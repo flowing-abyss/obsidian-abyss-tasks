@@ -20,6 +20,9 @@ export interface StatisticsObservation {
     readonly label: string;
     readonly value: number | string | null;
     readonly unit?: string | undefined;
+    readonly range?:
+      | { readonly from: number; readonly to: number; readonly inclusiveMaximum: boolean }
+      | undefined;
   }>;
   readonly note?: string | undefined;
 }
@@ -56,6 +59,7 @@ export interface StatisticsMark {
     | undefined;
 }
 export interface StatisticsChartModel {
+  readonly emptyMessage?: string | undefined;
   /** Horizontal ranking with one mark per ordered y category; presentation mounts a row window. */
   readonly rowViewport?: boolean | undefined;
   readonly id: string;
@@ -79,6 +83,7 @@ export interface StatisticsChartModel {
   readonly intensityScale?:
     { readonly domain: readonly [number, number]; readonly unit: string } | undefined;
   readonly facet?: {
+    readonly description?: string | undefined;
     readonly actionId?: string | undefined;
     readonly key: string | undefined;
     readonly label: string;

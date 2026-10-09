@@ -101,11 +101,23 @@ function countUnit(axis: StatisticsAxis): string | undefined {
   if (/tasks/i.test(axis.label)) return 'tasks';
   return axis.unit;
 }
+function observationRowValue(
+  value: number | string | null,
+  unit: string | undefined,
+  range: StatisticsObservation['values'][number]['range'],
+): string {
+  if (range === undefined) return observationValue(value, unit);
+  if (range.from === range.to) return observationValue(range.from, unit);
+  const bound = range.inclusiveMaximum ? '≤' : '<';
+  const from = Number(range.from.toPrecision(10)),
+    to = Number(range.to.toPrecision(10));
+  return `≥${from} to ${bound}${to}${unitSuffix(unit, to)}`;
+}
 function suppliedContent(observation: StatisticsObservation): MarkContent {
   const { title, values, note } = observation;
-  const rows = values.map(({ label, value, unit }) => ({
+  const rows = values.map(({ label, value, unit, range }) => ({
     label,
-    value: observationValue(value, unit),
+    value: observationRowValue(value, unit, range),
   }));
   if (note !== undefined && note !== '') rows.push({ label: 'Reading', value: note });
   return { title, rows };

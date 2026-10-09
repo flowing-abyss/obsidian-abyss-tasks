@@ -54,6 +54,7 @@ function chartMargin(model: StatisticsChartModel): { margin?: typeof TIMELINE_MA
 function height(model: StatisticsChartModel): number {
   if (model.rowViewport === true && model.y.type === 'band') return model.y.categories.length * 32;
   if (model.id === 'allocation-focus') return 288;
+  if (model.id === 'completion-origins') return 384;
   return baseHeight(model);
 }
 function baseHeight(model: StatisticsChartModel): number {
@@ -398,46 +399,40 @@ function timelineMarks(model: StatisticsChartModel): RenderMark[] {
 }
 function densityMarks(model: StatisticsChartModel): RenderMark[] {
   const rows = model.kind === 'timeline' ? timelineRows(model) : model.marks;
-  if (model.kind === 'scatter' && rows.some((mark) => mark.series !== undefined))
-    return model.series.map((item) =>
-      rect(
-        rows.filter((mark) => mark.series === item.key),
-        {
-          id: `density:${item.key}`,
-          x1: 'x',
-          x2: 'x2',
-          y1: 'y',
-          y2: 'y2',
-          key: 'key',
-          fill: statisticsSeriesPaint(item, model.series),
-          inset: 0,
-        },
-      ),
-    );
   const maximum =
     model.intensityScale?.domain[1] ?? Math.max(0, ...rows.map((mark) => mark.weight ?? 0));
   const paints = ['zero', 'low', 'medium', 'high'] as const;
-  return paints.flatMap((bucket) => {
-    const fill = statisticsIntensityPaint(bucket);
-    const values = rows.filter((mark) => heatBucket(mark, maximum) === bucket);
-    return values.length === 0
-      ? []
-      : [
-          rect(values, {
-            id: `density:${bucket}`,
-            x1: 'x',
-            x2: 'x2',
-            x: (mark) => (number(mark, 'x') + (mark.x2 ?? number(mark, 'x'))) / 2,
-            ...(model.kind === 'timeline'
-              ? { y: 'y' as const }
-              : { y1: 'y' as const, y2: 'y2' as const }),
-            key: 'key',
-            fill,
-            radius: 2,
-            inset: 0,
-          }),
-        ];
-  });
+  const series =
+    model.kind === 'scatter' && rows.some((mark) => mark.series !== undefined)
+      ? model.series
+      : [undefined];
+  return series.flatMap((item) =>
+    paints.flatMap((bucket) => {
+      const values = rows.filter(
+        (mark) =>
+          heatBucket(mark, maximum) === bucket && (item === undefined || mark.series === item.key),
+      );
+      return values.length === 0
+        ? []
+        : [
+            rect(values, {
+              id: `density:${item?.key ?? ''}:${bucket}`,
+              x1: 'x',
+              x2: 'x2',
+              x: (mark) => (number(mark, 'x') + (mark.x2 ?? number(mark, 'x'))) / 2,
+              ...(model.kind === 'timeline'
+                ? { y: 'y' as const }
+                : { y1: 'y' as const, y2: 'y2' as const }),
+              key: 'key',
+              fill: statisticsIntensityPaint(bucket),
+              stroke: item === undefined ? 'none' : statisticsSeriesPaint(item, model.series),
+              strokeWidth: item === undefined ? 0 : 1.5,
+              radius: 2,
+              inset: 0,
+            }),
+          ];
+    }),
+  );
 }
 function networkMarks(model: StatisticsChartModel, width: number, height: number): RenderMark[] {
   const nodes = new Map(model.marks.map((mark) => [mark.key, mark]));

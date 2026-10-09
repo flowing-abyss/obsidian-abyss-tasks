@@ -38,7 +38,8 @@ export class StatisticsCharts {
     const retained = new Set<string>();
     this.host.classList.add('abyss-statistics-charts');
     for (const model of models) {
-      if (model.marks.length === 0 && model.kind !== 'timeline') continue;
+      if (model.marks.length === 0 && model.kind !== 'timeline' && model.emptyMessage === undefined)
+        continue;
       if (retained.has(model.id))
         throw new Error(`Duplicate Statistics chart identity: ${model.id}`);
       retained.add(model.id);
@@ -101,18 +102,38 @@ export class StatisticsCharts {
     model: StatisticsChartModel,
     select: (id: string) => void,
   ): StatisticsChartHandle {
-    return model.rowViewport === true
-      ? new StatisticsRowChart(surface, this.renderer, model, {
-          onSelect: select,
-          positions: this.rowPositions_abyssPrivate,
-          onFailure:
-            this.rowOptions_abyssPrivate.onFailure ??
-            ((error) => {
-              throw error;
-            }),
-        })
-      : this.renderer.mount(surface, model, select);
+    if (model.rowViewport === true)
+      return new StatisticsRowChart(surface, this.renderer, model, {
+        onSelect: select,
+        positions: this.rowPositions_abyssPrivate,
+        onFailure:
+          this.rowOptions_abyssPrivate.onFailure ??
+          ((error) => {
+            throw error;
+          }),
+      });
+    let current: StatisticsChartHandle | undefined;
+    const update = (next: StatisticsChartModel): void => {
+      if (next.marks.length === 0 && next.emptyMessage !== undefined) {
+        current?.destroy();
+        current = undefined;
+        surface.replaceChildren();
+        surface.createEl('p', { cls: 'abyss-statistics-context', text: next.emptyMessage });
+      } else if (current === undefined) {
+        surface.replaceChildren();
+        current = this.renderer.mount(surface, next, select);
+      } else current.update(next);
+    };
+    update(model);
+    return {
+      update,
+      destroy: () => {
+        current?.destroy();
+        surface.replaceChildren();
+      },
+    };
   }
+
   private caption_abyssPrivate(element: HTMLElement, model: StatisticsChartModel): void {
     element.classList.toggle('abyss-statistics-chart--facet', model.facet !== undefined);
     const existing = element.querySelector('figcaption');
@@ -134,6 +155,8 @@ export class StatisticsCharts {
         this.onSelect(id);
       });
     }
+    if (model.facet.description !== undefined)
+      caption.createDiv({ text: model.facet.description, cls: 'abyss-statistics-context' });
     element.prepend(caption);
   }
   private release_abyssPrivate(): void {

@@ -139,7 +139,8 @@ export class StatisticsSections {
       model.charts.every((chart) => chart.marks.length === 0);
     if (
       model.emptyMessage !== undefined ||
-      (model.charts.length > 0 && model.charts.every((chart) => chart.marks.length === 0))
+      (model.charts.length > 0 &&
+        model.charts.every((chart) => chart.marks.length === 0 && chart.emptyMessage === undefined))
     )
       (allocation ? chartHost : element).createDiv({
         cls: allocation

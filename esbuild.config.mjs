@@ -9,8 +9,8 @@ import process from 'process';
 // Obsidian loads every enabled plugin's `main.js` at vault startup — a size
 // regression is a user-facing cost, not just a build metric. Bump this in
 // package.json if the plugin legitimately grows, but bump it deliberately.
-// Analysis native scroll restoration and accessible row targets received a measured
-// 1 KiB increase per artifact (1841 KiB main / 181 KiB CSS); dependency scope is unchanged.
+// Analysis Movement endpoints, project coverage/focus and Aging density received a measured
+// 4 KiB main increase (1845 KiB main / unchanged 181 KiB CSS); dependency scope is unchanged.
 const { mainJsBudgetBytes: MAIN_JS_BUDGET_BYTES } = JSON.parse(
   readFileSync('package.json', 'utf8'),
 ).release;

@@ -509,6 +509,16 @@ eligible zero-time tasks and subtasks and has no percentage curve when total rec
 The left navigation owns visible Allocation grouping through `StatisticsNavigationPort`; it reads no
 task sources. Group search uses a bounded native SuggestModal over current aggregate identities.
 
+Movement keeps at most twelve project facets per page. Local project focus and return preserve
+scope and page, while stale page/focus requests clamp to available groups. Both event and origin
+scales are computed across all scoped projects. Accumulated event marks use civil-day endpoint positions, name actual bucket
+endpoints and select exact period prefixes; the zero origin precedes the period. Creation-date
+unavailability and completion-before-creation have separate origin evidence. Duplicate project
+titles carry their paths in Movement and Aging. Aging retains every live open node and its own
+all-time recorded intervals; dense marks expose range observations and encode owner counts in
+fill intensity, with overdue status in outlines and an explicit key. Unknown ages remain a
+distinct unavailable band, separate from zero-day ages.
+
 Timeline geometry uses local clock minutes, split at day/offset boundaries, with actual instants,
 offsets and endpoint labels separate from elapsed contributions. Its bounded weekly overview uses
 a frozen `chartActions` registry for week activation; source evidence remains separately selectable.
@@ -547,7 +557,11 @@ Removed, inert and destroyed row controls cannot activate. Adapter row bands use
 matching fixed pitch; packed numeric Timeline lanes alone reverse the vertical Timeline scale.
 
 [`StatisticsCharts`](src/panels/statistics/StatisticsCharts.ts) retains keyed mounts for the current
-section, updates surviving charts, destroys removed charts, and omits charts with no marks. Suspend
+section, updates surviving charts and destroys removed charts. Empty charts are omitted unless their
+model supplies an explicit unavailable message; those retain their real facet heading and a native
+text surface without an engine mount. Empty/populated updates replace that owned surface, and
+nonzero per-facet date gaps are compact model descriptions in the caption. Sections suppresses
+its generic empty-population fallback when those chart-level unavailable messages are visible. Suspend
 releases hosts while retaining the models; resume remounts when visibility or owner document changes.
 Each host belongs to its own document/window and delegates responsive layout and disposal to the
 engine. Below 240px available chart width, the figure provides a native horizontal scroll viewport
@@ -560,7 +574,7 @@ the section's complete peer list. Tooltip variables are declared on the plugin-o
 tooltip class and enrolled as exact external CSS consumers. The official tooltip portal uses the
 owner-document top layer or body fallback, retaining those tokens while staying outside scroller
 geometry; the engine disposes portal observers/listeners with its chart. Content is structured from
-engine-neutral mark observations, with labelled values and units shared with accessible text and
+engine-neutral mark observations, including explicit half-open ranges with inclusive maxima, with labelled values and units shared with accessible text and
 concise Results titles. Prose and clock ranges use the engine’s wrapping label column; short
 numeric/unit values retain its value column, without inline-style overrides. Geometry-aware
 fallback reports segment magnitudes rather than offsets.

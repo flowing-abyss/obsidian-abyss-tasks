@@ -1,11 +1,18 @@
-import { bucketAt, dayOf, type StatisticsCalendar } from './statisticsCalendar';
+import {
+  bucketAt,
+  dateInterval,
+  dateOf,
+  dayOf,
+  type StatisticsCalendar,
+} from './statisticsCalendar';
 import {
   bands,
   numeric,
   type StatisticsChartModel,
   type StatisticsMark,
+  type StatisticsObservation,
 } from './statisticsChartModel';
-import { active, inScope, NO_PROJECT } from './statisticsDataset';
+import { active, inScope } from './statisticsDataset';
 import { dependencySections } from './statisticsDependencies';
 import { age, ageBand, datedEvent, dateEligibility, inPeriod, overdue } from './statisticsFlow';
 import { contribution } from './statisticsIntervals';
@@ -14,16 +21,37 @@ import { rankedNumber, required, sorted } from './statisticsWork';
 import type {
   StatisticsAction,
   StatisticsContext,
-  StatisticsScope,
   StatisticsSection,
   StatisticsTask,
   StatisticsViewModel,
 } from './types';
 const EVENTS = ['created', 'completed', 'cancelled'] as const;
 type EventKind = (typeof EVENTS)[number];
+const EVENT_NAMES = { created: 'creation', completed: 'completion', cancelled: 'cancellation' };
+function eventApplies(task: StatisticsTask, event: EventKind): boolean {
+  return (
+    event === 'created' ||
+    task.status === ({ completed: 'done', cancelled: 'cancelled', created: 'open' } as const)[event]
+  );
+}
+function axisExtent(maximum: number): number {
+  return maximum === 0 ? 1 : maximum;
+}
+function positions(page: number, count: number): string {
+  return `Projects ${count === 0 ? 0 : page * 12 + 1}–${Math.min(count, (page + 1) * 12)} of ${count}`;
+}
+function unavailableDescription(unavailable: MovementGroup['unavailable']): string | undefined {
+  if (unavailable.size === 0) return undefined;
+  return [...unavailable]
+    .map(
+      ([event, indices]) =>
+        `${indices.length} ${EVENT_NAMES[event]} date${indices.length === 1 ? '' : 's'} unavailable`,
+    )
+    .join(' · ');
+}
 interface MovementGroup {
   label: string;
-  scope: StatisticsScope;
+  unavailable: Map<EventKind, number[]>;
   origins: Map<string, number[]>;
   count: number;
   events: Map<EventKind, Map<number, number>>;
@@ -33,23 +61,47 @@ function completionOrigin(
   completed: number,
   calendar: StatisticsCalendar,
 ): string {
-  if (task.created === undefined || dayOf(task.created) > completed) return 'unknown';
+  if (task.created === undefined) return 'unknown';
+  if (dayOf(task.created) > completed) return 'before-created';
   return dayOf(task.created) < calendar.fromDay ? 'before' : 'new';
 }
-function projectScope(task: StatisticsTask): StatisticsScope {
-  if (task.fileKind === 'archive') return { type: 'archive' };
-  return task.projectKey === NO_PROJECT
-    ? { type: 'unassigned' }
-    : { type: 'project', path: task.filePath };
+function projectLabels(ctx: StatisticsContext): Map<string, string> {
+  const names = new Map<string, number>();
+  for (const project of ctx.dataset.projects)
+    names.set(project.name, (names.get(project.name) ?? 0) + 1);
+  return new Map(
+    ctx.dataset.projects.map((project) => [
+      `project:${project.path}`,
+      (names.get(project.name) ?? 0) > 1 ? `${project.name} · ${project.path}` : project.name,
+    ]),
+  );
 }
+function groupPage(page: number | undefined, count: number): number {
+  return Math.min(Math.max(0, Math.floor(page ?? 0)), Math.max(0, Math.ceil(count / 12) - 1));
+}
+const ORIGINS = [
+  { key: 'before', label: 'Created before period', tone: 'completed' as const },
+  { key: 'new', label: 'Created in period', tone: 'created' as const },
+  { key: 'unknown', label: 'Creation date unavailable', tone: 'muted' as const },
+  { key: 'before-created', label: 'Completion before creation', tone: 'cancelled' as const },
+];
 class Movement {
   readonly groups = new Map<string, MovementGroup>();
   readonly origins = new Map<string, number[]>();
   maximum = 0;
+  originMaximum = 0;
+  private readonly labels = projectLabels(this.ctx);
   constructor(private readonly ctx: StatisticsContext) {}
   private event(group: MovementGroup, task: StatisticsTask, event: EventKind): void {
     const day = datedEvent(task, event, this.ctx.calendar);
-    if (day === undefined) return;
+    if (day === undefined) {
+      if (eventApplies(task, event)) {
+        const indices = group.unavailable.get(event) ?? [];
+        indices.push(task.index);
+        group.unavailable.set(event, indices);
+      }
+      return;
+    }
     const counts = group.events.get(event) ?? new Map<number, number>();
     group.events.set(event, counts);
     if (!inPeriod(day, this.ctx.calendar)) return;
@@ -69,8 +121,8 @@ class Movement {
     for (const task of this.ctx.dataset.tasks) {
       if (inScope(task, this.ctx.request.scope)) {
         const group = this.groups.get(task.projectKey) ?? {
-          label: task.projectName,
-          scope: projectScope(task),
+          label: this.labels.get(task.projectKey) ?? task.projectName,
+          unavailable: new Map<EventKind, number[]>(),
           origins: new Map<string, number[]>(),
           count: 0,
           events: new Map<EventKind, Map<number, number>>(),
@@ -87,7 +139,10 @@ class Movement {
     await this.measure();
   }
   private async measure(): Promise<void> {
-    for (const group of this.groups.values())
+    for (const group of this.groups.values()) {
+      let originTotal = 0;
+      for (const indices of group.origins.values()) originTotal += indices.length;
+      this.originMaximum = Math.max(this.originMaximum, originTotal);
       for (const counts of group.events.values()) {
         let total = 0;
         for (const value of counts.values()) {
@@ -97,6 +152,7 @@ class Movement {
         this.maximum = Math.max(this.maximum, total);
         await this.ctx.budget.step();
       }
+    }
   }
   private selection(key: string, event: EventKind, bucket: number): string {
     const { calendar, request, evidence } = this.ctx,
@@ -118,17 +174,29 @@ class Movement {
     counts: Map<number, number>,
   ): Promise<StatisticsMark[]> {
     const marks: StatisticsMark[] = [
-      { key: `${key}:${event}:origin`, x: 0, y: 0, series: event, label: 'Before first bucket' },
+      { key: `${key}:${event}:origin`, x: 0, y: 0, series: event, label: 'Before period' },
     ];
     let total = 0;
     for (let i = 0; i < this.ctx.calendar.buckets.length; i++) {
       total += counts.get(i) ?? 0;
+      const bucket = required(this.ctx.calendar.buckets[i]),
+        endpoint = dateOf(bucket.toDay - 1);
       marks.push({
         key: `${key}:${event}:${i}`,
-        x: i + 1,
+        x: bucket.toDay - this.ctx.calendar.fromDay,
         y: total,
         series: event,
-        label: required(this.ctx.calendar.buckets[i]).key,
+        label: `Through ${endpoint}`,
+        observation: {
+          title: `${required(this.groups.get(key)).label} · Through ${endpoint}`,
+          values: [
+            { label: event[0]?.toUpperCase() + event.slice(1), value: total, unit: 'tasks' },
+            {
+              label: 'Period prefix',
+              value: dateInterval(this.ctx.calendar.fromDay, bucket.toDay),
+            },
+          ],
+        },
         selectionId: this.selection(key, event, i),
       });
       await this.ctx.budget.step();
@@ -139,11 +207,12 @@ class Movement {
     const group = required(this.groups.get(key)),
       marks: StatisticsMark[] = [],
       series: Array<StatisticsChartModel['series'][number]> = [];
+    const hasDates = group.events.size > 0;
     for (const event of EVENTS) {
       const counts = group.events.get(event);
-      if (counts !== undefined) {
+      if (hasDates && (counts !== undefined || !group.unavailable.has(event))) {
         series.push({ key: event, label: event, tone: event });
-        marks.push(...(await this.seriesMarks(key, event, counts)));
+        marks.push(...(await this.seriesMarks(key, event, counts ?? new Map<number, number>())));
       }
     }
     return {
@@ -151,11 +220,17 @@ class Movement {
       accessibleLabel: `Cumulative retained events · ${group.label}`,
       kind: 'lines',
       layout: 'facets',
-      facet: { key, label: group.label, actionId: `focus:${key}` },
+      emptyMessage: hasDates ? undefined : 'No usable event dates',
+      facet: {
+        key,
+        label: group.label,
+        actionId: `focus:${key}`,
+        description: unavailableDescription(group.unavailable),
+      },
       x: {
-        ...numeric('Date', this.ctx.calendar.buckets.length),
+        ...numeric('Through date', this.ctx.calendar.toDay - this.ctx.calendar.fromDay),
         tickLabels: this.ctx.calendar.buckets.map(
-          (bucket, index) => [index + 1, bucket.key] as const,
+          (bucket) => [bucket.toDay - this.ctx.calendar.fromDay, dateOf(bucket.toDay - 1)] as const,
         ),
       },
       y: numeric('Cumulative tasks', this.maximum, 0, 'count'),
@@ -175,55 +250,49 @@ async function movement(ctx: StatisticsContext): Promise<StatisticsViewModel> {
         ),
       ctx.budget,
     ),
-    page = Math.max(0, Math.floor(ctx.request.page ?? 0)),
+    page = groupPage(ctx.request.page, keys.length),
     charts: StatisticsChartModel[] = [];
-  const visible = keys.slice(page * 12, (page + 1) * 12);
+  const focused =
+    ctx.request.focusKey !== undefined && model.groups.has(ctx.request.focusKey)
+      ? ctx.request.focusKey
+      : undefined;
+  const visible = focused === undefined ? keys.slice(page * 12, (page + 1) * 12) : [focused];
   const chartActions: Array<readonly [string, StatisticsAction]> = [];
   const originMarks: StatisticsMark[] = [];
-  let originMax = 0;
+  const coverage = [];
   for (const key of visible) {
     charts.push(await model.chart(key));
     const group = required(model.groups.get(key));
-    chartActions.push([`focus:${key}`, { type: 'scope', label: group.label, scope: group.scope }]);
-    let base = 0;
-    for (const origin of ['before', 'new', 'unknown']) {
-      const indices = group.origins.get(origin) ?? [];
-      originMarks.push({
-        key: `${key}:${origin}`,
-        x: base,
-        x2: base + indices.length,
-        y: key,
-        series: origin,
-        weight: indices.length,
-        label: group.label,
-        selectionId: ctx.evidence.tasks(`origin:${key}:${origin}`, indices),
-      });
-      base += indices.length;
-    }
-    originMax = Math.max(originMax, base);
+    chartActions.push([`focus:${key}`, { type: 'focus', label: group.label, focusKey: key }]);
+    originMarks.push(...projectOrigins(ctx, key, group));
+    for (const [event, indices] of group.unavailable)
+      coverage.push(
+        metric(
+          `movement-unavailable:${key}:${event}`,
+          `${group.label} · ${event} dates unavailable`,
+          indices.length,
+          {
+            role: 'coverage',
+            selectionId: ctx.evidence.tasks(`movement-unavailable:${key}:${event}`, indices),
+          },
+        ),
+      );
   }
-  const originSeries = [
-    { key: 'before', label: 'Created before period', tone: 'completed' as const },
-    { key: 'new', label: 'Created in period', tone: 'created' as const },
-    { key: 'unknown', label: 'Creation date unknown / invalid', tone: 'muted' as const },
-  ];
-  const metrics = ['before', 'new', 'unknown'].map((origin, index) =>
-    metric(
-      `completion-origin:${origin}`,
-      required(['Created before period', 'Created in period', 'Creation date unknown'][index]),
-      (model.origins.get(origin) ?? []).length,
-      ctx.evidence.tasks(`completion-origin:${origin}`, model.origins.get(origin) ?? []),
-    ),
-  );
+  const originSeries = ORIGINS;
+  const metrics = originMetrics(ctx, model);
   return finish(
     ctx,
     [
       {
         id: 'movement',
-        title: 'Project movement',
+        title:
+          focused === undefined
+            ? 'Project movement'
+            : `Project movement · ${required(model.groups.get(focused)).label}`,
+        reading: `Recorded task events by current project · tasks and subtasks · ${focused === undefined ? positions(page, keys.length) : 'Within selected scope'}. Zero precedes this period; points show bucket endpoints.`,
         context:
           'Cumulative retained events classified by current project. Zero origin precedes the period. Missing date series are unavailable; this does not reconstruct historical backlog.',
-        metrics: await dateEligibility(ctx, EVENTS),
+        metrics: [...(await dateEligibility(ctx, EVENTS)), ...coverage],
         charts,
         legend: EVENTS.map((key) => ({
           key,
@@ -231,11 +300,65 @@ async function movement(ctx: StatisticsContext): Promise<StatisticsViewModel> {
           tone: key,
         })),
       },
-      { ...originSection({ model, visible, originMax, originSeries, originMarks }), metrics },
+      {
+        ...originSection({
+          model,
+          visible,
+          originMax: model.originMaximum,
+          originSeries,
+          originMarks,
+        }),
+        metrics,
+      },
     ],
-    pageActions(page, keys.length, 12),
+    movementActions(focused, page, keys.length),
     chartActions,
   );
+}
+function originMetrics(ctx: StatisticsContext, model: Movement): StatisticsSection['metrics'] {
+  return ORIGINS.map((origin) =>
+    metric(
+      `completion-origin:${origin.key}`,
+      `All projects in scope · ${origin.label}`,
+      (model.origins.get(origin.key) ?? []).length,
+      ctx.evidence.tasks(`completion-origin:${origin.key}`, model.origins.get(origin.key) ?? []),
+    ),
+  );
+}
+function movementActions(
+  focused: string | undefined,
+  page: number,
+  total: number,
+): StatisticsAction[] {
+  return focused === undefined
+    ? pageActions(page, total, 12)
+    : [{ type: 'focus', label: 'Back to projects', focusKey: undefined }];
+}
+function projectOrigins(
+  ctx: StatisticsContext,
+  key: string,
+  group: MovementGroup,
+): StatisticsMark[] {
+  let base = 0;
+  return ORIGINS.map((origin) => {
+    const indices = group.origins.get(origin.key) ?? [],
+      x = base;
+    base += indices.length;
+    return {
+      key: `${key}:${origin.key}`,
+      x,
+      x2: base,
+      y: key,
+      series: origin.key,
+      weight: indices.length,
+      label: group.label,
+      observation: {
+        title: group.label,
+        values: [{ label: origin.label, value: indices.length, unit: 'tasks' }],
+      },
+      selectionId: ctx.evidence.tasks(`origin:${key}:${origin.key}`, indices),
+    };
+  });
 }
 function originSection({
   model,
@@ -289,11 +412,12 @@ interface AgeGroup {
   label: string;
   bands: number[][];
 }
-const AGE_LABELS = ['0–7', '8–14', '15–30', '31–60', '61+', 'Unknown'];
+const AGE_LABELS = ['0–7', '8–14', '15–30', '31–60', '61+', 'Age unavailable'];
 class Aging {
   readonly open: number[] = [];
   readonly unknown: number[] = [];
   readonly projects = new Map<string, AgeGroup>();
+  private readonly labels = projectLabels(this.ctx);
   private readonly durations = new Map<number, number>();
   private points = new Map<string, AgePoint>();
   private maxAge = 0;
@@ -318,7 +442,7 @@ class Aging {
     const days = age(task, this.ctx.calendar),
       minutes = this.durations.get(task.index) ?? 0,
       group = this.projects.get(task.projectKey) ?? {
-        label: task.projectName,
+        label: this.labels.get(task.projectKey) ?? task.projectName,
         bands: Array.from({ length: 6 }, () => [] as number[]),
       };
     required(group.bands[ageBand(days)]).push(task.index);
@@ -338,12 +462,10 @@ class Aging {
   private async bin(): Promise<void> {
     this.dense = this.points.size > 600;
     if (!this.dense) return;
-    this.maxAge = Math.max(1, this.maxAge);
-    this.maxMinutes = Math.max(1, this.maxMinutes);
     const bins = new Map<string, AgePoint>();
     for (const point of this.points.values()) {
-      const x = Math.min(29, Math.floor((point.age / this.maxAge) * 30)),
-        y = Math.min(19, Math.floor((point.minutes / this.maxMinutes) * 20)),
+      const x = Math.min(29, Math.floor((point.age / axisExtent(this.maxAge)) * 30)),
+        y = Math.min(19, Math.floor((point.minutes / axisExtent(this.maxMinutes)) * 20)),
         key = `${x}:${y}`,
         cell = bins.get(key) ?? {
           age: (x * this.maxAge) / 30,
@@ -361,28 +483,60 @@ class Aging {
     }
     this.points = bins;
   }
+  private mark(key: string, point: AgePoint): StatisticsMark {
+    return {
+      key,
+      x: point.age,
+      y: point.minutes,
+      x2: this.dense ? point.age + axisExtent(this.maxAge) / 30 : undefined,
+      y2: this.dense ? point.minutes + axisExtent(this.maxMinutes) / 20 : undefined,
+      weight: point.indices.length,
+      overdue: point.overdue,
+      series: overdueSeries(point.overdue, point.indices.length),
+      selectionId: this.ctx.evidence.tasks(`aging:${key}`, point.indices),
+      observation: {
+        title: this.dense ? 'Open tasks in range' : 'Current open tasks',
+        values: [
+          this.coordinate('Days since creation', point.age, {
+            maximum: this.maxAge,
+            bins: 30,
+            unit: 'days',
+          }),
+          this.coordinate('Recorded time (all time)', point.minutes, {
+            maximum: this.maxMinutes,
+            bins: 20,
+            unit: 'minutes',
+          }),
+          { label: 'Tasks', value: point.indices.length, unit: 'tasks' },
+          ...(point.overdue > 0 ? [{ label: 'Overdue', value: point.overdue, unit: 'tasks' }] : []),
+        ],
+      },
+    };
+  }
+  emptyMessage(): string | undefined {
+    if (this.open.length === 0) return 'No current open tasks in scope';
+    if (this.open.length === this.unknown.length)
+      return 'All current open tasks have age unavailable';
+    return undefined;
+  }
   chart(): StatisticsChartModel {
-    const marks: StatisticsMark[] = [];
-    for (const [key, point] of this.points)
-      marks.push({
-        key,
-        x: point.age,
-        y: point.minutes,
-        x2: this.dense ? point.age + this.maxAge / 30 : undefined,
-        y2: this.dense ? point.minutes + this.maxMinutes / 20 : undefined,
-        weight: point.indices.length,
-        overdue: point.overdue,
-        series: overdueSeries(point.overdue, point.indices.length),
-        selectionId: this.ctx.evidence.tasks(`aging:${key}`, point.indices),
-        detail: `${point.indices.length} tasks; ${point.overdue} overdue`,
-      });
+    const marks = [...this.points].map(([key, point]) => this.mark(key, point));
     return {
       id: 'aging',
       accessibleLabel: 'Current task age versus all-time recorded minutes',
       kind: 'scatter',
       layout: this.dense ? 'density' : undefined,
-      x: numeric('Age', this.maxAge, 0, 'days'),
-      y: numeric('Recorded time', this.maxMinutes, 0, 'minutes'),
+      intensityScale: this.dense
+        ? { domain: [0, Math.max(0, ...marks.map((mark) => mark.weight ?? 0))], unit: 'tasks' }
+        : undefined,
+      x: {
+        ...numeric('Days since creation', this.maxAge, 0, 'days'),
+        ticks: this.maxAge === 0 ? [0] : undefined,
+      },
+      y: {
+        ...numeric('Recorded time (all time)', this.maxMinutes, 0, 'minutes'),
+        ticks: this.maxMinutes === 0 ? [0] : undefined,
+      },
       series: [
         { key: 'overdue', label: 'Overdue', tone: 'overdue' },
         { key: 'mixed', label: 'Mixed group', tone: 'cancelled' },
@@ -391,13 +545,28 @@ class Aging {
       marks,
     };
   }
+  private coordinate(
+    label: string,
+    value: number,
+    axis: { maximum: number; bins: number; unit: string },
+  ): StatisticsObservation['values'][number] {
+    const { maximum, bins, unit } = axis,
+      inclusiveMaximum = value >= ((bins - 1) * maximum) / bins,
+      to = inclusiveMaximum ? maximum : value + maximum / bins;
+    return {
+      label,
+      value,
+      unit,
+      range: this.dense ? { from: value, to, inclusiveMaximum } : undefined,
+    };
+  }
   async composition(): Promise<{ charts: StatisticsChartModel[]; keys: string[]; page: number }> {
     const keys = await sorted(
         [...this.projects.keys()],
         (a, z) => a.localeCompare(z),
         this.ctx.budget,
       ),
-      page = Math.max(0, Math.floor(this.ctx.request.page ?? 0));
+      page = groupPage(this.ctx.request.page, keys.length);
     let maximum = 0;
     for (const group of this.projects.values()) {
       for (const indices of group.bands) maximum = Math.max(maximum, indices.length);
@@ -418,11 +587,15 @@ class Aging {
       facet: { key, label: group.label },
       x: bands('Age days', AGE_LABELS),
       y: numeric('Tasks', maximum, 0, 'count'),
-      series: [],
+      series: [
+        { key: 'known', label: 'Known age', tone: 'accent' },
+        { key: 'unavailable', label: 'Age unavailable', tone: 'muted' },
+      ],
       marks: group.bands.map((indices, i) => ({
         key: `${key}:${i}`,
         x: required(AGE_LABELS[i]),
         y: indices.length,
+        series: i === 5 ? 'unavailable' : 'known',
         selectionId: this.ctx.evidence.tasks(`age-project:${key}:${i}`, indices),
       })),
     };
@@ -431,13 +604,16 @@ class Aging {
 async function aging(ctx: StatisticsContext): Promise<StatisticsViewModel> {
   const model = new Aging(ctx);
   await model.prepare();
-  const composition = await model.composition();
+  const composition = await model.composition(),
+    chart = model.chart();
   return finish(
     ctx,
     [
       {
         id: 'aging',
         title: 'Current open task age and recorded time',
+        reading: `Live tasks and subtasks · each node’s own recorded time. ${chart.layout === 'density' ? 'Fill shows task count; outlines show overdue status.' : 'Point size shows task count; color shows overdue status.'}`,
+        emptyMessage: model.emptyMessage(),
         context:
           'Live tasks; all-time node-own recorded time. Missing recorded time does not mean unstarted.',
         metrics: [
@@ -449,17 +625,21 @@ async function aging(ctx: StatisticsContext): Promise<StatisticsViewModel> {
           ),
           metric(
             'unknown-age',
-            'Unknown age',
+            'Age unavailable',
             model.unknown.length,
             ctx.evidence.tasks('unknown-age', model.unknown),
           ),
         ],
-        charts: [model.chart()],
-        legend: [],
+        charts: [chart],
+        legend: chart.series.map((series) => ({
+          ...series,
+          label: chart.layout === 'density' ? `${series.label} outline` : series.label,
+        })),
       },
       {
         id: 'age-composition',
         title: 'Age composition by project',
+        reading: positions(composition.page, composition.keys.length),
         context: 'Current containing project; missing ages stay explicit.',
         metrics: [],
         charts: composition.charts,

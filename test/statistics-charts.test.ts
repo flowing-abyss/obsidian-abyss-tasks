@@ -959,6 +959,7 @@ it.each(['time', 'age'] as const)('renders and selects dense Aging with zero %s'
     view.sections.flatMap((section) => section.charts).find((chart) => chart.id === 'aging'),
   );
   expect(value.layout).toBe('density');
+  expect({ time: value.y, age: value.x }[zero]).toMatchObject({ ticks: [0] });
   expect(value.marks.reduce((sum, mark) => sum + required(mark.weight), 0)).toBe(601);
   const el = host(document, 240),
     chart = mount(el, value);
@@ -971,6 +972,10 @@ it.each(['time', 'age'] as const)('renders and selects dense Aging with zero %s'
   const all = new Set<string>();
   for (const mark of value.marks) {
     expect(zero === 'time' ? mark.y : mark.x).toBe(0);
+    const description = statisticsMarkDescription(mark, value);
+    expect(description).toContain(
+      zero === 'time' ? 'Recorded time (all time): 0 min' : 'Days since creation: 0 days',
+    );
     const bin = Number(mark.key.split(':')[zero === 'time' ? 0 : 1]),
       bins = zero === 'time' ? 30 : 20;
     const expected = nodes
@@ -2074,4 +2079,202 @@ it('keeps zero-time Allocation concentration in the reserved plot with an honest
   );
   sections.update(focused);
   expect(element.querySelectorAll('.abyss-statistics-allocation-empty-plot')).toHaveLength(1);
+});
+
+it('paints actual Aging density by owner count and reports half-open ranges with an inclusive maximum', async () => {
+  const now = Date.parse('2026-10-04T12:00Z');
+  const nodes = Array.from({ length: 601 }, (_, i) =>
+    task(`D${i}`, {
+      planning: { created: date(new Date(now - i * 86400000).toISOString().slice(0, 10)) },
+      timeEntries:
+        i === 0
+          ? []
+          : [closed(new Date(now - i * 60000).toISOString(), new Date(now).toISOString())],
+    }),
+  );
+  nodes.push(
+    ...Array.from({ length: 99 }, (_, i) =>
+      task(`zero${i}`, { planning: { created: date('2026-10-04') } }),
+    ),
+  );
+  const ds = required(await prepareStatisticsDataset(source(nodes), [], work));
+  const view = required(await new StatisticsSession(ds).view(request({ view: 'aging' }), work));
+  const value = required(view.sections[0]?.charts[0]);
+  expect(value.layout).toBe('density');
+  const first = required(value.marks.find((m) => m.key === '0:0'));
+  const next = required(value.marks.find((m) => m.key === '1:0'));
+  expect([first.weight, next.weight]).toEqual([119, 10]);
+  const content = statisticsMarkDescription(first, value);
+  expect(content).toContain('Days since creation: ≥0 to <20 days');
+  expect(content).toContain('Recorded time (all time): ≥0 to <30 min');
+  expect(content.match(/119/g)).toHaveLength(1);
+  const end = statisticsMarkDescription(
+    required(value.marks.find((m) => m.key === '29:19')),
+    value,
+  );
+  expect(end).toContain('to ≤600 days');
+  expect(end).toContain('to ≤600 min');
+  const el = host(),
+    chart = mount(el, value);
+  const rects = marks(el);
+  const dense = required(
+    rects.find(
+      (r) =>
+        Number(r.getAttribute('x')) ===
+        Math.min(...rects.map((rect) => Number(rect.getAttribute('x')))),
+    ),
+  );
+  const sparse = required(
+    rects.find(
+      (r) =>
+        Number(r.getAttribute('x')) > Number(dense.getAttribute('x')) &&
+        Number(r.getAttribute('y')) === Number(dense.getAttribute('y')),
+    ),
+  );
+  expect(dense.getAttribute('fill')).not.toBe(sparse.getAttribute('fill'));
+  expect(value.x.label).toBe('Days since creation');
+  expect(value.y.label).toBe('Recorded time (all time)');
+  expect(value.intensityScale).toEqual({ domain: [0, 119], unit: 'tasks' });
+  expect(required(view.sections[0]).reading).toContain('outlines');
+  expect(required(view.sections[0]).legend.map((item) => item.label)).toContain('Overdue outline');
+  const owners = new Set<string>();
+  for (const mark of value.marks) {
+    const page = view.evidence(required(mark.selectionId), 0, 50);
+    for (let start = 0; start < page.total; start += 50)
+      view
+        .evidence(required(mark.selectionId), start, 50)
+        .rows.forEach((row) => owners.add(row.key));
+  }
+  expect(owners.size).toBe(700);
+  key(chart.svg(), 'End');
+  key(chart.svg(), 'Enter');
+  expect(chart.select).toHaveBeenCalled();
+});
+it('retains empty Movement headings through populated transitions and suspension', async () => {
+  const empty = model({
+    id: 'undated',
+    kind: 'lines',
+    facet: { key: 'undated', label: 'Undated project' },
+    emptyMessage: 'No usable event dates',
+    marks: [],
+  });
+  const element = host();
+  const charts = new StatisticsCharts(element, new TanStackStatisticsChart(), vi.fn());
+  mounts.push(charts);
+  charts.update([empty]);
+  expect(element.querySelector('figcaption')?.textContent).toBe('Undated project');
+  expect(element.textContent).toContain('No usable event dates');
+  expect(element.querySelector('svg')).toBeNull();
+  charts.update([
+    {
+      ...empty,
+      emptyMessage: undefined,
+      marks: [{ key: 'created', x: 0, y: 1, series: 'created' }],
+    },
+  ]);
+  expect(element.querySelector('svg')).not.toBeNull();
+  expect(element.textContent).not.toContain('No usable event dates');
+  charts.update([empty]);
+  expect(element.querySelector('svg')).toBeNull();
+  charts.suspend();
+  expect(element.children).toHaveLength(0);
+  charts.resume();
+  expect(element.textContent).toContain('No usable event dates');
+  charts.destroy();
+  expect(element.children).toHaveLength(0);
+});
+
+it('keeps completion-origin plot height stable on short project pages', () => {
+  const rows = Array.from({ length: 12 }, (_, i) => `P${i}`);
+  const origins = model({
+    id: 'completion-origins',
+    kind: 'bars',
+    layout: 'stacked',
+    x: { type: 'number', label: 'Completed tasks', domain: [0, 20] },
+    y: { type: 'band', label: 'Project', categories: rows },
+    marks: rows.map((row) => ({ key: row, x: 0, x2: 1, y: row, series: 'created' })),
+  });
+  const element = host(),
+    chart = mount(element, origins);
+  const fullHeight = required(chart.svg().getAttribute('viewBox')).split(' ')[3];
+  expect(Number(fullHeight)).toBeGreaterThan(0);
+  chart.handle.update({
+    ...origins,
+    y: { type: 'band', label: 'Project', categories: ['P12'] },
+    marks: [{ key: 'P12', x: 0, x2: 1, y: 'P12', series: 'created' }],
+  });
+  expect(required(chart.svg().getAttribute('viewBox')).split(' ')[3]).toBe(fullHeight);
+});
+
+it('keeps overdue, mixed and not-overdue outlines distinct on actual Aging density', async () => {
+  const now = Date.parse('2026-10-04T12:00Z');
+  const nodes = Array.from({ length: 601 }, (_, i) =>
+    task(`status${i}`, {
+      planning: {
+        created: date(new Date(now - i * 86400000).toISOString().slice(0, 10)),
+        ...(i < 5 || (i >= 20 && i < 40) ? { due: date('2026-10-03') } : {}),
+      },
+    }),
+  );
+  const ds = required(await prepareStatisticsDataset(source(nodes), [], work));
+  const view = required(await new StatisticsSession(ds).view(request({ view: 'aging' }), work));
+  const value = required(required(view.sections[0]).charts[0]);
+  expect(value.marks.find((mark) => mark.key === '0:0')).toMatchObject({
+    series: 'mixed',
+    weight: 20,
+    overdue: 5,
+  });
+  expect(value.marks.find((mark) => mark.key === '1:0')).toMatchObject({
+    series: 'overdue',
+    weight: 20,
+    overdue: 20,
+  });
+  const element = host();
+  mount(element, value);
+  expect(new Set(marks(element).map((mark) => mark.getAttribute('stroke')))).toEqual(
+    new Set([
+      'var(--color-orange, var(--text-normal))',
+      'var(--color-red, var(--text-normal))',
+      'var(--interactive-accent, var(--text-normal))',
+    ]),
+  );
+});
+
+it('keeps undated-only Movement coverage without a contradictory empty-population message', async () => {
+  const dataset = required(
+    await prepareStatisticsDataset(
+      source([task('Undated')]),
+      [{ path: 'Undated.md', name: 'Undated project' }],
+      work,
+    ),
+  );
+  const view = required(
+    await new StatisticsSession(dataset).view(request({ view: 'movement' }), work),
+  );
+  const surface = host(),
+    sections = new StatisticsSections(surface, new TanStackStatisticsChart(), vi.fn());
+  mounts.push(sections);
+  sections.update({ ...view, sections: [required(view.sections[0])] });
+  expect(surface.querySelector('figcaption')?.textContent).toContain('Undated project');
+  expect(surface.textContent).toContain('No usable event dates');
+  expect(surface.textContent).toContain('1 creation date unavailable');
+  expect(surface.textContent).not.toContain('No eligible records in this selection');
+  expect(surface.querySelector('svg')).toBeNull();
+  const populated = required(
+    await prepareStatisticsDataset(
+      source([task('Undated', { planning: { created: date('2026-10-01') } })]),
+      [{ path: 'Undated.md', name: 'Undated project' }],
+      work,
+    ),
+  );
+  const next = required(
+    await new StatisticsSession(populated).view(request({ view: 'movement' }), work),
+  );
+  sections.update({ ...next, sections: [required(next.sections[0])] });
+  expect(surface.querySelector('svg')).not.toBeNull();
+  expect(surface.textContent).not.toContain('No usable event dates');
+  sections.update({ ...view, sections: [required(view.sections[0])] });
+  expect(surface.querySelector('svg')).toBeNull();
+  expect(surface.textContent).toContain('No usable event dates');
+  expect(surface.textContent).not.toContain('No eligible records in this selection');
 });
