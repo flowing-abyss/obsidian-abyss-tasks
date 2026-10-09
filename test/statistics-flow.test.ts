@@ -444,7 +444,10 @@ it('separates in-period creation defects from scope-wide undatable completions w
   );
   const metrics = week.sections.flatMap((s) => s.metrics);
   expect(metrics.find((m) => m.id === 'valid-pairs')?.value).toBe(1);
-  expect(metrics.find((m) => m.id === 'missing-pairs')?.value).toBe(3);
+  expect(metrics.find((m) => m.id === 'missing-pairs')).toMatchObject({
+    value: 3,
+    label: 'Excluded completions · creation date unusable',
+  });
   for (const [id, title, reason] of [
     ['creation-missing', 'missing-created', 'Creation date missing'],
     ['creation-invalid', 'invalid-created', 'Creation date invalid or ambiguous'],
@@ -676,4 +679,23 @@ it('measures literal age boundaries including physical children and archive whil
   expect(view.evidence('valid-pairs', 0, 50).rows.map((row) => row.title)).not.toContain(
     'recurring-child',
   );
+});
+
+it('keeps the cross-year range and exact population while compacting a large cohort axis count', async () => {
+  const nodes = Array.from({ length: 1001 }, (_, i) =>
+    task(`year-boundary-${i}`, { planning: { created: date('2025-12-29') } }),
+  );
+  const view = required(
+    await new StatisticsSession(
+      required(await prepareStatisticsDataset(source(nodes), [], work)),
+    ).view(
+      request({ view: 'cohorts', period: 'all', nowMs: Date.parse('2026-01-10T12:00Z') }),
+      work,
+    ),
+  );
+  const chart = required(view.sections[0]?.charts[0]);
+  expect(chart.y.tickLabels).toEqual([['2025-12-29', '2025-12-29–01-04·1k']]);
+  const observation = required(chart.marks[0]?.observation);
+  expect(observation.title).toContain('2025-12-29 – 2026-01-04');
+  expect(observation.values).toContainEqual({ label: 'Cohort', value: 1001, unit: 'tasks' });
 });

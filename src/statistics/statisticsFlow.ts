@@ -553,7 +553,7 @@ async function completion(ctx: StatisticsContext): Promise<StatisticsSection[]> 
             completionContext,
           ),
         ),
-        metric('missing-pairs', 'Excluded creations in period', excluded.length, {
+        metric('missing-pairs', 'Excluded completions · creation date unusable', excluded.length, {
           role: 'coverage',
           selectionId: contextualTasks(ctx, 'missing-pairs', excluded, (t) =>
             required(DATE_REASONS[required(completionReason(t, ctx))]),
@@ -893,6 +893,18 @@ function cohortMarks(ctx: StatisticsContext, week: number, cohort: Cohort): Stat
     };
   });
 }
+/** Compact axis counts; observations keep the exact integer population. */
+const COHORT_COUNT_FORMAT = new Intl.NumberFormat('en', {
+  notation: 'compact',
+  maximumSignificantDigits: 3,
+});
+function cohortRowLabel(ctx: StatisticsContext, week: number, size: number): string {
+  const first = dateOf(Math.max(week, ctx.calendar.fromDay)),
+    last = dateOf(Math.min(week + 7, ctx.calendar.toDay) - 1),
+    range = first === last ? first : `${first}–${last.slice(5)}`,
+    partial = week < ctx.calendar.fromDay || week + 7 > ctx.calendar.toDay;
+  return `${range}·${COHORT_COUNT_FORMAT.format(size).replace('K', 'k')}${partial ? '*' : ''}`;
+}
 async function cohorts(ctx: StatisticsContext): Promise<StatisticsViewModel> {
   const groups = await cohortGroups(ctx),
     weeks = await sorted([...groups.keys()], (a, z) => z - a, ctx.budget),
@@ -917,7 +929,7 @@ async function cohorts(ctx: StatisticsContext): Promise<StatisticsViewModel> {
         id: 'cohorts',
         title: 'Completed within days of creation',
         reading:
-          'One-off tasks and subtasks · cancellations included. Partial weeks use only included creation dates.',
+          'One-off tasks and subtasks · cancellations included. Rows show dates · task count; * partial week.',
         context:
           'N includes cancellations. A horizon matures after the youngest creation completes its final horizon day.',
         metrics: [
@@ -933,15 +945,17 @@ async function cohorts(ctx: StatisticsContext): Promise<StatisticsViewModel> {
             x: {
               ...numeric('Completed within', 30, 0, 'days'),
               ticks: HORIZONS,
-              tickLabels: HORIZONS.map((value) => [value, `${value} days`] as const),
+              tickLabels: HORIZONS.map(
+                (value) => [value, `${value} ${value === 1 ? 'day' : 'days'}`] as const,
+              ),
             },
             y: {
-              ...bands('Creation week', shown.map(dateOf)),
+              ...bands('Creation dates · task count', shown.map(dateOf)),
               tickLabels: shown.map(
                 (week) =>
                   [
                     dateOf(week),
-                    `${dateInterval(Math.max(week, ctx.calendar.fromDay), Math.min(week + 7, ctx.calendar.toDay))} · ${required(groups.get(week)).indices.length} tasks${week < ctx.calendar.fromDay || week + 7 > ctx.calendar.toDay ? ' · partial' : ''}`,
+                    cohortRowLabel(ctx, week, required(groups.get(week)).indices.length),
                   ] as const,
               ),
             },

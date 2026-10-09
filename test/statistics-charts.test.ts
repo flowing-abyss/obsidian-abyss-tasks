@@ -1547,3 +1547,90 @@ it('separates adjacent selectable Details coverage metrics into accessible rows 
   }
   expect(select.mock.calls).toEqual([['created-unavailable'], ['completed-unavailable']]);
 });
+
+it.each([1360, 320])(
+  'renders exact compact cohort intervals and counts without truncation at %ipx',
+  async (width) => {
+    const dataset = required(
+      await prepareStatisticsDataset(
+        source([
+          ...[
+            '2026-09-21',
+            '2026-09-14',
+            '2026-09-07',
+            '2026-08-31',
+            '2026-08-24',
+            '2026-08-17',
+          ].map((created) => task(created, { planning: { created: date(created) } })),
+          task('cross-month', { planning: { created: date('2026-09-28') } }),
+          task('current-a', { planning: { created: date('2026-10-06') } }),
+          task('current-b', { planning: { created: date('2026-10-07') } }),
+        ]),
+        [],
+        work,
+      ),
+    );
+    const view = required(
+      await new StatisticsSession(dataset).view(
+        request({ view: 'cohorts', period: 'all', nowMs: Date.parse('2026-10-09T12:00Z') }),
+        work,
+      ),
+    );
+    const chart = required(view.sections[0]?.charts[0]);
+    const el = host(document, width);
+    mount(el, chart);
+    const ticks = [...el.querySelectorAll('svg text')].map((node) => node.textContent);
+    expect(ticks).toContain('2026-10-05–10-09·2*');
+    expect(ticks).toContain('2026-09-28–10-04·1');
+    expect(ticks).toContain('Creation dates · task count');
+    expect(ticks).toContain('1 day');
+    const clip = required(el.querySelector('clipPath rect'));
+    expect(n(clip, 'width')).toBeGreaterThan(100);
+    expect(marks(el).every((cell) => n(cell, 'width') > 15)).toBe(true);
+    expect(
+      ticks.filter((label) => label.startsWith('2026-')).some((label) => label.includes('…')),
+    ).toBe(false);
+    expect(chart.marks.find((mark) => mark.y === '2026-10-05')?.observation?.title).toContain(
+      '2026-10-05 – 2026-10-09',
+    );
+    expect(view.sections[0]?.reading).toContain('* partial week');
+  },
+);
+
+it.each([1360, 320])(
+  'preserves cross-year cohort range and maximum integer population at %ipx',
+  (width) => {
+    const el = host(document, width);
+    const label = '2025-12-29–01-04·9010T';
+    mount(
+      el,
+      model({
+        id: 'cohorts',
+        kind: 'heatmap',
+        layout: undefined,
+        x: { type: 'number', label: 'Completed within', domain: [0, 30] },
+        y: {
+          type: 'band',
+          label: 'Creation dates · task count',
+          categories: ['2025-12-29'],
+          tickLabels: [['2025-12-29', label]],
+        },
+        series: [],
+        marks: [
+          {
+            key: 'maximum',
+            x: 1,
+            y: '2025-12-29',
+            denominator: Number.MAX_SAFE_INTEGER,
+            numerator: 0,
+            weight: 0,
+          },
+        ],
+      }),
+    );
+    const texts = [...el.querySelectorAll('svg text')].map((node) => node.textContent);
+    expect(texts).toContain(label);
+    expect(texts.some((text) => text.includes('…'))).toBe(false);
+    expect(n(required(el.querySelector('clipPath rect')), 'width')).toBeGreaterThan(0);
+  },
+);
