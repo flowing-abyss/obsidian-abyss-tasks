@@ -369,15 +369,23 @@ retry; unchanged work and deactivation release waiters. `isStatisticsCurrent(sna
 exact published identity with no pending or held work. `ProjectStore.whenSettled()` acknowledges
 already accepted flush tickets, including signature-unchanged work and teardown.
 
-### Native Statistics workflow
+### Native Analysis workflow
 
 [`StatisticsMode`](src/panels/statistics/StatisticsMode.ts) is retained by CenterPanel and acquires
 source/project subscriptions only while visible. PanelView’s existing `onWindowMigrated`
 subscription routes through CenterPanel’s retained Statistics render boundary, which detects owner
 document changes and releases/remounts charts, subscriptions and scheduled work. The main composition supplies the optional source
-capability; the rail exposes Statistics only with that capability. Navigation uses the existing
+capability; the rail exposes Analysis only with that capability. Navigation uses the existing
 project-editor completion boundary. Scope, period, view, week, group and focus remain session state.
-Statistics uses the native right inspector overlay at every width, initially closed; Tasks retains
+CenterPanel exposes a narrow transient `StatisticsNavigationPort` from its retained mode. PanelView
+constructs CenterPanel before LeftPanel and injects that port into the real sidebar. LeftPanel observes
+view/scope labels for its lifetime, renders all eleven Analysis rows in their existing families, and
+never acquires retained sources. Choices remain owned by StatisticsMode; sidebar updates preserve
+scroll and current row focus. Analysis navigation docks above 38rem and uses CompactPaneAccess below
+that boundary with the name Analysis navigation. Accepted choices dismiss only the left overlay;
+scope opens after focus returns to the visible toggle so native modal cancellation/acceptance has a
+connected return target. Tasks keeps the Task lists name and its existing thresholds.
+Analysis uses the native right inspector overlay at every width, initially closed; Tasks retains
 its wide docked inspector. Property chips on evidence cards explicitly navigate to Tasks before
 applying normal task filters.
 
@@ -391,7 +399,7 @@ owner timer is the fallback. Hidden views do not aggregate.
 
 [`StatisticsControls`](src/panels/statistics/StatisticsControls.ts) prepares a yielding scope inventory
 and keyed label lookup once per normalized dataset. The native searchable SuggestModal renders
-at most50 suggestions while retaining every project path and tag; duplicate names show path context.
+at most 50 suggestions while retaining every project path and tag; duplicate names show path context.
 [`StatisticsSections`](src/panels/statistics/StatisticsSections.ts) stages changed chart sections and
 commits only after all mounts succeed, preserving coherent last-good graphs and labels on background
 failure. Requested contexts show loading/error state. The mode owns diagnostic logging and retry.
@@ -399,19 +407,32 @@ Partial source-acquisition diagnostics expose the same explicit Retry without re
 routine refresh. CenterPanel unmounts outgoing Statistics during the mode notification, before the
 outer layout changes; scroll is captured before teardown and restored after the first accepted
 content installation on reentry or owner migration, never on background observation updates.
+The root is a bounded flex column: a fixed native header/context, a center-owned chart scroller,
+and a normally absent results region capped at 35% of center height with its own fixed heading and
+records scroller. CompactPaneAccess continues measuring the actual fixed header.
 Control focus restoration prevents scrolling, and the Statistics scroller disables browser anchoring
 so staged section replacements preserve the user's viewport.
 Shared legends/intensity keys use the same semantic paint as the adapter; explanatory context and
-scope eligibility stay in accessible disclosure controls. Each chart mount supplies a stable unique
+scope eligibility stay in one owned Analysis details anchored popover, using CenterPanel's existing
+interaction ownership. It closes on intent/model changes, unmount and document migration; source
+availability and Retry remain visible outside the popover. Exact period labels format civil dates
+with UTC pinned for display, preserving the model's date boundaries. Each chart mount supplies a stable unique
 engine resource prefix so SVG clip paths cannot collide across facets or leaves. Accessible chart
 names live on HTML wrappers: nonempty SVG `aria-label` triggers Obsidian’s HTML-only tooltip path.
 Bounded Timeline intervals are packed into clock-aligned subrows; dependency layout follows actual
 adjacency with distinct sibling rows and vertical long chains. These display coordinates never alter
 source identities, durations, graph counts or evidence authority.
 
-[`StatisticsEvidence`](src/panels/statistics/StatisticsEvidence.ts) pages50 physical records, renders
+[`StatisticsEvidence`](src/panels/statistics/StatisticsEvidence.ts) pages 50 physical records, renders
 the existing live root card once, and offers exact matched-child selection with shown-record counts.
-Each open revalidates the root and exact descendant reference. Archive rows only open their current
+The shared root card receives an activation override through TaskCardRenderer's existing keyboard
+path: every activation freshly validates and selects the root independently of the child record that
+introduced it. Child actions separately revalidate the complete descendant path. Evidence retains
+plots and keyed chart handles; pointer exploration preserves focus, while presentation-owned keyboard
+activation can focus the results heading without scrolling. Clear restores a connected opener only
+when results own focus. Intent changes and accepted changed observations clear results; unchanged
+cached observations retain them. Invalidation returns removed-result focus to the stable center
+heading and leaves unrelated inspector/editor focus alone. Archive rows only open their current
 retained source at its line; they never enter mutation queries or task commands. Recorded transitions
 retain occurrence keys and instants even when the same owner pair repeats.
 Detached archive root revisions carry exact accepted block provenance under a non-authoritative

@@ -117,6 +117,7 @@ import { taskSearchDestination } from './center/taskSearchDestination';
 import { mountTaskSearchKeyboardActivation } from './center/taskSearchKeyboardActivation';
 import { ProjectsPanel } from './projects/ProjectsPanel';
 import { StatisticsMode } from './statistics/StatisticsMode';
+import type { StatisticsNavigationPort } from './statistics/StatisticsNavigation';
 import { TanStackStatisticsChart } from './statistics/TanStackStatisticsChart';
 import { TaskListSurface, type TaskRowMount } from './task-list/TaskListSurface';
 import { TaskSearchRows, type TaskSearchRowsIdentity } from './task-list/TaskSearchRows';
@@ -437,6 +438,10 @@ export class CenterPanel {
     ];
   }
 
+  getStatisticsNavigation(): StatisticsNavigationPort | undefined {
+    return this.statistics_abyssPrivate?.navigation;
+  }
+
   private createStatistics_abyssPrivate(options: CenterPanelOptions): StatisticsMode | undefined {
     const {
       state,
@@ -465,6 +470,7 @@ export class CenterPanel {
           renderer: new TanStackStatisticsChart(),
           context: timeTracking?.context ?? deviceTrackedTimeContext,
           ticker: timeTracking?.ticker,
+          interactionOwnership: this.interactionOwnership_abyssPrivate,
           host: {
             renderComplete: () => {
               onRenderComplete(this.el);
@@ -477,10 +483,11 @@ export class CenterPanel {
               this.md_abyssPrivate.load();
               statisticsGroups = this.effectiveTagGroups_abyssPrivate();
             },
-            renderRoot: (host, root) => {
+            renderRoot: (host, root, activate) => {
               this.taskCardRenderer_abyssPrivate.render(host, root, statisticsGroups, {
                 selected: taskStackRowKey(state.get('taskStack')) === taskRowKey(root),
                 showDelete: false,
+                onActivate: activate,
                 rowKey: taskRowKey(root),
               });
             },

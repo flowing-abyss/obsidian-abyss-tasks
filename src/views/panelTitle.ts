@@ -56,7 +56,7 @@ export function panelTitle(mode: ViewMode, listTitle: () => string): string {
     case 'projects':
       return 'Projects';
     case 'statistics':
-      return 'Statistics';
+      return 'Analysis';
     case 'search':
       return 'Search';
   }

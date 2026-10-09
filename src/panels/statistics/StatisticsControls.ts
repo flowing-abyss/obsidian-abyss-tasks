@@ -1,11 +1,9 @@
 import { DropdownComponent, SuggestModal, type App } from 'obsidian';
 import {
-  STATISTICS_VIEWS,
   type StatisticsDataset,
   type StatisticsPeriod,
   type StatisticsRequest,
   type StatisticsScope,
-  type StatisticsViewId,
   type StatisticsWork,
 } from '../../statistics';
 import { WorkBudget } from '../../statistics/statisticsWork';
@@ -46,25 +44,23 @@ function restoreControlFocus(host: HTMLElement, focused: Element | null): void {
   }
 }
 export class StatisticsControls {
-  private readonly families_abyssPrivate = new Map<string, StatisticsViewId>();
+  private document_abyssPrivate: Document | undefined;
+  private closing_abyssPrivate = false;
   private dataset_abyssPrivate: StatisticsDataset | undefined;
   private inventory_abyssPrivate: Array<readonly [StatisticsScope, string, string]> = [];
   private picker_abyssPrivate: ScopePicker | undefined;
-  private scope_abyssPrivate: HTMLButtonElement | undefined;
   private labels_abyssPrivate = new Map<string, string>();
   constructor(
     private readonly app_abyssPrivate: App,
     private readonly change_abyssPrivate: (next: Partial<StatisticsChoices>) => void,
   ) {}
-  render(host: HTMLElement, choices: StatisticsChoices, dataset?: StatisticsDataset): void {
+  render(host: HTMLElement, choices: StatisticsChoices): void {
+    this.document_abyssPrivate = host.ownerDocument;
+    this.closing_abyssPrivate = false;
     const focused = host.querySelector(':focus');
     host.empty();
-    const bar = host.createDiv({ cls: 'abyss-statistics-controls' });
-    this.scopes_abyssPrivate(bar, choices.scope, dataset);
-    if (choices.view === 'aging' || choices.view === 'dependencies')
-      bar.createSpan({ text: 'Current state' });
-    else
-      this.select_abyssPrivate(bar, 'Period', PERIODS, {
+    if (choices.view !== 'aging' && choices.view !== 'dependencies')
+      this.select_abyssPrivate(host, 'Period', PERIODS, {
         value: choices.period,
         change: (value) => {
           const period = PERIODS.find(([key]) => key === value)?.[0];
@@ -72,54 +68,25 @@ export class StatisticsControls {
             this.change_abyssPrivate({ period, page: undefined, weekStart: undefined });
         },
       });
-    const family = STATISTICS_VIEWS.find((view) => view.id === choices.view)?.family ?? 'Flow';
-    this.families_abyssPrivate.set(family, choices.view);
-    const tabs = host.createDiv({
-      cls: 'abyss-statistics-tabs',
-      attr: { 'aria-label': 'Statistics analysis' },
-    });
-    for (const name of ['Flow', 'Time', 'Projects'] as const) {
-      const button = statisticsButton(tabs, name, () => {
-        this.change_abyssPrivate({
-          view:
-            this.families_abyssPrivate.get(name) ??
-            STATISTICS_VIEWS.find((view) => view.family === name)?.id ??
-            'rhythm',
-          page: undefined,
-          focusKey: undefined,
+    if (choices.view === 'allocation') {
+      const group = host.createDiv({
+        cls: 'abyss-cal-view-switcher abyss-statistics-group',
+        attr: { role: 'group', 'aria-label': 'Group by' },
+      });
+      for (const [key, label] of [
+        ['project', 'Project'],
+        ['tag', 'Tags'],
+        ['priority', 'Priority'],
+      ] as const) {
+        const button = statisticsButton(group, label, () => {
+          this.change_abyssPrivate({ group: key, page: undefined });
         });
-      });
-      button.dataset['statisticsFamily'] = name;
-      button.setAttribute('aria-pressed', String(name === family));
+        button.className = 'abyss-cal-view-btn';
+        button.classList.toggle('is-active', choices.group === key);
+        button.setAttribute('aria-label', `Group by ${label}`);
+        button.setAttribute('aria-pressed', String(choices.group === key));
+      }
     }
-    const subnav = host.createDiv({
-      cls: 'abyss-statistics-tabs',
-      attr: { 'aria-label': `${family} views` },
-    });
-    for (const view of STATISTICS_VIEWS.filter((view) => view.family === family)) {
-      const button = statisticsButton(subnav, view.title, () => {
-        this.change_abyssPrivate({ view: view.id, page: undefined, focusKey: undefined });
-      });
-      button.dataset['statisticsView'] = view.id;
-      button.setAttribute('aria-pressed', String(view.id === choices.view));
-    }
-    if (choices.view === 'allocation')
-      this.select_abyssPrivate(
-        bar,
-        'Group by',
-        [
-          ['project', 'Project'],
-          ['tag', 'Tags'],
-          ['priority', 'Priority'],
-        ],
-        {
-          value: choices.group,
-          change: (value) => {
-            if (value === 'project' || value === 'tag' || value === 'priority')
-              this.change_abyssPrivate({ group: value, page: undefined });
-          },
-        },
-      );
     restoreControlFocus(host, focused);
   }
   private select_abyssPrivate(
@@ -128,7 +95,7 @@ export class StatisticsControls {
     options: ReadonlyArray<readonly [string, string]>,
     selected: { value: string; change: (value: string) => void },
   ): void {
-    const wrapper = host.createEl('label', { text: label });
+    const wrapper = host.createEl('label');
     const dropdown = new DropdownComponent(wrapper);
     dropdown.selectEl.setAttribute('aria-label', label);
     for (const [key, title] of options) dropdown.addOption(key, title);
@@ -195,41 +162,43 @@ export class StatisticsControls {
       await budget.step();
     }
   }
-  private focus_abyssPrivate(): void {
-    if (this.scope_abyssPrivate?.isConnected === true) this.scope_abyssPrivate.focus();
+  scopeLabel(scope: StatisticsScope): string {
+    return (
+      this.labels_abyssPrivate.get(JSON.stringify(scope)) ??
+      (scope.type === 'project' ? `${scope.path} · unavailable` : 'Entire vault')
+    );
+  }
+  openScope(_scope: StatisticsScope): void {
+    const previous = this.picker_abyssPrivate;
+    this.picker_abyssPrivate = undefined;
+    previous?.close();
+    // The caller establishes a visible return target before the native modal captures focus.
+    const returnTarget = this.document_abyssPrivate?.activeElement as HTMLElement | null;
+    const sidebar = returnTarget?.closest('.abyss-left');
+    const restore = (): void => {
+      const current = sidebar?.querySelector<HTMLElement>('[aria-label="Scope"]') ?? returnTarget;
+      if (!this.closing_abyssPrivate && current?.isConnected === true)
+        current.focus({ preventScroll: true });
+    };
+    const picker: ScopePicker = new ScopePicker(
+      this.app_abyssPrivate,
+      this.inventory_abyssPrivate,
+      (scope) => {
+        this.change_abyssPrivate({ scope, page: undefined, focusKey: undefined });
+      },
+      () => {
+        if (this.picker_abyssPrivate !== picker) return;
+        this.picker_abyssPrivate = undefined;
+        restore();
+      },
+    );
+    this.picker_abyssPrivate = picker;
+    picker.open();
   }
   destroy(): void {
-    this.scope_abyssPrivate = undefined;
+    this.closing_abyssPrivate = true;
     this.picker_abyssPrivate?.close();
     this.picker_abyssPrivate = undefined;
-  }
-  private scopes_abyssPrivate(
-    host: HTMLElement,
-    current: StatisticsScope,
-    _dataset?: StatisticsDataset,
-  ): void {
-    const key = JSON.stringify(current);
-    const title =
-      this.labels_abyssPrivate.get(key) ??
-      (current.type === 'project' ? `${current.path} · unavailable` : 'Entire vault');
-    const button = statisticsButton(host, `Scope · ${title}`, () => {
-      this.picker_abyssPrivate?.close();
-      this.picker_abyssPrivate = new ScopePicker(
-        this.app_abyssPrivate,
-        this.inventory_abyssPrivate,
-        (scope) => {
-          this.change_abyssPrivate({ scope, page: undefined, focusKey: undefined });
-          this.focus_abyssPrivate();
-        },
-        () => {
-          this.focus_abyssPrivate();
-        },
-      );
-      this.picker_abyssPrivate.open();
-    });
-    this.scope_abyssPrivate = button;
-    button.setAttribute('aria-label', 'Scope');
-    button.setAttribute('aria-haspopup', 'dialog');
   }
 }
 type ScopeOption = readonly [StatisticsScope, string, string];

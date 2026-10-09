@@ -145,7 +145,11 @@ describe('QuickCaptureCoordinator', () => {
     expect(declarationsFor('.abyss-layout--tasks > .abyss-right.is-compact-open')).toContain(
       'inset-block: var(--abyss-compact-overlay-top, var(--abyss-center-toolbar-height)) 0',
     );
-    expect(declarationsFor('.abyss-layout--tasks > .abyss-left.is-compact-open')).toContain(
+    expect(
+      declarationsFor(
+        ':is(.abyss-layout--tasks, .abyss-layout--statistics) > .abyss-left.is-compact-open',
+      ),
+    ).toContain(
       'inset-block: var(--abyss-compact-overlay-top, var(--abyss-center-toolbar-height)) 0',
     );
   });
@@ -187,7 +191,7 @@ describe('QuickCaptureCoordinator', () => {
       /@container\s+abyss-panel-layout\s*\(max-width:\s*58rem\)[\s\S]*?\.abyss-layout--tasks\s*>\s*\.abyss-right:not\(\.is-compact-open\)\s*\{[\s\S]*?display:\s*none/u,
     );
     expect(css).toMatch(
-      /@container\s+abyss-panel-layout\s*\(max-width:\s*38rem\)[\s\S]*?\.abyss-layout--tasks\s*>\s*\.abyss-left:not\(\.is-compact-open\)\s*\{[\s\S]*?display:\s*none/u,
+      /@container\s+abyss-panel-layout\s*\(max-width:\s*38rem\)[\s\S]*?:is\(\.abyss-layout--tasks,\s*\.abyss-layout--statistics\)\s*>\s*\.abyss-left:not\(\.is-compact-open\)\s*\{[\s\S]*?display:\s*none/u,
     );
     expect(css).toMatch(
       /\.abyss-layout--tasks\s*>\s*\.abyss-(?:left|right)\.is-compact-open\s*\{[\s\S]*?position:\s*absolute[\s\S]*?z-index:/u,

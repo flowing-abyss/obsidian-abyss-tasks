@@ -2,11 +2,14 @@ import type * as ObsidianModule from 'obsidian';
 import { Menu, Notice, type MenuItem } from 'obsidian';
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { AppState } from '../src/app/AppState';
+import { LeftPanel } from '../src/panels/LeftPanel';
+import type { StatisticsNavigationPort } from '../src/panels/statistics/StatisticsNavigation';
 import { ProjectCreationError, type ProjectCreateOptions } from '../src/projects/projectCreation';
 import { ProjectEditValidationError } from '../src/projects/projectEditError';
 import type { ProjectStats } from '../src/projects/types';
 import { DEFAULT_SETTINGS, getListViewDefaults } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
+import type { StatisticsViewId } from '../src/statistics';
 import { RenameTagModal } from '../src/tags/RenameTagModal';
 import { TagManager } from '../src/tags/TagManager';
 import { discoveredPrefixGroupId, discoveredTagGroupId } from '../src/tags/effectiveTagGroups';
@@ -3251,4 +3254,91 @@ it('counts independently active canonical children, ranges and custom status sym
     h.close();
     vi.useRealTimers();
   }
+});
+
+it('renders all Analysis rows from the owning port and preserves sidebar focus/scroll on active updates', () => {
+  const state = new AppState();
+  state.set('mode', 'statistics');
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  const tasks = makeStubStore([]);
+  const tags = new TagManager(null as never, settings, async () => {}, {
+    check: () => 'ready',
+    apply: async (_change, live) => {
+      live();
+    },
+  });
+  let view: StatisticsViewId = 'rhythm';
+  const listeners = new Set<() => void>();
+  const navigation: StatisticsNavigationPort = {
+    snapshot: () => ({ view, scopeLabel: 'Entire vault' }),
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    selectView: (next) => {
+      view = next;
+      listeners.forEach((listener) => {
+        listener();
+      });
+    },
+    openScope: () => {},
+  };
+  const close = vi.fn();
+  const panel = new LeftPanel({
+    state,
+    settings,
+    tagManager: tags,
+    app: null as never,
+    tasks,
+    statisticsNavigation: navigation,
+    onAnalysisNavigate: close,
+  });
+  const host = document.body.createDiv();
+  try {
+    panel.mount(host);
+    const rows = host.querySelectorAll<HTMLButtonElement>('[data-statistics-view]');
+    expect(rows).toHaveLength(11);
+    expect([...rows].map((row) => row.textContent)).toEqual([
+      'Rhythm',
+      'Completion',
+      'Deadlines',
+      'Cohorts',
+      'Allocation',
+      'Timeline',
+      'Sessions',
+      'Patterns',
+      'Movement',
+      'Aging',
+      'Dependencies',
+    ]);
+    expect(host.textContent).toContain('Analysis');
+    host.scrollTop = 193;
+    const allocation = expectDefined(
+      host.querySelector<HTMLButtonElement>('[data-statistics-view="allocation"]'),
+    );
+    allocation.focus();
+    allocation.click();
+    expect(view).toBe('allocation');
+    expect(host.querySelector('[aria-current="page"]')?.textContent).toBe('Allocation');
+    expect(host.scrollTop).toBe(193);
+    expect(document.activeElement).toBe(host.querySelector('[data-statistics-view="allocation"]'));
+    expect(close).toHaveBeenCalledTimes(1);
+    expectDefined(
+      host.querySelector<HTMLButtonElement>('[data-statistics-view="allocation"]'),
+    ).click();
+    expect(close).toHaveBeenCalledTimes(2);
+    expectDefined(host.querySelector<HTMLButtonElement>('[aria-label="Scope"]')).click();
+    expect(close).toHaveBeenCalledTimes(3);
+    state.set('mode', 'tasks');
+    expect(host.textContent).toContain('Inbox');
+    expect(host.querySelector('[data-statistics-view]')).toBeNull();
+    navigation.selectView('cohorts');
+    expect(host.textContent).toContain('Inbox');
+  } finally {
+    panel.destroy();
+    host.remove();
+  }
+  expect(listeners.size).toBe(0);
 });

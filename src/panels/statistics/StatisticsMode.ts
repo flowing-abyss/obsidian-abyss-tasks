@@ -1,9 +1,10 @@
-import { Notice, type App } from 'obsidian';
+import { Notice, setIcon, type App } from 'obsidian';
 import type { AppState } from '../../app/AppState';
 import type { ProjectStore } from '../../projects/ProjectStore';
 import type { CalendarSettings } from '../../settings/types';
 import {
   prepareStatisticsDataset,
+  STATISTICS_VIEWS,
   StatisticsSession,
   type StatisticsAction,
   type StatisticsDataset,
@@ -14,11 +15,14 @@ import {
 } from '../../statistics';
 import { StatisticsCancelled } from '../../statistics/statisticsWork';
 import type { TaskQueryApi, TaskStatisticsSnapshot, TaskStatisticsSource } from '../../tasks';
+import type { InteractionOwnershipPort } from '../../ui/interactionOwnership';
 import type { TrackedTimeContext } from '../../ui/timeTracking/formatTracked';
 import type { TrackingTicker } from '../../ui/timeTracking/TrackingTicker';
 import type { StatisticsChartRenderer } from './StatisticsChart';
 import { statisticsButton, StatisticsControls, type StatisticsChoices } from './StatisticsControls';
+import { StatisticsDetails } from './StatisticsDetails';
 import { StatisticsEvidence, type StatisticsEvidenceHost } from './StatisticsEvidence';
+import type { StatisticsNavigationPort } from './StatisticsNavigation';
 import { StatisticsSections } from './StatisticsSections';
 import { StatisticsWorkScheduler } from './StatisticsWorkScheduler';
 interface StatisticsModeOptions {
@@ -29,6 +33,7 @@ interface StatisticsModeOptions {
   readonly projects: Pick<ProjectStore, 'list' | 'onUpdate' | 'whenSettled'>;
   readonly renderer: StatisticsChartRenderer;
   readonly context: () => TrackedTimeContext;
+  readonly interactionOwnership?: InteractionOwnershipPort | undefined;
   readonly ticker?: TrackingTicker | undefined;
   readonly queries?: Pick<TaskQueryApi, 'resolve'> | undefined;
   readonly host: StatisticsEvidenceHost & {
@@ -52,6 +57,12 @@ export class StatisticsMode {
     period: 'week',
     group: 'project',
   };
+  readonly navigation: StatisticsNavigationPort;
+  private readonly navigationListeners_abyssPrivate = new Set<() => void>();
+  private readonly details_abyssPrivate: StatisticsDetails;
+  private title_abyssPrivate: HTMLElement | undefined;
+  private keyboardActivation_abyssPrivate = false;
+  private selectionOpener_abyssPrivate: HTMLElement | SVGElement | null = null;
   private root_abyssPrivate: HTMLElement | undefined;
   private controlsHost_abyssPrivate: HTMLElement | undefined;
   private label_abyssPrivate: HTMLElement | undefined;
@@ -83,6 +94,25 @@ export class StatisticsMode {
     this.controls_abyssPrivate = new StatisticsControls(options_abyssPrivate.app, (next) => {
       this.change_abyssPrivate(next);
     });
+    this.navigation = {
+      snapshot: () => ({
+        view: this.choices_abyssPrivate.view,
+        scopeLabel: this.controls_abyssPrivate.scopeLabel(this.choices_abyssPrivate.scope),
+      }),
+      subscribe: (listener) => {
+        this.navigationListeners_abyssPrivate.add(listener);
+        return () => {
+          this.navigationListeners_abyssPrivate.delete(listener);
+        };
+      },
+      selectView: (view) => {
+        this.change_abyssPrivate({ view, page: undefined, focusKey: undefined });
+      },
+      openScope: () => {
+        this.controls_abyssPrivate.openScope(this.choices_abyssPrivate.scope);
+      },
+    };
+    this.details_abyssPrivate = new StatisticsDetails(options_abyssPrivate.interactionOwnership);
     this.evidence_abyssPrivate = new StatisticsEvidence(
       options_abyssPrivate.source,
       options_abyssPrivate.queries ?? { resolve: (ref) => ({ type: 'not-found', ref }) },
@@ -104,11 +134,7 @@ export class StatisticsMode {
     this.forceClock_abyssPrivate = true;
     this.scheduler_abyssPrivate = new StatisticsWorkScheduler(this.owner_abyssPrivate);
     this.root_abyssPrivate = host.createDiv({ cls: 'abyss-statistics' });
-    const header = this.root_abyssPrivate.createDiv({ cls: 'abyss-center-header' });
-    const title = header.createEl('h2', { text: 'Statistics' }),
-      headerControls = header.createDiv({ cls: 'abyss-center-controls' });
-    this.options_abyssPrivate.host.header?.(header, title, headerControls);
-    this.controlsHost_abyssPrivate = this.root_abyssPrivate.createDiv();
+    this.header_abyssPrivate(this.root_abyssPrivate);
     const context = this.root_abyssPrivate.createDiv({ cls: 'abyss-statistics-context-row' });
     this.label_abyssPrivate = context.createDiv({ cls: 'abyss-statistics-context' });
     this.status_abyssPrivate = this.root_abyssPrivate.createDiv({
@@ -117,10 +143,27 @@ export class StatisticsMode {
     this.actions_abyssPrivate = context.createDiv({
       cls: 'abyss-statistics-actions',
     });
-    this.content_abyssPrivate = this.root_abyssPrivate.createDiv();
+    this.content_abyssPrivate = this.root_abyssPrivate.createDiv({
+      cls: 'abyss-statistics-content',
+    });
     this.evidenceHost_abyssPrivate = this.root_abyssPrivate.createDiv({
       cls: 'abyss-statistics-evidence',
     });
+    this.evidenceHost_abyssPrivate.hidden = true;
+    this.root_abyssPrivate.addEventListener(
+      'pointerdown',
+      () => {
+        this.keyboardActivation_abyssPrivate = false;
+      },
+      true,
+    );
+    this.root_abyssPrivate.addEventListener(
+      'keydown',
+      (event) => {
+        this.keyboardActivation_abyssPrivate = event.key === 'Enter' || event.key === ' ';
+      },
+      true,
+    );
     this.sections_abyssPrivate = new StatisticsSections(
       this.content_abyssPrivate,
       this.options_abyssPrivate.renderer,
@@ -128,15 +171,39 @@ export class StatisticsMode {
         this.select_abyssPrivate(id);
       },
     );
-    this.controls_abyssPrivate.render(
-      this.controlsHost_abyssPrivate,
-      this.choices_abyssPrivate,
-      this.observation_abyssPrivate?.dataset,
-    );
     this.subscribe_abyssPrivate();
     this.armMidnight_abyssPrivate();
     this.status_abyssPrivate.setText('Preparing analysis…');
     this.schedule_abyssPrivate(false);
+  }
+  private header_abyssPrivate(root: HTMLElement): void {
+    const header = root.createDiv({ cls: 'abyss-center-header' });
+    const title = header.createEl('h2', {
+        text: this.viewTitle_abyssPrivate(),
+        cls: 'abyss-center-title',
+        attr: { tabindex: '-1' },
+      }),
+      headerControls = header.createDiv({ cls: 'abyss-center-controls' });
+    this.title_abyssPrivate = title;
+    this.controlsHost_abyssPrivate = headerControls.createDiv({ cls: 'abyss-statistics-controls' });
+    const details = headerControls.createEl('button', {
+      cls: 'abyss-view-state-btn',
+      attr: { type: 'button', 'aria-label': 'Analysis details' },
+    });
+    setIcon(details, 'info');
+    details.addEventListener('click', () => {
+      if (this.model_abyssPrivate !== undefined && this.root_abyssPrivate !== undefined)
+        this.details_abyssPrivate.open(
+          this.root_abyssPrivate,
+          details,
+          this.model_abyssPrivate,
+          (id) => {
+            this.select_abyssPrivate(id);
+          },
+        );
+    });
+    this.options_abyssPrivate.host.header?.(header, title, headerControls);
+    this.controls_abyssPrivate.render(this.controlsHost_abyssPrivate, this.choices_abyssPrivate);
   }
   private isAttached_abyssPrivate(host: HTMLElement): boolean {
     return (
@@ -187,20 +254,28 @@ export class StatisticsMode {
       };
     this.schedule_abyssPrivate(true);
   }
+  private viewTitle_abyssPrivate(): string {
+    return (
+      STATISTICS_VIEWS.find((view) => view.id === this.choices_abyssPrivate.view)?.title ??
+      'Analysis'
+    );
+  }
+  private notifyNavigation_abyssPrivate(): void {
+    for (const listener of this.navigationListeners_abyssPrivate) listener();
+  }
   private change_abyssPrivate(next: Partial<StatisticsChoices>): void {
+    this.details_abyssPrivate.close();
+    this.clearSelection_abyssPrivate(false);
     this.choices_abyssPrivate = { ...this.choices_abyssPrivate, ...next };
+    this.title_abyssPrivate?.setText(this.viewTitle_abyssPrivate());
+    this.notifyNavigation_abyssPrivate();
     this.contextPending_abyssPrivate = true;
     this.generation_abyssPrivate++;
-    if (this.evidenceHost_abyssPrivate !== undefined) this.evidenceHost_abyssPrivate.empty();
     if (this.content_abyssPrivate !== undefined) this.content_abyssPrivate.hidden = true;
     this.label_abyssPrivate?.setText('Preparing analysis…');
     this.status_abyssPrivate?.empty();
     if (this.controlsHost_abyssPrivate !== undefined)
-      this.controls_abyssPrivate.render(
-        this.controlsHost_abyssPrivate,
-        this.choices_abyssPrivate,
-        this.observation_abyssPrivate?.dataset,
-      );
+      this.controls_abyssPrivate.render(this.controlsHost_abyssPrivate, this.choices_abyssPrivate);
     this.schedule_abyssPrivate(false);
   }
   private schedule_abyssPrivate(background: boolean): void {
@@ -295,7 +370,9 @@ export class StatisticsMode {
   private accept_abyssPrivate(observation: Observation, model: StatisticsViewModel): void {
     const changed = this.model_abyssPrivate !== model || this.contextPending_abyssPrivate;
     if (changed) {
+      this.details_abyssPrivate.close();
       this.sections_abyssPrivate?.update(model);
+      this.clearSelection_abyssPrivate(false);
       this.contextPending_abyssPrivate = false;
       this.observation_abyssPrivate = observation;
       this.install_abyssPrivate(model);
@@ -309,11 +386,11 @@ export class StatisticsMode {
     if (!this.mounted_abyssPrivate) return;
     const text =
       this.background_abyssPrivate && this.model_abyssPrivate !== undefined
-        ? 'Statistics is stale. Could not refresh the last valid observation.'
-        : 'Could not prepare Statistics.';
+        ? 'Analysis is stale. Could not refresh the last valid observation.'
+        : 'Could not prepare Analysis.';
     this.status_abyssPrivate?.setText(text);
     if (!this.background_abyssPrivate)
-      new Notice('Could not prepare statistics. Use retry in the panel.');
+      new Notice('Could not prepare analysis. Use retry in the panel.');
     this.showRetry_abyssPrivate();
   }
   private showRetry_abyssPrivate(): void {
@@ -331,7 +408,7 @@ export class StatisticsMode {
       this.schedule_abyssPrivate(false);
     } catch (error) {
       console.error('[abyss-tasks] Statistics retry failed', { error });
-      new Notice('Could not refresh statistics sources. Try again.');
+      new Notice('Could not refresh analysis sources. Try again.');
     }
   }
   private catalog_abyssPrivate(): string {
@@ -342,24 +419,23 @@ export class StatisticsMode {
   private install_abyssPrivate(model: StatisticsViewModel): void {
     const restoreScroll = this.model_abyssPrivate === undefined;
     this.model_abyssPrivate = model;
+    this.title_abyssPrivate?.setText(model.title);
+    this.notifyNavigation_abyssPrivate();
     this.label_abyssPrivate?.setText(
-      model.currentState
-        ? `Current state · ${new Date(model.asOfMs).toLocaleDateString('en')}`
-        : model.dateLabel,
+      `${this.controls_abyssPrivate.scopeLabel(this.choices_abyssPrivate.scope)} · ${
+        model.currentState
+          ? `Current state · ${new Date(model.asOfMs).toLocaleDateString('en')}`
+          : formatRange(model.dateLabel)
+      }`,
     );
     this.sourceStatus_abyssPrivate(model);
     if (this.content_abyssPrivate !== undefined) this.content_abyssPrivate.hidden = false;
-    this.evidenceHost_abyssPrivate?.empty();
     if (this.controlsHost_abyssPrivate !== undefined)
-      this.controls_abyssPrivate.render(
-        this.controlsHost_abyssPrivate,
-        this.choices_abyssPrivate,
-        this.observation_abyssPrivate?.dataset,
-      );
+      this.controls_abyssPrivate.render(this.controlsHost_abyssPrivate, this.choices_abyssPrivate);
     this.renderActions_abyssPrivate(model);
     this.options_abyssPrivate.host.renderComplete();
-    if (restoreScroll && this.root_abyssPrivate !== undefined)
-      this.root_abyssPrivate.scrollTop = this.scrollTop_abyssPrivate;
+    if (restoreScroll && this.content_abyssPrivate !== undefined)
+      this.content_abyssPrivate.scrollTop = this.scrollTop_abyssPrivate;
   }
   private sourceStatus_abyssPrivate(model: StatisticsViewModel): void {
     this.status_abyssPrivate?.empty();
@@ -371,6 +447,8 @@ export class StatisticsMode {
       this.status_abyssPrivate?.setText(
         `${model.coverage.source.sourceIssues.length} sources unavailable · partial coverage`,
       );
+      for (const issue of model.coverage.source.sourceIssues)
+        this.status_abyssPrivate?.createDiv({ text: `${issue.path}: ${issue.reason}` });
       this.showRetry_abyssPrivate();
     }
   }
@@ -381,21 +459,6 @@ export class StatisticsMode {
         statisticsButton(this.actions_abyssPrivate, action.label, () => {
           this.action_abyssPrivate(action);
         });
-      if (!model.currentState && this.choices_abyssPrivate.period !== 'all')
-        statisticsButton(this.actions_abyssPrivate, 'View earlier activity', () => {
-          this.change_abyssPrivate({ period: 'all', weekStart: undefined, page: undefined });
-        });
-      const details = this.actions_abyssPrivate.createEl('details');
-      details.createEl('summary', { text: 'Data coverage' });
-      const coverage = model.coverage.scope;
-      details.createEl('p', {
-        text: `${coverage.nodes} Tasks & subtasks in scope · ${coverage.live} live · ${coverage.archive} archived · ${coverage.entries} time entries · ${coverage.brokenEntries} broken entries · ${coverage.dateIssues} date issues`,
-      });
-      details.createEl('p', {
-        text: `Recurring: ${model.coverage.source.recurrence}. Current project membership and tags classify retained history.`,
-      });
-      for (const issue of model.coverage.source.sourceIssues)
-        details.createDiv({ text: `${issue.path}: ${issue.reason}` });
     }
   }
   private action_abyssPrivate(action: StatisticsAction): void {
@@ -425,17 +488,39 @@ export class StatisticsMode {
       this.action_abyssPrivate(action);
       return;
     }
-    const opener = this.evidenceHost_abyssPrivate.ownerDocument.activeElement as
-      HTMLElement | SVGElement | null;
-    if (this.content_abyssPrivate !== undefined) this.content_abyssPrivate.hidden = true;
-    this.evidence_abyssPrivate.render(this.evidenceHost_abyssPrivate, model, id, () => {
-      this.evidenceHost_abyssPrivate?.empty();
-      if (this.content_abyssPrivate !== undefined) this.content_abyssPrivate.hidden = false;
-      if (opener?.isConnected === true) opener.focus();
-    });
-    this.evidenceHost_abyssPrivate.querySelector<HTMLButtonElement>('button')?.focus();
+    const keyboard = this.keyboardActivation_abyssPrivate;
+    this.keyboardActivation_abyssPrivate = false;
+    this.selectionOpener_abyssPrivate = this.evidenceHost_abyssPrivate.ownerDocument
+      .activeElement as HTMLElement | SVGElement | null;
+    this.evidenceHost_abyssPrivate.hidden = false;
+    this.evidence_abyssPrivate.render(
+      this.evidenceHost_abyssPrivate,
+      model,
+      { id, label: selectionLabel(model, id) },
+      () => {
+        this.clearSelection_abyssPrivate(true);
+      },
+    );
+    if (keyboard)
+      this.evidenceHost_abyssPrivate
+        .querySelector<HTMLElement>('h3')
+        ?.focus({ preventScroll: true });
     this.options_abyssPrivate.host.renderComplete();
   }
+  private clearSelection_abyssPrivate(explicit: boolean): void {
+    const host = this.evidenceHost_abyssPrivate;
+    if (host === undefined || host.hidden === true) return;
+    const focused = host.contains(host.ownerDocument.activeElement);
+    const opener = this.selectionOpener_abyssPrivate;
+    host.empty();
+    host.hidden = true;
+    this.selectionOpener_abyssPrivate = null;
+    if (focused) {
+      const target = explicit && opener?.isConnected === true ? opener : this.title_abyssPrivate;
+      target?.focus({ preventScroll: true });
+    }
+  }
+
   private armMinute_abyssPrivate(): void {
     if (this.observation_abyssPrivate?.running === true && this.minute_abyssPrivate !== undefined)
       return;
@@ -470,12 +555,14 @@ export class StatisticsMode {
     this.minute_abyssPrivate = undefined;
   }
   unmount(): void {
-    this.scrollTop_abyssPrivate = this.root_abyssPrivate?.scrollTop ?? this.scrollTop_abyssPrivate;
+    this.scrollTop_abyssPrivate =
+      this.content_abyssPrivate?.scrollTop ?? this.scrollTop_abyssPrivate;
     this.mounted_abyssPrivate = false;
     this.generation_abyssPrivate++;
     this.requested_abyssPrivate = false;
     for (const off of this.unsubs_abyssPrivate.splice(0)) off();
     this.clearClocks_abyssPrivate();
+    this.details_abyssPrivate.close();
     this.controls_abyssPrivate.destroy();
     this.scheduler_abyssPrivate?.destroy();
     this.scheduler_abyssPrivate = undefined;
@@ -483,11 +570,39 @@ export class StatisticsMode {
     this.sections_abyssPrivate = undefined;
     this.root_abyssPrivate?.remove();
     this.root_abyssPrivate = undefined;
+    this.content_abyssPrivate = undefined;
+    this.evidenceHost_abyssPrivate = undefined;
+    this.title_abyssPrivate = undefined;
     this.model_abyssPrivate = undefined;
   }
   destroy(): void {
     this.unmount();
+    this.navigationListeners_abyssPrivate.clear();
     this.destroyed_abyssPrivate = true;
     this.observation_abyssPrivate = undefined;
   }
+}
+
+function formatRange(label: string): string {
+  return label.replace(/\d{4}-\d{2}-\d{2}/g, (date) =>
+    new Date(`${date}T00:00:00Z`).toLocaleDateString('en', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      timeZone: 'UTC',
+    }),
+  );
+}
+function selectionLabel(model: StatisticsViewModel, id: string): string {
+  for (const section of model.sections) {
+    const metric = section.metrics.find((metric) => metric.selectionId === id);
+    if (metric !== undefined) return metric.label;
+    const legend = section.legend.find((item) => item.selectionId === id);
+    if (legend !== undefined) return legend.label;
+    for (const chart of section.charts) {
+      const mark = chart.marks.find((mark) => mark.selectionId === id);
+      if (mark !== undefined) return mark.label ?? chart.accessibleLabel;
+    }
+  }
+  return 'Selected records';
 }

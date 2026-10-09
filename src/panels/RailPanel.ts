@@ -12,7 +12,7 @@ const ITEMS: RailItem[] = [
   { mode: 'tasks', icon: 'list-checks', label: 'Tasks' },
   { mode: 'calendar', icon: 'calendar-days', label: 'Calendar' },
   { mode: 'projects', icon: 'folder-kanban', label: 'Projects' },
-  { mode: 'statistics', icon: 'chart-no-axes-combined', label: 'Statistics' },
+  { mode: 'statistics', icon: 'chart-no-axes-combined', label: 'Analysis' },
   { mode: 'search', icon: 'search', label: 'Search' },
 ];
 

@@ -669,6 +669,28 @@ export class PanelView extends ItemView {
     };
   }
 
+  private createLeftPanel_abyssPrivate(
+    selectionTasks: TaskApplicationApi & TaskCaptureApplicationApi,
+    projectStore: ProjectStore,
+    projectManager: ProjectManager,
+  ): LeftPanel {
+    return new LeftPanel({
+      statisticsNavigation: this.center_abyssPrivate.getStatisticsNavigation(),
+      onAnalysisNavigate: () => {
+        this.compactPaneAccess_abyssPrivate.close(true, 'left');
+      },
+      state: this.state_abyssPrivate,
+      settings: this.settings_abyssPrivate,
+      tagManager: this.tagManager_abyssPrivate,
+      app: this.app,
+      tasks: selectionTasks,
+      projectStore,
+      projectManager,
+      navigation: this.panelNavigation_abyssPrivate,
+      onSaveViewState: this.onSaveViewState_abyssPrivate,
+    });
+  }
+
   private createPanels_abyssPrivate(
     selectionTasks: TaskApplicationApi & TaskCaptureApplicationApi,
     projectStore: ProjectStore,
@@ -681,17 +703,6 @@ export class PanelView extends ItemView {
       this.panelNavigation_abyssPrivate,
       this.statisticsSource_abyssPrivate !== undefined,
     );
-    this.left_abyssPrivate = new LeftPanel({
-      state: this.state_abyssPrivate,
-      settings: this.settings_abyssPrivate,
-      tagManager: this.tagManager_abyssPrivate,
-      app: this.app,
-      tasks: selectionTasks,
-      projectStore,
-      projectManager,
-      navigation: this.panelNavigation_abyssPrivate,
-      onSaveViewState: this.onSaveViewState_abyssPrivate,
-    });
     this.center_abyssPrivate = new CenterPanel({
       statisticsSource: this.statisticsSource_abyssPrivate,
       onTaskListDraftHandoff: (drafts, root, selection) =>
@@ -724,6 +735,11 @@ export class PanelView extends ItemView {
         this.compactPaneAccess_abyssPrivate.attachHeader(header, controls);
       },
     });
+    this.left_abyssPrivate = this.createLeftPanel_abyssPrivate(
+      selectionTasks,
+      projectStore,
+      projectManager,
+    );
     this.right_abyssPrivate = new RightPanel({
       localSearchScope:
         this.localScope_abyssPrivate === undefined

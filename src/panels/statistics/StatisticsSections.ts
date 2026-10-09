@@ -25,6 +25,10 @@ export class StatisticsSections {
   ) {}
   update(view: StatisticsViewModel): void {
     const staged = this.stage_abyssPrivate(view);
+    this.host_abyssPrivate.classList.toggle(
+      'abyss-statistics-content--rhythm',
+      view.view === 'rhythm',
+    );
     for (const [key, section] of this.sections_abyssPrivate)
       if (staged.has(key) || !view.sections.some((model) => model.id === key)) {
         section.charts.destroy();
@@ -67,9 +71,6 @@ export class StatisticsSections {
     const element = this.host_abyssPrivate.createEl('section', { cls: 'abyss-statistics-section' });
     const heading = element.createDiv({ cls: 'abyss-statistics-section-heading' });
     heading.createEl('h3', { text: model.title });
-    const help = heading.createEl('details');
-    help.createEl('summary', { text: 'About', attr: { 'aria-label': `About ${model.title}` } });
-    help.createEl('p', { text: model.context });
     this.metrics_abyssPrivate(element, model);
     this.legend_abyssPrivate(element, model);
     this.intensity_abyssPrivate(element, model);
@@ -87,20 +88,29 @@ export class StatisticsSections {
     }
     if (model.charts.length > 0 && model.charts.every((chart) => chart.marks.length === 0))
       element.createDiv({ text: 'No eligible records in this selection.' });
-    this.coverage_abyssPrivate(element, model);
     return { element, charts, model };
   }
   private metrics_abyssPrivate(element: HTMLElement, model: StatisticsSection): void {
     const metrics = element.createDiv({ cls: 'abyss-statistics-metrics' });
     for (const metric of model.metrics.filter((value) => value.role !== 'coverage')) {
-      const text = `${metric.label} · ${metric.value === null ? 'Unavailable' : statisticsNumber(metric.value)}${metricUnit(metric.unit, metric.value)}`;
-      if (metric.selectionId === undefined) metrics.createSpan({ text });
-      else {
-        const id = metric.selectionId;
-        statisticsButton(metrics, text, () => {
+      const value = metric.value === null ? 'Unavailable' : statisticsNumber(metric.value);
+      const item =
+        metric.selectionId === undefined
+          ? metrics.createDiv({ cls: 'abyss-statistics-metric' })
+          : metrics.createEl('button', {
+              cls: 'abyss-statistics-metric',
+              attr: { type: 'button' },
+            });
+      item.createSpan({
+        cls: 'abyss-statistics-metric-value',
+        text: `${value}${metricUnit(metric.unit, metric.value)}`,
+      });
+      item.createSpan({ cls: 'abyss-statistics-metric-label', text: metric.label });
+      const id = metric.selectionId;
+      if (id !== undefined)
+        item.addEventListener('click', () => {
           this.select_abyssPrivate(id);
         });
-      }
     }
   }
   private legend_abyssPrivate(element: HTMLElement, model: StatisticsSection): void {
@@ -175,21 +185,6 @@ export class StatisticsSections {
         item.prepend(swatch);
         setStatisticsKey(swatch, 'paint', statisticsIntensityPaint(level));
       }
-  }
-  private coverage_abyssPrivate(element: HTMLElement, model: StatisticsSection): void {
-    const coverage = model.metrics.filter((value) => value.role === 'coverage');
-    if (coverage.length > 0) {
-      const details = element.createEl('details');
-      details.createEl('summary', { text: 'Coverage and details · entire selected scope' });
-      for (const metric of coverage) {
-        const id = metric.selectionId;
-        if (id !== undefined)
-          statisticsButton(details, `${metric.label}: ${metric.value ?? 'Unavailable'}`, () => {
-            this.select_abyssPrivate(id);
-          });
-        if (metric.context !== undefined) details.createEl('p', { text: metric.context });
-      }
-    }
   }
   destroy(): void {
     for (const section of this.sections_abyssPrivate.values()) section.charts.destroy();

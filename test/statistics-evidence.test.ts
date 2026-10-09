@@ -46,7 +46,12 @@ async function archivedEvidence() {
       throw new Error('Archive evidence cannot acquire mutation authority');
     }),
   };
-  new StatisticsEvidence(index, queries, host).render(element, model, 'created', vi.fn());
+  new StatisticsEvidence(index, queries, host).render(
+    element,
+    model,
+    { id: 'created', label: 'Created' },
+    vi.fn(),
+  );
   const buttons = [...element.querySelectorAll('button')].filter((button) =>
     button.textContent.startsWith('Open archived source'),
   );
@@ -138,16 +143,26 @@ it('renders one shared live root with exact matched children, and archives have 
         : { type: 'not-found' as const, ref: live.ref },
     ),
   };
-  const host = { renderRoot: vi.fn(), select: vi.fn(), openSource: vi.fn(async () => {}) };
+  const host = {
+    renderRoot: vi.fn((host: HTMLElement, _root: unknown, activate: () => void) => {
+      const card = host.createEl('button', { text: 'Root card' });
+      card.addEventListener('click', activate);
+    }),
+    select: vi.fn(),
+    openSource: vi.fn(async () => {}),
+  };
   const evidence = new StatisticsEvidence(port, queries, host);
   const dataset = required(await prepareStatisticsDataset(snapshot, [], work));
   const model = required(await new StatisticsSession(dataset).view(request(), work));
   const element = document.body.createDiv();
-  evidence.render(element, model, 'created', vi.fn());
+  evidence.render(element, model, { id: 'created', label: 'Created' }, vi.fn());
   expect(host.renderRoot).toHaveBeenCalledTimes(1);
   expect(element.textContent).toContain('3 matching records');
   expect(element.textContent).toContain('2 matched subtask records shown');
   const buttons = [...element.querySelectorAll('button')];
+  buttons.find((button) => button.textContent === 'Root card')?.click();
+  expect(host.select).toHaveBeenCalledWith([live]);
+  expect(element.textContent).not.toContain('Select task · Root');
   buttons.find((button) => button.textContent.includes('Child 1'))?.click();
   expect(host.select).toHaveBeenCalledWith([live, children[1]]);
   buttons.find((button) => button.textContent.includes('Archived'))?.click();
@@ -156,7 +171,8 @@ it('renders one shared live root with exact matched children, and archives have 
   current = false;
   buttons.find((button) => button.textContent.includes('Child 0'))?.click();
   buttons.find((button) => button.textContent.includes('Archived'))?.click();
-  expect(host.select).toHaveBeenCalledTimes(1);
+  buttons.find((button) => button.textContent === 'Root card')?.click();
+  expect(host.select).toHaveBeenCalledTimes(2);
   expect(host.openSource).toHaveBeenCalledTimes(1);
   expect(element.textContent).toContain('changed or was removed');
   element.remove();
@@ -184,7 +200,7 @@ it('pages physical source rows in batches of 50 and retains occurrence-specific 
     port,
     { resolve: (ref) => ({ type: 'not-found', ref }) },
     { renderRoot: vi.fn(), select: vi.fn(), openSource: async () => {} },
-  ).render(element, model, 'created', vi.fn());
+  ).render(element, model, { id: 'created', label: 'Created' }, vi.fn());
   expect(element.querySelectorAll('[data-evidence-key]')).toHaveLength(50);
   [...element.querySelectorAll('button')]
     .find((button) => button.textContent === 'Load more')
@@ -233,7 +249,7 @@ it('renders repeated owner changes as distinct native evidence rows with their e
     port,
     { resolve: (ref) => ({ type: 'not-found', ref }) },
     { renderRoot: vi.fn(), select: vi.fn(), openSource: async () => {} },
-  ).render(element, model, 'recorded-changes', vi.fn());
+  ).render(element, model, { id: 'recorded-changes', label: 'Recorded changes' }, vi.fn());
   const rows = [...element.querySelectorAll<HTMLElement>('[data-evidence-key]')];
   expect(rows).toHaveLength(3);
   expect(new Set(rows.map((row) => row.dataset['evidenceKey'])).size).toBe(3);

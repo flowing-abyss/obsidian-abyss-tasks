@@ -1,14 +1,16 @@
 import { SuggestModal } from 'obsidian';
 import { afterEach, expect, it, vi, type MockResult } from 'vitest';
 import { AppState } from '../src/app/AppState';
+import { LeftPanel } from '../src/panels/LeftPanel';
 import type { StatisticsChartRenderer } from '../src/panels/statistics/StatisticsChart';
 import type { StatisticsChoices } from '../src/panels/statistics/StatisticsControls';
 import { StatisticsMode } from '../src/panels/statistics/StatisticsMode';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { StatisticsScope, StatisticsViewModel } from '../src/statistics';
 import { StatisticsSession } from '../src/statistics/statisticsSession';
+import { TagManager } from '../src/tags/TagManager';
 import type { TaskStatisticsSnapshot, TaskStatisticsSource } from '../src/tasks';
-import { createAppWithFiles, deferred, expectDefined } from './helpers';
+import { configuredTaskApplication, createAppWithFiles, deferred, expectDefined } from './helpers';
 import { date, request, source, task, utc, work } from './helpers/statisticsFixtures';
 const cleanups: Array<() => void> = [];
 afterEach(() => {
@@ -41,8 +43,10 @@ async function harness(acceptedSource?: TaskStatisticsSource) {
   const renderer = {
     mount: vi.fn<StatisticsChartRenderer['mount']>(() => ({ update: vi.fn(), destroy: vi.fn() })),
   };
+  const state = new AppState();
+  state.set('mode', 'statistics');
   const mode = new StatisticsMode({
-    state: new AppState(),
+    state,
     app,
     settings: structuredClone(DEFAULT_SETTINGS),
     source: acceptedSource ?? sourcePort,
@@ -58,7 +62,9 @@ async function harness(acceptedSource?: TaskStatisticsSource) {
       openSource: async () => {},
     },
   });
+  const left = mountAnalysisNavigation(app, state, mode, host);
   cleanups.push(() => {
+    left.destroy();
     mode.destroy();
     host.remove();
   });
@@ -139,13 +145,16 @@ it('exposes explicit source Retry for partial results, repeated failure and reco
   expect(retry()).toBeUndefined();
   expect(h.host.textContent).not.toContain('partial coverage');
   expect(h.host.textContent).not.toContain('archive.md: read-failed');
-  expect(h.host.textContent).toContain('2 Tasks & subtasks in scope');
+  expectDefined(h.host.querySelector<HTMLButtonElement>('[aria-label="Analysis details"]')).click();
+  expect(h.host.querySelector('[role="dialog"]')?.textContent).toContain(
+    '2 Tasks & subtasks in scope',
+  );
 });
 it('captures scroll before teardown and restores after accepted content only on reentry', async () => {
   const h = await harness();
   h.mode.render(h.host);
   await h.wait();
-  const oldRoot = expectDefined(h.host.querySelector<HTMLElement>('.abyss-statistics'));
+  const oldRoot = expectDefined(h.host.querySelector<HTMLElement>('.abyss-statistics-content'));
   // Model browser clamping at DOM boundaries; native acceptance verifies real layout.
   Object.defineProperty(oldRoot, 'scrollTop', {
     get: () => (oldRoot.querySelector('.abyss-statistics-section') === null ? 0 : 340),
@@ -155,7 +164,7 @@ it('captures scroll before teardown and restores after accepted content only on 
   h.sourcePort.whenStatisticsSettled = () => gate.promise;
   h.reset();
   h.mode.render(h.host);
-  const root = expectDefined(h.host.querySelector<HTMLElement>('.abyss-statistics'));
+  const root = expectDefined(h.host.querySelector<HTMLElement>('.abyss-statistics-content'));
   let scroll = 0;
   const writes: number[] = [];
   Object.defineProperty(root, 'scrollTop', {
@@ -172,7 +181,7 @@ it('captures scroll before teardown and restores after accepted content only on 
   gate.resolve();
   await h.wait();
   expect(writes).toEqual([340]);
-  expectDefined(h.host.querySelector<HTMLButtonElement>('[aria-label="Scope"]')).focus();
+  expectDefined(h.host.querySelector<HTMLSelectElement>('[aria-label="Period"]')).focus();
   const focus = Reflect.get(HTMLElement.prototype, 'focus');
   vi.spyOn(HTMLElement.prototype, 'focus').mockImplementation(function (
     this: HTMLElement,
@@ -187,7 +196,7 @@ it('captures scroll before teardown and restores after accepted content only on 
   h.replace(source([task('Updated')]));
   await h.wait();
   expect(scroll).toBe(125);
-  expect(document.activeElement?.getAttribute('aria-label')).toBe('Scope');
+  expect(document.activeElement?.getAttribute('aria-label')).toBe('Period');
   expect(writes).toEqual([340, 125]);
 });
 it('retains observation time and controls through real view switches, reusing cached models', async () => {
@@ -199,11 +208,11 @@ it('retains observation time and controls through real view switches, reusing ca
   const first: unknown = await build.mock.results[0]?.value;
   h.reset();
   h.advance();
-  h.host.querySelector<HTMLButtonElement>('[data-statistics-family="Time"]')?.click();
+  h.mode.navigation.selectView('allocation');
   await h.wait();
   h.reset();
   h.advance();
-  h.host.querySelector<HTMLButtonElement>('[data-statistics-family="Flow"]')?.click();
+  h.mode.navigation.selectView('rhythm');
   await h.wait();
   const last: unknown = await build.mock.results[build.mock.results.length - 1]?.value;
   expect(last).toBe(first);
@@ -283,8 +292,10 @@ it('joins real accepted source and project membership only after both barriers, 
     completion.current = deferred<void>();
   };
   const element = document.body.createDiv();
+  const state = new AppState();
+  state.set('mode', 'statistics');
   const mode = new StatisticsMode({
-    state: new AppState(),
+    state,
     app,
     settings,
     source: index,
@@ -347,32 +358,35 @@ it('routes every native analysis control and keeps Period across current-state v
   const h = await harness();
   h.mode.render(h.host);
   await h.wait();
-  const visit = async (selector: string) => {
+  const visit = async (view: Parameters<typeof h.mode.navigation.selectView>[0]) => {
     h.reset();
     h.advance();
-    const button = h.host.querySelector<HTMLButtonElement>(selector);
-    expect(button).not.toBeNull();
-    button?.click();
+    h.mode.navigation.selectView(view);
     await h.wait();
+    expect(
+      h.host.querySelector(`[data-statistics-view="${view}"]`)?.getAttribute('aria-current'),
+    ).toBe('page');
   };
-  for (const [family, views] of [
-    ['Flow', ['rhythm', 'completion', 'deadlines', 'cohorts']],
-    ['Time', ['allocation', 'timeline', 'sessions', 'patterns']],
-    ['Projects', ['movement', 'aging', 'dependencies']],
-  ] as const) {
-    await visit(`[data-statistics-family="${family}"]`);
-    for (const view of views) {
-      await visit(`[data-statistics-view="${view}"]`);
-      expect(
-        h.host.querySelector(`[data-statistics-view="${view}"]`)?.getAttribute('aria-pressed'),
-      ).toBe('true');
-    }
-  }
+  for (const view of [
+    'rhythm',
+    'completion',
+    'deadlines',
+    'cohorts',
+    'allocation',
+    'timeline',
+    'sessions',
+    'patterns',
+    'movement',
+    'aging',
+    'dependencies',
+  ] as const)
+    await visit(view);
   expect(h.host.querySelector('[aria-label="Period"]')).toBeNull();
   expect(h.host.textContent).toContain('Current state');
-  await visit('[data-statistics-family="Flow"]');
+  await visit('rhythm');
   expect(h.host.querySelector<HTMLSelectElement>('[aria-label="Period"]')?.value).toBe('week');
 });
+
 it('uses right overlay at every Statistics width without inheriting an old selection or reopening on resize', async () => {
   const { CompactPaneAccess } = await import('../src/views/CompactPaneAccess');
   let mode: 'tasks' | 'statistics' = 'tasks',
@@ -413,6 +427,13 @@ it('uses right overlay at every Statistics width without inheriting an old selec
   expect(document.activeElement).toBe(rightButton);
   width = 420;
   access.refreshWidth();
+  expect(leftButton.classList.contains('is-compact-available')).toBe(true);
+  expect(leftButton.getAttribute('aria-label')).toBe('Show Analysis navigation');
+  access.open('left', true);
+  expect(left.classList.contains('is-compact-open')).toBe(true);
+  expect(left.getAttribute('aria-labelledby')).not.toBeNull();
+  access.close(true);
+  expect(document.activeElement).toBe(leftButton);
   expect(right.classList.contains('is-compact-open')).toBe(false);
   access.selectionChanged(true);
   expect(right.classList.contains('is-compact-open')).toBe(true);
@@ -464,8 +485,8 @@ it('prepares a yielding cached scope inventory, bounds native suggestions and di
   await controls.prepare(dataset, { yieldControl: yields, isCancelled: () => false });
   expect(yields).toHaveBeenCalledTimes(calls);
   const element = document.body.createDiv();
-  controls.render(element, request(), dataset);
-  element.querySelector<HTMLButtonElement>('[aria-label="Scope"]')?.click();
+  controls.render(element, request());
+  controls.openScope({ type: 'all' });
   const picker = required(opened[0]);
   expect(await picker.getSuggestions('')).toHaveLength(50);
   expect((await picker.getSuggestions('Entire vault')).map(([scope]) => scope)).toEqual([
@@ -482,22 +503,16 @@ it('prepares a yielding cached scope inventory, bounds native suggestions and di
   });
   expect((await picker.getSuggestions('tag1199'))[0]?.[0]).toEqual({ type: 'tag', tag: 'tag1199' });
   change.mockImplementation((next: Partial<StatisticsChoices>) => {
-    controls.render(element, { ...request(), ...next }, dataset);
+    controls.render(element, { ...request(), ...next });
   });
   picker.onChooseSuggestion(last, new KeyboardEvent('keydown', { key: 'Enter' }));
   picker.onClose();
-  expect(document.activeElement).toBe(element.querySelector('[aria-label="Scope"]'));
-  controls.render(element, { ...request(), scope: { type: 'project', path: 'P1199.md' } }, dataset);
-  expect(document.activeElement).toBe(element.querySelector('[aria-label="Scope"]'));
+  controls.render(element, { ...request(), scope: { type: 'project', path: 'P1199.md' } });
   const serialize = vi.spyOn(JSON, 'stringify');
   for (const view of ['rhythm', 'allocation', 'movement'] as const) {
     serialize.mockClear();
-    controls.render(
-      element,
-      { ...request(), view, scope: { type: 'tag', tag: 'tag1199' } },
-      dataset,
-    );
-    expect(element.querySelector('[aria-label="Scope"]')?.textContent).toContain('#tag1199');
+    controls.render(element, { ...request(), view, scope: { type: 'tag', tag: 'tag1199' } });
+    expect(controls.scopeLabel({ type: 'tag', tag: 'tag1199' })).toBe('#tag1199');
     expect(serialize.mock.calls.length).toBeLessThanOrEqual(1);
   }
   controls.destroy();
@@ -580,7 +595,7 @@ it('retains choices across hide/show and adopts the new owner without rebuilding
   h.mode.render(h.host);
   await h.wait();
   h.reset();
-  h.host.querySelector<HTMLButtonElement>('[data-statistics-family="Time"]')?.click();
+  h.mode.navigation.selectView('allocation');
   await h.wait();
   const mountCount = h.renderer.mount.mock.calls.length;
   h.reset();
@@ -597,8 +612,8 @@ it('retains choices across hide/show and adopts the new owner without rebuilding
   h.mode.render(h.host);
   await h.wait();
   expect(
-    h.host.querySelector('[data-statistics-view="allocation"]')?.getAttribute('aria-pressed'),
-  ).toBe('true');
+    h.host.querySelector('[data-statistics-view="allocation"]')?.getAttribute('aria-current'),
+  ).toBe('page');
   expect(h.listeners.size).toBe(1);
   expect(h.host.querySelector('.abyss-statistics')?.ownerDocument).toBe(owner);
   h.mode.unmount();
@@ -617,16 +632,17 @@ it('moves keyboard focus into evidence and returns it to the retained analytical
   await h.wait();
   const opener = expectDefined(
     [...h.host.querySelectorAll<HTMLButtonElement>('.abyss-statistics-metrics button')].find(
-      (button) => button.textContent.startsWith('Created'),
+      (button) => button.textContent.includes('Created'),
     ),
   );
   opener.focus();
+  opener.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
   opener.click();
   const back = expectDefined(
     h.host.querySelector<HTMLButtonElement>('.abyss-statistics-evidence button'),
   );
-  expect(back.textContent).toBe('Back to analysis');
-  expect(owner.activeElement).toBe(back);
+  expect(back.getAttribute('aria-label')).toBe('Clear selection');
+  expect(owner.activeElement).toBe(h.host.querySelector('.abyss-statistics-evidence h3'));
   back.click();
   expect(owner.activeElement).toBe(opener);
   const svg = h.host.createSvg('svg');
@@ -638,11 +654,12 @@ it('moves keyboard focus into evidence and returns it to the retained analytical
   const selection = expectDefined(
     mounted[1].marks.find((mark) => mark.selectionId !== undefined)?.selectionId,
   );
+  svg.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
   mounted[2](selection);
   const svgBack = expectDefined(
     h.host.querySelector<HTMLButtonElement>('.abyss-statistics-evidence button'),
   );
-  expect(owner.activeElement).toBe(svgBack);
+  expect(owner.activeElement).toBe(h.host.querySelector('.abyss-statistics-evidence h3'));
   svgBack.click();
   expect(owner.activeElement).toBe(svg);
 });
@@ -689,8 +706,10 @@ async function selectedProjectHarness() {
   vi.useFakeTimers();
   let completion = deferred<void>();
   const host = document.body.createDiv();
+  const state = new AppState();
+  state.set('mode', 'statistics');
   const mode = new StatisticsMode({
-    state: new AppState(),
+    state,
     app,
     settings,
     source: index,
@@ -706,6 +725,7 @@ async function selectedProjectHarness() {
       },
     },
   });
+  const left = mountAnalysisNavigation(app, state, mode, host);
   // The real panel forwards note lifecycle identity to its retained mode.
   const rename = app.vault.on('rename', (file, oldPath) => {
     mode.followNote(oldPath, file.path);
@@ -714,6 +734,7 @@ async function selectedProjectHarness() {
     mode.followNote(file.path);
   });
   cleanups.push(() => {
+    left.destroy();
     app.vault.offref(rename);
     app.vault.offref(remove);
     mode.destroy();
@@ -744,7 +765,7 @@ it.each(['membership loss', 'deletion'] as const)(
     h.reset();
     await selectScope(h.host, 'Before.md');
     await h.wait();
-    expect(h.host.querySelector('[aria-label="Scope"]')?.textContent).toBe('Scope · Before');
+    expect(h.host.querySelector('[aria-label="Scope"]')?.textContent).toBe('Before');
     expect(expectDefined(views.mock.lastCall)[0].scope).toEqual({
       type: 'project',
       path: 'Before.md',
@@ -760,7 +781,7 @@ it.each(['membership loss', 'deletion'] as const)(
     await h.projects.whenSettled();
     await h.wait();
     expect(h.projects.list().map((project) => project.path)).toEqual(['After.md']);
-    expect(h.host.querySelector('[aria-label="Scope"]')?.textContent).toBe('Scope · After');
+    expect(h.host.querySelector('[aria-label="Scope"]')?.textContent).toBe('After');
     expect(expectDefined(views.mock.lastCall)[0].scope).toEqual({
       type: 'project',
       path: 'After.md',
@@ -788,7 +809,7 @@ it.each(['membership loss', 'deletion'] as const)(
       path: 'After.md',
     });
     expect(h.host.querySelector('[aria-label="Scope"]')?.textContent).toBe(
-      'Scope · After.md · unavailable',
+      'After.md · unavailable',
     );
     const unavailable: StatisticsViewModel | undefined = await returned(
       views.mock.results[views.mock.results.length - 1],
@@ -870,13 +891,13 @@ it('discards a superseded cold scope, period and view request and installs only 
   expect(content.hidden).toBe(false);
   expect(previous.isConnected).toBe(false);
   expect(h.host.querySelector('.abyss-statistics-context')?.textContent).toBe(
-    expectDefined(current).dateLabel,
+    '#latest · Oct 1, 2026 – Oct 4, 2026',
   );
-  expect(h.host.querySelector('[aria-label="Scope"]')?.textContent).toBe('Scope · #latest');
+  expect(h.host.querySelector('[aria-label="Scope"]')?.textContent).toBe('#latest');
   expect(h.host.querySelector<HTMLSelectElement>('[aria-label="Period"]')?.value).toBe('month');
   expect(
-    h.host.querySelector('[data-statistics-view="cohorts"]')?.getAttribute('aria-pressed'),
-  ).toBe('true');
+    h.host.querySelector('[data-statistics-view="cohorts"]')?.getAttribute('aria-current'),
+  ).toBe('page');
   expect(h.renderer.mount.mock.calls.length - mounts).toBe(
     expectDefined(current).sections.reduce((count, section) => count + section.charts.length, 0),
   );
@@ -899,7 +920,7 @@ it('refreshes an open scope picker when a new inventory is accepted, preserving 
     work,
   );
   controls.render(host, choices);
-  expectDefined(host.querySelector<HTMLButtonElement>('[aria-label="Scope"]')).click();
+  controls.openScope({ type: 'all' });
   const picker = expectDefined(opened[0]);
   picker.inputEl.value = 'newly-created';
   let shown: readonly ScopeOption[] = [];
@@ -917,12 +938,12 @@ it('refreshes an open scope picker when a new inventory is accepted, preserving 
   expect(opened).toHaveLength(1);
   controls.destroy();
 });
-it('retains the focused family, view, period and grouping controls across accepted navigation', async () => {
+it('retains focused Period and Group by controls across accepted navigation', async () => {
   const { StatisticsControls } = await import('../src/panels/statistics/StatisticsControls');
   const app = await createAppWithFiles({});
   const host = document.body.createDiv();
   let choices: StatisticsChoices = {
-    view: 'rhythm',
+    view: 'allocation',
     period: 'week',
     scope: { type: 'all' },
     group: 'project',
@@ -932,12 +953,7 @@ it('retains the focused family, view, period and grouping controls across accept
     controls.render(host, choices);
   });
   controls.render(host, choices);
-  for (const selector of [
-    '[data-statistics-view="completion"]',
-    '[data-statistics-family="Time"]',
-    'select[aria-label="Period"]',
-    'select[aria-label="Group by"]',
-  ]) {
+  for (const selector of ['select[aria-label="Period"]', 'button[aria-label="Group by Tags"]']) {
     const control = host.querySelector<HTMLElement>(selector);
     if (control === null) throw new Error(`Missing control ${selector}`);
     control.focus();
@@ -955,4 +971,171 @@ it('retains the focused family, view, period and grouping controls across accept
   controls.destroy();
   host.remove();
   outside.remove();
+});
+
+it('observes transient navigation without acquiring source subscriptions while hidden', async () => {
+  const h = await harness();
+  const observations: string[] = [];
+  const off = h.mode.navigation.subscribe(() => {
+    observations.push(h.mode.navigation.snapshot().view);
+  });
+  h.mode.navigation.selectView('timeline');
+  expect(observations).toEqual(['timeline']);
+  expect(h.listeners.size).toBe(0);
+  off();
+  h.mode.navigation.selectView('allocation');
+  expect(observations).toEqual(['timeline']);
+});
+it('navigates all eleven analyses through its transient port and retains the selected period', async () => {
+  const h = await harness();
+  h.mode.render(h.host);
+  await h.wait();
+  const period = expectDefined(h.host.querySelector<HTMLSelectElement>('[aria-label="Period"]'));
+  h.reset();
+  period.value = '90d';
+  period.dispatchEvent(new Event('change'));
+  await h.wait();
+  for (const view of [
+    'rhythm',
+    'completion',
+    'deadlines',
+    'cohorts',
+    'allocation',
+    'timeline',
+    'sessions',
+    'patterns',
+    'movement',
+    'aging',
+    'dependencies',
+  ] as const) {
+    h.reset();
+    h.mode.navigation.selectView(view);
+    await h.wait();
+    expect(h.mode.navigation.snapshot()).toEqual({ view, scopeLabel: 'Entire vault' });
+    expect(h.host.querySelector('.abyss-statistics .abyss-center-title')?.textContent).toBe(
+      expectDefined(view[0]).toUpperCase() + view.slice(1),
+    );
+  }
+  h.reset();
+  h.mode.navigation.selectView('rhythm');
+  await h.wait();
+  expect(h.host.querySelector<HTMLSelectElement>('[aria-label="Period"]')?.value).toBe('90d');
+});
+it('keeps charts visible for pointer evidence, preserves scroll on Clear, and retains unchanged selections', async () => {
+  const h = await harness();
+  h.mode.render(h.host);
+  await h.wait();
+  const chart = expectDefined(h.host.querySelector('.abyss-statistics-chart'));
+  const content = expectDefined(h.host.querySelector<HTMLElement>('.abyss-statistics-content'));
+  content.scrollTop = 128;
+  const outside = document.body.createEl('button');
+  cleanups.push(() => {
+    outside.remove();
+  });
+  outside.focus();
+  const mounted = expectDefined(h.renderer.mount.mock.calls[0]);
+  mounted[2](
+    expectDefined(mounted[1].marks.find((mark) => mark.selectionId !== undefined)?.selectionId),
+  );
+  expect(chart.isConnected).toBe(true);
+  expect(chart.closest('[hidden]')).toBeNull();
+  expect(h.host.querySelector('.abyss-statistics-evidence')?.textContent).toContain(
+    'matching records',
+  );
+  expect(document.activeElement).toBe(outside);
+  h.reset();
+  h.mode.refresh();
+  await h.wait();
+  expect(h.host.querySelector('.abyss-statistics-evidence')?.textContent).toContain(
+    'matching records',
+  );
+  expectDefined(h.host.querySelector<HTMLButtonElement>('[aria-label="Clear selection"]')).click();
+  expect(content.scrollTop).toBe(128);
+  expect(document.activeElement).toBe(outside);
+});
+it.each([true, false])(
+  'clears obsolete evidence and restores focus only when removed results owned it (%s)',
+  async (focusedResult) => {
+    const h = await harness();
+    h.mode.render(h.host);
+    await h.wait();
+    const opener = expectDefined(
+      h.host.querySelector<HTMLButtonElement>('.abyss-statistics-metrics button'),
+    );
+    opener.focus();
+    opener.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    opener.click();
+    const clear = expectDefined(
+      h.host.querySelector<HTMLButtonElement>('[aria-label="Clear selection"]'),
+    );
+    clear.focus();
+    const outside = document.body.createEl('button');
+    cleanups.push(() => {
+      outside.remove();
+    });
+    if (!focusedResult) outside.focus();
+    h.reset();
+    h.replace(source([task('Changed', { planning: { created: date('2026-10-01') } })]));
+    await h.wait();
+    expect(h.host.querySelector('.abyss-statistics-evidence')?.textContent).toBe('');
+    expect(document.activeElement).toBe(
+      focusedResult ? h.host.querySelector('.abyss-statistics .abyss-center-title') : outside,
+    );
+  },
+);
+
+function mountAnalysisNavigation(
+  app: Awaited<ReturnType<typeof createAppWithFiles>>,
+  state: AppState,
+  mode: StatisticsMode,
+  host: HTMLElement,
+): LeftPanel {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  const application = configuredTaskApplication(app, settings);
+  const tags = new TagManager(app, settings, async () => {}, {
+    check: () => 'ready',
+    apply: async (_change, live) => {
+      live();
+    },
+  });
+  const left = new LeftPanel({
+    state,
+    settings,
+    app,
+    tagManager: tags,
+    tasks: application.tasks,
+    statisticsNavigation: mode.navigation,
+  });
+  left.mount(host.createDiv({ cls: 'abyss-left' }));
+  return left;
+}
+
+it('owns one details popover with definitions and coverage and releases it on navigation and unmount', async () => {
+  const h = await harness();
+  h.mode.render(h.host);
+  await h.wait();
+  const details = expectDefined(
+    h.host.querySelector<HTMLButtonElement>('[aria-label="Analysis details"]'),
+  );
+  details.focus();
+  details.click();
+  const dialog = expectDefined(h.host.querySelector<HTMLElement>('[role="dialog"]'));
+  expect(dialog.textContent).toContain('Rhythm details');
+  expect(dialog.textContent).toContain('Tasks & subtasks in scope');
+  expect(dialog.textContent).toContain('Recorded task events');
+  expect(h.host.querySelector('details')).toBeNull();
+  dialog.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+  );
+  expect(dialog.isConnected).toBe(false);
+  expect(document.activeElement).toBe(details);
+  details.click();
+  h.reset();
+  h.mode.navigation.selectView('completion');
+  await h.wait();
+  expect(h.host.querySelector('[role="dialog"]')).toBeNull();
+  details.click();
+  h.mode.unmount();
+  expect(h.host.querySelector('[role="dialog"]')).toBeNull();
+  expect(h.listeners.size).toBe(0);
 });

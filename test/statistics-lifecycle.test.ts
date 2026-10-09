@@ -1,7 +1,8 @@
-import { WorkspaceLeaf, type App } from 'obsidian';
+import { SuggestModal, WorkspaceLeaf, type App } from 'obsidian';
 import { expect, it, vi } from 'vitest';
 import type { AppState } from '../src/app/AppState';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
+import type { StatisticsScope } from '../src/statistics';
 import { TagManager } from '../src/tags/TagManager';
 import { PanelView } from '../src/views/PanelView';
 import {
@@ -54,9 +55,10 @@ it('renders selected live evidence and opens the exact matched child through the
     expectDefined(
       [
         ...view.contentEl.querySelectorAll<HTMLButtonElement>('.abyss-statistics-metrics button'),
-      ].find((button) => button.textContent.startsWith('Open now')),
+      ].find((button) => button.textContent.includes('Open now')),
     ).click();
     expect(view.contentEl.querySelectorAll('.abyss-statistics .abyss-task-card')).toHaveLength(1);
+    expect(view.contentEl.querySelector('.abyss-statistics-chart')?.closest('[hidden]')).toBeNull();
     expect(
       view.contentEl.querySelector('.abyss-statistics .abyss-task-card.is-selected'),
     ).not.toBeNull();
@@ -70,6 +72,87 @@ it('renders selected live evidence and opens the exact matched child through the
     expect(state.get('taskStack')[1]?.ref).toMatchObject({ relativeLine: 2 });
     expect(view.contentEl.querySelector('.abyss-right')?.textContent).toContain('Matched child');
     expect(state.get('mode')).toBe('statistics');
+    const card = expectDefined(
+      view.contentEl.querySelector<HTMLElement>('.abyss-statistics .abyss-task-card'),
+    );
+    card.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
+    expect(state.get('taskStack')).toEqual([root]);
+    const opened: Array<SuggestModal<readonly [StatisticsScope, string, string]>> = [];
+    let modalReturn: Element | null = null;
+    vi.spyOn(SuggestModal.prototype, 'open').mockImplementation(function (
+      this: SuggestModal<readonly [StatisticsScope, string, string]>,
+    ) {
+      opened.push(this);
+      modalReturn = document.activeElement;
+      document.body.append(this.containerEl);
+      this.inputEl.focus();
+    });
+    const scopeRow = expectDefined(
+      view.contentEl.querySelector<HTMLButtonElement>('.abyss-left [aria-label="Scope"]'),
+    );
+    scopeRow.click();
+    expect(modalReturn).toBe(scopeRow);
+    const docked = expectDefined(opened[0]);
+    docked.onClose();
+    docked.containerEl.remove();
+    expect(document.activeElement).toBe(
+      view.contentEl.querySelector('.abyss-left [aria-label="Scope"]'),
+    );
+    const layout = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-layout'));
+    const left = expectDefined(layout.querySelector<HTMLElement>('.abyss-left'));
+    const toggle = expectDefined(
+      layout.querySelector<HTMLButtonElement>('.abyss-compact-pane-button--left'),
+    );
+    expect(left.querySelectorAll('[data-statistics-view]')).toHaveLength(11);
+    vi.spyOn(layout, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      width: 430,
+      height: 640,
+      right: 430,
+      bottom: 640,
+      toJSON: () => ({}),
+    });
+    window.dispatchEvent(new Event('resize'));
+    expect(toggle.getAttribute('aria-label')).toBe('Show Analysis navigation');
+    toggle.click();
+    left.scrollTop = 80;
+    const row = expectDefined(
+      left.querySelector<HTMLButtonElement>('[data-statistics-view="rhythm"]'),
+    );
+    row.focus();
+    row.click();
+    expect(left.classList.contains('is-compact-open')).toBe(false);
+    expect(document.activeElement).toBe(toggle);
+    expect(left.scrollTop).toBe(80);
+    toggle.click();
+    expect(left.classList.contains('is-compact-open')).toBe(true);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expectDefined(left.querySelector<HTMLButtonElement>('[aria-label="Scope"]')).click();
+    expect(left.classList.contains('is-compact-open')).toBe(false);
+    expect(modalReturn).toBe(toggle);
+    const canceled = expectDefined(opened[1]);
+    expect(document.activeElement).toBe(canceled.inputEl);
+    canceled.onClose();
+    canceled.containerEl.remove();
+    expect(document.activeElement).toBe(toggle);
+    expect(left.querySelector('[aria-label="Scope"]')?.textContent).toBe('Entire vault');
+    toggle.click();
+    expectDefined(left.querySelector<HTMLButtonElement>('[aria-label="Scope"]')).click();
+    const accepted = expectDefined(opened[2]);
+    const option = expectDefined((await accepted.getSuggestions('Priority A'))[0]);
+    accepted.onChooseSuggestion(option, new KeyboardEvent('keydown', { key: 'Enter' }));
+    expect(document.activeElement).toBe(accepted.inputEl);
+    accepted.onClose();
+    accepted.containerEl.remove();
+    expect(document.activeElement).toBe(toggle);
+    await vi.waitFor(() => {
+      expect(left.querySelector('[aria-label="Scope"]')?.textContent).toBe('Priority A');
+    });
   } finally {
     await view.onClose();
     application.index.destroy();
@@ -118,13 +201,11 @@ it('moves and clears live evidence highlights without enabling delete controls',
     expectDefined(
       [
         ...view.contentEl.querySelectorAll<HTMLButtonElement>('.abyss-statistics-metrics button'),
-      ].find((button) => button.textContent.startsWith('Open now')),
+      ].find((button) => button.textContent.includes('Open now')),
     ).click();
     const evidence = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-statistics'));
     const [firstCard, secondCard] = evidence.querySelectorAll<HTMLElement>('.abyss-task-card');
-    const actions = [...evidence.querySelectorAll<HTMLButtonElement>('button')].filter((button) =>
-      button.textContent.startsWith('Select task · '),
-    );
+    const actions = [...evidence.querySelectorAll<HTMLElement>('.abyss-task-card')];
     expect(actions).toHaveLength(2);
     expect([...evidence.querySelectorAll('.abyss-task-card.is-selected')]).toEqual([firstCard]);
     expectDefined(actions[1]).click();
@@ -223,7 +304,9 @@ it('captures scroll before mode layout changes and remounts Statistics through o
     await vi.waitFor(() => {
       expect(view.contentEl.querySelectorAll('svg').length).toBeGreaterThan(0);
     });
-    const root = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-statistics'));
+    const root = expectDefined(
+      view.contentEl.querySelector<HTMLElement>('.abyss-statistics-content'),
+    );
     const layout = expectDefined(view.contentEl.querySelector('.abyss-layout'));
     // Native proof showed the outgoing layout clamps 263.5 to 257.5 before onCommit renders.
     Object.defineProperty(root, 'scrollTop', {
@@ -234,7 +317,9 @@ it('captures scroll before mode layout changes and remounts Statistics through o
     expect(root.isConnected).toBe(false);
     state.set('mode', 'statistics');
     await vi.waitFor(() => {
-      expect(view.contentEl.querySelector<HTMLElement>('.abyss-statistics')?.scrollTop).toBe(263.5);
+      expect(
+        view.contentEl.querySelector<HTMLElement>('.abyss-statistics-content')?.scrollTop,
+      ).toBe(263.5);
     });
     const oldCharts = [...view.contentEl.querySelectorAll('.abyss-statistics-chart-svg')];
     expect(oldCharts).toHaveLength(3);

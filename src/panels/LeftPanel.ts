@@ -11,6 +11,7 @@ import {
 } from '../projects/projectCreation';
 import { projectStatusDisplayName } from '../projects/status';
 import type { CalendarSettings } from '../settings/types';
+import { STATISTICS_VIEWS } from '../statistics';
 import { TagGroupValidationError, type TagManager } from '../tags/TagManager';
 import { isTagNavigationArchived, resolveEffectiveTagGroups } from '../tags/effectiveTagGroups';
 import { tagSettingsFailureNotice } from '../tags/tagSettingsFailure';
@@ -31,6 +32,7 @@ import { runAsyncAction } from '../ui/runAsyncAction';
 import { presentTaskCommandResult } from '../ui/taskCommandResult';
 import { PanelNavigator, type PanelNavigationActions } from '../views/panelNavigation';
 import { TagNavigation } from './left/TagNavigation';
+import type { StatisticsNavigationPort } from './statistics/StatisticsNavigation';
 
 const PROJECTS_CAP = 10;
 
@@ -78,6 +80,8 @@ export interface LeftPanelOptions {
   readonly projectStore?: ProjectStore | null | undefined;
   readonly projectManager?: ProjectManager | null | undefined;
   readonly navigation?: PanelNavigationActions | undefined;
+  readonly statisticsNavigation?: StatisticsNavigationPort | undefined;
+  readonly onAnalysisNavigate?: (() => void) | undefined;
   readonly onSaveViewState?: (() => Promise<void>) | undefined;
 }
 
@@ -102,7 +106,8 @@ export class LeftPanel {
   private readonly tagNavigation_abyssPrivate: TagNavigation;
   private readonly navigation_abyssPrivate: PanelNavigationActions;
 
-  constructor(options: LeftPanelOptions) {
+  constructor(private readonly options_abyssPrivate: LeftPanelOptions) {
+    const options = options_abyssPrivate;
     const {
       state,
       settings,
@@ -170,6 +175,13 @@ export class LeftPanel {
         }
       }),
     );
+    const statistics = this.options_abyssPrivate.statisticsNavigation;
+    if (statistics !== undefined)
+      this.offs_abyssPrivate.push(
+        statistics.subscribe(() => {
+          if (this.state_abyssPrivate.get('mode') === 'statistics') this.render_abyssPrivate();
+        }),
+      );
     this.render_abyssPrivate();
   }
 
@@ -238,15 +250,77 @@ export class LeftPanel {
   private render_abyssPrivate(): void {
     this.renderCount_abyssPrivate += 1;
     const hold = this.holdInlineAdd_abyssPrivate();
+    const scroll = this.el_abyssPrivate.scrollTop;
+    const focused = this.el_abyssPrivate.querySelector(':focus');
+    const view = focused?.getAttribute('data-statistics-view');
+    const scope = focused?.getAttribute('aria-label') === 'Scope';
     this.el_abyssPrivate.empty();
     this.renderSections_abyssPrivate();
     this.settleInlineAdd_abyssPrivate(hold);
+    if (this.state_abyssPrivate.get('mode') === 'statistics') {
+      this.el_abyssPrivate.scrollTop = scroll;
+      let replacement = scope
+        ? this.el_abyssPrivate.querySelector<HTMLElement>('[aria-label="Scope"]')
+        : null;
+      if (view != null)
+        replacement =
+          [...this.el_abyssPrivate.querySelectorAll<HTMLElement>('[data-statistics-view]')].find(
+            (row) => row.dataset['statisticsView'] === view,
+          ) ?? null;
+      replacement?.focus({ preventScroll: true });
+    }
+  }
+
+  private renderStatistics_abyssPrivate(): void {
+    const navigation = this.options_abyssPrivate.statisticsNavigation;
+    if (navigation === undefined) return;
+    const current = navigation.snapshot();
+    const header = this.el_abyssPrivate.createDiv({
+      cls: 'abyss-left-section abyss-statistics-navigation',
+    });
+    header.createEl('h2', { cls: 'abyss-center-title', text: 'Analysis' });
+    const scope = header.createEl('button', {
+      cls: 'abyss-left-item',
+      attr: { type: 'button', 'aria-label': 'Scope', 'aria-haspopup': 'dialog' },
+    });
+    scope.createSpan({ cls: 'abyss-left-label', text: current.scopeLabel });
+    setIcon(scope.createSpan({ cls: 'abyss-left-icon' }), 'chevrons-up-down');
+    scope.addEventListener('click', () => {
+      scope.focus({ preventScroll: true });
+      this.options_abyssPrivate.onAnalysisNavigate?.();
+      navigation.openScope();
+    });
+    for (const family of ['Flow', 'Time', 'Projects'] as const) {
+      const section = this.el_abyssPrivate.createDiv({ cls: 'abyss-left-section' });
+      section.createDiv({ cls: 'abyss-left-section-header', text: family });
+      for (const view of STATISTICS_VIEWS.filter((view) => view.family === family)) {
+        const row = section.createEl('button', {
+          cls: 'abyss-left-item',
+          attr: { type: 'button' },
+        });
+        row.dataset['statisticsView'] = view.id;
+        row.classList.toggle('is-active', current.view === view.id);
+        if (current.view === view.id) row.setAttribute('aria-current', 'page');
+        row
+          .createSpan({ cls: 'abyss-left-item-left' })
+          .createSpan({ cls: 'abyss-left-label', text: view.title });
+        row.addEventListener('click', () => {
+          navigation.selectView(view.id);
+          this.options_abyssPrivate.onAnalysisNavigate?.();
+        });
+      }
+    }
   }
 
   private renderSections_abyssPrivate(): void {
     const mode = this.state_abyssPrivate.get('mode');
     // The projects mode is a self-contained deep view; search hides the left panel too.
-    if (mode === 'search' || mode === 'projects' || mode === 'statistics') return;
+    this.el_abyssPrivate.classList.toggle('abyss-left--statistics', mode === 'statistics');
+    if (mode === 'statistics') {
+      this.renderStatistics_abyssPrivate();
+      return;
+    }
+    if (mode === 'search' || mode === 'projects') return;
 
     const allNodes = this.tasks_abyssPrivate.queries.listNodes();
     const nowMs = Date.now();

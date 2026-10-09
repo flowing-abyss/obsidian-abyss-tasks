@@ -220,17 +220,21 @@
 }
 
 @container abyss-panel-layout (max-width: 38rem) {
-  .abyss-layout--tasks > .abyss-left:not(.is-compact-open) {
+  :is(.abyss-layout--tasks, .abyss-layout--statistics) > .abyss-left:not(.is-compact-open) {
     display: none;
   }
 
-  .abyss-layout--tasks > .abyss-left.is-compact-open {
+  :is(.abyss-layout--tasks, .abyss-layout--statistics) > .abyss-left.is-compact-open {
     position: absolute;
     z-index: calc(var(--layer-popover, 30) - 1);
     inset-block: var(--abyss-compact-overlay-top, var(--abyss-center-toolbar-height)) 0;
     inset-inline-start: 48px;
     inline-size: min(15rem, calc(100cqi - 48px));
     box-shadow: var(--shadow-l, none);
+  }
+
+  .abyss-layout--statistics > .abyss-left.is-compact-open {
+    box-shadow: none;
   }
 
   .abyss-layout--tasks .abyss-center-header {
@@ -9902,7 +9906,7 @@ body.is-tablet .abyss-tracked-row button.abyss-tracked-row-open {
   --ts-chart-tooltip-color: var(--text-normal);
   --ts-chart-tooltip-border: 1px solid var(--background-modifier-border);
   --ts-chart-tooltip-border-radius: var(--radius-s);
-  --ts-chart-tooltip-shadow: var(--shadow-s, none);
+  --ts-chart-tooltip-shadow: none;
   --ts-chart-tooltip-max-width: min(24rem, 90%);
   --ts-chart-tooltip-padding: var(--size-4-2) var(--size-4-3);
   --ts-chart-tooltip-font: var(--font-ui-small) / var(--line-height-tight)
@@ -9958,8 +9962,7 @@ body.is-tablet .abyss-tracked-row button.abyss-tracked-row-open {
   overflow-wrap: anywhere;
 }
 
-/* Statistics owns its chart width; details use the existing native overlay at every width. */
-.abyss-layout--statistics > .abyss-left,
+/* Analysis shares the native left navigation; the task inspector is an explicit overlay. */
 .abyss-layout--statistics > .abyss-right:not(.is-compact-open) {
   display: none;
 }
@@ -9970,7 +9973,6 @@ body.is-tablet .abyss-tracked-row button.abyss-tracked-row-open {
   inset-block: var(--abyss-compact-overlay-top, var(--abyss-center-toolbar-height)) 0;
   inset-inline-end: 0;
   inline-size: min(20rem, calc(100cqi - 48px));
-  box-shadow: var(--shadow-l, none);
 }
 
 .abyss-layout--statistics button.abyss-compact-pane-button.is-compact-available {
@@ -9978,15 +9980,40 @@ body.is-tablet .abyss-tracked-row button.abyss-tracked-row-open {
 }
 
 .abyss-statistics {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-block-size: 0;
+  min-inline-size: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.abyss-statistics button.abyss-view-state-btn {
+  box-shadow: none;
+}
+
+.abyss-statistics-content {
+  flex: 1;
+  min-block-size: 0;
   overflow: auto;
   overflow-anchor: none;
-  overflow-wrap: anywhere;
-  min-inline-size: 0;
-  padding: var(--size-4-3);
+  padding: 0 var(--size-4-4) var(--size-4-4);
+}
+
+.abyss-statistics-content--rhythm {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  gap: var(--size-4-4);
+}
+
+.abyss-statistics-content--rhythm > .abyss-statistics-section:first-child {
+  grid-column: 1 / -1;
 }
 
 .abyss-statistics-controls,
-.abyss-statistics-tabs,
 .abyss-statistics-metrics,
 .abyss-statistics-legend,
 .abyss-statistics-intensity,
@@ -9994,39 +10021,96 @@ body.is-tablet .abyss-tracked-row button.abyss-tracked-row-open {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  gap: var(--size-4-3);
+}
+
+.abyss-statistics-controls {
   gap: var(--size-4-2);
-  margin-block-end: var(--size-4-3);
 }
 
 .abyss-statistics-controls label {
-  display: flex;
   min-inline-size: 0;
-  max-inline-size: 100%;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--size-4-2);
 }
 
-.abyss-statistics-tabs button[aria-pressed='true'] {
-  background: var(--background-modifier-hover);
-  color: var(--text-accent);
+.abyss-statistics-group .abyss-cal-view-btn {
+  transition: none;
+  box-shadow: none;
 }
 
 .abyss-statistics-section {
+  min-inline-size: 0;
   padding-block: var(--size-4-3);
   border-block-start: 1px solid var(--background-modifier-border);
 }
 
 .abyss-statistics-section-heading h3 {
-  margin-block: var(--size-4-2);
+  margin: 0 0 var(--size-4-3);
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-semibold);
+  color: var(--text-normal);
 }
 
+.abyss-statistics-metrics {
+  align-items: baseline;
+  gap: var(--size-4-4);
+  margin-block-end: var(--size-4-3);
+}
+
+.abyss-statistics-metric {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--size-2-1);
+  min-inline-size: 0;
+}
+
+button.abyss-statistics-metric,
+.abyss-statistics-legend button,
+.abyss-statistics-chart-caption button,
+button.abyss-statistics-evidence-action,
+.abyss-statistics-details button {
+  height: auto;
+  padding: var(--size-2-1);
+  border: none;
+  border-radius: var(--radius-s);
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  white-space: normal;
+  cursor: pointer;
+}
+
+button.abyss-statistics-metric:hover,
+.abyss-statistics-legend button:hover,
+.abyss-statistics-chart-caption button:hover,
+button.abyss-statistics-evidence-action:hover,
+.abyss-statistics-details button:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.abyss-statistics-metric-value {
+  font-size: calc(var(--font-ui-medium) * 1.25);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--font-semibold);
+  color: var(--text-normal);
+}
+
+.abyss-statistics-metric-label,
 .abyss-statistics-context,
 .abyss-statistics-legend,
 .abyss-statistics-intensity,
-.abyss-statistics-section summary {
+.abyss-statistics-evidence-count {
   color: var(--text-muted);
   font-size: var(--font-ui-small);
+}
+
+.abyss-statistics-legend,
+.abyss-statistics-intensity {
+  gap: var(--size-4-2);
+  margin-block-end: var(--size-4-2);
 }
 
 .abyss-statistics-swatch {
@@ -10039,71 +10123,149 @@ body.is-tablet .abyss-tracked-row button.abyss-tracked-row-open {
   opacity: var(--abyss-statistics-key-opacity, 1);
 }
 
+.abyss-statistics-context-row {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--size-4-2);
+  padding: var(--size-4-2) var(--size-4-4);
+}
+
+.abyss-statistics-context-row > * {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
+.abyss-statistics > [role='status']:not(:empty) {
+  padding: var(--size-4-2) var(--size-4-4);
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.abyss-statistics-evidence {
+  display: flex;
+  flex: 0 1 35%;
+  flex-direction: column;
+  min-block-size: min(8rem, 35%);
+  max-block-size: 35%;
+  min-inline-size: 0;
+  overflow: hidden;
+  border-block-start: 1px solid var(--background-modifier-border);
+}
+
+.abyss-statistics-evidence-header {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--size-4-2);
+  padding: var(--size-4-2) var(--size-4-4);
+}
+
+.abyss-statistics-evidence-header h3 {
+  flex: 1;
+  min-inline-size: 0;
+  margin: 0;
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-semibold);
+}
+
+.abyss-statistics-evidence-records {
+  min-block-size: 0;
+  overflow: auto;
+  overflow-anchor: none;
+  padding: 0 var(--size-4-4) var(--size-4-3);
+}
+
 .abyss-statistics-evidence-row {
   padding-block: var(--size-4-2);
   border-block-end: 1px solid var(--background-modifier-border);
+}
+
+.abyss-statistics-evidence-row--child > .abyss-statistics-evidence-action,
+.abyss-statistics-evidence-row--child > .abyss-statistics-context {
+  margin-inline-start: var(--size-4-4);
+}
+
+.abyss-statistics-details {
+  inline-size: min(32rem, var(--abyss-pop-width, calc(100% - 16px)));
+  max-block-size: var(--abyss-pop-height);
+  overflow: auto;
+  padding: var(--size-4-4);
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  box-shadow: none;
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+}
+
+.abyss-statistics-details h3,
+.abyss-statistics-details h4 {
+  margin: 0 0 var(--size-4-2);
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-semibold);
+}
+
+.abyss-statistics-details p {
+  margin-block: var(--size-4-2) var(--size-4-4);
+}
+
+.abyss-statistics-navigation h2 {
+  padding: var(--size-4-3) var(--size-4-4);
+}
+
+.abyss-left--statistics .abyss-left-section-header {
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-semibold);
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.abyss-left--statistics button.abyss-left-item {
+  width: calc(100% - 2 * var(--size-2-3));
+  height: auto;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  transition: none;
+  text-align: start;
+}
+
+.abyss-left--statistics button.abyss-left-item:hover {
+  background: var(--nav-item-background-hover);
+}
+
+.abyss-left--statistics button.abyss-left-item.is-active {
+  background: var(--nav-item-background-active);
+  color: var(--nav-item-color-active);
+}
+
+.abyss-statistics button:focus-visible,
+.abyss-left--statistics button:focus-visible {
+  outline: 2px solid var(--background-modifier-border-focus);
+  outline-offset: 2px;
 }
 
 .abyss-statistics [hidden] {
   display: none;
 }
 
-.abyss-statistics > .abyss-center-header {
-  min-block-size: 0;
-  padding: var(--size-4-1) 0;
-  margin-block-end: var(--size-4-2);
-}
+@container abyss-task-list (max-width: 42rem) {
+  .abyss-statistics-content--rhythm {
+    grid-template-columns: minmax(0, 1fr);
+  }
 
-.abyss-statistics > .abyss-center-header h2 {
-  margin-block: var(--size-4-1);
-  font-size: var(--font-ui-medium);
-}
+  .abyss-statistics > .abyss-center-header,
+  .abyss-statistics .abyss-center-controls {
+    flex-wrap: wrap;
+  }
 
-.abyss-statistics-section-heading,
-.abyss-statistics-context-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--size-4-2);
-}
-
-.abyss-statistics-section-heading h3 {
-  margin-block: 0;
-  font-size: var(--font-ui-medium);
-}
-
-.abyss-statistics-section-heading {
-  margin-block-end: var(--size-4-2);
-}
-
-.abyss-statistics-section-heading details[open] {
-  flex-basis: 100%;
-}
-
-.abyss-statistics-tabs {
-  gap: var(--size-4-1);
-  margin-block-end: var(--size-4-1);
-}
-
-.abyss-statistics-tabs button {
-  padding: var(--size-2-1) var(--size-4-2);
-}
-
-.abyss-statistics button,
-.abyss-statistics select {
-  min-inline-size: 0;
-  max-inline-size: 100%;
-}
-
-.abyss-statistics button {
-  block-size: auto;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-
-.abyss-statistics-context-row > * {
-  min-inline-size: 0;
-  max-inline-size: 100%;
+  .abyss-statistics .abyss-center-controls {
+    justify-content: flex-end;
+    min-inline-size: 0;
+  }
 }
 
 .abyss-project-timeline-groups {

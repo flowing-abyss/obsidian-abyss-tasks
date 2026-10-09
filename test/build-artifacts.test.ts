@@ -75,6 +75,7 @@ const privateOwners = new Set([
   'TagGroupAppearanceModal',
   'StatisticsMode',
   'StatisticsControls',
+  'StatisticsDetails',
   'StatisticsEvidence',
   'StatisticsSections',
   'StatisticsWorkScheduler',

@@ -280,8 +280,7 @@ export class CompactPaneAccess {
     if (
       elements == null ||
       !this.#isCompactPaneCollapsed(pane) ||
-      (this.#options.mode() !== 'tasks' &&
-        !(this.#options.mode() === 'statistics' && pane === 'right'))
+      (this.#options.mode() !== 'tasks' && this.#options.mode() !== 'statistics')
     ) {
       return;
     }
@@ -303,7 +302,7 @@ export class CompactPaneAccess {
     const inactivePane = pane === 'left' ? elements.right : elements.left;
     activePane.addClass('is-compact-open');
     inactivePane.removeClass('is-compact-open');
-    this.#setCompactPaneButtonState(elements.leftButton, 'task lists', pane === 'left');
+    this.#setCompactPaneButtonState(elements.leftButton, this.#leftName(), pane === 'left');
     this.#setCompactPaneButtonState(elements.rightButton, 'task details', pane === 'right');
     if (this.#compactPaneOpen !== pane || reason === 'button') this.#compactPaneOpenReason = reason;
     this.#compactPaneOpen = pane;
@@ -319,7 +318,8 @@ export class CompactPaneAccess {
     );
   }
 
-  close(restoreFocus: boolean): void {
+  close(restoreFocus: boolean, onlyPane?: CompactPane): void {
+    if (onlyPane !== undefined && this.#compactPaneOpen !== onlyPane) return;
     const elements = this.#compactPaneElements;
     const pane = this.#compactPaneOpen;
     this.#compactPaneOpen = null;
@@ -327,7 +327,7 @@ export class CompactPaneAccess {
     if (elements == null) return;
     elements.left.removeClass('is-compact-open');
     elements.right.removeClass('is-compact-open');
-    this.#setCompactPaneButtonState(elements.leftButton, 'task lists', false);
+    this.#setCompactPaneButtonState(elements.leftButton, this.#leftName(), false);
     this.#setCompactPaneButtonState(elements.rightButton, 'task details', false);
     if (restoreFocus && pane !== null) {
       const button = pane === 'left' ? elements.leftButton : elements.rightButton;
@@ -353,10 +353,27 @@ export class CompactPaneAccess {
     this.#openNewlyCollapsedTaskDetails(wasRightCollapsed);
   }
 
+  #leftName(): string {
+    return this.#options.mode() === 'statistics' ? 'Analysis navigation' : 'task lists';
+  }
+
   #syncButtonAvailability(): void {
+    const elements = this.#compactPaneElements;
+    if (elements !== undefined) {
+      const labelId = elements.left.getAttribute('aria-labelledby');
+      if (labelId !== null)
+        elements.layout.ownerDocument
+          .getElementById(labelId)
+          ?.setText(this.#options.mode() === 'statistics' ? 'Analysis navigation' : 'Task lists');
+      this.#setCompactPaneButtonState(
+        elements.leftButton,
+        this.#leftName(),
+        this.#compactPaneOpen === 'left',
+      );
+    }
     this.#compactPaneElements?.leftButton.toggleClass(
       'is-compact-available',
-      this.#options.mode() !== 'statistics' && this.#compactLeftCollapsed,
+      this.#compactLeftCollapsed,
     );
     this.#compactPaneElements?.rightButton.toggleClass(
       'is-compact-available',
@@ -398,7 +415,7 @@ export class CompactPaneAccess {
   }
 
   #isCompactPaneCollapsed(pane: CompactPane): boolean {
-    if (this.#options.mode() === 'statistics') return pane === 'right';
+    if (this.#options.mode() === 'statistics' && pane === 'right') return true;
     return pane === 'left' ? this.#compactLeftCollapsed : this.#compactRightCollapsed;
   }
 }

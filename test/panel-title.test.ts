@@ -51,6 +51,6 @@ describe('panelTitle', () => {
 
 it('names Statistics without reading a task list', () => {
   const list = vi.fn();
-  expect(panelTitle('statistics', list)).toBe('Statistics');
+  expect(panelTitle('statistics', list)).toBe('Analysis');
   expect(list).not.toHaveBeenCalled();
 });

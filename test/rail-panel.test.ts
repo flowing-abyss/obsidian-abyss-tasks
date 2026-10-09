@@ -137,6 +137,30 @@ describe('RailPanel', () => {
     expect(panel['el'].querySelectorAll('button[title]')).toHaveLength(0);
   });
 
+  it('exposes Analysis immediately before Search only when the source capability is available', () => {
+    const state = new AppState();
+    const navigation = stateNavigationActions(state);
+    navigation.openStatistics = () => {
+      state.set('mode', 'statistics');
+    };
+    const panel = new RailPanel(state, { setting: {} }, navigation, true);
+    const host = freshContainer();
+    panel.mount(host);
+    try {
+      expect(
+        [...host.querySelectorAll('button')].map((button) => button.getAttribute('aria-label')),
+      ).toEqual(['Tasks', 'Calendar', 'Projects', 'Analysis', 'Search', 'Settings']);
+      expectDefined(host.querySelector<HTMLButtonElement>('[aria-label="Analysis"]')).click();
+      expect(state.get('mode')).toBe('statistics');
+      expect(host.querySelector('[aria-label="Analysis"]')?.classList.contains('is-active')).toBe(
+        true,
+      );
+      expect(host.querySelector('[aria-label="Statistics"]')).toBeNull();
+    } finally {
+      panel.destroy();
+    }
+  });
+
   it.each([
     ['Projects', 'projects'],
     ['Tasks', 'tasks'],
