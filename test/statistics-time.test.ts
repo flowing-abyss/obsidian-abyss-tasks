@@ -555,8 +555,8 @@ it('distinguishes excluded and future days from observed zero in a partial selec
   );
   const model = await v.get('timeline');
   const section = required(model.sections[0]);
-  expect(section.reading).toContain('2026-09-07–2026-09-13');
-  expect(section.reading).toContain('2026-09-10');
+  expect(section.reading).toContain('Sep 7–13, 2026');
+  expect(section.reading).toContain('Included Sep 10–13');
   expect(value(model, 'day:0')).toBeNull();
   expect(value(model, 'day:2')).toBeNull();
   expect(value(model, 'day:3')).toBe(20);
@@ -586,7 +586,7 @@ it('keeps an empty selected week reachable with its range and separate period mi
   expect(value(model, 'recorded-minutes')).toBe(60);
   expect(value(model, 'week-minutes')).toBe(0);
   expect(model.sections[0]?.emptyMessage).toBe('No recorded time in this week.');
-  expect(model.sections[0]?.reading).toContain('2026-10-05–2026-10-11');
+  expect(model.sections[0]?.reading).toContain('Oct 5–11, 2026');
   expect(
     model.actions.some((action) => action.type === 'week' && action.label === 'Previous week'),
   ).toBe(true);
@@ -883,4 +883,26 @@ it('keeps sequential local-clock intervals sparse and counts repeated-hour overl
       .evidence(required(mark.selectionId), 0, 50)
       .rows.every((row) => row.contributionMinutes === 120),
   ).toBe(true);
+});
+
+it('keeps the selected-week reading compact while retaining precise physical observation endpoints', async () => {
+  const model = await (
+    await views(
+      [
+        task('precise', {
+          timeEntries: [closed('2026-10-09T09:00:00.000Z', '2026-10-09T09:00:00.015Z')],
+        }),
+      ],
+      { period: 'today', nowMs: Date.parse('2026-10-09T10:30:09.249Z'), offsetAt: () => 420 },
+    )
+  ).get('timeline');
+  expect(model.sections[0]?.reading).toBe(
+    'Oct 5–11, 2026 · Included Oct 9 · Through 17:30 UTC+7 · overlapping entries add',
+  );
+  const mark = required(model.sections[0]?.charts[0]?.marks[0]);
+  expect(mark.observation?.title).toContain('16:00–16:00:00.015');
+  expect(mark.clock?.endMs).toBe(Date.parse('2026-10-09T09:00:00.015Z'));
+  expect(model.evidence(required(mark.selectionId), 0, 1).rows[0]?.entryTiming?.endMs).toBe(
+    Date.parse('2026-10-09T09:00:00.015Z'),
+  );
 });

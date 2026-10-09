@@ -427,7 +427,9 @@ with UTC pinned for display, preserving the model's date boundaries. Each chart 
 engine resource prefix so SVG clip paths cannot collide across facets or leaves. Accessible chart
 names live on HTML wrappers: nonempty SVG `aria-label` triggers Obsidian’s HTML-only tooltip path.
 Timeline retains its seven-day clock frame even without intervals, distinguishing days outside
-the selected period or not yet elapsed from observed zero. Week activation clears the overview
+the selected period or not yet elapsed from observed zero. Its adapter retains all seven vertical
+day ticks in sparse and hourly layouts, using compact day/availability labels and a bounded
+left margin; full model dates and physical observation endpoints remain intact. Week activation clears the overview
 page choice so the selected week remains visible. Its dense fallback explicitly reports hourly
 sums with original physical-entry evidence. The model selects that fallback when the seven-day
 sum of max(2, peak simultaneous local-clock intervals) exceeds 28 or fragments exceed 700. Its

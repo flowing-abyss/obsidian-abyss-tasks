@@ -42,6 +42,29 @@ function clockPosition(ms: number, window: ClockWindow): number {
 function instantLabel(ms: number, offset: number): string {
   return `${new Date(ms + offset * 60000).toISOString().replace('Z', '')} (UTC${offset >= 0 ? '+' : ''}${offset / 60})`;
 }
+function minuteLabel(ms: number, offset: number): string {
+  const time = new Date(ms + offset * 60000).toISOString().slice(11, 16);
+  return `${time} UTC${offset >= 0 ? '+' : ''}${offset / 60}`;
+}
+function calendarRange(first: number, last: number, includeYear: boolean): string {
+  const a = new Date(first * DAY),
+    z = new Date(last * DAY),
+    sameYear = a.getUTCFullYear() === z.getUTCFullYear(),
+    format = (date: Date): string =>
+      date.toLocaleDateString('en', {
+        month: 'short',
+        day: 'numeric',
+        year: includeYear || !sameYear ? 'numeric' : undefined,
+        timeZone: 'UTC',
+      });
+  if (first === last) return format(a);
+  if (sameYear && a.getUTCMonth() === z.getUTCMonth()) {
+    const month = a.toLocaleDateString('en', { month: 'short', timeZone: 'UTC' }),
+      year = includeYear ? `, ${a.getUTCFullYear()}` : '';
+    return `${month} ${a.getUTCDate()}–${z.getUTCDate()}${year}`;
+  }
+  return `${format(a)}–${format(z)}`;
+}
 function clockRange(start: number, end: number, offset: number): string {
   const a = new Date(start + offset * 60000).toISOString(),
     z = new Date(end + offset * 60000).toISOString();
@@ -97,14 +120,14 @@ class Timeline {
     const c = this.ctx.calendar,
       first = Math.max(this.week, c.fromDay),
       last = Math.min(this.week + 6, c.todayDay),
-      range = `${dateOf(this.week)}–${dateOf(this.week + 6)}`,
+      range = calendarRange(this.week, this.week + 6, true),
       included =
         first !== this.week || last !== this.week + 6
-          ? ` · Included ${dateOf(first)}–${dateOf(last)}`
+          ? ` · Included ${calendarRange(first, last, false)}`
           : '',
       through =
         last === c.todayDay
-          ? ` · Through ${instantLabel(c.endMs, this.ctx.request.offsetAt(c.endMs))}`
+          ? ` · Through ${minuteLabel(c.endMs, this.ctx.request.offsetAt(c.endMs))}`
           : '';
     return `${range}${included}${through} · overlapping entries add`;
   }

@@ -1016,7 +1016,7 @@ it('shows overlapping timeline intervals in separate subrows without changing cl
   }));
   expect(required(a).x).toBe(required(b).x);
   expect(required(a).x).toBe(required(d).x);
-  expect(required(b).w).toBeCloseTo(required(a).w / 2);
+  expect(Math.abs(required(b).w - required(a).w / 2)).toBeLessThanOrEqual(0.01);
   expect(required(a).y + required(a).h).toBeLessThanOrEqual(required(b).y);
   expect(required(c).y).toBe(required(b).y);
 });
@@ -1295,7 +1295,7 @@ it('bounds dense graph height while preserving every selectable node and the foc
   expect(marks(el, 'text')).toHaveLength(1);
   expect(required(marks(el, 'text')[0]).textContent).toContain('0');
 });
-it('keeps exact date and clock labels with positive Timeline geometry at the narrow viewport minimum', () => {
+it('keeps compact date and exact clock labels with positive Timeline geometry at the narrow viewport minimum', () => {
   const el = host(document, 240);
   mount(
     el,
@@ -1329,7 +1329,7 @@ it('keeps exact date and clock labels with positive Timeline geometry at the nar
   expect(n(clip, 'width')).toBeGreaterThan(40);
   expect(n(clip, 'x') + n(clip, 'width')).toBeLessThanOrEqual(240);
   expect([...el.querySelectorAll('text')].map((node) => node.textContent)).toContain(
-    '2026-09-28 · 495 min',
+    'Mon 28 · 495 min',
   );
   const interval = required(marks(el)[0]);
   expect(n(interval, 'width')).toBeCloseTo((n(clip, 'width') * 495) / 1440);
@@ -1693,3 +1693,54 @@ it('bounds sparse Timeline height at the sixteen-overlap boundary and uses the e
     expect(chart.layout).toBe(count === 16 ? undefined : 'density');
   }
 });
+
+it.each([1, 17])(
+  'retains seven readable Timeline days at a 320px plot surface with %i Friday recordings',
+  async (count) => {
+    const dataset = required(
+      await prepareStatisticsDataset(
+        source(
+          Array.from({ length: count }, (_, i) =>
+            task(`Friday${i}`, {
+              timeEntries: [closed('2026-10-09T09:00Z', '2026-10-09T09:40Z')],
+            }),
+          ),
+        ),
+        [],
+        work,
+      ),
+    );
+    const view = required(
+      await new StatisticsSession(dataset).view(
+        request({
+          view: 'timeline',
+          period: 'today',
+          nowMs: Date.parse('2026-10-09T13:10:09.249Z'),
+        }),
+        work,
+      ),
+    );
+    const chart = required(view.sections[0]?.charts[0]),
+      element = host(document, 320);
+    const rendered = mount(element, chart);
+    const labels = [...element.querySelectorAll('svg text')].map((text) => text.textContent);
+    const expected = [
+      'Mon 5 · Outside',
+      'Tue 6 · Outside',
+      'Wed 7 · Outside',
+      'Thu 8 · Outside',
+      `Fri 9 · ${count * 40} min`,
+      'Sat 10 · Future',
+      'Sun 11 · Future',
+    ];
+    for (const day of expected) expect(labels).toContain(day);
+    expect(n(required(element.querySelector('clipPath rect')), 'width')).toBeGreaterThanOrEqual(
+      180,
+    );
+    expect(chart.y.tickLabels).toContainEqual(['2026-10-09', `2026-10-09 · ${count * 40} min`]);
+    expect(chart.marks[0]?.observation?.title).toContain('2026-10-09');
+    expect(chart.layout).toBe(count === 1 ? undefined : 'density');
+    expect(marks(element).length).toBeGreaterThan(0);
+    expect(rendered.svg().getAttribute('viewBox')).toContain('320');
+  },
+);

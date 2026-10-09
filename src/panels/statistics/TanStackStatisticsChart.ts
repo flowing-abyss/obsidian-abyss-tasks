@@ -36,6 +36,17 @@ const BACKGROUND = 'var(--background-primary)';
 const ACCENT = 'var(--interactive-accent)';
 const SCATTER_MARGIN = { top: 16, right: 16, bottom: 42, left: 76 };
 const NETWORK_MARGIN = { top: 35, left: 55, right: 55, bottom: 20 };
+const TIMELINE_MARGIN = { top: 12, left: 116, right: 12, bottom: 40 };
+const CHART_MARGINS: Partial<Record<StatisticsChartModel['kind'], typeof TIMELINE_MARGIN>> = {
+  scatter: SCATTER_MARGIN,
+  network: NETWORK_MARGIN,
+  timeline: TIMELINE_MARGIN,
+};
+
+function chartMargin(kind: StatisticsChartModel['kind']): { margin?: typeof TIMELINE_MARGIN } {
+  const margin = CHART_MARGINS[kind];
+  return margin === undefined ? {} : { margin };
+}
 
 function height(model: StatisticsChartModel): number {
   if (model.y.type === 'number') return numericHeight(model, model.y.domain[1]);
@@ -128,18 +139,51 @@ function axisPolicy(
     tickLabels: { fontSize: 11, opacity: 1, thin: { minGap: 9, priority: 'ends' } },
   };
 }
+function timelineDayLabel(label: string): string {
+  const date = new Date(`${label.slice(0, 10)}T00:00:00Z`);
+  if (!Number.isFinite(date.getTime())) return label;
+  const weekday = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][date.getUTCDay()],
+    detail = label.slice(13);
+  let status = detail;
+  if (detail === 'Outside period') status = 'Outside';
+  else if (detail === 'Not yet elapsed') status = 'Future';
+  else if (detail.endsWith(' min')) status = statisticsNumber(Number(detail.slice(0, -4)), ' min');
+  return `${weekday ?? ''} ${date.getUTCDate()} · ${status}`;
+}
+function timelineDayAxis(
+  value: StatisticsAxis,
+): Exclude<ChartPositionScaleOptions<Value>['axis'], false | undefined> {
+  const labels = new Map<string | number, string>(value.tickLabels ?? []),
+    positions =
+      value.type === 'band'
+        ? value.categories
+        : (value.tickLabels?.map(([position]) => position) ?? []);
+  return {
+    line: false,
+    ticks: {
+      size: 0,
+      values: positions,
+      format: (tick) => timelineDayLabel(labels.get(tick) ?? String(tick)),
+    },
+    tickLabels: { fontSize: 11, opacity: 1, thin: false },
+  };
+}
 function axis(
   model: StatisticsChartModel,
   side: 'x' | 'y',
   width: number,
 ): ChartPositionScaleOptions<Value> {
-  const hidden = model.kind === 'network';
+  const hidden = model.kind === 'network',
+    policy =
+      model.kind === 'timeline' && side === 'y'
+        ? timelineDayAxis(model.y)
+        : axisPolicy(model[side], width, side);
   const grid = !hidden && model[side].type === 'number' && model.kind !== 'heatmap' && side === 'y';
   return {
     scale: positionScale(model, side),
     reverse: (hidden || model.kind === 'timeline') && side === 'y',
     grid: grid ? { stroke: 'var(--background-modifier-border)', strokeOpacity: 0.55 } : false,
-    axis: hidden ? false : axisPolicy(model[side], width, side),
+    axis: hidden ? false : policy,
   };
 }
 function seriesMarks(model: StatisticsChartModel): RenderMark[] {
@@ -601,8 +645,7 @@ export class TanStackStatisticsChart implements StatisticsChartRenderer {
               palette: [ACCENT],
             },
             clip: model.kind !== 'network' && model.kind !== 'scatter',
-            ...(model.kind === 'scatter' ? { margin: SCATTER_MARGIN } : {}),
-            ...(model.kind === 'network' ? { margin: NETWORK_MARGIN } : {}),
+            ...chartMargin(model.kind),
           }),
           focus: 'nearest',
           focusRing: { fill: BACKGROUND, radius: 6, strokeWidth: 2 },
