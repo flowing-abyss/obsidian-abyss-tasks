@@ -2210,8 +2210,8 @@ it.each([640, 240])(
         .filter((mark) => n(mark, 'width') > 0)
         .map((mark) => ({ y: n(mark, 'y'), height: n(mark, 'height') }))
         .sort((a, b) => a.y - b.y);
-    const baseline = geometry(),
-      fullHeight = required(chart.svg().getAttribute('viewBox')).split(' ')[3];
+    const baseline = geometry();
+    expect(Number(required(chart.svg().getAttribute('viewBox')).split(' ')[3])).toBe(384);
     expect(baseline).toHaveLength(12);
     expect(required(baseline[0]).height).toBeGreaterThan(20);
     expect(required(baseline[0]).height).toBeLessThan(28);
@@ -2229,9 +2229,20 @@ it.each([640, 240])(
           selectionId: row,
         })),
       });
-      expect(required(chart.svg().getAttribute('viewBox')).split(' ')[3]).toBe(fullHeight);
+      const renderedHeight = Number(required(chart.svg().getAttribute('viewBox')).split(' ')[3]);
+      expect(renderedHeight).toBe(categories.length * 28 + 48);
       const rectangles = geometry();
       expect(rectangles).toHaveLength(categories.length);
+      const last = required(rectangles[rectangles.length - 1]);
+      expect(renderedHeight - last.y - last.height).toBeLessThan(40);
+      const axisLabel = required(
+        [...element.querySelectorAll('text')].find(
+          (node) => node.textContent === 'Completed tasks',
+        ),
+      );
+      const axisY = Number(required(axisLabel.getAttribute('y')));
+      expect(axisY).toBeGreaterThan(last.y + last.height);
+      expect(axisY - last.y - last.height).toBeLessThan(40);
       for (const [index, rectangle] of rectangles.entries()) {
         expect(rectangle.height).toBeCloseTo(required(baseline[index]).height, 5);
         expect(rectangle.y).toBeCloseTo(required(baseline[index]).y, 5);

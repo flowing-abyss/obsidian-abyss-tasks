@@ -44,9 +44,9 @@ const CHART_MARGINS: Partial<Record<StatisticsChartModel['kind'], typeof TIMELIN
 };
 
 function chartMargin(model: StatisticsChartModel): { margin?: Partial<typeof TIMELINE_MARGIN> } {
-  // Unused rows stay below the real rows inside the 384px slot, preserving 28px pitch.
+  // Ordinary axis margins preserve 28px row pitch without reserving absent rows.
   if (model.id === 'completion-origins' && model.y.type === 'band')
-    return { margin: { top: 12, bottom: 372 - model.y.categories.length * 28 } };
+    return { margin: { top: 12, bottom: 36 } };
   const margin =
     model.rowViewport === true
       ? { top: 0, bottom: 0, left: 160, right: 64 }
@@ -57,7 +57,6 @@ function chartMargin(model: StatisticsChartModel): { margin?: Partial<typeof TIM
 function height(model: StatisticsChartModel): number {
   if (model.rowViewport === true && model.y.type === 'band') return model.y.categories.length * 32;
   if (model.id === 'allocation-focus') return 288;
-  if (model.id === 'completion-origins') return 384;
   return baseHeight(model);
 }
 function baseHeight(model: StatisticsChartModel): number {
