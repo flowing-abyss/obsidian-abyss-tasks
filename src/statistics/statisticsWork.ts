@@ -7,13 +7,15 @@ export class WorkBudget {
   check(): void {
     if (this.work.isCancelled()) throw new StatisticsCancelled();
   }
-  async step(): Promise<void> {
+  step(): Promise<void> | undefined {
     this.check();
-    if (++this.count >= 1000) {
-      this.count = 0;
-      await this.work.yieldControl();
-      this.check();
-    }
+    if (++this.count < 1000) return undefined;
+    this.count = 0;
+    return this.pause();
+  }
+  private async pause(): Promise<void> {
+    await this.work.yieldControl();
+    this.check();
   }
 }
 async function merge<T>(
@@ -30,9 +32,31 @@ async function merge<T>(
   while (a < aEnd || b < bEnd) {
     const left = b >= bEnd || (a < aEnd && compare(required(values[a]), required(values[b])) <= 0);
     result.push(left ? required(values[a++]) : required(values[b++]));
-    await budget.step();
+    const pause = budget.step();
+    if (pause !== undefined) await pause;
   }
   return result;
+}
+async function append<T>(input: Iterable<T>, output: T[], budget: WorkBudget): Promise<void> {
+  for (const value of input) {
+    output.push(value);
+    const pause = budget.step();
+    if (pause !== undefined) await pause;
+  }
+}
+async function sortRuns<T>(
+  values: T[],
+  compare: (a: T, b: T) => number,
+  budget: WorkBudget,
+): Promise<void> {
+  for (let start = 0; start < values.length; start += 500) {
+    const run = values.slice(start, start + 500).sort(compare);
+    for (let i = 0; i < run.length; i++) {
+      values[start + i] = required(run[i]);
+      const pause = budget.step();
+      if (pause !== undefined) await pause;
+    }
+  }
 }
 export async function sorted<T>(
   input: Iterable<T>,
@@ -40,24 +64,12 @@ export async function sorted<T>(
   budget: WorkBudget,
 ): Promise<T[]> {
   let values: T[] = [];
-  for (const value of input) {
-    values.push(value);
-    await budget.step();
-  }
-  for (let start = 0; start < values.length; start += 500) {
-    const run = values.slice(start, start + 500).sort(compare);
-    for (let i = 0; i < run.length; i++) {
-      values[start + i] = required(run[i]);
-      await budget.step();
-    }
-  }
+  await append(input, values, budget);
+  await sortRuns(values, compare, budget);
   for (let width = 500; width < values.length; width *= 2) {
     const next: T[] = [];
     for (let start = 0; start < values.length; start += width * 2) {
-      for (const value of await merge(values, { start, width }, compare, budget)) {
-        next.push(value);
-        await budget.step();
-      }
+      await append(await merge(values, { start, width }, compare, budget), next, budget);
     }
     values = next;
   }

@@ -507,7 +507,8 @@ segments and circular-hour arithmetic; range updates aggregate long intervals wi
 expansion. Owner changes sweep all physical owners before scope. Dependency ranking uses direct
 active degrees; iterative graph diagnostics and one selected downstream traversal avoid per-node
 transitive closures. Normalization, calendar discovery, sorting and cold aggregation share a
-cancellable yielding work port.
+cancellable yielding work port. Sorting awaits only real owner pauses, preserving the
+1,000-operation yield budget and per-operation cancellation checks without a promise per item.
 
 Dependency focus is eligible only while its live active prerequisite has scoped waiting dependents;
 changed observations recover to the first eligible prerequisite or an empty ranking. Transient Back
