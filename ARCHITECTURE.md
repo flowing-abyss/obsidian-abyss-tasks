@@ -616,11 +616,12 @@ Section captions and empty messages remain model data; concise view help belongs
 The session cache and scoped coverage include the effective project status filter.
 Statistics content, figure and Results scrollers reserve stable scrollbar space.
 
-[`THIRD_PARTY_NOTICES.txt`](THIRD_PARTY_NOTICES.txt) retains the pinned runtime license inventory,
-including MiniSearch and the chart dependencies retained by the adapter's bundle analysis. The esbuild
-banner embeds those original notices in development and production `main.js`; their bytes remain
-inside the existing build/release budget checks. Artifact tests assert the installed texts and the
-exact approved package roster. The plugin's own license remains separate.
+[`esbuild.config.mjs`](esbuild.config.mjs) reads the original license files from the installed runtime
+dependencies, including MiniSearch and the chart dependencies retained by the adapter's bundle
+analysis. The build resolves packages through their owning dependencies and embeds their notices in
+development and production `main.js`, without a separate checked-in copy. Their bytes remain inside
+the existing build/release budget checks. Artifact tests build without a standalone notices file and
+assert the installed texts and exact approved package roster. The plugin's own license remains separate.
 
 ### Creation, transfer, and tags
 

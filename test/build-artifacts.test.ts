@@ -213,7 +213,7 @@ describe('production JavaScript artifact', () => {
 
   beforeAll(() => {
     directory = mkdtempSync(path.join(tmpdir(), 'abyss-production-artifact-'));
-    for (const file of ['src', 'tsconfig.json', 'THIRD_PARTY_NOTICES.txt']) {
+    for (const file of ['src', 'tsconfig.json']) {
       symlinkSync(path.join(root, file), path.join(directory, file));
     }
     writeFileSync(
@@ -230,6 +230,7 @@ describe('production JavaScript artifact', () => {
     );
     buildStatus = result.status;
     buildError = result.stderr;
+    expect(buildStatus, buildError).toBe(0);
     code = readFileSync(path.join(directory, 'main.js'), 'utf8');
   }, CHILD_PROCESS_TIMEOUT_MS);
 
@@ -238,7 +239,7 @@ describe('production JavaScript artifact', () => {
     delete (window as unknown as Record<string, unknown>)['renderCalendar'];
   });
 
-  it('builds the complete plugin within the shared release budget', () => {
+  it('builds without a separate notices file within the shared release budget', () => {
     const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')) as {
       release: { mainJsBudgetBytes: number };
     };
@@ -257,9 +258,7 @@ describe('production JavaScript artifact', () => {
       'node_modules/rrule/LICENCE',
     ])
       expect(code.includes(readFileSync(path.join(root, file), 'utf8').trim()), file).toBe(true);
-    const notices = readFileSync(path.join(root, 'THIRD_PARTY_NOTICES.txt'), 'utf8');
-    expect(code.includes(notices.trim())).toBe(true);
-    expect([...notices.matchAll(/^Package: (.+)$/gm)].map((match) => match[1])).toEqual([
+    expect([...code.matchAll(/^Package: (.+)$/gm)].map((match) => match[1])).toEqual([
       '@tanstack/charts@1.0.0',
       'd3-array@3.2.4',
       'd3-scale@4.0.2',

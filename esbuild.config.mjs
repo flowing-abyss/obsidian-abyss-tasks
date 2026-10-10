@@ -1,7 +1,8 @@
 import esbuild from 'esbuild';
-import { appendFileSync, readFileSync } from 'node:fs';
-import { builtinModules } from 'node:module';
+import { appendFileSync, existsSync, readFileSync } from 'node:fs';
+import { builtinModules, createRequire } from 'node:module';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import process from 'process';
 
 // Shared with release-check.mjs, which re-checks the same threshold against an
@@ -18,7 +19,18 @@ import process from 'process';
 const { mainJsBudgetBytes: MAIN_JS_BUDGET_BYTES } = JSON.parse(
   readFileSync('package.json', 'utf8'),
 ).release;
-const thirdPartyNotices = readFileSync('THIRD_PARTY_NOTICES.txt', 'utf8').trim();
+const chartsEntry = fileURLToPath(import.meta.resolve('@tanstack/charts'));
+const chartsRequire = createRequire(chartsEntry);
+const arrayRequire = createRequire(chartsRequire.resolve('d3-array'));
+const thirdPartyNotices = [
+  dependencyNotice('@tanstack/charts', chartsEntry, 'LICENSE'),
+  dependencyNotice('d3-array', chartsRequire.resolve('d3-array'), 'LICENSE'),
+  dependencyNotice('d3-scale', chartsRequire.resolve('d3-scale'), 'LICENSE'),
+  dependencyNotice('d3-shape', chartsRequire.resolve('d3-shape'), 'LICENSE'),
+  dependencyNotice('internmap', arrayRequire.resolve('internmap'), 'LICENSE'),
+  dependencyNotice('minisearch', fileURLToPath(import.meta.resolve('minisearch')), 'LICENSE.txt'),
+  dependencyNotice('rrule', fileURLToPath(import.meta.resolve('rrule')), 'LICENCE'),
+].join('\n\n\n');
 if (thirdPartyNotices.length === 0 || thirdPartyNotices.includes('*/')) {
   throw new Error('Third-party notices must be nonempty and safe to embed in a JavaScript comment');
 }
@@ -137,5 +149,23 @@ function checkSizeBudget(metafile) {
         'Check for an accidentally-bundled dependency, or raise the budget deliberately.',
     );
     process.exit(1);
+  }
+}
+
+function dependencyNotice(name, entry, licenseFile) {
+  let directory = path.dirname(entry);
+  while (true) {
+    const manifest = path.join(directory, 'package.json');
+    if (existsSync(manifest)) {
+      const pkg = JSON.parse(readFileSync(manifest, 'utf8'));
+      if (pkg.name === name) {
+        const license = readFileSync(path.join(directory, licenseFile), 'utf8').trim();
+        if (license.length === 0) throw new Error(`The installed license for ${name} is empty`);
+        return `Package: ${name}@${pkg.version}\nLicense: ${pkg.license}\n${'-'.repeat(72)}\n\n${license}`;
+      }
+    }
+    const parent = path.dirname(directory);
+    if (parent === directory) throw new Error(`Cannot locate the installed package ${name}`);
+    directory = parent;
   }
 }
