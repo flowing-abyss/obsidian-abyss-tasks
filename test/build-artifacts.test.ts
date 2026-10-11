@@ -14,6 +14,7 @@ const loadNodeTools = async () => {
     import('node:os'),
     import('node:path'),
     import('node:vm'),
+    import('node:buffer'),
   ]);
 };
 const [
@@ -22,6 +23,7 @@ const [
   { tmpdir },
   path,
   { compileFunction },
+  { Blob: RuntimeBlob },
 ] = await loadNodeTools();
 
 useRealMoment();
@@ -87,6 +89,7 @@ const privateOwners = new Set([
   'CaptureSurface',
   'CaptureTargetResolver',
   'TaskSearch',
+  'TaskSearchService',
 ]);
 
 function privateOwner(node: ts.Node): string | undefined {
@@ -203,6 +206,21 @@ function lookbehindOpeners(code: string): string[] {
   return [...code.matchAll(/\(\?<[=!]/gu)].map((match) =>
     code.slice(Math.max(0, match.index - 40), match.index + 40),
   );
+}
+
+function loadArtifact(code: string): typeof TaskCalendarPlugin {
+  type LoadedModule = { exports: { default: typeof TaskCalendarPlugin } };
+  const module = { exports: {} } as LoadedModule;
+  const execute = compileFunction(code, ['module', 'exports', 'require']) as (
+    module: LoadedModule,
+    exports: LoadedModule['exports'],
+    require: (id: string) => typeof obsidian,
+  ) => void;
+  execute(module, module.exports, (id) => {
+    if (id !== 'obsidian') throw new Error(`Unexpected runtime dependency: ${id}`);
+    return obsidian;
+  });
+  return module.exports.default;
 }
 
 describe('production JavaScript artifact', () => {
@@ -404,17 +422,7 @@ describe('production JavaScript artifact', () => {
   });
 
   it('loads the actual CommonJS artifact through the Obsidian entry point', async () => {
-    type LoadedModule = { exports: { default: typeof TaskCalendarPlugin } };
-    const module = { exports: {} } as LoadedModule;
-    const execute = compileFunction(code, ['module', 'exports', 'require']) as (
-      module: LoadedModule,
-      exports: LoadedModule['exports'],
-      require: (id: string) => typeof obsidian,
-    ) => void;
-    execute(module, module.exports, (id) => {
-      if (id !== 'obsidian') throw new Error(`Unexpected runtime dependency: ${id}`);
-      return obsidian;
-    });
+    const Plugin = loadArtifact(code);
     const app = appWithFiles({});
     // Obsidian installs the plugin directory before loading its entry point.
     await app.vault.adapter.mkdir(`${app.vault.configDir}/plugins/abyss-tasks`);
@@ -425,7 +433,7 @@ describe('production JavaScript artifact', () => {
       },
       'constructor__',
     );
-    const plugin = new module.exports.default(app, {
+    const plugin = new Plugin(app, {
       id: 'abyss-tasks',
       name: 'Abyss Tasks',
       author: 'Fixture',
@@ -444,5 +452,112 @@ describe('production JavaScript artifact', () => {
     } finally {
       plugin.onunload();
     }
+  });
+
+  it('searches and hydrates real tasks and explicitly retires a minified plugin cursor', async () => {
+    const urls = new Map<string, Blob>();
+    const workerErrors: unknown[] = [];
+    const executeBlob = async (blob: Blob, scope: unknown): Promise<void> => {
+      const source = await blob.text();
+      const executeWorker = compileFunction(source, ['self']) as (scope: unknown) => void;
+      executeWorker(scope);
+    };
+    // Supply browser transport APIs; execute the actual Blob/embedded worker, including replies.
+    vi.stubGlobal('Blob', RuntimeBlob);
+    vi.stubGlobal(
+      'URL',
+      class extends URL {
+        static override createObjectURL(blob: Blob): string {
+          const url = `blob:artifact-${urls.size}`;
+          urls.set(url, blob);
+          return url;
+        }
+        static override revokeObjectURL(url: string): void {
+          urls.delete(url);
+        }
+      },
+    );
+    vi.stubGlobal(
+      'Worker',
+      class {
+        onmessage: ((event: { data: unknown }) => void) | undefined;
+        private terminated = false;
+        private readonly scope = {
+          onmessage: undefined as ((event: { data: unknown }) => void) | undefined,
+          postMessage: (data: unknown): void => {
+            if (!this.terminated) this.onmessage?.({ data: structuredClone(data) });
+          },
+        };
+        private ready: Promise<void> | undefined;
+        constructor(private readonly url: string) {}
+        postMessage(data: unknown): void {
+          this.ready ??= executeBlob(expectDefined(urls.get(this.url)), this.scope);
+          const message = structuredClone(data);
+          void this.ready
+            .then(() => {
+              if (!this.terminated) this.scope.onmessage?.({ data: message });
+            })
+            .catch((error: unknown) => {
+              workerErrors.push(error);
+            });
+        }
+        terminate(): void {
+          this.terminated = true;
+          this.scope.onmessage = undefined;
+        }
+      },
+    );
+    const Plugin = loadArtifact(code);
+    const app = appWithFiles({
+      'artifact.md': '- [ ] needle artifact\n- [ ] unrelated\n',
+    });
+    await app.vault.adapter.mkdir(`${app.vault.configDir}/plugins/abyss-tasks`);
+    const workspace = app.workspace as unknown as {
+      layoutReady: boolean;
+      setLayoutReady__(): void;
+    };
+    workspace.layoutReady = false;
+    const plugin = new Plugin(app, {
+      id: 'abyss-tasks',
+      name: 'Abyss Tasks',
+      author: 'Fixture',
+      version: '1.0.0',
+      minAppVersion: '1.0.0',
+      description: 'Nonempty production search artifact test',
+    });
+    const controller = new AbortController();
+    let cursor: Awaited<ReturnType<TaskCalendarPlugin['search']['open']>> | undefined;
+    const states: string[] = [];
+    let unsubscribe: (() => void) | undefined;
+    try {
+      await plugin.onload();
+      workspace.setLayoutReady__();
+      unsubscribe = plugin.search.subscribe((state) => states.push(state.phase));
+      await plugin.search.prepare(controller.signal);
+      cursor = await plugin.search.open({ kind: 'nodes', query: 'needle' }, controller.signal);
+      expect(cursor).toMatchObject({ kind: 'nodes', access: 'random', total: 1 });
+      const batch = await plugin.search.read(cursor, 0, 1, controller.signal);
+      expect(batch.hits).toHaveLength(1);
+      expect(batch.hits[0]?.address).toMatchObject({ childLines: [] });
+      const hydrated = await plugin.search.resolveHits(batch.hits, controller.signal);
+      expect(hydrated).toHaveLength(1);
+      expect(hydrated[0]?.task.node.title).toBe('needle artifact');
+      expect(hydrated[0]?.task.root.ref.filePath).toBe('artifact.md');
+      // Random-access cursors stay alive after exhaustion, so release is observable here.
+      expect((await plugin.search.read(cursor, 0, 1, controller.signal)).hits).toEqual(batch.hits);
+      plugin.search.release(cursor);
+      await expect(plugin.search.read(cursor, 0, 1, controller.signal)).rejects.toMatchObject({
+        code: 'cursor-expired',
+      });
+      expect(states).toContain('ready');
+    } finally {
+      if (cursor !== undefined) plugin.search.release(cursor);
+      controller.abort();
+      unsubscribe?.();
+      plugin.onunload();
+      vi.unstubAllGlobals();
+    }
+    expect(workerErrors).toEqual([]);
+    expect(urls.size).toBe(0);
   });
 });
