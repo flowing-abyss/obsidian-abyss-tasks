@@ -1,5 +1,6 @@
 import { replaceUnlessPreceded } from '../markdown/precedingCodePoint';
 import type { TaskSnapshot } from '../tasks';
+import { replaceGhostTitleBackticks } from './ghostTitleBackticks';
 
 // Pair content never ends in a backslash: its last character class excludes it, and for inline
 // pairs also the line terminators that `.` excludes. Group 3 is an escaped inline delimiter, which
@@ -25,7 +26,11 @@ export function plainGhostTaskTitle(task: TaskSnapshot): string {
     let previous: string;
     do {
       previous = text;
-      text = text.replace(PAIRED_INLINE_DELIMITER_RE, '$2$3');
+      // With only single ticks, the original opener has no alternative widths to retry.
+      // Multiple ticks need an index to avoid retrying impossible widths against the suffix.
+      text = /`{2}/u.test(text)
+        ? replaceGhostTitleBackticks(text)
+        : text.replace(PAIRED_INLINE_DELIMITER_RE, '$2$3');
       text = replaceUnlessPreceded(PAIRED_EMPHASIS_RE, text, isEmphasisNeighbor, pairContent);
     } while (text !== previous);
   }

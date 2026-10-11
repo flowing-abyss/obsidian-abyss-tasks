@@ -64,6 +64,21 @@ describe('bounded actual-module regex probes', () => {
     CHILD_PROCESS_TIMEOUT_MS,
   );
 
+  it(
+    'bounds bare, unequal and escaped backtick runs with exact ghost titles',
+    async () => {
+      const result = await runRegexScenario('ghost');
+      expect(result.outputs).toEqual(
+        [4000, 16000].map(() =>
+          JSON.stringify(['', '`', 'leftright', 'a', '`a', 'a`', '``', '`', '`a`', 'a`']),
+        ),
+      );
+      expectNormalizedSamples(result);
+      expect(medianFourfoldRatio(result.samples)).toBeLessThan(8);
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
+
   it('rejects quadratic per-operation cost even when adaptive batches take equal CPU', () => {
     const samples = [
       { size: 4000, cpuMs: 0.125, iterations: 64, elapsedCpuMs: 8 },

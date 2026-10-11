@@ -61,8 +61,14 @@ const operations: Readonly<Record<RegexScenario, string>> = {
     const makeInput = size => '[a]('.repeat(size);
     const operation = input => collapseLinks(input);`,
   ghost: `import { plainGhostTaskTitle } from './src/ui/plainGhostTaskTitle.ts';
-    const makeInput = size => ({title: '\\x60'.repeat(size)});
-    const operation = input => plainGhostTaskTitle(input);`,
+    const makeInput = size => {
+      const ticks = '\\x60'.repeat(size);
+      return [ticks, ticks + '\\x60', 'left' + ticks + 'right', ticks + 'a' + ticks,
+        ticks + 'a' + ticks.slice(1), ticks.slice(1) + 'a' + ticks,
+        '\\\\' + ticks, '\\\\' + ticks + '\\x60', ticks + 'a\\\\' + ticks,
+        ticks + 'a\\\\' + ticks + '\\x60'].map(title => ({title}));
+    };
+    const operation = input => JSON.stringify(input.map(plainGhostTaskTitle));`,
 };
 
 /** Bundle current production modules, never a copied regex or same-thread timeout wrapper. */

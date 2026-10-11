@@ -48,6 +48,34 @@ describe('plainGhostTaskTitle', () => {
   });
 
   it.each([
+    ['empty even run', '````````', ''],
+    ['odd run', '```````', '`'],
+    ['run with prefix', 'left````', 'left'],
+    ['run with suffix', '`````right', '`right'],
+    ['equal runs', '````a````', 'a'],
+    ['shorter closing run', '````a```', '`a'],
+    ['longer closing run', '```a````', 'a`'],
+    ['embedded shorter run', '``a`b``', 'a`b'],
+    ['escaped even run', '\\````', '``'],
+    ['escaped odd run', '\\`````', '`'],
+    ['even escape parity', '\\\\````', '\\``'],
+    ['escaped closer prefix', '````a\\````', '`a`'],
+    ['escaped longer closer', '````a\\`````', 'a`'],
+    ['later unescaped closer', '``a\\`` b``', 'a`` b'],
+    ['line separator boundary', `\`\`a${LINE_SEPARATOR}b\`\``, `a${LINE_SEPARATOR}b`],
+    [
+      'paragraph separator boundary',
+      `\`a${PARAGRAPH_SEPARATOR}b\``,
+      `\`a${PARAGRAPH_SEPARATOR}b\``,
+    ],
+    ['nested code and strong', '**`a`**', 'a'],
+    ['code exposes strike on a later pass', '`~~a~~`', 'a'],
+    ['strong exposes code on a later pass', '``**a**``', 'a'],
+  ])('preserves %s', (_case, title, expected) => {
+    expect(plainGhostTaskTitle(task({ title }))).toBe(expected);
+  });
+
+  it.each([
     ['escaped strong openers', '\\** '],
     ['escaped code openers', '\\` '],
   ])('stays linear on many %s', (_case, unit) => {
