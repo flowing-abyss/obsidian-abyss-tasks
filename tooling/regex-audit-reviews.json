@@ -14,7 +14,7 @@
     },
     "sourceHash": "86bb1e51c18c2394539ef3873ece4e4bd6f98530a819bdb264c7c7547e410e63",
     "guards": {
-      "test/regex-audit.test.ts": "2a260caf91e3b36ffdce0a17f427dd59101ec8de7de5838ff827cf51174b20ab"
+      "test/regex-audit.test.ts": "8429bc3b0bb1cda75102e751e47ab652a1416d1488c42d093b758d5169a4da60"
     },
     "analyzer": {
       "regexp": "3.3.1",
@@ -62,7 +62,7 @@
     },
     "sourceHash": "86bb1e51c18c2394539ef3873ece4e4bd6f98530a819bdb264c7c7547e410e63",
     "guards": {
-      "test/regex-audit.test.ts": "2a260caf91e3b36ffdce0a17f427dd59101ec8de7de5838ff827cf51174b20ab",
+      "test/regex-audit.test.ts": "8429bc3b0bb1cda75102e751e47ab652a1416d1488c42d093b758d5169a4da60",
       "src/markdown/inlineCode.ts": "b3574f0900f7467ce11de9cf4854c39882289bc716922d2f4a8f5f6b728bec7c"
     },
     "analyzer": {
@@ -111,7 +111,7 @@
     },
     "sourceHash": "86bb1e51c18c2394539ef3873ece4e4bd6f98530a819bdb264c7c7547e410e63",
     "guards": {
-      "test/regex-audit.test.ts": "2a260caf91e3b36ffdce0a17f427dd59101ec8de7de5838ff827cf51174b20ab",
+      "test/regex-audit.test.ts": "8429bc3b0bb1cda75102e751e47ab652a1416d1488c42d093b758d5169a4da60",
       "src/markdown/inlineCode.ts": "b3574f0900f7467ce11de9cf4854c39882289bc716922d2f4a8f5f6b728bec7c"
     },
     "analyzer": {
@@ -160,7 +160,7 @@
     },
     "sourceHash": "ed6f98907cbd8262d63a062f5b16bf1c52e38188ea8c2dd46144d0d8342f18f6",
     "guards": {
-      "test/regex-audit.test.ts": "2a260caf91e3b36ffdce0a17f427dd59101ec8de7de5838ff827cf51174b20ab"
+      "test/regex-audit.test.ts": "8429bc3b0bb1cda75102e751e47ab652a1416d1488c42d093b758d5169a4da60"
     },
     "analyzer": {
       "regexp": "3.3.1",
@@ -208,7 +208,7 @@
     },
     "sourceHash": "ed6f98907cbd8262d63a062f5b16bf1c52e38188ea8c2dd46144d0d8342f18f6",
     "guards": {
-      "test/regex-audit.test.ts": "2a260caf91e3b36ffdce0a17f427dd59101ec8de7de5838ff827cf51174b20ab"
+      "test/regex-audit.test.ts": "8429bc3b0bb1cda75102e751e47ab652a1416d1488c42d093b758d5169a4da60"
     },
     "analyzer": {
       "regexp": "3.3.1",
@@ -256,7 +256,7 @@
     },
     "sourceHash": "2c1b42c281344db4c06d004cbcd5f5f65aa43aae27b09e86d88018b12735b41c",
     "guards": {
-      "test/regex-audit.test.ts": "2a260caf91e3b36ffdce0a17f427dd59101ec8de7de5838ff827cf51174b20ab"
+      "test/regex-audit.test.ts": "8429bc3b0bb1cda75102e751e47ab652a1416d1488c42d093b758d5169a4da60"
     },
     "analyzer": {
       "regexp": "3.3.1",
@@ -304,7 +304,7 @@
     },
     "sourceHash": "555367e4914e99491e671d9b2ece62ec3d40dfdac84bf37adfb2a994397ca3b6",
     "guards": {
-      "test/regex-audit.test.ts": "2a260caf91e3b36ffdce0a17f427dd59101ec8de7de5838ff827cf51174b20ab",
+      "test/regex-audit.test.ts": "8429bc3b0bb1cda75102e751e47ab652a1416d1488c42d093b758d5169a4da60",
       "src/tasks/domain/taskLineAtomicRanges.ts": "2c1b42c281344db4c06d004cbcd5f5f65aa43aae27b09e86d88018b12735b41c",
       "src/tasks/domain/precedingCodePoint.ts": "0af685ac951cf133bff98c45f71f6b3d52ca5e87a63d92d9dee32be3a022f528"
     },
@@ -354,7 +354,7 @@
     },
     "sourceHash": "ecc69ca3a323567254552a82f9f5e652af52e308974355c12c7e757a18824df1",
     "guards": {
-      "test/regex-audit.test.ts": "2a260caf91e3b36ffdce0a17f427dd59101ec8de7de5838ff827cf51174b20ab",
+      "test/regex-audit.test.ts": "8429bc3b0bb1cda75102e751e47ab652a1416d1488c42d093b758d5169a4da60",
       "src/tasks/domain/taskLineSourceModel.ts": "555367e4914e99491e671d9b2ece62ec3d40dfdac84bf37adfb2a994397ca3b6",
       "src/markdown/links.ts": "86bb1e51c18c2394539ef3873ece4e4bd6f98530a819bdb264c7c7547e410e63"
     },
@@ -404,7 +404,7 @@
     },
     "sourceHash": "eaea7d6acf9dd9ceb4dcf2204ba0d50d38939ec6d5f347bc45acf19e8ac44183",
     "guards": {
-      "test/regex-audit.test.ts": "2a260caf91e3b36ffdce0a17f427dd59101ec8de7de5838ff827cf51174b20ab",
+      "test/regex-audit.test.ts": "8429bc3b0bb1cda75102e751e47ab652a1416d1488c42d093b758d5169a4da60",
       "src/ui/ghostTitleBackticks.ts": "03c7f6ab59efb939c3ae35b64d1bde75a7cbe300b2615517efde28e33c5a5403",
       "src/markdown/precedingCodePoint.ts": "6e4eb626734bf236a6ce8ff5269c48a087613a20d59731827402f6c683c1706c",
       "test/plain-ghost-task-title.test.ts": "be97599d9e07c52a1ba98869879d7dcf494027abefa883d1c78a3a5ff6427c5d",
@@ -461,7 +461,7 @@
     },
     "sourceHash": "eaea7d6acf9dd9ceb4dcf2204ba0d50d38939ec6d5f347bc45acf19e8ac44183",
     "guards": {
-      "test/regex-audit.test.ts": "2a260caf91e3b36ffdce0a17f427dd59101ec8de7de5838ff827cf51174b20ab",
+      "test/regex-audit.test.ts": "8429bc3b0bb1cda75102e751e47ab652a1416d1488c42d093b758d5169a4da60",
       "src/ui/ghostTitleBackticks.ts": "03c7f6ab59efb939c3ae35b64d1bde75a7cbe300b2615517efde28e33c5a5403",
       "src/markdown/precedingCodePoint.ts": "6e4eb626734bf236a6ce8ff5269c48a087613a20d59731827402f6c683c1706c",
       "test/plain-ghost-task-title.test.ts": "be97599d9e07c52a1ba98869879d7dcf494027abefa883d1c78a3a5ff6427c5d",

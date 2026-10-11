@@ -19,6 +19,81 @@ const loadTimers = async () => {
   return import('node:timers');
 };
 const { setTimeout, clearTimeout } = await loadTimers();
+const loadFileSystem = async () => {
+  if (!Platform.isDesktop) throw new Error('Regex audit tests require a desktop runtime');
+  return import('node:fs/promises');
+};
+const loadOperatingSystem = async () => {
+  if (!Platform.isDesktop) throw new Error('Regex audit tests require a desktop runtime');
+  return import('node:os');
+};
+const loadChildProcesses = async () => {
+  if (!Platform.isDesktop) throw new Error('Regex audit tests require a desktop runtime');
+  return import('node:child_process');
+};
+const { mkdtemp, readFile, rm } = await loadFileSystem();
+const { tmpdir } = await loadOperatingSystem();
+const { execFile } = await loadChildProcesses();
+const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+// A worker and solver model recheck's inherited stderr. Both self-exit as a RED-run failsafe.
+async function descendantFixture(inherit: boolean, action: string) {
+  const directory = await mkdtemp(`${tmpdir()}/abyss-regex-tree-`);
+  const marker = `${directory}/pids`;
+  const solver = `require('node:fs').appendFileSync(${JSON.stringify(marker)},process.pid+'\\n'); setTimeout(()=>{},4500);`;
+  const worker = `const {spawn}=require('node:child_process'); require('node:fs').appendFileSync(${JSON.stringify(marker)},process.pid+'\\n'); spawn(process.execPath,['-e',${JSON.stringify(solver)}],{stdio:['ignore','ignore',${JSON.stringify(inherit ? 'inherit' : 'ignore')}]}); setTimeout(()=>{},4500);`;
+  const code = `const {spawn}=require('node:child_process'); const fs=require('node:fs'); spawn(process.execPath,['-e',${JSON.stringify(worker)}],{stdio:['ignore','ignore',${JSON.stringify(inherit ? 'inherit' : 'ignore')}]}); const ready=setInterval(()=>{if(fs.existsSync(${JSON.stringify(marker)})&&fs.readFileSync(${JSON.stringify(marker)},'utf8').trim().split('\\n').length===2){clearInterval(ready);${action}}},5);`;
+  const pids = async () => (await readFile(marker, 'utf8')).trim().split('\n').map(Number);
+  return {
+    code,
+    pids,
+    async ready() {
+      const until = performance.now() + 3000;
+      while (performance.now() < until) {
+        try {
+          if ((await pids()).length === 2) return;
+        } catch (error) {
+          if ((error as { code?: string }).code !== 'ENOENT') throw error;
+        }
+        await pause(10);
+      }
+      throw new Error('Worker and solver did not start');
+    },
+    async cleanup() {
+      try {
+        for (const pid of await pids()) {
+          try {
+            process.kill(pid, 'SIGKILL');
+          } catch (error) {
+            if ((error as { code?: string }).code !== 'ESRCH') throw error;
+          }
+        }
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  };
+}
+
+async function expectDescendantsGone(pids: number[]) {
+  expect(pids).toHaveLength(2);
+  for (const pid of pids) {
+    await expect
+      .poll(
+        () => {
+          try {
+            process.kill(pid, 0);
+            return false;
+          } catch (error) {
+            if ((error as { code?: string }).code === 'ESRCH') return true;
+            throw error;
+          }
+        },
+        { timeout: 500 },
+      )
+      .toBe(true);
+  }
+}
 
 const finding = {
   file: 'src/example.ts',
@@ -143,6 +218,87 @@ describe('exact regex review policy', () => {
 });
 
 describe('real analyzer and bounded orchestration', () => {
+  it.each([
+    ['deadline', true, 'while(true){}'],
+    [
+      'output limit',
+      true,
+      "process.stdout.write('x'.repeat(10_000_001)); setTimeout(()=>{},4500);",
+    ],
+    [
+      'error output limit',
+      true,
+      "process.stderr.write('x'.repeat(1_000_001)); setTimeout(()=>{},4500);",
+    ],
+  ])(
+    'bounds %s cleanup despite worker and solver retaining stderr',
+    async (reason, inherit, action) => {
+      const fixture = await descendantFixture(inherit, action);
+      try {
+        const start = performance.now();
+        await expect(runBoundedChild(['-e', fixture.code], { deadlineMs: 1200 })).rejects.toThrow(
+          reason,
+        );
+        expect(performance.now() - start).toBeLessThan(2500);
+        await expectDescendantsGone(await fixture.pids());
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
+  it.each([false, true])(
+    'cancels the worker and solver with inherited stderr: %s',
+    async (inherit) => {
+      const fixture = await descendantFixture(inherit, 'while(true){}');
+      const abort = new AbortController();
+      const result = runBoundedChild(['-e', fixture.code], { signal: abort.signal });
+      const rejected = expect(result).rejects.toThrow('cancel');
+      try {
+        await fixture.ready();
+        const start = performance.now();
+        abort.abort();
+        await rejected;
+        expect(performance.now() - start).toBeLessThan(1500);
+        await expectDescendantsGone(await fixture.pids());
+      } finally {
+        abort.abort();
+        await rejected;
+        await fixture.cleanup();
+      }
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
+  it(
+    'exits an actual CLI nonzero within the deadline cleanup bound with inherited descendant pipes',
+    async () => {
+      const fixture = await descendantFixture(true, 'while(true){}');
+      const code = `import {runBoundedChild} from ${JSON.stringify(new URL('../tooling/regex-audit.mjs', import.meta.url).href)}; try {await runBoundedChild(['-e',${JSON.stringify(fixture.code)}],{deadlineMs:1200});}catch(error){console.error(error.message);process.exitCode=1;}`;
+      try {
+        const start = performance.now();
+        const result = await new Promise<{
+          code: number | string | null | undefined;
+          stderr: string;
+        }>((resolve) => {
+          execFile(
+            process.execPath,
+            ['--input-type=module', '-e', code],
+            { timeout: 7000 },
+            (error, _stdout, stderr) => {
+              resolve({ code: error?.code, stderr });
+            },
+          );
+        });
+        expect(result.code).toBe(1);
+        expect(result.stderr).toContain('analyzer hard deadline exceeded');
+        expect(performance.now() - start).toBeLessThan(2500);
+        await expectDescendantsGone(await fixture.pids());
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
   it(
     'reports a vulnerable literal, accepts a safe literal and exposes unsupported analysis',
     async () => {
