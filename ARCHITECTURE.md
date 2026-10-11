@@ -2006,8 +2006,23 @@ pnpm arch
 pnpm verify
 ```
 
-`pnpm verify` is the authoritative local, CI, and pre-push gate. `pnpm verify:task` is the fast
-iteration gate. Styles stay scoped to plugin-owned surfaces and use semantic host tokens.
+`pnpm verify` is the authoritative full quality gate. `pnpm verify:task` is the fast iteration
+gate. CI and pre-push use `pnpm run ci`, whose single selector lives in `tooling/verify-changes.mjs`.
+Only README, architecture documentation, LICENSE and semantic version-only metadata changes use
+formatting, official manifest/license lint and metadata checks. All other changes or uncertain Git
+history use the complete `verify` gate. Pushes compare every pushed commit; PRs compare their merge
+base; pre-push consumes every updated ref and rejects a commit outside the checked-out source.
+Local tracked and non-ignored untracked changes participate in the decision.
+
+Release preparation uses the previous reachable published stable release discovered through the
+existing GitHub CLI. Missing API access, tags or history falls back to full verification. The release
+route always builds fresh artifacts and checks shipped CSS and release-ready metadata; metadata-only
+validation cannot stand in for artifact checks. Official Obsidian preflight runs additionally on
+Node 24 with a pinned action, strict errors, project-owned lint/build, and PR mode even for tags.
+The existing workflow owns artifact attestation, the minified stylesheet and draft release creation.
+Independent Security workflow checks retain their own triggers, including scheduled audits.
+
+Styles stay scoped to plugin-owned surfaces and use semantic host tokens.
 The full gate includes source CSS, community review rules, and freshly built
 artifact CSS. UI changes also require native interaction, screenshots, DOM evidence, and captured
 runtime errors in `dev-vault-tasks`, including constrained widths when layout changes. Follow

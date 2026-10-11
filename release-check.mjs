@@ -8,6 +8,8 @@
 // Run standalone (`pnpm run release:check`) against already-generated release
 // artifacts, or as part of `pnpm run verify`, which builds main.js and generates
 // dist/styles.css before running this checker.
+// `--metadata-only` validates repository/version metadata without generated artifacts. It cannot
+// be combined with `--release-ready`, which requires fresh release artifacts.
 //
 // `--release-ready` additionally fails on unfilled template placeholders
 // (manifest.id/name/author/description, package.json's name, LICENSE's
@@ -21,6 +23,7 @@ import path from 'node:path';
 import process from 'node:process';
 
 const releaseReady = process.argv.includes('--release-ready');
+const metadataOnly = process.argv.includes('--metadata-only');
 
 const PLACEHOLDER_VALUES = {
   'manifest.json#id': 'your-id-here',
@@ -34,6 +37,11 @@ const PLACEHOLDER_VALUES = {
 // threshold — both read package.json#release.mainJsBudgetBytes so the two
 // checks can't silently drift apart.
 const errors = [];
+if (metadataOnly && releaseReady) {
+  errors.push(
+    '--metadata-only cannot be combined with --release-ready; release artifacts must be checked.',
+  );
+}
 const packageJson = readJsonFile('package.json');
 if (packageJson === null) errors.push('package.json is missing or not valid JSON.');
 const configuredMainJsBudget = packageJson?.release?.mainJsBudgetBytes;
@@ -65,8 +73,10 @@ const SEMVER_PATTERN = /^\d+\.\d+\.\d+$/;
 
 const manifest = checkManifest();
 checkVersionsConsistency(manifest);
-checkMainJs(manifest);
-checkStylesCss();
+if (!metadataOnly) {
+  checkMainJs(manifest);
+  checkStylesCss();
+}
 checkRequiredRepoFiles();
 checkPackageJsonVersion(manifest, packageJson);
 checkReleaseTag(manifest);
@@ -126,6 +136,22 @@ function checkVersionsConsistency(manifest) {
   if (versions === null) {
     errors.push('versions.json is missing or not valid JSON.');
     return;
+  }
+
+  if (typeof versions !== 'object' || Array.isArray(versions)) {
+    errors.push('versions.json must be an object mapping plugin versions to minimum app versions.');
+    return;
+  }
+  for (const [version, minimum] of Object.entries(versions)) {
+    if (
+      !SEMVER_PATTERN.test(version) ||
+      typeof minimum !== 'string' ||
+      !SEMVER_PATTERN.test(minimum)
+    ) {
+      errors.push(
+        `versions.json entry "${version}" must map a plain semver plugin version to a plain semver minimum app version.`,
+      );
+    }
   }
 
   const recordedMinAppVersion = versions[manifest.version];
@@ -219,6 +245,8 @@ function checkRequiredRepoFiles() {
   for (const file of ['README.md', 'LICENSE']) {
     if (!existsSync(file)) {
       errors.push(`${file} is missing — required for community-plugin submission.`);
+    } else if (readFileSync(file, 'utf8').trim().length === 0) {
+      errors.push(`${file} is empty — required for community-plugin submission.`);
     }
   }
 }

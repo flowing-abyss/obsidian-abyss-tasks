@@ -362,6 +362,7 @@ export default defineConfig(
       'tooling/check-css.mjs',
       'tooling/css-policy.mjs',
       'tooling/css-contracts.mjs',
+      'tooling/verify-changes.mjs',
     ],
     languageOptions: {
       globals: { ...globals.node },

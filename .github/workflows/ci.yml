@@ -22,6 +22,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Compare the complete push/PR, including commits before a final version bump.
+          fetch-depth: 0
       - name: Install pnpm
         uses: pnpm/action-setup@v6
       - name: Use Node.js ${{ matrix.node-version }}
@@ -30,7 +33,23 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
-      - run: pnpm run ci
+      - name: Verify changed content
+        id: verification
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: pnpm run ci
+      - name: Obsidian community preflight
+        if: matrix.node-version == '24.x'
+        uses: obsidianmd/obsidian-workflows@8167caed39664214d82c86fdfa32e06d8d55f61d # v1
+        with:
+          type: plugin
+          mode: pr
+          strict: 'true'
+          # Our gate owns lint and build; this action adds repository/metadata/bundle checks.
+          build: 'false'
+          lint: 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   commit-messages:
     name: Commit messages

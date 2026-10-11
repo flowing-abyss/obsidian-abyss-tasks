@@ -14,7 +14,8 @@ An Obsidian sidebar plugin that renders vault tasks in month, week, and list vie
 | `pnpm lint:store`              | Community directory review lint                |
 | `pnpm test`                    | Vitest unit suite                              |
 | `pnpm verify:task`             | Fast lint + CSS + types + architecture + tests |
-| `pnpm verify`                  | Canonical full local/CI/pre-push quality gate  |
+| `pnpm verify`                  | Canonical full quality gate                   |
+| `pnpm run ci`                  | Select full or documentation/version checks   |
 | `pnpm format` / `format:check` | Prettier                                       |
 | `pnpm deadcode`                | Knip unused code/dependencies                  |
 | `pnpm release patch`           | Verify, bump, commit, tag, and push a release  |
@@ -24,7 +25,7 @@ An Obsidian sidebar plugin that renders vault tasks in month, week, and list vie
 - Strict TypeScript. Prefer `async/await`.
 - Tests in `test/*.test.ts` use [obsidian-test-mocks](https://github.com/mnaoumov/obsidian-test-mocks) (auto-setup in `vitest.config.ts`).
 - Conventional commits enforced by commitlint + husky hooks.
-- `pnpm release` runs the canonical verification gate, updates `manifest.json` + `versions.json`, commits, tags with **no `v` prefix**, and pushes. **Never tag manually.** `manifest.json` `id` must stay `abyss-tasks`.
+- `pnpm release` runs scoped release preparation with fresh artifact checks, updates `manifest.json` + `versions.json`, commits, tags with **no `v` prefix**, and pushes. **Never tag manually.** `manifest.json` `id` must stay `abyss-tasks`.
 - Never disable, downgrade, bypass, or warn-only an applicable `eslint-plugin-obsidianmd` rule; fix the violation at its source. This includes runtime code, `manifest.json`, and `LICENSE`.
 - `docs/` is gitignored — local-only scratch space for plans/specs. **Never commit `docs/`.**
 - Presentation code imports task contracts from `src/tasks`; only `src/main.ts` wires concrete
@@ -33,8 +34,12 @@ An Obsidian sidebar plugin that renders vault tasks in month, week, and list vie
   parallel mechanism.
 - Fix dependency-cruiser and architecture-test violations at their source; never weaken a rule or
   add a blanket exception.
-- `pnpm verify` is the authoritative local, CI, and pre-push gate; `verify:task` is the fast
-  iteration gate. Keep source CSS checks and the post-build artifact CSS check in the full gate.
+- `pnpm verify` is the authoritative full gate; `verify:task` is the fast iteration gate. CI and
+  pre-push use `pnpm run ci` through `tooling/verify-changes.mjs`. Only explicitly allowed documentation
+  and semantic version-only metadata changes use light checks. Behavior, dependencies, tooling,
+  checks and uncertain history use full verification. Keep source CSS checks and the post-build
+  artifact CSS check in the full gate. Release mode always builds and checks fresh artifacts against
+  the previous reachable published stable release; missing release history or API access means full.
 - Text writes stay with the exact file/owner/API authorities in
   `test/architecture/storageAuthority.ts`. Presentation uses public commands. A new acquisition
   needs a narrow reason and accepting/rejecting coverage, not a blanket authorization.

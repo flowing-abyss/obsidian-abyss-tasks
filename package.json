@@ -9,7 +9,7 @@
     "dev": "node esbuild.config.mjs",
     "build": "pnpm typecheck && node esbuild.config.mjs production",
     "build:analyze": "pnpm typecheck && node esbuild.config.mjs production analyze",
-    "preversion": "pnpm run verify && node release-check.mjs --release-ready",
+    "preversion": "pnpm run ci --release",
     "version": "node version-bump.mjs && git add manifest.json versions.json",
     "postversion": "git push --follow-tags",
     "release": "pnpm version --tag-version-prefix ''",
@@ -33,7 +33,7 @@
     "verify:task": "pnpm lint && pnpm lint:css && pnpm typecheck && pnpm arch && pnpm test",
     "test:ai": "node --test \".ai/**/*.test.mjs\"",
     "verify": "pnpm format:check && pnpm lint && pnpm lint:css && pnpm lint:store && pnpm typecheck && pnpm arch && pnpm deadcode && pnpm test:ai && pnpm test:coverage && pnpm build && pnpm release:artifacts && pnpm lint:css:artifact && pnpm release:check && pnpm audit:dependencies",
-    "ci": "pnpm verify",
+    "ci": "node tooling/verify-changes.mjs",
     "prepare": "husky && node .ai/setup.mjs && pnpm run codegraph:setup",
     "lint:css:artifact": "node tooling/check-css.mjs --artifact dist/styles.css",
     "codegraph:setup": "node .ai/setup-codegraph.mjs"

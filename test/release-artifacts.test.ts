@@ -102,6 +102,81 @@ function writeAcceptedFixture(options: CheckerFixtureOptions = {}): void {
   writeFileSync(path.join(fixtureDirectory, 'dist/styles.css'), '.a{}\n');
 }
 
+describe('release metadata checks', () => {
+  it(
+    'validates metadata without requiring generated artifacts',
+    () => {
+      writeCheckerFixture(128);
+      rmSync(path.join(fixtureDirectory, 'main.js'));
+      const result = spawnSync(process.execPath, [CHECKER_PATH, '--metadata-only'], {
+        cwd: fixtureDirectory,
+        encoding: 'utf8',
+        env: withoutAmbientReleaseRef(process.env),
+      });
+      expect(result.status, result.stderr).toBe(0);
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
+
+  it(
+    'rejects malformed historical version keys',
+    () => {
+      writeAcceptedFixture();
+      writeFileSync(
+        path.join(fixtureDirectory, 'versions.json'),
+        '{"1.0.0":"1.0.0","not-a-version":"1.0.0"}',
+      );
+      const result = runScript(CHECKER_PATH);
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain('not-a-version');
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
+
+  it(
+    'rejects malformed historical minimum app versions',
+    () => {
+      writeAcceptedFixture();
+      writeFileSync(path.join(fixtureDirectory, 'versions.json'), '{"1.0.0":"1.0.0","0.9.0":12}');
+      const result = runScript(CHECKER_PATH);
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain('0.9.0');
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
+
+  it(
+    'rejects metadata-only mode combined with release-ready mode',
+    () => {
+      writeAcceptedFixture();
+      const result = spawnSync(
+        process.execPath,
+        [CHECKER_PATH, '--metadata-only', '--release-ready'],
+        {
+          cwd: fixtureDirectory,
+          encoding: 'utf8',
+          env: withoutAmbientReleaseRef(process.env),
+        },
+      );
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain('--metadata-only');
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
+
+  it.each(['README.md', 'LICENSE'])(
+    'rejects an empty required %s',
+    (file) => {
+      writeAcceptedFixture();
+      writeFileSync(path.join(fixtureDirectory, file), ' \n');
+      const result = runScript(CHECKER_PATH);
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(file);
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
+});
+
 describe('release stylesheet producer', () => {
   it.each(['environment', 'config-file discovery'])(
     'ignores ambient Browserslist %s when producing release bytes',
