@@ -31,10 +31,23 @@ jobs:
           cache: 'pnpm'
 
       - name: Verify and build plugin
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           pnpm install --frozen-lockfile
-          pnpm run ci
-          node release-check.mjs --release-ready
+          pnpm run ci --release
+
+      - name: Obsidian community preflight
+        uses: obsidianmd/obsidian-workflows@8167caed39664214d82c86fdfa32e06d8d55f61d # v1
+        with:
+          type: plugin
+          # Keep attestation, shipped dist/styles.css and draft creation in this workflow.
+          mode: pr
+          strict: 'true'
+          build: 'false'
+          lint: 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Attest build provenance
         if: ${{ !github.event.repository.private }}

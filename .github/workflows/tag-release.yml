@@ -1,0 +1,69 @@
+name: Tag merged patch release
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [master]
+
+concurrency:
+  group: tag-patch-release-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+jobs:
+  tag:
+    if: >-
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      # Execute only the trusted master helper, never code or artifacts from the triggering run.
+      - uses: actions/checkout@v7
+        with:
+          ref: master
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Identify verified release PR
+        id: candidate
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node tooling/release-automation.mjs candidate
+
+      - name: Create repository tag token
+        if: steps.candidate.outputs.sha != ''
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      - name: Create exact version tag
+        if: steps.candidate.outputs.sha != ''
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TOKEN: ${{ steps.app-token.outputs.token }}
+          CANDIDATE_SHA: ${{ steps.candidate.outputs.sha }}
+          RELEASE_VERSION: ${{ steps.candidate.outputs.version }}
+        run: node tooling/release-automation.mjs tag
+
+      - name: Summarize release tag
+        env:
+          RELEASE_VERSION: ${{ steps.candidate.outputs.version }}
+          RELEASE_SHA: ${{ steps.candidate.outputs.sha }}
+        run: |
+          if [ -n "$RELEASE_VERSION" ]; then
+            printf 'Verified patch release %s at %s\n' "$RELEASE_VERSION" "$RELEASE_SHA" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'This commit has no merged patch release PR.' >> "$GITHUB_STEP_SUMMARY"
+          fi

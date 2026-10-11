@@ -68,7 +68,7 @@ process.exit(${exitCode});
     assert.equal(git(repo, 'rev-parse', 'HEAD'), originalHead);
     assert.equal(result.status, exitCode, result.stderr);
     assert.deepEqual(JSON.parse(readFileSync(report, 'utf8')), {
-      args: ['verify'],
+      args: ['run', 'ci', '--pre-push'],
       root: foreign,
     });
   });

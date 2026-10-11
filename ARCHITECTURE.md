@@ -2006,8 +2006,38 @@ pnpm arch
 pnpm verify
 ```
 
-`pnpm verify` is the authoritative local, CI, and pre-push gate. `pnpm verify:task` is the fast
-iteration gate. Styles stay scoped to plugin-owned surfaces and use semantic host tokens.
+`pnpm verify` is the authoritative full quality gate. `pnpm verify:task` is the fast iteration
+gate. CI and pre-push use `pnpm run ci`, whose single selector lives in `tooling/verify-changes.mjs`.
+Only README, architecture documentation, LICENSE and semantic version-only metadata changes use
+formatting, official manifest/license lint and metadata checks. All other changes or uncertain Git
+history use the complete `verify` gate. Pushes compare every pushed commit; PRs compare their merge
+base; pre-push consumes every updated ref and rejects a commit outside the checked-out source.
+Local tracked and non-ignored untracked changes participate in the decision.
+
+Release preparation uses the previous reachable published stable release discovered through the
+existing GitHub CLI. Missing API access, tags or history falls back to full verification. The release
+route always builds fresh artifacts and checks shipped CSS and release-ready metadata; metadata-only
+validation cannot stand in for artifact checks. Official Obsidian preflight runs additionally on
+Node 24 with a pinned action, strict errors, project-owned lint/build, and PR mode even for tags.
+The existing workflow owns artifact attestation, the minified stylesheet and draft release creation.
+Independent Security workflow checks retain their own triggers, including scheduled audits.
+
+The manually dispatched `Prepare patch release` workflow runs from master and reuses
+`version-bump.mjs` to prepare only package, manifest and version-history changes in a PR from
+`abyss-automation`. It verifies the complete release scope and fresh artifacts before opening the
+PR. After that PR is merged, `Tag merged patch release` rechecks the exact successful master CI run
+through GitHub's API, the bot PR's complete file list, its merged commit and the semantic patch
+metadata. Its trusted master helper never checks out or executes the triggering run's code or
+artifacts. A repository-scoped App token creates an immutable plain version tag, which triggers the
+existing draft release workflow. Existing tags must resolve to that exact commit and are never
+rewritten. Repository configuration uses `RELEASE_APP_CLIENT_ID` and `RELEASE_APP_PRIVATE_KEY`;
+the short-lived tokens request only the contents/PR permissions needed by each operation.
+Preparation can recover a pushed branch whose PR was not created by validating its complete
+version-only diff and prepared metadata through Git objects, without checking out or rewriting the
+branch. Tag runs use a concurrency group per verified commit so unrelated CI completions cannot
+discard a pending release.
+
+Styles stay scoped to plugin-owned surfaces and use semantic host tokens.
 The full gate includes source CSS, community review rules, and freshly built
 artifact CSS. UI changes also require native interaction, screenshots, DOM evidence, and captured
 runtime errors in `dev-vault-tasks`, including constrained widths when layout changes. Follow
