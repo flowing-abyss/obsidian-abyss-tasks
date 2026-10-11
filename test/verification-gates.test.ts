@@ -96,6 +96,16 @@ describe('verification gates', () => {
   );
 
   it(
+    'stops the full gate when reviewed regex analysis fails',
+    () => {
+      const result = runGate(scripts['verify'] ?? '', 'lint:regex');
+      expect(result.status).not.toBe(0);
+      expect(result.commands).toEqual(['format:check', 'lint', 'lint:regex']);
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
+
+  it(
     'stops the full gate when the Store review lint fails',
     () => {
       const result = runGate(scripts['verify'] ?? '', 'lint:store');
@@ -128,6 +138,7 @@ describe('verification gates', () => {
       expect(result.commands).toEqual([
         'format:check',
         'lint',
+        'lint:regex',
         'lint:css',
         'lint:store',
         'typecheck',

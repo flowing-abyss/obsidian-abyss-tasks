@@ -1,0 +1,506 @@
+[
+  {
+    "finding": {
+      "file": "src/markdown/links.ts",
+      "line": 7,
+      "column": 20,
+      "endLine": 7,
+      "endColumn": 48,
+      "ruleId": "redos/no-vulnerable",
+      "messageId": "",
+      "message": "Found a ReDoS vulnerable RegExp (2nd degree polynomial).",
+      "raw": "const MD_LINK_RE = /\\[([^[\\]]+)\\]\\(([^)]+)\\)/gu;",
+      "unproven": false
+    },
+    "sourceHash": "86bb1e51c18c2394539ef3873ece4e4bd6f98530a819bdb264c7c7547e410e63",
+    "guards": {
+      "test/regex-audit.test.ts": "2a260caf91e3b36ffdce0a17f427dd59101ec8de7de5838ff827cf51174b20ab"
+    },
+    "analyzer": {
+      "regexp": "3.3.1",
+      "redos": "4.5.0",
+      "options": {
+        "regexp/no-super-linear-backtracking": {
+          "report": "certain"
+        },
+        "regexp/no-super-linear-move": {
+          "report": "certain"
+        },
+        "redos/no-vulnerable": {
+          "timeout": 1000,
+          "cache": false,
+          "ignoreErrors": false
+        }
+      }
+    },
+    "disposition": "context-protected",
+    "reason": "collapseLinks first scopes MD_LINK_RE to the prefix ending at the last literal closing parenthesis and appends the untouched suffix. With no closer the regex receives an empty string; otherwise the first eligible destination can consume through a closer. Non-overlapping bracket labels prevent overlapping candidate rescans. The reviewed missing-closer family is bounded through the real legacy caller; this is not a universal safety claim for the entire parser.",
+    "tests": {
+      "accepting": [
+        "test/regex-audit.test.ts > accepts closed Markdown links through all audited public paths"
+      ],
+      "rejecting": [
+        "test/regex-audit.test.ts > rejects missing or escaped final Markdown closers through all audited public paths"
+      ],
+      "performance": [
+        "test/regex-audit.test.ts > bounds guarded missing-closer work through all audited public link paths"
+      ]
+    }
+  },
+  {
+    "finding": {
+      "file": "src/markdown/links.ts",
+      "line": 239,
+      "column": 7,
+      "endLine": 239,
+      "endColumn": 72,
+      "ruleId": "redos/no-vulnerable",
+      "messageId": "",
+      "message": "Found a ReDoS vulnerable RegExp (2nd degree polynomial).",
+      "raw": "    ? /!?\\[((?:[^\\\\[\\]]|\\\\[^])*)\\]\\(((?:[^\\\\)]|\\\\[^])+)\\)|(\\\\[\\\\[!])/gu",
+      "unproven": false
+    },
+    "sourceHash": "86bb1e51c18c2394539ef3873ece4e4bd6f98530a819bdb264c7c7547e410e63",
+    "guards": {
+      "test/regex-audit.test.ts": "2a260caf91e3b36ffdce0a17f427dd59101ec8de7de5838ff827cf51174b20ab",
+      "src/markdown/inlineCode.ts": "b3574f0900f7467ce11de9cf4854c39882289bc716922d2f4a8f5f6b728bec7c"
+    },
+    "analyzer": {
+      "regexp": "3.3.1",
+      "redos": "4.5.0",
+      "options": {
+        "regexp/no-super-linear-backtracking": {
+          "report": "certain"
+        },
+        "regexp/no-super-linear-move": {
+          "report": "certain"
+        },
+        "redos/no-vulnerable": {
+          "timeout": 1000,
+          "cache": false,
+          "ignoreErrors": false
+        }
+      }
+    },
+    "disposition": "context-protected",
+    "reason": "parseLinks and parseSourceReferences pass only markdownLinkScope, ending at the last unescaped closing parenthesis; no closer yields an empty string. The label/destination escape alternatives are disjoint and every accepted global match consumes nonempty input. The two occurrences intentionally differ in empty-image-label acceptance; tests exercise both and reject escaped/missing final closers. The reviewed scope is this exact literal and guard, not every scanner in the module.",
+    "tests": {
+      "accepting": [
+        "test/regex-audit.test.ts > accepts closed Markdown links through all audited public paths"
+      ],
+      "rejecting": [
+        "test/regex-audit.test.ts > rejects missing or escaped final Markdown closers through all audited public paths"
+      ],
+      "performance": [
+        "test/regex-audit.test.ts > bounds guarded missing-closer work through all audited public link paths"
+      ]
+    }
+  },
+  {
+    "finding": {
+      "file": "src/markdown/links.ts",
+      "line": 240,
+      "column": 7,
+      "endLine": 240,
+      "endColumn": 72,
+      "ruleId": "redos/no-vulnerable",
+      "messageId": "",
+      "message": "Found a ReDoS vulnerable RegExp (2nd degree polynomial).",
+      "raw": "    : /!?\\[((?:[^\\\\[\\]]|\\\\[^])+)\\]\\(((?:[^\\\\)]|\\\\[^])+)\\)|(\\\\[\\\\[!])/gu;",
+      "unproven": false
+    },
+    "sourceHash": "86bb1e51c18c2394539ef3873ece4e4bd6f98530a819bdb264c7c7547e410e63",
+    "guards": {
+      "test/regex-audit.test.ts": "2a260caf91e3b36ffdce0a17f427dd59101ec8de7de5838ff827cf51174b20ab",
+      "src/markdown/inlineCode.ts": "b3574f0900f7467ce11de9cf4854c39882289bc716922d2f4a8f5f6b728bec7c"
+    },
+    "analyzer": {
+      "regexp": "3.3.1",
+      "redos": "4.5.0",
+      "options": {
+        "regexp/no-super-linear-backtracking": {
+          "report": "certain"
+        },
+        "regexp/no-super-linear-move": {
+          "report": "certain"
+        },
+        "redos/no-vulnerable": {
+          "timeout": 1000,
+          "cache": false,
+          "ignoreErrors": false
+        }
+      }
+    },
+    "disposition": "context-protected",
+    "reason": "parseLinks and parseSourceReferences pass only markdownLinkScope, ending at the last unescaped closing parenthesis; no closer yields an empty string. The label/destination escape alternatives are disjoint and every accepted global match consumes nonempty input. The two occurrences intentionally differ in empty-image-label acceptance; tests exercise both and reject escaped/missing final closers. The reviewed scope is this exact literal and guard, not every scanner in the module.",
+    "tests": {
+      "accepting": [
+        "test/regex-audit.test.ts > accepts closed Markdown links through all audited public paths"
+      ],
+      "rejecting": [
+        "test/regex-audit.test.ts > rejects missing or escaped final Markdown closers through all audited public paths"
+      ],
+      "performance": [
+        "test/regex-audit.test.ts > bounds guarded missing-closer work through all audited public link paths"
+      ]
+    }
+  },
+  {
+    "finding": {
+      "file": "src/tasks/domain/recurrence.ts",
+      "line": 311,
+      "column": 29,
+      "endLine": 311,
+      "endColumn": 70,
+      "ruleId": "redos/no-vulnerable",
+      "messageId": "",
+      "message": "Found a ReDoS vulnerable RegExp (2nd degree polynomial).",
+      "raw": "  const canonicalInterval = /^(?:(\\d+) )?(year|years) (.+) on (.+)$/u.exec(body);",
+      "unproven": false
+    },
+    "sourceHash": "ed6f98907cbd8262d63a062f5b16bf1c52e38188ea8c2dd46144d0d8342f18f6",
+    "guards": {
+      "test/regex-audit.test.ts": "2a260caf91e3b36ffdce0a17f427dd59101ec8de7de5838ff827cf51174b20ab"
+    },
+    "analyzer": {
+      "regexp": "3.3.1",
+      "redos": "4.5.0",
+      "options": {
+        "regexp/no-super-linear-backtracking": {
+          "report": "certain"
+        },
+        "regexp/no-super-linear-move": {
+          "report": "certain"
+        },
+        "redos/no-vulnerable": {
+          "timeout": 1000,
+          "cache": false,
+          "ignoreErrors": false
+        }
+      }
+    },
+    "disposition": "context-protected",
+    "reason": "annualGrammar is private and reached via supportedGrammar, whose normalizedRuleText removes all dot-excluded CR/LF/LS/PS before either annual regex. Therefore the raw repeated-on plus line-terminator rejecting witness cannot reach these anchored expressions unchanged. Without a dot barrier the final nonempty clause accepts; later grammar validation rejects invalid month/day lists. Direct public normalization and rejecting growth tests cover both forms. This record does not certify arbitrary rrule compilation complexity.",
+    "tests": {
+      "accepting": [
+        "test/regex-audit.test.ts > accepts annual recurrence after public whitespace normalization"
+      ],
+      "rejecting": [
+        "test/regex-audit.test.ts > rejects invalid annual clauses after public whitespace normalization"
+      ],
+      "performance": [
+        "test/regex-audit.test.ts > bounds normalized annual rejection work through the public parser"
+      ]
+    }
+  },
+  {
+    "finding": {
+      "file": "src/tasks/domain/recurrence.ts",
+      "line": 314,
+      "column": 23,
+      "endLine": 314,
+      "endColumn": 40,
+      "ruleId": "redos/no-vulnerable",
+      "messageId": "",
+      "message": "Found a ReDoS vulnerable RegExp (2nd degree polynomial).",
+      "raw": "  const namedMonths = /^(.+) on (.+)$/u.exec(body);",
+      "unproven": false
+    },
+    "sourceHash": "ed6f98907cbd8262d63a062f5b16bf1c52e38188ea8c2dd46144d0d8342f18f6",
+    "guards": {
+      "test/regex-audit.test.ts": "2a260caf91e3b36ffdce0a17f427dd59101ec8de7de5838ff827cf51174b20ab"
+    },
+    "analyzer": {
+      "regexp": "3.3.1",
+      "redos": "4.5.0",
+      "options": {
+        "regexp/no-super-linear-backtracking": {
+          "report": "certain"
+        },
+        "regexp/no-super-linear-move": {
+          "report": "certain"
+        },
+        "redos/no-vulnerable": {
+          "timeout": 1000,
+          "cache": false,
+          "ignoreErrors": false
+        }
+      }
+    },
+    "disposition": "context-protected",
+    "reason": "annualGrammar is private and reached via supportedGrammar, whose normalizedRuleText removes all dot-excluded CR/LF/LS/PS before either annual regex. Therefore the raw repeated-on plus line-terminator rejecting witness cannot reach these anchored expressions unchanged. Without a dot barrier the final nonempty clause accepts; later grammar validation rejects invalid month/day lists. Direct public normalization and rejecting growth tests cover both forms. This record does not certify arbitrary rrule compilation complexity.",
+    "tests": {
+      "accepting": [
+        "test/regex-audit.test.ts > accepts annual recurrence after public whitespace normalization"
+      ],
+      "rejecting": [
+        "test/regex-audit.test.ts > rejects invalid annual clauses after public whitespace normalization"
+      ],
+      "performance": [
+        "test/regex-audit.test.ts > bounds normalized annual rejection work through the public parser"
+      ]
+    }
+  },
+  {
+    "finding": {
+      "file": "src/tasks/domain/taskLineAtomicRanges.ts",
+      "line": 112,
+      "column": 5,
+      "endLine": 112,
+      "endColumn": 70,
+      "ruleId": "redos/no-vulnerable",
+      "messageId": "",
+      "message": "Found a ReDoS vulnerable RegExp (2nd degree polynomial).",
+      "raw": "    /!?\\[((?:[^\\\\[\\]]|\\\\[^])+)\\]\\(((?:[^\\\\)]|\\\\[^])+)\\)|(\\\\[\\\\[!])/gu,",
+      "unproven": false
+    },
+    "sourceHash": "2c1b42c281344db4c06d004cbcd5f5f65aa43aae27b09e86d88018b12735b41c",
+    "guards": {
+      "test/regex-audit.test.ts": "2a260caf91e3b36ffdce0a17f427dd59101ec8de7de5838ff827cf51174b20ab"
+    },
+    "analyzer": {
+      "regexp": "3.3.1",
+      "redos": "4.5.0",
+      "options": {
+        "regexp/no-super-linear-backtracking": {
+          "report": "certain"
+        },
+        "regexp/no-super-linear-move": {
+          "report": "certain"
+        },
+        "redos/no-vulnerable": {
+          "timeout": 1000,
+          "cache": false,
+          "ignoreErrors": false
+        }
+      }
+    },
+    "disposition": "context-protected",
+    "reason": "parseLinkRanges scopes the regex through its own markdownLinkScope before scanning, stopping at the last unescaped closing parenthesis. Missing/escaped-only closers cannot enter this regex; escapes are consumed by disjoint alternatives and accepted matches are nonempty. Public acceptance, rejection, span tests and actual-module missing-closer CPU probes bind this exact guarded occurrence.",
+    "tests": {
+      "accepting": [
+        "test/regex-audit.test.ts > accepts closed Markdown links through all audited public paths"
+      ],
+      "rejecting": [
+        "test/regex-audit.test.ts > rejects missing or escaped final Markdown closers through all audited public paths"
+      ],
+      "performance": [
+        "test/regex-audit.test.ts > bounds guarded missing-closer work through all audited public link paths"
+      ]
+    }
+  },
+  {
+    "finding": {
+      "file": "src/tasks/domain/taskLineSourceModel.ts",
+      "line": 108,
+      "column": 34,
+      "endLine": 108,
+      "endColumn": 77,
+      "ruleId": "regexp/no-super-linear-backtracking",
+      "messageId": "trade",
+      "message": "The quantifier ' *' can exchange characters with ' *'. Using any string accepted by / +/, this can be exploited to cause at least polynomial backtracking. This is going to cause exponential backtracking resulting in exponential worst-case runtime behavior.",
+      "raw": "const DEPENDS_ON_RE = new RegExp(`⛔\\\\uFE0F? *(${TASK_ID_SEQUENCE})(?=$|\\\\s)`, 'uy');",
+      "unproven": false
+    },
+    "sourceHash": "555367e4914e99491e671d9b2ece62ec3d40dfdac84bf37adfb2a994397ca3b6",
+    "guards": {
+      "test/regex-audit.test.ts": "2a260caf91e3b36ffdce0a17f427dd59101ec8de7de5838ff827cf51174b20ab",
+      "src/tasks/domain/taskLineAtomicRanges.ts": "2c1b42c281344db4c06d004cbcd5f5f65aa43aae27b09e86d88018b12735b41c",
+      "src/tasks/domain/precedingCodePoint.ts": "0af685ac951cf133bff98c45f71f6b3d52ca5e87a63d92d9dee32be3a022f528"
+    },
+    "analyzer": {
+      "regexp": "3.3.1",
+      "redos": "4.5.0",
+      "options": {
+        "regexp/no-super-linear-backtracking": {
+          "report": "certain"
+        },
+        "regexp/no-super-linear-move": {
+          "report": "certain"
+        },
+        "redos/no-vulnerable": {
+          "timeout": 1000,
+          "cache": false,
+          "ignoreErrors": false
+        }
+      }
+    },
+    "disposition": "context-protected",
+    "reason": "This exact constructed dependency regex retains sticky uy flags and is entered at an explicitly discovered carrier marker with lastIndex set by the source-model caller. Task IDs exclude whitespace and commas. The reported exchangeable ASCII spaces themselves satisfy the final (?=$|\\s) assertion: when a downstream clause rejects, backing off at the first exchanged whitespace allows the outer repetition to stop and accept that boundary, instead of enumerating every partition against a mandatory rejecting suffix. Seven actual-public-parser families (4000/16000, killable four-second children) completed, including bare/spaced invalid suffixes, malformed comma chains and valid clauses; direct tests bind dependsOn, exact carrier end and unchanged authored spans. This caller-specific analysis is distinct from an unsupported/timeout result; finite CPU probes do not establish a universal whole-parser complexity bound.",
+    "tests": {
+      "accepting": [
+        "test/regex-audit.test.ts > accepts dependency carriers at whitespace and retains the exact authored suffix"
+      ],
+      "rejecting": [
+        "test/regex-audit.test.ts > rejects dependency carriers without an accepting whitespace or end boundary"
+      ],
+      "performance": [
+        "test/regex-audit.test.ts > bounds dependency public work with accepting or rejecting suffixes: %s"
+      ]
+    }
+  },
+  {
+    "finding": {
+      "file": "src/tasks/infrastructure/markdown/TaskMarkdownCodec.ts",
+      "line": 271,
+      "column": 20,
+      "endLine": 271,
+      "endColumn": 48,
+      "ruleId": "redos/no-vulnerable",
+      "messageId": "",
+      "message": "Found a ReDoS vulnerable RegExp (2nd degree polynomial).",
+      "raw": "const MD_LINK_RE = /\\[([^[\\]]+)\\]\\(([^)]+)\\)/gu;",
+      "unproven": false
+    },
+    "sourceHash": "ecc69ca3a323567254552a82f9f5e652af52e308974355c12c7e757a18824df1",
+    "guards": {
+      "test/regex-audit.test.ts": "2a260caf91e3b36ffdce0a17f427dd59101ec8de7de5838ff827cf51174b20ab",
+      "src/tasks/domain/taskLineSourceModel.ts": "555367e4914e99491e671d9b2ece62ec3d40dfdac84bf37adfb2a994397ca3b6",
+      "src/markdown/links.ts": "86bb1e51c18c2394539ef3873ece4e4bd6f98530a819bdb264c7c7547e410e63"
+    },
+    "analyzer": {
+      "regexp": "3.3.1",
+      "redos": "4.5.0",
+      "options": {
+        "regexp/no-super-linear-backtracking": {
+          "report": "certain"
+        },
+        "regexp/no-super-linear-move": {
+          "report": "certain"
+        },
+        "redos/no-vulnerable": {
+          "timeout": 1000,
+          "cache": false,
+          "ignoreErrors": false
+        }
+      }
+    },
+    "disposition": "context-protected",
+    "reason": "Private collapseMarkdownLinks bounds MD_LINK_RE to the prefix ending at the last literal closing parenthesis, appending the untouched suffix. The public codec reaches it after the canonical source model. With no closer the regex receives an empty string, and bracket labels exclude competing nested openers. Direct codec output and actual-module CPU evidence cover the malformed-link family; no blanket parser safety is asserted.",
+    "tests": {
+      "accepting": [
+        "test/regex-audit.test.ts > accepts closed Markdown links through all audited public paths"
+      ],
+      "rejecting": [
+        "test/regex-audit.test.ts > rejects missing or escaped final Markdown closers through all audited public paths"
+      ],
+      "performance": [
+        "test/regex-audit.test.ts > bounds guarded missing-closer work through all audited public link paths"
+      ]
+    }
+  },
+  {
+    "finding": {
+      "file": "src/ui/plainGhostTaskTitle.ts",
+      "line": 9,
+      "column": 36,
+      "endLine": 9,
+      "endColumn": 100,
+      "ruleId": "redos/no-vulnerable",
+      "messageId": "",
+      "message": "Error on ReDoS vulnerability check: timeout",
+      "raw": "const PAIRED_INLINE_DELIMITER_RE = /(\\*\\*|__|~~|`+)((?:.*?[^\\\\\\n\\r\\u2028\\u2029])??)\\1|(\\\\[*_~`])/gu;",
+      "unproven": true
+    },
+    "sourceHash": "eaea7d6acf9dd9ceb4dcf2204ba0d50d38939ec6d5f347bc45acf19e8ac44183",
+    "guards": {
+      "test/regex-audit.test.ts": "2a260caf91e3b36ffdce0a17f427dd59101ec8de7de5838ff827cf51174b20ab",
+      "src/ui/ghostTitleBackticks.ts": "03c7f6ab59efb939c3ae35b64d1bde75a7cbe300b2615517efde28e33c5a5403",
+      "src/markdown/precedingCodePoint.ts": "6e4eb626734bf236a6ce8ff5269c48a087613a20d59731827402f6c683c1706c",
+      "test/plain-ghost-task-title.test.ts": "be97599d9e07c52a1ba98869879d7dcf494027abefa883d1c78a3a5ff6427c5d",
+      "test/plain-ghost-task-title-properties.test.ts": "4c0e4e01a6ae1ac854c35b3c40123fdb9302115ebdd81d2405b8d5b5fb4c8558",
+      "test/regex-runtime-scaling.test.ts": "8f87d21715e4a0c0845f51133d3426233f5dd8b507b4c6a6825cea8542e1e90d"
+    },
+    "analyzer": {
+      "regexp": "3.3.1",
+      "redos": "4.5.0",
+      "options": {
+        "regexp/no-super-linear-backtracking": {
+          "report": "certain"
+        },
+        "regexp/no-super-linear-move": {
+          "report": "certain"
+        },
+        "redos/no-vulnerable": {
+          "timeout": 1000,
+          "cache": false,
+          "ignoreErrors": false
+        }
+      }
+    },
+    "disposition": "unproven",
+    "reason": "UNPROVEN: recheck timed out at the required 1000ms budget for this exact fallback expression. Absence of a conclusion is not safety. The public helper dispatches adjacent backticks to an indexed scanner, preserves semantic fixed-point passes and passes named accepting/rejecting and externally killable growth tests. Task5 analysis retains superlinear nested fixed-point work and a conservative whole-helper upper bound; these finite tests do not resolve solver incompleteness or prove universal linearity. Keep this timeout visible and re-review source, guards, options or diagnostics drift.",
+    "tests": {
+      "accepting": [
+        "test/plain-ghost-task-title.test.ts > strips a code pair",
+        "test/plain-ghost-task-title-properties.test.ts > strips paired delimiters around known safe content"
+      ],
+      "rejecting": [
+        "test/plain-ghost-task-title.test.ts > keeps a strong pair around a line separator",
+        "test/plain-ghost-task-title.test.ts > preserves paragraph separator boundary",
+        "test/plain-ghost-task-title-properties.test.ts > retains escaped fragments beside independently stripped plain fragments"
+      ],
+      "performance": [
+        "test/regex-runtime-scaling.test.ts > bounds bare, unequal and escaped backtick runs with exact ghost titles",
+        "test/plain-ghost-task-title.test.ts > stays linear on many escaped code openers"
+      ]
+    }
+  },
+  {
+    "finding": {
+      "file": "src/ui/plainGhostTaskTitle.ts",
+      "line": 9,
+      "column": 49,
+      "endLine": 9,
+      "endColumn": 51,
+      "ruleId": "regexp/no-super-linear-move",
+      "messageId": "unexpected",
+      "message": "Any attack string /`+/ plus some rejecting suffix will cause quadratic runtime because of this quantifier.",
+      "raw": "const PAIRED_INLINE_DELIMITER_RE = /(\\*\\*|__|~~|`+)((?:.*?[^\\\\\\n\\r\\u2028\\u2029])??)\\1|(\\\\[*_~`])/gu;",
+      "unproven": false
+    },
+    "sourceHash": "eaea7d6acf9dd9ceb4dcf2204ba0d50d38939ec6d5f347bc45acf19e8ac44183",
+    "guards": {
+      "test/regex-audit.test.ts": "2a260caf91e3b36ffdce0a17f427dd59101ec8de7de5838ff827cf51174b20ab",
+      "src/ui/ghostTitleBackticks.ts": "03c7f6ab59efb939c3ae35b64d1bde75a7cbe300b2615517efde28e33c5a5403",
+      "src/markdown/precedingCodePoint.ts": "6e4eb626734bf236a6ce8ff5269c48a087613a20d59731827402f6c683c1706c",
+      "test/plain-ghost-task-title.test.ts": "be97599d9e07c52a1ba98869879d7dcf494027abefa883d1c78a3a5ff6427c5d",
+      "test/plain-ghost-task-title-properties.test.ts": "4c0e4e01a6ae1ac854c35b3c40123fdb9302115ebdd81d2405b8d5b5fb4c8558",
+      "test/regex-runtime-scaling.test.ts": "8f87d21715e4a0c0845f51133d3426233f5dd8b507b4c6a6825cea8542e1e90d"
+    },
+    "analyzer": {
+      "regexp": "3.3.1",
+      "redos": "4.5.0",
+      "options": {
+        "regexp/no-super-linear-backtracking": {
+          "report": "certain"
+        },
+        "regexp/no-super-linear-move": {
+          "report": "certain"
+        },
+        "redos/no-vulnerable": {
+          "timeout": 1000,
+          "cache": false,
+          "ignoreErrors": false
+        }
+      }
+    },
+    "disposition": "context-protected",
+    "reason": "The reported backtick+ move family cannot reach this occurrence with a run wider than one: every fixed-point iteration tests for two adjacent backticks and dispatches such input to replaceGhostTitleBackticks. The fallback receives only isolated ticks, so this quantifier has bounded effective width. The exact source and external indexed-helper/preceding-character guards are bound independently, with public parity/escaped/barrier tests and killable 4000/16000 backtick probes. This protects only this move diagnostic; the independent recheck timeout remains visibly unproven and the whole fixed-point helper is not claimed linear.",
+    "tests": {
+      "accepting": [
+        "test/plain-ghost-task-title.test.ts > strips a code pair",
+        "test/plain-ghost-task-title-properties.test.ts > strips paired delimiters around known safe content"
+      ],
+      "rejecting": [
+        "test/plain-ghost-task-title.test.ts > keeps a strong pair around a line separator",
+        "test/plain-ghost-task-title.test.ts > preserves paragraph separator boundary",
+        "test/plain-ghost-task-title-properties.test.ts > retains escaped fragments beside independently stripped plain fragments"
+      ],
+      "performance": [
+        "test/regex-runtime-scaling.test.ts > bounds bare, unequal and escaped backtick runs with exact ghost titles",
+        "test/plain-ghost-task-title.test.ts > stays linear on many escaped code openers"
+      ]
+    }
+  }
+]

@@ -379,3 +379,42 @@ describe('directive comment ban', () => {
     LINTER_TIMEOUT_MS,
   );
 });
+
+describe('focused regex correctness enrollment', () => {
+  it(
+    'keeps exactly the correctness rules on code and security cost analysis in its separate audit',
+    async () => {
+      const names = [
+        'no-dupe-disjunctions',
+        'no-contradiction-with-assertion',
+        'no-empty-lookarounds-assertion',
+        'no-missing-g-flag',
+        'no-useless-backreference',
+        'no-useless-dollar-replacements',
+        'strict',
+      ];
+      const expected = Object.fromEntries(names.map((name) => [`regexp/${name}`, [2]]));
+      for (const file of [
+        'src/main.ts',
+        'test/regex-audit.test.ts',
+        'tooling/regex-audit.mjs',
+        'eslint.config.mts',
+        'dependency-cruiser.config.cjs',
+      ]) {
+        const rules = await effectiveRules(projectLint, `${ROOT}/${file}`);
+        expect(
+          Object.fromEntries(Object.entries(rules).filter(([name]) => name.startsWith('regexp/'))),
+          file,
+        ).toEqual(expected);
+      }
+      for (const file of ['manifest.json', 'package.json', 'LICENSE']) {
+        const rules = await effectiveRules(projectLint, `${ROOT}/${file}`);
+        expect(
+          Object.keys(rules).filter((name) => name.startsWith('regexp/')),
+          file,
+        ).toEqual([]);
+      }
+    },
+    LINTER_TIMEOUT_MS,
+  );
+});

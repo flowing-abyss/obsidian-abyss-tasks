@@ -539,3 +539,17 @@ describe('project lexical policy', () => {
     LINTER_TIMEOUT_MS,
   );
 });
+
+it.each(['tooling/regex-audit.mjs', 'tooling/regex-audit-policy.mjs'])(
+  'keeps the regex audit Node authority confined to its exact tooling owner: %s',
+  async (file) => {
+    const source = "import { readFile } from 'node:fs/promises'; export { readFile };";
+    const allowed = await diagnostics(file, source);
+    expectParseSafe(allowed);
+    expect(allowed.filter(({ ruleId }) => ruleId === 'obsidianmd/no-nodejs-modules')).toEqual([]);
+    const forbidden = await diagnostics('src/main.ts', source);
+    expectParseSafe(forbidden);
+    expect(forbidden.some(({ ruleId }) => ruleId === 'obsidianmd/no-nodejs-modules')).toBe(true);
+  },
+  LINTER_TIMEOUT_MS,
+);

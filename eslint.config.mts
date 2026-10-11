@@ -2,6 +2,7 @@ import json from '@eslint/json';
 import prettier from 'eslint-config-prettier';
 import obsidianmd from 'eslint-plugin-obsidianmd';
 import { PlainTextParser } from 'eslint-plugin-obsidianmd/dist/lib/plainTextParser.js';
+import regexp from 'eslint-plugin-regexp';
 import sonarjs from 'eslint-plugin-sonarjs';
 import { defineConfig, globalIgnores } from 'eslint/config';
 import * as globals from 'globals';
@@ -159,6 +160,19 @@ export default defineConfig(
         { allowString: false, allowNumber: false, allowNullableObject: false },
       ],
       '@typescript-eslint/switch-exhaustiveness-check': 'error',
+    },
+  },
+  {
+    files: codeFiles,
+    plugins: { regexp },
+    rules: {
+      'regexp/no-dupe-disjunctions': 'error',
+      'regexp/no-contradiction-with-assertion': 'error',
+      'regexp/no-empty-lookarounds-assertion': 'error',
+      'regexp/no-missing-g-flag': 'error',
+      'regexp/no-useless-backreference': 'error',
+      'regexp/no-useless-dollar-replacements': 'error',
+      'regexp/strict': 'error',
     },
   },
   {
@@ -364,6 +378,8 @@ export default defineConfig(
       'tooling/css-contracts.mjs',
       'tooling/verify-changes.mjs',
       'tooling/release-automation.mjs',
+      'tooling/regex-audit.mjs',
+      'tooling/regex-audit-policy.mjs',
     ],
     languageOptions: {
       globals: { ...globals.node },
