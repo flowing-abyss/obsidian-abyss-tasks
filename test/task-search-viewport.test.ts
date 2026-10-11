@@ -121,9 +121,10 @@ async function drivenCompletion(
 describe('Search supplied result viewport', () => {
   it('keeps compact complete order and bounds demanded mounts without querying or completing on scroll', async (context) => {
     let acquired: Awaited<ReturnType<typeof harness>> | undefined;
-    const dispose = ownTestCleanup(context, () => {
+    const dispose = ownTestCleanup(context.signal, () => {
       acquired?.dispose();
     });
+    context.onTestFinished(() => dispose());
     const h = (acquired = await harness(1200, undefined, false, context.signal));
     try {
       await h.completed();

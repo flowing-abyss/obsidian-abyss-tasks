@@ -392,9 +392,10 @@ describe('physical Q creation reveal through PanelView', () => {
     'preserves query and unrelated exclusions while revealing only the created root ($name)',
     async ({ global, property, destination, title }, context) => {
       let acquired: Awaited<ReturnType<typeof mountQuickPanel>> | undefined;
-      const dispose = ownTestCleanup(context, async () => {
+      const dispose = ownTestCleanup(context.signal, async () => {
         await acquired?.dispose();
       });
+      context.onTestFinished(() => dispose());
       const h = (acquired = await mountQuickPanel(false, false, true, context.signal));
       let now = 1_800_000_000_000;
       vi.spyOn(h.presentation['options'], 'now').mockImplementation(() => now);
@@ -464,11 +465,12 @@ describe('physical Q creation reveal through PanelView', () => {
       const hydrationFinished = deferred<void>();
       const revealSettled = deferred<void>();
       let acquired: Awaited<ReturnType<typeof mountQuickPanel>> | undefined;
-      const dispose = ownTestCleanup(context, async () => {
+      const dispose = ownTestCleanup(context.signal, async () => {
         const closed = acquired?.dispose();
         hydration.resolve();
         await closed;
       });
+      context.onTestFinished(() => dispose());
       const h = (acquired = await mountQuickPanel(false, false, true, context.signal));
       let now = 1_800_000_000_000;
       vi.spyOn(h.presentation['options'], 'now').mockImplementation(() => now);
@@ -617,12 +619,13 @@ describe('physical Q creation reveal through PanelView', () => {
     const hydration = deferred<void>();
     const entered = deferred<void>();
     let acquired: Awaited<ReturnType<typeof mountQuickPanel>> | undefined;
-    const dispose = ownTestCleanup(context, async () => {
+    const dispose = ownTestCleanup(context.signal, async () => {
       lifetime.abort(new Error('Row cancelled'));
       const closed = acquired?.dispose();
       hydration.resolve();
       await closed;
     });
+    context.onTestFinished(() => dispose());
     const h = (acquired = await mountQuickPanel(false, false, true, lifetime.signal));
     try {
       const now = 1_800_000_000_000;

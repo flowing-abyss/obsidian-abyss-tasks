@@ -1051,7 +1051,7 @@ it('waits for real compact creation hydration and Markdown, then repaints only r
   const hydration = deferred<void>(),
     markdown = deferred<void>();
   let acquired: Awaited<ReturnType<typeof mountCanonicalSearchUi>> | undefined;
-  const dispose = ownTestCleanup(context, () => {
+  const dispose = ownTestCleanup(context.signal, () => {
     try {
       acquired?.dispose();
     } finally {
@@ -1059,6 +1059,7 @@ it('waits for real compact creation hydration and Markdown, then repaints only r
       markdown.resolve();
     }
   });
+  context.onTestFinished(() => dispose());
   const h = (acquired = await mountCanonicalSearchUi(
     {
       'many.md': Array.from({ length: 1200 }, (_, n) => `- [ ] needle ${n}`).join('\n'),

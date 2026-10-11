@@ -1,5 +1,3 @@
-import type { TestContext } from 'vitest';
-
 function failure(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
 }
@@ -38,15 +36,15 @@ export function ownedWait<T>(promise: Promise<T>, signal: AbortSignal): Promise<
   });
 }
 
-/** Start cleanup synchronously on cancellation; the finished hook awaits the same disposal. */
+/** Start cleanup on cancellation; the caller's direct finished hook awaits the same disposal. */
 export function ownTestCleanup(
-  context: Pick<TestContext, 'signal' | 'onTestFinished'>,
+  signal: AbortSignal,
   cleanup: () => void | Promise<void>,
 ): () => Promise<void> {
   let disposal: Promise<void> | undefined;
   const dispose = (): Promise<void> => {
     if (disposal === undefined) {
-      context.signal.removeEventListener('abort', abort);
+      signal.removeEventListener('abort', abort);
       try {
         disposal = Promise.resolve(cleanup());
       } catch (error) {
@@ -59,8 +57,7 @@ export function ownTestCleanup(
     // Keep the rejection for the awaited finished hook without an unhandled event callback.
     void dispose().catch(() => {});
   };
-  context.onTestFinished(dispose);
-  context.signal.addEventListener('abort', abort, { once: true });
-  if (context.signal.aborted) abort();
+  signal.addEventListener('abort', abort, { once: true });
+  if (signal.aborted) abort();
   return dispose;
 }
