@@ -14,16 +14,20 @@ const location = { filePath: 'qa.md', line: 0 };
 const parameters = { seed: 20261011, numRuns: 200 };
 const endings = fc.constantFrom('' as const, '\n' as const, '\r\n' as const);
 
-function expectPartition(parsed: Pick<ParsedTaskLine, 'spans' | 'original'>): void {
+function expectPartition(
+  parsed: Pick<ParsedTaskLine, 'spans' | 'original'>,
+  expectedSource: string,
+): void {
+  expect(parsed.original).toBe(expectedSource);
   expect(parsed.spans[0]?.from).toBe(0);
-  expect(parsed.spans[parsed.spans.length - 1]?.to).toBe(parsed.original.length);
-  expect(parsed.spans.map((span) => parsed.original.slice(span.from, span.to)).join('')).toBe(
-    parsed.original,
+  expect(parsed.spans[parsed.spans.length - 1]?.to).toBe(expectedSource.length);
+  expect(parsed.spans.map((span) => expectedSource.slice(span.from, span.to)).join('')).toBe(
+    expectedSource,
   );
   for (const span of parsed.spans) {
     expect(span.to).toBeGreaterThan(span.from);
     expect(span.from).toBeGreaterThanOrEqual(0);
-    expect(span.to).toBeLessThanOrEqual(parsed.original.length);
+    expect(span.to).toBeLessThanOrEqual(expectedSource.length);
   }
   for (let i = 1; i < parsed.spans.length; i++) {
     expect(parsed.spans[i]?.from).toBe(parsed.spans[i - 1]?.to);
@@ -45,6 +49,7 @@ function expectFields(
     | 'lineEnding'
   >,
   value: TaskSyntaxCase,
+  expectedSource: string,
 ): void {
   expect(parsed.statusSymbol).toBe(value.status);
   expect(parsed.markdownTitle).toBe(value.title);
@@ -54,15 +59,15 @@ function expectFields(
   expect(parsed.planning.due).toBe(value.due);
   expect(parsed.priority).toBe(value.priority);
   expect(parsed.lineEnding).toBe(value.lineEnding);
-  expectPartition(parsed);
+  expectPartition(parsed, expectedSource);
 }
 
 describe('independent canonical task grammar', () => {
   it('reads generated authored fields and partitions every UTF-16 source unit', () => {
     fc.assert(
       fc.property(taskSyntaxArbitrary(), (value) => {
-        expectFields(expectDefined(codec.parseLine(value.source, location)), value);
-        expectFields(expectDefined(parseTaskLineSourceModel(value.source)), value);
+        expectFields(expectDefined(codec.parseLine(value.source, location)), value, value.source);
+        expectFields(expectDefined(parseTaskLineSourceModel(value.source)), value, value.source);
       }),
       parameters,
     );
@@ -86,10 +91,11 @@ describe('independent canonical task grammar', () => {
           expect(result.type).toBe('changed');
           if (result.type === 'invalid') throw new Error('Generated valid status edit was refused');
           expect(result.content).toBe(`${source.slice(0, statusAt)}x${source.slice(statusAt + 1)}`);
-          expectFields(expectDefined(codec.parseLine(result.content, location)), {
-            ...value,
-            status: 'x',
-          });
+          expectFields(
+            expectDefined(codec.parseLine(result.content, location)),
+            { ...value, status: 'x' },
+            result.content,
+          );
           expect(codec.applyLineEdit(result.content, edit).type).toBe('unchanged');
         },
       ),
@@ -123,12 +129,16 @@ describe('independent canonical task grammar', () => {
         expect(result).toEqual({ type: 'changed', content: `${prefix} #keep #NEW ${suffix}` });
         if (result.type === 'invalid') throw new Error('Generated valid tag edit was refused');
         const parsed = expectDefined(codec.parseLine(result.content, location));
-        expectFields(parsed, {
-          ...value,
-          title: `${value.title} 🧩 future`,
-          priority: 'D',
-          tags: ['#keep', '#NEW'],
-        });
+        expectFields(
+          parsed,
+          {
+            ...value,
+            title: `${value.title} 🧩 future`,
+            priority: 'D',
+            tags: ['#keep', '#NEW'],
+          },
+          result.content,
+        );
         expect(codec.applyLineEdit(result.content, edit).type).toBe('unchanged');
       }),
       parameters,
@@ -156,7 +166,7 @@ describe('independent canonical task grammar', () => {
               text: source.slice(span.from, span.to),
             })),
         ).toEqual([{ kind, text: suffix }]);
-        expectPartition(parsed);
+        expectPartition(parsed, source);
         expect(
           codec.applyLineEdit(source, {
             type: 'set-status',
@@ -184,7 +194,7 @@ describe('independent canonical task grammar', () => {
         expect(parsed.priority).toBe(value.priority);
         expect(parsed.occurrences.get(value.kind)).toHaveLength(2);
         if (value.kind === 'task-id') expect(parsed.dependencyId).toBe('first');
-        expectPartition(parsed);
+        expectPartition(parsed, source);
       }),
       parameters,
     );
@@ -193,14 +203,15 @@ describe('independent canonical task grammar', () => {
   it.each(['🧩 future', '🧭 next'])('keeps the unknown suffix %s in the title', (suffix) => {
     fc.assert(
       fc.property(endings, (ending) => {
-        const parsed = expectDefined(codec.parseLine(`- [ ] Task ${suffix}${ending}`, location));
+        const source = `- [ ] Task ${suffix}${ending}`;
+        const parsed = expectDefined(codec.parseLine(source, location));
         expect(parsed.markdownTitle).toBe(`Task ${suffix}`);
         expect(
           parsed.spans
             .filter((span) => span.kind === 'unknown')
-            .map((span) => parsed.original.slice(span.from, span.to)),
+            .map((span) => source.slice(span.from, span.to)),
         ).toEqual([suffix.slice(0, 2)]);
-        expectPartition(parsed);
+        expectPartition(parsed, source);
       }),
       parameters,
     );
@@ -222,7 +233,7 @@ describe('independent canonical task grammar', () => {
         expect(parsed.dependencyId).toBeUndefined();
         expect(parsed.dependsOn).toEqual([]);
         expect(parsed.spans.filter((span) => span.kind === 'malformed-known')).toEqual([]);
-        expectPartition(parsed);
+        expectPartition(parsed, source);
       }),
       parameters,
     );
@@ -286,7 +297,7 @@ describe('independent canonical task grammar', () => {
           ...value.spans,
           ...(ending.length > 0 ? [['separator', ending]] : []),
         ]);
-        expectPartition(parsed);
+        expectPartition(parsed, source);
         const result = codec.applyLineEdit(source, {
           type: 'set-status',
           symbol: 'x',
