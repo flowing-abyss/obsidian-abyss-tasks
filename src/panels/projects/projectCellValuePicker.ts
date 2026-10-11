@@ -183,6 +183,7 @@ class ProjectCellValuePicker implements ProjectCellValuePickerControl {
       cls: 'abyss-project-editor-input abyss-project-value-picker-search',
       attr: {
         type: 'text',
+        enterkeyhint: 'enter',
         role: 'combobox',
         'aria-label': `Search ${this.options_abyssPrivate.label}`,
         'aria-autocomplete': 'list',

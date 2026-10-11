@@ -30,6 +30,9 @@ export class SettingsValueCommit implements SettingsValueCommitRegistrar, EventL
   }
 
   register(control: HTMLInputElement, commit: () => boolean | void): void {
+    if (control.type === 'text') {
+      control.setAttribute('enterkeyhint', 'enter');
+    }
     this.registrations_abyssPrivate.set(control, {
       control,
       commit,

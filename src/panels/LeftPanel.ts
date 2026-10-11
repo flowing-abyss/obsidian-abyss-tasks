@@ -644,7 +644,7 @@ export class LeftPanel {
       section.createDiv({ cls: 'abyss-left-section-body' });
     const input = body.createEl('input', {
       cls: 'abyss-left-add-input',
-      attr: { type: 'text', placeholder },
+      attr: { type: 'text', placeholder, enterkeyhint: 'enter' },
     });
     // Place it directly under the header, above existing rows.
     body.insertBefore(input, body.firstChild);

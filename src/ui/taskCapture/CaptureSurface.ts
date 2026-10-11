@@ -49,6 +49,7 @@ export class CaptureSurface {
     this.input = this.element.createEl('input');
     this.input.className = 'abyss-capture-input abyss-quick-capture-input';
     this.input.type = 'text';
+    this.input.setAttribute('enterkeyhint', 'enter');
     this.input.placeholder = options.placeholder ?? 'Task name…';
     this.input.setAttribute('aria-label', options.inputLabel ?? 'Add task');
 

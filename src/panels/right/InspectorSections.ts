@@ -545,7 +545,8 @@ export class InspectorSections {
     trigger.addClass('abyss-subtask-add-row--hidden');
     const input = section.createEl('input', {
       cls: 'abyss-subtask-new-input',
-      attr: { type: 'text', placeholder: 'New sub-task…' },
+      // Android's default Next action changes focus without sending the Enter that adds the draft.
+      attr: { type: 'text', placeholder: 'New sub-task…', enterkeyhint: 'enter' },
     });
     const lifecycle = new AsyncEditLifecycle();
     const editorOwner = this.#editorOwner(input);

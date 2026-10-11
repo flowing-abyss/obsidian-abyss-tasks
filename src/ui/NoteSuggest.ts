@@ -38,6 +38,7 @@ export class NoteSuggest extends AbstractInputSuggest<TFile> {
     private readonly onPick_abyssPrivate: (file: TFile) => void,
   ) {
     super(app, inputElement);
+    inputElement.setAttribute('enterkeyhint', 'enter');
     this.source_abyssPrivate = new VaultFileSuggestionSource(app);
   }
 

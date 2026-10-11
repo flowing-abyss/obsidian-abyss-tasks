@@ -199,6 +199,7 @@ export function showTagDropdown(
     cls: 'abyss-tag-input',
     attr: {
       type: 'text',
+      enterkeyhint: 'enter',
       placeholder: '#Tag',
       autocomplete: 'off',
       role: 'combobox',

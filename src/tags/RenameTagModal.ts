@@ -78,7 +78,7 @@ export class RenameTagModal extends Modal {
 
     this.input = contentEl.createEl('input', {
       cls: 'abyss-rename-input',
-      attr: { type: 'text', value: this.currentTag },
+      attr: { type: 'text', value: this.currentTag, enterkeyhint: 'enter' },
     });
     this.input.select();
 

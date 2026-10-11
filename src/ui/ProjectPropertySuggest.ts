@@ -139,6 +139,7 @@ export class ProjectPropertySuggest extends AbstractInputSuggest<ProjectProperty
 
   constructor(options: ProjectPropertySuggestOptions) {
     super(options.app, options.input);
+    options.input.setAttribute('enterkeyhint', 'enter');
     this.renderGeneration_abyssPrivate = undefined;
     if (options.onEscape !== undefined) {
       this.scope = new Scope(this.scope);

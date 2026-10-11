@@ -85,6 +85,7 @@ function beginRename(
     cls: 'abyss-project-column-rename',
     attr: {
       type: 'text',
+      enterkeyhint: 'enter',
       'aria-label': `Rename ${column.field.label} column`,
     },
   });

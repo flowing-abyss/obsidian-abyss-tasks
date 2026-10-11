@@ -211,7 +211,12 @@ function textControl(
 ): EditorControl {
   const input = root.createEl('input', {
     cls: 'abyss-project-editor-input',
-    attr: { type: 'text', 'aria-label': options.field.label, autocomplete: 'off' },
+    attr: {
+      type: 'text',
+      enterkeyhint: 'enter',
+      'aria-label': options.field.label,
+      autocomplete: 'off',
+    },
   });
   input.value = typeof options.value === 'string' ? options.value : '';
   input.addEventListener('input', () => {

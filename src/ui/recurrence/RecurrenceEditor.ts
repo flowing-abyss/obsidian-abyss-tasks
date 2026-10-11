@@ -760,6 +760,7 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
       cls: 'abyss-recurrence-interval',
       attr: {
         type: 'text',
+        enterkeyhint: 'enter',
         inputmode: 'numeric',
         pattern: '[0-9]*',
         value: this.state_abyssPrivate.intervalText,
@@ -1099,6 +1100,7 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
       cls: 'abyss-recurrence-raw',
       attr: {
         type: 'text',
+        enterkeyhint: 'enter',
         value: this.state_abyssPrivate.customDraft,
         'aria-label': 'Recurrence rule',
         'aria-describedby': this.diagnosticId_abyssPrivate,

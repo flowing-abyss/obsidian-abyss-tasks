@@ -106,6 +106,7 @@ export class ProjectCreationComposer {
       cls: 'abyss-project-creation-name',
       attr: {
         type: 'text',
+        enterkeyhint: 'enter',
         placeholder: 'Project name…',
         'aria-label': 'Project name',
       },
