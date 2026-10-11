@@ -80,7 +80,7 @@ export function readTaskLinePrefix(source: string): {
 }
 
 const TASK_TAG_BODY = `${TAG_CHARACTER_SOURCE}+(?:/${TAG_CHARACTER_SOURCE}+)*`;
-const TASK_TAG_ADJACENT = String.raw`(?:[#\p{L}\p{M}\p{N}\p{Pc}/-]|\p{Extended_Pictographic}|\p{Regional_Indicator}|\p{Emoji_Modifier}|\uFE0F|\u200D)`;
+const TASK_TAG_ADJACENT = String.raw`[\u200D\p{L}\p{M}\p{N}\p{Pc}\p{Extended_Pictographic}\p{Regional_Indicator}\p{Emoji_Modifier}\uFE0F#/-]`;
 // `isTaskTagAdjacent` refuses a match that continues a word, a path, another tag, or an emoji.
 const TAG_RE = new RegExp(String.raw`#${TASK_TAG_BODY}(?!${TASK_TAG_ADJACENT})`, 'gu');
 const TASK_TAG_ADJACENT_RE = new RegExp(`^${TASK_TAG_ADJACENT}$`, 'u');

@@ -9,7 +9,12 @@ const BRACKETS_RE = /\[([^[\]]*)\]/gu;
 
 /** Collapse links to the readable, non-clickable placeholder form (legacy `text`). */
 export function collapseLinks(input: string): string {
-  return collapseWikiLinks(input).replace(MD_LINK_RE, '🌐 $1').replace(BRACKETS_RE, '$1');
+  const wikiCollapsed = collapseWikiLinks(input);
+  // Legacy links accept even escaped closers; the modern markdownLinkScope is stricter.
+  const end = wikiCollapsed.lastIndexOf(')') + 1;
+  return (
+    wikiCollapsed.slice(0, end).replace(MD_LINK_RE, '🌐 $1') + wikiCollapsed.slice(end)
+  ).replace(BRACKETS_RE, '$1');
 }
 
 export interface LinkToken {

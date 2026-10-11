@@ -5,7 +5,7 @@ export interface TagRenameChange {
   readonly newTag: string;
   readonly scope: TagRenameScope;
 }
-export const TAG_CHARACTER_SOURCE = String.raw`(?:[\p{L}\p{M}\p{N}\p{Pc}-]|\p{Extended_Pictographic}|\p{Regional_Indicator}|\p{Emoji_Modifier}|\uFE0F|\u200D)`;
+export const TAG_CHARACTER_SOURCE = String.raw`[\u200D\p{L}\p{M}\p{N}\p{Pc}\p{Extended_Pictographic}\p{Regional_Indicator}\p{Emoji_Modifier}\uFE0F-]`;
 const VALID_TAG = new RegExp(
   String.raw`^#${TAG_CHARACTER_SOURCE}+(?:/${TAG_CHARACTER_SOURCE}+)*$`,
   'u',

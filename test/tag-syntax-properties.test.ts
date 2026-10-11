@@ -13,6 +13,16 @@ const numericSegment = fc
   .map((parts) => parts.join(''));
 
 describe('independent tag grammar', () => {
+  it.each([
+    ['#ℹ️/123', '#ℹ️/123'],
+    ['#️/Я', '#️/Я'],
+    ['#ℹ️/123!', null],
+    ['#ℹ️//123', null],
+    ['#12/٣', null],
+  ])('preserves overlapping-category spelling and hierarchy rules for %j', (source, expected) => {
+    expect(normalizeTag(source)).toBe(expected);
+  });
+
   it('accepts Unicode hierarchical spelling without rewriting it', () => {
     fc.assert(
       fc.property(validTagArbitrary(), (tag) => {

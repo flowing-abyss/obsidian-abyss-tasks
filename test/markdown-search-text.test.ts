@@ -3,6 +3,83 @@ import { parseLinks, searchLinkSpans } from '../src/markdown/links';
 import { projectSearchText, searchTextSourceRanges } from '../src/markdown/searchText';
 import { expectDefined } from './helpers';
 
+// Literal visible/source endpoints make comment consumption and UTF-16 origin changes observable.
+it.each([
+  { source: '<!-->', text: '<!-->', runs: [[0, 5, 0, 5]], destinations: [] },
+  { source: '<!--->', text: '<!--->', runs: [[0, 6, 0, 6]], destinations: [] },
+  {
+    source: '\\<!-- <i>x</i> -->[a](b)',
+    text: '<!-- <i>x</i> -->a',
+    runs: [
+      [0, 1, 0, 2],
+      [1, 17, 2, 18],
+      [17, 18, 19, 20],
+    ],
+    destinations: [['b', 22, 23]],
+  },
+  {
+    source: '<!-- <i>x</i> [a](b)',
+    text: '<!-- x a',
+    runs: [
+      [0, 5, 0, 5],
+      [5, 6, 8, 9],
+      [6, 7, 13, 14],
+      [7, 8, 15, 16],
+    ],
+    destinations: [['b', 18, 19]],
+  },
+  {
+    source: '<!-- a <!-- [h](s) -->[v](d)',
+    text: 'v',
+    runs: [[0, 1, 23, 24]],
+    destinations: [['d', 26, 27]],
+  },
+  { source: "<i q='>'>x</i>", text: 'x', runs: [[0, 1, 9, 10]], destinations: [] },
+  { source: '<!-- `x` -->y', text: 'y', runs: [[0, 1, 12, 13]], destinations: [] },
+  { source: '<!--><!-->x', text: 'x', runs: [[0, 1, 10, 11]], destinations: [] },
+  {
+    source: '<!---><i>x</i>',
+    text: '<!--->x',
+    runs: [
+      [0, 6, 0, 6],
+      [6, 7, 9, 10],
+    ],
+    destinations: [],
+  },
+] as const)('preserves comment/tag consumption and exact origins: $source', (fixture) => {
+  expect(projectSearchText(fixture.source, 'prose')).toEqual({
+    visible: {
+      text: fixture.text,
+      map: fixture.runs.map(([from, to, sourceFrom, sourceTo]) => ({
+        visible: { from, to },
+        source: [{ from: sourceFrom, to: sourceTo }],
+      })),
+    },
+    destinations: fixture.destinations.map(([text, from, to]) => ({
+      text,
+      map: [{ visible: { from: 0, to: text.length }, source: [{ from, to }] }],
+    })),
+  });
+});
+
+it('keeps title HTML literal while preserving nested-looking comment link evidence', () => {
+  expect(projectSearchText('<!-- a <!-- [h](s) -->[v](d)', 'title')).toEqual({
+    visible: {
+      text: '<!-- a <!-- h -->v',
+      map: [
+        { visible: { from: 0, to: 12 }, source: [{ from: 0, to: 12 }] },
+        { visible: { from: 12, to: 13 }, source: [{ from: 13, to: 14 }] },
+        { visible: { from: 13, to: 17 }, source: [{ from: 18, to: 22 }] },
+        { visible: { from: 17, to: 18 }, source: [{ from: 23, to: 24 }] },
+      ],
+    },
+    destinations: [
+      { text: 's', map: [{ visible: { from: 0, to: 1 }, source: [{ from: 16, to: 17 }] }] },
+      { text: 'd', map: [{ visible: { from: 0, to: 1 }, source: [{ from: 26, to: 27 }] }] },
+    ],
+  });
+});
+
 describe('shared search text projection', () => {
   it('maps a word split by formatting to disjoint original field ranges', () => {
     const value = projectSearchText('**bud**get', 'title').visible;

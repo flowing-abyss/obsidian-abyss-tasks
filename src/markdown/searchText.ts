@@ -337,16 +337,35 @@ function htmlTagEnd(source: string, start: number): number {
   }
   return -1;
 }
+function closedCommentEnd(
+  source: string,
+  open: RegExp,
+  comments: { noFutureEnd: boolean },
+): number {
+  // Begin after the complete opener: <!--> and <!---> have only overlapping closers.
+  const end = comments.noFutureEnd ? -1 : source.indexOf('-->', open.lastIndex);
+  if (end < 0) {
+    comments.noFutureEnd = true;
+    return -1;
+  }
+  // Escaped closed comments also consume their contents in the original global scan.
+  open.lastIndex = end + 3;
+  return open.lastIndex;
+}
 function proseHtml(source: string): Replacement[] {
   // Recognize tag/comment scaffolding only; malformed syntax remains literal.
   const output: Replacement[] = [];
-  const open = /<!--[\s\S]*?-->|<\/?[A-Za-z][A-Za-z0-9-]*/gu;
-  for (const match of source.matchAll(open)) {
-    if (escapedAt(source, match.index)) continue;
-    const to = match[0].startsWith('<!--')
-      ? match.index + match[0].length
-      : htmlTagEnd(source, match.index + match[0].length);
-    if (to > match.index) output.push({ range: { from: match.index, to }, pieces: [] });
+  const open = /<!--|<\/?[A-Za-z][A-Za-z0-9-]*/gu;
+  const comments = { noFutureEnd: false };
+  let match: RegExpExecArray | null;
+  while ((match = open.exec(source)) !== null) {
+    const isComment = match[0] === '<!--';
+    const escaped = escapedAt(source, match.index);
+    if (!isComment && escaped) continue;
+    const to = isComment
+      ? closedCommentEnd(source, open, comments)
+      : htmlTagEnd(source, open.lastIndex);
+    if (to > match.index && !escaped) output.push({ range: { from: match.index, to }, pieces: [] });
   }
   return output;
 }

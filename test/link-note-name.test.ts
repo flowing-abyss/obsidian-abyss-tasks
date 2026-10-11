@@ -18,6 +18,17 @@ import { canonicalStatusCatalog, expectDefined } from './helpers';
 
 const LINK = String.fromCodePoint(0x1f517);
 
+it.each([
+  ['[a](b\\) suffix [tail]', '🌐 a suffix tail'],
+  ['[x](a)b) [z](', '🌐 xb) z('],
+  ['[[Note.md|A)]] [x](', '🔗 A) x('],
+  ['[x]() [tail]', 'x() tail'],
+  ['[a](b\\) [c](d) [tail]', '🌐 a 🌐 c tail'],
+  ['[a]([tail]) [z](', '🌐 a z('],
+])('retains legacy escaped-closer acceptance and final bracket collapse: %s', (source, output) => {
+  expect(collapseLinks(source)).toBe(output);
+});
+
 /** The plain title the codec gives a task line, which every title surface shows or compares. */
 function codecTitle(line: string): string | undefined {
   return new TaskMarkdownCodec(canonicalStatusCatalog()).parseLine(line, {
