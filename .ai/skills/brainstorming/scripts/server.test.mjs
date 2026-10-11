@@ -1,9 +1,10 @@
 import { strict as assert } from 'node:assert';
 import { spawn } from 'node:child_process';
-import { once } from 'node:events';
+import { EventEmitter, once } from 'node:events';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { PassThrough } from 'node:stream';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
@@ -31,7 +32,23 @@ test('the companion serves its local frame and fragment', async (t) => {
     }
     rmSync(root, { recursive: true, force: true });
   });
-  const info = await new Promise((resolve, reject) => {
+  const info = await waitForStartup(child);
+  const response = await fetch(`http://127.0.0.1:${info.port}/`, {
+    headers: { Cookie: `brainstorm-key-${info.port}=test-literal-token` },
+    signal: AbortSignal.timeout(5000),
+  });
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  await t.test('retains literal dollar replacement sequences', () => {
+    assert.ok(html.includes(fragment), 'the served HTML retains the complete fragment');
+  });
+  await t.test('loads no remote frame assets', () => {
+    assert.doesNotMatch(html, /(?:src|href)=["']https?:\/\//, 'the companion frame stays local');
+  });
+});
+
+function waitForStartup(child) {
+  return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('companion did not start')), 5000);
     let stdout = '';
     let stderr = '';
@@ -45,22 +62,61 @@ test('the companion serves its local frame and fragment', async (t) => {
     });
     child.stdout.on('data', (chunk) => {
       stdout += chunk;
-      const line = stdout.split('\n').find((item) => item.includes('"type":"server-started"'));
+      const lines = stdout.split('\n');
+      stdout = lines.pop() ?? '';
+      const line = lines.find((item) => item.includes('"type":"server-started"'));
       if (!line) return;
       clearTimeout(timer);
-      resolve(JSON.parse(line));
+      try {
+        resolve(JSON.parse(line));
+      } catch (error) {
+        reject(error);
+      }
     });
   });
-  const response = await fetch(`http://127.0.0.1:${info.port}/`, {
-    headers: { Cookie: `brainstorm-key-${info.port}=test-literal-token` },
-    signal: AbortSignal.timeout(5000),
+}
+
+function startupFixture() {
+  return Object.assign(new EventEmitter(), {
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
   });
-  assert.equal(response.status, 200);
-  const html = await response.text();
-  await t.test('retains literal dollar replacement sequences', () => {
-    assert.ok(html.includes(fragment), 'the served HTML retains the complete fragment');
-  });
-  await t.test('loads no remote frame assets', () => {
-    assert.doesNotMatch(html, /(?:src|href)=["']https?:\/\//, 'the companion frame stays local');
-  });
+}
+test('startup waits for a complete newline-terminated record across chunks', async () => {
+  const child = startupFixture();
+  const started = waitForStartup(child);
+  let settled = false;
+  void started.then(
+    () => {
+      settled = true;
+    },
+    () => {
+      settled = true;
+    },
+  );
+  try {
+    assert.doesNotThrow(() => child.stdout.write('log line\n{"type":"server-started","port":'));
+    await Promise.resolve();
+    assert.equal(settled, false);
+    child.stdout.write('1234}');
+    await Promise.resolve();
+    assert.equal(settled, false);
+    child.stdout.write('\n');
+    assert.deepEqual(await started, { type: 'server-started', port: 1234 });
+  } finally {
+    child.emit('exit', 0);
+    await started.catch(() => {});
+  }
+});
+test('malformed completed startup records reject the startup promise', async () => {
+  const child = startupFixture();
+  const started = waitForStartup(child);
+  const rejected = assert.rejects(started, SyntaxError);
+  try {
+    assert.doesNotThrow(() => child.stdout.write('{"type":"server-started","port":\n'));
+    await rejected;
+  } finally {
+    child.emit('exit', 0);
+    await rejected.catch(() => {});
+  }
 });

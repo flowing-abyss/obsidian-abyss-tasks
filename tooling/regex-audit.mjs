@@ -170,12 +170,22 @@ async function analyze() {
     cache: false,
   });
   const results = await lint.lintFiles(['src/**/*.ts']);
+  return { ...(await collectFindings(results)), analyzer: await analyzerIdentity() };
+}
+
+/**
+ * Collect exact occurrence and source identities from analyzer results.
+ * @param {import('eslint').ESLint.LintResult[]} results
+ * @param {string} [root]
+ * @param {typeof path} [paths]
+ */
+export async function collectFindings(results, root = ROOT, paths = path) {
   /** @type {import('./regex-audit-policy.mjs').Finding[]} */
   const findings = [];
   /** @type {Record<string, string>} */
   const sourceHashes = {};
   for (const result of results) {
-    const file = path.relative(ROOT, result.filePath);
+    const file = paths.relative(root, result.filePath).split(paths.sep).join('/');
     const source = result.source ?? (await readFile(result.filePath, 'utf8'));
     sourceHashes[file] = createHash('sha256').update(source).digest('hex');
     for (const message of result.messages) {
@@ -199,7 +209,7 @@ async function analyze() {
       });
     }
   }
-  return { findings, sourceHashes, analyzer: await analyzerIdentity() };
+  return { findings, sourceHashes };
 }
 
 async function audit() {

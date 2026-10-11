@@ -3097,9 +3097,9 @@ it('retains one lease and cursor through an unchanged synchronous inspector rend
   expect(subscribe).not.toHaveBeenCalled();
 });
 
-it.each(['End', 'Home'])(
+it.for(['End', 'Home'])(
   'TaskModal dependency picker owns Find and Escape after logical %s movement',
-  async (label) => {
+  async (label, { signal }) => {
     const candidates = Array.from({ length: 31 }, (_, i) => `- [ ] Candidate ${i} 🆔 c${i}`).join(
       '\n',
     );
@@ -3135,20 +3135,18 @@ it.each(['End', 'Home'])(
     expect(input.selectionEnd).toBe(9);
     const picker = expectDefined(input.closest<HTMLElement>('.abyss-dep-search'));
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
-    await vi.waitFor(() => {
-      const id = input.getAttribute('aria-activedescendant');
-      expect(id === null ? null : input.ownerDocument.getElementById(id)?.textContent).toContain(
-        'Candidate 30',
-      );
-    });
+    await searchUiCompleted(picker, undefined, { signal, phase: 'dependency End movement' });
+    const endId = input.getAttribute('aria-activedescendant');
+    expect(
+      endId === null ? null : input.ownerDocument.getElementById(endId)?.textContent,
+    ).toContain('Candidate 30');
     if (label === 'Home') {
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
-      await vi.waitFor(() => {
-        const id = input.getAttribute('aria-activedescendant');
-        expect(id === null ? null : input.ownerDocument.getElementById(id)?.textContent).toContain(
-          'Candidate 0',
-        );
-      });
+      await searchUiCompleted(picker, undefined, { signal, phase: 'dependency Home movement' });
+      const homeId = input.getAttribute('aria-activedescendant');
+      expect(
+        homeId === null ? null : input.ownerDocument.getElementById(homeId)?.textContent,
+      ).toContain('Candidate 0');
     }
     expect(picker.querySelector('[aria-label="Next page"]')).toBeNull();
     const focused = expectDefined(document.activeElement);

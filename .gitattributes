@@ -1,0 +1,15 @@
+# Exact regex-review hashes require identical source and guard bytes on every checkout.
+src/markdown/inlineCode.ts text eol=lf
+src/markdown/links.ts text eol=lf
+src/markdown/precedingCodePoint.ts text eol=lf
+src/tasks/domain/precedingCodePoint.ts text eol=lf
+src/tasks/domain/recurrence.ts text eol=lf
+src/tasks/domain/taskLineAtomicRanges.ts text eol=lf
+src/tasks/domain/taskLineSourceModel.ts text eol=lf
+src/tasks/infrastructure/markdown/TaskMarkdownCodec.ts text eol=lf
+src/ui/ghostTitleBackticks.ts text eol=lf
+src/ui/plainGhostTaskTitle.ts text eol=lf
+test/plain-ghost-task-title-properties.test.ts text eol=lf
+test/plain-ghost-task-title.test.ts text eol=lf
+test/regex-audit.test.ts text eol=lf
+test/regex-runtime-scaling.test.ts text eol=lf

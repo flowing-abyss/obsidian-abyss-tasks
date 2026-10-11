@@ -18,8 +18,14 @@ import { localDate, type TaskOrganizationRecord } from '../src/tasks';
 import { expectDefined } from './helpers';
 import { createCanonicalSearchHarness } from './support/taskSearchHarness';
 
-export async function dailyFixture(markdown: string, today = '2026-10-06') {
-  const h = await createCanonicalSearchHarness({ 'daily.md': markdown }, DEFAULT_SETTINGS);
+export async function dailyFixture(
+  markdown: string | Record<string, string>,
+  today = '2026-10-06',
+) {
+  const h = await createCanonicalSearchHarness(
+    typeof markdown === 'string' ? { 'daily.md': markdown } : markdown,
+    DEFAULT_SETTINGS,
+  );
   const subscription = h.index.searchSource().subscribe(() => {});
   const generation = subscription.state.generation;
   subscription.unsubscribe();
@@ -393,9 +399,17 @@ it.each([
 ])(
   'constructs $count canonical nodes with storage independent of occupied days',
   async ({ count, start, due, logical }) => {
-    const h = await dailyFixture(
-      Array.from({ length: count }, (_, i) => `- [ ] Task ${i} 🛫 ${start} 📅 ${due}`).join('\n'),
+    // Keep all canonical nodes while bounding the mock host's quadratic per-file list parser.
+    const files = Object.fromEntries(
+      Array.from({ length: Math.ceil(count / 100) }, (_, file) => [
+        `daily-${file}.md`,
+        Array.from(
+          { length: Math.min(100, count - file * 100) },
+          (_, line) => `- [ ] Task ${file * 100 + line} 🛫 ${start} 📅 ${due}`,
+        ).join('\n'),
+      ]),
     );
+    const h = await dailyFixture(files);
     try {
       const steps = organizeTaskSearch(h.input);
       let checkpoints = 0;

@@ -10,10 +10,19 @@ import { parseLinkRanges } from '../src/tasks/domain/taskLineAtomicRanges';
 import { parseTaskLineSourceModel } from '../src/tasks/domain/taskLineSourceModel';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { validateReviews } from '../tooling/regex-audit-policy.mjs';
-import { auditConfig, runBoundedChild } from '../tooling/regex-audit.mjs';
+import { auditConfig, collectFindings, runBoundedChild } from '../tooling/regex-audit.mjs';
 import { medianFourfoldRatio, type RegexScenarioResult } from './support/regexRuntimeHarness';
 import { CHILD_PROCESS_TIMEOUT_MS, LINTER_TIMEOUT_MS } from './support/timeouts';
-const ROOT = new URL('..', import.meta.url).pathname;
+const loadPaths = async () => {
+  if (!Platform.isDesktop) throw new Error('Regex audit tests require a desktop runtime');
+  return {
+    ...(await import('node:url')),
+    ...(await import('node:path')),
+    ...(await import('node:crypto')),
+  };
+};
+const { fileURLToPath, posix, win32, createHash } = await loadPaths();
+const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const loadTimers = async () => {
   if (!Platform.isDesktop) throw new Error('Regex audit tests require a desktop runtime');
   return import('node:timers');
@@ -31,7 +40,7 @@ const loadChildProcesses = async () => {
   if (!Platform.isDesktop) throw new Error('Regex audit tests require a desktop runtime');
   return import('node:child_process');
 };
-const { mkdtemp, readFile, rm } = await loadFileSystem();
+const { mkdtemp, readFile, rm, stat } = await loadFileSystem();
 const { tmpdir } = await loadOperatingSystem();
 const { execFile } = await loadChildProcesses();
 const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -46,6 +55,7 @@ async function descendantFixture(inherit: boolean, action: string) {
   const pids = async () => (await readFile(marker, 'utf8')).trim().split('\n').map(Number);
   return {
     code,
+    directory,
     pids,
     async ready() {
       const until = performance.now() + 3000;
@@ -61,7 +71,11 @@ async function descendantFixture(inherit: boolean, action: string) {
     },
     async cleanup() {
       try {
-        for (const pid of await pids()) {
+        const remaining = await pids().catch((error: unknown) => {
+          if ((error as { code?: string }).code === 'ENOENT') return [];
+          throw error;
+        });
+        for (const pid of remaining) {
           try {
             process.kill(pid, 'SIGKILL');
           } catch (error) {
@@ -73,6 +87,14 @@ async function descendantFixture(inherit: boolean, action: string) {
       }
     },
   };
+}
+
+async function settleCancellation(rejected: Promise<unknown>, cleanup: () => Promise<void>) {
+  try {
+    await rejected;
+  } finally {
+    await cleanup();
+  }
 }
 
 async function expectDescendantsGone(pids: number[]) {
@@ -128,6 +150,81 @@ const review = {
 };
 
 describe('exact regex review policy', () => {
+  it.each([
+    {
+      windows: false,
+      rootUrl: 'file:///repo%20space/%23checkout/',
+      fileUrl: 'file:///repo%20space/%23checkout/src/example.ts',
+      root: '/repo space/#checkout/',
+      file: '/repo space/#checkout/src/example.ts',
+    },
+    {
+      windows: true,
+      rootUrl: 'file:///C:/repo%20space/%23checkout/',
+      fileUrl: 'file:///C:/repo%20space/%23checkout/src/example.ts',
+      root: 'C:\\repo space\\#checkout\\',
+      file: 'C:\\repo space\\#checkout\\src\\example.ts',
+    },
+  ])(
+    'collects portable exact identities with decoded URLs (Windows: $windows)',
+    async ({ windows, rootUrl, fileUrl, root, file }) => {
+      const source = '\n/a+b/\n/a+b/';
+      const collected = await collectFindings(
+        [
+          {
+            filePath: fileURLToPath(fileUrl, { windows }),
+            source,
+            messages: [2, 3].map((line) => ({
+              ...finding,
+              line,
+              endLine: line,
+              severity: 2 as const,
+            })),
+            errorCount: 2,
+            fatalErrorCount: 0,
+            warningCount: 0,
+            fixableErrorCount: 0,
+            fixableWarningCount: 0,
+            suppressedMessages: [],
+            usedDeprecatedRules: [],
+          },
+        ],
+        fileURLToPath(rootUrl, { windows }),
+        windows ? win32 : posix,
+      );
+      expect(fileURLToPath(rootUrl, { windows })).toBe(root);
+      expect(fileURLToPath(fileUrl, { windows })).toBe(file);
+      expect(collected.findings).toEqual([finding, { ...finding, line: 3, endLine: 3 }]);
+      const sourceHash = createHash('sha256').update(source).digest('hex');
+      expect(collected.sourceHashes).toEqual({ 'src/example.ts': sourceHash });
+      const reviews = [review, { ...review, finding: { ...finding, line: 3, endLine: 3 } }].map(
+        (item) => ({ ...item, sourceHash }),
+      );
+      expect(validateReviews(collected.findings, reviews, { ...context, ...collected })).toEqual({
+        reviewed: 2,
+        unproven: 0,
+        errors: [],
+      });
+      expect(
+        validateReviews(collected.findings, reviews.slice(0, 1), { ...context, ...collected })
+          .errors,
+      ).toContainEqual(expect.stringContaining('requires exactly one review'));
+      expect(
+        validateReviews(collected.findings, reviews, {
+          ...context,
+          ...collected,
+          guardHashes: { 'src/guard.ts': 'changed' },
+        }).errors,
+      ).toContainEqual(expect.stringContaining('guard'));
+      expect(
+        validateReviews(collected.findings, reviews, {
+          ...context,
+          sourceHashes: { 'src/example.ts': `${sourceHash}changed` },
+        }).errors,
+      ).toContainEqual(expect.stringContaining('source'));
+    },
+  );
+
   it('accepts an exact occurrence with independently bound source and guard evidence', () => {
     expect(validateReviews([finding], [review], context)).toEqual({
       reviewed: 1,
@@ -218,6 +315,30 @@ describe('exact regex review policy', () => {
 });
 
 describe('real analyzer and bounded orchestration', () => {
+  it(
+    'cleans descendant resources even when the cancellation matcher rejects an unexpected success',
+    async () => {
+      const fixture = await descendantFixture(
+        false,
+        "process.stdout.write('{}'); process.exit(0);",
+      );
+      try {
+        const result = await runBoundedChild(['-e', fixture.code]);
+        const pids = await fixture.pids();
+        const rejected = expect(Promise.resolve(result)).rejects.toThrow('cancel');
+        await expect(settleCancellation(rejected, () => fixture.cleanup())).rejects.toThrow(
+          'resolved',
+        );
+        await expectDescendantsGone(pids);
+        await expect(fixture.pids()).rejects.toMatchObject({ code: 'ENOENT' });
+        await expect(stat(fixture.directory)).rejects.toMatchObject({ code: 'ENOENT' });
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
+
   it.each([
     ['deadline', true, 'while(true){}'],
     [
@@ -263,8 +384,7 @@ describe('real analyzer and bounded orchestration', () => {
         await expectDescendantsGone(await fixture.pids());
       } finally {
         abort.abort();
-        await rejected;
-        await fixture.cleanup();
+        await settleCancellation(rejected, () => fixture.cleanup());
       }
     },
     CHILD_PROCESS_TIMEOUT_MS,
