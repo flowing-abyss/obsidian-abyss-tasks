@@ -75,6 +75,17 @@ If the workflow conclusion isn't `success`, `$run_id` comes back empty (the push
 
 **Do not rerun `pnpm run release patch` after the version commit and tag were pushed.** It may create the next patch release rather than retrying the failed workflow for the existing tag. Diagnose and fix forward instead.
 
+## Release Notes
+
+Use superpowers:humanizer in embedded mode on the draft changelog before it
+is published. Check the commit range and actual behavior first; preserve
+versions, compatibility limits, migration/rollback instructions, links, and
+verified checks. Generated categories are a starting point, not evidence.
+Keep the rewritten notes local, then update the authorized draft release with
+`gh release edit <exact-tag> --notes-file <local-notes-file>` and read the body
+back. Do not edit README unless the release request separately includes it.
+Humanizer does not authorize publishing the draft.
+
 ## What's still manual
 
 - Open the draft release on GitHub, skim the changelog you just confirmed is real, publish it.

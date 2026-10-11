@@ -9,7 +9,7 @@ machine-level configuration as part of a project task.
   `spawn_agent {fork_turns: "none"}` where supported. The default `"all"`
   copies the entire transcript and inherits the parent's model and effort.
   Full-history forks reject `model` and `reasoning_effort` overrides in the
-  current tool. Overrides require an isolated (`"none"`) or positive-count
+  current tool. Overrides require an isolated (`"none"`)
   fork, and must follow the user's explicit routing and the spawn allowlist.
   Send a focused file-based brief with the context an isolated child needs.
   Never require unavailable fields such as `agent_type`.
@@ -43,7 +43,7 @@ with one that finished without reporting when necessary.
 
 Follow explicit user routing before any role-based recommendation. Use the
 Model Selection section of the execution skill only within that routing and
-the current allowlist. An isolated fork permits explicit model and effort;
+the current allowlist. An isolated fork permits authorized explicit model and effort;
 a full-history fork inherits both and forbids their overrides. Do not change
 machine-level defaults or request configuration changes for a routine task.
 

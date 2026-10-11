@@ -77,6 +77,13 @@ An Obsidian sidebar plugin that renders vault tasks in month, week, and list vie
   requests it.
 - Do not bump the plugin version, tag, or publish a release unless explicitly requested.
 
+## Writing
+
+Use `superpowers:humanizer` for prose the user will read, including PR titles
+and descriptions, commit messages, and release notes. Preserve technical facts,
+verified checks, compatibility limits, and the requested scope. Do not edit
+README unless the task explicitly includes it.
+
 ## Obsidian CLI
 
 [Obsidian CLI](https://obsidian.md/help/cli) controls the running app from the terminal.
@@ -87,6 +94,8 @@ obsidian vault="dev-vault-tasks" eval code="app.vault.getFiles().length"   # run
 obsidian vault="dev-vault-tasks" devtools                                  # toggle dev tools
 obsidian vault="dev-vault-tasks" dev:screenshot path=screenshot.png        # screenshot
 obsidian vault="dev-vault-tasks" dev:dom selector=".abyss-panel-view" text # query DOM
+obsidian vault="dev-vault-tasks" dev:console                            # captured console output
+obsidian vault="dev-vault-tasks" dev:errors                             # captured runtime errors
 ```
 
 Typical loop: `pnpm dev` → `obsidian plugin:reload id=abyss-tasks`.

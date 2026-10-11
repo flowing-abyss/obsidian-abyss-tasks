@@ -185,7 +185,7 @@ implementation.
 
 Explicit user routing and the actual tool schema take precedence over these
 recommendations. Full-history forks inherit model/effort and forbid overrides;
-use an isolated or positive-count fork for permitted explicit overrides.
+use an isolated fork for permitted explicit overrides.
 
 Use the least powerful model that can handle each role to conserve cost and increase speed.
 

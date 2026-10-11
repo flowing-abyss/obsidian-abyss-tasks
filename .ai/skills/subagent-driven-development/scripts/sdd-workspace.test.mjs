@@ -1,6 +1,14 @@
 import { strict as assert } from 'node:assert';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
@@ -86,5 +94,17 @@ test('a legacy workspace without a marker is adopted by the plan that resolves t
 });
 
 test('a missing plan file exits 2', () => {
-  assert.throws(() => workspace('docs/missing.md'), (error) => error.status === 2);
+  assert.throws(
+    () => workspace('docs/missing.md'),
+    (error) => error.status === 2,
+  );
+});
+
+test('keeps an existing workspace ignore policy byte-for-byte', () => {
+  workspace('docs/alpha/plan.md');
+  const ignore = path.join(repo, '.superpowers', 'sdd', '.gitignore');
+  const policy = '*\n!progress.md\n';
+  writeFileSync(ignore, policy);
+  workspace('docs/beta/plan.md');
+  assert.equal(readFileSync(ignore, 'utf8'), policy);
 });

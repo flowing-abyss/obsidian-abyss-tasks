@@ -8,9 +8,8 @@
 //
 //   node .ai/setup.mjs
 //
-// Safe to re-run: existing correct links are left alone. A symlink that no longer
-// resolves and points into `.ai/` can only be one this script made before its
-// source moved, so it is replaced with the expected link. Anything else that isn't
+// Safe to re-run: existing correct links are left alone. A broken symlink to one of the four
+// previous harness-script locations is repaired after the source move. Anything else that isn't
 // already the expected link is reported and skipped rather than overwritten.
 //
 // `.ai/configs/` is laid out as a literal mirror of the repo root — e.g.
@@ -145,6 +144,11 @@ function ensureLink(linkPath, targetPath) {
       console.log(
         `conflict ${linkPath} (exists and is not the expected link to ${relativeTarget}: ${check.reason})`,
       );
+      if (isWindows && targetPath.startsWith('.ai/scripts/')) {
+        console.log(
+          `If ${linkPath} is the old generated hard link, remove that file and re-run node .ai/setup.mjs. Preserve custom files before doing so.`,
+        );
+      }
       return 'conflict';
     }
     unlinkSync(linkPath);
@@ -169,18 +173,22 @@ function ensureLink(linkPath, targetPath) {
   return 'created';
 }
 
-// Only this script makes links into `.ai/`, so a symlink that no longer resolves
-// and whose stored target, resolved the way the filesystem does against the
-// link's own directory, lies inside `.ai/` is one it made before its source
-// moved. Returns that stored target, or undefined for anything else.
+// Repair only the known previous source for each moved adapter. Arbitrary broken
+// links inside `.ai/` may belong to the user and must remain conflicts.
 function ownStaleLinkTarget(linkPath) {
   if (existsSync(linkPath) || !isBrokenSymlink(linkPath)) return undefined;
   const storedTarget = readlinkSync(linkPath);
   const resolved = path.resolve(realpathSync(path.dirname(linkPath)), storedTarget);
-  const fromAiRoot = path.relative(realpathSync(aiRoot), resolved);
-  const insideAiRoot =
-    fromAiRoot !== '' && !path.isAbsolute(fromAiRoot) && fromAiRoot.split(path.sep)[0] !== '..';
-  return insideAiRoot ? storedTarget : undefined;
+  const previousSources = {
+    '.opencode/plugins/pnpm-policy.js': 'configs/.opencode/plugins/pnpm-policy.js',
+    '.opencode/plugins/codegraph.js': 'configs/.opencode/plugins/codegraph.js',
+    '.pi/extensions/pnpm-policy.ts': 'configs/.pi/extensions/pnpm-policy.ts',
+    '.pi/extensions/codegraph.ts': 'configs/.pi/extensions/codegraph.ts',
+  };
+  const previousSource = previousSources[linkPath];
+  return previousSource && resolved === path.join(realpathSync(aiRoot), previousSource)
+    ? storedTarget
+    : undefined;
 }
 
 function createLink(linkPath, targetPath, relativeTarget, isDirTarget) {

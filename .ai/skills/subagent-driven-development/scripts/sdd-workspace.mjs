@@ -72,7 +72,8 @@ export function resolveWorkspace(planFile) {
       dir = path.join(base, `${slug}-${parent}-${n}`);
     }
   }
-  writeFileSync(path.join(base, '.gitignore'), '*\n');
+  const ignore = path.join(base, '.gitignore');
+  if (!existsSync(ignore)) writeFileSync(ignore, '*\n');
 
   return dir;
 }

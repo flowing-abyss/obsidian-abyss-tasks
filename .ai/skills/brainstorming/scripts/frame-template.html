@@ -9,7 +9,7 @@
      *
      * This template provides a consistent frame with:
      * - OS-aware light/dark theming
-     * - Header branding and connection status
+     * - Connection status
      * - Scrollable main content area
      * - CSS helpers for common UI patterns
      *
@@ -63,13 +63,6 @@
     }
 
     /* ===== FRAME STRUCTURE ===== */
-    .brand { display: flex; align-items: center; min-width: 0; overflow: hidden; color: var(--text-secondary); line-height: 1; }
-    .brand a { color: inherit; text-decoration: none; display: flex; align-items: center; gap: 0.5rem; min-width: 0; max-width: 100%; line-height: 1; }
-    .brand-copy { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1; transform: translateY(-1px); }
-    .brand-logo { display: block; height: 1em; width: auto; max-width: 180px; flex-shrink: 0; filter: invert(1); }
-    @media (prefers-color-scheme: dark) {
-      .brand-logo { filter: none; }
-    }
     .status { font-size: 0.7rem; color: var(--status-color, var(--success)); display: flex; align-items: center; gap: 0.4rem; justify-self: end; white-space: nowrap; line-height: 1; }
     .status::before { content: ''; width: 6px; height: 6px; background: var(--status-color, var(--success)); border-radius: 50%; }
 
@@ -87,7 +80,6 @@
       gap: 1rem;
       min-height: 42px;
     }
-    .header .brand { justify-self: start; width: 100%; font-size: 0.75rem; line-height: 1; }
     .header .status { grid-column: 2; line-height: 1; }
     .header span {
       font-size: 0.75rem;
@@ -199,7 +191,6 @@
 </head>
 <body>
   <div class="header">
-    <!-- BRANDING -->
     <div class="status">Connecting…</div>
   </div>
 

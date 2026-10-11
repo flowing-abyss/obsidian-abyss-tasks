@@ -1,6 +1,13 @@
 import { strict as assert } from 'node:assert';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
@@ -34,7 +41,15 @@ before(() => {
   git = (...args) =>
     execFileSync(
       'git',
-      ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', ...args],
+      [
+        '-c',
+        'user.name=Test',
+        '-c',
+        'user.email=test@example.com',
+        '-c',
+        'commit.gpgsign=false',
+        ...args,
+      ],
       { cwd: repo, encoding: 'utf8' },
     ).trim();
   git('init', '-q');
@@ -46,7 +61,10 @@ before(() => {
 after(() => rmSync(repo, { force: true, recursive: true }));
 
 const run = (script, ...args) =>
-  spawnSync(process.execPath, [path.join(scriptsDir, script), ...args], { cwd: repo, encoding: 'utf8' });
+  spawnSync(process.execPath, [path.join(scriptsDir, script), ...args], {
+    cwd: repo,
+    encoding: 'utf8',
+  });
 
 const workspace = () => path.join(repo, '.superpowers', 'sdd', 'plan');
 
@@ -126,6 +144,23 @@ test('task-done rejects a missing -- separator or an unknown BASE with exit 2', 
 });
 
 test('renderCommand quotes only the arguments that need it', () => {
-  assert.equal(renderCommand(['pnpm', 'test', '--', 'src/a b.test.ts']), "pnpm test -- 'src/a b.test.ts'");
+  assert.equal(
+    renderCommand(['pnpm', 'test', '--', 'src/a b.test.ts']),
+    "pnpm test -- 'src/a b.test.ts'",
+  );
   assert.equal(renderCommand(['pnpm', 'exec', 'vitest', 'run']), 'pnpm exec vitest run');
+});
+
+test('task-done records silent and whitespace-only passing commands', () => {
+  const base = git('rev-parse', 'HEAD');
+  for (const script of ['', "console.log('  '); console.log('')"]) {
+    const result = run('task-done.mjs', 'plan.md', '2', base, '--', process.execPath, '-e', script);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /→ \(no output\)\)/);
+    assert.match(readFileSync(path.join(workspace(), 'progress.md'), 'utf8'), /→ \(no output\)\)/);
+  }
+});
+
+test('renderCommand shows an empty argument explicitly', () => {
+  assert.equal(renderCommand(['node', '-e', '']), "node -e ''");
 });

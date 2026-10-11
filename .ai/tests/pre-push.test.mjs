@@ -18,7 +18,7 @@ const cleanEnvironment = Object.fromEntries(
 
 for (const exitCode of [0, 23]) {
   test(`pre-push isolates fixture Git commands and preserves verification exit ${exitCode}`, (t) => {
-    const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'pre-push-isolation-')));
+    const root = realpathSync.native(mkdtempSync(path.join(tmpdir(), 'pre-push-isolation-')));
     t.after(() => rmSync(root, { recursive: true, force: true }));
     const repo = path.join(root, 'repo');
     const worktree = path.join(root, 'worktree');
@@ -69,7 +69,7 @@ process.exit(${exitCode});
     assert.equal(result.status, exitCode, result.stderr);
     assert.deepEqual(JSON.parse(readFileSync(report, 'utf8')), {
       args: ['run', 'ci', '--pre-push'],
-      root: foreign,
+      root: realpathSync.native(foreign),
     });
   });
 }

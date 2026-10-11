@@ -57,7 +57,14 @@ plan, the conversation, or the branch's upstream. If it is not already
 known, ask: "This branch split from <your best guess> - is that correct?"
 Confirm before merging: merging into the wrong base is expensive to undo.
 
-## Step 4: Present Options
+## Step 4: Use the Existing Integration Choice or Present Options
+
+If the user already authorized an integration method in this conversation,
+execute that method after verification without asking again. Otherwise present
+the applicable menu below and wait. Before finalizing a pull request's title
+and description, use superpowers:humanizer in embedded mode. Preserve the
+repository's PR template and actual verification results.
+
 
 **Normal repo and named-branch worktree — present exactly these 3 options:**
 
@@ -85,8 +92,8 @@ Which option?
 Present the menu exactly as written — concise, with every option coming
 from the list above. Discarding the work happens only in response to your
 human partner explicitly asking for it (see "If your human partner asks to
-discard the work" below). Wait for their answer; the integration decision
-is theirs.
+discard the work" below). Wait for their answer when the integration choice is missing; preserve
+a choice they have already made.
 
 ## Step 5: Execute Choice
 

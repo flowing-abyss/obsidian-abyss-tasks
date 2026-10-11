@@ -235,7 +235,7 @@ mark the todo complete and take the next task.
 
 Explicit user model routing and the actual spawn schema take precedence over
 role recommendations below. Full-history forks inherit settings; use an
-isolated or positive-count fork for permitted model and effort overrides.
+isolated fork for permitted model and effort overrides.
 
 Run `node ../subagent-driven-development/scripts/review-package.mjs PLAN_FILE MERGE_BASE HEAD`
 (MERGE_BASE = the commit the branch started from, e.g.

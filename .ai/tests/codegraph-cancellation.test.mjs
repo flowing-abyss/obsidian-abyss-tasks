@@ -16,7 +16,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const aiRoot = path.dirname(fileURLToPath(import.meta.url));
+const aiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const deadline = 30_000;
 const realSetTimeout = globalThis.setTimeout;
 const realClearTimeout = globalThis.clearTimeout;

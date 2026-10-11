@@ -16,7 +16,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint . --max-warnings 0",
-    "lint:css": "stylelint styles.css && node tooling/check-css.mjs styles.css",
+    "lint:css": "stylelint styles.css --max-warnings 0 && node tooling/check-css.mjs styles.css",
     "lint:store": "vitest run --config vitest.store.config.ts",
     "typecheck": "tsc -noEmit --skipLibCheck && tsc --project tooling/tsconfig.json",
     "test": "vitest run",

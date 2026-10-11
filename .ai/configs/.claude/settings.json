@@ -31,7 +31,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$CLAUDE_PROJECT_DIR/.ai/codegraph.mjs\" prompt-hook"
+            "command": "node \"$CLAUDE_PROJECT_DIR/.ai/codegraph.mjs\" prompt-hook",
+            "timeout": 30
           }
         ]
       }
