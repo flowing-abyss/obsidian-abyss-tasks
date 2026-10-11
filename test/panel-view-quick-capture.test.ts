@@ -215,7 +215,10 @@ function enter(input: HTMLInputElement, text: string): void {
 }
 
 /** Observe the real reveal; a short-lived pulse is not a reliable asynchronous completion clock. */
-function nextQuickPresentation(presentation: CreationPresentationController) {
+function nextQuickPresentation(
+  presentation: CreationPresentationController,
+  onRevealSettled?: () => void,
+) {
   const receipt = deferred<{ ref: TaskRef; element: HTMLElement } | undefined>();
   const present = presentation.present.bind(presentation);
   vi.spyOn(presentation, 'present').mockImplementationOnce(
@@ -227,6 +230,12 @@ function nextQuickPresentation(presentation: CreationPresentationController) {
           ? undefined
           : {
               ...authority,
+              reveal(ref, request) {
+                const result = authority.reveal(ref, request);
+                return onRevealSettled === undefined
+                  ? result
+                  : Promise.resolve(result).finally(onRevealSettled);
+              },
               onPresented(ref, element) {
                 authority.onPresented?.(ref, element);
                 receipt.resolve({ ref, element });
@@ -453,6 +462,7 @@ describe('physical Q creation reveal through PanelView', () => {
       const entered = deferred<void>();
       const hydration = deferred<void>();
       const hydrationFinished = deferred<void>();
+      const revealSettled = deferred<void>();
       let acquired: Awaited<ReturnType<typeof mountQuickPanel>> | undefined;
       const dispose = ownTestCleanup(context, async () => {
         const closed = acquired?.dispose();
@@ -489,7 +499,9 @@ describe('physical Q creation reveal through PanelView', () => {
         });
         const input = await ownedWait(h.openQ(), context.signal);
         let received = false;
-        const presented = nextQuickPresentation(h.presentation).then((receipt) => {
+        const presented = nextQuickPresentation(h.presentation, () => {
+          revealSettled.resolve();
+        }).then((receipt) => {
           received = true;
           return receipt;
         });
@@ -510,6 +522,7 @@ describe('physical Q creation reveal through PanelView', () => {
         const acceptedSelection = [...h.state.get('taskStack')];
         const createdBeforeRelease = expectDefined(h.index.list({ filePath: 'created.md' })[0]);
         expect(acceptedSelection).toEqual([createdBeforeRelease]);
+        const expiresAt = expectDefined(h.presentation['pending'][0]).expiresAt;
         let retainedSelection = acceptedSelection;
         const lateReveal = vi.spyOn(TaskListSurface.prototype, 'reveal');
         if (outcome.startsWith('expired')) {
@@ -526,12 +539,10 @@ describe('physical Q creation reveal through PanelView', () => {
         }
         if (outcome === 'cancelled') {
           input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-          now += 1;
-          h.presentation.refreshMounted(h.center);
         }
         hydration.resolve();
-        const receipt = await ownedWait(presented, context.signal);
         await ownedWait(hydrationFinished.promise, context.signal);
+        await ownedWait(revealSettled.promise, context.signal);
         const created = expectDefined(h.index.list({ filePath: 'created.md' })[0]);
         expect(created.title).toBe('Z created Q excluded');
         expect(h.state.get('centerFilter')).toBe('needle');
@@ -543,6 +554,7 @@ describe('physical Q creation reveal through PanelView', () => {
         expect(renderedTaskElements(h.root, unrelated.ref)).toEqual([]);
         expect(legacyScroll).not.toHaveBeenCalled();
         if (outcome === 'presented') {
+          const receipt = await ownedWait(presented, context.signal);
           const card = expectDefined(receipt).element;
           expect(receipt?.ref).toEqual(created.ref);
           expect(renderedTaskElements(h.root, created.ref)).toContain(card);
@@ -568,26 +580,31 @@ describe('physical Q creation reveal through PanelView', () => {
           expect(completions).not.toHaveBeenCalled();
           expect(document.activeElement).toBe(input);
         } else {
-          expect(receipt).toBeUndefined();
           await ownedWait(flushMicrotasks(), context.signal);
+          if (outcome === 'cancelled') expect(now).toBeLessThan(expiresAt);
           expect(h.root.querySelector('.is-just-created')).toBeNull();
           expect(h.panel['creationInclusion_abyssPrivate']).toBeUndefined();
           expect(h.panel['creationAttempts_abyssPrivate'].size).toBe(0);
+          expect(h.state.get('taskStack')).toEqual(retainedSelection);
+          expect(lateReveal).not.toHaveBeenCalled();
+          expect(
+            await ownedWait(
+              h.app.vault.read(expectDefined(h.app.vault.getFileByPath('created.md'))),
+              context.signal,
+            ),
+          ).toContain('- [ ] Z created Q excluded');
           if (outcome === 'cancelled') {
             expect(input.isConnected).toBe(false);
             expect(document.activeElement).toBe(h.center);
+            // Cancellation must reject late work while its presentation deadline is still live.
+            // The owner retains the terminal entry until expiry after these checks.
+            now += 1;
+            h.presentation.refreshMounted(h.center);
           } else {
-            expect(h.state.get('taskStack')).toEqual(retainedSelection);
-            expect(lateReveal).not.toHaveBeenCalled();
             expect(input.isConnected).toBe(true);
             expect(document.activeElement).toBe(input);
-            expect(
-              await ownedWait(
-                h.app.vault.read(expectDefined(h.app.vault.getFileByPath('created.md'))),
-                context.signal,
-              ),
-            ).toContain('- [ ] Z created Q excluded');
           }
+          expect(await ownedWait(presented, context.signal)).toBeUndefined();
         }
       } finally {
         await dispose();
