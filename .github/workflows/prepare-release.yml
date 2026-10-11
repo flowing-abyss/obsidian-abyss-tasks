@@ -1,0 +1,114 @@
+name: Prepare patch release
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: prepare-patch-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require master
+        env:
+          WORKFLOW_REF: ${{ github.ref }}
+        run: |
+          if [ "$WORKFLOW_REF" != refs/heads/master ]; then
+            echo '::error::Run Prepare patch release from master.'
+            exit 1
+          fi
+
+      - name: Check App configuration
+        env:
+          RELEASE_APP_CLIENT_ID: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+        run: |
+          if [ -z "$RELEASE_APP_CLIENT_ID" ] || [ -z "$RELEASE_APP_PRIVATE_KEY" ]; then
+            echo '::error::Configure RELEASE_APP_CLIENT_ID and RELEASE_APP_PRIVATE_KEY and install abyss-automation on this repository.'
+            exit 1
+          fi
+
+      - uses: actions/checkout@v7
+        with:
+          ref: master
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Prepare version metadata
+        id: release
+        run: node tooling/release-automation.mjs prepare
+
+      - name: Verify release scope and build fresh artifacts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: pnpm run ci --release
+
+      - name: Create repository App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Create release pull request
+        id: pull-request
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          RELEASE_BRANCH: ${{ steps.release.outputs.branch }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          if [ "$APP_SLUG" != abyss-automation ]; then
+            echo '::error::The release App must be abyss-automation.'
+            exit 1
+          fi
+          gh auth setup-git
+          existing=$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&base=master&head=$GITHUB_REPOSITORY_OWNER:$RELEASE_BRANCH" \
+            --jq '[.[] | select(.user.login == "abyss-automation[bot]")][0].html_url // empty')
+          if [ -n "$existing" ]; then
+            printf 'pull-request-url=%s\n' "$existing" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          remote=$(git ls-remote origin "refs/heads/$RELEASE_BRANCH")
+          if [ -n "$remote" ]; then
+            git fetch origin "refs/heads/$RELEASE_BRANCH:refs/remotes/origin/$RELEASE_BRANCH"
+            node tooling/release-automation.mjs reuse
+          else
+            git switch -c "$RELEASE_BRANCH"
+            git config user.name 'abyss-automation[bot]'
+            git config user.email 'abyss-automation[bot]@users.noreply.github.com'
+            git add -- package.json manifest.json versions.json
+            git commit -m "chore: release $RELEASE_VERSION"
+            git push origin "HEAD:refs/heads/$RELEASE_BRANCH"
+          fi
+          cat > "$RUNNER_TEMP/release-pr-body.md" <<EOF
+          Prepares patch release $RELEASE_VERSION.
+
+          Only package.json, manifest.json and versions.json change. Release verification builds and checks fresh artifacts before opening this PR.
+
+          Merge this PR after CI passes. Successful master CI creates the version tag and the existing release workflow creates a draft with plugin assets.
+          EOF
+          url=$(gh pr create --base master --head "$RELEASE_BRANCH" \
+            --title "chore: release $RELEASE_VERSION" --body-file "$RUNNER_TEMP/release-pr-body.md")
+          printf 'pull-request-url=%s\n' "$url" >> "$GITHUB_OUTPUT"
+
+      - name: Summarize release preparation
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          PULL_REQUEST_URL: ${{ steps.pull-request.outputs.pull-request-url }}
+        run: |
+          printf 'Prepared patch release %s\n\n%s\n' "$RELEASE_VERSION" "$PULL_REQUEST_URL" >> "$GITHUB_STEP_SUMMARY"

@@ -2022,6 +2022,21 @@ Node 24 with a pinned action, strict errors, project-owned lint/build, and PR mo
 The existing workflow owns artifact attestation, the minified stylesheet and draft release creation.
 Independent Security workflow checks retain their own triggers, including scheduled audits.
 
+The manually dispatched `Prepare patch release` workflow runs from master and reuses
+`version-bump.mjs` to prepare only package, manifest and version-history changes in a PR from
+`abyss-automation`. It verifies the complete release scope and fresh artifacts before opening the
+PR. After that PR is merged, `Tag merged patch release` rechecks the exact successful master CI run
+through GitHub's API, the bot PR's complete file list, its merged commit and the semantic patch
+metadata. Its trusted master helper never checks out or executes the triggering run's code or
+artifacts. A repository-scoped App token creates an immutable plain version tag, which triggers the
+existing draft release workflow. Existing tags must resolve to that exact commit and are never
+rewritten. Repository configuration uses `RELEASE_APP_CLIENT_ID` and `RELEASE_APP_PRIVATE_KEY`;
+the short-lived tokens request only the contents/PR permissions needed by each operation.
+Preparation can recover a pushed branch whose PR was not created by validating its complete
+version-only diff and prepared metadata through Git objects, without checking out or rewriting the
+branch. Tag runs use a concurrency group per verified commit so unrelated CI completions cannot
+discard a pending release.
+
 Styles stay scoped to plugin-owned surfaces and use semantic host tokens.
 The full gate includes source CSS, community review rules, and freshly built
 artifact CSS. UI changes also require native interaction, screenshots, DOM evidence, and captured
