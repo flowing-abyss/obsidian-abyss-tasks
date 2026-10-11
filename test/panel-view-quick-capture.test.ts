@@ -14,6 +14,7 @@ import type {
 import { renderedTaskElements } from '../src/ui/taskPresentationIdentity';
 import { PanelView } from '../src/views/PanelView';
 import { deferred, expectDefined, flushMicrotasks, useRealMoment } from './helpers';
+import { ownedWait, ownTestCleanup } from './support/ownedTestLifetime';
 import {
   prepareTaskPanelViewport,
   taskCardMountBound,
@@ -46,7 +47,22 @@ const rows = Array.from(
   (_, n) => `- [ ] A row ${String(n).padStart(4, '0')}`,
 ).join('\n');
 
-async function mountQuickPanel(dashboard = false, tag = false, needle = false) {
+function bindQuickPanelLifetime(signal: AbortSignal | undefined, abort: () => void): void {
+  signal?.addEventListener('abort', abort, { once: true });
+  signal?.throwIfAborted();
+}
+async function openQuickView(view: PanelView, signal?: AbortSignal): Promise<void> {
+  if (signal === undefined) await view.onOpen();
+  else await ownedWait(view.onOpen(), signal);
+  signal?.throwIfAborted();
+}
+
+async function mountQuickPanel(
+  dashboard = false,
+  tag = false,
+  needle = false,
+  lifetimeSignal?: AbortSignal,
+) {
   const settings: CalendarSettings = structuredClone(DEFAULT_SETTINGS);
   settings.taskFilePath = 'created.md';
   settings.taskInsertionMode = 'append';
@@ -67,95 +83,127 @@ async function mountQuickPanel(dashboard = false, tag = false, needle = false) {
       'excluded.md': '- [ ] Unrelated excluded #other\n',
     },
     settings,
+    true,
+    undefined,
+    undefined,
+    undefined,
+    lifetimeSignal,
   );
-  const leaf = new (WorkspaceLeaf as unknown as { new (app: App): WorkspaceLeaf })(h.app);
-  const tags = new TagManager(h.app, settings, async () => {}, {
-    check: () => 'ready',
-    apply: async (_change, applyLive) => {
-      applyLive();
-    },
-  });
-  const view = new PanelView(
-    leaf,
-    settings,
-    tags,
-    h.index,
-    h.tasks,
-    h.statusRegistry,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    h.search,
-  );
-  prepareTaskPanelViewport(view.contentEl, true);
-  for (const element of [view.contentEl, view.containerEl]) {
-    const bounds = new DOMRect(0, 0, 700, 900);
-    Object.defineProperty(element, 'getClientRects', {
-      configurable: true,
-      value: () => Object.assign([bounds], { item: () => bounds }),
+  let acquiredView: PanelView | undefined;
+  let disposal: Promise<void> | undefined;
+  function dispose(): Promise<void> {
+    if (disposal !== undefined) return disposal;
+    lifetimeSignal?.removeEventListener('abort', abort);
+    // onClose destroys the presentation timer synchronously, before its returned promise settles.
+    disposal = (async () => {
+      try {
+        const closed = acquiredView?.onClose();
+        acquiredView?.containerEl.remove();
+        (h.app.workspace as { activeLeaf: WorkspaceLeaf | null }).activeLeaf = null;
+        h.close();
+        await closed;
+      } finally {
+        acquiredView?.containerEl.remove();
+        h.close();
+      }
+    })();
+    return disposal;
+  }
+  function abort(): void {
+    void dispose().catch((error: unknown) => {
+      console.error('[abyss-tasks] Quick Capture cancellation cleanup failed', error);
     });
   }
-  vi.spyOn(h.app.workspace, 'getActiveViewOfType').mockImplementation((type) =>
-    type === PanelView ? view : null,
-  );
-  (h.app.workspace as { activeLeaf: WorkspaceLeaf | null }).activeLeaf = leaf;
-  await view.onOpen();
-  const internals = view as unknown as {
-    state_abyssPrivate: AppState;
-    center_abyssPrivate: CenterPanel;
-    creationPresentation_abyssPrivate: CreationPresentationController;
-  };
-  const state = internals.state_abyssPrivate;
-  state.set('selectedList', 'inbox');
-  if (tag) state.set('selectedList', { type: 'tag', tag: '#work' });
-  if (dashboard) {
-    state.set('mode', 'projects');
-    state.set('projectsPanel', { view: 'dashboard', path: 'Projects/P.md' });
-  }
-  const root = view.contentEl;
-  const center = expectDefined(root.querySelector<HTMLElement>('.abyss-center'));
-  return {
-    ...h,
-    view,
-    root,
-    center,
-    state,
-    settings,
-    panel: internals.center_abyssPrivate,
-    presentation: internals.creationPresentation_abyssPrivate,
-    query(value: string) {
-      const input = expectDefined(
-        root.querySelector<HTMLInputElement>('.abyss-center-search, .abyss-search-global'),
-      );
-      input.value = value;
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-    },
-    async openQ() {
-      center.tabIndex = -1;
-      center.focus();
-      const event = new KeyboardEvent('keydown', {
-        key: 'q',
-        code: 'KeyQ',
-        bubbles: true,
-        cancelable: true,
+  try {
+    bindQuickPanelLifetime(lifetimeSignal, abort);
+    const leaf = new (WorkspaceLeaf as unknown as { new (app: App): WorkspaceLeaf })(h.app);
+    const tags = new TagManager(h.app, settings, async () => {}, {
+      check: () => 'ready',
+      apply: async (_change, applyLive) => {
+        applyLive();
+      },
+    });
+    const view = (acquiredView = new PanelView(
+      leaf,
+      settings,
+      tags,
+      h.index,
+      h.tasks,
+      h.statusRegistry,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      h.search,
+    ));
+    prepareTaskPanelViewport(view.contentEl, true);
+    for (const element of [view.contentEl, view.containerEl]) {
+      const bounds = new DOMRect(0, 0, 700, 900);
+      Object.defineProperty(element, 'getClientRects', {
+        configurable: true,
+        value: () => Object.assign([bounds], { item: () => bounds }),
       });
-      center.dispatchEvent(event);
-      await flushMicrotasks(0);
-      expect(event.defaultPrevented).toBe(true);
-      const input = expectDefined(
-        root.querySelector<HTMLInputElement>('.abyss-quick-capture-host .abyss-capture-input'),
-      );
-      expect(document.activeElement).toBe(input);
-      return input;
-    },
-    async dispose() {
-      await view.onClose();
-      view.containerEl.remove();
-      (h.app.workspace as { activeLeaf: WorkspaceLeaf | null }).activeLeaf = null;
-      h.close();
-    },
-  };
+    }
+    vi.spyOn(h.app.workspace, 'getActiveViewOfType').mockImplementation((type) =>
+      type === PanelView ? view : null,
+    );
+    (h.app.workspace as { activeLeaf: WorkspaceLeaf | null }).activeLeaf = leaf;
+    await openQuickView(view, lifetimeSignal);
+    const internals = view as unknown as {
+      state_abyssPrivate: AppState;
+      center_abyssPrivate: CenterPanel;
+      creationPresentation_abyssPrivate: CreationPresentationController;
+    };
+    const state = internals.state_abyssPrivate;
+    state.set('selectedList', 'inbox');
+    if (tag) state.set('selectedList', { type: 'tag', tag: '#work' });
+    if (dashboard) {
+      state.set('mode', 'projects');
+      state.set('projectsPanel', { view: 'dashboard', path: 'Projects/P.md' });
+    }
+    const root = view.contentEl;
+    const center = expectDefined(root.querySelector<HTMLElement>('.abyss-center'));
+    return {
+      ...h,
+      view,
+      root,
+      center,
+      state,
+      settings,
+      panel: internals.center_abyssPrivate,
+      presentation: internals.creationPresentation_abyssPrivate,
+      query(value: string) {
+        const input = expectDefined(
+          root.querySelector<HTMLInputElement>('.abyss-center-search, .abyss-search-global'),
+        );
+        input.value = value;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      },
+      async openQ() {
+        center.tabIndex = -1;
+        center.focus();
+        const event = new KeyboardEvent('keydown', {
+          key: 'q',
+          code: 'KeyQ',
+          bubbles: true,
+          cancelable: true,
+        });
+        center.dispatchEvent(event);
+        await flushMicrotasks(0);
+        lifetimeSignal?.throwIfAborted();
+        expect(event.defaultPrevented).toBe(true);
+        const input = expectDefined(
+          root.querySelector<HTMLInputElement>('.abyss-quick-capture-host .abyss-capture-input'),
+        );
+        expect(document.activeElement).toBe(input);
+        return input;
+      },
+      dispose,
+    };
+  } catch (error) {
+    await dispose();
+    throw error;
+  }
 }
 
 function enter(input: HTMLInputElement, text: string): void {
@@ -288,7 +336,7 @@ describe('physical Q creation reveal through PanelView', () => {
     },
   );
 
-  it.each([
+  it.for([
     {
       name: 'matched-text',
       global: false,
@@ -333,8 +381,14 @@ describe('physical Q creation reveal through PanelView', () => {
     },
   ])(
     'preserves query and unrelated exclusions while revealing only the created root ($name)',
-    async ({ global, property, destination, title }) => {
-      const h = await mountQuickPanel(false, false, true);
+    async ({ global, property, destination, title }, context) => {
+      let acquired: Awaited<ReturnType<typeof mountQuickPanel>> | undefined;
+      const dispose = ownTestCleanup(context, async () => {
+        await acquired?.dispose();
+      });
+      const h = (acquired = await mountQuickPanel(false, false, true, context.signal));
+      let now = 1_800_000_000_000;
+      vi.spyOn(h.presentation['options'], 'now').mockImplementation(() => now);
       try {
         h.state.set('mode', global ? 'search' : 'tasks');
         h.settings.taskFilePath = destination;
@@ -345,12 +399,15 @@ describe('physical Q creation reveal through PanelView', () => {
           });
         }
         h.query('needle');
-        await searchUiCompleted(h.center);
+        await searchUiCompleted(h.center, undefined, {
+          signal: context.signal,
+          phase: 'quick capture query',
+        });
         const filters = structuredClone(h.state.get('centerListViewState').filters);
-        const input = await h.openQ();
+        const input = await ownedWait(h.openQ(), context.signal);
         const presented = nextQuickPresentation(h.presentation);
         enter(input, title);
-        const receipt = expectDefined(await presented);
+        const receipt = expectDefined(await ownedWait(presented, context.signal));
         const created = expectDefined(h.index.list().find((task) => task.title === title));
         expect(receipt.ref).toEqual(created.ref);
         expect(renderedTaskElements(h.root, created.ref)).toContain(receipt.element);
@@ -373,21 +430,44 @@ describe('physical Q creation reveal through PanelView', () => {
         expect(document.activeElement).toBe(input);
         expect(input.value).toBe('');
         expect(legacyScroll).not.toHaveBeenCalled();
+        const complete = vi.spyOn(h.panel, 'completeTaskCardRender_abyssPrivate');
+        const reveal = vi.spyOn(TaskListSurface.prototype, 'reveal');
+        now += 1099;
+        h.presentation.refreshMounted(h.center);
+        expect(receipt.element.classList.contains('is-just-created')).toBe(true);
+        now += 1;
+        h.presentation.refreshMounted(h.center);
+        expect(h.root.querySelector('.is-just-created')).toBeNull();
+        expect(complete).not.toHaveBeenCalled();
+        expect(reveal).not.toHaveBeenCalled();
+        expect(document.activeElement).toBe(input);
       } finally {
-        await h.dispose();
+        await dispose();
       }
     },
   );
 
-  it.each(['presented', 'cancelled'] as const)(
+  it.for(['presented', 'cancelled', 'expired', 'expired-new-selection'] as const)(
     'observes a %s excluded reveal after the old polling window expires',
-    async (outcome) => {
-      const h = await mountQuickPanel(false, false, true);
+    async (outcome, context) => {
       const entered = deferred<void>();
       const hydration = deferred<void>();
+      const hydrationFinished = deferred<void>();
+      let acquired: Awaited<ReturnType<typeof mountQuickPanel>> | undefined;
+      const dispose = ownTestCleanup(context, async () => {
+        const closed = acquired?.dispose();
+        hydration.resolve();
+        await closed;
+      });
+      const h = (acquired = await mountQuickPanel(false, false, true, context.signal));
+      let now = 1_800_000_000_000;
+      vi.spyOn(h.presentation['options'], 'now').mockImplementation(() => now);
       try {
         h.query('needle');
-        await searchUiCompleted(h.center);
+        await searchUiCompleted(h.center, undefined, {
+          signal: context.signal,
+          phase: 'quick capture query',
+        });
         const resolve = h.index.resolveSearchHits.bind(h.index);
         vi.spyOn(h.index, 'resolveSearchHits').mockImplementation(async (hits, signal) => {
           const created = h.source.files().find((file) => file.path === 'created.md');
@@ -398,25 +478,60 @@ describe('physical Q creation reveal through PanelView', () => {
             )
           ) {
             entered.resolve();
-            await hydration.promise;
+            try {
+              await ownedWait(hydration.promise, context.signal);
+              return await resolve(hits, signal);
+            } finally {
+              hydrationFinished.resolve();
+            }
           }
           return resolve(hits, signal);
         });
-        const input = await h.openQ();
-        const presented = nextQuickPresentation(h.presentation);
+        const input = await ownedWait(h.openQ(), context.signal);
+        let received = false;
+        const presented = nextQuickPresentation(h.presentation).then((receipt) => {
+          received = true;
+          return receipt;
+        });
         enter(input, 'Z created Q excluded');
-        await entered.promise;
+        await ownedWait(entered.promise, context.signal);
         // Reproduce the old assertion's false negative while real hydration is still pending.
         await expect(
-          vi.waitFor(() => {
-            expect(h.root.querySelector('.is-just-created')).not.toBeNull();
-          }),
+          ownedWait(
+            vi.waitFor(() => {
+              context.signal.throwIfAborted();
+              expect(h.root.querySelector('.is-just-created')).not.toBeNull();
+            }),
+            context.signal,
+          ),
         ).rejects.toThrow();
+        context.signal.throwIfAborted();
+        expect(received).toBe(false);
+        const acceptedSelection = [...h.state.get('taskStack')];
+        const createdBeforeRelease = expectDefined(h.index.list({ filePath: 'created.md' })[0]);
+        expect(acceptedSelection).toEqual([createdBeforeRelease]);
+        let retainedSelection = acceptedSelection;
+        const lateReveal = vi.spyOn(TaskListSurface.prototype, 'reveal');
+        if (outcome.startsWith('expired')) {
+          now += 3000;
+          h.presentation.refreshMounted(h.center);
+          expect(await ownedWait(presented, context.signal)).toBeUndefined();
+          expect(h.state.get('taskStack')).toEqual(acceptedSelection);
+          if (outcome === 'expired-new-selection') {
+            retainedSelection = [expectDefined(h.index.list({ filePath: 'many.md' })[0])];
+            h.state.set('taskStack', retainedSelection);
+          }
+        } else {
+          now += 2999;
+        }
         if (outcome === 'cancelled') {
           input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+          now += 1;
+          h.presentation.refreshMounted(h.center);
         }
         hydration.resolve();
-        const receipt = await presented;
+        const receipt = await ownedWait(presented, context.signal);
+        await ownedWait(hydrationFinished.promise, context.signal);
         const created = expectDefined(h.index.list({ filePath: 'created.md' })[0]);
         expect(created.title).toBe('Z created Q excluded');
         expect(h.state.get('centerFilter')).toBe('needle');
@@ -441,21 +556,110 @@ describe('physical Q creation reveal through PanelView', () => {
           expect(document.activeElement).toBe(input);
           expect(input.isConnected).toBe(true);
           expect(input.value).toBe('');
+          const revealCount = lateReveal.mock.calls.length;
+          const completions = vi.spyOn(h.panel, 'completeTaskCardRender_abyssPrivate');
+          now += 1099;
+          h.presentation.refreshMounted(h.center);
+          expect(card.classList.contains('is-just-created')).toBe(true);
+          now += 1;
+          h.presentation.refreshMounted(h.center);
+          expect(h.root.querySelector('.is-just-created')).toBeNull();
+          expect(lateReveal).toHaveBeenCalledTimes(revealCount);
+          expect(completions).not.toHaveBeenCalled();
+          expect(document.activeElement).toBe(input);
         } else {
           expect(receipt).toBeUndefined();
-          await flushMicrotasks();
+          await ownedWait(flushMicrotasks(), context.signal);
           expect(h.root.querySelector('.is-just-created')).toBeNull();
           expect(h.panel['creationInclusion_abyssPrivate']).toBeUndefined();
           expect(h.panel['creationAttempts_abyssPrivate'].size).toBe(0);
-          expect(input.isConnected).toBe(false);
-          expect(document.activeElement).toBe(h.center);
+          if (outcome === 'cancelled') {
+            expect(input.isConnected).toBe(false);
+            expect(document.activeElement).toBe(h.center);
+          } else {
+            expect(h.state.get('taskStack')).toEqual(retainedSelection);
+            expect(lateReveal).not.toHaveBeenCalled();
+            expect(input.isConnected).toBe(true);
+            expect(document.activeElement).toBe(input);
+            expect(
+              await ownedWait(
+                h.app.vault.read(expectDefined(h.app.vault.getFileByPath('created.md'))),
+                context.signal,
+              ),
+            ).toContain('- [ ] Z created Q excluded');
+          }
         }
       } finally {
-        hydration.resolve();
-        await h.dispose();
+        await dispose();
       }
     },
   );
+
+  it('reclaims a blocked Quick Capture owner before late hydration can resume the row', async (context) => {
+    const lifetime = new AbortController();
+    const hydration = deferred<void>();
+    const entered = deferred<void>();
+    let acquired: Awaited<ReturnType<typeof mountQuickPanel>> | undefined;
+    const dispose = ownTestCleanup(context, async () => {
+      lifetime.abort(new Error('Row cancelled'));
+      const closed = acquired?.dispose();
+      hydration.resolve();
+      await closed;
+    });
+    const h = (acquired = await mountQuickPanel(false, false, true, lifetime.signal));
+    try {
+      const now = 1_800_000_000_000;
+      const clock = vi.spyOn(h.presentation['options'], 'now').mockImplementation(() => now);
+      h.query('needle');
+      await searchUiCompleted(h.center, undefined, {
+        signal: lifetime.signal,
+        phase: 'cancelled capture query',
+      });
+      const resolve = h.index.resolveSearchHits.bind(h.index);
+      vi.spyOn(h.index, 'resolveSearchHits').mockImplementation(async (hits, signal) => {
+        const file = h.source.files().find((item) => item.path === 'created.md');
+        if (
+          file !== undefined &&
+          hits.some((hit) =>
+            [...h.source.nodes(file)].some((node) => node.rootId === hit.address.rootId),
+          )
+        ) {
+          entered.resolve();
+          await ownedWait(hydration.promise, lifetime.signal);
+        }
+        return resolve(hits, signal);
+      });
+      const input = await ownedWait(h.openQ(), lifetime.signal);
+      const presented = nextQuickPresentation(h.presentation);
+      enter(input, 'Z cancelled owner');
+      await ownedWait(entered.promise, lifetime.signal);
+      const created = expectDefined(h.index.list({ filePath: 'created.md' })[0]);
+      expect(h.state.get('taskStack')).toEqual([created]);
+      const pending = expectDefined(h.presentation['pending'][0]);
+      const announcement = h.presentation['announcementTimeout'];
+      const clear = vi.spyOn(window, 'clearTimeout');
+      const resumed = vi.fn();
+      const body = ownedWait(presented, lifetime.signal).then(resumed);
+      const rejected = expect(body).rejects.toThrow('cancel test owner');
+      lifetime.abort(new Error('cancel test owner'));
+      // Cancellation stops the actual owner before any asynchronous disposal/finished hook.
+      expect(h.presentation['pending']).toHaveLength(0);
+      expect(clear).toHaveBeenCalledWith(pending.timeout);
+      expect(clear).toHaveBeenCalledWith(announcement);
+      expect(h.view.containerEl.isConnected).toBe(false);
+      expect(h.root.querySelector('.is-just-created')).toBeNull();
+      clock.mockRestore();
+      clear.mockRestore();
+      hydration.resolve();
+      await rejected;
+      await h.dispose();
+      await Promise.resolve();
+      expect(resumed).not.toHaveBeenCalled();
+      expect(h.state.get('taskStack')).toEqual([created]);
+    } finally {
+      await dispose();
+    }
+  });
 
   it.each(['calendar', 'overview'] as const)(
     'keeps %s creation without a stale disconnected list capability',

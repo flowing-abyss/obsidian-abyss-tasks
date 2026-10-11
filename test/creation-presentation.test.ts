@@ -39,6 +39,7 @@ import {
   taskQueryApi,
   useRealMoment,
 } from './helpers';
+import { ownedWait, ownTestCleanup } from './support/ownedTestLifetime';
 import { useTaskPanelViewport } from './support/taskPanelViewport';
 import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
 import { taskViewportOwner } from './support/taskViewportOwner';
@@ -1044,10 +1045,21 @@ describe('asynchronous creation receipts', () => {
   });
 });
 
-it('waits for real compact creation hydration and Markdown, then repaints only remaining pulse on remount', async () => {
+it('waits for real compact creation hydration and Markdown, then repaints only remaining pulse on remount', async (context) => {
   const settings = structuredClone(DEFAULT_SETTINGS);
   settings.taskFilePath = 'created.md';
-  const h = await mountCanonicalSearchUi(
+  const hydration = deferred<void>(),
+    markdown = deferred<void>();
+  let acquired: Awaited<ReturnType<typeof mountCanonicalSearchUi>> | undefined;
+  const dispose = ownTestCleanup(context, () => {
+    try {
+      acquired?.dispose();
+    } finally {
+      hydration.resolve();
+      markdown.resolve();
+    }
+  });
+  const h = (acquired = await mountCanonicalSearchUi(
     {
       'many.md': Array.from({ length: 1200 }, (_, n) => `- [ ] needle ${n}`).join('\n'),
       'created.md': '',
@@ -1056,9 +1068,38 @@ it('waits for real compact creation hydration and Markdown, then repaints only r
     'tasks',
     undefined,
     true,
+    undefined,
+    undefined,
+    context.signal,
+  ));
+  const presentation = expectDefined(h.creation);
+  let now = 1_800_000_000_000;
+  vi.spyOn(presentation['options'], 'now').mockImplementation(() => now);
+  const presented = deferred<{ ref: TaskRef; element: HTMLElement } | undefined>();
+  const present = presentation.present.bind(presentation);
+  vi.spyOn(presentation, 'present').mockImplementationOnce(
+    (result, description, authority, ownsSelection) => {
+      present(
+        result,
+        description,
+        authority === undefined
+          ? undefined
+          : {
+              ...authority,
+              onPresented(ref, element) {
+                authority.onPresented?.(ref, element);
+                presented.resolve({ ref, element });
+              },
+              onFinished() {
+                authority.onFinished?.();
+                presented.resolve(undefined);
+              },
+            },
+        ownsSelection,
+      );
+      if (authority === undefined) presented.resolve(undefined);
+    },
   );
-  const hydration = deferred<void>(),
-    markdown = deferred<void>();
   try {
     h.query('needle');
     await h.completed();
@@ -1076,7 +1117,7 @@ it('waits for real compact creation hydration and Markdown, then repaints only r
         })
       ) {
         entered.resolve();
-        await hydration.promise;
+        await ownedWait(hydration.promise, context.signal);
       }
       return actual(hits, signal);
     });
@@ -1085,16 +1126,16 @@ it('waits for real compact creation hydration and Markdown, then repaints only r
       holder.createEl('strong', { text });
       if (text.includes('created needle')) {
         rendered.resolve();
-        await markdown.promise;
+        await ownedWait(markdown.promise, context.signal);
       }
     });
     expectDefined(h.root.querySelector<HTMLButtonElement>('.abyss-add-task-trigger')).click();
-    await flushMicrotasks();
+    await ownedWait(flushMicrotasks(), context.signal);
     const input = expectDefined(h.root.querySelector<HTMLInputElement>('.abyss-capture-input'));
     input.value = '**created needle**';
     input.dispatchEvent(new Event('input', { bubbles: true }));
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    await entered.promise;
+    await ownedWait(entered.promise, context.signal);
     await h.completed();
     const surface = expectDefined(h.panel['taskSurface_abyssPrivate']).surface;
     const reveal = vi.spyOn(surface, 'reveal');
@@ -1102,15 +1143,15 @@ it('waits for real compact creation hydration and Markdown, then repaints only r
     expect(reveal).not.toHaveBeenCalled();
     const completions = complete.mock.calls.length;
     hydration.resolve();
-    await rendered.promise;
+    await ownedWait(rendered.promise, context.signal);
     expect(h.root.querySelector('.is-just-created')).toBeNull();
     expect(reveal).not.toHaveBeenCalled();
     markdown.resolve();
-    await vi.waitFor(() => {
-      expect(h.root.querySelector('.is-just-created')).not.toBeNull();
-    });
+    const receipt = expectDefined(await ownedWait(presented.promise, context.signal));
     const created = expectDefined(h.index.list({ filePath: 'created.md' })[0]);
     const card = expectDefined(h.root.querySelector<HTMLElement>('.is-just-created'));
+    expect(receipt.ref).toEqual(created.ref);
+    expect(receipt.element).toBe(card);
     expect(renderedTaskElements(h.root, created.ref)).toContain(card);
     expect(document.activeElement).toBe(input);
     expect(input.isConnected).toBe(true);
@@ -1118,27 +1159,37 @@ it('waits for real compact creation hydration and Markdown, then repaints only r
     expect(revealRounds).toBeGreaterThanOrEqual(1);
     expect(revealRounds).toBeLessThanOrEqual(8);
     expect(complete).toHaveBeenCalledTimes(completions);
-    const deadline = Date.now() + 1100;
+    now += 700;
+    presentation.refreshMounted(h.root);
     const scroll = expectDefined(h.root.querySelector<HTMLElement>('.abyss-center-scroll'));
     scroll.scrollTop = 0;
     scroll.dispatchEvent(new Event('scroll'));
-    await vi.waitFor(() => {
-      expect(card.isConnected).toBe(false);
-    });
+    await ownedWait(
+      vi.waitFor(() => {
+        context.signal.throwIfAborted();
+        expect(card.isConnected).toBe(false);
+      }),
+      context.signal,
+    );
     scroll.scrollTop = 1200 * 64;
     scroll.dispatchEvent(new Event('scroll'));
-    await vi.waitFor(() => {
-      expect(h.root.querySelector('.is-just-created')).not.toBeNull();
-    });
+    await ownedWait(
+      vi.waitFor(() => {
+        context.signal.throwIfAborted();
+        expect(h.root.querySelector('.is-just-created')).not.toBeNull();
+      }),
+      context.signal,
+    );
     expect(reveal).toHaveBeenCalledTimes(revealRounds);
     expect(complete).toHaveBeenCalledTimes(completions);
-    vi.spyOn(Date, 'now').mockReturnValue(deadline + 1);
-    h.creation?.refreshMounted(h.root);
+    now += 400;
+    presentation.refreshMounted(h.root);
     expect(h.root.querySelector('.is-just-created')).toBeNull();
+    expect(reveal).toHaveBeenCalledTimes(revealRounds);
+    expect(complete).toHaveBeenCalledTimes(completions);
+    expect(document.activeElement).toBe(input);
   } finally {
-    hydration.resolve();
-    markdown.resolve();
-    h.dispose();
+    await dispose();
   }
 });
 

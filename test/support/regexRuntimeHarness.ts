@@ -1,7 +1,7 @@
 import { build } from 'esbuild';
 import { Platform } from 'obsidian';
 
-export type RegexScenario = 'tags' | 'comments' | 'legacy-links' | 'ghost';
+export type RegexScenario = 'tags' | 'comments' | 'legacy-links' | 'ghost' | 'ghost-bounded';
 export interface RegexScenarioResult {
   readonly samples: ReadonlyArray<{
     size: number;
@@ -67,6 +67,14 @@ const operations: Readonly<Record<RegexScenario, string>> = {
         ticks + 'a' + ticks.slice(1), ticks.slice(1) + 'a' + ticks,
         '\\\\' + ticks, '\\\\' + ticks + '\\x60', ticks + 'a\\\\' + ticks,
         ticks + 'a\\\\' + ticks + '\\x60'].map(title => ({title}));
+    };
+    const operation = input => JSON.stringify(input.map(plainGhostTaskTitle));`,
+  'ghost-bounded': `import { plainGhostTaskTitle } from './src/ui/plainGhostTaskTitle.ts';
+    const makeInput = size => {
+      const content = 'a'.repeat(size), tick = '\\x60';
+      return [tick + content + '\\\\' + tick, tick.repeat(2) + content + '\\\\' + tick.repeat(2),
+        tick.repeat(2) + content + '\\u2028b' + tick.repeat(2),
+        tick.repeat(2) + content + '\\u2029b' + tick.repeat(2)].map(title => ({title}));
     };
     const operation = input => JSON.stringify(input.map(plainGhostTaskTitle));`,
 };

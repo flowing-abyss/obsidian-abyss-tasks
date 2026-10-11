@@ -6,7 +6,8 @@ import { replaceGhostTitleBackticks } from './ghostTitleBackticks';
 // pairs also the line terminators that `.` excludes. Group 3 is an escaped inline delimiter, which
 // `$2$3` keeps, so no pair starts right after a backslash. `isEmphasisNeighbor` refuses an
 // emphasis pair right after a backslash, an asterisk, or an underscore.
-const PAIRED_INLINE_DELIMITER_RE = /(\*\*|__|~~|`+)((?:.*?[^\\\n\r\u2028\u2029])??)\1|(\\[*_~`])/gu;
+const PAIRED_INLINE_DELIMITER_RE =
+  /(\*\*|__|~~|`{1,2})((?:.*?[^\\\n\r\u2028\u2029])??)\1|(\\[*_~`])/gu;
 const PAIRED_EMPHASIS_RE = /([*_])([^*_]*?[^*_\\])\1/gu;
 const PAIR_DELIMITER_RE = /[*_~`]/u;
 
@@ -26,9 +27,9 @@ export function plainGhostTaskTitle(task: TaskSnapshot): string {
     let previous: string;
     do {
       previous = text;
-      // With only single ticks, the original opener has no alternative widths to retry.
-      // Multiple ticks need an index to avoid retrying impossible widths against the suffix.
-      text = /`{2}/u.test(text)
+      // Without a triple run the original greedy opener has only widths one and two.
+      // Recheck each pass: removing other delimiters can join previously separate tick runs.
+      text = /`{3}/u.test(text)
         ? replaceGhostTitleBackticks(text)
         : text.replace(PAIRED_INLINE_DELIMITER_RE, '$2$3');
       text = replaceUnlessPreceded(PAIRED_EMPHASIS_RE, text, isEmphasisNeighbor, pairContent);

@@ -2,6 +2,7 @@ import { MarkdownRenderer } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { deferred, expectDefined, flushMicrotasks, task, useRealMoment } from './helpers';
+import { ownedWait, ownTestCleanup } from './support/ownedTestLifetime';
 import { finiteOccurrences } from './support/taskOrganizationRows';
 import { taskCardMountBound } from './support/taskPanelViewport';
 import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
@@ -41,11 +42,18 @@ async function harness(
   count = 1200,
   before?: (h: Awaited<ReturnType<typeof mountCanonicalSearchUi>>) => void,
   markdown = false,
+  lifetimeSignal?: AbortSignal,
 ) {
   const clock = frames();
   const h = await mountCanonicalSearchUi(
     { 'search.md': source(count, markdown) },
     structuredClone(DEFAULT_SETTINGS),
+    'search',
+    undefined,
+    false,
+    undefined,
+    undefined,
+    lifetimeSignal,
   );
   cleanup.push(() => {
     h.dispose();
@@ -74,47 +82,106 @@ async function harness(
   };
 }
 
-describe('Search supplied result viewport', () => {
-  it('keeps compact complete order and bounds demanded mounts without querying or completing on scroll', async () => {
-    const h = await harness();
-    await h.completed();
-    expect(h.root.dataset['searchLogicalResults']).toBe('1200');
-    const organization = expectDefined(h.mount.mock.calls[0]?.[1]);
-    expect(finiteOccurrences(organization)).toHaveLength(1200);
-    expect(h.results.querySelectorAll('.abyss-task-card').length).toBeLessThanOrEqual(
-      taskCardMountBound(h.root, 1),
-    );
-    const reads = h.backends.reduce((sum, backend) => sum + backend.searchCalls, 0);
-    const completions = h.complete.mock.calls.length;
-    h.input.focus();
-    h.input.setSelectionRange(1, 4);
-    h.results.scrollTop = 2000;
-    h.results.dispatchEvent(new Event('scroll'));
-    expect(h.clock.flush()).toBeGreaterThan(0);
-    expect(h.backends.reduce((sum, backend) => sum + backend.searchCalls, 0)).toBe(reads);
-    expect(h.list).not.toHaveBeenCalled();
-    expect(h.complete).toHaveBeenCalledTimes(completions);
-    expect(h.input.isConnected).toBe(true);
-    expect([h.input.value, h.input.selectionStart, h.input.selectionEnd]).toEqual(['needle', 1, 4]);
-    expect(document.activeElement).toBe(h.input);
-    await vi.waitFor(() => {
-      expect(h.results.querySelector('.abyss-task-card[data-line]')).not.toBeNull();
-    });
-    const card = expectDefined(h.results.querySelector<HTMLElement>('.abyss-task-card[data-line]'));
-    const line = Number(card.dataset['line']);
-    card.click();
-    await vi.waitFor(() => {
-      expect(h.state.get('mode')).toBe('tasks');
-    });
-    await vi.waitFor(() => {
+async function drivenCompletion(
+  h: Awaited<ReturnType<typeof harness>>,
+  signal: AbortSignal,
+): Promise<void> {
+  let rejectFrame!: (error: unknown) => void;
+  const failed = new Promise<never>((_resolve, reject) => {
+    rejectFrame = reject;
+  });
+  let timer: number | undefined;
+  let stopped = false;
+  const stop = (): void => {
+    stopped = true;
+    if (timer !== undefined) window.clearTimeout(timer);
+    signal.removeEventListener('abort', stop);
+  };
+  const active = (): boolean => !stopped && !signal.aborted;
+  const pump = (): void => {
+    if (!active()) return;
+    try {
       h.clock.flush();
-      expect(h.root.dataset['searchPhase']).toBe('complete');
+      if (active()) timer = window.setTimeout(pump, 0);
+    } catch (error) {
+      rejectFrame(error);
+      stop();
+    }
+  };
+  signal.addEventListener('abort', stop, { once: true });
+  if (signal.aborted) stop();
+  else timer = window.setTimeout(pump, 0);
+  try {
+    await Promise.race([h.completed(), failed]);
+  } finally {
+    stop();
+  }
+}
+
+describe('Search supplied result viewport', () => {
+  it('keeps compact complete order and bounds demanded mounts without querying or completing on scroll', async (context) => {
+    let acquired: Awaited<ReturnType<typeof harness>> | undefined;
+    const dispose = ownTestCleanup(context, () => {
+      acquired?.dispose();
     });
-    await h.completed();
-    expect(h.openList).toHaveBeenCalledTimes(1);
-    expect(h.state.get('taskStack')[0]?.ref).toMatchObject({ line });
-    expect(h.root.querySelector('.is-search-revealed')).not.toBeNull();
-    expect(document.activeElement).not.toBe(card);
+    const h = (acquired = await harness(1200, undefined, false, context.signal));
+    try {
+      await h.completed();
+      expect(h.root.dataset['searchLogicalResults']).toBe('1200');
+      const organization = expectDefined(h.mount.mock.calls[0]?.[1]);
+      expect(finiteOccurrences(organization)).toHaveLength(1200);
+      expect(h.results.querySelectorAll('.abyss-task-card').length).toBeLessThanOrEqual(
+        taskCardMountBound(h.root, 1),
+      );
+      const reads = h.backends.reduce((sum, backend) => sum + backend.searchCalls, 0);
+      const completions = h.complete.mock.calls.length;
+      h.input.focus();
+      h.input.setSelectionRange(1, 4);
+      h.results.scrollTop = 2000;
+      h.results.dispatchEvent(new Event('scroll'));
+      expect(h.clock.flush()).toBeGreaterThan(0);
+      expect(h.backends.reduce((sum, backend) => sum + backend.searchCalls, 0)).toBe(reads);
+      expect(h.list).not.toHaveBeenCalled();
+      expect(h.complete).toHaveBeenCalledTimes(completions);
+      expect(h.input.isConnected).toBe(true);
+      expect([h.input.value, h.input.selectionStart, h.input.selectionEnd]).toEqual([
+        'needle',
+        1,
+        4,
+      ]);
+      expect(document.activeElement).toBe(h.input);
+      await ownedWait(
+        vi.waitFor(() => {
+          context.signal.throwIfAborted();
+          expect(h.results.querySelector('.abyss-task-card[data-line]')).not.toBeNull();
+        }),
+        context.signal,
+      );
+      const card = expectDefined(
+        h.results.querySelector<HTMLElement>('.abyss-task-card[data-line]'),
+      );
+      const line = Number(card.dataset['line']);
+      card.click();
+      await ownedWait(
+        vi.waitFor(() => {
+          context.signal.throwIfAborted();
+          expect(h.state.get('mode')).toBe('tasks');
+        }),
+        context.signal,
+      );
+      const request = h.root.dataset['searchRequest'];
+      const generation = h.root.dataset['searchGeneration'];
+      await drivenCompletion(h, context.signal);
+      expect(h.root.dataset['searchRequest']).toBe(request);
+      expect(h.root.dataset['searchGeneration']).toBe(generation);
+      expect(h.openList).toHaveBeenCalledTimes(1);
+      expect(h.state.get('taskStack')[0]?.ref).toMatchObject({ line });
+      const revealed = expectDefined(h.root.querySelector<HTMLElement>('.is-search-revealed'));
+      expect(Number(revealed.dataset['line'])).toBe(line);
+      expect(document.activeElement).not.toBe(card);
+    } finally {
+      await dispose();
+    }
   });
 
   it.each([12345.625, -0.625])(

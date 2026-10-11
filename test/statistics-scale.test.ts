@@ -230,7 +230,7 @@ describe.each([
       ]);
       expect(required(cohort[0]).weight).toBe(0);
     });
-    it('allocation retains exact totals and physical evidence', async () => {
+    it('allocation retains exact totals, ranks and time shares', async () => {
       views.set('allocation', await get('allocation'));
       const allocation = v('allocation');
       expect(metric(allocation, 'recorded-minutes')).toBe(minutes);
@@ -247,26 +247,35 @@ describe.each([
         'project:projects/beta.md': 50.5 * m,
         unassigned: 50.5 * m,
       });
-      const focused = await get('allocation', { focusKey: 'project:projects/beta.md' });
-      const buckets = chart(focused, 'allocation-focus').marks;
-      expect(buckets.map((mark) => mark.weight)).toEqual([24 * m, 0, 0, 8 * m, 8 * m, 0, 10.5 * m]);
-      for (const [index, count] of [
-        [0, 0.8 * m],
-        [3, 0.8 * m],
-        [4, 0.8 * m],
-        [6, 0.7 * m],
-      ]) {
-        const id = required(required(buckets[required(index)]).selectionId);
-        pageChecks(focused, id, required(count));
-        expect(
-          focused.evidence(id, 0, 50).rows.every((row) => row.filePath === 'projects/beta.md'),
-        ).toBe(true);
-      }
       expect(metric(allocation, 'task-denominator')).toBe(n);
       const share = chart(allocation, 'time-share').marks;
       expect(share.map((mark) => mark.x)).toEqual([0, 10, 90, 100]);
       expect(Number(required(share[1]).y) / 100).toBeCloseTo(941 / 998, 12);
       expect(Number(required(share[2]).y) / 100).toBeCloseTo(993 / 998, 12);
+    });
+    describe('allocation evidence', () => {
+      let allocationFocused: StatisticsViewModel;
+      beforeAll(async () => {
+        allocationFocused = await get('allocation', { focusKey: 'project:projects/beta.md' });
+      });
+      it('retains exact focused allocation weights', () => {
+        expect(
+          chart(allocationFocused, 'allocation-focus').marks.map((mark) => mark.weight),
+        ).toEqual([24 * m, 0, 0, 8 * m, 8 * m, 0, 10.5 * m]);
+      });
+      it.each([
+        [0, 0.8],
+        [3, 0.8],
+        [4, 0.8],
+        [6, 0.7],
+      ] as const)('pages exact Allocation bucket %s physical sources', async (index, share) => {
+        const focused = allocationFocused;
+        const id = required(required(chart(focused, 'allocation-focus').marks[index]).selectionId);
+        pageChecks(focused, id, share * m);
+        expect(
+          focused.evidence(id, 0, 50).rows.every((row) => row.filePath === 'projects/beta.md'),
+        ).toBe(true);
+      });
     });
     it('timeline retains exact totals and bounded density', async () => {
       views.set('timeline', await get('timeline'));

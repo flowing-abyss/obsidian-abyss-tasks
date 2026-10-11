@@ -89,6 +89,26 @@ describe('bounded actual-module regex probes', () => {
   });
 
   it(
+    'bounds one- and two-tick near misses at escaped and Unicode line boundaries',
+    async () => {
+      const result = await runRegexScenario('ghost-bounded');
+      expect(result.outputs).toEqual(
+        [4000, 16000].map((size) =>
+          JSON.stringify([
+            `\`${'a'.repeat(size)}\``,
+            `${'a'.repeat(size)}\`\``,
+            `${'a'.repeat(size)}\u2028b`,
+            `${'a'.repeat(size)}\u2029b`,
+          ]),
+        ),
+      );
+      expectNormalizedSamples(result);
+      expect(medianFourfoldRatio(result.samples)).toBeLessThan(8);
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
+
+  it(
     'hard-terminates a synchronous child before reporting the deadline failure',
     async () => {
       await expect(

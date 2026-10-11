@@ -76,6 +76,27 @@ describe('plainGhostTaskTitle', () => {
   });
 
   it.each([
+    ['ordinary greedy double opener', '``a`b``', 'a`b'],
+    ['indexed triple exposes empty pair on next pass', '```a``b```', 'ab'],
+    ['two-to-three unequal run boundary', '``a```', 'a`'],
+    ['three-to-two unequal run boundary', '```a``', '`a'],
+    ['escaped double opener', '\\``a``', '`a`'],
+    ['escaped triple opener', '\\```a```', '`a`'],
+    ['empty double pair', '``', ''],
+    ['empty triple odd run', '```', '`'],
+    ['strong removal joins three ticks on the next pass', '**``**`', '`'],
+    ['strong removal joins four ticks on the next pass', '**``**``', ''],
+    ['bounded pair cannot cross LS', `\`a${LINE_SEPARATOR}b\``, `\`a${LINE_SEPARATOR}b\``],
+    [
+      'bounded double pairs empty beside PS',
+      `\`\`a${PARAGRAPH_SEPARATOR}b\`\``,
+      `a${PARAGRAPH_SEPARATOR}b`,
+    ],
+  ])('preserves dispatch boundary: %s', (_case, title, expected) => {
+    expect(plainGhostTaskTitle(task({ title }))).toBe(expected);
+  });
+
+  it.each([
     ['escaped strong openers', '\\** '],
     ['escaped code openers', '\\` '],
   ])('stays linear on many %s', (_case, unit) => {

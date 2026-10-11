@@ -393,7 +393,7 @@ describe('real analyzer and bounded orchestration', () => {
     'exits an actual CLI nonzero within the deadline cleanup bound with inherited descendant pipes',
     async () => {
       const fixture = await descendantFixture(true, 'while(true){}');
-      const code = `import {runBoundedChild} from ${JSON.stringify(new URL('../tooling/regex-audit.mjs', import.meta.url).href)}; try {await runBoundedChild(['-e',${JSON.stringify(fixture.code)}],{deadlineMs:1200});}catch(error){console.error(error.message);process.exitCode=1;}`;
+      const code = `import {runBoundedChild} from ${JSON.stringify(new URL('../tooling/regex-audit-process.mjs', import.meta.url).href)}; try {await runBoundedChild(['-e',${JSON.stringify(fixture.code)}],{deadlineMs:1200});}catch(error){console.error(error.message);process.exitCode=1;}`;
       try {
         const start = performance.now();
         const result = await new Promise<{
@@ -567,6 +567,14 @@ describe('public caller evidence for reviewed diagnostics', () => {
         line: 0,
       })?.title,
     ).toBe('🌐 a');
+  });
+  it.each([
+    ['[a](b', 'a(b'],
+    ['[[Note.md]] [tail] [label](', '🔗 Note tail label('],
+    ['[a]([inside]', 'a(inside'],
+    ['[x](b\\) suffix [tail]', '🌐 x suffix tail'],
+  ])('preserves legacy last-close boundaries in %s', (input, expected) => {
+    expect(collapseLinks(input)).toBe(expected);
   });
   it('rejects missing or escaped final Markdown closers through all audited public paths', () => {
     for (const input of ['[a](b', '[a](b\\)']) {
