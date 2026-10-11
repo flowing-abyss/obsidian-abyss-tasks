@@ -572,7 +572,7 @@ export class ProjectsTableToolbar {
         const surface = showMenuAtMouseEventWithFocus(menu, event);
         if (surface !== undefined) {
           releaseChild = ownChild(surface, () => {
-            menu.close();
+            menu.hide();
           });
         }
       },

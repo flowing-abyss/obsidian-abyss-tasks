@@ -277,7 +277,7 @@ describe('production JavaScript artifact', () => {
     ])
       expect(code.includes(readFileSync(path.join(root, file), 'utf8').trim()), file).toBe(true);
     expect([...code.matchAll(/^Package: (.+)$/gm)].map((match) => match[1])).toEqual([
-      '@tanstack/charts@1.0.0',
+      '@tanstack/charts@1.1.0',
       'd3-array@3.2.4',
       'd3-scale@4.0.2',
       'd3-shape@3.2.0',

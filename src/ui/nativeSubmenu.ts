@@ -52,7 +52,7 @@ export function configureNativeSubmenu(
     return true;
   }
   parentItem.onClick((event) => {
-    options.parentMenu?.close();
+    options.parentMenu?.hide();
     const menu = new Menu();
     options.configure(menu);
     menu.onHide(() => {

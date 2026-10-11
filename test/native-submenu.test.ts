@@ -28,7 +28,10 @@ describe('configureNativeSubmenu', () => {
     } as unknown as MenuItem;
     const anchor = document.body.createEl('button');
     const parentMenu = new Menu();
-    const closeParent = vi.spyOn(parentMenu, 'close');
+    let parentHidden = false;
+    parentMenu.onHide(() => {
+      parentHidden = true;
+    });
     const show = vi.spyOn(Menu.prototype, 'showAtPosition');
     const configure = vi.fn();
 
@@ -40,11 +43,11 @@ describe('configureNativeSubmenu', () => {
     expect(native).toBe(false);
     activate?.(new KeyboardEvent('keydown', { key: 'Enter' }));
 
-    expect(closeParent).toHaveBeenCalledOnce();
+    expect(parentHidden).toBe(true);
     expect(show).toHaveBeenCalledOnce();
     const child = show.mock.instances[0] as Menu;
     expect(configure).toHaveBeenCalledWith(child);
-    child.close();
+    child.hide();
     expect(document.activeElement).toBe(anchor);
   });
 
@@ -68,7 +71,7 @@ describe('configureNativeSubmenu', () => {
     configureNativeSubmenu(parent, { configure: () => {}, fallbackAnchor: anchor, restoreFocus });
     activate?.(new MouseEvent('click'));
     rename.focus();
-    (show.mock.instances[0] as Menu | undefined)?.close();
+    (show.mock.instances[0] as Menu | undefined)?.hide();
 
     expect(restoreFocus).toHaveBeenCalledOnce();
     expect(document.activeElement).toBe(rename);

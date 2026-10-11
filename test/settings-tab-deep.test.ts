@@ -2572,6 +2572,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
 
   it('preserves the real settings scroller and focuses a newly added project status', async () => {
     const { tab } = makeTab();
+    openSection(tab, 3);
     const scroller = document.body.createDiv({ cls: 'vertical-tab-content' });
     scroller.append(tab.containerEl);
     scroller.scrollTop = 720.5;
@@ -2597,6 +2598,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
       onChange: () => () => {},
     };
     const { tab } = makeTab({}, { projectProperties });
+    openSection(tab, 3);
     const scroller = document.body.createDiv({ cls: 'vertical-tab-content' });
     scroller.append(tab.containerEl);
     scroller.scrollTop = 1855;

@@ -2350,7 +2350,7 @@ describe('ProjectsTableView', () => {
     const startDisplay = lastShownMenu(show);
     expect(menuItem(startDisplay, 'Pretty').checked).toBe(true);
     activateMenuItem(startDisplay, 'Raw');
-    startDisplay.close();
+    startDisplay.hide();
     await flushMicrotasks();
 
     expect(config.projects.table.dateDisplay).toBeUndefined();
@@ -2939,7 +2939,7 @@ describe('ProjectsTableView', () => {
     );
 
     expect(name.classList.contains('is-selection-focus')).toBe(false);
-    (expectDefined(show.mock.instances[0]) as Menu).close();
+    (expectDefined(show.mock.instances[0]) as Menu).hide();
     expect(activeDocument.activeElement).toBe(name);
     expect(name.classList.contains('is-selection-focus')).toBe(true);
   });
@@ -3483,7 +3483,7 @@ describe('ProjectsTableView', () => {
     );
     expectDefined(header.querySelector<HTMLButtonElement>('button')).focus();
     header.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-    lastShownMenu(show).close();
+    lastShownMenu(show).hide();
 
     expect(document.activeElement).toBe(selected);
   });
@@ -3531,7 +3531,7 @@ describe('ProjectsTableView', () => {
     const rootMenu = lastShownMenu(show);
 
     activateMenuItem(submenu(rootMenu, 'Alignment'), 'Center');
-    rootMenu.close();
+    rootMenu.hide();
 
     expect(document.activeElement).toBe(start);
     expect(scroll.scrollLeft).toBe(898);
@@ -3552,7 +3552,7 @@ describe('ProjectsTableView', () => {
     oldHeader.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     const rootMenu = lastShownMenu(show);
     activateMenuItem(submenu(rootMenu, 'Alignment'), 'Center');
-    rootMenu.close();
+    rootMenu.hide();
 
     const currentButton = expectDefined(
       host.querySelector<HTMLButtonElement>(

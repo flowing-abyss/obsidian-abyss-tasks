@@ -468,7 +468,7 @@ function renderShownMenuInDocument(): MenuShowSpy {
       const button = dom.createEl('button', { cls: 'menu-item', text: item.title__ });
       button.addEventListener('click', (event) => {
         item.onClick__?.(event);
-        this.close();
+        this.hide();
         dom.remove();
       });
     }
@@ -5065,7 +5065,7 @@ describe('project Kanban overview', () => {
     const { host, settings } = mountView();
     settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
     const show = renderShownMenuInDocument();
-    const closeMenus = vi.spyOn(Menu.prototype, 'close');
+    const hideMenus = vi.spyOn(Menu.prototype, 'hide');
 
     expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
     await flushMicrotasks();
@@ -5114,7 +5114,7 @@ describe('project Kanban overview', () => {
 
     tableStartAction.click();
     let menu = lastShownMenu(show);
-    menu.close();
+    menu.hide();
     menuDom(menu).remove();
     expect(activeDocument.activeElement).toBe(tableStartAction);
     activeDocument.body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -5160,7 +5160,7 @@ describe('project Kanban overview', () => {
 
     boardStartAction.click();
     menu = lastShownMenu(show);
-    menu.close();
+    menu.hide();
     menuDom(menu).remove();
     expect(activeDocument.activeElement).toBe(boardStartAction);
     expectDefined(host.querySelector<HTMLElement>('.abyss-view-state-popover')).dispatchEvent(
@@ -5188,12 +5188,12 @@ describe('project Kanban overview', () => {
         '.abyss-view-state-option-action',
       ),
     ).click();
-    const closesBeforeParentTeardown = closeMenus.mock.calls.length;
+    const hidesBeforeParentTeardown = hideMenus.mock.calls.length;
 
     viewOptions.click();
 
     expect(host.querySelector('.abyss-view-state-popover')).toBeNull();
-    expect(closeMenus).toHaveBeenCalledTimes(closesBeforeParentTeardown + 1);
+    expect(hideMenus).toHaveBeenCalledTimes(hidesBeforeParentTeardown + 1);
   });
 
   it('shows the full description without retaining a line clamp', async () => {

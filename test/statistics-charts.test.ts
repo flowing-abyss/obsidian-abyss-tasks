@@ -802,7 +802,13 @@ describe('Statistics chart adapter', () => {
     });
     const element = host();
     const chart = mount(element);
-    const fire = (width: number) =>
+    const fire = (width: number) => {
+      Object.defineProperty(element, 'clientWidth', { configurable: true, value: width });
+      vi.spyOn(element, 'getBoundingClientRect').mockReturnValue({
+        ...element.getBoundingClientRect(),
+        width,
+        right: width,
+      });
       observers[0]?.(
         [
           {
@@ -815,10 +821,12 @@ describe('Statistics chart adapter', () => {
         ],
         {} as ResizeObserver,
       );
+    };
+    expect(chart.svg().getAttribute('viewBox')?.split(' ')[2]).toBe('640');
     fire(280);
     for (const callback of frames.values()) callback(1);
     frames.clear();
-    expect(chart.svg().getAttribute('viewBox')).toContain('280');
+    expect(chart.svg().getAttribute('viewBox')?.split(' ')[2]).toBe('280');
     fire(400);
     const pending = [...frames.values()];
     chart.handle.destroy();
