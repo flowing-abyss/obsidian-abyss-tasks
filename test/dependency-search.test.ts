@@ -20,6 +20,7 @@ import {
 import type { DependencyCandidate } from '../src/ui/TaskDependencySearchProvider';
 import { createTaskDependencySearchProvider } from '../src/ui/TaskDependencySearchProvider';
 import { deferred, dispatchImeKey, expectDefined, flushMicrotasks, methodOf } from './helpers';
+import { ownedWait, ownTestCleanup } from './support/ownedTestLifetime';
 import { scopeKeyboardEvent } from './support/scopeKeyboardEvent';
 import * as harnessModule from './support/taskSearchHarness';
 import { createCanonicalSearchHarness } from './support/taskSearchHarness';
@@ -1189,37 +1190,289 @@ function gapFiles(kind: 'disabled' | 'omitted', direction: DependencyDirection) 
   };
 }
 
+type GapHarness = Awaited<ReturnType<typeof fixture>>;
+type GapUi = ReturnType<GapHarness['mount']>;
+
+function activeGapTitle(ui: GapUi): string | null | undefined {
+  return ui.active()?.querySelector('.abyss-dep-search-title')?.textContent;
+}
+
+function createGapOwner(rowSignal: AbortSignal) {
+  const lifetime = new AbortController();
+  let acquired: GapHarness | undefined;
+  let mounted: GapUi | undefined;
+  let unsubscribe: (() => void) | undefined;
+  let generation: number | undefined;
+  let closed = false;
+  return {
+    signal: lifetime.signal,
+    generation: () => expectDefined(generation),
+    async acquire(
+      kind: 'disabled' | 'omitted',
+      direction: DependencyDirection,
+      beforeMount?: (h: GapHarness) => void,
+    ) {
+      lifetime.signal.throwIfAborted();
+      const h = (acquired = await fixture(
+        0,
+        direction,
+        gapFiles(kind, direction),
+        lifetime.signal,
+      ));
+      if (lifetime.signal.aborted) {
+        h.close();
+        lifetime.signal.throwIfAborted();
+      }
+      const source = h.source.subscribe((event) => {
+        generation = event.type === 'state' ? event.state.generation : event.generation;
+      });
+      generation = source.state.generation;
+      unsubscribe = source.unsubscribe;
+      beforeMount?.(h);
+      const ui = (mounted = h.mount());
+      return { h, ui };
+    },
+    dispose() {
+      if (closed) return;
+      closed = true;
+      lifetime.abort(rowSignal.reason ?? new Error('Dependency gap owner disposed'));
+      try {
+        mounted?.handle.destroy();
+      } finally {
+        unsubscribe?.();
+        acquired?.close();
+      }
+    },
+  };
+}
+
+async function gapReceipt(ui: GapUi, generation: () => number, signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted();
+  const win = expectDefined(ui.handle.element.ownerDocument.defaultView);
+  const local = new AbortController();
+  const timer = win.setTimeout(() => {
+    local.abort(new Error('Dependency navigation receipt exceeded 3000ms'));
+  }, 3000);
+  const abort = () => {
+    // Vitest can restore mocks before an abandoned body's async finally resumes.
+    win.clearTimeout(timer);
+    local.abort(signal.reason);
+  };
+  signal.addEventListener('abort', abort, { once: true });
+  if (signal.aborted) abort();
+  try {
+    await searchUiCompleted(ui.handle.element, generation, {
+      signal: local.signal,
+      phase: 'dependency gap navigation',
+    });
+    signal.throwIfAborted();
+  } finally {
+    win.clearTimeout(timer);
+    signal.removeEventListener('abort', abort);
+  }
+}
+
+async function gapMove(
+  ui: GapUi,
+  key: string,
+  generation: () => number,
+  signal: AbortSignal,
+): Promise<void> {
+  signal.throwIfAborted();
+  const root = ui.handle.element;
+  const doc = root.ownerDocument;
+  const request = root.dataset['searchRequest'];
+  const currentGeneration = generation();
+  const raw = ui.input.value;
+  ui.key(key);
+  // Mounted reveal queues its demand synchronously; observe that demand's receipt.
+  await Promise.resolve();
+  await gapReceipt(ui, generation, signal);
+  signal.throwIfAborted();
+  expect(ui.handle.element).toBe(root);
+  expect(root.ownerDocument).toBe(doc);
+  expect(root.isConnected).toBe(true);
+  expect(root.dataset['searchPhase']).toBe('complete');
+  expect(root.dataset['searchRequest']).toBe(request);
+  expect(root.dataset['searchGeneration']).toBe(String(currentGeneration));
+  expect(generation()).toBe(currentGeneration);
+  expect(ui.input.value).toBe(raw);
+}
+
+function holdGapProjection(h: GapHarness) {
+  const entered = deferred<void>();
+  let release!: () => void;
+  let reject!: (error: Error) => void;
+  const gate = new Promise<void>((resolve, fail) => {
+    release = resolve;
+    reject = fail;
+  });
+  let armed = false;
+  let session: Awaited<ReturnType<typeof h.callbacks.provider.open>> | undefined;
+  const pending: Array<Promise<void>> = [];
+  const open = h.callbacks.provider.open.bind(h.callbacks.provider);
+  h.callbacks.provider.open = async (...args) => {
+    const actual = await open(...args);
+    session = actual;
+    const options = actual.options.bind(actual);
+    actual.options = (candidates, signal) => {
+      if (!armed) return options(candidates, signal);
+      armed = false;
+      entered.resolve();
+      const operation = (async () => {
+        await ownedWait(gate, signal);
+        return await options(candidates, signal);
+      })();
+      pending.push(
+        operation.then(
+          () => {},
+          () => {},
+        ),
+      );
+      return operation;
+    };
+    return actual;
+  };
+  return {
+    entered: entered.promise,
+    arm: () => {
+      armed = true;
+    },
+    release: () => {
+      armed = false;
+      release();
+    },
+    reject: (error: Error) => {
+      armed = false;
+      reject(error);
+    },
+    session: () => expectDefined(session),
+    settled: () => Promise.all(pending).then(() => {}),
+  };
+}
+
+it.for(['release', 'cancel'] as const)(
+  'owns a mounted gap navigation receipt through held projection (%s)',
+  async (outcome, context) => {
+    const owner = createGapOwner(context.signal);
+    let held: ReturnType<typeof holdGapProjection> | undefined;
+    let navigation: Promise<void> | undefined;
+    const dispose = ownTestCleanup(context.signal, async () => {
+      owner.dispose();
+      held?.release();
+      await held?.settled();
+      await navigation;
+    });
+    context.onTestFinished(() => dispose());
+    try {
+      const { h, ui } = await owner.acquire('omitted', 'blocks', (h) => {
+        held = holdGapProjection(h);
+      });
+      owner.signal.throwIfAborted();
+      const projection = expectDefined(held);
+      ui.query('  Candidate  ');
+      await gapReceipt(ui, owner.generation, owner.signal);
+      await gapMove(ui, 'Home', owner.generation, owner.signal);
+      for (let offset = 1; offset <= 5; offset++) {
+        await gapMove(ui, 'ArrowDown', owner.generation, owner.signal);
+        expect(activeGapTitle(ui)).toBe(`Candidate ${String(offset).padStart(3, '0')}`);
+      }
+      const win = expectDefined(ui.handle.element.ownerDocument.defaultView);
+      const timers = vi.spyOn(win, 'setTimeout');
+      const clear = vi.spyOn(win, 'clearTimeout');
+      const observe = vi.spyOn(win.MutationObserver.prototype, 'observe');
+      const disconnect = vi.spyOn(win.MutationObserver.prototype, 'disconnect');
+      let state: 'pending' | 'fulfilled' | 'rejected' = 'pending';
+      let failure: unknown;
+      projection.arm();
+      navigation = gapMove(ui, 'ArrowDown', owner.generation, owner.signal).then(
+        () => {
+          state = 'fulfilled';
+        },
+        (error: unknown) => {
+          state = 'rejected';
+          failure = error;
+        },
+      );
+      // Candidate006 is already mounted; its reveal queues the new anchor's demand.
+      expect(activeGapTitle(ui)).toBe('Candidate 006');
+      await ownedWait(projection.entered, context.signal);
+      context.signal.throwIfAborted();
+      await Promise.resolve();
+      context.signal.throwIfAborted();
+      expect(state).toBe('pending');
+      expect(ui.handle.element.dataset['searchPhase']).toBe('pending');
+      expect(ui.active()).toBeNull();
+      const receiptTimer: unknown = expectDefined(
+        timers.mock.results[timers.mock.calls.findIndex(([, ms]) => ms === 3000)],
+      ).value;
+      const receiptObserver =
+        observe.mock.contexts[observe.mock.calls.findIndex(([root]) => root === ui.handle.element)];
+      expect(receiptObserver).toBeDefined();
+      if (outcome === 'release') {
+        projection.release();
+        await navigation;
+        context.signal.throwIfAborted();
+        expect(state).toBe('fulfilled');
+        expect(activeGapTitle(ui)).toBe('Candidate 006');
+      } else {
+        owner.dispose();
+        expect(clear).toHaveBeenCalledWith(receiptTimer);
+        expect(disconnect.mock.contexts).toContain(receiptObserver);
+        expect(owner.signal.aborted).toBe(true);
+        expect(ui.handle.element.isConnected).toBe(false);
+        expect(() => projection.session().generation).toThrow('Search cancelled');
+        await navigation;
+        await projection.settled();
+        context.signal.throwIfAborted();
+        expect(state).toBe('rejected');
+        expect(failure).toBeInstanceOf(Error);
+        expect((failure as Error).message).toContain('Search receipt cancelled');
+        const disposed = ui.handle.element.outerHTML;
+        expect(clear).toHaveBeenCalledWith(receiptTimer);
+        expect(disconnect.mock.contexts).toContain(receiptObserver);
+        vi.restoreAllMocks();
+        projection.reject(new Error('Late held host rejection'));
+        await Promise.resolve();
+        context.signal.throwIfAborted();
+        expect(state).toBe('rejected');
+        expect(ui.handle.element.outerHTML).toBe(disposed);
+        expect(ui.handle.element.isConnected).toBe(false);
+      }
+      expect(h.writes).toEqual([]);
+      expect(h.creates).toEqual([]);
+      if (outcome === 'release') {
+        expect(clear).toHaveBeenCalledWith(receiptTimer);
+        expect(disconnect.mock.contexts).toContain(receiptObserver);
+      }
+    } finally {
+      await dispose();
+    }
+  },
+);
+
 async function reachGapEdge(
   ui: ReturnType<Awaited<ReturnType<typeof fixture>>['mount']>,
   key: 'ArrowDown' | 'ArrowUp',
   gapEnd: number,
+  owner: ReturnType<typeof createGapOwner>,
 ): Promise<void> {
-  ui.key(key === 'ArrowDown' ? 'Home' : 'End');
-  await vi.waitFor(() => {
-    expect(ui.active()?.querySelector('.abyss-dep-search-title')?.textContent).toBe(
-      key === 'ArrowDown' ? 'Candidate 000' : `Candidate ${String(gapEnd + 29).padStart(3, '0')}`,
-    );
-  });
-  await ui.completed();
+  await gapMove(ui, key === 'ArrowDown' ? 'Home' : 'End', owner.generation, owner.signal);
+  expect(activeGapTitle(ui)).toBe(
+    key === 'ArrowDown' ? 'Candidate 000' : `Candidate ${String(gapEnd + 29).padStart(3, '0')}`,
+  );
   const target =
     key === 'ArrowDown' ? 'Candidate 029' : `Candidate ${String(gapEnd).padStart(3, '0')}`;
-  for (
-    let steps = 0;
-    steps < 35 && ui.active()?.querySelector('.abyss-dep-search-title')?.textContent !== target;
-    steps++
-  ) {
+  for (let steps = 0; steps < 35 && activeGapTitle(ui) !== target; steps++) {
     const previous = ui.active()?.textContent;
-    ui.key(key);
-    await vi.waitFor(() => {
-      expect(ui.active()).not.toBeNull();
-      expect(ui.active()?.textContent).not.toBe(previous);
-    });
-    await ui.completed();
+    await gapMove(ui, key, owner.generation, owner.signal);
+    expect(ui.active()).not.toBeNull();
+    expect(ui.active()?.textContent).not.toBe(previous);
   }
-  expect(ui.active()?.querySelector('.abyss-dep-search-title')?.textContent).toBe(target);
+  expect(activeGapTitle(ui)).toBe(target);
 }
 
-it.each([
+it.for([
   ['disabled', 'ArrowDown', 'blocks'],
   ['disabled', 'ArrowUp', 'blocks'],
   ['omitted', 'ArrowDown', 'blocks'],
@@ -1230,75 +1483,83 @@ it.each([
   ['omitted', 'ArrowUp', 'blocked-by'],
 ] as const)(
   'crosses a %s interval with %s without changing commit intent (%s)',
-  async (kind, key, direction) => {
-    const h = await fixture(0, direction, gapFiles(kind, direction));
-    const ui = h.mount();
-    ui.query('  Candidate  ');
-    await ui.completed();
-    const list = expectDefined(
-      ui.handle.element.querySelector<HTMLElement>('.abyss-dep-search-results'),
-    );
-    const gapEnd = kind === 'disabled' ? 60 : 120;
-    await reachGapEdge(ui, key, gapEnd);
-    ui.key(key);
-    await vi.waitFor(() => {
-      expect(ui.active()?.querySelector('.abyss-dep-search-title')?.textContent).toBe(
+  async ([kind, key, direction], context) => {
+    const owner = createGapOwner(context.signal);
+    const dispose = ownTestCleanup(context.signal, () => {
+      owner.dispose();
+    });
+    context.onTestFinished(() => dispose());
+    try {
+      const { h, ui } = await owner.acquire(kind, direction);
+      owner.signal.throwIfAborted();
+      ui.query('  Candidate  ');
+      await gapReceipt(ui, owner.generation, owner.signal);
+      const list = expectDefined(
+        ui.handle.element.querySelector<HTMLElement>('.abyss-dep-search-results'),
+      );
+      const gapEnd = kind === 'disabled' ? 60 : 120;
+      await reachGapEdge(ui, key, gapEnd, owner);
+      await gapMove(ui, key, owner.generation, owner.signal);
+      expect(activeGapTitle(ui)).toBe(
         key === 'ArrowDown' ? `Candidate ${String(gapEnd).padStart(3, '0')}` : 'Candidate 029',
       );
-    });
-    await ui.completed();
-    expect(h.writes).toEqual([]);
-    expect(h.creates).toEqual([]);
-    if (kind === 'disabled') {
-      list.scrollTop = 35 * 48;
-      list.dispatchEvent(new Event('scroll'));
-      await vi.waitFor(() => {
-        // Crossing already mounted disabled rows; observe the requested scroll window.
-        expect(
-          list.querySelector('[aria-posinset="41"] .abyss-dep-search-title')?.textContent,
-        ).toBe('Candidate 040');
-        expect(list.querySelector('[aria-disabled="true"]')).not.toBeNull();
-      });
-      await ui.completed();
-      expect(ui.active()).toBeNull();
-      for (const option of list.querySelectorAll('[aria-disabled="true"]'))
-        expect(option.textContent).toContain('Would create a cycle');
-      ui.key('Enter');
       expect(h.writes).toEqual([]);
       expect(h.creates).toEqual([]);
+      if (kind === 'disabled') {
+        list.scrollTop = 35 * 48;
+        list.dispatchEvent(new Event('scroll'));
+        await vi.waitFor(() => {
+          owner.signal.throwIfAborted();
+          // Crossing already mounted disabled rows; observe the requested scroll window.
+          expect(
+            list.querySelector('[aria-posinset="41"] .abyss-dep-search-title')?.textContent,
+          ).toBe('Candidate 040');
+          expect(list.querySelector('[aria-disabled="true"]')).not.toBeNull();
+        });
+        await gapReceipt(ui, owner.generation, owner.signal);
+        expect(ui.active()).toBeNull();
+        for (const option of list.querySelectorAll('[aria-disabled="true"]'))
+          expect(option.textContent).toContain('Would create a cycle');
+        ui.key('Enter');
+        expect(h.writes).toEqual([]);
+        expect(h.creates).toEqual([]);
+      }
+      const title =
+        key === 'ArrowDown' ? `Candidate ${String(gapEnd + 29).padStart(3, '0')}` : 'Candidate 000';
+      await gapMove(ui, key === 'ArrowDown' ? 'End' : 'Home', owner.generation, owner.signal);
+      expect(activeGapTitle(ui)).toBe(title);
+      expect(h.writes).toEqual([]);
+      expect(h.creates).toEqual([]);
+      ui.key('Enter');
+      await vi.waitFor(() => {
+        owner.signal.throwIfAborted();
+        expect(h.writes).toHaveLength(1);
+      });
+      owner.signal.throwIfAborted();
+      const write = expectDefined(h.writes[0]);
+      expect(write.title).toBe(title);
+      expect(write.direction).toBe(direction);
+      expect(write.target).toEqual(
+        expectDefined(h.index.listNodes().find((task) => task.node.title === title)).target,
+      );
+      expect(h.creates).toEqual([]);
+      await gapReceipt(ui, owner.generation, owner.signal);
+      ui.query('  Candidate  ');
+      await gapReceipt(ui, owner.generation, owner.signal);
+      expect(
+        ui.handle.element.querySelector<HTMLButtonElement>('.abyss-dep-search-create')?.disabled,
+        ui.handle.element.outerHTML,
+      ).toBe(false);
+      expectDefined(
+        ui.handle.element.querySelector<HTMLButtonElement>('.abyss-dep-search-create'),
+      ).click();
+      await vi.waitFor(() => {
+        owner.signal.throwIfAborted();
+        expect(h.creates).toEqual([['  Candidate  ', direction]]);
+      });
+    } finally {
+      await dispose();
     }
-    const title =
-      key === 'ArrowDown' ? `Candidate ${String(gapEnd + 29).padStart(3, '0')}` : 'Candidate 000';
-    ui.key(key === 'ArrowDown' ? 'End' : 'Home');
-    await vi.waitFor(() => {
-      expect(ui.active()?.querySelector('.abyss-dep-search-title')?.textContent).toBe(title);
-    });
-    await ui.completed();
-    expect(h.writes).toEqual([]);
-    expect(h.creates).toEqual([]);
-    ui.key('Enter');
-    await vi.waitFor(() => {
-      expect(h.writes).toHaveLength(1);
-    });
-    expect(h.writes[0]?.title).toBe(title);
-    expect(h.writes[0]?.direction).toBe(direction);
-    expect(h.writes[0]?.target).toEqual(
-      expectDefined(h.index.listNodes().find((task) => task.node.title === title)).target,
-    );
-    expect(h.creates).toEqual([]);
-    await ui.completed();
-    ui.query('  Candidate  ');
-    await ui.completed();
-    expect(
-      ui.handle.element.querySelector<HTMLButtonElement>('.abyss-dep-search-create')?.disabled,
-      ui.handle.element.outerHTML,
-    ).toBe(false);
-    expectDefined(
-      ui.handle.element.querySelector<HTMLButtonElement>('.abyss-dep-search-create'),
-    ).click();
-    await vi.waitFor(() => {
-      expect(h.creates).toEqual([['  Candidate  ', direction]]);
-    });
   },
 );
 it.each([false, true])(
