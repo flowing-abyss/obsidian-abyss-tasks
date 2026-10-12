@@ -174,6 +174,28 @@ async function assertFreshRebuildMatchesModel(
 }
 
 describe('canonical index and persistent search transitions', () => {
+  it('keeps HTML colors out of root and subtask tags after indexing and updates', async () => {
+    const source =
+      '- [ ] #real <font color="#ff0000">root</font>\n  - [ ] <span style="color: #abc">child</span> #child\n';
+    const app = await createAppWithFiles({ 'html.md': source });
+    const index = new TaskIndex(app, { statusCatalog: canonicalStatusCatalog() });
+    try {
+      await index.initialize();
+      const root = expectDefined(index.list()[0]);
+      expect(root.tags).toEqual(['#real']);
+      expect(root.markdownTitle).toBe('<font color="#ff0000">root</font>');
+      expect(root.subtasks[0]?.tags).toEqual(['#child']);
+      expect(root.subtasks[0]?.markdownTitle).toBe('<span style="color: #abc">child</span>');
+      expect(index.list({ tag: '#ff0000' })).toEqual([]);
+      expect(index.list({ tag: '#abc' })).toEqual([]);
+      index.installCommittedContent('html.md', source.replace('#ff0000', '#00ff00'));
+      expect(index.list({ tag: '#00ff00' })).toEqual([]);
+      expect(index.list()[0]?.tags).toEqual(['#real']);
+    } finally {
+      index.destroy();
+    }
+  });
+
   it('matches an authored Map through committed puts, removals and re-adds', async () => {
     await fc.assert(
       fc.asyncProperty(operationsArbitrary, async (operations) => {

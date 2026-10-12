@@ -299,9 +299,9 @@
   {
     "finding": {
       "file": "src/tasks/domain/taskLineSourceModel.ts",
-      "line": 108,
+      "line": 109,
       "column": 34,
-      "endLine": 108,
+      "endLine": 109,
       "endColumn": 77,
       "ruleId": "regexp/no-super-linear-backtracking",
       "messageId": "trade",
@@ -309,7 +309,7 @@
       "raw": "const DEPENDS_ON_RE = new RegExp(`⛔\\\\uFE0F? *(${TASK_ID_SEQUENCE})(?=$|\\\\s)`, 'uy');",
       "unproven": false
     },
-    "sourceHash": "555367e4914e99491e671d9b2ece62ec3d40dfdac84bf37adfb2a994397ca3b6",
+    "sourceHash": "5fcbcb4ad0c586942d4d170e48c384cb8999b7f26acba6e7b7e0def96dd0aec3",
     "guards": {
       "test/regex-audit.test.ts": "7e4bb3d82879072dfd30a7eae8cabedeb0c6f959252a80524430b4cac516ce9b",
       "src/tasks/domain/taskLineAtomicRanges.ts": "2c1b42c281344db4c06d004cbcd5f5f65aa43aae27b09e86d88018b12735b41c",
@@ -363,7 +363,7 @@
     "sourceHash": "ecc69ca3a323567254552a82f9f5e652af52e308974355c12c7e757a18824df1",
     "guards": {
       "test/regex-audit.test.ts": "7e4bb3d82879072dfd30a7eae8cabedeb0c6f959252a80524430b4cac516ce9b",
-      "src/tasks/domain/taskLineSourceModel.ts": "555367e4914e99491e671d9b2ece62ec3d40dfdac84bf37adfb2a994397ca3b6",
+      "src/tasks/domain/taskLineSourceModel.ts": "5fcbcb4ad0c586942d4d170e48c384cb8999b7f26acba6e7b7e0def96dd0aec3",
       "src/markdown/links.ts": "ccc66cd02760e1628ef3a0250064c1f70aa815cfbda7fac995c9fa53f3757ab3",
       "tooling/regex-audit-process.mjs": "8e741dff6bb995e4c08f299902acaeba4990c7a09e8413cbba89e5e14f8da5d3"
     },

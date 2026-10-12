@@ -1,6 +1,7 @@
 import { normalizeTag, TAG_CHARACTER_SOURCE } from '../../markdown/tagSyntax';
 import { matchesUnlessPreceded } from './precedingCodePoint';
 import { inlineCodeRanges, parseLinkRanges, type SourceRange } from './taskLineAtomicRanges';
+import { htmlTagRanges } from './taskLineHtmlRanges';
 import type { OnCompletion, TaskPriority } from './types';
 
 type TaskLineSourceSpanKind =
@@ -597,7 +598,10 @@ function taskLineParseContext(original: string): TaskLineParseContext | null {
   if (prefix == null) return null;
   const { prefixEnd } = prefix;
   const body = content.slice(prefixEnd);
-  const atomicBodyRanges = mergedRanges([...inlineCodeRanges(body), ...parseLinkRanges(body)]);
+  const protectedBodyRanges = mergedRanges([...inlineCodeRanges(body), ...parseLinkRanges(body)]);
+  const atomicBodyRanges = body.includes('<')
+    ? mergedRanges([...protectedBodyRanges, ...htmlTagRanges(body, protectedBodyRanges)])
+    : protectedBodyRanges;
   return {
     original,
     lineEnding,
