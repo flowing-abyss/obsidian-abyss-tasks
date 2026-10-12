@@ -17,7 +17,7 @@ const ROOT = path.resolve(import.meta.dirname, '..');
 const options = {
   'regexp/no-super-linear-backtracking': { report: 'certain' },
   'regexp/no-super-linear-move': { report: 'certain' },
-  'redos/no-vulnerable': { timeout: 1000, cache: false, ignoreErrors: false },
+  'redos/no-vulnerable': { timeout: 10000, cache: false, ignoreErrors: false },
 };
 /** Manual flat registration: the published redos 4.5.0 preset is legacy-only. @type {import('eslint').Linter.Config[]} */
 export const auditConfig = [

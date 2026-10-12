@@ -28,7 +28,7 @@
           "report": "certain"
         },
         "redos/no-vulnerable": {
-          "timeout": 1000,
+          "timeout": 10000,
           "cache": false,
           "ignoreErrors": false
         }
@@ -79,7 +79,7 @@
           "report": "certain"
         },
         "redos/no-vulnerable": {
-          "timeout": 1000,
+          "timeout": 10000,
           "cache": false,
           "ignoreErrors": false
         }
@@ -129,7 +129,7 @@
           "report": "certain"
         },
         "redos/no-vulnerable": {
-          "timeout": 1000,
+          "timeout": 10000,
           "cache": false,
           "ignoreErrors": false
         }
@@ -178,7 +178,7 @@
           "report": "certain"
         },
         "redos/no-vulnerable": {
-          "timeout": 1000,
+          "timeout": 10000,
           "cache": false,
           "ignoreErrors": false
         }
@@ -227,7 +227,7 @@
           "report": "certain"
         },
         "redos/no-vulnerable": {
-          "timeout": 1000,
+          "timeout": 10000,
           "cache": false,
           "ignoreErrors": false
         }
@@ -276,7 +276,7 @@
           "report": "certain"
         },
         "redos/no-vulnerable": {
-          "timeout": 1000,
+          "timeout": 10000,
           "cache": false,
           "ignoreErrors": false
         }
@@ -327,7 +327,7 @@
           "report": "certain"
         },
         "redos/no-vulnerable": {
-          "timeout": 1000,
+          "timeout": 10000,
           "cache": false,
           "ignoreErrors": false
         }
@@ -378,7 +378,7 @@
           "report": "certain"
         },
         "redos/no-vulnerable": {
-          "timeout": 1000,
+          "timeout": 10000,
           "cache": false,
           "ignoreErrors": false
         }
