@@ -700,9 +700,7 @@ export class TaskSearch {
     if (error instanceof TaskRevealChanged) return error;
     if (
       error instanceof TaskSearchError &&
-      (error.code === 'invalid-query' ||
-        error.code === 'cursor-expired' ||
-        error.code === 'unavailable')
+      ['invalid-query', 'cursor-expired', 'unavailable', 'stale'].includes(error.code)
     )
       return error;
     const failure =
