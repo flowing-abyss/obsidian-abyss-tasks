@@ -21,7 +21,8 @@ const loadPaths = async () => {
     ...(await import('node:crypto')),
   };
 };
-const { fileURLToPath, posix, win32, createHash } = await loadPaths();
+const pathModule = await loadPaths();
+const { fileURLToPath, posix, win32, createHash } = pathModule;
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const loadTimers = async () => {
   if (!Platform.isDesktop) throw new Error('Regex audit tests require a desktop runtime');
@@ -40,7 +41,7 @@ const loadChildProcesses = async () => {
   if (!Platform.isDesktop) throw new Error('Regex audit tests require a desktop runtime');
   return import('node:child_process');
 };
-const { mkdtemp, readFile, rm, stat } = await loadFileSystem();
+const { mkdtemp, readFile, rm, stat, writeFile } = await loadFileSystem();
 const { tmpdir } = await loadOperatingSystem();
 const { execFile } = await loadChildProcesses();
 const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -550,9 +551,14 @@ async function publicGrowthScenario(
   });
   const contents = bundle.outputFiles[0]?.text;
   if (contents === undefined) throw new Error('No public probe bundle');
-  return (await runBoundedChild(['--input-type=commonjs', '-e', contents], {
-    deadlineMs: 4000,
-  })) as RegexScenarioResult;
+  const directory = await mkdtemp(pathModule.join(tmpdir(), 'abyss-regex-probe-'));
+  try {
+    const pathToProbe = pathModule.join(directory, 'probe.cjs');
+    await writeFile(pathToProbe, contents);
+    return (await runBoundedChild([pathToProbe], { deadlineMs: 4000 })) as RegexScenarioResult;
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 }
 
 describe('public caller evidence for reviewed diagnostics', () => {

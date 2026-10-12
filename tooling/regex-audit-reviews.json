@@ -14,7 +14,7 @@
     },
     "sourceHash": "ccc66cd02760e1628ef3a0250064c1f70aa815cfbda7fac995c9fa53f3757ab3",
     "guards": {
-      "test/regex-audit.test.ts": "7e4bb3d82879072dfd30a7eae8cabedeb0c6f959252a80524430b4cac516ce9b",
+      "test/regex-audit.test.ts": "b1098267c45ec137359868d9e18ffe94429716f059bdc4cd7903f7c9fa9f8938",
       "tooling/regex-audit-process.mjs": "8e741dff6bb995e4c08f299902acaeba4990c7a09e8413cbba89e5e14f8da5d3"
     },
     "analyzer": {
@@ -64,7 +64,7 @@
     },
     "sourceHash": "ccc66cd02760e1628ef3a0250064c1f70aa815cfbda7fac995c9fa53f3757ab3",
     "guards": {
-      "test/regex-audit.test.ts": "7e4bb3d82879072dfd30a7eae8cabedeb0c6f959252a80524430b4cac516ce9b",
+      "test/regex-audit.test.ts": "b1098267c45ec137359868d9e18ffe94429716f059bdc4cd7903f7c9fa9f8938",
       "src/markdown/inlineCode.ts": "b3574f0900f7467ce11de9cf4854c39882289bc716922d2f4a8f5f6b728bec7c",
       "tooling/regex-audit-process.mjs": "8e741dff6bb995e4c08f299902acaeba4990c7a09e8413cbba89e5e14f8da5d3"
     },
@@ -114,7 +114,7 @@
     },
     "sourceHash": "ccc66cd02760e1628ef3a0250064c1f70aa815cfbda7fac995c9fa53f3757ab3",
     "guards": {
-      "test/regex-audit.test.ts": "7e4bb3d82879072dfd30a7eae8cabedeb0c6f959252a80524430b4cac516ce9b",
+      "test/regex-audit.test.ts": "b1098267c45ec137359868d9e18ffe94429716f059bdc4cd7903f7c9fa9f8938",
       "src/markdown/inlineCode.ts": "b3574f0900f7467ce11de9cf4854c39882289bc716922d2f4a8f5f6b728bec7c",
       "tooling/regex-audit-process.mjs": "8e741dff6bb995e4c08f299902acaeba4990c7a09e8413cbba89e5e14f8da5d3"
     },
@@ -164,7 +164,7 @@
     },
     "sourceHash": "ed6f98907cbd8262d63a062f5b16bf1c52e38188ea8c2dd46144d0d8342f18f6",
     "guards": {
-      "test/regex-audit.test.ts": "7e4bb3d82879072dfd30a7eae8cabedeb0c6f959252a80524430b4cac516ce9b",
+      "test/regex-audit.test.ts": "b1098267c45ec137359868d9e18ffe94429716f059bdc4cd7903f7c9fa9f8938",
       "tooling/regex-audit-process.mjs": "8e741dff6bb995e4c08f299902acaeba4990c7a09e8413cbba89e5e14f8da5d3"
     },
     "analyzer": {
@@ -213,7 +213,7 @@
     },
     "sourceHash": "ed6f98907cbd8262d63a062f5b16bf1c52e38188ea8c2dd46144d0d8342f18f6",
     "guards": {
-      "test/regex-audit.test.ts": "7e4bb3d82879072dfd30a7eae8cabedeb0c6f959252a80524430b4cac516ce9b",
+      "test/regex-audit.test.ts": "b1098267c45ec137359868d9e18ffe94429716f059bdc4cd7903f7c9fa9f8938",
       "tooling/regex-audit-process.mjs": "8e741dff6bb995e4c08f299902acaeba4990c7a09e8413cbba89e5e14f8da5d3"
     },
     "analyzer": {
@@ -262,7 +262,7 @@
     },
     "sourceHash": "2c1b42c281344db4c06d004cbcd5f5f65aa43aae27b09e86d88018b12735b41c",
     "guards": {
-      "test/regex-audit.test.ts": "7e4bb3d82879072dfd30a7eae8cabedeb0c6f959252a80524430b4cac516ce9b",
+      "test/regex-audit.test.ts": "b1098267c45ec137359868d9e18ffe94429716f059bdc4cd7903f7c9fa9f8938",
       "tooling/regex-audit-process.mjs": "8e741dff6bb995e4c08f299902acaeba4990c7a09e8413cbba89e5e14f8da5d3"
     },
     "analyzer": {
@@ -311,7 +311,7 @@
     },
     "sourceHash": "5fcbcb4ad0c586942d4d170e48c384cb8999b7f26acba6e7b7e0def96dd0aec3",
     "guards": {
-      "test/regex-audit.test.ts": "7e4bb3d82879072dfd30a7eae8cabedeb0c6f959252a80524430b4cac516ce9b",
+      "test/regex-audit.test.ts": "b1098267c45ec137359868d9e18ffe94429716f059bdc4cd7903f7c9fa9f8938",
       "src/tasks/domain/taskLineAtomicRanges.ts": "2c1b42c281344db4c06d004cbcd5f5f65aa43aae27b09e86d88018b12735b41c",
       "src/tasks/domain/precedingCodePoint.ts": "0af685ac951cf133bff98c45f71f6b3d52ca5e87a63d92d9dee32be3a022f528",
       "tooling/regex-audit-process.mjs": "8e741dff6bb995e4c08f299902acaeba4990c7a09e8413cbba89e5e14f8da5d3"
@@ -362,7 +362,7 @@
     },
     "sourceHash": "ecc69ca3a323567254552a82f9f5e652af52e308974355c12c7e757a18824df1",
     "guards": {
-      "test/regex-audit.test.ts": "7e4bb3d82879072dfd30a7eae8cabedeb0c6f959252a80524430b4cac516ce9b",
+      "test/regex-audit.test.ts": "b1098267c45ec137359868d9e18ffe94429716f059bdc4cd7903f7c9fa9f8938",
       "src/tasks/domain/taskLineSourceModel.ts": "5fcbcb4ad0c586942d4d170e48c384cb8999b7f26acba6e7b7e0def96dd0aec3",
       "src/markdown/links.ts": "ccc66cd02760e1628ef3a0250064c1f70aa815cfbda7fac995c9fa53f3757ab3",
       "tooling/regex-audit-process.mjs": "8e741dff6bb995e4c08f299902acaeba4990c7a09e8413cbba89e5e14f8da5d3"
