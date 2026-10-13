@@ -123,17 +123,6 @@ function explicitPlanning(
   }
   return result;
 }
-function competingDays(days: readonly TaskInputCandidate[]): boolean {
-  return days.some((candidate, index) =>
-    days.some(
-      (other, otherIndex) =>
-        index !== otherIndex &&
-        candidate.ranges.some((range) =>
-          other.ranges.some((otherRange) => inputRangesOverlap(range, otherRange)),
-        ),
-    ),
-  );
-}
 function isPlanningPoint(candidate: TaskInputCandidate): boolean {
   return candidate.status === 'point' || candidate.status === 'partial';
 }
@@ -181,8 +170,7 @@ function decisionFor(input: ProjectionInput): Decision {
   const ambiguity =
     days.length > 1 ||
     clocks.length > 1 ||
-    active.some((candidate) => candidate.status === 'range' || candidate.reason === 'multiple') ||
-    competingDays(days);
+    active.some((candidate) => candidate.status === 'range' || candidate.reason === 'multiple');
   const hasExplicitDay = hasActiveExplicitDay(input, suppressed);
   return {
     input,

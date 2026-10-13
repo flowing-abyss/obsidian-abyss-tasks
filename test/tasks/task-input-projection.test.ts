@@ -11,6 +11,7 @@ import {
   editTaskInput,
   type TaskInputState,
 } from '../../src/tasks/domain/taskInputState';
+import type { TaskInputCandidate } from '../../src/tasks/domain/taskInputTypes';
 import type { TaskPlanning } from '../../src/tasks/domain/types';
 import { localDate } from '../../src/tasks/domain/validation';
 import { expectDefined } from '../helpers';
@@ -462,3 +463,85 @@ for (const kind of ['paste', 'composition', 'history'] as const) {
     });
   });
 }
+
+describe('metadata decision boundary conservation', () => {
+  it('merges dismissed tags with existing context removals without duplicating their identity', () => {
+    const raw = 'Call #work';
+    const removed = act(createTaskInputState(raw), { type: 'remove-tag', tag: '#work' });
+    const result = project(removed, {
+      tags: { add: ['#work', '#personal'], remove: ['#WORK', '#later'] },
+    });
+    expect(removed.raw).toBe(raw);
+    expect(result.markdownBody).toBe('Call');
+    expect(result.initial.tags).toEqual({ add: ['#personal'], remove: ['#WORK', '#later'] });
+  });
+
+  it('keeps overlapping distinct point interpretations literal and ambiguous', () => {
+    const raw = 'Call next Friday';
+    const candidates: TaskInputCandidate[] = [
+      {
+        kind: 'date-time',
+        status: 'point',
+        date: localDate('2026-10-16'),
+        ranges: [{ from: 5, to: 16 }],
+        dateRanges: [{ from: 5, to: 16 }],
+        timeRanges: [],
+      },
+      {
+        kind: 'date-time',
+        status: 'point',
+        date: localDate('2026-10-23'),
+        ranges: [{ from: 10, to: 16 }],
+        dateRanges: [{ from: 10, to: 16 }],
+        timeRanges: [],
+      },
+    ];
+    const result = projectTaskInput({
+      state: createTaskInputState(raw),
+      reference,
+      inspection: inspectTaskInput(raw),
+      sourcePlanning: {},
+      candidates,
+    });
+    expect(result.markdownBody).toBe(raw);
+    expect(result.ambiguity).toBe(true);
+    expect(result.initial.due).toBeUndefined();
+    expect(result.hasAuthoredTitle).toBe(true);
+  });
+
+  it('removes a reentered tag again and restores only the new occurrence', () => {
+    const first = act(dismiss('Call tomorrow #work'), { type: 'remove-tag', tag: '#work' });
+    const raw = 'Call tomorrow #work #WORK';
+    const reentered = editTaskInput(first, raw);
+    expect(project(reentered).markdownBody).toBe('Call tomorrow #WORK');
+    const removedAgain = act(reentered, { type: 'remove-tag', tag: '#work' });
+    expect(removedAgain.raw).toBe(raw);
+    expect(project(removedAgain).markdownBody).toBe('Call tomorrow');
+    expect(project(removedAgain).initial.due).toEqual({ type: 'clear' });
+    const restored = act(removedAgain, { type: 'restore' });
+    expect(restored.raw).toBe(raw);
+    expect(project(restored).markdownBody).toBe('Call tomorrow #WORK');
+    expect(project(restored).initial.due).toEqual({ type: 'clear' });
+  });
+
+  it('sets a manual date from a dismissed point without consuming its words again', () => {
+    const raw = 'Call tomorrow';
+    const removed = dismiss(raw);
+    const projection = project(removed);
+    const selected = applyTaskInputAction(
+      removed,
+      {
+        type: 'select-date',
+        role: 'due',
+        value: localDate('2026-10-20'),
+        candidate: expectDefined(projection.candidates[0]),
+      },
+      projection,
+      inspectTaskInput(raw),
+    );
+    expect(selected.raw).toBe(raw);
+    expect(project(selected).markdownBody).toBe(raw);
+    expect(project(selected).initial.due).toEqual({ type: 'set', value: '2026-10-20' });
+    expect(selected.restore).toBeUndefined();
+  });
+});
