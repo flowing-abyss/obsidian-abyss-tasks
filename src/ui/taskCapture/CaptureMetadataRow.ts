@@ -134,8 +134,8 @@ export class CaptureMetadataRow {
       const time = value;
       const chip = this.use(keys, disabled, 'time', { removable: true });
       this.content(chip, value, () => {
-        const content = chip.body.createSpan({ cls: 'abyss-task-time-badge' });
-        setIcon(content.createSpan(), 'clock');
+        const content = chip.body.createSpan({ cls: 'abyss-task-date' });
+        setIcon(content.createSpan({ cls: 'abyss-date-icon' }), 'clock');
         content.createSpan({ text: time });
       });
       chip.remove?.setAttribute('aria-label', 'Remove time');
