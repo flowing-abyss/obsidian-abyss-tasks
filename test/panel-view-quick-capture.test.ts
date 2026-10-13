@@ -1377,6 +1377,12 @@ it('formats Q dates against the frozen draft year, including when natural recogn
     });
     h.settings.parseDatesInQuickCapture = false;
     const input = await h.openQ();
+    expect(h.root.querySelector('.abyss-capture-metadata .abyss-task-date')).toBeNull();
+    input.value = 'Call 📅 2026-10-20';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await vi.waitFor(() => {
+      expect(h.root.querySelector('.abyss-capture-metadata .abyss-task-date')).not.toBeNull();
+    });
     const date = expectDefined(
       h.root.querySelector<HTMLButtonElement>(
         '.abyss-capture-chip-body[aria-label^="Edit due date"]',

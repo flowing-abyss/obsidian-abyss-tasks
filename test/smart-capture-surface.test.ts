@@ -58,6 +58,51 @@ function harness(initial?: TaskCreateRequest['initial']) {
     expectDefined(host.querySelector<HTMLButtonElement>(`button[aria-label^="${label}"]`));
   return { host, controller, surface, type, button, execute, preview };
 }
+it('starts with destination context and reveals only real policy tags and planning', () => {
+  const h = harness({ tags: { add: ['#task/inbox'] } });
+  const contents = () =>
+    [...h.host.querySelectorAll('.abyss-capture-chip-body')].map((element) => element.textContent);
+  expect(contents()).toEqual(['Inbox']);
+  h.type('Call');
+  vi.advanceTimersByTime(24);
+  expect(contents()).toEqual(['Inbox', '#task/inbox']);
+  h.type('Call tomorrow at 14:00');
+  vi.advanceTimersByTime(24);
+  expect(contents()).toEqual(['Inbox', '2026-10-14', '14:00', '#task/inbox']);
+  h.type('Call 📅 2026-10-20');
+  vi.advanceTimersByTime(24);
+  expect(contents()).toEqual(['Inbox', '2026-10-20', '#task/inbox']);
+  h.type('');
+  vi.advanceTimersByTime(24);
+  expect(contents()).toEqual(['Inbox']);
+  expect(h.execute).not.toHaveBeenCalled();
+  h.surface.destroy();
+});
+it('removes the last date and restores it while preserving raw text and repairing focus', () => {
+  const h = harness();
+  const raw = 'Call tomorrow';
+  h.type(raw);
+  vi.advanceTimersByTime(24);
+  const input = h.surface.input;
+  input.setSelectionRange(1, 3);
+  const write = vi.spyOn(input, 'value', 'set');
+  const remove = h.button('Remove due date');
+  remove.focus();
+  remove.click();
+  expect(h.host.querySelector('button[aria-label^="Edit due date"]')).toBeNull();
+  expect(remove.isConnected).toBe(false);
+  expect(document.activeElement).toBe(h.button('Restore'));
+  h.button('Restore').click();
+  expect(h.button('Edit due date').textContent).toBe('2026-10-14');
+  expect(document.activeElement).toBe(input);
+  expect(h.surface.input).toBe(input);
+  expect(input.value).toBe(raw);
+  expect(input.selectionStart).toBe(1);
+  expect(input.selectionEnd).toBe(3);
+  expect(write).not.toHaveBeenCalled();
+  expect(h.execute).not.toHaveBeenCalled();
+  h.surface.destroy();
+});
 it('keeps raw input, selection, mounted node and metadata controls stable across remove and Restore', () => {
   const h = harness();
   const raw = 'Call tomorrow #work';
@@ -193,7 +238,7 @@ it('drops coalesced recognition and child work on destroy', async () => {
   expect(h.execute).not.toHaveBeenCalled();
 });
 
-it('repairs focus when the focused due cross becomes hidden', () => {
+it('repairs focus when the focused due cross is removed', () => {
   const h = harness();
   h.type('Call tomorrow');
   vi.advanceTimersByTime(24);
@@ -267,7 +312,7 @@ it('shows sanitized recognition failure while retaining explicit metadata contro
   vi.spyOn(recognizer, 'recognize').mockImplementation(() => {
     throw new Error('private input details');
   });
-  h.type('Call tomorrow');
+  h.type('Call tomorrow 📅 2026-10-20');
   vi.advanceTimersByTime(24);
   expect(h.host.textContent).toContain('Could not recognize dates and times');
   expect(h.host.textContent).not.toContain('private input details');
@@ -351,8 +396,12 @@ it('keeps Enter on a metadata body action inside the capture', async () => {
   h.surface.destroy();
 });
 
-it('shows, reopens and clears a manual day before a title without rewriting the input', () => {
-  const h = harness();
+it('shows, reopens and clears a real initial day before a title without rewriting the input', () => {
+  const h = harness({ due: { type: 'set', value: localDate('2026-10-19') } });
+  expect(h.button('Edit due date').textContent).toBe('2026-10-19');
+  expect(h.controller.snapshot().metadata?.referenceDate).toBeUndefined();
+  expect(h.controller.snapshot().metadata?.preview.type).toBe('invalid');
+  expect(h.execute).not.toHaveBeenCalled();
   const input = h.surface.input;
   input.setSelectionRange(0, 0);
   const write = vi.spyOn(input, 'value', 'set');
@@ -371,8 +420,8 @@ it('shows, reopens and clears a manual day before a title without rewriting the 
     .querySelector<HTMLInputElement>('input[type="date"]')
     ?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   h.button('Remove due date').click();
-  expect(h.button('Remove due date').hidden).toBe(true);
-  expect(h.host.querySelector('.abyss-task-date')?.textContent).toBe('Date');
+  expect(h.host.querySelector('button[aria-label="Remove due date"]')).toBeNull();
+  expect(h.host.querySelector('.abyss-task-date')).toBeNull();
   expect(h.surface.input).toBe(input);
   expect(input.value).toBe('');
   expect(input.selectionStart).toBe(0);
@@ -409,7 +458,7 @@ it.each(['input', 'date', 'tag'] as const)(
   async (focused) => {
     const h = harness();
     const escape = vi.spyOn(h.controller, 'escape');
-    h.type('Call #work');
+    h.type('Call #work tomorrow');
     vi.advanceTimersByTime(24);
     const input = h.surface.input;
     input.setSelectionRange(1, 3);
@@ -505,8 +554,8 @@ it.each(['unavailable', 'throw', 'invalid-metadata'] as const)(
       value: localDate('2026-10-20'),
     });
     expect(h.controller.snapshot().metadata?.projection).toBeUndefined();
-    expect(h.button('Edit due date').textContent).toBe('Date');
-    expect(h.button('Remove due date').hidden).toBe(true);
+    expect(h.host.querySelector('button[aria-label^="Edit due date"]')).toBeNull();
+    expect(h.host.querySelector('button[aria-label="Remove due date"]')).toBeNull();
     expect(h.execute).not.toHaveBeenCalled();
     h.surface.destroy();
   },
@@ -522,8 +571,8 @@ it('does not display held manual planning through a malformed canonical carrier'
   h.type('Call 📅 nope');
   vi.advanceTimersByTime(24);
   expect(h.controller.snapshot().metadata?.preview.type).toBe('invalid');
-  expect(h.button('Edit due date').textContent).toBe('Date');
-  expect(h.button('Remove due date').hidden).toBe(true);
+  expect(h.host.querySelector('button[aria-label^="Edit due date"]')).toBeNull();
+  expect(h.host.querySelector('button[aria-label="Remove due date"]')).toBeNull();
   expect(h.surface.input.value).toBe('Call 📅 nope');
   h.surface.destroy();
 });

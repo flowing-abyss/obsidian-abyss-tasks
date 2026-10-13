@@ -1,5 +1,11 @@
 import { Menu, setIcon } from 'obsidian';
-import { localDate, type LocalDate, type TaskInputAction, type TaskPlanning } from '../../tasks';
+import {
+  localDate,
+  type LocalDate,
+  type TaskCreateRequest,
+  type TaskInputAction,
+  type TaskPlanning,
+} from '../../tasks';
 import { showDatePickerPopover, type DatePickerPopoverHandle } from '../DatePickerPopover';
 import { isImeOwnedEvent } from '../ime';
 import type { InteractionOwnershipPort } from '../interactionOwnership';
@@ -128,7 +134,7 @@ export class CaptureMetadataRow {
     const planning = this.planning(metadata);
     for (const role of ['due', 'scheduled', 'start'] as const) {
       const value = planning[role];
-      if (value === undefined && role !== 'due') continue;
+      if (value === undefined) continue;
       const chip = this.use(keys, disabled, `date:${role}`, { removable: true, actionable: true });
       const description = this.dateDescription(metadata, role, value);
       chip.body.setAttribute('aria-label', description);
@@ -136,11 +142,10 @@ export class CaptureMetadataRow {
       const label = this.dateLabel(value, metadata.referenceDate);
       this.content(chip, label, () => {
         const content = chip.body.createSpan({ cls: 'abyss-task-date' });
-        setIcon(content.createSpan(), 'calendar');
+        setIcon(content.createSpan({ cls: 'abyss-date-icon' }), 'calendar');
         content.createSpan({ text: label });
       });
       if (chip.remove !== undefined) {
-        chip.remove.hidden = value === undefined;
         chip.remove.setAttribute('aria-label', `Remove ${role} date`);
       }
       chip.activate = () => {
@@ -158,18 +163,26 @@ export class CaptureMetadataRow {
     )
       return {};
     const planning: Pick<TaskPlanning, DateRole | 'time'> = {};
+    const initial = this.planningInitial(metadata);
     for (const role of ['due', 'scheduled', 'start', 'time'] as const) {
-      const patch = metadata.projection?.initial[role];
+      const patch = initial?.[role];
       if (patch?.type === 'set') Object.assign(planning, { [role]: patch.value });
     }
     return planning;
   }
+  private planningInitial(metadata: CaptureMetadataSnapshot): TaskCreateRequest['initial'] {
+    // Before the first edit, real context dates can render without freezing the draft clock.
+    return metadata.projection === undefined &&
+      metadata.referenceDate === undefined &&
+      this.options.controller.target.session.type === 'ready'
+      ? this.options.controller.target.initial
+      : metadata.projection?.initial;
+  }
   private dateDescription(
     metadata: CaptureMetadataSnapshot,
     role: DateRole,
-    value?: LocalDate,
+    value: LocalDate,
   ): string {
-    if (value === undefined) return `Edit ${role} date`;
     const projection = metadata.projection;
     const binding = projection?.bindings.find((item) => item.role === role);
     const source =
@@ -187,10 +200,8 @@ export class CaptureMetadataRow {
     const phrase = source === undefined ? '' : ` (${source})`;
     return `Edit ${role} date: ${value}${phrase}`;
   }
-  private dateLabel(value: string | undefined, referenceDate?: string): string {
-    return value === undefined
-      ? 'Date'
-      : (this.options.formatDate?.(value, referenceDate) ?? value);
+  private dateLabel(value: string, referenceDate?: string): string {
+    return this.options.formatDate?.(value, referenceDate) ?? value;
   }
   private renderTime(keys: Set<string>, disabled: boolean, value: string | undefined): void {
     if (value !== undefined) {
