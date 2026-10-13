@@ -222,6 +222,46 @@ describe('smart Q canonical commit', () => {
       expect(root.planning.time).toBe(planning.time);
     },
   );
+  it.each<[string, string, { due?: string; time?: string }]>([
+    ['Call build+07:00 tomorrow', 'Call build+07:00', { due: '2026-10-14' }],
+    [
+      'Call build+07:00 tomorrow at 12:00',
+      'Call build+07:00',
+      { due: '2026-10-14', time: '12:00' },
+    ],
+    ['Позвонить завтра ЗАДАЧА-07:00', 'Позвонить ЗАДАЧА-07:00', { due: '2026-10-14' }],
+    [
+      'Позвонить в 12:00 ЗАДАЧА-25:00 завтра',
+      'Позвонить ЗАДАЧА-25:00',
+      { due: '2026-10-14', time: '12:00' },
+    ],
+    ['Call tomorrow at 12:00+07:00', 'Call tomorrow at 12:00+07:00', {}],
+  ])(
+    'previews and writes colon-form identifiers without consuming them: %s',
+    async (raw, title, planning) => {
+      const h = await smartHarness({}, { inbox: false, initial: {} });
+      h.controller.setDraft(raw);
+      const snapshot = h.controller.snapshot();
+      expect(snapshot.draft).toBe(raw);
+      expect(snapshot.metadata?.preview).toMatchObject({
+        type: 'valid',
+        metadata: { markdownTitle: title, planning },
+      });
+      expect(snapshot.metadata?.projection?.initial.due).toEqual(
+        planning.due === undefined ? undefined : { type: 'set', value: planning.due },
+      );
+      expect(snapshot.metadata?.projection?.initial.time).toEqual(
+        planning.time === undefined ? undefined : { type: 'set', value: planning.time },
+      );
+      expect(h.repositoryWrites).toHaveLength(0);
+      await h.controller.submit('enter');
+      expect(h.repositoryWrites).toHaveLength(1);
+      const root = h.readCanonicalRoot(expectDefined(h.repositoryWrites[0]));
+      expect(root.markdownTitle).toBe(title);
+      expect(root.planning.due).toBe(planning.due);
+      expect(root.planning.time).toBe(planning.time);
+    },
+  );
   it('keeps dismissed words across outside edits', async () => {
     const h = await smartHarness();
     h.controller.setDraft('Позвонить послезавтра в 12:00');

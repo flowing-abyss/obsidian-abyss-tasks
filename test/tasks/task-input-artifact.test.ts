@@ -83,6 +83,33 @@ describe('offline Chrono locale artifact', () => {
           yearExplicit: false,
         },
       ]);
+      const colonIdentifier = execute().recognize({
+        text: 'Call build+07:00 tomorrow at 12:00',
+        reference: {
+          epochMs: 1791867600000,
+          localDate: localDate('2026-10-13'),
+          localTime: localTime('12:00'),
+          second: 0,
+          offsetMinutes: 420,
+        },
+        protectedRanges: [],
+      });
+      expect(colonIdentifier).toEqual([
+        {
+          kind: 'date-time',
+          status: 'point',
+          ranges: [
+            { from: 17, to: 25 },
+            { from: 26, to: 34 },
+          ],
+          dateRanges: [{ from: 17, to: 25 }],
+          timeRanges: [{ from: 26, to: 34 }],
+          date: '2026-10-14',
+          time: '12:00',
+          dateOrigin: 'relative',
+          yearExplicit: false,
+        },
+      ]);
       expect(result).toEqual([
         {
           kind: 'date-time',

@@ -73,9 +73,7 @@ function parseLocales(text: string, reference: TaskInputReference): LocaleResult
   const ref = { instant: new Date(reference.epochMs), timezone: reference.offsetMinutes };
   // Chrono's offset refiner accepts numeric prefixes (e.g. -1234 in -123456).
   // Mask non-token fragments without making ordinary title IDs into join barriers.
-  const fragments = [...text.matchAll(NUMERIC_OFFSET)]
-    .filter((match) => !isNumericTimezone(text, match.index, match[0]))
-    .map((match) => ({ from: match.index, to: match.index + match[0].length }));
+  const fragments = nonTimezoneNumericRanges(text);
   const masked = maskInputRanges(text, fragments);
   return [
     ...ru.parse(masked, ref, { forwardDate: false }),
@@ -118,6 +116,11 @@ function isNumericTimezone(text: string, from: number, token: string): boolean {
   );
   return clock !== null && exactClock(clock[1] ?? '');
 }
+function nonTimezoneNumericRanges(text: string): TaskInputRange[] {
+  return [...text.matchAll(NUMERIC_OFFSET)]
+    .filter((match) => !isNumericTimezone(text, match.index, match[0]))
+    .map((match) => ({ from: match.index, to: match.index + match[0].length }));
+}
 function hasNumericTimezone(text: string): boolean {
   return [...text.matchAll(NUMERIC_OFFSET)].some((match) =>
     isNumericTimezone(text, match.index, match[0]),
@@ -133,7 +136,7 @@ function exclusion(text: string): TaskInputCandidate['reason'] | undefined {
     return 'negation';
   if (/\b(?:UTC|GMT|CET|CEST|PST|PDT|EST|EDT|JST|MSK)\b/u.test(text) || hasNumericTimezone(text))
     return 'timezone';
-  return timeExclusion(text);
+  return timeExclusion(maskInputRanges(text, nonTimezoneNumericRanges(text)));
 }
 function excludeExpressions(context: Recognition): void {
   const masked = maskInputRanges(context.text, context.barriers);
@@ -184,7 +187,10 @@ function recognizedClock(context: Recognition, range: TaskInputRange): TaskInput
   return candidate(range, { time, timeRanges: [range] });
 }
 function recognizeClocks(context: Recognition): TaskInputCandidate[] {
-  const masked = maskInputRanges(context.text, context.barriers),
+  const masked = maskInputRanges(context.text, [
+      ...context.barriers,
+      ...nonTimezoneNumericRanges(context.text),
+    ]),
     clocks: TaskInputCandidate[] = [];
   for (const match of masked.matchAll(CLOCK)) {
     const range = ownedCue(context.text, { from: match.index, to: match.index + match[0].length });

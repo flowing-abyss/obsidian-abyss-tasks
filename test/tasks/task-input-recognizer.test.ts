@@ -306,3 +306,42 @@ describe('numeric identifiers beside natural dates and clocks', () => {
     ]);
   });
 });
+
+describe('colon-form numeric identifiers never become clocks', () => {
+  it.each<[string, string, string | undefined]>([
+    ['Call build+07:00 tomorrow', 'Call build+07:00', undefined],
+    ['Call build+07:00 tomorrow at 12:00', 'Call build+07:00', '12:00'],
+    ['Позвонить завтра ЗАДАЧА-07:00', 'Позвонить ЗАДАЧА-07:00', undefined],
+    ['Позвонить завтра ЗАДАЧА-07:00 в 12:00', 'Позвонить ЗАДАЧА-07:00', '12:00'],
+    ['Позвонить в 12:00 ЗАДАЧА-07:00 завтра', 'Позвонить ЗАДАЧА-07:00', '12:00'],
+    ['Call at 12:00 build+07:00 tomorrow', 'Call build+07:00', '12:00'],
+    ['Call tomorrow build-07:00 at 12:00', 'Call build-07:00', '12:00'],
+    ['Call build+25:00 tomorrow', 'Call build+25:00', undefined],
+    ['Call build+25:00 tomorrow at 12:00', 'Call build+25:00', '12:00'],
+    ['Позвонить в 12:00 ЗАДАЧА-25:00 завтра', 'Позвонить ЗАДАЧА-25:00', '12:00'],
+  ])(
+    'preserves the exact identifier with independently authored planning: %s',
+    (raw, body, time) => {
+      const result = project(createTaskInputState(raw));
+      expect(result.initial.due).toEqual({ type: 'set', value: '2026-10-14' });
+      expect(result.initial.time).toEqual(
+        time === undefined ? undefined : { type: 'set', value: time },
+      );
+      expect(result.markdownBody).toBe(body);
+      expect(result.ambiguity).toBe(false);
+    },
+  );
+  it.each([
+    'Call tomorrow at 12:00+07:00',
+    'Call tomorrow at 12:00-07:00',
+    'Call tomorrow at 25:00',
+    'Позвонить завтра в 25:00',
+    'Call build+07:00 tomorrow at 25:00',
+    'Call build+25:00 tomorrow at 25:00',
+  ])('preserves genuine timezone and invalid-clock refusals: %s', (raw) => {
+    const result = project(createTaskInputState(raw));
+    expect(result.initial.due).toBeUndefined();
+    expect(result.initial.time).toBeUndefined();
+    expect(result.markdownBody).toBe(raw);
+  });
+});
