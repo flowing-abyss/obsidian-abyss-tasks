@@ -816,3 +816,33 @@ describe('metadata-only canonical source removals', () => {
     expect(h.readCanonicalRoot(expectDefined(h.repositoryWrites[0])).planning.due).toBeUndefined();
   });
 });
+
+for (const editKind of ['paste', 'composition', 'history'] as const) {
+  it.each([
+    ['Call 📅 2026-10-20 📅 2026-10-20', 'Call 📅 2026-10-20'],
+    ['📅 2026-10-20 Call 📅 2026-10-20', '📅 2026-10-20 Call'],
+  ])(`saves only the new identical canonical carrier after ${editKind}: %s`, async (raw, body) => {
+    const h = await smartHarness({ prefix: 'Prefix' }, { inbox: false, initial: {} });
+    h.controller.setDraft('Call 📅 2026-10-20');
+    h.controller.applyMetadataAction({ type: 'dismiss', role: 'due' });
+    h.preview.mockClear();
+    h.controller.setDraft(raw, { editKind, deferRecognition: true });
+    h.controller.flushRecognition();
+    const snapshot = h.controller.snapshot();
+    expect(snapshot.draft).toBe(raw);
+    expect(h.preview.mock.calls[0]?.[0].markdownBody).toBe(body);
+    expect(snapshot.metadata?.projection?.markdownBody).toBe(body);
+    expect(snapshot.metadata?.preview).toMatchObject({
+      type: 'valid',
+      metadata: { markdownTitle: 'Prefix Call', planning: { due: '2026-10-20' } },
+    });
+    await h.controller.submit('enter');
+    expect(h.execute).toHaveBeenCalledOnce();
+    expect(h.repositoryWrites).toHaveLength(1);
+    expect(h.readCanonicalRoot(expectDefined(h.repositoryWrites[0]))).toMatchObject({
+      markdownTitle: 'Prefix Call',
+      planning: { due: '2026-10-20' },
+    });
+    expect(h.repositoryWrites[0]?.match(/📅 2026-10-20/gu)).toHaveLength(1);
+  });
+}

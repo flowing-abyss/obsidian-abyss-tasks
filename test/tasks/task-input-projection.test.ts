@@ -1,7 +1,10 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { inspectTaskInput } from '../../src/tasks/domain/taskInputInspection';
-import { projectTaskInput } from '../../src/tasks/domain/taskInputProjection';
+import {
+  projectTaskInput,
+  taskInputPreflightBody,
+} from '../../src/tasks/domain/taskInputProjection';
 import {
   applyTaskInputAction,
   createTaskInputState,
@@ -442,3 +445,20 @@ it('keeps the meaningful last Restore offer through an ineffective repeated dism
     value: '2026-10-14',
   });
 });
+
+for (const kind of ['paste', 'composition', 'history'] as const) {
+  it.each([
+    ['Call 📅 2026-10-20 📅 2026-10-20', 'Call 📅 2026-10-20'],
+    ['📅 2026-10-20 Call 📅 2026-10-20', '📅 2026-10-20 Call'],
+  ])(`keeps new identical canonical source active after ${kind}: %s`, (raw, body) => {
+    const edited = editTaskInput(dismiss('Call 📅 2026-10-20'), raw, kind);
+    expect(edited.raw).toBe(raw);
+    expect(taskInputPreflightBody(edited, inspectTaskInput(raw))).toBe(body);
+    expect(project(edited, context).markdownBody).toBe(body);
+    expect(project(edited, context).initial.due).toEqual({ type: 'set', value: '2026-10-20' });
+    expect(edited.restore).toBeUndefined();
+    expect(project(editTaskInput(edited, 'Call', kind), context).initial.due).toEqual({
+      type: 'clear',
+    });
+  });
+}

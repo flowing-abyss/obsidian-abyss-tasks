@@ -103,8 +103,8 @@ export class CaptureSurface {
       const boundary = new CaptureInteractionBoundary(this.element, {
         flushInput: () => this.flushInput_abyssPrivate(),
         isLive,
-        submit: () => {
-          runAsyncAction(controller.submit('blur'), 'Could not add task');
+        submit: (trigger) => {
+          runAsyncAction(controller.submit(trigger), 'Could not add task');
         },
       });
       const row = new CaptureMetadataRow(this.element, {
@@ -151,7 +151,8 @@ export class CaptureSurface {
       if (event.key === 'Enter') {
         event.preventDefault();
         event.stopPropagation();
-        if (this.flushInput_abyssPrivate() === 'ready')
+        if (this.boundary_abyssPrivate !== undefined) this.boundary_abyssPrivate.requestSubmit();
+        else if (this.flushInput_abyssPrivate() === 'ready')
           runAsyncAction(this.controller_abyssPrivate.submit('enter'), 'Could not add task');
       } else if (event.key === 'Escape') {
         event.preventDefault();

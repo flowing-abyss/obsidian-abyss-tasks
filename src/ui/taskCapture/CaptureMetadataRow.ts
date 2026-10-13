@@ -309,7 +309,12 @@ export class CaptureMetadataRow {
     });
     this.picker = handle;
     release = this.options.boundary.register(handle.element, {
-      flush: () => handle.flush(),
+      flush: (trigger) => {
+        const result = handle.flush();
+        if (result === 'blocked' && trigger === 'enter' && this.live())
+          handle.element.querySelector<HTMLInputElement>('input[type="date"]')?.focus();
+        return result;
+      },
       cancel: () => {
         handle(false);
       },

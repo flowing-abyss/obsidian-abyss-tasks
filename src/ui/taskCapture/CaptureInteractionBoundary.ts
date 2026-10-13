@@ -1,4 +1,8 @@
-type Settlement = { readonly flush?: () => 'ready' | 'blocked'; readonly cancel?: () => void };
+type SubmitTrigger = 'enter' | 'blur';
+type Settlement = {
+  readonly flush?: (trigger: SubmitTrigger) => 'ready' | 'blocked';
+  readonly cancel?: () => void;
+};
 type ExitEvidence =
   | {
       readonly type: 'pointer';
@@ -8,7 +12,7 @@ type ExitEvidence =
   | { readonly type: 'focus'; readonly relatedTarget: EventTarget | null };
 interface BoundaryCallbacks {
   readonly flushInput: () => 'ready' | 'blocked';
-  readonly submit: () => void;
+  readonly submit: (trigger: SubmitTrigger) => void;
   readonly isLive: () => boolean;
 }
 
@@ -61,6 +65,10 @@ export class CaptureInteractionBoundary {
     this.schedule();
   }
 
+  requestSubmit(): void {
+    this.settle('enter');
+  }
+
   beginComposition(): void {
     this.composing = true;
   }
@@ -97,19 +105,24 @@ export class CaptureInteractionBoundary {
     if (this.timer !== undefined) this.window.clearTimeout(this.timer);
     this.timer = undefined;
   }
+  private settle(trigger: SubmitTrigger): void {
+    if (this.destroyed || this.composing || this.settling || !this.callbacks.isLive()) return;
+    this.cancelExit();
+    this.settling = true;
+    try {
+      for (const child of [...this.surfaces.values()])
+        if (child.flush?.(trigger) === 'blocked') return;
+      if (this.callbacks.flushInput() === 'ready') this.callbacks.submit(trigger);
+    } finally {
+      this.settling = false;
+    }
+  }
   private schedule(): void {
     if (!this.pendingExit || this.composing || this.timer !== undefined || this.destroyed) return;
     this.timer = this.window.setTimeout(() => {
       this.timer = undefined;
       if (!this.pendingExit || this.composing || this.destroyed || !this.callbacks.isLive()) return;
-      this.pendingExit = false;
-      this.settling = true;
-      try {
-        for (const child of [...this.surfaces.values()]) if (child.flush?.() === 'blocked') return;
-        if (this.callbacks.flushInput() === 'ready') this.callbacks.submit();
-      } finally {
-        this.settling = false;
-      }
+      this.settle('blur');
     }, 0);
   }
 }

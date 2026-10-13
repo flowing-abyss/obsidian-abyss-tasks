@@ -85,3 +85,33 @@ it('uses a later outside focusin as proof after a null blur', () => {
   expect(h.calls).toEqual(['input', 'submit']);
   h.boundary.destroy();
 });
+
+it('uses the child-input-submit path for explicit Enter and cancels queued outside exit', () => {
+  const h = harness();
+  const flush = vi.fn(() => {
+    h.calls.push('picker');
+    return 'ready' as const;
+  });
+  h.boundary.register(document.body.createDiv(), { flush });
+  document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+  h.boundary.requestSubmit();
+  vi.runAllTimers();
+  expect(flush).toHaveBeenCalledExactlyOnceWith('enter');
+  expect(h.calls).toEqual(['picker', 'input', 'submit']);
+  h.boundary.destroy();
+});
+it('blocks explicit Enter before raw flush for an invalid child, composition or disposed owner', () => {
+  const h = harness();
+  const flush = vi.fn(() => 'blocked' as const);
+  h.boundary.register(document.body.createDiv(), { flush });
+  h.boundary.beginComposition();
+  h.boundary.requestSubmit();
+  expect(flush).not.toHaveBeenCalled();
+  h.boundary.endComposition();
+  h.boundary.requestSubmit();
+  expect(flush).toHaveBeenCalledExactlyOnceWith('enter');
+  expect(h.calls).toEqual([]);
+  h.boundary.destroy();
+  h.boundary.requestSubmit();
+  expect(flush).toHaveBeenCalledOnce();
+});

@@ -132,10 +132,11 @@ Empty forms may expose manual choices without a valid creation preview.
 
 `CaptureMetadataRow` and central task cards share tag and source-note content. Both resolve tag colors
 from the effective groups and observed task catalog. Q's `CaptureInteractionBoundary` owns the mounted
-input, row, native menus and picker roots in their document. A proven exit settles picker drafts,
-then raw input and recognition, then submits once. Invalid picker drafts block departure with inline
-feedback. Ordinary typing coalesces for 24 ms; Enter and exit flush synchronously. Composition stages
-raw against one immutable precomposition mapping baseline and settles after the final input event.
+input, row, native menus and picker roots in their document. Explicit Enter and proven exit share one
+settlement path: picker drafts, raw input and recognition, then one submit. Invalid picker drafts block
+submission with inline feedback. Ordinary typing coalesces for 24 ms; Enter and exit flush synchronously.
+Composition stages raw against one immutable precomposition mapping baseline and settles after the
+final input event.
 Window migration disposes surface listeners, timers and child drafts and remounts against the new
 document while retaining the controller, create session, reference and pending submission.
 

@@ -271,3 +271,79 @@ it('shows sanitized recognition failure while retaining explicit metadata contro
   expect(h.button('Edit due date').isConnected).toBe(true);
   h.surface.destroy();
 });
+
+it.each([false, true])(
+  'settles a retained picker before raw Enter, valid replacement %s',
+  async (valid) => {
+    const h = harness();
+    h.type('Call tomorrow');
+    vi.advanceTimersByTime(24);
+    h.button('Edit due date').click();
+    vi.runAllTimers();
+    const picker = expectDefined(h.host.querySelector<HTMLInputElement>('input[type="date"]'));
+    picker.value = '0202-01-01';
+    h.surface.input.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    h.surface.input.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    h.surface.input.focus();
+    await vi.advanceTimersByTimeAsync(250);
+    expect(picker.isConnected).toBe(true);
+    expect(document.activeElement).toBe(h.surface.input);
+    expect(h.execute).not.toHaveBeenCalled();
+    if (valid) picker.value = '2026-10-20';
+    const enter = () =>
+      h.surface.input.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Enter',
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    enter();
+    enter();
+    await vi.runAllTimersAsync();
+    if (valid) {
+      expect(h.execute).toHaveBeenCalledOnce();
+      expect(h.execute.mock.calls[0]?.[0].initial?.due).toEqual({
+        type: 'set',
+        value: '2026-10-20',
+      });
+      expect(picker.isConnected).toBe(false);
+      // A known unchanged failure still permits a subsequent explicit Enter retry.
+      enter();
+      await vi.runAllTimersAsync();
+      expect(h.execute).toHaveBeenCalledTimes(2);
+    } else {
+      expect(h.execute).not.toHaveBeenCalled();
+      expect(picker.isConnected).toBe(true);
+      expect(h.host.textContent).toContain('Enter a complete date');
+      expect(document.activeElement).toBe(picker);
+    }
+    h.surface.destroy();
+  },
+);
+it('keeps unknown execution latched across repeated raw Enter settlement', async () => {
+  const h = harness();
+  h.execute.mockRejectedValueOnce(new Error('unknown write'));
+  h.type('Call tomorrow');
+  h.surface.input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  await vi.runAllTimersAsync();
+  h.surface.input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  await vi.runAllTimersAsync();
+  expect(h.execute).toHaveBeenCalledOnce();
+  expect(h.controller.snapshot().metadata?.needsCheckedRetry).toBe(true);
+  h.surface.destroy();
+});
+
+it('keeps Enter on a metadata body action inside the capture', async () => {
+  const h = harness();
+  h.type('Call tomorrow');
+  vi.advanceTimersByTime(24);
+  const date = h.button('Edit due date');
+  date.focus();
+  date.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  date.click();
+  await vi.runAllTimersAsync();
+  expect(h.host.querySelector('input[type="date"]')).not.toBeNull();
+  expect(h.execute).not.toHaveBeenCalled();
+  h.surface.destroy();
+});

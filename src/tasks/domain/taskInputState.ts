@@ -209,10 +209,20 @@ function uncertainDescendants(edit: InputEdit, binding: TaskInputBinding): TaskI
   return result;
 }
 function rebaseSuppressions(edit: InputEdit, uncertain: boolean): TaskInputBinding[] {
+  const carriers = inspectTaskInput(edit.old.raw).carriers;
   return edit.old.suppressed.flatMap((binding) => {
     const mapped = rebaseBinding(edit, binding);
     const result = mapped === undefined ? [] : [mapped];
-    return uncertain ? [...result, ...uncertainDescendants(edit, binding)] : result;
+    // Canonical removal owns only the old occurrence, never a matching newly authored carrier.
+    const canonical = carriers.some(
+      (carrier) =>
+        carrier.value !== undefined &&
+        carrier.role === binding.role &&
+        binding.ranges.some(
+          (range) => range.from === carrier.range.from && range.to === carrier.range.to,
+        ),
+    );
+    return uncertain && !canonical ? [...result, ...uncertainDescendants(edit, binding)] : result;
   });
 }
 function rebaseManual(edit: InputEdit): TaskInputState['manual'] {
