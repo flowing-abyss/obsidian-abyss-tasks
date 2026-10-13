@@ -1,6 +1,49 @@
-import type { TaskCommandResult } from '../../tasks';
-import type { CreationResultDescription, describeTaskCreationResult } from '../taskCommandResult';
+import {
+  applyTaskInputAction,
+  createTaskInputState,
+  editTaskInput,
+  inspectTaskInput,
+  projectTaskInput,
+  taskInputPreflightInitial,
+  type TaskCommandResult,
+  type TaskCreatePreview,
+  type TaskCreateRequest,
+  type TaskInputAction,
+  type TaskInputProjection,
+  type TaskInputReference,
+  type TaskInputServices,
+  type TaskInputState,
+} from '../../tasks';
+import { describeTaskCreationResult, type CreationResultDescription } from '../taskCommandResult';
 import { commandBodyForCapture, type CaptureTarget } from './CaptureTargetResolver';
+
+export interface CaptureSmartOptions extends TaskInputServices {
+  readonly enabled: () => boolean;
+  readonly onRecognitionFailure: () => void;
+}
+export interface CaptureMetadataSnapshot {
+  readonly destination?: { readonly filePath: string; readonly inbox: boolean };
+  readonly preview: TaskCreatePreview;
+  readonly projection?: TaskInputProjection;
+  readonly canRestore: boolean;
+  readonly recognitionError?: string;
+  readonly needsCheckedRetry: boolean;
+}
+interface FrozenCaptureSubmission {
+  readonly request: TaskCreateRequest;
+  readonly state: TaskInputState;
+  readonly reference: TaskInputReference;
+}
+function detachFrozen<T>(value: T): T {
+  const detached = structuredClone(value);
+  const freeze = (item: unknown): void => {
+    if (item === null || typeof item !== 'object') return;
+    for (const child of Object.values(item)) freeze(child);
+    Object.freeze(item);
+  };
+  freeze(detached);
+  return detached;
+}
 
 export type CapturePhase = 'idle' | 'submitting' | 'error' | 'closed';
 export type CaptureSubmitCause = 'enter' | 'blur';
@@ -12,13 +55,15 @@ export interface CaptureSnapshot {
   readonly ariaBusy: boolean;
   readonly focusEpoch: number;
   readonly error?: CreationResultDescription;
+  readonly metadata?: CaptureMetadataSnapshot;
 }
 
 export interface CaptureObserver {
   (snapshot: CaptureSnapshot): void;
 }
 
-interface TaskCaptureControllerOptions {
+export interface TaskCaptureControllerOptions {
+  readonly smart?: CaptureSmartOptions;
   readonly target: CaptureTarget;
   readonly onSubmit?: () => void;
   readonly describe: typeof describeTaskCreationResult;
@@ -48,8 +93,21 @@ export class TaskCaptureController {
   private closeAfterSuccess_abyssPrivate = false;
   private destroyed_abyssPrivate = false;
 
+  private readonly smart_abyssPrivate: CaptureSmartOptions | undefined;
+  private state_abyssPrivate = createTaskInputState();
+  private reference_abyssPrivate: TaskInputReference | undefined;
+  private enabled_abyssPrivate = false;
+  private metadata_abyssPrivate: CaptureMetadataSnapshot | undefined;
+  private frozen_abyssPrivate: FrozenCaptureSubmission | undefined;
+  private recognitionPending_abyssPrivate = false;
+  private recognitionFailureRevision_abyssPrivate: number | undefined;
+  private needsCheckedRetry_abyssPrivate = false;
+  private requiresEnter_abyssPrivate = false;
+
   constructor(options: TaskCaptureControllerOptions) {
     this.target = options.target;
+    this.smart_abyssPrivate = options.smart;
+    this.state_abyssPrivate = createTaskInputState(this.target.draftSeed ?? '');
     this.draft_abyssPrivate = this.target.draftSeed ?? '';
     this.onSubmit_abyssPrivate = options.onSubmit;
     this.describe_abyssPrivate = options.describe;
@@ -60,11 +118,12 @@ export class TaskCaptureController {
   snapshot(): CaptureSnapshot {
     return {
       phase: this.phase_abyssPrivate,
-      draft: this.draft_abyssPrivate,
+      draft: this.raw_abyssPrivate(),
       readonly: this.phase_abyssPrivate === 'submitting',
       ariaBusy: this.phase_abyssPrivate === 'submitting',
       focusEpoch: this.focusEpoch_abyssPrivate,
       ...(this.error_abyssPrivate !== undefined && { error: this.error_abyssPrivate }),
+      ...(this.smart_abyssPrivate !== undefined && { metadata: this.smartMetadata_abyssPrivate() }),
     };
   }
 
@@ -81,13 +140,23 @@ export class TaskCaptureController {
     };
   }
 
-  setDraft(value: string): void {
+  setDraft(
+    value: string,
+    options?: {
+      readonly deferRecognition?: boolean;
+      readonly editKind?: 'input' | 'paste' | 'composition' | 'history';
+    },
+  ): void {
     if (
       this.destroyed_abyssPrivate ||
       this.phase_abyssPrivate === 'submitting' ||
       this.phase_abyssPrivate === 'closed'
     )
       return;
+    if (this.smart_abyssPrivate !== undefined) {
+      this.setSmartDraft_abyssPrivate(value, options);
+      return;
+    }
     if (value === this.draft_abyssPrivate && this.phase_abyssPrivate !== 'error') return;
     this.draft_abyssPrivate = value;
     this.phase_abyssPrivate = 'idle';
@@ -95,12 +164,34 @@ export class TaskCaptureController {
     this.emit_abyssPrivate();
   }
 
+  private setSmartDraft_abyssPrivate(
+    value: string,
+    options?: {
+      readonly deferRecognition?: boolean;
+      readonly editKind?: 'input' | 'paste' | 'composition' | 'history';
+    },
+  ): void {
+    if (value === this.state_abyssPrivate.raw) return;
+    this.state_abyssPrivate = editTaskInput(this.state_abyssPrivate, value, options?.editKind);
+    this.frozen_abyssPrivate = undefined;
+    this.phase_abyssPrivate = 'idle';
+    this.error_abyssPrivate = undefined;
+    if (value.trim().length > 0) this.freezeReference_abyssPrivate();
+    this.recognitionPending_abyssPrivate = true;
+    if (options?.deferRecognition !== true) this.refreshSmart_abyssPrivate();
+    this.emit_abyssPrivate();
+  }
+
   isEmpty(): boolean {
-    const draft = this.draft_abyssPrivate.trim();
+    const draft = this.raw_abyssPrivate().trim();
     return draft.length === 0 || draft === this.target.draftSeed?.trim();
   }
 
   async submit(cause: CaptureSubmitCause): Promise<void> {
+    if (this.smart_abyssPrivate !== undefined) {
+      await this.submitSmart_abyssPrivate(cause);
+      return;
+    }
     const submission = this.beginSubmission_abyssPrivate(cause);
     if (submission === undefined || this.isSubmissionObsolete_abyssPrivate(submission.token))
       return;
@@ -110,6 +201,282 @@ export class TaskCaptureController {
     });
     if (this.isSubmissionObsolete_abyssPrivate(submission.token)) return;
     this.finishSubmission_abyssPrivate(submission, result);
+  }
+
+  private raw_abyssPrivate(): string {
+    return this.smart_abyssPrivate === undefined
+      ? this.draft_abyssPrivate
+      : this.state_abyssPrivate.raw;
+  }
+
+  private smartMetadata_abyssPrivate(): CaptureMetadataSnapshot {
+    return {
+      ...this.metadata_abyssPrivate,
+      ...(this.target.session.type === 'ready' && {
+        destination: {
+          filePath: this.target.session.destination.filePath,
+          inbox: this.target.context.type === 'list' && this.target.context.selection === 'inbox',
+        },
+      }),
+      preview: this.metadata_abyssPrivate?.preview ?? {
+        type: 'invalid',
+        issues: [{ code: 'invalid-title', field: 'title' }],
+      },
+      canRestore: this.state_abyssPrivate.restore !== undefined,
+      needsCheckedRetry: this.needsCheckedRetry_abyssPrivate,
+    };
+  }
+
+  private freezeReference_abyssPrivate(): void {
+    if (this.reference_abyssPrivate !== undefined || this.smart_abyssPrivate === undefined) return;
+    this.reference_abyssPrivate = detachFrozen(this.smart_abyssPrivate.readReference());
+    this.enabled_abyssPrivate = this.smart_abyssPrivate.enabled();
+  }
+
+  flushRecognition(): void {
+    if (
+      this.destroyed_abyssPrivate ||
+      this.phase_abyssPrivate === 'closed' ||
+      this.phase_abyssPrivate === 'submitting'
+    )
+      return;
+    if (this.recognitionPending_abyssPrivate) this.refreshSmart_abyssPrivate();
+    this.emit_abyssPrivate();
+  }
+
+  private refreshSmart_abyssPrivate(): void {
+    const smart = this.smart_abyssPrivate,
+      reference = this.reference_abyssPrivate;
+    if (smart === undefined || reference === undefined) return;
+    this.recognitionPending_abyssPrivate = false;
+    const state = this.state_abyssPrivate,
+      inspection = inspectTaskInput(state.raw);
+    const { candidates, recognitionError } = this.recognize_abyssPrivate(smart, reference);
+    let preview: TaskCreatePreview;
+    let projection: TaskInputProjection | undefined;
+    try {
+      const source = this.target.session.preview({
+        markdownBody: commandBodyForCapture(this.target, state.raw),
+        initial: taskInputPreflightInitial(state, this.target.initial),
+      });
+      preview = source;
+      if (source.type === 'valid') {
+        projection = projectTaskInput({
+          state,
+          reference,
+          candidates,
+          inspection,
+          sourcePlanning: source.sourcePlanning,
+          ...(this.target.initial !== undefined && { contextInitial: this.target.initial }),
+        });
+        preview = this.target.session.preview(this.request_abyssPrivate(projection));
+      } else if (state.raw.trim().length === 0) {
+        // An empty form exposes transient manual choices, never a valid creation preview.
+        projection = projectTaskInput({
+          state,
+          reference,
+          candidates: [],
+          inspection,
+          sourcePlanning: {},
+          ...(this.target.initial !== undefined && { contextInitial: this.target.initial }),
+        });
+      }
+    } catch {
+      preview = { type: 'unavailable', cause: 'preview-capability' };
+    }
+    this.showSmartValidation_abyssPrivate(preview);
+    this.metadata_abyssPrivate = {
+      preview,
+      ...(projection !== undefined && { projection }),
+      canRestore: state.restore !== undefined,
+      needsCheckedRetry: this.needsCheckedRetry_abyssPrivate,
+      ...(recognitionError !== undefined && { recognitionError }),
+    };
+  }
+
+  private showSmartValidation_abyssPrivate(preview: TaskCreatePreview): void {
+    if (preview.type === 'valid') return;
+    if (
+      preview.type === 'invalid' &&
+      preview.issues.every((issue) => issue.code === 'invalid-title')
+    )
+      return;
+    this.error_abyssPrivate = {
+      kind: 'error',
+      message: this.smartValidationMessage_abyssPrivate(preview),
+      ariaLive: 'assertive',
+      requiresRecovery: preview.type === 'unavailable',
+    };
+  }
+
+  private recognize_abyssPrivate(
+    smart: CaptureSmartOptions,
+    reference: TaskInputReference,
+  ): {
+    readonly candidates: ReturnType<CaptureSmartOptions['recognizer']['recognize']>;
+    readonly recognitionError?: string;
+  } {
+    const state = this.state_abyssPrivate,
+      inspection = inspectTaskInput(state.raw);
+    let recognitionError: string | undefined;
+    let candidates: ReturnType<CaptureSmartOptions['recognizer']['recognize']> = [];
+    if (this.enabled_abyssPrivate) {
+      try {
+        candidates = smart.recognizer.recognize({
+          text: state.raw,
+          reference,
+          protectedRanges: inspection.protectedRanges,
+        });
+      } catch {
+        recognitionError =
+          'Could not recognize dates and times. Explicit choices are still available.';
+        if (this.recognitionFailureRevision_abyssPrivate !== state.revision) {
+          this.recognitionFailureRevision_abyssPrivate = state.revision;
+          smart.onRecognitionFailure();
+        }
+      }
+    }
+    return { candidates, ...(recognitionError !== undefined && { recognitionError }) };
+  }
+
+  private request_abyssPrivate(projection: TaskInputProjection): TaskCreateRequest {
+    return {
+      markdownBody: commandBodyForCapture(this.target, projection.markdownBody),
+      initial: projection.initial,
+    };
+  }
+
+  private canEdit_abyssPrivate(): boolean {
+    return (
+      this.smart_abyssPrivate !== undefined &&
+      !this.destroyed_abyssPrivate &&
+      this.phase_abyssPrivate !== 'submitting' &&
+      this.phase_abyssPrivate !== 'closed'
+    );
+  }
+
+  applyMetadataAction(action: TaskInputAction): void {
+    if (!this.canEdit_abyssPrivate()) return;
+    this.freezeReference_abyssPrivate();
+    if (
+      this.metadata_abyssPrivate?.projection === undefined ||
+      this.recognitionPending_abyssPrivate
+    )
+      this.refreshSmart_abyssPrivate();
+    const projection = this.metadata_abyssPrivate?.projection;
+    if (projection === undefined) return;
+    const next = applyTaskInputAction(
+      this.state_abyssPrivate,
+      action,
+      projection,
+      inspectTaskInput(this.state_abyssPrivate.raw),
+    );
+    if (next === this.state_abyssPrivate) return;
+    this.state_abyssPrivate = next;
+    this.frozen_abyssPrivate = undefined;
+    this.phase_abyssPrivate = 'idle';
+    this.error_abyssPrivate = undefined;
+    this.refreshSmart_abyssPrivate();
+    this.emit_abyssPrivate();
+  }
+
+  async confirmCheckedRetry(): Promise<void> {
+    if (!this.needsCheckedRetry_abyssPrivate || this.phase_abyssPrivate === 'submitting') return;
+    this.needsCheckedRetry_abyssPrivate = false;
+    await this.submit('enter');
+  }
+
+  private smartError_abyssPrivate(message: string, requiresRecovery = false): void {
+    this.phase_abyssPrivate = 'error';
+    this.error_abyssPrivate = { kind: 'error', message, ariaLive: 'assertive', requiresRecovery };
+    this.emit_abyssPrivate();
+  }
+
+  private canSubmitSmart_abyssPrivate(cause: CaptureSubmitCause): boolean {
+    if (!this.canEdit_abyssPrivate()) {
+      if (this.phase_abyssPrivate === 'submitting' && cause === 'blur')
+        this.closeAfterSuccess_abyssPrivate = true;
+      return false;
+    }
+    if (this.needsCheckedRetry_abyssPrivate) return false;
+    return cause !== 'blur' || !this.requiresEnter_abyssPrivate;
+  }
+
+  private async submitSmart_abyssPrivate(cause: CaptureSubmitCause): Promise<void> {
+    if (!this.canSubmitSmart_abyssPrivate(cause)) return;
+    if (this.isEmpty()) {
+      if (cause === 'blur') this.close_abyssPrivate();
+      return;
+    }
+    if (!this.prepareSmartSubmission_abyssPrivate()) return;
+    const frozen = this.frozen_abyssPrivate;
+    if (frozen === undefined) return;
+    const submission = this.beginSubmission_abyssPrivate(cause);
+    if (submission === undefined || this.isSubmissionObsolete_abyssPrivate(submission.token))
+      return;
+    let result: TaskCommandResult;
+    try {
+      result = await this.target.session.execute(frozen.request);
+    } catch {
+      result = { type: 'io-error', cause: 'capture-write-unconfirmed', contentState: 'unknown' };
+    }
+    if (this.isSubmissionObsolete_abyssPrivate(submission.token)) return;
+    this.classifySmartResult_abyssPrivate(result);
+    this.finishSubmission_abyssPrivate(submission, result);
+  }
+
+  private ensureSmartProjection_abyssPrivate(): void {
+    if (this.recognitionPending_abyssPrivate || this.metadata_abyssPrivate === undefined)
+      this.refreshSmart_abyssPrivate();
+  }
+
+  private smartValidationMessage_abyssPrivate(preview: TaskCreatePreview | undefined): string {
+    if (preview?.type === 'unavailable')
+      return 'Could not preview this task. Try again before saving.';
+    if (
+      preview?.type === 'invalid' &&
+      preview.issues.some((issue) => issue.code !== 'invalid-title')
+    )
+      return describeTaskCreationResult(preview).message;
+    return 'Add a task title before saving.';
+  }
+
+  private prepareSmartSubmission_abyssPrivate(): boolean {
+    if (this.frozen_abyssPrivate !== undefined) return true;
+    this.freezeReference_abyssPrivate();
+    this.ensureSmartProjection_abyssPrivate();
+    const metadata = this.metadata_abyssPrivate,
+      projection = metadata?.projection;
+    if (metadata?.preview.type !== 'valid' || projection?.hasAuthoredTitle !== true) {
+      this.smartError_abyssPrivate(this.smartValidationMessage_abyssPrivate(metadata?.preview));
+      return false;
+    }
+    const reference = this.reference_abyssPrivate;
+    if (reference === undefined) return false;
+    this.frozen_abyssPrivate = detachFrozen({
+      request: this.request_abyssPrivate(projection),
+      state: this.state_abyssPrivate,
+      reference,
+    });
+    return true;
+  }
+
+  private classifySmartResult_abyssPrivate(result: TaskCommandResult): void {
+    // Classify the write before any presentation callback can fail.
+    if (result.type === 'ok') {
+      this.frozen_abyssPrivate = undefined;
+      this.state_abyssPrivate = createTaskInputState(this.target.draftSeed ?? '');
+      this.reference_abyssPrivate = undefined;
+      this.metadata_abyssPrivate = undefined;
+      this.recognitionPending_abyssPrivate = false;
+      this.recognitionFailureRevision_abyssPrivate = undefined;
+      this.requiresEnter_abyssPrivate = false;
+      this.needsCheckedRetry_abyssPrivate = false;
+    } else {
+      this.requiresEnter_abyssPrivate = true;
+      if (result.type === 'io-error' && result.contentState === 'unknown')
+        this.needsCheckedRetry_abyssPrivate = true;
+    }
   }
 
   private beginSubmission_abyssPrivate(cause: CaptureSubmitCause): CaptureSubmission | undefined {
@@ -124,7 +491,7 @@ export class TaskCaptureController {
     }
     const submission = {
       cause,
-      draft: this.draft_abyssPrivate,
+      draft: this.raw_abyssPrivate(),
       token: ++this.submissionToken_abyssPrivate,
     };
     this.phase_abyssPrivate = 'submitting';
@@ -135,11 +502,31 @@ export class TaskCaptureController {
     return submission;
   }
 
+  private describeResult_abyssPrivate(result: TaskCommandResult): CreationResultDescription {
+    if (this.smart_abyssPrivate === undefined) return this.describe_abyssPrivate(result);
+    try {
+      const description = this.describe_abyssPrivate(result);
+      return result.type === 'ok' && description.kind !== 'success'
+        ? describeTaskCreationResult(result)
+        : description;
+    } catch {
+      console.error('[abyss-tasks] Could not describe the quick-capture result');
+      return describeTaskCreationResult(result);
+    }
+  }
+
   private finishSubmission_abyssPrivate(
     submission: CaptureSubmission,
     result: TaskCommandResult,
   ): void {
-    const description = this.describe_abyssPrivate(result);
+    const description = this.needsCheckedRetry_abyssPrivate
+      ? {
+          kind: 'error' as const,
+          message: `Could not confirm whether the task was saved to ${this.target.session.type === 'ready' ? this.target.session.destination.filePath : 'the destination'}. Inspect it before repeating.`,
+          ariaLive: 'assertive' as const,
+          requiresRecovery: true,
+        }
+      : this.describeResult_abyssPrivate(result);
     const shouldRequestClose = this.applySubmissionDescription_abyssPrivate(
       submission,
       description,
@@ -164,7 +551,9 @@ export class TaskCaptureController {
     try {
       this.onResult_abyssPrivate(result, description);
     } catch (error) {
-      console.error('[abyss-tasks] Could not show the capture result', error);
+      if (this.smart_abyssPrivate === undefined)
+        console.error('[abyss-tasks] Could not show the capture result', error);
+      else console.error('[abyss-tasks] Could not show the quick-capture result');
     }
   }
 
@@ -206,6 +595,7 @@ export class TaskCaptureController {
   destroy(): void {
     if (this.destroyed_abyssPrivate) return;
     this.destroyed_abyssPrivate = true;
+    this.needsCheckedRetry_abyssPrivate = false;
     this.phase_abyssPrivate = 'closed';
     this.submissionToken_abyssPrivate++;
     this.observers_abyssPrivate.clear();
@@ -214,6 +604,7 @@ export class TaskCaptureController {
   private close_abyssPrivate(): void {
     if (this.phase_abyssPrivate === 'closed') return;
     const token = this.submissionToken_abyssPrivate;
+    this.needsCheckedRetry_abyssPrivate = false;
     this.phase_abyssPrivate = 'closed';
     this.emit_abyssPrivate();
     if (this.destroyed_abyssPrivate || token !== this.submissionToken_abyssPrivate) return;

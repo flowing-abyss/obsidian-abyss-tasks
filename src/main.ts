@@ -34,9 +34,11 @@ import {
   localDate,
   recentTrackingWindow,
   resumeTarget,
+  taskInputReference,
   type TaskApplicationApi,
   type TaskCaptureApplicationApi,
   type TaskDependencyQueryApi,
+  type TaskInputServices,
   type TaskInsertionPolicy,
   type TaskQueryApi,
   type TaskStatisticsSource,
@@ -55,6 +57,7 @@ import { systemClock } from './tasks/domain/clock';
 import type { CommentTimeContextProvider } from './tasks/domain/commentTimeLabel';
 import { StatusCatalog } from './tasks/domain/StatusCatalog';
 import { systemCommentTimeContext } from './tasks/infrastructure/commentTimeContext';
+import { ChronoTaskInputRecognizer } from './tasks/infrastructure/input/ChronoTaskInputRecognizer';
 import { MarkdownTaskCreatePreview } from './tasks/infrastructure/markdown/MarkdownTaskCreatePreview';
 import { TaskBlockEditor } from './tasks/infrastructure/markdown/TaskBlockEditor';
 import { parseMarkdownFrontmatter } from './tasks/infrastructure/markdown/taskBlockSyntax';
@@ -97,6 +100,7 @@ export default class TaskCalendarPlugin extends Plugin {
   tasks!: TaskApplicationApi & TaskCaptureApplicationApi;
   private taskIndex!: TaskIndex;
   taskStatistics!: TaskStatisticsSource;
+  private taskInputServices!: TaskInputServices;
   private statisticsArchivePattern!: NotePathPattern;
   private taskSearch!: TaskSearchService;
   get search(): TaskSearchApi {
@@ -183,15 +187,12 @@ export default class TaskCalendarPlugin extends Plugin {
     const diagnostics: TaskDiagnosticSink = (diagnostic, error) => {
       console.error('[abyss-tasks] task operation failed', diagnostic, error);
     };
+    const clock = this.initializeTaskInputServices();
     this.tasks = new TaskApplicationService(
       this.taskIndex,
       repository,
       this.statusCatalog,
-      systemClock(
-        () => Date.now(),
-        DEVICE_OFFSET_AT,
-        (epochMs) => localDate(window.moment(epochMs).format('YYYY-MM-DD')),
-      ),
+      clock,
       destinationProvider,
       () => ({
         taskPrefix: this.settings.taskPrefix,
@@ -238,6 +239,19 @@ export default class TaskCalendarPlugin extends Plugin {
     });
   }
 
+  private initializeTaskInputServices(): ReturnType<typeof systemClock> {
+    const clock = systemClock(
+      () => Date.now(),
+      DEVICE_OFFSET_AT,
+      (epochMs) => localDate(window.moment(epochMs).format('YYYY-MM-DD')),
+    );
+    this.taskInputServices = {
+      recognizer: new ChronoTaskInputRecognizer(),
+      readReference: () => taskInputReference(clock.read()),
+    };
+    return clock;
+  }
+
   private registerPanel(commentTimeContext: CommentTimeContextProvider): void {
     this.registerView(
       PANEL_VIEW_TYPE,
@@ -255,6 +269,7 @@ export default class TaskCalendarPlugin extends Plugin {
           this.projectManager,
           this.search,
           this.taskStatistics,
+          this.taskInputServices,
         ),
     );
   }

@@ -102,6 +102,7 @@ export const DEFAULT_SETTINGS: CalendarSettings = {
   firstDayOfWeek: 1,
   taskPrefix: '',
   applyTaskPrefixToSubtasks: false,
+  parseDatesInQuickCapture: true,
   taskFilePath: 'tasks/active.md',
   taskArchivePath: 'tasks/archive.md',
   taskIgnoreQuery: '',

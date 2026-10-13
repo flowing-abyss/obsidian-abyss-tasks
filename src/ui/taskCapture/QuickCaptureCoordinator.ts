@@ -7,11 +7,12 @@ import { describeTaskCreationResult, type CreationResultDescription } from '../t
 import { CaptureRevealIntent, type CaptureRevealAuthority } from './CaptureRevealIntent';
 import { CaptureSurface } from './CaptureSurface';
 import type { CaptureContext, CaptureTarget } from './CaptureTargetResolver';
-import { TaskCaptureController } from './TaskCaptureController';
+import { TaskCaptureController, type CaptureSmartOptions } from './TaskCaptureController';
 
 export type QuickCapturePhase = 'closed' | 'resolving' | 'open';
 
 interface QuickCaptureCoordinatorOptions {
+  readonly smart?: CaptureSmartOptions;
   readonly host: HTMLElement;
   readonly context: () => CaptureContext;
   readonly resolveTarget: (context: CaptureContext) => Promise<CaptureTarget>;
@@ -115,6 +116,7 @@ export class QuickCaptureCoordinator {
 
     const controller = new TaskCaptureController({
       target,
+      ...(this.options.smart !== undefined && { smart: this.options.smart }),
       describe: describeTaskCreationResult,
       onSubmit: () => {
         this.options.onSubmit?.();

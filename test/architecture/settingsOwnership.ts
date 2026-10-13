@@ -8,6 +8,7 @@ export const CALENDAR_SETTINGS_OWNERS = {
   firstDayOfWeek: 'static',
   taskPrefix: 'static',
   applyTaskPrefixToSubtasks: 'static',
+  parseDatesInQuickCapture: 'static',
   taskFilePath: 'static',
   taskArchivePath: 'static',
   taskIgnoreQuery: 'static',

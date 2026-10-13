@@ -394,6 +394,23 @@ export class CalendarSettingsTab extends PluginSettingTab {
           }),
       );
 
+    const smartDescription = containerEl.ownerDocument.adoptNode(createFragment());
+    smartDescription.append('Recognize dates and times while adding a task with ');
+    const captureKey = smartDescription.createEl('kbd');
+    captureKey.textContent = 'Q';
+    smartDescription.append(captureKey, '.');
+    new Setting(containerEl)
+      .setName('Smart recognition in quick capture')
+      .setDesc(smartDescription)
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin_abyssPrivate.settings.parseDatesInQuickCapture)
+          .onChange(async (value) => {
+            this.plugin_abyssPrivate.settings.parseDatesInQuickCapture = value;
+            await this.plugin_abyssPrivate.saveSettings();
+          }),
+      );
+
     new Setting(containerEl)
       .setName('Source note display')
       .setDesc('Show which note a task comes from, before the tag chip in list view.')

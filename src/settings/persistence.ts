@@ -470,6 +470,10 @@ function composeSettings(
     staticData['firstDayOfWeek'],
     defaults.firstDayOfWeek,
   );
+  settings.parseDatesInQuickCapture =
+    typeof staticData['parseDatesInQuickCapture'] === 'boolean'
+      ? staticData['parseDatesInQuickCapture']
+      : true;
   if (decoded.views.listViewStates === undefined) delete settings.listViewStates;
   else settings.listViewStates = decoded.views.listViewStates;
   settings.sectionCollapse = decoded.views.sectionCollapse;

@@ -2377,3 +2377,35 @@ it.each(
     expect(reload.settings.taskPrefix).toBe('#queued');
   },
 );
+
+describe('smart Q static setting', () => {
+  it.each([undefined, 'false', null, {}, true, false])(
+    'normalizes %j and keeps unknown extensions through real coordinator',
+    async (value) => {
+      const oldDocument = markedStatic({
+        parseDatesInQuickCapture: value,
+        futureStatic: { nested: { preserved: 8 } },
+      });
+      if (value === undefined) delete oldDocument['parseDatesInQuickCapture'];
+      const port = memoryPort(oldDocument, stateEnvelope({ futureView: { preserved: 9 } }));
+      const coordinator = new SettingsPersistenceCoordinator(port);
+      const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+      expect(settings.parseDatesInQuickCapture).toBe(value !== false);
+      const before = structuredClone(port.staticData);
+      port.writes.length = 0;
+      settings.parseDatesInQuickCapture = false;
+      await coordinator.saveViewState(settings);
+      expect(port.staticData).toEqual(before);
+      expect(port.stateText).not.toContain('parseDatesInQuickCapture');
+      await coordinator.saveSettings(settings);
+      expect(port.staticData).toMatchObject({
+        parseDatesInQuickCapture: false,
+        futureStatic: { nested: { preserved: 8 } },
+      });
+      expect(
+        (await new SettingsPersistenceCoordinator(port).loadSettings(DEFAULT_SETTINGS)).settings
+          .parseDatesInQuickCapture,
+      ).toBe(false);
+    },
+  );
+});

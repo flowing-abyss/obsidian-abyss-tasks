@@ -160,3 +160,21 @@ export {
 } from './domain/taskSearchProjection';
 
 export type { TaskDateRole } from './domain/taskOccupiedDates';
+
+export type { TaskCreateRequest } from './application/TaskApplicationApi';
+export type { TaskInputServices } from './application/TaskInputRecognizer';
+export { inspectTaskInput } from './domain/taskInputInspection';
+export {
+  projectTaskInput,
+  taskInputPreflightInitial,
+  type TaskInputProjection,
+} from './domain/taskInputProjection';
+export {
+  applyTaskInputAction,
+  createTaskInputState,
+  editTaskInput,
+  type TaskInputAction,
+  type TaskInputState,
+} from './domain/taskInputState';
+export { taskInputReference } from './domain/taskInputTypes';
+export type { TaskCreatePreview, TaskInputReference } from './domain/taskInputTypes';

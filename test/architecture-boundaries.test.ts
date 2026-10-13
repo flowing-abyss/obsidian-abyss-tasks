@@ -75,6 +75,25 @@ const ALLOWED_WRITER_CALLS: Record<string, AllowedWriter> = {
 };
 
 const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
+  TaskCreateRequest: ['src/ui/taskCapture/TaskCaptureController.ts'],
+  TaskCreatePreview: ['src/ui/taskCapture/TaskCaptureController.ts'],
+  TaskInputReference: ['src/ui/taskCapture/TaskCaptureController.ts'],
+  inspectTaskInput: ['src/ui/taskCapture/TaskCaptureController.ts'],
+  projectTaskInput: ['src/ui/taskCapture/TaskCaptureController.ts'],
+  taskInputPreflightInitial: ['src/ui/taskCapture/TaskCaptureController.ts'],
+  TaskInputProjection: ['src/ui/taskCapture/TaskCaptureController.ts'],
+  createTaskInputState: ['src/ui/taskCapture/TaskCaptureController.ts'],
+  editTaskInput: ['src/ui/taskCapture/TaskCaptureController.ts'],
+  applyTaskInputAction: ['src/ui/taskCapture/TaskCaptureController.ts'],
+  TaskInputAction: ['src/ui/taskCapture/TaskCaptureController.ts'],
+  TaskInputState: ['src/ui/taskCapture/TaskCaptureController.ts'],
+  taskInputReference: ['src/main.ts'],
+  TaskInputServices: [
+    'src/main.ts',
+    'src/views/PanelView.ts',
+    'src/ui/taskCapture/TaskCaptureController.ts',
+  ],
+
   normalizeCommentText: ['src/ui/ownedTaskSelection.ts'],
   TaskSearchEligibilityRequest: ['src/ui/TaskDependencySearchProvider.ts'],
   TaskSearchEligibilityBatch: ['src/ui/TaskDependencySearchProvider.ts'],

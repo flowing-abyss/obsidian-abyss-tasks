@@ -117,6 +117,23 @@ preparation needs fresh proof before retry. The application owns root/subtask pr
 tag policy; presentation supplies typed input. Current source exclusions still apply when a retained
 session writes. A failed creation must not silently duplicate a task or note.
 
+Quick capture owns one transient task-input state. Its first meaningful edit or manual choice freezes
+an explicit civil-time reference and the static `parseDatesInQuickCapture` preference until success.
+The composition root injects the shared clock and offline English/Russian recognizer through
+`TaskInputServices`; other capture controllers omit that capability. The pure model owns raw text,
+occurrence suppression, manual choices and source ranges. Q reads canonical source planning from
+its retained create session before projection, then previews the exact unprefixed final request under
+the same policy. Only accepted, fully represented ranges are removed at submission. Metadata never
+creates an authored title. Empty forms may expose manual choices without a valid creation preview.
+
+Submission detaches and freezes the request, model and reference. A known unchanged write failure
+retains that request for explicit Enter retry; edits keep the original reference and create a new
+projection. Every write failure blocks blur retries. An unknown outcome remains latched across edits
+until the user checks the destination and explicitly repeats, or closes the capture. Success resets
+transient input state before result presentation, while retaining the destination session. Recognition
+failures show sanitized feedback once per revision and preserve explicit choices; canonical preview
+failure blocks writing. None of this state is persisted in task Markdown or saved view state.
+
 Moves and archives prove the destination before removing the source. Archive batches share a frozen
 date-expanded destination and return an archive-specific outcome because the destination is outside
 ordinary queries. Recovery can remove or restore only exact content still owned by that operation;

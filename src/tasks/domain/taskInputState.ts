@@ -269,12 +269,11 @@ function removeTag(
   tag: string,
   inspection: TaskInputInspection,
 ): TaskInputState {
-  let raw = state.raw;
+  let edited = state;
   for (const { range } of inspection.tags
     .filter((occurrence) => sameTag(occurrence.value, tag))
     .sort((a, b) => b.range.from - a.range.from))
-    raw = removeOwnedInputRange(raw, range);
-  const edited = editTaskInput(state, raw);
+    edited = editTaskInput(edited, removeOwnedInputRange(edited.raw, range));
   return {
     ...edited,
     removedTags: [...edited.removedTags.filter((old) => !sameTag(old, tag)), tag],

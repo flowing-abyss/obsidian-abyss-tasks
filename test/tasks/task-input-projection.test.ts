@@ -366,3 +366,21 @@ describe('review regressions: current manual source eligibility', () => {
     },
   );
 });
+
+it('keeps a dismissed interior day when deleting duplicate tags and undoing native history', () => {
+  const raw = 'Call #work tomorrow #WORK';
+  const state = dismiss(raw);
+  const removed = applyTaskInputAction(
+    state,
+    { type: 'remove-tag', tag: '#work' },
+    project(state, context),
+    inspectTaskInput(raw),
+  );
+  expect(removed.raw).toBe('Call tomorrow');
+  expect(project(removed, context).markdownBody).toBe('Call tomorrow');
+  expect(project(removed, context).initial.due).toEqual({ type: 'clear' });
+  const undo = editTaskInput(removed, raw, 'history');
+  expect(undo.removedTags).toEqual([]);
+  expect(project(undo, context).markdownBody).toBe(raw);
+  expect(project(undo, context).initial.due).toEqual({ type: 'clear' });
+});

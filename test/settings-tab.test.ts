@@ -1,11 +1,11 @@
-import { App, Platform } from 'obsidian';
+import { App, Platform, Setting } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { CalendarSettingsTab } from '../src/settings/SettingsTab';
 import { SHORTCUT_ACTIONS } from '../src/settings/shortcuts';
 import type { CalendarSettings } from '../src/settings/types';
 import { cssRuleContaining, cssValue } from './cssHelpers';
-import { expectDefined, useRealMoment } from './helpers';
+import { expectDefined, methodOf, useRealMoment } from './helpers';
 
 useRealMoment();
 
@@ -35,7 +35,7 @@ interface StubPlugin {
   refreshProjectSettings(): void;
 }
 
-function makeTab(): CalendarSettingsTab {
+function makeTab(overrides: Partial<StubPlugin> = {}): CalendarSettingsTab {
   const app = new App();
   // Settings tests do not need plugin integrations.
   (app as unknown as Record<string, unknown>)['plugins'] = { getPlugin: () => null };
@@ -50,6 +50,7 @@ function makeTab(): CalendarSettingsTab {
     refreshProjectTableSettings: vi.fn(),
     refreshProjectSettings: vi.fn(),
   };
+  Object.assign(plugin, overrides);
   const tab = new CalendarSettingsTab(
     app,
     plugin as unknown as ConstructorParameters<typeof CalendarSettingsTab>[1],
@@ -240,4 +241,39 @@ describe('CalendarSettingsTab sections', () => {
       expectDefined(sections[1]).querySelector<HTMLElement>('.abyss-settings-section-body')?.hidden,
     ).toBe(false);
   });
+});
+
+it('offers one smart recognition toggle in task creation settings', async () => {
+  let change: ((value: boolean) => unknown) | undefined;
+  const addToggle = methodOf(Setting.prototype, 'addToggle');
+  const changes = vi.spyOn(Setting.prototype, 'addToggle').mockImplementation(function (
+    this: Setting,
+    callback,
+  ) {
+    return addToggle.call(this, (component) => {
+      if (this.nameEl.textContent === 'Smart recognition in quick capture') {
+        const onChange = component.onChange.bind(component);
+        vi.spyOn(component, 'onChange').mockImplementation((listener) => {
+          change = listener;
+          return onChange(listener);
+        });
+      }
+      callback(component);
+    });
+  });
+  const settings = structuredClone(DEFAULT_SETTINGS),
+    saveSettings = vi.fn(async () => {});
+  const tab = makeTab({ settings, saveSettings });
+  const rows = [...tab.containerEl.querySelectorAll('.setting-item')].filter(
+    (row) =>
+      row.querySelector('.setting-item-name')?.textContent === 'Smart recognition in quick capture',
+  );
+  expect(rows).toHaveLength(1);
+  expect(rows[0]?.querySelector('.setting-item-description')?.textContent).toBe(
+    'Recognize dates and times while adding a task with Q.',
+  );
+  await expectDefined(change)(false);
+  expect(settings.parseDatesInQuickCapture).toBe(false);
+  expect(saveSettings).toHaveBeenCalledOnce();
+  changes.mockRestore();
 });

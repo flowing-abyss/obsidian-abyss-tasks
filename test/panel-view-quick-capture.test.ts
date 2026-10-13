@@ -6,7 +6,8 @@ import { TaskListSurface } from '../src/panels/task-list/TaskListSurface';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
 import { TagManager } from '../src/tags/TagManager';
-import type { TaskRef } from '../src/tasks';
+import type { TaskInputServices, TaskRef } from '../src/tasks';
+import { ChronoTaskInputRecognizer } from '../src/tasks/infrastructure/input/ChronoTaskInputRecognizer';
 import type {
   CreationPresentationController,
   CreationRevealRequest,
@@ -15,6 +16,7 @@ import { renderedTaskElements } from '../src/ui/taskPresentationIdentity';
 import { PanelView } from '../src/views/PanelView';
 import { deferred, expectDefined, flushMicrotasks, useRealMoment } from './helpers';
 import { ownedWait, ownTestCleanup } from './support/ownedTestLifetime';
+import { reference } from './support/taskInputHarness';
 import {
   prepareTaskPanelViewport,
   taskCardMountBound,
@@ -61,8 +63,9 @@ async function mountQuickPanel(
   dashboard = false,
   tag = false,
   needle = false,
-  lifetimeSignal?: AbortSignal,
+  ...options: [lifetimeSignal?: AbortSignal, taskInputServices?: TaskInputServices]
 ) {
+  const [lifetimeSignal, taskInputServices] = options;
   const settings: CalendarSettings = structuredClone(DEFAULT_SETTINGS);
   settings.taskFilePath = 'created.md';
   settings.taskInsertionMode = 'append';
@@ -135,6 +138,8 @@ async function mountQuickPanel(
       undefined,
       undefined,
       h.search,
+      undefined,
+      taskInputServices,
     ));
     prepareTaskPanelViewport(view.contentEl, true);
     for (const element of [view.contentEl, view.containerEl]) {
@@ -1305,4 +1310,48 @@ describe('physical Q creation reveal through PanelView', () => {
       await h.dispose();
     }
   });
+});
+
+it('passes neutral services only to Q, freezes the active setting and refuses an actual unavailable preview', async () => {
+  const recognizer = new ChronoTaskInputRecognizer(),
+    recognize = vi.spyOn(recognizer, 'recognize'),
+    readReference = vi.fn(() => reference);
+  const h = await mountQuickPanel(false, false, false, undefined, { recognizer, readReference });
+  try {
+    const plan = h.tasks.planCreate.bind(h.tasks);
+    const sessions: Array<Awaited<ReturnType<typeof plan>>> = [];
+    vi.spyOn(h.tasks, 'planCreate').mockImplementation(async (destination, options) => {
+      const session = await plan(destination, options);
+      sessions.push(session);
+      return session;
+    });
+    h.settings.parseDatesInQuickCapture = false;
+    const input = await h.openQ();
+    input.value = 'Call tomorrow';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(recognize).not.toHaveBeenCalled();
+    expect(readReference).toHaveBeenCalledOnce();
+    h.settings.parseDatesInQuickCapture = true;
+    input.value = 'Call again tomorrow';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(recognize).not.toHaveBeenCalled();
+    const session = expectDefined(sessions[0]),
+      execute = vi.spyOn(session, 'execute');
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
+    await flushMicrotasks(0);
+    expect(execute).not.toHaveBeenCalled();
+    expect(h.index.list({ filePath: 'created.md' })).toEqual([]);
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    );
+    const next = await h.openQ();
+    next.value = 'Call tomorrow';
+    next.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(recognize).toHaveBeenCalledOnce();
+    expect(readReference).toHaveBeenCalledTimes(2);
+  } finally {
+    await h.dispose();
+  }
 });

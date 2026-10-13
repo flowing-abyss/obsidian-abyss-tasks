@@ -27,6 +27,7 @@ import type {
   TaskCommand,
   TaskCommandResult,
   TaskIndexEvent,
+  TaskInputServices,
   TaskNodeRef,
   TaskQueryApi,
   TaskRef,
@@ -127,6 +128,7 @@ type PanelViewDependencies = [
   projectManager?: ProjectManager,
   search?: TaskSearchApi,
   statisticsSource?: TaskStatisticsSource,
+  taskInputServices?: TaskInputServices,
 ];
 
 function hasFinitePositiveBounds(bounds: DOMRect): boolean {
@@ -223,6 +225,8 @@ export class PanelView extends ItemView {
 
   private readonly statisticsSource_abyssPrivate: TaskStatisticsSource | undefined;
 
+  private readonly taskInputServices_abyssPrivate: TaskInputServices | undefined;
+
   constructor(leaf: WorkspaceLeaf, ...dependencies: PanelViewDependencies) {
     super(leaf);
     const [
@@ -237,8 +241,10 @@ export class PanelView extends ItemView {
       projectManager,
       search,
       statisticsSource,
+      taskInputServices,
     ] = dependencies;
     this.statisticsSource_abyssPrivate = statisticsSource;
+    this.taskInputServices_abyssPrivate = taskInputServices;
     this.settings_abyssPrivate = settings;
     this.search_abyssPrivate = search;
     this.tagManager_abyssPrivate = tagManager;
@@ -928,6 +934,15 @@ export class PanelView extends ItemView {
     let ownsSelection = this.center_abyssPrivate.captureCreationSelection();
     this.quickCapture_abyssPrivate = new QuickCaptureCoordinator({
       host: elements.quickCaptureHost,
+      ...(this.taskInputServices_abyssPrivate !== undefined && {
+        smart: {
+          ...this.taskInputServices_abyssPrivate,
+          enabled: () => this.settings_abyssPrivate.parseDatesInQuickCapture,
+          onRecognitionFailure: () => {
+            console.error('[abyss-tasks] Quick-capture date recognition failed');
+          },
+        },
+      }),
       context: () => this.quickCaptureContext_abyssPrivate(),
       resolveTarget: (context) => captureTargets.resolve(context),
       captureReveal: (isCurrent) => this.center_abyssPrivate.captureCreationReveal(isCurrent),
