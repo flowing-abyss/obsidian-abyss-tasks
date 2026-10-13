@@ -15,6 +15,7 @@ import { describeTaskCreationResult } from '../src/ui/taskCommandResult';
 import {
   configuredTaskApplication,
   createAppWithFiles,
+  deferred,
   expectDefined,
   useRealMoment,
 } from './helpers';
@@ -270,6 +271,118 @@ it('starts with destination context and reveals only real policy tags and planni
   expect(h.execute).not.toHaveBeenCalled();
   h.surface.destroy();
 });
+it.each([
+  {
+    label: 'Remove due date',
+    target: '.abyss-date-icon',
+    remaining: ['Inbox', '#health', 'Restore'],
+  },
+  {
+    label: 'Remove due date',
+    target: '.abyss-task-date > span:last-child',
+    remaining: ['Inbox', '#health', 'Restore'],
+  },
+  {
+    label: 'Remove time',
+    target: '.abyss-date-icon',
+    remaining: ['Inbox', '2026-10-14', '#health', 'Restore'],
+  },
+  {
+    label: 'Remove time',
+    target: '.abyss-task-date > span:last-child',
+    remaining: ['Inbox', '2026-10-14', '#health', 'Restore'],
+  },
+  {
+    label: 'Remove #health',
+    target: '.abyss-task-tag',
+    remaining: ['Inbox', '2026-10-14', '10:00', 'Restore'],
+  },
+])(
+  'dismisses $label from $target once and restores without changing raw input',
+  ({ label, target, remaining }) => {
+    const h = harness();
+    const raw = 'Завтра в 10:00 позвонить #health';
+    h.type(raw);
+    vi.advanceTimersByTime(24);
+    const body = expectDefined(
+      h.button(label).parentElement?.querySelector<HTMLElement>('.abyss-capture-chip-body'),
+    );
+    const content = expectDefined(body.querySelector(target));
+    const action = vi.spyOn(h.controller, 'applyMetadataAction');
+    const input = h.surface.input;
+    input.setSelectionRange(2, 5);
+    const down = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+    content.dispatchEvent(down);
+    content.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(action).toHaveBeenCalledOnce();
+    expect(down.defaultPrevented).toBe(true);
+    expect(h.host.querySelector(`button[aria-label^="${label}"]`)).toBeNull();
+    expect(
+      [...h.host.querySelectorAll('.abyss-capture-chip-body')].map((el) => el.textContent),
+    ).toEqual(remaining);
+    expect(document.activeElement).toBe(input);
+    expect(input.value).toBe(raw);
+    expect([input.selectionStart, input.selectionEnd]).toEqual([2, 5]);
+    expect(h.host.querySelector('input[type="date"]')).toBeNull();
+    h.button('Restore').click();
+    expect(h.button(label).isConnected).toBe(true);
+    expect(input.value).toBe(raw);
+    expect(h.execute).not.toHaveBeenCalled();
+    h.surface.destroy();
+  },
+);
+
+it('opens secondary date editing with Shift+F10 while ignoring IME and preserving metadata', () => {
+  const h = harness();
+  h.type('Call tomorrow');
+  vi.advanceTimersByTime(24);
+  const date = h.button('Remove due date');
+  date.focus();
+  date.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'F10', shiftKey: true, isComposing: true, bubbles: true }),
+  );
+  expect(h.host.querySelector('input[type="date"]')).toBeNull();
+  const key = new KeyboardEvent('keydown', {
+    key: 'F10',
+    shiftKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  date.dispatchEvent(key);
+  vi.runAllTimers();
+  expect(key.defaultPrevented).toBe(true);
+  expect(h.host.querySelector<HTMLInputElement>('input[type="date"]')?.value).toBe('2026-10-14');
+  expect(h.controller.snapshot().metadata?.canRestore).toBe(false);
+  expect(h.execute).not.toHaveBeenCalled();
+  h.surface.destroy();
+});
+
+it('ignores disabled, submitting and disposed body activations', async () => {
+  const h = harness();
+  h.type('Call tomorrow at 10:00 #work');
+  vi.advanceTimersByTime(24);
+  const bodies = ['Remove due date', 'Remove time', 'Remove #work'].map(h.button);
+  const action = vi.spyOn(h.controller, 'applyMetadataAction');
+  const before = h.controller.snapshot().metadata;
+  const pending = deferred<Awaited<ReturnType<typeof h.execute>>>();
+  h.execute.mockImplementationOnce(() => pending.promise);
+  const submission = h.controller.submit('enter');
+  expect(h.controller.snapshot().phase).toBe('submitting');
+  for (const body of bodies) {
+    expect(body.disabled).toBe(true);
+    body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    body.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+  }
+  expect(action).not.toHaveBeenCalled();
+  expect(h.host.querySelector('input[type="date"]')).toBeNull();
+  expect(h.controller.snapshot().metadata).toEqual(before);
+  h.surface.destroy();
+  for (const body of bodies) body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  expect(action).not.toHaveBeenCalled();
+  pending.resolve({ type: 'io-error', cause: 'test', contentState: 'unchanged' });
+  await submission;
+});
+
 it('removes the last date and restores it while preserving raw text and repairing focus', () => {
   const h = harness();
   const raw = 'Call tomorrow';
@@ -281,11 +394,11 @@ it('removes the last date and restores it while preserving raw text and repairin
   const remove = h.button('Remove due date');
   remove.focus();
   remove.click();
-  expect(h.host.querySelector('button[aria-label^="Edit due date"]')).toBeNull();
+  expect(h.host.querySelector('button[aria-label^="Remove due date"]')).toBeNull();
   expect(remove.isConnected).toBe(false);
   expect(document.activeElement).toBe(h.button('Restore'));
   h.button('Restore').click();
-  expect(h.button('Edit due date').textContent).toBe('2026-10-14');
+  expect(h.button('Remove due date').textContent).toBe('2026-10-14');
   expect(document.activeElement).toBe(input);
   expect(h.surface.input).toBe(input);
   expect(input.value).toBe(raw);
@@ -322,12 +435,12 @@ it('keeps input-to-date-to-picker owned and settles actual picker value before o
   const h = harness();
   h.type('Позвонить завтра');
   vi.advanceTimersByTime(24);
-  const date = h.button('Edit due date');
+  const date = h.button('Remove due date');
   date.focus();
   h.surface.input.dispatchEvent(new FocusEvent('blur', { relatedTarget: date }));
   vi.runAllTimers();
   expect(h.execute).not.toHaveBeenCalled();
-  date.click();
+  date.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
   vi.runAllTimers();
   const picker = expectDefined(h.host.querySelector<HTMLInputElement>('input[type="date"]'));
   picker.value = '2026-10-20';
@@ -343,7 +456,9 @@ it('blocks invalid picker through outside events and delayed blur and shows inli
   const h = harness();
   h.type('Call tomorrow');
   vi.advanceTimersByTime(24);
-  h.button('Edit due date').click();
+  h.button('Remove due date').dispatchEvent(
+    new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+  );
   vi.runAllTimers();
   const picker = expectDefined(h.host.querySelector<HTMLInputElement>('input[type="date"]'));
   picker.value = '0202-01-01';
@@ -403,12 +518,12 @@ it('closes only the child picker on Escape and keeps stable badge focus across i
   const h = harness();
   h.type('Call tomorrow');
   vi.advanceTimersByTime(24);
-  const date = h.button('Edit due date');
+  const date = h.button('Remove due date');
   date.focus();
   h.controller.flushRecognition();
   expect(document.activeElement).toBe(date);
-  expect(h.button('Edit due date')).toBe(date);
-  date.click();
+  expect(h.button('Remove due date')).toBe(date);
+  date.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
   vi.runAllTimers();
   const picker = expectDefined(h.host.querySelector<HTMLInputElement>('input[type="date"]'));
   picker.dispatchEvent(
@@ -430,7 +545,7 @@ it('drops coalesced recognition and child work on destroy', async () => {
   expect(h.execute).not.toHaveBeenCalled();
 });
 
-it('repairs focus when the focused due cross is removed', () => {
+it('repairs focus when the focused due badge is removed', () => {
   const h = harness();
   h.type('Call tomorrow');
   vi.advanceTimersByTime(24);
@@ -444,7 +559,7 @@ it('closes capture once when Escape is pressed on a metadata control', () => {
   const h = harness();
   h.type('Call tomorrow');
   vi.advanceTimersByTime(24);
-  const date = h.button('Edit due date');
+  const date = h.button('Remove due date');
   date.focus();
   const escape = vi.spyOn(h.controller, 'escape');
   date.dispatchEvent(
@@ -484,6 +599,61 @@ it('owns a native menu before first focus and returns nested Escape to its opene
   portal?.remove();
 });
 
+it.each(['2026-10-14', 'Choose date…', 'Ignore date suggestions'])(
+  'keeps ambiguity actionable and handles menu choice %s',
+  (choice) => {
+    const h = harness();
+    const menus: Menu[] = [];
+    vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (this: Menu) {
+      menus.push(this);
+      return this;
+    });
+    const raw = 'Call tomorrow and послезавтра';
+    h.type(raw);
+    vi.advanceTimersByTime(24);
+    const opener = expectDefined(
+      [...h.host.querySelectorAll<HTMLButtonElement>('button')].find(
+        (button) => button.textContent === 'Choose date',
+      ),
+    );
+    opener.click();
+    const shown = expectDefined(menus[0]);
+    const items = (
+      shown as unknown as {
+        menuItems__: Array<{ title__: string; onClick__: (() => void) | null }>;
+      }
+    ).menuItems__;
+    expect(items.map((item) => item.title__)).toEqual([
+      '2026-10-14',
+      '2026-10-15',
+      'Choose date…',
+      'Ignore date suggestions',
+    ]);
+    expect(h.host.querySelector('button[aria-label="Remove date suggestions"]')).toBeNull();
+    expectDefined(expectDefined(items.find((item) => item.title__ === choice)).onClick__)();
+    shown.hide();
+    vi.runAllTimers();
+    if (choice === 'Choose date…') {
+      expect(h.host.querySelector('input[type="date"]')).not.toBeNull();
+    } else if (choice === '2026-10-14') {
+      expect(h.button('Remove due date').textContent).toBe('2026-10-14');
+    } else {
+      expect(opener.isConnected).toBe(false);
+      expect(h.host.querySelector('.abyss-task-date')).toBeNull();
+      expect(h.button('Restore').isConnected).toBe(true);
+      h.button('Restore').click();
+      expect(
+        [...h.host.querySelectorAll('.abyss-capture-chip-body')].some(
+          (el) => el.textContent === 'Choose date',
+        ),
+      ).toBe(true);
+    }
+    expect(h.surface.input.value).toBe(raw);
+    expect(h.execute).not.toHaveBeenCalled();
+    h.surface.destroy();
+  },
+);
+
 it('does not execute a stale remove after flushing a newer input revision', () => {
   const h = harness();
   h.type('Call #work');
@@ -508,7 +678,7 @@ it('shows sanitized recognition failure while retaining explicit metadata contro
   vi.advanceTimersByTime(24);
   expect(h.host.textContent).toContain('Could not recognize dates and times');
   expect(h.host.textContent).not.toContain('private input details');
-  expect(h.button('Edit due date').isConnected).toBe(true);
+  expect(h.button('Remove due date').isConnected).toBe(true);
   h.surface.destroy();
 });
 
@@ -518,7 +688,9 @@ it.each([false, true])(
     const h = harness();
     h.type('Call tomorrow');
     vi.advanceTimersByTime(24);
-    h.button('Edit due date').click();
+    h.button('Remove due date').dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+    );
     vi.runAllTimers();
     const picker = expectDefined(h.host.querySelector<HTMLInputElement>('input[type="date"]'));
     picker.value = '0202-01-01';
@@ -578,26 +750,30 @@ it('keeps Enter on a metadata body action inside the capture', async () => {
   const h = harness();
   h.type('Call tomorrow');
   vi.advanceTimersByTime(24);
-  const date = h.button('Edit due date');
+  const date = h.button('Remove due date');
   date.focus();
   date.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
   date.click();
   await vi.runAllTimersAsync();
-  expect(h.host.querySelector('input[type="date"]')).not.toBeNull();
+  expect(h.host.querySelector('input[type="date"]')).toBeNull();
+  expect(h.host.querySelector('button[aria-label^="Remove due date"]')).toBeNull();
+  expect(document.activeElement).toBe(h.button('Restore'));
   expect(h.execute).not.toHaveBeenCalled();
   h.surface.destroy();
 });
 
 it('shows, reopens and clears a real initial day before a title without rewriting the input', () => {
   const h = harness({ due: { type: 'set', value: localDate('2026-10-19') } });
-  expect(h.button('Edit due date').textContent).toBe('2026-10-19');
+  expect(h.button('Remove due date').textContent).toBe('2026-10-19');
   expect(h.controller.snapshot().metadata?.referenceDate).toBeUndefined();
   expect(h.controller.snapshot().metadata?.preview.type).toBe('invalid');
   expect(h.execute).not.toHaveBeenCalled();
   const input = h.surface.input;
   input.setSelectionRange(0, 0);
   const write = vi.spyOn(input, 'value', 'set');
-  h.button('Edit due date').click();
+  h.button('Remove due date').dispatchEvent(
+    new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+  );
   vi.runAllTimers();
   const picker = expectDefined(h.host.querySelector<HTMLInputElement>('input[type="date"]'));
   picker.value = '2026-10-20';
@@ -605,14 +781,16 @@ it('shows, reopens and clears a real initial day before a title without rewritin
   expect(h.controller.snapshot().metadata?.preview.type).toBe('invalid');
   expect(h.host.querySelector('.abyss-task-date')?.textContent).toContain('2026-10-20');
   expect(h.button('Remove due date').hidden).toBe(false);
-  h.button('Edit due date').click();
+  h.button('Remove due date').dispatchEvent(
+    new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+  );
   vi.runAllTimers();
   expect(h.host.querySelector<HTMLInputElement>('input[type="date"]')?.value).toBe('2026-10-20');
   h.host
     .querySelector<HTMLInputElement>('input[type="date"]')
     ?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   h.button('Remove due date').click();
-  expect(h.host.querySelector('button[aria-label="Remove due date"]')).toBeNull();
+  expect(h.host.querySelector('button[aria-label^="Remove due date"]')).toBeNull();
   expect(h.host.querySelector('.abyss-task-date')).toBeNull();
   expect(h.surface.input).toBe(input);
   expect(input.value).toBe('');
@@ -626,17 +804,17 @@ it('confirms the effective full date and recognized phrase, then drops the phras
   const h = harness();
   h.type('Call tomorrow');
   vi.advanceTimersByTime(24);
-  const date = h.button('Edit due date');
+  const date = h.button('Remove due date');
   expect(date.getAttribute('aria-label')).toContain('2026-10-14');
   expect(date.getAttribute('aria-label')).toContain('tomorrow');
   expect(date.title).toContain('2026-10-14');
   expect(date.title).toContain('tomorrow');
-  date.click();
+  date.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
   vi.runAllTimers();
   const picker = expectDefined(h.host.querySelector<HTMLInputElement>('input[type="date"]'));
   picker.value = '2027-01-01';
   picker.dispatchEvent(new Event('change', { bubbles: true }));
-  expect(h.button('Edit due date')).toBe(date);
+  expect(h.button('Remove due date')).toBe(date);
   expect(date.getAttribute('aria-label')).toContain('2027-01-01');
   expect(date.getAttribute('aria-label')).not.toContain('tomorrow');
   expect(date.title).toContain('2027-01-01');
@@ -654,7 +832,7 @@ it.each(['input', 'date', 'tag'] as const)(
     vi.advanceTimersByTime(24);
     const input = h.surface.input;
     input.setSelectionRange(1, 3);
-    const date = h.button('Edit due date');
+    const date = h.button('Remove due date');
     const tag = h.button('Remove #work');
     const active = { input, date, tag }[focused];
     active.focus();
@@ -682,9 +860,8 @@ it.each(['input', 'date', 'tag'] as const)(
         button.getAttribute('aria-label'),
       ),
     ).toEqual([
-      'Edit due date: 2026-10-14 (tomorrow at 14:00)',
-      'Remove due date',
-      'Remove time',
+      'Remove due date: 2026-10-14 (tomorrow at 14:00). Right-click or Shift+F10 to edit.',
+      'Remove time: 14:00',
       'Remove #work',
     ]);
     h.type('Call #home #work tomorrow at 14:00');
@@ -700,7 +877,7 @@ it.each(['input', 'date', 'tag'] as const)(
     await vi.runAllTimersAsync();
     expect(order()).toEqual(['Inbox', '2026-10-14', '14:00', '#work', '#home']);
     expect(h.surface.input).toBe(input);
-    expect(h.button('Edit due date')).toBe(date);
+    expect(h.button('Remove due date')).toBe(date);
     expect(h.button('Remove #work')).toBe(tag);
     expect(document.activeElement).toBe(active);
     expect(h.execute).not.toHaveBeenCalled();
@@ -717,9 +894,11 @@ it('shows held context planning without inventing a recognized phrase', () => {
     role: 'due',
     value: localDate('2026-10-20'),
   });
-  const scheduled = h.button('Edit scheduled date');
+  const scheduled = h.button('Remove scheduled date');
   expect(scheduled.textContent).toBe('2026-10-19');
-  expect(scheduled.title).toBe('Edit scheduled date: 2026-10-19');
+  expect(scheduled.title).toBe(
+    'Remove scheduled date: 2026-10-19. Right-click or Shift+F10 to edit.',
+  );
   expect(scheduled.getAttribute('aria-label')).toBe(scheduled.title);
   expect(h.controller.snapshot().metadata?.preview.type).toBe('invalid');
   h.surface.destroy();
@@ -748,8 +927,7 @@ it.each(['unavailable', 'throw', 'invalid-metadata'] as const)(
       value: localDate('2026-10-20'),
     });
     expect(h.controller.snapshot().metadata?.projection).toBeUndefined();
-    expect(h.host.querySelector('button[aria-label^="Edit due date"]')).toBeNull();
-    expect(h.host.querySelector('button[aria-label="Remove due date"]')).toBeNull();
+    expect(h.host.querySelector('button[aria-label^="Remove due date"]')).toBeNull();
     expect(h.execute).not.toHaveBeenCalled();
     if (log !== undefined)
       expect(log.mock.calls).toEqual([['[abyss-tasks] Quick-capture draft preview failed']]);
@@ -767,8 +945,7 @@ it('does not display held manual planning through a malformed canonical carrier'
   h.type('Call 📅 nope');
   vi.advanceTimersByTime(24);
   expect(h.controller.snapshot().metadata?.preview.type).toBe('invalid');
-  expect(h.host.querySelector('button[aria-label^="Edit due date"]')).toBeNull();
-  expect(h.host.querySelector('button[aria-label="Remove due date"]')).toBeNull();
+  expect(h.host.querySelector('button[aria-label^="Remove due date"]')).toBeNull();
   expect(h.surface.input.value).toBe('Call 📅 nope');
   h.surface.destroy();
 });
@@ -777,7 +954,7 @@ it('identifies the clock phrase that supplies an inferred date', () => {
   const h = harness();
   h.type('Call at 14:00');
   vi.advanceTimersByTime(24);
-  const date = h.button('Edit due date');
+  const date = h.button('Remove due date');
   expect(date.title).toContain('2026-10-13');
   expect(date.title).toContain('at 14:00');
   expect(date.getAttribute('aria-label')).toBe(date.title);
@@ -803,8 +980,8 @@ it('updates unchanged clock text with the edited date class and preserves the da
   const raw = 'Call tomorrow ⏰ 14:00';
   h.type(raw);
   vi.advanceTimersByTime(24);
-  const date = h.button('Edit due date');
-  const clock = () => expectDefined(h.button('Remove time').previousElementSibling);
+  const date = h.button('Remove due date');
+  const clock = () => h.button('Remove time');
   const content = (body: Element) => expectDefined(body.querySelector('.abyss-task-date'));
   expect(content(date).classList.contains('is-tomorrow')).toBe(true);
   expect(content(clock()).classList.contains('is-tomorrow')).toBe(true);
@@ -815,7 +992,7 @@ it('updates unchanged clock text with the edited date class and preserves the da
     role: 'due',
     value: localDate('2026-10-13'),
   });
-  expect(h.button('Edit due date')).toBe(date);
+  expect(h.button('Remove due date')).toBe(date);
   expect(document.activeElement).toBe(date);
   expect(content(date).classList.contains('is-today')).toBe(true);
   expect(content(clock()).classList.contains('is-today')).toBe(true);
@@ -823,7 +1000,7 @@ it('updates unchanged clock text with the edited date class and preserves the da
   h.button('Remove due date').click();
   expect(content(clock()).className).toBe('abyss-task-date');
   h.button('Restore').click();
-  expect(content(h.button('Edit due date')).classList.contains('is-today')).toBe(true);
+  expect(content(h.button('Remove due date')).classList.contains('is-today')).toBe(true);
   expect(content(clock()).classList.contains('is-today')).toBe(true);
   expect(h.surface.input.value).toBe(raw);
   expect(h.execute).not.toHaveBeenCalled();
@@ -842,20 +1019,20 @@ it.each(['2026-10-13', '2026-10-14'])(
     );
     h.type('Call ⏰ 14:00');
     vi.advanceTimersByTime(24);
-    const date = h.button('Edit due date');
-    const clock = expectDefined(h.button('Remove time').previousElementSibling);
+    const date = h.button('Remove due date');
+    const clock = h.button('Remove time');
     const classes = () =>
       [...h.host.querySelectorAll('.abyss-task-date')].map((el) => el.className);
     expect(classes()).toEqual(['abyss-task-date', 'abyss-task-date', 'abyss-task-date']);
     date.focus();
     h.button('Remove start date').click();
-    expect(h.button('Edit due date')).toBe(date);
+    expect(h.button('Remove due date')).toBe(date);
     expect(document.activeElement).toBe(date);
     expect(classes()).toEqual(['abyss-task-date is-tomorrow', 'abyss-task-date is-tomorrow']);
     expect(clock.textContent).toBe('14:00');
     h.button('Restore').click();
     expect(classes()).toEqual(['abyss-task-date', 'abyss-task-date', 'abyss-task-date']);
-    expect(h.button('Edit due date')).toBe(date);
+    expect(h.button('Remove due date')).toBe(date);
     expect(document.activeElement).toBe(date);
     expect(h.surface.input.value).toBe('Call ⏰ 14:00');
     h.surface.destroy();
@@ -893,7 +1070,7 @@ it('keeps dates and time neutral when their presentation classifier is absent', 
 
 it('classifies real context planning before editing without freezing the input reference', () => {
   const h = harness({ due: { type: 'set', value: localDate('2026-10-14') } }, () => 'is-tomorrow');
-  expect(h.button('Edit due date').querySelector('.abyss-task-date')?.className).toBe(
+  expect(h.button('Remove due date').querySelector('.abyss-task-date')?.className).toBe(
     'abyss-task-date is-tomorrow',
   );
   expect(h.controller.snapshot().metadata?.referenceDate).toBeUndefined();

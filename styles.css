@@ -10456,14 +10456,14 @@ button.abyss-statistics-row-button:focus-visible {
   place-content: center;
 }
 
-/* Shared task metadata stays inline; only the row owns its gutters and button resets. */
+/* Shared task metadata stays inline; only the row owns its spacing and button resets. */
 .abyss-capture-metadata {
   box-sizing: border-box;
   grid-column: 1 / -1;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--size-4-1) var(--size-2-1);
+  gap: var(--size-4-1) 0;
   padding: calc(var(--size-4-2) - var(--size-2-1)) var(--size-2-3) 0;
   min-block-size: calc(1.3em + var(--size-4-2) - var(--size-2-1));
   min-width: 0;
@@ -10474,14 +10474,21 @@ button.abyss-statistics-row-button:focus-visible {
 
 .abyss-capture-chip {
   box-sizing: border-box;
-  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 0;
-  padding-inline-end: 14px;
   min-block-size: 1.3em;
   max-width: 100%;
   min-width: 0;
+}
+
+.abyss-capture-separator {
+  flex: 0 0 auto;
+  margin-inline: var(--size-4-1);
+  color: var(--text-faint);
+}
+
+.abyss-capture-separator[hidden] {
+  display: none;
 }
 
 .abyss-capture-chip-body {
@@ -10498,21 +10505,12 @@ button.abyss-statistics-row-button:focus-visible {
   white-space: nowrap;
 }
 
-/* Own each state so later theme button borders cannot change the metadata line geometry. */
+/* Own each state so theme button borders cannot change the metadata line geometry. */
+.abyss-capture-surface .abyss-capture-metadata .abyss-capture-chip > button.abyss-capture-chip-body,
 .abyss-capture-surface
   .abyss-capture-metadata
   .abyss-capture-chip
-  > button:is(.abyss-capture-chip-body, .abyss-chip-remove),
-.abyss-capture-surface
-  .abyss-capture-metadata
-  .abyss-capture-chip
-  > button:is(.abyss-capture-chip-body, .abyss-chip-remove):is(
-    :hover,
-    :focus,
-    :focus-visible,
-    :active,
-    :disabled
-  ) {
+  > button.abyss-capture-chip-body:is(:hover, :focus, :focus-visible, :active, :disabled) {
   box-sizing: border-box;
   font: inherit;
   line-height: inherit;
@@ -10548,36 +10546,17 @@ button.abyss-statistics-row-button:focus-visible {
   min-width: 0;
 }
 
-.abyss-capture-surface .abyss-capture-metadata .abyss-capture-chip > button.abyss-chip-remove {
-  position: absolute;
-  inset-block-start: 50%;
-  inset-inline-end: 0;
-  width: 14px;
-  height: 14px;
-  transform: translateY(-50%);
-  opacity: 0;
-}
-
-.abyss-capture-metadata button.abyss-chip-remove svg {
-  width: 11px;
-  height: 11px;
-}
-
-.abyss-capture-chip .abyss-chip-remove[hidden] {
-  display: none;
-}
-
-.abyss-capture-surface
-  .abyss-capture-metadata
-  .abyss-capture-chip:is(:hover, :focus-within)
-  > button.abyss-chip-remove {
-  opacity: 1;
+.abyss-capture-chip-body.is-removable:not(:disabled):is(:hover, :focus-visible) .abyss-task-tag,
+.abyss-capture-chip-body.is-removable:not(:disabled):is(:hover, :focus-visible)
+  .abyss-task-date
+  > span:not(.abyss-date-icon) {
+  text-decoration: line-through;
 }
 
 .abyss-capture-surface
   .abyss-capture-metadata
   .abyss-capture-chip
-  > button:is(.abyss-capture-chip-body, .abyss-chip-remove):focus-visible {
+  > button.abyss-capture-chip-body:focus-visible {
   outline: 2px solid var(--background-modifier-border-focus);
   outline-offset: 2px;
 }
@@ -10587,14 +10566,14 @@ button.abyss-statistics-row-button:focus-visible {
     min-block-size: calc(24px + var(--size-4-2) - var(--size-2-1));
   }
 
-  .abyss-capture-surface .abyss-capture-metadata .abyss-capture-chip {
-    padding-inline-end: var(--size-4-6);
+  .abyss-capture-surface
+    .abyss-capture-metadata
+    .abyss-capture-chip
+    > button.abyss-capture-chip-body,
+  .abyss-capture-surface
+    .abyss-capture-metadata
+    .abyss-capture-chip
+    > button.abyss-capture-chip-body:is(:hover, :focus, :focus-visible, :active, :disabled) {
     min-block-size: 24px;
-  }
-
-  .abyss-capture-surface .abyss-capture-metadata .abyss-capture-chip > button.abyss-chip-remove {
-    width: 24px;
-    height: 24px;
-    opacity: 1;
   }
 }

@@ -34,10 +34,11 @@ interface MetadataRowOptions {
 interface Chip {
   readonly element: HTMLElement;
   readonly body: HTMLElement;
-  readonly remove?: HTMLButtonElement;
+  readonly separator: HTMLElement;
   signature: string;
   activate?: (event: MouseEvent) => void;
   dismiss?: TaskInputAction;
+  edit?: () => void;
 }
 
 function captureMetadata(
@@ -88,9 +89,11 @@ export class CaptureMetadataRow {
   }
 
   private reconcileOrder(keys: Set<string>): void {
-    const ordered = [...keys].flatMap((key) => {
+    const ordered = [...keys].flatMap((key, index) => {
       const chip = this.chips.get(key);
-      return chip === undefined ? [] : [chip.element];
+      if (chip === undefined) return [];
+      chip.separator.hidden = index === 0;
+      return [chip.element];
     });
     const active = this.element.ownerDocument.activeElement;
     const focused = ordered.find((element) => element.contains(active));
@@ -159,7 +162,8 @@ export class CaptureMetadataRow {
         this.content(chip, `${tag}:${color ?? ''}`, () => {
           renderTaskTagContent(chip.body, tag, color);
         });
-        chip.remove?.setAttribute('aria-label', `Remove ${tag}`);
+        chip.body.setAttribute('aria-label', `Remove ${tag}`);
+        chip.body.setAttribute('title', `Remove ${tag}`);
         chip.dismiss = { type: 'remove-tag', tag };
       }
     }
@@ -186,10 +190,7 @@ export class CaptureMetadataRow {
         setIcon(content.createSpan({ cls: 'abyss-date-icon' }), 'calendar');
         content.createSpan({ text: label });
       });
-      if (chip.remove !== undefined) {
-        chip.remove.setAttribute('aria-label', `Remove ${role} date`);
-      }
-      chip.activate = () => {
+      chip.edit = () => {
         this.openDate(chip.body, role, value);
       };
       chip.dismiss = { type: 'dismiss', role };
@@ -262,7 +263,7 @@ export class CaptureMetadataRow {
         ? binding.slices.join(' ')
         : undefined;
     const phrase = source === undefined ? '' : ` (${source})`;
-    return `Edit ${role} date: ${value}${phrase}`;
+    return `Remove ${role} date: ${value}${phrase}. Right-click or Shift+F10 to edit.`;
   }
   private dateLabel(value: string, referenceDate?: string): string {
     return this.options.formatDate?.(value, referenceDate) ?? value;
@@ -281,7 +282,8 @@ export class CaptureMetadataRow {
         setIcon(content.createSpan({ cls: 'abyss-date-icon' }), 'clock');
         content.createSpan({ text: time });
       });
-      chip.remove?.setAttribute('aria-label', 'Remove time');
+      chip.body.setAttribute('aria-label', `Remove time: ${value}`);
+      chip.body.setAttribute('title', `Remove time: ${value}`);
       chip.dismiss = { type: 'dismiss', role: 'time' };
     }
   }
@@ -291,15 +293,14 @@ export class CaptureMetadataRow {
     metadata: CaptureMetadataSnapshot,
   ): void {
     if (metadata.projection?.ambiguity === true) {
-      const chip = this.use(keys, disabled, 'ambiguity', { removable: true, actionable: true });
+      const chip = this.use(keys, disabled, 'ambiguity', { actionable: true });
       this.content(chip, 'Choose date', () => {
         chip.body.setText('Choose date');
       });
       chip.activate = (event) => {
         this.openChoices(event, chip.body);
       };
-      chip.remove?.setAttribute('aria-label', 'Remove date suggestions');
-      chip.dismiss = { type: 'dismiss-ambiguity' };
+      chip.body.setAttribute('aria-label', 'Choose date');
     }
     if (metadata.canRestore) {
       const chip = this.use(keys, disabled, 'restore', { actionable: true });
@@ -334,40 +335,46 @@ export class CaptureMetadataRow {
     const { removable = false, actionable = false } = options;
     let chip = this.chips.get(key);
     chip ??= this.createChip(key, removable, actionable);
-    if (actionable) chip.body.toggleAttribute('disabled', disabled);
-    if (chip.remove !== undefined) chip.remove.disabled = disabled;
+    if (removable || actionable) chip.body.toggleAttribute('disabled', disabled);
     return chip;
   }
   private createChip(key: string, removable: boolean, actionable: boolean): Chip {
     const element = this.element.createSpan({ cls: 'abyss-capture-chip' });
-    const body = element.createEl(actionable ? 'button' : 'span', {
-      cls: 'abyss-capture-chip-body',
+    const separator = element.createSpan({
+      cls: 'abyss-capture-separator',
+      text: '·',
+      attr: { 'aria-hidden': 'true' },
     });
-    const remove = removable
-      ? element.createEl('button', { cls: 'abyss-chip-remove', attr: { type: 'button' } })
-      : undefined;
-    if (actionable) body.setAttribute('type', 'button');
-    const chip: Chip = {
-      element,
-      body,
-      signature: '',
-      ...(remove === undefined ? {} : { remove }),
-    };
+    const body = element.createEl(removable || actionable ? 'button' : 'span', {
+      cls: `abyss-capture-chip-body${removable ? ' is-removable' : ''}`,
+    });
+    if (removable || actionable) body.setAttribute('type', 'button');
+    const chip: Chip = { element, body, separator, signature: '' };
     this.chips.set(key, chip);
     body.addEventListener('click', (event) => {
-      if (this.live() && this.options.flushInput() === 'ready')
-        this.chips.get(key)?.activate?.(event as MouseEvent);
+      if (!this.ready(body)) return;
+      const current = this.chips.get(key);
+      if (removable) {
+        if (current?.dismiss !== undefined) this.act(current.dismiss);
+      } else current?.activate?.(event as MouseEvent);
     });
-    if (remove !== undefined) {
-      setIcon(remove, 'x');
-      remove.addEventListener('mousedown', (event) => {
-        this.preserveInputFocus(event);
+    if (removable) {
+      body.addEventListener('mousedown', (event) => {
+        this.preserveInputFocus(event as MouseEvent);
       });
-      remove.addEventListener('click', () => {
-        if (!this.live() || this.options.flushInput() === 'blocked') return;
-        const action = this.chips.get(key)?.dismiss;
-        if (action !== undefined) this.act(action);
-      });
+    }
+    if (removable && actionable) {
+      const edit = (event: Event): void => {
+        if (event.type === 'keydown') {
+          const keyboard = event as KeyboardEvent;
+          if (keyboard.key !== 'F10' || !keyboard.shiftKey || isImeOwnedEvent(keyboard)) return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        if (this.ready(body)) this.chips.get(key)?.edit?.();
+      };
+      body.addEventListener('contextmenu', edit);
+      body.addEventListener('keydown', edit);
     }
     return chip;
   }
@@ -380,7 +387,20 @@ export class CaptureMetadataRow {
     this.chips.clear();
   }
   private live(): boolean {
-    return !this.destroyed && this.options.isLive();
+    const snapshot = this.options.controller.snapshot();
+    return (
+      !this.destroyed && this.options.isLive() && !snapshot.readonly && snapshot.phase !== 'closed'
+    );
+  }
+  private ready(body: HTMLElement): boolean {
+    return (
+      this.live() &&
+      !body.hasAttribute('disabled') &&
+      body.isConnected &&
+      this.options.flushInput() === 'ready' &&
+      this.live() &&
+      body.isConnected
+    );
   }
   private content(chip: Chip, signature: string, render: () => void): void {
     if (chip.signature === signature) return;
@@ -484,6 +504,11 @@ export class CaptureMetadataRow {
     menu.addItem((item) =>
       item.setTitle('Choose date…').onClick(() => {
         this.openDate(anchor, 'due');
+      }),
+    );
+    menu.addItem((item) =>
+      item.setTitle('Ignore date suggestions').onClick(() => {
+        this.act({ type: 'dismiss-ambiguity' });
       }),
     );
     menu.onHide(() => {

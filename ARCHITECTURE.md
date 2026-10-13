@@ -168,6 +168,10 @@ context day, then the existing display clock. Point-date badges reuse the centra
 clock follows the primary due, scheduled, then start date. `taskOccupiedDates` keeps interval date/time
 content neutral, including equal start/due bounds. A draft retained across midnight may therefore
 keep a different semantic color from a newly rendered central card, matching its frozen interpretation.
+Q renders removable date, time and tag metadata as whole-body buttons separated by decorative dots.
+Primary activation dismisses metadata while retaining raw input; hover and keyboard focus strike only
+the label. Date contextmenu and Shift+F10 open the shared picker. Destination captions remain passive,
+and ambiguity opens the existing choice menu with an explicit Ignore date suggestions action.
 Q's `CaptureInteractionBoundary` owns the mounted
 input, row, native menus and picker roots in their document. Explicit Enter and proven exit share one
 settlement path: picker drafts, raw input and recognition, then one submit. Invalid picker drafts block
