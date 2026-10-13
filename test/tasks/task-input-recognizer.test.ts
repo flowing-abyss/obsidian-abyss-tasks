@@ -236,3 +236,73 @@ describe('alternative guard preserves canonical tag joins', () => {
     expect(result.markdownBody).toBe(body);
   });
 });
+
+describe('numeric identifiers beside natural dates and clocks', () => {
+  it.each([
+    [
+      'SMART-CAPTURE-SMOKE-20261013-01 Набрать другу в 12:00 послезавтра #new/tag',
+      'SMART-CAPTURE-SMOKE-20261013-01 Набрать другу #new/tag',
+      '2026-10-15',
+    ],
+    ['ISSUE-2026 Call tomorrow at 12:00', 'ISSUE-2026 Call', '2026-10-14'],
+    ['Call at 12:00 tomorrow ISSUE-0700', 'Call ISSUE-0700', '2026-10-14'],
+    ['ЗАДАЧА-2026 Позвонить завтра в 12:00', 'ЗАДАЧА-2026 Позвонить', '2026-10-14'],
+    ['Позвонить в 12:00 завтра ЗАДАЧА-0700', 'Позвонить ЗАДАЧА-0700', '2026-10-14'],
+    ['Compare 2025-2026 tomorrow at 12:00', 'Compare 2025-2026', '2026-10-14'],
+    ['Сравнить в 12:00 завтра 2025-2026', 'Сравнить 2025-2026', '2026-10-14'],
+    ['Call build+0700 tomorrow at 12:00', 'Call build+0700', '2026-10-14'],
+    ['Call +123456 tomorrow at 12:00', 'Call +123456', '2026-10-14'],
+    ['Call at 12:00 tomorrow -123456', 'Call -123456', '2026-10-14'],
+    ['Call ref-0700x tomorrow at 12:00', 'Call ref-0700x', '2026-10-14'],
+    ['Позвонить в 12:00 завтра -123456', 'Позвонить -123456', '2026-10-14'],
+    ['Call tomorrow ISSUE-2026 at 12:00', 'Call ISSUE-2026', '2026-10-14'],
+    ['Позвонить в 12:00 ЗАДАЧА-2026 завтра', 'Позвонить ЗАДАЧА-2026', '2026-10-14'],
+    ['Call tomorrow -123456 at 12:00', 'Call -123456', '2026-10-14'],
+    ['Call  tomorrow +123456 at 12:00  notes', 'Call  +123456  notes', '2026-10-14'],
+  ])(
+    'preserves identifier text and consumes only accepted temporal ranges: %s',
+    (raw, body, due) => {
+      const result = project(createTaskInputState(raw));
+      expect(result.initial.due).toEqual({ type: 'set', value: due });
+      expect(result.initial.time).toEqual({ type: 'set', value: '12:00' });
+      expect(result.markdownBody).toBe(body);
+      expect(result.candidates.some((candidate) => candidate.reason === 'timezone')).toBe(false);
+    },
+  );
+
+  it.each([
+    'Call tomorrow at 12:00+07:00',
+    'Call tomorrow at 12:00-07:00',
+    'Call tomorrow at 12:00+0700',
+    'Call tomorrow at 12:00-0700',
+    'Call tomorrow at 12:00 +07:00',
+    'Call tomorrow at 12:00 -07:00',
+    'Call tomorrow at 12:00 +0700',
+    'Call tomorrow at 12:00 -0700',
+    'Позвонить в 12:00+0700 завтра',
+    'Позвонить в 12:00-0700 завтра',
+    'Позвонить в 12:00 +07:00 завтра',
+    'Позвонить в 12:00 -07:00 завтра',
+    'Call tomorrow at 2pm+0700',
+    'Call tomorrow at 2pm-0700',
+    'Call tomorrow at 2pm+07:00',
+    'Call tomorrow at 2pm-07:00',
+    'Call tomorrow at 12:00 (+0700)',
+    'Call tomorrow at 12:00 (-07:00)',
+    'Call tomorrow at 12:00 +0700.',
+    'Call tomorrow at 12:00 -07:00, please',
+    'Call tomorrow at 12:00 UTC',
+    'Call tomorrow at 12:00 GMT',
+    'Call tomorrow at 12:00 CET',
+    'Позвонить в 12:00 MSK завтра',
+    'Call tomorrow -2026',
+  ])('keeps genuine or conservatively ambiguous timezone tokens literal: %s', (raw) => {
+    const result = project(createTaskInputState(raw));
+    expect(result.initial.due).toBeUndefined();
+    expect(result.initial.time).toBeUndefined();
+    expect(result.markdownBody).toBe(raw);
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ status: 'unsupported', reason: 'timezone' }),
+    ]);
+  });
+});

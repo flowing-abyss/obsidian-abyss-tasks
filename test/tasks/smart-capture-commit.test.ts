@@ -182,6 +182,46 @@ describe('smart Q canonical commit', () => {
       });
     },
   );
+  it('previews and writes the exact native numeric identifier input', async () => {
+    const h = await smartHarness();
+    const raw = 'SMART-CAPTURE-SMOKE-20261013-01 Набрать другу в 12:00 послезавтра #new/tag';
+    h.controller.setDraft(raw);
+    expect(h.controller.snapshot().draft).toBe(raw);
+    expect(h.controller.snapshot().metadata?.projection?.markdownBody).toBe(
+      'SMART-CAPTURE-SMOKE-20261013-01 Набрать другу #new/tag',
+    );
+    const metadata = {
+      markdownTitle: 'SMART-CAPTURE-SMOKE-20261013-01 Набрать другу',
+      planning: { due: '2026-10-15', time: '12:00' },
+      tags: ['#new/tag'],
+    };
+    expect(h.controller.snapshot().metadata?.preview).toMatchObject({ type: 'valid', metadata });
+    expect(h.repositoryWrites).toHaveLength(0);
+    await h.controller.submit('enter');
+    expect(h.repositoryWrites).toHaveLength(1);
+    expect(h.readCanonicalRoot(expectDefined(h.repositoryWrites[0]))).toMatchObject(metadata);
+  });
+  it.each<[string, string, { due?: string; time?: string }]>([
+    ['Call at 12:00 tomorrow -123456', 'Call -123456', { due: '2026-10-14', time: '12:00' }],
+    ['Call at 12:00 tomorrow -1234', 'Call at 12:00 tomorrow -1234', {}],
+  ])(
+    'preserves numeric source through preview and canonical writing: %s',
+    async (raw, title, planning) => {
+      const h = await smartHarness({}, { inbox: false, initial: {} });
+      h.controller.setDraft(raw);
+      expect(h.controller.snapshot().draft).toBe(raw);
+      expect(h.controller.snapshot().metadata?.preview).toMatchObject({
+        type: 'valid',
+        metadata: { markdownTitle: title, planning },
+      });
+      await h.controller.submit('enter');
+      expect(h.repositoryWrites).toHaveLength(1);
+      const root = h.readCanonicalRoot(expectDefined(h.repositoryWrites[0]));
+      expect(root.markdownTitle).toBe(title);
+      expect(root.planning.due).toBe(planning.due);
+      expect(root.planning.time).toBe(planning.time);
+    },
+  );
   it('keeps dismissed words across outside edits', async () => {
     const h = await smartHarness();
     h.controller.setDraft('Позвонить послезавтра в 12:00');

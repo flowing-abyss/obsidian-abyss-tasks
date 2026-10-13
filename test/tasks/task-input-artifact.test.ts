@@ -56,6 +56,33 @@ describe('offline Chrono locale artifact', () => {
         },
         protectedRanges: [],
       });
+      const numericIdentifier = execute().recognize({
+        text: 'SMART-CAPTURE-SMOKE-20261013-01 Набрать другу в 12:00 послезавтра #new/tag',
+        reference: {
+          epochMs: 1791867600000,
+          localDate: localDate('2026-10-13'),
+          localTime: localTime('12:00'),
+          second: 0,
+          offsetMinutes: 420,
+        },
+        protectedRanges: [{ from: 66, to: 74 }],
+      });
+      expect(numericIdentifier).toEqual([
+        {
+          kind: 'date-time',
+          status: 'point',
+          ranges: [
+            { from: 46, to: 53 },
+            { from: 54, to: 65 },
+          ],
+          dateRanges: [{ from: 54, to: 65 }],
+          timeRanges: [{ from: 46, to: 53 }],
+          date: '2026-10-15',
+          time: '12:00',
+          dateOrigin: 'relative',
+          yearExplicit: false,
+        },
+      ]);
       expect(result).toEqual([
         {
           kind: 'date-time',

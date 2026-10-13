@@ -21,6 +21,7 @@ import type { LocalDate } from '../../domain/types';
 import { localDate, localTime } from '../../domain/validation';
 
 const CLOCK = /\d{1,2}:\d{2}(?::\d{2})?|\d{1,2}\s?[ap]m/giu;
+const NUMERIC_OFFSET = /[+-]\d{2}:?\d{2}\d*/gu;
 const NUMERIC = /\d{4}-\d{2}-\d{2}|\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?/gu;
 function validatedDate(year: number, month: number, day: number): LocalDate | undefined {
   try {
@@ -70,10 +71,22 @@ interface Recognition {
 }
 function parseLocales(text: string, reference: TaskInputReference): LocaleResult[] {
   const ref = { instant: new Date(reference.epochMs), timezone: reference.offsetMinutes };
+  // Chrono's offset refiner accepts numeric prefixes (e.g. -1234 in -123456).
+  // Mask non-token fragments without making ordinary title IDs into join barriers.
+  const fragments = [...text.matchAll(NUMERIC_OFFSET)]
+    .filter((match) => !isNumericTimezone(text, match.index, match[0]))
+    .map((match) => ({ from: match.index, to: match.index + match[0].length }));
+  const masked = maskInputRanges(text, fragments);
   return [
-    ...ru.parse(text, ref, { forwardDate: false }),
-    ...en.parse(text, ref, { forwardDate: false }),
-  ];
+    ...ru.parse(masked, ref, { forwardDate: false }),
+    ...en.parse(masked, ref, { forwardDate: false }),
+  ].filter((result) => {
+    const range = {
+      from: result.index + result.text.length - result.text.trimStart().length,
+      to: result.index + result.text.trimEnd().length,
+    };
+    return fragments.every((fragment) => !inputRangesOverlap(fragment, range));
+  });
 }
 function timeExclusion(text: string): TaskInputCandidate['reason'] | undefined {
   for (const match of text.matchAll(/[0-9:]+/gu)) {
@@ -94,6 +107,22 @@ function timeExclusion(text: string): TaskInputCandidate['reason'] | undefined {
     return 'range';
   return undefined;
 }
+function isNumericTimezone(text: string, from: number, token: string): boolean {
+  if (!/^[+-]\d{2}:?\d{2}$/u.test(token)) return false;
+  const end = from + token.length;
+  if (/^(?:[\p{L}\p{N}_:+/-]|\.\d)/u.test(text.slice(end, end + 2))) return false;
+  if (!/[\p{L}\p{N}_:./+-]/u.test(text[from - 1] ?? '')) return true;
+  // An attached offset may follow a real clock, but never an identifier/year fragment.
+  const clock = /(?:^|[^\p{L}\p{N}_:./+-])(\d{1,2}:\d{2}|\d{1,2}\s?[ap]m)$/iu.exec(
+    text.slice(Math.max(0, from - 6), from),
+  );
+  return clock !== null && exactClock(clock[1] ?? '');
+}
+function hasNumericTimezone(text: string): boolean {
+  return [...text.matchAll(NUMERIC_OFFSET)].some((match) =>
+    isNumericTimezone(text, match.index, match[0]),
+  );
+}
 function exclusion(text: string): TaskInputCandidate['reason'] | undefined {
   if (/(?:кажд\p{L}*|every\b|daily\b|weekly\b)/iu.test(text)) return 'recurrence';
   if (
@@ -102,7 +131,7 @@ function exclusion(text: string): TaskInputCandidate['reason'] | undefined {
     )
   )
     return 'negation';
-  if (/\b(?:UTC|GMT|CET|CEST|PST|PDT|EST|EDT|JST|MSK)\b|[+-]\d{2}:?\d{2}/u.test(text))
+  if (/\b(?:UTC|GMT|CET|CEST|PST|PDT|EST|EDT|JST|MSK)\b/u.test(text) || hasNumericTimezone(text))
     return 'timezone';
   return timeExclusion(text);
 }
