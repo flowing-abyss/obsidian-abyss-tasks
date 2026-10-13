@@ -73,13 +73,44 @@ module.exports = {
       from: {
         path: '^src/tasks/infrastructure/',
         pathNot:
-          '^src/tasks/infrastructure/search/(?:MiniSearchTaskEngine|BrowserTaskSearchBackend)[.]ts$',
+          '^src/tasks/infrastructure/(?:search/(?:MiniSearchTaskEngine|BrowserTaskSearchBackend)|input/ChronoTaskInputRecognizer)[.]ts$',
       },
       to: {
         pathNot: [
           '^src/tasks/(?:infrastructure|application|domain)/',
           '^src/markdown/',
           '^obsidian$',
+        ],
+      },
+    },
+    {
+      name: 'task-input-recognizer-depends-inward',
+      comment:
+        'The concrete input adapter may import only inward task contracts and the two pinned Chrono locales.',
+      severity: 'error',
+      from: { path: '^src/tasks/infrastructure/input/ChronoTaskInputRecognizer[.]ts$' },
+      to: {
+        pathNot: [
+          '^src/tasks/(?:application|domain)/',
+          '^chrono-node/(?:en|ru)$',
+          '^node_modules/chrono-node/dist/(?:esm|cjs)/locales/(?:en|ru)/index[.]js$',
+          '^node_modules/[.]pnpm/chrono-node@2[.]10[.]3/node_modules/chrono-node/dist/(?:esm|cjs)/locales/(?:en|ru)/index[.]js$',
+        ],
+      },
+    },
+    {
+      name: 'chrono-acquisition-is-confined',
+      comment: 'Natural input recognition has exactly one offline locale acquisition boundary.',
+      severity: 'error',
+      from: {
+        path: '^src/',
+        pathNot: '^src/tasks/infrastructure/input/ChronoTaskInputRecognizer[.]ts$',
+      },
+      to: {
+        path: [
+          '^chrono-node(?:/|$)',
+          '^node_modules/chrono-node/',
+          '^node_modules/[.]pnpm/chrono-node@',
         ],
       },
     },

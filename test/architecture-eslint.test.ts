@@ -553,3 +553,28 @@ it.each(['tooling/regex-audit.mjs', 'tooling/regex-audit-policy.mjs'])(
   },
   LINTER_TIMEOUT_MS,
 );
+
+describe('pure task input helpers', () => {
+  it.each([
+    'src/tasks/domain/taskInputGuards.ts',
+    'src/tasks/domain/taskInputState.ts',
+    'src/tasks/domain/taskInputProjection.ts',
+  ])(
+    'accepts explicit data and rejects ambient time in %s',
+    async (path) => {
+      const accepted = await diagnostics(
+        path,
+        'export function length(raw:string):number {return raw.length;}',
+      );
+      expectParseSafe(accepted);
+      expect(accepted.filter((d) => d.ruleId === 'project-policy/ambient')).toEqual([]);
+      const rejected = await diagnostics(
+        path,
+        'export function reference():number {return Date.now();}',
+      );
+      expectParseSafe(rejected);
+      expect(rejected.some((d) => d.ruleId === 'project-policy/ambient')).toBe(true);
+    },
+    LINTER_TIMEOUT_MS,
+  );
+});

@@ -1,0 +1,138 @@
+export interface TaskInputCorpusCase {
+  readonly raw: string;
+  readonly title: string;
+  readonly due: string | null;
+  readonly time: string | null;
+  readonly tags: readonly string[];
+}
+export const corpus: readonly TaskInputCorpusCase[] = [
+  { raw: 'Позвонить маме', title: 'Позвонить маме', due: null, time: null, tags: [] },
+  { raw: 'Купить молоко завтра', title: 'Купить молоко', due: '2026-10-14', time: null, tags: [] },
+  {
+    raw: 'Послезавтра полить цветы',
+    title: 'полить цветы',
+    due: '2026-10-15',
+    time: null,
+    tags: [],
+  },
+  { raw: 'Позвонить вчера', title: 'Позвонить', due: '2026-10-12', time: null, tags: [] },
+  {
+    raw: 'В пятницу отправить акт',
+    title: 'отправить акт',
+    due: '2026-10-16',
+    time: null,
+    tags: [],
+  },
+  {
+    raw: 'Позвонить в следующую пятницу',
+    title: 'Позвонить',
+    due: '2026-10-23',
+    time: null,
+    tags: [],
+  },
+  { raw: 'Позвонить через 2 дня', title: 'Позвонить', due: '2026-10-15', time: null, tags: [] },
+  {
+    raw: 'Перенести встречу на 15.10',
+    title: 'Перенести встречу',
+    due: '2026-10-15',
+    time: null,
+    tags: [],
+  },
+  {
+    raw: 'Забрать заказ 15.10.2026',
+    title: 'Забрать заказ',
+    due: '2026-10-15',
+    time: null,
+    tags: [],
+  },
+  { raw: 'Позвонить в 14:00', title: 'Позвонить', due: '2026-10-13', time: '14:00', tags: [] },
+  { raw: 'Позвонить в 12:00', title: 'Позвонить', due: '2026-10-14', time: '12:00', tags: [] },
+  {
+    raw: 'Набрать другу в 12:00 послезавтра #new/tag',
+    title: 'Набрать другу',
+    due: '2026-10-15',
+    time: '12:00',
+    tags: ['#new/tag'],
+  },
+  {
+    raw: 'Набрать другу послезавтра в 12:00 #new/tag',
+    title: 'Набрать другу',
+    due: '2026-10-15',
+    time: '12:00',
+    tags: ['#new/tag'],
+  },
+  {
+    raw: 'Завтра напомнить маме про билеты в 14:00 #семья',
+    title: 'напомнить маме про билеты',
+    due: '2026-10-14',
+    time: '14:00',
+    tags: ['#семья'],
+  },
+  {
+    raw: 'Подготовить завтра подробное письмо для команды и приложить ссылки на черновики #работа',
+    title: 'Подготовить подробное письмо для команды и приложить ссылки на черновики',
+    due: '2026-10-14',
+    time: null,
+    tags: ['#работа'],
+  },
+  {
+    raw: 'Обсудить послезавтра с командой все замечания к макету и отправить итог в 16:30 #project/design',
+    title: 'Обсудить с командой все замечания к макету и отправить итог',
+    due: '2026-10-15',
+    time: '16:30',
+    tags: ['#project/design'],
+  },
+  { raw: 'Call tomorrow at 14:00', title: 'Call', due: '2026-10-14', time: '14:00', tags: [] },
+  { raw: 'Call at 2pm tomorrow', title: 'Call', due: '2026-10-14', time: '14:00', tags: [] },
+  { raw: 'Call on October 15', title: 'Call', due: '2026-10-15', time: null, tags: [] },
+  {
+    raw: 'Send the revised draft next Friday #work',
+    title: 'Send the revised draft',
+    due: '2026-10-23',
+    time: null,
+    tags: ['#work'],
+  },
+  {
+    raw: 'Созвон tomorrow в 14:00 #team',
+    title: 'Созвон',
+    due: '2026-10-14',
+    time: '14:00',
+    tags: ['#team'],
+  },
+  {
+    raw: 'Позвонить 👩‍💻 завтра #дом',
+    title: 'Позвонить 👩‍💻',
+    due: '2026-10-14',
+    time: null,
+    tags: ['#дом'],
+  },
+  {
+    raw: 'Позвонить завтра утром',
+    title: 'Позвонить завтра утром',
+    due: '2026-10-14',
+    time: null,
+    tags: [],
+  },
+  {
+    raw: 'Подготовить отчёт за 15 октября',
+    title: 'Подготовить отчёт за 15 октября',
+    due: null,
+    time: null,
+    tags: [],
+  },
+  { raw: 'Среда разработки', title: 'Среда разработки', due: null, time: null, tags: [] },
+  {
+    raw: 'Каждый вторник поливать цветы',
+    title: 'Каждый вторник поливать цветы',
+    due: null,
+    time: null,
+    tags: [],
+  },
+  {
+    raw: 'Созвон завтра с 10:00 до 11:00',
+    title: 'Созвон завтра с 10:00 до 11:00',
+    due: null,
+    time: null,
+    tags: [],
+  },
+];

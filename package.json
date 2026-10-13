@@ -75,6 +75,7 @@
   },
   "dependencies": {
     "@tanstack/charts": "1.1.0",
+    "chrono-node": "2.10.3",
     "minisearch": "7.2.0",
     "rrule": "2.8.1"
   },

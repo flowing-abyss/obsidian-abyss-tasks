@@ -626,6 +626,19 @@ function importsFromSyntax(module: ts.SourceFile): ImportRecord[] {
   return result;
 }
 
+const CHRONO_INPUT_ADAPTER = 'src/tasks/infrastructure/input/ChronoTaskInputRecognizer.ts';
+function chronoImportViolationsFor(path: string, records: readonly ImportRecord[]): string[] {
+  return records
+    .filter(
+      ({ specifier }) =>
+        (specifier === 'chrono-node' || specifier.startsWith('chrono-node/')) &&
+        !(
+          path === CHRONO_INPUT_ADAPTER &&
+          (specifier === 'chrono-node/en' || specifier === 'chrono-node/ru')
+        ),
+    )
+    .map(({ specifier }) => `${path} -> ${specifier}`);
+}
 function rruleImportViolationsFor(path: string, records: readonly ImportRecord[]): string[] {
   return records
     .filter(({ specifier }) => {
@@ -1187,6 +1200,36 @@ describe('task architecture boundaries', () => {
     'keeps task domain and application free of ambient time and DOM access',
     () => {
       expect(ambientBoundarySites()).toEqual([]);
+    },
+    SOURCE_WALK_TIMEOUT_MS,
+  );
+
+  it(
+    'confines Chrono acquisition to the exact locale adapter',
+    () => {
+      expect(
+        sourceFiles(SRC_ROOT).flatMap((absolute) => {
+          const path = repoPath(absolute);
+          return chronoImportViolationsFor(path, imports(path));
+        }),
+      ).toEqual([]);
+      for (const locale of ['chrono-node/en', 'chrono-node/ru']) {
+        const records = importsFromSyntax(
+          syntaxFromText(CHRONO_INPUT_ADAPTER, `import * as locale from '${locale}';`),
+        );
+        expect(chronoImportViolationsFor(CHRONO_INPUT_ADAPTER, records)).toEqual([]);
+        expect(chronoImportViolationsFor('src/tasks/domain/taskInputState.ts', records)).toEqual([
+          `src/tasks/domain/taskInputState.ts -> ${locale}`,
+        ]);
+      }
+      for (const specifier of ['chrono-node', 'chrono-node/ja', 'chrono-node/en/parsers']) {
+        const records = importsFromSyntax(
+          syntaxFromText(CHRONO_INPUT_ADAPTER, `import * as locale from '${specifier}';`),
+        );
+        expect(chronoImportViolationsFor(CHRONO_INPUT_ADAPTER, records)).toEqual([
+          `${CHRONO_INPUT_ADAPTER} -> ${specifier}`,
+        ]);
+      }
     },
     SOURCE_WALK_TIMEOUT_MS,
   );

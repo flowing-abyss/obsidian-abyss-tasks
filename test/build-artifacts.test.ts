@@ -273,6 +273,7 @@ describe('production JavaScript artifact', () => {
       'node_modules/.pnpm/d3-shape@3.2.0/node_modules/d3-shape/LICENSE',
       'node_modules/.pnpm/internmap@2.0.3/node_modules/internmap/LICENSE',
       'node_modules/minisearch/LICENSE.txt',
+      'node_modules/chrono-node/LICENSE.txt',
       'node_modules/rrule/LICENCE',
     ])
       expect(code.includes(readFileSync(path.join(root, file), 'utf8').trim()), file).toBe(true);
@@ -283,6 +284,7 @@ describe('production JavaScript artifact', () => {
       'd3-shape@3.2.0',
       'internmap@2.0.3',
       'minisearch@7.2.0',
+      'chrono-node@2.10.3',
       'rrule@2.8.1',
     ]);
     const policy = obsidian.parseYaml(

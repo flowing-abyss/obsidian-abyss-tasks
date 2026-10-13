@@ -29,6 +29,11 @@ const thirdPartyNotices = [
   dependencyNotice('d3-shape', chartsRequire.resolve('d3-shape'), 'LICENSE'),
   dependencyNotice('internmap', arrayRequire.resolve('internmap'), 'LICENSE'),
   dependencyNotice('minisearch', fileURLToPath(import.meta.resolve('minisearch')), 'LICENSE.txt'),
+  dependencyNotice(
+    'chrono-node',
+    fileURLToPath(import.meta.resolve('chrono-node/ru')),
+    'LICENSE.txt',
+  ),
   dependencyNotice('rrule', fileURLToPath(import.meta.resolve('rrule')), 'LICENCE'),
 ].join('\n\n\n');
 if (thirdPartyNotices.length === 0 || thirdPartyNotices.includes('*/')) {

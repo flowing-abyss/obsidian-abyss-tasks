@@ -42,6 +42,7 @@ describe('README', () => {
   it('keeps the exact approved runtime package roster', () => {
     expect(Object.keys(readManifest('package.json').dependencies ?? {})).toEqual([
       '@tanstack/charts',
+      'chrono-node',
       'minisearch',
       'rrule',
     ]);
