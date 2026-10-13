@@ -22,6 +22,8 @@ import process from 'process';
 // Shipped CSS is 185,777 bytes (+1,045), within its unchanged 185,856-byte limit.
 // Q caption transfer: Task 1 baseline 2,016,990 bytes; final 2,018,100 (+1,110 bytes).
 // Its minimal containing main limit is 2,018,304 bytes (1971 KiB); CSS is unchanged.
+// Q semantic metadata colors: accepted baseline 2,018,100 bytes; final 2,018,557 (+457 bytes).
+// Its minimal containing main limit is 2,019,328 bytes (1972 KiB); CSS is unchanged.
 // Dependency scope and budget enforcement are unchanged.
 const { mainJsBudgetBytes: MAIN_JS_BUDGET_BYTES } = JSON.parse(
   readFileSync('package.json', 'utf8'),

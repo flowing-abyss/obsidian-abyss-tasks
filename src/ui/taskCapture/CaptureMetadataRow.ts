@@ -1,6 +1,7 @@
 import { Menu, setIcon } from 'obsidian';
 import {
   localDate,
+  taskOccupiedDates,
   type LocalDate,
   type TaskCreateRequest,
   type TaskInputAction,
@@ -24,6 +25,7 @@ interface MetadataRowOptions {
   readonly isLive: () => boolean;
   readonly getTagColor?: (tag: string) => string | undefined;
   readonly formatDate?: (value: string, referenceDate?: string) => string;
+  readonly getDateClass?: (value: string, referenceDate?: string) => string;
   readonly interactionOwnership?: InteractionOwnershipPort;
 }
 interface Chip {
@@ -132,6 +134,7 @@ export class CaptureMetadataRow {
     metadata: CaptureMetadataSnapshot,
   ): void {
     const planning = this.planning(metadata);
+    const interval = taskOccupiedDates(planning).kind === 'interval';
     for (const role of ['due', 'scheduled', 'start'] as const) {
       const value = planning[role];
       if (value === undefined) continue;
@@ -140,8 +143,9 @@ export class CaptureMetadataRow {
       chip.body.setAttribute('aria-label', description);
       chip.body.setAttribute('title', description);
       const label = this.dateLabel(value, metadata.referenceDate);
-      this.content(chip, label, () => {
-        const content = chip.body.createSpan({ cls: 'abyss-task-date' });
+      const dateClass = this.dateClass(value, metadata.referenceDate, interval);
+      this.content(chip, `${label}:${dateClass}`, () => {
+        const content = chip.body.createSpan({ cls: `abyss-task-date ${dateClass}`.trim() });
         setIcon(content.createSpan({ cls: 'abyss-date-icon' }), 'calendar');
         content.createSpan({ text: label });
       });
@@ -153,7 +157,21 @@ export class CaptureMetadataRow {
       };
       chip.dismiss = { type: 'dismiss', role };
     }
-    this.renderTime(keys, disabled, planning.time);
+    const timeClass = this.dateClass(
+      planning.due ?? planning.scheduled ?? planning.start,
+      metadata.referenceDate,
+      interval,
+    );
+    this.renderTime(keys, disabled, planning.time, timeClass);
+  }
+  private dateClass(
+    value: LocalDate | undefined,
+    referenceDate: string | undefined,
+    interval: boolean,
+  ): string {
+    return value === undefined || interval
+      ? ''
+      : (this.options.getDateClass?.(value, referenceDate) ?? '');
   }
   private planning(metadata: CaptureMetadataSnapshot): Pick<TaskPlanning, DateRole | 'time'> {
     if (metadata.preview.type === 'valid') return metadata.preview.metadata.planning;
@@ -203,12 +221,17 @@ export class CaptureMetadataRow {
   private dateLabel(value: string, referenceDate?: string): string {
     return this.options.formatDate?.(value, referenceDate) ?? value;
   }
-  private renderTime(keys: Set<string>, disabled: boolean, value: string | undefined): void {
+  private renderTime(
+    keys: Set<string>,
+    disabled: boolean,
+    value: string | undefined,
+    dateClass: string,
+  ): void {
     if (value !== undefined) {
       const time = value;
       const chip = this.use(keys, disabled, 'time', { removable: true });
-      this.content(chip, value, () => {
-        const content = chip.body.createSpan({ cls: 'abyss-task-date' });
+      this.content(chip, `${value}:${dateClass}`, () => {
+        const content = chip.body.createSpan({ cls: `abyss-task-date ${dateClass}`.trim() });
         setIcon(content.createSpan({ cls: 'abyss-date-icon' }), 'clock');
         content.createSpan({ text: time });
       });

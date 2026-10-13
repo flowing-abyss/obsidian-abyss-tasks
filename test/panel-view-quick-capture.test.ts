@@ -1412,3 +1412,46 @@ it('formats Q dates against the frozen draft year, including when natural recogn
     await h.dispose();
   }
 });
+
+it('wires Q date and clock colors to the central classifier against its retained reference', async () => {
+  const readReference = vi.fn(() => reference);
+  const h = await mountQuickPanel(false, false, false, undefined, {
+    recognizer: new ChronoTaskInputRecognizer(),
+    readReference,
+  });
+  try {
+    const port = new MarkdownTaskCreatePreview(codec);
+    const plan = h.tasks.planCreate.bind(h.tasks);
+    vi.spyOn(h.tasks, 'planCreate').mockImplementation(async (destination, options) => {
+      const session = await plan(destination, options);
+      vi.spyOn(session, 'preview').mockImplementation((request) =>
+        port.preview({ ...request, today: reference.localDate, addCreatedDate: false }),
+      );
+      return session;
+    });
+    const input = await h.openQ();
+    input.value = 'Call tomorrow at 14:00';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    const contents = () => [...h.root.querySelectorAll('.abyss-capture-metadata .abyss-task-date')];
+    await vi.waitFor(() => {
+      expect(contents()).toHaveLength(2);
+    });
+    expect(contents().map((el) => el.className)).toEqual([
+      'abyss-task-date is-tomorrow',
+      'abyss-task-date is-tomorrow',
+    ]);
+    readReference.mockReturnValue({ ...reference, localDate: localDate('2026-10-14') });
+    input.value = 'Call tomorrow at 15:00';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await vi.waitFor(() => {
+      expect(contents()[1]?.textContent).toBe('15:00');
+    });
+    expect(contents().map((el) => el.className)).toEqual([
+      'abyss-task-date is-tomorrow',
+      'abyss-task-date is-tomorrow',
+    ]);
+    expect(readReference).toHaveBeenCalledOnce();
+  } finally {
+    await h.dispose();
+  }
+});

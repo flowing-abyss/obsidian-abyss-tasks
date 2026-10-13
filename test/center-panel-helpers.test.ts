@@ -600,6 +600,33 @@ describe('CenterPanel pure helpers', () => {
     });
   });
 
+  describe('date classes against an explicit capture reference', () => {
+    fixedToday('2027-04-20');
+
+    it.each([
+      ['2026-10-12', '2026-10-13', 'is-overdue'],
+      ['2026-10-13', '2026-10-13', 'is-today'],
+      ['2026-10-14', '2026-10-13', 'is-tomorrow'],
+      ['2026-10-15', '2026-10-13', 'is-soon'],
+      ['2026-10-20', '2026-10-13', ''],
+      ['2027-01-01', '2026-12-31', 'is-tomorrow'],
+      ['2027-01-02', '2026-12-31', 'is-soon'],
+    ])(
+      'classifies %s from %s rather than the live display day',
+      (date, referenceDate, expected) => {
+        const { panel } = makePanel([]);
+        expect(call<string>(panel, 'getDateClass', date, referenceDate)).toBe(expected);
+      },
+    );
+
+    it('keeps the central display-clock behavior when no reference is supplied', () => {
+      const { panel } = makePanel([]);
+      expect(panel.getDateClassForCapture('2027-04-20')).toBe('is-today');
+      expect(panel.getDateClassForCapture('2027-04-21')).toBe('is-tomorrow');
+      expect(panel.getDateClassForCapture('2027-04-22')).toBe('is-soon');
+    });
+  });
+
   describe('getListViewDefaults', () => {
     it('today list uses date grouping', () => {
       expect(getListViewDefaults('today').groupBy).toBe('date');

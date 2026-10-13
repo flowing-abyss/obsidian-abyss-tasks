@@ -11,6 +11,7 @@ export interface CaptureSurfaceOptions {
   readonly inputLabel?: string;
   readonly getTagColor?: (tag: string) => string | undefined;
   readonly formatDate?: (value: string, referenceDate?: string) => string;
+  readonly getDateClass?: (value: string, referenceDate?: string) => string;
   readonly interactionOwnership?: InteractionOwnershipPort;
   readonly isLive?: () => boolean;
   readonly placeholder?: string;

@@ -3754,13 +3754,18 @@ export class CenterPanel {
     return m.format('D MMM');
   }
 
-  private getDateClass_abyssPrivate(d: string): string {
-    const today = window.moment().format('YYYY-MM-DD');
+  getDateClassForCapture(value: string, referenceDate?: string): string {
+    return this.getDateClass_abyssPrivate(value, referenceDate);
+  }
+
+  private getDateClass_abyssPrivate(d: string, referenceDate?: string): string {
+    const reference = referenceDate === undefined ? moment() : moment(referenceDate, 'YYYY-MM-DD');
+    const today = reference.format('YYYY-MM-DD');
     if (d < today) return 'is-overdue';
     if (d === today) return 'is-today';
-    const tomorrow = window.moment().add(1, 'day').format('YYYY-MM-DD');
+    const tomorrow = reference.clone().add(1, 'day').format('YYYY-MM-DD');
     if (d === tomorrow) return 'is-tomorrow';
-    const dayAfter = window.moment().add(2, 'days').format('YYYY-MM-DD');
+    const dayAfter = reference.clone().add(2, 'days').format('YYYY-MM-DD');
     if (d === dayAfter) return 'is-soon';
     return '';
   }

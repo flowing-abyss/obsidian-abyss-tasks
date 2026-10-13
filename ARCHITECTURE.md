@@ -138,7 +138,14 @@ input remain unchanged. Canonical preview and frozen submission/retry receive th
 Empty forms may expose manual choices without a valid creation preview.
 
 `CaptureMetadataRow` and central task cards share tag and source-note content. Both resolve tag colors
-from the effective groups and observed task catalog. Q's `CaptureInteractionBoundary` owns the mounted
+from the effective groups and observed task catalog. PanelView injects CenterPanel's existing date
+classifier through the Q coordinator and surface as an optional presentation callback. Q supplies its
+frozen reference day; real context planning before the first edit uses the display clock without
+freezing the controller. Point-date badges reuse the central semantic classes, and the independent
+clock follows the primary due, scheduled, then start date. `taskOccupiedDates` keeps interval date/time
+content neutral, including equal start/due bounds. A draft retained across midnight may therefore
+keep a different semantic color from a newly rendered central card, matching its frozen interpretation.
+Q's `CaptureInteractionBoundary` owns the mounted
 input, row, native menus and picker roots in their document. Explicit Enter and proven exit share one
 settlement path: picker drafts, raw input and recognition, then one submit. Invalid picker drafts block
 submission with inline feedback. Ordinary typing coalesces for 24 ms; Enter and exit flush synchronously.

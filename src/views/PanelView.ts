@@ -943,6 +943,8 @@ export class PanelView extends ItemView {
             selectionTasks.queries.observedTags(),
           ),
         ),
+      getDateClass: (value, referenceDate) =>
+        this.center_abyssPrivate.getDateClassForCapture(value, referenceDate),
       formatDate: (value, referenceDate) =>
         moment(value, 'YYYY-MM-DD').format(
           value.slice(0, 4) === referenceDate?.slice(0, 4) ? 'D MMM' : 'D MMM YYYY',

@@ -12,7 +12,10 @@ afterEach(() => {
   vi.restoreAllMocks();
   document.body.empty();
 });
-function harness(initial?: TaskCreateRequest['initial']) {
+function harness(
+  initial?: TaskCreateRequest['initial'],
+  getDateClass?: (value: string, referenceDate?: string) => string,
+) {
   vi.useFakeTimers();
   const port = new MarkdownTaskCreatePreview(codec);
   const execute = vi.fn(async (_request: TaskCreateRequest) => ({
@@ -48,7 +51,11 @@ function harness(initial?: TaskCreateRequest['initial']) {
     onResult: vi.fn(),
     onRequestClose: vi.fn(),
   });
-  const surface = new CaptureSurface(host, controller, { getTagColor: () => '#ff0000' });
+  const options = {
+    getTagColor: () => '#ff0000',
+    ...(getDateClass === undefined ? {} : { getDateClass }),
+  };
+  const surface = new CaptureSurface(host, controller, options);
   surface.focus();
   const type = (raw: string) => {
     surface.input.value = raw;
@@ -594,3 +601,157 @@ it('identifies the clock phrase that supplies an inferred date', () => {
   expect(date.title).not.toContain('at 14:00');
   h.surface.destroy();
 });
+
+it('updates unchanged clock text with the edited date class and preserves the date button and focus', () => {
+  const classes: Record<string, string> = {
+    '2026-10-13': 'is-today',
+    '2026-10-14': 'is-tomorrow',
+  };
+  const getDateClass = vi.fn((value: string, referenceDate?: string) =>
+    referenceDate === '2026-10-13' ? (classes[value] ?? '') : '',
+  );
+  const h = harness(undefined, getDateClass);
+  const raw = 'Call tomorrow ⏰ 14:00';
+  h.type(raw);
+  vi.advanceTimersByTime(24);
+  const date = h.button('Edit due date');
+  const clock = () => expectDefined(h.button('Remove time').previousElementSibling);
+  const content = (body: Element) => expectDefined(body.querySelector('.abyss-task-date'));
+  expect(content(date).classList.contains('is-tomorrow')).toBe(true);
+  expect(content(clock()).classList.contains('is-tomorrow')).toBe(true);
+  expect(getDateClass).toHaveBeenCalledWith('2026-10-14', '2026-10-13');
+  date.focus();
+  h.controller.applyMetadataAction({
+    type: 'select-date',
+    role: 'due',
+    value: localDate('2026-10-13'),
+  });
+  expect(h.button('Edit due date')).toBe(date);
+  expect(document.activeElement).toBe(date);
+  expect(content(date).classList.contains('is-today')).toBe(true);
+  expect(content(clock()).classList.contains('is-today')).toBe(true);
+  expect(content(clock()).textContent).toBe('14:00');
+  h.button('Remove due date').click();
+  expect(content(clock()).className).toBe('abyss-task-date');
+  h.button('Restore').click();
+  expect(content(h.button('Edit due date')).classList.contains('is-today')).toBe(true);
+  expect(content(clock()).classList.contains('is-today')).toBe(true);
+  expect(h.surface.input.value).toBe(raw);
+  expect(h.execute).not.toHaveBeenCalled();
+  h.surface.destroy();
+});
+
+it.each(['2026-10-13', '2026-10-14'])(
+  'keeps an interval starting %s neutral, then recolors the unchanged end and clock on removal and Restore',
+  (start) => {
+    const h = harness(
+      {
+        start: { type: 'set', value: localDate(start) },
+        due: { type: 'set', value: localDate('2026-10-14') },
+      },
+      () => 'is-tomorrow',
+    );
+    h.type('Call ⏰ 14:00');
+    vi.advanceTimersByTime(24);
+    const date = h.button('Edit due date');
+    const clock = expectDefined(h.button('Remove time').previousElementSibling);
+    const classes = () =>
+      [...h.host.querySelectorAll('.abyss-task-date')].map((el) => el.className);
+    expect(classes()).toEqual(['abyss-task-date', 'abyss-task-date', 'abyss-task-date']);
+    date.focus();
+    h.button('Remove start date').click();
+    expect(h.button('Edit due date')).toBe(date);
+    expect(document.activeElement).toBe(date);
+    expect(classes()).toEqual(['abyss-task-date is-tomorrow', 'abyss-task-date is-tomorrow']);
+    expect(clock.textContent).toBe('14:00');
+    h.button('Restore').click();
+    expect(classes()).toEqual(['abyss-task-date', 'abyss-task-date', 'abyss-task-date']);
+    expect(h.button('Edit due date')).toBe(date);
+    expect(document.activeElement).toBe(date);
+    expect(h.surface.input.value).toBe('Call ⏰ 14:00');
+    h.surface.destroy();
+  },
+);
+
+it('colors raw time by its inferred due date while actual time-only planning stays neutral', () => {
+  const h = harness(undefined, (value, referenceDate) =>
+    value === '2026-10-13' && referenceDate === '2026-10-13' ? 'is-today' : '',
+  );
+  h.type('Call ⏰ 14:00');
+  vi.advanceTimersByTime(24);
+  expect([...h.host.querySelectorAll('.abyss-task-date')].map((el) => el.className)).toEqual([
+    'abyss-task-date',
+  ]);
+  h.type('Call at 14:00');
+  vi.advanceTimersByTime(24);
+  expect([...h.host.querySelectorAll('.abyss-task-date')].map((el) => el.className)).toEqual([
+    'abyss-task-date is-today',
+    'abyss-task-date is-today',
+  ]);
+  h.surface.destroy();
+});
+
+it('keeps dates and time neutral when their presentation classifier is absent', () => {
+  const h = harness();
+  h.type('Call tomorrow at 14:00');
+  vi.advanceTimersByTime(24);
+  expect([...h.host.querySelectorAll('.abyss-task-date')].map((el) => el.className)).toEqual([
+    'abyss-task-date',
+    'abyss-task-date',
+  ]);
+  h.surface.destroy();
+});
+
+it('classifies real context planning before editing without freezing the input reference', () => {
+  const h = harness({ due: { type: 'set', value: localDate('2026-10-14') } }, () => 'is-tomorrow');
+  expect(h.button('Edit due date').querySelector('.abyss-task-date')?.className).toBe(
+    'abyss-task-date is-tomorrow',
+  );
+  expect(h.controller.snapshot().metadata?.referenceDate).toBeUndefined();
+  expect(h.controller.snapshot().metadata?.preview.type).toBe('invalid');
+  h.surface.destroy();
+});
+
+it.each([
+  {
+    role: 'due' as const,
+    initial: {
+      due: { type: 'set' as const, value: localDate('2026-10-13') },
+      scheduled: { type: 'set' as const, value: localDate('2026-10-14') },
+    },
+    before: ['abyss-task-date is-today', 'abyss-task-date is-tomorrow', 'abyss-task-date is-today'],
+    after: ['abyss-task-date is-tomorrow', 'abyss-task-date is-tomorrow'],
+  },
+  {
+    role: 'scheduled' as const,
+    initial: {
+      scheduled: { type: 'set' as const, value: localDate('2026-10-14') },
+      start: { type: 'set' as const, value: localDate('2026-10-15') },
+    },
+    before: [
+      'abyss-task-date is-tomorrow',
+      'abyss-task-date is-soon',
+      'abyss-task-date is-tomorrow',
+    ],
+    after: ['abyss-task-date is-soon', 'abyss-task-date is-soon'],
+  },
+])(
+  'colors point dates independently and moves the clock after removing $role',
+  ({ role, initial, before, after }) => {
+    const classes: Record<string, string> = {
+      '2026-10-13': 'is-today',
+      '2026-10-14': 'is-tomorrow',
+      '2026-10-15': 'is-soon',
+    };
+    const h = harness(initial, (value) => classes[value] ?? '');
+    h.type('Call ⏰ 14:00');
+    vi.advanceTimersByTime(24);
+    const colors = () => [...h.host.querySelectorAll('.abyss-task-date')].map((el) => el.className);
+    expect(colors()).toEqual(before);
+    h.button(`Remove ${role} date`).click();
+    expect(colors()).toEqual(after);
+    h.button('Restore').click();
+    expect(colors()).toEqual(before);
+    h.surface.destroy();
+  },
+);
