@@ -10463,7 +10463,7 @@ button.abyss-statistics-row-button:focus-visible {
   flex-wrap: wrap;
   align-items: center;
   gap: var(--size-4-1) var(--size-4-3);
-  padding: var(--size-4-1) var(--size-4-2);
+  padding: calc(var(--size-4-2) - var(--size-2-1)) var(--size-4-2) 0;
   min-width: 0;
   position: relative;
 }
