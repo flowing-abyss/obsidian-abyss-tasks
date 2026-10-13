@@ -201,6 +201,8 @@ function recognizedNumeric(context: Recognition, range: TaskInputRange): TaskInp
   if (date === undefined || badEdge)
     return candidate(range, { status: 'unsupported', reason: 'numeric' });
   const owned = ownedCue(context.text, range);
+  if (contentDate(context.text, owned))
+    return candidate(owned, { status: 'unsupported', reason: 'content' });
   return candidate(owned, { date, dateRanges: [owned], yearExplicit, dateOrigin: 'named' });
 }
 function recognizeNumeric(context: Recognition): TaskInputCandidate[] {
@@ -380,6 +382,8 @@ function mergePair(
   )
     return undefined;
   const tags = inspectTaskInput(context.text).tags.map((tag) => tag.range);
+  const gap = maskInputRanges(context.text, tags).slice(left.to, right.from);
+  if (/(?:^|[^\p{L}\p{N}_])(?:or|или)(?=$|[^\p{L}\p{N}_])/iu.test(gap)) return undefined;
   const isTag = (range: TaskInputRange): boolean =>
     tags.some((tag) => tag.from === range.from && tag.to === range.to);
   if (

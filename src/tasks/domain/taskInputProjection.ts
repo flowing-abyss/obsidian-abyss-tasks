@@ -223,15 +223,31 @@ function useNaturalDay(decision: Decision): boolean {
   if (day.status === 'point') decision.consumed.push(binding);
   return true;
 }
+function eligibleManualBinding(decision: Decision, binding: TaskInputBinding): boolean {
+  const { state, inspection } = decision.input;
+  if (!currentInputBinding(state.raw, state.revision, binding)) return false;
+  if (
+    binding.ranges.some((range) =>
+      inspection.protectedRanges.some((protectedRange) =>
+        inputRangesOverlap(range, protectedRange),
+      ),
+    )
+  )
+    return false;
+  return decision.candidates.some(
+    (candidate) =>
+      candidate.status === 'point' &&
+      candidate.date !== undefined &&
+      !candidateSuppressed(decision.suppressed, candidate, 'due') &&
+      JSON.stringify(candidate.dateRanges) === JSON.stringify(binding.dateRanges),
+  );
+}
 function useManualDay(decision: Decision, role: TaskInputDateRole): boolean {
   const { state } = decision.input,
     manual = state.manual[role];
   if (manual === undefined) return false;
   decision.initial = { ...decision.initial, [role]: { type: 'set', value: manual.value } };
-  if (
-    manual.binding !== undefined &&
-    currentInputBinding(state.raw, state.revision, manual.binding)
-  ) {
+  if (manual.binding !== undefined && eligibleManualBinding(decision, manual.binding)) {
     decision.bindings.push(manual.binding);
     decision.consumed.push(manual.binding);
   }

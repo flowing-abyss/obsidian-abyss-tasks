@@ -198,3 +198,41 @@ describe('clock lexical boundaries', () => {
     },
   );
 });
+
+describe('review regressions: alternatives and numeric content dates', () => {
+  it.each(['Call tomorrow or at 14:00', 'Позвонить завтра или в 14:00'])(
+    'keeps alternatives neutral and literal: %s',
+    (raw) => {
+      const result = project(createTaskInputState(raw));
+      expect(result.initial.due).toBeUndefined();
+      expect(result.initial.time).toBeUndefined();
+      expect(result.ambiguity).toBe(true);
+      expect(result.markdownBody).toBe(raw);
+    },
+  );
+  it.each(['report for 2026-10-15', 'Подготовить отчёт за 15.10.2026'])(
+    'keeps numeric report dates literal: %s',
+    (raw) => {
+      const result = project(createTaskInputState(raw));
+      expect(result.initial.due).toBeUndefined();
+      expect(result.initial.time).toBeUndefined();
+      expect(result.markdownBody).toBe(raw);
+      expect(result.candidates).toEqual([
+        expect.objectContaining({ status: 'unsupported', reason: 'content' }),
+      ]);
+    },
+  );
+});
+
+describe('alternative guard preserves canonical tag joins', () => {
+  it.each([
+    ['Call tomorrow #or at 14:00', 'Call #or'],
+    ['Позвонить завтра #или в 14:00', 'Позвонить #или'],
+  ])('%s', (raw, body) => {
+    const result = project(createTaskInputState(raw));
+    expect(result.initial.due).toEqual({ type: 'set', value: '2026-10-14' });
+    expect(result.initial.time).toEqual({ type: 'set', value: '14:00' });
+    expect(result.ambiguity).toBe(false);
+    expect(result.markdownBody).toBe(body);
+  });
+});

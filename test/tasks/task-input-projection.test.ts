@@ -345,3 +345,24 @@ describe('compound source conservation when one component loses priority', () =>
     expect(result.markdownBody).toBe(edited.raw);
   });
 });
+
+describe('review regressions: current manual source eligibility', () => {
+  it.each(['`Call tomorrow`', 'Call tomorrow morning', 'Call not tomorrow'])(
+    'preserves manual day but leaves currently ineligible source literal: %s',
+    (raw) => {
+      const state = createTaskInputState('Call tomorrow');
+      const manual = applyTaskInputAction(
+        state,
+        { type: 'select-date', role: 'due', value: localDate('2026-10-20') },
+        project(state),
+        inspectTaskInput(state.raw),
+      );
+      const edited = editTaskInput(manual, raw);
+      const result = project(edited);
+      expect(result.initial.due).toEqual({ type: 'set', value: '2026-10-20' });
+      expect(result.initial.time).toBeUndefined();
+      expect(result.markdownBody).toBe(raw);
+      expect(result.bindings).toEqual([]);
+    },
+  );
+});
