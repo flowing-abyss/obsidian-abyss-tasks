@@ -1145,7 +1145,7 @@ describe('TaskApplicationService lifecycle routing', () => {
 
     expect(prepare).toHaveBeenCalledOnce();
     expect(create).toHaveBeenNthCalledWith(1, appendDestination, {
-      markdownBody: 'Plan #inbox first planned task',
+      markdownBody: 'Plan first planned task',
       initial: { tags: { add: ['#work'], remove: ['#inbox'] } },
       today: localDate('2026-07-14'),
       addCreatedDate: true,
@@ -2358,42 +2358,42 @@ describe('ordinary subtask prefix ownership through repositories', () => {
       root: 'Root #project',
       owner: undefined,
       enabled: false,
-      child: 'Added #custom',
+      child: 'Added',
     },
     {
       name: 'enabled outside Inbox',
       root: 'Root #project',
       owner: undefined,
       enabled: true,
-      child: '#task/one-off Added #custom',
+      child: '#task/one-off Added',
     },
     {
       name: 'untagged Inbox',
       root: 'Root',
       owner: undefined,
       enabled: true,
-      child: 'Added #custom',
+      child: 'Added',
     },
     {
       name: 'tagged Inbox with tagged child',
       root: 'Root #TASK/INBOX',
       owner: 'Owner #project',
       enabled: true,
-      child: 'Added #custom',
+      child: 'Added',
     },
     {
       name: 'non-Inbox with untagged child',
       root: 'Root #project',
       owner: 'Owner',
       enabled: true,
-      child: '#task/one-off Added #custom',
+      child: '#task/one-off Added',
     },
     {
       name: 'non-Inbox with Inbox-tagged child',
       root: 'Root #project',
       owner: 'Owner #task/inbox',
       enabled: true,
-      child: '#task/one-off Added #custom',
+      child: '#task/one-off Added',
     },
   ];
   it.each(
@@ -2429,14 +2429,12 @@ describe('ordinary subtask prefix ownership through repositories', () => {
         ? { type: 'task' as const, ref: original.ref }
         : { type: 'subtask' as const, ref: expectDefined(original.subtasks[0]).ref };
     const current = taskFrom(
-      await api.execute({ type: 'add-subtask', parent, text: 'Added #custom' }),
+      await api.execute({ type: 'add-subtask', parent, text: 'Added' }),
       'child not added',
     );
     const added = owner === undefined ? current.subtasks[0] : current.subtasks[0]?.subtasks[0];
     expect(added?.markdownTitle).toBe('Added');
-    expect(added?.tags).toEqual(
-      child.startsWith('#task/one-off') ? ['#task/one-off', '#custom'] : ['#custom'],
-    );
+    expect(added?.tags).toEqual(child.startsWith('#task/one-off') ? ['#task/one-off'] : []);
     expect(await h.read()).toContain(`- [ ] ${child}`);
   });
 });

@@ -87,6 +87,77 @@ async function harness(
 }
 
 describe('retained canonical create preview', () => {
+  it('uses selected tags instead of fallback tags in context, preview and saved Markdown', async () => {
+    const h = await harness({ prefix: '#task/one-off' });
+    const session = await h.service.planCreate({ type: 'configured-default' });
+    const initial = { tags: { add: ['#task/multistep'] } };
+    expect(session.previewContext?.({ markdownBody: '', initial })).toMatchObject({
+      type: 'ready',
+      metadata: { tags: ['#task/multistep'] },
+    });
+    const request = { markdownBody: 'Новая задача', initial };
+    expect(session.preview(request)).toMatchObject({
+      type: 'valid',
+      metadata: { tags: ['#task/multistep'] },
+    });
+    expect((await session.execute(request)).type).toBe('ok');
+    expect(h.readCanonicalRoot(expectDefined(h.repositoryWrites[0])).tags).toEqual([
+      '#task/multistep',
+    ]);
+  });
+
+  it.each([
+    { body: 'Call', tags: ['#base', '#second'] },
+    { body: 'Call #specific', tags: ['#specific'] },
+    { body: 'Call #BASE', tags: ['#BASE'] },
+    {
+      body: 'Call #specific',
+      initial: { tags: { remove: ['#specific'] } },
+      tags: ['#base', '#second'],
+    },
+    { body: 'Call', initial: { tags: { remove: ['#base', '#second'] } }, tags: [] },
+    {
+      body: 'Call',
+      initial: { tags: { add: ['#specific'], remove: ['#specific'] } },
+      tags: ['#base', '#second'],
+    },
+    { body: 'Call #specific', initial: { tags: { remove: ['#base'] } }, tags: ['#specific'] },
+  ])('keeps literal fallback expectations for $body $initial', async ({ body, tags, ...row }) => {
+    const h = await harness({ prefix: '#base #second' });
+    const session = await h.service.planCreate({ type: 'configured-default' });
+    const request = { markdownBody: body, ...row };
+    expect(session.preview(request)).toMatchObject({ type: 'valid', metadata: { tags } });
+    expect((await session.execute(request)).type).toBe('ok');
+    expect(h.readCanonicalRoot(expectDefined(h.repositoryWrites[0])).tags).toEqual(tags);
+  });
+
+  it.each([
+    { mode: 'tag', remove: true, body: 'Call', tags: ['#task/inbox'], member: true },
+    { mode: 'tag', remove: false, body: 'Call #specific', tags: ['#specific'], member: false },
+    { mode: 'tag', remove: true, body: 'Call #specific', tags: ['#specific'], member: false },
+    { mode: 'untagged', remove: true, body: 'Call', tags: ['#task/inbox'], member: false },
+    { mode: 'untagged', remove: false, body: 'Call #specific', tags: ['#specific'], member: false },
+    { mode: 'untagged', remove: true, body: 'Call #specific', tags: ['#specific'], member: false },
+    { mode: 'both', remove: true, body: 'Call', tags: ['#task/inbox'], member: true },
+    { mode: 'both', remove: false, body: 'Call #specific', tags: ['#specific'], member: false },
+    { mode: 'both', remove: true, body: 'Call #specific', tags: ['#specific'], member: false },
+  ] as const)('keeps fallback classification under $mode/remove=$remove: $body', async (row) => {
+    const h = await harness({
+      prefix: '#task/inbox',
+      inboxMode: row.mode,
+      removeInbox: row.remove,
+    });
+    const session = await h.service.planCreate({ type: 'configured-default' });
+    const request = { markdownBody: row.body };
+    expect(session.preview(request)).toMatchObject({
+      type: 'valid',
+      metadata: { tags: row.tags },
+      inbox: { member: row.member },
+    });
+    expect((await session.execute(request)).type).toBe('ok');
+    expect(h.readCanonicalRoot(expectDefined(h.repositoryWrites[0])).tags).toEqual(row.tags);
+  });
+
   it('freezes Inbox policy and removes its automatic tag without writing', async () => {
     const { service, behavior, repositoryWrites, readCanonicalRoot } = await harness({
       prefix: '#prefix',
@@ -116,7 +187,7 @@ describe('retained canonical create preview', () => {
     {
       prefix: '#WORK',
       input: { markdownBody: 'Call #work #other', initial: { tags: { add: ['#Work', '#next'] } } },
-      tags: ['#WORK', '#other', '#next'],
+      tags: ['#work', '#other', '#next'],
     },
     {
       prefix: '#prefix',
@@ -353,7 +424,7 @@ describe('retained title-free canonical context', () => {
       referenceDate: '2026-10-13',
       sourcePlanning: { due: '2026-10-15', time: '23:30' },
       metadata: {
-        tags: ['#task/one-off', '#work'],
+        tags: ['#work'],
         planning: { due: '2026-10-14', time: '23:30', duration: 30 },
         priority: 'C',
       },

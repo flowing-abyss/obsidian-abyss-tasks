@@ -432,7 +432,7 @@ describe('Q context before authored input', () => {
     },
     {
       context: { type: 'list', selection: { type: 'tag', tag: '#selected' } },
-      tags: ['#task/one-off', '#selected'],
+      tags: ['#selected'],
       planning: {},
     },
     {
@@ -477,34 +477,56 @@ describe('Q context before authored input', () => {
     },
   );
 
-  it.each(['prefix', 'selected'] as const)(
-    'removes and restores the empty %s tag without editing raw bytes',
-    async (tag) => {
+  it('falls back after selected-tag removal and keeps removed defaults absent through edits and save', async () => {
+    const h = await smartHarness(
+      { prefix: '#prefix' },
+      { resolveContext: { type: 'list', selection: { type: 'tag', tag: '#selected' } } },
+    );
+    const tags = () => h.controller.snapshot().metadata?.context;
+    expect(tags()).toMatchObject({ type: 'ready', metadata: { tags: ['#selected'] } });
+    h.controller.applyMetadataAction({ type: 'remove-tag', tag: '#selected' });
+    expect(tags()).toMatchObject({ type: 'ready', metadata: { tags: ['#prefix'] } });
+    h.controller.applyMetadataAction({ type: 'remove-tag', tag: '#prefix' });
+    expect(tags()).toMatchObject({ type: 'ready', metadata: { tags: [] } });
+    h.controller.setDraft('Call');
+    expect(h.controller.snapshot().metadata?.preview).toMatchObject({
+      type: 'valid',
+      metadata: { tags: [] },
+    });
+    h.controller.applyMetadataAction({ type: 'dismiss', role: 'due' });
+    expect(h.controller.snapshot().metadata?.preview).toMatchObject({
+      type: 'valid',
+      metadata: { tags: [] },
+    });
+    expect(h.controller.snapshot().draft).toBe('Call');
+    await h.controller.submit('enter');
+    expect(h.readCanonicalRoot(expectDefined(h.repositoryWrites[0])).tags).toEqual([]);
+  });
+
+  it.each(['selected', 'fallback'] as const)(
+    'restores %s tags alone without editing raw bytes',
+    async (stage) => {
       const h = await smartHarness(
         { prefix: '#prefix' },
-        { resolveContext: { type: 'list', selection: { type: 'tag', tag: '#selected' } } },
+        stage === 'selected'
+          ? { resolveContext: { type: 'list', selection: { type: 'tag', tag: '#selected' } } }
+          : { resolveContext: { type: 'project-dashboard', path: 'Project.md' } },
       );
+      const expected = stage === 'selected' ? ['#selected'] : ['#prefix'];
+      h.controller.applyMetadataAction({ type: 'remove-tag', tag: expected[0] ?? '' });
       expect(h.controller.snapshot().metadata?.context).toMatchObject({
         type: 'ready',
-        metadata: { tags: ['#prefix', '#selected'] },
-      });
-      h.controller.applyMetadataAction({ type: 'remove-tag', tag: `#${tag}` });
-      expect(h.controller.snapshot().draft).toBe('');
-      expect(h.controller.snapshot().metadata?.context).toMatchObject({
-        type: 'ready',
-        metadata: { tags: [tag === 'prefix' ? '#selected' : '#prefix'] },
+        metadata: { tags: stage === 'selected' ? ['#prefix'] : [] },
       });
       h.controller.applyMetadataAction({ type: 'restore' });
       expect(h.controller.snapshot().metadata?.context).toMatchObject({
         type: 'ready',
-        metadata: { tags: ['#prefix', '#selected'] },
+        metadata: { tags: expected },
       });
+      expect(h.controller.snapshot().draft).toBe('');
       h.controller.setDraft('Call');
       await h.controller.submit('enter');
-      expect(h.readCanonicalRoot(expectDefined(h.repositoryWrites[0])).tags).toEqual([
-        '#prefix',
-        '#selected',
-      ]);
+      expect(h.readCanonicalRoot(expectDefined(h.repositoryWrites[0])).tags).toEqual(expected);
     },
   );
 
@@ -548,7 +570,7 @@ describe('Q context before authored input', () => {
     expect(h.controller.snapshot().metadata?.context).toMatchObject({
       type: 'ready',
       sourcePlanning: { due: '2026-10-20' },
-      metadata: { tags: ['#prefix', '#selected'], planning: { due: '2026-10-20' } },
+      metadata: { tags: ['#selected'], planning: { due: '2026-10-20' } },
     });
     expect(h.readReference).not.toHaveBeenCalled();
     expect(h.recognize).not.toHaveBeenCalled();
@@ -565,21 +587,21 @@ describe('Q context before authored input', () => {
       type: 'ready',
       metadata: { planning: { due: '2026-10-20' } },
     });
-    h.controller.applyMetadataAction({ type: 'remove-tag', tag: '#prefix' });
+    h.controller.applyMetadataAction({ type: 'remove-tag', tag: '#selected' });
     expect(h.controller.snapshot().metadata?.context).toMatchObject({
       type: 'ready',
-      metadata: { tags: ['#selected'] },
+      metadata: { tags: ['#prefix'] },
     });
     h.controller.applyMetadataAction({ type: 'restore' });
     h.controller.setDraft(`Call${raw}`);
     expect(h.controller.snapshot().metadata?.preview).toMatchObject({
       type: 'valid',
-      metadata: { tags: ['#prefix', '#selected'], planning: { due: '2026-10-20' } },
+      metadata: { tags: ['#selected'], planning: { due: '2026-10-20' } },
     });
     await h.controller.submit('enter');
     expect(h.readCanonicalRoot(expectDefined(h.repositoryWrites[0]))).toMatchObject({
       markdownTitle: 'Call',
-      tags: ['#prefix', '#selected'],
+      tags: ['#selected'],
       planning: { due: '2026-10-20' },
     });
   });
@@ -1003,12 +1025,12 @@ const agreementCases: ReadonlyArray<{
 ];
 function agreementTags(
   tags: readonly string[],
-  prefixed: boolean,
+  defaults: readonly string[],
   inbox: boolean,
   removeInbox: boolean,
 ): readonly string[] {
   return [
-    ...(prefixed && !inbox ? ['#prefix'] : []),
+    ...(!inbox && tags.length === 0 ? defaults : []),
     ...tags,
     ...(inbox && !removeInbox ? ['#task/inbox'] : []),
   ];
@@ -1051,10 +1073,14 @@ describe('canonical agreement independent oracles', () => {
             maxLength: 5,
           })
           .map((words) => words.join(' ')),
+        fc.constantFrom(
+          { prefix: '', tags: [] },
+          { prefix: '#prefix', tags: ['#prefix'] },
+          { prefix: '#first #second', tags: ['#first', '#second'] },
+        ),
         fc.boolean(),
-        fc.boolean(),
-        async (row, title, prefixed, removeInbox) => {
-          const h = await harness({ prefix: prefixed ? '#prefix' : '', removeInbox });
+        async (row, title, fallback, removeInbox) => {
+          const h = await harness({ prefix: fallback.prefix, removeInbox });
           const session = await h.service.planCreate(
             { type: 'configured-default' },
             row.body.includes('#new/tag') ? { intent: 'inbox' } : undefined,
@@ -1071,7 +1097,7 @@ describe('canonical agreement independent oracles', () => {
             await expectInvalidAgreement(h, session, request, { issueCode: row.invalid, before });
           } else {
             const inbox = row.body.includes('#new/tag');
-            const tags = agreementTags(row.tags ?? [], prefixed, inbox, removeInbox);
+            const tags = agreementTags(row.tags ?? [], fallback.tags, inbox, removeInbox);
             const planning = row.due === undefined ? {} : { due: row.due };
             expect(preview).toMatchObject({
               type: 'valid',

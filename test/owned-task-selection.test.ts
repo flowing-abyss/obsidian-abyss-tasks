@@ -289,7 +289,7 @@ describe('owned non-structural inspector selection', () => {
   );
 
   it.each([
-    { text: 'Added #inbox #work #work', actual: '#prefix Added #work', addCreatedDate: false },
+    { text: 'Added #inbox #work #work', actual: 'Added #work', addCreatedDate: false },
     { text: 'Added', actual: '#prefix Added ➕ 2026-09-20', addCreatedDate: true },
     { text: 'Added ➕ 2026-09-01', actual: '#prefix Added ➕ 2026-09-01', addCreatedDate: true },
   ])(
@@ -340,10 +340,10 @@ describe('owned non-structural inspector selection', () => {
   );
 
   it.each([
-    { root: 'Root #project', enabled: false, child: 'Added #custom' },
-    { root: 'Root #project', enabled: true, child: '#prefix Added #custom' },
-    { root: 'Root #TASK/INBOX', enabled: true, child: 'Added #custom' },
-    { root: 'Root', enabled: true, child: 'Added #custom' },
+    { root: 'Root #project', enabled: false, child: 'Added' },
+    { root: 'Root #project', enabled: true, child: '#prefix Added' },
+    { root: 'Root #TASK/INBOX', enabled: true, child: 'Added' },
+    { root: 'Root', enabled: true, child: 'Added' },
   ])(
     'keeps strict owned creation proof for $root, enabled=$enabled',
     ({ root, enabled, child }) => {
@@ -359,17 +359,13 @@ describe('owned non-structural inspector selection', () => {
       const command: TaskCommand = {
         type: 'add-subtask',
         parent: { type: 'subtask', ref: parent.ref },
-        text: 'Added #custom',
+        text: 'Added',
       };
       const current = snapshot(`${original.source.originalBlock}\n    - [ ] ${child}`, 'after');
       expect(
         rebuildOwnedTaskSelection(current, [original, parent], command, policy)?.[1]?.ref,
       ).toEqual(current.subtasks[0]?.ref);
-      for (const wrong of [
-        'Foreign #custom',
-        `${child} #unexpected`,
-        `${child}\n    - [ ] Extra`,
-      ]) {
+      for (const wrong of ['Foreign', `${child} #unexpected`, `${child}\n    - [ ] Extra`]) {
         expect(
           rebuildOwnedTaskSelection(
             snapshot(`${original.source.originalBlock}\n    - [ ] ${wrong}`, 'wrong'),

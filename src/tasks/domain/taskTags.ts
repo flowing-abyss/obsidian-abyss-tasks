@@ -198,14 +198,32 @@ function withoutInitialInbox(
   };
 }
 
-/** Applies prefix text, per-task deduplication, and Inbox removal to authored task Markdown. */
+/** Resolves fallback ownership on the composed root, including protected Markdown spanning inputs. */
+function withFallbackPrefixTags(
+  prefix: string,
+  markdown: string,
+  initial: TaskTagChange | undefined,
+): string {
+  const combined = prefixTaskMarkdown(prefix, markdown);
+  const prefixEnd = prefix.trim().length;
+  const lines = sourceLines(combined);
+  const { content, ending } = withoutLineEnding(lines[0] ?? '');
+  const occurrences = tagOccurrences(content, true);
+  const requestStart = prefixEnd === 0 ? 0 : prefixEnd + 1;
+  const authored = occurrences.filter(({ from }) => from >= requestStart);
+  if (rootTagsAfterInitial(authored, initial).size === 0) return combined;
+  const prefixOwned = occurrences.filter(({ to }) => to <= prefixEnd);
+  return `${removeOccurrences(content, prefixOwned)}${ending}${lines.slice(1).join('')}`;
+}
+
+/** Applies fallback prefix tags, per-task deduplication, and Inbox removal to task Markdown. */
 export function applyTaskCreationTagPolicy(
   prefix: string,
   markdown: string,
   inbox: TaskInboxTagPolicy,
   initial?: TaskTagChange,
 ): TaskCreationTagPolicyResult {
-  const combined = prefixTaskMarkdown(prefix, markdown);
+  const combined = withFallbackPrefixTags(prefix, markdown, initial);
   const inboxTag = configuredInboxTag(inbox);
   let rootRemovesInbox = false;
   const lines = sourceLines(combined).map((line, index) => {

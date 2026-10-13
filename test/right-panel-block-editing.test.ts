@@ -242,7 +242,7 @@ describe('RightPanel block editing', () => {
         const input = expectDefined(
           h.el.querySelector<HTMLInputElement>('.abyss-subtask-new-input'),
         );
-        for (const text of ['First #custom', 'Second #custom']) {
+        for (const text of ['First', 'Second']) {
           input.value = text;
           input.dispatchEvent(new Event('input', { bubbles: true }));
           input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
@@ -254,7 +254,7 @@ describe('RightPanel block editing', () => {
           await flushMicrotasks(20);
           expect(
             h.node('Owner').node.subtasks[h.node('Owner').node.subtasks.length - 1]?.tags,
-          ).toEqual(prefix === '' ? ['#custom'] : ['#prefix', '#custom']);
+          ).toEqual(prefix === '' ? [] : ['#prefix']);
           expect(h.el.querySelector('.abyss-subtask-new-input')).toBe(input);
           expect(input.isConnected).toBe(true);
           expect(input.value).toBe('');

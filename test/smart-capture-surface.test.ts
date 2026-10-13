@@ -129,23 +129,23 @@ describe('canonical Q context representation', () => {
       },
     );
     try {
-      expect(h.contents()).toEqual(['#prefix', '#selected']);
+      expect(h.contents()).toEqual(['#selected']);
       expect(h.description()).toBe('');
       expect(h.readReference).not.toHaveBeenCalled();
       expect(h.recognize).not.toHaveBeenCalled();
       h.settings.sourceNoteDisplay = 'always';
       h.settings.taskPrefix = '#changed';
       h.controller.flushRecognition();
-      expect(h.contents()).toEqual(['tasks', '#prefix', '#selected']);
+      expect(h.contents()).toEqual(['tasks', '#selected']);
       expect(h.description()).toBe('tasks');
-      h.button('Remove #prefix').click();
-      expect(h.contents()).toEqual(['tasks', '#selected', 'Restore']);
+      h.button('Remove #selected').click();
+      expect(h.contents()).toEqual(['tasks', '#prefix', 'Restore']);
       h.button('Restore').click();
-      expect(h.contents()).toEqual(['tasks', '#prefix', '#selected']);
+      expect(h.contents()).toEqual(['tasks', '#selected']);
       expect(h.surface.input.value).toBe('');
       h.settings.sourceNoteDisplay = 'never';
       h.controller.flushRecognition();
-      expect(h.contents()).toEqual(['#prefix', '#selected']);
+      expect(h.contents()).toEqual(['#selected']);
       expect(h.description()).toBe('');
     } finally {
       h.close();

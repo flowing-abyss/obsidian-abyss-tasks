@@ -364,7 +364,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
       const taggedPrefixInUntaggedInbox =
         this.plugin_abyssPrivate.settings.inbox.mode === 'untagged' &&
         extractMarkdownBodyTags(this.plugin_abyssPrivate.settings.taskPrefix).length > 0;
-      return `Prepended when adding a new task (e.g. #Task/one-off). Tasks added from Inbox skip this prefix.${taggedPrefixInUntaggedInbox ? ' Tasks created elsewhere with this prefix do not appear in an untagged inbox.' : ''}`;
+      return `Prepended when adding a new task. Tags in the prefix are added only when the task has no tag. Tasks added from Inbox skip this prefix.${taggedPrefixInUntaggedInbox ? ' Tasks created elsewhere with this prefix do not appear in an untagged inbox.' : ''}`;
     };
     const taskPrefixSetting = new Setting(containerEl)
       .setName('Task prefix')

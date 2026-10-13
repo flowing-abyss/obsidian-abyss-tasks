@@ -133,49 +133,49 @@ describe('public atomic dependency subtask creation', () => {
       root: 'Current #project',
       owner: undefined,
       enabled: false,
-      child: 'Child #custom',
+      child: 'Child',
     },
     {
       name: 'enabled non-Inbox root',
       root: 'Current #project',
       owner: undefined,
       enabled: true,
-      child: '#task/one-off Child #custom',
+      child: '#task/one-off Child',
     },
     {
       name: 'case-insensitive Inbox root',
       root: 'Current #TASK/INBOX',
       owner: undefined,
       enabled: true,
-      child: 'Child #custom',
+      child: 'Child',
     },
     {
       name: 'untagged Inbox root',
       root: 'Current',
       owner: undefined,
       enabled: true,
-      child: 'Child #custom',
+      child: 'Child',
     },
     {
       name: 'tagged child of Inbox root',
       root: 'Current #task/inbox',
       owner: 'Owner #project',
       enabled: true,
-      child: 'Child #custom',
+      child: 'Child',
     },
     {
       name: 'untagged child of non-Inbox root',
       root: 'Current #project',
       owner: 'Owner',
       enabled: true,
-      child: '#task/one-off Child #custom',
+      child: '#task/one-off Child',
     },
     {
       name: 'Inbox-tagged child of non-Inbox root',
       root: 'Current #project',
       owner: 'Owner #task/inbox',
       enabled: true,
-      child: '#task/one-off Child #custom',
+      child: '#task/one-off Child',
     },
   ];
   it.each(
@@ -196,13 +196,13 @@ describe('public atomic dependency subtask creation', () => {
         inbox: { mode: 'both', tag: '#task/inbox', removeTagOnAssign: true },
       });
       const target = h.node(owner?.split(' #')[0] ?? 'Current').target;
-      const created = outcome(await h.create(direction, 'Child #custom', target));
+      const created = outcome(await h.create(direction, 'Child', target));
       expect(created.child.root.source.originalBlock).toContain(
         `${child} ${direction === 'blocks' ? '⛔' : '🆔'} 00000000`,
       );
       const node = h.index.listNodes().find((candidate) => candidate.node.title === 'Child');
       expect(node?.node.tags).toEqual(
-        enabled && child.startsWith('#task/one-off') ? ['#task/one-off', '#custom'] : ['#custom'],
+        enabled && child.startsWith('#task/one-off') ? ['#task/one-off'] : [],
       );
       expect((await h.read()).match(/Child/g)).toHaveLength(1);
     },
@@ -210,8 +210,8 @@ describe('public atomic dependency subtask creation', () => {
 
   it.each(
     (['ordinary', 'blocks', 'blocked-by'] as const).flatMap((route) => [
-      { route, before: '#project', after: '#task/inbox', child: 'Child #custom' },
-      { route, before: '#task/inbox', after: '#project', child: '#task/one-off Child #custom' },
+      { route, before: '#project', after: '#task/inbox', child: 'Child' },
+      { route, before: '#task/inbox', after: '#project', child: '#task/one-off Child' },
     ]),
   )(
     'uses fresh owning-root membership for $route after $before becomes $after',
@@ -236,13 +236,13 @@ describe('public atomic dependency subtask creation', () => {
           ? await h.application.execute({
               type: 'add-subtask',
               parent: target,
-              text: 'Child #custom',
+              text: 'Child',
             })
-          : await h.create(route, 'Child #custom', target);
+          : await h.create(route, 'Child', target);
       expect(result.type).toBe('ok');
       expect(await h.read()).toContain(`- [ ] ${child}`);
       expect(h.node('Owner').node.subtasks[0]?.tags).toEqual(
-        child.startsWith('#task/one-off') ? ['#task/one-off', '#custom'] : ['#custom'],
+        child.startsWith('#task/one-off') ? ['#task/one-off'] : [],
       );
       expect((await h.read()).match(/Child/g)).toHaveLength(1);
     },
@@ -250,8 +250,8 @@ describe('public atomic dependency subtask creation', () => {
 
   it.each(
     (['ordinary', 'blocks', 'blocked-by'] as const).flatMap((route) => [
-      { route, before: '#project', after: '#task/inbox', child: 'Child #custom' },
-      { route, before: '#task/inbox', after: '#project', child: '#task/one-off Child #custom' },
+      { route, before: '#project', after: '#task/inbox', child: 'Child' },
+      { route, before: '#task/inbox', after: '#project', child: '#task/one-off Child' },
     ]),
   )(
     'recomputes $route prefix on a proven root rebase from $before to $after with frozen settings',
@@ -299,17 +299,15 @@ describe('public atomic dependency subtask creation', () => {
           ? await h.application.execute({
               type: 'add-subtask',
               parent: target,
-              text: 'Child #custom',
+              text: 'Child',
             })
-          : await h.create(route, 'Child #custom', target);
+          : await h.create(route, 'Child', target);
       expect(result.type).toBe('ok');
       const added = h.node('Owner').node.subtasks[0];
       expect(added?.markdownTitle).toBe('Child');
       expect(added?.planning.created).toBe('2026-09-06');
       expect(await h.read()).toContain(`- [ ] ${child}`);
-      expect(added?.tags).toEqual(
-        child.startsWith('#task/one-off') ? ['#task/one-off', '#custom'] : ['#custom'],
-      );
+      expect(added?.tags).toEqual(child.startsWith('#task/one-off') ? ['#task/one-off'] : []);
       expect((await h.read()).match(/Child/g)).toHaveLength(1);
       expect(await h.read()).not.toContain('#changed');
       expect(h.today).toHaveBeenCalledOnce();

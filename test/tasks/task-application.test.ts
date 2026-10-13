@@ -435,7 +435,7 @@ describe('TaskApplicationService planning commands', () => {
     expect(create).toHaveBeenCalledWith(
       { filePath: 'tasks.md', insertion: { type: 'append' } },
       {
-        markdownBody: 'Plan `#code` #work new root',
+        markdownBody: 'Plan `#code` new root #work',
         today: localDate('2026-07-14'),
         addCreatedDate: true,
       },
@@ -540,7 +540,7 @@ describe('TaskApplicationService planning commands', () => {
     expect(create).toHaveBeenCalledWith(
       { filePath: 'tasks.md', insertion: { type: 'append' } },
       expect.objectContaining({
-        markdownBody: '#work Read [docs](https://example.com/#work) and preserve #worké',
+        markdownBody: 'Read [docs](https://example.com/#work) and preserve #worké',
       }),
     );
   });
@@ -593,11 +593,23 @@ describe('TaskApplicationService planning commands', () => {
   });
 
   it.each([
-    ['tagged prefix', '#work', 'Captured', '#work Captured'],
-    ['tagged body', '', 'Captured #work', 'Captured #work'],
+    {
+      name: 'tagged prefix',
+      taskPrefix: '#work',
+      markdownBody: 'Captured',
+      expectedMarkdown: 'Captured',
+      expectedTags: ['#inbox'],
+    },
+    {
+      name: 'tagged body',
+      taskPrefix: '',
+      markdownBody: 'Captured #work',
+      expectedMarkdown: 'Captured #work',
+      expectedTags: [],
+    },
   ])(
-    'composes an initial Inbox addition with a %s before applying creation policy',
-    async (_name, taskPrefix, markdownBody, expectedMarkdown) => {
+    'composes an initial Inbox addition with a $name before applying creation policy',
+    async ({ taskPrefix, markdownBody, expectedMarkdown, expectedTags }) => {
       const create = vi.fn<TaskRepository['create']>().mockResolvedValue({
         type: 'committed',
         outcome: { type: 'task', task: snapshot() },
@@ -624,13 +636,16 @@ describe('TaskApplicationService planning commands', () => {
         { filePath: 'tasks.md', insertion: { type: 'append' } },
         expect.objectContaining({
           markdownBody: expectedMarkdown,
-          initial: { tags: { add: [] } },
+          initial: { tags: { add: expectedTags } },
         }),
       );
     },
   );
 
-  it('applies the captured Markdown prefix once to ordinary subtasks', async () => {
+  it.each([
+    { text: 'new child', expected: 'Plan #work new child' },
+    { text: 'new child #specific', expected: 'Plan new child #specific' },
+  ])('applies fallback prefix tags to ordinary subtasks: $text', async ({ text, expected }) => {
     const edit = vi.fn<TaskRepository['edit']>().mockResolvedValue({
       type: 'committed',
       outcome: { type: 'task', task: snapshot() },
@@ -646,13 +661,13 @@ describe('TaskApplicationService planning commands', () => {
     ).execute({
       type: 'add-subtask',
       parent: { type: 'task', ref },
-      text: 'new child',
+      text,
     });
 
     expect(edit).toHaveBeenCalledWith({
       type: 'add-subtask',
       parent: { type: 'task', ref },
-      text: 'Plan #work new child',
+      text: expected,
       today: localDate('2026-07-14'),
       addCreatedDate: true,
     });

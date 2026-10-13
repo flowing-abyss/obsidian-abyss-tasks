@@ -114,8 +114,12 @@ Capture retains a session with its destination, date, template, insertion policy
 settings. Planning does not write. [`NoteTemplateService`](src/notes/NoteTemplateService.ts)
 prepares the note at execution and coordinates concurrent preparation of the same path. Uncertain
 preparation needs fresh proof before retry. The application owns root/subtask prefix, Inbox, and
-tag policy; presentation supplies typed input. Current source exclusions still apply when a retained
-session writes. A failed creation must not silently duplicate a task or note.
+tag policy; presentation supplies typed input. Prefix tags are fallback for a new task whose composed
+root has no surviving authored or initial tag. Only canonical root tag tokens wholly supplied by
+the prefix are omitted when specific tags survive; other prefix Markdown and later lines remain.
+The persisted prefix stays unchanged, Inbox capture skips it, and subtasks retain their opt-in and
+owning-root Inbox gate. Current source exclusions still apply when a retained session writes. A failed
+creation must not silently duplicate a task or note.
 
 Quick capture owns one transient task-input state. Its first meaningful edit or manual choice freezes
 an explicit civil-time reference and the static `parseDatesInQuickCapture` preference until success.
