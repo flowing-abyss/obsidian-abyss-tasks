@@ -1447,10 +1447,10 @@ it('formats Q dates with the central labels against the frozen draft reference, 
     });
     const date = expectDefined(
       h.root.querySelector<HTMLButtonElement>(
-        '.abyss-capture-chip-body[aria-label^="Edit due date"]',
+        '.abyss-capture-chip-body[aria-label^="Remove due date"]',
       ),
     );
-    date.click();
+    date.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     let picker = expectDefined(h.root.querySelector<HTMLInputElement>('input[type="date"]'));
     picker.value = '2027-01-01';
     picker.dispatchEvent(new Event('change', { bubbles: true }));
@@ -1463,7 +1463,7 @@ it('formats Q dates with the central labels against the frozen draft reference, 
     await vi.waitFor(() => {
       expect(date.textContent).toBe('1 Jan');
     });
-    date.click();
+    date.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     picker = expectDefined(h.root.querySelector<HTMLInputElement>('input[type="date"]'));
     picker.value = '2026-10-20';
     picker.dispatchEvent(new Event('change', { bubbles: true }));

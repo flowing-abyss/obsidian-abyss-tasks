@@ -106,6 +106,39 @@ describe('retained canonical create preview', () => {
     ]);
   });
 
+  it('keeps a prefix child tag out of root metadata across preview and saved Markdown', async () => {
+    const h = await harness({ prefix: 'Root #fallback\n  - [ ] Child' });
+    Object.assign(h.behavior.taskLifecycle, { addCreatedDate: false });
+    const session = await h.service.planCreate({ type: 'configured-default' });
+    const request = { markdownBody: 'Task #specific' };
+    expect(session.preview(request)).toMatchObject({
+      type: 'valid',
+      metadata: { markdownTitle: 'Root', tags: ['#fallback'] },
+    });
+    expect((await session.execute(request)).type).toBe('ok');
+    const saved = expectDefined(h.repositoryWrites[0]);
+    expect(h.readCanonicalRoot(saved).tags).toEqual(['#fallback']);
+    expect(saved).toBe('- [ ] Root #fallback\n  - [ ] Child Task #specific');
+  });
+
+  it('protects link text composed across the prefix boundary in preview and saved Markdown', async () => {
+    const h = await harness({ prefix: '#fallback [' });
+    Object.assign(h.behavior.taskLifecycle, { addCreatedDate: false });
+    const session = await h.service.planCreate({ type: 'configured-default' });
+    const request = { markdownBody: 'label #specific](note.md)' };
+    expect(session.preview(request)).toMatchObject({
+      type: 'valid',
+      metadata: { markdownTitle: '[ label #specific](note.md)', tags: ['#fallback'] },
+    });
+    expect((await session.execute(request)).type).toBe('ok');
+    const saved = expectDefined(h.repositoryWrites[0]);
+    expect(h.readCanonicalRoot(saved)).toMatchObject({
+      markdownTitle: '[ label #specific](note.md)',
+      tags: ['#fallback'],
+    });
+    expect(saved).toBe('- [ ] #fallback [ label #specific](note.md)');
+  });
+
   it.each([
     { body: 'Call', tags: ['#base', '#second'] },
     { body: 'Call #specific', tags: ['#specific'] },
