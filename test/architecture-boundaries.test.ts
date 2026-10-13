@@ -1096,7 +1096,69 @@ function searchConstructionSites(path: string, module: ts.SourceFile): string[] 
   return sites;
 }
 
+function captureReadImportViolations(path: string, records: readonly ImportRecord[]): string[] {
+  if (
+    !/^src\/(?:code-block|panels|ui|views)\//u.test(path) &&
+    path !== 'src/settings/SettingsTab.ts'
+  )
+    return [];
+  return records.flatMap((record) => {
+    const target = resolvedImport(path, record.specifier);
+    return target?.startsWith('src/tasks/') === true && target !== 'src/tasks/index'
+      ? [`${path} -> ${target}`]
+      : [];
+  });
+}
+
 describe('task architecture boundaries', () => {
+  it(
+    'keeps capture read consumers on the public task capability',
+    () => {
+      const path = 'src/ui/taskCapture/probe.ts';
+      const records = (source: string) => importsFromSyntax(syntaxFromText(path, source));
+      expect(
+        captureReadImportViolations(
+          path,
+          records("import type { TaskCreateSession } from '../../tasks';"),
+        ),
+      ).toEqual([]);
+      expect(
+        captureReadImportViolations(
+          path,
+          records(
+            "import { MarkdownTaskCreatePreview } from '../../tasks/infrastructure/markdown/MarkdownTaskCreatePreview';",
+          ),
+        ),
+      ).toEqual([`${path} -> src/tasks/infrastructure/markdown/MarkdownTaskCreatePreview`]);
+      expect(
+        captureReadImportViolations(
+          path,
+          records(
+            "import { TaskMarkdownCodec } from '../../tasks/infrastructure/markdown/TaskMarkdownCodec';",
+          ),
+        ),
+      ).toEqual([`${path} -> src/tasks/infrastructure/markdown/TaskMarkdownCodec`]);
+      expect(
+        captureReadImportViolations(
+          'src/main.ts',
+          importsFromSyntax(
+            syntaxFromText(
+              'src/main.ts',
+              "import { MarkdownTaskCreatePreview } from './tasks/infrastructure/markdown/MarkdownTaskCreatePreview';",
+            ),
+          ),
+        ),
+      ).toEqual([]);
+      expect(
+        sourceFiles().flatMap((absolute) => {
+          const sourcePath = repoPath(absolute);
+          return captureReadImportViolations(sourcePath, imports(sourcePath));
+        }),
+      ).toEqual([]);
+    },
+    SOURCE_WALK_TIMEOUT_MS,
+  );
+
   it(
     'owns the shared search service only in the composition root',
     () => {

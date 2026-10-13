@@ -1414,6 +1414,7 @@ describe('CenterPanel shared list capture', () => {
     const planCreate = vi.fn(
       plan ??
         (async () => ({
+          preview: () => ({ type: 'unavailable' as const, cause: 'preview-capability' as const }),
           type: 'ready' as const,
           destination: { filePath: 'Capture.md', insertion: { type: 'append' as const } },
           execute: sessionExecute,
@@ -1885,6 +1886,7 @@ describe('CenterPanel shared list capture', () => {
 
         navigate(state);
         planned.resolve({
+          preview: () => ({ type: 'unavailable' as const, cause: 'preview-capability' as const }),
           type: 'ready',
           destination: { filePath: 'Capture.md', insertion: { type: 'append' } },
           execute: sessionExecute,
@@ -2789,6 +2791,7 @@ describe('CenterPanel projects mode teardown (regression)', () => {
     const application: TaskApplicationApi & TaskCaptureApplicationApi = {
       queries,
       planCreate: vi.fn(async () => ({
+        preview: () => ({ type: 'unavailable' as const, cause: 'preview-capability' as const }),
         type: 'ready' as const,
         destination: { filePath: 'Projects/A.md', insertion: { type: 'append' as const } },
         execute: sessionExecute,
@@ -3077,6 +3080,7 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       },
     }));
     const planCreate = vi.fn(async () => ({
+      preview: () => ({ type: 'unavailable' as const, cause: 'preview-capability' as const }),
       type: 'ready' as const,
       destination: { filePath: 'Projects/A.md', insertion: { type: 'append' as const } },
       execute: sessionExecute,
@@ -4354,6 +4358,7 @@ describe('CenterPanel calendar mode — click-to-create', () => {
     });
     const sessionExecute = vi.fn<TaskCreateSession['execute']>(implementation);
     const planCreate = vi.fn<TaskCaptureApplicationApi['planCreate']>(async () => ({
+      preview: () => ({ type: 'unavailable' as const, cause: 'preview-capability' as const }),
       type: 'ready' as const,
       destination: { filePath: 'Capture.md', insertion: { type: 'append' as const } },
       execute: sessionExecute,

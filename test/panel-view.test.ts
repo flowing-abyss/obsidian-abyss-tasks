@@ -88,6 +88,7 @@ function panelCaptureTarget(execute: TaskCreateSession['execute']): CaptureTarge
     label: 'Test destination',
     context: { type: 'list', selection: 'today' },
     session: {
+      preview: () => ({ type: 'unavailable' as const, cause: 'preview-capability' as const }),
       type: 'ready',
       destination: { filePath: 'Capture.md', insertion: { type: 'append' } },
       execute,
@@ -2414,6 +2415,7 @@ describe('PanelView', () => {
       );
       const application = taskApplication.tasks;
       vi.spyOn(application, 'planCreate').mockResolvedValue({
+        preview: () => ({ type: 'unavailable' as const, cause: 'preview-capability' as const }),
         type: 'ready',
         destination: { filePath: 'capture.md', insertion: { type: 'append' } },
         execute,
@@ -2790,6 +2792,7 @@ describe('PanelView', () => {
         },
       } satisfies TaskCommandResult);
       vi.spyOn(application, 'planCreate').mockResolvedValue({
+        preview: () => ({ type: 'unavailable' as const, cause: 'preview-capability' as const }),
         type: 'ready',
         destination: { filePath: 'capture.md', insertion: { type: 'append' } },
         execute,
@@ -2922,6 +2925,7 @@ describe('PanelView', () => {
         });
         const captureApplication = taskApplication.tasks;
         const planCreate = vi.spyOn(captureApplication, 'planCreate').mockResolvedValue({
+          preview: () => ({ type: 'unavailable' as const, cause: 'preview-capability' as const }),
           type: 'ready',
           destination: { filePath: 'capture.md', insertion: { type: 'append' } },
           execute: sessionExecute,
@@ -2971,6 +2975,7 @@ describe('PanelView', () => {
       state.set('selectedList', 'inbox');
       const captureApplication = taskApplication.tasks;
       vi.spyOn(captureApplication, 'planCreate').mockResolvedValue({
+        preview: () => ({ type: 'unavailable' as const, cause: 'preview-capability' as const }),
         type: 'ready',
         destination: { filePath: 'capture.md', insertion: { type: 'append' } },
         execute: async () => ({
@@ -3941,6 +3946,7 @@ describe('PanelView', () => {
       const open = pressQ(betaStatus);
       alphaStatus.focus();
       pending.resolve({
+        preview: () => ({ type: 'unavailable' as const, cause: 'preview-capability' as const }),
         type: 'ready',
         destination: {
           filePath: 'Projects/B.md',

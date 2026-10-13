@@ -366,6 +366,7 @@ describe('CenterPanel root lifecycle API delegation', () => {
       issues: [{ code: 'invalid-target' }],
     });
     const planCreate = vi.fn<TaskCaptureApplicationApi['planCreate']>(async (destination) => ({
+      preview: () => ({ type: 'unavailable' as const, cause: 'preview-capability' as const }),
       type: 'ready',
       destination:
         destination.type === 'explicit'
@@ -444,9 +445,11 @@ describe('CenterPanel root lifecycle API delegation', () => {
         type: 'invalid',
         issues: [{ code: 'destination-unavailable', field: 'destination' }],
       });
-      const planCreate = vi
-        .fn<TaskCaptureApplicationApi['planCreate']>()
-        .mockResolvedValue({ type: 'unavailable', execute: sessionExecute });
+      const planCreate = vi.fn<TaskCaptureApplicationApi['planCreate']>().mockResolvedValue({
+        preview: () => ({ type: 'unavailable' as const, cause: 'destination' as const }),
+        type: 'unavailable',
+        execute: sessionExecute,
+      });
       const tasks: TaskApplicationApi & TaskCaptureApplicationApi = {
         queries,
         execute,

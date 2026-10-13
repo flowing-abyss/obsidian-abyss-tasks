@@ -85,6 +85,7 @@ describe('capture session cancellation', () => {
       captures.cancelActiveCapture();
       next.focus();
       pending.resolve({
+        preview: () => ({ type: 'unavailable' as const, cause: 'preview-capability' as const }),
         type: 'ready',
         destination: { filePath: 'Capture.md', insertion: { type: 'append' } },
         execute: sessionExecute,
@@ -110,6 +111,7 @@ describe('retained capture hosts', () => {
       queries: taskQueryApi(),
       execute: vi.fn(),
       planCreate: async () => ({
+        preview: () => ({ type: 'unavailable' as const, cause: 'preview-capability' as const }),
         type: 'ready',
         destination: { filePath: 'Capture.md', insertion: { type: 'append' } },
         execute,
@@ -190,6 +192,7 @@ describe('capture publication through a bounded task surface', () => {
         queries,
         execute: vi.fn(),
         planCreate: async () => ({
+          preview: () => ({ type: 'unavailable' as const, cause: 'preview-capability' as const }),
           type: 'ready',
           destination: { filePath: 'large.md', insertion: { type: 'append' } },
           execute: async () => result,
@@ -279,6 +282,7 @@ it('keeps Mod+A and IME keys inside the actual centre capture input without blur
     queries,
     execute: vi.fn(),
     planCreate: async () => ({
+      preview: () => ({ type: 'unavailable' as const, cause: 'preview-capability' as const }),
       type: 'ready',
       destination: { filePath: 'tasks.md', insertion: { type: 'append' } },
       execute,
@@ -341,6 +345,7 @@ it.each(['blur', 'input', 'unmount', 'parent'] as const)(
       queries: taskQueryApi(),
       execute: vi.fn(),
       planCreate: async () => ({
+        preview: () => ({ type: 'unavailable' as const, cause: 'preview-capability' as const }),
         type: 'ready',
         destination: { filePath: 'tasks.md', insertion: { type: 'append' } },
         execute: async () => ({

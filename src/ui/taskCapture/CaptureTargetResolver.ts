@@ -45,6 +45,7 @@ function destinationUnavailableResult(): TaskCommandResult {
 function unavailableSession(): TaskCreateSession {
   return {
     type: 'unavailable',
+    preview: () => ({ type: 'unavailable', cause: 'destination' }),
     execute: async () => destinationUnavailableResult(),
   };
 }

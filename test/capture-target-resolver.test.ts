@@ -27,6 +27,7 @@ const configuredDestination: TaskDestination = {
 
 function readySession(destination: TaskDestination): TaskCreateSession {
   return {
+    preview: () => ({ type: 'unavailable' as const, cause: 'preview-capability' as const }),
     type: 'ready',
     destination: {
       filePath: destination.filePath,

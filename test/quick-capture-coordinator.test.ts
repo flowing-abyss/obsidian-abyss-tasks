@@ -53,6 +53,7 @@ function readySession(
   execute: TaskCreateSession['execute'] = async () => success(),
 ): TaskCreateSession {
   return {
+    preview: () => ({ type: 'unavailable' as const, cause: 'preview-capability' as const }),
     type: 'ready',
     destination: { filePath: 'Inbox.md', insertion: { type: 'append' } },
     execute,

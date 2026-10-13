@@ -5,6 +5,7 @@ import type {
   TaskDependencyProjection,
   TaskNodeSnapshot,
 } from '../domain/taskDependencies';
+import type { TaskCreatePreview } from '../domain/taskInputTypes';
 import type { TaskResolution } from '../domain/taskReconciliation';
 import type { TaskDependencySummary, TaskSearchAddress } from '../domain/taskSearchTypes';
 import type { TrackedEntry, TrackedTotal } from '../domain/timeTracking';
@@ -128,7 +129,7 @@ export type CreateTaskCommand = Extract<TaskCommand, { readonly type: 'create' }
 export type CreateTaskCommandDestination = CreateTaskCommand['destination'];
 export type CreateTaskCommandInitial = NonNullable<CreateTaskCommand['initial']>;
 
-interface TaskCreateRequest {
+export interface TaskCreateRequest {
   readonly markdownBody: string;
   readonly initial?: CreateTaskCommandInitial;
 }
@@ -141,10 +142,12 @@ export type TaskCreateSession =
   | {
       readonly type: 'ready';
       readonly destination: TaskDestination;
+      preview(request: TaskCreateRequest): TaskCreatePreview;
       execute(request: TaskCreateRequest): Promise<TaskCommandResult>;
     }
   | {
       readonly type: 'unavailable';
+      preview(request: TaskCreateRequest): TaskCreatePreview;
       execute(request: TaskCreateRequest): Promise<TaskCommandResult>;
     };
 

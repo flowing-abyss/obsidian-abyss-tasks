@@ -275,6 +275,18 @@ and search marks are ready. Replacement or disposal makes old callbacks inert. E
 whole-field alignment and exact authored occurrence proof; ambiguous anchors receive no edit wiring.
 Compact title embeds become inert labels. Presentation and search highlighting confer no write rights.
 
+Retained create sessions expose a synchronous preview through the same frozen creation policy and
+initial-field preparation as execution. The Markdown preview adapter runs `createTaskBlock` in memory
+and reads its canonical root metadata. It also retains policy-prefixed source planning before the
+initial patch, separately from final planning. Preview does not prepare or validate destinations,
+read the clock again, or write; execution retains its destination and current-source checks.
+Unavailable sessions and absent preview ports return explicit capability outcomes.
+
+The task domain's input inspection reads canonical carrier occurrences and atomic Markdown ranges
+in raw UTF-16 coordinates. It protects tags, known carriers (including malformed ones), links,
+images, code, and HTML without applying creation policy or normalizing the draft. These read helpers
+and neutral contracts remain inward until a presentation consumer needs a public barrel export.
+
 ## Projects
 
 [`ProjectStore`](src/projects/ProjectStore.ts) evaluates configured membership against note paths,

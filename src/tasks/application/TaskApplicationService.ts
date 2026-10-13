@@ -22,6 +22,7 @@ import {
   taskMutationNodeRef,
 } from '../domain/taskCommandTargets';
 import { isHierarchyCommand, type TaskHierarchyCommand } from '../domain/taskHierarchy';
+import type { TaskCreatePreview } from '../domain/taskInputTypes';
 import { reconcileTaskNodeRef, type TaskResolution } from '../domain/taskReconciliation';
 import {
   applyTaskCreationTagPolicy,
@@ -51,12 +52,14 @@ import type {
   TaskArchiveSession,
   TaskCaptureApplicationApi,
   TaskCreatePlanOptions,
+  TaskCreateRequest,
   TaskCreateSession,
   TaskDependencyQueryApi,
   TaskQueryApi,
   TimeTrackingQueryApi,
 } from './TaskApplicationApi';
 import type { TaskBehaviorSettings, TaskBehaviorSettingsProvider } from './TaskBehaviorSettings';
+import type { TaskCreatePreviewPort } from './TaskCreatePreviewPort';
 import {
   DependencyCompletionConflict,
   nextTaskDependencyId,
@@ -425,11 +428,6 @@ function captureClock(
   return 'read' in clock ? clock.read() : { localDate: clock.today() };
 }
 
-interface TaskCreateRequest {
-  readonly markdownBody: string;
-  readonly initial?: CreateTaskCommandInitial;
-}
-
 type PreparedCreateInitial =
   | { readonly type: 'valid'; readonly initial?: CreateTaskCommandInitial }
   | { readonly type: 'invalid' };
@@ -493,6 +491,7 @@ type TaskApplicationServiceDependencies = [
   behaviorSettings?: TaskBehaviorSettingsProvider,
   dependencies?: TaskDependencyService,
   diagnostics?: TaskDiagnosticSink,
+  previewPort?: TaskCreatePreviewPort,
 ];
 
 type ArchiveDestinationResolution =
@@ -510,6 +509,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     TaskReadProjectionApi;
   private readonly dependencies_abyssPrivate: TaskDependencyService;
   private readonly tracking_abyssPrivate: TimeTrackingService;
+  private readonly previewPort_abyssPrivate: TaskCreatePreviewPort | undefined;
   private readonly diagnostics_abyssPrivate: TaskDiagnosticSink;
   private readonly repository_abyssPrivate: TaskRepository;
   private readonly statusCatalog_abyssPrivate: StatusCatalog;
@@ -527,7 +527,9 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
       behaviorSettings = () => DEFAULT_BEHAVIOR_SETTINGS,
       dependencyService,
       diagnostics = () => {},
+      previewPort,
     ] = dependencies;
+    this.previewPort_abyssPrivate = previewPort;
     this.queries = queries;
     this.repository_abyssPrivate = repository;
     this.statusCatalog_abyssPrivate = statusCatalog;
@@ -1128,6 +1130,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     return {
       type: 'ready',
       destination,
+      preview: (request) => this.previewCreate_abyssPrivate(request, settings, reading),
       execute: async (request) => {
         try {
           return await this.executePlannedCreate_abyssPrivate(
@@ -1151,9 +1154,29 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     };
   }
 
+  private previewCreate_abyssPrivate(
+    request: TaskCreateRequest,
+    settings: TaskBehaviorSettings,
+    reading: ClockReading | { readonly localDate: ClockReading['localDate'] },
+  ): TaskCreatePreview {
+    const port = this.previewPort_abyssPrivate;
+    if (port === undefined) return { type: 'unavailable', cause: 'preview-capability' };
+    if (hasInvalidCreateTitle(request.markdownBody)) {
+      return { type: 'invalid', issues: [{ code: 'invalid-title', field: 'title' }] };
+    }
+    const prepared = prepareCreateInitial(request, settings);
+    if (prepared.type === 'invalid') return invalidTaskTarget('tags');
+    return port.preview({
+      ...preparedCreateDraft(request, prepared, settings),
+      today: reading.localDate,
+      addCreatedDate: settings.taskLifecycle.addCreatedDate,
+    });
+  }
+
   private unavailableCreateSession_abyssPrivate(): TaskCreateSession {
     return {
       type: 'unavailable',
+      preview: () => ({ type: 'unavailable', cause: 'destination' }),
       execute: async () => destinationUnavailableResult(),
     };
   }

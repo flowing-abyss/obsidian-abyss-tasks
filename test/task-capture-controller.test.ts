@@ -38,6 +38,7 @@ function harness(
     label: 'Inbox · #inbox',
     context: { type: 'list', selection: 'inbox' },
     session: {
+      preview: () => ({ type: 'unavailable' as const, cause: 'preview-capability' as const }),
       type: 'ready',
       destination: { filePath: 'Inbox.md', insertion: { type: 'append' } },
       execute,

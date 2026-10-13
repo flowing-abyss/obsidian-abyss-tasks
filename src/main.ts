@@ -55,6 +55,7 @@ import { systemClock } from './tasks/domain/clock';
 import type { CommentTimeContextProvider } from './tasks/domain/commentTimeLabel';
 import { StatusCatalog } from './tasks/domain/StatusCatalog';
 import { systemCommentTimeContext } from './tasks/infrastructure/commentTimeContext';
+import { MarkdownTaskCreatePreview } from './tasks/infrastructure/markdown/MarkdownTaskCreatePreview';
 import { TaskBlockEditor } from './tasks/infrastructure/markdown/TaskBlockEditor';
 import { parseMarkdownFrontmatter } from './tasks/infrastructure/markdown/taskBlockSyntax';
 import { TaskLocator } from './tasks/infrastructure/markdown/TaskLocator';
@@ -209,6 +210,7 @@ export default class TaskCalendarPlugin extends Plugin {
         diagnostics,
       ),
       diagnostics,
+      new MarkdownTaskCreatePreview(codec),
     );
     this.queries = this.tasks.queries;
     this.projectManager = new ProjectManager(

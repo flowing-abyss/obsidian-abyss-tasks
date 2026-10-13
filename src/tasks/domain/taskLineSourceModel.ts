@@ -617,6 +617,11 @@ function taskLineParseContext(original: string): TaskLineParseContext | null {
   };
 }
 
+/** Atomic Markdown source ranges used by the canonical task-line reader. */
+export function taskLineAtomicRanges(original: string): readonly SourceRange[] {
+  return taskLineParseContext(original)?.atomicTitleRanges ?? [];
+}
+
 function pushDurationCandidates(candidates: Candidate[], body: string, prefixEnd: number): void {
   for (const match of matches(DURATION_RE, body)) {
     if ([match[1], match[2], match[3], match[4]].every((value) => value === undefined)) continue;
