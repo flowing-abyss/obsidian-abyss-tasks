@@ -107,7 +107,7 @@
     "knip": "6.41.0",
     "nano-staged": "^1.0.2",
     "obsidian": "1.14.4",
-    "obsidian-test-mocks": "7.2.0",
+    "obsidian-test-mocks": "7.2.1",
     "postcss": "8.5.29",
     "postcss-selector-parser": "7.1.6",
     "postcss-value-parser": "4.2.0",

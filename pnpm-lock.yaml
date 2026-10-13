@@ -264,8 +264,8 @@ importers:
         specifier: 1.14.4
         version: 1.14.4(@codemirror/state@6.7.6)(@codemirror/view@6.43.13)
       obsidian-test-mocks:
-        specifier: 7.2.0
-        version: 7.2.0(obsidian@1.14.4(@codemirror/state@6.7.6)(@codemirror/view@6.43.13))(vitest@5.0.3)
+        specifier: 7.2.1
+        version: 7.2.1(obsidian@1.14.4(@codemirror/state@6.7.6)(@codemirror/view@6.43.13))(vitest@5.0.3)
       postcss:
         specifier: 8.5.29
         version: 8.5.29
@@ -2907,8 +2907,8 @@ packages:
     resolution: {integrity: sha512-gXah6aZrcUxjWg2zR2MwouP2eHlCBzdV4pygudehaKXSGW4v2AsRQUK+lwwXhii6KFZcunEnmSUoYp5CXibxtA==}
     engines: {node: '>= 0.4'}
 
-  obsidian-test-mocks@7.2.0:
-    resolution: {integrity: sha512-RIr6cRxdd3dobvx1t4S5/y0c1xRurg2cWqBTFV1ZO7dWnp3nY8WqA7ML5AtXr12J5rXXL2s/T2Qe6J5l+8u1Sg==}
+  obsidian-test-mocks@7.2.1:
+    resolution: {integrity: sha512-gi5ElH66CsXTRn0swq4QSjz4cOmvPs9phH2xi1j2uuSdljzvFwWHO1W1Ouz2Bm23kVshcJIEWOu+Xr90IFSWoA==}
     peerDependencies:
       jest: '*'
       obsidian: ^1.12.3
@@ -6619,7 +6619,7 @@ snapshots:
       define-properties: 1.2.1
       es-object-atoms: 1.1.2
 
-  obsidian-test-mocks@7.2.0(obsidian@1.14.4(@codemirror/state@6.7.6)(@codemirror/view@6.43.13))(vitest@5.0.3):
+  obsidian-test-mocks@7.2.1(obsidian@1.14.4(@codemirror/state@6.7.6)(@codemirror/view@6.43.13))(vitest@5.0.3):
     dependencies:
       '@codemirror/state': 6.5.0
       '@codemirror/view': 6.38.6

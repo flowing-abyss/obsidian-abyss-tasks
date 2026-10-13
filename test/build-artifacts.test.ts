@@ -285,9 +285,11 @@ describe('production JavaScript artifact', () => {
       'minisearch@7.2.0',
       'rrule@2.8.1',
     ]);
-    const policy = readFileSync(path.join(root, 'pnpm-workspace.yaml'), 'utf8');
-    expect(policy).toMatch(/^minimumReleaseAge: 1440$/m);
-    expect(policy).not.toContain('minimumReleaseAgeExclude');
+    const policy = obsidian.parseYaml(
+      readFileSync(path.join(root, 'pnpm-workspace.yaml'), 'utf8'),
+    ) as { minimumReleaseAge: number; minimumReleaseAgeExclude: readonly string[] };
+    expect(policy.minimumReleaseAge).toBe(1440);
+    expect(policy.minimumReleaseAgeExclude).toEqual(['obsidian-test-mocks@7.2.1']);
   });
 
   it('embeds a self-contained browser worker and executes its minified ready/add/query protocol', async () => {

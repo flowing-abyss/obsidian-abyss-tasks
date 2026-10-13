@@ -140,6 +140,47 @@ function captureCreateCallback(
 }
 
 describe('TaskIndex lifecycle and events', () => {
+  it.each([
+    { indent: '  ', column: 2 },
+    { indent: '\t', column: 1 },
+  ])(
+    'indexes sibling tasks with automatic metadata for indent $column',
+    async ({ indent, column }) => {
+      const path = 'nested.md';
+      const lines = ['- [ ] Root', `${indent}- [x] Child`, `${indent}- [ ] Sibling`, '- [ ] Other'];
+      const app = await createAppWithFiles({ [path]: lines.join('\n') });
+      const cache = expectDefined(app.metadataCache.getCache(path));
+      expect(
+        cache.listItems?.map((item) => [
+          item.parent,
+          item.position.start.line,
+          item.position.start.col,
+        ]),
+      ).toEqual([
+        [-1, 0, 0],
+        [0, 1, column],
+        [0, 2, column],
+        [-1, 3, 0],
+      ]);
+      const index = new TaskIndex(app, { statusCatalog: canonicalStatusCatalog() });
+      try {
+        await index.initialize();
+        const tasks = index.list();
+        expect(tasks.map((task) => task.title)).toEqual(['Root', 'Other']);
+        const root = expectDefined(tasks[0]);
+        expect(root.subtasks).toMatchObject([
+          { title: 'Child', status: 'done', ref: { relativeLine: 1 } },
+          { title: 'Sibling', status: 'open', ref: { relativeLine: 2 } },
+        ]);
+        expect(root.source.originalBlock).toBe(lines.slice(0, 3).join('\n'));
+        expect(tasks[1]?.ref.line).toBe(3);
+        expect(tasks[1]?.source.originalBlock).toBe(lines[3]);
+      } finally {
+        index.destroy();
+      }
+    },
+  );
+
   it('refreshes complete formatted root and child comment refs after an external file change', async () => {
     const source =
       '- [ ] Root\n\t- 2026-10-07: head\n\t\ttail\n\t\tthird\n\t- [ ] Child\n\t\t- child head\n\t\t\tchild tail\n\t- [ ] Sibling';
