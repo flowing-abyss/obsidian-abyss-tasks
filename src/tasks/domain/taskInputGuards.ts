@@ -23,7 +23,7 @@ export function validInputRange(text: string, range: TaskInputRange): boolean {
 export function currentInputBinding(
   raw: string,
   revision: number,
-  binding: TaskInputBinding,
+  binding: Pick<TaskInputBinding, 'revision' | 'ranges' | 'slices'>,
 ): boolean {
   return (
     binding.revision === revision &&
@@ -92,14 +92,4 @@ export function inputTextBarriers(
   for (const match of text.matchAll(/\bhttps?:\/\/[^\s<>]+/giu))
     result.push({ from: match.index, to: match.index + match[0].length });
   return result;
-}
-/** Removes only the owned interval and at most one adjacent separator on each edge. */
-export function removeOwnedInputRange(raw: string, range: TaskInputRange): string {
-  let from = range.from,
-    to = range.to;
-  const space = (value: string | undefined): boolean => value === ' ' || value === '\t';
-  if (from === 0 && space(raw[to])) to++;
-  else if (to === raw.length && space(raw[from - 1])) from--;
-  else if (space(raw[from - 1]) && space(raw[to])) to++;
-  return raw.slice(0, from) + raw.slice(to);
 }

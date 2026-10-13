@@ -166,6 +166,7 @@ export type { TaskInputServices } from './application/TaskInputRecognizer';
 export { inspectTaskInput } from './domain/taskInputInspection';
 export {
   projectTaskInput,
+  taskInputPreflightBody,
   taskInputPreflightInitial,
   type TaskInputProjection,
 } from './domain/taskInputProjection';

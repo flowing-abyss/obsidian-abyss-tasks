@@ -129,7 +129,8 @@ describe('transient input decisions', () => {
       project(state),
       inspectTaskInput(state.raw),
     );
-    expect(removed.raw).toBe('Call');
+    expect(removed.raw).toBe(state.raw);
+    expect(project(removed).markdownBody).toBe('Call');
     expect(project(removed).initial.tags?.remove).toEqual(['#work']);
     expect(editTaskInput(removed, 'Call #Work').removedTags).toEqual([]);
   });
@@ -236,7 +237,7 @@ describe('manual and restore provenance', () => {
     expect(manual.manual.due?.binding).toBeUndefined();
     expect(project(manual).markdownBody).toBe(state.raw);
   });
-  it('preserves a date restore through unrelated tag removal', () => {
+  it('restores only tag removal while preserving the earlier date dismissal', () => {
     const state = dismiss('Call tomorrow #work');
     const removed = applyTaskInputAction(
       state,
@@ -251,7 +252,7 @@ describe('manual and restore provenance', () => {
       project(removed),
       inspectTaskInput(removed.raw),
     );
-    expect(project(restored).initial.due).toEqual({ type: 'set', value: '2026-10-14' });
+    expect(project(restored).initial.due).toEqual({ type: 'clear' });
   });
   it('preserves due restore through a manual action on another date role', () => {
     const state = dismiss('Call tomorrow');
@@ -301,7 +302,7 @@ describe('source and fallback priority', () => {
     const removed = dismiss('Call 📅 2026-10-20');
     const changed = editTaskInput(removed, `${removed.raw} tomorrow`);
     expect(project(changed).initial.due).toEqual({ type: 'set', value: '2026-10-14' });
-    expect(project(changed).markdownBody).toBe('Call 📅 2026-10-20');
+    expect(project(changed).markdownBody).toBe('Call');
   });
 });
 function withSource(
@@ -367,20 +368,77 @@ describe('review regressions: current manual source eligibility', () => {
   );
 });
 
-it('keeps a dismissed interior day when deleting duplicate tags and undoing native history', () => {
+it('restores only duplicate tag metadata without touching the dismissed interior day or raw', () => {
   const raw = 'Call #work tomorrow #WORK';
   const state = dismiss(raw);
-  const removed = applyTaskInputAction(
-    state,
-    { type: 'remove-tag', tag: '#work' },
-    project(state, context),
-    inspectTaskInput(raw),
-  );
-  expect(removed.raw).toBe('Call tomorrow');
+  const removed = act(state, { type: 'remove-tag', tag: '#work' });
+  expect(removed.raw).toBe(raw);
   expect(project(removed, context).markdownBody).toBe('Call tomorrow');
-  expect(project(removed, context).initial.due).toEqual({ type: 'clear' });
-  const undo = editTaskInput(removed, raw, 'history');
-  expect(undo.removedTags).toEqual([]);
-  expect(project(undo, context).markdownBody).toBe(raw);
-  expect(project(undo, context).initial.due).toEqual({ type: 'clear' });
+  const restored = act(removed, { type: 'restore' });
+  expect(restored.raw).toBe(raw);
+  expect(project(restored, context).markdownBody).toBe(raw);
+  expect(project(restored, context).initial.due).toEqual({ type: 'clear' });
+});
+function act(state: TaskInputState, action: Parameters<typeof applyTaskInputAction>[1]) {
+  return applyTaskInputAction(state, action, project(state), inspectTaskInput(state.raw));
+}
+it.each(['#WORK Call #work', 'Call #work #WORK'])('activates only new tag input: %s', (raw) => {
+  const removed = act(createTaskInputState('Call #work'), { type: 'remove-tag', tag: '#work' });
+  const edited = editTaskInput(removed, raw);
+  expect(edited.removedTags).toEqual([]);
+  expect(project(edited).markdownBody).toBe(raw.startsWith('#') ? '#WORK Call' : 'Call #WORK');
+  expect(edited.restore).toBeUndefined();
+});
+it.each(['📅 2026-10-21 Call 📅 2026-10-20', 'Call 📅 2026-10-20 📅 2026-10-21'])(
+  'activates only new role input regardless of order: %s',
+  (raw) => {
+    const edited = editTaskInput(dismiss('Call 📅 2026-10-20'), raw);
+    expect(project(edited).initial.due).toEqual({ type: 'set', value: '2026-10-21' });
+    expect(project(edited).markdownBody).not.toContain('2026-10-20');
+    expect(edited.restore).toBeUndefined();
+    expect(project(editTaskInput(edited, 'Call'), context).initial.due).toEqual({ type: 'clear' });
+  },
+);
+it('dismisses the current losing natural candidate with its explicit due', () => {
+  const state = dismiss('Call tomorrow 📅 2026-10-20');
+  expect(state.raw).toBe('Call tomorrow 📅 2026-10-20');
+  expect(project(state).markdownBody).toBe('Call tomorrow');
+  expect(project(state).initial.due).toEqual({ type: 'clear' });
+});
+it('restores a removed manual value without undoing older suppression', () => {
+  const manual = act(dismiss('Call tomorrow'), {
+    type: 'select-date',
+    role: 'due',
+    value: localDate('2026-10-22'),
+  });
+  const removed = act(manual, { type: 'dismiss', role: 'due' });
+  const restored = act(removed, { type: 'restore' });
+  expect(restored.raw).toBe(manual.raw);
+  expect(project(restored).initial.due).toEqual({ type: 'set', value: '2026-10-22' });
+  expect(project(restored).markdownBody).toBe(manual.raw);
+});
+it.each(['👩‍💻 Call #work 📅 2026-10-20 tomorrow', '👩‍💻 Call tomorrow #work 📅 2026-10-20'])(
+  'unifies canonical and natural removals in original UTF-16 coordinates: %s',
+  (raw) => {
+    let state = dismiss(raw.replace('tomorrow', ''));
+    state = act(state, { type: 'remove-tag', tag: '#work' });
+    state = editTaskInput(state, raw);
+    expect(project(state).markdownBody.trim()).toBe('👩‍💻 Call');
+    expect(state.raw).toBe(raw);
+  },
+);
+
+it('expires a manual removal receipt when its bound source changes', () => {
+  const state = createTaskInputState('Call tomorrow');
+  const manual = act(state, { type: 'select-date', role: 'due', value: localDate('2026-10-22') });
+  const removed = act(manual, { type: 'dismiss', role: 'due' });
+  expect(editTaskInput(removed, 'Call послезавтра').restore).toBeUndefined();
+});
+it('keeps the meaningful last Restore offer through an ineffective repeated dismissal', () => {
+  const state = dismiss('Call tomorrow');
+  expect(act(state, { type: 'dismiss', role: 'due' })).toBe(state);
+  expect(project(act(state, { type: 'restore' })).initial.due).toEqual({
+    type: 'set',
+    value: '2026-10-14',
+  });
 });

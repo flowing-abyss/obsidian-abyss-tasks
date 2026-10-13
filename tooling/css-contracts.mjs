@@ -230,3 +230,11 @@ export const runtimeFamilies = [
   },
   { file: 'src/ui/ViewOptionsPopover.ts', helper: 'setPopoverVariable', prefix: '' },
 ];
+
+// Shared task/Q content owns the existing tag color, with no new runtime variable family.
+export const taskMetadataColorContract = {
+  variable: '--abyss-tag-color',
+  producer: 'src/ui/taskMetadataContent.ts',
+  consumers: ['src/panels/center/TaskCardRenderer.ts', 'src/ui/taskCapture/CaptureMetadataRow.ts'],
+  selector: '.abyss-task-tag--colored',
+};

@@ -20,7 +20,7 @@ export interface TaskInputInspection {
   readonly carriers: readonly TaskInputCarrier[];
   readonly protectedRanges: readonly TaskInputRange[];
 }
-export interface TaskCreatePreviewMetadata {
+interface TaskCreatePreviewMetadata {
   readonly markdownTitle: string;
   readonly tags: readonly string[];
   readonly planning: Pick<TaskPlanning, 'due' | 'scheduled' | 'start' | 'time' | 'duration'>;

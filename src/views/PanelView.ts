@@ -19,6 +19,7 @@ import {
 import type { StatusRegistry } from '../status/StatusRegistry';
 import type { TagManager } from '../tags/TagManager';
 import { prefixForDiscoveredGroupId, resolveEffectiveTagGroups } from '../tags/effectiveTagGroups';
+import { tagColorForGroups } from '../tags/tagColor';
 import { collectTaskNodeTags } from '../tags/taskTagCatalog';
 import type {
   CommentTimeContextProvider,
@@ -934,6 +935,15 @@ export class PanelView extends ItemView {
     let ownsSelection = this.center_abyssPrivate.captureCreationSelection();
     this.quickCapture_abyssPrivate = new QuickCaptureCoordinator({
       host: elements.quickCaptureHost,
+      getTagColor: (tag) =>
+        tagColorForGroups(
+          tag,
+          resolveEffectiveTagGroups(
+            this.settings_abyssPrivate,
+            selectionTasks.queries.observedTags(),
+          ),
+        ),
+      formatDate: (value) => moment(value, 'YYYY-MM-DD').format('D MMM'),
       ...(this.taskInputServices_abyssPrivate !== undefined && {
         smart: {
           ...this.taskInputServices_abyssPrivate,
@@ -971,6 +981,7 @@ export class PanelView extends ItemView {
     this.shortcutMigrationCleanup_abyssPrivate = this.contentEl.onWindowMigrated(() => {
       this.bindPanelShortcuts_abyssPrivate();
       this.bindDayBoundary_abyssPrivate();
+      this.quickCapture_abyssPrivate?.onWindowMigrated();
       this.center_abyssPrivate.onWindowMigrated();
       this.right_abyssPrivate.onWindowMigrated();
       this.cancelSearchPresentation_abyssPrivate?.();

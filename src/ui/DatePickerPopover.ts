@@ -1,4 +1,5 @@
 import { anchoredPlacement } from './anchoredPlacement';
+import { isImeOwnedEvent } from './ime';
 import { noInteractionOwnership, type InteractionOwnershipPort } from './interactionOwnership';
 import {
   bindSegmentedInputCommit,
@@ -15,8 +16,15 @@ export interface DatePickerPopoverOptions {
   /** `returnFocus` is false for a pick made by leaving the picker, which keeps focus where it went. */
   readonly onPick: (value: string, pick: { readonly returnFocus: boolean }) => void;
   readonly onClose?: () => void;
+  readonly onInvalidDraft?: () => void;
   readonly restoreFocus?: () => void;
   readonly interactionOwnership?: InteractionOwnershipPort;
+}
+
+export interface DatePickerPopoverHandle {
+  (restoreFocus?: boolean): void;
+  readonly element: HTMLElement;
+  flush(): 'ready' | 'blocked';
 }
 
 const ownerCleanups = new WeakMap<HTMLElement, () => void>();
@@ -56,7 +64,7 @@ class DatePickerLifecycle {
     });
   }
 
-  mount(): () => void {
+  mount(): DatePickerPopoverHandle {
     ownerCleanups.set(this.options_abyssPrivate.owner, this.cleanup_abyssPrivate);
     this.ownerWindow_abyssPrivate?.addEventListener('resize', this.position_abyssPrivate);
     this.ownerDocument_abyssPrivate.addEventListener('scroll', this.position_abyssPrivate, true);
@@ -66,7 +74,10 @@ class DatePickerLifecycle {
       0,
     );
     this.focusTimer_abyssPrivate = this.setTimer_abyssPrivate(this.focusInput_abyssPrivate, 0);
-    return this.cleanup_abyssPrivate;
+    return Object.assign(this.cleanup_abyssPrivate, {
+      element: this.popover_abyssPrivate,
+      flush: () => this.flush_abyssPrivate(),
+    });
   }
 
   private readonly onOutside_abyssPrivate = (event: MouseEvent): void => {
@@ -83,11 +94,26 @@ class DatePickerLifecycle {
     ) {
       return;
     }
+    if (this.options_abyssPrivate.onInvalidDraft !== undefined) {
+      this.flush_abyssPrivate();
+      return;
+    }
     this.draft_abyssPrivate.flush();
     this.cleanup_abyssPrivate();
   };
 
   private readonly onKeyDown_abyssPrivate = (event: KeyboardEvent): void => {
+    if (isImeOwnedEvent(event)) return;
+    if (
+      event.key === 'Enter' &&
+      this.options_abyssPrivate.onInvalidDraft !== undefined &&
+      event.target === this.input_abyssPrivate
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.commitDraft_abyssPrivate('enter');
+      return;
+    }
     if (event.key !== 'Escape') return;
     event.preventDefault();
     event.stopPropagation();
@@ -95,9 +121,8 @@ class DatePickerLifecycle {
   };
 
   private commitDraft_abyssPrivate(reason: SegmentedCommitReason): void {
-    const { validity, value } = this.input_abyssPrivate;
-    // Bad input and a year no task date can hold stay a draft; an empty field still picks.
-    if (validity.badInput || (value !== '' && !isUsableDateInputValue(value))) return;
+    if (this.closed_abyssPrivate || !this.validDraft_abyssPrivate()) return;
+    const value = this.input_abyssPrivate.value;
     // Enter and a native change close as a change always has; leaving the picker keeps focus where
     // the user sent it.
     const returnFocus = reason === 'change' || reason === 'enter';
@@ -108,12 +133,29 @@ class DatePickerLifecycle {
     }
   }
 
+  private validDraft_abyssPrivate(): boolean {
+    const { validity, value } = this.input_abyssPrivate;
+    if (!validity.badInput && (value === '' || isUsableDateInputValue(value))) return true;
+    this.options_abyssPrivate.onInvalidDraft?.();
+    return false;
+  }
+
+  private flush_abyssPrivate(): 'ready' | 'blocked' {
+    if (this.closed_abyssPrivate) return 'ready';
+    if (!this.validDraft_abyssPrivate()) return 'blocked';
+    if (this.input_abyssPrivate.value !== (this.options_abyssPrivate.initialValue ?? ''))
+      this.commitDraft_abyssPrivate('flush');
+    else this.cleanup_abyssPrivate(false);
+    return 'ready';
+  }
+
   private readonly onBlur_abyssPrivate = (): void => {
     if (this.closed_abyssPrivate) return;
     this.clearTimer_abyssPrivate(this.blurTimer_abyssPrivate);
     this.blurTimer_abyssPrivate = this.setTimer_abyssPrivate(() => {
       this.blurTimer_abyssPrivate = undefined;
-      this.cleanup_abyssPrivate(false);
+      if (this.options_abyssPrivate.onInvalidDraft !== undefined) this.flush_abyssPrivate();
+      else this.cleanup_abyssPrivate(false);
     }, 200);
   };
 
@@ -187,7 +229,7 @@ class DatePickerLifecycle {
   }
 }
 
-export function showDatePickerPopover(options: DatePickerPopoverOptions): () => void {
+export function showDatePickerPopover(options: DatePickerPopoverOptions): DatePickerPopoverHandle {
   ownerCleanups.get(options.owner)?.();
 
   const popover = options.owner.createDiv();

@@ -10,10 +10,10 @@ import type { StatusRegistry } from '../status/StatusRegistry';
 import {
   isTagNavigationArchived,
   resolveEffectiveTagGroups,
-  tagMatchesGroup,
   tagNavigationGroupTags,
   type EffectiveTagGroup,
 } from '../tags/effectiveTagGroups';
+import { tagColorForGroups } from '../tags/tagColor';
 import { selectTaskNodes } from '../task-lists/TaskListSelector';
 import { outgoingTaskLinkValues, type TaskLinkValues } from '../task-lists/taskLinkValues';
 import type { TaskOccurrencePresentation } from '../task-lists/taskOccurrencePresentation';
@@ -3769,10 +3769,7 @@ export class CenterPanel {
     tag: string,
     tagGroups: readonly EffectiveTagGroup[] = this.effectiveTagGroups_abyssPrivate(),
   ): string | undefined {
-    for (const group of tagGroups) {
-      if (tagMatchesGroup(tag, group)) return group.color;
-    }
-    return undefined;
+    return tagColorForGroups(tag, tagGroups);
   }
 
   private effectiveTagGroups_abyssPrivate(): readonly EffectiveTagGroup[] {

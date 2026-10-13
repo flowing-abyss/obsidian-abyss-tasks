@@ -9,6 +9,7 @@ import { isImeOwnedEvent } from './ime';
 export function showMenuAtMouseEventWithFocus(
   menu: Menu,
   event: MouseEvent,
+  onSurface?: (surface: HTMLElement) => void,
 ): HTMLElement | undefined {
   const eventTarget = event.currentTarget ?? event.target;
   const targetDocument =
@@ -37,6 +38,7 @@ export function showMenuAtMouseEventWithFocus(
     keyEvent.preventDefault();
     keyEvent.stopPropagation();
   });
+  if (surface !== undefined) onSurface?.(surface);
   const firstItem = surface?.querySelector<HTMLElement>('.menu-item:not(.is-disabled)');
   if (firstItem != null) {
     firstItem.tabIndex = 0;

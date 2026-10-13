@@ -13,6 +13,8 @@ export type QuickCapturePhase = 'closed' | 'resolving' | 'open';
 
 interface QuickCaptureCoordinatorOptions {
   readonly smart?: CaptureSmartOptions;
+  readonly getTagColor?: (tag: string) => string | undefined;
+  readonly formatDate?: (value: string) => string;
   readonly host: HTMLElement;
   readonly context: () => CaptureContext;
   readonly resolveTarget: (context: CaptureContext) => Promise<CaptureTarget>;
@@ -40,6 +42,7 @@ function frozenContext(context: CaptureContext): CaptureContext {
 export class QuickCaptureCoordinator {
   private currentPhase: QuickCapturePhase = 'closed';
   private generation = 0;
+  private surfaceGeneration = 0;
   private ownershipToken: { release(): void } | null = null;
   private controller: TaskCaptureController | null = null;
   private surface: CaptureSurface | null = null;
@@ -141,14 +144,7 @@ export class QuickCaptureCoordinator {
 
     let surface: CaptureSurface;
     try {
-      surface = new CaptureSurface(this.options.host, controller, {
-        closeOnEmptyBlur: false,
-        onEscape: () => {
-          if (this.generation === generation && this.controller === controller) {
-            this.restoreFocusOnClose = true;
-          }
-        },
-      });
+      surface = this.mountSurface(controller, generation);
     } catch {
       controller.destroy();
       this.closeGeneration(generation);
@@ -165,6 +161,39 @@ export class QuickCaptureCoordinator {
     this.currentPhase = 'open';
     this.revealIntent?.mount(surface.input);
     surface.focus();
+  }
+
+  onWindowMigrated(): void {
+    if (this.destroyed || this.currentPhase === 'closed') return;
+    this.outsidePointerCleanup?.();
+    this.outsidePointerCleanup = null;
+    this.armOutsidePointerPolicy(this.generation);
+    const controller = this.controller;
+    if (controller === null) return;
+    const ownedFocus =
+      this.surface?.element.contains(this.surface.input.ownerDocument.activeElement) === true;
+    this.surface?.destroy();
+    this.surface = this.mountSurface(controller, this.generation);
+    this.revealIntent?.mount(this.surface.input);
+    if (ownedFocus) this.surface.focus();
+  }
+
+  private mountSurface(controller: TaskCaptureController, generation: number): CaptureSurface {
+    const surfaceGeneration = ++this.surfaceGeneration;
+    return new CaptureSurface(this.options.host, controller, {
+      closeOnEmptyBlur: false,
+      ...(this.options.getTagColor === undefined ? {} : { getTagColor: this.options.getTagColor }),
+      ...(this.options.formatDate === undefined ? {} : { formatDate: this.options.formatDate }),
+      interactionOwnership: this.options.interactionOwnership,
+      isLive: () =>
+        !this.destroyed &&
+        generation === this.generation &&
+        surfaceGeneration === this.surfaceGeneration,
+      onEscape: () => {
+        if (this.generation === generation && this.controller === controller)
+          this.restoreFocusOnClose = true;
+      },
+    });
   }
 
   private armOutsidePointerPolicy(generation: number): void {
@@ -186,6 +215,7 @@ export class QuickCaptureCoordinator {
       this.releaseCurrentGeneration(false);
       return;
     }
+    if (this.options.smart !== undefined) return;
     const controller = this.controller;
     const surface = this.surface;
     if (controller == null || surface == null) return;
@@ -217,6 +247,7 @@ export class QuickCaptureCoordinator {
 
   private releaseCurrentGeneration(restoreFocus = false): void {
     ++this.generation;
+    ++this.surfaceGeneration;
     this.currentPhase = 'closed';
     const surface = this.surface;
     const controller = this.controller;

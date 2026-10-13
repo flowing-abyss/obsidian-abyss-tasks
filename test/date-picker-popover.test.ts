@@ -572,3 +572,54 @@ describe('showDatePickerPopover', () => {
     }
   });
 });
+
+describe('Q picker settlement', () => {
+  it('flushes the actual native value without a change event and is idempotent', () => {
+    vi.useFakeTimers();
+    const h = host();
+    const onPick = vi.fn();
+    const handle = showDatePickerPopover({ ...h, initialValue: '2026-10-14', onPick });
+    const input = expectDefined(h.owner.querySelector<HTMLInputElement>('input'));
+    input.value = '2026-10-20';
+    expect(handle.flush()).toBe('ready');
+    expect(handle.flush()).toBe('ready');
+    expect(onPick).toHaveBeenCalledExactlyOnceWith('2026-10-20', { returnFocus: false });
+    expect(handle.element.isConnected).toBe(false);
+    h.owner.remove();
+  });
+  it('retains invalid Q picker after pointer/mouse/blur timer and Enter', () => {
+    vi.useFakeTimers();
+    const h = host();
+    const onPick = vi.fn();
+    const onInvalidDraft = vi.fn();
+    const handle = showDatePickerPopover({ ...h, onPick, onInvalidDraft });
+    vi.runAllTimers();
+    const input = expectDefined(h.owner.querySelector<HTMLInputElement>('input'));
+    input.value = '0202-01-01';
+    document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    input.dispatchEvent(new FocusEvent('blur'));
+    vi.advanceTimersByTime(250);
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(handle.element.isConnected).toBe(true);
+    expect(handle.flush()).toBe('blocked');
+    expect(onInvalidDraft).toHaveBeenCalled();
+    expect(onPick).not.toHaveBeenCalled();
+    handle(false);
+    h.owner.remove();
+  });
+  it.each([
+    { key: 'Escape', isComposing: true },
+    { key: 'Process' },
+    { key: 'Escape', keyCode: 229 },
+  ])('leaves IME-owned Escape alone: %o', (init) => {
+    vi.useFakeTimers();
+    const h = host();
+    const handle = showDatePickerPopover({ ...h, onPick: vi.fn() });
+    vi.runAllTimers();
+    document.dispatchEvent(new KeyboardEvent('keydown', init));
+    expect(handle.element.isConnected).toBe(true);
+    handle(false);
+    h.owner.remove();
+  });
+});

@@ -1,7 +1,6 @@
-import { setIcon } from 'obsidian';
-import { noteNameOfPath } from '../markdown/noteName';
 import { compileNotePathPattern } from '../markdown/notePathPattern';
 import type { TaskSnapshot } from '../tasks';
+import { renderSourceNoteContent } from './taskMetadataContent';
 
 export function shouldShowSourceNote(
   task: TaskSnapshot,
@@ -24,13 +23,8 @@ export function renderSourceNoteChip(
   task: TaskSnapshot,
   onClick?: (filePath: string) => void,
 ): void {
-  const noteName = noteNameOfPath(task.source.filePath);
-  const chip = container.createSpan({
-    cls: `abyss-task-source-note${onClick != null ? ' abyss-task-source-note--clickable' : ''}`,
-  });
-  const iconEl = chip.createSpan({ cls: 'abyss-task-source-note-icon' });
-  setIcon(iconEl, 'file-text');
-  chip.createSpan({ cls: 'abyss-task-source-note-name', text: noteName });
+  const chip = renderSourceNoteContent(container, task.source.filePath);
+  chip.classList.toggle('abyss-task-source-note--clickable', onClick != null);
   if (onClick != null) {
     chip.addEventListener('click', (e) => {
       e.stopPropagation();

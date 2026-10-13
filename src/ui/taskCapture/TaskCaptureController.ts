@@ -4,6 +4,7 @@ import {
   editTaskInput,
   inspectTaskInput,
   projectTaskInput,
+  taskInputPreflightBody,
   taskInputPreflightInitial,
   type TaskCommandResult,
   type TaskCreatePreview,
@@ -44,6 +45,8 @@ function detachFrozen<T>(value: T): T {
   freeze(detached);
   return detached;
 }
+
+type CaptureEditKind = 'input' | 'paste' | 'composition' | 'history';
 
 export type CapturePhase = 'idle' | 'submitting' | 'error' | 'closed';
 export type CaptureSubmitCause = 'enter' | 'blur';
@@ -95,6 +98,7 @@ export class TaskCaptureController {
 
   private readonly smart_abyssPrivate: CaptureSmartOptions | undefined;
   private state_abyssPrivate = createTaskInputState();
+  private compositionBaseline_abyssPrivate: TaskInputState | undefined;
   private reference_abyssPrivate: TaskInputReference | undefined;
   private enabled_abyssPrivate = false;
   private metadata_abyssPrivate: CaptureMetadataSnapshot | undefined;
@@ -144,7 +148,7 @@ export class TaskCaptureController {
     value: string,
     options?: {
       readonly deferRecognition?: boolean;
-      readonly editKind?: 'input' | 'paste' | 'composition' | 'history';
+      readonly editKind?: CaptureEditKind;
     },
   ): void {
     if (
@@ -168,18 +172,43 @@ export class TaskCaptureController {
     value: string,
     options?: {
       readonly deferRecognition?: boolean;
-      readonly editKind?: 'input' | 'paste' | 'composition' | 'history';
+      readonly editKind?: CaptureEditKind;
     },
   ): void {
     if (value === this.state_abyssPrivate.raw) return;
-    this.state_abyssPrivate = editTaskInput(this.state_abyssPrivate, value, options?.editKind);
+    this.editSmartDraft_abyssPrivate(value, options);
     this.frozen_abyssPrivate = undefined;
     this.phase_abyssPrivate = 'idle';
     this.error_abyssPrivate = undefined;
     if (value.trim().length > 0) this.freezeReference_abyssPrivate();
     this.recognitionPending_abyssPrivate = true;
-    if (options?.deferRecognition !== true) this.refreshSmart_abyssPrivate();
+    if (options?.deferRecognition !== true && this.compositionBaseline_abyssPrivate === undefined)
+      this.refreshSmart_abyssPrivate();
     this.emit_abyssPrivate();
+  }
+
+  private editSmartDraft_abyssPrivate(
+    value: string,
+    options?: {
+      readonly deferRecognition?: boolean;
+      readonly editKind?: 'input' | 'paste' | 'composition' | 'history';
+    },
+  ): void {
+    if (options?.editKind === 'composition' && options.deferRecognition === true) {
+      this.compositionBaseline_abyssPrivate ??= this.state_abyssPrivate;
+      this.state_abyssPrivate = {
+        ...this.state_abyssPrivate,
+        raw: value,
+        revision: this.state_abyssPrivate.revision + 1,
+      };
+    } else if (this.compositionBaseline_abyssPrivate !== undefined) {
+      this.state_abyssPrivate = {
+        ...this.state_abyssPrivate,
+        raw: value,
+        revision: this.state_abyssPrivate.revision + 1,
+      };
+    } else
+      this.state_abyssPrivate = editTaskInput(this.state_abyssPrivate, value, options?.editKind);
   }
 
   isEmpty(): boolean {
@@ -240,8 +269,21 @@ export class TaskCaptureController {
       this.phase_abyssPrivate === 'submitting'
     )
       return;
+    this.settleComposition_abyssPrivate();
     if (this.recognitionPending_abyssPrivate) this.refreshSmart_abyssPrivate();
     this.emit_abyssPrivate();
+  }
+
+  private settleComposition_abyssPrivate(): void {
+    const baseline = this.compositionBaseline_abyssPrivate;
+    if (baseline === undefined) return;
+    this.compositionBaseline_abyssPrivate = undefined;
+    this.state_abyssPrivate = editTaskInput(
+      baseline,
+      this.state_abyssPrivate.raw,
+      'composition',
+      this.state_abyssPrivate.revision + 1,
+    );
   }
 
   private refreshSmart_abyssPrivate(): void {
@@ -256,7 +298,7 @@ export class TaskCaptureController {
     let projection: TaskInputProjection | undefined;
     try {
       const source = this.target.session.preview({
-        markdownBody: commandBodyForCapture(this.target, state.raw),
+        markdownBody: commandBodyForCapture(this.target, taskInputPreflightBody(state, inspection)),
         initial: taskInputPreflightInitial(state, this.target.initial),
       });
       preview = source;
@@ -356,7 +398,7 @@ export class TaskCaptureController {
   }
 
   applyMetadataAction(action: TaskInputAction): void {
-    if (!this.canEdit_abyssPrivate()) return;
+    if (!this.canEdit_abyssPrivate() || this.compositionBaseline_abyssPrivate !== undefined) return;
     this.freezeReference_abyssPrivate();
     if (
       this.metadata_abyssPrivate?.projection === undefined ||
@@ -426,6 +468,7 @@ export class TaskCaptureController {
   }
 
   private ensureSmartProjection_abyssPrivate(): void {
+    this.settleComposition_abyssPrivate();
     if (this.recognitionPending_abyssPrivate || this.metadata_abyssPrivate === undefined)
       this.refreshSmart_abyssPrivate();
   }

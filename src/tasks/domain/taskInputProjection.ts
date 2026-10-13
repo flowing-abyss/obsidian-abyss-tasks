@@ -1,11 +1,6 @@
 import { sameTag } from '../../markdown/tagSyntax';
 import { shiftLocalDate } from './localDateMath';
-import {
-  currentInputBinding,
-  inputRangesOverlap,
-  removeOwnedInputRange,
-  validInputRange,
-} from './taskInputGuards';
+import { currentInputBinding, inputRangesOverlap, validInputRange } from './taskInputGuards';
 import {
   inputBinding,
   type TaskInputBinding,
@@ -17,6 +12,7 @@ import type {
   TaskInputInitial,
   TaskInputInspection,
   TaskInputPlanningRole,
+  TaskInputRange,
   TaskInputReference,
 } from './taskInputTypes';
 import { parseTaskLineSourceModel } from './taskLineSourceModel';
@@ -114,6 +110,8 @@ function explicitPlanning(
   suppressed: readonly TaskInputBinding[],
 ): InputPlanning {
   const result = { ...input.sourcePlanning };
+  for (const role of ['due', 'scheduled', 'start', 'time'] as const)
+    if (input.inspection.carriers.some((carrier) => carrier.role === role)) delete result[role];
   for (const carrier of input.inspection.carriers) {
     if (carrier.value === undefined) continue;
     const removed = suppressed.some(
@@ -121,8 +119,7 @@ function explicitPlanning(
         binding.role === carrier.role &&
         binding.ranges.some((range) => inputRangesOverlap(range, carrier.range)),
     );
-    if (removed) delete result[carrier.role];
-    else Object.assign(result, { [carrier.role]: carrier.value });
+    if (!removed) Object.assign(result, { [carrier.role]: carrier.value });
   }
   return result;
 }
@@ -328,18 +325,81 @@ function bindingFullyRepresented(decision: Decision, binding: TaskInputBinding):
   const time = decision.initial.time;
   return source?.time !== undefined && time?.type === 'set' && time.value === source.time;
 }
-function projectedBody(decision: Decision): string {
-  const ranges = decision.consumed
-    .filter((binding) => bindingFullyRepresented(decision, binding))
-    .flatMap((binding) => binding.ranges)
+function inactiveCanonicalRanges(
+  state: TaskInputState,
+  inspection: TaskInputInspection,
+): TaskInputRange[] {
+  const sameRange = (a: TaskInputRange, b: TaskInputRange): boolean =>
+    a.from === b.from && a.to === b.to;
+  const planning = inspection.carriers
     .filter(
-      (range, index, all) =>
-        all.findIndex((other) => other.from === range.from && other.to === range.to) === index,
+      (carrier) =>
+        carrier.value !== undefined &&
+        state.suppressed.some(
+          (binding) =>
+            binding.role === carrier.role &&
+            currentInputBinding(state.raw, state.revision, binding) &&
+            binding.ranges.some((range) => sameRange(range, carrier.range)),
+        ),
     )
-    .sort((a, b) => b.from - a.from);
-  let raw = decision.input.state.raw;
-  for (const range of ranges) raw = removeOwnedInputRange(raw, range);
-  return raw;
+    .map((carrier) => carrier.range);
+  const tags = inspection.tags
+    .filter((tag) =>
+      state.suppressedTags.some(
+        (binding) =>
+          sameTag(binding.tag, tag.value) &&
+          currentInputBinding(state.raw, state.revision, binding) &&
+          binding.ranges.some((range) => sameRange(range, tag.range)),
+      ),
+    )
+    .map((tag) => tag.range);
+  return [...planning, ...tags];
+}
+/** All intervals refer to the original UTF-16 source, including bounded separator ownership. */
+function buildInputBody(raw: string, ranges: readonly TaskInputRange[]): string {
+  const space = (value: string | undefined): boolean => value === ' ' || value === '\t';
+  const merged: Array<{ from: number; to: number }> = [];
+  for (const range of ranges
+    .filter((item) => validInputRange(raw, item))
+    .sort((a, b) => a.from - b.from)) {
+    const last = merged[merged.length - 1];
+    if (
+      last !== undefined &&
+      (range.from <= last.to || (range.from === last.to + 1 && space(raw[last.to])))
+    )
+      last.to = Math.max(last.to, range.to);
+    else merged.push({ ...range });
+  }
+  const owned = merged
+    .map((range) => {
+      let { from, to } = range;
+      if (from === 0 && space(raw[to])) to++;
+      else if (to === raw.length && space(raw[from - 1])) from--;
+      else if (space(raw[from - 1]) && space(raw[to])) to++;
+      return { from, to };
+    })
+    .sort((a, b) => a.from - b.from);
+  let cursor = 0,
+    body = '';
+  for (const range of owned) {
+    if (range.from > cursor) body += raw.slice(cursor, range.from);
+    cursor = Math.max(cursor, range.to);
+  }
+  return body + raw.slice(cursor);
+}
+export function taskInputPreflightBody(
+  state: TaskInputState,
+  inspection: TaskInputInspection,
+): string {
+  return buildInputBody(state.raw, inactiveCanonicalRanges(state, inspection));
+}
+function projectedBody(decision: Decision): string {
+  return buildInputBody(decision.input.state.raw, [
+    ...inactiveCanonicalRanges(decision.input.state, decision.input.inspection),
+    ...decision.consumed
+      .filter((binding) => bindingFullyRepresented(decision, binding))
+      .flatMap((binding) => binding.ranges),
+  ]);
 }
 function hasAuthoredTitle(raw: string): boolean {
   const title = parseTaskLineSourceModel(`- [ ] ${raw}`)?.markdownTitle ?? '';

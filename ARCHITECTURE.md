@@ -123,8 +123,21 @@ The composition root injects the shared clock and offline English/Russian recogn
 `TaskInputServices`; other capture controllers omit that capability. The pure model owns raw text,
 occurrence suppression, manual choices and source ranges. Q reads canonical source planning from
 its retained create session before projection, then previews the exact unprefixed final request under
-the same policy. Only accepted, fully represented ranges are removed at submission. Metadata never
-creates an authored title. Empty forms may expose manual choices without a valid creation preview.
+the same policy. Chip removal and the single Restore action change metadata only; they preserve raw
+text and native input history. Exact inactive canonical occurrences are filtered before source
+preflight and application tag policy. Final projection removes their union with fully represented
+accepted natural ranges in original UTF-16 coordinates. Restore reverses only its own metadata deltas;
+source changes and conflicting re-entry expire the offer. Metadata never creates an authored title.
+Empty forms may expose manual choices without a valid creation preview.
+
+`CaptureMetadataRow` and central task cards share tag and source-note content. Both resolve tag colors
+from the effective groups and observed task catalog. Q's `CaptureInteractionBoundary` owns the mounted
+input, row, native menus and picker roots in their document. A proven exit settles picker drafts,
+then raw input and recognition, then submits once. Invalid picker drafts block departure with inline
+feedback. Ordinary typing coalesces for 24 ms; Enter and exit flush synchronously. Composition stages
+raw against one immutable precomposition mapping baseline and settles after the final input event.
+Window migration disposes surface listeners, timers and child drafts and remounts against the new
+document while retaining the controller, create session, reference and pending submission.
 
 Submission detaches and freezes the request, model and reference. A known unchanged write failure
 retains that request for explicit Enter retry; edits keep the original reference and create a new

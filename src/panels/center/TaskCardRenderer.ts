@@ -43,6 +43,7 @@ import {
   renderDependencyIndicator,
   type TaskDependencyLookup,
 } from '../../ui/taskDependencyPresentation';
+import { renderTaskTagContent } from '../../ui/taskMetadataContent';
 import { renderTaskDescriptionText } from '../../ui/taskNodeText';
 import { renderTaskParentButton } from '../../ui/taskParentButton';
 import {
@@ -1208,12 +1209,8 @@ export class TaskCardRenderer {
     },
   ): HTMLElement {
     const component = dropContext?.component ?? this.#host.component();
-    const element = host.createSpan({ cls: 'abyss-task-tag abyss-cursor-pointer', text: tag });
-    const color = this.#host.getTagColor(tag, tagGroups);
-    if (color !== undefined && color !== '') {
-      element.setCssProps({ '--abyss-tag-color': color });
-      element.addClass('abyss-task-tag--colored');
-    }
+    const element = renderTaskTagContent(host, tag, this.#host.getTagColor(tag, tagGroups));
+    element.addClass('abyss-cursor-pointer');
     component.registerDomEvent(element, 'click', (event) => {
       event.stopPropagation();
       this.#listControls.addPropertyFilter({ type: 'tag', value: tag });

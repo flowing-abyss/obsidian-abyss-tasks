@@ -685,3 +685,15 @@ it('treats an untouched date seed as empty under the surface blur policy', async
   controller.destroy();
   base.controller.destroy();
 });
+
+it('reserves chip cross width while allowing wrapping, ellipsis and keyboard/touch access', () => {
+  expectDeclaration(declarationsFor('.abyss-capture-metadata'), 'flex-wrap', 'wrap');
+  expectDeclaration(declarationsFor('.abyss-capture-chip'), 'max-width', '100%');
+  expectDeclaration(declarationsFor('.abyss-capture-chip-body'), 'min-width', '0');
+  expect(css).toMatch(/\.abyss-capture-chip \.abyss-chip-remove\s*\{\s*opacity: 0/u);
+  expect(css).toMatch(/\.abyss-capture-chip \.abyss-chip-remove\s*\{[^}]*flex-shrink: 0/u);
+  expect(css).toContain('.abyss-capture-chip:focus-within .abyss-chip-remove');
+  expect(lastAtRuleBlock('@media (hover: none)')).toContain(
+    '.abyss-capture-chip .abyss-chip-remove',
+  );
+});

@@ -1,5 +1,5 @@
 import type { TagGroup } from '../settings/types';
-import { tagMatchesGroup } from './effectiveTagGroups';
+import { tagMatchesGroup, type EffectiveTagGroup } from './effectiveTagGroups';
 
 /**
  * The color for an already-extracted tag string (e.g. "#work" or "work"), matching it
@@ -19,4 +19,11 @@ export function tagColorFor(
 ): string | undefined {
   const first = tags?.[0];
   return first !== undefined && first.length > 0 ? colorForTag(first, tagGroups) : undefined;
+}
+
+export function tagColorForGroups(
+  tag: string,
+  groups: readonly EffectiveTagGroup[],
+): string | undefined {
+  return groups.find((group) => tagMatchesGroup(tag, group))?.color;
 }

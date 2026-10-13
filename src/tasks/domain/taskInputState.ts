@@ -1,5 +1,5 @@
 import { sameTag } from '../../markdown/tagSyntax';
-import { currentInputBinding, inputRangesOverlap, removeOwnedInputRange } from './taskInputGuards';
+import { currentInputBinding, inputRangesOverlap } from './taskInputGuards';
 import { inspectTaskInput } from './taskInputInspection';
 import type { TaskInputProjection } from './taskInputProjection';
 import type {
@@ -17,8 +17,14 @@ export interface TaskInputBinding {
   readonly dateRanges: readonly TaskInputRange[];
   readonly timeRanges: readonly TaskInputRange[];
 }
+interface TaskInputTagBinding {
+  readonly ranges: readonly TaskInputRange[];
+  readonly slices: readonly string[];
+  readonly revision: number;
+  readonly tag: string;
+}
 export type TaskInputDateRole = Exclude<TaskInputPlanningRole, 'time'>;
-export interface TaskInputManualDate {
+interface TaskInputManualDate {
   readonly value: LocalDate;
   // Present only for an accepted complete point; absence grants no text consumption.
   readonly binding?: TaskInputBinding;
@@ -30,9 +36,13 @@ export interface TaskInputState {
   readonly clearedFallbacks: readonly TaskInputPlanningRole[];
   readonly manual: Readonly<Partial<Record<TaskInputDateRole, TaskInputManualDate>>>;
   readonly removedTags: readonly string[];
+  readonly suppressedTags: readonly TaskInputTagBinding[];
   readonly restore?: {
     readonly bindings: readonly TaskInputBinding[];
     readonly fallbacks: readonly TaskInputPlanningRole[];
+    readonly tags: readonly TaskInputTagBinding[];
+    readonly removedTags: readonly string[];
+    readonly manual: TaskInputState['manual'];
     readonly revision: number;
   };
 }
@@ -48,7 +58,15 @@ export type TaskInputAction =
   | { readonly type: 'remove-tag'; readonly tag: string }
   | { readonly type: 'restore' };
 export function createTaskInputState(raw = ''): TaskInputState {
-  return { raw, revision: 0, suppressed: [], clearedFallbacks: [], manual: {}, removedTags: [] };
+  return {
+    raw,
+    revision: 0,
+    suppressed: [],
+    clearedFallbacks: [],
+    manual: {},
+    removedTags: [],
+    suppressedTags: [],
+  };
 }
 export function inputBinding(
   state: TaskInputState,
@@ -72,11 +90,12 @@ function lexicalBoundary(raw: string, range: TaskInputRange): boolean {
 interface InputEdit {
   readonly old: TaskInputState;
   readonly raw: string;
+  readonly revision: number;
   readonly prefix: number;
   readonly suffix: number;
   readonly enclosingOffset?: number;
 }
-function inputEdit(state: TaskInputState, raw: string): InputEdit {
+function inputEdit(state: TaskInputState, raw: string, revision: number): InputEdit {
   let prefix = 0;
   while (prefix < Math.min(raw.length, state.raw.length) && raw[prefix] === state.raw[prefix])
     prefix++;
@@ -89,7 +108,14 @@ function inputEdit(state: TaskInputState, raw: string): InputEdit {
   const enclosing = raw.indexOf(state.raw);
   const unique =
     state.raw.length > 0 && enclosing >= 0 && raw.indexOf(state.raw, enclosing + 1) < 0;
-  return { old: state, raw, prefix, suffix, ...(unique ? { enclosingOffset: enclosing } : {}) };
+  return {
+    old: state,
+    raw,
+    revision,
+    prefix,
+    suffix,
+    ...(unique ? { enclosingOffset: enclosing } : {}),
+  };
 }
 function shiftedEditRange(edit: InputEdit, range: TaskInputRange): TaskInputRange | undefined {
   if (edit.enclosingOffset !== undefined)
@@ -118,7 +144,7 @@ function rebaseBinding(
   const dateRanges = binding.dateRanges.map((range) => rebaseRange(edit, range));
   const timeRanges = binding.timeRanges.map((range) => rebaseRange(edit, range));
   const ranges = binding.ranges.map((range) => rebaseRange(edit, range));
-  const revision = edit.old.revision + 1;
+  const revision = edit.revision;
   if (ranges.every(definedRange))
     return {
       ...binding,
@@ -177,7 +203,7 @@ function uncertainDescendants(edit: InputEdit, binding: TaskInputBinding): TaskI
       ranges,
       dateRanges: componentDescendants(binding, ranges, binding.dateRanges),
       timeRanges: componentDescendants(binding, ranges, binding.timeRanges),
-      revision: edit.old.revision + 1,
+      revision: edit.revision,
     });
   }
   return result;
@@ -216,29 +242,77 @@ function remainingTagRemovals(edit: InputEdit): string[] {
       ),
   );
 }
+function rebaseTag(edit: InputEdit, binding: TaskInputTagBinding): TaskInputTagBinding | undefined {
+  if (!currentInputBinding(edit.old.raw, edit.old.revision, binding)) return undefined;
+  const ranges = binding.ranges.map((range) => rebaseRange(edit, range));
+  if (!ranges.every(definedRange)) return undefined;
+  const tags = inspectTaskInput(edit.raw).tags;
+  if (
+    !ranges.every((range) =>
+      tags.some(
+        (tag) =>
+          sameTag(tag.value, binding.tag) &&
+          tag.range.from === range.from &&
+          tag.range.to === range.to,
+      ),
+    )
+  )
+    return undefined;
+  return { ...binding, ranges, revision: edit.revision };
+}
 function rebaseRestore(edit: InputEdit): TaskInputState['restore'] {
   const restore = edit.old.restore;
   if (restore === undefined) return undefined;
   const bindings = restore.bindings.map((binding) => rebaseBinding(edit, binding));
-  if (!bindings.every((binding): binding is TaskInputBinding => binding !== undefined))
+  const tags = restore.tags.map((binding) => rebaseTag(edit, binding));
+  if (
+    !bindings.every((binding): binding is TaskInputBinding => binding !== undefined) ||
+    !tags.every((binding): binding is TaskInputTagBinding => binding !== undefined)
+  )
     return undefined;
-  return { ...restore, bindings, revision: edit.old.revision + 1 };
+  const removedTags = remainingTagRemovals(edit);
+  if (restore.removedTags.some((tag) => !removedTags.some((old) => sameTag(old, tag))))
+    return undefined;
+  const roles = [
+    ...restore.fallbacks,
+    ...restore.bindings.map((binding) => binding.role),
+    ...Object.keys(restore.manual),
+  ];
+  const before = inspectTaskInput(edit.old.raw).carriers;
+  if (
+    inspectTaskInput(edit.raw).carriers.some(
+      (carrier) =>
+        roles.includes(carrier.role) &&
+        !before.some(
+          (old) =>
+            old.role === carrier.role && rebaseRange(edit, old.range)?.from === carrier.range.from,
+        ),
+    )
+  )
+    return undefined;
+  const manual = rebaseManual({ ...edit, old: { ...edit.old, manual: restore.manual } });
+  return { ...restore, bindings, tags, manual, revision: edit.revision };
 }
 export function editTaskInput(
   state: TaskInputState,
   raw: string,
   kind: 'input' | 'paste' | 'composition' | 'history' = 'input',
+  revision = state.revision + 1,
 ): TaskInputState {
-  if (raw === state.raw) return state;
-  const edit = inputEdit(state, raw),
+  if (raw === state.raw && revision === state.revision + 1) return state;
+  const edit = inputEdit(state, raw, revision),
     restore = rebaseRestore(edit);
   return {
     raw,
-    revision: state.revision + 1,
+    revision,
     suppressed: rebaseSuppressions(edit, kind !== 'input'),
     clearedFallbacks: state.clearedFallbacks,
     manual: rebaseManual(edit),
     removedTags: remainingTagRemovals(edit),
+    suppressedTags: state.suppressedTags.flatMap((binding) => {
+      const next = rebaseTag(edit, binding);
+      return next === undefined ? [] : [next];
+    }),
     ...(restore === undefined ? {} : { restore }),
   };
 }
@@ -251,7 +325,9 @@ function restoreDismissal(state: TaskInputState): TaskInputState {
   const restored = state.restore;
   if (
     restored?.revision !== state.revision ||
-    !restored.bindings.every((binding) => currentInputBinding(state.raw, state.revision, binding))
+    ![...restored.bindings, ...restored.tags].every((binding) =>
+      currentInputBinding(state.raw, state.revision, binding),
+    )
   )
     return state;
   const matches = (a: TaskInputBinding, b: TaskInputBinding): boolean =>
@@ -262,6 +338,18 @@ function restoreDismissal(state: TaskInputState): TaskInputState {
       (binding) => !restored.bindings.some((old) => matches(binding, old)),
     ),
     clearedFallbacks: state.clearedFallbacks.filter((role) => !restored.fallbacks.includes(role)),
+    manual: { ...state.manual, ...restored.manual },
+    removedTags: state.removedTags.filter(
+      (tag) => !restored.removedTags.some((old) => sameTag(old, tag)),
+    ),
+    suppressedTags: state.suppressedTags.filter(
+      (binding) =>
+        !restored.tags.some(
+          (old) =>
+            sameTag(old.tag, binding.tag) &&
+            JSON.stringify(old.ranges) === JSON.stringify(binding.ranges),
+        ),
+    ),
   };
 }
 function removeTag(
@@ -269,14 +357,35 @@ function removeTag(
   tag: string,
   inspection: TaskInputInspection,
 ): TaskInputState {
-  let edited = state;
-  for (const { range } of inspection.tags
+  const tags = inspection.tags
     .filter((occurrence) => sameTag(occurrence.value, tag))
-    .sort((a, b) => b.range.from - a.range.from))
-    edited = editTaskInput(edited, removeOwnedInputRange(edited.raw, range));
+    .map((occurrence) => ({
+      tag: occurrence.value,
+      ranges: [occurrence.range],
+      slices: [state.raw.slice(occurrence.range.from, occurrence.range.to)],
+      revision: state.revision,
+    }))
+    .filter(
+      (binding) =>
+        !state.suppressedTags.some(
+          (old) =>
+            sameTag(old.tag, tag) && JSON.stringify(old.ranges) === JSON.stringify(binding.ranges),
+        ),
+    );
+  const removedTags = state.removedTags.some((old) => sameTag(old, tag)) ? [] : [tag];
+  if (tags.length === 0 && removedTags.length === 0) return state;
   return {
-    ...edited,
-    removedTags: [...edited.removedTags.filter((old) => !sameTag(old, tag)), tag],
+    ...state,
+    suppressedTags: [...state.suppressedTags, ...tags],
+    removedTags: [...state.removedTags, ...removedTags],
+    restore: {
+      bindings: [],
+      fallbacks: [],
+      tags,
+      removedTags,
+      manual: {},
+      revision: state.revision,
+    },
   };
 }
 function chosenBinding(
@@ -306,7 +415,9 @@ function afterRoleAction(state: TaskInputState, role: TaskInputPlanningRole): Ta
   const restore = state.restore;
   if (restore === undefined) return state;
   const affected =
-    restore.fallbacks.includes(role) || restore.bindings.some((binding) => binding.role === role);
+    restore.fallbacks.includes(role) ||
+    restore.bindings.some((binding) => binding.role === role) ||
+    (role !== 'time' && restore.manual[role] !== undefined);
   return affected ? withoutRestore(state) : state;
 }
 function selectDate(
@@ -336,7 +447,7 @@ function dismissedBindings(
     .filter((candidate) => role === 'due' || (role === 'time' && candidate.time !== undefined))
     .map((candidate) => inputBinding(state, candidate, role));
   const carriers = inspection.carriers
-    .filter((carrier) => carrier.role === role)
+    .filter((carrier) => carrier.role === role && carrier.value !== undefined)
     .map((carrier) => ({
       ranges: [carrier.range],
       slices: [state.raw.slice(carrier.range.from, carrier.range.to)],
@@ -358,16 +469,34 @@ function dismissRole(
   inspection: TaskInputInspection,
 ): TaskInputState {
   const roles: TaskInputPlanningRole[] = role === 'due' ? ['due', 'time'] : [role];
-  const bindings = dismissedBindings(state, role, projection, inspection);
+  const bindings = dismissedBindings(state, role, projection, inspection).filter(
+    (binding, index, all) => {
+      const same = (other: TaskInputBinding): boolean =>
+        other.role === binding.role &&
+        JSON.stringify(other.ranges) === JSON.stringify(binding.ranges);
+      return !state.suppressed.some(same) && all.findIndex(same) === index;
+    },
+  );
+  const removedManual =
+    role === 'time' || state.manual[role] === undefined ? {} : { [role]: state.manual[role] };
   const manual = { ...state.manual };
   if (role !== 'time') delete manual[role];
   const fallbacks = roles.filter((affected) => !state.clearedFallbacks.includes(affected));
+  if (bindings.length === 0 && fallbacks.length === 0 && Object.keys(removedManual).length === 0)
+    return state;
   return {
     ...withoutRestore(state),
     manual,
     suppressed: [...state.suppressed, ...bindings],
     clearedFallbacks: [...state.clearedFallbacks, ...fallbacks],
-    restore: { bindings, fallbacks, revision: state.revision },
+    restore: {
+      bindings,
+      fallbacks,
+      tags: [],
+      removedTags: [],
+      manual: removedManual,
+      revision: state.revision,
+    },
   };
 }
 export function applyTaskInputAction(

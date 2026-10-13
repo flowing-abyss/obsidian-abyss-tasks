@@ -740,3 +740,79 @@ it('clears unknown recovery when the capture closes', async () => {
   expect(h.controller.snapshot().phase).toBe('closed');
   expect(h.controller.snapshot().metadata?.needsCheckedRetry).toBe(false);
 });
+
+describe('metadata-only canonical source removals', () => {
+  it.each([true, false])(
+    'removes typed duplicates before Inbox policy, Inbox dismissed %s',
+    async (dismissInbox) => {
+      const h = await smartHarness();
+      h.controller.setDraft('Call');
+      if (dismissInbox)
+        h.controller.applyMetadataAction({ type: 'remove-tag', tag: '#task/inbox' });
+      const raw = 'Call #work #WORK';
+      h.controller.setDraft(raw);
+      h.controller.applyMetadataAction({ type: 'remove-tag', tag: '#work' });
+      expect(h.controller.snapshot().draft).toBe(raw);
+      expect(h.controller.snapshot().metadata?.preview).toMatchObject({
+        type: 'valid',
+        metadata: { tags: dismissInbox ? [] : ['#task/inbox'] },
+      });
+      await h.controller.submit('enter');
+      expect(h.readCanonicalRoot(expectDefined(h.repositoryWrites[0])).tags).toEqual(
+        dismissInbox ? [] : ['#task/inbox'],
+      );
+      expect(h.repositoryWrites[0]).not.toMatch(/#work/iu);
+    },
+  );
+  it.each(['📅 2026-10-21 Call 📅 2026-10-20', 'Call 📅 2026-10-20 📅 2026-10-21'])(
+    'preflights new active carriers through actual source validation: %s',
+    async (raw) => {
+      const h = await smartHarness({ prefix: 'Prefix' }, { inbox: false, initial: {} });
+      h.controller.setDraft('Call 📅 2026-10-20');
+      h.controller.applyMetadataAction({ type: 'dismiss', role: 'due' });
+      h.controller.setDraft(raw);
+      expect(h.controller.snapshot().metadata?.preview).toMatchObject({
+        type: 'valid',
+        metadata: { planning: { due: '2026-10-21' } },
+      });
+      await h.controller.submit('enter');
+      const root = h.readCanonicalRoot(expectDefined(h.repositoryWrites[0]));
+      expect(root.planning.due).toBe('2026-10-21');
+      expect(root.markdownTitle).toBe('Prefix Call');
+    },
+  );
+  it.each(['Call 📅 nope', 'Call 📅 2026-10-21 📅 2026-10-22'])(
+    'never hides changed invalid or active duplicate metadata: %s',
+    async (raw) => {
+      const h = await smartHarness();
+      h.controller.setDraft('Call 📅 2026-10-20');
+      h.controller.applyMetadataAction({ type: 'dismiss', role: 'due' });
+      h.controller.setDraft(raw);
+      await h.controller.submit('enter');
+      expect(h.repositoryWrites).toEqual([]);
+      expect(h.controller.snapshot().metadata?.preview.type).toBe('invalid');
+    },
+  );
+  it('stages IME changes against one precomposition suppression baseline', async () => {
+    const h = await smartHarness();
+    const raw = 'Call tomorrow';
+    h.controller.setDraft(raw);
+    h.controller.applyMetadataAction({ type: 'dismiss', role: 'due' });
+    h.recognize.mockClear();
+    h.controller.setDraft('Call tom', { deferRecognition: true, editKind: 'composition' });
+    h.controller.setDraft(raw, { deferRecognition: true, editKind: 'composition' });
+    h.controller.applyMetadataAction({
+      type: 'select-date',
+      role: 'due',
+      value: localDate('2026-10-22'),
+    });
+    expect(h.recognize).not.toHaveBeenCalled();
+    h.controller.flushRecognition();
+    expect(h.controller.snapshot().metadata?.preview).toMatchObject({
+      type: 'valid',
+      metadata: { markdownTitle: raw, planning: {} },
+    });
+    await h.controller.submit('enter');
+    expect(h.readCanonicalRoot(expectDefined(h.repositoryWrites[0])).planning.due).toBeUndefined();
+  });
+});

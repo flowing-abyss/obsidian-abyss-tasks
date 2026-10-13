@@ -666,3 +666,26 @@ describe('QuickCaptureCoordinator', () => {
     expect(document.activeElement).toBe(elsewhere);
   });
 });
+
+it('remounts a migrated surface while retaining the controller and in-flight operation', async () => {
+  const pending = deferred<TaskCommandResult>();
+  const execute = vi.fn(() => pending.promise);
+  const h = harness(async (context) => target(context, 'Migration', execute));
+  const first = await open(h);
+  first.value = 'Migrating draft';
+  first.dispatchEvent(new Event('input'));
+  first.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+  const destroys = vi.spyOn(TaskCaptureController.prototype, 'destroy');
+  h.coordinator.onWindowMigrated();
+  const second = expectDefined(h.host.querySelector<HTMLInputElement>('input'));
+  expect(second).not.toBe(first);
+  expect(second.value).toBe('Migrating draft');
+  expect(second.readOnly).toBe(true);
+  expect(destroys).not.toHaveBeenCalled();
+  pending.resolve(success());
+  await flushMicrotasks(0);
+  expect(execute).toHaveBeenCalledOnce();
+  expect(h.onResult).toHaveBeenCalledOnce();
+  expect(h.resolveTarget).toHaveBeenCalledOnce();
+  expect(h.acquire).toHaveBeenCalledOnce();
+});

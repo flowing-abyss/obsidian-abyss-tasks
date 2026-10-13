@@ -81,11 +81,15 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   inspectTaskInput: ['src/ui/taskCapture/TaskCaptureController.ts'],
   projectTaskInput: ['src/ui/taskCapture/TaskCaptureController.ts'],
   taskInputPreflightInitial: ['src/ui/taskCapture/TaskCaptureController.ts'],
+  taskInputPreflightBody: ['src/ui/taskCapture/TaskCaptureController.ts'],
   TaskInputProjection: ['src/ui/taskCapture/TaskCaptureController.ts'],
   createTaskInputState: ['src/ui/taskCapture/TaskCaptureController.ts'],
   editTaskInput: ['src/ui/taskCapture/TaskCaptureController.ts'],
   applyTaskInputAction: ['src/ui/taskCapture/TaskCaptureController.ts'],
-  TaskInputAction: ['src/ui/taskCapture/TaskCaptureController.ts'],
+  TaskInputAction: [
+    'src/ui/taskCapture/CaptureMetadataRow.ts',
+    'src/ui/taskCapture/TaskCaptureController.ts',
+  ],
   TaskInputState: ['src/ui/taskCapture/TaskCaptureController.ts'],
   taskInputReference: ['src/main.ts'],
   TaskInputServices: [
@@ -369,6 +373,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   formatTrackedDurationWithSeconds: ['src/ui/timeTracking/TimeEntriesPopover.ts'],
   groupTrackedDays: ['src/ui/timeTracking/RailTrackingWidget.ts'],
   localDate: [
+    'src/ui/taskCapture/CaptureMetadataRow.ts',
     'src/statistics/statisticsCalendar.ts',
     'src/statistics/statisticsDataset.ts',
     'src/main.ts',

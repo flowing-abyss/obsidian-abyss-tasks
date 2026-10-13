@@ -1349,7 +1349,9 @@ it('passes neutral services only to Q, freezes the active setting and refuses an
     const next = await h.openQ();
     next.value = 'Call tomorrow';
     next.dispatchEvent(new Event('input', { bubbles: true }));
-    expect(recognize).toHaveBeenCalledOnce();
+    await vi.waitFor(() => {
+      expect(recognize).toHaveBeenCalledOnce();
+    });
     expect(readReference).toHaveBeenCalledTimes(2);
   } finally {
     await h.dispose();

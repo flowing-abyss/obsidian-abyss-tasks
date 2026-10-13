@@ -10455,3 +10455,62 @@ button.abyss-statistics-row-button:focus-visible {
   display: grid;
   place-content: center;
 }
+
+.abyss-capture-metadata {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--size-2-1) var(--size-4-1);
+  min-width: 0;
+  position: relative;
+}
+
+.abyss-capture-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--size-2-1);
+  max-width: 100%;
+  min-width: 0;
+}
+
+.abyss-capture-chip-body {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.abyss-capture-chip-body :is(.abyss-task-tag, .abyss-task-source-note) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.abyss-capture-chip .abyss-chip-remove {
+  opacity: 0;
+  flex-shrink: 0;
+}
+
+.abyss-capture-chip:hover .abyss-chip-remove,
+.abyss-capture-chip:focus-within .abyss-chip-remove {
+  opacity: 1;
+}
+
+.abyss-capture-chip :is(button):focus-visible {
+  outline: 2px solid var(--background-modifier-border-focus);
+  outline-offset: 2px;
+}
+
+@media (hover: none) {
+  .abyss-capture-chip .abyss-chip-remove {
+    opacity: 1;
+  }
+}

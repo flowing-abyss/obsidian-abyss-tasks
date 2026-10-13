@@ -829,3 +829,19 @@ it('backs bounded Statistics ranking geometry with exact native height and offse
     ),
   ).toEqual([]);
 });
+
+it('discovers shared task/Q tag color from its exact visual owner', async () => {
+  const { taskMetadataColorContract: contract } = await import('../tooling/css-contracts.mjs');
+  const { default: ts } = await import('typescript');
+  const source = ts.sys.readFile(ts.sys.resolvePath(contract.producer));
+  if (source === undefined) throw new Error('Missing task metadata color producer');
+  expect(discoverRuntimeVariables(source).produced).toContain(contract.variable);
+  for (const consumer of contract.consumers) {
+    const body = ts.sys.readFile(ts.sys.resolvePath(consumer));
+    expect(body).toContain('renderTaskTagContent');
+    expect(body).not.toContain("setCssProps({ '--abyss-tag-color'");
+  }
+  const css = ts.sys.readFile(ts.sys.resolvePath('styles.css'));
+  expect(css).toContain(contract.selector);
+  expect(css).toContain(`var(${contract.variable},`);
+});
