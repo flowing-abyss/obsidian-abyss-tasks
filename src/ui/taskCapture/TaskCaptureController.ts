@@ -23,6 +23,7 @@ export interface CaptureSmartOptions extends TaskInputServices {
   readonly onRecognitionFailure: () => void;
 }
 export interface CaptureMetadataSnapshot {
+  readonly referenceDate?: TaskInputReference['localDate'];
   readonly destination?: { readonly filePath: string; readonly inbox: boolean };
   readonly preview: TaskCreatePreview;
   readonly projection?: TaskInputProjection;
@@ -44,6 +45,16 @@ function detachFrozen<T>(value: T): T {
   };
   freeze(detached);
   return detached;
+}
+
+function missingTitleOnly(preview: TaskCreatePreview): boolean {
+  return (
+    preview.type === 'invalid' && preview.issues.every((issue) => issue.code === 'invalid-title')
+  );
+}
+
+function canProjectEmptyInput(state: TaskInputState, preview: TaskCreatePreview): boolean {
+  return state.raw.trim().length === 0 && missingTitleOnly(preview);
 }
 
 type CaptureEditKind = 'input' | 'paste' | 'composition' | 'history';
@@ -241,6 +252,9 @@ export class TaskCaptureController {
   private smartMetadata_abyssPrivate(): CaptureMetadataSnapshot {
     return {
       ...this.metadata_abyssPrivate,
+      ...(this.reference_abyssPrivate !== undefined && {
+        referenceDate: this.reference_abyssPrivate.localDate,
+      }),
       ...(this.target.session.type === 'ready' && {
         destination: {
           filePath: this.target.session.destination.filePath,
@@ -312,7 +326,7 @@ export class TaskCaptureController {
           ...(this.target.initial !== undefined && { contextInitial: this.target.initial }),
         });
         preview = this.target.session.preview(this.request_abyssPrivate(projection));
-      } else if (state.raw.trim().length === 0) {
+      } else if (canProjectEmptyInput(state, source)) {
         // An empty form exposes transient manual choices, never a valid creation preview.
         projection = projectTaskInput({
           state,
@@ -338,11 +352,7 @@ export class TaskCaptureController {
 
   private showSmartValidation_abyssPrivate(preview: TaskCreatePreview): void {
     if (preview.type === 'valid') return;
-    if (
-      preview.type === 'invalid' &&
-      preview.issues.every((issue) => issue.code === 'invalid-title')
-    )
-      return;
+    if (missingTitleOnly(preview)) return;
     this.error_abyssPrivate = {
       kind: 'error',
       message: this.smartValidationMessage_abyssPrivate(preview),

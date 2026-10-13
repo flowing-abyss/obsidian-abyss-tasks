@@ -6,8 +6,9 @@ import { TaskListSurface } from '../src/panels/task-list/TaskListSurface';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
 import { TagManager } from '../src/tags/TagManager';
-import type { TaskInputServices, TaskRef } from '../src/tasks';
+import { localDate, type TaskInputServices, type TaskRef } from '../src/tasks';
 import { ChronoTaskInputRecognizer } from '../src/tasks/infrastructure/input/ChronoTaskInputRecognizer';
+import { MarkdownTaskCreatePreview } from '../src/tasks/infrastructure/markdown/MarkdownTaskCreatePreview';
 import type {
   CreationPresentationController,
   CreationRevealRequest,
@@ -16,7 +17,7 @@ import { renderedTaskElements } from '../src/ui/taskPresentationIdentity';
 import { PanelView } from '../src/views/PanelView';
 import { deferred, expectDefined, flushMicrotasks, useRealMoment } from './helpers';
 import { ownedWait, ownTestCleanup } from './support/ownedTestLifetime';
-import { reference } from './support/taskInputHarness';
+import { codec, reference } from './support/taskInputHarness';
 import {
   prepareTaskPanelViewport,
   taskCardMountBound,
@@ -1353,6 +1354,54 @@ it('passes neutral services only to Q, freezes the active setting and refuses an
       expect(recognize).toHaveBeenCalledOnce();
     });
     expect(readReference).toHaveBeenCalledTimes(2);
+  } finally {
+    await h.dispose();
+  }
+});
+
+it('formats Q dates against the frozen draft year, including when natural recognition is disabled', async () => {
+  const readReference = vi.fn(() => reference);
+  const h = await mountQuickPanel(false, false, false, undefined, {
+    recognizer: new ChronoTaskInputRecognizer(),
+    readReference,
+  });
+  try {
+    const port = new MarkdownTaskCreatePreview(codec);
+    const plan = h.tasks.planCreate.bind(h.tasks);
+    vi.spyOn(h.tasks, 'planCreate').mockImplementation(async (destination, options) => {
+      const session = await plan(destination, options);
+      vi.spyOn(session, 'preview').mockImplementation((request) =>
+        port.preview({ ...request, today: reference.localDate, addCreatedDate: false }),
+      );
+      return session;
+    });
+    h.settings.parseDatesInQuickCapture = false;
+    const input = await h.openQ();
+    const date = expectDefined(
+      h.root.querySelector<HTMLButtonElement>(
+        '.abyss-capture-chip-body[aria-label^="Edit due date"]',
+      ),
+    );
+    date.click();
+    let picker = expectDefined(h.root.querySelector<HTMLInputElement>('input[type="date"]'));
+    picker.value = '2027-01-01';
+    picker.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(date.textContent).toContain('2027');
+    expect(date.title).toContain('2027-01-01');
+    expect(date.getAttribute('aria-label')).toContain('2027-01-01');
+    readReference.mockReturnValue({ ...reference, localDate: localDate('2027-10-13') });
+    input.value = 'Call';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await vi.waitFor(() => {
+      expect(date.textContent).toContain('2027');
+    });
+    date.click();
+    picker = expectDefined(h.root.querySelector<HTMLInputElement>('input[type="date"]'));
+    picker.value = '2026-10-20';
+    picker.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(date.textContent).not.toContain('2026');
+    expect(date.title).toContain('2026-10-20');
+    expect(readReference).toHaveBeenCalledOnce();
   } finally {
     await h.dispose();
   }

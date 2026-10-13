@@ -1,5 +1,5 @@
 import { Menu, setIcon } from 'obsidian';
-import { localDate, type TaskInputAction } from '../../tasks';
+import { localDate, type LocalDate, type TaskInputAction, type TaskPlanning } from '../../tasks';
 import { showDatePickerPopover, type DatePickerPopoverHandle } from '../DatePickerPopover';
 import { isImeOwnedEvent } from '../ime';
 import type { InteractionOwnershipPort } from '../interactionOwnership';
@@ -17,7 +17,7 @@ interface MetadataRowOptions {
   readonly flushInput: () => 'ready' | 'blocked';
   readonly isLive: () => boolean;
   readonly getTagColor?: (tag: string) => string | undefined;
-  readonly formatDate?: (value: string) => string;
+  readonly formatDate?: (value: string, referenceDate?: string) => string;
   readonly interactionOwnership?: InteractionOwnershipPort;
 }
 interface Chip {
@@ -52,14 +52,37 @@ export class CaptureMetadataRow {
     this.renderFeedback();
     const keys = new Set<string>();
     this.renderDestination(keys, disabled, metadata);
-    this.renderTags(keys, disabled, metadata);
     this.renderPlanning(keys, disabled, metadata);
+    this.renderTags(keys, disabled, metadata);
     this.renderActions(keys, disabled, metadata);
     for (const [key, chip] of this.chips)
       if (!keys.has(key)) {
         chip.element.remove();
         this.chips.delete(key);
       }
+    this.reconcileOrder(keys);
+  }
+
+  private reconcileOrder(keys: Set<string>): void {
+    const ordered = [...keys].flatMap((key) => {
+      const chip = this.chips.get(key);
+      return chip === undefined ? [] : [chip.element];
+    });
+    const active = this.element.ownerDocument.activeElement;
+    const focused = ordered.find((element) => element.contains(active));
+    const pivot = focused === undefined ? ordered.length : ordered.indexOf(focused);
+    // Move siblings around the focused chip; detaching it would dispatch blur into capture.
+    let anchor = focused ?? null;
+    for (const element of ordered.slice(0, pivot).reverse()) {
+      if (element.nextSibling !== anchor) this.element.insertBefore(element, anchor);
+      anchor = element;
+    }
+    let previous = focused;
+    for (const element of ordered.slice(pivot + 1)) {
+      if (previous !== undefined && previous.nextSibling !== element)
+        this.element.insertBefore(element, previous.nextSibling);
+      previous = element;
+    }
   }
 
   private renderDestination(
@@ -102,14 +125,15 @@ export class CaptureMetadataRow {
     disabled: boolean,
     metadata: CaptureMetadataSnapshot,
   ): void {
-    const planning =
-      metadata.preview.type === 'valid' ? metadata.preview.metadata.planning : undefined;
+    const planning = this.planning(metadata);
     for (const role of ['due', 'scheduled', 'start'] as const) {
-      const value = planning?.[role];
+      const value = planning[role];
       if (value === undefined && role !== 'due') continue;
       const chip = this.use(keys, disabled, `date:${role}`, { removable: true, actionable: true });
-      chip.body.setAttribute('aria-label', `Edit ${role} date`);
-      const label = this.dateLabel(value);
+      const description = this.dateDescription(metadata, role, value);
+      chip.body.setAttribute('aria-label', description);
+      chip.body.setAttribute('title', description);
+      const label = this.dateLabel(value, metadata.referenceDate);
       this.content(chip, label, () => {
         const content = chip.body.createSpan({ cls: 'abyss-task-date' });
         setIcon(content.createSpan(), 'calendar');
@@ -124,10 +148,49 @@ export class CaptureMetadataRow {
       };
       chip.dismiss = { type: 'dismiss', role };
     }
-    this.renderTime(keys, disabled, planning?.time);
+    this.renderTime(keys, disabled, planning.time);
   }
-  private dateLabel(value: string | undefined): string {
-    return value === undefined ? 'Date' : (this.options.formatDate?.(value) ?? value);
+  private planning(metadata: CaptureMetadataSnapshot): Pick<TaskPlanning, DateRole | 'time'> {
+    if (metadata.preview.type === 'valid') return metadata.preview.metadata.planning;
+    if (
+      metadata.preview.type !== 'invalid' ||
+      !metadata.preview.issues.every((issue) => issue.code === 'invalid-title')
+    )
+      return {};
+    const planning: Pick<TaskPlanning, DateRole | 'time'> = {};
+    for (const role of ['due', 'scheduled', 'start', 'time'] as const) {
+      const patch = metadata.projection?.initial[role];
+      if (patch?.type === 'set') Object.assign(planning, { [role]: patch.value });
+    }
+    return planning;
+  }
+  private dateDescription(
+    metadata: CaptureMetadataSnapshot,
+    role: DateRole,
+    value?: LocalDate,
+  ): string {
+    if (value === undefined) return `Edit ${role} date`;
+    const projection = metadata.projection;
+    const binding = projection?.bindings.find((item) => item.role === role);
+    const source =
+      binding !== undefined &&
+      projection?.candidates.some(
+        (candidate) =>
+          (candidate.date === value ||
+            (binding.dateRanges.length === 0 &&
+              candidate.date === undefined &&
+              candidate.time !== undefined)) &&
+          JSON.stringify(candidate.ranges) === JSON.stringify(binding.ranges),
+      ) === true
+        ? binding.slices.join(' ')
+        : undefined;
+    const phrase = source === undefined ? '' : ` (${source})`;
+    return `Edit ${role} date: ${value}${phrase}`;
+  }
+  private dateLabel(value: string | undefined, referenceDate?: string): string {
+    return value === undefined
+      ? 'Date'
+      : (this.options.formatDate?.(value, referenceDate) ?? value);
   }
   private renderTime(keys: Set<string>, disabled: boolean, value: string | undefined): void {
     if (value !== undefined) {
@@ -327,12 +390,13 @@ export class CaptureMetadataRow {
     this.menu = menu;
     const token = this.options.interactionOwnership?.acquire({ blocksShortcuts: true });
     let release = (): void => {};
-    const projection = this.options.controller.snapshot().metadata?.projection;
+    const metadata = this.options.controller.snapshot().metadata;
+    const projection = metadata?.projection;
     for (const candidate of projection?.candidates ?? []) {
       const value = candidate.date;
       if (candidate.status !== 'point' || value === undefined) continue;
       menu.addItem((item) =>
-        item.setTitle(this.options.formatDate?.(value) ?? value).onClick(() => {
+        item.setTitle(this.dateLabel(value, metadata?.referenceDate)).onClick(() => {
           this.act({ type: 'select-date', role: 'due', value, candidate });
         }),
       );

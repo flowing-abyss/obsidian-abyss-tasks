@@ -10513,8 +10513,10 @@ button.abyss-statistics-row-button:focus-visible {
   outline-offset: 2px;
 }
 
-@media (hover: none) {
+@media (hover: none), (pointer: coarse) {
   .abyss-capture-chip .abyss-chip-remove {
+    width: 24px;
+    height: 24px;
     opacity: 1;
   }
 }

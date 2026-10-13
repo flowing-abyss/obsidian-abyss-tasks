@@ -81,6 +81,7 @@ describe('finite recognition policies', () => {
     'Call #tomorrow',
     'Call about 14:00 tomorrow',
     'Call tomorrow around 2pm',
+    'Позвонить в прошлое воскресенье',
   ])('keeps excluded source literal: %s', (raw) => {
     const result = project(createTaskInputState(raw));
     expect(result.initial.due).toBeUndefined();
@@ -343,5 +344,56 @@ describe('colon-form numeric identifiers never become clocks', () => {
     expect(result.initial.due).toBeUndefined();
     expect(result.initial.time).toBeUndefined();
     expect(result.markdownBody).toBe(raw);
+  });
+});
+
+describe('timezone alias case refusal', () => {
+  it.each([
+    'Call tomorrow at 14:00 PST',
+    'Call tomorrow at 14:00 pst',
+    'Call tomorrow at 14:00 PsT',
+    'Позвонить завтра в 14:00 MSK',
+    'Позвонить завтра в 14:00 msk',
+    'Позвонить завтра в 14:00 MsK',
+  ])('preserves the entire timezone-qualified clause: %s', (raw) => {
+    const result = project(createTaskInputState(raw));
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ status: 'unsupported', reason: 'timezone' }),
+    ]);
+    expect(result.initial.due).toBeUndefined();
+    expect(result.initial.time).toBeUndefined();
+    expect(result.markdownBody).toBe(raw);
+  });
+});
+
+describe('nearest strictly past weekdays', () => {
+  it.each([
+    ['2026-10-15', 'last Friday', 'в прошлую пятницу', '2026-10-09'],
+    ['2026-10-16', 'last Friday', 'в прошлую пятницу', '2026-10-09'],
+    ['2026-10-17', 'last Friday', 'в прошлую пятницу', '2026-10-16'],
+    ['2026-10-18', 'last Monday', 'в прошлый понедельник', '2026-10-12'],
+    ['2026-10-19', 'last Sunday', 'в воскресенье на прошлой неделе', '2026-10-18'],
+    ['2026-10-18', 'last Sunday', 'в воскресенье на прошлой неделе', '2026-10-11'],
+    ['2026-10-17', 'Friday', 'в пятницу', '2026-10-23'],
+    ['2026-10-15', 'next Friday', 'в следующую пятницу', '2026-10-23'],
+    ['2026-10-18', 'next Monday', 'в следующий понедельник', '2026-10-19'],
+  ])('%s: %s / %s → %s', (day, english, russian, due) => {
+    const ref = taskInputReference(clockFrom(Date.parse(`${day}T12:00:00+07:00`), 420).read());
+    for (const raw of [`Call ${english}`, `Позвонить ${russian}`]) {
+      const inspection = inspectTaskInput(raw);
+      const result = projectTaskInput({
+        state: createTaskInputState(raw),
+        reference: ref,
+        inspection,
+        sourcePlanning: {},
+        candidates: recognizer.recognize({
+          text: raw,
+          reference: ref,
+          protectedRanges: inspection.protectedRanges,
+        }),
+      });
+      expect(result.initial.due).toEqual({ type: 'set', value: due });
+      expect(result.markdownBody).toBe(raw.startsWith('Call') ? 'Call' : 'Позвонить');
+    }
   });
 });

@@ -943,7 +943,10 @@ export class PanelView extends ItemView {
             selectionTasks.queries.observedTags(),
           ),
         ),
-      formatDate: (value) => moment(value, 'YYYY-MM-DD').format('D MMM'),
+      formatDate: (value, referenceDate) =>
+        moment(value, 'YYYY-MM-DD').format(
+          value.slice(0, 4) === referenceDate?.slice(0, 4) ? 'D MMM' : 'D MMM YYYY',
+        ),
       ...(this.taskInputServices_abyssPrivate !== undefined && {
         smart: {
           ...this.taskInputServices_abyssPrivate,

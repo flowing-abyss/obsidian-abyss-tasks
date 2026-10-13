@@ -14,7 +14,7 @@ export type QuickCapturePhase = 'closed' | 'resolving' | 'open';
 interface QuickCaptureCoordinatorOptions {
   readonly smart?: CaptureSmartOptions;
   readonly getTagColor?: (tag: string) => string | undefined;
-  readonly formatDate?: (value: string) => string;
+  readonly formatDate?: (value: string, referenceDate?: string) => string;
   readonly host: HTMLElement;
   readonly context: () => CaptureContext;
   readonly resolveTarget: (context: CaptureContext) => Promise<CaptureTarget>;

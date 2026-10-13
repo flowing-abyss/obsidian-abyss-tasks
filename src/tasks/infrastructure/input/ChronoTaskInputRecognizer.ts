@@ -134,7 +134,7 @@ function exclusion(text: string): TaskInputCandidate['reason'] | undefined {
     )
   )
     return 'negation';
-  if (/\b(?:UTC|GMT|CET|CEST|PST|PDT|EST|EDT|JST|MSK)\b/u.test(text) || hasNumericTimezone(text))
+  if (/\b(?:UTC|GMT|CET|CEST|PST|PDT|EST|EDT|JST|MSK)\b/iu.test(text) || hasNumericTimezone(text))
     return 'timezone';
   return timeExclusion(maskInputRanges(text, nonTimezoneNumericRanges(text)));
 }
@@ -285,7 +285,10 @@ function contentDate(text: string, range: TaskInputRange): boolean {
 }
 function weekdayDelta(slice: string, today: number, target: number): number {
   if (/next|следующ/iu.test(slice)) return 7 - today + target;
-  if (/last|прошл/iu.test(slice)) return target - today - 7;
+  if (/last|прошл/iu.test(slice)) {
+    const delta = target - today;
+    return delta < 0 ? delta : delta - 7;
+  }
   return (target - today + 7) % 7;
 }
 function weekdayDate(

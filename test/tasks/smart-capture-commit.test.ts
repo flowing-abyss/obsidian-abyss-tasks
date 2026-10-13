@@ -926,3 +926,40 @@ for (const editKind of ['paste', 'composition', 'history'] as const) {
     expect(h.repositoryWrites[0]?.match(/📅 2026-10-20/gu)).toHaveLength(1);
   });
 }
+
+it.each([
+  'Call tomorrow at 14:00 PST',
+  'Call tomorrow at 14:00 pst',
+  'Call tomorrow at 14:00 PsT',
+  'Позвонить завтра в 14:00 MSK',
+  'Позвонить завтра в 14:00 msk',
+  'Позвонить завтра в 14:00 MsK',
+])('writes timezone-qualified wording unchanged: %s', async (raw) => {
+  const h = await smartHarness();
+  h.controller.setDraft(raw);
+  await h.controller.submit('enter');
+  const saved = h.readCanonicalRoot(h.repositoryWrites[0] ?? '');
+  expect(saved.markdownTitle).toBe(raw);
+  expect(saved.planning.due).toBeUndefined();
+  expect(saved.planning.time).toBeUndefined();
+  expect(h.execute.mock.calls[0]?.[0].markdownBody).toBe(raw);
+});
+
+it.each([
+  ['2026-10-17', 'Call last Friday', '2026-10-16', 'Call'],
+  ['2026-10-17', 'Позвонить в прошлую пятницу', '2026-10-16', 'Позвонить'],
+  ['2026-10-19', 'Call last Sunday', '2026-10-18', 'Call'],
+  ['2026-10-19', 'Позвонить в воскресенье на прошлой неделе', '2026-10-18', 'Позвонить'],
+])('writes the nearest past weekday at %s: %s', async (day, raw, due, title) => {
+  const h = await smartHarness();
+  h.readReference.mockReturnValue({
+    ...reference,
+    epochMs: Date.parse(`${day}T12:00:00+07:00`),
+    localDate: localDate(day),
+  });
+  h.controller.setDraft(raw);
+  await h.controller.submit('enter');
+  const saved = h.readCanonicalRoot(h.repositoryWrites[0] ?? '');
+  expect(saved.markdownTitle).toBe(title);
+  expect(saved.planning.due).toBe(due);
+});

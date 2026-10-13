@@ -1,6 +1,6 @@
 import { Menu } from 'obsidian';
 import { afterEach, expect, it, vi } from 'vitest';
-import { localDate, type TaskCreateRequest } from '../src/tasks';
+import { localDate, type TaskCreatePreview, type TaskCreateRequest } from '../src/tasks';
 import { MarkdownTaskCreatePreview } from '../src/tasks/infrastructure/markdown/MarkdownTaskCreatePreview';
 import { CaptureSurface } from '../src/ui/taskCapture/CaptureSurface';
 import { TaskCaptureController } from '../src/ui/taskCapture/TaskCaptureController';
@@ -12,7 +12,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   document.body.empty();
 });
-function harness() {
+function harness(initial?: TaskCreateRequest['initial']) {
   vi.useFakeTimers();
   const port = new MarkdownTaskCreatePreview(codec);
   const execute = vi.fn(async (_request: TaskCreateRequest) => ({
@@ -20,6 +20,9 @@ function harness() {
     cause: 'test',
     contentState: 'unchanged' as const,
   }));
+  const preview = vi.fn((request: TaskCreateRequest): TaskCreatePreview =>
+    port.preview({ ...request, today: localDate('2026-10-13'), addCreatedDate: false }),
+  );
   const host = document.body.createDiv();
   const controller = new TaskCaptureController({
     target: {
@@ -28,10 +31,10 @@ function harness() {
       session: {
         type: 'ready',
         destination: { filePath: 'Inbox.md', insertion: { type: 'append' } },
-        preview: (request) =>
-          port.preview({ ...request, today: localDate('2026-10-13'), addCreatedDate: false }),
+        preview,
         execute,
       },
+      ...(initial === undefined ? {} : { initial }),
       markdownPrefix: '',
       markdownSuffixes: [],
     },
@@ -52,8 +55,8 @@ function harness() {
     surface.input.dispatchEvent(new Event('input', { bubbles: true }));
   };
   const button = (label: string) =>
-    expectDefined(host.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`));
-  return { host, controller, surface, type, button, execute };
+    expectDefined(host.querySelector<HTMLButtonElement>(`button[aria-label^="${label}"]`));
+  return { host, controller, surface, type, button, execute, preview };
 }
 it('keeps raw input, selection, mounted node and metadata controls stable across remove and Restore', () => {
   const h = harness();
@@ -345,5 +348,200 @@ it('keeps Enter on a metadata body action inside the capture', async () => {
   await vi.runAllTimersAsync();
   expect(h.host.querySelector('input[type="date"]')).not.toBeNull();
   expect(h.execute).not.toHaveBeenCalled();
+  h.surface.destroy();
+});
+
+it('shows, reopens and clears a manual day before a title without rewriting the input', () => {
+  const h = harness();
+  const input = h.surface.input;
+  input.setSelectionRange(0, 0);
+  const write = vi.spyOn(input, 'value', 'set');
+  h.button('Edit due date').click();
+  vi.runAllTimers();
+  const picker = expectDefined(h.host.querySelector<HTMLInputElement>('input[type="date"]'));
+  picker.value = '2026-10-20';
+  picker.dispatchEvent(new Event('change', { bubbles: true }));
+  expect(h.controller.snapshot().metadata?.preview.type).toBe('invalid');
+  expect(h.host.querySelector('.abyss-task-date')?.textContent).toContain('2026-10-20');
+  expect(h.button('Remove due date').hidden).toBe(false);
+  h.button('Edit due date').click();
+  vi.runAllTimers();
+  expect(h.host.querySelector<HTMLInputElement>('input[type="date"]')?.value).toBe('2026-10-20');
+  h.host
+    .querySelector<HTMLInputElement>('input[type="date"]')
+    ?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  h.button('Remove due date').click();
+  expect(h.button('Remove due date').hidden).toBe(true);
+  expect(h.host.querySelector('.abyss-task-date')?.textContent).toBe('Date');
+  expect(h.surface.input).toBe(input);
+  expect(input.value).toBe('');
+  expect(input.selectionStart).toBe(0);
+  expect(input.selectionEnd).toBe(0);
+  expect(write).not.toHaveBeenCalled();
+  h.surface.destroy();
+});
+
+it('confirms the effective full date and recognized phrase, then drops the phrase on manual replacement', () => {
+  const h = harness();
+  h.type('Call tomorrow');
+  vi.advanceTimersByTime(24);
+  const date = h.button('Edit due date');
+  expect(date.getAttribute('aria-label')).toContain('2026-10-14');
+  expect(date.getAttribute('aria-label')).toContain('tomorrow');
+  expect(date.title).toContain('2026-10-14');
+  expect(date.title).toContain('tomorrow');
+  date.click();
+  vi.runAllTimers();
+  const picker = expectDefined(h.host.querySelector<HTMLInputElement>('input[type="date"]'));
+  picker.value = '2027-01-01';
+  picker.dispatchEvent(new Event('change', { bubbles: true }));
+  expect(h.button('Edit due date')).toBe(date);
+  expect(date.getAttribute('aria-label')).toContain('2027-01-01');
+  expect(date.getAttribute('aria-label')).not.toContain('tomorrow');
+  expect(date.title).toContain('2027-01-01');
+  expect(date.title).not.toContain('tomorrow');
+  expect(h.surface.input.value).toBe('Call tomorrow');
+  h.surface.destroy();
+});
+
+it.each(['input', 'date', 'tag'] as const)(
+  'keeps date and time before tags through edits and Restore with stable %s focus',
+  async (focused) => {
+    const h = harness();
+    const escape = vi.spyOn(h.controller, 'escape');
+    h.type('Call #work');
+    vi.advanceTimersByTime(24);
+    const input = h.surface.input;
+    input.setSelectionRange(1, 3);
+    const date = h.button('Edit due date');
+    const tag = h.button('Remove #work');
+    const active = { input, date, tag }[focused];
+    active.focus();
+    const blur = vi.fn();
+    active.addEventListener('blur', blur);
+    const order = () =>
+      [...h.host.querySelectorAll('.abyss-capture-chip-body')].map((el) => el.textContent);
+    h.type('Call #work tomorrow at 14:00');
+    await vi.runAllTimersAsync();
+    expect(order()).toEqual(['Inbox', '2026-10-14', '14:00', '#work']);
+    expect(document.activeElement).toBe(active);
+    input.setSelectionRange(1, 3);
+    h.button('Remove time').click();
+    await vi.runAllTimersAsync();
+    expect(order()).toEqual(['Inbox', '2026-10-14', '#work', 'Restore']);
+    expect(input.selectionStart).toBe(1);
+    expect(input.selectionEnd).toBe(3);
+    h.button('Restore').click();
+    await vi.runAllTimersAsync();
+    expect(order()).toEqual(['Inbox', '2026-10-14', '14:00', '#work']);
+    expect(input.selectionStart).toBe(1);
+    expect(input.selectionEnd).toBe(3);
+    expect(
+      [...h.host.querySelectorAll('.abyss-capture-metadata button:not([hidden])')].map((button) =>
+        button.getAttribute('aria-label'),
+      ),
+    ).toEqual([
+      'Edit due date: 2026-10-14 (tomorrow at 14:00)',
+      'Remove due date',
+      'Remove time',
+      'Remove #work',
+    ]);
+    h.type('Call #home #work tomorrow at 14:00');
+    await vi.runAllTimersAsync();
+    expect(order()).toEqual(['Inbox', '2026-10-14', '14:00', '#home', '#work']);
+    h.type('Call #work #home tomorrow at 14:00');
+    await vi.runAllTimersAsync();
+    expect(order()).toEqual(['Inbox', '2026-10-14', '14:00', '#work', '#home']);
+    h.type('Call #work tomorrow');
+    await vi.runAllTimersAsync();
+    expect(order()).toEqual(['Inbox', '2026-10-14', '#work']);
+    h.type('Call #work tomorrow at 14:00 #home');
+    await vi.runAllTimersAsync();
+    expect(order()).toEqual(['Inbox', '2026-10-14', '14:00', '#work', '#home']);
+    expect(h.surface.input).toBe(input);
+    expect(h.button('Edit due date')).toBe(date);
+    expect(h.button('Remove #work')).toBe(tag);
+    expect(document.activeElement).toBe(active);
+    expect(h.execute).not.toHaveBeenCalled();
+    expect(escape).not.toHaveBeenCalled();
+    expect(blur).not.toHaveBeenCalled();
+    h.surface.destroy();
+  },
+);
+
+it('shows held context planning without inventing a recognized phrase', () => {
+  const h = harness({ scheduled: { type: 'set', value: localDate('2026-10-19') } });
+  h.controller.applyMetadataAction({
+    type: 'select-date',
+    role: 'due',
+    value: localDate('2026-10-20'),
+  });
+  const scheduled = h.button('Edit scheduled date');
+  expect(scheduled.textContent).toBe('2026-10-19');
+  expect(scheduled.title).toBe('Edit scheduled date: 2026-10-19');
+  expect(scheduled.getAttribute('aria-label')).toBe(scheduled.title);
+  expect(h.controller.snapshot().metadata?.preview.type).toBe('invalid');
+  h.surface.destroy();
+});
+
+it.each(['unavailable', 'throw', 'invalid-metadata'] as const)(
+  'never exposes empty-title transient planning when canonical preview is %s',
+  (failure) => {
+    const h = harness();
+    h.preview.mockImplementation(() => {
+      if (failure === 'throw') throw new Error('preview test');
+      if (failure === 'unavailable') return { type: 'unavailable', cause: 'preview-capability' };
+      return {
+        type: 'invalid',
+        issues: [
+          { code: 'invalid-title', field: 'title' },
+          { code: 'invalid-date', field: 'due' },
+        ],
+      };
+    });
+    h.controller.applyMetadataAction({
+      type: 'select-date',
+      role: 'due',
+      value: localDate('2026-10-20'),
+    });
+    expect(h.controller.snapshot().metadata?.projection).toBeUndefined();
+    expect(h.button('Edit due date').textContent).toBe('Date');
+    expect(h.button('Remove due date').hidden).toBe(true);
+    expect(h.execute).not.toHaveBeenCalled();
+    h.surface.destroy();
+  },
+);
+
+it('does not display held manual planning through a malformed canonical carrier', () => {
+  const h = harness();
+  h.controller.applyMetadataAction({
+    type: 'select-date',
+    role: 'due',
+    value: localDate('2026-10-20'),
+  });
+  h.type('Call 📅 nope');
+  vi.advanceTimersByTime(24);
+  expect(h.controller.snapshot().metadata?.preview.type).toBe('invalid');
+  expect(h.button('Edit due date').textContent).toBe('Date');
+  expect(h.button('Remove due date').hidden).toBe(true);
+  expect(h.surface.input.value).toBe('Call 📅 nope');
+  h.surface.destroy();
+});
+
+it('identifies the clock phrase that supplies an inferred date', () => {
+  const h = harness();
+  h.type('Call at 14:00');
+  vi.advanceTimersByTime(24);
+  const date = h.button('Edit due date');
+  expect(date.title).toContain('2026-10-13');
+  expect(date.title).toContain('at 14:00');
+  expect(date.getAttribute('aria-label')).toBe(date.title);
+  h.controller.applyMetadataAction({
+    type: 'select-date',
+    role: 'due',
+    value: localDate('2026-10-20'),
+  });
+  expect(date.title).toContain('2026-10-20');
+  expect(date.title).not.toContain('at 14:00');
   h.surface.destroy();
 });
