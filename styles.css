@@ -10499,6 +10499,10 @@ button.abyss-statistics-row-button:focus-visible {
   flex-shrink: 0;
 }
 
+.abyss-capture-chip .abyss-chip-remove[hidden] {
+  display: none;
+}
+
 .abyss-capture-chip:hover .abyss-chip-remove,
 .abyss-capture-chip:focus-within .abyss-chip-remove {
   opacity: 1;
