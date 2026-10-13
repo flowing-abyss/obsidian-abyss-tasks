@@ -10458,20 +10458,28 @@ button.abyss-statistics-row-button:focus-visible {
 
 /* Shared task metadata stays inline; only the row owns its gutters and button resets. */
 .abyss-capture-metadata {
+  box-sizing: border-box;
   grid-column: 1 / -1;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--size-4-1) var(--size-4-3);
-  padding: calc(var(--size-4-2) - var(--size-2-1)) var(--size-4-2) 0;
+  gap: var(--size-4-1) var(--size-2-1);
+  padding: calc(var(--size-4-2) - var(--size-2-1)) var(--size-2-3) 0;
+  min-block-size: calc(1.3em + var(--size-4-2) - var(--size-2-1));
   min-width: 0;
   position: relative;
+  font-size: 11px;
+  line-height: 1.3;
 }
 
 .abyss-capture-chip {
+  box-sizing: border-box;
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: var(--size-2-1);
+  gap: 0;
+  padding-inline-end: 14px;
+  min-block-size: 1.3em;
   max-width: 100%;
   min-width: 0;
 }
@@ -10484,22 +10492,43 @@ button.abyss-statistics-row-button:focus-visible {
   max-width: 100%;
   height: auto;
   color: var(--text-muted);
-  font-size: 11px;
-  line-height: 1.3;
+  font: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* Obsidian's button defaults otherwise give only actionable metadata a filled 30px box. */
-.abyss-capture-metadata button:is(.abyss-capture-chip-body, .abyss-chip-remove),
-.abyss-capture-metadata button:is(.abyss-capture-chip-body, .abyss-chip-remove):hover {
+/* Own each state so later theme button borders cannot change the metadata line geometry. */
+.abyss-capture-surface
+  .abyss-capture-metadata
+  .abyss-capture-chip
+  > button:is(.abyss-capture-chip-body, .abyss-chip-remove),
+.abyss-capture-surface
+  .abyss-capture-metadata
+  .abyss-capture-chip
+  > button:is(.abyss-capture-chip-body, .abyss-chip-remove):is(
+    :hover,
+    :focus,
+    :focus-visible,
+    :active,
+    :disabled
+  ) {
+  box-sizing: border-box;
+  font: inherit;
+  line-height: inherit;
+  min-width: 0;
   min-height: 0;
+  margin: 0;
   padding: 0;
   border: 0;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
+  outline: none;
 }
 
-.abyss-capture-chip-body :is(.abyss-task-tag, .abyss-task-source-note) {
+.abyss-capture-chip-body :is(.abyss-task-tag, .abyss-task-source-note),
+.abyss-capture-chip-body .abyss-task-date > span:not(.abyss-date-icon) {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -10515,9 +10544,18 @@ button.abyss-statistics-row-button:focus-visible {
   min-width: 0;
 }
 
-.abyss-capture-chip .abyss-chip-remove {
+.abyss-capture-chip-body .abyss-task-date {
+  min-width: 0;
+}
+
+.abyss-capture-surface .abyss-capture-metadata .abyss-capture-chip > button.abyss-chip-remove {
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-end: 0;
+  width: 14px;
+  height: 14px;
+  transform: translateY(-50%);
   opacity: 0;
-  flex-shrink: 0;
 }
 
 .abyss-capture-metadata button.abyss-chip-remove svg {
@@ -10529,18 +10567,32 @@ button.abyss-statistics-row-button:focus-visible {
   display: none;
 }
 
-.abyss-capture-chip:hover .abyss-chip-remove,
-.abyss-capture-chip:focus-within .abyss-chip-remove {
+.abyss-capture-surface
+  .abyss-capture-metadata
+  .abyss-capture-chip:is(:hover, :focus-within)
+  > button.abyss-chip-remove {
   opacity: 1;
 }
 
-.abyss-capture-chip :is(button):focus-visible {
+.abyss-capture-surface
+  .abyss-capture-metadata
+  .abyss-capture-chip
+  > button:is(.abyss-capture-chip-body, .abyss-chip-remove):focus-visible {
   outline: 2px solid var(--background-modifier-border-focus);
   outline-offset: 2px;
 }
 
 @media (hover: none), (pointer: coarse) {
-  .abyss-capture-chip .abyss-chip-remove {
+  .abyss-capture-surface .abyss-capture-metadata {
+    min-block-size: calc(24px + var(--size-4-2) - var(--size-2-1));
+  }
+
+  .abyss-capture-surface .abyss-capture-metadata .abyss-capture-chip {
+    padding-inline-end: var(--size-4-6);
+    min-block-size: 24px;
+  }
+
+  .abyss-capture-surface .abyss-capture-metadata .abyss-capture-chip > button.abyss-chip-remove {
     width: 24px;
     height: 24px;
     opacity: 1;

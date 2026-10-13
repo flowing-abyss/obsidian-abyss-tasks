@@ -7,7 +7,7 @@ import postcss from 'postcss';
 const root = process.cwd();
 rmSync(path.join(root, 'dist'), { recursive: true, force: true });
 const packageJson = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
-// The 182 KiB cap includes the measured native capture metadata resets and spacing.
+// The 183 KiB cap includes the measured capture metadata channels and state resets.
 const budget = packageJson.release?.stylesCssBudgetBytes;
 if (!Number.isSafeInteger(budget) || budget <= 0) {
   throw new Error('release.stylesCssBudgetBytes must be a positive safe integer');
