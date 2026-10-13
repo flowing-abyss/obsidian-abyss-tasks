@@ -58,6 +58,7 @@ import { bindLocalSearchScope } from '../ui/localSearchKeys';
 import { nativeInteractionBlocksPanelShortcuts } from '../ui/nativeInteractionBlocker';
 import { PanelShortcutRouter } from '../ui/panelShortcutRouter';
 import { prefersReducedMotion } from '../ui/reducedMotion';
+import { shouldShowSourcePath } from '../ui/sourceNoteChip';
 import {
   CaptureTargetResolver,
   type CaptureContext,
@@ -88,6 +89,14 @@ export const PANEL_VIEW_TYPE = 'task-calendar-panel';
 
 /** Set on the panel root while the phone keyboard is up; the stylesheet drops the bottom inset. */
 const KEYBOARD_CLASS = 'abyss-panel-view--keyboard';
+
+function logQuickCapturePreviewFailure(phase: 'context' | 'draft'): void {
+  console.error(
+    phase === 'context'
+      ? '[abyss-tasks] Quick-capture context preview failed'
+      : '[abyss-tasks] Quick-capture draft preview failed',
+  );
+}
 
 /** Obsidian's leaf refreshes its tab header from getDisplayText, but the call is undocumented. */
 function hasHeaderRefresh(value: unknown): value is { updateHeader(): void } {
@@ -946,8 +955,12 @@ export class PanelView extends ItemView {
       getDateClass: (value, referenceDate) =>
         this.center_abyssPrivate.getDateClassForCapture(value, referenceDate),
       formatDate: (value, referenceDate) =>
-        moment(value, 'YYYY-MM-DD').format(
-          value.slice(0, 4) === referenceDate?.slice(0, 4) ? 'D MMM' : 'D MMM YYYY',
+        this.center_abyssPrivate.formatDateForCapture(value, referenceDate),
+      shouldShowSourceNote: (path) =>
+        shouldShowSourcePath(
+          path,
+          this.settings_abyssPrivate.sourceNoteDisplay,
+          this.settings_abyssPrivate.taskFilePath,
         ),
       ...(this.taskInputServices_abyssPrivate !== undefined && {
         smart: {
@@ -956,6 +969,7 @@ export class PanelView extends ItemView {
           onRecognitionFailure: () => {
             console.error('[abyss-tasks] Quick-capture date recognition failed');
           },
+          onPreviewFailure: logQuickCapturePreviewFailure,
         },
       }),
       context: () => this.quickCaptureContext_abyssPrivate(),

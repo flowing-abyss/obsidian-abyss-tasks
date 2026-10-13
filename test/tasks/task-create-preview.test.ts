@@ -2,6 +2,7 @@ import fc from 'fast-check';
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
 import { toStatusRules } from '../../src/settings/statusCatalogAdapter';
+import { admitsTaskNode } from '../../src/task-lists/taskNodeMembership';
 import type { TaskCreateRequest } from '../../src/tasks/application/TaskApplicationApi';
 import { TaskApplicationService } from '../../src/tasks/application/TaskApplicationService';
 import type { TaskBehaviorSettings } from '../../src/tasks/application/TaskBehaviorSettings';
@@ -24,6 +25,8 @@ async function harness(
     unavailable?: boolean;
     noPort?: boolean;
     previewPort?: TaskCreatePreviewPort;
+    inboxMode?: TaskBehaviorSettings['inbox']['mode'];
+    inboxTag?: string;
   } = {},
 ) {
   const catalog = new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses));
@@ -45,7 +48,11 @@ async function harness(
   const behavior: TaskBehaviorSettings = {
     taskPrefix: options.prefix ?? '',
     applyTaskPrefixToSubtasks: false,
-    inbox: { mode: 'tag', tag: '#task/inbox', removeTagOnAssign: options.removeInbox ?? true },
+    inbox: {
+      mode: options.inboxMode ?? 'tag',
+      tag: options.inboxTag ?? '#task/inbox',
+      removeTagOnAssign: options.removeInbox ?? true,
+    },
     taskLifecycle: { addCreatedDate: true, addCompletionDate: true },
     recurrence: { newOccurrencePlacement: 'after', removeScheduledDate: false },
   };
@@ -158,6 +165,7 @@ describe('retained canonical create preview', () => {
     };
     expect(session.preview(input)).toEqual({
       type: 'valid',
+      inbox: { member: false },
       sourcePlanning: {
         start: '2026-10-13',
         scheduled: '2026-10-14',
@@ -245,6 +253,7 @@ describe('retained canonical create preview', () => {
     };
     expect(session.preview(input)).toEqual({
       type: 'valid',
+      inbox: { member: false },
       sourcePlanning: { due: '2026-10-15' },
       metadata: { markdownTitle: 'Call', tags: [], priority: 'D', planning: {} },
     });
@@ -327,5 +336,329 @@ describe('retained canonical create preview', () => {
       ),
       { seed: 20261013, numRuns: 60 },
     );
+  });
+});
+
+describe('retained title-free canonical context', () => {
+  it('shares frozen prefix, selected tag, planning normalization and priority with real creation', async () => {
+    const h = await harness({ prefix: '#task/one-off 📅 2026-10-15 ⏰ 23:30 ⏱️ 2h 🔼' });
+    const session = await h.service.planCreate({ type: 'configured-default' });
+    const initial: TaskCreateRequest['initial'] = {
+      tags: { add: ['work'] },
+      due: { type: 'set', value: localDate('2026-10-14') },
+    };
+    const context = expectDefined(session.previewContext?.({ markdownBody: '', initial }));
+    expect(context).toEqual({
+      type: 'ready',
+      referenceDate: '2026-10-13',
+      sourcePlanning: { due: '2026-10-15', time: '23:30' },
+      metadata: {
+        tags: ['#task/one-off', '#work'],
+        planning: { due: '2026-10-14', time: '23:30', duration: 30 },
+        priority: 'C',
+      },
+      inbox: { member: false },
+    });
+    expect(context).not.toHaveProperty('markdownBody');
+    expect(context).not.toHaveProperty('metadata.markdownTitle');
+    Object.assign(h.behavior, { taskPrefix: '#changed' });
+    Object.assign(h.behavior.inbox, { mode: 'untagged', removeTagOnAssign: false });
+    expect(session.previewContext?.({ markdownBody: '', initial })).toEqual(context);
+    const request = { markdownBody: 'Call', initial };
+    const preview = session.preview(request);
+    expect(preview).toMatchObject({ type: 'valid', metadata: { markdownTitle: 'Call' } });
+    if (context.type !== 'ready' || preview.type !== 'valid') throw new Error('Expected metadata');
+    expect({
+      tags: preview.metadata.tags,
+      planning: preview.metadata.planning,
+      priority: preview.metadata.priority,
+    }).toEqual(context.metadata);
+    expect(h.prepare).not.toHaveBeenCalled();
+    expect(h.validate).not.toHaveBeenCalled();
+    expect(h.clock).toHaveBeenCalledOnce();
+    expect(h.repositoryWrites).toHaveLength(0);
+    expect((await session.execute(request)).type).toBe('ok');
+    expect(h.readCanonicalRoot(expectDefined(h.repositoryWrites[0]))).toMatchObject({
+      markdownTitle: 'Call',
+      ...context.metadata,
+    });
+  });
+
+  it('defaults to an empty authored body and never grants empty creation', async () => {
+    const h = await harness();
+    const session = await h.service.planCreate({ type: 'configured-default' });
+    expect(session.previewContext?.()).toEqual({
+      type: 'ready',
+      referenceDate: '2026-10-13',
+      sourcePlanning: {},
+      metadata: { tags: [], planning: {}, priority: 'D' },
+      inbox: { member: false },
+    });
+    expect(session.preview({ markdownBody: '' })).toMatchObject({ type: 'invalid' });
+    expect((await session.execute({ markdownBody: '' })).type).toBe('invalid');
+    expect(h.prepare).not.toHaveBeenCalled();
+    expect(h.repositoryWrites).toHaveLength(0);
+  });
+
+  it.each([
+    { prefix: '📅 nope', body: '', code: 'invalid-date', field: 'due' },
+    { prefix: '📅 2026-02-30', body: '', code: 'invalid-date', field: 'due' },
+    { prefix: '📅 2026-10-15', body: '📅 2026-10-16', code: 'duplicate-field', field: 'due' },
+    { prefix: '⏰ 25:00', body: '', code: 'invalid-time', field: 'time' },
+    { prefix: '➕ nope', body: '', code: 'invalid-date', field: 'created' },
+    { prefix: '➕ 2026-10-15 ➕ 2026-10-16', body: '', code: 'duplicate-field', field: 'created' },
+  ])(
+    'validates titleless metadata before an initial clear: $prefix $body',
+    async ({ prefix, body, code, field }) => {
+      const h = await harness({ prefix });
+      const session = await h.service.planCreate({ type: 'configured-default' });
+      const initial: TaskCreateRequest['initial'] = {
+        due: { type: 'clear' },
+        time: { type: 'clear' },
+      };
+      expect(session.previewContext?.({ markdownBody: body, initial })).toEqual({
+        type: 'invalid',
+        issues: [{ code, field }],
+      });
+      expect(h.repositoryWrites).toHaveLength(0);
+      expect(h.prepare).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rejects malformed initial tags without a title', async () => {
+    const h = await harness();
+    const session = await h.service.planCreate({ type: 'configured-default' });
+    expect(
+      session.previewContext?.({
+        markdownBody: '',
+        initial: { tags: { add: ['#broken/'] } },
+      }),
+    ).toEqual({
+      type: 'invalid',
+      issues: [{ code: 'invalid-target', field: 'tags' }],
+    });
+    expect(h.repositoryWrites).toHaveLength(0);
+  });
+
+  it('reads exact source date before an initial override and respects protected Markdown', async () => {
+    const h = await harness({ prefix: '#prefix `#literal` [note](#link)' });
+    const session = await h.service.planCreate({ type: 'configured-default' });
+    expect(
+      session.previewContext?.({
+        markdownBody: ' 📅 2026-10-15',
+        initial: { due: { type: 'set', value: localDate('2026-10-14') } },
+      }),
+    ).toMatchObject({
+      type: 'ready',
+      sourcePlanning: { due: '2026-10-15' },
+      metadata: { tags: ['#prefix'], planning: { due: '2026-10-14' } },
+    });
+  });
+
+  it.each([
+    { unavailable: true, cause: 'destination' },
+    { noPort: true, cause: 'preview-capability' },
+  ])('preserves the existing unavailable cause: $cause', async ({ cause, ...options }) => {
+    const h = await harness(options);
+    const session = await h.service.planCreate({ type: 'configured-default' });
+    expect(session.previewContext?.()).toEqual({ type: 'unavailable', cause });
+    expect(h.prepare).not.toHaveBeenCalled();
+    expect(h.repositoryWrites).toHaveLength(0);
+  });
+
+  it('keeps a legacy adapter optional and its real preview/save usable', async () => {
+    const actual = await harness();
+    const actualSession = await actual.service.planCreate({ type: 'configured-default' });
+    const h = await harness({
+      previewPort: {
+        preview: (draft) =>
+          actualSession.preview(draft) as Exclude<
+            ReturnType<typeof actualSession.preview>,
+            { type: 'unavailable' }
+          >,
+      },
+    });
+    const session = await h.service.planCreate({ type: 'configured-default' });
+    expect(session.previewContext?.()).toEqual({
+      type: 'unavailable',
+      cause: 'preview-capability',
+    });
+    expect(session.preview({ markdownBody: 'Call' }).type).toBe('valid');
+    expect((await session.execute({ markdownBody: 'Call' })).type).toBe('ok');
+  });
+});
+
+describe('frozen preview and actual central Inbox membership', () => {
+  const cases = [
+    {
+      mode: 'tag',
+      remove: true,
+      body: 'Call',
+      tags: ['#task/inbox'],
+      member: true,
+      serviceTag: '#task/inbox',
+    },
+    { mode: 'tag', remove: true, body: 'Call #health', tags: ['#health'], member: false },
+    {
+      mode: 'tag',
+      remove: false,
+      body: 'Call #health',
+      tags: ['#health', '#task/inbox'],
+      member: true,
+      serviceTag: '#task/inbox',
+    },
+    {
+      mode: 'both',
+      remove: true,
+      body: 'Call',
+      tags: ['#task/inbox'],
+      member: true,
+      serviceTag: '#task/inbox',
+    },
+    {
+      mode: 'both',
+      remove: true,
+      body: 'Call #health #work',
+      tags: ['#health', '#work'],
+      member: false,
+    },
+    {
+      mode: 'both',
+      remove: false,
+      body: 'Call #health #work',
+      tags: ['#health', '#work', '#task/inbox'],
+      member: true,
+      serviceTag: '#task/inbox',
+    },
+    { mode: 'untagged', remove: true, body: 'Call', initial: {}, tags: [], member: true },
+    {
+      mode: 'untagged',
+      remove: false,
+      body: 'Call #task/inbox',
+      initial: {},
+      tags: ['#task/inbox'],
+      member: false,
+    },
+    {
+      mode: 'tag',
+      remove: false,
+      body: 'Call #TASK/INBOX',
+      tags: ['#TASK/INBOX'],
+      member: true,
+      serviceTag: '#TASK/INBOX',
+    },
+    {
+      mode: 'tag',
+      remove: true,
+      body: 'Call #task/inbox/child',
+      tags: ['#task/inbox/child'],
+      member: false,
+    },
+    {
+      mode: 'tag',
+      remove: true,
+      body: 'Call `#health` [link](#work)',
+      tags: ['#task/inbox'],
+      member: true,
+      serviceTag: '#task/inbox',
+    },
+    {
+      mode: 'tag',
+      remove: true,
+      body: 'Call',
+      initial: { tags: { add: ['#task/inbox', '#health'] } },
+      tags: ['#health'],
+      member: false,
+    },
+    {
+      mode: 'tag',
+      remove: true,
+      body: 'Call #health',
+      initial: { tags: { add: ['#task/inbox'], remove: ['#health'] } },
+      tags: ['#task/inbox'],
+      member: true,
+      serviceTag: '#task/inbox',
+    },
+    {
+      mode: 'tag',
+      remove: false,
+      body: 'Call #health',
+      initial: { tags: { add: ['#task/inbox'], remove: ['#task/inbox'] } },
+      tags: ['#health'],
+      member: false,
+    },
+    {
+      mode: 'tag',
+      remove: false,
+      body: 'Call #task/inbox',
+      tag: '#task/inbox #other',
+      initial: {},
+      tags: ['#task/inbox'],
+      member: false,
+    },
+    {
+      mode: 'both',
+      remove: false,
+      body: 'Call',
+      tag: '#broken/',
+      initial: {},
+      tags: [],
+      member: true,
+    },
+  ] as const;
+  it.each(cases)('agrees across $mode remove=$remove $body', async (row) => {
+    const h = await harness({
+      inboxMode: row.mode,
+      ...('tag' in row ? { inboxTag: row.tag } : {}),
+      removeInbox: row.remove,
+    });
+    const session = await h.service.planCreate({ type: 'configured-default' }, { intent: 'inbox' });
+    const request: TaskCreateRequest = {
+      markdownBody: row.body,
+      initial: 'initial' in row ? row.initial : { tags: { add: ['#task/inbox'] } },
+    };
+    const inbox = {
+      member: row.member,
+      ...('serviceTag' in row ? { serviceTag: row.serviceTag } : {}),
+    };
+    expect(session.preview(request)).toMatchObject({
+      type: 'valid',
+      metadata: { tags: row.tags },
+      inbox,
+    });
+    Object.assign(h.behavior.inbox, {
+      mode: row.mode === 'untagged' ? 'tag' : 'untagged',
+      tag: '#changed',
+      removeTagOnAssign: !row.remove,
+    });
+    expect(session.preview(request)).toMatchObject({ inbox });
+    expect((await session.execute(request)).type).toBe('ok');
+    const root = h.readCanonicalRoot(expectDefined(h.repositoryWrites[0]));
+    expect(root.tags).toEqual(row.tags);
+    expect(
+      admitsTaskNode(
+        {
+          depth: 0,
+          tags: root.tags,
+          planning: {},
+          status: 'open',
+          statusSymbol: ' ',
+          source: { filePath: 'tasks.md', line: 0 },
+        },
+        {
+          selection: 'inbox',
+          today: localDate('2026-10-13'),
+          observedTags: root.tags,
+          settings: {
+            ...DEFAULT_SETTINGS,
+            inbox: {
+              mode: row.mode,
+              tag: 'tag' in row ? row.tag : '#task/inbox',
+              removeTagOnAssign: row.remove,
+            },
+          },
+        },
+      ),
+    ).toBe(row.member);
   });
 });

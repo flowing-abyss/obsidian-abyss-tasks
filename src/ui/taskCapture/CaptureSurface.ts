@@ -11,6 +11,7 @@ export interface CaptureSurfaceOptions {
   readonly inputLabel?: string;
   readonly getTagColor?: (tag: string) => string | undefined;
   readonly formatDate?: (value: string, referenceDate?: string) => string;
+  readonly shouldShowSourceNote?: (path: string) => boolean;
   readonly getDateClass?: (value: string, referenceDate?: string) => string;
   readonly interactionOwnership?: InteractionOwnershipPort;
   readonly isLive?: () => boolean;
@@ -282,8 +283,11 @@ export class CaptureSurface {
   }
 
   private renderMetadata_abyssPrivate(snapshot: CaptureSnapshot): void {
-    if (snapshot.metadata !== undefined)
+    if (snapshot.metadata !== undefined) {
       this.metadataRow_abyssPrivate?.render(snapshot.metadata, snapshot.readonly);
+      this.destination_abyssPrivate.textContent =
+        this.metadataRow_abyssPrivate?.destinationDescription() ?? '';
+    }
   }
   private render_abyssPrivate(snapshot: CaptureSnapshot): void {
     if (this.destroyed_abyssPrivate) return;

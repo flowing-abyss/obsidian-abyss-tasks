@@ -28,13 +28,20 @@ function createdDateIssues(parsed: ParsedTaskLine): readonly TaskIssue[] {
   return [];
 }
 
+export function creationMetadataIssues(
+  codec: TaskMarkdownCodec,
+  parsed: ParsedTaskLine,
+): readonly TaskIssue[] {
+  return [...codec.validateLine(parsed.original), ...createdDateIssues(parsed)];
+}
+
 export function creationLineIssues(
   codec: TaskMarkdownCodec,
   parsed: ParsedTaskLine,
 ): readonly TaskIssue[] {
   return parsed.markdownTitle.trim().length === 0
     ? [{ code: 'invalid-title', field: 'title' }]
-    : [...codec.validateLine(parsed.original), ...createdDateIssues(parsed)];
+    : creationMetadataIssues(codec, parsed);
 }
 
 export function stampCreatedDate(parsed: ParsedTaskLine, today: LocalDate): string {

@@ -15,6 +15,7 @@ interface QuickCaptureCoordinatorOptions {
   readonly smart?: CaptureSmartOptions;
   readonly getTagColor?: (tag: string) => string | undefined;
   readonly formatDate?: (value: string, referenceDate?: string) => string;
+  readonly shouldShowSourceNote?: (path: string) => boolean;
   readonly getDateClass?: (value: string, referenceDate?: string) => string;
   readonly host: HTMLElement;
   readonly context: () => CaptureContext;
@@ -185,6 +186,9 @@ export class QuickCaptureCoordinator {
       closeOnEmptyBlur: false,
       ...(this.options.getTagColor === undefined ? {} : { getTagColor: this.options.getTagColor }),
       ...(this.options.formatDate === undefined ? {} : { formatDate: this.options.formatDate }),
+      ...(this.options.shouldShowSourceNote === undefined
+        ? {}
+        : { shouldShowSourceNote: this.options.shouldShowSourceNote }),
       ...(this.options.getDateClass === undefined
         ? {}
         : { getDateClass: this.options.getDateClass }),

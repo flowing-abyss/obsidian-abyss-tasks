@@ -97,6 +97,11 @@ async function harness(
 
 import { localTime } from '../../src/tasks/domain/validation';
 import { ChronoTaskInputRecognizer } from '../../src/tasks/infrastructure/input/ChronoTaskInputRecognizer';
+import {
+  CaptureTargetResolver,
+  type CaptureContext,
+  type CaptureTarget,
+} from '../../src/ui/taskCapture/CaptureTargetResolver';
 import { TaskCaptureController } from '../../src/ui/taskCapture/TaskCaptureController';
 import { describeTaskCreationResult } from '../../src/ui/taskCommandResult';
 
@@ -107,38 +112,61 @@ const reference = {
   second: 0,
   offsetMinutes: 420,
 };
+interface SmartCaptureInput {
+  readonly inbox?: boolean;
+  readonly initial?: TaskCreateRequest['initial'];
+  readonly markdownPrefix?: string;
+  readonly resolveContext?: CaptureContext;
+  readonly previewFailureCallback?: boolean;
+}
+async function smartTarget(
+  real: Awaited<ReturnType<typeof harness>>,
+  input: SmartCaptureInput,
+): Promise<CaptureTarget> {
+  if (input.resolveContext !== undefined)
+    return await new CaptureTargetResolver(
+      real.service,
+      { ...DEFAULT_SETTINGS, inbox: real.behavior.inbox },
+      () => reference.localDate,
+    ).resolve(input.resolveContext);
+  return {
+    label: 'Inbox',
+    context: { type: 'list', selection: 'inbox' },
+    session: await real.service.planCreate(
+      { type: 'configured-default' },
+      input.inbox === false ? undefined : { intent: 'inbox' },
+    ),
+    markdownPrefix: input.markdownPrefix ?? '',
+    markdownSuffixes: [],
+    initial: input.initial ?? { tags: { add: ['#task/inbox'] } },
+  };
+}
 async function smartHarness(
   options: Parameters<typeof harness>[0] = {},
-  input: {
-    readonly inbox?: boolean;
-    readonly initial?: TaskCreateRequest['initial'];
-    readonly markdownPrefix?: string;
-  } = {},
+  input: SmartCaptureInput = {},
 ) {
   const real = await harness(options);
-  const session = await real.service.planCreate(
-    { type: 'configured-default' },
-    input.inbox === false ? undefined : { intent: 'inbox' },
-  );
+  const target = await smartTarget(real, input);
+  const session = target.session;
   const recognizer = new ChronoTaskInputRecognizer();
   const recognize = vi.spyOn(recognizer, 'recognize');
   const readReference = vi.fn(() => reference);
   const enabled = vi.fn(() => true);
   const onRecognitionFailure = vi.fn();
+  const onPreviewFailure = vi.fn();
   const preview = vi.spyOn(session, 'preview');
   const execute = vi.spyOn(session, 'execute');
   const onResult = vi.fn();
   const describeResult = vi.fn(describeTaskCreationResult);
   const controller = new TaskCaptureController({
-    target: {
-      label: 'Inbox',
-      context: { type: 'list', selection: 'inbox' },
-      session,
-      markdownPrefix: input.markdownPrefix ?? '',
-      markdownSuffixes: [],
-      initial: input.initial ?? { tags: { add: ['#task/inbox'] } },
+    target,
+    smart: {
+      recognizer,
+      readReference,
+      enabled,
+      onRecognitionFailure,
+      ...(input.previewFailureCallback === false ? {} : { onPreviewFailure }),
     },
-    smart: { recognizer, readReference, enabled, onRecognitionFailure },
     describe: describeResult,
     onResult,
     onRequestClose: () => {},
@@ -152,6 +180,7 @@ async function smartHarness(
     preview,
     execute,
     onRecognitionFailure,
+    onPreviewFailure,
     onResult,
     describeResult,
   };
@@ -347,6 +376,406 @@ describe('smart Q canonical commit', () => {
     expect(h.readReference).toHaveBeenCalledTimes(2);
     expect(h.enabled).toHaveBeenCalledTimes(2);
   });
+});
+
+describe('Q context before authored input', () => {
+  it.each([
+    {
+      prefix: '#prefix 📅 2026-10-15 ⏰ 23:30',
+      context: { type: 'list', selection: 'today' },
+      planning: { due: '2026-10-15', time: '23:30' },
+    },
+    {
+      prefix: '#prefix ⏰ 23:30',
+      context: { type: 'default', source: 'projects' },
+      planning: { time: '23:30' },
+    },
+  ] satisfies ReadonlyArray<{
+    prefix: string;
+    context: CaptureContext;
+    planning: { due?: string; time: string };
+  }>)(
+    'preserves canonical context meaning on the first real edit: $prefix',
+    async ({ prefix, context, planning }) => {
+      const h = await smartHarness({ prefix }, { resolveContext: context });
+      const initial = h.controller.snapshot().metadata?.context;
+      expect(initial).toMatchObject({ type: 'ready', metadata: { tags: ['#prefix'], planning } });
+      expect(h.readReference).not.toHaveBeenCalled();
+      expect(h.recognize).not.toHaveBeenCalled();
+      h.controller.setDraft('Call');
+      const preview = h.controller.snapshot().metadata?.preview;
+      expect(preview).toMatchObject({ type: 'valid', metadata: { tags: ['#prefix'], planning } });
+      if (initial?.type !== 'ready' || preview?.type !== 'valid')
+        throw new Error('Expected canonical metadata');
+      expect({
+        tags: preview.metadata.tags,
+        planning: preview.metadata.planning,
+        priority: preview.metadata.priority,
+      }).toEqual(initial.metadata);
+      await h.controller.submit('enter');
+      expect(h.readCanonicalRoot(expectDefined(h.repositoryWrites[0]))).toMatchObject({
+        markdownTitle: 'Call',
+        ...initial.metadata,
+      });
+    },
+  );
+  it.each([
+    {
+      context: { type: 'list', selection: 'today' },
+      tags: ['#task/one-off'],
+      planning: { due: '2026-10-13' },
+    },
+    {
+      context: { type: 'list', selection: 'upcoming' },
+      tags: ['#task/one-off'],
+      planning: { due: '2026-10-14' },
+    },
+    {
+      context: { type: 'list', selection: { type: 'tag', tag: '#selected' } },
+      tags: ['#task/one-off', '#selected'],
+      planning: {},
+    },
+    {
+      context: { type: 'project-dashboard', path: 'Project.md' },
+      tags: ['#task/one-off'],
+      planning: {},
+    },
+  ] satisfies ReadonlyArray<{
+    context: CaptureContext;
+    tags: string[];
+    planning: { due?: string };
+  }>)(
+    'shows frozen canonical metadata for $context immediately',
+    async ({ context, tags, planning }) => {
+      const h = await smartHarness({ prefix: '#task/one-off' }, { resolveContext: context });
+      expect(h.controller.snapshot().metadata?.context).toMatchObject({
+        type: 'ready',
+        referenceDate: '2026-10-13',
+        metadata: { tags, planning },
+      });
+      expect(h.controller.snapshot().metadata?.preview.type).toBe('invalid');
+      h.controller.snapshot();
+      const subscription = h.controller.subscribe(() => h.controller.snapshot());
+      subscription.release();
+      expect(h.readReference).not.toHaveBeenCalled();
+      expect(h.recognize).not.toHaveBeenCalled();
+      expect(h.enabled).not.toHaveBeenCalled();
+      expect(h.repositoryWrites).toHaveLength(0);
+      await h.controller.submit('enter');
+      expect(h.repositoryWrites).toHaveLength(0);
+      h.controller.setDraft('Call');
+      expect(h.controller.snapshot().metadata?.preview).toMatchObject({
+        type: 'valid',
+        metadata: { tags, planning },
+      });
+      await h.controller.submit('enter');
+      expect(h.readCanonicalRoot(expectDefined(h.repositoryWrites[0]))).toMatchObject({
+        tags,
+        planning,
+        markdownTitle: 'Call',
+      });
+    },
+  );
+
+  it.each(['prefix', 'selected'] as const)(
+    'removes and restores the empty %s tag without editing raw bytes',
+    async (tag) => {
+      const h = await smartHarness(
+        { prefix: '#prefix' },
+        { resolveContext: { type: 'list', selection: { type: 'tag', tag: '#selected' } } },
+      );
+      expect(h.controller.snapshot().metadata?.context).toMatchObject({
+        type: 'ready',
+        metadata: { tags: ['#prefix', '#selected'] },
+      });
+      h.controller.applyMetadataAction({ type: 'remove-tag', tag: `#${tag}` });
+      expect(h.controller.snapshot().draft).toBe('');
+      expect(h.controller.snapshot().metadata?.context).toMatchObject({
+        type: 'ready',
+        metadata: { tags: [tag === 'prefix' ? '#selected' : '#prefix'] },
+      });
+      h.controller.applyMetadataAction({ type: 'restore' });
+      expect(h.controller.snapshot().metadata?.context).toMatchObject({
+        type: 'ready',
+        metadata: { tags: ['#prefix', '#selected'] },
+      });
+      h.controller.setDraft('Call');
+      await h.controller.submit('enter');
+      expect(h.readCanonicalRoot(expectDefined(h.repositoryWrites[0])).tags).toEqual([
+        '#prefix',
+        '#selected',
+      ]);
+    },
+  );
+
+  it('dismisses and restores an empty prefix date above a selected Today fallback', async () => {
+    const h = await smartHarness(
+      { prefix: '📅 2026-10-15 #prefix' },
+      { resolveContext: { type: 'list', selection: 'today' } },
+    );
+    expect(h.controller.snapshot().metadata?.context).toMatchObject({
+      type: 'ready',
+      sourcePlanning: { due: '2026-10-15' },
+      metadata: { planning: { due: '2026-10-15' } },
+    });
+    h.controller.applyMetadataAction({ type: 'dismiss', role: 'due' });
+    expect(h.controller.snapshot().metadata?.context).toMatchObject({
+      type: 'ready',
+      metadata: { planning: {} },
+    });
+    h.controller.applyMetadataAction({ type: 'restore' });
+    expect(h.controller.snapshot().metadata?.context).toMatchObject({
+      type: 'ready',
+      metadata: { planning: { due: '2026-10-15' } },
+    });
+    expect(h.controller.snapshot().draft).toBe('');
+    expect(h.repositoryWrites).toHaveLength(0);
+  });
+
+  it('retains real resolver seed provenance across early date/tag actions and actual save', async () => {
+    const h = await smartHarness(
+      { prefix: '#prefix' },
+      {
+        resolveContext: {
+          type: 'list',
+          selection: { type: 'tag', tag: '#selected' },
+          date: localDate('2026-10-20'),
+        },
+      },
+    );
+    const raw = ' 📅 2026-10-20';
+    expect(h.controller.snapshot().draft).toBe(raw);
+    expect(h.controller.snapshot().metadata?.context).toMatchObject({
+      type: 'ready',
+      sourcePlanning: { due: '2026-10-20' },
+      metadata: { tags: ['#prefix', '#selected'], planning: { due: '2026-10-20' } },
+    });
+    expect(h.readReference).not.toHaveBeenCalled();
+    expect(h.recognize).not.toHaveBeenCalled();
+    await h.controller.submit('enter');
+    expect(h.repositoryWrites).toHaveLength(0);
+    h.controller.applyMetadataAction({ type: 'dismiss', role: 'due' });
+    expect(h.controller.snapshot().metadata?.context).toMatchObject({
+      type: 'ready',
+      metadata: { planning: {} },
+    });
+    expect(h.controller.snapshot().draft).toBe(raw);
+    h.controller.applyMetadataAction({ type: 'restore' });
+    expect(h.controller.snapshot().metadata?.context).toMatchObject({
+      type: 'ready',
+      metadata: { planning: { due: '2026-10-20' } },
+    });
+    h.controller.applyMetadataAction({ type: 'remove-tag', tag: '#prefix' });
+    expect(h.controller.snapshot().metadata?.context).toMatchObject({
+      type: 'ready',
+      metadata: { tags: ['#selected'] },
+    });
+    h.controller.applyMetadataAction({ type: 'restore' });
+    h.controller.setDraft(`Call${raw}`);
+    expect(h.controller.snapshot().metadata?.preview).toMatchObject({
+      type: 'valid',
+      metadata: { tags: ['#prefix', '#selected'], planning: { due: '2026-10-20' } },
+    });
+    await h.controller.submit('enter');
+    expect(h.readCanonicalRoot(expectDefined(h.repositoryWrites[0]))).toMatchObject({
+      markdownTitle: 'Call',
+      tags: ['#prefix', '#selected'],
+      planning: { due: '2026-10-20' },
+    });
+  });
+
+  it('rejects a duplicate seed and prefix date instead of masking the source date', async () => {
+    const h = await smartHarness(
+      { prefix: '📅 2026-10-15 #prefix' },
+      { resolveContext: { type: 'list', selection: 'today', date: localDate('2026-10-20') } },
+    );
+    expect(h.controller.snapshot().metadata?.context).toEqual({
+      type: 'invalid',
+      issues: [{ code: 'duplicate-field', field: 'due' }],
+    });
+    expect(h.controller.snapshot().error?.message).toBeTruthy();
+    expect(h.readReference).not.toHaveBeenCalled();
+    expect(h.onPreviewFailure).not.toHaveBeenCalled();
+    expect(h.repositoryWrites).toHaveLength(0);
+  });
+
+  it('does not revive the resolver context exception after real authored input and equal-byte history', async () => {
+    const h = await smartHarness(
+      { prefix: '#prefix' },
+      { resolveContext: { type: 'list', selection: 'today', date: localDate('2026-10-20') } },
+    );
+    expect(h.controller.snapshot().metadata?.context?.type).toBe('ready');
+    h.controller.setDraft('Call 📅 2026-10-20');
+    h.controller.setDraft(' 📅 2026-10-20', { editKind: 'history' });
+    expect(h.controller.snapshot().metadata?.context).toBeUndefined();
+    expect(h.controller.snapshot().metadata?.preview.type).toBe('invalid');
+    expect(h.controller.isEmpty()).toBe(false);
+    await h.controller.submit('enter');
+    expect(h.repositoryWrites).toHaveLength(0);
+  });
+
+  it.each(['Call #health', 'Call #health #work'])(
+    'reclassifies Inbox through remove and Restore while raw stays intact: %s',
+    async (raw) => {
+      const h = await smartHarness();
+      h.controller.setDraft(raw);
+      expect(h.controller.snapshot().metadata?.destination).toEqual({
+        filePath: 'tasks.md',
+        inbox: false,
+      });
+      h.controller.applyMetadataAction({ type: 'remove-tag', tag: '#health' });
+      if (!raw.includes('#work'))
+        expect(h.controller.snapshot().metadata?.destination).toEqual({
+          filePath: 'tasks.md',
+          inbox: true,
+          representedInboxTag: '#task/inbox',
+        });
+      else expect(h.controller.snapshot().metadata?.destination?.inbox).toBe(false);
+      expect(h.controller.snapshot().draft).toBe(raw);
+      h.controller.applyMetadataAction({ type: 'restore' });
+      expect(h.controller.snapshot().metadata?.destination?.inbox).toBe(false);
+      expect(h.controller.snapshot().draft).toBe(raw);
+      await h.controller.submit('enter');
+      expect(h.readCanonicalRoot(expectDefined(h.repositoryWrites[0])).tags).toEqual(
+        raw.includes('#work') ? ['#health', '#work'] : ['#health'],
+      );
+    },
+  );
+});
+
+describe('guarded Q context and draft diagnostics', () => {
+  it('reports thrown context once per revision, keeps snapshots observational and recovers to a real write', async () => {
+    const canonical = new MarkdownTaskCreatePreview(
+      new TaskMarkdownCodec(new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses))),
+    );
+    let fails = true;
+    const readContext = vi.fn(
+      (draft: Parameters<NonNullable<TaskCreatePreviewPort['previewContext']>>[0]) => {
+        if (fails) throw new Error('private raw /private/path');
+        return canonical.previewContext(draft);
+      },
+    );
+    const h = await smartHarness({
+      previewPort: { preview: (draft) => canonical.preview(draft), previewContext: readContext },
+    });
+    expect(h.controller.snapshot().phase).not.toBe('closed');
+    expect(h.controller.snapshot().metadata?.context).toEqual({
+      type: 'unavailable',
+      cause: 'preview-capability',
+    });
+    expect(h.controller.snapshot().error?.message).toBeTruthy();
+    h.controller.snapshot();
+    h.controller.subscribe(() => h.controller.snapshot()).release();
+    expect(h.onPreviewFailure.mock.calls).toEqual([['context']]);
+    expect(readContext).toHaveBeenCalledOnce();
+    expect(h.readReference).not.toHaveBeenCalled();
+    h.controller.applyMetadataAction({
+      type: 'select-date',
+      role: 'due',
+      value: localDate('2026-10-14'),
+    });
+    h.controller.applyMetadataAction({
+      type: 'select-date',
+      role: 'due',
+      value: localDate('2026-10-14'),
+    });
+    expect(h.onPreviewFailure.mock.calls).toEqual([['context']]);
+    fails = false;
+    h.controller.setDraft('Call');
+    expect(h.controller.snapshot().error).toBeUndefined();
+    h.controller.setDraft('');
+    expect(h.controller.snapshot().metadata?.context?.type).toBe('ready');
+    expect(h.controller.snapshot().error).toBeUndefined();
+    h.controller.setDraft('Call');
+    await h.controller.submit('enter');
+    expect(h.repositoryWrites).toHaveLength(1);
+  });
+
+  it('uses a constant fallback diagnostic without exposing raw input, paths or thrown causes', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const canonical = new MarkdownTaskCreatePreview(
+        new TaskMarkdownCodec(new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses))),
+      );
+      const h = await smartHarness(
+        {
+          previewPort: {
+            preview: (draft) => canonical.preview(draft),
+            previewContext: () => {
+              throw new Error('private raw /private/path');
+            },
+          },
+        },
+        { previewFailureCallback: false },
+      );
+      expect(log.mock.calls).toEqual([['[abyss-tasks] Quick-capture context preview failed']]);
+      h.controller.snapshot();
+      h.controller.applyMetadataAction({
+        type: 'select-date',
+        role: 'due',
+        value: localDate('2026-10-14'),
+      });
+      expect(log).toHaveBeenCalledOnce();
+      h.controller.setDraft('Call');
+      await h.controller.submit('enter');
+      expect(h.repositoryWrites).toHaveLength(1);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it('handles draft exceptions at a distinct once-per-revision boundary', async () => {
+    const canonical = new MarkdownTaskCreatePreview(
+      new TaskMarkdownCodec(new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses))),
+    );
+    let fails = true;
+    const h = await smartHarness({
+      previewPort: {
+        previewContext: (draft) => canonical.previewContext(draft),
+        preview: (draft) => {
+          if (fails) throw new Error('private input');
+          return canonical.preview(draft);
+        },
+      },
+    });
+    h.controller.setDraft('Call tomorrow');
+    h.controller.flushRecognition();
+    await h.controller.submit('enter');
+    expect(h.onPreviewFailure.mock.calls).toEqual([['draft']]);
+    expect(h.repositoryWrites).toHaveLength(0);
+    fails = false;
+    h.controller.setDraft('Call tomorrow!');
+    await h.controller.submit('enter');
+    expect(h.repositoryWrites).toHaveLength(1);
+  });
+
+  it('treats missing context support quietly while ordinary title-bearing capture stays usable', async () => {
+    const canonical = new MarkdownTaskCreatePreview(
+      new TaskMarkdownCodec(new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses))),
+    );
+    const h = await smartHarness({ previewPort: { preview: (draft) => canonical.preview(draft) } });
+    expect(h.controller.snapshot().error).toBeUndefined();
+    expect(h.onPreviewFailure).not.toHaveBeenCalled();
+    h.controller.setDraft('Call');
+    await h.controller.submit('enter');
+    expect(h.repositoryWrites).toHaveLength(1);
+  });
+
+  it.each([false, true])(
+    'uses structured feedback without unexpected logging; unavailable=%s',
+    async (unavailable) => {
+      const h = await smartHarness(
+        { unavailable, prefix: unavailable ? '' : '⏰ 25:00' },
+        { inbox: false, initial: {} },
+      );
+      expect(h.controller.snapshot().metadata?.context?.type).toBe(
+        unavailable ? 'unavailable' : 'invalid',
+      );
+      expect(h.controller.snapshot().error?.message).toBeTruthy();
+      expect(h.onPreviewFailure).not.toHaveBeenCalled();
+      expect(h.repositoryWrites).toHaveLength(0);
+    },
+  );
 });
 
 describe('smart Q settlement and failure contracts', () => {

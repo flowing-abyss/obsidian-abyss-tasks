@@ -77,9 +77,14 @@ const ALLOWED_WRITER_CALLS: Record<string, AllowedWriter> = {
 const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   TaskCreateRequest: ['src/ui/taskCapture/TaskCaptureController.ts'],
   TaskCreatePreview: ['src/ui/taskCapture/TaskCaptureController.ts'],
+  TaskCreateContextPreview: [
+    'src/ui/taskCapture/TaskCaptureController.ts',
+    'src/ui/taskCapture/CaptureMetadataRow.ts',
+  ],
   TaskInputReference: ['src/ui/taskCapture/TaskCaptureController.ts'],
   inspectTaskInput: ['src/ui/taskCapture/TaskCaptureController.ts'],
   projectTaskInput: ['src/ui/taskCapture/TaskCaptureController.ts'],
+  projectTaskInputContext: ['src/ui/taskCapture/TaskCaptureController.ts'],
   taskInputPreflightInitial: ['src/ui/taskCapture/TaskCaptureController.ts'],
   taskInputPreflightBody: ['src/ui/taskCapture/TaskCaptureController.ts'],
   TaskInputProjection: ['src/ui/taskCapture/TaskCaptureController.ts'],
@@ -212,6 +217,8 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   TaskHierarchyRecovery: ['src/ui/taskCommandResult.ts'],
   hierarchyWouldCycle: ['src/ui/taskHierarchyActions.ts'],
   taskPrefixForSubtask: ['src/panels/RightPanel.ts'],
+  isTaskInboxMember: ['src/task-lists/taskNodeMembership.ts'],
+  sameTag: ['src/ui/taskCapture/CaptureMetadataRow.ts'],
   normalizeTaskTagInput: [
     'src/settings/SettingsTab.ts',
     'src/task-lists/taskNodeMembership.ts',

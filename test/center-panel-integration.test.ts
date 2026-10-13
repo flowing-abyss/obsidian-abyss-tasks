@@ -8539,3 +8539,25 @@ describe('date header capture through the retained task bar', () => {
     },
   );
 });
+
+describe('shared central capture date labels', () => {
+  fixedToday('2026-10-13');
+  it('formats actual Today/Tomorrow and near/far values against an explicit civil day', async () => {
+    const { panel, index } = await makePanel({ 'tasks.md': '' });
+    try {
+      window.moment.locale('en');
+      expect(panel.formatDateForCapture('2026-10-13', '2026-10-13')).toBe('Today');
+      expect(panel.formatDateForCapture('2026-10-14', '2026-10-13')).toBe('Tomorrow');
+      expect(panel.formatDateForCapture('2026-10-16', '2026-10-13')).toBe('Fri 16 Oct');
+      expect(panel.formatDateForCapture('2026-10-12', '2026-10-13')).toBe('Mon 12 Oct');
+      expect(panel.formatDateForCapture('2026-10-21', '2026-10-13')).toBe('21 Oct');
+      expect(panel.formatDateForCapture('2027-01-02', '2026-10-13')).toBe('2 Jan');
+      vi.setSystemTime(new Date('2026-10-14T00:01:00'));
+      expect(panel.formatDateForCapture('2026-10-14', '2026-10-13')).toBe('Tomorrow');
+      expect(panel.formatDateForCapture('2026-10-14')).toBe('Today');
+    } finally {
+      panel.destroy();
+      index.destroy();
+    }
+  });
+});

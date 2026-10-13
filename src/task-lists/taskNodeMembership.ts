@@ -10,6 +10,7 @@ import {
   type EffectiveTagGroup,
 } from '../tags/effectiveTagGroups';
 import {
+  isTaskInboxMember,
   normalizeTaskTagInput,
   taskHasFutureDate,
   taskNodeSourceLine,
@@ -177,7 +178,12 @@ function* selectedInbox(
     if (matches === undefined) throw new Error('Inbox membership ended without a result');
     tagged = matches;
   }
-  return tagged || (settings.inbox.mode !== 'tag' && task.depth === 0 && task.tags.length === 0);
+  return isTaskInboxMember({
+    mode: settings.inbox.mode,
+    hasInboxTag: tagged,
+    depth: task.depth,
+    tagCount: task.tags.length,
+  });
 }
 function* selectedTree(
   tags: readonly string[],

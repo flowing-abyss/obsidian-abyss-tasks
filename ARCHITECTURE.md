@@ -137,11 +137,30 @@ Unicode-letter uppercase mapping when it stays one code point; the neutral proje
 input remain unchanged. Canonical preview and frozen submission/retry receive that same request.
 Empty forms may expose manual choices without a valid creation preview.
 
+The retained create session's optional `previewContext(request?)` reads known prefix, initial, and
+resolver-seed metadata through the canonical validation, patch, and normalization stages. Its ready
+result has the captured session day and metadata without a title or executable request. The regular
+creation path retains its title and block checks. Q caches this context before mounting, without
+acquiring the recognition reference or reading the recognition preference. `projectTaskInputContext`
+uses the same source and manual-choice precedence with no natural candidates or reference; explicit
+time alone cannot infer a day. A resolver seed keeps its transient ownership through metadata actions.
+An authored input change expires that ownership, and equal bytes from Undo cannot reacquire it.
+
+Valid creation previews and ready contexts carry an optional Inbox classification from the session's
+frozen policy and final canonical tags. Central membership shares `isTaskInboxMember` while retaining
+its cooperative exact-tag matching. An Inbox-intent Q caption represents that actual membership and
+hides only its exact service tag. Other tags retain removal and Restore. Legacy previews without the
+classification display their actual source and tags; unsupported context is optional. Unexpected
+context or draft preview failures clear stale metadata and use one inline error with a constant,
+sanitized diagnostic per phase and revision. Ordinary valid preview can recover without a new session.
+
 `CaptureMetadataRow` and central task cards share tag and source-note content. Both resolve tag colors
-from the effective groups and observed task catalog. PanelView injects CenterPanel's existing date
-classifier through the Q coordinator and surface as an optional presentation callback. Q supplies its
-frozen reference day; real context planning before the first edit uses the display clock without
-freezing the controller. Point-date badges reuse the central semantic classes, and the independent
+from the effective groups and observed task catalog. PanelView injects the current source-path display
+policy and CenterPanel's shared date formatter and classifier through the Q coordinator and surface.
+Generic file captions obey `shouldShowSourcePath`, including configured date-template destinations;
+semantic Inbox and explicit project captions remain. The existing assistive destination description
+tracks the visible caption. Q supplies its frozen recognition day when acquired, otherwise the ready
+context day, then the existing display clock. Point-date badges reuse the central semantic classes, and the independent
 clock follows the primary due, scheduled, then start date. `taskOccupiedDates` keeps interval date/time
 content neutral, including equal start/due bounds. A draft retained across midnight may therefore
 keep a different semantic color from a newly rendered central card, matching its frozen interpretation.

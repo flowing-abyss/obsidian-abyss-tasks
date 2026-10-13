@@ -1,8 +1,10 @@
 import { Menu, setIcon } from 'obsidian';
 import {
   localDate,
+  sameTag,
   taskOccupiedDates,
   type LocalDate,
+  type TaskCreateContextPreview,
   type TaskCreateRequest,
   type TaskInputAction,
   type TaskPlanning,
@@ -25,6 +27,7 @@ interface MetadataRowOptions {
   readonly isLive: () => boolean;
   readonly getTagColor?: (tag: string) => string | undefined;
   readonly formatDate?: (value: string, referenceDate?: string) => string;
+  readonly shouldShowSourceNote?: (path: string) => boolean;
   readonly getDateClass?: (value: string, referenceDate?: string) => string;
   readonly interactionOwnership?: InteractionOwnershipPort;
 }
@@ -35,6 +38,19 @@ interface Chip {
   signature: string;
   activate?: (event: MouseEvent) => void;
   dismiss?: TaskInputAction;
+}
+
+function captureMetadata(
+  metadata: CaptureMetadataSnapshot,
+): Extract<TaskCreateContextPreview, { type: 'ready' }>['metadata'] | undefined {
+  if (metadata.preview.type === 'valid') return metadata.preview.metadata;
+  if (metadata.context?.type === 'ready') return metadata.context.metadata;
+  return undefined;
+}
+
+function captureReferenceDate(metadata: CaptureMetadataSnapshot): string | undefined {
+  if (metadata.referenceDate !== undefined) return metadata.referenceDate;
+  return metadata.context?.type === 'ready' ? metadata.context.referenceDate : undefined;
 }
 
 export class CaptureMetadataRow {
@@ -99,7 +115,7 @@ export class CaptureMetadataRow {
     metadata: CaptureMetadataSnapshot,
   ): void {
     const destination = metadata.destination;
-    if (destination !== undefined) {
+    if (destination !== undefined && this.showDestination(destination)) {
       const chip = this.use(keys, disabled, 'destination');
       this.content(chip, `${destination.filePath}:${String(destination.inbox)}`, () => {
         renderSourceNoteContent(
@@ -111,13 +127,33 @@ export class CaptureMetadataRow {
       });
     }
   }
+  private showDestination(
+    destination: NonNullable<CaptureMetadataSnapshot['destination']>,
+  ): boolean {
+    if (destination.inbox) return true;
+    const context = this.options.controller.target.context;
+    if (context.type === 'project-dashboard' || context.type === 'project-table') return true;
+    if (
+      context.type === 'list' &&
+      typeof context.selection === 'object' &&
+      context.selection.type === 'project'
+    )
+      return true;
+    return this.options.shouldShowSourceNote?.(destination.filePath) ?? true;
+  }
+  destinationDescription(): string {
+    return this.chips.get('destination')?.body.textContent ?? '';
+  }
   private renderTags(
     keys: Set<string>,
     disabled: boolean,
     metadata: CaptureMetadataSnapshot,
   ): void {
-    if (metadata.preview.type === 'valid') {
-      for (const tag of metadata.preview.metadata.tags) {
+    const value = captureMetadata(metadata);
+    if (value !== undefined) {
+      for (const tag of value.tags) {
+        const represented = metadata.destination?.representedInboxTag;
+        if (represented !== undefined && sameTag(tag, represented)) continue;
         const chip = this.use(keys, disabled, `tag:${tag.toLowerCase()}`, { removable: true });
         const color = this.options.getTagColor?.(tag);
         this.content(chip, `${tag}:${color ?? ''}`, () => {
@@ -135,6 +171,7 @@ export class CaptureMetadataRow {
   ): void {
     const planning = this.planning(metadata);
     const interval = taskOccupiedDates(planning).kind === 'interval';
+    const referenceDate = captureReferenceDate(metadata);
     for (const role of ['due', 'scheduled', 'start'] as const) {
       const value = planning[role];
       if (value === undefined) continue;
@@ -142,8 +179,8 @@ export class CaptureMetadataRow {
       const description = this.dateDescription(metadata, role, value);
       chip.body.setAttribute('aria-label', description);
       chip.body.setAttribute('title', description);
-      const label = this.dateLabel(value, metadata.referenceDate);
-      const dateClass = this.dateClass(value, metadata.referenceDate, interval);
+      const label = this.dateLabel(value, referenceDate);
+      const dateClass = this.dateClass(value, referenceDate, interval);
       this.content(chip, `${label}:${dateClass}`, () => {
         const content = chip.body.createSpan({ cls: `abyss-task-date ${dateClass}`.trim() });
         setIcon(content.createSpan({ cls: 'abyss-date-icon' }), 'calendar');
@@ -159,7 +196,7 @@ export class CaptureMetadataRow {
     }
     const timeClass = this.dateClass(
       planning.due ?? planning.scheduled ?? planning.start,
-      metadata.referenceDate,
+      referenceDate,
       interval,
     );
     this.renderTime(keys, disabled, planning.time, timeClass);
@@ -174,12 +211,9 @@ export class CaptureMetadataRow {
       : (this.options.getDateClass?.(value, referenceDate) ?? '');
   }
   private planning(metadata: CaptureMetadataSnapshot): Pick<TaskPlanning, DateRole | 'time'> {
-    if (metadata.preview.type === 'valid') return metadata.preview.metadata.planning;
-    if (
-      metadata.preview.type !== 'invalid' ||
-      !metadata.preview.issues.every((issue) => issue.code === 'invalid-title')
-    )
-      return {};
+    const value = captureMetadata(metadata);
+    if (value !== undefined) return value.planning;
+    if (!this.showLegacyPlanning(metadata)) return {};
     const planning: Pick<TaskPlanning, DateRole | 'time'> = {};
     const initial = this.planningInitial(metadata);
     for (const role of ['due', 'scheduled', 'start', 'time'] as const) {
@@ -187,6 +221,18 @@ export class CaptureMetadataRow {
       if (patch?.type === 'set') Object.assign(planning, { [role]: patch.value });
     }
     return planning;
+  }
+  private showLegacyPlanning(metadata: CaptureMetadataSnapshot): boolean {
+    if (
+      metadata.context !== undefined &&
+      (metadata.context.type !== 'unavailable' || metadata.context.cause !== 'preview-capability')
+    )
+      return false;
+    if (this.options.controller.snapshot().draft.trim().length > 0) return false;
+    return (
+      metadata.preview.type === 'invalid' &&
+      metadata.preview.issues.every((issue) => issue.code === 'invalid-title')
+    );
   }
   private planningInitial(metadata: CaptureMetadataSnapshot): TaskCreateRequest['initial'] {
     // Before the first edit, real context dates can render without freezing the draft clock.

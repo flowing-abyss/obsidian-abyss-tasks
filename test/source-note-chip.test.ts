@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { renderSourceNoteChip, shouldShowSourceNote } from '../src/ui/sourceNoteChip';
+import {
+  renderSourceNoteChip,
+  shouldShowSourceNote,
+  shouldShowSourcePath,
+} from '../src/ui/sourceNoteChip';
 import { freshContainer, task } from './helpers';
 
 describe('shouldShowSourceNote', () => {
@@ -47,6 +51,22 @@ describe('shouldShowSourceNote', () => {
       presentation: {},
     });
     expect(shouldShowSourceNote(t, 'non-default', '')).toBe(true);
+  });
+});
+
+describe('source path presentation policy', () => {
+  it.each([
+    ['never', 'Projects/P.md', 'tasks.md', false],
+    ['always', 'periodic/daily/2026-10-13.md', 'periodic/daily/{{YYYY-MM-DD}}.md', true],
+    ['non-default', 'periodic/daily/2026-10-13.md', 'periodic/daily/{{YYYY-MM-DD}}.md', false],
+    ['non-default', 'periodic/daily/2026-10-13-extra.md', 'periodic/daily/{{YYYY-MM-DD}}.md', true],
+    ['non-default', 'Projects/P.md', 'periodic/daily/{{YYYY-MM-DD}}.md', true],
+    ['non-default', 'tasks.md', '{{', true],
+  ] as const)('classifies %s %s against %s', (display, path, template, visible) => {
+    expect(shouldShowSourcePath(path, display, template)).toBe(visible);
+    expect(shouldShowSourceNote(task({ source: { filePath: path } }), display, template)).toBe(
+      visible,
+    );
   });
 });
 

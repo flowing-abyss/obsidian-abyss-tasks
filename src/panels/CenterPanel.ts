@@ -3743,13 +3743,18 @@ export class CenterPanel {
     return listSelectionTitle(selection, groups);
   }
 
-  private formatDate_abyssPrivate(d: string): string {
-    const today = window.moment().format('YYYY-MM-DD');
-    const tomorrow = window.moment().add(1, 'day').format('YYYY-MM-DD');
+  formatDateForCapture(value: string, referenceDate?: string): string {
+    return this.formatDate_abyssPrivate(value, referenceDate);
+  }
+
+  private formatDate_abyssPrivate(d: string, referenceDate?: string): string {
+    const reference = referenceDate === undefined ? moment() : moment(referenceDate, 'YYYY-MM-DD');
+    const today = reference.format('YYYY-MM-DD');
+    const tomorrow = reference.clone().add(1, 'day').format('YYYY-MM-DD');
     if (d === today) return 'Today';
     if (d === tomorrow) return 'Tomorrow';
-    const m = window.moment(d, 'YYYY-MM-DD');
-    const diff = m.diff(window.moment(), 'days');
+    const m = moment(d, 'YYYY-MM-DD');
+    const diff = m.diff(reference, 'days');
     if (diff > -7 && diff < 7) return m.format('ddd D MMM');
     return m.format('D MMM');
   }

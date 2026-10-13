@@ -59,7 +59,12 @@ export {
   type CompletionTrackingWitness,
   type TaskResolution,
 } from './domain/taskReconciliation';
-export { normalizeTaskTagInput, taskPrefixForSubtask } from './domain/taskTags';
+export {
+  isTaskInboxMember,
+  normalizeTaskTagInput,
+  sameTag,
+  taskPrefixForSubtask,
+} from './domain/taskTags';
 export { sameTaskTreeWithOwnedChanges } from './domain/taskTreeChangeProof';
 export type { OffsetAt } from './domain/timeEntry';
 export {
@@ -166,6 +171,7 @@ export type { TaskInputServices } from './application/TaskInputRecognizer';
 export { inspectTaskInput } from './domain/taskInputInspection';
 export {
   projectTaskInput,
+  projectTaskInputContext,
   taskInputPreflightBody,
   taskInputPreflightInitial,
   type TaskInputProjection,
@@ -178,4 +184,8 @@ export {
   type TaskInputState,
 } from './domain/taskInputState';
 export { taskInputReference } from './domain/taskInputTypes';
-export type { TaskCreatePreview, TaskInputReference } from './domain/taskInputTypes';
+export type {
+  TaskCreateContextPreview,
+  TaskCreatePreview,
+  TaskInputReference,
+} from './domain/taskInputTypes';

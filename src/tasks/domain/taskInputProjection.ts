@@ -40,9 +40,13 @@ interface ProjectionInput {
   readonly sourcePlanning: Pick<TaskPlanning, 'due' | 'scheduled' | 'start' | 'time'>;
   readonly contextInitial?: TaskInputInitial;
 }
+type ContextProjectionInput = Omit<ProjectionInput, 'reference' | 'candidates'>;
+type ProjectionSource =
+  | (ProjectionInput & { readonly mode: 'recognized' })
+  | (ContextProjectionInput & { readonly mode: 'context'; readonly candidates: readonly never[] });
 type InputPlanning = Pick<TaskPlanning, 'due' | 'scheduled' | 'start' | 'time'>;
 interface Decision {
-  readonly input: ProjectionInput;
+  readonly input: ProjectionSource;
   readonly suppressed: readonly TaskInputBinding[];
   readonly candidates: readonly TaskInputCandidate[];
   readonly days: readonly TaskInputCandidate[];
@@ -95,7 +99,7 @@ function candidateSuppressed(
   );
 }
 function activeCarrier(
-  input: ProjectionInput,
+  input: ProjectionSource,
   suppressed: readonly TaskInputBinding[],
   role: TaskInputPlanningRole,
 ): boolean {
@@ -111,7 +115,7 @@ function activeCarrier(
   );
 }
 function explicitPlanning(
-  input: ProjectionInput,
+  input: ProjectionSource,
   suppressed: readonly TaskInputBinding[],
 ): InputPlanning {
   const result = { ...input.sourcePlanning };
@@ -132,7 +136,7 @@ function isPlanningPoint(candidate: TaskInputCandidate): boolean {
   return candidate.status === 'point' || candidate.status === 'partial';
 }
 function hasActiveExplicitDay(
-  input: ProjectionInput,
+  input: ProjectionSource,
   suppressed: readonly TaskInputBinding[],
 ): boolean {
   const prefix = (['due', 'start', 'scheduled'] as const).some(
@@ -150,7 +154,7 @@ function hasActiveExplicitDay(
   );
   return prefix || raw;
 }
-function decisionFor(input: ProjectionInput): Decision {
+function decisionFor(input: ProjectionSource): Decision {
   const { state } = input;
   const suppressed = state.suppressed.filter((binding) =>
     currentInputBinding(state.raw, state.revision, binding),
@@ -262,15 +266,19 @@ function assignDay(decision: Decision, role: TaskInputDateRole): void {
   if (role === 'due' && useNaturalDay(decision)) return;
   fallback(decision, role);
 }
-function inferTimeDay(decision: Decision, clock: TaskInputCandidate): void {
-  const { state, reference } = decision.input;
-  const blocked =
+function hasTimeDay(decision: Decision): boolean {
+  const { state } = decision.input;
+  return (
     decision.initial.due?.type === 'set' ||
     decision.days.length > 0 ||
     decision.hasExplicitDay ||
     state.manual.scheduled !== undefined ||
-    state.manual.start !== undefined;
-  if (blocked || clock.time === undefined) return;
+    state.manual.start !== undefined
+  );
+}
+function inferTimeDay(decision: Decision, clock: TaskInputCandidate): void {
+  if (decision.input.mode === 'context' || hasTimeDay(decision) || clock.time === undefined) return;
+  const { state, reference } = decision.input;
   const due =
     clock.time > reference.localTime ? reference.localDate : shiftLocalDate(reference.localDate, 1);
   if (due === undefined) return;
@@ -462,7 +470,7 @@ function hasAuthoredTitle(raw: string): boolean {
   const title = parseTaskLineSourceModel(`- [ ] ${raw}`)?.markdownTitle ?? '';
   return /[\p{L}\p{N}\p{Extended_Pictographic}]/u.test(title);
 }
-export function projectTaskInput(input: ProjectionInput): TaskInputProjection {
+function projectInput(input: ProjectionSource): TaskInputProjection {
   const decision = decisionFor(input);
   for (const role of ['due', 'scheduled', 'start'] as const) assignDay(decision, role);
   assignTime(decision);
@@ -478,4 +486,13 @@ export function projectTaskInput(input: ProjectionInput): TaskInputProjection {
     ambiguity: decision.ambiguity,
     hasAuthoredTitle: hasAuthoredTitle(body.markdownBody),
   };
+}
+
+export function projectTaskInput(input: ProjectionInput): TaskInputProjection {
+  return projectInput({ ...input, mode: 'recognized' });
+}
+
+/** Known canonical/manual context has no natural candidates or recognition reference. */
+export function projectTaskInputContext(input: ContextProjectionInput): TaskInputProjection {
+  return projectInput({ ...input, mode: 'context', candidates: [] });
 }

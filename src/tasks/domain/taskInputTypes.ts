@@ -20,20 +20,36 @@ export interface TaskInputInspection {
   readonly carriers: readonly TaskInputCarrier[];
   readonly protectedRanges: readonly TaskInputRange[];
 }
-interface TaskCreatePreviewMetadata {
-  readonly markdownTitle: string;
+interface TaskCreateContextMetadata {
   readonly tags: readonly string[];
   readonly planning: Pick<TaskPlanning, 'due' | 'scheduled' | 'start' | 'time' | 'duration'>;
   readonly priority: TaskPriority;
+}
+interface TaskCreatePreviewMetadata extends TaskCreateContextMetadata {
+  readonly markdownTitle: string;
+}
+export interface TaskCreateInboxPreview {
+  readonly member: boolean;
+  readonly serviceTag?: string;
 }
 export type TaskCreatePreview =
   | {
       readonly type: 'valid';
       readonly metadata: TaskCreatePreviewMetadata;
       readonly sourcePlanning: Pick<TaskPlanning, 'due' | 'scheduled' | 'start' | 'time'>;
+      readonly inbox?: TaskCreateInboxPreview;
     }
   | { readonly type: 'invalid'; readonly issues: readonly TaskIssue[] }
   | { readonly type: 'unavailable'; readonly cause: 'destination' | 'preview-capability' };
+export type TaskCreateContextPreview =
+  | {
+      readonly type: 'ready';
+      readonly referenceDate: LocalDate;
+      readonly metadata: TaskCreateContextMetadata;
+      readonly sourcePlanning: Pick<TaskPlanning, 'due' | 'scheduled' | 'start' | 'time'>;
+      readonly inbox?: TaskCreateInboxPreview;
+    }
+  | Extract<TaskCreatePreview, { readonly type: 'invalid' | 'unavailable' }>;
 export interface TaskInputReference {
   readonly epochMs: number;
   readonly localDate: LocalDate;

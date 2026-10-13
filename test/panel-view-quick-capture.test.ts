@@ -64,9 +64,13 @@ async function mountQuickPanel(
   dashboard = false,
   tag = false,
   needle = false,
-  ...options: [lifetimeSignal?: AbortSignal, taskInputServices?: TaskInputServices]
+  ...options: [
+    lifetimeSignal?: AbortSignal,
+    taskInputServices?: TaskInputServices,
+    capturePreview?: boolean,
+  ]
 ) {
-  const [lifetimeSignal, taskInputServices] = options;
+  const [lifetimeSignal, taskInputServices, capturePreview] = options;
   const settings: CalendarSettings = structuredClone(DEFAULT_SETTINGS);
   settings.taskFilePath = 'created.md';
   settings.taskInsertionMode = 'append';
@@ -92,6 +96,7 @@ async function mountQuickPanel(
     undefined,
     undefined,
     lifetimeSignal,
+    capturePreview,
   );
   let acquiredView: PanelView | undefined;
   let disposal: Promise<void> | undefined;
@@ -1313,6 +1318,63 @@ describe('physical Q creation reveal through PanelView', () => {
   });
 });
 
+it.each(['today', 'upcoming'] as const)(
+  'shows immediate %s context through PanelView with shared relative labels and live source preferences',
+  async (selection) => {
+    const readReference = vi.fn(() => reference);
+    const recognizer = new ChronoTaskInputRecognizer();
+    const recognize = vi.spyOn(recognizer, 'recognize');
+    const h = await mountQuickPanel(
+      false,
+      false,
+      false,
+      undefined,
+      { recognizer, readReference },
+      true,
+    );
+    try {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-10-13T12:00:00'));
+      h.settings.taskFilePath = 'periodic/daily/{{YYYY-MM-DD}}.md';
+      h.settings.taskPrefix = '#prefix';
+      h.settings.sourceNoteDisplay = 'non-default';
+      h.state.set('selectedList', selection);
+      const input = await h.openQ();
+      const contents = () =>
+        [...h.root.querySelectorAll('.abyss-capture-metadata .abyss-capture-chip-body')].map(
+          (el) => el.textContent,
+        );
+      expect(contents()).toEqual([selection === 'today' ? 'Today' : 'Tomorrow', '#prefix']);
+      expect(h.root.querySelector('.abyss-capture-destination')?.textContent).toBe('');
+      expect(readReference).not.toHaveBeenCalled();
+      expect(recognize).not.toHaveBeenCalled();
+      h.settings.sourceNoteDisplay = 'always';
+      h.settings.taskPrefix = '#changed';
+      const remove = expectDefined(
+        h.root.querySelector<HTMLButtonElement>('button[aria-label="Remove #prefix"]'),
+      );
+      remove.click();
+      expect(contents()).toEqual([
+        '2026-10-13',
+        selection === 'today' ? 'Today' : 'Tomorrow',
+        'Restore',
+      ]);
+      expect(h.root.querySelector('.abyss-capture-destination')?.textContent).toBe('2026-10-13');
+      expectDefined(
+        h.root.querySelector<HTMLButtonElement>('button[aria-label="Restore"]'),
+      ).click();
+      expect(contents()).toEqual([
+        '2026-10-13',
+        selection === 'today' ? 'Today' : 'Tomorrow',
+        '#prefix',
+      ]);
+      expect(input.value).toBe('');
+    } finally {
+      await h.dispose();
+    }
+  },
+);
+
 it('passes neutral services only to Q, freezes the active setting and refuses an actual unavailable preview', async () => {
   const recognizer = new ChronoTaskInputRecognizer(),
     recognize = vi.spyOn(recognizer, 'recognize'),
@@ -1359,7 +1421,7 @@ it('passes neutral services only to Q, freezes the active setting and refuses an
   }
 });
 
-it('formats Q dates against the frozen draft year, including when natural recognition is disabled', async () => {
+it('formats Q dates with the central labels against the frozen draft reference, including when recognition is disabled', async () => {
   const readReference = vi.fn(() => reference);
   const h = await mountQuickPanel(false, false, false, undefined, {
     recognizer: new ChronoTaskInputRecognizer(),
@@ -1392,14 +1454,14 @@ it('formats Q dates against the frozen draft year, including when natural recogn
     let picker = expectDefined(h.root.querySelector<HTMLInputElement>('input[type="date"]'));
     picker.value = '2027-01-01';
     picker.dispatchEvent(new Event('change', { bubbles: true }));
-    expect(date.textContent).toContain('2027');
+    expect(date.textContent).toBe('1 Jan');
     expect(date.title).toContain('2027-01-01');
     expect(date.getAttribute('aria-label')).toContain('2027-01-01');
     readReference.mockReturnValue({ ...reference, localDate: localDate('2027-10-13') });
     input.value = 'Call';
     input.dispatchEvent(new Event('input', { bubbles: true }));
     await vi.waitFor(() => {
-      expect(date.textContent).toContain('2027');
+      expect(date.textContent).toBe('1 Jan');
     });
     date.click();
     picker = expectDefined(h.root.querySelector<HTMLInputElement>('input[type="date"]'));

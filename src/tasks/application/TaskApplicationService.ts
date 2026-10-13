@@ -22,10 +22,15 @@ import {
   taskMutationNodeRef,
 } from '../domain/taskCommandTargets';
 import { isHierarchyCommand, type TaskHierarchyCommand } from '../domain/taskHierarchy';
-import type { TaskCreatePreview } from '../domain/taskInputTypes';
+import type {
+  TaskCreateContextPreview,
+  TaskCreateInboxPreview,
+  TaskCreatePreview,
+} from '../domain/taskInputTypes';
 import { reconcileTaskNodeRef, type TaskResolution } from '../domain/taskReconciliation';
 import {
   applyTaskCreationTagPolicy,
+  isTaskInboxMember,
   normalizeTaskTagInput,
   sameTag,
   tagComparisonKey,
@@ -468,6 +473,27 @@ function preparedCreateDraft(
       ...preparedInitial.initial,
       ...(creationPolicy.tags !== undefined && { tags: creationPolicy.tags }),
     },
+  };
+}
+
+function createInboxPreview(
+  tags: readonly string[],
+  settings: TaskBehaviorSettings,
+): TaskCreateInboxPreview {
+  const normalized = normalizeTaskTagInput(settings.inbox.tag);
+  const configuredTag = normalized?.length === 1 ? normalized[0] : undefined;
+  const serviceTag =
+    settings.inbox.mode === 'untagged' || configuredTag === undefined
+      ? undefined
+      : tags.find((tag) => sameTag(tag, configuredTag));
+  return {
+    member: isTaskInboxMember({
+      mode: settings.inbox.mode,
+      hasInboxTag: serviceTag !== undefined,
+      tagCount: tags.length,
+      depth: 0,
+    }),
+    ...(serviceTag === undefined ? {} : { serviceTag }),
   };
 }
 
@@ -1131,6 +1157,8 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
       type: 'ready',
       destination,
       preview: (request) => this.previewCreate_abyssPrivate(request, settings, reading),
+      previewContext: (request = { markdownBody: '' }) =>
+        this.previewCreateContext_abyssPrivate(request, settings, reading),
       execute: async (request) => {
         try {
           return await this.executePlannedCreate_abyssPrivate(
@@ -1166,17 +1194,41 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     }
     const prepared = prepareCreateInitial(request, settings);
     if (prepared.type === 'invalid') return invalidTaskTarget('tags');
-    return port.preview({
+    const preview = port.preview({
       ...preparedCreateDraft(request, prepared, settings),
       today: reading.localDate,
       addCreatedDate: settings.taskLifecycle.addCreatedDate,
     });
+    return preview.type === 'valid'
+      ? { ...preview, inbox: createInboxPreview(preview.metadata.tags, settings) }
+      : preview;
+  }
+
+  private previewCreateContext_abyssPrivate(
+    request: TaskCreateRequest,
+    settings: TaskBehaviorSettings,
+    reading: ClockReading | { readonly localDate: ClockReading['localDate'] },
+  ): TaskCreateContextPreview {
+    const port = this.previewPort_abyssPrivate;
+    if (port?.previewContext === undefined)
+      return { type: 'unavailable', cause: 'preview-capability' };
+    const prepared = prepareCreateInitial(request, settings);
+    if (prepared.type === 'invalid') return invalidTaskTarget('tags');
+    const context = port.previewContext(preparedCreateDraft(request, prepared, settings));
+    return context.type === 'ready'
+      ? {
+          ...context,
+          referenceDate: reading.localDate,
+          inbox: createInboxPreview(context.metadata.tags, settings),
+        }
+      : context;
   }
 
   private unavailableCreateSession_abyssPrivate(): TaskCreateSession {
     return {
       type: 'unavailable',
       preview: () => ({ type: 'unavailable', cause: 'destination' }),
+      previewContext: () => ({ type: 'unavailable', cause: 'destination' }),
       execute: async () => destinationUnavailableResult(),
     };
   }

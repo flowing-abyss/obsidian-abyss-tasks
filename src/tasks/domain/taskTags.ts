@@ -70,6 +70,19 @@ export interface TaskInboxTagPolicy {
   readonly removeTagOnAssign: boolean;
 }
 
+/** Final Inbox classification after callers have matched the exact configured tag. */
+export function isTaskInboxMember(input: {
+  readonly mode: TaskInboxTagPolicy['mode'];
+  readonly hasInboxTag: boolean;
+  readonly tagCount: number;
+  readonly depth: number;
+}): boolean {
+  return (
+    (input.mode !== 'untagged' && input.hasInboxTag) ||
+    (input.mode !== 'tag' && input.depth === 0 && input.tagCount === 0)
+  );
+}
+
 /** Automatic subtask prefixes follow the owning root's Inbox membership, never descendant tags. */
 export function taskPrefixForSubtask(
   prefix: string,

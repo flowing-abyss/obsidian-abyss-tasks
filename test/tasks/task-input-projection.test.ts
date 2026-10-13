@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { inspectTaskInput } from '../../src/tasks/domain/taskInputInspection';
 import {
   projectTaskInput,
+  projectTaskInputContext,
   taskInputPreflightBody,
 } from '../../src/tasks/domain/taskInputProjection';
 import {
@@ -17,6 +18,57 @@ import { localDate, localTime } from '../../src/tasks/domain/validation';
 import { expectDefined } from '../helpers';
 import { project, recognizer, reference } from '../support/taskInputHarness';
 const context = { due: { type: 'set' as const, value: localDate('2026-10-13') } };
+
+describe('context projection without a recognition clock', () => {
+  it('retains source-over-initial precedence and a canonical time without inferring a day', () => {
+    const state = createTaskInputState();
+    const projection = projectTaskInputContext({
+      state,
+      inspection: inspectTaskInput(state.raw),
+      sourcePlanning: { due: localDate('2026-10-15'), time: localTime('23:30') },
+      contextInitial: context,
+    });
+    expect(projection.initial).toEqual({
+      due: { type: 'set', value: '2026-10-15' },
+      time: { type: 'set', value: '23:30' },
+    });
+    expect(projection.candidates).toEqual([]);
+    expect(projection.hasAuthoredTitle).toBe(false);
+    const time = projectTaskInputContext({
+      state,
+      inspection: inspectTaskInput(''),
+      sourcePlanning: { time: localTime('23:30') },
+    });
+    expect(time.initial).toEqual({ time: { type: 'set', value: '23:30' } });
+  });
+  it('uses the same canonical occurrence suppression and Restore without touching seed bytes', () => {
+    const state = createTaskInputState(' 📅 2026-10-20');
+    const read = (value: TaskInputState) =>
+      projectTaskInputContext({
+        state: value,
+        inspection: inspectTaskInput(value.raw),
+        sourcePlanning: {},
+      });
+    const first = read(state);
+    const dismissed = applyTaskInputAction(
+      state,
+      { type: 'dismiss', role: 'due' },
+      first,
+      inspectTaskInput(state.raw),
+    );
+    expect(read(dismissed).initial).toEqual({ due: { type: 'clear' }, time: { type: 'clear' } });
+    expect(read(dismissed).markdownBody.trim()).toBe('');
+    expect(dismissed.raw).toBe(' 📅 2026-10-20');
+    const restored = applyTaskInputAction(
+      dismissed,
+      { type: 'restore' },
+      read(dismissed),
+      inspectTaskInput(dismissed.raw),
+    );
+    expect(read(restored).initial).toEqual({ due: { type: 'set', value: '2026-10-20' } });
+    expect(restored.raw).toBe(state.raw);
+  });
+});
 function dismiss(raw: string) {
   const state = createTaskInputState(raw);
   return applyTaskInputAction(

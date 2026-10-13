@@ -29,6 +29,7 @@ import { StatusCatalog } from '../src/tasks/domain/StatusCatalog';
 import { enumerateTaskNodes } from '../src/tasks/domain/taskDependencies';
 import { TaskSearchError } from '../src/tasks/domain/taskSearchTypes';
 import { localDate } from '../src/tasks/domain/validation';
+import { MarkdownTaskCreatePreview } from '../src/tasks/infrastructure/markdown/MarkdownTaskCreatePreview';
 import { TaskBlockEditor } from '../src/tasks/infrastructure/markdown/TaskBlockEditor';
 import { TaskLocator } from '../src/tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
@@ -843,6 +844,7 @@ export function configuredTaskApplication(
     readonly clock?: Clock;
     readonly diagnostics?: TaskDiagnosticSink;
     readonly readYield?: (signal: AbortSignal) => Promise<void>;
+    readonly capturePreview?: boolean;
   } = {},
 ): {
   readonly index: TaskIndex;
@@ -900,9 +902,12 @@ export function configuredTaskApplication(
       },
       (filePath, templatePath, title) => noteTemplates.ensureNote(filePath, templatePath, title),
     ),
-    undefined,
+    options.capturePreview === true ? () => settings : undefined,
     undefined,
     options.diagnostics,
+    options.capturePreview === true
+      ? new MarkdownTaskCreatePreview(new TaskMarkdownCodec(statusCatalog))
+      : undefined,
   );
   return {
     index,

@@ -1,16 +1,201 @@
 import { Menu } from 'obsidian';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { DEFAULT_SETTINGS } from '../src/settings/defaults';
+import type { CalendarSettings } from '../src/settings/types';
 import { localDate, type TaskCreatePreview, type TaskCreateRequest } from '../src/tasks';
 import { MarkdownTaskCreatePreview } from '../src/tasks/infrastructure/markdown/MarkdownTaskCreatePreview';
+import { shouldShowSourcePath } from '../src/ui/sourceNoteChip';
 import { CaptureSurface } from '../src/ui/taskCapture/CaptureSurface';
+import {
+  CaptureTargetResolver,
+  type CaptureContext,
+} from '../src/ui/taskCapture/CaptureTargetResolver';
 import { TaskCaptureController } from '../src/ui/taskCapture/TaskCaptureController';
 import { describeTaskCreationResult } from '../src/ui/taskCommandResult';
-import { expectDefined } from './helpers';
+import {
+  configuredTaskApplication,
+  createAppWithFiles,
+  expectDefined,
+  useRealMoment,
+} from './helpers';
 import { codec, recognizer, reference } from './support/taskInputHarness';
+useRealMoment();
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   document.body.empty();
+});
+
+async function canonicalSurface(
+  context: CaptureContext,
+  preferences: Partial<CalendarSettings> = {},
+) {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-10-13T12:00:00'));
+  const settings = {
+    ...structuredClone(DEFAULT_SETTINGS),
+    taskFilePath: 'tasks.md',
+    taskInsertionMode: 'append' as const,
+    ...preferences,
+  };
+  const app = await createAppWithFiles({ 'tasks.md': '', 'Projects/P.md': '' });
+  const application = configuredTaskApplication(app, settings, {
+    authority: true,
+    capturePreview: true,
+  });
+  const target = await new CaptureTargetResolver(
+    application.tasks,
+    settings,
+    () => reference.localDate,
+  ).resolve(context);
+  const readReference = vi.fn(() => reference);
+  const recognize = vi.spyOn(recognizer, 'recognize');
+  const controller = new TaskCaptureController({
+    target,
+    smart: { recognizer, readReference, enabled: () => true, onRecognitionFailure: vi.fn() },
+    describe: describeTaskCreationResult,
+    onResult: vi.fn(),
+    onRequestClose: vi.fn(),
+  });
+  const host = document.body.createDiv();
+  const surface = new CaptureSurface(host, controller, {
+    shouldShowSourceNote: (path) =>
+      shouldShowSourcePath(path, settings.sourceNoteDisplay, settings.taskFilePath),
+  });
+  const contents = () =>
+    [...host.querySelectorAll('.abyss-capture-chip-body')].map((el) => el.textContent);
+  const button = (label: string) =>
+    expectDefined(host.querySelector<HTMLButtonElement>(`button[aria-label^="${label}"]`));
+  const description = () => host.querySelector('.abyss-capture-destination')?.textContent;
+  const close = () => {
+    surface.destroy();
+    controller.destroy();
+    application.index.destroy();
+  };
+  return {
+    settings,
+    host,
+    controller,
+    surface,
+    readReference,
+    recognize,
+    contents,
+    button,
+    description,
+    close,
+  };
+}
+
+describe('canonical Q context representation', () => {
+  it.each([true, false])(
+    'represents the Inbox service tag only through its actual caption, remove=%s',
+    async (removeTagOnAssign) => {
+      const h = await canonicalSurface(
+        { type: 'list', selection: 'inbox' },
+        {
+          sourceNoteDisplay: 'always',
+          inbox: { mode: 'tag', tag: '#task/inbox', removeTagOnAssign },
+        },
+      );
+      try {
+        expect(h.contents()).toEqual(['Inbox']);
+        expect(h.host.querySelector('button[aria-label="Remove #task/inbox"]')).toBeNull();
+        expect(h.description()).toBe('Inbox');
+        h.controller.setDraft('Call #health');
+        expect(h.contents()).toEqual([removeTagOnAssign ? 'tasks' : 'Inbox', '#health']);
+        expect(h.description()).toBe(removeTagOnAssign ? 'tasks' : 'Inbox');
+        expect(h.host.querySelector('button[aria-label="Remove #task/inbox"]')).toBeNull();
+        h.button('Remove #health').focus();
+        h.button('Remove #health').click();
+        expect(h.contents()).toEqual(['Inbox', 'Restore']);
+        expect(h.description()).toBe('Inbox');
+        expect(document.activeElement).toBe(h.button('Restore'));
+        h.button('Restore').click();
+        expect(h.contents()).toEqual([removeTagOnAssign ? 'tasks' : 'Inbox', '#health']);
+        expect(h.controller.snapshot().draft).toBe('Call #health');
+        expect(h.description()).toBe(removeTagOnAssign ? 'tasks' : 'Inbox');
+      } finally {
+        h.close();
+      }
+    },
+  );
+
+  it('uses current source preferences while preserving frozen context tags and empty raw input', async () => {
+    const h = await canonicalSurface(
+      { type: 'list', selection: { type: 'tag', tag: '#selected' } },
+      {
+        taskPrefix: '#prefix',
+        sourceNoteDisplay: 'non-default',
+      },
+    );
+    try {
+      expect(h.contents()).toEqual(['#prefix', '#selected']);
+      expect(h.description()).toBe('');
+      expect(h.readReference).not.toHaveBeenCalled();
+      expect(h.recognize).not.toHaveBeenCalled();
+      h.settings.sourceNoteDisplay = 'always';
+      h.settings.taskPrefix = '#changed';
+      h.controller.flushRecognition();
+      expect(h.contents()).toEqual(['tasks', '#prefix', '#selected']);
+      expect(h.description()).toBe('tasks');
+      h.button('Remove #prefix').click();
+      expect(h.contents()).toEqual(['tasks', '#selected', 'Restore']);
+      h.button('Restore').click();
+      expect(h.contents()).toEqual(['tasks', '#prefix', '#selected']);
+      expect(h.surface.input.value).toBe('');
+      h.settings.sourceNoteDisplay = 'never';
+      h.controller.flushRecognition();
+      expect(h.contents()).toEqual(['#prefix', '#selected']);
+      expect(h.description()).toBe('');
+    } finally {
+      h.close();
+    }
+  });
+
+  it.each([
+    { type: 'project-dashboard', path: 'Projects/P.md' },
+    { type: 'project-table', path: 'Projects/P.md' },
+    { type: 'list', selection: { type: 'project', path: 'Projects/P.md' } },
+  ] satisfies CaptureContext[])(
+    'retains the explicit project context when generic source is hidden: $type',
+    async (context) => {
+      const h = await canonicalSurface(context, {
+        taskPrefix: '#prefix',
+        sourceNoteDisplay: 'never',
+      });
+      try {
+        expect(h.contents()).toEqual(['P', '#prefix']);
+        expect(h.description()).toBe('P');
+        expect(h.readReference).not.toHaveBeenCalled();
+      } finally {
+        h.close();
+      }
+    },
+  );
+
+  it('keeps default Projects capture generic and leaves only actual extra tags after Inbox eviction', async () => {
+    const h = await canonicalSurface(
+      { type: 'default', source: 'projects' },
+      { taskPrefix: '#prefix', sourceNoteDisplay: 'never' },
+    );
+    try {
+      expect(h.contents()).toEqual(['#prefix']);
+      expect(h.description()).toBe('');
+    } finally {
+      h.close();
+    }
+    const inbox = await canonicalSurface(
+      { type: 'list', selection: 'inbox' },
+      { sourceNoteDisplay: 'non-default' },
+    );
+    try {
+      inbox.controller.setDraft('Call #health');
+      expect(inbox.contents()).toEqual(['#health']);
+      expect(inbox.description()).toBe('');
+    } finally {
+      inbox.close();
+    }
+  });
 });
 function harness(
   initial?: TaskCreateRequest['initial'],
@@ -543,6 +728,8 @@ it('shows held context planning without inventing a recognized phrase', () => {
 it.each(['unavailable', 'throw', 'invalid-metadata'] as const)(
   'never exposes empty-title transient planning when canonical preview is %s',
   (failure) => {
+    const log =
+      failure === 'throw' ? vi.spyOn(console, 'error').mockImplementation(() => {}) : undefined;
     const h = harness();
     h.preview.mockImplementation(() => {
       if (failure === 'throw') throw new Error('preview test');
@@ -564,6 +751,8 @@ it.each(['unavailable', 'throw', 'invalid-metadata'] as const)(
     expect(h.host.querySelector('button[aria-label^="Edit due date"]')).toBeNull();
     expect(h.host.querySelector('button[aria-label="Remove due date"]')).toBeNull();
     expect(h.execute).not.toHaveBeenCalled();
+    if (log !== undefined)
+      expect(log.mock.calls).toEqual([['[abyss-tasks] Quick-capture draft preview failed']]);
     h.surface.destroy();
   },
 );

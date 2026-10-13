@@ -3,7 +3,12 @@ import type { LocalDate, TaskRef } from '../../domain/types';
 import type { TaskIssue } from '../../domain/validation';
 import { invalidTaskResult, invalidTaskSyntax } from '../../domain/validation';
 import { applyTaskCommand } from './applyTaskCommand';
-import { creationLineIssues, normalizeCreatedTaskLine, stampCreatedDate } from './createTaskLine';
+import {
+  creationLineIssues,
+  creationMetadataIssues,
+  normalizeCreatedTaskLine,
+  stampCreatedDate,
+} from './createTaskLine';
 import { TaskBlockEditor } from './TaskBlockEditor';
 import { type TaskMarkdownCodec } from './TaskMarkdownCodec';
 
@@ -13,6 +18,9 @@ const editor = new TaskBlockEditor();
 type CreateTaskBlockResult =
   | { readonly type: 'created'; readonly content: string }
   | { readonly type: 'invalid'; readonly issues: readonly TaskIssue[] };
+type CreateMetadataFailure = Extract<CreateTaskBlockResult, { readonly type: 'invalid' }>;
+type ReadTaskCreateContextResult =
+  { readonly type: 'context'; readonly content: string } | CreateMetadataFailure;
 
 type DraftContentResult =
   | { readonly type: 'content'; readonly content: string }
@@ -43,7 +51,7 @@ function validRootBlock(content: string): boolean {
 function validateSourceLines(
   codec: TaskMarkdownCodec,
   sourceLines: readonly string[],
-): CreateTaskBlockResult | undefined {
+): CreateMetadataFailure | undefined {
   for (const sourceLine of sourceLines) {
     const parsed = codec.parseLine(sourceLine, { filePath: '', line: 0 });
     if (parsed == null) continue;
@@ -57,7 +65,7 @@ function applyInitialPatch(
   codec: TaskMarkdownCodec,
   sourceLines: string[],
   initial: TaskDraft['initial'],
-): CreateTaskBlockResult | undefined {
+): CreateMetadataFailure | undefined {
   if (initial === undefined || Object.keys(initial).length === 0) return undefined;
   const ownerLine = sourceLines[0];
   if (ownerLine === undefined) return invalidTaskSyntax();
@@ -71,11 +79,28 @@ function applyInitialPatch(
   return undefined;
 }
 
+/** A read-only context root shares creation metadata stages without authorizing a task title. */
+export function readTaskCreateContext(
+  codec: TaskMarkdownCodec,
+  draft: TaskDraft,
+): ReadTaskCreateContextResult {
+  if (/[\r\n]/u.test(draft.markdownBody)) return invalidTaskSyntax();
+  const sourceLines = [`- [ ] ${draft.markdownBody}`];
+  const parsed = codec.parseLine(sourceLines[0] ?? '', { filePath: '', line: 0 });
+  if (parsed === null) return invalidTaskSyntax();
+  const issues = creationMetadataIssues(codec, parsed);
+  if (issues.length > 0) return invalidTaskResult(issues);
+  const patch = applyInitialPatch(codec, sourceLines, draft.initial);
+  if (patch !== undefined) return patch;
+  const normalized = normalizeSourceLines(codec, sourceLines);
+  return normalized ?? { type: 'context', content: sourceLines.join('\n') };
+}
+
 /** Newly authored raw timing follows the same final-candidate rule as field edits. */
 function normalizeSourceLines(
   codec: TaskMarkdownCodec,
   sourceLines: string[],
-): CreateTaskBlockResult | undefined {
+): CreateMetadataFailure | undefined {
   for (const [index, sourceLine] of sourceLines.entries()) {
     const result = normalizeCreatedTaskLine(codec, sourceLine);
     if (result.type === 'invalid') return result;

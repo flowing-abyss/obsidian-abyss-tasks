@@ -213,9 +213,10 @@ export async function createCanonicalSearchHarness(
     clock?: Clock,
     readYield?: (signal: AbortSignal) => Promise<void>,
     setupSignal?: AbortSignal,
+    capturePreview?: boolean,
   ]
 ) {
-  const [segment = fallbackSearchWords, clock, readYield, setupSignal] = options;
+  const [segment = fallbackSearchWords, clock, readYield, setupSignal, capturePreview] = options;
   checkSetup();
   function checkSetup(): void {
     setupSignal?.throwIfAborted();
@@ -226,6 +227,7 @@ export async function createCanonicalSearchHarness(
     authority: true,
     ...(readYield === undefined ? {} : { readYield }),
     ...(clock === undefined ? {} : { clock }),
+    ...(capturePreview === true ? { capturePreview } : {}),
   });
   let search: TaskSearchService | undefined;
   let closed = false;

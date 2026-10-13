@@ -24,6 +24,8 @@ import process from 'process';
 // Its minimal containing main limit is 2,018,304 bytes (1971 KiB); CSS is unchanged.
 // Q semantic metadata colors: accepted baseline 2,018,100 bytes; final 2,018,557 (+457 bytes).
 // Its minimal containing main limit is 2,019,328 bytes (1972 KiB); CSS is unchanged.
+// Q retained canonical context: measured 2,024,012 bytes; the approved next-KiB main limit is
+// 2,024,448 bytes (1977 KiB). The CSS limit is unchanged.
 // Dependency scope and budget enforcement are unchanged.
 const { mainJsBudgetBytes: MAIN_JS_BUDGET_BYTES } = JSON.parse(
   readFileSync('package.json', 'utf8'),
