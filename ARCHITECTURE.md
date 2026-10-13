@@ -128,6 +128,13 @@ text and native input history. Exact inactive canonical occurrences are filtered
 preflight and application tag policy. Final projection removes their union with fully represented
 accepted natural ranges in original UTF-16 coordinates. Restore reverses only its own metadata deltas;
 source changes and conflicting re-entry expire the offer. Metadata never creates an authored title.
+The removal operation retains original source spans and body offsets. The projection can expose a
+lowercase surviving word after an initially uppercase natural prefix only when every preceding
+non-whitespace source character belongs to fully consumed natural ranges and the word is outside
+protected Markdown and retained temporal candidates.
+Inactive canonical/tag removals supply no such proof. The shared Q request builder applies a single
+Unicode-letter uppercase mapping when it stays one code point; the neutral projected body and raw
+input remain unchanged. Canonical preview and frozen submission/retry receive that same request.
 Empty forms may expose manual choices without a valid creation preview.
 
 `CaptureMetadataRow` and central task cards share tag and source-note content. Both resolve tag colors

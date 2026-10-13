@@ -21,6 +21,11 @@ import type { TaskPlanning } from './types';
 export interface TaskInputProjection {
   readonly revision: number;
   readonly markdownBody: string;
+  /** A lowercase word following a fully consumed, initially uppercase natural prefix. */
+  readonly capitalizationTarget?: {
+    readonly sourceRange: TaskInputRange;
+    readonly bodyOffset: number;
+  };
   readonly initial: TaskInputInitial;
   readonly bindings: readonly TaskInputBinding[];
   readonly candidates: readonly TaskInputCandidate[];
@@ -343,8 +348,15 @@ function inactiveCanonicalRanges(
     .map((tag) => tag.range);
   return [...planning, ...tags];
 }
+interface InputBody {
+  readonly markdownBody: string;
+  readonly retained: ReadonlyArray<{
+    readonly sourceRange: TaskInputRange;
+    readonly bodyOffset: number;
+  }>;
+}
 /** All intervals refer to the original UTF-16 source, including bounded separator ownership. */
-function buildInputBody(raw: string, ranges: readonly TaskInputRange[]): string {
+function buildInputBody(raw: string, ranges: readonly TaskInputRange[]): InputBody {
   const space = (value: string | undefined): boolean => value === ' ' || value === '\t';
   const merged: Array<{ from: number; to: number }> = [];
   for (const range of ranges
@@ -369,25 +381,82 @@ function buildInputBody(raw: string, ranges: readonly TaskInputRange[]): string 
     .sort((a, b) => a.from - b.from);
   let cursor = 0,
     body = '';
+  const retained: Array<{ sourceRange: TaskInputRange; bodyOffset: number }> = [];
+  const retain = (from: number, to: number): void => {
+    if (to <= from) return;
+    retained.push({ sourceRange: { from, to }, bodyOffset: body.length });
+    body += raw.slice(from, to);
+  };
   for (const range of owned) {
-    if (range.from > cursor) body += raw.slice(cursor, range.from);
+    retain(cursor, range.from);
     cursor = Math.max(cursor, range.to);
   }
-  return body + raw.slice(cursor);
+  retain(cursor, raw.length);
+  return { markdownBody: body, retained };
 }
 export function taskInputPreflightBody(
   state: TaskInputState,
   inspection: TaskInputInspection,
 ): string {
-  return buildInputBody(state.raw, inactiveCanonicalRanges(state, inspection));
+  return buildInputBody(state.raw, inactiveCanonicalRanges(state, inspection)).markdownBody;
 }
-function projectedBody(decision: Decision): string {
-  return buildInputBody(decision.input.state.raw, [
+function hasConsumedNaturalPrefix(
+  raw: string,
+  targetFrom: number,
+  naturalRanges: readonly TaskInputRange[],
+): boolean {
+  if (!/^\s*\p{Lu}/u.test(raw)) return false;
+  // Canonical/tag deletion and separator ownership cannot supply natural-prefix evidence.
+  for (let offset = 0; offset < targetFrom; offset++)
+    if (
+      !/\s/u.test(raw.charAt(offset)) &&
+      !naturalRanges.some((range) => range.from <= offset && offset < range.to)
+    )
+      return false;
+  return true;
+}
+function capitalizationTarget(
+  decision: Decision,
+  body: InputBody,
+  naturalRanges: readonly TaskInputRange[],
+): TaskInputProjection['capitalizationTarget'] {
+  const { state, inspection } = decision.input;
+  const leading = /^(?!\s*\S*[\p{Lu}\p{Lt}])(\s*)(\p{L}[\p{L}\p{M}]*)/u.exec(body.markdownBody);
+  if (leading === null) return undefined;
+  const word = leading[2];
+  if (word === undefined || !/^\p{Ll}[\p{Ll}\p{M}]*$/u.test(word)) return undefined;
+  const bodyOffset = leading[1]?.length ?? 0;
+  const span = body.retained.find(
+    (item) =>
+      item.bodyOffset <= bodyOffset &&
+      item.bodyOffset + item.sourceRange.to - item.sourceRange.from >= bodyOffset + word.length,
+  );
+  if (span === undefined) return undefined;
+  const from = span.sourceRange.from + bodyOffset - span.bodyOffset;
+  const sourceRange = { from, to: from + word.length };
+  const protectedOrTemporal = [
+    ...inspection.protectedRanges,
+    ...decision.candidates.flatMap((candidate) => candidate.ranges),
+  ];
+  if (protectedOrTemporal.some((range) => inputRangesOverlap(range, sourceRange))) return undefined;
+  if (!hasConsumedNaturalPrefix(state.raw, from, naturalRanges)) return undefined;
+  return { sourceRange, bodyOffset };
+}
+function projectedBody(
+  decision: Decision,
+): Pick<TaskInputProjection, 'markdownBody' | 'capitalizationTarget'> {
+  const naturalRanges = decision.consumed
+    .filter((binding) => bindingFullyRepresented(decision, binding))
+    .flatMap((binding) => binding.ranges);
+  const body = buildInputBody(decision.input.state.raw, [
     ...inactiveCanonicalRanges(decision.input.state, decision.input.inspection),
-    ...decision.consumed
-      .filter((binding) => bindingFullyRepresented(decision, binding))
-      .flatMap((binding) => binding.ranges),
+    ...naturalRanges,
   ]);
+  const target = capitalizationTarget(decision, body, naturalRanges);
+  return {
+    markdownBody: body.markdownBody,
+    ...(target === undefined ? {} : { capitalizationTarget: target }),
+  };
 }
 function hasAuthoredTitle(raw: string): boolean {
   const title = parseTaskLineSourceModel(`- [ ] ${raw}`)?.markdownTitle ?? '';
@@ -399,14 +468,14 @@ export function projectTaskInput(input: ProjectionInput): TaskInputProjection {
   assignTime(decision);
   if (input.contextInitial?.duration !== undefined)
     decision.initial = { ...decision.initial, duration: input.contextInitial.duration };
-  const markdownBody = projectedBody(decision);
+  const body = projectedBody(decision);
   return {
     revision: input.state.revision,
-    markdownBody,
+    ...body,
     initial: decision.initial,
     bindings: decision.bindings,
     candidates: decision.candidates,
     ambiguity: decision.ambiguity,
-    hasAuthoredTitle: hasAuthoredTitle(markdownBody),
+    hasAuthoredTitle: hasAuthoredTitle(body.markdownBody),
   };
 }

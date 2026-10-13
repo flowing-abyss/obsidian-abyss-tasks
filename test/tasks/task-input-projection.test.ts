@@ -13,7 +13,7 @@ import {
 } from '../../src/tasks/domain/taskInputState';
 import type { TaskInputCandidate } from '../../src/tasks/domain/taskInputTypes';
 import type { TaskPlanning } from '../../src/tasks/domain/types';
-import { localDate } from '../../src/tasks/domain/validation';
+import { localDate, localTime } from '../../src/tasks/domain/validation';
 import { expectDefined } from '../helpers';
 import { project, recognizer, reference } from '../support/taskInputHarness';
 const context = { due: { type: 'set' as const, value: localDate('2026-10-13') } };
@@ -544,4 +544,115 @@ describe('metadata decision boundary conservation', () => {
     expect(project(selected).initial.due).toEqual({ type: 'set', value: '2026-10-20' });
     expect(selected.restore).toBeUndefined();
   });
+});
+
+describe('consumed natural prefix provenance', () => {
+  it('maps a whitespace-surrounded surviving word through the actual removal', () => {
+    const raw = ' \tTomorrow  call a friend\t ';
+    const result = project(createTaskInputState(raw));
+    expect(result.markdownBody).toBe(' \t call a friend\t ');
+    expect(result).toMatchObject({
+      capitalizationTarget: { sourceRange: { from: 12, to: 16 }, bodyOffset: 3 },
+    });
+  });
+
+  it('accepts two independent leading date/time ranges with only whitespace between them', () => {
+    const raw = 'Tomorrow\tAt 10:00 call a friend';
+    const result = projectTaskInput({
+      state: createTaskInputState(raw),
+      reference,
+      inspection: inspectTaskInput(raw),
+      sourcePlanning: {},
+      candidates: [
+        {
+          kind: 'date-time',
+          status: 'point',
+          ranges: [{ from: 0, to: 8 }],
+          dateRanges: [{ from: 0, to: 8 }],
+          timeRanges: [],
+          date: localDate('2026-10-14'),
+        },
+        {
+          kind: 'date-time',
+          status: 'point',
+          ranges: [{ from: 9, to: 17 }],
+          dateRanges: [],
+          timeRanges: [{ from: 9, to: 17 }],
+          time: localTime('10:00'),
+        },
+      ],
+    });
+    expect(result.markdownBody).toBe('call a friend');
+    expect(result).toMatchObject({
+      capitalizationTarget: { sourceRange: { from: 18, to: 22 }, bodyOffset: 0 },
+    });
+  });
+
+  it('does not derive consumption from a partial candidate binding', () => {
+    const raw = 'Tomorrow call a friend';
+    const result = projectTaskInput({
+      state: createTaskInputState(raw),
+      reference,
+      inspection: inspectTaskInput(raw),
+      sourcePlanning: {},
+      candidates: [
+        {
+          kind: 'date-time',
+          status: 'partial',
+          ranges: [{ from: 0, to: 8 }],
+          dateRanges: [{ from: 0, to: 8 }],
+          timeRanges: [],
+          date: localDate('2026-10-14'),
+        },
+      ],
+    });
+    expect(result.bindings).toHaveLength(1);
+    expect(result.markdownBody).toBe(raw);
+    expect(result).not.toHaveProperty('capitalizationTarget');
+  });
+});
+
+it.each(['partial', 'unsupported'] as const)(
+  'does not capitalize a retained %s temporal word after another consumed prefix',
+  (status) => {
+    const raw = 'Tomorrow morning call a friend';
+    const result = projectTaskInput({
+      state: createTaskInputState(raw),
+      reference,
+      inspection: inspectTaskInput(raw),
+      sourcePlanning: {},
+      candidates: [
+        {
+          kind: 'date-time',
+          status: 'point',
+          ranges: [{ from: 0, to: 8 }],
+          dateRanges: [{ from: 0, to: 8 }],
+          timeRanges: [],
+          date: localDate('2026-10-14'),
+        },
+        {
+          kind: 'date-time',
+          status,
+          ranges: [{ from: 9, to: 16 }],
+          dateRanges: [],
+          timeRanges: [],
+        },
+      ],
+    });
+    expect(result.markdownBody).toBe('morning call a friend');
+    expect(result).not.toHaveProperty('capitalizationTarget');
+  },
+);
+
+it('rejects a surviving lowercase word with explicit protected source ownership', () => {
+  const raw = 'Tomorrow call a friend';
+  const result = projectTaskInput({
+    state: createTaskInputState(raw),
+    reference,
+    inspection: { ...inspectTaskInput(raw), protectedRanges: [{ from: 9, to: 13 }] },
+    sourcePlanning: {},
+    candidates: recognizer.recognize({ text: raw, reference, protectedRanges: [] }),
+  });
+  expect(result.markdownBody).toBe('call a friend');
+  expect(result).not.toHaveProperty('capitalizationTarget');
 });

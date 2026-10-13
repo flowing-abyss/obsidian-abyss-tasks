@@ -392,8 +392,16 @@ export class TaskCaptureController {
   }
 
   private request_abyssPrivate(projection: TaskInputProjection): TaskCreateRequest {
+    let body = projection.markdownBody;
+    const offset = projection.capitalizationTarget?.bodyOffset;
+    if (offset !== undefined) {
+      const first = [...body.slice(offset)][0];
+      const uppercase = first?.toUpperCase();
+      if (first !== undefined && uppercase !== undefined && [...uppercase].length === 1)
+        body = body.slice(0, offset) + uppercase + body.slice(offset + first.length);
+    }
     return {
-      markdownBody: commandBodyForCapture(this.target, projection.markdownBody),
+      markdownBody: commandBodyForCapture(this.target, body),
       initial: projection.initial,
     };
   }

@@ -963,3 +963,256 @@ it.each([
   expect(saved.markdownTitle).toBe(title);
   expect(saved.planning.due).toBe(due);
 });
+
+describe('Q caption capitalization after a consumed natural prefix', () => {
+  it.each<[string, string, string, { due?: string; time?: string }]>([
+    [
+      'Завтра в 10:00 приём у стоматолога',
+      'приём у стоматолога',
+      'Приём у стоматолога',
+      { due: '2026-10-14', time: '10:00' },
+    ],
+    ['Tomorrow call a friend #work', 'call a friend #work', 'Call a friend', { due: '2026-10-14' }],
+    [
+      'Tomorrow at 10:00 call a friend',
+      'call a friend',
+      'Call a friend',
+      { due: '2026-10-14', time: '10:00' },
+    ],
+    ['tomorrow call a friend', 'call a friend', 'call a friend', { due: '2026-10-14' }],
+    ['call a friend Tomorrow', 'call a friend', 'call a friend', { due: '2026-10-14' }],
+    ['Tomorrow iOS update', 'iOS update', 'iOS update', { due: '2026-10-14' }],
+    ['Tomorrow eBay listing', 'eBay listing', 'eBay listing', { due: '2026-10-14' }],
+    ['Tomorrow i18nAPI update', 'i18nAPI update', 'i18nAPI update', { due: '2026-10-14' }],
+    ['Tomorrow i-Phone update', 'i-Phone update', 'i-Phone update', { due: '2026-10-14' }],
+    ['Tomorrow `call` a friend', '`call` a friend', '`call` a friend', { due: '2026-10-14' }],
+    [
+      'Tomorrow [call](https://example.com) a friend',
+      '[call](https://example.com) a friend',
+      '[call](https://example.com) a friend',
+      { due: '2026-10-14' },
+    ],
+    ['Tomorrow "call" a friend', '"call" a friend', '"call" a friend', { due: '2026-10-14' }],
+    ["Tomorrow 'call' a friend", "'call' a friend", "'call' a friend", { due: '2026-10-14' }],
+    ['Tomorrow ßeta task', 'ßeta task', 'ßeta task', { due: '2026-10-14' }],
+    ['Tomorrow 𐐨eta task', '𐐨eta task', '𐐀eta task', { due: '2026-10-14' }],
+    ['Tomorrow élan task', 'élan task', 'Élan task', { due: '2026-10-14' }],
+    ['Tomorrow , call a friend', ', call a friend', ', call a friend', { due: '2026-10-14' }],
+    ['Tomorrow – call a friend', '– call a friend', '– call a friend', { due: '2026-10-14' }],
+    [
+      'Tomorrow at 10:00 PST call a friend',
+      'Tomorrow at 10:00 PST call a friend',
+      'Tomorrow at 10:00 PST call a friend',
+      {},
+    ],
+    [
+      'Tomorrow and Friday call a friend',
+      'Tomorrow and Friday call a friend',
+      'Tomorrow and Friday call a friend',
+      {},
+    ],
+    [
+      'Tomorrow 📅 2026-10-20 call a friend',
+      'Tomorrow 📅 2026-10-20 call a friend',
+      'Tomorrow call a friend',
+      { due: '2026-10-20' },
+    ],
+  ])(
+    'preserves raw and neutral projection while preview and writer agree: %s',
+    async (raw, body, title, planning) => {
+      const h = await smartHarness();
+      h.controller.setDraft(raw);
+      const snapshot = h.controller.snapshot();
+      expect(snapshot.draft).toBe(raw);
+      expect(snapshot.metadata?.projection?.markdownBody).toBe(body);
+      expect(snapshot.metadata?.preview).toMatchObject({
+        type: 'valid',
+        metadata: { markdownTitle: title, planning },
+      });
+      await h.controller.submit('enter');
+      expect(h.readCanonicalRoot(expectDefined(h.repositoryWrites[0]))).toMatchObject({
+        markdownTitle: title,
+      });
+      const saved = h.readCanonicalRoot(expectDefined(h.repositoryWrites[0]));
+      expect(saved.planning.due).toBe(planning.due);
+      expect(saved.planning.time).toBe(planning.time);
+      const request = expectDefined(h.execute.mock.calls[0]?.[0]);
+      expect(h.preview.mock.calls[h.preview.mock.calls.length - 1]?.[0]).toEqual(request);
+      expect(saved.tags).toEqual(raw.includes('#work') ? ['#work'] : ['#task/inbox']);
+    },
+  );
+
+  it.each(['due', 'time'] as const)(
+    'keeps the original compound literal after %s dismissal and capitalizes after Restore',
+    async (role) => {
+      const h = await smartHarness();
+      const raw = 'Завтра в 10:00 приём у стоматолога';
+      h.controller.setDraft(raw);
+      h.controller.applyMetadataAction({ type: 'dismiss', role });
+      expect(h.controller.snapshot().draft).toBe(raw);
+      expect(h.controller.snapshot().metadata?.projection?.markdownBody).toBe(raw);
+      expect(h.controller.snapshot().metadata?.preview).toMatchObject({
+        type: 'valid',
+        metadata: { markdownTitle: raw },
+      });
+      await h.controller.submit('enter');
+      expect(h.readCanonicalRoot(expectDefined(h.repositoryWrites[0])).markdownTitle).toBe(raw);
+      const restored = await smartHarness();
+      restored.controller.setDraft(raw);
+      restored.controller.applyMetadataAction({ type: 'dismiss', role });
+      restored.controller.applyMetadataAction({ type: 'restore' });
+      expect(restored.controller.snapshot().metadata?.projection?.markdownBody).toBe(
+        'приём у стоматолога',
+      );
+      expect(restored.controller.snapshot().metadata?.preview).toMatchObject({
+        type: 'valid',
+        metadata: { markdownTitle: 'Приём у стоматолога' },
+      });
+      await restored.controller.submit('enter');
+      expect(
+        restored.readCanonicalRoot(expectDefined(restored.repositoryWrites[0])).markdownTitle,
+      ).toBe('Приём у стоматолога');
+    },
+  );
+
+  it.each([
+    '📅 2026-10-20 call a friend',
+    '#work Tomorrow call a friend',
+    'Tomorrow #work call a friend',
+  ])('never treats canonical or tag removal as natural prefix proof: %s', async (raw) => {
+    const h = await smartHarness({}, { inbox: false, initial: {} });
+    h.controller.setDraft(raw);
+    if (raw.includes('#work'))
+      h.controller.applyMetadataAction({ type: 'remove-tag', tag: '#work' });
+    else h.controller.applyMetadataAction({ type: 'dismiss', role: 'due' });
+    expect(h.controller.snapshot().draft).toBe(raw);
+    expect(h.controller.snapshot().metadata?.preview).toMatchObject({
+      type: 'valid',
+      metadata: { markdownTitle: 'call a friend' },
+    });
+    await h.controller.submit('enter');
+    expect(h.readCanonicalRoot(expectDefined(h.repositoryWrites[0])).markdownTitle).toBe(
+      'call a friend',
+    );
+  });
+
+  it('keeps the normalized request and planning frozen through an unchanged write failure', async () => {
+    const h = await smartHarness();
+    vi.spyOn(h.repository, 'create').mockResolvedValueOnce({
+      type: 'io-error',
+      cause: 'process-error',
+      contentState: 'unchanged',
+    });
+    const raw = 'Завтра в 10:00 приём у стоматолога';
+    h.controller.setDraft(raw);
+    const previewRequest = structuredClone(
+      expectDefined(h.preview.mock.calls[h.preview.mock.calls.length - 1]?.[0]),
+    );
+    expect(previewRequest.markdownBody).toBe('Приём у стоматолога');
+    await h.controller.submit('enter');
+    expect(h.repositoryWrites).toEqual([]);
+    expect(h.controller.snapshot().draft).toBe(raw);
+    h.readReference.mockReturnValue({ ...reference, localDate: localDate('2026-10-20') });
+    await h.controller.submit('blur');
+    await h.controller.submit('enter');
+    expect(h.execute.mock.calls.map(([request]) => request)).toEqual([
+      previewRequest,
+      previewRequest,
+    ]);
+    expect(h.readCanonicalRoot(expectDefined(h.repositoryWrites[0]))).toMatchObject({
+      markdownTitle: 'Приём у стоматолога',
+      planning: { due: '2026-10-14', time: '10:00' },
+    });
+    expect(h.readReference).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the normalized frozen request through an unknown outcome and checked retry', async () => {
+    const h = await smartHarness();
+    vi.spyOn(h.repository, 'create').mockResolvedValueOnce({
+      type: 'io-error',
+      cause: 'process-error',
+      contentState: 'unknown',
+    });
+    h.controller.setDraft('Tomorrow call a friend');
+    await h.controller.submit('enter');
+    expect(h.repositoryWrites).toEqual([]);
+    expect(h.controller.snapshot().metadata?.needsCheckedRetry).toBe(true);
+    h.readReference.mockReturnValue({ ...reference, localDate: localDate('2026-10-20') });
+    await h.controller.submit('enter');
+    expect(h.repositoryWrites).toEqual([]);
+    await h.controller.confirmCheckedRetry();
+    expect(h.execute.mock.calls.map(([request]) => request.markdownBody)).toEqual([
+      'Call a friend',
+      'Call a friend',
+    ]);
+    expect(h.readCanonicalRoot(expectDefined(h.repositoryWrites[0]))).toMatchObject({
+      markdownTitle: 'Call a friend',
+      planning: { due: '2026-10-14' },
+    });
+  });
+
+  it('preserves smart-off Q and non-Q captions', async () => {
+    const raw = 'Tomorrow call a friend';
+    const off = await smartHarness();
+    off.enabled.mockReturnValue(false);
+    off.controller.setDraft(raw);
+    expect(off.controller.snapshot().metadata?.preview).toMatchObject({
+      type: 'valid',
+      metadata: { markdownTitle: raw, planning: {} },
+    });
+    await off.controller.submit('enter');
+    expect(off.readCanonicalRoot(expectDefined(off.repositoryWrites[0])).markdownTitle).toBe(raw);
+    const plain = await harness();
+    const session = await plain.service.planCreate({ type: 'configured-default' });
+    const controller = new TaskCaptureController({
+      target: {
+        label: 'Task',
+        context: { type: 'default', source: 'calendar' },
+        session,
+        markdownPrefix: '',
+        markdownSuffixes: [],
+      },
+      describe: describeTaskCreationResult,
+      onResult: () => {},
+      onRequestClose: () => {},
+    });
+    controller.setDraft(raw);
+    await controller.submit('enter');
+    expect(plain.readCanonicalRoot(expectDefined(plain.repositoryWrites[0])).markdownTitle).toBe(
+      raw,
+    );
+  });
+
+  it('conserves title bytes except the first letter across bounded whitespace and word lengths', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc
+          .array(fc.constantFrom('a', 'b', 'c', 'я'), { minLength: 1, maxLength: 24 })
+          .map((letters) => letters.join('')),
+        fc.constantFrom('', ' ', '\t', ' \t '),
+        fc.constantFrom(' ', '  ', '\t', ' \t  '),
+        fc.constantFrom('', ' ', '\t '),
+        async (word, before, gap, after) => {
+          const h = await smartHarness();
+          const title = `${word} remaining text`;
+          const raw = `${before}Tomorrow${gap}${title}${after}`;
+          h.controller.setDraft(raw);
+          const neutral = `${before}${gap.slice(1)}${title}${after}`;
+          const normalized = `${word[0]?.toUpperCase()}${word.slice(1)} remaining text`;
+          expect(h.controller.snapshot().draft).toBe(raw);
+          expect(h.controller.snapshot().metadata?.projection?.markdownBody).toBe(neutral);
+          expect(h.controller.snapshot().metadata?.preview).toMatchObject({
+            type: 'valid',
+            metadata: { markdownTitle: normalized, planning: { due: '2026-10-14' } },
+          });
+          await h.controller.submit('enter');
+          expect(h.readCanonicalRoot(expectDefined(h.repositoryWrites[0])).markdownTitle).toBe(
+            normalized,
+          );
+          expect(h.execute.mock.calls[0]?.[0].markdownBody).toBe(normalized);
+        },
+      ),
+      { seed: 2026101311, numRuns: 32 },
+    );
+  });
+});

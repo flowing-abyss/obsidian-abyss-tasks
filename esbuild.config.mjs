@@ -20,6 +20,8 @@ import process from 'process';
 // the remaining 47,276 bytes cover smart capture and the added MIT notice.
 // The measured final limit is ceil(2,016,864 / 1024) * 1024 = 2,017,280 (1970 KiB).
 // Shipped CSS is 185,777 bytes (+1,045), within its unchanged 185,856-byte limit.
+// Q caption transfer: Task 1 baseline 2,016,990 bytes; final 2,018,100 (+1,110 bytes).
+// Its minimal containing main limit is 2,018,304 bytes (1971 KiB); CSS is unchanged.
 // Dependency scope and budget enforcement are unchanged.
 const { mainJsBudgetBytes: MAIN_JS_BUDGET_BYTES } = JSON.parse(
   readFileSync('package.json', 'utf8'),
