@@ -15,11 +15,11 @@ import process from 'process';
 // Task 7's eligible/scoped/bounded dependency correction adds 3,525 measured bytes;
 // allow its approved 4 KiB increase. The final twelve Analysis clarity corrections add
 // 2,894 measured bytes; allow the approved further 3 KiB (1853 KiB main / unchanged 181 KiB CSS).
-// Smart Q: baseline 1,898,487 bytes; final 2,015,508 (+117,021 bytes).
+// Smart Q: baseline 1,898,487 bytes; final 2,016,864 (+118,377 bytes).
 // Chrono 2.10.3 en/ru contributes 71,101 production bytes (71,201 locale-only);
-// the remaining 45,920 bytes cover smart capture and the added MIT notice.
-// The measured final limit is ceil(2,015,508 / 1024) * 1024 = 2,016,256 (1969 KiB).
-// Shipped CSS is 185,737 bytes (+1,005), within its unchanged 185,856-byte limit.
+// the remaining 47,276 bytes cover smart capture and the added MIT notice.
+// The measured final limit is ceil(2,016,864 / 1024) * 1024 = 2,017,280 (1970 KiB).
+// Shipped CSS is 185,777 bytes (+1,045), within its unchanged 185,856-byte limit.
 // Dependency scope and budget enforcement are unchanged.
 const { mainJsBudgetBytes: MAIN_JS_BUDGET_BYTES } = JSON.parse(
   readFileSync('package.json', 'utf8'),
