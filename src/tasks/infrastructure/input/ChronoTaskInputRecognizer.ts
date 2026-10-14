@@ -21,6 +21,8 @@ import type { LocalDate } from '../../domain/types';
 import { localDate, localTime } from '../../domain/validation';
 
 const CLOCK = /\d{1,2}:\d{2}(?::\d{2})?|\d{1,2}\s?[ap]m/giu;
+// Range detection preserves short hyphenated endpoints before signed title masking.
+const RANGE_NUMERIC_OFFSET = /[+-]\d{2}:?\d{2}\d*/gu;
 const NUMERIC_OFFSET = /[+-]\d+(?::\d+|[.,]\d+)?/gu;
 const NUMERIC = /\d{4}-\d{2}-\d{2}|\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?/gu;
 function validatedDate(year: number, month: number, day: number): LocalDate | undefined {
@@ -69,11 +71,14 @@ interface Recognition {
   readonly barriers: TaskInputRange[];
   readonly excluded: TaskInputCandidate[];
 }
-function parseLocales(text: string, reference: TaskInputReference): LocaleResult[] {
+function parseLocales(
+  text: string,
+  reference: TaskInputReference,
+  fragments = nonTimezoneNumericRanges(text),
+): LocaleResult[] {
   const ref = { instant: new Date(reference.epochMs), timezone: reference.offsetMinutes };
   // Chrono's offset refiner accepts numeric prefixes (e.g. -1234 in -123456).
   // Mask non-token fragments without making ordinary title IDs into join barriers.
-  const fragments = nonTimezoneNumericRanges(text);
   const masked = maskInputRanges(text, fragments);
   return [
     ...ru.parse(masked, ref, { forwardDate: false }),
@@ -125,8 +130,8 @@ function isNumericTimezone(text: string, from: number, token: string): boolean {
   );
   return clock !== null && exactClock(clock[1] ?? '');
 }
-function nonTimezoneNumericRanges(text: string): TaskInputRange[] {
-  return [...text.matchAll(NUMERIC_OFFSET)]
+function nonTimezoneNumericRanges(text: string, pattern = NUMERIC_OFFSET): TaskInputRange[] {
+  return [...text.matchAll(pattern)]
     .filter((match) => !isNumericTimezone(text, match.index, match[0]))
     .map((match) => ({ from: match.index, to: match.index + match[0].length }));
 }
@@ -161,7 +166,11 @@ function excludeExpressions(context: Recognition): void {
 }
 function excludeRanges(context: Recognition): void {
   const masked = maskInputRanges(context.text, context.barriers);
-  for (const result of parseLocales(masked, context.reference)) {
+  for (const result of parseLocales(
+    masked,
+    context.reference,
+    nonTimezoneNumericRanges(masked, RANGE_NUMERIC_OFFSET),
+  )) {
     if (result.end == null) continue;
     const range = { from: result.index, to: result.index + result.text.length };
     context.excluded.push(candidate(range, { status: 'range', reason: 'range' }));

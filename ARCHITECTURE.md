@@ -366,8 +366,9 @@ suppression, manual calendar provenance, fallback clears, tag removals, and the 
 The pure projection chooses effective planning and removes only fully represented, current disjoint
 source ranges. Same-line metadata groups own adjacent unprotected dash/colon separators; interior
 groups preserve their left connector. Active canonical tags and valid carriers stay in Markdown
-while their title separators are removed. Capitalization requires an initially uppercase, fully
-consumed natural prefix, including its owned separators; canonical source never supplies that proof.
+while their title separators are removed. An owned attached separator supplies one horizontal
+gap when removal would merge retained canonical metadata with title text. Capitalization requires
+an initially uppercase, fully consumed natural prefix, including its owned separators; canonical source never supplies that proof.
 Canonical tags stay protected from parsing and conserved between a joined day and clock;
 other Markdown atoms remain merge barriers. These helpers carry no write or settings authority.
 

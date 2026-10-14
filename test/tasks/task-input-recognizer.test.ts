@@ -445,3 +445,23 @@ describe('clock colon delimiters and signed title fragments', () => {
     },
   );
 });
+
+describe('review round one: date ranges precede signed title masking', () => {
+  it.each(['June 5-7 conference', '5-7 June conference', '5-7 июня конференция'])(
+    'retains the real range decision: %s',
+    (raw) => {
+      const result = project(createTaskInputState(raw));
+      expect(result.markdownBody).toBe(raw);
+      expect(result.initial.due).toBeUndefined();
+      expect(result.initial.time).toBeUndefined();
+      expect(result.candidates).toContainEqual(
+        expect.objectContaining({ status: 'range', reason: 'range' }),
+      );
+    },
+  );
+  it('still masks a signed number following a relative point', () => {
+    const result = project(createTaskInputState('Tomorrow -5 degrees'));
+    expect(result.markdownBody).toBe('-5 degrees');
+    expect(result.initial.due).toEqual({ type: 'set', value: '2026-10-14' });
+  });
+});

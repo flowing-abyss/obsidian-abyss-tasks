@@ -1892,3 +1892,55 @@ describe('separator decisions retain capture session authority', () => {
     );
   });
 });
+
+describe('review round one: canonical capture boundary agreement', () => {
+  it.each<[string, string, { tags: string[]; planning: { due?: string } }]>([
+    ['June 5-7 conference', 'June 5-7 conference', { tags: [], planning: {} }],
+    ['5-7 June conference', '5-7 June conference', { tags: [], planning: {} }],
+    ['5-7 июня конференция', '5-7 июня конференция', { tags: [], planning: {} }],
+    ['#work:приём', 'приём', { tags: ['#work'], planning: {} }],
+    ['call:#work', 'call', { tags: ['#work'], planning: {} }],
+    ['#work:Tomorrow:call', 'call', { tags: ['#work'], planning: { due: '2026-10-14' } }],
+    ['📅 2026-10-20:приём', 'приём', { tags: [], planning: { due: '2026-10-20' } }],
+    ['call:📅 2026-10-20', 'call', { tags: [], planning: { due: '2026-10-20' } }],
+    ['Call :tomorrow', 'Call', { tags: [], planning: { due: '2026-10-14' } }],
+    ['приём :завтра', 'приём', { tags: [], planning: { due: '2026-10-14' } }],
+    ['Tomorrow -5 degrees', '-5 degrees', { tags: [], planning: { due: '2026-10-14' } }],
+    ['Tomorrow :smile:', ':smile:', { tags: [], planning: { due: '2026-10-14' } }],
+    ['Call :`tomorrow`', 'Call :`tomorrow`', { tags: [], planning: {} }],
+  ])('preview and saved root conserve lexical meaning: %s', async (raw, title, metadata) => {
+    const h = await smartHarness({}, { inbox: false, initial: {} });
+    h.controller.setDraft(raw);
+    expect(h.controller.snapshot().draft).toBe(raw);
+    expect(h.controller.snapshot().metadata?.preview).toMatchObject({
+      type: 'valid',
+      metadata: { markdownTitle: title, ...metadata },
+    });
+    await h.controller.submit('enter');
+    expect(h.readCanonicalRoot(expectDefined(h.repositoryWrites[0]))).toMatchObject({
+      markdownTitle: title,
+      ...metadata,
+    });
+  });
+  it.each(['#work:приём', '📅 2026-10-20:приём'])(
+    'dismissal and Restore preserve attached canonical title: %s',
+    async (raw) => {
+      const h = await smartHarness({}, { inbox: false, initial: {} });
+      h.controller.setDraft(raw);
+      if (raw.startsWith('#'))
+        h.controller.applyMetadataAction({ type: 'remove-tag', tag: '#work' });
+      else h.controller.applyMetadataAction({ type: 'dismiss', role: 'due' });
+      expect(h.controller.snapshot().metadata?.preview).toMatchObject({
+        type: 'valid',
+        metadata: { markdownTitle: 'приём', tags: [], planning: {} },
+      });
+      h.controller.applyMetadataAction({ type: 'restore' });
+      expect(h.controller.snapshot().draft).toBe(raw);
+      await h.controller.submit('enter');
+      const root = h.readCanonicalRoot(expectDefined(h.repositoryWrites[0]));
+      expect(root.markdownTitle).toBe('приём');
+      expect(root.tags).toEqual(raw.startsWith('#') ? ['#work'] : []);
+      expect(root.planning.due).toBe(raw.startsWith('#') ? undefined : '2026-10-20');
+    },
+  );
+});

@@ -17,21 +17,31 @@ function onlyHorizontal(raw: string, from: number, to: number): boolean {
 function dashEdge(value: string | undefined): boolean {
   return value === undefined || value === '\r' || value === '\n' || horizontal(value);
 }
-function eligibleColon(raw: string, range: TaskInputRange): boolean {
+function eligibleColon(
+  raw: string,
+  range: TaskInputRange,
+  hidden: readonly TaskInputRange[],
+): boolean {
   const before = raw[range.from - 1],
     after = raw[range.to];
   if (before === ':' || after === ':') return false;
   // A spaced colon glued to authored text is a shortcode/label, not a delimiter.
-  return !horizontal(before) || dashEdge(after);
+  return (
+    !horizontal(before) || dashEdge(after) || hidden.some((metadata) => metadata.from === range.to)
+  );
 }
-function separatorTokens(raw: string, barriers: readonly TaskInputRange[]): TaskInputRange[] {
+function separatorTokens(
+  raw: string,
+  barriers: readonly TaskInputRange[],
+  hidden: readonly TaskInputRange[],
+): TaskInputRange[] {
   const tokens: TaskInputRange[] = [];
   for (const match of raw.matchAll(/[-‐‑‒–—―]+|:/gu)) {
     const range = { from: match.index, to: match.index + match[0].length };
     if (barriers.some((barrier) => inputRangesOverlap(barrier, range))) continue;
     const eligible =
       match[0] === ':'
-        ? eligibleColon(raw, range)
+        ? eligibleColon(raw, range, hidden)
         : dashEdge(raw[range.from - 1]) && dashEdge(raw[range.to]);
     if (eligible) tokens.push(range);
   }
@@ -146,11 +156,23 @@ function ownedSeparators(
   protectedRanges: readonly TaskInputRange[],
 ): TaskInputRange[] {
   const barriers = inputTextBarriers(raw, protectedRanges),
-    tokens = separatorTokens(raw, [...barriers, ...hidden]);
+    tokens = separatorTokens(raw, [...barriers, ...hidden], hidden);
   return metadataGroups(raw, hidden, tokens, barriers).flatMap((group) => [
     ...internalSeparators(raw, group, hidden, tokens),
     ...groupSeparators(raw, group, tokens),
   ]);
+}
+function needsCanonicalGap(
+  raw: string,
+  range: TaskInputRange,
+  retainedMetadata: readonly TaskInputRange[],
+  separators: readonly TaskInputRange[],
+): boolean {
+  if (!separators.some((separator) => inputRangesOverlap(separator, range))) return false;
+  if (dashEdge(raw[range.from - 1]) || dashEdge(raw[range.to])) return false;
+  return retainedMetadata.some(
+    (metadata) => metadata.to === range.from || metadata.from === range.to,
+  );
 }
 /** Source deletions and title-hidden metadata are distinct: active canonical tokens survive. */
 export function buildInputBody(
@@ -160,6 +182,9 @@ export function buildInputBody(
   protectedRanges: readonly TaskInputRange[],
 ): InputBody {
   const separators = ownedSeparators(raw, hidden, protectedRanges);
+  const retainedMetadata = hidden.filter(
+    (metadata) => !ranges.some((removed) => inputRangesOverlap(metadata, removed)),
+  );
   const space = (value: string | undefined): boolean => value === ' ' || value === '\t';
   const merged: Array<{ from: number; to: number }> = [];
   for (const range of [...ranges, ...separators]
@@ -198,6 +223,8 @@ export function buildInputBody(
   };
   for (const range of owned) {
     retain(cursor, range.from);
+    // A consumed attached delimiter remains a lexical gap beside retained canonical source.
+    if (needsCanonicalGap(raw, range, retainedMetadata, separators)) body += ' ';
     cursor = Math.max(cursor, range.to);
   }
   retain(cursor, raw.length);

@@ -808,3 +808,30 @@ describe('metadata-owned title separators', () => {
     },
   );
 });
+
+describe('review round one: attached metadata separators', () => {
+  it.each([
+    ['#work:приём', '#work приём'],
+    ['call:#work', 'call #work'],
+    ['#work:Tomorrow:call', '#work call'],
+    ['📅 2026-10-20:приём', '📅 2026-10-20 приём'],
+    ['call:📅 2026-10-20', 'call 📅 2026-10-20'],
+    ['Call :tomorrow', 'Call'],
+    ['приём :завтра', 'приём'],
+    ['Tomorrow :smile:', ':smile:'],
+    ['Call :`tomorrow`', 'Call :`tomorrow`'],
+    ['Call :"tomorrow"', 'Call :"tomorrow"'],
+  ])('preserves source and current canonical identity: %s', (raw, body) => {
+    const state = createTaskInputState(raw);
+    const result = project(state);
+    expect(result.markdownBody).toBe(body);
+    expect(result.hasAuthoredTitle).toBe(true);
+    expect(state.raw).toBe(raw);
+  });
+  it('maps surviving UTF-16 title across an inserted canonical boundary space', () => {
+    const raw = '#work:𐐨eta task';
+    const result = project(createTaskInputState(raw));
+    expect(result.markdownBody).toBe('#work 𐐨eta task');
+    expect(result.capitalizationTarget).toBeUndefined();
+  });
+});
