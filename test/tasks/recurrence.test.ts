@@ -3,8 +3,10 @@ import { Platform } from 'obsidian';
 import { describe, expect, it } from 'vitest';
 import {
   expandRecurrenceReferences,
+  firstRecurrenceDate,
   nextOccurrencePlanning,
   parseRecurrenceRule,
+  recurrenceLabel,
 } from '../../src/tasks/domain/recurrence';
 import type { LocalDate, TaskPlanning } from '../../src/tasks/domain/types';
 import { localDate } from '../../src/tasks/domain/validation';
@@ -520,7 +522,7 @@ describe('expandRecurrenceReferences', () => {
       if (!Platform.isDesktop) throw new Error('Timezone process test requires desktop APIs');
       const { execFileSync } = await import('node:child_process');
       const probeSource = `
-      import { expandRecurrenceReferences, nextOccurrencePlanning } from './src/tasks/domain/recurrence';
+      import { expandRecurrenceReferences, firstRecurrenceDate, nextOccurrencePlanning } from './src/tasks/domain/recurrence';
       import { localDate } from './src/tasks/domain/validation';
 
       const policy = { removeScheduledDate: false };
@@ -538,7 +540,8 @@ describe('expandRecurrenceReferences', () => {
         maxVisible: 512,
         maxSequentialSteps: 4096,
       });
-      process.stdout.write(JSON.stringify({ next, expanded }));
+      const first = firstRecurrenceDate('every 2 weeks on Monday', localDate('2026-10-13'));
+      process.stdout.write(JSON.stringify({ next, expanded, first }));
     `;
       const bundler = `
       import { build } from 'esbuild';
@@ -583,10 +586,44 @@ describe('expandRecurrenceReferences', () => {
           type: 'expanded',
           dates: ['2022-02-28', '2022-03-28', '2022-04-28'],
         },
+        first: '2026-10-26',
       });
 
       expect(outputs).toEqual([expected, expected]);
     },
     CHILD_PROCESS_TIMEOUT_MS,
   );
+});
+
+describe('firstRecurrenceDate', () => {
+  it.each([
+    ['every day', '2026-10-13', '2026-10-13'],
+    ['every 3 days when done', '2026-10-13', '2026-10-13'],
+    ['every week on Tuesday', '2026-10-13', '2026-10-13'],
+    ['every week on Monday', '2026-10-13', '2026-10-19'],
+    ['every 2 weeks on Monday', '2026-10-13', '2026-10-26'],
+    ['every 2 months on the 5th', '2026-10-13', '2026-12-05'],
+    ['every February on the 29th', '2026-10-13', '2028-02-29'],
+    ['every month', '2026-01-31', '2026-01-31'],
+    ['every year', '2024-02-29', '2024-02-29'],
+    ['every February on the 31st', '2026-10-13', undefined],
+    ['every 9007199254740991 weeks on Friday', '2026-10-13', '2026-10-16'],
+    ['every 9007199254740991 months on the 15th', '2026-10-13', '2026-10-15'],
+    ['every 100000 weeks on Monday', '2026-10-13', '3943-04-26'],
+    ['every 9007199254740991 weeks on Monday', '2026-10-13', undefined],
+    ['every 9007199254740991 months on the 5th', '2026-10-13', undefined],
+    ['invalid', '2026-10-13', undefined],
+    ['every week on Monday', '9999-12-31', undefined],
+  ] as const)('queries %s inclusively from %s', (rule, from, expected) => {
+    expect(firstRecurrenceDate(rule, localDate(from))).toBe(expected);
+  });
+});
+describe('recurrenceLabel', () => {
+  it.each([
+    ['every month on the first Monday', 'every month on the 1st Monday'],
+    ['every week on Friday, Tuesday when done', 'every week on Tuesday, Friday when done'],
+    ['invalid when done', 'invalid when done'],
+  ])('displays canonical valid rules and literal invalid rules: %s', (rule, expected) => {
+    expect(recurrenceLabel(rule)).toBe(expected);
+  });
 });

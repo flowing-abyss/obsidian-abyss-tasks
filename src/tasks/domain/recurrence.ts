@@ -462,6 +462,38 @@ export function parseRecurrenceRule(raw: string): RecurrenceParseResult {
   });
 }
 
+/** Canonical English display, preserving invalid authored rules. */
+export function recurrenceLabel(rule: string): string {
+  const parsed = parseRecurrenceRule(rule);
+  if (parsed.type === 'invalid') return rule;
+  return `${parsed.canonical}${parsed.whenDone ? ' when done' : ''}`;
+}
+
+/** Inclusive civil-date query; the lower bound also sets the interval phase. */
+export function firstRecurrenceDate(rule: string, lowerBound: LocalDate): LocalDate | undefined {
+  const compiled = parsedRule(rule);
+  if (compiled.type === 'invalid') return undefined;
+  const from = utcDate(lowerBound);
+  // rrule normalizes daily/weekly jumps month by month. A jump longer than the
+  // entire 0000..9999 civil horizon has no later in-horizon occurrence; limiting
+  // that jump preserves initial-period selectors without pathological loops.
+  const horizonIntervals: Readonly<Record<number, number>> = {
+    [RRule.YEARLY]: 10_000,
+    [RRule.MONTHLY]: 120_000,
+    [RRule.WEEKLY]: 523_000,
+    [RRule.DAILY]: 3_661_000,
+  };
+  const interval = Math.min(
+    compiled.rule.options.interval,
+    horizonIntervals[compiled.rule.options.freq] ?? Infinity,
+  );
+  const anchored = new RRule({ ...compiled.rule.origOptions, interval, dtstart: from });
+  const occurrence = anchored.after(from, true);
+  return occurrence === null || occurrence.getUTCFullYear() > 9999
+    ? undefined
+    : localDateFromUtc(occurrence);
+}
+
 function recurrenceReference(
   planning: TaskPlanning,
   policy: RecurrencePolicy,
