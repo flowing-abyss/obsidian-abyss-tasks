@@ -6,6 +6,7 @@ import type {
 } from '../../application/TaskInputRecognizer';
 import { epochDayForLocalDate } from '../../domain/commentTimestamp';
 import { shiftLocalDate } from '../../domain/localDateMath';
+import { matchesUnlessPreceded } from '../../domain/precedingCodePoint';
 import {
   inputRangesOverlap,
   inputTextBarriers,
@@ -172,7 +173,12 @@ function hasNumericTimezone(text: string): boolean {
   );
 }
 function exclusion(text: string): TaskInputCandidate['reason'] | undefined {
-  if (/(?:кажд\p{L}*|every\b|daily\b|weekly\b)/iu.test(text)) return 'recurrence';
+  if (
+    matchesUnlessPreceded(/(?:кажд|every\b|daily\b|weekly\b)/giu, text, (previous) =>
+      /[\p{L}\p{N}_./#-]/u.test(previous),
+    ).length > 0
+  )
+    return 'recurrence';
   if (
     /(?:^|\s)(?:не|not|never|no)\s+(?:завтра|сегодня|послезавтра|tomorrow|today|next|on|at)/iu.test(
       text,

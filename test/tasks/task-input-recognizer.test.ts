@@ -514,3 +514,84 @@ describe('signed suffix ownership at resolved date boundaries', () => {
     },
   );
 });
+
+describe('recurrence exclusion respects identifier boundaries', () => {
+  it.each([
+    'wiki/daily',
+    'release-weekly',
+    'hooks/every',
+    'шаблон-каждый',
+    '𝕒daily',
+    '𐐀weekly',
+    '𝕒каждый',
+    'x_every',
+    'note.daily',
+    '5daily',
+  ])('keeps ordinary identifier %s while recognizing an independent date', (detail) => {
+    const raw = `Call tomorrow ${detail}`;
+    const result = project(createTaskInputState(raw));
+    expect(result.markdownBody).toBe(`Call ${detail}`);
+    expect(result.initial.due).toEqual({ type: 'set', value: '2026-10-14' });
+    expect(result.initial.time).toBeUndefined();
+    expect(result.candidates).not.toContainEqual(expect.objectContaining({ reason: 'recurrence' }));
+    expect(
+      result.candidates
+        .flatMap((candidate) => candidate.ranges)
+        .map((range) => raw.slice(range.from, range.to)),
+    ).toEqual(['tomorrow']);
+  });
+  it.each([
+    'Call every hour tomorrow',
+    'Call every 2 hours tomorrow',
+    'Call каждый час завтра',
+    'Call (every hour) tomorrow',
+    'Call wiki/daily every hour tomorrow',
+    'Call 𝕒daily every hour tomorrow',
+    'Call 𐐀 weekly tomorrow',
+  ])('retains the real unsupported recurrence cue in %s', (raw) => {
+    const result = project(createTaskInputState(raw));
+    expect(result.markdownBody).toBe(raw);
+    expect(result.initial.due).toBeUndefined();
+    expect(result.initial.time).toBeUndefined();
+    expect(result.candidates).toContainEqual(
+      expect.objectContaining({
+        status: 'unsupported',
+        reason: 'recurrence',
+        ranges: [{ from: 0, to: raw.length }],
+      }),
+    );
+  });
+  it('keeps a later date clause independent after ignoring an identifier match', () => {
+    const raw = 'Call wiki/daily every hour; call tomorrow';
+    const result = project(createTaskInputState(raw));
+    expect(result.markdownBody).toBe('Call wiki/daily every hour; call');
+    expect(result.initial.due).toEqual({ type: 'set', value: '2026-10-14' });
+    expect(result.candidates).toContainEqual(
+      expect.objectContaining({
+        status: 'unsupported',
+        reason: 'recurrence',
+        ranges: [{ from: 0, to: 26 }],
+      }),
+    );
+  });
+  it('preserves a long attached Russian-stem identifier beside a date', () => {
+    const detail = `x${'кажд'.repeat(2000)}`;
+    const result = project(createTaskInputState(`Call tomorrow ${detail}`));
+    expect(result.markdownBody).toBe(`Call ${detail}`);
+    expect(result.initial.due).toEqual({ type: 'set', value: '2026-10-14' });
+    expect(result.candidates).not.toContainEqual(expect.objectContaining({ reason: 'recurrence' }));
+  });
+  it('finds a bare Russian recurrence cue after a long attached-stem identifier', () => {
+    const raw = `Call x${'кажд'.repeat(2000)} каждый час завтра`;
+    const result = project(createTaskInputState(raw));
+    expect(result.markdownBody).toBe(raw);
+    expect(result.initial.due).toBeUndefined();
+    expect(result.candidates).toContainEqual(
+      expect.objectContaining({
+        status: 'unsupported',
+        reason: 'recurrence',
+        ranges: [{ from: 0, to: raw.length }],
+      }),
+    );
+  });
+});

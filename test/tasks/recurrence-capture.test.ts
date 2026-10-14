@@ -815,3 +815,37 @@ describe('final review recurrence persistence regressions', () => {
     },
   );
 });
+
+describe('native identifier details preserve recurrence and first-date inference', () => {
+  it.each([
+    ['Каждый день — обновить wiki/daily', 'Обновить wiki/daily'],
+    ['every day update release-weekly', 'update release-weekly'],
+    ['every day inspect hooks/every', 'inspect hooks/every'],
+    ['Каждый день — проверить шаблон-каждый', 'Проверить шаблон-каждый'],
+    ['every day inspect 𝕒daily', 'inspect 𝕒daily'],
+    ['every day inspect 𐐀weekly', 'inspect 𐐀weekly'],
+    ['Каждый день — проверить 𝕒каждый', 'Проверить 𝕒каждый'],
+    [
+      'Каждый день — пить воду RECURRENCE-NATIVE-5867c992e42b4378833927833bbf79bd-q-ru-daily',
+      'Пить воду RECURRENCE-NATIVE-5867c992e42b4378833927833bbf79bd-q-ru-daily',
+    ],
+  ])('saves the exact identifier detail in %s', async (raw, title) => {
+    const h = await capture();
+    h.controller.setDraft(raw);
+    expect(h.controller.snapshot().draft).toBe(raw);
+    expect(h.controller.snapshot().metadata?.preview).toMatchObject({
+      type: 'valid',
+      metadata: { markdownTitle: title, recurrence: 'every day', planning: { due: '2026-10-13' } },
+    });
+    expect(h.controller.snapshot().metadata?.projection?.recurrenceDateInferred).toBe(true);
+    await h.controller.submit('enter');
+    const content = expectDefined(h.repositoryWrites[0]);
+    expect(content).toContain(title);
+    expect(content).toContain('🔁 every day');
+    const root = h.readCanonicalRoot(content);
+    expect(root.markdownTitle).toBe(title);
+    expect(root.recurrence).toBe('every day');
+    expect(root.planning.due).toBe('2026-10-13');
+    expect(root.planning.time).toBeUndefined();
+  });
+});
