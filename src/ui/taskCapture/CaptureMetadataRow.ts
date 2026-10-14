@@ -1,6 +1,7 @@
 import { Menu, setIcon } from 'obsidian';
 import {
   localDate,
+  recurrenceLabel,
   sameTag,
   taskOccupiedDates,
   type LocalDate,
@@ -78,6 +79,7 @@ export class CaptureMetadataRow {
     const keys = new Set<string>();
     this.renderDestination(keys, disabled, metadata);
     this.renderPlanning(keys, disabled, metadata);
+    this.renderRecurrence(keys, disabled, metadata);
     this.renderTags(keys, disabled, metadata);
     this.renderActions(keys, disabled, metadata);
     for (const [key, chip] of this.chips)
@@ -146,6 +148,27 @@ export class CaptureMetadataRow {
   }
   destinationDescription(): string {
     return this.chips.get('destination')?.body.textContent ?? '';
+  }
+  private renderRecurrence(
+    keys: Set<string>,
+    disabled: boolean,
+    metadata: CaptureMetadataSnapshot,
+  ): void {
+    const rule = captureMetadata(metadata)?.recurrence;
+    if (rule === undefined) return;
+    const label = recurrenceLabel(rule);
+    const chip = this.use(keys, disabled, 'recurrence', { removable: true });
+    this.content(chip, label, () => {
+      const content = chip.body.createSpan({ cls: 'abyss-task-date' });
+      setIcon(
+        content.createSpan({ cls: 'abyss-date-icon', attr: { 'data-icon': 'repeat-2' } }),
+        'repeat-2',
+      );
+      content.createSpan({ text: label });
+    });
+    chip.body.setAttribute('aria-label', `Remove repeat: ${label}`);
+    chip.body.setAttribute('title', `Remove repeat: ${label}`);
+    chip.dismiss = { type: 'dismiss', role: 'recurrence' };
   }
   private renderTags(
     keys: Set<string>,

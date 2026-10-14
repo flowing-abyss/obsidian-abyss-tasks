@@ -7,6 +7,7 @@ import { toStatusRules } from '../../src/settings/statusCatalogAdapter';
 import type { CalendarSettings, TaskStatusDef } from '../../src/settings/types';
 import { StatusRegistry } from '../../src/status/StatusRegistry';
 import type { TaskApplicationApi } from '../../src/tasks';
+import type { RecurrenceInputParser } from '../../src/tasks/application/RecurrenceInputParser';
 import { TaskApplicationService } from '../../src/tasks/application/TaskApplicationService';
 import {
   TaskDependencyService,
@@ -34,10 +35,19 @@ export const inspectorCleanups: Array<() => void> = [];
 
 /** A mounted RightPanel over a real index, repository, and ref authority, attached to the body. */
 export async function inspectorHarness(
-  markdown: string,
-  selected = 'Current',
-  additionalFiles = {},
-  settingsOrStatuses: CalendarSettings | readonly TaskStatusDef[] = buildDefaultTaskStatuses(),
+  ...[
+    markdown,
+    selected = 'Current',
+    additionalFiles = {},
+    settingsOrStatuses = buildDefaultTaskStatuses(),
+    recurrenceInput,
+  ]: [
+    markdown: string,
+    selected?: string,
+    additionalFiles?: Record<string, string>,
+    settingsOrStatuses?: CalendarSettings | readonly TaskStatusDef[],
+    recurrenceInput?: RecurrenceInputParser,
+  ]
 ) {
   const settings = 'taskStatuses' in settingsOrStatuses ? settingsOrStatuses : DEFAULT_SETTINGS;
   const statusDefinitions =
@@ -101,6 +111,7 @@ export async function inspectorHarness(
   const el = activeDocument.body.createDiv();
   const search = canonicalSearchForIndex(index);
   const panel = new RightPanel({
+    recurrenceInput,
     state,
     app,
     statusRegistry: new StatusRegistry([...statusDefinitions]),

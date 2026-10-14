@@ -395,7 +395,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
       );
 
     const smartDescription = containerEl.ownerDocument.adoptNode(createFragment());
-    smartDescription.append('Recognize dates and times while adding a task with ');
+    smartDescription.append('Recognize dates, times, and repeats while adding a task with ');
     const captureKey = smartDescription.createEl('kbd');
     captureKey.textContent = 'Q';
     smartDescription.append(captureKey, '.');

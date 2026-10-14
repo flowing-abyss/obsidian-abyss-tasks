@@ -1,6 +1,8 @@
 import {
   parseRecurrenceRule,
+  recurrenceLabel,
   type LocalDate,
+  type RecurrenceInputParser,
   type RecurrenceParseResult,
   type RecurrencePolicy,
   type SubtaskSnapshot,
@@ -26,6 +28,7 @@ import {
 import { recurrenceIssueText } from './renderRecurrenceBadge';
 
 export interface RecurrenceEditorOptions {
+  readonly recurrenceInput?: RecurrenceInputParser | undefined;
   readonly container: HTMLElement;
   readonly source: TaskOccurrenceResult;
   readonly policy: RecurrencePolicy;
@@ -288,6 +291,10 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
   private readonly state_abyssPrivate: EditorState;
   private readonly ownerWindow_abyssPrivate: Window | null;
 
+  private parsedCustomDraft_abyssPrivate: string | undefined;
+  private customParseFailed_abyssPrivate = false;
+  private customFailureLogged_abyssPrivate = false;
+
   constructor(private readonly options_abyssPrivate: RecurrenceEditorOptions) {
     this.task_abyssPrivate = selectedTask(options_abyssPrivate.source);
     this.reference_abyssPrivate = referenceDate(
@@ -425,8 +432,7 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
   }
 
   private parseState_abyssPrivate(): RecurrenceParseResult {
-    if (this.state_abyssPrivate.mode === 'custom')
-      return parseRecurrenceRule(this.state_abyssPrivate.customDraft);
+    if (this.state_abyssPrivate.mode === 'custom') return this.parseCustomDraft_abyssPrivate();
     if (this.state_abyssPrivate.preset === 'weekdays') {
       return parseRecurrenceRule(
         `every weekday${this.state_abyssPrivate.whenDone ? ' when done' : ''}`,
@@ -440,6 +446,36 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
       yearly: this.state_abyssPrivate.yearly,
       whenDone: this.state_abyssPrivate.whenDone,
     });
+  }
+
+  private parseCustomDraft_abyssPrivate(): RecurrenceParseResult {
+    const draft = this.state_abyssPrivate.customDraft;
+    if (draft !== this.parsedCustomDraft_abyssPrivate) {
+      this.parsedCustomDraft_abyssPrivate = draft;
+      this.customFailureLogged_abyssPrivate = false;
+    }
+    this.customParseFailed_abyssPrivate = false;
+    try {
+      return this.options_abyssPrivate.recurrenceInput?.parse(draft) ?? parseRecurrenceRule(draft);
+    } catch {
+      this.customParseFailed_abyssPrivate = true;
+      if (!this.customFailureLogged_abyssPrivate) {
+        this.customFailureLogged_abyssPrivate = true;
+        console.error('[abyss-tasks] Could not parse custom repeat input');
+      }
+      return { type: 'invalid', code: 'unparseable-rule' };
+    }
+  }
+
+  /** Deliberate completion edits use the parser's validated writable English rule. */
+  private rewriteCustomWhenDone_abyssPrivate(): boolean {
+    const parsed = this.parseCustomDraft_abyssPrivate();
+    if (this.customParseFailed_abyssPrivate) return false;
+    this.state_abyssPrivate.customDraft = withTerminalWhenDone(
+      parsed.type === 'valid' ? parsed.raw : this.state_abyssPrivate.customDraft,
+      this.state_abyssPrivate.whenDone,
+    );
+    return true;
   }
 
   private canonicalPreset_abyssPrivate(): Preset | undefined {
@@ -470,6 +506,8 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
   private validationMessage_abyssPrivate(parsed: RecurrenceParseResult): string {
     const blocking = this.blockingMessage_abyssPrivate();
     if (blocking.length > 0) return blocking;
+    if (this.state_abyssPrivate.mode === 'custom' && this.customParseFailed_abyssPrivate)
+      return 'Could not read the repeat. Edit the rule and try again.';
     return parsed.type === 'invalid' ? recurrenceIssueText(parsed.code) : '';
   }
 
@@ -510,8 +548,7 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
       '.abyss-recurrence-preview-rule',
     );
     if (preview === null) return;
-    const suffix = parsed.type === 'valid' && parsed.whenDone ? ' when done' : '';
-    preview.textContent = parsed.type === 'valid' ? `${parsed.canonical}${suffix}` : '—';
+    preview.textContent = parsed.type === 'valid' ? recurrenceLabel(parsed.raw) : '—';
   }
 
   private refreshStatus_abyssPrivate(message: string): void {
@@ -616,6 +653,8 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
 
   private async submit_abyssPrivate(): Promise<void> {
     const parsed = this.parseState_abyssPrivate();
+    if (this.customParseFailed_abyssPrivate && this.state_abyssPrivate.mode === 'custom')
+      this.refresh_abyssPrivate();
     if (
       this.state_abyssPrivate.submitting ||
       this.validationMessage_abyssPrivate(parsed).length > 0 ||
@@ -1057,10 +1096,8 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
       },
     });
     custom.addEventListener('click', () => {
-      this.state_abyssPrivate.customDraft = withTerminalWhenDone(
-        this.state_abyssPrivate.customDraft,
-        this.state_abyssPrivate.whenDone,
-      );
+      if (this.state_abyssPrivate.mode === 'custom') return;
+      this.rewriteCustomWhenDone_abyssPrivate();
       this.state_abyssPrivate.mode = 'custom';
       this.state_abyssPrivate.preset = undefined;
       this.markDirty_abyssPrivate();
@@ -1163,10 +1200,7 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
 
   private syncCustomWhenDoneInput_abyssPrivate(): void {
     if (this.state_abyssPrivate.mode !== 'custom') return;
-    this.state_abyssPrivate.customDraft = withTerminalWhenDone(
-      this.state_abyssPrivate.customDraft,
-      this.state_abyssPrivate.whenDone,
-    );
+    if (!this.rewriteCustomWhenDone_abyssPrivate()) return;
     const raw =
       this.options_abyssPrivate.container.querySelector<HTMLInputElement>('.abyss-recurrence-raw');
     if (raw !== null) raw.value = this.state_abyssPrivate.customDraft;

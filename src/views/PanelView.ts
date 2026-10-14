@@ -720,6 +720,7 @@ export class PanelView extends ItemView {
       this.statisticsSource_abyssPrivate !== undefined,
     );
     this.center_abyssPrivate = new CenterPanel({
+      recurrenceInput: this.taskInputServices_abyssPrivate?.recurrence,
       statisticsSource: this.statisticsSource_abyssPrivate,
       onTaskListDraftHandoff: (drafts, root, selection) =>
         this.right_abyssPrivate.receiveDraftHandoff(drafts, root, selection),
@@ -757,6 +758,7 @@ export class PanelView extends ItemView {
       projectManager,
     );
     this.right_abyssPrivate = new RightPanel({
+      recurrenceInput: this.taskInputServices_abyssPrivate?.recurrence,
       localSearchScope:
         this.localScope_abyssPrivate === undefined
           ? undefined

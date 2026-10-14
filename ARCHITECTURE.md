@@ -123,10 +123,13 @@ creation must not silently duplicate a task or note.
 
 Quick capture owns one transient task-input state. Its first meaningful edit or manual choice freezes
 an explicit civil-time reference and the static `parseDatesInQuickCapture` preference until success.
-The composition root injects the shared clock and offline English/Russian recognizer through
-`TaskInputServices`; other capture controllers omit that capability. The pure model owns raw text,
-occurrence suppression, manual choices and source ranges. Q reads canonical source planning from
-its retained create session before projection, then previews the exact unprefixed final request under
+The composition root injects the shared clock, offline English/Russian date recognizer and
+`RecurrenceInputParser` through `TaskInputServices`; other capture controllers omit those capabilities.
+One `RecurrenceTextInputParser` serves Q and the existing recurrence editors through PanelView,
+CenterPanel, RightPanel and TaskModal. The Q smart preference controls extraction only; explicit
+custom-rule editing keeps the injected parser available. The pure model owns raw text, occurrence
+suppression, manual choices and source ranges. Q reads canonical source planning and recurrence
+from its retained create session before projection, then previews the exact unprefixed final request under
 the same policy. Chip removal and the single Restore action change metadata only; they preserve raw
 text and native input history. Exact inactive canonical occurrences are filtered before source
 preflight and application tag policy. Final projection removes their union with fully represented
@@ -168,7 +171,8 @@ context day, then the existing display clock. Point-date badges reuse the centra
 clock follows the primary due, scheduled, then start date. `taskOccupiedDates` keeps interval date/time
 content neutral, including equal start/due bounds. A draft retained across midnight may therefore
 keep a different semantic color from a newly rendered central card, matching its frozen interpretation.
-Q renders removable date, time and tag metadata as whole-body buttons separated by decorative dots.
+Q renders removable date, time, recurrence and tag metadata as whole-body buttons separated by
+decorative dots. Recurrence follows time and precedes tags, using the final canonical preview metadata.
 Primary activation dismisses metadata while retaining raw input; hover and keyboard focus strike only
 the label. Date contextmenu and Shift+F10 open the shared picker. Destination captions remain passive,
 and ambiguity opens the existing choice menu with an explicit Ignore date suggestions action.
@@ -226,6 +230,17 @@ Manual status edits trigger no writes.
 shares a ticker and command boundary; ticking updates displayed totals without repeating queries.
 Recurrence forecasts are derived, bounded, and carry no tracked time or direct mutation authority.
 Edits resolve their persisted source through the existing calendar/application adapters.
+
+The recurrence domain owns `recurrenceLabel`: Q, inspector chips, editor previews and shared
+tooltips display the same canonical English rule and one terminal `when done`. Invalid stored rules
+remain visible as authored. Custom editors use the optional recurrence input port, falling back to
+`parseRecurrenceRule` when absent; presets and structured controls keep their domain builders.
+Russian custom drafts retain their text and selection through passive refresh and draft transfer.
+An intentional completion or mode change may rewrite a valid draft using its parsed English `raw`;
+saves use that validated value through the existing patch command and English Markdown contract.
+Unexpected custom-parser failures belong to the editor's inline validation boundary: stale preview
+clears, Save disables, and a constant sanitized diagnostic logs once per distinct draft revision.
+A valid subsequent edit recovers without changing the retained task target.
 
 ## Search and bounded read models
 

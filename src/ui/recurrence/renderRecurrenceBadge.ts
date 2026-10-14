@@ -1,5 +1,5 @@
 import { setIcon } from 'obsidian';
-import { parseRecurrenceRule, type RecurrenceParseResult } from '../../tasks';
+import { parseRecurrenceRule, recurrenceLabel, type RecurrenceParseResult } from '../../tasks';
 
 export interface RecurrenceBadgeInput {
   readonly rule: string;
@@ -43,7 +43,7 @@ export function renderRecurrenceBadge(
   const tooltip =
     input.validity === 'invalid'
       ? `Invalid repeat rule: ${input.reason ?? 'Enter a supported repeat rule.'}`
-      : `Repeats: ${input.rule}`;
+      : `Repeats: ${recurrenceLabel(input.rule)}`;
   const badge = container.createSpan({
     cls: 'abyss-recurrence-badge',
     attr: {

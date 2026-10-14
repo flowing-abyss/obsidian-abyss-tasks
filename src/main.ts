@@ -58,6 +58,7 @@ import type { CommentTimeContextProvider } from './tasks/domain/commentTimeLabel
 import { StatusCatalog } from './tasks/domain/StatusCatalog';
 import { systemCommentTimeContext } from './tasks/infrastructure/commentTimeContext';
 import { ChronoTaskInputRecognizer } from './tasks/infrastructure/input/ChronoTaskInputRecognizer';
+import { RecurrenceTextInputParser } from './tasks/infrastructure/input/RecurrenceTextInputParser';
 import { MarkdownTaskCreatePreview } from './tasks/infrastructure/markdown/MarkdownTaskCreatePreview';
 import { TaskBlockEditor } from './tasks/infrastructure/markdown/TaskBlockEditor';
 import { parseMarkdownFrontmatter } from './tasks/infrastructure/markdown/taskBlockSyntax';
@@ -247,6 +248,7 @@ export default class TaskCalendarPlugin extends Plugin {
     );
     this.taskInputServices = {
       recognizer: new ChronoTaskInputRecognizer(),
+      recurrence: new RecurrenceTextInputParser(),
       readReference: () => taskInputReference(clock.read()),
     };
     return clock;

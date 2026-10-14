@@ -1,6 +1,8 @@
 import postcss from 'postcss';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RecurrencePolicy, TaskCommandResult, TaskPatch } from '../src/tasks';
+import type { RecurrenceInputParser } from '../src/tasks/application/RecurrenceInputParser';
+import { RecurrenceTextInputParser } from '../src/tasks/infrastructure/input/RecurrenceTextInputParser';
 import {
   mountAnchoredRecurrenceEditor,
   mountRecurrenceEditor,
@@ -65,6 +67,7 @@ const mounted: RecurrenceEditorHandle[] = [];
 function mount(
   overrides: Partial<{
     container: HTMLElement;
+    recurrenceInput: RecurrenceInputParser;
     source: Parameters<typeof mountRecurrenceEditor>[0]['source'];
     policy: RecurrencePolicy;
     ownershipConflict: boolean;
@@ -1771,3 +1774,195 @@ describe('Clear repeat styling', () => {
     expect(cssValue(base, 'margin-inline')).toBe('calc(var(--size-4-1) * -1)');
   });
 });
+
+describe('shared recurrence custom input', () => {
+  it('previews and saves translated English without rewriting the Russian draft or selection', async () => {
+    const { container, handle, onSubmit } = mount({
+      recurrenceInput: new RecurrenceTextInputParser(),
+    });
+    activeDocument.body.append(container);
+    click(button(container, 'Custom'));
+    const raw = expectDefined(container.querySelector<HTMLInputElement>('.abyss-recurrence-raw'));
+    input(raw, 'каждые 3 дня после выполнения');
+    raw.focus();
+    raw.setSelectionRange(4, 10);
+    expect(container.querySelector('.abyss-recurrence-preview-rule')?.textContent).toBe(
+      'every 3 days when done',
+    );
+    expect(
+      expectDefined(container.querySelector<HTMLInputElement>('.abyss-recurrence-when-done'))
+        .checked,
+    ).toBe(true);
+    click(button(container, 'Custom'));
+    click(button(container, 'Custom'));
+    expect(raw.value).toBe('каждые 3 дня после выполнения');
+    expect(container.querySelector('.abyss-recurrence-raw')).toBe(raw);
+    expect([raw.selectionStart, raw.selectionEnd]).toEqual([4, 10]);
+    const draft = handle.captureDraftState();
+    const transferred = mount({ recurrenceInput: new RecurrenceTextInputParser() });
+    activeDocument.body.append(transferred.container);
+    transferred.handle.restoreDraftState(draft);
+    const restored = expectDefined(
+      transferred.container.querySelector<HTMLInputElement>('.abyss-recurrence-raw'),
+    );
+    expect(restored.value).toBe('каждые 3 дня после выполнения');
+    expect([restored.selectionStart, restored.selectionEnd]).toEqual([4, 10]);
+    click(button(container, 'Save repeat'));
+    await vi.waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledWith({
+        recurrence: { type: 'set', value: 'every 3 days when done' },
+      });
+    });
+  });
+
+  it.each(['каждые 3 дня после выполнения', 'каждые 3 дня'])(
+    'uses validated English for intentional completion changes: %s',
+    async (phrase) => {
+      const { container, onSubmit } = mount({ recurrenceInput: new RecurrenceTextInputParser() });
+      click(button(container, 'Custom'));
+      const raw = expectDefined(container.querySelector<HTMLInputElement>('.abyss-recurrence-raw'));
+      input(raw, phrase);
+      const done = expectDefined(
+        container.querySelector<HTMLInputElement>('.abyss-recurrence-when-done'),
+      );
+      done.checked = false;
+      done.dispatchEvent(new Event('change', { bubbles: true }));
+      expect(raw.value).toBe('every 3 days');
+      done.checked = true;
+      done.dispatchEvent(new Event('change', { bubbles: true }));
+      expect(raw.value).toBe('every 3 days when done');
+      click(button(container, 'Save repeat'));
+      await vi.waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledWith({
+          recurrence: { type: 'set', value: 'every 3 days when done' },
+        });
+      });
+    },
+  );
+
+  it('synchronizes completion when intentionally returning from a preset to a translated custom draft', () => {
+    const { container } = mount({ recurrenceInput: new RecurrenceTextInputParser() });
+    click(button(container, 'Custom'));
+    input(
+      expectDefined(container.querySelector<HTMLInputElement>('.abyss-recurrence-raw')),
+      'каждые 3 дня после выполнения',
+    );
+    click(button(container, 'Daily'));
+    const done = expectDefined(
+      container.querySelector<HTMLInputElement>('.abyss-recurrence-when-done'),
+    );
+    done.checked = false;
+    done.dispatchEvent(new Event('change', { bubbles: true }));
+    click(button(container, 'Custom'));
+    expect(
+      expectDefined(container.querySelector<HTMLInputElement>('.abyss-recurrence-raw')).value,
+    ).toBe('every 3 days');
+    expect(container.querySelector('.abyss-recurrence-preview-rule')?.textContent).toBe(
+      'every 3 days',
+    );
+  });
+
+  it.each([undefined, new RecurrenceTextInputParser()])(
+    'preserves authored valid English saves with optional parser %s',
+    async (recurrenceInput) => {
+      const { container, onSubmit } = mount(
+        recurrenceInput === undefined ? {} : { recurrenceInput },
+      );
+      click(button(container, 'Custom'));
+      input(
+        expectDefined(container.querySelector<HTMLInputElement>('.abyss-recurrence-raw')),
+        'every month on the first Monday',
+      );
+      expect(container.querySelector('.abyss-recurrence-preview-rule')?.textContent).toBe(
+        'every month on the 1st Monday',
+      );
+      click(button(container, 'Save repeat'));
+      await vi.waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledWith({
+          recurrence: { type: 'set', value: 'every month on the first Monday' },
+        });
+      });
+    },
+  );
+
+  it('contains parser exceptions across refresh, save and deliberate actions and recovers on a valid edit', async () => {
+    const real = new RecurrenceTextInputParser();
+    let throwing = true;
+    const recurrenceInput: RecurrenceInputParser = {
+      extract: (request) => real.extract(request),
+      parse: (text) => {
+        if (throwing) throw new Error(`private task text: ${text}`);
+        return real.parse(text);
+      },
+    };
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { container, onSubmit } = mount({ recurrenceInput });
+    click(button(container, 'Custom'));
+    const raw = expectDefined(container.querySelector<HTMLInputElement>('.abyss-recurrence-raw'));
+    input(raw, 'private draft');
+    expect(container.querySelector('.abyss-recurrence-preview-rule')?.textContent).toBe('—');
+    expect(button(container, 'Save repeat').disabled).toBe(true);
+    const done = expectDefined(
+      container.querySelector<HTMLInputElement>('.abyss-recurrence-when-done'),
+    );
+    done.checked = true;
+    done.dispatchEvent(new Event('change', { bubbles: true }));
+    click(button(container, 'Custom'));
+    keydown(raw, 'Enter');
+    expect(diagnostic).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('private');
+    expect(raw.value).toBe('private draft');
+    expect(container.querySelector('.abyss-recurrence-status')?.textContent).toContain('Could not');
+    expect(onSubmit).not.toHaveBeenCalled();
+    throwing = false;
+    input(raw, 'каждый день');
+    expect(container.querySelector('.abyss-recurrence-preview-rule')?.textContent).toBe(
+      'every day',
+    );
+    expect(button(container, 'Save repeat').disabled).toBe(false);
+    click(button(container, 'Save repeat'));
+    await vi.waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledWith({ recurrence: { type: 'set', value: 'every day' } });
+    });
+  });
+});
+
+it.each(['completion', 'mode'] as const)(
+  'clears a valid preview when the custom parser throws during a deliberate %s action',
+  (action) => {
+    const real = new RecurrenceTextInputParser();
+    let throwing = false;
+    const recurrenceInput: RecurrenceInputParser = {
+      extract: (request) => real.extract(request),
+      parse: (text) => {
+        if (throwing) throw new Error(text);
+        return real.parse(text);
+      },
+    };
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { container } = mount({ recurrenceInput });
+    click(button(container, 'Custom'));
+    const raw = expectDefined(container.querySelector<HTMLInputElement>('.abyss-recurrence-raw'));
+    input(raw, 'каждые 3 дня');
+    expect(container.querySelector('.abyss-recurrence-preview-rule')?.textContent).toBe(
+      'every 3 days',
+    );
+    if (action === 'mode') click(button(container, 'Daily'));
+    throwing = true;
+    if (action === 'mode') click(button(container, 'Custom'));
+    else {
+      const done = expectDefined(
+        container.querySelector<HTMLInputElement>('.abyss-recurrence-when-done'),
+      );
+      done.checked = true;
+      done.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    expect(container.querySelector('.abyss-recurrence-preview-rule')?.textContent).toBe('—');
+    expect(button(container, 'Save repeat').disabled).toBe(true);
+    expect(
+      expectDefined(container.querySelector<HTMLInputElement>('.abyss-recurrence-raw')).value,
+    ).toBe('каждые 3 дня');
+    expect(diagnostic).toHaveBeenCalledOnce();
+    expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('каждые');
+  },
+);

@@ -41,6 +41,7 @@ export { daysBetweenLocalDates, shiftLocalDate } from './domain/localDateMath';
 export {
   expandRecurrenceReferences,
   parseRecurrenceRule,
+  recurrenceLabel,
   type RecurrenceParseResult,
   type RecurrencePolicy,
 } from './domain/recurrence';
@@ -191,3 +192,5 @@ export type {
 } from './domain/taskInputTypes';
 
 export type { TaskInputRecurrenceCandidate } from './domain/recurrenceInputTypes';
+
+export type { RecurrenceInputParser } from './application/RecurrenceInputParser';

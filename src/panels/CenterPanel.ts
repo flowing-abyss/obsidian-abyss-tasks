@@ -34,6 +34,7 @@ import {
   taskTreeNodes,
   type CommentTimeContextProvider,
   type LocalDate,
+  type RecurrenceInputParser,
   type TaskApplicationApi,
   type TaskCaptureApplicationApi,
   type TaskCommandResult,
@@ -189,6 +190,7 @@ interface CreationInclusion {
 }
 
 interface CenterPanelOptions {
+  readonly recurrenceInput?: RecurrenceInputParser | undefined;
   readonly statisticsSource?: TaskStatisticsSource | undefined;
   readonly onTaskListDraftHandoff?: TaskListDraftHandoff | undefined;
   readonly state: AppState;
@@ -323,6 +325,7 @@ export class CenterPanel {
   private readonly calendar_abyssPrivate: CalendarMode;
   private readonly state_abyssPrivate: AppState;
   private readonly app_abyssPrivate: App;
+  private readonly recurrenceInput_abyssPrivate: RecurrenceInputParser | undefined;
   private readonly settings_abyssPrivate: CalendarSettings;
   private readonly queries_abyssPrivate: CenterPanelOptions['queries'];
   private readonly statusRegistry_abyssPrivate: StatusRegistry;
@@ -349,7 +352,10 @@ export class CenterPanel {
   private trackingUnsubscribe_abyssPrivate: (() => void) | undefined;
 
   constructor(options: CenterPanelOptions) {
-    this.onTaskListDraftHandoff_abyssPrivate = options.onTaskListDraftHandoff;
+    ({
+      recurrenceInput: this.recurrenceInput_abyssPrivate,
+      onTaskListDraftHandoff: this.onTaskListDraftHandoff_abyssPrivate,
+    } = options);
     const {
       state,
       app,
@@ -1959,6 +1965,7 @@ export class CenterPanel {
 
   private initializeOwnedUi_abyssPrivate(): void {
     this.taskModal_abyssPrivate = new TaskModal({
+      recurrenceInput: this.recurrenceInput_abyssPrivate,
       app: this.app_abyssPrivate,
       statusRegistry: this.statusRegistry_abyssPrivate,
       settings: this.settings_abyssPrivate,
@@ -4194,6 +4201,7 @@ export class CenterPanel {
             }
           });
     const handle = mountAnchoredRecurrenceEditor({
+      recurrenceInput: this.recurrenceInput_abyssPrivate,
       anchor,
       source,
       policy: { removeScheduledDate: this.settings_abyssPrivate.recurrence.removeScheduledDate },
@@ -4252,6 +4260,7 @@ export class CenterPanel {
       lifecycle.handle?.dismiss();
     };
     const handle = mountAnchoredRecurrenceEditor({
+      recurrenceInput: this.recurrenceInput_abyssPrivate,
       anchor,
       source,
       policy: { removeScheduledDate: this.settings_abyssPrivate.recurrence.removeScheduledDate },

@@ -8,11 +8,13 @@ import type { CalendarSettings } from '../src/settings/types';
 import { TagManager } from '../src/tags/TagManager';
 import { localDate, type TaskInputServices, type TaskRef } from '../src/tasks';
 import { ChronoTaskInputRecognizer } from '../src/tasks/infrastructure/input/ChronoTaskInputRecognizer';
+import { RecurrenceTextInputParser } from '../src/tasks/infrastructure/input/RecurrenceTextInputParser';
 import { MarkdownTaskCreatePreview } from '../src/tasks/infrastructure/markdown/MarkdownTaskCreatePreview';
 import type {
   CreationPresentationController,
   CreationRevealRequest,
 } from '../src/ui/creation/CreationPresentationController';
+import type { TaskModal } from '../src/ui/TaskModal';
 import { renderedTaskElements } from '../src/ui/taskPresentationIdentity';
 import { PanelView } from '../src/views/PanelView';
 import { deferred, expectDefined, flushMicrotasks, useRealMoment } from './helpers';
@@ -1517,3 +1519,54 @@ it('wires Q date and clock colors to the central classifier against its retained
     await h.dispose();
   }
 });
+
+it.each(['inspector', 'central-editor', 'task-modal'] as const)(
+  'passes the shared recurrence port through PanelView into %s even with Q smart extraction off',
+  async (entry) => {
+    const h = await mountQuickPanel(
+      false,
+      false,
+      false,
+      undefined,
+      {
+        recognizer: new ChronoTaskInputRecognizer(),
+        recurrence: new RecurrenceTextInputParser(),
+        readReference: () => reference,
+      },
+      true,
+    );
+    try {
+      h.settings.parseDatesInQuickCapture = false;
+      const root = expectDefined(h.index.list()[0]);
+      h.state.set('taskStack', [root]);
+      const anchor = expectDefined(h.center.querySelector<HTMLElement>('.abyss-task-card'));
+      let scope: ParentNode = h.root;
+      const methods = h.panel as unknown as {
+        taskModal_abyssPrivate: TaskModal;
+        openRecurrenceEditor_abyssPrivate(anchor: HTMLElement, task: typeof root): void;
+      };
+      if (entry === 'central-editor') {
+        methods.openRecurrenceEditor_abyssPrivate(anchor, root);
+        scope = activeDocument;
+      } else if (entry === 'task-modal') {
+        methods.taskModal_abyssPrivate.open(root);
+        scope = expectDefined(activeDocument.querySelector('.abyss-modal'));
+        expectDefined(scope.querySelector<HTMLButtonElement>('.abyss-repeat-chip')).click();
+      } else expectDefined(h.root.querySelector<HTMLButtonElement>('.abyss-repeat-chip')).click();
+      const custom = expectDefined(
+        [...scope.querySelectorAll<HTMLButtonElement>('.abyss-recurrence-editor button')].find(
+          (button) => button.textContent === 'Custom',
+        ),
+      );
+      custom.click();
+      const input = expectDefined(scope.querySelector<HTMLInputElement>('.abyss-recurrence-raw'));
+      input.value = 'каждые 3 дня после выполнения';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      expect(scope.querySelector('.abyss-recurrence-preview-rule')?.textContent).toBe(
+        'every 3 days when done',
+      );
+    } finally {
+      await h.dispose();
+    }
+  },
+);

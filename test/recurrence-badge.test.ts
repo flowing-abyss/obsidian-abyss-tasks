@@ -16,6 +16,20 @@ function styles(): string {
 }
 
 describe('renderRecurrenceBadge', () => {
+  it('uses the canonical English label for authored English tooltips including completion once', () => {
+    const container = createFragment().createDiv();
+    expect(
+      renderRecurrenceBadge(
+        container,
+        recurrenceBadgeInput('every month on the first Monday'),
+      ).getAttribute('aria-label'),
+    ).toBe('Repeats: every month on the 1st Monday');
+    expect(
+      renderRecurrenceBadge(container, recurrenceBadgeInput('every 3 days when done')).getAttribute(
+        'aria-label',
+      ),
+    ).toBe('Repeats: every 3 days when done');
+  });
   it('renders one fixed repeat-2 icon slot with an accessible valid-rule tooltip', () => {
     const container = createFragment().createDiv();
 

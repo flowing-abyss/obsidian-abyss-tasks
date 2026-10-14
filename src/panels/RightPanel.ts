@@ -32,6 +32,7 @@ import {
   type DependencyDirection,
   type LocalDate,
   type PlanningTarget,
+  type RecurrenceInputParser,
   type SubtaskPatch,
   type SubtaskRef,
   type SubtaskSnapshot,
@@ -96,6 +97,7 @@ import {
 } from '../ui/timeTracking/TimeBadge';
 
 interface RightPanelOptions {
+  readonly recurrenceInput?: RecurrenceInputParser | undefined;
   readonly onShowInTaskList?: ShowInTaskList | undefined;
   readonly state: AppState;
   readonly app: App;
@@ -393,6 +395,7 @@ export class RightPanel {
     this.interactionOwnership_abyssPrivate = interactionOwnership;
     this.timeTracking_abyssPrivate = timeTracking;
     this.planningSurfaces_abyssPrivate = new InspectorPlanningSurfaces({
+      recurrenceInput: options.recurrenceInput,
       app,
       settings,
       statusRegistry,

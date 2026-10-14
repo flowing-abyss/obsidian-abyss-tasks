@@ -9,6 +9,7 @@ import type { TaskSearchApi } from '../tasks';
 import {
   sameTaskNodeRef,
   type CommentTimeContextProvider,
+  type RecurrenceInputParser,
   type TaskApplicationApi,
   type TaskIndexEvent,
   type TaskNodeRef,
@@ -52,6 +53,7 @@ import { TrackingTicker } from './timeTracking/TrackingTicker';
 import { createTrackingActions } from './timeTracking/trackingActions';
 
 interface TaskModalOptions {
+  readonly recurrenceInput?: RecurrenceInputParser | undefined;
   readonly onTaskListDraftHandoff?: TaskListDraftHandoff | undefined;
   readonly onShowInTaskList?: ShowInTaskList | undefined;
   readonly app: App;
@@ -75,6 +77,7 @@ interface HierarchyContinuation {
 
 export class TaskModal {
   private readonly app_abyssPrivate: App;
+  private readonly recurrenceInput_abyssPrivate: RecurrenceInputParser | undefined;
   private readonly statusRegistry_abyssPrivate: StatusRegistry;
   private readonly settings_abyssPrivate: CalendarSettings | undefined;
   private readonly queries_abyssPrivate: TaskQueryApi | undefined;
@@ -101,6 +104,7 @@ export class TaskModal {
   private readonly hierarchyContinuations_abyssPrivate = new Map<object, HierarchyContinuation>();
 
   constructor(options: TaskModalOptions) {
+    this.recurrenceInput_abyssPrivate = options.recurrenceInput;
     const {
       app,
       statusRegistry,
@@ -168,6 +172,7 @@ export class TaskModal {
     const openingState = this.innerState_abyssPrivate;
     const scope = new Scope(this.app_abyssPrivate.scope);
     this.innerPanel_abyssPrivate = new RightPanel({
+      recurrenceInput: this.recurrenceInput_abyssPrivate,
       localSearchScope: { parent: scope, keymap: this.app_abyssPrivate.keymap },
       state: this.innerState_abyssPrivate,
       app: this.app_abyssPrivate,

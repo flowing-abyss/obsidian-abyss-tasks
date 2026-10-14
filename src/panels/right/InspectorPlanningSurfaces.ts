@@ -9,10 +9,12 @@ import { collectTaskTags } from '../../tags/taskTagCatalog';
 import type { TaskQueryApi } from '../../tasks';
 import {
   localDate,
+  recurrenceLabel,
   sameTaskNodeRef,
   subtreeRunning,
   type LocalDate,
   type PlanningTarget,
+  type RecurrenceInputParser,
   type TaskCommandResult,
   type TaskNodeRef,
   type TaskPatch,
@@ -93,6 +95,7 @@ interface InspectorPlanningCommands {
   readonly promoteSubtask: (task: TaskLike) => Promise<void>;
 }
 interface InspectorPlanningSurfacesOptions {
+  readonly recurrenceInput?: RecurrenceInputParser | undefined;
   readonly app: App;
   readonly settings: CalendarSettings | undefined;
   readonly statusRegistry: StatusRegistry;
@@ -236,6 +239,7 @@ function clearOptionalTimer(ownerWindow: Window | null, timer: number | undefine
 }
 
 export class InspectorPlanningSurfaces {
+  readonly #recurrenceInput: RecurrenceInputParser | undefined;
   readonly #app: InspectorPlanningSurfacesOptions['app'];
   readonly #settings: InspectorPlanningSurfacesOptions['settings'];
   readonly #statusRegistry: InspectorPlanningSurfacesOptions['statusRegistry'];
@@ -245,6 +249,7 @@ export class InspectorPlanningSurfaces {
   readonly #host: InspectorPlanningSurfacesOptions['host'];
   readonly #commands: InspectorPlanningCommands;
   constructor(options: InspectorPlanningSurfacesOptions) {
+    this.#recurrenceInput = options.recurrenceInput;
     this.#app = options.app;
     this.#settings = options.settings;
     this.#statusRegistry = options.statusRegistry;
@@ -696,7 +701,7 @@ export class InspectorPlanningSurfaces {
     this.registerPlanningControl('repeat', chip);
     if (hasRecurrence) {
       renderRecurrenceBadge(chip, recurrenceBadgeInput(recurrence));
-      chip.createSpan({ cls: 'abyss-repeat-chip-label', text: recurrence });
+      chip.createSpan({ cls: 'abyss-repeat-chip-label', text: recurrenceLabel(recurrence) });
     } else {
       chip.setText('+ repeat');
     }
@@ -726,6 +731,7 @@ export class InspectorPlanningSurfaces {
     const { popover, inline } = this.#createRecurrencePopover();
     const dismissalFocus = this.#beginRecurrenceIntent(anchor, restoring?.intent);
     const handle = mountRecurrenceEditor({
+      recurrenceInput: this.#recurrenceInput,
       container: popover,
       source: { root, target },
       policy: {

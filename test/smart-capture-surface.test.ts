@@ -1,8 +1,9 @@
-import { Menu } from 'obsidian';
+import { Menu, TFile } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
 import { localDate, type TaskCreatePreview, type TaskCreateRequest } from '../src/tasks';
+import { RecurrenceTextInputParser } from '../src/tasks/infrastructure/input/RecurrenceTextInputParser';
 import { MarkdownTaskCreatePreview } from '../src/tasks/infrastructure/markdown/MarkdownTaskCreatePreview';
 import { shouldShowSourcePath } from '../src/ui/sourceNoteChip';
 import { CaptureSurface } from '../src/ui/taskCapture/CaptureSurface';
@@ -53,7 +54,13 @@ async function canonicalSurface(
   const recognize = vi.spyOn(recognizer, 'recognize');
   const controller = new TaskCaptureController({
     target,
-    smart: { recognizer, readReference, enabled: () => true, onRecognitionFailure: vi.fn() },
+    smart: {
+      recognizer,
+      recurrence: new RecurrenceTextInputParser(),
+      readReference,
+      enabled: () => true,
+      onRecognitionFailure: vi.fn(),
+    },
     describe: describeTaskCreationResult,
     onResult: vi.fn(),
     onRequestClose: vi.fn(),
@@ -74,6 +81,11 @@ async function canonicalSurface(
     application.index.destroy();
   };
   return {
+    async readCreated() {
+      const file = app.vault.getAbstractFileByPath('tasks.md');
+      if (!(file instanceof TFile)) throw new Error('Missing created note');
+      return app.vault.read(file);
+    },
     settings,
     host,
     controller,
@@ -1374,3 +1386,53 @@ it.each([
     h.surface.destroy();
   },
 );
+
+describe('Q recurrence metadata', () => {
+  it('orders repeat after time and before tags, dismisses the whole badge and restores without changing raw selection', async () => {
+    const h = await canonicalSurface(
+      { type: 'list', selection: 'inbox' },
+      { sourceNoteDisplay: 'always' },
+    );
+    try {
+      h.surface.input.value = 'Позвонить каждый день в 18:00 #work';
+      h.surface.input.dispatchEvent(new Event('input', { bubbles: true }));
+      h.controller.flushRecognition();
+      expect(h.contents()).toEqual(['tasks', '2026-10-13', '18:00', 'every day', '#work']);
+      const repeat = h.button('Remove repeat');
+      expect(repeat.querySelector('[data-icon="repeat-2"]')).not.toBeNull();
+      expect(repeat.classList.contains('is-removable')).toBe(true);
+      const separator = expectDefined(
+        repeat.parentElement?.querySelector('.abyss-capture-separator'),
+      );
+      expect(separator.textContent).toBe('·');
+      expect(separator.getAttribute('aria-hidden')).toBe('true');
+      h.surface.input.focus();
+      h.surface.input.setSelectionRange(2, 7);
+      repeat.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+      repeat.click();
+      expect(h.contents()).toEqual(['tasks', '2026-10-13', '18:00', '#work', 'Restore']);
+      expect(h.surface.input.value).toBe('Позвонить каждый день в 18:00 #work');
+      expect([h.surface.input.selectionStart, h.surface.input.selectionEnd]).toEqual([2, 7]);
+      h.button('Restore').click();
+      expect(h.contents()).toEqual(['tasks', '2026-10-13', '18:00', 'every day', '#work']);
+      expect(h.controller.snapshot().draft).toBe('Позвонить каждый день в 18:00 #work');
+    } finally {
+      h.close();
+    }
+  });
+});
+
+it('submits the displayed canonical repeat through the real Q create session', async () => {
+  const h = await canonicalSurface({ type: 'list', selection: 'inbox' });
+  try {
+    h.controller.setDraft('Позвонить каждые 3 дня после выполнения #work');
+    expect(h.button('Remove repeat').textContent).toBe('every 3 days when done');
+    await h.controller.submit('enter');
+    expect(await h.readCreated()).toBe(
+      '- [ ] Позвонить #work 🔁 every 3 days when done ➕ 2026-10-13 📅 2026-10-13',
+    );
+    expect(h.controller.snapshot().draft).toBe('');
+  } finally {
+    h.close();
+  }
+});

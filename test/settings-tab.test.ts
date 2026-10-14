@@ -270,7 +270,7 @@ it('offers one smart recognition toggle in task creation settings', async () => 
   );
   expect(rows).toHaveLength(1);
   expect(rows[0]?.querySelector('.setting-item-description')?.textContent).toBe(
-    'Recognize dates and times while adding a task with Q.',
+    'Recognize dates, times, and repeats while adding a task with Q.',
   );
   await expectDefined(change)(false);
   expect(settings.parseDatesInQuickCapture).toBe(false);
