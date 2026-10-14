@@ -78,10 +78,28 @@ function htmlElementBarriers(text: string, atoms: readonly TaskInputRange[]): Ta
 function withinBudget(text: string): boolean {
   return text.length <= MAX_UNITS && [...text.matchAll(/[\p{L}\p{N}_]+/gu)].length <= MAX_TOKENS;
 }
-function clauses(text: string): TaskInputRange[] {
+function abbreviationPeriod(
+  text: string,
+  index: number,
+  abbreviations: ReadonlySet<string>,
+  lookback: number,
+): boolean {
+  const prefix = text.slice(Math.max(0, index - lookback), index);
+  const word = /(?:^|[^\p{L}\p{N}_])(\p{L}+)$/u.exec(prefix)?.[1];
+  return word !== undefined && abbreviations.has(word.toLowerCase());
+}
+function clauses(text: string, locales: readonly RecurrenceInputLocale[]): TaskInputRange[] {
+  const abbreviations = new Set(
+    locales
+      .flatMap((locale) => locale.weekdayAbbreviations ?? [])
+      .map((word) => word.toLowerCase()),
+  );
+  const lookback = Math.max(0, ...[...abbreviations].map((word) => word.length)) + 1;
   const ranges: TaskInputRange[] = [];
   let from = 0;
   for (const separator of text.matchAll(/[;!?\r\n]|\.(?=\s|$)/gu)) {
+    if (separator[0] === '.' && abbreviationPeriod(text, separator.index, abbreviations, lookback))
+      continue;
     if (separator.index > from) ranges.push({ from, to: separator.index });
     from = separator.index + separator[0].length;
   }
@@ -115,7 +133,7 @@ function longestPhrase(
   }
   return longest;
 }
-/** Atoms stop grammar, but cannot conceal a restriction immediately after them. */
+/** Inspect punctuation and atoms without adding them to recurrence removal ranges. */
 function continuationStart(context: ExtractionContext, from: number, to: number): number {
   let cursor = from;
   while (cursor < to) {
@@ -124,7 +142,7 @@ function continuationStart(context: ExtractionContext, from: number, to: number)
       cursor = atom.to;
       continue;
     }
-    if (!/[\s,):\]}—–]/u.test(context.text[cursor] ?? '')) break;
+    if (!/[\s,()[\]{}:—–]/u.test(context.text[cursor] ?? '')) break;
     cursor++;
   }
   return cursor;
@@ -178,6 +196,23 @@ interface ExtractionScan {
   readonly candidates: TaskInputRecurrenceCandidate[];
   readonly protectedRanges: TaskInputRange[];
 }
+function leadingRestricted(
+  context: ExtractionContext,
+  clause: TaskInputRange,
+  cue: RecurrenceCue,
+): boolean {
+  const prefix = normalizeRecurrencePhrase(context.masked.slice(clause.from, cue.from));
+  return context.locales.some((locale) => locale.hasLeadingRestriction(prefix));
+}
+function unsupportedProtection(
+  context: ExtractionContext,
+  clause: TaskInputRange,
+  cue: RecurrenceCue,
+): TaskInputRange {
+  const start = leadingRestricted(context, clause, cue) ? clause.from : cue.from;
+  const from = start + context.text.slice(start, clause.to).search(/\S/u);
+  return sourceProtection(context.text, from, clause.to);
+}
 function candidateAt(
   context: ExtractionContext,
   clause: TaskInputRange,
@@ -185,8 +220,7 @@ function candidateAt(
 ): TaskInputRecurrenceCandidate | undefined {
   const match = longestPhrase(context, cue.from, clause.to, cue.locale);
   if (match === undefined) return undefined;
-  const prefix = normalizeRecurrencePhrase(context.masked.slice(clause.from, cue.from));
-  if (context.locales.some((locale) => locale.hasLeadingRestriction(prefix))) return undefined;
+  if (leadingRestricted(context, clause, cue)) return undefined;
   if (unsupportedTail(context, match.to, clause.to)) return undefined;
   const range = { from: cue.from, to: match.to };
   if (context.barriers.some((barrier) => inputRangesOverlap(range, barrier))) return undefined;
@@ -204,7 +238,7 @@ function scanCue(
   )
     return;
   const candidate = candidateAt(context, clause, cue);
-  const range = candidate?.ranges[0] ?? sourceProtection(context.text, cue.from, clause.to);
+  const range = candidate?.ranges[0] ?? unsupportedProtection(context, clause, cue);
   if (!validInputRange(context.text, range)) return;
   scan.protectedRanges.push(range);
   scan.expressions++;
@@ -262,7 +296,7 @@ export class RecurrenceTextInputParser implements RecurrenceInputParser {
       candidates: [],
       protectedRanges: [...html],
     };
-    for (const clause of clauses(masked)) scanClause(context, clause, cues, scan);
+    for (const clause of clauses(masked, this.locales)) scanClause(context, clause, cues, scan);
     return {
       candidates: scan.expressions === 1 ? scan.candidates : [],
       protectedRanges: scan.protectedRanges,

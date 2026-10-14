@@ -5,6 +5,8 @@ export interface RecurrenceInputLocale {
   isContinuation(tail: string): boolean;
   hasLeadingRestriction(clausePrefix: string): boolean;
   readonly clockCues: readonly string[];
+  /** Bare finite weekday tokens whose dots do not end unsupported source protection. */
+  readonly weekdayAbbreviations?: readonly string[];
 }
 
 export function normalizeRecurrencePhrase(text: string): string {

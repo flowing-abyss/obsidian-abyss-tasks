@@ -74,6 +74,7 @@ export const englishRecurrenceInput: RecurrenceInputLocale = {
   hasLeadingRestriction: (prefix) =>
     /(?:^|[^\p{L}\p{N}_])(?:not|never|only|except|excluding|until|till|through)(?![\p{L}\p{N}_])/iu.test(
       prefix,
-    ) || /(?:^| )for \d+ times?(?: |$)/iu.test(prefix),
+    ) || /(?:^|[^\p{L}\p{N}_])\d+ times?(?![\p{L}\p{N}_])/iu.test(prefix),
   clockCues: ['at'],
+  weekdayAbbreviations: ['mon', 'tue', 'tues', 'wed', 'thu', 'thur', 'thurs', 'fri', 'sat', 'sun'],
 };

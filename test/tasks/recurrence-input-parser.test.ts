@@ -350,3 +350,106 @@ describe('candidate budget ownership', () => {
     expect(result.protectedRanges).toEqual([{ from: 0, to: text.length }]);
   });
 });
+
+describe('reviewed unsupported-expression ownership', () => {
+  it.each([
+    'every day (except Monday)',
+    'каждый день (кроме воскресенья)',
+    'every day at 10:00 (except Monday)',
+    'каждый день в 10:00 (кроме воскресенья)',
+    'every day ((except Monday))',
+  ])('inspects a parenthesized restriction without accepting the rule: %s', (text) => {
+    const result = extract(text);
+    expect(result.candidates).toEqual([]);
+    expect(result.protectedRanges).toEqual([{ from: 0, to: text.length }]);
+  });
+  it.each([
+    'every day (write notes)',
+    'every day at 10:00 (write notes)',
+    'каждый день (писать заметки)',
+  ])('leaves ordinary parenthetical prose outside the recurrence range: %s', (text) => {
+    const result = extract(text);
+    expect(result.candidates.map((candidate) => candidate.rule)).toEqual(['every day']);
+    expect(result.candidates[0]?.ranges.map((range) => text.slice(range.from, range.to))).toEqual([
+      text.startsWith('каждый') ? 'каждый день' : 'every day',
+    ]);
+  });
+  it.each([
+    ['until June every day', 20],
+    ['до июня каждый день', 19],
+    ['3 times every day', 17],
+    ['for 3 times every day', 21],
+    ['3 раза каждый день', 18],
+  ] as const)('protects a leading restriction and the rule: %s', (text, to) => {
+    const result = extract(text);
+    expect(result.candidates).toEqual([]);
+    expect(result.protectedRanges).toEqual([{ from: 0, to }]);
+  });
+  it.each([
+    ['until June every day; call tomorrow', 'until June every day', 20],
+    ['до июня каждый день; позвонить завтра', 'до июня каждый день', 19],
+    ['3 times every day; call tomorrow', '3 times every day', 17],
+    ['Prepare until June every day; call tomorrow', 'Prepare until June every day', 28],
+    ['  until June every day ; call tomorrow', 'until June every day', 22],
+  ] as const)('keeps a later semicolon clause independent: %s', (text, protectedSource, to) => {
+    const result = extract(text);
+    expect(result.candidates).toEqual([]);
+    expect(result.protectedRanges.map((range) => text.slice(range.from, range.to))).toEqual([
+      protectedSource,
+    ]);
+    expect(result.protectedRanges[0]?.to).toBe(to);
+  });
+  it.each([
+    ['every day on Mon. and Fri.; call tomorrow', 'every day on Mon. and Fri.'],
+    ['every day on Mon. and Fri. Call tomorrow.', 'every day on Mon. and Fri. Call tomorrow'],
+    [
+      'every day on Mon. and Fri. Another sentence; call tomorrow',
+      'every day on Mon. and Fri. Another sentence',
+    ],
+    ['каждый день по пн. и пт.; позвонить завтра', 'каждый день по пн. и пт.'],
+    [
+      'every day on Mon. and Fri. Write notes. Call tomorrow.',
+      'every day on Mon. and Fri. Write notes',
+    ],
+  ] as const)(
+    'keeps weekday dots inside protection and genuine clause endings outside: %s',
+    (text, protectedSource) => {
+      const result = extract(text);
+      expect(result.candidates).toEqual([]);
+      expect(result.protectedRanges.map((range) => text.slice(range.from, range.to))).toEqual([
+        protectedSource,
+      ]);
+    },
+  );
+});
+
+describe('registered abbreviation protection', () => {
+  const locale: RecurrenceInputLocale = {
+    id: 'abbreviations',
+    starts: (text) => (text.startsWith('cada ') ? [0] : []),
+    toEnglish: (text) => (text === 'cada día' ? 'every day' : undefined),
+    isContinuation: (tail) => tail.startsWith('en '),
+    hasLeadingRestriction: () => false,
+    clockCues: [],
+    weekdayAbbreviations: ['dx', 'fx'],
+  };
+  it('gets abbreviation vocabulary from an independent locale and retains a later sentence', () => {
+    const text = 'cada día en Dx. y Fx. escribir. mañana';
+    const result = new RecurrenceTextInputParser([locale]).extract({ text, protectedRanges: [] });
+    expect(result.candidates).toEqual([]);
+    expect(result.protectedRanges.map((range) => text.slice(range.from, range.to))).toEqual([
+      'cada día en Dx. y Fx. escribir',
+    ]);
+  });
+  it.each(['every Mon.', 'every Mon. and Fri.', 'каждый пн.', 'каждый день по пн. и пт.'])(
+    'does not add abbreviation grammar: %s',
+    (text) => {
+      expect(parser.parse(text).type).toBe('invalid');
+      const result = extract(text);
+      expect(result.candidates).toEqual([]);
+      expect(result.protectedRanges.map((range) => text.slice(range.from, range.to))).toEqual([
+        text,
+      ]);
+    },
+  );
+});

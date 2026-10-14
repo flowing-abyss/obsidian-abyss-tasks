@@ -282,4 +282,5 @@ export const russianRecurrenceInput: RecurrenceInputLocale = {
     /(?:^|[^\p{L}\p{N}_])(?:не|никогда|только|кроме|исключая|до)(?![\p{L}\p{N}_])/iu.test(prefix) ||
     /(?:^| )\d+ раз(?:а)?(?: |$)/iu.test(prefix),
   clockCues: ['в'],
+  weekdayAbbreviations: ['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс'],
 };

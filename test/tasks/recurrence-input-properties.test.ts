@@ -106,3 +106,72 @@ describe('fixed-seed recurrence extraction properties', () => {
     );
   });
 });
+
+describe('fixed-seed review boundary properties', () => {
+  it('protects parenthesized exceptions before and after a clock', () => {
+    fc.assert(
+      fc.property(
+        prose,
+        spacing,
+        fc.constantFrom('', ' at 10:00', ' at 2pm'),
+        (prefix, space, clock) => {
+          const expression = `every${space}day${clock} (except Monday)`;
+          const text = `${prefix} ${expression}; call tomorrow`;
+          const result = parser.extract({
+            text,
+            protectedRanges: inspectTaskInput(text).protectedRanges,
+          });
+          expect(result.candidates).toEqual([]);
+          expect(result.protectedRanges.map((range) => text.slice(range.from, range.to))).toEqual([
+            expression,
+          ]);
+        },
+      ),
+      { seed: 2026101411, numRuns: 100 },
+    );
+  });
+  it('protects leading restrictions through their current clause', () => {
+    fc.assert(
+      fc.property(
+        prose,
+        fc.constantFrom('until June every day', 'до июня каждый день', '3 times every day'),
+        (prefix, expression) => {
+          const protectedSource = `${prefix} ${expression}`;
+          const text = `${protectedSource}; call tomorrow`;
+          const result = parser.extract({
+            text,
+            protectedRanges: inspectTaskInput(text).protectedRanges,
+          });
+          expect(result.candidates).toEqual([]);
+          expect(result.protectedRanges.map((range) => text.slice(range.from, range.to))).toEqual([
+            protectedSource,
+          ]);
+          expect(
+            result.protectedRanges.every(
+              (range) => !text.slice(range.from, range.to).includes('tomorrow'),
+            ),
+          ).toBe(true);
+        },
+      ),
+      { seed: 2026101412, numRuns: 100 },
+    );
+  });
+  it('keeps finite weekday abbreviation dots inside unsupported source', () => {
+    fc.assert(
+      fc.property(prose, spacing, fc.boolean(), (prefix, space, uppercase) => {
+        const source = uppercase ? 'EVERY DAY ON MON. AND FRI.' : 'every day on Mon. and Fri.';
+        const expression = source.replaceAll(' ', space);
+        const text = `${prefix} ${expression}; call tomorrow`;
+        const result = parser.extract({
+          text,
+          protectedRanges: inspectTaskInput(text).protectedRanges,
+        });
+        expect(result.candidates).toEqual([]);
+        expect(result.protectedRanges.map((range) => text.slice(range.from, range.to))).toEqual([
+          expression,
+        ]);
+      }),
+      { seed: 2026101413, numRuns: 100 },
+    );
+  });
+});
