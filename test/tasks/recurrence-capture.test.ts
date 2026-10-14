@@ -723,6 +723,12 @@ it.each(['08:00', '09:00', '10:00'])(
 describe('final review recurrence persistence regressions', () => {
   it.each([
     ['1 и 15 числа каждого месяца', 'every month on the 1st and 15th'],
+    ['каждый месяц 1 , 15 числа', 'every month on the 1st and 15th'],
+    ['каждый месяц 1\t, 15 числа', 'every month on the 1st and 15th'],
+    ['каждый месяц 1\u00a0, 15 числа', 'every month on the 1st and 15th'],
+    ['1 , 15 числа каждого месяца', 'every month on the 1st and 15th'],
+    ['1\t, 15 числа каждого месяца', 'every month on the 1st and 15th'],
+    ['1\u00a0, 15 числа каждого месяца', 'every month on the 1st and 15th'],
     ['1, 15 числа каждого месяца', 'every month on the 1st and 15th'],
     ['1-го, 15-го и 25-го числа каждого месяца', 'every month on the 1st, 15th and 25th'],
   ])('saves the complete reverse monthly list: %s', async (phrase, rule) => {
@@ -744,6 +750,13 @@ describe('final review recurrence persistence regressions', () => {
     expect(root.planning.time).toBeUndefined();
   });
   const literal = [
+    'Call 𝕒15 числа каждого месяца',
+    'Call 𐐀15 числа каждого месяца',
+    'Call 𝕒1, 15 числа каждого месяца',
+    'Call 𐐀1 и 15 числа каждого месяца',
+    'Call 1, 𝕒15 и 25 числа каждого месяца',
+    'Call +1 , 15 числа каждого месяца',
+    'Call -1\t, 15 числа каждого месяца',
     'Call every day not on Monday',
     'Позвонить каждый день не в понедельник',
     'Call every day - except Monday',

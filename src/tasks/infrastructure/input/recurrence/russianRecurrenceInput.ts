@@ -138,9 +138,12 @@ function translatedList(
     : undefined;
 }
 function dates(text: string): string | undefined {
-  return translatedList(text, (value) =>
-    /^\d+(?:-го)?$/u.test(value) ? englishOrdinal(value.replace(/-го$/u, '')) : undefined,
-  );
+  return translatedList(text, (value) => {
+    const selector = value.slice(0, horizontalEnd(value, value.length));
+    return /^\d+(?:-го)?$/u.test(selector)
+      ? englishOrdinal(selector.replace(/-го$/u, ''))
+      : undefined;
+  });
 }
 function weekdaySelector(text: string): string | undefined {
   const parts = text.replace(/^в /u, '').split(' ');
@@ -264,7 +267,11 @@ function horizontalEnd(text: string, end: number): number {
 function selectorStart(text: string, end: number): number | undefined {
   const to = horizontalEnd(text, end);
   let from = to;
-  while (from > 0 && /[\p{L}\p{N}_./+#–—-]/u.test(text[from - 1] ?? '')) from--;
+  while (from > 0) {
+    const previous = /[\p{L}\p{N}_./+#–—-]$/u.exec(text.slice(Math.max(0, from - 2), from));
+    if (previous === null) break;
+    from -= previous[0].length;
+  }
   return from < to ? from : undefined;
 }
 function connectorStart(text: string, end: number): number | undefined {
@@ -281,9 +288,9 @@ function previousSelector(text: string, end: number): number | undefined {
   if (connector === undefined) return undefined;
   const from = selectorStart(text, connector);
   if (from === undefined) return undefined;
-  // A comma/dash before a numeric item may instead separate ordinary title prose.
+  // Keep digit-bearing identifiers with the list; a comma/dash can also separate title prose.
   const separator = normalizeRecurrencePhrase(text.slice(connector, end));
-  return separator === 'и' || separator === 'или' || /^[+-]?\d/u.test(text.slice(from, connector))
+  return separator === 'и' || separator === 'или' || /\d/u.test(text.slice(from, connector))
     ? from
     : undefined;
 }

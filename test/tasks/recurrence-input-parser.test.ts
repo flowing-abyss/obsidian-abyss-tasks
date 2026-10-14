@@ -575,3 +575,47 @@ describe('restriction protection before date recognition', () => {
     expect(extract(text).protectedRanges).toEqual([{ from: 0, to: text.length }]);
   });
 });
+
+describe('reverse selector compatibility boundaries', () => {
+  it.each(['𝕒', '𐐀'])(
+    'protects an attached astral-letter identifier without acquiring a numeric suffix: %s',
+    (letter) => {
+      const text = `Call ${letter}15 числа каждого месяца`;
+      const result = extract(text);
+      expect(result.candidates).toEqual([]);
+      expect(result.protectedRanges).toEqual([{ from: 5, to: 30 }]);
+      expect(text.slice(5, 30)).toBe(`${letter}15 числа каждого месяца`);
+    },
+  );
+  it.each(['𝕒', '𐐀'])(
+    'accepts a numeric selector separated from astral-letter prose: %s',
+    (letter) => {
+      const text = `Call ${letter} 15 числа каждого месяца`;
+      expect(extract(text).candidates).toEqual([
+        { rule: 'every month on the 15th', ranges: [{ from: 8, to: 31 }] },
+      ]);
+    },
+  );
+  it.each([' ', '\t', '\u00a0'])(
+    'preserves whole-field and extracted horizontal spacing before commas: %j',
+    (space) => {
+      for (const phrase of [
+        `каждый месяц 1${space}, 15 числа`,
+        `1${space}, 15 числа каждого месяца`,
+      ]) {
+        const rule = 'every month on the 1st and 15th';
+        const text = `Call ${phrase}`;
+        expect(parser.parse(phrase)).toMatchObject({ type: 'valid', raw: rule });
+        expect(extract(text).candidates).toEqual([
+          { rule, ranges: [{ from: 5, to: 5 + phrase.length }] },
+        ]);
+      }
+      for (const invalid of ['+1', '-1', '0', '32', '1.5', '1-3']) {
+        const phrase = `${invalid}${space}, 15 числа каждого месяца`;
+        expect(parser.parse(phrase).type).toBe('invalid');
+        expect(extract(phrase).candidates).toEqual([]);
+        expect(extract(phrase).protectedRanges).toEqual([{ from: 0, to: phrase.length }]);
+      }
+    },
+  );
+});

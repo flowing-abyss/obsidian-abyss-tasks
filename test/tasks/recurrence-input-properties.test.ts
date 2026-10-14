@@ -265,3 +265,30 @@ describe('final review source ownership properties', () => {
     );
   });
 });
+
+it('never extracts a valid suffix after an astral identifier in any reverse list position', () => {
+  fc.assert(
+    fc.property(
+      prose,
+      spacing,
+      fc.constantFrom('𝕒', '𐐀'),
+      fc.tuple(fc.constantFrom(', ', ' и ', ' или '), fc.constantFrom(0, 1, 2)),
+      (prefix, space, letter, [separator, position]) => {
+        const items = ['1', '15', '25'];
+        items[position] = `${letter}${items[position] ?? ''}`;
+        const expression = `${items.join(separator)} числа каждого месяца`.replaceAll(' ', space);
+        const before = `${prefix} \`literal\` `;
+        const text = `${before}${expression}; call tomorrow`;
+        const result = parser.extract({
+          text,
+          protectedRanges: inspectTaskInput(text).protectedRanges,
+        });
+        expect(result.candidates).toEqual([]);
+        expect(result.protectedRanges).toEqual([
+          { from: before.length, to: before.length + expression.length },
+        ]);
+      },
+    ),
+    { seed: 2026101431, numRuns: 100 },
+  );
+});
