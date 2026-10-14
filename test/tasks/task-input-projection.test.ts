@@ -835,3 +835,16 @@ describe('review round one: attached metadata separators', () => {
     expect(result.capitalizationTarget).toBeUndefined();
   });
 });
+
+it.each([
+  ['Tomorrow-5 degrees', '-5 degrees'],
+  ['Завтра-5 градусов', '-5 градусов'],
+])('conserves attached signed title and raw source: %s', (raw, title) => {
+  const state = createTaskInputState(raw);
+  const result = project(state);
+  expect(result.markdownBody).toBe(title);
+  expect(result.initial.due).toEqual({ type: 'set', value: '2026-10-14' });
+  expect(result.hasAuthoredTitle).toBe(true);
+  expect(result.capitalizationTarget).toBeUndefined();
+  expect(state.raw).toBe(raw);
+});

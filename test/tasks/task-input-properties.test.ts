@@ -258,3 +258,32 @@ describe('bounded separator preservation', () => {
     );
   });
 });
+
+it('conserves signed title numbers at relative date boundaries, seed 2026101403', () => {
+  fc.assert(
+    fc.property(
+      fc.constantFrom('Tomorrow', 'Завтра'),
+      fc.constantFrom('', ' '),
+      fc.tuple(
+        fc.constantFrom('+', '-'),
+        fc.integer({ min: 0, max: 99 }),
+        fc.constantFrom('', '.5', ',5'),
+      ),
+      (date, gap, [sign, number, decimal]) => {
+        const title = `${sign}${number}${decimal} units`;
+        const raw = `${date}${gap}${title}`;
+        const state = createTaskInputState(raw);
+        const result = project(state);
+        expect(result.markdownBody).toBe(title);
+        expect(result.initial.due).toEqual({ type: 'set', value: '2026-10-14' });
+        expect(state.raw).toBe(raw);
+        expect(
+          result.candidates
+            .flatMap((candidate) => candidate.ranges)
+            .map((range) => raw.slice(range.from, range.to)),
+        ).toEqual([date]);
+      },
+    ),
+    { numRuns: 120, seed: 2026101403 },
+  );
+});

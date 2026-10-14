@@ -96,7 +96,8 @@ function namedDateSafeFragments(text: string, reference: TaskInputReference): Ta
   const fragments = nonTimezoneNumericRanges(text);
   const attached = (range: TaskInputRange): boolean => /\p{L}/u.test(text[range.from - 1] ?? '');
   if (!fragments.some(attached)) return fragments;
-  // The original mask must prove an explicit named day/month point before its hyphen is exempt.
+  // Calendar certainty alone also admits relative dates with signed title values appended as offsets.
+  // Only a point without an extracted offset can prove that the hyphen belongs to its named date.
   // Supplying fragments makes this bounded call skip the classification pass.
   const points = parseLocales(
     text,
@@ -104,7 +105,10 @@ function namedDateSafeFragments(text: string, reference: TaskInputReference): Ta
     nonTimezoneNumericRanges(text, RANGE_NUMERIC_OFFSET),
   ).filter(
     (result) =>
-      result.end == null && result.start.isCertain('month') && result.start.isCertain('day'),
+      result.end == null &&
+      result.start.isCertain('month') &&
+      result.start.isCertain('day') &&
+      !result.start.isCertain('timezoneOffset'),
   );
   return fragments.filter(
     (fragment) =>

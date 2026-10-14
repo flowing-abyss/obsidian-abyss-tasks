@@ -1966,3 +1966,25 @@ it('uses the accepted hyphenated named date rather than time-only fallback', asy
     tags: [],
   });
 });
+
+it.each([
+  ['Tomorrow-5 degrees', '-5 degrees', '2026-10-14'],
+  ['Завтра-5 градусов', '-5 градусов', '2026-10-14'],
+  ['5 June-5 degrees', '-5 degrees', '2027-06-05'],
+  ['5 июня+5 units', '+5 units', '2027-06-05'],
+])('preserves the attached signed title in preview and saved root: %s', async (raw, title, due) => {
+  const h = await smartHarness({}, { inbox: false, initial: {} });
+  h.controller.setDraft(raw);
+  expect(h.controller.snapshot().draft).toBe(raw);
+  expect(h.controller.snapshot().metadata?.projection?.markdownBody).toBe(title);
+  expect(h.controller.snapshot().metadata?.preview).toMatchObject({
+    type: 'valid',
+    metadata: { markdownTitle: title, planning: { due }, tags: [] },
+  });
+  await h.controller.submit('enter');
+  expect(h.readCanonicalRoot(expectDefined(h.repositoryWrites[0]))).toMatchObject({
+    markdownTitle: title,
+    planning: { due },
+    tags: [],
+  });
+});

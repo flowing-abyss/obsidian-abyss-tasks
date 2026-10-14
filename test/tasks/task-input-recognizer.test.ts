@@ -480,3 +480,37 @@ describe('final review: hyphenated named point dates', () => {
     },
   );
 });
+
+describe('signed suffix ownership at resolved date boundaries', () => {
+  it.each([
+    ['Tomorrow-5 degrees', 'Tomorrow', '-5 degrees', '2026-10-14'],
+    ['Завтра-5 градусов', 'Завтра', '-5 градусов', '2026-10-14'],
+    ['Tomorrow+5 degrees', 'Tomorrow', '+5 degrees', '2026-10-14'],
+    ['Завтра+5 градусов', 'Завтра', '+5 градусов', '2026-10-14'],
+    ['Today-0 units', 'Today', '-0 units', '2026-10-13'],
+    ['Yesterday+14 units', 'Yesterday', '+14 units', '2026-10-12'],
+    ['Tomorrow-5.5 degrees', 'Tomorrow', '-5.5 degrees', '2026-10-14'],
+    ['Завтра+5,5 градусов', 'Завтра', '+5,5 градусов', '2026-10-14'],
+    ['5 June-5 degrees', '5 June', '-5 degrees', '2027-06-05'],
+    ['5 июня+5 units', '5 июня', '+5 units', '2027-06-05'],
+  ])('consumes only the date before its signed title: %s', (raw, date, title, due) => {
+    const result = project(createTaskInputState(raw));
+    expect(result.markdownBody).toBe(title);
+    expect(result.initial.due).toEqual({ type: 'set', value: due });
+    expect(result.initial.time).toBeUndefined();
+    expect(
+      result.candidates
+        .flatMap((candidate) => candidate.ranges)
+        .map((range) => raw.slice(range.from, range.to)),
+    ).toEqual([date]);
+  });
+
+  it.each(['June+5 units', 'June-5.5 units', 'June-5,5 units'])(
+    'does not turn a signed value into a named date: %s',
+    (raw) => {
+      const result = project(createTaskInputState(raw));
+      expect(result.markdownBody).toBe(raw);
+      expect(result.initial.due).toBeUndefined();
+    },
+  );
+});
