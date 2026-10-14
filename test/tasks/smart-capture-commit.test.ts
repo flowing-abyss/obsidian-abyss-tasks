@@ -1944,3 +1944,25 @@ describe('review round one: canonical capture boundary agreement', () => {
     },
   );
 });
+
+it('uses the accepted hyphenated named date rather than time-only fallback', async () => {
+  const raw = 'June-5 at 10:00 conference';
+  const h = await smartHarness({}, { inbox: false, initial: {} });
+  h.controller.setDraft(raw);
+  expect(h.controller.snapshot().draft).toBe(raw);
+  expect(h.controller.snapshot().metadata?.projection?.markdownBody).toBe('conference');
+  expect(h.controller.snapshot().metadata?.preview).toMatchObject({
+    type: 'valid',
+    metadata: {
+      markdownTitle: 'Conference',
+      planning: { due: '2027-06-05', time: '10:00' },
+      tags: [],
+    },
+  });
+  await h.controller.submit('enter');
+  expect(h.readCanonicalRoot(expectDefined(h.repositoryWrites[0]))).toMatchObject({
+    markdownTitle: 'Conference',
+    planning: { due: '2027-06-05', time: '10:00' },
+    tags: [],
+  });
+});

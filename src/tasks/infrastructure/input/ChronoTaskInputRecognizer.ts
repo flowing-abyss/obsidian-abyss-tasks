@@ -74,12 +74,13 @@ interface Recognition {
 function parseLocales(
   text: string,
   reference: TaskInputReference,
-  fragments = nonTimezoneNumericRanges(text),
+  fragments?: readonly TaskInputRange[],
 ): LocaleResult[] {
   const ref = { instant: new Date(reference.epochMs), timezone: reference.offsetMinutes };
   // Chrono's offset refiner accepts numeric prefixes (e.g. -1234 in -123456).
   // Mask non-token fragments without making ordinary title IDs into join barriers.
-  const masked = maskInputRanges(text, fragments);
+  const excludedFragments = fragments ?? namedDateSafeFragments(text, reference);
+  const masked = maskInputRanges(text, excludedFragments);
   return [
     ...ru.parse(masked, ref, { forwardDate: false }),
     ...en.parse(masked, ref, { forwardDate: false }),
@@ -88,8 +89,32 @@ function parseLocales(
       from: result.index + result.text.length - result.text.trimStart().length,
       to: result.index + result.text.trimEnd().length,
     };
-    return fragments.every((fragment) => !inputRangesOverlap(fragment, range));
+    return excludedFragments.every((fragment) => !inputRangesOverlap(fragment, range));
   });
+}
+function namedDateSafeFragments(text: string, reference: TaskInputReference): TaskInputRange[] {
+  const fragments = nonTimezoneNumericRanges(text);
+  const attached = (range: TaskInputRange): boolean => /\p{L}/u.test(text[range.from - 1] ?? '');
+  if (!fragments.some(attached)) return fragments;
+  // The original mask must prove an explicit named day/month point before its hyphen is exempt.
+  // Supplying fragments makes this bounded call skip the classification pass.
+  const points = parseLocales(
+    text,
+    reference,
+    nonTimezoneNumericRanges(text, RANGE_NUMERIC_OFFSET),
+  ).filter(
+    (result) =>
+      result.end == null && result.start.isCertain('month') && result.start.isCertain('day'),
+  );
+  return fragments.filter(
+    (fragment) =>
+      !(
+        attached(fragment) &&
+        points.some(
+          (point) => point.index <= fragment.from && fragment.to <= point.index + point.text.length,
+        )
+      ),
+  );
 }
 function clockTitleColon(text: string, from: number, clock: string): boolean {
   if (!exactClock(clock) || text[from + clock.length] !== ':') return false;

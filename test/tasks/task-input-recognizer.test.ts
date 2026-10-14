@@ -465,3 +465,18 @@ describe('review round one: date ranges precede signed title masking', () => {
     expect(result.initial.due).toEqual({ type: 'set', value: '2026-10-14' });
   });
 });
+
+describe('final review: hyphenated named point dates', () => {
+  it.each(['June-5 conference', '5-June conference'])(
+    'retains accepted named-date planning: %s',
+    (raw) => {
+      const result = project(createTaskInputState(raw));
+      expect(result.markdownBody).toBe('conference');
+      expect(result.initial.due).toEqual({ type: 'set', value: '2027-06-05' });
+      expect(result.initial.time).toBeUndefined();
+      expect(result.candidates).toContainEqual(
+        expect.objectContaining({ status: 'point', dateOrigin: 'named', date: '2027-06-05' }),
+      );
+    },
+  );
+});
