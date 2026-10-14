@@ -647,3 +647,32 @@ describe('atomic minute-plus-meridiem clocks', () => {
     },
   );
 });
+
+describe('extended clock atoms cannot supply an inner clock', () => {
+  it.each([
+    'Call at 10:00pm/3pm',
+    'Call at 2pm/path/3pm',
+    'Call ⏳ 2026-10-14 at 10:00pm/3pm',
+    'Call ⏳ 2026-10-14 at 2pm/path/3pm',
+  ])('preserves the full invalid atom without a separate natural date: %s', (raw) => {
+    const inspection = inspectTaskInput(raw);
+    const candidates = recognizer.recognize({
+      text: raw,
+      reference,
+      protectedRanges: inspection.protectedRanges,
+    });
+    expect(candidates.filter((candidate) => candidate.time !== undefined)).toEqual([]);
+    const result = project(createTaskInputState(raw));
+    expect(result.markdownBody).toBe(raw);
+    expect(result.initial.time).toBeUndefined();
+    expect(result.initial.due).toBeUndefined();
+  });
+
+  it('still recognizes an independent clock beyond a rejected atom', () => {
+    const raw = 'Call at 2pm/path/3pm; meet at 4pm';
+    const result = project(createTaskInputState(raw));
+    expect(result.markdownBody).toBe('Call at 2pm/path/3pm; meet');
+    expect(result.initial.time).toEqual({ type: 'set', value: '16:00' });
+    expect(result.initial.due).toEqual({ type: 'set', value: '2026-10-13' });
+  });
+});

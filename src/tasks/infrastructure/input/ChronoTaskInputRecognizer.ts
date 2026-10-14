@@ -256,6 +256,7 @@ function recognizeClocks(context: Recognition): TaskInputCandidate[] {
       from: match.index,
       to: end + (extension?.[0].length ?? 0),
     });
+    if (context.barriers.some((barrier) => inputRangesOverlap(range, barrier))) continue;
     const result = recognizedClock(context, range);
     if (result.status === 'point') clocks.push(result);
     else {

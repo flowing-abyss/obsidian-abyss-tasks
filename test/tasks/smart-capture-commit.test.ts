@@ -2153,3 +2153,67 @@ it.each([
   expect(root.planning.due).toBe(due);
   expect(root.recurrence).toBe(recurrence);
 });
+
+it.each(['10:00pm/3pm', '2pm/path/3pm'])(
+  'saves an unsupported full clock atom without rescuing its inner clock: %s',
+  async (clock) => {
+    const h = await smartHarness(
+      {},
+      {
+        inbox: false,
+        initial: {},
+        reference: {
+          ...reference,
+          epochMs: Date.parse('2026-10-13T09:00:00+07:00'),
+          localTime: localTime('09:00'),
+        },
+      },
+    );
+    const raw = `Call at ${clock}`;
+    h.controller.setDraft(raw);
+    expect(h.controller.snapshot().draft).toBe(raw);
+    expect(h.controller.snapshot().metadata?.preview).toMatchObject({
+      type: 'valid',
+      metadata: { markdownTitle: raw, planning: {} },
+    });
+    await h.controller.submit('enter');
+    const content = expectDefined(h.repositoryWrites[0]);
+    expect(content).toBe(`- [ ] ${raw} ➕ 2026-10-13`);
+    const root = h.readCanonicalRoot(content);
+    expect(root.markdownTitle).toBe(raw);
+    expect(root.planning.time).toBeUndefined();
+    expect(root.planning.due).toBeUndefined();
+  },
+);
+
+it.each(['authored', 'context'] as const)(
+  'retains an unsupported clock atom beside an explicit %s scheduled date',
+  async (source) => {
+    const h = await smartHarness(
+      {},
+      {
+        inbox: false,
+        initial:
+          source === 'context'
+            ? { scheduled: { type: 'set', value: localDate('2026-10-14') } }
+            : {},
+      },
+    );
+    const raw = source === 'authored' ? 'Call ⏳ 2026-10-14 at 10:00pm/3pm' : 'Call at 10:00pm/3pm';
+    h.controller.setDraft(raw);
+    expect(h.controller.snapshot().draft).toBe(raw);
+    expect(h.controller.snapshot().metadata?.preview).toMatchObject({
+      type: 'valid',
+      metadata: { markdownTitle: 'Call at 10:00pm/3pm', planning: { scheduled: '2026-10-14' } },
+    });
+    await h.controller.submit('enter');
+    const content = expectDefined(h.repositoryWrites[0]);
+    const root = h.readCanonicalRoot(content);
+    expect(root.markdownTitle).toBe('Call at 10:00pm/3pm');
+    expect(root.planning.scheduled).toBe('2026-10-14');
+    expect(root.planning.time).toBeUndefined();
+    expect(root.planning.due).toBeUndefined();
+    expect(content).toContain('10:00pm/3pm');
+    expect(content).not.toContain('⏰');
+  },
+);
