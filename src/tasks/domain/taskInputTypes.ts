@@ -10,10 +10,11 @@ export interface TaskInputRange {
   readonly to: number;
 }
 export type TaskInputPlanningRole = 'due' | 'scheduled' | 'start' | 'time';
+export type TaskInputMetadataRole = TaskInputPlanningRole | 'recurrence';
 export interface TaskInputCarrier {
-  readonly role: TaskInputPlanningRole;
+  readonly role: TaskInputMetadataRole;
   readonly range: TaskInputRange;
-  readonly value?: LocalDate | LocalTime;
+  readonly value?: string;
 }
 export interface TaskInputInspection {
   readonly tags: ReadonlyArray<{ readonly value: string; readonly range: TaskInputRange }>;
@@ -21,6 +22,7 @@ export interface TaskInputInspection {
   readonly protectedRanges: readonly TaskInputRange[];
 }
 interface TaskCreateContextMetadata {
+  readonly recurrence?: string;
   readonly tags: readonly string[];
   readonly planning: Pick<TaskPlanning, 'due' | 'scheduled' | 'start' | 'time' | 'duration'>;
   readonly priority: TaskPriority;
@@ -36,6 +38,7 @@ export type TaskCreatePreview =
   | {
       readonly type: 'valid';
       readonly metadata: TaskCreatePreviewMetadata;
+      readonly sourceRecurrence?: string;
       readonly sourcePlanning: Pick<TaskPlanning, 'due' | 'scheduled' | 'start' | 'time'>;
       readonly inbox?: TaskCreateInboxPreview;
     }
@@ -46,6 +49,7 @@ export type TaskCreateContextPreview =
       readonly type: 'ready';
       readonly referenceDate: LocalDate;
       readonly metadata: TaskCreateContextMetadata;
+      readonly sourceRecurrence?: string;
       readonly sourcePlanning: Pick<TaskPlanning, 'due' | 'scheduled' | 'start' | 'time'>;
       readonly inbox?: TaskCreateInboxPreview;
     }

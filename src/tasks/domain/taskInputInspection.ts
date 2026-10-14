@@ -1,23 +1,32 @@
 import type {
   TaskInputCarrier,
   TaskInputInspection,
-  TaskInputPlanningRole,
+  TaskInputMetadataRole,
   TaskInputRange,
 } from './taskInputTypes';
 import { parseTaskLineSourceModel, taskLineAtomicRanges } from './taskLineSourceModel';
 import { localDate, localTime } from './validation';
 
+import { parseRecurrenceRule } from './recurrence';
+
 const PREFIX = '- [ ] ';
 
-function planningRole(kind: string): kind is TaskInputPlanningRole {
-  return kind === 'due' || kind === 'scheduled' || kind === 'start' || kind === 'time';
+function metadataRole(kind: string): kind is TaskInputMetadataRole {
+  return (
+    kind === 'due' ||
+    kind === 'scheduled' ||
+    kind === 'start' ||
+    kind === 'time' ||
+    kind === 'recurrence'
+  );
 }
 
 function carrierValue(
-  role: TaskInputPlanningRole,
+  role: TaskInputMetadataRole,
   value: string | number | undefined,
 ): TaskInputCarrier['value'] {
   if (typeof value !== 'string') return undefined;
+  if (role === 'recurrence') return parseRecurrenceRule(value).type === 'valid' ? value : undefined;
   try {
     return role === 'time' ? localTime(value) : localDate(value);
   } catch {
@@ -43,7 +52,7 @@ export function inspectTaskInput(raw: string): TaskInputInspection {
   const carriers: TaskInputCarrier[] = [];
   for (const carrier of model.carriers) {
     const role = carrier.kind === 'malformed-known' ? carrier.malformedKind : carrier.kind;
-    if (role === undefined || !planningRole(role)) continue;
+    if (role === undefined || !metadataRole(role)) continue;
     const value = carrierValue(role, carrier.value);
     carriers.push({ role, range: range(carrier), ...(value === undefined ? {} : { value }) });
   }

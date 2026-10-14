@@ -189,3 +189,5 @@ export type {
   TaskCreatePreview,
   TaskInputReference,
 } from './domain/taskInputTypes';
+
+export type { TaskInputRecurrenceCandidate } from './domain/recurrenceInputTypes';

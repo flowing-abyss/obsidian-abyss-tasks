@@ -63,7 +63,11 @@ describe('raw task input inspection', () => {
       'Call #work #work 📅 2026-10-15 📅 2026-10-16 ➕ 2026-10-13 🔼 🔁 every day ⏱️ 1h 🆔 abc ⛔ def ^block';
     const inspection = inspectTaskInput(raw);
     expect(inspection.tags.map(({ value }) => value)).toEqual(['#work', '#work']);
-    expect(inspection.carriers.map(({ value }) => value)).toEqual(['2026-10-15', '2026-10-16']);
+    expect(inspection.carriers.map(({ role, value }) => ({ role, value }))).toEqual([
+      { role: 'due', value: '2026-10-15' },
+      { role: 'due', value: '2026-10-16' },
+      { role: 'recurrence', value: 'every day' },
+    ]);
     expect(inspection.protectedRanges.map(({ from, to }) => raw.slice(from, to))).toEqual([
       '#work',
       '#work',
@@ -79,3 +83,15 @@ describe('raw task input inspection', () => {
     ]);
   });
 });
+
+it.each(['every day except Monday', 'каждый день', 'nonsense'])(
+  'protects an invalid canonical recurrence without granting metadata ownership: %s',
+  (rule) => {
+    const raw = `Call 🔁 ${rule}`;
+    const inspection = inspectTaskInput(raw);
+    expect(inspection.carriers).toEqual([
+      { role: 'recurrence', range: { from: 5, to: raw.length } },
+    ]);
+    expect(inspection.protectedRanges).toContainEqual({ from: 5, to: raw.length });
+  },
+);

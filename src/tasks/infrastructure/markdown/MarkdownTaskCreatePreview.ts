@@ -35,7 +35,12 @@ function sourcePlanning(
 function metadata(
   parsed: ParsedTaskLine,
 ): Extract<TaskCreateContextProjection, { type: 'ready' }>['metadata'] {
-  return { tags: parsed.tags, planning: planning(parsed), priority: parsed.priority };
+  return {
+    tags: parsed.tags,
+    planning: planning(parsed),
+    priority: parsed.priority,
+    ...(parsed.recurrence === undefined ? {} : { recurrence: parsed.recurrence }),
+  };
 }
 
 /** Runs the canonical create pipeline in memory; destination acquisition belongs to execution. */
@@ -57,6 +62,7 @@ export class MarkdownTaskCreatePreview implements TaskCreatePreviewPort {
     return {
       type: 'valid',
       sourcePlanning: sourcePlanning(raw),
+      ...(raw.recurrence === undefined ? {} : { sourceRecurrence: raw.recurrence }),
       metadata: {
         ...metadata(root),
         markdownTitle: root.markdownTitle,
@@ -71,6 +77,11 @@ export class MarkdownTaskCreatePreview implements TaskCreatePreviewPort {
     if (block.type === 'invalid') return block;
     const root = this.codec.parseLine(block.content, source);
     if (raw === null || root === null) throw new Error('Canonical create context has no root');
-    return { type: 'ready', sourcePlanning: sourcePlanning(raw), metadata: metadata(root) };
+    return {
+      type: 'ready',
+      sourcePlanning: sourcePlanning(raw),
+      ...(raw.recurrence === undefined ? {} : { sourceRecurrence: raw.recurrence }),
+      metadata: metadata(root),
+    };
   }
 }

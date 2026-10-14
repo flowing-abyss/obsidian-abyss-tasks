@@ -10,6 +10,7 @@ import {
   inputRangesOverlap,
   inputTextBarriers,
   maskInputRanges,
+  validInputRange,
 } from '../../domain/taskInputGuards';
 import { inspectTaskInput } from '../../domain/taskInputInspection';
 import type {
@@ -70,6 +71,7 @@ interface Recognition {
   readonly reference: TaskInputReference;
   readonly barriers: TaskInputRange[];
   readonly excluded: TaskInputCandidate[];
+  readonly pairingTransparent: readonly TaskInputRange[];
 }
 function parseLocales(
   text: string,
@@ -465,20 +467,29 @@ function mergePair(
   const spans = [...day.ranges, ...clock.ranges].sort((a, b) => a.from - b.from),
     left = spans[0],
     right = spans[spans.length - 1];
+  if (left === undefined || right === undefined || clock.time === undefined) return undefined;
+  const tags = inspectTaskInput(context.text).tags.map((tag) => tag.range);
+  const gap = maskInputRanges(context.text, [...tags, ...context.pairingTransparent]).slice(
+    left.to,
+    right.from,
+  );
   if (
-    left === undefined ||
-    right === undefined ||
-    clock.time === undefined ||
-    /[.!?;\n]/u.test(context.text.slice(left.to, right.from))
+    /[.!?;\n]/u.test(
+      maskInputRanges(context.text, context.pairingTransparent).slice(left.to, right.from),
+    )
   )
     return undefined;
-  const tags = inspectTaskInput(context.text).tags.map((tag) => tag.range);
-  const gap = maskInputRanges(context.text, tags).slice(left.to, right.from);
   if (/(?:^|[^\p{L}\p{N}_])(?:or|или)(?=$|[^\p{L}\p{N}_])/iu.test(gap)) return undefined;
   const isTag = (range: TaskInputRange): boolean =>
     tags.some((tag) => tag.from === range.from && tag.to === range.to);
   if (
-    context.barriers.some((range) => !isTag(range) && range.from < right.from && range.to > left.to)
+    context.barriers.some(
+      (range) =>
+        !isTag(range) &&
+        !context.pairingTransparent.some((other) => sameRange(range, other)) &&
+        range.from < right.from &&
+        range.to > left.to,
+    )
   )
     return undefined;
   return { ...day, time: clock.time, ranges: spans, timeRanges: clock.timeRanges };
@@ -499,6 +510,21 @@ function mergedCandidates(
     ...context.excluded,
   ];
 }
+function sameRange(a: TaskInputRange, b: TaskInputRange): boolean {
+  return a.from === b.from && a.to === b.to;
+}
+function pairingTransparent(request: TaskInputRecognizerRequest): readonly TaskInputRange[] {
+  const hard = inputTextBarriers(request.text, inspectTaskInput(request.text).protectedRanges);
+  return (request.pairingTransparentRanges ?? []).filter(
+    (range) =>
+      validInputRange(request.text, range) &&
+      request.protectedRanges.some((other) => sameRange(range, other)) &&
+      !hard.some((other) => inputRangesOverlap(range, other)) &&
+      !request.protectedRanges.some(
+        (other) => !sameRange(range, other) && inputRangesOverlap(range, other),
+      ),
+  );
+}
 /** Offline locale adapter. Library objects never cross the application port. */
 export class ChronoTaskInputRecognizer implements TaskInputRecognizer {
   recognize(request: TaskInputRecognizerRequest): readonly TaskInputCandidate[] {
@@ -507,6 +533,7 @@ export class ChronoTaskInputRecognizer implements TaskInputRecognizer {
       reference: request.reference,
       barriers: inputTextBarriers(request.text, request.protectedRanges),
       excluded: [],
+      pairingTransparent: pairingTransparent(request),
     };
     excludeExpressions(context);
     excludeRanges(context);

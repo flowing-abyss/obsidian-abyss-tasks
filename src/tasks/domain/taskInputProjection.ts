@@ -1,7 +1,9 @@
 import { sameTag } from '../../markdown/tagSyntax';
 import { shiftLocalDate } from './localDateMath';
+import type { TaskInputRecurrenceCandidate } from './recurrenceInputTypes';
 import { buildInputBody, type InputBody } from './taskInputBody';
 import { currentInputBinding, inputRangesOverlap, validInputRange } from './taskInputGuards';
+import { projectInputRecurrence } from './taskInputRecurrence';
 import {
   inputBinding,
   type TaskInputBinding,
@@ -20,6 +22,8 @@ import { parseTaskLineSourceModel } from './taskLineSourceModel';
 import type { TaskPlanning } from './types';
 
 export interface TaskInputProjection {
+  readonly recurrences: readonly TaskInputRecurrenceCandidate[];
+  readonly recurrenceDateInferred: boolean;
   readonly revision: number;
   readonly markdownBody: string;
   /** A lowercase word following a fully consumed, initially uppercase natural prefix. */
@@ -34,6 +38,8 @@ export interface TaskInputProjection {
   readonly hasAuthoredTitle: boolean;
 }
 interface ProjectionInput {
+  readonly recurrences?: readonly TaskInputRecurrenceCandidate[];
+  readonly sourceRecurrence?: string;
   readonly state: TaskInputState;
   readonly reference: TaskInputReference;
   readonly candidates: readonly TaskInputCandidate[];
@@ -69,6 +75,7 @@ export function taskInputPreflightInitial(
   delete context.start;
   delete context.time;
   delete context.duration;
+  delete context.recurrence;
   if (state.removedTags.length === 0) return context;
   const tags = context.tags;
   const additions = tags?.add?.filter(
@@ -123,7 +130,7 @@ function explicitPlanning(
   for (const role of ['due', 'scheduled', 'start', 'time'] as const)
     if (input.inspection.carriers.some((carrier) => carrier.role === role)) delete result[role];
   for (const carrier of input.inspection.carriers) {
-    if (carrier.value === undefined) continue;
+    if (carrier.value === undefined || carrier.role === 'recurrence') continue;
     const removed = suppressed.some(
       (binding) =>
         binding.role === carrier.role &&
@@ -147,6 +154,7 @@ function hasActiveExplicitDay(
   const raw = input.inspection.carriers.some(
     (carrier) =>
       carrier.role !== 'time' &&
+      carrier.role !== 'recurrence' &&
       !suppressed.some(
         (binding) =>
           binding.role === carrier.role &&
@@ -267,10 +275,17 @@ function assignDay(decision: Decision, role: TaskInputDateRole): void {
   if (role === 'due' && useNaturalDay(decision)) return;
   fallback(decision, role);
 }
+function hasRecurrenceContextDay(initial: TaskInputInitial): boolean {
+  return (
+    initial.recurrence?.type === 'set' &&
+    (initial.start?.type === 'set' || initial.scheduled?.type === 'set')
+  );
+}
 function hasTimeDay(decision: Decision): boolean {
   const { state } = decision.input;
   return (
     decision.initial.due?.type === 'set' ||
+    hasRecurrenceContextDay(decision.initial) ||
     decision.days.length > 0 ||
     decision.hasExplicitDay ||
     state.manual.scheduled !== undefined ||
@@ -298,7 +313,7 @@ function clockFullyRepresented(decision: Decision, clock: TaskInputCandidate): b
       ),
   );
 }
-function assignTime(decision: Decision): void {
+function assignTime(decision: Decision): TaskInputCandidate | undefined {
   const explicitTime = decision.explicit.time;
   if (explicitTime !== undefined && explicitRoleActive(decision, 'time')) {
     decision.initial = {
@@ -313,6 +328,9 @@ function assignTime(decision: Decision): void {
     return;
   }
   decision.initial = { ...decision.initial, time: { type: 'set', value: clock.time } };
+  return clock;
+}
+function bindNaturalTime(decision: Decision, clock: TaskInputCandidate): void {
   inferTimeDay(decision, clock);
   const binding = inputBinding(decision.input.state, clock, 'time');
   decision.bindings.push(binding);
@@ -441,10 +459,36 @@ function hasAuthoredTitle(raw: string): boolean {
   const title = parseTaskLineSourceModel(`- [ ] ${raw}`)?.markdownTitle ?? '';
   return /[\p{L}\p{N}\p{Extended_Pictographic}]/u.test(title);
 }
+function assignRecurrence(decision: Decision): ReturnType<typeof projectInputRecurrence> {
+  const input = decision.input;
+  const recurrence = projectInputRecurrence({
+    state: input.state,
+    inspection: input.inspection,
+    suppressed: decision.suppressed,
+    recurrences: input.mode === 'context' ? [] : (input.recurrences ?? []),
+    candidates: decision.candidates,
+    ...(decision.initial.time?.type === 'set' ? { time: decision.initial.time.value } : {}),
+    ambiguity: decision.ambiguity,
+    initial: decision.initial,
+    ...(input.contextInitial === undefined ? {} : { contextInitial: input.contextInitial }),
+    ...(input.sourceRecurrence === undefined ? {} : { sourceRecurrence: input.sourceRecurrence }),
+    ...(input.mode === 'context' ? {} : { reference: input.reference }),
+  });
+  decision.initial = recurrence.initial;
+  decision.bindings.push(...recurrence.bindings);
+  decision.consumed.push(...recurrence.bindings);
+  if (recurrence.recurrenceDateInferred)
+    decision.bindings.push(
+      ...recurrence.bindings.map((binding) => ({ ...binding, role: 'due' as const })),
+    );
+  return recurrence;
+}
 function projectInput(input: ProjectionSource): TaskInputProjection {
   const decision = decisionFor(input);
   for (const role of ['due', 'scheduled', 'start'] as const) assignDay(decision, role);
-  assignTime(decision);
+  const clock = assignTime(decision);
+  const recurrence = assignRecurrence(decision);
+  if (clock !== undefined) bindNaturalTime(decision, clock);
   if (input.contextInitial?.duration !== undefined)
     decision.initial = { ...decision.initial, duration: input.contextInitial.duration };
   const body = projectedBody(decision);
@@ -454,6 +498,8 @@ function projectInput(input: ProjectionSource): TaskInputProjection {
     initial: decision.initial,
     bindings: decision.bindings,
     candidates: decision.candidates,
+    recurrences: recurrence.recurrences,
+    recurrenceDateInferred: recurrence.recurrenceDateInferred,
     ambiguity: decision.ambiguity,
     hasAuthoredTitle: hasAuthoredTitle(body.markdownBody),
   };

@@ -81,6 +81,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
     'src/ui/taskCapture/TaskCaptureController.ts',
     'src/ui/taskCapture/CaptureMetadataRow.ts',
   ],
+  TaskInputRecurrenceCandidate: ['src/ui/taskCapture/TaskCaptureController.ts'],
   TaskInputReference: ['src/ui/taskCapture/TaskCaptureController.ts'],
   inspectTaskInput: ['src/ui/taskCapture/TaskCaptureController.ts'],
   projectTaskInput: ['src/ui/taskCapture/TaskCaptureController.ts'],

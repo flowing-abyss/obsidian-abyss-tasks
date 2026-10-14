@@ -3,107 +3,21 @@ import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
 import { toStatusRules } from '../../src/settings/statusCatalogAdapter';
 import type { TaskCreateRequest } from '../../src/tasks/application/TaskApplicationApi';
-import { TaskApplicationService } from '../../src/tasks/application/TaskApplicationService';
-import type { TaskBehaviorSettings } from '../../src/tasks/application/TaskBehaviorSettings';
+import type { TaskApplicationService } from '../../src/tasks/application/TaskApplicationService';
 import type { TaskCreatePreviewPort } from '../../src/tasks/application/TaskCreatePreviewPort';
 import { StatusCatalog } from '../../src/tasks/domain/StatusCatalog';
 import { localDate } from '../../src/tasks/domain/validation';
-import { TaskIndex } from '../../src/tasks/infrastructure/TaskIndex';
 import { MarkdownTaskCreatePreview } from '../../src/tasks/infrastructure/markdown/MarkdownTaskCreatePreview';
 import { TaskMarkdownCodec } from '../../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
-import {
-  createAppWithFiles,
-  deferred,
-  expectDefined,
-  taskQueryApi,
-  useRealMoment,
-} from '../helpers';
-import { InMemoryTaskRepository } from '../support/InMemoryTaskRepository';
+import { deferred, expectDefined, useRealMoment } from '../helpers';
 
 useRealMoment();
 
-async function harness(
-  options: {
-    prefix?: string;
-    removeInbox?: boolean;
-    unavailable?: boolean;
-    noPort?: boolean;
-    previewPort?: TaskCreatePreviewPort;
-  } = {},
-) {
-  const catalog = new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses));
-  const codec = new TaskMarkdownCodec(catalog);
-  const app = await createAppWithFiles({ 'tasks.md': '' });
-  const index = new TaskIndex(app, { statusCatalog: catalog });
-  const repository = new InMemoryTaskRepository({
-    files: { 'tasks.md': '' },
-    codec,
-    snapshotsFromContent: (path, content) => index.snapshotsFromContent(path, content),
-  });
-  const repositoryWrites: string[] = [];
-  const create = repository.create.bind(repository);
-  vi.spyOn(repository, 'create').mockImplementation(async (destination, draft) => {
-    const result = await create(destination, draft);
-    if (result.type === 'committed') repositoryWrites.push(repository.content('tasks.md') ?? '');
-    return result;
-  });
-  const behavior: TaskBehaviorSettings = {
-    taskPrefix: options.prefix ?? '',
-    applyTaskPrefixToSubtasks: false,
-    inbox: { mode: 'tag', tag: '#task/inbox', removeTagOnAssign: options.removeInbox ?? true },
-    taskLifecycle: { addCreatedDate: true, addCompletionDate: true },
-    recurrence: { newOccurrencePlacement: 'after', removeScheduledDate: false },
-  };
-  const destination = { filePath: 'tasks.md', insertion: { type: 'append' as const } };
-  const prepare = vi.fn(async () => ({ type: 'resolved' as const, destination }));
-  const validate = vi.fn(async () => true);
-  const plan = vi.fn(async () =>
-    options.unavailable === true ? undefined : { destination, prepare, validate },
-  );
-  const clock = vi.fn(() => localDate('2026-10-13'));
-  const service = new TaskApplicationService(
-    taskQueryApi(),
-    repository,
-    catalog,
-    { today: clock },
-    {
-      planConfiguredDefault: plan,
-      planExplicit: async () => ({ destination, prepare, validate }),
-      resolveConfiguredDefault: prepare,
-      prepare,
-    },
-    () => behavior,
-    undefined,
-    undefined,
-    options.noPort === true
-      ? undefined
-      : (options.previewPort ?? new MarkdownTaskCreatePreview(codec)),
-  );
-  const readCanonicalRoot = (content: string) =>
-    expectDefined(codec.parseLine(content.split('\n')[0] ?? '', { filePath: 'tasks.md', line: 0 }));
-  return {
-    app,
-    service,
-    behavior,
-    repository,
-    repositoryWrites,
-    readCanonicalRoot,
-    prepare,
-    validate,
-    plan,
-    clock,
-  };
-}
-
 import { localTime } from '../../src/tasks/domain/validation';
-import { ChronoTaskInputRecognizer } from '../../src/tasks/infrastructure/input/ChronoTaskInputRecognizer';
-import {
-  CaptureTargetResolver,
-  type CaptureContext,
-  type CaptureTarget,
-} from '../../src/ui/taskCapture/CaptureTargetResolver';
+import { type CaptureContext } from '../../src/ui/taskCapture/CaptureTargetResolver';
 import { TaskCaptureController } from '../../src/ui/taskCapture/TaskCaptureController';
 import { describeTaskCreationResult } from '../../src/ui/taskCommandResult';
+import { captureHarness as harness, smartHarness } from '../support/taskInputHarness';
 
 const reference = {
   epochMs: Date.parse('2026-10-13T12:00:00+07:00'),
@@ -112,79 +26,6 @@ const reference = {
   second: 0,
   offsetMinutes: 420,
 };
-interface SmartCaptureInput {
-  readonly inbox?: boolean;
-  readonly initial?: TaskCreateRequest['initial'];
-  readonly markdownPrefix?: string;
-  readonly resolveContext?: CaptureContext;
-  readonly previewFailureCallback?: boolean;
-}
-async function smartTarget(
-  real: Awaited<ReturnType<typeof harness>>,
-  input: SmartCaptureInput,
-): Promise<CaptureTarget> {
-  if (input.resolveContext !== undefined)
-    return await new CaptureTargetResolver(
-      real.service,
-      { ...DEFAULT_SETTINGS, inbox: real.behavior.inbox },
-      () => reference.localDate,
-    ).resolve(input.resolveContext);
-  return {
-    label: 'Inbox',
-    context: { type: 'list', selection: 'inbox' },
-    session: await real.service.planCreate(
-      { type: 'configured-default' },
-      input.inbox === false ? undefined : { intent: 'inbox' },
-    ),
-    markdownPrefix: input.markdownPrefix ?? '',
-    markdownSuffixes: [],
-    initial: input.initial ?? { tags: { add: ['#task/inbox'] } },
-  };
-}
-async function smartHarness(
-  options: Parameters<typeof harness>[0] = {},
-  input: SmartCaptureInput = {},
-) {
-  const real = await harness(options);
-  const target = await smartTarget(real, input);
-  const session = target.session;
-  const recognizer = new ChronoTaskInputRecognizer();
-  const recognize = vi.spyOn(recognizer, 'recognize');
-  const readReference = vi.fn(() => reference);
-  const enabled = vi.fn(() => true);
-  const onRecognitionFailure = vi.fn();
-  const onPreviewFailure = vi.fn();
-  const preview = vi.spyOn(session, 'preview');
-  const execute = vi.spyOn(session, 'execute');
-  const onResult = vi.fn();
-  const describeResult = vi.fn(describeTaskCreationResult);
-  const controller = new TaskCaptureController({
-    target,
-    smart: {
-      recognizer,
-      readReference,
-      enabled,
-      onRecognitionFailure,
-      ...(input.previewFailureCallback === false ? {} : { onPreviewFailure }),
-    },
-    describe: describeResult,
-    onResult,
-    onRequestClose: () => {},
-  });
-  return {
-    ...real,
-    controller,
-    recognize,
-    readReference,
-    enabled,
-    preview,
-    execute,
-    onRecognitionFailure,
-    onPreviewFailure,
-    onResult,
-    describeResult,
-  };
-}
 describe('smart Q canonical commit', () => {
   it.each([true, false])(
     'previews and writes the user example with remove Inbox %s',

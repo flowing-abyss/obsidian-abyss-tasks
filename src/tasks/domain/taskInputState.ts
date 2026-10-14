@@ -1,10 +1,12 @@
 import { sameTag } from '../../markdown/tagSyntax';
+import type { TaskInputRecurrenceCandidate } from './recurrenceInputTypes';
 import { currentInputBinding, inputRangesOverlap } from './taskInputGuards';
 import { inspectTaskInput } from './taskInputInspection';
 import type { TaskInputProjection } from './taskInputProjection';
 import type {
   TaskInputCandidate,
   TaskInputInspection,
+  TaskInputMetadataRole,
   TaskInputPlanningRole,
   TaskInputRange,
 } from './taskInputTypes';
@@ -12,7 +14,7 @@ import type { LocalDate } from './types';
 export interface TaskInputBinding {
   readonly ranges: readonly TaskInputRange[];
   readonly slices: readonly string[];
-  readonly role: TaskInputPlanningRole;
+  readonly role: TaskInputMetadataRole;
   readonly revision: number;
   readonly dateRanges: readonly TaskInputRange[];
   readonly timeRanges: readonly TaskInputRange[];
@@ -33,13 +35,13 @@ export interface TaskInputState {
   readonly raw: string;
   readonly revision: number;
   readonly suppressed: readonly TaskInputBinding[];
-  readonly clearedFallbacks: readonly TaskInputPlanningRole[];
+  readonly clearedFallbacks: readonly TaskInputMetadataRole[];
   readonly manual: Readonly<Partial<Record<TaskInputDateRole, TaskInputManualDate>>>;
   readonly removedTags: readonly string[];
   readonly suppressedTags: readonly TaskInputTagBinding[];
   readonly restore?: {
     readonly bindings: readonly TaskInputBinding[];
-    readonly fallbacks: readonly TaskInputPlanningRole[];
+    readonly fallbacks: readonly TaskInputMetadataRole[];
     readonly tags: readonly TaskInputTagBinding[];
     readonly removedTags: readonly string[];
     readonly manual: TaskInputState['manual'];
@@ -47,7 +49,7 @@ export interface TaskInputState {
   };
 }
 export type TaskInputAction =
-  | { readonly type: 'dismiss'; readonly role: TaskInputPlanningRole }
+  | { readonly type: 'dismiss'; readonly role: TaskInputMetadataRole }
   | { readonly type: 'dismiss-ambiguity' }
   | {
       readonly type: 'select-date';
@@ -80,6 +82,19 @@ export function inputBinding(
     revision: state.revision,
     dateRanges: candidate.dateRanges,
     timeRanges: candidate.timeRanges,
+  };
+}
+export function recurrenceInputBinding(
+  state: TaskInputState,
+  candidate: TaskInputRecurrenceCandidate,
+): TaskInputBinding {
+  return {
+    role: 'recurrence',
+    ranges: candidate.ranges,
+    slices: candidate.ranges.map((range) => state.raw.slice(range.from, range.to)),
+    revision: state.revision,
+    dateRanges: [],
+    timeRanges: [],
   };
 }
 function lexicalBoundary(raw: string, range: TaskInputRange): boolean {
@@ -286,6 +301,14 @@ function rebaseRestore(edit: InputEdit): TaskInputState['restore'] {
   const roles = [
     ...restore.fallbacks,
     ...restore.bindings.map((binding) => binding.role),
+    ...restore.bindings
+      .filter(
+        (binding) =>
+          binding.role === 'due' &&
+          binding.dateRanges.length === 0 &&
+          binding.timeRanges.length === 0,
+      )
+      .map(() => 'recurrence'),
     ...Object.keys(restore.manual),
   ];
   const before = inspectTaskInput(edit.old.raw).carriers;
@@ -421,13 +444,13 @@ function chosenBinding(
   );
   return suppressed ? undefined : inputBinding(state, chosen, action.role);
 }
-function afterRoleAction(state: TaskInputState, role: TaskInputPlanningRole): TaskInputState {
+function afterRoleAction(state: TaskInputState, role: TaskInputMetadataRole): TaskInputState {
   const restore = state.restore;
   if (restore === undefined) return state;
   const affected =
     restore.fallbacks.includes(role) ||
     restore.bindings.some((binding) => binding.role === role) ||
-    (role !== 'time' && restore.manual[role] !== undefined);
+    (role !== 'time' && role !== 'recurrence' && restore.manual[role] !== undefined);
   return affected ? withoutRestore(state) : state;
 }
 function selectDate(
@@ -448,14 +471,14 @@ function selectDate(
 }
 function dismissedBindings(
   state: TaskInputState,
-  role: TaskInputPlanningRole,
+  role: TaskInputMetadataRole,
   projection: TaskInputProjection,
   inspection: TaskInputInspection,
 ): TaskInputBinding[] {
   const roles = role === 'due' ? ['due', 'time'] : [role];
   const candidates = projection.candidates
     .filter((candidate) => role === 'due' || (role === 'time' && candidate.time !== undefined))
-    .map((candidate) => inputBinding(state, candidate, role));
+    .map((candidate) => inputBinding(state, candidate, role === 'time' ? 'time' : 'due'));
   const carriers = inspection.carriers
     .filter((carrier) => carrier.role === role && carrier.value !== undefined)
     .map((carrier) => ({
@@ -463,22 +486,25 @@ function dismissedBindings(
       slices: [state.raw.slice(carrier.range.from, carrier.range.to)],
       role,
       revision: state.revision,
-      dateRanges: role === 'time' ? [] : [carrier.range],
+      dateRanges: role === 'time' || role === 'recurrence' ? [] : [carrier.range],
       timeRanges: role === 'time' ? [carrier.range] : [],
     }));
   return [
     ...candidates,
+    ...(role === 'recurrence'
+      ? projection.recurrences.map((candidate) => recurrenceInputBinding(state, candidate))
+      : []),
     ...projection.bindings.filter((binding) => roles.includes(binding.role)),
     ...carriers,
   ];
 }
 function dismissRole(
   state: TaskInputState,
-  role: TaskInputPlanningRole,
+  role: TaskInputMetadataRole,
   projection: TaskInputProjection,
   inspection: TaskInputInspection,
 ): TaskInputState {
-  const roles: TaskInputPlanningRole[] = role === 'due' ? ['due', 'time'] : [role];
+  const roles: TaskInputMetadataRole[] = role === 'due' ? ['due', 'time'] : [role];
   const bindings = dismissedBindings(state, role, projection, inspection).filter(
     (binding, index, all) => {
       const same = (other: TaskInputBinding): boolean =>
@@ -488,9 +514,11 @@ function dismissRole(
     },
   );
   const removedManual =
-    role === 'time' || state.manual[role] === undefined ? {} : { [role]: state.manual[role] };
+    role === 'time' || role === 'recurrence' || state.manual[role] === undefined
+      ? {}
+      : { [role]: state.manual[role] };
   const manual = { ...state.manual };
-  if (role !== 'time') delete manual[role];
+  if (role !== 'time' && role !== 'recurrence') delete manual[role];
   const fallbacks = roles.filter((affected) => !state.clearedFallbacks.includes(affected));
   if (bindings.length === 0 && fallbacks.length === 0 && Object.keys(removedManual).length === 0)
     return state;

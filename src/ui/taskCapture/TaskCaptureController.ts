@@ -13,6 +13,7 @@ import {
   type TaskCreateRequest,
   type TaskInputAction,
   type TaskInputProjection,
+  type TaskInputRecurrenceCandidate,
   type TaskInputReference,
   type TaskInputServices,
   type TaskInputState,
@@ -405,11 +406,13 @@ export class TaskCaptureController {
   private contextProjection_abyssPrivate(
     inspection: ReturnType<typeof inspectTaskInput>,
     sourcePlanning: Extract<TaskCreateContextPreview, { type: 'ready' }>['sourcePlanning'],
+    sourceRecurrence?: string,
   ): TaskInputProjection {
     return projectTaskInputContext({
       state: this.state_abyssPrivate,
       inspection,
       sourcePlanning,
+      ...(sourceRecurrence === undefined ? {} : { sourceRecurrence }),
       ...(this.target.initial === undefined ? {} : { contextInitial: this.target.initial }),
     });
   }
@@ -437,7 +440,11 @@ export class TaskCaptureController {
     inspection: ReturnType<typeof inspectTaskInput>,
     source: Extract<TaskCreateContextPreview, { type: 'ready' }>,
   ): ContextRead {
-    const projection = this.contextProjection_abyssPrivate(inspection, source.sourcePlanning);
+    const projection = this.contextProjection_abyssPrivate(
+      inspection,
+      source.sourcePlanning,
+      source.sourceRecurrence,
+    );
     const context: TaskCreateContextPreview = this.target.session.previewContext?.(
       this.request_abyssPrivate(projection),
     ) ?? { type: 'unavailable', cause: 'preview-capability' };
@@ -508,7 +515,10 @@ export class TaskCaptureController {
     this.recognitionPending_abyssPrivate = false;
     const state = this.state_abyssPrivate,
       inspection = inspectTaskInput(state.raw);
-    const { candidates, recognitionError } = this.recognize_abyssPrivate(smart, reference);
+    const { candidates, recurrences, recognitionError } = this.recognize_abyssPrivate(
+      smart,
+      reference,
+    );
     let preview: TaskCreatePreview;
     let projection: TaskInputProjection | undefined;
     try {
@@ -519,8 +529,12 @@ export class TaskCaptureController {
           state,
           reference,
           candidates,
+          recurrences,
           inspection,
           sourcePlanning: source.sourcePlanning,
+          ...(source.sourceRecurrence === undefined
+            ? {}
+            : { sourceRecurrence: source.sourceRecurrence }),
           ...(this.target.initial !== undefined && { contextInitial: this.target.initial }),
         });
         preview = this.target.session.preview(this.request_abyssPrivate(projection));
@@ -558,20 +572,30 @@ export class TaskCaptureController {
     reference: TaskInputReference,
   ): {
     readonly candidates: ReturnType<CaptureSmartOptions['recognizer']['recognize']>;
+    readonly recurrences: readonly TaskInputRecurrenceCandidate[];
     readonly recognitionError?: string;
   } {
     const state = this.state_abyssPrivate,
       inspection = inspectTaskInput(state.raw);
     let recognitionError: string | undefined;
     let candidates: ReturnType<CaptureSmartOptions['recognizer']['recognize']> = [];
+    let recurrences: readonly TaskInputRecurrenceCandidate[] = [];
     if (this.enabled_abyssPrivate) {
       try {
+        const recurring = smart.recurrence?.extract({
+          text: state.raw,
+          protectedRanges: inspection.protectedRanges,
+        }) ?? { candidates: [], protectedRanges: [] };
         candidates = smart.recognizer.recognize({
           text: state.raw,
           reference,
-          protectedRanges: inspection.protectedRanges,
+          protectedRanges: [...inspection.protectedRanges, ...recurring.protectedRanges],
+          pairingTransparentRanges: recurring.candidates.flatMap((candidate) => candidate.ranges),
         });
+        recurrences = recurring.candidates;
       } catch {
+        candidates = [];
+        recurrences = [];
         recognitionError =
           'Could not recognize dates and times. Explicit choices are still available.';
         if (this.recognitionFailureRevision_abyssPrivate !== state.revision) {
@@ -580,7 +604,7 @@ export class TaskCaptureController {
         }
       }
     }
-    return { candidates, ...(recognitionError !== undefined && { recognitionError }) };
+    return { candidates, recurrences, ...(recognitionError !== undefined && { recognitionError }) };
   }
 
   private request_abyssPrivate(projection: TaskInputProjection): TaskCreateRequest {

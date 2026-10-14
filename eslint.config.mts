@@ -493,6 +493,7 @@ export default defineConfig(
       'src/tasks/infrastructure/input/recurrence/russianRecurrenceInput.ts',
       'src/tasks/domain/taskInputState.ts',
       'src/tasks/domain/taskInputProjection.ts',
+      'src/tasks/domain/taskInputRecurrence.ts',
       'src/tasks/domain/taskInputBody.ts',
       'src/tasks/application/TaskInputRecognizer.ts',
       'src/tasks/application/TaskCreatePreviewPort.ts',
