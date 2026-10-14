@@ -21,7 +21,7 @@ import type { LocalDate } from '../../domain/types';
 import { localDate, localTime } from '../../domain/validation';
 
 const CLOCK = /\d{1,2}:\d{2}(?::\d{2})?|\d{1,2}\s?[ap]m/giu;
-const NUMERIC_OFFSET = /[+-]\d{2}:?\d{2}\d*/gu;
+const NUMERIC_OFFSET = /[+-]\d+(?::\d+|[.,]\d+)?/gu;
 const NUMERIC = /\d{4}-\d{2}-\d{2}|\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?/gu;
 function validatedDate(year: number, month: number, day: number): LocalDate | undefined {
   try {
@@ -86,11 +86,20 @@ function parseLocales(text: string, reference: TaskInputReference): LocaleResult
     return fragments.every((fragment) => !inputRangesOverlap(fragment, range));
   });
 }
+function clockTitleColon(text: string, from: number, clock: string): boolean {
+  if (!exactClock(clock) || text[from + clock.length] !== ':') return false;
+  const tail = text.slice(from + clock.length + 1);
+  return /^[^\S\r\n]*(?:[^\d:\s]|$)/u.test(tail);
+}
+function invalidClockToken(text: string): boolean {
+  return [...text.matchAll(/[0-9:]+/gu)].some((match) => {
+    const source = match[0];
+    if (!source.includes(':') || !/\d/u.test(source) || exactClock(source)) return false;
+    return !source.endsWith(':') || !clockTitleColon(text, match.index, source.slice(0, -1));
+  });
+}
 function timeExclusion(text: string): TaskInputCandidate['reason'] | undefined {
-  for (const match of text.matchAll(/[0-9:]+/gu)) {
-    if (match[0].includes(':') && /\d/u.test(match[0]) && !exactClock(match[0]))
-      return 'invalid-time';
-  }
+  if (invalidClockToken(text)) return 'invalid-time';
   if (/(?:about|around|approximately|примерно|около)\s+(?:at\s+)?\d/iu.test(text))
     return 'vague-time';
   if (
@@ -169,7 +178,8 @@ function exactClock(source: string): boolean {
 function clockWordEdge(text: string, range: TaskInputRange): boolean {
   return (
     /[\p{L}\p{N}_:]/u.test(text[range.from - 1] ?? '') ||
-    /[\p{L}\p{N}_:]/u.test(text[range.to] ?? '')
+    (/[\p{L}\p{N}_:]/u.test(text[range.to] ?? '') &&
+      !clockTitleColon(text, range.from, text.slice(range.from, range.to)))
   );
 }
 function recognizedClock(context: Recognition, range: TaskInputRange): TaskInputCandidate {
@@ -242,12 +252,17 @@ function recognizedNumeric(context: Recognition, range: TaskInputRange): TaskInp
 }
 function recognizeNumeric(context: Recognition): TaskInputCandidate[] {
   const masked = maskInputRanges(context.text, context.barriers),
+    fragments = nonTimezoneNumericRanges(context.text),
     numeric: TaskInputCandidate[] = [];
   for (const match of masked.matchAll(NUMERIC)) {
-    const result = recognizedNumeric(context, {
-      from: match.index,
-      to: match.index + match[0].length,
-    });
+    const range = { from: match.index, to: match.index + match[0].length };
+    // ISO date hyphens belong to the canonical numeric-date grammar, not signed title tokens.
+    if (
+      !/^\d{4}-\d{2}-\d{2}$/u.test(match[0]) &&
+      fragments.some((fragment) => inputRangesOverlap(fragment, range))
+    )
+      continue;
+    const result = recognizedNumeric(context, range);
     if (result.status === 'point') numeric.push(result);
     else context.excluded.push(result);
     context.barriers.push(...result.ranges);

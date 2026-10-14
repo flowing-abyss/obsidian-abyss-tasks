@@ -1453,7 +1453,7 @@ describe('Q caption capitalization after a consumed natural prefix', () => {
     ['Tomorrow 𐐨eta task', '𐐨eta task', '𐐀eta task', { due: '2026-10-14' }],
     ['Tomorrow élan task', 'élan task', 'Élan task', { due: '2026-10-14' }],
     ['Tomorrow , call a friend', ', call a friend', ', call a friend', { due: '2026-10-14' }],
-    ['Tomorrow – call a friend', '– call a friend', '– call a friend', { due: '2026-10-14' }],
+    ['Tomorrow – call a friend', 'call a friend', 'Call a friend', { due: '2026-10-14' }],
     [
       'Tomorrow at 10:00 PST call a friend',
       'Tomorrow at 10:00 PST call a friend',
@@ -1668,6 +1668,227 @@ describe('Q caption capitalization after a consumed natural prefix', () => {
         },
       ),
       { seed: 2026101311, numRuns: 32 },
+    );
+  });
+});
+
+describe('Q metadata-owned separator commits', () => {
+  it.each<[string, string, string, { planning: { due?: string; time?: string }; tags: string[] }]>([
+    [
+      'Сегодня в 10:00 — приём у стоматолога',
+      'приём у стоматолога',
+      'Приём у стоматолога',
+      { planning: { due: '2026-10-13', time: '10:00' }, tags: [] },
+    ],
+    [
+      'Сегодня в 10:00: приём',
+      'приём',
+      'Приём',
+      { planning: { due: '2026-10-13', time: '10:00' }, tags: [] },
+    ],
+    ['Завтра - приём', 'приём', 'Приём', { planning: { due: '2026-10-14' }, tags: [] }],
+    ['Завтра ‐ приём', 'приём', 'Приём', { planning: { due: '2026-10-14' }, tags: [] }],
+    ['Завтра ‑ приём', 'приём', 'Приём', { planning: { due: '2026-10-14' }, tags: [] }],
+    ['Завтра ‒ приём', 'приём', 'Приём', { planning: { due: '2026-10-14' }, tags: [] }],
+    ['Завтра – приём', 'приём', 'Приём', { planning: { due: '2026-10-14' }, tags: [] }],
+    ['Завтра — приём', 'приём', 'Приём', { planning: { due: '2026-10-14' }, tags: [] }],
+    ['Завтра ― приём', 'приём', 'Приём', { planning: { due: '2026-10-14' }, tags: [] }],
+    ['Завтра -- приём', 'приём', 'Приём', { planning: { due: '2026-10-14' }, tags: [] }],
+    ['Завтра --- приём', 'приём', 'Приём', { planning: { due: '2026-10-14' }, tags: [] }],
+    ['Завтра:приём', 'приём', 'Приём', { planning: { due: '2026-10-14' }, tags: [] }],
+    ['Приём — завтра', 'Приём', 'Приём', { planning: { due: '2026-10-14' }, tags: [] }],
+    [
+      'Созвон — завтра — обсудить план',
+      'Созвон — обсудить план',
+      'Созвон — обсудить план',
+      { planning: { due: '2026-10-14' }, tags: [] },
+    ],
+    [
+      'Созвон: завтра — обсудить план',
+      'Созвон: обсудить план',
+      'Созвон: обсудить план',
+      { planning: { due: '2026-10-14' }, tags: [] },
+    ],
+    ['Tomorrow foo-bar', 'foo-bar', 'Foo-bar', { planning: { due: '2026-10-14' }, tags: [] }],
+    [
+      'Завтра -5 градусов',
+      '-5 градусов',
+      '-5 градусов',
+      { planning: { due: '2026-10-14' }, tags: [] },
+    ],
+    ['#work — приём', '#work приём', 'приём', { planning: {}, tags: ['#work'] }],
+    ['приём — #work', 'приём #work', 'приём', { planning: {}, tags: ['#work'] }],
+    [
+      'созвон — #work — обсудить',
+      'созвон — #work обсудить',
+      'созвон — обсудить',
+      { planning: {}, tags: ['#work'] },
+    ],
+    [
+      '📅 2026-10-20 — приём',
+      '📅 2026-10-20 приём',
+      'приём',
+      { planning: { due: '2026-10-20' }, tags: [] },
+    ],
+    [
+      'приём — 📅 2026-10-20',
+      'приём 📅 2026-10-20',
+      'приём',
+      { planning: { due: '2026-10-20' }, tags: [] },
+    ],
+    [
+      'созвон — 📅 2026-10-20 — обсудить',
+      'созвон — 📅 2026-10-20 обсудить',
+      'созвон — обсудить',
+      { planning: { due: '2026-10-20' }, tags: [] },
+    ],
+  ])('preview and canonical root agree for %s', async (raw, body, title, { planning, tags }) => {
+    const h = await smartHarness({}, { inbox: false, initial: {} });
+    h.controller.setDraft(raw);
+    expect(h.controller.snapshot().draft).toBe(raw);
+    expect(h.controller.snapshot().metadata?.projection?.markdownBody).toBe(body);
+    expect(h.controller.snapshot().metadata?.preview).toMatchObject({
+      type: 'valid',
+      metadata: { markdownTitle: title, planning, tags },
+    });
+    await h.controller.submit('enter');
+    expect(h.readCanonicalRoot(expectDefined(h.repositoryWrites[0]))).toMatchObject({
+      markdownTitle: title,
+      planning,
+      tags,
+    });
+  });
+});
+
+describe('separator decisions retain capture session authority', () => {
+  it.each(['due', 'time'] as const)(
+    'restores screenshot punctuation only while %s is dismissed',
+    async (role) => {
+      const raw = 'Сегодня в 10:00 — приём у стоматолога';
+      const h = await smartHarness();
+      h.controller.setDraft(raw);
+      h.controller.applyMetadataAction({ type: 'dismiss', role });
+      expect(h.controller.snapshot().draft).toBe(raw);
+      expect(h.controller.snapshot().metadata?.projection?.markdownBody).toBe(raw);
+      expect(h.controller.snapshot().metadata?.preview).toMatchObject({
+        type: 'valid',
+        metadata: { markdownTitle: raw },
+      });
+      h.controller.applyMetadataAction({ type: 'restore' });
+      expect(h.controller.snapshot().draft).toBe(raw);
+      expect(h.controller.snapshot().metadata?.preview).toMatchObject({
+        type: 'valid',
+        metadata: {
+          markdownTitle: 'Приём у стоматолога',
+          planning: { due: '2026-10-13', time: '10:00' },
+        },
+      });
+      await h.controller.submit('enter');
+      expect(h.readCanonicalRoot(expectDefined(h.repositoryWrites[0]))).toMatchObject({
+        markdownTitle: 'Приём у стоматолога',
+        planning: { due: '2026-10-13', time: '10:00' },
+      });
+    },
+  );
+  it.each(['#work — приём', '📅 2026-10-20 — приём'])(
+    'canonical dismissal preserves lowercase title: %s',
+    async (raw) => {
+      const h = await smartHarness({}, { inbox: false, initial: {} });
+      h.controller.setDraft(raw);
+      if (raw.startsWith('#'))
+        h.controller.applyMetadataAction({ type: 'remove-tag', tag: '#work' });
+      else h.controller.applyMetadataAction({ type: 'dismiss', role: 'due' });
+      expect(h.controller.snapshot().metadata?.preview).toMatchObject({
+        type: 'valid',
+        metadata: { markdownTitle: 'приём', tags: [], planning: {} },
+      });
+      h.controller.applyMetadataAction({ type: 'restore' });
+      await h.controller.submit('enter');
+      const root = h.readCanonicalRoot(expectDefined(h.repositoryWrites[0]));
+      expect(root.markdownTitle).toBe('приём');
+      expect(root.tags).toEqual(raw.startsWith('#') ? ['#work'] : []);
+      expect(root.planning.due).toBe(raw.startsWith('#') ? undefined : '2026-10-20');
+    },
+  );
+  it('re-evaluates source ownership after an edit', async () => {
+    const h = await smartHarness();
+    h.controller.setDraft('Tomorrow — call');
+    expect(h.controller.snapshot().metadata?.preview).toMatchObject({
+      type: 'valid',
+      metadata: { markdownTitle: 'Call' },
+    });
+    h.controller.setDraft('Tomorrow --flag');
+    await h.controller.submit('enter');
+    expect(h.readCanonicalRoot(expectDefined(h.repositoryWrites[0])).markdownTitle).toBe('--flag');
+  });
+  it.each(['Завтра —', 'Завтра:', '#work —', '📅 2026-10-20 —'])(
+    'refuses metadata and separator only: %s',
+    async (raw) => {
+      const h = await smartHarness();
+      h.controller.setDraft(raw);
+      await h.controller.submit('enter');
+      expect(h.repositoryWrites).toEqual([]);
+      expect(h.controller.snapshot().draft).toBe(raw);
+    },
+  );
+  it('writes normalized separators from the same frozen request after unchanged failure', async () => {
+    const h = await smartHarness();
+    vi.spyOn(h.repository, 'create').mockResolvedValueOnce({
+      type: 'io-error',
+      cause: 'process-error',
+      contentState: 'unchanged',
+    });
+    const raw = 'Сегодня в 10:00 — приём у стоматолога';
+    h.controller.setDraft(raw);
+    const request = structuredClone(
+      expectDefined(h.preview.mock.calls[h.preview.mock.calls.length - 1]?.[0]),
+    );
+    expect(request.markdownBody).toBe('Приём у стоматолога');
+    await h.controller.submit('enter');
+    h.readReference.mockReturnValue({ ...reference, localDate: localDate('2026-10-20') });
+    await h.controller.submit('enter');
+    expect(h.execute.mock.calls.map(([value]) => value)).toEqual([request, request]);
+    expect(h.readCanonicalRoot(expectDefined(h.repositoryWrites[0]))).toMatchObject({
+      markdownTitle: 'Приём у стоматолога',
+      planning: { due: '2026-10-13', time: '10:00' },
+    });
+  });
+  it('keeps separator punctuation in smart-off Q', async () => {
+    const h = await smartHarness();
+    h.enabled.mockReturnValue(false);
+    const raw = 'Сегодня в 10:00 — приём';
+    h.controller.setDraft(raw);
+    await h.controller.submit('enter');
+    expect(h.readCanonicalRoot(expectDefined(h.repositoryWrites[0]))).toMatchObject({
+      markdownTitle: raw,
+      planning: {},
+    });
+  });
+  it('saves literal expected roots over supported separators and horizontal gaps', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.constantFrom('-', '‐', '‑', '‒', '–', '—', '―', '--', '---', ':'),
+        fc.constantFrom(' ', '  ', '\t', '\u00a0'),
+        fc.constantFrom(
+          { text: 'приём у врача', title: 'Приём у врача' },
+          { text: 'call a friend', title: 'Call a friend' },
+          { text: '𐐨eta remaining', title: '𐐀eta remaining' },
+        ),
+        async (separator, gap, fixture) => {
+          const raw = `Tomorrow${gap}${separator}${gap}${fixture.text}`;
+          const h = await smartHarness({}, { inbox: false, initial: {} });
+          h.controller.setDraft(raw);
+          expect(h.controller.snapshot().draft).toBe(raw);
+          expect(h.controller.snapshot().metadata?.projection?.markdownBody).toBe(fixture.text);
+          await h.controller.submit('enter');
+          expect(h.readCanonicalRoot(expectDefined(h.repositoryWrites[0]))).toMatchObject({
+            markdownTitle: fixture.title,
+            planning: { due: '2026-10-14' },
+            tags: [],
+          });
+        },
+      ),
+      { numRuns: 48, seed: 2026101401 },
     );
   });
 });

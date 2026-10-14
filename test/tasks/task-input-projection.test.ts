@@ -708,3 +708,103 @@ it('rejects a surviving lowercase word with explicit protected source ownership'
   expect(result.markdownBody).toBe('call a friend');
   expect(result).not.toHaveProperty('capitalizationTarget');
 });
+
+describe('metadata-owned title separators', () => {
+  it.each([
+    ['Сегодня в 10:00 — приём у стоматолога', 'приём у стоматолога'],
+    ['Завтра - приём', 'приём'],
+    ['Завтра ‐ приём', 'приём'],
+    ['Завтра ‑ приём', 'приём'],
+    ['Завтра ‒ приём', 'приём'],
+    ['Завтра – приём', 'приём'],
+    ['Завтра — приём', 'приём'],
+    ['Завтра ― приём', 'приём'],
+    ['Завтра -- приём', 'приём'],
+    ['Завтра --- приём', 'приём'],
+    ['Завтра:приём', 'приём'],
+    ['Завтра : приём', 'приём'],
+    ['Приём — завтра', 'Приём'],
+    ['Приём: завтра', 'Приём'],
+    ['Созвон — завтра — обсудить план', 'Созвон — обсудить план'],
+    ['Созвон: завтра — обсудить план', 'Созвон: обсудить план'],
+    ['Завтра — приём — уточнить время', 'приём — уточнить время'],
+    ['Call tomorrow — details', 'Call — details'],
+    ['Call — tomorrow details', 'Call — details'],
+    ['Завтра\u00a0—\u00a0приём', 'приём'],
+    ['приём\u00a0—\u00a0завтра', 'приём'],
+    ['созвон\u00a0—\u00a0завтра\u00a0—\u00a0план', 'созвон\u00a0—\u00a0план'],
+    ['Tomorrow  —  at 10:00 — call', 'call'],
+    ['Tomorrow\u00a0—\u00a0at 10:00 — call', 'call'],
+    ['#work  —  #home — call', '#work #home call'],
+    ['`#work` — call', '`#work` — call'],
+    ['"#work" — call', '"#work" — call'],
+    ['📅 2026-99-99 — call', '📅 2026-99-99 — call'],
+    ['Tomorrow — call\n— authored', 'call\n— authored'],
+    ['Tomorrow\n— call', '\n— call'],
+    ['— call tomorrow', '— call'],
+    ['Tomorrow :smile:', ':smile:'],
+    ['Tomorrow --flag', '--flag'],
+    ['Tomorrow foo-bar', 'foo-bar'],
+    ['Tomorrow −5 degrees', '−5 degrees'],
+    ['Tomorrow :: call', ':: call'],
+    ['Tomorrow `— code: text`', '`— code: text`'],
+    ['Tomorrow https://example.com/a:b', 'https://example.com/a:b'],
+    ['Tomorrow "— quoted: text"', '"— quoted: text"'],
+    ['Today — tomorrow — call', 'Today — tomorrow — call'],
+    ['Tomorrow morning — call', 'Tomorrow morning — call'],
+    ['Tomorrow at 25:00 — call', 'Tomorrow at 25:00 — call'],
+    ['authored — call', 'authored — call'],
+  ])('conserves surviving source bytes: %s', (raw, body) => {
+    const state = createTaskInputState(raw);
+    expect(project(state).markdownBody).toBe(body);
+    expect(state.raw).toBe(raw);
+  });
+
+  it.each([
+    ['Tomorrow — call', 'call', { from: 11, to: 15, bodyOffset: 0 }],
+    [' \tTomorrow — 𐐨eta task', ' \t𐐨eta task', { from: 13, to: 18, bodyOffset: 2 }],
+  ] as const)(
+    'maps capitalization through original UTF-16 source: %s',
+    (raw, body, { from, to, bodyOffset }) => {
+      expect(project(createTaskInputState(raw))).toMatchObject({
+        markdownBody: body,
+        capitalizationTarget: { sourceRange: { from, to }, bodyOffset },
+      });
+    },
+  );
+
+  it.each([
+    ['#work — приём', '#work приём'],
+    ['приём — #work', 'приём #work'],
+    ['созвон — #work — обсудить', 'созвон — #work обсудить'],
+    ['📅 2026-10-20 — приём', '📅 2026-10-20 приём'],
+    ['приём — 📅 2026-10-20', 'приём 📅 2026-10-20'],
+    ['созвон — 📅 2026-10-20 — обсудить', 'созвон — 📅 2026-10-20 обсудить'],
+    ['Tomorrow — #work — call', '#work call'],
+  ])('keeps active canonical source without natural-prefix proof: %s', (raw, body) => {
+    const result = project(createTaskInputState(raw));
+    expect(result.markdownBody).toBe(body);
+    expect(result.capitalizationTarget).toBeUndefined();
+  });
+
+  it.each(['#work — call', '📅 2026-10-20 — call'])(
+    'uses canonical separator ownership during preflight: %s',
+    (raw) => {
+      const state = createTaskInputState(raw);
+      const removed = raw.startsWith('#')
+        ? act(state, { type: 'remove-tag', tag: '#work' })
+        : act(state, { type: 'dismiss', role: 'due' });
+      expect(taskInputPreflightBody(removed, inspectTaskInput(raw))).toBe('call');
+      expect(project(removed).capitalizationTarget).toBeUndefined();
+      expect(removed.raw).toBe(raw);
+      expect(project(act(removed, { type: 'restore' })).markdownBody).toBe(raw.replace(' — ', ' '));
+    },
+  );
+
+  it.each(['Завтра —', 'Завтра:', '#work —', '📅 2026-10-20 —'])(
+    'never manufactures authored title: %s',
+    (raw) => {
+      expect(project(createTaskInputState(raw)).hasAuthoredTitle).toBe(false);
+    },
+  );
+});

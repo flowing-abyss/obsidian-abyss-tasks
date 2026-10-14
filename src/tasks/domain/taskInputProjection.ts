@@ -1,5 +1,6 @@
 import { sameTag } from '../../markdown/tagSyntax';
 import { shiftLocalDate } from './localDateMath';
+import { buildInputBody, type InputBody } from './taskInputBody';
 import { currentInputBinding, inputRangesOverlap, validInputRange } from './taskInputGuards';
 import {
   inputBinding,
@@ -356,57 +357,24 @@ function inactiveCanonicalRanges(
     .map((tag) => tag.range);
   return [...planning, ...tags];
 }
-interface InputBody {
-  readonly markdownBody: string;
-  readonly retained: ReadonlyArray<{
-    readonly sourceRange: TaskInputRange;
-    readonly bodyOffset: number;
-  }>;
-}
-/** All intervals refer to the original UTF-16 source, including bounded separator ownership. */
-function buildInputBody(raw: string, ranges: readonly TaskInputRange[]): InputBody {
-  const space = (value: string | undefined): boolean => value === ' ' || value === '\t';
-  const merged: Array<{ from: number; to: number }> = [];
-  for (const range of ranges
-    .filter((item) => validInputRange(raw, item))
-    .sort((a, b) => a.from - b.from)) {
-    const last = merged[merged.length - 1];
-    if (
-      last !== undefined &&
-      (range.from <= last.to || (range.from === last.to + 1 && space(raw[last.to])))
-    )
-      last.to = Math.max(last.to, range.to);
-    else merged.push({ ...range });
-  }
-  const owned = merged
-    .map((range) => {
-      let { from, to } = range;
-      if (from === 0 && space(raw[to])) to++;
-      else if (to === raw.length && space(raw[from - 1])) from--;
-      else if (space(raw[from - 1]) && space(raw[to])) to++;
-      return { from, to };
-    })
-    .sort((a, b) => a.from - b.from);
-  let cursor = 0,
-    body = '';
-  const retained: Array<{ sourceRange: TaskInputRange; bodyOffset: number }> = [];
-  const retain = (from: number, to: number): void => {
-    if (to <= from) return;
-    retained.push({ sourceRange: { from, to }, bodyOffset: body.length });
-    body += raw.slice(from, to);
-  };
-  for (const range of owned) {
-    retain(cursor, range.from);
-    cursor = Math.max(cursor, range.to);
-  }
-  retain(cursor, raw.length);
-  return { markdownBody: body, retained };
+function canonicalTitleRanges(inspection: TaskInputInspection): TaskInputRange[] {
+  return [
+    ...inspection.tags.map((tag) => tag.range),
+    ...inspection.carriers
+      .filter((carrier) => carrier.value !== undefined)
+      .map((carrier) => carrier.range),
+  ];
 }
 export function taskInputPreflightBody(
   state: TaskInputState,
   inspection: TaskInputInspection,
 ): string {
-  return buildInputBody(state.raw, inactiveCanonicalRanges(state, inspection)).markdownBody;
+  return buildInputBody(
+    state.raw,
+    inactiveCanonicalRanges(state, inspection),
+    canonicalTitleRanges(inspection),
+    inspection.protectedRanges,
+  ).markdownBody;
 }
 function hasConsumedNaturalPrefix(
   raw: string,
@@ -414,7 +382,7 @@ function hasConsumedNaturalPrefix(
   naturalRanges: readonly TaskInputRange[],
 ): boolean {
   if (!/^\s*\p{Lu}/u.test(raw)) return false;
-  // Canonical/tag deletion and separator ownership cannot supply natural-prefix evidence.
+  // Canonical/tag source characters cannot supply natural-prefix evidence.
   for (let offset = 0; offset < targetFrom; offset++)
     if (
       !/\s/u.test(raw.charAt(offset)) &&
@@ -456,11 +424,14 @@ function projectedBody(
   const naturalRanges = decision.consumed
     .filter((binding) => bindingFullyRepresented(decision, binding))
     .flatMap((binding) => binding.ranges);
-  const body = buildInputBody(decision.input.state.raw, [
-    ...inactiveCanonicalRanges(decision.input.state, decision.input.inspection),
-    ...naturalRanges,
-  ]);
-  const target = capitalizationTarget(decision, body, naturalRanges);
+  const { state, inspection } = decision.input;
+  const body = buildInputBody(
+    state.raw,
+    [...inactiveCanonicalRanges(state, inspection), ...naturalRanges],
+    [...naturalRanges, ...canonicalTitleRanges(inspection)],
+    inspection.protectedRanges,
+  );
+  const target = capitalizationTarget(decision, body, [...naturalRanges, ...body.separators]);
   return {
     markdownBody: body.markdownBody,
     ...(target === undefined ? {} : { capitalizationTarget: target }),

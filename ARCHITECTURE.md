@@ -364,7 +364,11 @@ Its offline Chrono adapter imports only the English and Russian locales and retu
 partial interpretations, ranges, and unsupported expressions. Domain input state owns occurrence
 suppression, manual calendar provenance, fallback clears, tag removals, and the last restorable dismissal.
 The pure projection chooses effective planning and removes only fully represented, current disjoint
-source ranges. Canonical tags stay protected from parsing and conserved between a joined day and clock;
+source ranges. Same-line metadata groups own adjacent unprotected dash/colon separators; interior
+groups preserve their left connector. Active canonical tags and valid carriers stay in Markdown
+while their title separators are removed. Capitalization requires an initially uppercase, fully
+consumed natural prefix, including its owned separators; canonical source never supplies that proof.
+Canonical tags stay protected from parsing and conserved between a joined day and clock;
 other Markdown atoms remain merge barriers. These helpers carry no write or settings authority.
 
 ## Projects

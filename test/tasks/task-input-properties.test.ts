@@ -231,3 +231,30 @@ describe('restore after outside edits', () => {
     expect(accepted).toBe(250);
   });
 });
+
+describe('bounded separator preservation', () => {
+  it('retains signed tokens, casing and internal delimiters, seed 2026101402', () => {
+    fc.assert(
+      fc.property(
+        fc.constantFrom(
+          '-5 degrees',
+          '+5.5 units',
+          '−5 градусов',
+          '--flag',
+          'iOS update',
+          'eBay listing',
+          'e-mail details',
+          'call — details',
+          'call: details',
+        ),
+        fc.constantFrom(' ', '\t', '  '),
+        (title, gap) => {
+          const result = project(createTaskInputState(`Tomorrow${gap}— ${title}`));
+          expect(result.markdownBody).toBe(title);
+          expect(result.initial.due).toEqual({ type: 'set', value: '2026-10-14' });
+        },
+      ),
+      { numRuns: 48, seed: 2026101402 },
+    );
+  });
+});

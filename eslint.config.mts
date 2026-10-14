@@ -487,6 +487,7 @@ export default defineConfig(
       'src/tasks/domain/taskInputGuards.ts',
       'src/tasks/domain/taskInputState.ts',
       'src/tasks/domain/taskInputProjection.ts',
+      'src/tasks/domain/taskInputBody.ts',
       'src/tasks/application/TaskInputRecognizer.ts',
       'src/tasks/application/TaskCreatePreviewPort.ts',
       'src/tasks/infrastructure/markdown/MarkdownTaskCreatePreview.ts',

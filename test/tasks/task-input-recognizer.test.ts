@@ -397,3 +397,51 @@ describe('nearest strictly past weekdays', () => {
     }
   });
 });
+
+describe('clock colon delimiters and signed title fragments', () => {
+  it.each([
+    'Сегодня в 10:00: приём',
+    'Сегодня в 10:00:приём',
+    'Сегодня в 10:00: `приём`',
+    'Сегодня в 10:00: ',
+  ])('owns only the complete clock before title colon: %s', (raw) => {
+    const result = project(createTaskInputState(raw));
+    expect(result.initial.due).toEqual({ type: 'set', value: '2026-10-13' });
+    expect(result.initial.time).toEqual({ type: 'set', value: '10:00' });
+    expect(
+      result.candidates
+        .flatMap((candidate) => candidate.ranges)
+        .map((range) => raw.slice(range.from, range.to)),
+    ).toEqual(['Сегодня', 'в 10:00']);
+  });
+  it.each([
+    '10:00:30',
+    '10:00:3',
+    ['10', '', '00'].join(':'),
+    '25:00',
+    ['10', '00', '', ''].join(':'),
+    '10:00: 3',
+    '10:00 +0700',
+    '10:00-11:00',
+  ])('retains unsupported clock: %s', (clock) => {
+    const raw = `Сегодня в ${clock} — приём`;
+    const result = project(createTaskInputState(raw));
+    expect(result.markdownBody).toBe(raw);
+    expect(result.initial.due).toBeUndefined();
+    expect(result.initial.time).toBeUndefined();
+  });
+  it.each(['-5 градусов', '+5 градусов', '-5.5 градусов', '+5,5 градусов', '-0.25 units'])(
+    'preserves signed non-timezone fragment: %s',
+    (title) => {
+      const raw = `Завтра ${title}`;
+      const result = project(createTaskInputState(raw));
+      expect(result.initial.due).toEqual({ type: 'set', value: '2026-10-14' });
+      expect(result.markdownBody).toBe(title);
+      expect(
+        result.candidates
+          .flatMap((candidate) => candidate.ranges)
+          .map((range) => raw.slice(range.from, range.to)),
+      ).toEqual(['Завтра']);
+    },
+  );
+});
