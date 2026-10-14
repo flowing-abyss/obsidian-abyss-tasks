@@ -175,3 +175,93 @@ describe('fixed-seed review boundary properties', () => {
     );
   });
 });
+
+describe('final review source ownership properties', () => {
+  it('owns each reverse monthly selector across Unicode, spacing, suffixes and separators', () => {
+    fc.assert(
+      fc.property(
+        fc.tuple(prose, spacing, fc.constantFrom(' и ', ', '), fc.boolean(), fc.boolean()),
+        ([prefix, space, joiner, ordinal, uppercase]) => {
+          const selectors = ordinal ? ['1-го', '15-го', '25-го'] : ['1', '15', '25'];
+          const phrase = `${selectors.join(joiner)} числа каждого месяца`.replaceAll(' ', space);
+          const source = uppercase ? phrase.toUpperCase() : phrase;
+          const before = `${prefix} \`tomorrow\` `;
+          const text = `${before}${source} аккуратно`;
+          const result = parser.extract({
+            text,
+            protectedRanges: inspectTaskInput(text).protectedRanges,
+          });
+          expect(result.candidates).toEqual([
+            {
+              rule: 'every month on the 1st, 15th and 25th',
+              ranges: [{ from: before.length, to: before.length + source.length }],
+            },
+          ]);
+          expect(parser.parse(source)).toMatchObject({
+            type: 'valid',
+            raw: 'every month on the 1st, 15th and 25th',
+          });
+        },
+      ),
+      { seed: 2026101421, numRuns: 100 },
+    );
+  });
+  it('protects invalid leading selectors through the clause instead of picking a valid suffix', () => {
+    fc.assert(
+      fc.property(
+        prose,
+        spacing,
+        fc.constantFrom('0', '32', '-1', '+1', '1.5', '1-3', '1 / 3', '1-ого'),
+        fc.constantFrom(' и ', ', ', ' или '),
+        (prefix, space, invalid, separator) => {
+          const expression = `${invalid}${separator}15 числа каждого месяца`.replaceAll(' ', space);
+          const before = `${prefix} \`tomorrow\` `;
+          const text = `${before}${expression}; call tomorrow`;
+          const result = parser.extract({
+            text,
+            protectedRanges: inspectTaskInput(text).protectedRanges,
+          });
+          expect(result.candidates).toEqual([]);
+          expect(result.protectedRanges).toEqual([
+            { from: before.length, to: before.length + expression.length },
+          ]);
+        },
+      ),
+      { seed: 2026101422, numRuns: 100 },
+    );
+  });
+  it('protects locale restrictions through punctuation and delegated clocks', () => {
+    fc.assert(
+      fc.property(
+        fc.tuple(
+          prose,
+          spacing,
+          fc.boolean(),
+          fc.constantFrom(' ', ' - ', ' — ', ' #work - ', ' `literal` - '),
+          fc.constantFrom(
+            { cue: 'every day', clock: 'at 10:00', tail: 'not on Monday' },
+            { cue: 'every day', clock: 'at 10:00', tail: 'except Monday' },
+            { cue: 'every day', clock: 'at 10:00', tail: 'two times' },
+            { cue: 'каждый день', clock: 'в 10:00', tail: 'не в понедельник' },
+            { cue: 'каждый день', clock: 'в 10:00', tail: 'кроме воскресенья' },
+            { cue: 'каждый день', clock: 'в 10:00', tail: 'два раза' },
+          ),
+        ),
+        ([prefix, space, clock, gap, entry]) => {
+          const clockSource = clock ? ` ${entry.clock}` : '';
+          const expression = `${entry.cue}${clockSource}${gap}${entry.tail}`.replaceAll(' ', space);
+          const text = `${prefix} ${expression}; call tomorrow`;
+          const result = parser.extract({
+            text,
+            protectedRanges: inspectTaskInput(text).protectedRanges,
+          });
+          expect(result.candidates).toEqual([]);
+          expect(result.protectedRanges).toEqual([
+            { from: prefix.length + 1, to: prefix.length + 1 + expression.length },
+          ]);
+        },
+      ),
+      { seed: 2026101423, numRuns: 120 },
+    );
+  });
+});

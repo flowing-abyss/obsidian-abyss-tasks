@@ -27,6 +27,8 @@ const CONTINUATIONS = new Set([
   'through',
   'for',
   'except',
+  'not',
+  'never',
   'excluding',
   'but',
   'only',
@@ -44,6 +46,9 @@ const CONTINUATIONS = new Set([
   'yearly',
   'weekdays',
 ]);
+const COUNT_ADVERB = /(?:^|[^\p{L}\p{N}_-])(?:once|twice|thrice)(?![\p{L}\p{N}_-])/iu;
+const WRITTEN_COUNT =
+  /(?:^|[^\p{L}\p{N}_-])(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten) times?(?![\p{L}\p{N}_-])/iu;
 const ALIASES: Readonly<Record<string, string>> = {
   daily: 'every day',
   weekly: 'every week',
@@ -70,11 +75,17 @@ export const englishRecurrenceInput: RecurrenceInputLocale = {
     return text;
   },
   isContinuation: (tail) =>
-    CONTINUATIONS.has(recurrenceHead(tail)) || /^\d/u.test(tail) || /^to \d/u.test(tail),
+    CONTINUATIONS.has(recurrenceHead(tail)) ||
+    /^\d/u.test(tail) ||
+    /^to \d/u.test(tail) ||
+    WRITTEN_COUNT.exec(tail)?.index === 0 ||
+    COUNT_ADVERB.exec(tail)?.index === 0,
   hasLeadingRestriction: (prefix) =>
     /(?:^|[^\p{L}\p{N}_])(?:not|never|only|except|excluding|until|till|through)(?![\p{L}\p{N}_])/iu.test(
       prefix,
-    ) || /(?:^|[^\p{L}\p{N}_])\d+ times?(?![\p{L}\p{N}_])/iu.test(prefix),
+    ) ||
+    WRITTEN_COUNT.test(prefix) ||
+    COUNT_ADVERB.test(prefix),
   clockCues: ['at'],
   weekdayAbbreviations: ['mon', 'tue', 'tues', 'wed', 'thu', 'thur', 'thurs', 'fri', 'sat', 'sun'],
 };

@@ -453,3 +453,125 @@ describe('registered abbreviation protection', () => {
     },
   );
 });
+
+// A suffix cue must never narrow the authored monthly selector list.
+describe('reverse monthly source ownership', () => {
+  it.each(['Call, ', 'Call - ', 'Call — '])(
+    'leaves an ordinary title separator outside a reverse list: %s',
+    (prefix) => {
+      const phrase = '1 и 15 числа каждого месяца';
+      expect(extract(prefix + phrase).candidates).toEqual([
+        {
+          rule: 'every month on the 1st and 15th',
+          ranges: [{ from: prefix.length, to: prefix.length + phrase.length }],
+        },
+      ]);
+    },
+  );
+  it.each([
+    ['Call 1 и 15 числа каждого месяца', 5, 32, 'every month on the 1st and 15th'],
+    ['Call 1, 15 числа каждого месяца', 5, 31, 'every month on the 1st and 15th'],
+    [
+      'Call 1-го, 15-го и 25-го числа каждого месяца',
+      5,
+      45,
+      'every month on the 1st, 15th and 25th',
+    ],
+  ] as const)('owns the complete list in %s', (text, from, to, rule) => {
+    const result = extract(text);
+    expect(result.candidates).toEqual([{ rule, ranges: [{ from, to }] }]);
+    expect(result.protectedRanges).toEqual([{ from, to }]);
+    expect(parser.parse(text.slice(from, to))).toMatchObject({ type: 'valid', raw: rule });
+  });
+  it.each([
+    '1 или 15',
+    '0 и 15',
+    '32, 15',
+    '-1 и 15',
+    '+1 и 15',
+    '1.5 и 15',
+    '1-3 и 15',
+    '1 – 3 и 15',
+    '1 / 3 и 15',
+    '9007199254740992, 15',
+    '1-ого и 15',
+    'один или 15',
+  ])('protects malformed selectors without acquiring their valid suffix: %s', (selectors) => {
+    const expression = `${selectors} числа каждого месяца`;
+    const prefix = '👩‍💻 `tomorrow` Call ';
+    const text = `${prefix}${expression}; call tomorrow`;
+    const result = extract(text);
+    expect(parser.parse(expression).type).toBe('invalid');
+    expect(result.candidates).toEqual([]);
+    expect(result.protectedRanges).toEqual([
+      { from: prefix.length, to: prefix.length + expression.length },
+    ]);
+  });
+});
+
+describe('restriction protection before date recognition', () => {
+  it.each([
+    'every day not on Monday',
+    'каждый день не в понедельник',
+    'every day - except Monday',
+    'каждый день - кроме воскресенья',
+    'every day at 10:00 - not on Monday',
+    'каждый день в 10:00 - не в понедельник',
+    'every day at 10:00 - except Monday',
+    'каждый день в 10:00 - кроме воскресенья',
+    'every day twice',
+    'каждый день два раза',
+    'every day two times',
+    'каждый день три раза',
+    'every day at 10:00 twice',
+    'каждый день в 10:00 два раза',
+  ])('protects the whole unsupported tail: %s', (expression) => {
+    const text = `Call ${expression}; call tomorrow`;
+    const result = extract(text);
+    expect(result.candidates).toEqual([]);
+    expect(result.protectedRanges).toEqual([{ from: 5, to: 5 + expression.length }]);
+  });
+  it.each([
+    'twice',
+    'two times',
+    'three times',
+    'once',
+    'thrice',
+    'два раза',
+    'три раза',
+    'пять раз',
+    'один раз',
+    'дважды',
+    'трижды',
+  ])('protects written counts on either side of a cue: %s', (count) => {
+    for (const cue of ['every day', 'каждый день']) {
+      for (const expression of [`${count} ${cue}`, `${cue} ${count}`]) {
+        const result = extract(expression);
+        expect(result.candidates).toEqual([]);
+        expect(result.protectedRanges).toEqual([{ from: 0, to: expression.length }]);
+      }
+    }
+  });
+  it.each([
+    'every day - write notes',
+    'каждый день - писать заметки',
+    'every day -5 degrees',
+    'every day +5 degrees',
+    'every day twice-baked bread',
+    'every day two notebooks',
+    'каждый день два блокнота',
+  ])('keeps ordinary prose outside the accepted source: %s', (text) => {
+    const source = text.startsWith('every') ? 'every day' : 'каждый день';
+    expect(extract(text).candidates).toEqual([
+      { rule: 'every day', ranges: [{ from: 0, to: source.length }] },
+    ]);
+  });
+  it.each([
+    'every day at 10:00-11:00',
+    'every day at 10:00 - 11:00',
+    'каждый день в 10:00 - 11:00',
+  ])('does not reinterpret a clock range as punctuation: %s', (text) => {
+    expect(extract(text).candidates).toEqual([]);
+    expect(extract(text).protectedRanges).toEqual([{ from: 0, to: text.length }]);
+  });
+});

@@ -142,7 +142,11 @@ function continuationStart(context: ExtractionContext, from: number, to: number)
       cursor = atom.to;
       continue;
     }
-    if (!/[\s,()[\]{}:—–]/u.test(context.text[cursor] ?? '')) break;
+    const spacedHyphen =
+      context.text[cursor] === '-' &&
+      /[^\S\r\n]/u.test(context.text[cursor - 1] ?? '') &&
+      /[^\S\r\n]/u.test(context.text[cursor + 1] ?? '');
+    if (!spacedHyphen && !/[\s,()[\]{}:—–]/u.test(context.text[cursor] ?? '')) break;
     cursor++;
   }
   return cursor;

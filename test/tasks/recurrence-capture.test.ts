@@ -718,3 +718,87 @@ it.each(['08:00', '09:00', '10:00'])(
     expect(root.planning.due).toBe(time === '10:00' ? '2026-10-13' : '2026-10-14');
   },
 );
+
+// These exercise real preview, controller, application service and Markdown codec writes.
+describe('final review recurrence persistence regressions', () => {
+  it.each([
+    ['1 и 15 числа каждого месяца', 'every month on the 1st and 15th'],
+    ['1, 15 числа каждого месяца', 'every month on the 1st and 15th'],
+    ['1-го, 15-го и 25-го числа каждого месяца', 'every month on the 1st, 15th and 25th'],
+  ])('saves the complete reverse monthly list: %s', async (phrase, rule) => {
+    const h = await capture();
+    const raw = `Call ${phrase}`;
+    h.controller.setDraft(raw);
+    expect(h.controller.snapshot().draft).toBe(raw);
+    expect(h.controller.snapshot().metadata?.preview).toMatchObject({
+      type: 'valid',
+      metadata: { markdownTitle: 'Call', recurrence: rule, planning: { due: '2026-10-15' } },
+    });
+    await h.controller.submit('enter');
+    const content = expectDefined(h.repositoryWrites[0]);
+    expect(content).toContain(`🔁 ${rule}`);
+    const root = h.readCanonicalRoot(content);
+    expect(root.markdownTitle).toBe('Call');
+    expect(root.recurrence).toBe(rule);
+    expect(root.planning).toMatchObject({ due: '2026-10-15' });
+    expect(root.planning.time).toBeUndefined();
+  });
+  const literal = [
+    'Call every day not on Monday',
+    'Позвонить каждый день не в понедельник',
+    'Call every day - except Monday',
+    'Позвонить каждый день - кроме воскресенья',
+    'Call twice every day',
+    'Позвонить два раза каждый день',
+    'Call every day twice',
+    'Позвонить каждый день два раза',
+    'Call two times every day',
+    'Call every day two times',
+    'Call every day at 10:00 - not on Monday',
+    'Позвонить каждый день в 10:00 - не в понедельник',
+    'Call every day at 10:00 - except Monday',
+    'Позвонить каждый день в 10:00 - кроме воскресенья',
+    'Call every day at 10:00 twice',
+    'Позвонить каждый день в 10:00 два раза',
+    'Call 1 или 15 числа каждого месяца',
+    'Call 0 и 15 числа каждого месяца',
+    'Call -1 и 15 числа каждого месяца',
+    'Call 1-3 и 15 числа каждого месяца',
+  ];
+  const planningCases = [
+    { planning: 'none', due: undefined, suffix: '', titleSuffix: '' },
+    { planning: 'canonical', due: '2026-10-16', suffix: ' 📅 2026-10-16', titleSuffix: '' },
+    { planning: 'context', due: '2026-10-16', suffix: '', titleSuffix: '' },
+    { planning: 'semicolon', due: '2026-10-14', suffix: '; call tomorrow', titleSuffix: '; call' },
+  ];
+  it.each(literal.flatMap((title) => planningCases.map((entry) => ({ title, ...entry }))))(
+    'retains $title with $planning planning',
+    async ({ title, planning, due, suffix, titleSuffix }) => {
+      const initial =
+        planning === 'context'
+          ? { due: { type: 'set' as const, value: localDate('2026-10-16') } }
+          : {};
+      const raw = `${title}${suffix}`;
+      const expectedTitle = `${title}${titleSuffix}`;
+      const h = await smartHarness({}, { recurrence, reference, inbox: false, initial });
+      h.controller.setDraft(raw);
+      expect(h.controller.snapshot().draft).toBe(raw);
+      const preview = h.controller.snapshot().metadata?.preview;
+      expect(preview?.type).toBe('valid');
+      if (preview?.type !== 'valid') throw new Error('Expected canonical preview');
+      expect(preview.metadata.markdownTitle).toBe(expectedTitle);
+      expect(preview.metadata.recurrence).toBeUndefined();
+      expect(preview.metadata.planning.due).toBe(due);
+      expect(preview.metadata.planning.time).toBeUndefined();
+      await h.controller.submit('enter');
+      const content = expectDefined(h.repositoryWrites[0]);
+      expect(content).toContain(expectedTitle);
+      expect(content).not.toContain('🔁');
+      const root = h.readCanonicalRoot(content);
+      expect(root.markdownTitle).toBe(expectedTitle);
+      expect(root.recurrence).toBeUndefined();
+      expect(root.planning.due).toBe(due);
+      expect(root.planning.time).toBeUndefined();
+    },
+  );
+});

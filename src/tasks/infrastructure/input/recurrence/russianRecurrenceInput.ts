@@ -97,6 +97,8 @@ const CONTINUATIONS = new Set([
   'до',
   'по',
   'кроме',
+  'не',
+  'никогда',
   'исключая',
   'только',
   'после',
@@ -122,6 +124,10 @@ const CONTINUATIONS = new Set([
   ...Object.keys(ORDINALS),
 ]);
 
+const COUNT_ADVERB = /(?:^|[^\p{L}\p{N}_-])(?:дважды|трижды)(?![\p{L}\p{N}_-])/iu;
+const WRITTEN_COUNT =
+  /(?:^|[^\p{L}\p{N}_-])(?:\d+|один|два|две|три|четыре|пять|шесть|семь|восемь|девять|десять) раза?(?![\p{L}\p{N}_-])/iu;
+
 function translatedList(
   text: string,
   item: (value: string) => string | undefined,
@@ -132,7 +138,9 @@ function translatedList(
     : undefined;
 }
 function dates(text: string): string | undefined {
-  return translatedList(text, (value) => englishOrdinal(value.replace(/-го$/u, '')));
+  return translatedList(text, (value) =>
+    /^\d+(?:-го)?$/u.test(value) ? englishOrdinal(value.replace(/-го$/u, '')) : undefined,
+  );
 }
 function weekdaySelector(text: string): string | undefined {
   const parts = text.replace(/^в /u, '').split(' ');
@@ -246,10 +254,58 @@ function contextualCue(text: string, words: readonly CueWord[], index: number): 
   if (value === 'раз') return nextWords(text, words, index, ['в']);
   if (value === 'через') return nextWords(text, words, index, ['день']);
   if (value === 'по') return weekdayCue(text, words, index);
-  return (
-    /^\d+(?:-го)?$/u.test(value ?? '') &&
-    nextWords(text, words, index, ['числа', 'каждого', 'месяца'])
-  );
+  return false;
+}
+function horizontalEnd(text: string, end: number): number {
+  let cursor = end;
+  while (cursor > 0 && /[^\S\r\n]/u.test(text[cursor - 1] ?? '')) cursor--;
+  return cursor;
+}
+function selectorStart(text: string, end: number): number | undefined {
+  const to = horizontalEnd(text, end);
+  let from = to;
+  while (from > 0 && /[\p{L}\p{N}_./+#–—-]/u.test(text[from - 1] ?? '')) from--;
+  return from < to ? from : undefined;
+}
+function connectorStart(text: string, end: number): number | undefined {
+  const to = horizontalEnd(text, end);
+  if (text[to - 1] === ',') return to - 1;
+  if (to === end) return undefined;
+  const connector = /(?:или|и|[-–—/])$/iu.exec(text.slice(Math.max(0, to - 3), to));
+  if (connector === null) return undefined;
+  const from = to - connector[0].length;
+  return /[^\S\r\n]/u.test(text[from - 1] ?? '') ? from : undefined;
+}
+function previousSelector(text: string, end: number): number | undefined {
+  const connector = connectorStart(text, end);
+  if (connector === undefined) return undefined;
+  const from = selectorStart(text, connector);
+  if (from === undefined) return undefined;
+  // A comma/dash before a numeric item may instead separate ordinary title prose.
+  const separator = normalizeRecurrencePhrase(text.slice(connector, end));
+  return separator === 'и' || separator === 'или' || /^[+-]?\d/u.test(text.slice(from, connector))
+    ? from
+    : undefined;
+}
+/** Walk the whole selector source, including malformed alternatives, before validation. */
+function reverseMonthlyStart(text: string, end: number): number | undefined {
+  let from = selectorStart(text, end);
+  let cursor = from;
+  while (cursor !== undefined) {
+    cursor = previousSelector(text, cursor);
+    if (cursor !== undefined) from = cursor;
+  }
+  return from;
+}
+function reverseMonthlyCue(
+  text: string,
+  words: readonly CueWord[],
+  index: number,
+): number | undefined {
+  const word = words[index];
+  return word?.value === 'числа' && nextWords(text, words, index, ['каждого', 'месяца'])
+    ? reverseMonthlyStart(text, word.from)
+    : undefined;
 }
 function russianStarts(text: string): readonly number[] {
   const words = [...text.matchAll(/[\p{L}\p{N}_]+(?:-го)?/giu)].map((match) => ({
@@ -258,12 +314,14 @@ function russianStarts(text: string): readonly number[] {
     to: match.index + match[0].length,
   }));
   const starts = new Set(recurrenceStarts(text, /[\p{L}\p{N}_]+(?:-го)?/giu));
-  return words
-    .filter(
-      (word, index) =>
-        starts.has(word.from) && (CUES.has(word.value) || contextualCue(text, words, index)),
-    )
-    .map((word) => word.from);
+  const result = new Set<number>();
+  for (const [index, word] of words.entries()) {
+    if (!starts.has(word.from)) continue;
+    if (CUES.has(word.value) || contextualCue(text, words, index)) result.add(word.from);
+    const from = reverseMonthlyCue(text, words, index);
+    if (from !== undefined) result.add(from);
+  }
+  return [...result].sort((a, b) => a - b);
 }
 
 export const russianRecurrenceInput: RecurrenceInputLocale = {
@@ -277,10 +335,15 @@ export const russianRecurrenceInput: RecurrenceInputLocale = {
     if (translated === undefined) return undefined;
     return `${translated}${whenDone ? ' when done' : ''}`;
   },
-  isContinuation: (tail) => CONTINUATIONS.has(recurrenceHead(tail)) || /^\d/u.test(tail),
+  isContinuation: (tail) =>
+    CONTINUATIONS.has(recurrenceHead(tail)) ||
+    /^\d/u.test(tail) ||
+    WRITTEN_COUNT.exec(tail)?.index === 0 ||
+    COUNT_ADVERB.exec(tail)?.index === 0,
   hasLeadingRestriction: (prefix) =>
     /(?:^|[^\p{L}\p{N}_])(?:не|никогда|только|кроме|исключая|до)(?![\p{L}\p{N}_])/iu.test(prefix) ||
-    /(?:^| )\d+ раз(?:а)?(?: |$)/iu.test(prefix),
+    WRITTEN_COUNT.test(prefix) ||
+    COUNT_ADVERB.test(prefix),
   clockCues: ['в'],
   weekdayAbbreviations: ['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс'],
 };
