@@ -9,11 +9,19 @@ import { StatusCatalog } from '../../src/tasks/domain/StatusCatalog';
 import { localDate } from '../../src/tasks/domain/validation';
 import { MarkdownTaskCreatePreview } from '../../src/tasks/infrastructure/markdown/MarkdownTaskCreatePreview';
 import { TaskMarkdownCodec } from '../../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
-import { deferred, expectDefined, useRealMoment } from '../helpers';
+import {
+  configuredTaskApplication,
+  createAppWithFiles,
+  deferred,
+  expectDefined,
+  useRealMoment,
+} from '../helpers';
 
 useRealMoment();
 
 import { localTime } from '../../src/tasks/domain/validation';
+import { ChronoTaskInputRecognizer } from '../../src/tasks/infrastructure/input/ChronoTaskInputRecognizer';
+import { RecurrenceTextInputParser } from '../../src/tasks/infrastructure/input/RecurrenceTextInputParser';
 import { type CaptureContext } from '../../src/ui/taskCapture/CaptureTargetResolver';
 import { TaskCaptureController } from '../../src/ui/taskCapture/TaskCaptureController';
 import { describeTaskCreationResult } from '../../src/ui/taskCommandResult';
@@ -1828,4 +1836,320 @@ it.each([
     planning: { due },
     tags: [],
   });
+});
+
+describe('Q protection composed by its retained session', () => {
+  it.each([
+    ['[', 'tomorrow](note.md) Call', '[ tomorrow](note.md) Call'],
+    ['[', 'every day](note.md) Call', '[ every day](note.md) Call'],
+    ['`', 'tomorrow` Call', '` tomorrow` Call'],
+    ['[[', 'every day]] Call', '[[ every day]] Call'],
+    ['"', 'tomorrow" Call', '" tomorrow" Call'],
+    ['«', 'every day» Call', '« every day» Call'],
+    ['<!--', 'tomorrow --> Call', '<!-- tomorrow --> Call'],
+    ['<span>', 'every day</span> Call', '<span> every day</span> Call'],
+    ['#fallback 👩‍💻 [', 'tomorrow](note.md) Call #specific', '👩‍💻 [ tomorrow](note.md) Call'],
+    ['[', '📅 2026-10-15 #hidden](note.md) Call', '[ 📅 2026-10-15 #hidden](note.md) Call'],
+  ])('keeps composed opaque input literal with prefix %s', async (prefix, raw, title) => {
+    const h = await smartHarness(
+      { prefix },
+      {
+        inbox: false,
+        initial: {},
+        recurrence: new RecurrenceTextInputParser(),
+      },
+    );
+    h.controller.setDraft(raw);
+    expect(h.controller.snapshot().draft).toBe(raw);
+    expect(h.controller.snapshot().metadata?.projection?.markdownBody).toBe(raw);
+    expect(h.controller.snapshot().metadata?.preview).toMatchObject({
+      type: 'valid',
+      metadata: { markdownTitle: title, planning: {} },
+    });
+    expect(h.recognize).not.toHaveBeenCalled();
+    await h.controller.submit('enter');
+    const root = h.readCanonicalRoot(expectDefined(h.repositoryWrites[0]));
+    expect(root.markdownTitle).toBe(title);
+    expect(root.planning.due).toBeUndefined();
+    expect(root.planning.time).toBeUndefined();
+    expect(root.recurrence).toBeUndefined();
+    expect(root.tags).toEqual(raw.endsWith('#specific') ? ['#specific'] : []);
+  });
+
+  it.each(['manual', 'dismiss'] as const)(
+    'revokes consumption after %s then wrapping and re-entry',
+    async (action) => {
+      const h = await smartHarness({ prefix: '[' }, { inbox: false, initial: {} });
+      const raw = 'tomorrow Call';
+      const projection = () => expectDefined(h.controller.snapshot().metadata?.projection);
+      h.controller.setDraft(raw);
+      expect(projection().markdownBody).toBe('Call');
+      h.controller.applyMetadataAction(
+        action === 'manual'
+          ? { type: 'select-date', role: 'due', value: localDate('2026-10-20') }
+          : { type: 'dismiss', role: 'due' },
+      );
+      expect(h.controller.snapshot().draft).toBe(raw);
+      expect(projection().markdownBody).toBe(action === 'manual' ? 'Call' : raw);
+      h.controller.setDraft('tomorrow](note.md) Call');
+      const wrapped = h.controller.snapshot();
+      expect(wrapped.draft).toBe('tomorrow](note.md) Call');
+      const wrappedProjection = expectDefined(wrapped.metadata?.projection);
+      expect(wrappedProjection.markdownBody).toBe(wrapped.draft);
+      expect(wrappedProjection.bindings).toEqual([]);
+      expect(wrappedProjection.initial.due).toEqual(
+        action === 'manual' ? { type: 'set', value: '2026-10-20' } : { type: 'clear' },
+      );
+      h.controller.applyMetadataAction({ type: 'restore' });
+      expect(h.controller.snapshot().draft).toBe(wrapped.draft);
+      expect(projection().markdownBody).toBe(wrapped.draft);
+      h.controller.setDraft('tomorrow Call');
+      const outside = h.controller.snapshot();
+      const outsideProjection = expectDefined(outside.metadata?.projection);
+      expect(outsideProjection.initial.due).toEqual({
+        type: 'set',
+        value: action === 'manual' ? '2026-10-20' : '2026-10-14',
+      });
+      expect(outsideProjection.markdownBody).toBe('Call');
+      await h.controller.submit('enter');
+      const root = h.readCanonicalRoot(expectDefined(h.repositoryWrites[0]));
+      expect(root.planning.due).toBe(action === 'manual' ? '2026-10-20' : '2026-10-14');
+      expect(root.markdownTitle).toBe('[ Call');
+    },
+  );
+
+  it('does not slice dismissed canonical metadata newly hidden in a composed link', async () => {
+    const h = await smartHarness({ prefix: '[' }, { inbox: false, initial: {} });
+    h.controller.setDraft('📅 2026-10-15 Call #hidden');
+    h.controller.applyMetadataAction({ type: 'dismiss', role: 'due' });
+    h.controller.applyMetadataAction({ type: 'remove-tag', tag: '#hidden' });
+    const raw = '📅 2026-10-15 Call #hidden](note.md)';
+    h.controller.setDraft(raw);
+    expect(h.controller.snapshot().metadata?.projection?.markdownBody).toBe(raw);
+    h.controller.applyMetadataAction({ type: 'restore' });
+    expect(h.controller.snapshot().draft).toBe(raw);
+    expect(h.controller.snapshot().metadata?.projection?.markdownBody).toBe(raw);
+    await h.controller.submit('enter');
+    const root = h.readCanonicalRoot(expectDefined(h.repositoryWrites[0]));
+    expect(root.markdownTitle).toBe('[ 📅 2026-10-15 Call #hidden](note.md)');
+    expect(root.planning.due).toBeUndefined();
+    expect(root.tags).toEqual([]);
+  });
+
+  it('keeps the optional absent capability compatible with unprotected legacy sessions', async () => {
+    const h = await smartHarness({}, { inbox: false, initial: {} });
+    Reflect.deleteProperty(h.controller.target.session, 'inspectInputProtection');
+    h.controller.setDraft('Call tomorrow');
+    await h.controller.submit('enter');
+    expect(h.readCanonicalRoot(expectDefined(h.repositoryWrites[0])).planning.due).toBe(
+      '2026-10-14',
+    );
+  });
+
+  it('keeps literal protection when automatic recognition is disabled', async () => {
+    const h = await smartHarness({ prefix: '[' }, { inbox: false, initial: {} });
+    h.enabled.mockReturnValue(false);
+    h.controller.setDraft('tomorrow](note.md) Call');
+    await h.controller.submit('enter');
+    expect(h.readCanonicalRoot(expectDefined(h.repositoryWrites[0])).markdownTitle).toBe(
+      '[ tomorrow](note.md) Call',
+    );
+    expect(h.recognize).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'throw',
+      () => {
+        throw new Error('private task text');
+      },
+    ],
+    ['undefined', () => undefined],
+    ['null', () => null],
+    ['missing field', () => ({})],
+    ['wrong field', () => ({ allowSourceTransforms: 'yes' })],
+  ])(
+    'fails closed for acquired %s proof in context and synchronous Enter',
+    async (_name, proof) => {
+      const h = await smartHarness({}, { inbox: false, initial: {} });
+      Reflect.set(h.controller.target.session, 'inspectInputProtection', proof);
+      h.controller.setDraft(' ');
+      expect(h.controller.snapshot().metadata?.context).toEqual({
+        type: 'unavailable',
+        cause: 'preview-capability',
+      });
+      h.controller.snapshot();
+      h.controller.flushRecognition();
+      expect(h.onPreviewFailure.mock.calls).toEqual([['context']]);
+      const raw = 'Call tomorrow';
+      h.controller.setDraft(raw, { deferRecognition: true });
+      await h.controller.submit('enter');
+      expect(h.controller.snapshot().draft).toBe(raw);
+      expect(h.controller.snapshot().metadata?.preview).toEqual({
+        type: 'unavailable',
+        cause: 'preview-capability',
+      });
+      expect(h.controller.snapshot().metadata?.projection).toBeUndefined();
+      expect(h.recognize).not.toHaveBeenCalled();
+      expect(h.execute).not.toHaveBeenCalled();
+      h.controller.snapshot();
+      h.controller.flushRecognition();
+      expect(h.onPreviewFailure.mock.calls).toEqual([['context'], ['draft']]);
+      Reflect.set(h.controller.target.session, 'inspectInputProtection', () => ({
+        allowSourceTransforms: true,
+      }));
+      h.controller.setDraft('Call again tomorrow');
+      await h.controller.submit('enter');
+      expect(h.readCanonicalRoot(expectDefined(h.repositoryWrites[0])).markdownTitle).toBe(
+        'Call again',
+      );
+    },
+  );
+});
+
+it.each(['tomorrow](note.md) Call', 'every day](note.md) Call'])(
+  'preserves composed source through ObsidianTaskRepository: %s',
+  async (raw) => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.taskPrefix = '[';
+    settings.taskFilePath = 'tasks.md';
+    settings.taskInsertionMode = 'append';
+    const app = await createAppWithFiles({ 'tasks.md': '' });
+    const h = configuredTaskApplication(app, settings, { capturePreview: true });
+    try {
+      const session = await h.tasks.planCreate({ type: 'configured-default' });
+      const controller = new TaskCaptureController({
+        target: {
+          label: 'Tasks',
+          context: { type: 'list', selection: 'today' },
+          session,
+          markdownPrefix: '',
+          markdownSuffixes: [],
+          initial: {},
+        },
+        smart: {
+          recognizer: new ChronoTaskInputRecognizer(),
+          recurrence: new RecurrenceTextInputParser(),
+          readReference: () => reference,
+          enabled: () => true,
+          onRecognitionFailure: () => {},
+        },
+        describe: describeTaskCreationResult,
+        onResult: () => {},
+        onRequestClose: () => {},
+      });
+      controller.setDraft(raw);
+      await controller.submit('enter');
+      const file = expectDefined(app.vault.getFileByPath('tasks.md'));
+      const content = await app.vault.read(file);
+      expect(content).toContain(`- [ ] [ ${raw}`);
+      expect(content).not.toContain('📅');
+      expect(content).not.toContain('🔁');
+      controller.destroy();
+    } finally {
+      h.index.destroy();
+    }
+  },
+);
+
+describe('minute-plus-meridiem canonical saves', () => {
+  it.each([
+    ['10:00 pm', '22:00'],
+    ['10:00PM', '22:00'],
+    ['12:00 am', '00:00'],
+    ['12:00 pm', '12:00'],
+  ])('saves complete %s and restores after dismissal', async (clock, time) => {
+    const h = await smartHarness(
+      {},
+      {
+        inbox: false,
+        initial: {},
+        reference: {
+          ...reference,
+          epochMs: Date.parse('2026-10-13T09:00:00+07:00'),
+          localTime: localTime('09:00'),
+        },
+      },
+    );
+    const raw = `Call tomorrow at ${clock}`;
+    h.controller.setDraft(raw);
+    expect(h.controller.snapshot().metadata?.preview).toMatchObject({
+      type: 'valid',
+      metadata: { markdownTitle: 'Call', planning: { due: '2026-10-14', time } },
+    });
+    h.controller.applyMetadataAction({ type: 'dismiss', role: 'time' });
+    expect(h.controller.snapshot().draft).toBe(raw);
+    expect(h.controller.snapshot().metadata?.projection?.markdownBody).toBe(
+      `Call tomorrow at ${clock}`,
+    );
+    h.controller.applyMetadataAction({ type: 'restore' });
+    await h.controller.submit('enter');
+    const root = h.readCanonicalRoot(expectDefined(h.repositoryWrites[0]));
+    expect(root.markdownTitle).toBe('Call');
+    expect(root.planning.due).toBe('2026-10-14');
+    expect(root.planning.time).toBe(time);
+    expect(root.recurrence).toBeUndefined();
+  });
+  it.each<[string, string | undefined, string?]>([
+    ['13:00 pm', '2026-10-14'],
+    ['00:00 am', '2026-10-14'],
+    ['10:61 pm', undefined],
+    ['10:00:00 pm', undefined],
+    ['10:00 PMish', '2026-10-14'],
+    ['10:00pm_build', '2026-10-14'],
+    ['10:00pm-project', '2026-10-14'],
+    ['2pm/path', '2026-10-14'],
+    ['10:00 pm+07:00', undefined],
+    ['10:00   pm+07:00', '2026-10-14', 'Call at 10:00 pm+07:00'],
+    ['10:00\tpm+07:00', undefined],
+  ])('keeps unsupported %s bytes in the save', async (clock, due, title) => {
+    const h = await smartHarness({}, { inbox: false, initial: {} });
+    const raw = `Call tomorrow at ${clock}`;
+    h.controller.setDraft(raw);
+    await h.controller.submit('enter');
+    const root = h.readCanonicalRoot(expectDefined(h.repositoryWrites[0]));
+    expect(root.markdownTitle).toBe(title ?? (due === undefined ? raw : `Call at ${clock}`));
+    expect(root.planning.time).toBeUndefined();
+    expect(root.planning.due).toBe(due);
+  });
+});
+
+it('reports acquired protection failure once per revision with sanitized diagnostics', async () => {
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    const h = await smartHarness({}, { inbox: false, initial: {}, previewFailureCallback: false });
+    Reflect.set(h.controller.target.session, 'inspectInputProtection', () => {
+      throw new Error('private source words');
+    });
+    h.controller.setDraft('Call private source words tomorrow');
+    h.controller.snapshot();
+    await h.controller.submit('enter');
+    h.controller.snapshot();
+    expect(log.mock.calls).toEqual([['[abyss-tasks] Quick-capture draft preview failed']]);
+    expect(h.execute).not.toHaveBeenCalled();
+    expect(h.controller.snapshot().draft).toBe('Call private source words tomorrow');
+    h.controller.setDraft('Call private source words again tomorrow');
+    expect(log.mock.calls).toEqual([
+      ['[abyss-tasks] Quick-capture draft preview failed'],
+      ['[abyss-tasks] Quick-capture draft preview failed'],
+    ]);
+  } finally {
+    log.mockRestore();
+  }
+});
+
+it.each([
+  ['Call tomorrow', '2026-10-14', undefined],
+  ['Call every day', '2026-10-13', 'every day'],
+])('allows unprotected recognition after a complete prefix: %s', async (raw, due, recurrence) => {
+  const h = await smartHarness(
+    { prefix: '[label](note.md)' },
+    { inbox: false, initial: {}, recurrence: new RecurrenceTextInputParser() },
+  );
+  h.controller.setDraft(raw);
+  await h.controller.submit('enter');
+  const root = h.readCanonicalRoot(expectDefined(h.repositoryWrites[0]));
+  expect(root.markdownTitle).toBe('[label](note.md) Call');
+  expect(root.planning.due).toBe(due);
+  expect(root.recurrence).toBe(recurrence);
 });

@@ -374,7 +374,7 @@ export class TaskCaptureController {
     const state = this.state_abyssPrivate;
     let reading: ContextRead;
     try {
-      reading = this.readContext_abyssPrivate(inspectTaskInput(state.raw));
+      reading = this.readContext_abyssPrivate(this.inspectSource_abyssPrivate().inspection);
     } catch {
       reading = {
         context: { type: 'unavailable', cause: 'preview-capability' },
@@ -390,6 +390,33 @@ export class TaskCaptureController {
       ...reading,
       canRestore: state.restore !== undefined,
       needsCheckedRetry: this.needsCheckedRetry_abyssPrivate,
+    };
+  }
+
+  private inspectSource_abyssPrivate(): {
+    readonly inspection: ReturnType<typeof inspectTaskInput>;
+    readonly allowed: boolean;
+  } {
+    const raw = this.state_abyssPrivate.raw;
+    const session = this.target.session;
+    let allowed = true;
+    if (session.inspectInputProtection !== undefined) {
+      const proof: unknown = session.inspectInputProtection({
+        markdownBody: commandBodyForCapture(this.target, raw),
+        ...(this.target.initial === undefined ? {} : { initial: this.target.initial }),
+      });
+      const value =
+        typeof proof === 'object' && proof !== null && 'allowSourceTransforms' in proof
+          ? proof.allowSourceTransforms
+          : undefined;
+      if (typeof value !== 'boolean') throw new Error('Invalid capture source protection');
+      allowed = value;
+    }
+    return {
+      allowed,
+      inspection: allowed
+        ? inspectTaskInput(raw)
+        : { tags: [], carriers: [], protectedRanges: [{ from: 0, to: raw.length }] },
     };
   }
 
@@ -513,15 +540,15 @@ export class TaskCaptureController {
       reference = this.reference_abyssPrivate;
     if (smart === undefined || reference === undefined) return;
     this.recognitionPending_abyssPrivate = false;
-    const state = this.state_abyssPrivate,
-      inspection = inspectTaskInput(state.raw);
-    const { candidates, recurrences, recognitionError } = this.recognize_abyssPrivate(
-      smart,
-      reference,
-    );
+    const state = this.state_abyssPrivate;
     let preview: TaskCreatePreview;
     let projection: TaskInputProjection | undefined;
+    let recognitionError: string | undefined;
     try {
+      const { inspection, allowed } = this.inspectSource_abyssPrivate();
+      const recognized = this.recognize_abyssPrivate(smart, reference, inspection, allowed);
+      const { candidates, recurrences } = recognized;
+      recognitionError = recognized.recognitionError;
       const source = this.target.session.preview(this.preflightRequest_abyssPrivate(inspection));
       preview = source;
       if (source.type === 'valid') {
@@ -570,17 +597,18 @@ export class TaskCaptureController {
   private recognize_abyssPrivate(
     smart: CaptureSmartOptions,
     reference: TaskInputReference,
+    inspection: ReturnType<typeof inspectTaskInput>,
+    allowed: boolean,
   ): {
     readonly candidates: ReturnType<CaptureSmartOptions['recognizer']['recognize']>;
     readonly recurrences: readonly TaskInputRecurrenceCandidate[];
     readonly recognitionError?: string;
   } {
-    const state = this.state_abyssPrivate,
-      inspection = inspectTaskInput(state.raw);
+    const state = this.state_abyssPrivate;
     let recognitionError: string | undefined;
     let candidates: ReturnType<CaptureSmartOptions['recognizer']['recognize']> = [];
     let recurrences: readonly TaskInputRecurrenceCandidate[] = [];
-    if (this.enabled_abyssPrivate) {
+    if (this.enabled_abyssPrivate && allowed) {
       try {
         const recurring = smart.recurrence?.extract({
           text: state.raw,
@@ -641,12 +669,18 @@ export class TaskCaptureController {
       this.refreshSmart_abyssPrivate();
     const projection = this.metadata_abyssPrivate?.projection;
     if (projection === undefined) return;
-    const next = applyTaskInputAction(
-      this.state_abyssPrivate,
-      action,
-      projection,
-      inspectTaskInput(this.state_abyssPrivate.raw),
-    );
+    let next: TaskInputState;
+    try {
+      next = applyTaskInputAction(
+        this.state_abyssPrivate,
+        action,
+        projection,
+        this.inspectSource_abyssPrivate().inspection,
+      );
+    } catch {
+      this.refreshSmart_abyssPrivate();
+      return;
+    }
     if (next === this.state_abyssPrivate) return;
     this.state_abyssPrivate = next;
     this.frozen_abyssPrivate = undefined;

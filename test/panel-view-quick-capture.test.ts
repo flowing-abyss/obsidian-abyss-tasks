@@ -1570,3 +1570,77 @@ it.each(['inspector', 'central-editor', 'task-modal'] as const)(
     }
   },
 );
+
+it('resolves stable Q tag colors from live configured groups without observed-catalog reads', async () => {
+  const recognizer = new ChronoTaskInputRecognizer();
+  const recognize = vi.spyOn(recognizer, 'recognize');
+  const h = await mountQuickPanel(
+    false,
+    false,
+    false,
+    undefined,
+    { recognizer, readReference: () => reference },
+    true,
+  );
+  try {
+    h.settings.tagGroups = [
+      { id: 'work', name: 'Work', mode: 'prefix', prefix: 'WORK', color: '#112233' },
+      { id: 'nested', name: 'Nested', mode: 'prefix', prefix: 'work/deep', color: '#abcdef' },
+      { id: 'manual', name: 'Manual', mode: 'manual', tags: ['MANUAL'], color: '#445566' },
+      { id: 'plain', name: 'Plain', mode: 'manual', tags: ['#plain'] },
+      { id: 'later', name: 'Later', mode: 'manual', tags: ['#plain'], color: '#778899' },
+    ];
+    const input = await h.openQ();
+    const tags = () => [
+      ...h.root.querySelectorAll<HTMLElement>('.abyss-capture-metadata .abyss-task-tag'),
+    ];
+    input.value = 'Call #work/deep/client #manual #plain #free';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await vi.waitFor(() => {
+      expect(recognize).toHaveBeenCalledOnce();
+    });
+    expect(tags().map((tag) => tag.textContent)).toEqual([
+      '#work/deep/client',
+      '#manual',
+      '#plain',
+      '#free',
+    ]);
+    expect(tags().map((tag) => tag.style.getPropertyValue('--abyss-tag-color'))).toEqual([
+      '#112233',
+      '#445566',
+      '',
+      '',
+    ]);
+    const observed = vi.spyOn(h.tasks.queries, 'observedTags');
+    observed.mockClear();
+    const previous = recognize.mock.calls.length;
+    input.value = 'Call again #work/deep/client #manual #plain #free';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await vi.waitFor(() => {
+      expect(recognize.mock.calls.length).toBeGreaterThan(previous);
+    });
+    expect(tags().map((tag) => tag.textContent)).toEqual([
+      '#work/deep/client',
+      '#manual',
+      '#plain',
+      '#free',
+    ]);
+    expect(observed).not.toHaveBeenCalled();
+    expectDefined(h.settings.tagGroups[0]).color = '#aabbcc';
+    const beforeColorEdit = recognize.mock.calls.length;
+    input.value = 'Call once more #work/deep/client #manual #plain #free';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await vi.waitFor(() => {
+      expect(recognize.mock.calls.length).toBeGreaterThan(beforeColorEdit);
+    });
+    expect(tags().map((tag) => tag.style.getPropertyValue('--abyss-tag-color'))).toEqual([
+      '#aabbcc',
+      '#445566',
+      '',
+      '',
+    ]);
+    expect(observed).not.toHaveBeenCalled();
+  } finally {
+    await h.dispose();
+  }
+});

@@ -22,6 +22,7 @@ import {
   taskMutationNodeRef,
 } from '../domain/taskCommandTargets';
 import { isHierarchyCommand, type TaskHierarchyCommand } from '../domain/taskHierarchy';
+import { inspectTaskInputProtection } from '../domain/taskInputInspection';
 import type {
   TaskCreateContextPreview,
   TaskCreateInboxPreview,
@@ -1156,6 +1157,8 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     return {
       type: 'ready',
       destination,
+      inspectInputProtection: (request) =>
+        inspectTaskInputProtection(settings.taskPrefix, request.markdownBody),
       preview: (request) => this.previewCreate_abyssPrivate(request, settings, reading),
       previewContext: (request = { markdownBody: '' }) =>
         this.previewCreateContext_abyssPrivate(request, settings, reading),
@@ -1227,6 +1230,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
   private unavailableCreateSession_abyssPrivate(): TaskCreateSession {
     return {
       type: 'unavailable',
+      inspectInputProtection: () => ({ allowSourceTransforms: false }),
       preview: () => ({ type: 'unavailable', cause: 'destination' }),
       previewContext: () => ({ type: 'unavailable', cause: 'destination' }),
       execute: async () => destinationUnavailableResult(),

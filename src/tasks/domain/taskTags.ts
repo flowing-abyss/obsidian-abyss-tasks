@@ -30,7 +30,7 @@ export function normalizeTaskTagInput(input: string): readonly string[] | undefi
 }
 
 /** Prepends the configured Markdown fragment without interpreting prose or inline code as tags. */
-function prefixTaskMarkdown(prefix: string, markdown: string): string {
+export function prefixTaskMarkdown(prefix: string, markdown: string): string {
   const normalizedPrefix = prefix.trim();
   return normalizedPrefix.length === 0 ? markdown : `${normalizedPrefix} ${markdown}`;
 }

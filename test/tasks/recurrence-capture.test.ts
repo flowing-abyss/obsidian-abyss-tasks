@@ -849,3 +849,46 @@ describe('native identifier details preserve recurrence and first-date inference
     expect(root.planning.time).toBeUndefined();
   });
 });
+
+describe('complete recurrence clock ownership', () => {
+  it.each([
+    ['10:00 pm', '22:00', '2026-10-13'],
+    ['12:00 am', '00:00', '2026-10-14'],
+    ['12:00 pm', '12:00', '2026-10-13'],
+    ['10:00PM', '22:00', '2026-10-13'],
+  ])('saves daily %s at its literal expected time', async (clock, time, due) => {
+    const h = await capture();
+    const raw = `Call every day at ${clock}`;
+    h.controller.setDraft(raw);
+    expect(h.controller.snapshot().draft).toBe(raw);
+    expect(h.controller.snapshot().metadata?.preview).toMatchObject({
+      type: 'valid',
+      metadata: { markdownTitle: 'Call', recurrence: 'every day', planning: { due, time } },
+    });
+    await h.controller.submit('enter');
+    const content = expectDefined(h.repositoryWrites[0]);
+    expect(content).toBe(`- [ ] Call ⏰ ${time} 🔁 every day ➕ 2026-10-13 📅 ${due}`);
+  });
+  it.each([
+    '13:00 pm',
+    '00:00 am',
+    '10:61 pm',
+    '10:00:00 pm',
+    '10:00 PMish',
+    '10:00pm_build',
+    '10:00pm-project',
+    '2pm/path',
+    '10:00 pm+07:00',
+  ])('retains unsupported recurrence and clock %s', async (clock) => {
+    const h = await capture();
+    const raw = `Call every day at ${clock}`;
+    h.controller.setDraft(raw);
+    expect(h.controller.snapshot().draft).toBe(raw);
+    await h.controller.submit('enter');
+    const root = h.readCanonicalRoot(expectDefined(h.repositoryWrites[0]));
+    expect(root.markdownTitle).toBe(raw);
+    expect(root.planning.time).toBeUndefined();
+    expect(root.planning.due).toBeUndefined();
+    expect(root.recurrence).toBeUndefined();
+  });
+});

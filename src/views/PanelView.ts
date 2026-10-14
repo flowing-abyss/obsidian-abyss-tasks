@@ -19,7 +19,7 @@ import {
 import type { StatusRegistry } from '../status/StatusRegistry';
 import type { TagManager } from '../tags/TagManager';
 import { prefixForDiscoveredGroupId, resolveEffectiveTagGroups } from '../tags/effectiveTagGroups';
-import { tagColorForGroups } from '../tags/tagColor';
+import { colorForTag } from '../tags/tagColor';
 import { collectTaskNodeTags } from '../tags/taskTagCatalog';
 import type {
   CommentTimeContextProvider,
@@ -946,14 +946,7 @@ export class PanelView extends ItemView {
     let ownsSelection = this.center_abyssPrivate.captureCreationSelection();
     this.quickCapture_abyssPrivate = new QuickCaptureCoordinator({
       host: elements.quickCaptureHost,
-      getTagColor: (tag) =>
-        tagColorForGroups(
-          tag,
-          resolveEffectiveTagGroups(
-            this.settings_abyssPrivate,
-            selectionTasks.queries.observedTags(),
-          ),
-        ),
+      getTagColor: (tag) => colorForTag(tag, this.settings_abyssPrivate.tagGroups),
       getDateClass: (value, referenceDate) =>
         this.center_abyssPrivate.getDateClassForCapture(value, referenceDate),
       formatDate: (value, referenceDate) =>

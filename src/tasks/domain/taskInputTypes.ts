@@ -16,6 +16,9 @@ export interface TaskInputCarrier {
   readonly range: TaskInputRange;
   readonly value?: string;
 }
+export interface TaskInputSourceProtection {
+  readonly allowSourceTransforms: boolean;
+}
 export interface TaskInputInspection {
   readonly tags: ReadonlyArray<{ readonly value: string; readonly range: TaskInputRange }>;
   readonly carriers: readonly TaskInputCarrier[];

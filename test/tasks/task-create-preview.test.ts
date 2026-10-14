@@ -766,3 +766,33 @@ describe('frozen preview and actual central Inbox membership', () => {
     ).toBe(row.member);
   });
 });
+
+describe('retained input-source protection', () => {
+  it.each([
+    ['[', 'tomorrow](note.md) Call', false],
+    ['`', 'tomorrow` Call', false],
+    ['"', 'tomorrow" Call', false],
+    ['<!--', 'tomorrow --> Call', false],
+    ['<span>', 'every day</span> Call', false],
+    ['[note](note.md)', 'Call tomorrow', true],
+    ['`label`', 'Call tomorrow', true],
+    ['#fallback', 'Call tomorrow #specific', true],
+  ])('proves composed ownership with frozen prefix %s', async (prefix, markdownBody, allowed) => {
+    const h = await harness({ prefix });
+    const session = await h.service.planCreate({ type: 'configured-default' });
+    Object.assign(h.behavior, { taskPrefix: 'changed' });
+    const before = h.clock.mock.calls.length;
+    expect(session.inspectInputProtection?.({ markdownBody })).toEqual({
+      allowSourceTransforms: allowed,
+    });
+    expect(h.clock).toHaveBeenCalledTimes(before);
+    expect(h.repositoryWrites).toEqual([]);
+  });
+  it('declines unavailable destination source authority', async () => {
+    const h = await harness({ unavailable: true });
+    const session = await h.service.planCreate({ type: 'configured-default' });
+    expect(session.inspectInputProtection?.({ markdownBody: 'Call tomorrow' })).toEqual({
+      allowSourceTransforms: false,
+    });
+  });
+});

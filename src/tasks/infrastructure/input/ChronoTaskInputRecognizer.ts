@@ -22,7 +22,7 @@ import type {
 import type { LocalDate } from '../../domain/types';
 import { localDate, localTime } from '../../domain/validation';
 
-const CLOCK = /\d{1,2}:\d{2}(?::\d{2})?|\d{1,2}\s?[ap]m/giu;
+const CLOCK = /\d{1,2}(?::\d{2}(?::\d{2})?(?:[^\S\r\n]*[ap]m)?|\s?[ap]m)/giu;
 // Range detection preserves short hyphenated endpoints before signed title masking.
 const RANGE_NUMERIC_OFFSET = /[+-]\d{2}:?\d{2}\d*/gu;
 const NUMERIC_OFFSET = /[+-]\d+(?::\d+|[.,]\d+)?/gu;
@@ -157,8 +157,8 @@ function isNumericTimezone(text: string, from: number, token: string): boolean {
   if (/^(?:[\p{L}\p{N}_:+/-]|\.\d)/u.test(text.slice(end, end + 2))) return false;
   if (!/[\p{L}\p{N}_:./+-]/u.test(text[from - 1] ?? '')) return true;
   // An attached offset may follow a real clock, but never an identifier/year fragment.
-  const clock = /(?:^|[^\p{L}\p{N}_:./+-])(\d{1,2}:\d{2}|\d{1,2}\s?[ap]m)$/iu.exec(
-    text.slice(Math.max(0, from - 6), from),
+  const clock = /(?:^|[^\p{L}\p{N}_:./+-])(\d{1,2}:\d{2}(?:\s?[ap]m)?|\d{1,2}\s?[ap]m)$/iu.exec(
+    text.slice(Math.max(0, from - 12), from),
   );
   return clock !== null && exactClock(clock[1] ?? '');
 }
@@ -218,7 +218,7 @@ function exactClock(source: string): boolean {
   const withoutCue = source.replace(/^(?:at|в)\s+/iu, '');
   return (
     /^(?:[01]?\d|2[0-3]):[0-5]\d$/u.test(withoutCue) ||
-    /^(?:0?[1-9]|1[0-2])\s?[ap]m$/iu.test(withoutCue)
+    /^(?:0?[1-9]|1[0-2])(?::[0-5]\d)?[^\S\r\n]*[ap]m$/iu.test(withoutCue)
   );
 }
 function clockWordEdge(text: string, range: TaskInputRange): boolean {
@@ -249,7 +249,13 @@ function recognizeClocks(context: Recognition): TaskInputCandidate[] {
     ]),
     clocks: TaskInputCandidate[] = [];
   for (const match of masked.matchAll(CLOCK)) {
-    const range = ownedCue(context.text, { from: match.index, to: match.index + match[0].length });
+    const end = match.index + match[0].length;
+    // Capture unsupported identifier/path suffixes before validating the whole clock atom.
+    const extension = /^[\p{L}\p{N}_/+-]+(?:[.:][\p{L}\p{N}_/+-]+)*/u.exec(context.text.slice(end));
+    const range = ownedCue(context.text, {
+      from: match.index,
+      to: end + (extension?.[0].length ?? 0),
+    });
     const result = recognizedClock(context, range);
     if (result.status === 'point') clocks.push(result);
     else {

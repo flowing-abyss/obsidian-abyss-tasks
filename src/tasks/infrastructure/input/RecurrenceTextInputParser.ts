@@ -9,6 +9,7 @@ import type {
   TaskInputRecurrenceCandidate,
 } from '../../domain/recurrenceInputTypes';
 import {
+  htmlElementBarriers,
   inputRangesOverlap,
   inputTextBarriers,
   maskInputRanges,
@@ -35,45 +36,6 @@ interface ExtractionContext {
 interface PhraseMatch {
   readonly to: number;
   readonly rule: string;
-}
-const VOID_HTML = new Set([
-  'area',
-  'base',
-  'br',
-  'col',
-  'embed',
-  'hr',
-  'img',
-  'input',
-  'link',
-  'meta',
-  'param',
-  'source',
-  'track',
-  'wbr',
-]);
-/** Only already-protected tag atoms can establish an opaque HTML element. */
-function htmlElementBarriers(text: string, atoms: readonly TaskInputRange[]): TaskInputRange[] {
-  const result: TaskInputRange[] = [];
-  const stack: Array<{ name: string; from: number }> = [];
-  for (const atom of atoms) {
-    const source = text.slice(atom.from, atom.to);
-    const tag = /^<(\/?)([a-z][\w:-]*)(?=[\s/>])/iu.exec(source);
-    if (tag === null || !source.endsWith('>')) continue;
-    const name = (tag[2] ?? '').toLowerCase();
-    if (VOID_HTML.has(name) || source.endsWith('/>')) continue;
-    if (tag[1] !== '/') {
-      stack.push({ name, from: atom.from });
-      continue;
-    }
-    const matching = stack.map((opening) => opening.name).lastIndexOf(name);
-    const opening = stack[matching];
-    if (opening === undefined) continue;
-    result.push({ from: opening.from, to: atom.to });
-    stack.splice(matching);
-  }
-  for (const opening of stack) result.push({ from: opening.from, to: text.length });
-  return result;
 }
 function withinBudget(text: string): boolean {
   return text.length <= MAX_UNITS && [...text.matchAll(/[\p{L}\p{N}_]+/gu)].length <= MAX_TOKENS;

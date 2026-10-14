@@ -595,3 +595,55 @@ describe('recurrence exclusion respects identifier boundaries', () => {
     );
   });
 });
+
+describe('atomic minute-plus-meridiem clocks', () => {
+  it.each([
+    ['10:00 pm', '22:00'],
+    ['10:00PM', '22:00'],
+    ['12:00 am', '00:00'],
+    ['12:00 pm', '12:00'],
+    ['2pm', '14:00'],
+    ['14:00', '14:00'],
+  ])('owns the complete UTF-16 clock %s', (clock, time) => {
+    const raw = `👩‍💻 Call tomorrow at ${clock}`;
+    const inspection = inspectTaskInput(raw);
+    const candidates = recognizer.recognize({
+      text: raw,
+      reference,
+      protectedRanges: inspection.protectedRanges,
+    });
+    const point = candidates.find((candidate) => candidate.time !== undefined);
+    expect(point?.time).toBe(time);
+    expect(point?.timeRanges.map(({ from, to }) => raw.slice(from, to))).toEqual([`at ${clock}`]);
+    const result = project(createTaskInputState(raw));
+    expect(result.markdownBody).toBe('👩‍💻 Call');
+    expect(result.initial.due).toEqual({ type: 'set', value: '2026-10-14' });
+  });
+  it.each([
+    '13:00 pm',
+    '00:00 am',
+    '10:61 pm',
+    '10:00:00 pm',
+    '10:00 PMish',
+    '10:00pm_build',
+    '10:00pm-project',
+    '2pm/path',
+    '10:00 pm+07:00',
+    '10:00   pm+07:00',
+    '10:00\tpm+07:00',
+  ])('never salvages a time prefix from %s', (clock) => {
+    const raw = `Call tomorrow at ${clock}`;
+    const result = project(createTaskInputState(raw));
+    expect(result.initial.time).toBeUndefined();
+    expect(result.markdownBody).toContain(`at ${clock}`);
+  });
+  it.each(['`10:00 pm`', '[10:00 pm](note.md)', '[[10:00 pm]]'])(
+    'keeps protected %s literal',
+    (clock) => {
+      const raw = `Call tomorrow ${clock}`;
+      const result = project(createTaskInputState(raw));
+      expect(result.initial.time).toBeUndefined();
+      expect(result.markdownBody).toBe(`Call ${clock}`);
+    },
+  );
+});

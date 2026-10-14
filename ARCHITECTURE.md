@@ -131,7 +131,12 @@ custom-rule editing keeps the injected parser available. The pure model owns raw
 suppression, manual choices and source ranges. Q reads canonical source planning and recurrence
 from its retained create session before projection, then previews the exact unprefixed final request under
 the same policy. Chip removal and the single Restore action change metadata only; they preserve raw
-text and native input history. Exact inactive canonical occurrences are filtered before source
+text and native input history. The session's optional `inspectInputProtection(request)` proves source
+ownership over the original request and frozen prefix before preflight. Composed Markdown atoms, quotes, comments, URLs and HTML
+elements crossing that boundary keep the whole input literal for that revision. Manual choices retain
+their explicit values while losing source-consumption authority. Only an absent capability permits
+legacy behavior; acquired malformed or throwing proof uses the existing unavailable-preview boundary.
+Exact inactive canonical occurrences are filtered before source
 preflight and application tag policy. Final projection removes their union with fully represented
 accepted natural ranges in original UTF-16 coordinates. Restore reverses only its own metadata deltas;
 source changes and conflicting re-entry expire the offer. Metadata never creates an authored title.
@@ -161,8 +166,9 @@ classification display their actual source and tags; unsupported context is opti
 context or draft preview failures clear stale metadata and use one inline error with a constant,
 sanitized diagnostic per phase and revision. Ordinary valid preview can recover without a new session.
 
-`CaptureMetadataRow` and central task cards share tag and source-note content. Both resolve tag colors
-from the effective groups and observed task catalog. PanelView injects the current source-path display
+`CaptureMetadataRow` and central task cards share tag and source-note content. Q resolves colors
+directly from current configured groups through the shared matcher. Central navigation and group
+discovery retain the effective groups and observed task catalog. PanelView injects the source-path display
 policy and CenterPanel's shared date formatter and classifier through the Q coordinator and surface.
 Generic file captions obey `shouldShowSourcePath`, including configured date-template destinations;
 semantic Inbox and explicit project captions remain. The existing assistive destination description

@@ -93,3 +93,46 @@ export function inputTextBarriers(
     result.push({ from: match.index, to: match.index + match[0].length });
   return result;
 }
+
+const VOID_HTML = new Set([
+  'area',
+  'base',
+  'br',
+  'col',
+  'embed',
+  'hr',
+  'img',
+  'input',
+  'link',
+  'meta',
+  'param',
+  'source',
+  'track',
+  'wbr',
+]);
+/** Only already-protected tag atoms can establish an opaque HTML element. */
+export function htmlElementBarriers(
+  text: string,
+  atoms: readonly TaskInputRange[],
+): TaskInputRange[] {
+  const result: TaskInputRange[] = [];
+  const stack: Array<{ name: string; from: number }> = [];
+  for (const atom of atoms) {
+    const source = text.slice(atom.from, atom.to);
+    const tag = /^<(\/?)([a-z][\w:-]*)(?=[\s/>])/iu.exec(source);
+    if (tag === null || !source.endsWith('>')) continue;
+    const name = (tag[2] ?? '').toLowerCase();
+    if (VOID_HTML.has(name) || source.endsWith('/>')) continue;
+    if (tag[1] !== '/') {
+      stack.push({ name, from: atom.from });
+      continue;
+    }
+    const matching = stack.map((opening) => opening.name).lastIndexOf(name);
+    const opening = stack[matching];
+    if (opening === undefined) continue;
+    result.push({ from: opening.from, to: atom.to });
+    stack.splice(matching);
+  }
+  for (const opening of stack) result.push({ from: opening.from, to: text.length });
+  return result;
+}

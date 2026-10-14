@@ -1,10 +1,13 @@
+import { htmlElementBarriers, inputTextBarriers } from './taskInputGuards';
 import type {
   TaskInputCarrier,
   TaskInputInspection,
   TaskInputMetadataRole,
   TaskInputRange,
+  TaskInputSourceProtection,
 } from './taskInputTypes';
 import { parseTaskLineSourceModel, taskLineAtomicRanges } from './taskLineSourceModel';
+import { prefixTaskMarkdown } from './taskTags';
 import { localDate, localTime } from './validation';
 
 import { parseRecurrenceRule } from './recurrence';
@@ -66,4 +69,20 @@ export function inspectTaskInput(raw: string): TaskInputInspection {
       return order !== 0 ? order : left.to - right.to;
     });
   return { tags, carriers, protectedRanges };
+}
+
+/** Proves source ownership before creation policy removes prefix-owned fallback tags. */
+export function inspectTaskInputProtection(
+  prefix: string,
+  markdownBody: string,
+): TaskInputSourceProtection {
+  const composed = prefixTaskMarkdown(prefix, markdownBody);
+  const boundary = composed.length - markdownBody.length;
+  const atoms = inputTextBarriers(composed, inspectTaskInput(composed).protectedRanges).sort(
+    (a, b) => a.from - b.from,
+  );
+  const ranges = [...atoms, ...htmlElementBarriers(composed, atoms)];
+  return {
+    allowSourceTransforms: !ranges.some(({ from, to }) => from < boundary && boundary < to),
+  };
 }

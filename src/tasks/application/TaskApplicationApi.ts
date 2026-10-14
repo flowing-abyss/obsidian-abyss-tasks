@@ -5,7 +5,11 @@ import type {
   TaskDependencyProjection,
   TaskNodeSnapshot,
 } from '../domain/taskDependencies';
-import type { TaskCreateContextPreview, TaskCreatePreview } from '../domain/taskInputTypes';
+import type {
+  TaskCreateContextPreview,
+  TaskCreatePreview,
+  TaskInputSourceProtection,
+} from '../domain/taskInputTypes';
 import type { TaskResolution } from '../domain/taskReconciliation';
 import type { TaskDependencySummary, TaskSearchAddress } from '../domain/taskSearchTypes';
 import type { TrackedEntry, TrackedTotal } from '../domain/timeTracking';
@@ -142,12 +146,14 @@ export type TaskCreateSession =
   | {
       readonly type: 'ready';
       readonly destination: TaskDestination;
+      inspectInputProtection?(request: TaskCreateRequest): TaskInputSourceProtection;
       preview(request: TaskCreateRequest): TaskCreatePreview;
       previewContext?(request?: TaskCreateRequest): TaskCreateContextPreview;
       execute(request: TaskCreateRequest): Promise<TaskCommandResult>;
     }
   | {
       readonly type: 'unavailable';
+      inspectInputProtection?(request: TaskCreateRequest): TaskInputSourceProtection;
       preview(request: TaskCreateRequest): TaskCreatePreview;
       previewContext?(request?: TaskCreateRequest): TaskCreateContextPreview;
       execute(request: TaskCreateRequest): Promise<TaskCommandResult>;
