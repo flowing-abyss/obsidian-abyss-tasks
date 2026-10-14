@@ -251,6 +251,60 @@ function harness(
     expectDefined(host.querySelector<HTMLButtonElement>(`button[aria-label^="${label}"]`));
   return { host, controller, surface, type, button, execute, preview };
 }
+
+function ownedChoiceMenu(hideOrder: 'before' | 'after') {
+  const portals = new Map<Menu, HTMLElement>();
+  const callbacks = new Map<Menu, () => unknown>();
+  vi.spyOn(Menu.prototype, 'onHide').mockImplementation(function (this: Menu, callback) {
+    callbacks.set(this, callback);
+  });
+  vi.spyOn(Menu.prototype, 'hide').mockImplementation(function (this: Menu) {
+    portals.get(this)?.remove();
+    const callback = callbacks.get(this);
+    callbacks.delete(this);
+    callback?.();
+    return this;
+  });
+  const shown: Menu[] = [];
+  vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (this: Menu) {
+    shown.push(this);
+    const portal = document.body.createDiv({ cls: 'menu' });
+    portals.set(this, portal);
+    const items = (
+      this as unknown as {
+        menuItems__: Array<{ title__: string; onClick__: (() => void) | null }>;
+      }
+    ).menuItems__;
+    for (const item of items) {
+      const row = portal.createDiv({ cls: 'menu-item', text: item.title__ });
+      row.tabIndex = -1;
+      row.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (hideOrder === 'before') this.hide();
+        item.onClick__?.();
+        if (hideOrder === 'after') this.hide();
+      });
+    }
+    return this;
+  });
+  return {
+    portal: () => expectDefined(portals.get(expectDefined(shown[shown.length - 1]))),
+    hide: () => expectDefined(shown[shown.length - 1]).hide(),
+    choose: (title: string) => {
+      const row = expectDefined(
+        [...expectDefined(portals.get(expectDefined(shown[shown.length - 1]))).children].find(
+          (element) => element.textContent === title,
+        ),
+      ) as HTMLElement;
+      row.focus();
+      row.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+    },
+  };
+}
 it('starts with destination context and reveals only real policy tags and planning', () => {
   const h = harness({ tags: { add: ['#task/inbox'] } });
   const contents = () =>
@@ -597,6 +651,205 @@ it('owns a native menu before first focus and returns nested Escape to its opene
   expect(h.controller.snapshot().phase).toBe('idle');
   h.surface.destroy();
   portal?.remove();
+});
+
+it.each(['before', 'after'] as const)(
+  'returns keyboard Ignore focus to Restore when the native menu hides %s its callback',
+  async (hideOrder) => {
+    const h = harness();
+    const menu = ownedChoiceMenu(hideOrder);
+    const raw = 'Call tomorrow and послезавтра';
+    h.type(raw);
+    vi.advanceTimersByTime(24);
+    const opener = h.button('Choose date');
+    opener.focus();
+    opener.click();
+    menu.choose('Ignore date suggestions');
+    expect(document.activeElement).toBe(h.button('Restore'));
+    expect(opener.isConnected).toBe(false);
+    expect(menu.portal().isConnected).toBe(false);
+    expect(h.surface.input.value).toBe(raw);
+    expect(h.controller.snapshot().metadata?.preview).toMatchObject({
+      type: 'valid',
+      metadata: { planning: {} },
+    });
+    await vi.runAllTimersAsync();
+    expect(h.controller.snapshot().phase).toBe('idle');
+    expect(h.execute).not.toHaveBeenCalled();
+    h.surface.destroy();
+  },
+);
+
+it.each(['before', 'after'] as const)(
+  'returns keyboard candidate focus to its surviving opener when the native menu hides %s its callback',
+  async (hideOrder) => {
+    const h = harness();
+    const menu = ownedChoiceMenu(hideOrder);
+    const raw = 'Call tomorrow and послезавтра';
+    h.type(raw);
+    vi.advanceTimersByTime(24);
+    const opener = h.button('Choose date');
+    opener.focus();
+    opener.click();
+    menu.choose('2026-10-14');
+    expect(document.activeElement).toBe(opener);
+    expect(opener.isConnected).toBe(true);
+    expect(menu.portal().isConnected).toBe(false);
+    expect(h.surface.input.value).toBe(raw);
+    expect(h.controller.snapshot().metadata?.preview).toMatchObject({
+      type: 'valid',
+      metadata: { planning: { due: '2026-10-14' } },
+    });
+    await vi.runAllTimersAsync();
+    expect(h.controller.snapshot().phase).toBe('idle');
+    expect(h.execute).not.toHaveBeenCalled();
+    h.surface.destroy();
+  },
+);
+
+it.each(['before', 'after'] as const)(
+  'preserves the manual picker focus when the native menu hides %s its callback',
+  async (hideOrder) => {
+    const h = harness();
+    const menu = ownedChoiceMenu(hideOrder);
+    const raw = 'Call tomorrow and послезавтра';
+    h.type(raw);
+    vi.advanceTimersByTime(24);
+    h.button('Choose date').click();
+    menu.choose('Choose date…');
+    const picker = expectDefined(h.host.querySelector<HTMLInputElement>('input[type="date"]'));
+    await vi.runAllTimersAsync();
+    expect(document.activeElement).toBe(picker);
+    expect(h.surface.input.value).toBe(raw);
+    expect(h.controller.snapshot().metadata?.projection?.ambiguity).toBe(true);
+    expect(h.execute).not.toHaveBeenCalled();
+    h.surface.destroy();
+  },
+);
+
+it('preserves external focus when an owned choice menu is dismissed outside', () => {
+  const h = harness();
+  const menu = ownedChoiceMenu('after');
+  h.type('Call tomorrow and послезавтра');
+  vi.advanceTimersByTime(24);
+  h.button('Choose date').click();
+  const external = document.body.createEl('button');
+  external.focus();
+  menu.hide();
+  expect(document.activeElement).toBe(external);
+  expect(h.controller.snapshot().metadata?.projection?.ambiguity).toBe(true);
+  expect(h.execute).not.toHaveBeenCalled();
+  h.surface.destroy();
+});
+
+it.each(['input', 'Restore', 'external'] as const)(
+  'preserves connected %s focus acquired while completing a menu choice',
+  (target) => {
+    const h = harness();
+    const menu = ownedChoiceMenu('after');
+    h.type('Call tomorrow and послезавтра');
+    vi.advanceTimersByTime(24);
+    h.button('Choose date').click();
+    const external = document.body.createEl('button');
+    let active: HTMLElement | undefined;
+    const observer = h.controller.subscribe((snapshot) => {
+      if (snapshot.metadata?.canRestore !== true) return;
+      active = { input: h.surface.input, Restore: h.button('Restore'), external }[target];
+      active.focus();
+    });
+    menu.choose('Ignore date suggestions');
+    expect(document.activeElement).toBe(expectDefined(active));
+    expect(h.execute).not.toHaveBeenCalled();
+    observer.release();
+    h.surface.destroy();
+  },
+);
+
+it('returns a completed menu choice to input when Restore is disabled', async () => {
+  const h = harness();
+  const menu = ownedChoiceMenu('after');
+  h.type('Call tomorrow and послезавтра');
+  vi.advanceTimersByTime(24);
+  h.button('Choose date').click();
+  const observer = h.controller.subscribe((snapshot) => {
+    if (snapshot.metadata?.canRestore === true) h.button('Restore').disabled = true;
+  });
+  menu.choose('Ignore date suggestions');
+  expect(document.activeElement).toBe(h.surface.input);
+  expect(h.button('Restore').disabled).toBe(true);
+  await vi.runAllTimersAsync();
+  expect(h.execute).not.toHaveBeenCalled();
+  observer.release();
+  h.surface.destroy();
+});
+
+it('returns a blocked menu choice to its surviving opener', () => {
+  const h = harness();
+  const menu = ownedChoiceMenu('after');
+  h.type('Call tomorrow and послезавтра');
+  vi.advanceTimersByTime(24);
+  const opener = h.button('Choose date');
+  opener.click();
+  h.surface.input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+  menu.choose('Ignore date suggestions');
+  expect(document.activeElement).toBe(opener);
+  expect(h.controller.snapshot().metadata?.projection?.ambiguity).toBe(true);
+  expect(h.execute).not.toHaveBeenCalled();
+  h.surface.destroy();
+});
+
+it('does not return menu choice focus after capture migrates to another document', () => {
+  const h = harness();
+  const menu = ownedChoiceMenu('after');
+  h.type('Call tomorrow and послезавтра');
+  vi.advanceTimersByTime(24);
+  h.button('Choose date').click();
+  const inputFocus = vi.spyOn(h.surface.input, 'focus');
+  const migrated = document.implementation.createHTMLDocument('Migrated capture');
+  migrated.body.append(h.host);
+  menu.choose('Ignore date suggestions');
+  expect(document.activeElement).toBe(document.body);
+  expect(inputFocus).not.toHaveBeenCalled();
+  expect(h.execute).not.toHaveBeenCalled();
+  h.surface.destroy();
+});
+
+it('does not return focus when capture destroys an owned choice menu', async () => {
+  const h = harness();
+  const menu = ownedChoiceMenu('after');
+  h.type('Call tomorrow and послезавтра');
+  vi.advanceTimersByTime(24);
+  h.button('Choose date').click();
+  const inputFocus = vi.spyOn(h.surface.input, 'focus');
+  const openerFocus = vi.spyOn(h.button('Choose date'), 'focus');
+  h.surface.destroy();
+  menu.choose('Ignore date suggestions');
+  expect(menu.portal().isConnected).toBe(false);
+  expect(document.activeElement).toBe(document.body);
+  expect(inputFocus).not.toHaveBeenCalled();
+  expect(openerFocus).not.toHaveBeenCalled();
+  await vi.runAllTimersAsync();
+  expect(h.execute).not.toHaveBeenCalled();
+});
+
+it('does not return menu choice focus after capture starts submitting', async () => {
+  const h = harness();
+  const menu = ownedChoiceMenu('after');
+  const pending = deferred<Awaited<ReturnType<typeof h.execute>>>();
+  h.execute.mockImplementationOnce(() => pending.promise);
+  h.type('Call tomorrow and послезавтра');
+  vi.advanceTimersByTime(24);
+  h.button('Choose date').click();
+  const submission = h.controller.submit('enter');
+  const inputFocus = vi.spyOn(h.surface.input, 'focus');
+  menu.choose('Ignore date suggestions');
+  expect(h.controller.snapshot().readonly).toBe(true);
+  expect(document.activeElement).toBe(document.body);
+  expect(inputFocus).not.toHaveBeenCalled();
+  expect(h.execute).toHaveBeenCalledOnce();
+  pending.resolve({ type: 'io-error', cause: 'test', contentState: 'unchanged' });
+  await submission;
+  h.surface.destroy();
 });
 
 it.each(['2026-10-14', 'Choose date…', 'Ignore date suggestions'])(

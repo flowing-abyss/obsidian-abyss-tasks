@@ -490,6 +490,41 @@ export class CaptureMetadataRow {
     this.menu = menu;
     const token = this.options.interactionOwnership?.acquire({ blocksShortcuts: true });
     let release = (): void => {};
+    const ownerDocument = this.element.ownerDocument;
+    let surface: HTMLElement | undefined;
+    const current = (): boolean =>
+      this.live() &&
+      this.element.isConnected &&
+      this.element.ownerDocument === ownerDocument &&
+      this.options.input.ownerDocument === ownerDocument &&
+      anchor.ownerDocument === ownerDocument &&
+      (surface === undefined || surface.ownerDocument === ownerDocument) &&
+      (this.menu === menu || this.menu === undefined);
+    const canReturnFocus = (menuSurface: HTMLElement): boolean => {
+      const active = ownerDocument.activeElement;
+      return (
+        active === null ||
+        active === ownerDocument.body ||
+        active === ownerDocument.documentElement ||
+        (menuSurface.isConnected && menuSurface.contains(active))
+      );
+    };
+    const completeChoice = (action: TaskInputAction): void => {
+      if (!current()) return;
+      this.act(action);
+      // The host may hide before or after this callback; rendering alone leaves its item focused.
+      menu.hide();
+      if (!current() || surface === undefined || !canReturnFocus(surface)) return;
+      const target = [anchor, this.chips.get('restore')?.body, this.options.input].find(
+        (element) =>
+          element !== undefined &&
+          element.isConnected &&
+          element.ownerDocument === ownerDocument &&
+          !element.hasAttribute('disabled') &&
+          element.closest('[hidden]') === null,
+      );
+      target?.focus({ preventScroll: true });
+    };
     const metadata = this.options.controller.snapshot().metadata;
     const projection = metadata?.projection;
     for (const candidate of projection?.candidates ?? []) {
@@ -497,7 +532,7 @@ export class CaptureMetadataRow {
       if (candidate.status !== 'point' || value === undefined) continue;
       menu.addItem((item) =>
         item.setTitle(this.dateLabel(value, metadata?.referenceDate)).onClick(() => {
-          this.act({ type: 'select-date', role: 'due', value, candidate });
+          completeChoice({ type: 'select-date', role: 'due', value, candidate });
         }),
       );
     }
@@ -508,7 +543,7 @@ export class CaptureMetadataRow {
     );
     menu.addItem((item) =>
       item.setTitle('Ignore date suggestions').onClick(() => {
-        this.act({ type: 'dismiss-ambiguity' });
+        completeChoice({ type: 'dismiss-ambiguity' });
       }),
     );
     menu.onHide(() => {
@@ -516,7 +551,8 @@ export class CaptureMetadataRow {
       token?.release();
       if (this.menu === menu) this.menu = undefined;
     });
-    showMenuAtMouseEventWithFocus(menu, event, (surface) => {
+    showMenuAtMouseEventWithFocus(menu, event, (menuSurface) => {
+      surface = menuSurface;
       surface.addEventListener('keydown', (key) => {
         if (key.key !== 'Escape' || isImeOwnedEvent(key)) return;
         key.preventDefault();
