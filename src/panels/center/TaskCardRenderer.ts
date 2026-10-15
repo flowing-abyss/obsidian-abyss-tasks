@@ -907,7 +907,14 @@ export class TaskCardRenderer {
       ...this.#textLifetime(context, flags),
       onRendered: (element) => {
         highlight.onRendered?.(element);
-        if (hasContinuation) element.appendText(' …');
+        if (hasContinuation) {
+          // Keep the cue in the final text block, outside links and inline formatting.
+          // A sibling of a rendered heading or list would start a separate line.
+          const blocks = element.querySelectorAll<HTMLElement>(
+            'p, h1, h2, h3, h4, h5, h6, li, blockquote',
+          );
+          (blocks[blocks.length - 1] ?? element).appendText(' …');
+        }
       },
     });
     if (context?.track !== undefined) context.track(descriptionRender);

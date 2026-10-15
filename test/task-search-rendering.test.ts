@@ -1684,3 +1684,98 @@ it.each(
     }
   },
 );
+
+it.each(
+  (['ordinary', 'filter'] as const).flatMap((mode) =>
+    [
+      { markdown: '# [[Summary]]', blocks: ['h1'] as const },
+      { markdown: '- [[Summary]]', blocks: ['ul', 'li'] as const },
+      { markdown: '1. [[Summary]]', blocks: ['ol', 'li'] as const },
+      { markdown: '> - [[Summary]]', blocks: ['blockquote', 'ul', 'li'] as const },
+    ].map((fixture) => ({ mode, ...fixture })),
+  ),
+)(
+  'keeps the $mode continuation inside the text block for $markdown',
+  async ({ mode, markdown, blocks }) => {
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, source, holder) => {
+      expect(source).toBe(markdown);
+      let block = holder;
+      for (const tag of blocks) block = block.createEl(tag);
+      block.createEl('a', {
+        cls: 'internal-link',
+        text: 'Summary',
+        attr: { 'data-href': 'Summary' },
+      });
+    });
+    const h = await mountCanonicalSearchUi(
+      { 'a.md': `- [ ] baseneedle\n  - > ${markdown}\n  - > Details` },
+      structuredClone(DEFAULT_SETTINGS),
+      'tasks',
+    );
+    try {
+      if (mode === 'filter') {
+        h.query('baseneedle');
+        await h.completed();
+      }
+      await vi.waitFor(() => {
+        expect(h.root.querySelector('.abyss-task-desc')?.textContent).toBe('Summary …');
+      });
+      const description = expectDefined(h.root.querySelector('.abyss-task-desc'));
+      const block = expectDefined(description.querySelector(blocks.join(' > ')));
+      const link = expectDefined(block.querySelector('a'));
+      expect(block.textContent).toBe('Summary …');
+      expect(link.textContent).toBe('Summary');
+      expect(link.nextSibling?.textContent).toBe(' …');
+      const open = vi.spyOn(h.app.workspace, 'openLinkText').mockResolvedValue(undefined);
+      link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      await vi.waitFor(() => {
+        expect(open).toHaveBeenCalledWith('Summary', 'a.md', false);
+      });
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it.each(['', 'baseneedle', 'childneedle', 'lastword'])(
+  'contains preview width without changing full matched evidence for query "%s"',
+  async (query) => {
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, source, holder) => {
+      holder.setText(source);
+    });
+    const h = await mountCanonicalSearchUi(
+      {
+        'a.md': `- [ ] baseneedle #metadata\n  - > ${'Long description '.repeat(50)}\n  - > lastword\n  - [ ] childneedle`,
+      },
+      structuredClone(DEFAULT_SETTINGS),
+      'tasks',
+    );
+    try {
+      h.state.set('selectedList', { type: 'tag', tag: '#metadata' });
+      h.panel.refresh();
+      if (query !== '') {
+        h.query(query);
+        await h.completed();
+      }
+      const description = expectDefined(h.root.querySelector('.abyss-task-desc'));
+      const containingSelectors: string[] = [];
+      postcss.parse(await loadPluginStyles()).walkDecls('contain', (declaration) => {
+        if (declaration.value === 'inline-size' && declaration.parent?.type === 'rule')
+          containingSelectors.push(declaration.parent.selector);
+      });
+      expect(containingSelectors.some((selector) => description.matches(selector))).toBe(
+        query !== 'lastword',
+      );
+      expect(
+        h.root.querySelector('.abyss-task-card-main-row > .abyss-task-meta-right')?.textContent,
+      ).toContain('#metadata');
+      if (query === 'lastword') {
+        expect(description.textContent).toContain('lastword');
+        expect(description.querySelector('mark')?.textContent).toBe('lastword');
+        expect(description.textContent).not.toContain(' …');
+      }
+    } finally {
+      h.dispose();
+    }
+  },
+);

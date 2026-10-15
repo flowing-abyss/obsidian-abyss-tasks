@@ -2664,7 +2664,8 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
 /* The description belongs to the title column. Inline-size containment keeps its length out of
    the title/metadata split, so a long note never squeezes the chips. */
-.abyss-task-body > .abyss-task-desc {
+.abyss-task-body > .abyss-task-desc,
+.abyss-task-body > .abyss-search-contexts > .abyss-task-desc {
   contain: inline-size;
 }
 
