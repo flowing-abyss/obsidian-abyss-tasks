@@ -909,9 +909,9 @@ export class TaskCardRenderer {
         highlight.onRendered?.(element);
         if (hasContinuation) {
           // Keep the cue in the final text block, outside links and inline formatting.
-          // A sibling of a rendered heading or list would start a separate line.
+          // Include raw HTML block containers: a cue after any of these starts a new line.
           const blocks = element.querySelectorAll<HTMLElement>(
-            'p, h1, h2, h3, h4, h5, h6, li, blockquote',
+            'address, article, aside, blockquote, dd, details, dialog, div, dt, fieldset, figcaption, figure, footer, form, h1, h2, h3, h4, h5, h6, header, hgroup, legend, li, main, nav, p, pre, section, summary, td, th',
           );
           (blocks[blocks.length - 1] ?? element).appendText(' …');
         }

@@ -1779,3 +1779,33 @@ it.each(['', 'baseneedle', 'childneedle', 'lastword'])(
     }
   },
 );
+
+it.each(
+  (['ordinary', 'filter'] as const).flatMap((mode) =>
+    (['div', 'pre'] as const).map((tag) => ({ mode, tag })),
+  ),
+)('keeps the $mode continuation inside a raw HTML $tag block', async ({ mode, tag }) => {
+  const markdown = `<${tag}>Summary</${tag}>`;
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, source, holder) => {
+    expect(source).toBe(markdown);
+    holder.createEl(tag, { text: 'Summary' });
+  });
+  const h = await mountCanonicalSearchUi(
+    { 'a.md': `- [ ] baseneedle\n  - > ${markdown}\n  - > Details` },
+    structuredClone(DEFAULT_SETTINGS),
+    'tasks',
+  );
+  try {
+    if (mode === 'filter') {
+      h.query('baseneedle');
+      await h.completed();
+    }
+    await vi.waitFor(() => {
+      expect(h.root.querySelector('.abyss-task-desc')?.textContent).toBe('Summary …');
+    });
+    const description = expectDefined(h.root.querySelector('.abyss-task-desc'));
+    expect(description.querySelector(tag)?.textContent).toBe('Summary …');
+  } finally {
+    h.dispose();
+  }
+});
