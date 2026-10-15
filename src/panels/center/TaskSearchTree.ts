@@ -164,9 +164,14 @@ function trackField(
   options.track(mount.render);
   activate(mount.element, entry.tree, options);
 }
-function renderHeader(entry: TreeEntry, options: TaskSearchTreeRenderOptions): HTMLElement {
+function renderHeader(
+  entry: TreeEntry,
+  baseTextHost: HTMLElement,
+  options: TaskSearchTreeRenderOptions,
+): HTMLElement {
   const { node, host, tree } = entry;
-  if (tree === options.search.context.tree || 'source' in node) return host;
+  if (tree === options.search.context.tree) return baseTextHost;
+  if ('source' in node) return host;
   const row = host.createDiv({ cls: 'abyss-subtask-row abyss-task-card-main-row' });
   mountTaskSearchKeyboardActivation(row, options.textOptions.component, () => {
     options.search.onActivate(tree.address);
@@ -256,16 +261,18 @@ function renderBody(
 }
 export function renderTaskSearchTree(
   host: HTMLElement,
+  baseTextHost: HTMLElement,
   options: TaskSearchTreeRenderOptions,
 ): void {
   const context = host.createDiv({ cls: 'abyss-search-context' });
+  const baseContext = baseTextHost.createDiv({ cls: 'abyss-search-context' });
   const pending: TreeEntry[] = [
     { tree: options.search.context.tree, node: options.base, host: context },
   ];
   while (pending.length > 0) {
     const entry = pending.pop();
     if (entry === undefined) break;
-    const body = renderHeader(entry, options);
+    const body = renderHeader(entry, baseContext, options);
     // Containers preserve source order while contents render iteratively without a depth limit.
     const children = renderBody(entry, options, body);
     for (let i = children.length - 1; i >= 0; i--) {

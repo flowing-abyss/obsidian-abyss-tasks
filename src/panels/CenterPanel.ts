@@ -1,4 +1,4 @@
-import { Component, Notice, type App, type Menu } from 'obsidian';
+import { Component, Notice, Platform, type App, type Menu } from 'obsidian';
 import type { AppState, ListSelection } from '../app/AppState';
 import { isListViewOptionsCustomized, listSelectionToKey } from '../app/listViewState';
 import { createBrowserTaskScheduler } from '../browserTaskScheduler';
@@ -2735,7 +2735,11 @@ export class CenterPanel {
   private renderTaskFilterInput_abyssPrivate(controls: HTMLElement): HTMLInputElement {
     const searchInput = controls.createEl('input', {
       cls: 'abyss-center-search',
-      attr: { type: 'text', placeholder: 'Filter…', 'aria-label': 'Filter tasks' },
+      attr: {
+        type: 'text',
+        placeholder: Platform.isMacOS ? 'Search (⌘+F)' : 'Search (Ctrl+F)',
+        'aria-label': 'Search tasks',
+      },
     });
     searchInput.value = this.state_abyssPrivate.get('centerFilter');
     if (this.refocusSearch_abyssPrivate) {

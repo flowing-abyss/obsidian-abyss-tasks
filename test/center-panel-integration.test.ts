@@ -3,6 +3,7 @@ import {
   MarkdownRenderer,
   Menu,
   Modal,
+  Platform,
   removeIcon,
   Scope,
   TFile,
@@ -2346,6 +2347,29 @@ describe('CenterPanel.renderWithGrouping (date grouping)', () => {
     const labels = Array.from(headers).map((h) => h.textContent.trim());
     expect(labels).toEqual(['No date']);
   });
+});
+
+it.each([
+  { isMacOS: true, placeholder: 'Search (⌘+F)' },
+  { isMacOS: false, placeholder: 'Search (Ctrl+F)' },
+])('advertises the existing Tasks search shortcut on $isMacOS', ({ isMacOS, placeholder }) => {
+  const previous = Platform.isMacOS;
+  Platform.isMacOS = isMacOS;
+  const state = new AppState();
+  const panel = makeStaticPanel(state, []);
+  const container = freshContainer();
+  try {
+    document.body.append(container);
+    panel.mount(container);
+    const input = expectDefined(container.querySelector<HTMLInputElement>('.abyss-center-search'));
+    expect(input.placeholder).toBe(placeholder);
+    expect(input.getAttribute('aria-label')).toBe('Search tasks');
+    expect(panel.localSearchTarget()?.input).toBe(input);
+  } finally {
+    panel.destroy();
+    container.remove();
+    Platform.isMacOS = previous;
+  }
 });
 
 describe('CenterPanel.renderSearch', () => {

@@ -962,7 +962,15 @@ it('uses shared tag colors and prevents child tag drops from writing the bubblin
     h.query('needle');
     await h.completed();
     const execute = vi.spyOn(h.tasks, 'execute');
-    const chips = [...h.root.querySelectorAll<HTMLElement>('.abyss-task-tag')];
+    const rootChips = [
+      ...h.root.querySelectorAll<HTMLElement>(
+        '.abyss-task-card > .abyss-task-card-main-row > .abyss-task-meta-right .abyss-task-tag',
+      ),
+    ];
+    const childChips = [
+      ...h.root.querySelectorAll<HTMLElement>('.abyss-subtask-row .abyss-task-tag'),
+    ];
+    const chips = [...childChips, ...rootChips];
     expect(chips.map((e) => e.textContent)).toEqual([
       '#needle-child',
       '#needle-deep',
@@ -1099,10 +1107,15 @@ it('renders duplicate semantic text per exact descendant and preserves it across
     await h.completed();
     const check = () => {
       expect(
-        [...h.root.querySelectorAll('.abyss-task-meta-right [role="group"]')].map(
-          (e) => e.textContent,
-        ),
-      ).toEqual(['needle-dep', 'needle-dep', 'needle-root']);
+        h.root.querySelector(
+          '.abyss-task-card > .abyss-task-card-main-row > .abyss-task-meta-right [role="group"]',
+        )?.textContent,
+      ).toBe('needle-root');
+      expect(
+        [
+          ...h.root.querySelectorAll('.abyss-subtask-row > .abyss-task-meta-right [role="group"]'),
+        ].map((e) => e.textContent),
+      ).toEqual(['needle-dep', 'needle-dep']);
       expect(h.root.querySelectorAll('.abyss-subtask-label')).toHaveLength(2);
     };
     check();
@@ -1348,6 +1361,60 @@ it('renders all four contributing tags once and keeps a same-tag drop a no-op', 
     h.dispose();
   }
 });
+
+it.each(['search', 'tasks'] as const)(
+  'keeps depth-two %s context on the card width outside the root title body',
+  async (mode) => {
+    const h = await mountCanonicalSearchUi(
+      {
+        'a.md': [
+          '- [ ] needle root #needle-root',
+          '  - > needle root description',
+          '  - 2026-10-04: needle root comment',
+          '  - [ ] A long needle child title with shared metadata #needle-child',
+          '    - > needle child description',
+          '    - 2026-10-04: needle child comment',
+          '    - [ ] needle grandchild #needle-grandchild',
+        ].join('\n'),
+      },
+      structuredClone(DEFAULT_SETTINGS),
+      mode,
+    );
+    try {
+      if (mode === 'tasks') {
+        h.state.set('selectedList', { type: 'tag', tag: '#needle-root' });
+        h.panel.refresh();
+      }
+      h.query('needle');
+      await h.completed();
+      const card = expectDefined(h.root.querySelector('.abyss-task-card'));
+      const rootMain = expectDefined(card.querySelector(':scope > .abyss-task-card-main-row'));
+      expect(rootMain.querySelector('.abyss-task-body .abyss-subtask-row')).toBeNull();
+      expect(rootMain.querySelector('.abyss-task-desc')?.textContent).toContain(
+        'needle root description',
+      );
+      const rows = [...card.querySelectorAll('.abyss-subtask-row')];
+      expect(rows).toHaveLength(2);
+      for (const row of rows) {
+        expect(row.querySelector(':scope > .abyss-task-meta-right')).not.toBeNull();
+        expect(row.closest('.abyss-task-card')).toBe(card);
+      }
+      expect(
+        rows[0]?.querySelector(':scope > .abyss-task-body .abyss-task-desc')?.textContent,
+      ).toContain('needle child description');
+      expect(card.querySelectorAll('.abyss-comment-row')).toHaveLength(2);
+      h.query('grandchild');
+      await h.completed();
+      expect(h.root.querySelectorAll('.abyss-subtask-row')).toHaveLength(2);
+      h.query('needle');
+      await h.completed();
+      expect(h.root.querySelectorAll('.abyss-task-meta-right')).toHaveLength(3);
+      expect(h.root.querySelectorAll('.abyss-comment-row')).toHaveLength(2);
+    } finally {
+      h.dispose();
+    }
+  },
+);
 
 // Nested metadata shares the card header tracks; descriptions stay in the text column.
 it.each(['', ' #needle-child'])(

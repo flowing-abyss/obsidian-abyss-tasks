@@ -366,26 +366,38 @@ export class TaskCardRenderer {
     const titleRow = body.createDiv({ cls: 'abyss-task-title-row' });
     const title = titleRow.createSpan({ cls: 'abyss-task-title' });
     const description = body.createDiv({ cls: 'abyss-task-desc' });
+    const searchContexts = card.createDiv({ cls: 'abyss-search-contexts' });
+    searchContexts.remove();
     const titleMount = this.#mountTextRegion(title, context, (task, owner) => {
       this.#renderTitle(title, task, owner);
     });
-    const descriptionMount = this.#mountTextRegion(description, context, (task, owner) => {
-      const search = owner.flags?.search;
-      description.className = search === undefined ? 'abyss-task-desc' : 'abyss-search-contexts';
-      description.hidden =
-        search === undefined &&
-        cardDescription(task, owner.flags) === '' &&
-        !cardDescriptionContinues(task, owner.flags);
-      if (search === undefined) this.#renderDescriptionText(description, task, owner);
-      else {
-        description.empty();
-        this.#renderSearchContext(description, task, search, {
-          owner,
-          scope: owner.flags?.renderScope,
-          tagGroups: owner.tagGroups?.() ?? [],
-        });
-      }
-    });
+    const descriptionMount = this.#mountTextRegion(
+      description,
+      context,
+      (task, owner) => {
+        const search = owner.flags?.search;
+        description.className = search === undefined ? 'abyss-task-desc' : 'abyss-search-contexts';
+        description.hidden =
+          search === undefined &&
+          cardDescription(task, owner.flags) === '' &&
+          !cardDescriptionContinues(task, owner.flags);
+        searchContexts.empty();
+        if (search === undefined) {
+          searchContexts.remove();
+          this.#renderDescriptionText(description, task, owner);
+        } else {
+          description.empty();
+          card.append(searchContexts);
+          this.#renderSearchContext(searchContexts, task, search, {
+            baseTextHost: description,
+            owner,
+            scope: owner.flags?.renderScope,
+            tagGroups: owner.tagGroups?.() ?? [],
+          });
+        }
+      },
+      [searchContexts],
+    );
     let settled: Promise<TaskRenderOutcome> = Promise.resolve({ type: 'ready' });
     let titleReceipt: Promise<TaskRenderOutcome> | undefined;
     let descriptionReceipt: Promise<TaskRenderOutcome> | undefined;
@@ -432,7 +444,9 @@ export class TaskCardRenderer {
     element: HTMLElement,
     context: CardContentContext,
     render: (task: TaskSnapshot, owner: CardContentContext) => void,
+    additionalRegions: readonly HTMLElement[] = [],
   ): TaskTextMount {
+    const regions = [element, ...additionalRegions];
     let live = true;
     let latest: TaskSnapshot | undefined;
     let flags: TaskCardFlags = { selected: false, showDelete: false };
@@ -452,7 +466,11 @@ export class TaskCardRenderer {
       if (!live || latest === undefined) return;
       const reusable = canReuseTaskText(outcome, renderedFlags);
       if (reusable && sameTaskText(latest, flags, rendered, renderedFlags)) return;
-      if (reusable && element.contains(element.ownerDocument.activeElement)) return;
+      if (
+        reusable &&
+        regions.some((region) => region.contains(element.ownerDocument.activeElement))
+      )
+        return;
       release();
       owner = context.component.addChild(new Component());
       const version = generation;
@@ -479,20 +497,7 @@ export class TaskCardRenderer {
         return settled;
       });
     };
-    context.component.registerDomEvent(element, 'focusout', (event) => {
-      const win = element.ownerDocument.defaultView;
-      if (
-        win !== null &&
-        event.relatedTarget instanceof win.Node &&
-        element.contains(event.relatedTarget)
-      )
-        return;
-      try {
-        refresh();
-      } catch (error) {
-        context.onRenderFailure(error);
-      }
-    });
+    this.#refreshTextAfterBlur(regions, context, refresh);
     return {
       get settled() {
         return receipt;
@@ -507,6 +512,29 @@ export class TaskCardRenderer {
         release();
       },
     };
+  }
+
+  #refreshTextAfterBlur(
+    regions: readonly HTMLElement[],
+    context: CardContentContext,
+    refresh: () => void,
+  ): void {
+    for (const region of regions)
+      context.component.registerDomEvent(region, 'focusout', (event) => {
+        const win = region.ownerDocument.defaultView;
+        const relatedTarget = event.relatedTarget;
+        if (
+          win !== null &&
+          relatedTarget instanceof win.Node &&
+          regions.some((region) => region.contains(relatedTarget))
+        )
+          return;
+        try {
+          refresh();
+        } catch (error) {
+          context.onRenderFailure(error);
+        }
+      });
   }
 
   #refreshBadges(
@@ -667,11 +695,23 @@ export class TaskCardRenderer {
 
     const mainRow = card.createDiv({ cls: 'abyss-task-card-main-row' });
     this.#renderStatus(mainRow, task);
-    this.#renderBody(mainRow, task, tagGroups, flags);
+    const body = this.#renderBody(mainRow, task, flags);
     this.#renderCardMetadata(mainRow, task, tagGroups, {
       search: flags.search,
       highlight: flags.highlight,
     });
+    if (flags.search !== undefined)
+      this.#renderSearchContext(
+        card.createDiv({ cls: 'abyss-search-contexts' }),
+        task,
+        flags.search,
+        {
+          baseTextHost: body.createDiv({ cls: 'abyss-search-contexts' }),
+          scope: flags.renderScope,
+          flags,
+          tagGroups,
+        },
+      );
     this.#host.mountInteractions(card, task, flags.rowKey, {
       component: this.#host.component(),
       currentTask: () => task,
@@ -712,12 +752,7 @@ export class TaskCardRenderer {
     });
   }
 
-  #renderBody(
-    mainRow: HTMLElement,
-    task: TaskSnapshot,
-    tagGroups: readonly EffectiveTagGroup[],
-    flags?: TaskCardFlags,
-  ): void {
+  #renderBody(mainRow: HTMLElement, task: TaskSnapshot, flags?: TaskCardFlags): HTMLElement {
     const body = mainRow.createDiv({ cls: 'abyss-task-body' });
     const titleRow = body.createDiv({ cls: 'abyss-task-title-row' });
     renderDependencyIndicator(titleRow, this.#host.dependenciesFor(task));
@@ -729,12 +764,7 @@ export class TaskCardRenderer {
     const titleEl = titleRow.createSpan({ cls: 'abyss-task-title' });
     this.#renderTitle(titleEl, task, undefined, flags);
     if (flags?.search === undefined) this.#renderDescription(body, task);
-    else
-      this.#renderSearchContext(body, task, flags.search, {
-        scope: flags.renderScope,
-        flags,
-        tagGroups,
-      });
+    return body;
   }
 
   #textLifetime(
@@ -926,6 +956,7 @@ export class TaskCardRenderer {
     root: TaskSnapshot,
     search: TaskCardSearchPresentation,
     options: {
+      readonly baseTextHost: HTMLElement;
       readonly owner?: CardContentContext | undefined;
       readonly scope?: TaskRenderScope | undefined;
       readonly flags?: TaskCardFlags | undefined;
@@ -943,13 +974,13 @@ export class TaskCardRenderer {
       (cardDescription(root, flags) !== '' || cardDescriptionContinues(root, flags))
     ) {
       this.#renderDescriptionText(
-        host.createDiv({ cls: 'abyss-task-desc' }),
+        options.baseTextHost.createDiv({ cls: 'abyss-task-desc' }),
         root,
         options.owner,
         flags,
       );
     }
-    renderTaskSearchTree(host, {
+    renderTaskSearchTree(host, options.baseTextHost, {
       app: this.#app,
       root,
       base: options.owner?.currentProjection().node ?? cardNode(root, flags),

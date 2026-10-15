@@ -351,6 +351,11 @@ Centre surfaces reuse `TaskCommands`, `TaskMenus`, `CaptureSessions`, `ListViewC
 section owners render and invoke retained callbacks; RightPanel keeps submission and recovery
 authority. New workflows reuse these commands, menus, renderers, and state semantics.
 
+Search and Filter descendants occupy a card-width region beside the base main row. Base description
+evidence stays in its title body; child descriptions stay in their own row bodies. The shared tree
+renderer traverses both hosts once, and the retained card owns both regions in one text lifetime for
+focus retention, cancellation, cleanup, and render receipts.
+
 ### Logical tasks and visual occurrences
 
 [`taskNodeMembership`](src/task-lists/taskNodeMembership.ts) supplies shared membership rules for

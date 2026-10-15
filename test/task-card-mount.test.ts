@@ -826,10 +826,14 @@ it('refreshes only root Search metadata and leaves descendant headers and recurr
     await mount.settled;
     mount.update(root, [], flags, search);
     await mount.settled;
-    const metadata = [...mount.element.querySelectorAll('.abyss-task-meta-right')];
-    expect(metadata).toHaveLength(2);
-    expect(metadata[0]?.textContent).toBe('needle-child');
-    expect(metadata[1]?.textContent).toContain('needle-root');
+    expect(mount.element.querySelectorAll('.abyss-task-meta-right')).toHaveLength(2);
+    expect(
+      mount.element.querySelector('.abyss-subtask-row > .abyss-task-meta-right')?.textContent,
+    ).toBe('needle-child');
+    expect(
+      mount.element.querySelector(':scope > .abyss-task-card-main-row > .abyss-task-meta-right')
+        ?.textContent,
+    ).toContain('needle-root');
     expect(mount.element.querySelectorAll('.abyss-task-source-note')).toHaveLength(1);
     expect(mount.element.querySelectorAll('.abyss-recurrence-badge')).toHaveLength(0);
     mount.destroy();
@@ -838,6 +842,132 @@ it('refreshes only root Search metadata and leaves descendant headers and recurr
     h.hostComponent.unload();
   }
 });
+
+it.each(['mount', 'render'] as const)(
+  'places %s search descendants outside the root body and retains base evidence',
+  async (entry) => {
+    const { taskSearchContext, prepareSearchQuery } = await import('../src/tasks');
+    const { fallbackSearchWords } = await import('../src/tasks/domain/searchMatchPolicy');
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, text, holder) => {
+      holder.setText(text);
+    });
+    const h = renderer();
+    const canonical = await createCanonicalSearchHarness(
+      {
+        'a.md':
+          '- [ ] needle root #needle-root\n  - > needle base description\n  - [ ] needle child #needle-child\n    - > needle child description\n    - [ ] needle grandchild #needle-grandchild',
+      },
+      h.settings,
+    );
+    try {
+      const root = expectDefined(canonical.index.list()[0]);
+      const query = prepareSearchQuery('needle', fallbackSearchWords);
+      const search = {
+        mode: 'search' as const,
+        context: taskSearchContext(
+          root,
+          { epoch: 'test', rootId: 1, version: 1, childLines: [] },
+          query,
+          fallbackSearchWords,
+        ),
+        query,
+        segment: fallbackSearchWords,
+        onActivate: () => {},
+      };
+      const flags = { selected: false, showDelete: false, search };
+      const mount = entry === 'mount' ? h.subject.mount(document.body, root, [], flags) : undefined;
+      const card = mount?.element ?? h.subject.render(document.body, root, [], flags);
+      await mount?.settled;
+      const rootMain = expectDefined(card.querySelector(':scope > .abyss-task-card-main-row'));
+      expect(rootMain.querySelector('.abyss-subtask-row')).toBeNull();
+      expect(rootMain.querySelector('.abyss-task-desc')?.textContent).toBe(
+        'needle base description',
+      );
+      expect(card.querySelectorAll('.abyss-subtask-row')).toHaveLength(2);
+      expect(card.querySelectorAll('.abyss-task-meta-right')).toHaveLength(3);
+      if (mount !== undefined) {
+        mount.update(root, [], flags);
+        expect(await mount.settled).toEqual({ type: 'ready' });
+        expect(card.querySelectorAll('.abyss-subtask-row')).toHaveLength(2);
+        mount.update(root, [], { selected: false, showDelete: false });
+        expect(await mount.settled).toEqual({ type: 'ready' });
+        expect(card.querySelector('.abyss-search-context')).toBeNull();
+        expect(rootMain.querySelector('.abyss-task-body > .abyss-task-desc')?.textContent).toBe(
+          'needle base description',
+        );
+        mount.destroy();
+      }
+    } finally {
+      canonical.close();
+      h.hostComponent.unload();
+    }
+  },
+);
+
+it.each(['base', 'child'] as const)(
+  'retains focused %s search evidence across source refresh until focus leaves both hosts',
+  async (region) => {
+    const { taskSearchContext, prepareSearchQuery } = await import('../src/tasks');
+    const { fallbackSearchWords } = await import('../src/tasks/domain/searchMatchPolicy');
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, text, holder) => {
+      holder.createEl('a', { text, attr: { href: 'Needle', tabindex: '0' } });
+    });
+    const h = renderer();
+    const canonical = await createCanonicalSearchHarness(
+      { 'a.md': '- [ ] root\n  - > [[Needle]] base\n  - [ ] child\n    - > [[Needle]] child' },
+      h.settings,
+    );
+    try {
+      const root = expectDefined(canonical.index.list()[0]);
+      const query = prepareSearchQuery('needle', fallbackSearchWords);
+      const searchFor = (root: TaskSnapshot) => ({
+        mode: 'search' as const,
+        context: taskSearchContext(
+          root,
+          { epoch: 'test', rootId: 1, version: 1, childLines: [] },
+          query,
+          fallbackSearchWords,
+        ),
+        query,
+        segment: fallbackSearchWords,
+        onActivate: () => {},
+      });
+      const flags = { selected: false, showDelete: false };
+      const mount = h.subject.mount(document.body, root, [], flags, searchFor(root));
+      expect(await mount.settled).toEqual({ type: 'ready' });
+      const baseLink = expectDefined(
+        mount.element.querySelector<HTMLElement>(
+          ':scope > .abyss-task-card-main-row .abyss-task-desc a',
+        ),
+      );
+      const childLink = expectDefined(
+        mount.element.querySelector<HTMLElement>('.abyss-subtask-row .abyss-task-desc a'),
+      );
+      const focused = region === 'base' ? baseLink : childLink;
+      focused.focus();
+      const refreshed = { ...root, description: 'New needle base' };
+      mount.update(refreshed, [], flags, searchFor(refreshed));
+      expect(await mount.settled).toEqual({ type: 'ready' });
+      expect(focused.isConnected).toBe(true);
+      expect(document.activeElement).toBe(focused);
+      (region === 'base' ? childLink : baseLink).focus();
+      expect(focused.isConnected).toBe(true);
+      document.body.createEl('button').focus();
+      expect(await mount.settled).toEqual({ type: 'ready' });
+      expect(focused.isConnected).toBe(false);
+      expect(
+        mount.element.querySelector(':scope > .abyss-task-card-main-row .abyss-task-desc')
+          ?.textContent,
+      ).toBe('New needle base');
+      expect(mount.element.querySelectorAll('.abyss-subtask-row')).toHaveLength(1);
+      expect(mount.element.querySelectorAll('.abyss-task-meta-right')).toHaveLength(2);
+      mount.destroy();
+    } finally {
+      canonical.close();
+      h.hostComponent.unload();
+    }
+  },
+);
 
 it.each([false, true])(
   'changes and clears highlight on a reused card and retains link behavior (focused=%s)',
