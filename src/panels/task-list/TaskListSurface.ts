@@ -85,6 +85,8 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
   #nativeCleanup: (() => void) | undefined;
   #binding = false;
   #frame: number | undefined;
+  #measurementFrame: number | undefined;
+  #measuring = false;
   #suspended = false;
   #destroyed = false;
   #failed = false;
@@ -130,6 +132,30 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
   }
   refreshMeasurements(): void {
     this.#schedule();
+    const frame = this.#frame;
+    const owner = this.#owner;
+    const generation = this.#nativeGeneration;
+    if (
+      this.#measuring ||
+      frame === undefined ||
+      owner === null ||
+      this.#measurementFrame === frame
+    )
+      return;
+    this.#measurementFrame = frame;
+    // Receipts may finish after an animation callback but before paint. Commit geometry now;
+    // refreshes raised inside this pass retain only their ordinary next-frame work.
+    owner.queueMicrotask(() => {
+      if (generation !== this.#nativeGeneration || frame !== this.#frame) return;
+      this.#measurementFrame = undefined;
+      this.#measuring = true;
+      try {
+        this.#cancelFrame();
+        this.#flushFrame(owner);
+      } finally {
+        this.#measuring = false;
+      }
+    });
   }
 
   update(
@@ -526,18 +552,21 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
       const frame: number | undefined = owner?.requestAnimationFrame(() => {
         if (generation !== this.#nativeGeneration || frame !== this.#frame) return;
         this.#frame = undefined;
-        if (owner.document !== this.#options.host.ownerDocument) {
-          this.#schedule();
-          return;
-        }
-        this.#guard(() => {
-          if (!this.#active()) return;
-          this.#reconcile(false, this.#checkLayout());
-        });
+        this.#flushFrame(owner);
       });
       this.#frame = frame;
     });
   };
+  #flushFrame(owner: Window): void {
+    if (owner.document !== this.#options.host.ownerDocument) {
+      this.refreshMeasurements();
+      return;
+    }
+    this.#guard(() => {
+      if (!this.#active()) return;
+      this.#reconcile(false, this.#checkLayout());
+    });
+  }
   #bind(): boolean {
     const binding = this.#binding;
     this.#binding = true;
@@ -677,6 +706,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     this.#clearInput();
     this.#ownedWrite = undefined;
     this.#nativeGeneration++;
+    this.#measurementFrame = undefined;
     this.#cancelFrame();
     this.#observer?.disconnect();
     this.#observer = undefined;

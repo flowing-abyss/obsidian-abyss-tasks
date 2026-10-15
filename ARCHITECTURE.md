@@ -421,7 +421,10 @@ selection and navigation regardless of the mounted window. Unready row frames re
 modeled extent while their children remain naturally measurable. The surface releases reservations
 with accepted measurements, spacer reconciliation, and the existing anchor correction, including
 when a ready measurement equals its cached height. Large logical-window clipping takes precedence
-and evicted frames retain no reservation.
+and evicted frames retain no reservation. Explicit content receipts coalesce measurement commits in
+the owning window's microtask checkpoint before paint; ordinary scroll and resize work remains on
+animation frames. Refreshes raised during that commit retain next-frame work without extending the
+microtask chain, and document/lifecycle invalidation retires queued measurement authority.
 
 CalendarMode owns calendar state, view lifetime, and forecast presentation. CalendarCommands maps
 gestures to public commands. Materialized cards retain exact root/child ancestry and occupied-date

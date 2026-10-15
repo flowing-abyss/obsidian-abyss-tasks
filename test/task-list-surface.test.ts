@@ -356,6 +356,137 @@ describe('pending row physical extent', () => {
     h.surface.destroy();
   });
 
+  it.each([53.09375, 158.828125])(
+    'commits a cold %s px receipt before the first paint without waiting for another frame',
+    async (height) => {
+      const h = pendingHarness();
+      h.surface.update(rows(100), { ...presentation, estimate: () => 64 });
+      for (const key of h.live) h.actual.set(key, 64);
+      h.settle();
+      h.scrollTo(400);
+      h.frame();
+      const first = expectDefined(h.surface.element('n.md:11'));
+      const next = expectDefined(h.surface.element('n.md:12'));
+      h.actual.set('n.md:11', height);
+      h.actual.set('n.md:12', height);
+      h.resolve('n.md:11');
+      h.resolve('n.md:12');
+      h.surface.refreshMeasurements();
+      // Browsers drain receipt microtasks before painting; no next animation frame has run.
+      await Promise.resolve();
+      expect(first.getBoundingClientRect().top).toBe(304);
+      expect(next.getBoundingClientRect().top).toBe(304 + height);
+      expect(h.scroll.scrollTop).toBe(400);
+      expect(h.reportFailure).not.toHaveBeenCalled();
+      h.surface.destroy();
+    },
+  );
+
+  it('coalesces receipt refreshes and leaves reentrant demand to the next native frame', async () => {
+    const h = pendingHarness();
+    h.surface.update(rows(100), { ...presentation, estimate: () => 64 });
+    for (const key of h.live) h.actual.set(key, 64);
+    h.settle();
+    // Drain the initial receipt notification before observing the next commit.
+    await Promise.resolve();
+    h.scrollTo(400);
+    h.frame();
+    h.actual.set('n.md:11', 53.09375);
+    h.resolve('n.md:11');
+    const reads: string[] = [];
+    h.onMeasure((key) => {
+      reads.push(key);
+    });
+    h.mountedChanged.mockImplementation(() => {
+      h.surface.refreshMeasurements();
+    });
+    h.surface.refreshMeasurements();
+    h.surface.refreshMeasurements();
+    h.surface.refreshMeasurements();
+    await Promise.resolve();
+    const committedReads = [...reads];
+    expect(reads.length).toBeGreaterThan(0);
+    expect(new Set(reads).size).toBe(reads.length);
+    expect(h.pending()).toBe(1);
+    await Promise.resolve();
+    expect(reads).toEqual(committedReads);
+    expect(h.reportFailure).not.toHaveBeenCalled();
+    h.surface.destroy();
+  });
+
+  it.each(['accept', 'veto'] as const)(
+    'preserves focus and native ownership for a prepaint measurement %s',
+    async (receipt) => {
+      const h = pendingHarness();
+      h.warm();
+      h.scrollTo(1727);
+      h.frame();
+      const anchor = expectDefined(h.surface.element('n.md:18'));
+      const input = anchor.createEl('input');
+      input.value = 'retained edit';
+      input.focus({ preventScroll: true });
+      let expected = 1727;
+      const afterWrite = vi.fn((top: number) => {
+        expected = top;
+      });
+      const release = h.surface.pin('n.md:18', undefined, {
+        beforeWrite: (top) => top === expected,
+        afterWrite,
+      });
+      h.actual.set('n.md:16', 136);
+      h.resolve('n.md:16');
+      h.surface.refreshMeasurements();
+      if (receipt === 'veto') h.scrollTo(1717);
+      h.writes.mockClear();
+      await Promise.resolve();
+      expect(document.activeElement).toBe(input);
+      expect(input.value).toBe('retained edit');
+      expect(h.surface.element('n.md:18')).toBe(anchor);
+      if (receipt === 'accept') {
+        expect(anchor.getBoundingClientRect().top).toBe(1);
+        expect(h.scroll.scrollTop).toBe(1767);
+        expect(expected).toBe(1767);
+        expect(afterWrite).toHaveBeenLastCalledWith(1767);
+      } else {
+        expect(h.scroll.scrollTop).toBe(1717);
+        expect(h.writes).not.toHaveBeenCalled();
+        expect(afterWrite).not.toHaveBeenCalled();
+      }
+      expect(h.reportFailure).not.toHaveBeenCalled();
+      release();
+      h.surface.destroy();
+    },
+  );
+
+  it.each(['removed', 'destroyed', 'suspended', 'adopted'] as const)(
+    'retires queued measurement authority when its surface is %s before the microtask checkpoint',
+    async (change) => {
+      const h = pendingHarness();
+      h.surface.update(rows(100), { ...presentation, estimate: () => 64 });
+      h.resolve('n.md:0');
+      h.surface.refreshMeasurements();
+      const owner = change === 'adopted' ? taskViewportOwner() : undefined;
+      if (change === 'removed') h.surface.update(rows(0), presentation);
+      else if (change === 'destroyed') h.surface.destroy();
+      else if (change === 'suspended') h.surface.suspend();
+      else if (owner !== undefined) {
+        owner.doc.body.append(h.scroll);
+        h.surface.refreshMeasurements();
+      }
+      const reads: string[] = [];
+      h.onMeasure((key) => {
+        reads.push(key);
+      });
+      h.writes.mockClear();
+      await Promise.resolve();
+      expect(reads).toEqual([]);
+      expect(h.writes).not.toHaveBeenCalled();
+      expect(h.reportFailure).not.toHaveBeenCalled();
+      h.surface.destroy();
+      owner?.destroy();
+    },
+  );
+
   it('keeps extent and surviving rows stable during a downward cached refill', () => {
     const h = pendingHarness();
     h.warm();

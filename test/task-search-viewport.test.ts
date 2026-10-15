@@ -838,6 +838,14 @@ it.each(['owned', 'coalesced', 'pending-user', 'historical-user', 'no-op-user'] 
       });
       const scroll = expectDefined(h.root.querySelector<HTMLElement>('.abyss-center-scroll'));
       const before = scroll.scrollTop;
+      const abortTops: number[] = [];
+      const request = expectDefined(
+        lifetime.mock.results[0]?.value as
+          ReturnType<(typeof h.panel)['createRevealLifetime_abyssPrivate']> | undefined,
+      );
+      request.signal.addEventListener('abort', () => {
+        abortTops.push(scroll.scrollTop);
+      });
       expect(before).toBeGreaterThan(10000);
       const pair = expectDefined(
         [...pending].find(([card]) => card.getBoundingClientRect().bottom <= 0),
@@ -846,8 +854,15 @@ it.each(['owned', 'coalesced', 'pending-user', 'historical-user', 'no-op-user'] 
       pair[0].setCssProps({ height: '96px' });
       pair[1].resolve();
       await flushMicrotasks(30);
-      expect(clock.flush()).toBeGreaterThan(0);
-      expect(scroll.scrollTop).not.toBe(before);
+      // Explicit receipts commit before another native frame. Inspect the ownership receipt here;
+      // a later ordinary frame may anchor changed content after the reveal owner has retired.
+      if (scenario === 'pending-user') {
+        expect(scroll.scrollTop).toBe(before - 17);
+        expect(abortTops).toEqual([before - 17]);
+      } else {
+        expect(scroll.scrollTop).toBe(before + 32);
+        expect(abortTops).toEqual([]);
+      }
       if (scenario === 'coalesced') {
         const next = expectDefined(
           [...pending].find(
@@ -857,13 +872,9 @@ it.each(['owned', 'coalesced', 'pending-user', 'historical-user', 'no-op-user'] 
         next[0].setCssProps({ height: '112px' });
         next[1].resolve();
         await flushMicrotasks(30);
-        expect(clock.flush()).toBeGreaterThan(0);
+        expect(scroll.scrollTop).toBe(before + 80);
       }
       applyUserScroll(scroll, before);
-      const request = expectDefined(
-        lifetime.mock.results[0]?.value as
-          ReturnType<(typeof h.panel)['createRevealLifetime_abyssPrivate']> | undefined,
-      );
       // A user move with no event must already have lost authority before an owned frame/setter.
       if (['pending-user', 'no-op-user'].includes(scenario))
         expect(request.signal.aborted).toBe(true);
