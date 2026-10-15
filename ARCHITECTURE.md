@@ -423,8 +423,10 @@ with accepted measurements, spacer reconciliation, and the existing anchor corre
 when a ready measurement equals its cached height. Large logical-window clipping takes precedence
 and evicted frames retain no reservation. Explicit content receipts coalesce measurement commits in
 the owning window's microtask checkpoint before paint; ordinary scroll and resize work remains on
-animation frames. Refreshes raised during that commit retain next-frame work without extending the
-microtask chain, and document/lifecycle invalidation retires queued measurement authority. Mounted
+animation frames. Ordinary CenterPanel rows admit geometry only after their current card receipt is
+ready and request this commit on completion; replaced cards, surfaces and documents retire that
+receipt's measurement authority. Refreshes raised during that commit retain next-frame work without
+extending the microtask chain, and document/lifecycle invalidation retires queued measurement authority. Mounted
 row readiness and admission checks finish before frame placement writes, so reservation release does
 not force a layout for each following row.
 

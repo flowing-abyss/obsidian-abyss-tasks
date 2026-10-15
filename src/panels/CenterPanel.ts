@@ -3003,6 +3003,7 @@ export class CenterPanel {
       );
     let card: TaskCardMount | undefined;
     let releaseNavigation: void | (() => void);
+    const readiness = this.taskRowReadiness_abyssPrivate(() => card);
     const element = mountTaskListRow(container, row, (parent, taskRow) => {
       card = this.taskCardRenderer_abyssPrivate.mount(
         parent,
@@ -3020,11 +3021,12 @@ export class CenterPanel {
         throw error;
       }
       this.ordinaryCards_abyssPrivate.set(taskRow.key, card);
-      this.observeTaskCardReceipt_abyssPrivate(card);
+      readiness.observe(card);
       return card.element;
     });
     return {
       element,
+      measurementReady: readiness.measurementReady,
       update: (next) => {
         if (next.kind === 'task') {
           if (card === undefined) return;
@@ -3043,7 +3045,7 @@ export class CenterPanel {
             );
             this.ordinaryCards_abyssPrivate.set(next.key, card);
           } else card.update(next.task.root, groups, flags);
-          this.observeTaskCardReceipt_abyssPrivate(card);
+          readiness.observe(card);
           releaseNavigation = this.taskSurface_abyssPrivate?.options.onCard?.(
             element,
             next.task.root,
@@ -3056,16 +3058,49 @@ export class CenterPanel {
         this.ordinaryCards_abyssPrivate.delete(row.key);
         if (card !== undefined) card.destroy();
         else element.remove();
+        card = undefined;
       },
     };
   }
 
-  private observeTaskCardReceipt_abyssPrivate(card: TaskCardMount): void {
+  private taskRowReadiness_abyssPrivate(current: () => TaskCardMount | undefined): {
+    readonly measurementReady: () => boolean;
+    readonly observe: (card: TaskCardMount) => void;
+  } {
+    let readyReceipt: Promise<TaskRenderOutcome> | undefined;
+    return {
+      measurementReady: () => {
+        const card = current();
+        return card !== undefined && card.settled === readyReceipt;
+      },
+      observe: (card) => {
+        const retained = this.taskSurface_abyssPrivate;
+        const document = card.element.ownerDocument;
+        this.observeTaskCardReceipt_abyssPrivate(card, (receipt) => {
+          if (
+            current() !== card ||
+            retained !== this.taskSurface_abyssPrivate ||
+            card.element.ownerDocument !== document
+          )
+            return;
+          readyReceipt = receipt;
+          retained?.surface.refreshMeasurements();
+        });
+      },
+    };
+  }
+
+  private observeTaskCardReceipt_abyssPrivate(
+    card: TaskCardMount,
+    ready?: (receipt: Promise<TaskRenderOutcome>) => void,
+  ): void {
     const receipt = card.settled;
     void receipt
       .then((outcome) => {
-        if (outcome.type === 'ready' && receipt === card.settled && card.element.isConnected)
+        if (outcome.type === 'ready' && receipt === card.settled && card.element.isConnected) {
+          ready?.(receipt);
           this.scheduleTaskRowsSettled_abyssPrivate();
+        }
       })
       .catch((error: unknown) => {
         this.reportTaskRenderFailure_abyssPrivate(error);
