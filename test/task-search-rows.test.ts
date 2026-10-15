@@ -802,12 +802,13 @@ it('shares a rich root while mounting exact root, parent, and same-title sibling
 
 it('does not accept the pending receipt of an exact child after its row is remounted', async () => {
   const held = deferred<TaskRenderOutcome>();
+  const current = deferred<TaskRenderOutcome>();
   let first = true;
   const h = await rowsHarness(
     2,
     {
       mountCard: (element) => {
-        const settled = first ? held.promise : Promise.resolve({ type: 'ready' as const });
+        const settled = first ? held.promise : current.promise;
         first = false;
         return {
           element,
@@ -834,7 +835,11 @@ it('does not accept the pending receipt of an exact child after its row is remou
   held.resolve({ type: 'ready' });
   try {
     expect(await old).toEqual({ type: 'cancelled' });
+    await flushMicrotasks(20);
+    expect(mount.measurementReady?.()).toBe(false);
+    current.resolve({ type: 'ready' });
     expect(await h.owner.settleRow(row.key, h.identity.signal)).toEqual({ type: 'ready' });
+    expect(mount.measurementReady?.()).toBe(true);
   } finally {
     mount.destroy();
     h.dispose();

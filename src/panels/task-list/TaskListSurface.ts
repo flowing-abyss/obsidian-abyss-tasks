@@ -73,6 +73,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
   readonly #viewport = new RowViewport();
   readonly #mounts = new Map<string, TaskRowMount<T>>();
   readonly #frames = new Map<string, HTMLElement>();
+  readonly #pendingFrames = new Set<string>();
   readonly #placements = new Map<string, { height: number; offset: number }>();
   readonly #pins = new Map<string, Set<PinOwner>>();
   readonly #nativeObservers = new Set<PinOwner>();
@@ -686,6 +687,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
   #evict(key: string, mount: TaskRowMount<T>): void {
     this.#observer?.unobserve(mount.element);
     this.#mounts.delete(key);
+    this.#pendingFrames.delete(key);
     this.#parked.delete(key);
     this.#placements.delete(key);
     const frame = this.#frames.get(key);
@@ -902,7 +904,11 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     const measurements = this.#measureRows(current);
     if (measurements === undefined || !this.#admitReconciliation(current)) return;
     const measured = this.#viewport.measure(measurements, Math.max(0, top), anchor);
-    if (!measured.changed) return;
+    let released = false;
+    for (const { key, height } of measurements)
+      if (Number.isFinite(height) && height > 0 && this.#pendingFrames.delete(key)) released = true;
+    // Equal cached heights still need a render to restore natural frame flow.
+    if (!measured.changed && !released) return;
     return top + measured.scrollTop - Math.max(0, top);
   }
   #measureRows(current: () => boolean): RowMeasurement[] | undefined {
@@ -947,10 +953,18 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
       mount.update(row);
       if (!this.#admitReconciliation(current)) return;
     }
-    if (mount !== undefined && current()) this.#placeMount(row.key, mount.element, current);
+    if (mount !== undefined && current()) this.#placeMount(row.key, mount, current);
     return this.#frames.get(row.key);
   }
-  #placeMount(key: string, element: HTMLElement, current: () => boolean): void {
+  #reserveFrame(key: string, mount: TaskRowMount<T>, current: () => boolean): boolean {
+    const ready = this.#measurementReady(mount, current);
+    if (!current()) return false;
+    if (!ready) this.#pendingFrames.add(key);
+    return true;
+  }
+  #placeMount(key: string, mount: TaskRowMount<T>, current: () => boolean): void {
+    if (!this.#reserveFrame(key, mount, current)) return;
+    const element = mount.element;
     this.#placeFrame(key, element);
     if (!this.#parked.has(key)) {
       element.removeClass('abyss-virtual-row-parked');
@@ -972,16 +986,20 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
   }
   #placeFrame(key: string, element: HTMLElement): void {
     const frame = this.#frames.get(key);
+    if (frame === undefined) return;
     // Source-address retirement may detach a reused holder while destroying its old card.
-    if (element.parentElement === null) frame?.append(element);
-    const placement = this.#placements.get(key);
+    if (element.parentElement === null) frame.append(element);
+    const bounds = this.#pendingFrames.has(key) ? this.#viewport.rowBounds(key) : undefined;
+    const placement =
+      this.#placements.get(key) ??
+      (bounds === undefined ? undefined : { height: bounds.bottom - bounds.top, offset: 0 });
     if (placement !== undefined) {
-      frame?.addClass('abyss-virtual-row-frame-clipped');
-      frame?.setCssProps({ '--abyss-virtual-row-height': `${placement.height}px` });
+      frame.addClass('abyss-virtual-row-frame-clipped');
+      frame.setCssProps({ '--abyss-virtual-row-height': `${placement.height}px` });
       element.setCssProps({ '--abyss-virtual-row-offset': `${placement.offset}px` });
     } else {
-      frame?.removeClass('abyss-virtual-row-frame-clipped');
-      frame?.style.removeProperty('--abyss-virtual-row-height');
+      frame.removeClass('abyss-virtual-row-frame-clipped');
+      frame.style.removeProperty('--abyss-virtual-row-height');
       element.style.removeProperty('--abyss-virtual-row-offset');
     }
   }

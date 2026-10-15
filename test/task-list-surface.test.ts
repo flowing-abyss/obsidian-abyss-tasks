@@ -222,6 +222,262 @@ function harness(clampWrites = false, sameHost = false, clampExtent = false) {
     pending: () => frames.size,
   };
 }
+/** The child keeps its natural box; preceding frames determine the visible sibling position. */
+function pendingHarness() {
+  const h = harness();
+  const ready = new Set<string>();
+  const live = new Set<string>();
+  const actual = new Map<string, number>();
+  const original = expectDefined(h.mount.getMockImplementation());
+  const rowHeight = (key: string): number =>
+    actual.get(key) ?? [40, 96, 152][Number(key.split(':')[1]) % 3] ?? 40;
+  h.mount.mockImplementation((host, row) => {
+    live.add(row.key);
+    h.heights.set(row.key, 16);
+    const mount = original(host, row);
+    return {
+      ...mount,
+      measurementReady: () => ready.has(row.key),
+      destroy: () => {
+        live.delete(row.key);
+        ready.delete(row.key);
+        mount.destroy();
+      },
+    };
+  });
+  const resolve = (key: string): void => {
+    ready.add(key);
+    h.heights.set(key, rowHeight(key));
+  };
+  const settle = (): void => {
+    for (const key of live) resolve(key);
+    h.surface.refreshMeasurements();
+    h.frame();
+  };
+  const warm = (): void => {
+    h.surface.update(rows(100), { ...presentation, estimate: () => 64 });
+    for (let position = 0; position < 4300; position += 300) {
+      h.scrollTo(position);
+      h.frame();
+      for (let round = 0; round < 3; round++) settle();
+    }
+    h.scrollTo(1904);
+    h.frame();
+    for (let round = 0; round < 3; round++) settle();
+  };
+  return { ...h, ready, live, actual, resolve, settle, warm };
+}
+
+describe('pending row physical extent', () => {
+  it.each([
+    [16, 17],
+    [17, 16],
+  ])(
+    'keeps a retained visible sibling stationary through cached refill receipts %s then %s',
+    (first, second) => {
+      const h = pendingHarness();
+      h.warm();
+      const anchor = expectDefined(h.surface.element('n.md:18'));
+      h.scrollTo(1727);
+      const before = anchor.getBoundingClientRect().top;
+      expect(before).toBe(1);
+      h.writes.mockClear();
+      h.frame();
+      expect(anchor.getBoundingClientRect().top).toBe(1);
+      expect(h.surface.mountedKeys().filter((key) => !h.ready.has(key))).toEqual([
+        'n.md:16',
+        'n.md:17',
+      ]);
+      for (const index of [first, second]) {
+        h.resolve(`n.md:${index}`);
+        // A receipt alone must not release physical extent ahead of model reconciliation.
+        expect(anchor.getBoundingClientRect().top).toBe(1);
+        h.surface.refreshMeasurements();
+        h.frame();
+        expect(anchor.getBoundingClientRect().top).toBe(1);
+      }
+      expect(h.surface.element('n.md:18')).toBe(anchor);
+      expect(h.scroll.scrollTop).toBe(1727);
+      expect(h.writes).not.toHaveBeenCalled();
+      // Equal cached measurements still release the reservation and restore natural flow.
+      h.heights.set('n.md:16', 100);
+      expect(anchor.getBoundingClientRect().top).toBe(5);
+      expect(h.reportFailure).not.toHaveBeenCalled();
+      h.surface.destroy();
+    },
+  );
+
+  it('commits a changed cached height and its scroll compensation with reservation release', () => {
+    const h = pendingHarness();
+    h.warm();
+    const anchor = expectDefined(h.surface.element('n.md:18'));
+    h.scrollTo(1727);
+    h.frame();
+    expect(anchor.getBoundingClientRect().top).toBe(1);
+    h.actual.set('n.md:16', 136);
+    h.resolve('n.md:16');
+    expect(anchor.getBoundingClientRect().top).toBe(1);
+    h.writes.mockClear();
+    h.surface.refreshMeasurements();
+    h.frame();
+    expect(h.scroll.scrollTop).toBe(1767);
+    expect(anchor.getBoundingClientRect().top).toBe(1);
+    expect(h.writes.mock.calls).toEqual([[1767]]);
+    h.resolve('n.md:17');
+    h.surface.refreshMeasurements();
+    h.frame();
+    expect(anchor.getBoundingClientRect().top).toBe(1);
+    expect(h.reportFailure).not.toHaveBeenCalled();
+    h.surface.destroy();
+  });
+
+  it('reserves cold estimates, excludes provisional reads, and measures the natural ready child', () => {
+    const h = pendingHarness();
+    h.surface.update(rows(100), { ...presentation, estimate: () => 64 });
+    h.scrollTo(128);
+    h.frame();
+    const anchor = expectDefined(h.surface.element('n.md:2'));
+    expect(anchor.getBoundingClientRect().top).toBe(0);
+    const reads: string[] = [];
+    h.onMeasure((key) => {
+      reads.push(key);
+    });
+    h.surface.refreshMeasurements();
+    h.frame();
+    expect(reads).toEqual([]);
+    h.actual.set('n.md:0', 96);
+    h.resolve('n.md:0');
+    h.surface.refreshMeasurements();
+    h.frame();
+    expect(reads).toEqual(['n.md:0']);
+    expect(h.scroll.scrollTop).toBe(160);
+    expect(anchor.getBoundingClientRect().top).toBe(0);
+    expect(h.reportFailure).not.toHaveBeenCalled();
+    h.surface.destroy();
+  });
+
+  it('keeps extent and surviving rows stable during a downward cached refill', () => {
+    const h = pendingHarness();
+    h.warm();
+    const anchor = expectDefined(h.surface.element('n.md:26'));
+    const extent = h.scroll.scrollHeight;
+    h.scrollTo(2410);
+    const before = anchor.getBoundingClientRect().top;
+    h.writes.mockClear();
+    h.frame();
+    expect(anchor.getBoundingClientRect().top).toBe(before);
+    expect(h.scroll.scrollHeight).toBe(extent);
+    expect(h.surface.mountedKeys().some((key) => !h.ready.has(key))).toBe(true);
+    h.settle();
+    expect(anchor.getBoundingClientRect().top).toBe(before);
+    expect(h.scroll.scrollHeight).toBe(extent);
+    expect(h.surface.element('n.md:26')).toBe(anchor);
+    expect(h.writes).not.toHaveBeenCalled();
+    expect(h.reportFailure).not.toHaveBeenCalled();
+    h.surface.destroy();
+  });
+
+  it('keeps synchronous variable-height rows in natural flow', () => {
+    const h = harness();
+    h.heights.set('n.md:0', 40);
+    h.heights.set('n.md:1', 96);
+    h.heights.set('n.md:2', 152);
+    h.surface.update(rows(100), presentation);
+    const third = expectDefined(h.surface.element('n.md:2'));
+    expect(third.getBoundingClientRect().top).toBe(136);
+    h.heights.set('n.md:0', 64);
+    expect(third.getBoundingClientRect().top).toBe(160);
+    h.surface.refreshMeasurements();
+    h.frame();
+    expect(third.getBoundingClientRect().top).toBe(160);
+    expect(h.reportFailure).not.toHaveBeenCalled();
+    h.surface.destroy();
+  });
+
+  it('uses new layout estimates while pending and releases a settled reservation after resize', () => {
+    const h = pendingHarness();
+    const source = rows(100);
+    h.surface.update(source, { ...presentation, estimate: () => 64 });
+    h.size(300, 480);
+    h.surface.update(source, { ...presentation, estimate: () => 80 });
+    const second = expectDefined(h.surface.element('n.md:1'));
+    expect(second.getBoundingClientRect().top).toBe(80);
+    h.actual.set('n.md:0', 104);
+    h.resolve('n.md:0');
+    expect(second.getBoundingClientRect().top).toBe(80);
+    h.resize();
+    h.frame();
+    expect(second.getBoundingClientRect().top).toBe(104);
+    h.heights.set('n.md:0', 120);
+    expect(second.getBoundingClientRect().top).toBe(120);
+    expect(h.reportFailure).not.toHaveBeenCalled();
+    h.surface.destroy();
+  });
+
+  it('retires pending frames on eviction and document adoption before remounting current rows', () => {
+    const h = pendingHarness();
+    h.warm();
+    h.scrollTo(1727);
+    h.frame();
+    const evicted = expectDefined(h.surface.element('n.md:16'));
+    const evictedFrame = expectDefined(evicted.parentElement);
+    h.scrollTo(4000);
+    h.frame();
+    expect(evictedFrame.isConnected).toBe(false);
+    h.scrollTo(1727);
+    h.frame();
+    const remounted = expectDefined(h.surface.element('n.md:16'));
+    expect(remounted).not.toBe(evicted);
+    const owner = taskViewportOwner();
+    owner.doc.body.append(h.scroll);
+    h.surface.refreshMeasurements();
+    owner.flush();
+    const adopted = expectDefined(h.surface.element('n.md:16'));
+    expect(adopted).not.toBe(remounted);
+    expect(adopted.ownerDocument).toBe(owner.doc);
+    const next = expectDefined(h.surface.element('n.md:17'));
+    expect(next.getBoundingClientRect().top - adopted.getBoundingClientRect().top).toBe(64);
+    h.actual.set('n.md:16', 96);
+    h.resolve('n.md:16');
+    h.surface.refreshMeasurements();
+    owner.flush();
+    expect(next.getBoundingClientRect().top - adopted.getBoundingClientRect().top).toBe(96);
+    expect(h.reportFailure).not.toHaveBeenCalled();
+    h.surface.destroy();
+    expect(owner.frames.size).toBe(0);
+    expect(owner.observers.every(({ elements }) => elements.size === 0)).toBe(true);
+    owner.destroy();
+  });
+
+  it('composes pending extent with compressed-window clipping and sparse focus parking', () => {
+    const h = pendingHarness();
+    h.surface.update(hugeRows(), hugePresentation);
+    const first = expectDefined(h.surface.element('number:0'));
+    const input = first.createEl('input');
+    input.focus({ preventScroll: true });
+    const release = h.surface.pin('number:0');
+    pointer(h.scroll);
+    h.scrollTo(999520);
+    h.frame();
+    const end = expectDefined(h.surface.element('number:9999999'));
+    expect(end.getBoundingClientRect().top).toBe(432);
+    expect(h.scroll.scrollHeight).toBe(1_000_000);
+    expect(first.hasClass('abyss-virtual-row-parked')).toBe(true);
+    h.actual.set('number:0', 300_000);
+    h.resolve('number:0');
+    h.surface.refreshMeasurements();
+    h.frame();
+    expect(end.getBoundingClientRect().top).toBe(432);
+    expect(h.scroll.scrollHeight).toBe(1_000_000);
+    expect(first.getBoundingClientRect().height).toBe(300_000);
+    expect(document.activeElement).toBe(input);
+    expect(h.surface.mountedKeys().length).toBeLessThan(30);
+    expect(h.reportFailure).not.toHaveBeenCalled();
+    release();
+    h.surface.destroy();
+  });
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -1827,6 +2083,11 @@ it('acknowledges the actual native clamp of a pending reveal setter', () => {
   h.surface.pin('n.md:99', undefined, {
     beforeWrite: (top) => top === expected,
     afterWrite,
+  });
+  // An independent native cap still has to be acknowledged now that pending rows reserve space.
+  const write = expectDefined(h.writes.getMockImplementation());
+  h.writes.mockImplementation((value) => {
+    write(Math.min(value, 4000));
   });
   h.writes.mockClear();
   expect(h.surface.reveal('n.md:99', { waitForReady: true })).toBe('pending');

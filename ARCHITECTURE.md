@@ -417,7 +417,11 @@ DOM owns geometry, focus, and interaction. Mounted rows own disposable Markdown 
 retain focused editors and active interactions, and invalidation ends those interactions before
 eviction. Date-grouped Upcoming uses [`taskDailyRows`](src/panels/task-list/taskDailyRows.ts) and
 bounded native scroll geometry without materializing every day. Full order remains available to
-selection and navigation regardless of the mounted window.
+selection and navigation regardless of the mounted window. Unready row frames reserve their current
+modeled extent while their children remain naturally measurable. The surface releases reservations
+with accepted measurements, spacer reconciliation, and the existing anchor correction, including
+when a ready measurement equals its cached height. Large logical-window clipping takes precedence
+and evicted frames retain no reservation.
 
 CalendarMode owns calendar state, view lifetime, and forecast presentation. CalendarCommands maps
 gestures to public commands. Materialized cards retain exact root/child ancestry and occupied-date
