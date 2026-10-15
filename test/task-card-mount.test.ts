@@ -827,7 +827,9 @@ it('refreshes only root Search metadata and leaves descendant headers and recurr
     await mount.settled;
     const metadata = [...mount.element.querySelectorAll('.abyss-task-meta-right')];
     expect(metadata).toHaveLength(2);
-    expect(metadata.map((e) => e.textContent)).toEqual(['needle-child', 'needle-root']);
+    expect(metadata[0]?.textContent).toBe('needle-child');
+    expect(metadata[1]?.textContent).toContain('needle-root');
+    expect(mount.element.querySelectorAll('.abyss-task-source-note')).toHaveLength(1);
     expect(mount.element.querySelectorAll('.abyss-recurrence-badge')).toHaveLength(0);
     mount.destroy();
   } finally {

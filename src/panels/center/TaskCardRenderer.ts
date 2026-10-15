@@ -598,7 +598,6 @@ export class TaskCardRenderer {
       search: current.flags.search,
       highlight: current.flags.highlight,
       component,
-      currentRoot: () => current.task,
       projection: current.flags.projection,
       occurrence: current.flags.occurrence,
     });
@@ -950,12 +949,16 @@ export class TaskCardRenderer {
           },
         });
       },
-      renderSemantics: (host, node, evidence) => {
-        this.#renderSearchSemantics(host, node, evidence, {
-          tagGroups: options.tagGroups,
+      renderMetadata: (host, node, evidence) => {
+        const metadata = this.#renderMetadata(host, node, options.tagGroups, {
           search,
           component: options.owner?.component,
         });
+        if (metadata !== undefined)
+          this.#renderSearchSemantics(metadata.host, node, evidence, {
+            search,
+            renderedValues: metadata.values,
+          });
       },
     });
   }
@@ -968,24 +971,17 @@ export class TaskCardRenderer {
       readonly search?: TaskCardSearchPresentation | undefined;
       readonly highlight?: TaskCardHighlight | undefined;
       readonly component?: Component | undefined;
-      readonly currentRoot?: () => TaskSnapshot;
       readonly projection?: TaskNodeSnapshot | undefined;
       readonly occurrence?: TaskOccurrencePresentation | undefined;
     },
   ): void {
-    const { search, currentRoot } = options;
-    if (search === undefined) this.#renderMetadata(mainRow, task, tagGroups, options);
-    else
+    const metadata = this.#renderMetadata(mainRow, task, tagGroups, options);
+    if (options.search !== undefined && metadata !== undefined)
       this.#renderSearchSemantics(
-        mainRow.createDiv({ cls: 'abyss-task-meta-right' }),
-        task,
-        search.context.tree.evidence.filter(isTaskSearchSemanticEvidence),
-        {
-          tagGroups,
-          search,
-          component: options.component,
-          ...(currentRoot === undefined ? {} : { currentRoot }),
-        },
+        metadata.host,
+        cardNode(task, options),
+        options.search.context.tree.evidence.filter(isTaskSearchSemanticEvidence),
+        { search: options.search, renderedValues: metadata.values },
       );
   }
 
@@ -994,14 +990,13 @@ export class TaskCardRenderer {
     node: TaskSelectionNode,
     evidence: readonly TaskSearchSemanticEvidence[],
     options: {
-      readonly tagGroups: readonly EffectiveTagGroup[];
       readonly search: TaskCardSearchPresentation;
-      readonly component?: Component | undefined;
-      readonly currentRoot?: () => TaskSnapshot;
+      readonly renderedValues: ReadonlyMap<string, HTMLElement>;
     },
   ): void {
     const groups = new Map<string, TaskSearchSemanticEvidence[]>();
     for (const record of evidence) {
+      if (record.field === 'tag') continue;
       const id = `${record.field}:${record.text}`;
       const group = groups.get(id);
       if (group === undefined) groups.set(id, [record]);
@@ -1026,22 +1021,13 @@ export class TaskCardRenderer {
     node: TaskSelectionNode,
     records: readonly TaskSearchSemanticEvidence[],
     options: {
-      readonly tagGroups: readonly EffectiveTagGroup[];
       readonly search: TaskCardSearchPresentation;
-      readonly component?: Component | undefined;
-      readonly currentRoot?: () => TaskSnapshot;
+      readonly renderedValues: ReadonlyMap<string, HTMLElement>;
     },
   ): void {
+    const { search, renderedValues } = options;
     const record = records[0];
     if (record === undefined) return;
-    if (record.field === 'tag') {
-      const element = this.#renderTagMetadata(host, record.text, options.tagGroups, {
-        component: options.component,
-        ...('source' in node ? { task: node, currentTask: options.currentRoot } : { task: node }),
-      });
-      this.#markSemanticValue(element, record.text, options.search);
-      return;
-    }
     const keys = records.map((e) => e.provenance.key);
     const meaning = keys
       .map(
@@ -1049,12 +1035,18 @@ export class TaskCardRenderer {
           `${key === 'duration' && /^\d+$/u.test(record.text) ? 'Duration minutes' : key}: ${record.text}`,
       )
       .join('; ');
+    const rendered = keys
+      .map((key) => renderedValues.get(`${key}:${record.text}`))
+      .find((element) => element !== undefined);
+    if (rendered !== undefined) {
+      rendered.setAttribute('role', 'group');
+      rendered.setAttribute('aria-label', meaning);
+      const text = rendered.querySelector<HTMLElement>(':scope > span:last-child');
+      if (text?.textContent === record.text) this.#markSemanticValue(text, record.text, search);
+      return;
+    }
     const wrapper = host.createSpan({ attr: { role: 'group', 'aria-label': meaning } });
-    this.#renderSearchMetadataValue(wrapper, node, {
-      keys,
-      text: record.text,
-      search: options.search,
-    });
+    this.#renderSearchMetadataValue(wrapper, node, { keys, text: record.text, search });
   }
 
   #searchEvidenceDate(node: TaskSelectionNode, keys: readonly string[]): LocalDate | undefined {
@@ -1101,50 +1093,53 @@ export class TaskCardRenderer {
 
   #renderMetadata(
     mainRow: HTMLElement,
-    task: TaskSnapshot,
+    task: TaskSelectionNode,
     tagGroups: readonly EffectiveTagGroup[],
     options: {
       readonly component?: Component | undefined;
-      readonly currentRoot?: () => TaskSnapshot;
       readonly projection?: TaskNodeSnapshot | undefined;
       readonly occurrence?: TaskOccurrencePresentation | undefined;
       readonly highlight?: TaskCardHighlight | undefined;
+      readonly search?: TaskCardSearchPresentation | undefined;
     },
-  ): void {
-    const node = cardNode(task, options);
+  ): { readonly host: HTMLElement; readonly values: ReadonlyMap<string, HTMLElement> } | undefined {
+    const node = options.projection?.node ?? task;
     const currentTask = (): TaskSelectionNode => node;
-    const today = localDate(moment().format('YYYY-MM-DD'));
-    const sel = this.#state.get('selectedList');
     const dates = cardDates(node.planning, options.occurrence);
     const tags = node.tags;
-    const suppressToday = sel === 'today' && todayTaskCategory(node, today) === 'today';
-    const showSourceNote = shouldShowSourceNote(
-      task,
-      this.#settings.sourceNoteDisplay,
-      this.#settings.taskFilePath,
-    );
-    const hasRightMeta =
-      showSourceNote ||
-      dates.interval !== undefined ||
-      (dates.date != null && !suppressToday) ||
-      node.planning.time != null ||
-      tags.length > 0;
-    if (!hasRightMeta) return;
+    const suppressToday = options.search === undefined && this.#suppressTodayMetadata(node);
     const metaRight = mainRow.createDiv({ cls: 'abyss-task-meta-right' });
-    this.#renderDateMetadata(metaRight, node, dates, suppressToday);
-    if (showSourceNote) {
-      renderSourceNoteChip(metaRight, task, (filePath) => {
-        this.#listControls.addPropertyFilter({ type: 'file', filePath });
-      });
-    }
+    const values = this.#renderDateMetadata(metaRight, node, dates, suppressToday);
+    if ('source' in task) this.#renderSourceMetadata(metaRight, task);
     for (const tag of tags) {
       const element = this.#renderTagMetadata(metaRight, tag, tagGroups, {
         component: options.component,
         task: node,
         currentTask,
       });
-      this.#markSemanticValue(element, tag, options.highlight);
+      this.#markSemanticValue(element, tag, options.search ?? options.highlight);
     }
+    if (metaRight.childElementCount === 0 && options.search === undefined) {
+      metaRight.remove();
+      return;
+    }
+    return { host: metaRight, values };
+  }
+
+  #suppressTodayMetadata(node: TaskSelectionNode): boolean {
+    const today = localDate(moment().format('YYYY-MM-DD'));
+    return (
+      this.#state.get('mode') === 'tasks' &&
+      this.#state.get('selectedList') === 'today' &&
+      todayTaskCategory(node, today) === 'today'
+    );
+  }
+
+  #renderSourceMetadata(host: HTMLElement, task: TaskSnapshot): void {
+    if (shouldShowSourceNote(task, this.#settings.sourceNoteDisplay, this.#settings.taskFilePath))
+      renderSourceNoteChip(host, task, (filePath) => {
+        this.#listControls.addPropertyFilter({ type: 'file', filePath });
+      });
   }
 
   #renderDateMetadata(
@@ -1152,9 +1147,18 @@ export class TaskCardRenderer {
     task: TaskSelectionNode,
     dates: ReturnType<typeof cardDates>,
     suppressToday: boolean,
-  ): void {
+  ): ReadonlyMap<string, HTMLElement> {
+    const values = new Map<string, HTMLElement>();
     const { date, interval } = dates;
     const time = task.planning.time;
+    const renderDate = (host: HTMLElement, value: LocalDate, showIcon = true): void => {
+      const element = this.#renderDateFilterPart(host, value, showIcon);
+      for (const key of ['due', 'scheduled', 'start'] as const)
+        if (task.planning[key] === value) values.set(`${key}:${value}`, element);
+    };
+    const renderTime = (host: HTMLElement, value: string, className: string): void => {
+      values.set(`time:${value}`, this.#renderTimeFilterPart(host, value, className));
+    };
     if (interval !== undefined) {
       const dateElement = host.createSpan({ cls: 'abyss-task-date' });
       const icon = dateElement.createSpan({
@@ -1173,24 +1177,25 @@ export class TaskCardRenderer {
         },
       });
       glyph.createSvg('path', { attr: { d: 'M4 6v12M4 12h16M20 6v12' } });
-      this.#renderDateFilterPart(dateElement, interval.start, false);
+      renderDate(dateElement, interval.start, false);
       dateElement.createSpan({ text: '–' });
-      this.#renderDateFilterPart(dateElement, interval.due, false);
-      if (time != null) this.#renderTimeFilterPart(dateElement, time, 'abyss-task-time-part');
-      return;
+      renderDate(dateElement, interval.due, false);
+      if (time != null) renderTime(dateElement, time, 'abyss-task-time-part');
+      return values;
     }
     if (date != null && !suppressToday) {
       const dateElement = host.createSpan({
         cls: `abyss-task-date ${this.#host.getDateClass(date)}`.trim(),
       });
-      this.#renderDateFilterPart(dateElement, date);
-      if (time != null) this.#renderTimeFilterPart(dateElement, time, 'abyss-task-time-part');
-      return;
+      renderDate(dateElement, date);
+      if (time != null) renderTime(dateElement, time, 'abyss-task-time-part');
+      return values;
     }
-    if (time != null) this.#renderTimeFilterPart(host, time, 'abyss-task-date');
+    if (time != null) renderTime(host, time, 'abyss-task-date');
+    return values;
   }
 
-  #renderDateFilterPart(host: HTMLElement, date: LocalDate, showIcon = true): void {
+  #renderDateFilterPart(host: HTMLElement, date: LocalDate, showIcon = true): HTMLElement {
     const part = host.createSpan({ cls: 'abyss-task-date-part abyss-cursor-pointer' });
     if (showIcon) {
       const icon = part.createSpan({ cls: 'abyss-date-icon' });
@@ -1201,9 +1206,10 @@ export class TaskCardRenderer {
       event.stopPropagation();
       this.#listControls.addPropertyFilter({ type: 'date', value: date });
     });
+    return part;
   }
 
-  #renderTimeFilterPart(host: HTMLElement, time: string, className: string): void {
+  #renderTimeFilterPart(host: HTMLElement, time: string, className: string): HTMLElement {
     const part = host.createSpan({ cls: `${className} abyss-cursor-pointer` });
     const icon = part.createSpan({ cls: 'abyss-date-icon' });
     setIcon(icon, 'clock');
@@ -1212,6 +1218,7 @@ export class TaskCardRenderer {
       event.stopPropagation();
       this.#listControls.addPropertyFilter({ type: 'time', value: time });
     });
+    return part;
   }
 
   #renderTagMetadata(

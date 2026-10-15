@@ -44,7 +44,7 @@ export interface TaskSearchTreeRenderOptions {
   readonly track: (render: TaskTextRender) => void;
   readonly editLink: (target: TaskTextTarget, occurrence: number, token: LinkToken) => void;
   readonly renderChildStatus: (host: HTMLElement, child: SubtaskSnapshot) => void;
-  readonly renderSemantics: (
+  readonly renderMetadata: (
     host: HTMLElement,
     node: TaskSelectionNode,
     evidence: readonly TaskSearchSemanticEvidence[],
@@ -126,11 +126,7 @@ function renderHeader(entry: TreeEntry, options: TaskSearchTreeRenderOptions): H
     ),
   );
   trackField(entry, options, title);
-  options.renderSemantics(
-    body.createDiv({ cls: 'abyss-task-meta-right' }),
-    node,
-    tree.evidence.filter(isTaskSearchSemanticEvidence),
-  );
+  options.renderMetadata(body, node, tree.evidence.filter(isTaskSearchSemanticEvidence));
   return body;
 }
 function contributingComments(

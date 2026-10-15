@@ -948,12 +948,13 @@ it('uses shared tag colors and prevents child tag drops from writing the bubblin
       '#needle-child',
       '#needle-deep',
       '#needle-root',
+      '#unmatched-root',
     ]);
-    expect(chips.every((e) => e.hasClass('abyss-task-tag--colored'))).toBe(true);
-    expect(chips.every((e) => e.style.getPropertyValue('--abyss-tag-color') === '#ff0000')).toBe(
-      true,
-    );
-    expect(h.root.textContent).not.toContain('unmatched');
+    expect(chips.slice(0, 3).every((e) => e.hasClass('abyss-task-tag--colored'))).toBe(true);
+    expect(
+      chips.slice(0, 3).every((e) => e.style.getPropertyValue('--abyss-tag-color') === '#ff0000'),
+    ).toBe(true);
+    expect(h.root.textContent).toContain('unmatched');
     h.state.set('draggingTag', '#replacement');
     const childChip = expectDefined(chips.find((e) => e.textContent === '#needle-child'));
     const over = new Event('dragover', { bubbles: true, cancelable: true });
@@ -1014,7 +1015,7 @@ it.each([
   ['every day', '- [ ] root 🔁 every day #unmatched', 'recurrence: every day', 'every day'],
   ['tomorrow', '- [ ] root 🔁 tomorrow #unmatched', 'recurrence: tomorrow', 'tomorrow'],
 ] as const)(
-  'renders only contributing scalar %s in its exact header',
+  'retains contributing scalar %s alongside ordinary context in its exact header',
   async (query, source, meaning, value) => {
     const h = await mountCanonicalSearchUi({ 'a.md': source }, structuredClone(DEFAULT_SETTINGS));
     try {
@@ -1027,13 +1028,9 @@ it.each([
       );
       expect(group.textContent).toBe(value);
       expect(group.querySelectorAll('a, button')).toHaveLength(0);
-      expect(
-        h.root.querySelectorAll(
-          '.abyss-task-tag, .abyss-task-desc, .abyss-comment-text, .abyss-task-source-note',
-        ),
-      ).toHaveLength(0);
+      expect(h.root.querySelectorAll('.abyss-task-desc, .abyss-comment-text')).toHaveLength(0);
       expect(group.querySelectorAll('mark').length).toBeGreaterThan(0);
-      expect(h.root.textContent).not.toContain('unmatched');
+      expect(h.root.textContent).toContain('unmatched');
       expect(h.root.querySelectorAll('.abyss-recurrence-badge')).toHaveLength(
         query === 'every day' || query === 'tomorrow' ? 1 : 0,
       );
@@ -1047,7 +1044,7 @@ it.each([
   },
 );
 
-it('deduplicates equal due/scheduled values with both accessible meanings and no time sidecar', async () => {
+it('deduplicates equal due/scheduled values with both accessible meanings and ordinary time', async () => {
   const source = '- [ ] root 📅 2026-11-30 ⏳ 2026-11-30 ⏰ 09:30 🔁 every day #unmatched';
   const h = await mountCanonicalSearchUi({ 'a.md': source }, structuredClone(DEFAULT_SETTINGS));
   try {
@@ -1058,12 +1055,12 @@ it('deduplicates equal due/scheduled values with both accessible meanings and no
     );
     expect(date.getAttribute('aria-label')).toBe('scheduled: 2026-11-30; due: 2026-11-30');
     expect(h.root.querySelectorAll('.abyss-task-date-part')).toHaveLength(1);
-    expect(
-      h.root.querySelectorAll('.abyss-task-tag, .abyss-recurrence-badge, .abyss-task-time-part'),
-    ).toHaveLength(0);
+    expect(h.root.querySelectorAll('.abyss-recurrence-badge')).toHaveLength(0);
     expect(date.querySelector('mark')).toBeNull();
+    expect(h.root.querySelector('.abyss-task-time-part')?.textContent).toBe('09:30');
+    expect(h.root.querySelector('.abyss-task-tag')?.textContent).toBe('#unmatched');
     const execute = vi.spyOn(h.tasks, 'execute');
-    expectDefined(date.querySelector<HTMLElement>('.abyss-task-date-part')).click();
+    date.click();
     expect(h.state.get('mode')).toBe('search');
     expect(h.panel['searchView_abyssPrivate'].list.filters).toEqual([
       { type: 'date', value: '2026-11-30' },
@@ -1188,17 +1185,17 @@ it.each([
       const group = expectDefined(
         h.root.querySelector<HTMLElement>(`.abyss-task-meta-right [aria-label="${key}: ${value}"]`),
       );
-      expect(
-        h.root.querySelectorAll('.abyss-task-tag, .abyss-comment-text, .abyss-task-desc'),
-      ).toHaveLength(0);
+      expect(h.root.querySelectorAll('.abyss-comment-text, .abyss-task-desc')).toHaveLength(0);
       if (key === 'due' || key === 'scheduled') {
-        expect(group.querySelector('.abyss-task-date-part')).not.toBeNull();
-        expectDefined(group.querySelector<HTMLElement>('.abyss-task-date-part')).click();
+        expect(group.matches('.abyss-task-date-part')).toBe(true);
+        group.click();
         expect(h.panel['searchView_abyssPrivate'].list.filters).toEqual([{ type: 'date', value }]);
       } else if (key === 'time') {
         expect(group.textContent).toBe(value);
-        expectDefined(group.querySelector<HTMLElement>('.abyss-task-date')).click();
+        group.click();
         expect(h.panel['searchView_abyssPrivate'].list.filters).toEqual([{ type: 'time', value }]);
+      } else if (key === 'start') {
+        expect(group.matches('.abyss-task-date-part')).toBe(true);
       } else {
         expect(group.textContent).toBe(value);
         expect(group.querySelector('.abyss-task-date')).toBeNull();
@@ -1424,3 +1421,117 @@ it('marks Tasks filter title, visible description and tags without Search contex
     h.dispose();
   }
 });
+
+it('keeps title-only root and child context, with only title matches highlighted, across publication', async () => {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.sourceNoteDisplay = 'always';
+  const source =
+    '- [ ] needle root 📅 2026-10-20 #context\n  - [ ] needle child ⏳ 2026-10-21 #child-context\n  - [ ] unrelated #hidden';
+  const h = await mountCanonicalSearchUi({ 'Projects/Plan.md': source }, settings);
+  try {
+    h.query('needle');
+    await h.completed();
+    const check = (childTag: string) => {
+      const card = expectDefined(h.root.querySelector('.abyss-task-card'));
+      const root = expectDefined(
+        card.querySelector('.abyss-task-card-main-row > .abyss-task-meta-right'),
+      );
+      const child = expectDefined(card.querySelector('.abyss-subtask-row .abyss-task-meta-right'));
+      expect(root.querySelector('.abyss-task-tag')?.textContent).toBe('#context');
+      expect(root.querySelector('.abyss-task-date')?.textContent).toContain('20 Oct');
+      expect(child.querySelector('.abyss-task-tag')?.textContent).toBe(childTag);
+      expect(child.querySelector('.abyss-task-date')?.textContent).toContain('21 Oct');
+      expect(card.querySelectorAll('.abyss-task-source-note')).toHaveLength(1);
+      expect(child.querySelector('.abyss-task-source-note')).toBeNull();
+      expect([...card.querySelectorAll('mark')].map((e) => e.textContent)).toEqual([
+        'needle',
+        'needle',
+      ]);
+      expect(card.textContent).not.toContain('#hidden');
+    };
+    check('#child-context');
+    h.index.installCommittedContent(
+      'Projects/Plan.md',
+      source.replace('#child-context', '#updated'),
+    );
+    await h.completed();
+    check('#updated');
+  } finally {
+    h.dispose();
+  }
+});
+
+it.each([
+  ['always', 'Inbox/tasks.md', 1],
+  ['never', 'Projects/Plan.md', 0],
+  ['non-default', 'Inbox/tasks.md', 0],
+  ['non-default', 'Projects/Plan.md', 1],
+] as const)('applies Search source policy %s for %s', async (policy, filePath, count) => {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.sourceNoteDisplay = policy;
+  settings.taskFilePath = 'Inbox/tasks.md';
+  const h = await mountCanonicalSearchUi({ [filePath]: '- [ ] needle' }, settings);
+  try {
+    h.query('needle');
+    await h.completed();
+    const chips = h.root.querySelectorAll<HTMLElement>('.abyss-task-source-note');
+    expect(chips).toHaveLength(count);
+    if (count === 1) {
+      const execute = vi.spyOn(h.tasks, 'execute');
+      expectDefined(chips[0]).click();
+      expect(h.panel['searchView_abyssPrivate'].list.filters).toEqual([{ type: 'file', filePath }]);
+      expect(h.state.get('mode')).toBe('search');
+      expect(execute).not.toHaveBeenCalled();
+    }
+  } finally {
+    h.dispose();
+  }
+});
+
+it('shows today planning in Search after selecting Today', async () => {
+  const { moment } = await import('../src/obsidianMoment');
+  const date = moment().format('YYYY-MM-DD');
+  const h = await mountCanonicalSearchUi(
+    { 'a.md': `- [ ] needle 📅 ${date}` },
+    structuredClone(DEFAULT_SETTINGS),
+  );
+  try {
+    h.state.set('selectedList', 'today');
+    h.query('needle');
+    await h.completed();
+    expect(h.root.querySelector('.abyss-task-date-part')).not.toBeNull();
+  } finally {
+    h.dispose();
+  }
+});
+
+it.each([
+  ['#context', 'click', 'tag'],
+  ['#context', 'contextmenu', 'tag-exclude'],
+  ['#child-context', 'click', 'tag'],
+  ['#child-context', 'contextmenu', 'tag-exclude'],
+] as const)(
+  'applies %s %s to Search filters without activation or writes',
+  async (tag, event, type) => {
+    const source = '- [ ] needle root #context\n  - [ ] needle child #child-context';
+    const h = await mountCanonicalSearchUi({ 'a.md': source }, structuredClone(DEFAULT_SETTINGS));
+    try {
+      h.query('needle');
+      await h.completed();
+      const execute = vi.spyOn(h.tasks, 'execute');
+      const chip = expectDefined(
+        [...h.root.querySelectorAll<HTMLElement>('.abyss-task-tag')].find(
+          (e) => e.textContent === tag,
+        ),
+      );
+      chip.dispatchEvent(new MouseEvent(event, { bubbles: true, cancelable: true }));
+      expect(h.panel['searchView_abyssPrivate'].list.filters).toEqual([{ type, value: tag }]);
+      expect(h.state.get('mode')).toBe('search');
+      expect(h.state.get('taskStack')).toEqual([]);
+      expect(execute).not.toHaveBeenCalled();
+      expect(await h.app.vault.adapter.read('a.md')).toBe(source);
+    } finally {
+      h.dispose();
+    }
+  },
+);
