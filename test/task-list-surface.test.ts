@@ -10,6 +10,7 @@ import {
   type TaskListRow,
 } from '../src/panels/task-list/taskListRows';
 import { LogicalScrollWindow } from '../src/panels/virtualization/logicalScrollWindow';
+import { RowViewport } from '../src/panels/virtualization/rowViewport';
 import {
   cssDeclarationsFor,
   expectDefined,
@@ -283,7 +284,143 @@ function pendingHarness() {
   return { ...h, ready, live, actual, resolve, settle, warm };
 }
 
+function coldTopHarness(count = 100) {
+  const h = pendingHarness();
+  h.surface.update(rows(count), { ...presentation, estimate: () => 64 });
+  for (const key of h.live) {
+    h.actual.set(key, 36);
+    const index = Number(key.split(':')[1]);
+    if (index < 4 || index >= 7) h.resolve(key);
+  }
+  h.surface.refreshMeasurements();
+  h.frame();
+  h.scrollTo(535);
+  h.frame();
+  for (let round = 0; round < 2; round++) {
+    for (const key of h.live) h.actual.set(key, 36);
+    h.settle();
+  }
+  expect(h.surface.element('n.md:4')).toBeUndefined();
+  const survivor = expectDefined(h.surface.element('n.md:7'));
+  h.scrollTo(175.28125);
+  const before = survivor.getBoundingClientRect().top;
+  expect(before).toBe(160.71875);
+  h.writes.mockClear();
+  h.frame();
+  expect(survivor.getBoundingClientRect().top).toBe(before);
+  expect(h.writes).not.toHaveBeenCalled();
+  return { ...h, survivor, before };
+}
+
 describe('pending row physical extent', () => {
+  it('keeps an explicit visible reveal ahead of the settled-visible fallback', () => {
+    const h = coldTopHarness();
+    for (const key of h.live) {
+      h.actual.set(key, 36);
+      h.resolve(key);
+    }
+    const target = h.surface.element('n.md:8');
+    expect(h.surface.reveal('n.md:8')).toBe(target);
+    expect(h.scroll.scrollTop).toBe(175.28125);
+    expect(h.writes).not.toHaveBeenCalled();
+    expect(h.reportFailure).not.toHaveBeenCalled();
+    h.surface.destroy();
+  });
+
+  it('bounds settled-visible anchor lookup and natural geometry reads to mounted rows', async () => {
+    const h = coldTopHarness(10_000);
+    const bounds = vi.spyOn(RowViewport.prototype, 'rowBounds');
+    const measure = vi.fn();
+    h.onMeasure(measure);
+    const mounted = h.surface.mountedKeys().length;
+    for (const key of h.live) {
+      h.actual.set(key, 36);
+      h.resolve(key);
+    }
+    h.surface.refreshMeasurements();
+    await Promise.resolve();
+    expect(bounds.mock.calls.length).toBeLessThanOrEqual(8 * mounted);
+    expect(measure.mock.calls.length).toBeLessThanOrEqual(mounted);
+    expect(h.survivor.getBoundingClientRect().top).toBe(h.before);
+    expect(h.scroll.scrollTop).toBe(91.28125);
+    expect(h.reportFailure).not.toHaveBeenCalled();
+    h.surface.destroy();
+  });
+
+  it.each(['source', 'adoption', 'destruction'] as const)(
+    'retires a selected settled-visible anchor when measurement changes the %s',
+    async (change) => {
+      const h = coldTopHarness();
+      const owner = change === 'adoption' ? taskViewportOwner() : undefined;
+      let invalidated = false;
+      h.onMeasure(() => {
+        if (invalidated) return;
+        invalidated = true;
+        if (change === 'source') h.surface.update(rows(1), presentation);
+        else if (owner !== undefined) owner.doc.body.append(h.scroll);
+        else h.surface.destroy();
+      });
+      for (const key of h.live) {
+        h.actual.set(key, 36);
+        h.resolve(key);
+      }
+      h.surface.refreshMeasurements();
+      await Promise.resolve();
+      expect(invalidated).toBe(true);
+      expect(h.writes.mock.calls).not.toContainEqual([91.28125]);
+      expect(h.reportFailure).not.toHaveBeenCalled();
+      h.surface.destroy();
+      owner?.destroy();
+    },
+  );
+
+  it('keeps the logical anchor when no previously settled visible row is available', async () => {
+    const h = pendingHarness();
+    h.surface.update(rows(100), { ...presentation, estimate: () => 64 });
+    h.scrollTo(175.28125);
+    h.frame();
+    for (const key of h.live) {
+      h.actual.set(key, 36);
+      h.resolve(key);
+    }
+    h.surface.refreshMeasurements();
+    await Promise.resolve();
+    expect(h.scroll.scrollTop).toBe(119.28125);
+    expect(h.reportFailure).not.toHaveBeenCalled();
+    h.surface.destroy();
+  });
+
+  it('preserves an explicit source-update anchor ahead of the settled-visible fallback', () => {
+    const h = coldTopHarness();
+    for (const key of h.live) {
+      h.actual.set(key, 36);
+      h.resolve(key);
+    }
+    h.surface.update(rows(100), { ...presentation, estimate: () => 64 });
+    expect(h.scroll.scrollTop).toBe(175.28125);
+    expect(h.survivor.getBoundingClientRect().top).toBe(76.71875);
+    expect(h.writes).not.toHaveBeenCalled();
+    expect(h.reportFailure).not.toHaveBeenCalled();
+    h.surface.destroy();
+  });
+
+  it('keeps an established visible sibling stationary when cold pending rows occupy the logical top anchor', async () => {
+    const h = coldTopHarness();
+    const { survivor, before } = h;
+    for (const key of h.live) {
+      h.actual.set(key, 36);
+      h.resolve(key);
+    }
+    h.surface.refreshMeasurements();
+    await Promise.resolve();
+    expect(h.surface.element('n.md:7')).toBe(survivor);
+    expect(survivor.getBoundingClientRect().top).toBe(before);
+    expect(h.scroll.scrollTop).toBe(91.28125);
+    expect(h.writes.mock.calls).toEqual([[91.28125]]);
+    expect(h.reportFailure).not.toHaveBeenCalled();
+    h.surface.destroy();
+  });
+
   it.each([
     [16, 17],
     [17, 16],

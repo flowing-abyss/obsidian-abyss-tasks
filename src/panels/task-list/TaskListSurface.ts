@@ -778,12 +778,18 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     this.#resolvePinOrder();
     if (!this.#admitReconciliation(current)) return false;
     this.#readFocus();
-    const nativeTop = target?.top ?? this.#top();
+    const nativeTop = target === undefined ? this.#top() : target.top;
     const revealKey = target?.revealKey;
     // Only a row already intersecting before provisional measurement retains tall-row placement.
     const alignTall = !this.#intersects(revealKey);
     if (!this.#admitReconciliation(current)) return false;
-    this.#renderWindow(update, nativeTop, revealKey ?? this.#anchorKey(target?.anchor), current);
+    // A tall row's old offset can place its replacement estimate outside overscan.
+    const anchor = target?.anchor;
+    const anchorKey =
+      anchor === undefined
+        ? undefined
+        : this.#viewport.rowAt(this.#viewport.restoreAnchor({ ...anchor, offset: 0 }, 0))?.key;
+    this.#renderWindow(update, nativeTop, revealKey ?? anchorKey, current);
     if (!this.#admitReconciliation(current)) return false;
     return this.#measureWindow(nativeTop, target, current, alignTall);
   }
@@ -860,7 +866,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     initial: boolean,
   ): { top: number; stable: boolean } {
     const { key, current, alignTall } = reveal;
-    const measuredTop = this.#measure(top, undefined, current);
+    const measuredTop = this.#measure(top, this.#viewport.captureAnchor(top), current);
     if (!current()) return { top, stable: false };
     const desired =
       measuredTop !== undefined || initial
@@ -924,16 +930,29 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     if (top < 0) return top;
     return Math.max(0, bottom - height);
   }
-  #anchorKey(anchor: RowAnchor | undefined): string | undefined {
-    // A tall row's old offset can place its replacement estimate outside overscan.
-    return anchor === undefined
-      ? undefined
-      : this.#viewport.rowAt(this.#viewport.restoreAnchor({ ...anchor, offset: 0 }, 0))?.key;
+  #measurementAnchor(top: number): RowAnchor | undefined {
+    const fallback = this.#viewport.captureAnchor(top);
+    if (fallback === undefined || !this.#pendingFrames.has(fallback.key)) return;
+    // Preserve settled visible ink when the logical anchor still occupies a pending frame.
+    const bottom = top + this.#height();
+    for (const key of this.#ordered) {
+      const row = this.#viewport.rowBounds(key);
+      if (
+        row === undefined ||
+        this.#pendingFrames.has(key) ||
+        row.bottom <= top ||
+        row.top >= bottom
+      )
+        continue;
+      return { ...fallback, key, previousIndex: row.index, offset: top - row.top };
+    }
+    return undefined;
   }
   #measure(top: number, anchor: RowAnchor | undefined, current: () => boolean): number | undefined {
+    const retainedAnchor = anchor ?? this.#measurementAnchor(top);
     const measurements = this.#measureRows(current);
     if (measurements === undefined || !this.#admitReconciliation(current)) return;
-    const measured = this.#viewport.measure(measurements, Math.max(0, top), anchor);
+    const measured = this.#viewport.measure(measurements, Math.max(0, top), retainedAnchor);
     let released = false;
     for (const { key, height } of measurements)
       if (Number.isFinite(height) && height > 0 && this.#pendingFrames.delete(key)) released = true;
@@ -942,6 +961,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     return top + measured.scrollTop - Math.max(0, top);
   }
   #measureRows(current: () => boolean): RowMeasurement[] | undefined {
+    if (!this.#admitReconciliation(current)) return;
     const measurements: RowMeasurement[] = [];
     for (const [key, mount] of this.#mounts) {
       const ready = this.#measurementReady(mount, current);
