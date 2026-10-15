@@ -4,6 +4,7 @@ import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { ShortcutActionId } from '../src/settings/shortcuts';
 import {
   localDate,
+  localTime,
   type TaskCaptureApplicationApi,
   type TaskCommandResult,
   type TaskCreateSession,
@@ -25,6 +26,7 @@ import {
   stripCssComments,
   task,
 } from './helpers';
+import { smartHarness } from './support/taskInputHarness';
 
 async function loadStylesFixture(): Promise<string> {
   if (!Platform.isDesktop) throw new Error('CSS fixture requires the desktop test runtime');
@@ -443,14 +445,14 @@ describe('QuickCaptureCoordinator', () => {
       planCreate: vi.fn(() => planned.promise),
     };
     const settings = structuredClone(DEFAULT_SETTINGS);
-    let today = localDate('2026-08-24');
+    let today = localDate('2026-10-14');
     const resolver = new CaptureTargetResolver(application, settings, () => today);
     const h = harness((context) => resolver.resolve(context));
-    h.setContext({ type: 'default', source: 'calendar' });
+    h.setContext({ type: 'default', source: 'calendar', date: localDate('2026-10-16') });
 
     h.coordinator.openOrFocus();
-    today = localDate('2026-08-25');
-    h.setContext({ type: 'list', selection: 'inbox' });
+    today = localDate('2026-10-15');
+    h.setContext({ type: 'default', source: 'calendar', date: localDate('2026-10-17') });
     planned.resolve(readySession(execute));
     await flushMicrotasks(0);
     const input = expectDefined(
@@ -465,10 +467,54 @@ describe('QuickCaptureCoordinator', () => {
 
     expect(execute).toHaveBeenCalledWith({
       markdownBody: 'draft',
-      initial: { due: { type: 'set', value: localDate('2026-08-24') } },
+      initial: { due: { type: 'set', value: localDate('2026-10-16') } },
     });
-    expect(h.resolveTarget).toHaveBeenCalledWith({ type: 'default', source: 'calendar' });
+    expect(h.resolveTarget).toHaveBeenCalledWith({
+      type: 'default',
+      source: 'calendar',
+      date: '2026-10-16',
+    });
   });
+
+  it.each([
+    ['plain', 'Draft', undefined, '2026-10-16'],
+    ['typed', 'Draft 📅 2026-10-20', undefined, '2026-10-20'],
+    ['manual', 'Draft', '2026-10-21', '2026-10-21'],
+    ['natural clock', 'Draft tomorrow', undefined, '2026-10-15'],
+  ] as const)(
+    'preserves %s planning precedence over calendar context',
+    async (_name, raw, manual, due) => {
+      const h = await smartHarness(
+        {},
+        {
+          resolveContext: { type: 'default', source: 'calendar', date: localDate('2026-10-16') },
+          reference: {
+            epochMs: Date.parse('2026-10-14T12:00:00+07:00'),
+            localDate: localDate('2026-10-14'),
+            localTime: localTime('12:00'),
+            second: 0,
+            offsetMinutes: 420,
+          },
+        },
+      );
+      try {
+        h.controller.setDraft(raw);
+        if (manual !== undefined)
+          h.controller.applyMetadataAction({
+            type: 'select-date',
+            role: 'due',
+            value: localDate(manual),
+          });
+        await h.controller.submit('enter');
+        expect(h.readCanonicalRoot(h.repository.content('tasks.md') ?? '').planning.due).toBe(due);
+        expect(h.readReference).toHaveReturnedWith(
+          expect.objectContaining({ localDate: '2026-10-14' }),
+        );
+      } finally {
+        h.controller.destroy();
+      }
+    },
+  );
 
   it('ignores a resolution after close or destroy and releases its resolving token once', async () => {
     const closePending = deferred<CaptureTarget>();

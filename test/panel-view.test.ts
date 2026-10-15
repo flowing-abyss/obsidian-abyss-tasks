@@ -37,7 +37,7 @@ import { TaskModal } from '../src/ui/TaskModal';
 import type { CreationPresentationController } from '../src/ui/creation/CreationPresentationController';
 import type { InteractionRegistry } from '../src/ui/interactionOwnership';
 import { PanelShortcutRouter } from '../src/ui/panelShortcutRouter';
-import type { CaptureTarget } from '../src/ui/taskCapture/CaptureTargetResolver';
+import type { CaptureContext, CaptureTarget } from '../src/ui/taskCapture/CaptureTargetResolver';
 import type { QuickCaptureCoordinator } from '../src/ui/taskCapture/QuickCaptureCoordinator';
 import { requestTaskCompletion } from '../src/ui/taskCommandResult';
 import { renderedTaskNodeElements, taskPresentationKey } from '../src/ui/taskPresentationIdentity';
@@ -2778,6 +2778,74 @@ describe('PanelView', () => {
       expect(stale.defaultPrevented).toBe(false);
       expect(current.defaultPrevented).toBe(true);
     });
+
+    it.each([
+      ['today', '2026-10-16'],
+      ['week', '2026-10-14'],
+      ['month', '2026-10-14'],
+    ] as const)(
+      'Q captures the displayed %s context with the configured destination',
+      async (calendarView, due) => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date(2026, 9, 14, 12));
+        try {
+          document.body.appendChild(view.containerEl);
+          workspaceState(app).activeLeaf = leaf;
+          const execute = vi.fn<TaskCreateSession['execute']>(async () => ({
+            type: 'invalid',
+            issues: [{ code: 'invalid-title', field: 'title' }],
+          }));
+          const planCreate = vi.spyOn(taskApplication.tasks, 'planCreate').mockResolvedValue({
+            type: 'ready',
+            destination: { filePath: 'configured.md', insertion: { type: 'append' } },
+            preview: () => ({ type: 'unavailable', cause: 'preview-capability' }),
+            execute,
+          });
+          const internals = view as unknown as {
+            panelNavigation_abyssPrivate: PanelNavigator;
+            quickCapture_abyssPrivate: { controller: { target: { context: CaptureContext } } };
+          };
+          internals.panelNavigation_abyssPrivate.openCalendarView(calendarView);
+          const next = expectDefined(
+            view.contentEl.querySelector<HTMLButtonElement>(
+              '.abyss-cal-nav-btn[aria-label="Next"]',
+            ),
+          );
+          next.click();
+          next.click();
+          const event = new KeyboardEvent('keydown', {
+            key: 'q',
+            code: 'KeyQ',
+            bubbles: true,
+            cancelable: true,
+          });
+          view.contentEl.dispatchEvent(event);
+          await flushMicrotasks(0);
+          const input = expectDefined(
+            view.contentEl.querySelector<HTMLInputElement>('.abyss-quick-capture-input'),
+          );
+          expect(event.defaultPrevented).toBe(true);
+          expect(internals.quickCapture_abyssPrivate.controller.target.context).toEqual({
+            type: 'default',
+            source: 'calendar',
+            ...(calendarView === 'today' ? { date: '2026-10-16' } : {}),
+          });
+          expect(planCreate).toHaveBeenCalledWith({ type: 'configured-default' });
+          input.value = 'Calendar draft';
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+          );
+          await flushMicrotasks(0);
+          expect(execute).toHaveBeenCalledWith({
+            markdownBody: 'Calendar draft',
+            initial: { due: { type: 'set', value: due } },
+          });
+        } finally {
+          vi.useRealTimers();
+        }
+      },
+    );
 
     it('opens and owns Quick Capture without changing mode, then refocuses only from panel chrome', async () => {
       document.body.appendChild(view.containerEl);

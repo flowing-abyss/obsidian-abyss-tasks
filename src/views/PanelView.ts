@@ -1209,6 +1209,10 @@ export class PanelView extends ItemView {
     if (mode === 'tasks') {
       return { type: 'list', selection: this.state_abyssPrivate.get('selectedList') };
     }
+    if (mode === 'calendar') {
+      const date = this.center_abyssPrivate.calendarCaptureDate();
+      return { type: 'default', source: 'calendar', ...(date === undefined ? {} : { date }) };
+    }
     if (mode === 'projects') {
       const projectsPanel = this.state_abyssPrivate.get('projectsPanel');
       if (projectsPanel.view === 'dashboard') {

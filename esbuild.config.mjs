@@ -26,6 +26,8 @@ import process from 'process';
 // Its minimal containing main limit is 2,019,328 bytes (1972 KiB); CSS is unchanged.
 // Q retained canonical context: measured 2,024,012 bytes; the approved next-KiB main limit is
 // 2,024,448 bytes (1977 KiB). The CSS limit is unchanged.
+// Q calendar-day capture: baseline 2,051,744 bytes; measured 2,052,158 bytes (+414 bytes).
+// The next-KiB main limit is 2,053,120 bytes (2005 KiB). The CSS limit is unchanged.
 // Dependency scope and budget enforcement are unchanged.
 const { mainJsBudgetBytes: MAIN_JS_BUDGET_BYTES } = JSON.parse(
   readFileSync('package.json', 'utf8'),

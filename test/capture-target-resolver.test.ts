@@ -18,7 +18,7 @@ import {
   type CaptureContext,
   type CaptureTarget,
 } from '../src/ui/taskCapture/CaptureTargetResolver';
-import { expectDefined, methodOf } from './helpers';
+import { deferred, expectDefined, methodOf } from './helpers';
 
 const configuredDestination: TaskDestination = {
   filePath: 'Daily/2026-08-22.md',
@@ -176,7 +176,7 @@ const scenarios: readonly Scenario[] = [
   {
     name: 'calendar',
     context: { type: 'default', source: 'calendar' },
-    label: 'Today · today',
+    label: 'Calendar · 2026-08-24',
     due: '2026-08-24',
   },
   {
@@ -224,6 +224,53 @@ async function expectScenarioPlan(
 }
 
 describe('CaptureTargetResolver', () => {
+  it('uses the captured calendar day instead of the clock with the configured destination', async () => {
+    const captureApplication = application();
+    const resolver = new CaptureTargetResolver(captureApplication, settings(), () =>
+      localDate('2026-10-14'),
+    );
+
+    const target = await resolver.resolve({
+      type: 'default',
+      source: 'calendar',
+      date: localDate('2026-10-16'),
+    });
+
+    expect(target.initial?.due).toEqual({ type: 'set', value: '2026-10-16' });
+    expect(target.label).toBe('Calendar · 2026-10-16');
+    expect(target.session).toMatchObject({ destination: configuredDestination });
+    expect(methodOf(captureApplication, 'planCreate')).toHaveBeenCalledWith({
+      type: 'configured-default',
+    });
+  });
+
+  it('freezes calendar context and clock fallback before deferred planning', async () => {
+    const captureApplication = application();
+    const planned = deferred<TaskCreateSession>();
+    captureApplication.planCreate.mockReturnValue(planned.promise);
+    let today = localDate('2026-10-14');
+    const resolver = new CaptureTargetResolver(captureApplication, settings(), () => today);
+    const context = {
+      type: 'default' as const,
+      source: 'calendar' as const,
+      date: localDate('2026-10-16'),
+    };
+
+    const exact = resolver.resolve(context);
+    const fallback = resolver.resolve({ type: 'default', source: 'calendar' });
+    context.date = localDate('2026-10-17');
+    today = localDate('2026-10-15');
+    planned.resolve(readySession(configuredDestination));
+
+    expect((await exact).initial?.due).toEqual({ type: 'set', value: '2026-10-16' });
+    expect((await exact).context).toEqual({
+      type: 'default',
+      source: 'calendar',
+      date: '2026-10-16',
+    });
+    expect((await fallback).initial?.due).toEqual({ type: 'set', value: '2026-10-14' });
+  });
+
   it.each(scenarios)('resolves the frozen $name target', async (scenario) => {
     const captureApplication = application();
     const resolver = new CaptureTargetResolver(

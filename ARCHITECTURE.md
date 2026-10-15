@@ -149,6 +149,12 @@ Unicode-letter uppercase mapping when it stays one code point; the neutral proje
 input remain unchanged. Canonical preview and frozen submission/retry receive that same request.
 Empty forms may expose manual choices without a valid creation preview.
 
+For Q in calendar day view, CalendarMode supplies a civil-date snapshot through
+`CenterPanel.calendarCaptureDate()` and PanelView's calendar capture context. CaptureTargetResolver
+freezes that day as the initial due date before awaiting configured-default creation planning.
+Week and month omit the exact day and retain the clock-day fallback. Explicit input and manual
+choices keep their existing precedence, and natural-language recognition uses its own clock reference.
+
 The retained create session's optional `previewContext(request?)` reads known prefix, initial, and
 resolver-seed metadata through the canonical validation, patch, and normalization stages. Its ready
 result has the captured session day and metadata without a title or executable request. The regular

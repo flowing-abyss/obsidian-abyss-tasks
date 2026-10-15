@@ -134,6 +134,29 @@ function harness(queryOverrides: Omit<Partial<TestTaskQueries>, 'subscribe'> = {
 }
 
 describe('CalendarMode session state', () => {
+  it('captures the displayed day as a civil-date snapshot and omits week and month dates', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 14, 12));
+    try {
+      const h = harness();
+      h.mode.setView('today');
+      h.mode.render(h.root);
+      h.click('.abyss-cal-nav-btn[aria-label="Next"]');
+      h.click('.abyss-cal-nav-btn[aria-label="Next"]');
+      const captured = h.mode.captureDate();
+      expect(captured).toBe('2026-10-16');
+      h.click('.abyss-cal-nav-btn[aria-label="Next"]');
+      expect(h.mode.captureDate()).toBe('2026-10-17');
+      expect(captured).toBe('2026-10-16');
+      for (const view of ['week', 'month'] as const) {
+        h.mode.setView(view);
+        expect(h.mode.captureDate()).toBeUndefined();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('starts in the month view on the first of the current month', () => {
     const h = harness();
     expect(h.mode.view()).toBe('month');

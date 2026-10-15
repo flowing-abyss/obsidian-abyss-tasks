@@ -22,7 +22,12 @@ export type CaptureContext =
   | { readonly type: 'project-table'; readonly path: string }
   | {
       readonly type: 'default';
-      readonly source: 'projects' | 'calendar' | 'search' | 'statistics';
+      readonly source: 'calendar';
+      readonly date?: LocalDate;
+    }
+  | {
+      readonly type: 'default';
+      readonly source: 'projects' | 'search' | 'statistics';
     };
 
 export interface CaptureTarget {
@@ -119,24 +124,18 @@ export class CaptureTargetResolver {
   private async defaultTarget_abyssPrivate(
     context: Extract<CaptureContext, { type: 'default' }>,
   ): Promise<CaptureTarget> {
-    const calendarToday = context.source === 'calendar' ? this.today_abyssPrivate() : undefined;
+    const calendarDate =
+      context.source === 'calendar' ? (context.date ?? this.today_abyssPrivate()) : undefined;
     const session = await this.application_abyssPrivate.planCreate({ type: 'configured-default' });
-    if (calendarToday === undefined) {
-      return {
-        label: 'Default destination',
-        context,
-        session,
-        markdownPrefix: '',
-        markdownSuffixes: [],
-      };
-    }
     return {
-      label: 'Today · today',
+      label: calendarDate === undefined ? 'Default destination' : `Calendar · ${calendarDate}`,
       context,
       session,
       markdownPrefix: '',
       markdownSuffixes: [],
-      initial: { due: { type: 'set', value: calendarToday } },
+      ...(calendarDate === undefined
+        ? {}
+        : { initial: { due: { type: 'set' as const, value: calendarDate } } }),
     };
   }
 

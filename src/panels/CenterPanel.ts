@@ -2402,6 +2402,10 @@ export class CenterPanel {
     return this.calendar_abyssPrivate.view();
   }
 
+  calendarCaptureDate(): LocalDate | undefined {
+    return this.calendar_abyssPrivate.captureDate();
+  }
+
   /** The heading of the tasks list for the current selection, as the center header shows it. */
   title(): string {
     return this.getTitle_abyssPrivate();

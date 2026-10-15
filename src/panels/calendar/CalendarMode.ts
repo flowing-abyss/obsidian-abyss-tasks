@@ -4,13 +4,14 @@ import { moment } from '../../obsidianMoment';
 import type { CalendarSettings } from '../../settings/types';
 import type { StatusRegistry } from '../../status/StatusRegistry';
 import type { EffectiveTagGroup } from '../../tags/effectiveTagGroups';
-import type {
-  LocalDate,
-  TaskApplicationApi,
-  TaskNodeRef,
-  TaskPriority,
-  TaskQueryApi,
-  TaskSnapshot,
+import {
+  localDate,
+  type LocalDate,
+  type TaskApplicationApi,
+  type TaskNodeRef,
+  type TaskPriority,
+  type TaskQueryApi,
+  type TaskSnapshot,
 } from '../../tasks';
 import type { InteractionOwnershipPort } from '../../ui/interactionOwnership';
 import { runAsyncAction } from '../../ui/runAsyncAction';
@@ -134,6 +135,12 @@ export class CalendarMode {
 
   view(): CalViewType {
     return this.viewType_abyssPrivate;
+  }
+
+  captureDate(): LocalDate | undefined {
+    return this.viewType_abyssPrivate === 'today'
+      ? localDate(this.date_abyssPrivate.format('YYYY-MM-DD'))
+      : undefined;
   }
 
   /** Selects a view and its policy date without rendering; the navigator triggers the render. */
