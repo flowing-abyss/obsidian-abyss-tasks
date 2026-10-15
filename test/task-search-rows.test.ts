@@ -142,6 +142,63 @@ async function rowsHarness(
     },
   };
 }
+async function measurementHarness(
+  overrides: Partial<Omit<TaskSearchRowsOptions, 'refreshMeasurements'>> = {},
+  count = 1,
+) {
+  let refreshes = 0;
+  let passes = 0;
+  const h = await rowsHarness(count, {
+    ...overrides,
+    refreshMeasurements: () => {
+      refreshes++;
+      surface.refreshMeasurements();
+    },
+  });
+  h.host.addClass('abyss-center-scroll');
+  prepareTaskPanelViewport(h.host);
+  const dimensions = vi.spyOn(h.host, 'clientWidth', 'get');
+  const surface: TaskListSurface<TaskSearchOccurrence> = new TaskListSurface<TaskSearchOccurrence>({
+    host: h.host,
+    scroll: h.host,
+    mount: (host, row) => h.owner.mount(host, row),
+    mountedChanged: () => {
+      passes++;
+      h.owner.mountedChanged(surface.mountedKeys());
+    },
+    reportFailure: h.failure,
+  });
+  const presentation = {
+    revision: 'receipt',
+    preserveAnchor: false,
+    estimate: () => 64,
+    measurementRevision: (row: { readonly key: string }) => row.key,
+  };
+  surface.update(h.rows, presentation);
+  dimensions.mockClear();
+  return {
+    ...h,
+    surface,
+    presentation,
+    dimensions,
+    get refreshes() {
+      return refreshes;
+    },
+    get passes() {
+      return passes;
+    },
+    resetMeasurements() {
+      refreshes = 0;
+      passes = 0;
+      dimensions.mockClear();
+    },
+    dispose() {
+      surface.destroy();
+      h.dispose();
+    },
+  };
+}
+
 it('shares one detached root across occurrences, bounds more than 50 demanded roots, and drops the last lease', async () => {
   const h = await rowsHarness();
   const hydrate = vi.spyOn(h.index, 'resolveSearchHits');
@@ -393,6 +450,160 @@ it('joins the final sparse set of the existing generic surface without hydrating
   surface.destroy();
   h.dispose();
 });
+it('does not reconcile natural geometry before a new card receipt can be measured', async () => {
+  const receipt = deferred<TaskRenderOutcome>();
+  const h = await measurementHarness({
+    mountCard: (element) => ({
+      element,
+      settled: receipt.promise,
+      accepts: () => true,
+      update: () => {},
+      destroy: () => {
+        element.remove();
+      },
+    }),
+  });
+  try {
+    await flushMicrotasks(40);
+    expect({
+      refreshes: h.refreshes,
+      dimensionReads: h.dimensions.mock.calls.length,
+      passes: h.passes,
+    }).toEqual({
+      refreshes: 0,
+      dimensionReads: 0,
+      passes: 1,
+    });
+    receipt.resolve({ type: 'ready' });
+    await flushMicrotasks(40);
+    expect(h.refreshes).toBe(1);
+    expect(h.dimensions.mock.calls.length).toBeGreaterThan(0);
+    expect(h.surface.element(expectDefined(h.rows.taskKeyAt(0)))).toBeDefined();
+    expect(h.failure).not.toHaveBeenCalled();
+  } finally {
+    receipt.resolve({ type: 'ready' });
+    h.dispose();
+  }
+});
+
+it('remeasures a synchronous card update that keeps its already-ready receipt', async () => {
+  const h = await measurementHarness(
+    {
+      updateCard: (card, _task, occurrence) => {
+        if (occurrence.key === 'many.md:0') card.element.setCssProps({ height: '96px' });
+      },
+    },
+    2,
+  );
+  try {
+    expect(await h.owner.settleMounted(h.identity.signal)).toEqual({ type: 'ready' });
+    await flushMicrotasks(40);
+    const first = expectDefined(h.surface.element('many.md:0'));
+    const second = expectDefined(h.surface.element('many.md:2'));
+    expect(second.getBoundingClientRect().top).toBe(64);
+    h.resetMeasurements();
+    h.surface.update(h.rows, { ...h.presentation, revision: 'metadata' });
+    await flushMicrotasks(40);
+    expect(h.refreshes).toBe(1);
+    expect(h.surface.element('many.md:0')).toBe(first);
+    expect(first.getBoundingClientRect().height).toBe(96);
+    expect(second.getBoundingClientRect().top).toBe(96);
+    expect(h.failure).not.toHaveBeenCalled();
+  } finally {
+    h.dispose();
+  }
+});
+
+it('reconciles a cancelled current receipt without admitting its provisional height', async () => {
+  const receipt = deferred<TaskRenderOutcome>();
+  const h = await measurementHarness({
+    mountCard: (element) => ({
+      element,
+      settled: receipt.promise,
+      accepts: () => true,
+      update: () => {},
+      destroy: () => {
+        element.remove();
+      },
+    }),
+  });
+  try {
+    await flushMicrotasks(40);
+    h.resetMeasurements();
+    receipt.resolve({ type: 'cancelled' });
+    await flushMicrotasks(40);
+    expect(await h.owner.settleRow('many.md:0', h.identity.signal)).toEqual({ type: 'cancelled' });
+    expect(h.refreshes).toBe(1);
+    const card = expectDefined(h.surface.element('many.md:0'));
+    expect(card.parentElement?.getBoundingClientRect().height).toBe(64);
+    expect(h.failure).not.toHaveBeenCalled();
+  } finally {
+    receipt.resolve({ type: 'cancelled' });
+    h.dispose();
+  }
+});
+
+it('reconciles a synchronous paint failure after its old card detaches the holder', async () => {
+  const error = new Error('update failed');
+  const h = await measurementHarness({
+    updateCard: () => {
+      throw error;
+    },
+  });
+  try {
+    expect(await h.owner.settleMounted(h.identity.signal)).toEqual({ type: 'ready' });
+    await flushMicrotasks(40);
+    const card = expectDefined(h.surface.element('many.md:0'));
+    const frame = expectDefined(card.parentElement);
+    h.resetMeasurements();
+    h.surface.update(h.rows, { ...h.presentation, revision: 'failed-paint' });
+    await flushMicrotasks(40);
+    expect(h.refreshes).toBe(1);
+    expect(h.failure).toHaveBeenCalledExactlyOnceWith(error);
+    expect(await h.owner.settleRow('many.md:0', h.identity.signal)).toEqual({
+      type: 'failed',
+      error,
+    });
+    expect(card.parentElement).toBe(frame);
+    expect(frame.getBoundingClientRect().height).toBe(64);
+  } finally {
+    h.dispose();
+  }
+});
+
+it.each(['hydration', 'dependencies'] as const)(
+  'reconciles cleared demand holders after a live %s failure',
+  async (phase) => {
+    const h = await measurementHarness();
+    const error = new Error('demand failed');
+    try {
+      expect(await h.owner.settleMounted(h.identity.signal)).toEqual({ type: 'ready' });
+      await flushMicrotasks(40);
+      const card = expectDefined(h.surface.element('many.md:0'));
+      const frame = expectDefined(card.parentElement);
+      h.resetMeasurements();
+      if (phase === 'hydration')
+        vi.spyOn(h.index, 'resolveSearchHits').mockRejectedValueOnce(error);
+      else vi.spyOn(h.index, 'prepareDependencies').mockRejectedValueOnce(error);
+      const next = {
+        ...h.identity,
+        request: 2,
+        semanticsRevision: h.identity.semanticsRevision + 1,
+      };
+      const rows = h.replace(next);
+      h.surface.update(rows, { ...h.presentation, revision: 'failed-demand' });
+      await flushMicrotasks(80);
+      expect(h.failure).toHaveBeenCalledExactlyOnceWith(error);
+      expect(await h.owner.settleRow('many.md:0', next.signal)).toEqual({ type: 'failed', error });
+      expect(h.refreshes).toBe(1);
+      expect(card.parentElement).toBe(frame);
+      expect(frame.getBoundingClientRect().height).toBe(64);
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
 it('fails a current card mount once and never completes its row as ready', async () => {
   const error = new Error('mount failed');
   const h = await rowsHarness(1, {

@@ -558,7 +558,10 @@ export class TaskSearchRows {
       failed = true;
     }
     this.#notify();
-    if (failed) this.#options.reportFailure(error);
+    if (failed) {
+      this.#options.refreshMeasurements();
+      this.#options.reportFailure(error);
+    }
   }
   async #hydrate(identity: TaskSearchRowsIdentity | undefined, signal: AbortSignal): Promise<void> {
     await this.#options.scheduler.yield(signal);
@@ -642,7 +645,22 @@ export class TaskSearchRows {
     this.#options.reportFailure(error);
   }
 
+  #observeReceipt(row: MountedRow, receipt: Promise<TaskRenderOutcome>): boolean {
+    if (row.receipt === receipt) return row.readyReceipt === receipt;
+    // New receipts own their geometry notification when they finish.
+    row.receipt = receipt;
+    void receipt
+      .then((outcome) => {
+        this.#receiptFinished(row, receipt, outcome);
+      })
+      .catch((error: unknown) => {
+        this.#receiptFinished(row, receipt, { type: 'failed', error });
+      });
+    return false;
+  }
+
   #paint(): void {
+    let refresh = false;
     for (const row of this.#mounted.values()) {
       const task = row.root.task;
       if (!row.dirty || task === undefined || !this.#eligible(row) || row.failure !== undefined)
@@ -663,21 +681,12 @@ export class TaskSearchRows {
           );
         row.element.inert = false;
         row.element.removeAttribute('aria-busy');
-        const receipt = row.card.settled;
-        if (row.receipt !== receipt) {
-          row.receipt = receipt;
-          void receipt
-            .then((outcome) => {
-              this.#receiptFinished(row, receipt, outcome);
-            })
-            .catch((error: unknown) => {
-              this.#receiptFinished(row, receipt, { type: 'failed', error });
-            });
-        }
+        refresh = this.#observeReceipt(row, row.card.settled) || refresh;
       } catch (error) {
         this.#failRow(row, error);
+        refresh = true;
       }
     }
-    this.#options.refreshMeasurements();
+    if (refresh) this.#options.refreshMeasurements();
   }
 }
