@@ -1784,7 +1784,7 @@ it.each([false, true])(
     const h = await mountCanonicalSearchUi(
       {
         'tree.md':
-          '- [ ] Grandparent #inbox\n  - [ ] Parent #private\n    - [ ] Same #inbox 📅 2026-10-08\n  - [ ] Same #inbox 📅 2026-10-08',
+          '- [ ] Grandparent #outside\n  - [ ] Parent #private\n    - [ ] Same #inbox 📅 2026-10-08\n  - [ ] Same #inbox 📅 2026-10-08\n- [ ] Separate #inbox',
       },
       structuredClone(DEFAULT_SETTINGS),
       'tasks',
@@ -2284,6 +2284,57 @@ it.each([
           before.replace(`- [ ] ${title}`, `- [/] ${title}`),
         );
       });
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it.each(['needle child', 'unmatched child'])(
+  'reveals a covered %s inside its owner while keeping exact inspector identity',
+  async (title) => {
+    const h = await mountCanonicalSearchUi(
+      {
+        'tree.md': `- [ ] Parent needle\n  - [ ] Branch\n    - [ ] ${title}\n  - [ ] unrelated sibling`,
+      },
+      structuredClone(DEFAULT_SETTINGS),
+      'tasks',
+    );
+    try {
+      h.query('needle');
+      await h.completed();
+      const target = expectDefined(h.index.listNodes().find(({ node }) => node.title === title));
+      const signal = new AbortController().signal;
+      const cursor = await h.search.open({ kind: 'roots', query: 'needle' }, signal);
+      const page = await h.search.read(cursor, 0, 1, signal);
+      const address = { ...expectDefined(page.hits[0]).address, childLines: [1, 1] };
+      h.panel['taskSearchReveal_abyssPrivate'].install({ id: 901, address, selection: 'inbox' });
+      h.state.set('taskStack', [target.root, ...target.path]);
+      h.panel.refresh();
+      await h.completed();
+      expect([...h.root.querySelectorAll('.abyss-task-title')].map((el) => el.textContent)).toEqual(
+        ['Parent needle'],
+      );
+      expect(
+        [...h.root.querySelectorAll('.abyss-subtask-label')].map((el) => el.textContent),
+      ).toEqual(['Branch', title]);
+      expect(h.root.textContent).not.toContain('unrelated sibling');
+      expect(h.state.get('taskStack').slice(-1)[0]?.ref).toEqual(target.node.ref);
+      expect(h.state.get('centerFilter')).toBe('needle');
+      expect(h.root.dataset['searchLogicalResults']).toBe('1');
+      expect(h.root.querySelector('.is-search-revealed .abyss-task-title')?.textContent).toBe(
+        'Parent needle',
+      );
+      h.panel.refresh();
+      await h.completed();
+      expect(h.root.querySelector('.is-search-revealed .abyss-task-title')?.textContent).toBe(
+        'Parent needle',
+      );
+      h.panel['taskSearchReveal_abyssPrivate'].clear();
+      h.panel.refresh();
+      await h.completed();
+      if (title === 'unmatched child')
+        expect(h.root.querySelector('.abyss-subtask-label')).toBeNull();
     } finally {
       h.dispose();
     }

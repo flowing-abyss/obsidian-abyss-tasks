@@ -1347,10 +1347,9 @@ it('renders all four contributing tags once and keeps a same-tag drop a no-op', 
   }
 });
 
-// These assertions catch root-only responsive tracks leaking onto nested child metadata,
-// and descriptions mounted beside the row instead of in its shared title column.
+// Nested metadata shares the card header tracks; descriptions stay in the text column.
 it.each(['', ' #needle-child'])(
-  'keeps child text and metadata in their own body with metadata %s',
+  'aligns child metadata beside the shared title and description body with metadata %s',
   async (tags) => {
     const h = await mountCanonicalSearchUi(
       {
@@ -1368,15 +1367,17 @@ it.each(['', ' #needle-child'])(
       expect(body.querySelector(':scope > .abyss-task-desc')?.textContent).toBe(
         'Full needle description',
       );
-      expect(body.querySelector(':scope > .abyss-task-meta-right')?.textContent).toBe(tags.trim());
-      expect(row.querySelector(':scope > .abyss-task-meta-right')).toBeNull();
+      expect(row.classList.contains('abyss-task-card-main-row')).toBe(true);
+      expect(body.classList.contains('abyss-task-body')).toBe(true);
+      expect(row.querySelector(':scope > .abyss-task-meta-right')?.textContent).toBe(tags.trim());
+      expect(body.querySelector(':scope > .abyss-task-meta-right')).toBeNull();
     } finally {
       h.dispose();
     }
   },
 );
 
-it('limits the narrow metadata width track to the root card row', async () => {
+it('shares the narrow metadata width track with nested search rows', async () => {
   const h = await mountCanonicalSearchUi(
     {
       'a.md': '- [ ] root #needle-root\n  - [ ] Parent needle layer #needle-child',
@@ -1387,7 +1388,7 @@ it('limits the narrow metadata width track to the root card row', async () => {
     h.query('needle');
     await h.completed();
     const rootMeta = expectDefined(
-      h.root.querySelector('.abyss-task-card-main-row > .abyss-task-meta-right'),
+      h.root.querySelector('.abyss-task-card > .abyss-task-card-main-row > .abyss-task-meta-right'),
     );
     const childMeta = expectDefined(
       h.root.querySelector('.abyss-search-context .abyss-task-meta-right'),
@@ -1405,7 +1406,7 @@ it('limits the narrow metadata width track to the root card row', async () => {
       });
     });
     expect(widthSelectors.some((selector) => rootMeta.matches(selector))).toBe(true);
-    expect(widthSelectors.some((selector) => childMeta.matches(selector))).toBe(false);
+    expect(widthSelectors.some((selector) => childMeta.matches(selector))).toBe(true);
   } finally {
     h.dispose();
   }
@@ -1456,7 +1457,7 @@ it('keeps title-only root and child context, with only title matches highlighted
     const check = (childTag: string) => {
       const card = expectDefined(h.root.querySelector('.abyss-task-card'));
       const root = expectDefined(
-        card.querySelector('.abyss-task-card-main-row > .abyss-task-meta-right'),
+        card.querySelector('.abyss-task-card > .abyss-task-card-main-row > .abyss-task-meta-right'),
       );
       const child = expectDefined(card.querySelector('.abyss-subtask-row .abyss-task-meta-right'));
       expect(root.querySelector('.abyss-task-tag')?.textContent).toBe('#context');
@@ -1767,7 +1768,9 @@ it.each(['', 'baseneedle', 'childneedle', 'lastword'])(
         query !== 'lastword',
       );
       expect(
-        h.root.querySelector('.abyss-task-card-main-row > .abyss-task-meta-right')?.textContent,
+        h.root.querySelector(
+          '.abyss-task-card > .abyss-task-card-main-row > .abyss-task-meta-right',
+        )?.textContent,
       ).toContain('#metadata');
       if (query === 'lastword') {
         expect(description.textContent).toContain('lastword');

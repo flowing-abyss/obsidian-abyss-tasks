@@ -159,7 +159,15 @@ interface TaskSurfaceState {
     readonly rows: TaskSearchRows;
     readonly identity: TaskSearchRowsIdentity;
     readonly order: TaskListRows<TaskSearchOccurrence>;
+    readonly revealOwner?: TaskSearchAddress | undefined;
   };
+}
+function searchRevealOwner(organization: TaskSearchOrganization): TaskSearchAddress | undefined {
+  const key =
+    organization.revealIndex === undefined
+      ? undefined
+      : organization.rows.taskKeyAt(organization.revealIndex);
+  return key === undefined ? undefined : organization.rows.task(key)?.address;
 }
 interface CreationAttempt {
   readonly retained: TaskSurfaceState;
@@ -1140,7 +1148,12 @@ export class CenterPanel {
     this.compactPresentation_abyssPrivate = options;
     const order = compact.rows.set(organization, options.groupBy, options.identity);
     this.reconcileCompactSelection_abyssPrivate(order, organization.generation);
-    retained.search = { rows: compact.rows, identity: options.identity, order };
+    retained.search = {
+      rows: compact.rows,
+      identity: options.identity,
+      order,
+      revealOwner: searchRevealOwner(organization),
+    };
     this.invalidateCompactInteractions_abyssPrivate(previous, order);
     this.mountedRows_abyssPrivate = retained.surface;
     retained.surface.update(
@@ -1762,13 +1775,14 @@ export class CenterPanel {
   }
 
   private refreshSearchPulse_abyssPrivate(): void {
-    const receipt = this.taskSearchReveal_abyssPrivate.current();
     const retained = this.taskSurface_abyssPrivate;
-    if (receipt === undefined || retained === null) return;
+    if (retained === null) return;
+    const compact = retained.search;
+    if (compact?.revealOwner === undefined) return;
     for (const key of retained.surface.mountedKeys()) {
-      const address = retained.search?.order.task(key)?.address;
+      const address = compact.order.task(key)?.address;
       if (
-        !this.sameSearchAddress_abyssPrivate(address, receipt.address) ||
+        !this.sameSearchAddress_abyssPrivate(address, compact.revealOwner) ||
         this.mountedSnapshot_abyssPrivate(key) === undefined
       )
         continue;

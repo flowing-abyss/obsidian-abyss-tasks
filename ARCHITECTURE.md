@@ -290,7 +290,12 @@ the complete logical order before mounting; hydration and Markdown rendering bel
 rows and finite interaction leases. Filter and Search build one pruned context per hydrated root and
 query, then cache presentations by full exact base address. Filter cards start at their eligible
 node; nested matches add explanatory context without adding logical rows or promoting an ineligible
-owner. Parent and child can remain independent cards. The mounted card count is bounded; a single
+owner. Nonempty Tasks Filter retains only outermost eligible exact addresses, using a cooperative
+ancestry index before grouping and counting. Selection and bulk actions address those retained bases.
+Temporary reveal keeps its exact inspector target separate from the scrolling card: a covered target
+forces only its ancestry into the owner's context, while a revealed ancestor temporarily owns covered
+bases. Context caches belong to the current publication and its reveal path. Empty browsing and root
+Search retain their existing populations. The mounted card count is bounded; a single
 matching tree can still render many context nodes. Empty node browsing can use canonical source
 order without building the full-text index. Shared service capacity bounds cursors; cancellation, source changes,
 and disposal retire obsolete work. Cooperative batches yield to the owning window, but individual

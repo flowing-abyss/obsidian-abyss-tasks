@@ -2,7 +2,7 @@ import { Notice } from 'obsidian';
 import { expect, it, vi } from 'vitest';
 import { BrowserTaskCancelled, createBrowserTaskScheduler } from '../src/browserTaskScheduler';
 import { DEFAULT_SETTINGS, getListViewDefaults } from '../src/settings/defaults';
-import { expectDefined, useRealMoment } from './helpers';
+import { deferred, expectDefined, useRealMoment } from './helpers';
 import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
 useRealMoment();
 it('admits blank Upcoming at timer zero while debouncing nonblank filters and superseded queries', async () => {
@@ -419,6 +419,54 @@ it('browses empty Upcoming without a text cursor, retires failed rows, and recov
   } finally {
     h.dispose();
     vi.useRealTimers();
+    vi.restoreAllMocks();
+  }
+});
+
+it('retires a covered forced reveal while its exact hydration is delayed by a query change', async () => {
+  const h = await mountCanonicalSearchUi(
+    { 'tree.md': '- [ ] Parent needle\n  - [ ] Unmatched child\n- [ ] Other' },
+    structuredClone(DEFAULT_SETTINGS),
+    'tasks',
+  );
+  const entered = deferred<void>(),
+    release = deferred<void>();
+  try {
+    h.query('needle');
+    await h.completed();
+    const signal = new AbortController().signal;
+    const cursor = await h.search.open({ kind: 'roots', query: 'needle' }, signal);
+    const page = await h.search.read(cursor, 0, 1, signal);
+    const address = { ...expectDefined(page.hits[0]).address, childLines: [1] };
+    const resolve = h.search.resolveHits.bind(h.search);
+    let pending: Promise<Awaited<ReturnType<typeof resolve>>> | undefined;
+    vi.spyOn(h.search, 'resolveHits').mockImplementation((hits, requestSignal) => {
+      if (hits[0]?.address.childLines.length !== 1) return resolve(hits, requestSignal);
+      pending = (async () => {
+        const result = await resolve(hits, requestSignal);
+        entered.resolve();
+        await release.promise;
+        return result;
+      })();
+      return pending;
+    });
+    h.panel['taskSearchReveal_abyssPrivate'].install({ id: 902, address, selection: 'inbox' });
+    h.panel['taskSearchReveal_abyssPrivate'].committed(new Set());
+    h.panel.refresh();
+    await entered.promise;
+    h.query('Other');
+    release.resolve();
+    await pending;
+    await h.completed();
+    expect([...h.root.querySelectorAll('.abyss-task-title')].map((el) => el.textContent)).toEqual([
+      'Other',
+    ]);
+    expect(h.root.querySelector('.abyss-subtask-label')).toBeNull();
+    expect(h.root.querySelector('.is-search-revealed')).toBeNull();
+    expect(h.panel['taskSearchReveal_abyssPrivate'].current()).toBeUndefined();
+  } finally {
+    release.resolve();
+    h.dispose();
     vi.restoreAllMocks();
   }
 });

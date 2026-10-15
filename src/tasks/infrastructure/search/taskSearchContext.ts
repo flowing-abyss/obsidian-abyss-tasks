@@ -11,6 +11,7 @@ import {
   type SearchWordSegmenter,
 } from '../../domain/searchMatchPolicy';
 import { taskSearchMetadata } from '../../domain/taskSearchMetadata';
+import { taskSearchAddressKey } from '../../domain/taskSearchProjection';
 import type { TaskSearchAddress } from '../../domain/taskSearchTypes';
 import type { SubtaskSnapshot, TaskSnapshot } from '../../domain/types';
 
@@ -61,6 +62,7 @@ function* fields(node: ContextNode['node']): Generator<ContextField> {
 interface Matching {
   readonly query: PreparedSearchQuery;
   readonly segment: SearchWordSegmenter;
+  readonly forcedKey?: string | undefined;
 }
 function fieldEvidence(
   current: ContextNode,
@@ -131,22 +133,49 @@ function* nodeEvidence(
 interface Frame extends ContextNode {
   readonly children: TaskSearchTreeNode[];
   readonly evidence: TaskSearchEvidence[];
+  readonly forced: boolean;
   nextChild: number;
 }
 function frame(current: ContextNode, matching: Matching): Frame {
   const evidence: TaskSearchEvidence[] = [];
   for (const record of nodeEvidence(current, matching))
     if (record !== undefined) evidence.push(record);
-  return { ...current, evidence, children: [], nextChild: 0 };
+  return {
+    ...current,
+    evidence,
+    children: [],
+    nextChild: 0,
+    forced:
+      matching.forcedKey !== undefined &&
+      matching.forcedKey === taskSearchAddressKey(current.address),
+  };
+}
+function hasContext(current: Frame): boolean {
+  return current.evidence.length > 0 || current.children.length > 0 || current.forced;
+}
+interface ContextOptions {
+  readonly segment: SearchWordSegmenter;
+  readonly forcedTarget?: TaskSearchAddress | undefined;
+}
+function contextMatching(
+  query: PreparedSearchQuery,
+  options: SearchWordSegmenter | ContextOptions,
+): Matching {
+  const { segment, forcedTarget } = typeof options === 'function' ? { segment: options } : options;
+  return {
+    query,
+    segment,
+    forcedKey: forcedTarget === undefined ? undefined : taskSearchAddressKey(forcedTarget),
+  };
 }
 /** Detached exact roots only. Display/source evidence confers no TaskTextTarget/edit authority. */
 export function taskSearchContext(
   root: TaskSnapshot,
   address: TaskSearchAddress,
   query: PreparedSearchQuery,
-  segment: SearchWordSegmenter,
+  options: SearchWordSegmenter | ContextOptions,
 ): TaskSearchContext {
-  const matching = { query, segment };
+  const matching = contextMatching(query, options);
   const first = frame({ node: root, address: { ...address, childLines: [] } }, matching);
   const pending = [first];
   while (pending.length > 0) {
@@ -169,7 +198,7 @@ export function taskSearchContext(
     } else {
       pending.pop();
       const parent = pending[pending.length - 1];
-      if (parent !== undefined && (current.evidence.length > 0 || current.children.length > 0))
+      if (parent !== undefined && hasContext(current))
         parent.children.push({
           address: current.address,
           evidence: current.evidence,

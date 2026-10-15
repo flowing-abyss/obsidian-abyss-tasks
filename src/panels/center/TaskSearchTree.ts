@@ -118,12 +118,12 @@ function trackField(
 function renderHeader(entry: TreeEntry, options: TaskSearchTreeRenderOptions): HTMLElement {
   const { node, host, tree } = entry;
   if (tree === options.search.context.tree || 'source' in node) return host;
-  const row = host.createDiv({ cls: 'abyss-subtask-row' });
+  const row = host.createDiv({ cls: 'abyss-subtask-row abyss-task-card-main-row' });
   mountTaskSearchKeyboardActivation(row, options.textOptions.component, () => {
     options.search.onActivate(tree.address);
   });
   options.renderChildStatus(row, node);
-  const body = row.createDiv({ cls: 'abyss-subtask-content' });
+  const body = row.createDiv({ cls: 'abyss-subtask-content abyss-task-body' });
   const titleRow = body.createDiv({ cls: 'abyss-subtask-title-row' });
   const title = renderSubtaskTitleText(
     titleRow,
@@ -136,7 +136,7 @@ function renderHeader(entry: TreeEntry, options: TaskSearchTreeRenderOptions): H
     ),
   );
   trackField(entry, options, title);
-  options.renderMetadata(body, node, tree.evidence.filter(isTaskSearchSemanticEvidence));
+  options.renderMetadata(row, node, tree.evidence.filter(isTaskSearchSemanticEvidence));
   return body;
 }
 function contributingComments(

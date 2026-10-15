@@ -631,3 +631,23 @@ describe('Panel hierarchy styles', () => {
     expect(declarationsFor('.abyss-left-count')).toContain('flex-shrink: 0');
   });
 });
+
+it('keeps the smaller nested search header on the shared responsive tracks', () => {
+  const nested = declarationsFor('.abyss-task-card .abyss-search-context .abyss-subtask-row');
+  expect(nested).toContain(
+    '--abyss-task-card-title-line: calc(var(--font-ui-small) * var(--line-height-tight))',
+  );
+  expect(nested).toContain('align-items: baseline');
+  expect(declarationsFor('.abyss-search-context .abyss-task-body')).toContain('flex: 1 1 auto');
+  expect(declarationsFor('.abyss-search-context .abyss-subtask-title-row')).toContain(
+    'line-height: var(--line-height-tight)',
+  );
+  const compact = atRuleBlock('@container abyss-task-list (max-width: 28rem)');
+  expect(
+    declarationsForSource(compact, '.abyss-search-context .abyss-task-card-main-row'),
+  ).toContain('display: grid');
+  expect(
+    declarationsForSource(compact, '.abyss-task-card-main-row > .abyss-task-meta-right'),
+  ).toContain('justify-content: flex-start');
+  expect(declarationsFor('.abyss-task-meta-right')).toContain('flex-wrap: wrap');
+});

@@ -53,6 +53,7 @@ export interface TaskSearchOccurrence {
 export type TaskSearchOrganization = {
   readonly generation: number;
   readonly revealIndex?: number;
+  readonly revealTarget?: TaskSearchAddress | undefined;
   readonly rows: TaskListRows<TaskSearchOccurrence>;
 } & (
   | { readonly scope: 'roots'; readonly rootTotal: number }
@@ -146,6 +147,105 @@ function* matchingRecords(
   if (rootRelevance(input) && input.hits !== null)
     return yield* restoreRelevance(selected, input.hits);
   return selected;
+}
+interface AncestryNode {
+  readonly children: Map<number, AncestryNode>;
+  record?: TaskOrganizationRecord;
+}
+function rootIdentity(address: TaskSearchAddress): string {
+  return JSON.stringify([address.epoch, address.version, address.rootId]);
+}
+function* insertAddress(
+  roots: Map<string, AncestryNode>,
+  record: TaskOrganizationRecord,
+): CollectionSteps<boolean> {
+  const key = rootIdentity(record.address);
+  let node = roots.get(key);
+  if (node === undefined) {
+    node = { children: new Map() };
+    roots.set(key, node);
+  }
+  for (const line of record.address.childLines) {
+    let child: AncestryNode | undefined = node.children.get(line);
+    if (child === undefined) {
+      child = { children: new Map() };
+      node.children.set(line, child);
+    }
+    node = child;
+    yield 'cheap';
+  }
+  node.record = record;
+  yield 'cheap';
+  return true;
+}
+function* addressOwner(
+  roots: ReadonlyMap<string, AncestryNode>,
+  address: TaskSearchAddress,
+): CollectionSteps<TaskOrganizationRecord | null> {
+  let node = roots.get(rootIdentity(address));
+  if (node?.record !== undefined) return node.record;
+  for (const line of address.childLines) {
+    node = node?.children.get(line);
+    yield 'cheap';
+    if (node?.record !== undefined) return node.record;
+    if (node === undefined) return null;
+  }
+  return null;
+}
+function* revealRecord(
+  input: TaskSearchOrganizationInput,
+): CollectionSteps<TaskOrganizationRecord | null> {
+  if (input.reveal === undefined) return null;
+  const key = taskSearchAddressKey(input.reveal);
+  for (const record of input.records) {
+    yield 'cheap';
+    if (taskSearchAddressKey(record.address) === key) return record;
+  }
+  throw new TaskSearchError('stale', 'Reveal target changed');
+}
+function* matchingRoots(records: readonly TaskOrganizationRecord[]): CollectionSteps<Set<number>> {
+  const roots = new Set<number>();
+  for (const record of records) {
+    roots.add(record.address.rootId);
+    yield 'cheap';
+  }
+  return roots;
+}
+function* outermostRecords(
+  roots: ReadonlyMap<string, AncestryNode>,
+  matching: readonly TaskOrganizationRecord[],
+): CollectionSteps<TaskOrganizationRecord[]> {
+  const retained: TaskOrganizationRecord[] = [];
+  for (const record of matching) {
+    const owner = yield* addressOwner(roots, record.address);
+    if (owner?.address.childLines.length === record.address.childLines.length)
+      retained.push(record);
+    yield 'cheap';
+  }
+  return retained;
+}
+function dailyOrganization(input: TaskSearchOrganizationInput): boolean {
+  return (
+    input.scope === 'nodes' && input.selection === 'upcoming' && input.view.list.groupBy === 'date'
+  );
+}
+function* ownedRecords(
+  input: TaskSearchOrganizationInput,
+  matching: readonly TaskOrganizationRecord[],
+): CollectionSteps<{
+  matching: readonly TaskOrganizationRecord[];
+  reveal: TaskOrganizationRecord | null;
+}> {
+  let reveal = (yield* revealRecord(input)) ?? null;
+  if (input.scope !== 'nodes' || input.hits === null) return { matching, reveal };
+  const roots = new Map<string, AncestryNode>();
+  // Populate every candidate before querying: ordinary sorting may put children first.
+  for (const record of matching) yield* insertAddress(roots, record);
+  if (reveal !== null) yield* insertAddress(roots, reveal);
+  const retained = yield* outermostRecords(roots, matching);
+  if (retained === undefined) throw new Error('Ancestry traversal ended without a result');
+  if (reveal !== null) reveal = (yield* addressOwner(roots, reveal.address)) ?? null;
+  return { matching: retained, reveal };
 }
 function occurrence(
   record: TaskOrganizationRecord,
@@ -306,21 +406,16 @@ function* revealRows(
   context: OrganizationContext,
   rows: TaskListRows<TaskSearchOccurrence>,
   ownerRoots: ReadonlySet<number>,
+  record: TaskOrganizationRecord | null,
 ): CollectionSteps<ReturnType<typeof withTaskRevealRows> | null> {
   const { input, makeOccurrence } = context;
-  if (input.reveal === undefined) return null;
-  let record: TaskOrganizationRecord | undefined;
-  for (const candidate of input.records) {
-    if (taskSearchAddressKey(candidate.address) === taskSearchAddressKey(input.reveal))
-      record = candidate;
-    yield 'cheap';
-  }
-  if (record === undefined) throw new TaskSearchError('stale', 'Reveal target changed');
+  if (record === null) return null;
+  yield 'cheap';
   const reveal = withTaskRevealRows(rows, {
     occurrence: makeOccurrence(record, null),
     generation: input.generation,
     kind: input.revealKind ?? 'navigation',
-    receiptId: input.revealReceiptId ?? taskSearchAddressKey(input.reveal),
+    receiptId: input.revealReceiptId ?? taskSearchAddressKey(record.address),
     ownerRootPresent: ownerRoots.has(record.address.rootId),
   });
   return reveal;
@@ -330,8 +425,11 @@ export function* organizeTaskSearch(
 ): CollectionSteps<TaskSearchOrganization> {
   const scores = yield* scoreMap(input);
   if (scores === undefined) throw new Error('Scores ended without a result');
-  const matching = yield* matchingRecords(input, scores);
-  if (matching === undefined) throw new Error('Matching ended without a result');
+  const selected = yield* matchingRecords(input, scores);
+  if (selected === undefined) throw new Error('Matching ended without a result');
+  const owned = yield* ownedRecords(input, selected);
+  if (owned === undefined) throw new Error('Ownership ended without a result');
+  const { matching } = owned;
   const menus = new Map<string, TaskSearchMenuSummary>();
   const context: OrganizationContext = {
     input,
@@ -352,16 +450,11 @@ export function* organizeTaskSearch(
       presentation: presentation(record, input),
     }),
   };
-  const ownerRoots = new Set<number>();
-  for (const record of matching) {
-    ownerRoots.add(record.address.rootId);
-    yield 'cheap';
-  }
-  const daily =
-    input.scope === 'nodes' && input.selection === 'upcoming' && input.view.list.groupBy === 'date';
+  const ownerRoots = (yield* matchingRoots(matching)) ?? new Set<number>();
+  const daily = dailyOrganization(input);
   const base = yield* daily ? dailyRows(context) : finiteRows(context);
   if (base === undefined) throw new Error('Rows ended without a result');
-  const reveal = yield* revealRows(context, base, ownerRoots);
+  const reveal = yield* revealRows(context, base, ownerRoots, owned.reveal);
   if (reveal === undefined) throw new Error('Reveal ended without a result');
   return organizationResult(context, base, reveal, ownerRoots);
 }
@@ -375,7 +468,7 @@ function organizationResult(
   return {
     generation: input.generation,
     rows: reveal?.rows ?? base,
-    ...(reveal === null ? {} : { revealIndex: reveal.revealIndex }),
+    ...(reveal === null ? {} : { revealIndex: reveal.revealIndex, revealTarget: input.reveal }),
     ...(input.scope === 'nodes'
       ? { scope: 'nodes', nodeTotal: matching.length + (reveal?.addedNodeCount ?? 0) }
       : { scope: 'roots', rootTotal: ownerRoots.size + (reveal?.addedRootCount ?? 0) }),

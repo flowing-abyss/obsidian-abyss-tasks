@@ -2629,7 +2629,18 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 /* Search children reuse the card marker's baseline strut at the child title's smaller cap
    height. Align to that first title line even when descriptions or semantic chips add rows. */
 .abyss-task-card .abyss-search-context .abyss-subtask-row {
+  --abyss-task-card-title-line: calc(var(--font-ui-small) * var(--line-height-tight));
+
   align-items: baseline;
+}
+
+.abyss-search-context .abyss-task-body {
+  flex: 1 1 auto;
+}
+
+.abyss-search-context .abyss-subtask-title-row {
+  font-size: var(--font-ui-small);
+  line-height: var(--line-height-tight);
 }
 
 .abyss-task-card .abyss-search-context .abyss-status-marker::before {
@@ -2883,7 +2894,8 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
    moves below the title instead of competing with it for the same flex track. Container sizing is
    intentional here: the center pane can become narrow inside a wide Obsidian window. */
 @container abyss-task-list (max-width: 28rem) {
-  .abyss-task-card-main-row {
+  .abyss-task-card-main-row,
+  .abyss-search-context .abyss-task-card-main-row {
     display: grid;
     grid-template-columns: var(--abyss-task-card-marker-size) minmax(0, 1fr);
     gap: var(--size-2-1) var(--abyss-task-card-primary-gap);

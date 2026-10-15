@@ -17,6 +17,7 @@ import {
   taskSearchAddressKey,
   type TaskOrganizationRecord,
 } from '../src/tasks';
+import { expectDefined } from './helpers';
 import { finiteGroupCounts, finiteOccurrences } from './support/taskOrganizationRows';
 import { assertNoRevision, createCanonicalSearchHarness } from './support/taskSearchHarness';
 import { taskKeys } from './task-list-row-assertions';
@@ -649,4 +650,203 @@ it('filters canonical occupied dates with own-node AND clauses in hydrated and c
   } finally {
     h.close();
   }
+});
+
+async function filteredTreeInput(markdown: string): Promise<TaskSearchOrganizationInput> {
+  const h = await createCanonicalSearchHarness({ 'tree.md': markdown }, settings);
+  try {
+    const subscription = h.index.searchSource().subscribe(() => {});
+    const generation = subscription.state.generation;
+    subscription.unsubscribe();
+    const records: TaskOrganizationRecord[] = [];
+    for await (const batch of h.index.organization(
+      { expectedGeneration: generation, scope: 'nodes' },
+      new AbortController().signal,
+    ))
+      records.push(...batch.items);
+    return {
+      scope: 'nodes',
+      generation,
+      records,
+      hits: records.map((record) => ({ address: record.address, score: 1 })),
+      selection: { type: 'tag', tag: '#keep' },
+      view: {
+        list: { groupBy: 'priority', sortBy: { field: 'title', dir: 'asc' }, filters: [] },
+        relevance: false,
+      },
+      settings,
+      today,
+      nowMs: 0,
+      outgoingLinks: new Map(),
+    };
+  } finally {
+    h.close();
+  }
+}
+
+it.each([
+  {
+    markdown: '- [ ] Z parent #keep\n  - [ ] A child #keep\n    - [ ] B grandchild #keep',
+    lines: [0],
+  },
+  { markdown: '- [ ] Z parent #keep\n  - [ ] Excluded\n    - [ ] A grandchild #keep', lines: [0] },
+  {
+    markdown:
+      '- [ ] Excluded\n  - [ ] A #keep\n    - [ ] Same #keep\n  - [ ] B #keep\n    - [ ] Same #keep',
+    lines: [1, 3],
+  },
+  {
+    markdown: '- [ ] Same #keep\n  - [ ] Same #keep\n- [ ] Same #keep\n  - [ ] Same #keep',
+    lines: [0, 2],
+  },
+])(
+  'retains outermost eligible exact bases before child-first sorting and groups: $lines',
+  async ({ markdown, lines }) => {
+    const input = await filteredTreeInput(markdown);
+    const result = organizeTaskSearch(input);
+    expect(finiteOccurrences(result).map((row) => row.taskKey)).toEqual(
+      lines.map((line) => `tree.md:${line}`),
+    );
+    expect(result.scope === 'nodes' && result.nodeTotal).toBe(lines.length);
+    expect([...finiteGroupCounts(result).values()]).toEqual([lines.length]);
+    const selection = new TaskRowSelection();
+    selection.bind(result.rows);
+    selection.selectAll(result.rows, {});
+    expect(selection.size).toBe(lines.length);
+    expect(organizeTaskSearch({ ...input, hits: null }).rows.taskCount).toBe(
+      input.records.filter((r) => r.tags.includes('#keep')).length,
+    );
+  },
+);
+
+it.each(['status', 'property'] as const)(
+  'does not grant ownership to an ancestor excluded by saved %s',
+  async (filter) => {
+    const input = await filteredTreeInput('- [x] Z parent #keep\n  - [ ] A child #keep #child');
+    const result = organizeTaskSearch({
+      ...input,
+      view: {
+        ...input.view,
+        list: {
+          ...input.view.list,
+          ...(filter === 'status'
+            ? { statusGroups: ['todo'] }
+            : { filters: [{ type: 'tag', value: '#child' }] }),
+        },
+      },
+    });
+    expect(finiteOccurrences(result).map((row) => row.taskKey)).toEqual(['tree.md:1']);
+  },
+);
+
+it.each(['navigation', 'creation'] as const)(
+  'reconciles covered, covering and disjoint %s before counting and expires it',
+  async (kind) => {
+    const input = await filteredTreeInput(
+      '- [ ] Z parent #keep\n  - [ ] A child #keep\n    - [ ] Unmatched\n- [ ] Disjoint',
+    );
+    const parent = expectDefined(input.records[0]),
+      child = expectDefined(input.records[1]),
+      unmatched = expectDefined(input.records[2]),
+      disjoint = expectDefined(input.records[3]);
+    for (const target of [child, unmatched]) {
+      const result = organizeTaskSearch({ ...input, reveal: target.address, revealKind: kind });
+      expect(finiteOccurrences(result).map((row) => row.taskKey)).toEqual(['tree.md:0']);
+      expect(finiteOccurrences(result)[result.revealIndex ?? -1]?.address).toEqual(parent.address);
+      expect(result.revealTarget).toEqual(target.address);
+      expect(result.scope === 'nodes' && result.nodeTotal).toBe(1);
+    }
+    const childOnly = { ...input, hits: [{ address: child.address, score: 1 }] };
+    const covered = organizeTaskSearch({ ...childOnly, reveal: parent.address, revealKind: kind });
+    expect(finiteOccurrences(covered).map((row) => row.taskKey)).toEqual(['tree.md:0']);
+    expect(covered.scope === 'nodes' && covered.nodeTotal).toBe(1);
+    const retired = organizeTaskSearch(childOnly);
+    expect(finiteOccurrences(retired).map((row) => row.taskKey)).toEqual(['tree.md:1']);
+    expect(retired.revealIndex).toBeUndefined();
+    const separate = organizeTaskSearch({ ...input, reveal: disjoint.address, revealKind: kind });
+    expect(finiteOccurrences(separate).map((row) => row.taskKey)).toEqual([
+      'tree.md:0',
+      'tree.md:3',
+    ]);
+  },
+);
+
+it('drops covered child selection without transferring it to the ancestor', async () => {
+  const input = await filteredTreeInput('- [ ] Z parent #keep\n  - [ ] A child #keep');
+  const selection = new TaskRowSelection();
+  const before = organizeTaskSearch({ ...input, hits: null });
+  selection.bind(before.rows);
+  selection.collapseTo('tree.md:1');
+  selection.bind(organizeTaskSearch(input).rows);
+  expect(selection.size).toBe(0);
+  expect(selection.has('tree.md:0')).toBe(false);
+});
+
+it('uses the complete root identity and relative path for ownership', async () => {
+  const input = await filteredTreeInput('- [ ] Parent #keep\n  - [ ] Same #keep');
+  const parent = expectDefined(input.records[0]),
+    child = expectDefined(input.records[1]);
+  const records = [
+    parent,
+    child,
+    ...[
+      { ...child.address, epoch: 'other' },
+      { ...child.address, version: child.address.version + 1 },
+      { ...child.address, rootId: child.address.rootId + 1 },
+    ].map((address, i) => ({ ...child, address, source: { filePath: `other${i}.md`, line: 1 } })),
+  ];
+  const result = organizeTaskSearch({
+    ...input,
+    records,
+    hits: records.map((r) => ({ address: r.address, score: 1 })),
+  });
+  expect(new Set(finiteOccurrences(result).map((row) => row.taskKey))).toEqual(
+    new Set(['tree.md:0', 'other0.md:1', 'other1.md:1', 'other2.md:1']),
+  );
+});
+
+it('retains grouped occurrences of an owner and deduplicates physical bulk targets', async () => {
+  const input = await filteredTreeInput(
+    '- [ ] Parent #keep [[A]] [[B]]\n  - [ ] Child #keep [[A]] [[B]]',
+  );
+  const outgoingLinks = new Map(
+    input.records.map((r) => [
+      `${r.source.filePath}:${r.source.line}`,
+      outgoingTaskLinkValues(r, (target) => `${target}.md`),
+    ]),
+  );
+  const result = organizeTaskSearch({
+    ...input,
+    outgoingLinks,
+    view: { ...input.view, list: { ...input.view.list, groupBy: 'outgoing-link' } },
+  });
+  expect(finiteOccurrences(result).map((row) => row.taskKey)).toEqual(['tree.md:0', 'tree.md:0']);
+  expect([...finiteGroupCounts(result).values()]).toEqual([1, 1]);
+  const selection = new TaskRowSelection();
+  selection.bind(result.rows);
+  selection.selectAll(result.rows, {});
+  expect(result.rows.selectedNodes(selection.ranges()).map((node) => node.taskKey)).toEqual([
+    'tree.md:0',
+  ]);
+});
+
+it('counts an interval owner once while retaining its daily occurrences', async () => {
+  const input = await filteredTreeInput(
+    '- [ ] Parent #keep 🛫 2026-10-04 📅 2026-10-06\n  - [ ] Child #keep 🛫 2026-10-04 📅 2026-10-06',
+  );
+  const result = organizeTaskSearch({
+    ...input,
+    selection: 'upcoming',
+    view: { ...input.view, list: { ...input.view.list, groupBy: 'date' } },
+  });
+  expect(result.scope === 'nodes' && result.nodeTotal).toBe(1);
+  // Upcoming starts tomorrow; the current day belongs to Today.
+  expect(result.rows.taskCount).toBe(2);
+  expect([...finiteGroupCounts(result).values()]).toEqual([1, 1]);
+  const selection = new TaskRowSelection();
+  selection.bind(result.rows);
+  selection.selectAll(result.rows, {});
+  expect(result.rows.selectedNodes(selection.ranges()).map((node) => node.taskKey)).toEqual([
+    'tree.md:0',
+  ]);
 });

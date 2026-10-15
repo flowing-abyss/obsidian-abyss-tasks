@@ -1086,7 +1086,7 @@ it('filters Today by descendant comments without promoting an ineligible owner o
   }
 });
 
-it('keeps parent and child as separate filtered cards with ordinary modifiers and base selection', async () => {
+it('keeps the eligible parent as the only filtered card with exact nested activation', async () => {
   const h = await mountCanonicalSearchUi(
     {
       'a.md': [
@@ -1112,22 +1112,25 @@ it('keeps parent and child as separate filtered cards with ordinary modifiers an
     const cards = [...h.root.querySelectorAll<HTMLElement>('.abyss-task-card')];
     expect(cards.map((card) => card.querySelector('.abyss-task-title')?.textContent)).toEqual([
       'Parent',
-      'Child',
     ]);
-    expect(h.root.querySelector('.abyss-group-header')?.textContent).toContain('2');
+    expect(h.root.dataset['searchLogicalResults']).toBe('1');
+    expect(h.root.querySelector('.abyss-group-header')?.textContent).toContain('1');
     const parent = expectDefined(cards[0]);
-    const child = expectDefined(cards[1]);
-    expectDefined(parent.querySelector<HTMLElement>('.abyss-task-desc')).click();
-    expect(h.state.get('taskStack').slice(-1)[0]?.title).toBe('Parent');
-    expectDefined(child.querySelector<HTMLElement>('.abyss-comment-text')).click();
-    expect(h.state.get('taskStack').slice(-1)[0]?.title).toBe('Child');
+    expect(parent.querySelectorAll('.abyss-subtask-label')).toHaveLength(1);
+    const child = expectDefined(h.index.listNodes().find(({ node }) => node.title === 'Child'));
+    expectDefined(parent.querySelector<HTMLElement>('.abyss-subtask-label')).click();
+    await vi.waitFor(() => {
+      expect(h.state.get('taskStack').slice(-1)[0]?.ref).toEqual(child.node.ref);
+    });
+    expect(h.state.get('selectedList')).toEqual({ type: 'tag', tag: '#eligible' });
+    expect(h.state.get('centerFilter')).toBe('needle');
     expectDefined(parent.querySelector<HTMLElement>('.abyss-subtask-label')).dispatchEvent(
       new MouseEvent('click', { bubbles: true, metaKey: true }),
     );
     expect(h.panel['rowSelection_abyssPrivate'].size).toBe(1);
-    child.dispatchEvent(new MouseEvent('click', { bubbles: true, metaKey: true }));
-    expect(h.panel['rowSelection_abyssPrivate'].size).toBe(2);
-    expect(h.state.get('centerFilter')).toBe('needle');
+    const targets = h.panel['taskMenuTargets_abyssPrivate']();
+    expect(targets.summaries).toHaveLength(1);
+    expect((await targets.resolve(targets.signal))[0]?.task.node.title).toBe('Parent');
     const row = expectDefined(parent.querySelector<HTMLElement>('.abyss-subtask-row'));
     row.focus();
     row.dispatchEvent(
@@ -1137,6 +1140,12 @@ it('keeps parent and child as separate filtered cards with ordinary modifiers an
       expect(h.state.get('taskStack').slice(-1)[0]?.title).toBe('Child');
     });
     expect(h.state.get('centerFilter')).toBe('needle');
+    h.query('Child');
+    await h.completed();
+    expect([...h.root.querySelectorAll('.abyss-task-title')].map((el) => el.textContent)).toEqual([
+      'Parent',
+    ]);
+    expect(h.root.querySelectorAll('.abyss-subtask-label')).toHaveLength(1);
   } finally {
     h.dispose();
   }

@@ -729,7 +729,7 @@ export class TaskSearch {
   ): Pick<TaskSearchOrganizationInput, 'hits' | 'reveal' | 'revealKind' | 'revealReceiptId'> {
     const receipt = this.#inclusion();
     return {
-      hits: receipt?.kind === 'navigation' ? null : collection.hits,
+      hits: collection.hits,
       reveal: receipt?.address,
       revealKind: receipt?.kind,
       revealReceiptId: receipt === undefined ? undefined : String(receipt.id),
@@ -835,6 +835,10 @@ export class TaskSearch {
       collection.records = [];
     }
   }
+  #needsCursor(query: string): boolean {
+    if (query.trim() !== '') return true;
+    return this.#inclusion()?.kind !== 'navigation' && !this.#filter;
+  }
   async #collectGeneration(
     query: string,
     current: SearchPreparation,
@@ -843,7 +847,7 @@ export class TaskSearch {
   ): Promise<number> {
     const signal = current.signal;
     let generation: number;
-    if (this.#inclusion()?.kind !== 'navigation' && !(this.#filter && query.trim() === '')) {
+    if (this.#needsCursor(query)) {
       generation = await this.#collectCursor(query, current, collection, handoff);
       if (this.#inclusion() !== undefined) await this.#proveReveal(current);
     } else {
@@ -982,6 +986,7 @@ export class TaskSearch {
     if (highlight === undefined) return undefined;
     const { query } = highlight;
     const mode = this.#filter ? 'filter' : 'search';
+    const forcedTarget = this.#organization?.revealTarget;
     const contexts = new WeakMap<
       TaskSnapshot,
       {
@@ -992,12 +997,10 @@ export class TaskSearch {
     return (task, address) => {
       let cached = contexts.get(task);
       if (cached === undefined) {
-        const context = taskSearchContext(
-          task,
-          { ...address, childLines: [] },
-          query,
-          this.#segment,
-        );
+        const context = taskSearchContext(task, { ...address, childLines: [] }, query, {
+          segment: this.#segment,
+          forcedTarget,
+        });
         const trees = new Map<string, TaskSearchTreeNode>();
         const pending = [context.tree];
         for (const tree of pending) {
