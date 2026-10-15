@@ -2750,34 +2750,51 @@ describe('multiline inspector comment and description editing', () => {
     expect(row.querySelector('button[aria-expanded]')).toBeNull();
   });
 
-  it.each([false, true])(
-    'submits a multiline description once on Enter (shift=%s) and retains its text',
-    async (shiftKey) => {
-      const h = await inspectorHarness('- [ ] Owner\n  - > old', 'Owner');
-      expectDefined(h.el.querySelector<HTMLElement>('.abyss-right-desc-view')).click();
-      const editor = expectDefined(
-        h.el.querySelector<HTMLTextAreaElement>('.abyss-right-desc-edit'),
-      );
-      const execute = vi.spyOn(h.api, 'execute');
-      editor.value = 'one\ntwo';
-      const event = new KeyboardEvent('keydown', {
-        key: 'Enter',
-        shiftKey,
-        bubbles: true,
-        cancelable: true,
-      });
-      editor.dispatchEvent(event);
-      editor.dispatchEvent(new Event('blur'));
-      await vi.waitFor(() => {
-        expect(h.node('Owner').node.description).toBe('one\ntwo');
-      });
-      expect(event.defaultPrevented).toBe(true);
-      expect(
-        execute.mock.calls.filter(([command]) => command.type === 'set-description'),
-      ).toHaveLength(1);
-      expect(h.el.querySelector('.abyss-right-desc-edit')).toBeNull();
-    },
-  );
+  it('keeps Shift+Enter native and retains the multiline description draft until plain Enter', async () => {
+    const h = await inspectorHarness('- [ ] Owner\n  - > old', 'Owner');
+    expectDefined(h.el.querySelector<HTMLElement>('.abyss-right-desc-view')).click();
+    const textarea = expectDefined(
+      h.el.querySelector<HTMLTextAreaElement>('.abyss-right-desc-edit'),
+    );
+    const execute = vi.spyOn(h.api, 'execute');
+    const target = taskNodeRef(h.node('Owner').node);
+    textarea.value = 'Summary';
+    const event = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    textarea.dispatchEvent(event);
+    await flushMicrotasks(20);
+    expect(event.defaultPrevented).toBe(false);
+    expect(h.el.querySelector('.abyss-right-desc-edit')).toBe(textarea);
+    expect(textarea.value).toBe('Summary');
+    expect(execute).not.toHaveBeenCalled();
+    // Native insertion is tested in the app; supply the resulting textarea value here.
+    textarea.value = 'Summary\nDetails';
+    textarea.setSelectionRange(15, 15);
+    expect(h.panel.captureDraftState()?.entries).toContainEqual(
+      expect.objectContaining({ kind: 'description', value: 'Summary\nDetails' }),
+    );
+    const submit = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      bubbles: true,
+      cancelable: true,
+    });
+    textarea.dispatchEvent(submit);
+    textarea.dispatchEvent(new Event('blur'));
+    await vi.waitFor(() => {
+      expect(h.node('Owner').node.description).toBe('Summary\nDetails');
+    });
+    expect(submit.defaultPrevented).toBe(true);
+    expect(execute).toHaveBeenCalledExactlyOnceWith({
+      type: 'set-description',
+      target,
+      text: 'Summary\nDetails',
+    });
+    expect(h.el.querySelector('.abyss-right-desc-edit')).toBeNull();
+  });
 
   it('deletes a cleared comment without producing a phantom detached draft', async () => {
     const h = await inspectorHarness('- [ ] Owner\n  - 2026-07-13: old comment', 'Owner');

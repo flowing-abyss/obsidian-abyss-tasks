@@ -113,6 +113,176 @@ function renderer(useListControls = false) {
     context: () => context,
   };
 }
+it.each([
+  { description: 'Summary\nDetails', displayed: 'Summary …' },
+  { description: 'Summary\n  ', displayed: 'Summary' },
+  { description: 'Summary', displayed: 'Summary' },
+  { description: 'Summary\n  \nDetails', displayed: 'Summary …' },
+])(
+  'shows the first description line with its continuation state: $description',
+  async ({ description, displayed }) => {
+    const h = renderer();
+    const flags = { selected: false, showDelete: false };
+    const mount = h.subject.mount(document.body, task({ description }), [], flags);
+    await mount.settled;
+    expect(mount.element.querySelector('.abyss-task-desc')?.textContent).toBe(displayed);
+    mount.destroy();
+  },
+);
+
+it('adds and removes the continuation cue when only later description lines change', async () => {
+  const h = renderer();
+  const flags = { selected: false, showDelete: false };
+  const mount = h.subject.mount(document.body, task({ description: 'Summary' }), [], flags);
+  const description = expectDefined(mount.element.querySelector('.abyss-task-desc'));
+  for (const [value, displayed] of [
+    ['Summary\nDetails', 'Summary …'],
+    ['Summary\n  ', 'Summary'],
+    ['Summary\nMore details', 'Summary …'],
+    ['Summary', 'Summary'],
+  ] as const) {
+    mount.update(task({ description: value }), [], flags);
+    await mount.settled;
+    expect(mount.element.querySelector('.abyss-task-desc')).toBe(description);
+    expect(description.textContent).toBe(displayed);
+  }
+  mount.destroy();
+});
+
+it('keeps the continuation cue visible when the canonical description starts with an empty line', async () => {
+  const source = await createCanonicalSearchHarness(
+    { 'empty-first.md': '- [ ] Root\n  - > \n  - > Details' },
+    structuredClone(DEFAULT_SETTINGS),
+  );
+  const h = renderer();
+  try {
+    const root = expectDefined(source.index.list()[0]);
+    expect(root.description).toBe('\nDetails');
+    const mount = h.subject.mount(document.body, root, [], { selected: false, showDelete: false });
+    await mount.settled;
+    const description = expectDefined(mount.element.querySelector<HTMLElement>('.abyss-task-desc'));
+    expect(description.hidden).toBe(false);
+    expect(description.textContent).toBe(' …');
+    mount.destroy();
+  } finally {
+    source.close();
+    h.hostComponent.unload();
+  }
+});
+
+it('derives the continuation cue from the projected nested task description', async () => {
+  const source = await createCanonicalSearchHarness(
+    {
+      'tree.md':
+        '- [ ] Root\n  - > Root summary\n  - [ ] Child\n    - > Child summary\n    - > Child details',
+    },
+    structuredClone(DEFAULT_SETTINGS),
+  );
+  const h = renderer();
+  try {
+    const projection = expectDefined(
+      source.index.listNodes().find(({ node }) => node.title === 'Child'),
+    );
+    expect(projection.node.description).toBe('Child summary\nChild details');
+    const mount = h.subject.mount(document.body, projection.root, [], {
+      selected: false,
+      showDelete: false,
+      projection,
+    });
+    await mount.settled;
+    expect(mount.element.querySelector('.abyss-task-desc')?.textContent).toBe('Child summary …');
+    mount.destroy();
+  } finally {
+    source.close();
+    h.hostComponent.unload();
+  }
+});
+
+it('adds the cue after Markdown and highlighting without changing description provenance', async () => {
+  const { prepareSearchQuery } = await import('../src/tasks');
+  const { fallbackSearchWords } = await import('../src/tasks/domain/searchMatchPolicy');
+  const renderedSources: string[] = [];
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, source, holder) => {
+    renderedSources.push(source);
+    holder.createEl('p').createEl('strong', { text: 'Summary' });
+  });
+  const h = renderer();
+  const original = task({ description: '**Summary**\nDetails' });
+  const mount = h.subject.mount(document.body, original, [], {
+    selected: false,
+    showDelete: false,
+    highlight: {
+      query: prepareSearchQuery('summary', fallbackSearchWords),
+      segment: fallbackSearchWords,
+    },
+  });
+  await mount.settled;
+  const description = expectDefined(mount.element.querySelector('.abyss-task-desc'));
+  expect(description.textContent).toBe('Summary …');
+  expect(description.querySelector('strong mark')?.textContent).toBe('Summary');
+  expect(renderedSources).toEqual(['**Summary**']);
+  expect(original.description).toBe('**Summary**\nDetails');
+  mount.destroy();
+});
+
+it('settles delayed description cues into only the current card generation', async () => {
+  const old = deferred<void>();
+  const next = deferred<void>();
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation((_app, source, holder) => {
+    const wait = source === '**Old**' ? old : next;
+    return wait.promise.then(() => {
+      holder.createEl('strong', { text: source === '**Old**' ? 'Old' : 'New' });
+    });
+  });
+  const h = renderer();
+  const flags = { selected: false, showDelete: false };
+  const mount = h.subject.mount(
+    document.body,
+    task({ description: '**Old**\nOld details' }),
+    [],
+    flags,
+  );
+  const previous = mount.settled;
+  mount.update(task({ description: '**New**\nNew details' }), [], flags);
+  expect(await previous).toEqual({ type: 'cancelled' });
+  next.resolve();
+  expect(await mount.settled).toEqual({ type: 'ready' });
+  expect(mount.element.querySelector('.abyss-task-desc')?.textContent).toBe('New …');
+  old.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(mount.element.querySelector('.abyss-task-desc')?.textContent).toBe('New …');
+  mount.destroy();
+});
+
+it('does not add a pending description cue after its card is destroyed', async () => {
+  const held = deferred<void>();
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _source, holder) => {
+    await held.promise;
+    holder.createEl('strong', { text: 'Old' });
+  });
+  const h = renderer();
+  const flags = { selected: false, showDelete: false };
+  const mount = h.subject.mount(
+    document.body,
+    task({ description: '**Old**\nDetails' }),
+    [],
+    flags,
+  );
+  const oldDescription = expectDefined(mount.element.querySelector('.abyss-task-desc'));
+  const pending = mount.settled;
+  mount.destroy();
+  expect(await pending).toEqual({ type: 'cancelled' });
+  const current = h.subject.mount(document.body, task({ description: 'New\nDetails' }), [], flags);
+  await current.settled;
+  held.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(oldDescription.textContent).toBe('Old');
+  expect(current.element.querySelector('.abyss-task-desc')?.textContent).toBe('New …');
+  current.destroy();
+});
+
 it('keeps every added tag available as a filter, including tags from the same prefix', () => {
   const h = renderer();
   const original = task({ tags: ['#work/one', '#work/two'] });

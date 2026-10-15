@@ -206,6 +206,15 @@ function cardDates(
 function cardDescription(task: TaskSnapshot, flags?: Pick<TaskCardFlags, 'projection'>): string {
   return (cardNode(task, flags).description ?? '').split('\n')[0] ?? '';
 }
+function cardDescriptionContinues(
+  task: TaskSnapshot,
+  flags?: Pick<TaskCardFlags, 'projection'>,
+): boolean {
+  return (cardNode(task, flags).description ?? '')
+    .split('\n')
+    .slice(1)
+    .some((line) => line.trim().length > 0);
+}
 
 function canReuseTaskText(
   outcome: TaskRenderOutcome | undefined,
@@ -362,7 +371,10 @@ export class TaskCardRenderer {
     const descriptionMount = this.#mountTextRegion(description, context, (task, owner) => {
       const search = owner.flags?.search;
       description.className = search === undefined ? 'abyss-task-desc' : 'abyss-search-contexts';
-      description.hidden = search === undefined && cardDescription(task, owner.flags) === '';
+      description.hidden =
+        search === undefined &&
+        cardDescription(task, owner.flags) === '' &&
+        !cardDescriptionContinues(task, owner.flags);
       if (search === undefined) this.#renderDescriptionText(description, task, owner);
       else {
         description.empty();
@@ -885,12 +897,16 @@ export class TaskCardRenderer {
     context?: CardContentContext,
   ): void {
     const description = cardDescription(task, context?.flags);
-    const highlight = context?.flags?.highlight;
+    const hasContinuation = cardDescriptionContinues(task, context?.flags);
+    const highlight = this.#highlightOptions(description, 'prose', context?.flags?.highlight);
     const descriptionRender = renderTaskDescriptionText(descriptionElement, description, {
       app: this.#app,
       sourcePath: task.source.filePath,
       ...this.#textLifetime(context),
-      ...this.#highlightOptions(description, 'prose', highlight),
+      onRendered: (element) => {
+        highlight.onRendered?.(element);
+        if (hasContinuation) element.appendText(' …');
+      },
     });
     if (context?.track !== undefined) context.track(descriptionRender);
     else context?.flags?.renderScope?.track(descriptionRender);

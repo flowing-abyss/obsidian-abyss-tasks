@@ -460,7 +460,7 @@ export class InspectorSections {
     });
     textarea.addEventListener('keydown', (event) => {
       if (isImeOwnedEvent(event)) return;
-      if (event.key === 'Enter' || event.key === 'Escape') {
+      if ((event.key === 'Enter' && !event.shiftKey) || event.key === 'Escape') {
         event.preventDefault();
         if (event.key === 'Escape') close();
         else runAsyncAction(finish());
