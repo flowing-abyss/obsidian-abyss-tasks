@@ -5473,16 +5473,15 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   position: fixed;
   inset: 0;
   background: var(--background-modifier-cover, var(--background-primary));
-  z-index: 1000;
+  z-index: var(--layer-modal, 50);
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-/* While the task-detail modal is open, lift Obsidian's hover-preview popover above
-   the modal backdrop (z-index 1000) so Cmd-hover previews aren't hidden behind it. */
+/* Keep Cmd-hover previews above the task modal and below native menus. */
 body.abyss-modal-open .popover.hover-popover {
-  z-index: 1001;
+  z-index: calc(var(--layer-modal, 50) + 1);
 }
 
 .abyss-modal {

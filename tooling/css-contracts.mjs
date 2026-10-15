@@ -53,7 +53,7 @@ const documented = {
   ],
   'Foundations/Icons.md': ['--icon-color', '--icon-color-active'],
   'Components/Text input.md': ['--input-height'],
-  'Foundations/Layers.md': ['--layer-menu', '--layer-popover'],
+  'Foundations/Layers.md': ['--layer-menu', '--layer-modal', '--layer-popover'],
   'Editor/Link.md': ['--link-color'],
   'Components/Navigation.md': [
     '--nav-item-background-active',
