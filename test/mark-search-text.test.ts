@@ -3,6 +3,7 @@ import { projectSearchText } from '../src/markdown/searchText';
 import { prepareSearchQuery } from '../src/tasks';
 import { fallbackSearchWords } from '../src/tasks/domain/searchMatchPolicy';
 import { markSearchText, renderedAnchorSources } from '../src/ui/markSearchText';
+import { compactTaskDescriptionExcerpt } from '../src/ui/taskDescriptionExcerpt';
 
 it('marks normalized and surrogate words without replacing owner-document anchors or their listeners', () => {
   const doc = document.implementation.createHTMLDocument();
@@ -168,3 +169,130 @@ it.each([128, 512])(
     expect(visits).toBeLessThan(count * (Math.ceil(Math.log2(map.length)) + 5));
   },
 );
+
+it('excerpts a late formatted match while retaining the original anchor and listener', () => {
+  const host = createDiv();
+  host.createEl('p', { text: 'unrelated opening paragraph '.repeat(40) });
+  const line = host.createEl('p');
+  line.appendText('context ');
+  const anchor = line.createEl('a');
+  anchor.createEl('strong').appendText('late');
+  anchor.appendText(' match');
+  line.appendText(' trailing '.repeat(40));
+  const openedOriginalOccurrence = vi.fn();
+  anchor.addEventListener('click', openedOriginalOccurrence);
+  compactTaskDescriptionExcerpt(
+    host,
+    prepareSearchQuery('late', fallbackSearchWords),
+    fallbackSearchWords,
+  );
+  expect(host.querySelector('a')).toBe(anchor);
+  expect(host.textContent).toContain('late match');
+  expect(host.textContent).not.toContain('unrelated opening paragraph');
+  expect(host.textContent.length).toBeLessThanOrEqual(246);
+  expect(host.querySelectorAll('p')).toHaveLength(1);
+  expect(anchor.textContent).toBe('late match');
+  expect(host.querySelector('strong')?.textContent).toBe('late');
+  anchor.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  expect(openedOriginalOccurrence).toHaveBeenCalledOnce();
+});
+
+it('retains ordered-list ordinals and nested semantics without inventing source marks', () => {
+  const host = createDiv();
+  const list = host.createEl('ol', { attr: { start: '7' } });
+  list.createEl('li').appendText('discard this');
+  list.createEl('li', { attr: { value: '12' } }).appendText('discard too');
+  const item = list.createEl('li');
+  const nested = item.createEl('ul').createEl('li');
+  nested.createEl('code').appendText('needle');
+  list.createEl('li', { text: 'remaining details '.repeat(80) });
+  const query = prepareSearchQuery('needle', fallbackSearchWords);
+  markSearchText(
+    host,
+    projectSearchText('7. discard this\n12. discard too\n13. - `needle`', 'prose'),
+    query,
+    fallbackSearchWords,
+  );
+  compactTaskDescriptionExcerpt(host, query, fallbackSearchWords);
+  expect(host.querySelector('ol')).toBe(list);
+  expect(host.querySelector('ol > li')).toBe(item);
+  expect(item.getAttribute('value')).toBe('13');
+  expect(host.querySelector('ol > li > ul > li > code')?.textContent).toBe('needle');
+  expect(host.textContent).not.toContain('discard');
+  expect(host.querySelector('mark')).toBeNull();
+  expect(host.textContent.length).toBeLessThanOrEqual(246);
+});
+
+it.each(['😀', 'e\u0301'])('does not split %s at either excerpt boundary', (cluster) => {
+  const host = createDiv();
+  host.appendText(`${cluster.repeat(100)} needle ${cluster.repeat(200)}`);
+  compactTaskDescriptionExcerpt(
+    host,
+    prepareSearchQuery('needle', fallbackSearchWords),
+    fallbackSearchWords,
+  );
+  expect(host.textContent).toContain('needle');
+  const text = host.textContent.replace(/^… /u, '').replace(/ …$/u, '');
+  expect(text).not.toMatch(/^[\uDC00-\uDFFF\p{M}]/u);
+  expect(text).not.toMatch(/[\uD800-\uDBFF]$/u);
+  expect(text).not.toMatch(/e$/u);
+  expect(host.textContent.length).toBeLessThanOrEqual(246);
+});
+
+it('bounds empty or transformed content and accepts a proved destination-only anchor', () => {
+  const query = prepareSearchQuery('destination', fallbackSearchWords);
+  const empty = createDiv();
+  compactTaskDescriptionExcerpt(empty, query, fallbackSearchWords);
+  expect(empty.textContent).toBe('');
+  const host = createDiv();
+  host.createEl('p', { text: 'unrelated opening paragraph '.repeat(40) });
+  const anchor = host.createEl('p').createEl('a', { text: 'Visible alias' });
+  compactTaskDescriptionExcerpt(host, query, fallbackSearchWords, anchor);
+  expect(host.querySelector('a')).toBe(anchor);
+  expect(host.textContent).toBe('… Visible alias');
+  expect(host.querySelector('mark')).toBeNull();
+  const transformed = createDiv();
+  transformed.appendText('host changed text '.repeat(300));
+  compactTaskDescriptionExcerpt(transformed, query, fallbackSearchWords);
+  expect(transformed.textContent.length).toBeLessThanOrEqual(246);
+  expect(transformed.querySelector('mark')).toBeNull();
+});
+
+it('keeps an exceptionally long single match and prunes a large fragmented field', () => {
+  const host = createDiv();
+  for (let i = 0; i < 1000; i++) host.createEl('p').createEl('em').appendText('unrelated');
+  const needle = 'a'.repeat(300);
+  const anchor = host.createEl('a', { text: needle });
+  compactTaskDescriptionExcerpt(
+    host,
+    prepareSearchQuery(needle, fallbackSearchWords),
+    fallbackSearchWords,
+  );
+  expect(host.querySelector('a')).toBe(anchor);
+  expect(anchor.textContent).toBe(needle);
+  expect(host.querySelectorAll('p, em')).toHaveLength(0);
+  expect(host.textContent).toBe(`… ${needle}`);
+});
+
+it('removes excluded and discarded blocks while preserving in-window line breaks', () => {
+  const host = createDiv();
+  host.createEl('p').appendText('opening');
+  const p = host.createEl('p');
+  p.appendText('needle');
+  p.createEl('br');
+  p.appendText('\nnext line');
+  p.createSpan({
+    attr: { 'aria-hidden': 'true' },
+    text: 'huge hidden subtree '.repeat(1000),
+  });
+  host.createEl('p', { text: 'remaining '.repeat(1000) });
+  compactTaskDescriptionExcerpt(
+    host,
+    prepareSearchQuery('needle', fallbackSearchWords),
+    fallbackSearchWords,
+  );
+  expect(host.querySelectorAll('br')).toHaveLength(1);
+  expect(host.querySelector('[aria-hidden]')).toBeNull();
+  expect(host.textContent).not.toContain('opening');
+  expect(host.textContent.length).toBeLessThanOrEqual(246);
+});

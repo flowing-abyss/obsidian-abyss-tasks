@@ -3730,3 +3730,40 @@ it('offers exact list navigation only with a capability and retains accepted act
   expect(request.isCurrent()).toBe(false);
   h.el.remove();
 });
+
+it('uses normal rendered description whitespace with compact semantic blocks', async () => {
+  const css = await stylesCss();
+  expect(/\.abyss-right-desc-view\s*\{([^}]+)\}/u.exec(css)?.[1]).toContain('white-space: normal');
+});
+
+it('preserves semantic multiline description blocks and the complete editor source', async () => {
+  const source = 'First\nSecond\n\nParagraph\n\n1. Outer\n   - Nested\n\n```\n  code\n```';
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, markdown, holder) => {
+    expect(markdown).toBe(source);
+    const p = holder.createEl('p', { text: 'First' });
+    p.createEl('br');
+    p.appendText('\nSecond');
+    holder.createEl('p', { text: 'Paragraph' });
+    const item = holder.createEl('ol').createEl('li', { text: 'Outer' });
+    item.createEl('ul').createEl('li', { text: 'Nested' });
+    holder.createEl('pre').createEl('code').appendText('  code\n');
+  });
+  const selected = task({ title: 'Current', description: source });
+  const { state, el } = await makePanel(
+    {},
+    {
+      queries: queryApiForTasks(() => [selected]),
+      execute: vi.fn(),
+    },
+  );
+  document.body.append(el);
+  state.set('taskStack', [selected]);
+  await flushMicrotasks();
+  const view = expectDefined(el.querySelector<HTMLElement>('.abyss-right-desc-view'));
+  expect(view.querySelector('p br')?.nextSibling?.textContent).toBe('\nSecond');
+  expect(view.querySelectorAll('p')).toHaveLength(2);
+  expect(view.querySelector('ol > li > ul > li')?.textContent).toBe('Nested');
+  expect(view.querySelector('pre code')?.textContent).toBe('  code\n');
+  view.click();
+  expect(el.querySelector<HTMLTextAreaElement>('textarea.abyss-right-desc')?.value).toBe(source);
+});

@@ -1,6 +1,10 @@
 import { Component, MarkdownRenderer, Menu, type App, type MenuItem } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { prepareSearchQuery } from '../src/tasks';
+import { fallbackSearchWords } from '../src/tasks/domain/searchMatchPolicy';
 import { renderTaskText } from '../src/ui/renderTaskText';
+import { compactTaskDescriptionExcerpt } from '../src/ui/taskDescriptionExcerpt';
+import { renderTaskDescriptionText } from '../src/ui/taskNodeText';
 import { deferred, expectDefined, flushMicrotasks } from './helpers';
 import { captureMenus, mockReadingView } from './support/linkEditHarness';
 
@@ -359,7 +363,13 @@ describe('task text render receipts', () => {
         .createEl('p')
         .createEl('a', { cls: 'internal-link', text: 'Alias', attr: { 'data-href': 'Note' } });
     });
-    const callback = vi.fn();
+    const callback = vi.fn((element: HTMLElement) => {
+      compactTaskDescriptionExcerpt(
+        element,
+        prepareSearchQuery('Alias', fallbackSearchWords),
+        fallbackSearchWords,
+      );
+    });
     const receipt = renderTaskText(el, '[[Note|Alias]]', {
       app,
       sourcePath: 'a.md',
@@ -399,7 +409,13 @@ describe('task text render receipts', () => {
         finish = r;
       });
     });
-    const callback = vi.fn();
+    const callback = vi.fn((element: HTMLElement) => {
+      compactTaskDescriptionExcerpt(
+        element,
+        prepareSearchQuery('Alias', fallbackSearchWords),
+        fallbackSearchWords,
+      );
+    });
     const receipt = renderTaskText(el, '[[Note]]', {
       app: {} as App,
       sourcePath: 'a.md',
@@ -434,7 +450,13 @@ it.each(['signal', 'detach', 'unload'] as const)(
     vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async () => {
       await finish.promise;
     });
-    const callback = vi.fn();
+    const callback = vi.fn((element: HTMLElement) => {
+      compactTaskDescriptionExcerpt(
+        element,
+        prepareSearchQuery('Alias', fallbackSearchWords),
+        fallbackSearchWords,
+      );
+    });
     const receipt = renderTaskText(el, '[[Note]]', {
       app: {} as App,
       component,
@@ -771,4 +793,46 @@ it('suppresses a held Markdown failure after its connected generation expires', 
   expect(report).not.toHaveBeenCalled();
   expect(log).not.toHaveBeenCalled();
   component.unload();
+});
+
+it('keeps an excerpted list anchor navigable without fabricating edit authority after alignment fails', async () => {
+  let originalAnchor: HTMLAnchorElement | undefined;
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, source, holder) => {
+    expect(source).toBe('1. opening\n2. [[Target|needle]]');
+    const list = holder.createEl('ol');
+    list.createEl('li').appendText('opening');
+    originalAnchor = list.createEl('li').createEl('a', {
+      cls: 'internal-link',
+      attr: { 'data-href': 'Target' },
+    });
+    originalAnchor.appendText('needle');
+  });
+  const openLinkText = vi.fn().mockResolvedValue(undefined);
+  const host = document.body.createDiv();
+  const menus = captureMenus();
+  const onEditLink = vi.fn();
+  const receipt = renderTaskDescriptionText(host, '1. opening\n2. [[Target|needle]]', {
+    app: { workspace: { openLinkText } } as unknown as App,
+    sourcePath: 'tasks.md',
+    component: new Component(),
+    onEditLink,
+    onRendered: (element) => {
+      compactTaskDescriptionExcerpt(
+        element,
+        prepareSearchQuery('needle', fallbackSearchWords),
+        fallbackSearchWords,
+      );
+    },
+  });
+  expect(await receipt.settled).toEqual({ type: 'ready' });
+  const anchor = expectDefined(host.querySelector('a'));
+  expect(anchor).toBe(originalAnchor);
+  expect(host.textContent).toBe('… needle');
+  expect(host.querySelector('li')?.getAttribute('value')).toBe('2');
+  anchor.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+  await flushMicrotasks();
+  expect(openLinkText).toHaveBeenCalledWith('Target', 'tasks.md', false);
+  anchor.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+  expect(menus).toHaveLength(0);
+  expect(onEditLink).not.toHaveBeenCalled();
 });

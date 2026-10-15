@@ -2620,8 +2620,14 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 .abyss-task-card .abyss-search-context .abyss-task-desc {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  line-height: 1.3;
+  max-height: 3.9em;
   white-space: normal;
-  overflow: visible;
+  overflow: hidden;
   text-overflow: clip;
   overflow-wrap: anywhere;
 }
@@ -4554,8 +4560,42 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 .abyss-right-desc-view {
   cursor: text;
   overflow: auto;
-  white-space: pre-wrap;
+  white-space: normal;
   overflow-wrap: anywhere;
+}
+
+.abyss-right-desc-view .abyss-md,
+.abyss-task-card .abyss-search-context .abyss-task-desc .abyss-md {
+  display: block;
+}
+
+.abyss-right-desc-view .abyss-md :is(p, ol, ul),
+.abyss-right-desc-view .abyss-md :is(pre, blockquote),
+.abyss-task-card .abyss-search-context .abyss-task-desc .abyss-md :is(p, ol, ul),
+.abyss-task-card .abyss-search-context .abyss-task-desc .abyss-md :is(pre, blockquote) {
+  margin-block: var(--size-2-2);
+}
+
+.abyss-right-desc-view .abyss-md > :first-child,
+.abyss-task-card .abyss-search-context .abyss-task-desc .abyss-md > :first-child {
+  margin-top: 0;
+}
+
+.abyss-right-desc-view .abyss-md > :last-child,
+.abyss-task-card .abyss-search-context .abyss-task-desc .abyss-md > :last-child {
+  margin-bottom: 0;
+}
+
+.abyss-right-desc-view .abyss-md li > p,
+.abyss-task-card .abyss-search-context .abyss-task-desc .abyss-md li > p {
+  margin-block: 0;
+}
+
+.abyss-right-desc-view .abyss-md pre,
+.abyss-right-desc-view .abyss-md code,
+.abyss-task-card .abyss-search-context .abyss-task-desc .abyss-md pre,
+.abyss-task-card .abyss-search-context .abyss-task-desc .abyss-md code {
+  white-space: pre-wrap;
 }
 
 .abyss-right-desc-view:hover {

@@ -1,54 +1,11 @@
 import type { SourceRange } from '../markdown/inlineCode';
 import { searchTextSourceRanges, type SearchTextProjection } from '../markdown/searchText';
 import { matchSearchText, type PreparedSearchQuery, type SearchWordSegmenter } from '../tasks';
+import { renderedText, type TextRun } from './taskDescriptionExcerpt';
 
-interface TextRun {
-  readonly node: Text;
-  readonly anchor: HTMLAnchorElement | undefined;
-  readonly start: number;
-  readonly end: number;
-}
 interface MarkRange {
   start: number;
   end: number;
-}
-const excluded = new Set(['SCRIPT', 'STYLE', 'BUTTON', 'INPUT', 'TEXTAREA', 'SELECT', 'SVG']);
-const blocks = new Set(['P', 'DIV', 'LI', 'PRE', 'BLOCKQUOTE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6']);
-
-function skipElement(element: Element): boolean {
-  return (
-    element.namespaceURI !== 'http://www.w3.org/1999/xhtml' ||
-    excluded.has(element.tagName) ||
-    element.getAttribute('aria-hidden') === 'true'
-  );
-}
-
-/** Rendered block boundaries carry whitespace, never fabricated searchable characters. */
-function renderedText(container: HTMLElement): { text: string; runs: TextRun[] } {
-  let text = '';
-  const runs: TextRun[] = [];
-  function walk(node: Node, anchor?: HTMLAnchorElement): void {
-    if (node.nodeType === 3) {
-      const start = text.length;
-      text += node.nodeValue ?? '';
-      runs.push({ node: node as Text, anchor, start, end: text.length });
-      return;
-    }
-    if (node.nodeType !== 1) return;
-    const element = node as Element;
-    if (skipElement(element)) return;
-    if (element.tagName === 'BR') {
-      text += '\n';
-      return;
-    }
-    const block = blocks.has(element.tagName);
-    if (block) text += '\n';
-    const owner = element.tagName === 'A' ? (element as HTMLAnchorElement) : anchor;
-    for (const child of element.childNodes) walk(child, owner);
-    if (block) text += '\n';
-  }
-  for (const node of container.childNodes) walk(node);
-  return { text, runs };
 }
 function isWhitespace(text: string, at: number): boolean {
   return /\s/u.test(text[at] ?? '');

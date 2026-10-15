@@ -1,5 +1,5 @@
 import type { App } from 'obsidian';
-import type { LinkToken } from '../../markdown/links';
+import { pairAnchorsToTokens, parseLinks, type LinkToken } from '../../markdown/links';
 import { projectSearchText } from '../../markdown/searchText';
 import type {
   SubtaskSnapshot,
@@ -10,6 +10,7 @@ import type {
 } from '../../tasks';
 import { markSearchText } from '../../ui/markSearchText';
 import type { RenderTaskTextOptions } from '../../ui/renderTaskText';
+import { compactTaskDescriptionExcerpt } from '../../ui/taskDescriptionExcerpt';
 import {
   renderSubtaskTitleText,
   renderTaskCommentText,
@@ -60,8 +61,9 @@ function fieldOptions(
   options: TaskSearchTreeRenderOptions,
   markdown: string,
   target: TaskTextTarget,
-  presentation: 'title' | 'markdown',
+  excerptEvidence?: readonly TaskSearchEvidence[],
 ): RenderTaskTextOptions {
+  const presentation = target.type === 'title' ? 'title' : 'markdown';
   return {
     ...options.textOptions,
     app: options.app,
@@ -77,8 +79,55 @@ function fieldOptions(
         options.search.query,
         options.search.segment,
       );
+      if (excerptEvidence !== undefined)
+        compactTaskDescriptionExcerpt(
+          element,
+          options.search.query,
+          options.search.segment,
+          matchingDescriptionAnchor(element, markdown, excerptEvidence),
+        );
     },
   };
+}
+function matchingDescriptionAnchor(
+  element: HTMLElement,
+  markdown: string,
+  evidence: readonly TaskSearchEvidence[],
+): HTMLAnchorElement | undefined {
+  const ranges = evidence
+    .filter(
+      (item) =>
+        item.field === 'link-target' &&
+        item.provenance.type === 'field' &&
+        item.provenance.field === 'description',
+    )
+    .flatMap((item) => item.matches.flatMap((match) => match.sourceRanges));
+  if (ranges.length === 0) return undefined;
+  const tokens = parseLinks(markdown);
+  const anchors = [...element.querySelectorAll('a')];
+  const occurrences = pairAnchorsToTokens(
+    anchors.map((anchor) => ({
+      text: anchor.textContent,
+      href: anchor.getAttribute('data-href') ?? anchor.getAttribute('href') ?? '',
+    })),
+    tokens,
+  );
+  // Display-only correspondence requires the complete authored link sequence. Edit handlers
+  // were already installed (or declined) using stronger whole-field source alignment.
+  if (
+    anchors.length !== tokens.length ||
+    occurrences.some((occurrence, index) => occurrence !== index)
+  )
+    return undefined;
+  for (const [index, token] of tokens.entries()) {
+    if (
+      ranges.some(
+        (range) => range.from >= token.index && range.to <= token.index + token.raw.length,
+      )
+    )
+      return anchors[index];
+  }
+  return undefined;
 }
 function activate(
   element: HTMLElement,
@@ -128,12 +177,7 @@ function renderHeader(entry: TreeEntry, options: TaskSearchTreeRenderOptions): H
   const title = renderSubtaskTitleText(
     titleRow,
     node,
-    fieldOptions(
-      options,
-      node.markdownTitle,
-      { type: 'title', target: taskNodeRef(node) },
-      'title',
-    ),
+    fieldOptions(options, node.markdownTitle, { type: 'title', target: taskNodeRef(node) }),
   );
   trackField(entry, options, title);
   options.renderMetadata(row, node, tree.evidence.filter(isTaskSearchSemanticEvidence));
@@ -164,7 +208,7 @@ function contributingComments(
           options,
           node.description,
           { type: 'description', target: taskNodeRef(node) },
-          'markdown',
+          tree.evidence,
         ),
       ),
     });
@@ -195,12 +239,7 @@ function renderBody(
       const mount = renderTaskCommentText(
         row,
         item.comment.text,
-        fieldOptions(
-          options,
-          item.comment.text,
-          { type: 'comment', ref: item.comment.ref },
-          'markdown',
-        ),
+        fieldOptions(options, item.comment.text, { type: 'comment', ref: item.comment.ref }),
       );
       trackField(entry, options, mount);
     } else {

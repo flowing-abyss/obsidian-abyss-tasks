@@ -651,3 +651,24 @@ it('keeps the smaller nested search header on the shared responsive tracks', () 
   ).toContain('justify-content: flex-start');
   expect(declarationsFor('.abyss-task-meta-right')).toContain('flex-wrap: wrap');
 });
+
+it('bounds matched description height while retaining scoped compact Markdown block spacing', () => {
+  const excerpt = declarationsFor('.abyss-task-card .abyss-search-context .abyss-task-desc');
+  expect(excerpt).toContain('-webkit-line-clamp: 3');
+  expect(excerpt).toContain('overflow: hidden');
+  expect(excerpt).toContain('max-height:');
+  expect(declarationsFor('.abyss-right-desc-view')).toContain('white-space: normal');
+  expect(declarationsFor('.abyss-right-desc-view .abyss-md p')).toContain(
+    'margin-block: var(--size-2-2)',
+  );
+  expect(declarationsFor('.abyss-right-desc-view .abyss-md > :first-child')).toContain(
+    'margin-top: 0',
+  );
+  expect(declarationsFor('.abyss-right-desc-view .abyss-md > :last-child')).toContain(
+    'margin-bottom: 0',
+  );
+  expect(declarationsFor('.abyss-right-desc-view .abyss-md li > p')).toContain('margin-block: 0');
+  expect(declarationsFor('.abyss-right-desc-view .abyss-md pre')).toContain(
+    'white-space: pre-wrap',
+  );
+});

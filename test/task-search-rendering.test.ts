@@ -7,6 +7,7 @@ import * as contextModule from '../src/tasks';
 import { clockFrom } from '../src/tasks/domain/clock';
 import { LinkEditModal } from '../src/ui/LinkEditModal';
 import { deferred, expectDefined, loadPluginStyles, useRealMoment } from './helpers';
+import { captureMenus, mockReadingView } from './support/linkEditHarness';
 import { taskCardMountBound } from './support/taskPanelViewport';
 import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
 
@@ -134,7 +135,7 @@ it.each(['Enter', ' '])(
   },
 );
 
-it('renders and marks the complete second paragraph and split child term with no unrelated preview', async () => {
+it('excerpts and marks the second paragraph and split child term with no unrelated preview', async () => {
   vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, source, holder) => {
     expect(source).toBe('unrelated paragraph\n\nsecond **bud**get paragraph');
     holder.createEl('p').appendText('unrelated paragraph');
@@ -165,7 +166,8 @@ it('renders and marks the complete second paragraph and split child term with no
     expect(card.textContent).not.toContain('unrelated comment');
     const fields = card.querySelectorAll('.abyss-task-desc, .abyss-subtask-label');
     expect(fields).toHaveLength(2);
-    expect(fields[0]?.textContent).toContain('unrelated paragraphsecond budget paragraph');
+    expect(fields[0]?.textContent).toBe('… second budget paragraph');
+    expect(fields[0]?.querySelectorAll('p')).toHaveLength(1);
     expect(
       [...expectDefined(fields[0]).querySelectorAll('mark')].map((m) => m.textContent),
     ).toEqual(['bud', 'get']);
@@ -640,7 +642,7 @@ it('keeps authored embed aliases inert and omits marks when the rendered preview
   }
 });
 
-it('renders the full long authored field past the former clipping point', async () => {
+it('excerpts a late match in a long single-line field', async () => {
   const prefix = 'padding '.repeat(40);
   const source = `${prefix}**needle** tail [[One|same]]`;
   vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, authored, holder) => {
@@ -660,7 +662,7 @@ it('renders the full long authored field past the former clipping point', async 
     expect(
       h.root.querySelector('.abyss-task-desc, .abyss-comment-text, .abyss-subtask-label')
         ?.textContent,
-    ).toBe(`${prefix}needle tail same`);
+    ).toBe('… padding padding padding needle tail same');
     expect(h.root.querySelector('.abyss-search-context mark')?.textContent).toBe('needle');
   } finally {
     h.dispose();
@@ -1412,7 +1414,7 @@ it('shares the narrow metadata width track with nested search rows', async () =>
   }
 });
 
-it('shows full matched Tasks filter descriptions and child context', async () => {
+it('shows short matched Tasks filter descriptions and child context', async () => {
   vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, text, element) => {
     element.setText(text);
   });
@@ -1675,7 +1677,7 @@ it.each(
       const descriptions = [...h.root.querySelectorAll('.abyss-task-desc')];
       expect(descriptions).toHaveLength(1);
       expect(descriptions[0]?.textContent).toBe(
-        query === 'lastword' ? 'first line\nlastword second line' : 'first line …',
+        query === 'lastword' ? '… lastword second line' : 'first line …',
       );
       if (query === 'lastword')
         expect(descriptions[0]?.querySelector('mark')?.textContent).toBe('lastword');
@@ -1775,7 +1777,7 @@ it.each(['', 'baseneedle', 'childneedle', 'lastword'])(
       if (query === 'lastword') {
         expect(description.textContent).toContain('lastword');
         expect(description.querySelector('mark')?.textContent).toBe('lastword');
-        expect(description.textContent).not.toContain(' …');
+        expect(description.textContent).toBe('… lastword');
       }
     } finally {
       h.dispose();
@@ -1808,6 +1810,163 @@ it.each(
     });
     const description = expectDefined(h.root.querySelector('.abyss-task-desc'));
     expect(description.querySelector(tag)?.textContent).toBe('Summary …');
+  } finally {
+    h.dispose();
+  }
+});
+
+it.each(['search', 'tasks'] as const)(
+  'excerpts a late destination-only link in %s with its original source occurrence',
+  async (mode) => {
+    mockReadingView();
+    const menus = captureMenus();
+    const field = `${'opening '.repeat(80)}\n[[HiddenLedger|Visible alias]]`;
+    const h = await mountCanonicalSearchUi(
+      {
+        'a.md': `- [ ] root\n${field
+          .split('\n')
+          .map((line) => `  - > ${line}`)
+          .join('\n')}`,
+      },
+      structuredClone(DEFAULT_SETTINGS),
+      mode,
+    );
+    try {
+      h.query('HiddenLedger');
+      await h.completed();
+      const desc = expectDefined(h.root.querySelector('.abyss-task-desc'));
+      expect(desc.textContent).toBe('… Visible alias');
+      expect(desc.querySelector('mark')).toBeNull();
+      const anchor = expectDefined(desc.querySelector('a'));
+      const open = vi.spyOn(h.app.workspace, 'openLinkText').mockResolvedValue(undefined);
+      anchor.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      await vi.waitFor(() => {
+        expect(open).toHaveBeenCalledWith('HiddenLedger', 'a.md', false);
+      });
+      anchor.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      expect(menus.some((menu) => menu.titles.includes('Edit link…'))).toBe(true);
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it.each(['search', 'tasks'] as const)(
+  'keeps repeated-link editing on the original second occurrence after %s excerpt pruning',
+  async (mode) => {
+    mockReadingView();
+    const menus = captureMenus();
+    const field = `[[Same|alias]] ${'unrelated '.repeat(60).trimEnd()}\nneedle [[Same|alias]]`;
+    vi.spyOn(LinkEditModal.prototype, 'open').mockImplementation(function (this: LinkEditModal) {
+      (this as unknown as { onSave_abyssPrivate: (text: string) => void }).onSave_abyssPrivate(
+        '[[Changed|alias]]',
+      );
+    });
+    const h = await mountCanonicalSearchUi(
+      {
+        'a.md': `- [ ] root\n${field
+          .split('\n')
+          .map((line) => `  - > ${line}`)
+          .join('\n')}`,
+      },
+      structuredClone(DEFAULT_SETTINGS),
+      mode,
+    );
+    try {
+      const execute = vi.spyOn(h.tasks, 'execute');
+      h.query('needle');
+      await h.completed();
+      const desc = expectDefined(h.root.querySelector('.abyss-task-desc'));
+      expect(desc.textContent).toBe('… needle alias');
+      expect(desc.querySelectorAll('a')).toHaveLength(1);
+      expectDefined(desc.querySelector('a')).dispatchEvent(
+        new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+      );
+      expectDefined(menus.find((menu) => menu.titles.includes('Edit link…'))).pick('Edit link…');
+      await vi.waitFor(() => {
+        expect(execute).toHaveBeenCalled();
+      });
+      expect(execute.mock.calls[0]?.[0]).toMatchObject({
+        type: 'edit-link',
+        occurrence: 1,
+        replacement: '[[Changed|alias]]',
+      });
+      await vi.waitFor(() => {
+        expect(h.index.list()[0]?.description).toBe(
+          field.replace('needle [[Same|alias]]', 'needle [[Changed|alias]]'),
+        );
+      });
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it('selects a destination-only list excerpt by complete link correspondence without granting edit authority', async () => {
+  const menus = captureMenus();
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _source, holder) => {
+    const list = holder.createEl('ol');
+    list.createEl('li').appendText('unrelated opening '.repeat(100));
+    list.createEl('li').createEl('a', {
+      cls: 'internal-link',
+      text: 'Visible alias',
+      attr: { 'data-href': 'HiddenLedger' },
+    });
+  });
+  const h = await mountCanonicalSearchUi(
+    {
+      'a.md': `- [ ] root\n  - > 1. ${'unrelated opening '.repeat(100)}\n  - > 2. [[HiddenLedger|Visible alias]]`,
+    },
+    structuredClone(DEFAULT_SETTINGS),
+  );
+  try {
+    h.query('HiddenLedger');
+    await h.completed();
+    const desc = expectDefined(h.root.querySelector('.abyss-task-desc'));
+    expect(desc.textContent).toBe('… Visible alias');
+    expect(desc.querySelector('li')?.getAttribute('value')).toBe('2');
+    expect(desc.querySelector('mark')).toBeNull();
+    expectDefined(desc.querySelector('a')).dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: false, cancelable: true }),
+    );
+    expect(menus.flatMap((menu) => menu.titles)).not.toContain('Edit link…');
+  } finally {
+    h.dispose();
+  }
+});
+
+it('uses a bounded opening excerpt when host-generated duplicate anchors make destination correspondence ambiguous', async () => {
+  const menus = captureMenus();
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _source, holder) => {
+    const opening = holder.createEl('p', { text: 'Opening ' });
+    opening.createEl('a', {
+      cls: 'internal-link',
+      text: 'Generated alias',
+      attr: { 'data-href': 'HiddenLedger' },
+    });
+    opening.appendText(' unrelated'.repeat(100));
+    holder.createEl('p').createEl('a', {
+      cls: 'internal-link',
+      text: 'Visible alias',
+      attr: { 'data-href': 'HiddenLedger' },
+    });
+  });
+  const h = await mountCanonicalSearchUi(
+    { 'a.md': `- [ ] root\n  - > ${'Opening '.repeat(100)}\n  - > [[HiddenLedger|Visible alias]]` },
+    structuredClone(DEFAULT_SETTINGS),
+  );
+  try {
+    h.query('HiddenLedger');
+    await h.completed();
+    const desc = expectDefined(h.root.querySelector('.abyss-task-desc'));
+    expect(desc.textContent).toMatch(/^Opening Generated alias/u);
+    expect(desc.textContent.length).toBeLessThanOrEqual(246);
+    expect(desc.textContent).not.toContain('Visible alias');
+    expect(desc.querySelector('mark')).toBeNull();
+    expectDefined(desc.querySelector('a')).dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: false, cancelable: true }),
+    );
+    expect(menus).toHaveLength(0);
   } finally {
     h.dispose();
   }

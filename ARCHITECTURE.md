@@ -380,7 +380,11 @@ CenterPanel's exact-task reveal path. Nested Filter activation shares exact-addr
 selects the inspector path in place with generation, cancellation, and selection-intent guards. It
 retains the active list and query; main-card selection and modifier clicks use ordinary list behavior.
 Filter retains the base node's ordinary description preview unless its full description matches.
-It also retains ordinary recurrence and Today metadata, with explicit matching evidence shown when
+Matching descriptions in Search and Filter show bounded excerpts chosen after full-field rendering
+and link wiring. Excerpts retain original anchors and source occurrences; rendered-text fallback
+selects display only and grants no link-edit authority. The inspector keeps the complete Markdown
+with compact paragraph/list spacing, and its editor retains the full source.
+Filter also retains ordinary recurrence and Today metadata, with explicit matching evidence shown when
 needed to explain the result. Temporary inclusion of a revealed or created task does not
 alter saved filters. Reveal consumes its scroll permission once and yields to later user scrolling,
 focus, source changes, or owner loss. Modal-to-sidebar draft transfer preserves both owners on conflict.
