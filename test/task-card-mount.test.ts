@@ -736,6 +736,65 @@ it('does not acquire long-lived host link callbacks for eager card renders', asy
   h.hostComponent.unload();
 });
 
+it.each([
+  { description: 'Description stabilityprobe', displayed: 'Description stabilityprobe' },
+  {
+    description: 'Description summary\n  - > Later description',
+    displayed: 'Description summary …',
+  },
+])(
+  'cold-mounts plain Filter text without moving fields through the panel: $displayed',
+  async ({ description, displayed }) => {
+    const { taskSearchContext, prepareSearchQuery } = await import('../src/tasks');
+    const { fallbackSearchWords } = await import('../src/tasks/domain/searchMatchPolicy');
+    const h = renderer();
+    const canonical = await createCanonicalSearchHarness(
+      {
+        'a.md': `- [ ] STABILITYPROBE Root item\n  - > ${description}`,
+      },
+      h.settings,
+    );
+    const root = expectDefined(canonical.index.list()[0]);
+    const panel = document.body.createDiv({ cls: 'abyss-panel-view' });
+    const cards = panel.createDiv();
+    const query = prepareSearchQuery('STABILITYPROBE Root', fallbackSearchWords);
+    const observer = new MutationObserver(() => {});
+    observer.observe(panel, { childList: true });
+    const render = vi.spyOn(MarkdownRenderer, 'render');
+    const mount = h.subject.mount(
+      cards,
+      root,
+      [],
+      { selected: false, showDelete: false },
+      {
+        mode: 'filter',
+        query,
+        segment: fallbackSearchWords,
+        context: taskSearchContext(
+          root,
+          { epoch: 'test', rootId: 1, version: 1, childLines: [] },
+          query,
+          fallbackSearchWords,
+        ),
+        onActivate: vi.fn(),
+      },
+    );
+    try {
+      expect(observer.takeRecords()).toHaveLength(0);
+      expect(mount.element.querySelector('.abyss-task-title')?.textContent).toBe(root.title);
+      expect(mount.element.querySelector('.abyss-task-desc')?.textContent).toBe(displayed);
+      expect(await mount.settled).toEqual({ type: 'ready' });
+      expect(observer.takeRecords()).toHaveLength(0);
+      expect(render).not.toHaveBeenCalled();
+    } finally {
+      observer.disconnect();
+      mount.destroy();
+      canonical.close();
+      h.hostComponent.unload();
+    }
+  },
+);
+
 it('mounts into the attached holder and receipts track only the current Markdown generation', async () => {
   const old = deferred<void>();
   const next = deferred<void>();

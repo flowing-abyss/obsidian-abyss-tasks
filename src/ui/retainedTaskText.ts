@@ -7,7 +7,11 @@ import {
   type TaskTextTarget,
 } from '../tasks';
 import { markSearchText } from './markSearchText';
-import { renderTaskText, type RenderTaskTextOptions } from './renderTaskText';
+import {
+  renderTaskText,
+  taskTextNeedsMarkdown,
+  type RenderTaskTextOptions,
+} from './renderTaskText';
 import { compactTaskDescriptionExcerpt } from './taskDescriptionExcerpt';
 import type { TaskRenderOutcome } from './taskRenderScope';
 
@@ -140,6 +144,7 @@ class PreparedField implements PreparedTaskTextUpdate {
   #committed = false;
   #render: ReturnType<typeof renderTaskText> | undefined;
   readonly #staging: HTMLElement | undefined;
+  readonly #direct: boolean;
   readonly #input: RetainedTaskTextInput;
   readonly #field: VisibleField;
   readonly #host: HTMLElement;
@@ -151,12 +156,14 @@ class PreparedField implements PreparedTaskTextUpdate {
     field: VisibleField,
     options: {
       replace: boolean;
+      direct: boolean;
       stagingHost: HTMLElement;
       publish: (field: VisibleField) => void;
       release: (field: VisibleField) => void;
     },
   ) {
     this.#host = host;
+    this.#direct = options.direct;
     this.#input = input;
     this.#field = field;
     this.#publish = options.publish;
@@ -166,6 +173,10 @@ class PreparedField implements PreparedTaskTextUpdate {
     });
     if (!options.replace) {
       this.#finish({ type: 'ready' });
+      return;
+    }
+    if (this.#direct) {
+      this.#renderReplacement(host);
       return;
     }
     this.#staging = host.createDiv();
@@ -254,7 +265,8 @@ class PreparedField implements PreparedTaskTextUpdate {
     this.#cancelled = true;
     this.#render?.cancel();
     this.#staging?.remove();
-    if (this.#staging !== undefined) this.#release(this.#field);
+    if (this.#direct) this.#host.empty();
+    if (this.#direct || this.#staging !== undefined) this.#release(this.#field);
     this.#finish({ type: 'cancelled' });
   }
 }
@@ -290,6 +302,12 @@ export class RetainedTaskText {
     if (reuse) field.input = { ...field.input, callbacks: input.callbacks };
     const update = new PreparedField(this.#host, input, field, {
       replace: !reuse,
+      // Plain first fields settle synchronously without a replacement to preserve.
+      // Markdown stays staged until its renderer and link wiring have finished.
+      direct:
+        old === undefined &&
+        !this.#host.hasChildNodes() &&
+        !taskTextNeedsMarkdown(input.source.markdown, input.source.presentation),
       stagingHost:
         this.#stagingHost.ownerDocument === this.#host.ownerDocument
           ? this.#stagingHost

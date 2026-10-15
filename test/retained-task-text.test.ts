@@ -46,6 +46,107 @@ function harness() {
     },
   };
 }
+it.each([true, false])(
+  'renders a fresh plain field in its final host without connected staging (connected: %s)',
+  async (connected) => {
+    const h = harness();
+    if (!connected) h.host.remove();
+    const observer = new MutationObserver(() => {});
+    observer.observe(document.body, { childList: true });
+    const render = vi.spyOn(MarkdownRenderer, 'render');
+    try {
+      const input = h.input('plain needle');
+      const first = h.field.prepare({ ...input, decoration: { kind: 'complete' } });
+      expect(h.host.textContent).toBe('plain needle');
+      const text = h.host.firstChild;
+      expect(observer.takeRecords()).toHaveLength(0);
+      expect(first.commit()).toBe(true);
+      expect(h.host.firstChild).toBe(text);
+      expect(await first.ready).toEqual({ type: 'ready' });
+      expect(render).not.toHaveBeenCalled();
+      expect(observer.takeRecords()).toHaveLength(0);
+    } finally {
+      observer.disconnect();
+      h.close();
+    }
+  },
+);
+it('retires an uncommitted first render before preparing the same source again', async () => {
+  const h = harness();
+  const held = deferred<void>();
+  let holder: HTMLElement | undefined;
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementationOnce((_app, _source, element) => {
+    holder = element;
+    return held.promise;
+  });
+  try {
+    const first = h.field.prepare(h.input());
+    const second = h.field.prepare(h.input());
+    expect(await first.ready).toEqual({ type: 'cancelled' });
+    expect(holder?.isConnected).toBe(false);
+    expect(await second.ready).toEqual({ type: 'ready' });
+    expect(second.commit()).toBe(true);
+    const anchor = expectDefined(h.host.querySelector('a'));
+    holder?.createSpan({ text: 'obsolete output' });
+    held.resolve();
+    await Promise.resolve();
+    first.cancel();
+    expect(first.commit()).toBe(false);
+    expect(h.host.querySelector('a')).toBe(anchor);
+    expect(h.host.textContent).toBe('needle');
+  } finally {
+    held.resolve();
+    h.close();
+  }
+});
+it.each([true, false])(
+  'stages first Markdown until its renderer finishes (connected: %s)',
+  async (connected) => {
+    const h = harness();
+    if (!connected) h.host.remove();
+    const held = deferred<void>();
+    let holder: HTMLElement | undefined;
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation((_app, _source, element) => {
+      holder = element;
+      element.textContent = 'Needle';
+      return held.promise;
+    });
+    try {
+      const first = h.field.prepare(h.input());
+      const rendered = expectDefined(holder);
+      expect(rendered.isConnected).toBe(true);
+      expect(rendered.parentElement).not.toBe(h.host);
+      expect(rendered.closest('[hidden][aria-hidden="true"]')).not.toBeNull();
+      expect(h.host.hasChildNodes()).toBe(false);
+      expect(first.commit()).toBe(false);
+      held.resolve();
+      expect(await first.ready).toEqual({ type: 'ready' });
+      expect(first.commit()).toBe(true);
+      expect(h.host.querySelector('.abyss-md')).toBe(rendered);
+      expect(document.querySelector('[inert]')).toBeNull();
+    } finally {
+      held.resolve();
+      h.close();
+    }
+  },
+);
+it('does not cancel a newer field when a completed first render was never committed', async () => {
+  const h = harness();
+  try {
+    const first = h.field.prepare(h.input('needle'));
+    expect(await first.ready).toEqual({ type: 'ready' });
+    const second = h.field.prepare(h.input('needle'));
+    expect(first.commit()).toBe(false);
+    expect(await second.ready).toEqual({ type: 'ready' });
+    expect(second.commit()).toBe(true);
+    const text = h.host.firstChild;
+    first.cancel();
+    expect(h.host.firstChild).toBe(text);
+    expect(h.host.textContent).toBe('needle');
+  } finally {
+    h.close();
+  }
+});
 it('re-marks complete fields without reparsing source and skips equivalent token work', async () => {
   const h = harness();
   const render = vi.spyOn(MarkdownRenderer, 'render');

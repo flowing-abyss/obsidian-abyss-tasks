@@ -45,7 +45,7 @@ export function renderTaskText(
   // structure use the host even without links. Unspecified callers retain link-driven dispatch.
   if (
     opts.presentation !== undefined
-      ? !needsMarkdown(markdownText, opts.presentation)
+      ? !taskTextNeedsMarkdown(markdownText, opts.presentation)
       : tokens.length === 0
   ) {
     el.setText(presented);
@@ -67,7 +67,10 @@ function taskTextPresentation(
   if (presentation === 'description') return analyzeTaskDescription(source).markdown;
   return presentation === 'title' ? inlineTaskTitleMarkdown(source) : source;
 }
-function needsMarkdown(text: string, presentation: 'title' | 'markdown' | 'description'): boolean {
+export function taskTextNeedsMarkdown(
+  text: string,
+  presentation: 'title' | 'markdown' | 'description',
+): boolean {
   return (
     /[\\*_~`[\]<>&!\r\n]/u.test(text) ||
     (presentation !== 'title' && /^\s*(?:#{1,6}\s|[-+]\s|\d+[.)]\s)/u.test(text))
