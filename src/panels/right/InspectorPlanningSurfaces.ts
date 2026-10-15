@@ -25,6 +25,7 @@ import {
 import { anchoredPlacement, type AnchoredPlacementInput } from '../../ui/anchoredPlacement';
 import { isImeOwnedEvent } from '../../ui/ime';
 import { type InteractionOwnershipPort } from '../../ui/interactionOwnership';
+import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import {
   mountRecurrenceEditor,
   type RecurrenceEditorHandle,
@@ -38,6 +39,8 @@ import { bindSegmentedInputCommit, isUsableDateInputValue } from '../../ui/segme
 import { setStatusMarkerCompletionBlocked, updateStatusMarker } from '../../ui/StatusMarker';
 import { showStatusMenuAt, type StatusMenuHandle } from '../../ui/statusMenu';
 import { showTagDropdown } from '../../ui/tagDropdown';
+import { TagPickerModal } from '../../ui/TagPickerModal';
+import { createTaskContextMenu } from '../../ui/taskContextMenu';
 import { type RightPanelDraftState } from '../../ui/taskDraftContinuity';
 import { openInFile } from '../../ui/taskNavigation';
 import { taskNodeLine, taskNodeRef } from '../../ui/taskSelection';
@@ -379,6 +382,7 @@ export class InspectorPlanningSurfaces {
   }
 
   resetRenderedControls(): void {
+    this.#rowMenuCleanup?.();
     this.#dependencyStatusMarkers.clear();
     this.#planningControls.clear();
     this.#planningControlKeys.clear();
@@ -881,6 +885,7 @@ export class InspectorPlanningSurfaces {
    * behavior are identical for all three; only the read/write pair differs.
    */
   #showDatePopover(anchor: HTMLElement, task: TaskLike, field: SchedulingDateField = 'due'): void {
+    const owner = this.#host.taskOwner(task);
     const already = this.#host.root().querySelector('.abyss-date-popover');
     this.clearPopovers();
     if (already != null) return;
@@ -920,12 +925,12 @@ export class InspectorPlanningSurfaces {
     const focusTimer = ownerWindow?.setTimeout(() => {
       if (this.#typedInput !== entry) return;
       try {
-        const stack = this.#host.stack();
-        const selected = stack[stack.length - 1];
+        const current = owner.current;
         if (
           this.#host.mounted() &&
-          selected !== undefined &&
-          this.hasFocusedTypedInputFor(taskNodeRef(selected)) &&
+          anchor.isConnected &&
+          current !== undefined &&
+          this.hasFocusedTypedInputFor(taskNodeRef(current)) &&
           this.#canFocusOpeningInput(input, anchor)
         )
           input.focus();
@@ -1293,6 +1298,79 @@ export class InspectorPlanningSurfaces {
       event.preventDefault();
     });
     button.addEventListener('click', action);
+  }
+
+  #rowMenuCleanup: (() => void) | undefined;
+
+  renderRowContextMenu(event: MouseEvent, task: TaskLike, anchor: HTMLElement): () => void {
+    this.#rowMenuCleanup?.();
+    const target = taskNodeRef(task);
+    const menu = createTaskContextMenu({
+      node: task,
+      target,
+      anchor,
+      statusRegistry: this.#statusRegistry,
+      pinnedTags: this.#settings?.pinnedTags ?? [],
+      timeTracking: this.#timeTracking,
+      actions: {
+        toggleDue: async (date) => {
+          await this.#commands.executePlanningPatch(task, {
+            due: task.planning.due === date ? { type: 'clear' } : { type: 'set', value: date },
+          });
+        },
+        patchTags: async (add, remove) => {
+          await this.#commands.executePlanningPatch(task, { tags: { add, remove } });
+        },
+        setStatus: (symbol) => this.#commands.setStatus(task, symbol),
+        setPriority: (priority) => this.#commands.updatePriority(task, priority),
+        openDatePicker: (opener) => {
+          this.#showDatePopover(opener, task);
+        },
+        openTagPicker: () => {
+          new TagPickerModal(
+            this.#app,
+            (tag) => this.#getTagColor(tag),
+            new Set(task.tags),
+            new Set(),
+            collectTaskTags(
+              this.#queries?.observedTags() ?? [],
+              this.#settings ?? DEFAULT_SETTINGS,
+              task.tags,
+            ),
+            (add, remove) => {
+              runAsyncAction(this.#commands.executePlanningPatch(task, { tags: { add, remove } }));
+            },
+            this.#interactionOwnership,
+          ).open();
+        },
+        openRecurrenceEditor: (opener) => {
+          this.#showRecurrencePopover(opener, task, this.#recurrenceStackFor(task));
+        },
+        openInNote: () => {
+          const root = this.#host.stack()[0];
+          if (root !== undefined && 'source' in root)
+            runAsyncAction(openInFile(this.#app, root, taskNodeLine(root, task)));
+        },
+        promote: () => this.#commands.promoteSubtask(task),
+        archive: async () => {
+          if (target.type === 'task') await this.#commands.archiveRootTask(target.ref);
+        },
+        delete: () => this.#commands.deleteTask(task),
+      },
+    });
+    const token = this.#interactionOwnership.acquire({ blocksShortcuts: true });
+    const close = (): void => {
+      menu.hide();
+      token.release();
+      if (this.#rowMenuCleanup === close) this.#rowMenuCleanup = undefined;
+    };
+    this.#rowMenuCleanup = close;
+    menu.onHide(() => {
+      token.release();
+      if (this.#rowMenuCleanup === close) this.#rowMenuCleanup = undefined;
+    });
+    showMenuAtMouseEventWithFocus(menu, event);
+    return close;
   }
 
   renderContextMenu(task: TaskLike, anchor: HTMLElement): void {

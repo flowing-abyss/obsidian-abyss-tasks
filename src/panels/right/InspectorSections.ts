@@ -44,6 +44,11 @@ interface InspectorSectionsOptions {
     readonly root: () => HTMLElement;
     readonly component: () => Component;
     readonly taskOwner: (task: TaskLike) => InspectorTaskOwner;
+    readonly openTaskContextMenu: (
+      event: MouseEvent,
+      task: TaskLike,
+      row: HTMLElement,
+    ) => () => void;
     readonly renderTaskStatusMarker: (parent: HTMLElement, task: TaskLike) => void;
     readonly bindHierarchyDrop: (surface: HTMLElement, task: TaskLike) => void;
     readonly finishTaskDrag: () => void;
@@ -846,6 +851,17 @@ export class InspectorSections {
       attr: { draggable: 'true', tabindex: '-1' },
     });
     this.#subRows.push({ row, owner, snapshot: sub, component });
+    let closeMenu: (() => void) | undefined;
+    component.register(() => closeMenu?.());
+    component.registerDomEvent(row, 'contextmenu', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const current = owner.current;
+      if (current !== undefined) {
+        closeMenu?.();
+        closeMenu = this.#host.openTaskContextMenu(event, current, row);
+      }
+    });
     this.#bindSubtaskDragAndDrop(row, container, { sub, parentTask }, component);
     this.#host.renderTaskStatusMarker(row, sub);
     this.#renderSubtaskContent(row, sub, component);

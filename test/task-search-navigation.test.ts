@@ -13,6 +13,7 @@ import { TaskSearchService } from '../src/tasks/infrastructure/search/TaskSearch
 import { TaskIndex } from '../src/tasks/infrastructure/TaskIndex';
 import { taskNodeRef } from '../src/ui/taskSelection';
 import { deferred, expectDefined, flushMicrotasks, methodOf, useRealMoment } from './helpers';
+import { captureMenus, mockReadingView, rightClick, settleRender } from './support/linkEditHarness';
 import { taskCardMountBound } from './support/taskPanelViewport';
 import { createCanonicalSearchHarness } from './support/taskSearchHarness';
 import {
@@ -2335,6 +2336,167 @@ it.each(['needle child', 'unmatched child'])(
       await h.completed();
       if (title === 'unmatched child')
         expect(h.root.querySelector('.abyss-subtask-label')).toBeNull();
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+// A bubbling child event must never acquire its enclosing card's write target.
+it.each([
+  ['tasks', 'Child needle'],
+  ['tasks', 'Grandchild needle'],
+  ['search', 'Child needle'],
+  ['search', 'Grandchild needle'],
+] as const)('targets the nested %s menu at %s', async (mode, title) => {
+  mockReadingView();
+  const shown = captureMenus();
+  const before =
+    '- [ ] Root needle\n  - [ ] Child needle\n    - [ ] Grandchild needle\n  - [ ] Child needle';
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date(2026, 9, 15, 12));
+  const h = await mountCanonicalSearchUi(
+    { 'different-source.md': before },
+    structuredClone(DEFAULT_SETTINGS),
+    mode,
+  );
+  try {
+    h.query('needle');
+    await h.completed();
+    await settleRender();
+    const label = expectDefined(
+      [...h.root.querySelectorAll<HTMLElement>('.abyss-subtask-label')].find(
+        (el) => el.textContent === title,
+      ),
+    );
+    rightClick(label);
+    expect(shown).toHaveLength(1);
+    expectDefined(shown[0]).pick('Today');
+    const file = expectDefined(h.app.vault.getFileByPath('different-source.md'));
+    await vi.waitFor(async () => {
+      const lines = (await h.app.vault.read(file)).split('\n');
+      const expectedLine = title === 'Child needle' ? 1 : 2;
+      const expected = before.split('\n');
+      expected[expectedLine] += ' 📅 2026-10-15';
+      expect(lines).toEqual(expected);
+    });
+  } finally {
+    h.dispose();
+    vi.useRealTimers();
+  }
+});
+
+it('keeps nested context menus single-target while two root cards remain selected', async () => {
+  const shown = captureMenus();
+  const before = '- [ ] Root needle\n  - [ ] Child needle\n- [ ] Other needle';
+  const h = await mountCanonicalSearchUi(
+    { 'tasks.md': before },
+    structuredClone(DEFAULT_SETTINGS),
+    'tasks',
+  );
+  try {
+    h.query('needle');
+    await h.completed();
+    const cards = [...h.root.querySelectorAll<HTMLElement>('.abyss-task-card')];
+    expect(cards).toHaveLength(2);
+    for (const card of cards)
+      card.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+    expect(h.panel['rowSelection_abyssPrivate'].size).toBe(2);
+    rightClick(expectDefined(h.root.querySelector('.abyss-subtask-label')));
+    expectDefined(shown[0]).pick('Today');
+    expect(shown[0]?.titles).not.toContain('2 tasks selected');
+    const file = expectDefined(h.app.vault.getFileByPath('tasks.md'));
+    await vi.waitFor(async () => {
+      expect((await h.app.vault.read(file)).split('\n')[1]).toContain('📅 ');
+    });
+    const lines = (await h.app.vault.read(file)).split('\n');
+    expect(lines[0]).toBe('- [ ] Root needle');
+    expect(lines[2]).toBe('- [ ] Other needle');
+  } finally {
+    h.dispose();
+  }
+});
+
+it.each(['tasks', 'search'] as const)(
+  'preserves source-link and child-status context ownership in %s',
+  async (mode) => {
+    mockReadingView();
+    const shown = captureMenus();
+    const before =
+      '- [ ] Root needle\n  - [ ] [[Different destination|Child needle]]\n    - [ ] [Grandchild needle](https://example.com/elsewhere)';
+    const h = await mountCanonicalSearchUi(
+      { 'tasks.md': before },
+      structuredClone(DEFAULT_SETTINGS),
+      mode,
+    );
+    try {
+      h.query('needle');
+      await h.completed();
+      await settleRender();
+      const labels = [...h.root.querySelectorAll<HTMLElement>('.abyss-subtask-label')];
+      for (const label of labels) {
+        rightClick(expectDefined(label.querySelector('a')));
+        expect(shown[shown.length - 1]?.titles).toEqual(['Edit link…']);
+      }
+      rightClick(expectDefined(labels[1]));
+      expect(shown).toHaveLength(3);
+      expect(shown[2]?.titles).toContain('Today');
+      const row = expectDefined(labels[1]?.closest('.abyss-subtask-row'));
+      rightClick(expectDefined(row.querySelector('.abyss-status-marker')));
+      expect(shown).toHaveLength(3);
+      const popover = expectDefined(document.querySelector('.abyss-status-popover'));
+      expectDefined(
+        [...popover.querySelectorAll<HTMLElement>('[role=menuitemradio]')].find((item) =>
+          item.textContent.includes('In progress'),
+        ),
+      ).click();
+      const file = expectDefined(h.app.vault.getFileByPath('tasks.md'));
+      await vi.waitFor(async () => {
+        expect(await h.app.vault.read(file)).toBe(before.replace('    - [ ]', '    - [/]'));
+      });
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it.each(['tasks', 'search'] as const)(
+  'keeps child comment and tag subcontrol context ownership in %s',
+  async (mode) => {
+    const shown = captureMenus();
+    const source =
+      '- [ ] Root needle\n  - [ ] Child needle #child\n    - 2026-09-05: comment needle\n  - [ ] Sibling needle #sibling';
+    const h = await mountCanonicalSearchUi(
+      { 'tasks.md': source },
+      structuredClone(DEFAULT_SETTINGS),
+      mode,
+    );
+    try {
+      h.query('needle');
+      await h.completed();
+      const target = expectDefined(
+        h.root.querySelector(mode === 'search' ? '.abyss-comment-text' : '.abyss-subtask-label'),
+      );
+      rightClick(target);
+      expectDefined(shown[0]).pick('Today');
+      const file = expectDefined(h.app.vault.getFileByPath('tasks.md'));
+      await vi.waitFor(async () => {
+        expect((await h.app.vault.read(file)).split('\n')[1]).toContain('📅 ');
+      });
+      await h.completed();
+      const label = expectDefined(
+        [...h.root.querySelectorAll<HTMLElement>('.abyss-subtask-label')].find(
+          (el) => el.textContent === 'Child needle',
+        ),
+      );
+      const row = expectDefined(label.closest('.abyss-subtask-row'));
+      const tag = expectDefined(row.querySelector('.abyss-task-tag'));
+      rightClick(tag);
+      expect(shown).toHaveLength(1);
+      await h.completed();
+      const content = await h.app.vault.read(file);
+      expect(content.split('\n')[0]).toBe('- [ ] Root needle');
+      expect(content.split('\n')[3]).toBe('  - [ ] Sibling needle #sibling');
     } finally {
       h.dispose();
     }

@@ -1,4 +1,4 @@
-import { Menu, type App, type MenuItem } from 'obsidian';
+import { Menu, type App } from 'obsidian';
 import { sameTag } from '../../markdown/tagSyntax';
 import { moment } from '../../obsidianMoment';
 import { PRIORITY_LEVELS } from '../../priority';
@@ -10,18 +10,21 @@ import type { TaskSearchMenuSummary } from '../../task-lists/taskSearchOrganizat
 import {
   localDate,
   shiftLocalDate,
-  subtreeRunning,
   taskNodeSourceLine,
   TaskSearchError,
   type LocalDate,
   type TaskOccurrenceCompletion,
-  type TaskPriority,
   type TaskQueryApi,
 } from '../../tasks';
 import { TagPickerModal } from '../../ui/TagPickerModal';
 import type { InteractionOwnershipPort } from '../../ui/interactionOwnership';
 import { runAsyncAction } from '../../ui/runAsyncAction';
 import { buildStatusSubmenu } from '../../ui/statusMenu';
+import {
+  applyPriorityFlagColor,
+  createTaskContextMenu,
+  getSubmenu,
+} from '../../ui/taskContextMenu';
 import { openInFile } from '../../ui/taskNavigation';
 import type { TrackingSurface } from '../../ui/timeTracking/TimeBadge';
 import {
@@ -83,24 +86,6 @@ interface TaskMenusOptions {
   readonly host: TaskMenusHost;
 }
 
-/**
- * Colors a priority-submenu flag icon to match the rest of the UI (status
- * popover flags, flag settings, etc.) by tagging the item's undocumented
- * `.dom` element — Obsidian doesn't expose per-item icon styling otherwise.
- */
-function applyPriorityFlagColor(si: MenuItem, value: TaskPriority): void {
-  const dom = (si as unknown as { dom?: HTMLElement }).dom;
-  if (dom != null) {
-    dom.addClass('abyss-menu-priority-flag');
-    dom.setAttribute('data-abyss-priority', value);
-  }
-}
-
-/** Obsidian's MenuItem.setSubmenu() is undocumented; reach it via one shared cast. */
-function getSubmenu(item: MenuItem): Menu {
-  return (item as unknown as { setSubmenu(): Menu }).setSubmenu();
-}
-
 export class TaskMenus {
   readonly #options: TaskMenusOptions;
 
@@ -108,262 +93,50 @@ export class TaskMenus {
     this.#options = options;
   }
 
-  /** Obsidian orders sections by their first registered item, so helper order is menu group order. */
   createTaskContextMenu(
     card: HTMLElement,
     task: TaskCommandSubject,
     representedTags: readonly string[] = [],
   ): Menu {
-    const today = localDate(moment().format('YYYY-MM-DD'));
-    const menu = new Menu();
-    this.#addTaskDuePresetMenuItems(menu, task, today);
-    this.#addTrackingMenuItem(menu, task);
-    this.#addTaskTagMenuItems(menu, task);
-    this.#addTaskDatePickerMenuItem(menu, card, task);
-    this.#addTaskEditMenuItems(menu, card, task);
-    this.#addTaskPropertyMenuItems(menu, task);
-    this.#addTaskTagFilterMenuItems(menu, [...this.#getTaskTags(task), ...representedTags]);
-    this.#addTaskOpenMenuItem(menu, task);
-    this.#addTaskDangerMenuItems(menu, task);
-    return menu;
-  }
-
-  #addTaskDuePresetMenuItems(menu: Menu, task: TaskCommandSubject, today: LocalDate): void {
-    const tomorrow = shiftLocalDate(today, 1);
-    menu.addItem((item) =>
-      item
-        .setTitle('Today')
-        .setIcon('calendar')
-        .setSection('today')
-        .setChecked(commandNode(task).planning.due === today)
-        .onClick(() => {
-          runAsyncAction(this.#options.commands.toggleTaskDuePreset(task, today));
-        }),
-    );
-
-    if (tomorrow !== undefined) {
-      menu.addItem((item) =>
-        item
-          .setTitle('Tomorrow')
-          .setIcon('calendar-plus')
-          .setSection('today')
-          .setChecked(commandNode(task).planning.due === tomorrow)
-          .onClick(() => {
-            runAsyncAction(this.#options.commands.toggleTaskDuePreset(task, tomorrow));
-          }),
-      );
-    }
-  }
-
-  #addTaskDatePickerMenuItem(menu: Menu, card: HTMLElement, task: TaskCommandSubject): void {
-    menu.addItem((item) =>
-      item
-        .setTitle('Set date…')
-        .setIcon('calendar-cog')
-        .setSection('edit')
-        .onClick(() => {
-          this.#options.host.openDatePicker(card, [task]);
-        }),
-    );
-  }
-
-  #addTaskTagMenuItems(menu: Menu, task: TaskCommandSubject): void {
-    for (const pinnedTag of this.#options.settings.pinnedTags) {
-      const hasTag = [...this.#getTaskTags(task)].some((tag) => sameTag(tag, pinnedTag));
-      menu.addItem((item) =>
-        item
-          .setTitle(pinnedTag)
-          .setIcon('tag')
-          .setSection('tags')
-          .setChecked(hasTag)
-          .onClick(() => {
-            runAsyncAction(
-              this.#options.commands.patchTaskTags(
-                task,
-                hasTag ? [] : [pinnedTag],
-                hasTag ? [pinnedTag] : [],
-              ),
-            );
-          }),
-      );
-    }
-  }
-
-  #addTaskPropertyMenuItems(menu: Menu, task: TaskCommandSubject): void {
-    menu.addItem((item) => {
-      item.setTitle('Priority').setIcon('arrow-up-narrow-wide').setSection('priority');
-      const sub = getSubmenu(item);
-      this.#buildPrioritySubmenu(sub, task);
-    });
-
-    menu.addItem((item) => {
-      item.setIcon('check-square').setSection('priority');
-      item.setTitle('Status');
-      buildStatusSubmenu(getSubmenu(item), commandNode(task), this.#options.statusRegistry, (c) => {
-        runAsyncAction(this.#options.commands.setTaskStatus(task, c));
-      });
-    });
-
-    menu.addItem((item) =>
-      item
-        .setTitle('Filter by this priority')
-        .setIcon('filter')
-        .setSection('priority')
-        .onClick(() => {
-          this.#options.host.addFilter({ type: 'priority', value: commandNode(task).priority });
-        }),
-    );
-
-    menu.addItem((item) =>
-      item
-        .setTitle('Filter by this status')
-        .setIcon('filter')
-        .setSection('priority')
-        .onClick(() => {
-          this.#options.host.addFilter({ type: 'status', value: commandNode(task).statusSymbol });
-        }),
-    );
-  }
-
-  #addTaskTagFilterMenuItems(menu: Menu, choices: readonly string[]): void {
-    const tags: string[] = [];
-    for (const choice of choices) if (!tags.some((tag) => sameTag(tag, choice))) tags.push(choice);
-    if (tags.length === 0) return;
-    for (const type of ['tag', 'tag-exclude'] as const) {
-      menu.addItem((item) => {
-        item
-          .setTitle(type === 'tag' ? 'Include tag' : 'Exclude tag')
-          .setIcon('filter')
-          .setSection('priority');
-        const add = (value: string): void => {
-          this.#options.host.addFilter({ type, value });
-        };
-        const tag = tags[0];
-        if (tags.length === 1 && tag !== undefined)
-          item.onClick(() => {
-            add(tag);
-          });
-        else {
-          const choices = getSubmenu(item);
-          for (const value of tags)
-            choices.addItem((choice) =>
-              choice
-                .setTitle(value)
-                .setIcon('tag')
-                .onClick(() => {
-                  add(value);
-                }),
-            );
-        }
-      });
-    }
-  }
-
-  #addTaskEditMenuItems(menu: Menu, card: HTMLElement, task: TaskCommandSubject): void {
-    menu.addItem((item) =>
-      item
-        .setTitle('Set tag…')
-        .setIcon('hash')
-        .setSection('edit')
-        .onClick(() => {
+    return createTaskContextMenu({
+      node: commandNode(task),
+      target: commandTarget(task),
+      anchor: card,
+      statusRegistry: this.#options.statusRegistry,
+      pinnedTags: this.#options.settings.pinnedTags,
+      timeTracking: this.#options.timeTracking,
+      filters: {
+        representedTags,
+        addFilter: (filter) => {
+          this.#options.host.addFilter(filter);
+        },
+      },
+      actions: {
+        toggleDue: (date) => this.#options.commands.toggleTaskDuePreset(task, date),
+        patchTags: (add, remove) => this.#options.commands.patchTaskTags(task, add, remove),
+        setStatus: (symbol) => this.#options.commands.setTaskStatus(task, symbol),
+        setPriority: (priority) => this.#options.commands.setPriority(task, priority),
+        openDatePicker: (anchor) => {
+          this.#options.host.openDatePicker(anchor, [task]);
+        },
+        openTagPicker: () => {
           this.#openTagPicker(task);
-        }),
-    );
-
-    menu.addItem((item) => {
-      item
-        .setTitle('Edit repeat…')
-        .setIcon('repeat-2')
-        .setSection('edit')
-        .onClick(() => {
-          this.#options.host.openRecurrenceEditor(card, task);
-        });
-    });
-  }
-
-  #addTaskOpenMenuItem(menu: Menu, task: TaskCommandSubject): void {
-    menu.addItem((item) =>
-      item
-        .setTitle('Open in note')
-        .setIcon('file-text')
-        .setSection('open')
-        .onClick(() => {
+        },
+        openRecurrenceEditor: (anchor) => {
+          this.#options.host.openRecurrenceEditor(anchor, task);
+        },
+        openInNote: () => {
           const target = commandTarget(task);
-          if (target !== undefined) {
-            const source = commandSource(task, this.#options.queries);
-            if (source !== undefined)
-              runAsyncAction(
-                openInFile(this.#options.app, source.root, taskNodeSourceLine(target)),
-              );
-          }
-        }),
-    );
-  }
-
-  #addTaskDangerMenuItems(menu: Menu, task: TaskCommandSubject): void {
-    if (commandTarget(task)?.type === 'subtask')
-      menu.addItem((item) =>
-        item
-          .setTitle('Make independent task')
-          .setIcon('list-plus')
-          .setSection('danger')
-          .onClick(() => {
-            runAsyncAction(this.#options.commands.promoteTask(task));
-          }),
-      );
-    menu.addItem((item) =>
-      item
-        .setTitle('Archive')
-        .setDisabled(commandTarget(task)?.type !== 'task')
-        .setIcon('archive')
-        .setSection('danger')
-        .onClick(() => {
-          runAsyncAction(this.#options.commands.archiveTasks([task]));
-        }),
-    );
-
-    menu.addItem((item) =>
-      item
-        .setTitle('Delete')
-        .setIcon('trash-2')
-        .setSection('danger')
-        .onClick(() => {
-          runAsyncAction(this.#options.commands.deleteTask(task));
-        }),
-    );
-  }
-
-  /**
-   * Start or pause the timer on the card the menu was opened from. It stands in a section of its
-   * own under the due presets because it is the one item here that sets something running rather
-   * than editing the task, and it only ever means one card, which is why the bulk menu has none.
-   * The section is registered by the item, so a menu without it shows no empty band.
-   *
-   * A forecast occurrence has no line to write to, and a finished node is refused unless something
-   * under it is still running, which is the one case that still needs a way to stop.
-   */
-  #addTrackingMenuItem(menu: Menu, task: TaskCommandSubject): void {
-    const tracking = this.#options.timeTracking;
-    const target = commandTarget(task);
-    if (tracking === undefined || target === undefined) return;
-    const running = subtreeRunning(commandNode(task));
-    if (
-      !running &&
-      (commandNode(task).status === 'done' || commandNode(task).status === 'cancelled')
-    )
-      return;
-    menu.addItem((item) =>
-      item
-        .setTitle(running ? 'Pause tracking' : 'Start tracking')
-        .setIcon(running ? 'pause' : 'play')
-        .setSection('tracking')
-        .onClick(() => {
-          runAsyncAction(
-            running ? tracking.actions.pause() : tracking.actions.start(target),
-            'Could not change time tracking',
-          );
-        }),
-    );
+          if (target === undefined) return;
+          const source = commandSource(task, this.#options.queries);
+          if (source !== undefined)
+            runAsyncAction(openInFile(this.#options.app, source.root, taskNodeSourceLine(target)));
+        },
+        promote: () => this.#options.commands.promoteTask(task),
+        archive: () => this.#options.commands.archiveTasks([task]),
+        delete: () => this.#options.commands.deleteTask(task),
+      },
+    });
   }
 
   #bulkTagIndicator(count: number, total: number): string {
@@ -433,20 +206,6 @@ export class TaskMenus {
 
   #targetsCurrent(targets: TaskMenuTargets): boolean {
     return !targets.signal.aborted;
-  }
-
-  #buildPrioritySubmenu(sub: Menu, task: TaskCommandSubject): void {
-    for (const level of PRIORITY_LEVELS) {
-      sub.addItem((si) => {
-        si.setTitle(level.label)
-          .setIcon('flag')
-          .setChecked(commandNode(task).priority === level.value)
-          .onClick(() => {
-            runAsyncAction(this.#options.commands.setPriority(task, level.value));
-          });
-        applyPriorityFlagColor(si, level.value);
-      });
-    }
   }
 
   #buildBulkPrioritySubmenu(sub: Menu, targets: TaskMenuTargets): void {

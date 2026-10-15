@@ -4,7 +4,7 @@ import { MarkdownRenderer, Menu, Modal } from 'obsidian';
 import { vi } from 'vitest';
 import { parseLinks } from '../../src/markdown/links';
 import { LinkEditModal } from '../../src/ui/LinkEditModal';
-import { expectDefined, flushMicrotasks } from '../helpers';
+import { expectDefined, flushMicrotasks, methodOf } from '../helpers';
 
 /**
  * A wiki link's href and anchor text as the reading view reads its content (app.js `QE` and
@@ -67,12 +67,19 @@ export function mockReadingView(): void {
 
 export interface ShownMenu {
   readonly titles: readonly string[];
-  readonly pick: (title: string) => void;
+  readonly pick: (...titles: string[]) => void;
 }
 
 /** Records every menu shown, with its items' titles and a pick that clicks one and hides it. */
 export function captureMenus(): ShownMenu[] {
   const shown: ShownMenu[] = [];
+  const addItem = methodOf(Menu.prototype, 'addItem');
+  vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, cb) {
+    return addItem.call(this, (item) => {
+      (item as unknown as { dom: HTMLElement }).dom = createDiv();
+      cb(item);
+    });
+  });
   vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (this: Menu) {
     const items = (
       this as unknown as {
@@ -81,9 +88,15 @@ export function captureMenus(): ShownMenu[] {
     ).menuItems__;
     shown.push({
       titles: items.map((item) => item.title__),
-      pick: (title) => {
-        const item = expectDefined(items.find((candidate) => candidate.title__ === title));
-        item.onClick__?.(new MouseEvent('click'));
+      pick: (...titles) => {
+        let choices = items;
+        for (const [index, title] of titles.entries()) {
+          const item = expectDefined(choices.find((candidate) => candidate.title__ === title));
+          if (index === titles.length - 1) item.onClick__?.(new MouseEvent('click'));
+          else
+            choices = (item as unknown as { submenu: { menuItems__: typeof items } }).submenu
+              .menuItems__;
+        }
         this.hide();
       },
     });

@@ -1,4 +1,4 @@
-import { Component, MarkdownRenderer, requireApiVersion } from 'obsidian';
+import { Component, MarkdownRenderer, Modal, requireApiVersion } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { RightPanel } from '../src/panels/RightPanel';
@@ -15,6 +15,7 @@ import { createTaskBlock } from '../src/tasks/infrastructure/markdown/createTask
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { projectTaskSnapshot } from '../src/tasks/infrastructure/markdown/TaskSnapshotProjector';
 import * as attachmentDrop from '../src/ui/attachmentDrop';
+import { TagPickerModal } from '../src/ui/TagPickerModal';
 import { taskNodeRef } from '../src/ui/taskSelection';
 import {
   canonicalStatusCatalog,
@@ -34,6 +35,7 @@ import {
   notices,
   subscribeInspectorReconciliation,
 } from './support/inspectorHarness';
+import { captureMenus, mockReadingView, rightClick, settleRender } from './support/linkEditHarness';
 
 useRealMoment();
 
@@ -3688,4 +3690,244 @@ it('reuses exact detached mounted owners without copying source into lookup keys
   } finally {
     serialization.mockRestore();
   }
+});
+
+it('opens the complete child task menu and edits only the inspector row', async () => {
+  const shown = captureMenus();
+  const h = await inspectorHarness(
+    '- [ ] Owner\n  - [ ] Child #existing\n  - [ ] Sibling',
+    'Owner',
+  );
+  const row = expectDefined(h.el.querySelector<HTMLElement>('.abyss-subtask-row'));
+  rightClick(row);
+  expect(shown).toHaveLength(1);
+  const menu = expectDefined(shown[0]);
+  expect(menu.titles).toEqual([
+    'Today',
+    'Tomorrow',
+    ...DEFAULT_SETTINGS.pinnedTags,
+    'Set date…',
+    'Set tag…',
+    'Edit repeat…',
+    'Priority',
+    'Status',
+    'Open in note',
+    'Make independent task',
+    'Archive',
+    'Delete',
+  ]);
+  menu.pick('Today');
+  await vi.waitFor(() => {
+    expect(h.node('Child').node.planning.due).toBeDefined();
+  });
+  expect(h.node('Owner').node.planning.due).toBeUndefined();
+  expect(h.node('Sibling').node.planning.due).toBeUndefined();
+  expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['Owner']);
+});
+
+it.each(['tag', 'priority', 'status'] as const)(
+  'routes inspector grandchild menu %s through its exact source',
+  async (action) => {
+    const shown = captureMenus();
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.pinnedTags = ['#pinned'];
+    const h = await inspectorHarness(
+      '- [ ] Root\n  - [ ] Owner\n    - [ ] Child\n    - [ ] Sibling',
+      'Owner',
+      {},
+      settings,
+    );
+    const off = subscribeInspectorReconciliation(h);
+    try {
+      rightClick(expectDefined(h.el.querySelector('.abyss-subtask-row')));
+      const menu = expectDefined(shown[0]);
+      if (action === 'tag') menu.pick('#pinned');
+      if (action === 'priority') menu.pick('Priority', 'Highest');
+      if (action === 'status') menu.pick('Status', 'In progress');
+      await vi.waitFor(async () => {
+        const lines = (await h.read()).split('\n');
+        expect(lines[0]).toBe('- [ ] Root');
+        expect(lines[1]).toBe('  - [ ] Owner');
+        expect(lines[3]).toBe('    - [ ] Sibling');
+        if (action === 'tag') expect(lines[2]).toBe('    - [ ] Child #pinned');
+        if (action === 'priority') expect(h.node('Child').node.priority).toBe('A');
+        if (action === 'status') expect(lines[2]).toBe('    - [/] Child');
+      });
+      expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['Root', 'Owner']);
+    } finally {
+      off();
+    }
+  },
+);
+
+it('uses successor refs for newly opened inspector menus and retires removed rows', async () => {
+  const shown = captureMenus();
+  const h = await inspectorHarness('- [ ] Owner\n  - [ ] Existing', 'Owner');
+  const off = subscribeInspectorReconciliation(h);
+  try {
+    const row = expectDefined(h.el.querySelector('.abyss-subtask-row'));
+    await call<Promise<boolean>>(h.panel, 'addSubTask', h.node('Owner').node, 'Added');
+    expect(row.isConnected).toBe(true);
+    rightClick(row);
+    expectDefined(shown[0]).pick('Today');
+    await vi.waitFor(() => {
+      expect(h.node('Existing').node.planning.due).toBeDefined();
+    });
+    rightClick(row);
+    expectDefined(shown[1]).pick('Delete');
+    await vi.waitFor(() => {
+      expect(h.node('Owner').node.subtasks.map((node) => node.title)).toEqual(['Added']);
+    });
+    expect(row.isConnected).toBe(false);
+    rightClick(row);
+    expect(shown).toHaveLength(2);
+  } finally {
+    off();
+  }
+});
+
+it('restores the exact child subtree through inspector menu Delete and Undo', async () => {
+  const source =
+    '- [ ] Root\n  - [ ] Owner\n    - [ ] Child\n      - 2026-09-05: child comment\n      - [ ] Deep\n    - [ ] Sibling';
+  const shown = captureMenus();
+  const h = await inspectorHarness(source, 'Owner');
+  const off = subscribeInspectorReconciliation(h);
+  try {
+    rightClick(expectDefined(h.el.querySelector('.abyss-subtask-row')));
+    expectDefined(shown[0]).pick('Delete');
+    await vi.waitFor(async () => {
+      expect(await h.read()).toBe('- [ ] Root\n  - [ ] Owner\n    - [ ] Sibling');
+    });
+    expectDefined(h.el.querySelector<HTMLButtonElement>('.abyss-undo-row button')).click();
+    await vi.waitFor(async () => {
+      expect(await h.read()).toBe(source);
+    });
+    expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['Root', 'Owner']);
+  } finally {
+    off();
+  }
+});
+
+it('refuses an inspector menu edit while a related submission is pending', async () => {
+  const shown = captureMenus();
+  const messages: string[] = [];
+  notices(messages);
+  const h = await inspectorHarness('- [ ] Owner\n  - [ ] Child', 'Owner');
+  const held = deferred<void>();
+  const process = h.app.vault.process.bind(h.app.vault);
+  vi.spyOn(h.app.vault, 'process').mockImplementation(async (...args) => {
+    await held.promise;
+    return process(...args);
+  });
+  const pending = call<Promise<TaskCommandResult>>(
+    h.panel,
+    'updatePriority',
+    h.node('Owner').node,
+    'A',
+  );
+  try {
+    rightClick(expectDefined(h.el.querySelector('.abyss-subtask-row')));
+    expectDefined(shown[0]).pick('Today');
+    await flushMicrotasks(20);
+    expect(messages).toContain(
+      'Another change to this task is still being saved. Try again in a moment.',
+    );
+    expect(await h.read()).toBe('- [ ] Owner\n  - [ ] Child');
+  } finally {
+    held.resolve();
+    await pending;
+  }
+  expect(h.node('Child').node.planning.due).toBeUndefined();
+});
+
+it('refuses an already open inspector menu after an external child replacement', async () => {
+  const shown = captureMenus();
+  const messages: string[] = [];
+  notices(messages);
+  const h = await inspectorHarness('- [ ] Owner\n  - [ ] Child', 'Owner');
+  rightClick(expectDefined(h.el.querySelector('.abyss-subtask-row')));
+  const replacement = '\n- [ ] Owner\n  - [ ] Replacement';
+  await h.app.vault.modify(h.file, replacement);
+  h.index.installCommittedContent('tasks.md', replacement);
+  expectDefined(shown[0]).pick('Today');
+  await flushMicrotasks(30);
+  expect(await h.read()).toBe(replacement.slice(1));
+  expect(messages.length).toBeGreaterThan(0);
+});
+
+it('focuses the existing inspector date editor for an unselected child menu target', async () => {
+  const shown = captureMenus();
+  const h = await inspectorHarness('- [ ] Owner\n  - [ ] Child\n  - [ ] Sibling', 'Owner');
+  rightClick(expectDefined(h.el.querySelector('.abyss-subtask-row')));
+  expectDefined(shown[0]).pick('Set date…');
+  const input = expectDefined(h.el.querySelector<HTMLInputElement>('.abyss-date-input'));
+  await vi.waitFor(() => {
+    expect(input.ownerDocument.activeElement).toBe(input);
+  });
+  input.value = '2026-10-21';
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: '2', bubbles: true }));
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  await vi.waitFor(async () => {
+    expect(await h.read()).toBe('- [ ] Owner\n  - [ ] Child 📅 2026-10-21\n  - [ ] Sibling');
+  });
+});
+
+it('uses the ordinary tag picker to atomically add and remove inspector child tags', async () => {
+  const shown = captureMenus();
+  const opened: TagPickerModal[] = [];
+  vi.spyOn(Modal.prototype, 'open').mockImplementation(function (this: Modal) {
+    if (!(this instanceof TagPickerModal)) throw new Error('Expected tag picker');
+    opened.push(this);
+    document.body.append(this.containerEl);
+    this.onOpen();
+  });
+  vi.spyOn(Modal.prototype, 'close').mockImplementation(function (this: Modal) {
+    this.onClose();
+    this.containerEl.remove();
+  });
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.pinnedTags = ['#new'];
+  const h = await inspectorHarness(
+    '- [ ] Owner #parent\n  - [ ] Child #old\n  - [ ] Sibling #old',
+    'Owner',
+    {},
+    settings,
+  );
+  rightClick(expectDefined(h.el.querySelector('.abyss-subtask-row')));
+  expectDefined(shown[0]).pick('Set tag…');
+  const picker = expectDefined(opened[0]);
+  try {
+    expectDefined(
+      picker.contentEl.querySelector<HTMLButtonElement>('[data-remove-tag="#old"]'),
+    ).click();
+    expectDefined(picker.contentEl.querySelector<HTMLButtonElement>('[data-tag="#new"]')).click();
+    picker.close();
+    await vi.waitFor(async () => {
+      expect(await h.read()).toBe('- [ ] Owner #parent\n  - [ ] Child #new\n  - [ ] Sibling #old');
+    });
+  } finally {
+    if (picker.containerEl.isConnected) picker.close();
+  }
+});
+
+it('preserves the source link menu inside an inspector child row', async () => {
+  mockReadingView();
+  const shown = captureMenus();
+  const source =
+    '- [ ] Root\n  - [ ] Owner\n    - [ ] [[Different note|Repeated label]]\n    - [ ] Repeated label';
+  const h = await inspectorHarness(source, 'Owner');
+  await settleRender();
+  const row = expectDefined(h.el.querySelector('.abyss-subtask-row'));
+  rightClick(expectDefined(row.querySelector('a')));
+  expect(shown[0]?.titles).toEqual(['Edit link…']);
+  rightClick(expectDefined(row.querySelector('.abyss-subtask-label')));
+  expect(shown).toHaveLength(2);
+  expectDefined(shown[1]).pick('Today');
+  await vi.waitFor(async () => {
+    const content = await h.read();
+    expect(content).toContain('    - [ ] [[Different note|Repeated label]] 📅 ');
+    expect(content.split('\n')[3]).toBe('    - [ ] Repeated label');
+    expect(content.split('\n')[0]).toBe('- [ ] Root');
+    expect(content.split('\n')[1]).toBe('  - [ ] Owner');
+  });
 });

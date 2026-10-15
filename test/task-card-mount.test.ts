@@ -91,6 +91,7 @@ function renderer(useListControls = false) {
         context = next;
         next?.component.register(unbound);
       },
+      openChildContextMenu: () => {},
       openStatusMenu,
       formatDate: String,
       getDateClass: () => '',
@@ -1902,6 +1903,7 @@ it('stops tree reconciliation when synchronous owner cleanup revokes a field com
     textOptions: { component: owner, isCurrent: () => current },
     track: () => {},
     editLink: () => {},
+    onChildContextMenu: () => {},
     renderChildStatus: () => {},
     metadataKey: () => '',
     renderMetadata: () => {},

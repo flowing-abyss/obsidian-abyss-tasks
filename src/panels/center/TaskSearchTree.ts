@@ -47,6 +47,11 @@ export interface TaskSearchTreeRenderOptions {
     child: SubtaskSnapshot,
     current: () => SubtaskSnapshot | undefined,
   ) => void;
+  readonly onChildContextMenu: (
+    event: MouseEvent,
+    child: SubtaskSnapshot,
+    row: HTMLElement,
+  ) => void;
   readonly metadataKey: (
     node: TaskSelectionNode,
     evidence: readonly TaskSearchSemanticEvidence[],
@@ -297,6 +302,14 @@ function createEntry(
     metadataKey: '',
     metadataOwner: undefined,
   };
+  if (row !== undefined) {
+    owner.registerDomEvent(host, 'contextmenu', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (isCurrent(record) && !('source' in record.node))
+        record.options.onChildContextMenu(event, record.node, row);
+    });
+  }
   if (row !== undefined)
     mountTaskSearchKeyboardActivation(row, owner, () => {
       if (isCurrent(record)) record.options.search.onActivate(record.tree.address);

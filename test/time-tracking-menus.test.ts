@@ -15,6 +15,7 @@ import {
   flushMicrotasks,
   useRealMoment,
 } from './helpers';
+import { captureMenus, rightClick } from './support/linkEditHarness';
 import { useTaskPanelViewport } from './support/taskPanelViewport';
 
 useTaskPanelViewport();
@@ -598,4 +599,20 @@ it('ticks every outgoing occurrence and releases previous render badges', async 
   expect(old.map((badge) => badge.textContent)).toEqual(['1h 36m', '1h 36m']);
   h.panel.destroy();
   expect(clock.running()).toBe(false);
+});
+
+it('starts inspector row tracking on the clicked grandchild while its parent is selected', async () => {
+  const shown = captureMenus();
+  const h = await inspector(
+    '- [ ] Alpha\n  - [ ] Owner\n    - [ ] Child\n    - [ ] Sibling\n',
+    'Owner',
+  );
+  rightClick(expectDefined(h.el.querySelector('.abyss-subtask-row')));
+  expectDefined(shown[0]).pick('Start tracking');
+  await vi.waitFor(async () => {
+    expect(await h.read()).toBe(
+      `- [ ] Alpha\n  - [ ] Owner\n    - [ ] Child\n    \t- ${NOW_ATOM} →\n    - [ ] Sibling\n`,
+    );
+  });
+  expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['Alpha', 'Owner']);
 });

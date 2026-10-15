@@ -17,6 +17,7 @@ import {
   type LocalDate,
   type PreparedSearchQuery,
   type SearchWordSegmenter,
+  type SubtaskSnapshot,
   type TaskDependencySummary,
   type TaskNodeRef,
   type TaskNodeSnapshot,
@@ -148,6 +149,7 @@ interface TaskCardRendererHost {
   ): void;
   reportFailure?(error: unknown): void;
   dependenciesForNode(target: TaskNodeRef): TaskDependencySummary | undefined;
+  openChildContextMenu(event: MouseEvent, child: SubtaskSnapshot, row: HTMLElement): void;
   openStatusMenu(
     event: MouseEvent,
     task: TaskSelectionNode,
@@ -1029,6 +1031,9 @@ export class TaskCardRenderer {
       },
       editLink: (target, occurrence, token) => {
         this.#commands.editTaskLink(root, occurrence, token, target);
+      },
+      onChildContextMenu: (event, child, row) => {
+        this.#host.openChildContextMenu(event, child, row);
       },
       renderChildStatus: (host, child, current) => {
         const presentation = {

@@ -361,7 +361,12 @@ duplicate shell subscriptions.
 Centre surfaces reuse `TaskCommands`, `TaskMenus`, `CaptureSessions`, `ListViewControls`, and
 [`TaskCardRenderer`](src/panels/center/TaskCardRenderer.ts). Inspector planning, dependency, and
 section owners render and invoke retained callbacks; RightPanel keeps submission and recovery
-authority. New workflows reuse these commands, menus, renderers, and state semantics.
+authority. [`taskContextMenu`](src/ui/taskContextMenu.ts) registers the shared single-task menu
+from an explicit node/reference and surface-owned action callbacks. CenterPanel retains bulk menu
+routing; descendant context rows always use the single-task route. Inspector rows acquire their
+current retained owner at menu opening and keep commands, pending edits, recovery, and Undo in
+RightPanel. View-filter actions are a center-only capability. New workflows reuse these commands,
+menus, renderers, and state semantics.
 
 Search and Filter descendants occupy a card-width region beside the base main row. Base description
 evidence stays in its title body; child descriptions stay in their own row bodies. The shared tree

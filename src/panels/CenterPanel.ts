@@ -554,6 +554,12 @@ export class CenterPanel {
         reportFailure: (error) => {
           this.reportTaskRenderFailure_abyssPrivate(error);
         },
+        openChildContextMenu: (event, child, row) => {
+          const card = row.closest<HTMLElement>('.abyss-task-card');
+          if (card === null) return;
+          const menu = this.taskMenus_abyssPrivate.createTaskContextMenu(card, child);
+          this.showTaskMenu_abyssPrivate(menu, event, card);
+        },
         openStatusMenu: (event, task, completion) => {
           this.openStatusMenu_abyssPrivate(event, task, completion);
         },

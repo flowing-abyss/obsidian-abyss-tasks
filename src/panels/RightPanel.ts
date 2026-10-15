@@ -525,6 +525,9 @@ export class RightPanel {
         root: () => this.el_abyssPrivate,
         component: () => this.md_abyssPrivate,
         taskOwner: (task) => this.taskOwner_abyssPrivate(task),
+        openTaskContextMenu: (event, task, row) => {
+          return this.planningSurfaces_abyssPrivate.renderRowContextMenu(event, task, row);
+        },
         renderTaskStatusMarker: (parent, task) => {
           this.renderTaskStatusMarker_abyssPrivate(parent, task);
         },
