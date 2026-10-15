@@ -1697,3 +1697,102 @@ it('commits changed tree fields together after the last focused replacement can 
     h.hostComponent.unload();
   }
 });
+
+it.each([
+  {
+    field: 'comment',
+    source: '- 2026-10-04: [bravo](https://example.com)',
+    selector: '.abyss-comment-text',
+  },
+  {
+    field: 'description',
+    source: '- > [bravo](https://example.com)',
+    selector: '.abyss-task-desc',
+  },
+])(
+  'releases a cancelled new $field listener before its entry retires',
+  async ({ source, selector }) => {
+    const { taskSearchContext, prepareSearchQuery } = await import('../src/tasks');
+    const { fallbackSearchWords } = await import('../src/tasks/domain/searchMatchPolicy');
+    const h = renderer();
+    const canonical = await createCanonicalSearchHarness(
+      { 'a.md': `- [ ] Root\n  - [ ] branchlong\n    ${source}` },
+      h.settings,
+    );
+    const root = expectDefined(canonical.index.list()[0]);
+    const onActivate = vi.fn();
+    const search = (raw: string) => {
+      const query = prepareSearchQuery(raw, fallbackSearchWords);
+      return {
+        mode: 'search' as const,
+        query,
+        segment: fallbackSearchWords,
+        context: taskSearchContext(
+          root,
+          { epoch: 'test', rootId: 1, version: 1, childLines: [] },
+          query,
+          fallbackSearchWords,
+        ),
+        onActivate,
+      };
+    };
+    let hold: ReturnType<typeof deferred<void>> | undefined;
+    const holders: HTMLElement[] = [];
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, markdown, holder) => {
+      if (markdown.includes('bravo') && hold !== undefined) {
+        holders.push(holder);
+        await hold.promise;
+      }
+      holder.setText(markdown);
+    });
+    const registrations = vi.spyOn(HTMLElement.prototype, 'addEventListener');
+    const flags = { selected: false, showDelete: false };
+    const mount = h.subject.mount(document.body, root, [], flags, search('branchlong'));
+    try {
+      await mount.settled;
+      const title = expectDefined(mount.element.querySelector('.abyss-subtask-label'));
+      const retired: HTMLElement[] = [];
+      for (let cycle = 0; cycle < 3; cycle++) {
+        hold = deferred<void>();
+        registrations.mockClear();
+        mount.update(root, [], flags, search('bra'));
+        const pending = mount.settled;
+        expect(holders).toHaveLength(cycle + 1);
+        const fields = registrations.mock.calls.flatMap(([type], index) => {
+          const element: unknown = registrations.mock.contexts[index];
+          return type === 'click' && element instanceof HTMLElement && element.matches(selector)
+            ? [element]
+            : [];
+        });
+        const field = expectDefined(fields[0]);
+        const registration = registrations.mock.calls.findIndex(
+          ([type], index) => type === 'click' && registrations.mock.contexts[index] === field,
+        );
+        const listener = expectDefined(registrations.mock.calls[registration]?.[1]);
+        const remove = vi.spyOn(field, 'removeEventListener');
+        mount.update(root, [], flags, search('branchlong'));
+        expect(await pending).toEqual({ type: 'cancelled' });
+        expect(await mount.settled).toEqual({ type: 'ready' });
+        expect(remove).toHaveBeenCalledWith('click', listener, undefined);
+        hold.resolve();
+        hold = undefined;
+        await Promise.resolve();
+        expect(mount.element.querySelector(selector)).toBeNull();
+        expect(mount.element.querySelector('.abyss-subtask-label')).toBe(title);
+        expect(holders.every((holder) => !holder.isConnected)).toBe(true);
+        retired.push(field);
+      }
+      mount.update(root, [], flags, search('bra'));
+      expect(await mount.settled).toEqual({ type: 'ready' });
+      for (const field of retired) field.click();
+      expect(onActivate).not.toHaveBeenCalled();
+      expectDefined(mount.element.querySelector<HTMLElement>(selector)).click();
+      expect(onActivate).toHaveBeenCalledTimes(1);
+    } finally {
+      hold?.resolve();
+      mount.destroy();
+      canonical.close();
+      h.hostComponent.unload();
+    }
+  },
+);

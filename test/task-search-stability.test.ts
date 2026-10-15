@@ -1,7 +1,7 @@
 import { MarkdownRenderer } from 'obsidian';
 import { afterEach, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import { expectDefined, flushMicrotasks, useRealMoment } from './helpers';
+import { expectDefined, flushMicrotasks, methodOf, useRealMoment } from './helpers';
 import { mockReadingView } from './support/linkEditHarness';
 import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
 useRealMoment();
@@ -74,6 +74,140 @@ it('keeps a focused descendant anchor and current activation when an earlier sib
   }
 });
 
+it.each([
+  { field: 'comment', source: '- 2026-10-04: bravo', selector: '.abyss-comment-text' },
+  { field: 'description', source: '- > bravo', selector: '.abyss-task-desc' },
+])(
+  'releases each removed $field listener while retaining its entry',
+  async ({ source, selector }) => {
+    mockReadingView();
+    const registrations = vi.spyOn(HTMLElement.prototype, 'addEventListener');
+    const removals = vi.spyOn(HTMLElement.prototype, 'removeEventListener');
+    const activeFields = () =>
+      registrations.mock.calls.flatMap(([type, listener], index) => {
+        const element: unknown = registrations.mock.contexts[index];
+        if (type !== 'click' || !(element instanceof HTMLElement) || !element.matches(selector))
+          return [];
+        const removed = removals.mock.calls.some(
+          ([removedType, removedListener], removedIndex) =>
+            removedType === type &&
+            removedListener === listener &&
+            removals.mock.contexts[removedIndex] === element,
+        );
+        return removed ? [] : [element];
+      });
+    const h = await mountCanonicalSearchUi(
+      { 'a.md': `- [ ] Root\n  - [ ] branchlong\n    ${source}` },
+      structuredClone(DEFAULT_SETTINGS),
+    );
+    try {
+      let retainedTitle: Element | undefined;
+      const retired: HTMLElement[] = [];
+      for (let cycle = 0; cycle < 4; cycle++) {
+        h.query('bra');
+        await h.completed();
+        const title = expectDefined(h.root.querySelector('.abyss-subtask-label'));
+        retainedTitle ??= title;
+        expect(title).toBe(retainedTitle);
+        const field = expectDefined(h.root.querySelector<HTMLElement>(selector));
+        expect(activeFields()).toEqual([field]);
+        for (const old of retired) old.click();
+        await flushMicrotasks(30);
+        expect(h.state.get('mode')).toBe('search');
+        h.query('bra ');
+        await h.completed();
+        expect(h.root.querySelector(selector)).toBe(field);
+        expect(activeFields()).toEqual([field]);
+        h.query('branchlong');
+        await h.completed();
+        expect(field.isConnected).toBe(false);
+        expect(activeFields()).toEqual([]);
+        expect(h.root.querySelector('.abyss-subtask-label')).toBe(retainedTitle);
+        retired.push(field);
+      }
+      h.query('bra');
+      await h.completed();
+      expect(activeFields()).toHaveLength(1);
+    } finally {
+      h.dispose();
+    }
+    expect(activeFields()).toEqual([]);
+  },
+);
+
+it.each([128, 256])(
+  'retains %i sibling nodes and focus with linear membership work',
+  async (count) => {
+    mockReadingView();
+    const h = await mountCanonicalSearchUi(
+      {
+        'a.md': [
+          '- [ ] Root',
+          ...Array.from(
+            { length: count },
+            (_, index) => `  - [ ] [needle ${index}](https://example.com/${index})`,
+          ),
+        ].join('\n'),
+      },
+      structuredClone(DEFAULT_SETTINGS),
+    );
+    try {
+      h.query('needle');
+      await h.completed();
+      const rows = [...h.root.querySelectorAll<HTMLElement>('.abyss-subtask-row')];
+      expect(rows).toHaveLength(count);
+      const anchor = expectDefined(rows[Math.floor(count / 2)]?.querySelector('a'));
+      anchor.focus();
+      const siblings = new WeakSet(rows.map((row) => expectDefined(row.parentElement)));
+      let membershipWork = 0;
+      const includes = Array.prototype.includes;
+      const has = methodOf(Set.prototype, 'has');
+      const arrayProbe = vi.spyOn(Array.prototype, 'includes').mockImplementation(function (
+        this: unknown[],
+        value: unknown,
+        from?: number,
+      ) {
+        if (!(value instanceof HTMLElement) || !siblings.has(value))
+          return includes.call(this, value, from);
+        // Count the element reads performed by the real membership scan, not elapsed time.
+        return includes.call(
+          new Proxy(this, {
+            get: (target, key, receiver): unknown => {
+              if (typeof key === 'string' && /^\d+$/u.test(key)) membershipWork++;
+              return Reflect.get(target, key, receiver);
+            },
+          }),
+          value,
+          from,
+        );
+      });
+      const setProbe = vi.spyOn(Set.prototype, 'has').mockImplementation(function (
+        this: Set<unknown>,
+        value: unknown,
+      ) {
+        if (value instanceof HTMLElement && siblings.has(value)) membershipWork++;
+        return has.call(this, value);
+      });
+      try {
+        h.query('needle ');
+        await h.completed();
+      } finally {
+        arrayProbe.mockRestore();
+        setProbe.mockRestore();
+      }
+      const retained = h.root.querySelectorAll('.abyss-subtask-row');
+      expect(retained).toHaveLength(count);
+      rows.forEach((row, index) => {
+        expect(retained[index]).toBe(row);
+      });
+      expect(document.activeElement).toBe(anchor);
+      expect(membershipWork).toBeLessThanOrEqual(count * 4);
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
 it('preserves a focused child title when its contributing comment disappears', async () => {
   mockReadingView();
   const h = await mountCanonicalSearchUi(
@@ -126,31 +260,48 @@ it('refreshes descendant status semantics without replacing its complete text', 
   }
 });
 
-it('does not give a removed focused comment the next query activation callback', async () => {
-  mockReadingView();
-  const h = await mountCanonicalSearchUi(
-    { 'a.md': '- [ ] Root\n  - [ ] branchlong\n    - 2026-10-04: [bravo](https://example.com)' },
-    structuredClone(DEFAULT_SETTINGS),
-  );
-  try {
-    h.query('bra');
-    await h.completed();
-    const comment = expectDefined(h.root.querySelector<HTMLElement>('.abyss-comment-text'));
-    const anchor = expectDefined(comment.querySelector('a'));
-    anchor.focus();
-    const publications = vi.spyOn(h.panel, 'mountSearchRows_abyssPrivate');
-    h.query('branchlong');
-    await vi.waitFor(() => {
-      expect(publications).toHaveBeenCalled();
-    });
-    expect(comment.isConnected).toBe(true);
-    comment.click();
-    await flushMicrotasks(30);
-    expect(h.state.get('mode')).toBe('search');
-    anchor.blur();
-    await h.completed();
-    expect(comment.isConnected).toBe(false);
-  } finally {
-    h.dispose();
-  }
-});
+it.each([
+  {
+    field: 'comment',
+    source: '- 2026-10-04: [bravo](https://example.com)',
+    selector: '.abyss-comment-text',
+  },
+  {
+    field: 'description',
+    source: '- > [bravo](https://example.com)',
+    selector: '.abyss-task-desc',
+  },
+])(
+  'does not give a removed focused $field the next query activation callback',
+  async ({ source, selector }) => {
+    mockReadingView();
+    const h = await mountCanonicalSearchUi(
+      { 'a.md': `- [ ] Root\n  - [ ] branchlong\n    ${source}` },
+      structuredClone(DEFAULT_SETTINGS),
+    );
+    try {
+      h.query('bra');
+      await h.completed();
+      const field = expectDefined(h.root.querySelector<HTMLElement>(selector));
+      const anchor = expectDefined(field.querySelector('a'));
+      anchor.focus();
+      const publications = vi.spyOn(h.panel, 'mountSearchRows_abyssPrivate');
+      h.query('branchlong');
+      await vi.waitFor(() => {
+        expect(publications).toHaveBeenCalled();
+      });
+      expect(field.isConnected).toBe(true);
+      field.click();
+      await flushMicrotasks(30);
+      expect(h.state.get('mode')).toBe('search');
+      expect(h.root.dataset['searchPhase']).toBe('pending');
+      expect(document.activeElement).toBe(anchor);
+      anchor.blur();
+      await h.completed();
+      expect(field.isConnected).toBe(false);
+      expect(h.root.dataset['searchPhase']).toBe('complete');
+    } finally {
+      h.dispose();
+    }
+  },
+);

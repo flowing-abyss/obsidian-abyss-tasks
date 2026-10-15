@@ -366,6 +366,9 @@ authority. New workflows reuse these commands, menus, renderers, and state seman
 Search and Filter descendants occupy a card-width region beside the base main row. Base description
 evidence stays in its title body; child descriptions stay in their own row bodies. The shared tree
 mount reconciles exact node and comment references in source order across both hosts.
+Each tree field owns its activation listener and text lifetime together; retirement releases both on
+removal, canceled creation, or entry disposal. Desired membership revokes ordinary activation before
+focus-deferred physical removal. Sibling pruning uses a desired-element set before reordering.
 [`RetainedTaskText`](src/ui/retainedTaskText.ts) owns each title, description, and comment independently,
 with one visible Markdown Component and at most one connected hidden replacement. Complete fields
 retain their wired anchors and source projection across query decoration changes. Destructive

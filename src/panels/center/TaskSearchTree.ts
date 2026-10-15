@@ -104,6 +104,8 @@ interface FieldRecord {
   readonly element: HTMLElement;
   readonly wrapper: HTMLElement;
   readonly text: RetainedTaskText;
+  desired: boolean;
+  destroy(): void;
 }
 interface EntryRecord {
   readonly target: ReturnType<typeof taskNodeRef>;
@@ -161,8 +163,9 @@ function activateField(event: MouseEvent, record: EntryRecord): void {
   search.onActivate(record.tree.address);
 }
 function reconcile(container: HTMLElement, elements: readonly HTMLElement[]): void {
+  const desired = new Set(elements);
   for (const child of [...container.children])
-    if (!elements.includes(child as HTMLElement)) child.remove();
+    if (!desired.has(child as HTMLElement)) child.remove();
   let cursor = container.firstChild;
   for (const element of elements) {
     if (element === cursor) cursor = cursor.nextSibling;
@@ -224,19 +227,29 @@ function createField(
   wrapper: HTMLElement,
   lifetime: { owner: Component; current: () => EntryRecord | undefined; stagingHost: HTMLElement },
 ): FieldRecord {
-  lifetime.owner.registerDomEvent(element, 'click', (event) => {
-    const record = lifetime.current();
+  const owner = lifetime.owner.addChild(new Component());
+  const text = new RetainedTaskText(element, owner, lifetime.stagingHost);
+  const field: FieldRecord = {
+    element,
+    wrapper,
+    text,
+    desired: true,
+    destroy: () => {
+      field.desired = false;
+      text.destroy();
+      lifetime.owner.removeChild(owner);
+      wrapper.remove();
+    },
+  };
+  owner.registerDomEvent(element, 'click', (event) => {
+    const record = field.desired ? lifetime.current() : undefined;
     if (record === undefined) {
       event.stopPropagation();
       return;
     }
     activateField(event, record);
   });
-  return {
-    element,
-    wrapper,
-    text: new RetainedTaskText(element, lifetime.owner, lifetime.stagingHost),
-  };
+  return field;
 }
 function createEntry(
   tree: TaskSearchTreeNode,
@@ -292,9 +305,9 @@ function createEntry(
 }
 function releaseEntry(record: EntryRecord, parent: Component): void {
   record.desired = false;
-  record.title?.text.destroy();
-  record.description?.text.destroy();
-  for (const field of record.comments.values()) field.text.destroy();
+  record.title?.destroy();
+  record.description?.destroy();
+  for (const field of record.comments.values()) field.destroy();
   parent.removeChild(record.owner);
   record.host.remove();
 }
@@ -324,12 +337,12 @@ function prepareComments(
       field = createField(wrapper.createEl('p', { cls: 'abyss-comment-text' }), wrapper, {
         owner: record.owner,
         stagingHost: record.stagingHost,
-        current: () =>
-          commentLines(record.tree).has(comment.ref.relativeLine) ? record : undefined,
+        current: () => record,
       });
       record.comments.set(comment.ref.relativeLine, field);
       plan.added.push([record, comment.ref.relativeLine, field]);
     }
+    field.desired = true;
     plan.updates.push(
       field.text.prepare(
         fieldInput(
@@ -342,7 +355,11 @@ function prepareComments(
     );
     ordered.push({ line: comment.ref.relativeLine, element: field.wrapper });
   }
-  for (const [line, field] of record.comments) if (!lines.has(line)) plan.removed.push(field);
+  for (const [line, field] of record.comments)
+    if (!lines.has(line)) {
+      field.desired = false;
+      plan.removed.push(field);
+    }
   return ordered;
 }
 function descriptionPresentation(record: EntryRecord): {
@@ -378,7 +395,10 @@ function prepareDescriptionField(
 ): FieldRecord | undefined {
   const { show, markdown, preview, continuation } = presentation;
   if (!show) {
-    if (record.description !== undefined) plan.removed.push(record.description);
+    if (record.description !== undefined) {
+      record.description.desired = false;
+      plan.removed.push(record.description);
+    }
     return;
   }
   if (record.description === undefined) {
@@ -392,6 +412,7 @@ function prepareDescriptionField(
     plan.descriptions.push(record);
   }
   const field = record.description;
+  field.desired = true;
   plan.updates.push(
     field.text.prepare(
       fieldInput(
@@ -561,10 +582,7 @@ class RetainedSearchTree implements TaskSearchTreeMount {
     for (const [host, elements] of plan.placements) reconcile(host, elements);
     for (const [key, record] of this.#records)
       if (plan.desired.get(key) !== record) releaseEntry(record, this.#owner);
-    for (const field of plan.removed) {
-      field.text.destroy();
-      field.wrapper.remove();
-    }
+    for (const field of plan.removed) field.destroy();
     this.#removeComments(plan);
     this.#records = plan.desired;
     if (this.#context.childElementCount === 0) this.#host.remove();
@@ -584,13 +602,12 @@ class RetainedSearchTree implements TaskSearchTreeMount {
       if (this.#records.get(key) !== record) releaseEntry(record, this.#owner);
     for (const record of plan.descriptions)
       if (this.#records.get(taskNodeAddress(record.target)) === record) {
-        record.description?.text.destroy();
+        record.description?.destroy();
         record.description = undefined;
       }
     for (const [record, line, field] of plan.added)
       if (this.#records.get(taskNodeAddress(record.target)) === record) {
-        field.text.destroy();
-        field.wrapper.remove();
+        field.destroy();
         record.comments.delete(line);
       }
   }
