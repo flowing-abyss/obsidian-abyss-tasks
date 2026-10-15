@@ -1149,15 +1149,29 @@ describe('physical Q creation reveal through PanelView', () => {
     }
   });
 
-  it('waits for exact hydration and current mounted Markdown without changing the focused Q input', async () => {
-    const h = await mountQuickPanel(false, false, true);
+  it('waits for exact hydration and current mounted Markdown without changing the focused Q input', async (context) => {
     const hydration = deferred<void>(),
       markdown = deferred<void>();
     const entered = deferred<void>(),
-      rendered = deferred<void>();
+      rendered = deferred<void>(),
+      requested = deferred<void>();
+    let acquired: Awaited<ReturnType<typeof mountQuickPanel>> | undefined;
+    const dispose = ownTestCleanup(context.signal, async () => {
+      const closed = acquired?.dispose();
+      hydration.resolve();
+      markdown.resolve();
+      await closed;
+    });
+    context.onTestFinished(() => dispose());
+    const h = (acquired = await mountQuickPanel(false, false, true, context.signal));
+    const now = 1_800_000_000_000;
+    vi.spyOn(h.presentation['options'], 'now').mockImplementation(() => now);
     try {
       h.query('needle');
-      await searchUiCompleted(h.center);
+      await searchUiCompleted(h.center, undefined, {
+        signal: context.signal,
+        phase: 'quick capture hydration query',
+      });
       const actual = h.index.resolveSearchHits.bind(h.index);
       vi.spyOn(h.index, 'resolveSearchHits').mockImplementation(async (hits, signal) => {
         const created = h.source.files().find((file) => file.path === 'created.md');
@@ -1168,7 +1182,7 @@ describe('physical Q creation reveal through PanelView', () => {
           )
         ) {
           entered.resolve();
-          await hydration.promise;
+          await ownedWait(hydration.promise, context.signal);
         }
         return actual(hits, signal);
       });
@@ -1176,42 +1190,38 @@ describe('physical Q creation reveal through PanelView', () => {
         holder.createEl('strong', { text });
         if (text.includes('Z created Q needle')) {
           rendered.resolve();
-          await markdown.promise;
+          await ownedWait(markdown.promise, context.signal);
         }
       });
-      let request: CreationRevealRequest | undefined;
       const present = h.presentation.present.bind(h.presentation);
       vi.spyOn(h.presentation, 'present').mockImplementation((result, description, authority) => {
         if (authority !== undefined) {
           const reveal = authority.reveal.bind(authority);
           vi.spyOn(authority, 'reveal').mockImplementation((ref, next) => {
-            request = next;
+            requested.resolve();
             return reveal(ref, next);
           });
         }
         present(result, description, authority);
       });
-      const input = await h.openQ();
+      const input = await ownedWait(h.openQ(), context.signal);
+      const presented = nextQuickPresentation(h.presentation);
       enter(input, '**Z created Q needle**');
-      await vi.waitFor(() => {
-        expect(request).toBeDefined();
-      });
-      await entered.promise;
+      await ownedWait(requested.promise, context.signal);
+      await ownedWait(entered.promise, context.signal);
       const reveal = vi.spyOn(expectDefined(h.panel['taskSurface_abyssPrivate']).surface, 'reveal');
       expect(h.root.querySelector('.is-just-created')).toBeNull();
       expect(reveal).not.toHaveBeenCalled();
       hydration.resolve();
-      await rendered.promise;
+      await ownedWait(rendered.promise, context.signal);
       expect(h.root.querySelector('.is-just-created')).toBeNull();
       expect(reveal).not.toHaveBeenCalled();
       markdown.resolve();
-      await vi.waitFor(() => {
-        expect(h.root.querySelector('.is-just-created')).not.toBeNull();
-      });
+      const receipt = expectDefined(await ownedWait(presented, context.signal));
       const created = expectDefined(h.index.list({ filePath: 'created.md' })[0]);
-      expect(renderedTaskElements(h.root, created.ref)).toContain(
-        h.root.querySelector('.is-just-created'),
-      );
+      expect(receipt.ref).toEqual(created.ref);
+      expect(renderedTaskElements(h.root, created.ref)).toContain(receipt.element);
+      expect(receipt.element.classList.contains('is-just-created')).toBe(true);
       expect(reveal.mock.calls.length).toBeGreaterThanOrEqual(1);
       expect(reveal.mock.calls.length).toBeLessThanOrEqual(8);
       expect(h.root.querySelectorAll('.abyss-task-card').length).toBeLessThanOrEqual(
@@ -1221,9 +1231,7 @@ describe('physical Q creation reveal through PanelView', () => {
       expect(input.value).toBe('');
       expect(legacyScroll).not.toHaveBeenCalled();
     } finally {
-      hydration.resolve();
-      markdown.resolve();
-      await h.dispose();
+      await dispose();
     }
   });
 

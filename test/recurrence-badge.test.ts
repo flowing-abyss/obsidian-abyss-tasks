@@ -116,13 +116,15 @@ describe('renderRecurrenceBadge', () => {
     expect(floating).toMatch(/position:\s*fixed/u);
   });
 
-  it('layers destructive confirmation above the task-detail modal', () => {
+  it('layers destructive confirmation above the host task-detail modal fallback', () => {
     const css = styles();
     const confirmation = /\.abyss-recurrence-delete-confirm\s*\{([^}]*)\}/u.exec(css)?.[1] ?? '';
     const modal = /\.abyss-modal-backdrop\s*\{([^}]*)\}/u.exec(css)?.[1] ?? '';
     const confirmationLayer = Number(/z-index:\s*(\d+)/u.exec(confirmation)?.[1]);
-    const modalLayer = Number(/z-index:\s*(\d+)/u.exec(modal)?.[1]);
+    const modalLayer = Number(/z-index:\s*var\(--layer-modal,\s*(\d+)\)/u.exec(modal)?.[1]);
 
+    expect(Number.isFinite(confirmationLayer)).toBe(true);
+    expect(Number.isFinite(modalLayer)).toBe(true);
     expect(confirmationLayer).toBeGreaterThan(modalLayer);
   });
 });

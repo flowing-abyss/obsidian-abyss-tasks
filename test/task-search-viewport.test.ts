@@ -83,7 +83,7 @@ async function harness(
 }
 
 async function drivenCompletion(
-  h: Awaited<ReturnType<typeof harness>>,
+  h: Pick<Awaited<ReturnType<typeof harness>>, 'clock' | 'completed'>,
   signal: AbortSignal,
 ): Promise<void> {
   let rejectFrame!: (error: unknown) => void;
@@ -790,11 +790,22 @@ it.each(['accepted', 'cancelled'] as const)(
   },
 );
 
-it.each(['owned', 'coalesced', 'pending-user', 'historical-user', 'no-op-user'] as const)(
+it.for(['owned', 'coalesced', 'pending-user', 'historical-user', 'no-op-user'] as const)(
   'tracks native scroll ownership while another destination receipt is pending: %s',
-  async (scenario) => {
+  async (scenario, context) => {
     const clock = frames();
-    const h = await mountCanonicalSearchUi(
+    const destinationEntered = deferred<void>();
+    const pending = new Map<HTMLElement, ReturnType<typeof deferred<void>>>();
+    let acquired: Awaited<ReturnType<typeof mountCanonicalSearchUi>> | undefined;
+    const dispose = ownTestCleanup(context.signal, () => {
+      try {
+        acquired?.dispose();
+      } finally {
+        for (const gate of pending.values()) gate.resolve();
+      }
+    });
+    context.onTestFinished(() => dispose());
+    const h = (acquired = await mountCanonicalSearchUi(
       {
         'search.md': Array.from({ length: 1200 }, (_, line) => {
           const title = line === 1199 ? 'needle target' : `neighbor ${line}`;
@@ -802,8 +813,13 @@ it.each(['owned', 'coalesced', 'pending-user', 'historical-user', 'no-op-user'] 
         }).join('\n'),
       },
       structuredClone(DEFAULT_SETTINGS),
-    );
-    const pending = new Map<HTMLElement, ReturnType<typeof deferred<void>>>();
+      'search',
+      undefined,
+      false,
+      undefined,
+      undefined,
+      context.signal,
+    ));
     const lifetime = vi.spyOn(h.panel, 'createRevealLifetime_abyssPrivate');
     const pulse = vi.spyOn(h.panel['taskSearchReveal_abyssPrivate'], 'show');
     vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, text, host) => {
@@ -815,7 +831,8 @@ it.each(['owned', 'coalesced', 'pending-user', 'historical-user', 'no-op-user'] 
       );
       const gate = deferred<void>();
       pending.set(card, gate);
-      await gate.promise;
+      if (pending.size === 2) destinationEntered.resolve();
+      await ownedWait(gate.promise, context.signal);
     });
     function applyUserScroll(scroll: HTMLElement, before: number): void {
       if (scenario === 'pending-user') expect(scroll.scrollTop).toBe(before - 17);
@@ -832,10 +849,11 @@ it.each(['owned', 'coalesced', 'pending-user', 'historical-user', 'no-op-user'] 
       h.query('needle');
       await h.completed();
       expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-title')).click();
-      await vi.waitFor(() => {
-        clock.flush();
-        expect(pending.size).toBeGreaterThan(1);
-      });
+      await drivenCompletion(
+        { clock, completed: () => ownedWait(destinationEntered.promise, context.signal) },
+        context.signal,
+      );
+      expect(pending.size).toBeGreaterThan(1);
       const scroll = expectDefined(h.root.querySelector<HTMLElement>('.abyss-center-scroll'));
       const before = scroll.scrollTop;
       const abortTops: number[] = [];
@@ -893,8 +911,7 @@ it.each(['owned', 'coalesced', 'pending-user', 'historical-user', 'no-op-user'] 
         expect(pulse).not.toHaveBeenCalled();
       }
     } finally {
-      for (const gate of pending.values()) gate.resolve();
-      h.dispose();
+      await dispose();
     }
   },
 );
