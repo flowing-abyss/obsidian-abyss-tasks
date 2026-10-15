@@ -450,7 +450,7 @@ describe('Search supplied result viewport', () => {
     expect(h.complete).toHaveBeenCalledTimes(3);
   });
 
-  it('preserves the same-query anchor and replaces lifetimes on a changed query', async () => {
+  it('preserves the logical anchor and card lifetime across equivalent queries', async () => {
     const h = await harness(50);
     await h.completed();
     h.clock.flush();
@@ -464,7 +464,8 @@ describe('Search supplied result viewport', () => {
     expect(retained.isConnected).toBe(true);
     h.query('needle ');
     await h.completed();
-    expect(retained.isConnected).toBe(false);
+    expect(retained.isConnected).toBe(true);
+    expect(h.results.scrollTop).toBe(1800.625);
     expect(h.root.querySelector('.abyss-center-scroll')).toBe(h.results);
   });
 
@@ -627,7 +628,7 @@ it('finishes deferred focused text after publication without reopening a sealed 
   await flushMicrotasks();
   expect(diagnostic).not.toHaveBeenCalled();
   expect(h.root.dataset['searchPhase']).toBe('complete');
-  expect(old.isConnected).toBe(false);
+  expect(old.isConnected).toBe(true);
   expect(h.results.textContent).toContain('needle');
 });
 
@@ -809,7 +810,9 @@ it.each(['owned', 'coalesced', 'pending-user', 'historical-user', 'no-op-user'] 
       host.createEl('strong', { text });
       const line = Number(/neighbor (\d+)/u.exec(text)?.[1]);
       if (h.state.get('mode') !== 'tasks' || line < 1180 || !Number.isFinite(line)) return;
-      const card = expectDefined(host.closest<HTMLElement>('.abyss-task-card'));
+      const card = expectDefined(
+        h.root.querySelector<HTMLElement>(`.abyss-task-card[data-line="${line}"]`),
+      );
       const gate = deferred<void>();
       pending.set(card, gate);
       await gate.promise;
@@ -884,3 +887,99 @@ it.each(['owned', 'coalesced', 'pending-user', 'historical-user', 'no-op-user'] 
     }
   },
 );
+
+it('remeasures a retained card after its changed excerpt commits', async () => {
+  const clock = frames();
+  const gate = deferred<void>();
+  let hold = false;
+  let entered = false;
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, text, holder) => {
+    if (hold && text.includes('context context')) {
+      entered = true;
+      await gate.promise;
+    }
+    holder.createEl('p', { text });
+  });
+  const h = await mountCanonicalSearchUi(
+    {
+      'search.md': `- [ ] needle branchlong\n  - > needle [context](https://example.com) ${'context '.repeat(80)}branchlong`,
+    },
+    structuredClone(DEFAULT_SETTINGS),
+  );
+  try {
+    h.query('needle');
+    await h.completed();
+    clock.flush();
+    const card = expectDefined(h.root.querySelector('.abyss-task-card'));
+    const old = expectDefined(card.querySelector('.abyss-task-desc')).textContent;
+    const surface = expectDefined(h.panel['taskSurface_abyssPrivate']).surface;
+    const measured = vi.spyOn(surface, 'refreshMeasurements');
+    hold = true;
+    h.query('branchlong');
+    await vi.waitFor(() => {
+      expect(entered).toBe(true);
+    });
+    expect(h.root.querySelector('.abyss-task-card')).toBe(card);
+    expect(card.querySelector('.abyss-task-desc')?.textContent).toBe(old);
+    expect(h.root.dataset['searchPhase']).toBe('pending');
+    const calls = measured.mock.calls.length;
+    gate.resolve();
+    await h.completed();
+    clock.flush();
+    expect(measured.mock.calls.length).toBeGreaterThan(calls);
+    expect(card.querySelector('.abyss-task-desc')?.textContent).toContain('branchlong');
+  } finally {
+    gate.resolve();
+    h.dispose();
+  }
+});
+
+it('remounts an offscreen row with the current excerpt while hydration stays bounded', async () => {
+  const clock = frames();
+  const text = Array.from(
+    { length: 300 },
+    (_, index) =>
+      `- [ ] Root ${index} needle branchlong\n  - > needle ${'context '.repeat(40)}branchlong`,
+  ).join('\n');
+  const h = await mountCanonicalSearchUi({ 'search.md': text }, structuredClone(DEFAULT_SETTINGS));
+  const hydrated = vi.spyOn(h.index, 'resolveSearchHits');
+  try {
+    h.query('needle');
+    await h.completed();
+    clock.flush();
+    const original = expectDefined(h.root.querySelector('.abyss-task-card[data-line="0"]'));
+    const scroll = expectDefined(h.root.querySelector<HTMLElement>('.abyss-center-scroll'));
+    scroll.scrollTop = 4000;
+    scroll.dispatchEvent(new Event('scroll'));
+    clock.flush();
+    await vi.waitFor(() => {
+      clock.flush();
+      expect(original.isConnected).toBe(false);
+    });
+    h.query('branchlong');
+    await h.completed();
+    clock.flush();
+    scroll.scrollTop = 0;
+    scroll.dispatchEvent(new Event('scroll'));
+    clock.flush();
+    await vi.waitFor(() => {
+      clock.flush();
+      expect(
+        h.root.querySelector('.abyss-task-card[data-line="0"] .abyss-task-desc')?.textContent,
+      ).toContain('branchlong');
+    });
+    expect(
+      new Set(hydrated.mock.calls.flatMap(([hits]) => hits.map((hit) => hit.address.rootId))).size,
+    ).toBeLessThan(300);
+    h.query('zzzznonexistent');
+    await h.completed();
+    expect(h.root.querySelector('.abyss-task-card')).toBeNull();
+    h.query('branchlong');
+    await h.completed();
+    expect(h.root.querySelector('.abyss-task-card .abyss-task-desc')?.textContent).toContain(
+      'branchlong',
+    );
+  } finally {
+    h.dispose();
+  }
+});

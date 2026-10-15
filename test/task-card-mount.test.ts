@@ -278,7 +278,7 @@ it('does not add a pending description cue after its card is destroyed', async (
   held.resolve();
   await Promise.resolve();
   await Promise.resolve();
-  expect(oldDescription.textContent).toBe('Old');
+  expect(oldDescription.textContent).toBe('');
   expect(current.element.querySelector('.abyss-task-desc')?.textContent).toBe('New …');
   current.destroy();
 });
@@ -532,7 +532,7 @@ it('keeps focused rendered link occurrences bound to their rendered source when 
   expect.soft(deadMenu.defaultPrevented).toBe(false);
 });
 
-it('does not rebuild a pending focused generation when Markdown cleanup emits focusout during destroy', () => {
+it('cancels a pending focused generation when Markdown cleanup emits focusout during destroy', async () => {
   const render = vi
     .spyOn(MarkdownRenderer, 'render')
     .mockImplementation(async (...args: Parameters<typeof MarkdownRenderer.render>) => {
@@ -546,10 +546,13 @@ it('does not rebuild a pending focused generation when Markdown cleanup emits fo
   const h = renderer();
   const flags = { selected: false, showDelete: false };
   const mount = h.subject.mount(document.body, task({ markdownTitle: '[[A]]' }), [], flags);
+  await mount.settled;
   expectDefined(mount.element.querySelector('a')).focus();
   mount.update(task({ markdownTitle: '[[B]]' }), [], flags);
+  const receipt = mount.settled;
   mount.destroy();
-  expect(render).toHaveBeenCalledTimes(1);
+  expect(await receipt).toEqual({ type: 'cancelled' });
+  expect(render).toHaveBeenCalledTimes(2);
 });
 
 it('refreshes unrelated content while keeping the identical Delete control focused', () => {
@@ -585,7 +588,7 @@ it('refreshes unrelated content while keeping the identical Delete control focus
   mount.destroy();
 });
 
-it('reconciles all timer transitions while the original Markdown link keeps focus', () => {
+it('reconciles all timer transitions while the original Markdown link keeps focus', async () => {
   vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _text, holder) => {
     holder.createEl('a', { text: 'A', attr: { href: 'A', tabindex: '0' } });
   });
@@ -595,6 +598,7 @@ it('reconciles all timer transitions while the original Markdown link keeps focu
   const make = (timeEntries: TaskSnapshot['timeEntries']) =>
     task({ markdownTitle: '[[A]]', timeEntries });
   const mount = h.subject.mount(document.body, make([]), [], flags);
+  await mount.settled;
   const link = expectDefined(mount.element.querySelector('a'));
   link.focus();
   mount.update(
@@ -757,7 +761,7 @@ it('mounts into the attached holder and receipts track only the current Markdown
   mount.destroy();
 });
 
-it('settles the displayed focused text without waiting for the deferred desired generation', async () => {
+it('keeps the desired receipt pending until focused replacement commits', async () => {
   const h = renderer();
   vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, markdown, holder) => {
     holder.createEl('a', { text: markdown, attr: { href: 'A', tabindex: '0' } });
@@ -768,9 +772,19 @@ it('settles the displayed focused text without waiting for the deferred desired 
   const link = expectDefined(mount.element.querySelector('a'));
   link.focus();
   mount.update(task({ markdownTitle: '[[B]]' }), [], flags);
-  expect(await mount.settled).toEqual({ type: 'ready' });
+  let ready = false;
+  const receipt = mount.settled.then((outcome) => {
+    ready = true;
+    return outcome;
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(ready).toBe(false);
   expect(link.isConnected).toBe(true);
   expect(link.textContent).toBe('[[A]]');
+  link.blur();
+  expect(await receipt).toEqual({ type: 'ready' });
+  expect(link.isConnected).toBe(false);
   mount.destroy();
 });
 
@@ -1033,14 +1047,20 @@ it.each(['base', 'child'] as const)(
       focused.focus();
       const refreshed = { ...root, description: 'New needle base' };
       mount.update(refreshed, [], flags, searchFor(refreshed));
-      expect(await mount.settled).toEqual({ type: 'ready' });
+      let ready = false;
+      const receipt = mount.settled.then((outcome) => {
+        ready = true;
+        return outcome;
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      if (region === 'base') expect(ready).toBe(false);
       expect(focused.isConnected).toBe(true);
       expect(document.activeElement).toBe(focused);
-      (region === 'base' ? childLink : baseLink).focus();
-      expect(focused.isConnected).toBe(true);
+      if (region === 'child') expect(childLink.isConnected).toBe(true);
       document.body.createEl('button').focus();
-      expect(await mount.settled).toEqual({ type: 'ready' });
-      expect(focused.isConnected).toBe(false);
+      expect(await receipt).toEqual({ type: 'ready' });
+      expect(focused.isConnected).toBe(region === 'child');
       expect(
         mount.element.querySelector(':scope > .abyss-task-card-main-row .abyss-task-desc')
           ?.textContent,
@@ -1090,7 +1110,7 @@ it.each([false, true])(
       mount.update(root, [], { ...flags, highlight: highlight('ledger') });
       if (focused) {
         expect(mount.element.querySelector('a')).toBe(anchor);
-        expect(anchor.querySelector('mark')?.textContent).toBe('Budget');
+        expect(anchor.querySelector('mark')).toBeNull();
         document.body.createEl('button').focus();
       }
       await mount.settled;
@@ -1163,7 +1183,7 @@ it('keeps dependency decoration inside the title on initial and retained renderi
   ).toBe(true);
 });
 
-it('renders own child metadata and retires parent controls on update and unload', async () => {
+it('renders own child metadata and retains parent controls until their owner unloads', async () => {
   const source = await createCanonicalSearchHarness(
     {
       'tree.md':
@@ -1198,8 +1218,8 @@ it('renders own child metadata and retires parent controls on update and unload'
     const request = h.showTaskInList.mock.calls[0]?.[1];
     expect(request?.signal.aborted).toBe(false);
     mount.update(projection.root, [], flags);
-    expect(request?.signal.aborted).toBe(true);
-    button.click();
+    expect(request?.signal.aborted).toBe(false);
+    expect(mount.element.querySelector('.abyss-task-parent-btn')).toBe(button);
     expect(h.showTaskInList).toHaveBeenCalledTimes(1);
     const replacement = expectDefined(
       mount.element.querySelector<HTMLButtonElement>('.abyss-task-parent-btn'),
@@ -1607,5 +1627,73 @@ it('mounts Analysis children as native cards with exact status commands and pare
     source.close();
     h.hostComponent.unload();
     container.remove();
+  }
+});
+
+it('commits changed tree fields together after the last focused replacement can publish', async () => {
+  const { taskSearchContext, prepareSearchQuery } = await import('../src/tasks');
+  const { fallbackSearchWords } = await import('../src/tasks/domain/searchMatchPolicy');
+  const { mockReadingView } = await import('./support/linkEditHarness');
+  mockReadingView();
+  const canonical = await createCanonicalSearchHarness(
+    {
+      'a.md':
+        '- [ ] Root\n  - > [base needle](https://base.example)\n  - [ ] Child\n    - > [child needle](https://child.example)',
+    },
+    structuredClone(DEFAULT_SETTINGS),
+  );
+  const h = renderer();
+  const root = expectDefined(canonical.index.list()[0]);
+  const query = prepareSearchQuery('needle', fallbackSearchWords);
+  const search = (root: TaskSnapshot) => ({
+    mode: 'search' as const,
+    query,
+    segment: fallbackSearchWords,
+    context: taskSearchContext(
+      root,
+      { epoch: 'test', rootId: 1, version: 1, childLines: [] },
+      query,
+      fallbackSearchWords,
+    ),
+    onActivate: () => {},
+  });
+  const flags = { selected: false, showDelete: false };
+  const mount = h.subject.mount(document.body, root, [], flags, search(root));
+  try {
+    await mount.settled;
+    const base = expectDefined(
+      mount.element.querySelector('.abyss-task-card-main-row .abyss-task-desc a'),
+    );
+    const child = expectDefined(
+      mount.element.querySelector<HTMLAnchorElement>('.abyss-subtask-row .abyss-task-desc a'),
+    );
+    child.focus();
+    const next = {
+      ...root,
+      description: 'New base needle',
+      subtasks: [{ ...expectDefined(root.subtasks[0]), description: 'New child needle' }],
+    };
+    mount.update(next, [], flags, search(next));
+    let complete = false;
+    const receipt = mount.settled.then((outcome) => {
+      complete = true;
+      return outcome;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(complete).toBe(false);
+    expect(base.isConnected).toBe(true);
+    expect(child.isConnected).toBe(true);
+    child.blur();
+    expect(await receipt).toEqual({ type: 'ready' });
+    expect(base.isConnected).toBe(false);
+    expect(child.isConnected).toBe(false);
+    expect(mount.element.textContent).toContain('New base needle');
+    expect(mount.element.textContent).toContain('New child needle');
+  } finally {
+    mount.destroy();
+    canonical.close();
+    h.hostComponent.unload();
   }
 });

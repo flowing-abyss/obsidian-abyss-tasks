@@ -565,7 +565,6 @@ export class CenterPanel {
   private createTaskSearch_abyssPrivate(
     organizationScheduler: TaskSearchOptions['organizationScheduler'],
   ): TaskSearch {
-    let query: string | undefined;
     return new TaskSearch({
       organizationScheduler,
       state: this.state_abyssPrivate,
@@ -604,14 +603,6 @@ export class CenterPanel {
         },
         revealTask: (key, identity) => this.revealSearchTask_abyssPrivate(key, identity),
         beginResults: () => {
-          const nextQuery = this.state_abyssPrivate.get(
-            this.state_abyssPrivate.get('mode') === 'search' ? 'searchQuery' : 'centerFilter',
-          );
-          if (query !== nextQuery) {
-            this.destroyTaskSurface_abyssPrivate();
-            this.taskSearchScrollReset_abyssPrivate = true;
-          }
-          query = nextQuery;
           this.beginTaskCardRender_abyssPrivate();
         },
         discardResults: () => {
@@ -1130,10 +1121,6 @@ export class CenterPanel {
       if (!this.createSearchSurface_abyssPrivate(host, options.identity))
         return { type: 'cancelled' };
     }
-    if (this.taskSearchScrollReset_abyssPrivate) {
-      host.scrollTop = 0;
-      this.taskSearchScrollReset_abyssPrivate = false;
-    }
     const retained = this.taskSurface_abyssPrivate;
     const compact = retained?.search;
     if (retained === null || compact === undefined) return { type: 'cancelled' };
@@ -1314,7 +1301,6 @@ export class CenterPanel {
     return true;
   }
 
-  private taskSearchScrollReset_abyssPrivate = false;
   private compactPresentation_abyssPrivate: TaskSearchRowOptions | undefined;
   private taskRowRevision_abyssPrivate(task: SurfaceTask): string {
     return 'root' in task ? task.root.ref.revision : String(task.address.version);

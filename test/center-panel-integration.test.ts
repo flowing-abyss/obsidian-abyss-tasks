@@ -1384,9 +1384,9 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
         ...cards,
       ]);
       expect(cards.every((card) => card.getAttribute('draggable') === 'true')).toBe(true);
+      await vi.advanceTimersByTimeAsync(0);
       const markdownHolder = expectDefined(scroll.querySelector<HTMLElement>('.abyss-md'));
       expect(markdownHolder.isConnected).toBe(true);
-      await vi.advanceTimersByTimeAsync(0);
       expect(markdownHolder.querySelector(':scope > p')).toBeNull();
 
       expectDefined(cards[1]).click();

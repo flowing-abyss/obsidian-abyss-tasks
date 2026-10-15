@@ -36,6 +36,11 @@ import {
   renderRecurrenceBadge,
 } from '../../ui/recurrence/renderRecurrenceBadge';
 import { renderTaskText, type RenderTaskTextOptions } from '../../ui/renderTaskText';
+import {
+  RetainedTaskText,
+  type PreparedTaskTextUpdate,
+  type RetainedTaskTextInput,
+} from '../../ui/retainedTaskText';
 import { runAsyncAction } from '../../ui/runAsyncAction';
 import { renderSourceNoteChip, shouldShowSourceNote } from '../../ui/sourceNoteChip';
 import {
@@ -50,11 +55,7 @@ import {
   applyTaskNodePresentationIdentity,
   applyTaskPresentationIdentity,
 } from '../../ui/taskPresentationIdentity';
-import {
-  TaskRenderScope,
-  type TaskRenderOutcome,
-  type TaskTextRender,
-} from '../../ui/taskRenderScope';
+import type { TaskRenderOutcome, TaskRenderScope, TaskTextRender } from '../../ui/taskRenderScope';
 import { taskNodeRef, type TaskSelectionNode } from '../../ui/taskSelection';
 import type { TrackingTickerState } from '../../ui/timeTracking/TrackingTicker';
 import { formatTrackedDuration } from '../../ui/timeTracking/formatTracked';
@@ -64,8 +65,11 @@ import type { TaskCommands } from './TaskCommands';
 import type { TaskListNavigationRequest } from './TaskListNavigation';
 import {
   isTaskSearchSemanticEvidence,
+  mountTaskSearchTree,
   renderTaskSearchTree,
   type TaskSearchSemanticEvidence,
+  type TaskSearchTreeMount,
+  type TaskSearchTreeRenderOptions,
 } from './TaskSearchTree';
 
 export interface TaskCardHighlight {
@@ -119,11 +123,6 @@ interface CardState {
 interface CardContents {
   readonly settled: Promise<TaskRenderOutcome>;
   update(current: CardState): void;
-  destroy(): void;
-}
-interface TaskTextMount {
-  readonly settled: Promise<TaskRenderOutcome>;
-  update(task: TaskSnapshot, flags: TaskCardFlags): void;
   destroy(): void;
 }
 interface CardContentContext {
@@ -217,26 +216,57 @@ function cardDescriptionContinues(
     .some((line) => line.trim().length > 0);
 }
 
-function canReuseTaskText(
-  outcome: TaskRenderOutcome | undefined,
-  flags: TaskCardFlags | undefined,
-): boolean {
-  // Ready text owns its wired DOM; pending text still needs its originating request.
-  return outcome === undefined ? flags?.isCurrent?.() !== false : outcome.type === 'ready';
-}
-
-function sameTaskText(
-  task: TaskSnapshot,
-  flags: TaskCardFlags,
-  rendered: TaskSnapshot | undefined,
-  renderedFlags: TaskCardFlags | undefined,
-): boolean {
-  return (
-    rendered === task &&
-    renderedFlags?.projection?.node === flags.projection?.node &&
-    renderedFlags?.search === flags.search &&
-    renderedFlags?.highlight === flags.highlight
-  );
+/** Card readiness covers the committed fields, including a focus-deferred replacement. */
+function settleCardFields(
+  card: HTMLElement,
+  context: CardContentContext,
+  updates: readonly PreparedTaskTextUpdate[],
+  tree: Promise<TaskRenderOutcome> | undefined,
+): TaskTextRender {
+  if (updates.every((update) => update.canCommit())) for (const update of updates) update.commit();
+  let done = false;
+  let ready = false;
+  let resolve!: (outcome: TaskRenderOutcome) => void;
+  const settled = new Promise<TaskRenderOutcome>((r) => {
+    resolve = r;
+  });
+  const finish = (outcome: TaskRenderOutcome): void => {
+    if (done) return;
+    done = true;
+    card.removeEventListener('focusout', blur);
+    resolve(outcome);
+  };
+  const commit = (): void => {
+    if (done || !ready || !context.isCurrent()) return;
+    if (updates.every((update) => update.commit())) finish({ type: 'ready' });
+  };
+  const blur = (): void => {
+    card.ownerDocument.defaultView?.queueMicrotask(commit);
+  };
+  card.addEventListener('focusout', blur);
+  const failed = (error: unknown): void => {
+    finish({ type: 'failed', error });
+    context.onRenderFailure(error);
+  };
+  void Promise.all([
+    ...updates.map((update) => update.ready),
+    ...(tree === undefined ? [] : [tree]),
+  ]).then((outcomes) => {
+    if (done) return;
+    const failure = outcomes.find((outcome) => outcome.type !== 'ready');
+    if (failure !== undefined) finish(failure);
+    else {
+      ready = true;
+      commit();
+    }
+  }, failed);
+  return {
+    settled,
+    cancel: () => {
+      for (const update of updates) update.cancel();
+      finish({ type: 'cancelled' });
+    },
+  };
 }
 
 export class TaskCardRenderer {
@@ -368,64 +398,15 @@ export class TaskCardRenderer {
     const description = body.createDiv({ cls: 'abyss-task-desc' });
     const searchContexts = card.createDiv({ cls: 'abyss-search-contexts' });
     searchContexts.remove();
-    const titleMount = this.#mountTextRegion(title, context, (task, owner) => {
-      this.#renderTitle(title, task, owner);
-    });
-    const descriptionMount = this.#mountTextRegion(
-      description,
-      context,
-      (task, owner) => {
-        const search = owner.flags?.search;
-        description.className = search === undefined ? 'abyss-task-desc' : 'abyss-search-contexts';
-        description.hidden =
-          search === undefined &&
-          cardDescription(task, owner.flags) === '' &&
-          !cardDescriptionContinues(task, owner.flags);
-        searchContexts.empty();
-        if (search === undefined) {
-          searchContexts.remove();
-          this.#renderDescriptionText(description, task, owner);
-        } else {
-          description.empty();
-          card.append(searchContexts);
-          this.#renderSearchContext(searchContexts, task, search, {
-            baseTextHost: description,
-            owner,
-            scope: owner.flags?.renderScope,
-            tagGroups: owner.tagGroups?.() ?? [],
-          });
-        }
-      },
-      [searchContexts],
-    );
-    let settled: Promise<TaskRenderOutcome> = Promise.resolve({ type: 'ready' });
-    let titleReceipt: Promise<TaskRenderOutcome> | undefined;
-    let descriptionReceipt: Promise<TaskRenderOutcome> | undefined;
-    let headerOwner: Component | undefined;
+    const text = this.#mountCardText(card, context, { title, description, searchContexts });
+    const header = this.#mountHeader(card, context, { titleRow, title });
     return {
       get settled() {
-        if (
-          titleReceipt !== titleMount.settled ||
-          descriptionReceipt !== descriptionMount.settled
-        ) {
-          titleReceipt = titleMount.settled;
-          descriptionReceipt = descriptionMount.settled;
-          settled = Promise.all([titleReceipt, descriptionReceipt]).then(
-            (outcomes) =>
-              outcomes.find((outcome) => outcome.type === 'failed') ??
-              outcomes.find((outcome) => outcome.type === 'cancelled') ?? { type: 'ready' },
-          );
-        }
-        return settled;
+        return text.settled;
       },
       update: (current) => {
-        if (headerOwner !== undefined) context.component.removeChild(headerOwner);
-        headerOwner = context.component.addChild(new Component());
-        this.#identity(card, current, headerOwner);
-        this.#refreshBadges(titleRow, title, current.task, { ...context, flags: current.flags });
-        this.#renderParentButton(titleRow, context, headerOwner);
-        titleMount.update(current.task, current.flags);
-        descriptionMount.update(current.task, current.flags);
+        header(current);
+        text.update(current);
         this.syncDeleteButton(
           card,
           current.flags.showDelete ? context.currentProjection().node : undefined,
@@ -433,108 +414,154 @@ export class TaskCardRenderer {
         );
       },
       destroy: () => {
-        titleMount.destroy();
-        descriptionMount.destroy();
+        text.destroy();
         this.#releaseBadges(context.badges);
       },
     };
   }
-
-  #mountTextRegion(
-    element: HTMLElement,
+  #headerKey(current: CardState): string {
+    const node = cardNode(current.task, current.flags);
+    const dependencies =
+      'source' in node
+        ? this.#host.dependenciesFor(node)
+        : this.#host.dependenciesForNode(taskNodeRef(node));
+    const search = current.flags.search;
+    const evidence = search?.context.tree.evidence.filter(isTaskSearchSemanticEvidence) ?? [];
+    return JSON.stringify([
+      this.#settings.sourceNoteDisplay,
+      this.#settings.taskFilePath,
+      current.tagGroups,
+      current.flags.occurrence,
+      search?.mode,
+      dependencies?.activeBlockedByCount,
+      dependencies?.activeBlocksCount,
+      evidence,
+      evidence.length === 0 ? undefined : search?.query.tokens,
+      this.#suppressTodayMetadata(node),
+    ]);
+  }
+  #mountHeader(
+    card: HTMLElement,
     context: CardContentContext,
-    render: (task: TaskSnapshot, owner: CardContentContext) => void,
-    additionalRegions: readonly HTMLElement[] = [],
-  ): TaskTextMount {
-    const regions = [element, ...additionalRegions];
-    let live = true;
-    let latest: TaskSnapshot | undefined;
-    let flags: TaskCardFlags = { selected: false, showDelete: false };
-    let rendered: TaskSnapshot | undefined;
-    let renderedFlags: TaskCardFlags | undefined;
+    hosts: { titleRow: HTMLElement; title: HTMLElement },
+  ): (current: CardState) => void {
+    let previous: CardState | undefined;
+    let key = '';
     let owner: Component | undefined;
-    let generation = 0;
-    let receipt: Promise<TaskRenderOutcome> = Promise.resolve({ type: 'ready' });
-    let controller: AbortController | undefined;
-    let outcome: TaskRenderOutcome | undefined;
-    const release = (): void => {
-      generation++;
-      controller?.abort();
-      if (owner !== undefined) context.component.removeChild(owner);
+    return (current) => {
+      const next = this.#headerKey(current);
+      const changed =
+        previous?.task !== current.task ||
+        previous.flags.projection?.node !== current.flags.projection?.node ||
+        next !== key;
+      if (changed) {
+        if (owner !== undefined) context.component.removeChild(owner);
+        owner = context.component.addChild(new Component());
+        this.#identity(card, current, owner);
+        this.#refreshBadges(hosts.titleRow, hosts.title, current.task, {
+          ...context,
+          flags: current.flags,
+        });
+        this.#renderParentButton(hosts.titleRow, context, owner);
+      } else {
+        card.toggleClass('is-selected', current.flags.selected);
+        this.#refreshStatus(card, context.currentProjection().node, current.flags.occurrence);
+      }
+      previous = current;
+      key = next;
     };
-    const refresh = (): void => {
-      if (!live || latest === undefined) return;
-      const reusable = canReuseTaskText(outcome, renderedFlags);
-      if (reusable && sameTaskText(latest, flags, rendered, renderedFlags)) return;
-      if (
-        reusable &&
-        regions.some((region) => region.contains(element.ownerDocument.activeElement))
-      )
-        return;
-      release();
-      owner = context.component.addChild(new Component());
-      const version = generation;
-      rendered = latest;
-      renderedFlags = flags;
-      controller = new AbortController();
-      const scope = new TaskRenderScope(controller.signal);
-      render(latest, {
-        ...context,
-        component: owner,
-        flags: {
-          ...flags,
-          signal: controller.signal,
-        },
-        track: (render) => {
-          scope.track(render);
-          flags.renderScope?.track(render);
-        },
-        isCurrent: () => live && generation === version && flags.isCurrent?.() !== false,
-      });
-      outcome = undefined;
-      receipt = scope.finish().then((settled) => {
-        if (live && generation === version) outcome = settled;
-        return settled;
-      });
-    };
-    this.#refreshTextAfterBlur(regions, context, refresh);
+  }
+  #retainedTextInput(
+    current: CardState,
+    context: CardContentContext,
+    kind: 'title' | 'description',
+  ): RetainedTaskTextInput {
+    const node = cardNode(current.task, current.flags);
+    const highlight = current.flags.search ?? current.flags.highlight;
     return {
-      get settled() {
-        return receipt;
+      source: {
+        target: { type: kind, target: taskNodeRef(node) },
+        markdown:
+          kind === 'title' ? node.markdownTitle : cardDescription(current.task, current.flags),
+        path: current.task.source.filePath,
+        presentation: kind,
       },
-      update: (task, nextFlags) => {
-        latest = task;
-        flags = nextFlags;
-        refresh();
+      decoration: {
+        kind: kind === 'title' ? 'complete' : 'preview',
+        continuation:
+          kind === 'description' && cardDescriptionContinues(current.task, current.flags),
+        ...(highlight === undefined ? {} : { query: highlight.query, segment: highlight.segment }),
       },
-      destroy: () => {
-        live = false;
-        release();
+      callbacks: {
+        app: this.#app,
+        isCurrent: context.isCurrent,
+        onRenderFailure: context.onRenderFailure,
+        onEditLink: (occurrence, token) => {
+          if (kind === 'title') this.#commands.editTaskLink(node, occurrence, token);
+          else
+            this.#commands.editTaskLink(node, occurrence, token, {
+              type: kind,
+              target: taskNodeRef(node),
+            });
+        },
       },
     };
   }
-
-  #refreshTextAfterBlur(
-    regions: readonly HTMLElement[],
+  #mountCardText(
+    card: HTMLElement,
     context: CardContentContext,
-    refresh: () => void,
-  ): void {
-    for (const region of regions)
-      context.component.registerDomEvent(region, 'focusout', (event) => {
-        const win = region.ownerDocument.defaultView;
-        const relatedTarget = event.relatedTarget;
-        if (
-          win !== null &&
-          relatedTarget instanceof win.Node &&
-          regions.some((region) => region.contains(relatedTarget))
-        )
-          return;
-        try {
-          refresh();
-        } catch (error) {
-          context.onRenderFailure(error);
-        }
+    hosts: { title: HTMLElement; description: HTMLElement; searchContexts: HTMLElement },
+  ): CardContents {
+    const title = new RetainedTaskText(hosts.title, context.component);
+    let description = new RetainedTaskText(hosts.description, context.component);
+    let tree: TaskSearchTreeMount | undefined;
+    let receipt: TaskTextRender = { settled: Promise.resolve({ type: 'ready' }), cancel: () => {} };
+    const searchDescription = (current: CardState, search: TaskCardSearchPresentation): void => {
+      hosts.description.className = 'abyss-search-contexts';
+      hosts.description.hidden = false;
+      if (!hosts.searchContexts.isConnected) card.append(hosts.searchContexts);
+      const options = this.#searchTreeOptions(current.task, search, {
+        owner: { ...context, flags: current.flags },
+        tagGroups: current.tagGroups,
       });
+      if (tree === undefined) {
+        description.destroy();
+        hosts.description.empty();
+        tree = mountTaskSearchTree(hosts.searchContexts, hosts.description, options);
+      } else tree.update(options);
+    };
+    const ordinaryDescription = (current: CardState): PreparedTaskTextUpdate => {
+      if (tree !== undefined) {
+        tree.destroy();
+        tree = undefined;
+        description = new RetainedTaskText(hosts.description, context.component);
+      }
+      hosts.searchContexts.remove();
+      hosts.description.className = 'abyss-task-desc';
+      hosts.description.hidden =
+        cardDescription(current.task, current.flags) === '' &&
+        !cardDescriptionContinues(current.task, current.flags);
+      return description.prepare(this.#retainedTextInput(current, context, 'description'));
+    };
+    return {
+      get settled() {
+        return receipt.settled;
+      },
+      update: (current) => {
+        receipt.cancel();
+        const updates = [title.prepare(this.#retainedTextInput(current, context, 'title'))];
+        if (current.flags.search !== undefined) searchDescription(current, current.flags.search);
+        else updates.push(ordinaryDescription(current));
+        receipt = settleCardFields(card, context, updates, tree?.settled);
+        current.flags.renderScope?.track(receipt);
+      },
+      destroy: () => {
+        receipt.cancel();
+        title.destroy();
+        description.destroy();
+        tree?.destroy();
+      },
+    };
   }
 
   #refreshBadges(
@@ -963,56 +990,77 @@ export class TaskCardRenderer {
       readonly tagGroups: readonly EffectiveTagGroup[];
     },
   ): void {
-    const flags = options.owner?.flags ?? options.flags;
-    const matchedDescription = search.context.tree.evidence.some(
-      (evidence) =>
-        evidence.provenance.type === 'field' && evidence.provenance.field === 'description',
+    const owner = options.owner;
+    renderTaskSearchTree(
+      host,
+      options.baseTextHost,
+      this.#searchTreeOptions(root, search, {
+        owner,
+        tagGroups: options.tagGroups,
+        scope: options.scope,
+      }),
     );
-    if (
-      search.mode === 'filter' &&
-      !matchedDescription &&
-      (cardDescription(root, flags) !== '' || cardDescriptionContinues(root, flags))
-    ) {
-      this.#renderDescriptionText(
-        options.baseTextHost.createDiv({ cls: 'abyss-task-desc' }),
-        root,
-        options.owner,
-        flags,
-      );
-    }
-    renderTaskSearchTree(host, options.baseTextHost, {
+  }
+
+  #searchTreeOptions(
+    root: TaskSnapshot,
+    search: TaskCardSearchPresentation,
+    options: {
+      readonly owner: CardContentContext | undefined;
+      readonly tagGroups: readonly EffectiveTagGroup[];
+      readonly scope?: TaskRenderScope | undefined;
+    },
+  ): TaskSearchTreeRenderOptions {
+    const { owner, tagGroups, scope } = options;
+    return {
       app: this.#app,
       root,
-      base: options.owner?.currentProjection().node ?? cardNode(root, flags),
+      base: owner?.currentProjection().node ?? root,
       search,
-      textOptions: this.#textLifetime(options.owner),
+      textOptions: this.#textLifetime(owner),
       track: (render) => {
-        if (options.owner?.track !== undefined) options.owner.track(render);
-        else options.scope?.track(render);
+        if (owner?.track !== undefined) owner.track(render);
+        else scope?.track(render);
       },
       editLink: (target, occurrence, token) => {
         this.#commands.editTaskLink(root, occurrence, token, target);
       },
-      renderChildStatus: (host, child) => {
-        renderStatusMarker(host, {
+      renderChildStatus: (host, child, current) => {
+        const presentation = {
           task: child,
           registry: this.#statusRegistry,
           completionBlocked: dependencyCompletionBlocked(
             this.#host.dependenciesForNode(taskNodeRef(child)),
           ),
           onLeftClick: () => {
-            runAsyncAction(this.#commands.toggleTask(child));
+            const node = current();
+            if (node !== undefined) runAsyncAction(this.#commands.toggleTask(node));
           },
-          onContextMenu: (event) => {
+          onContextMenu: (event: MouseEvent) => {
             event.stopPropagation();
-            this.#host.openStatusMenu(event, child);
+            const node = current();
+            if (node !== undefined) this.#host.openStatusMenu(event, node);
           },
-        });
+        };
+        const marker = host.querySelector<HTMLElement>(
+          ':scope > .abyss-status-marker, :scope > .abyss-status-control > .abyss-status-marker',
+        );
+        if (marker === null) renderStatusMarker(host, presentation);
+        else updateStatusMarker(marker, presentation);
       },
-      renderMetadata: (host, node, evidence) => {
-        const metadata = this.#renderMetadata(host, node, options.tagGroups, {
+      metadataKey: (node, evidence) =>
+        JSON.stringify([
+          tagGroups,
+          this.#settings.sourceNoteDisplay,
+          this.#settings.taskFilePath,
+          this.#suppressTodayMetadata(node),
+          evidence,
+          evidence.length === 0 ? undefined : search.query.tokens,
+        ]),
+      renderMetadata: (host, node, evidence, component) => {
+        const metadata = this.#renderMetadata(host, node, tagGroups, {
           search,
-          component: options.owner?.component,
+          component,
         });
         if (metadata !== undefined)
           this.#renderSearchSemantics(metadata.host, node, evidence, {
@@ -1020,8 +1068,7 @@ export class TaskCardRenderer {
             renderedValues: metadata.values,
           });
       },
-    });
-    if (host.querySelector('.abyss-comment-row, .abyss-subtask-row') === null) host.remove();
+    };
   }
 
   #renderCardMetadata(

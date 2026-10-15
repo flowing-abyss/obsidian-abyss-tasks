@@ -365,8 +365,16 @@ authority. New workflows reuse these commands, menus, renderers, and state seman
 
 Search and Filter descendants occupy a card-width region beside the base main row. Base description
 evidence stays in its title body; child descriptions stay in their own row bodies. The shared tree
-renderer traverses both hosts once, and the retained card owns both regions in one text lifetime for
-focus retention, cancellation, cleanup, and render receipts.
+mount reconciles exact node and comment references in source order across both hosts.
+[`RetainedTaskText`](src/ui/retainedTaskText.ts) owns each title, description, and comment independently,
+with one visible Markdown Component and at most one connected hidden replacement. Complete fields
+retain their wired anchors and source projection across query decoration changes. Destructive
+excerpts replace only their affected field after rendering and focus checks. Link edit bindings keep
+the source target and occurrence that produced the anchor; ordinary actions read current snapshots.
+A synchronous field preflight checks focus and currentness before the tree commits its prepared
+fields. Card and tree receipts settle after publication, including focus-deferred commits. Query changes
+retain the existing task surface and its logical scroll anchor; receipt completion refreshes row
+measurements through TaskSearchRows.
 
 ### Logical tasks and visual occurrences
 
