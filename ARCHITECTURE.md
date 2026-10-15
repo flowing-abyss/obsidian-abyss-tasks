@@ -436,7 +436,9 @@ Fully settled windows retain their ordinary fractional offset policy. Source anc
 keep their own placement authority; pure row geometry and native write guards remain responsible
 for the resulting compensation.
 Frame extent transactions retain the existing native extent with a transient guard until the final
-DOM order exists, including when no native-write observer is registered. Ordering uses that
+DOM order exists, including when no native-write observer is registered and the native offset is
+nonzero. Ownerless exact-zero transactions run directly because zero cannot clamp downward;
+owned transactions retain their native receipt checks at every offset. Ordering uses that
 transaction’s active guard as its terminal sentinel when it belongs to the row host, avoiding moves
 of established rows across the guard. Guard removal permits a real final extent shrink to clamp
 normally.

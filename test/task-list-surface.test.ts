@@ -2618,6 +2618,116 @@ it('prevents ownerless tail-spacer reuse from clamping before pending frames reg
   h.surface.destroy();
 });
 
+it.each([false, true])(
+  'keeps ownerless exact-zero extent refresh free of guard reads and row moves (same host=%s)',
+  async (sameHost) => {
+    const h = harness(false, sameHost);
+    h.surface.update(rows(100), presentation);
+    const extent = vi.spyOn(h.scroll, 'scrollHeight', 'get');
+    const insert = vi.spyOn(h.host, 'insertBefore');
+    const add = vi.spyOn(h.host, 'appendChild');
+    const mounted = h.surface.mountedKeys().map((key) => h.surface.element(key));
+    h.surface.refreshMeasurements();
+    await Promise.resolve();
+    expect(extent).not.toHaveBeenCalled();
+    expect(insert).not.toHaveBeenCalled();
+    expect(add).not.toHaveBeenCalled();
+    expect(h.surface.mountedKeys().map((key) => h.surface.element(key))).toEqual(mounted);
+    expect(h.scroll.scrollTop).toBe(0);
+    expect(h.reportFailure).not.toHaveBeenCalled();
+    h.surface.destroy();
+  },
+);
+
+it.each(['hidden', 'destroyed', 'replaced'] as const)(
+  'retires an ownerless zero-origin callback when the surface is %s',
+  (change) => {
+    const h = harness();
+    h.surface.update(rows(100), presentation);
+    let acted = false;
+    const guards: boolean[] = [];
+    for (const result of h.mount.mock.results) {
+      const mount = result.value as ReturnType<typeof h.mount>;
+      vi.spyOn(mount, 'update').mockImplementation(() => {
+        guards.push(h.host.querySelector('[data-abyss-scroll-guard]') !== null);
+        if (acted) return;
+        acted = true;
+        if (change === 'hidden') h.size(0, 0);
+        else if (change === 'destroyed') h.surface.destroy();
+        else {
+          h.scroll.scrollTop = 96;
+          h.surface.update(rows(50), { ...presentation, revision: 'nested positive' });
+        }
+      });
+    }
+    h.mountedChanged.mockClear();
+    h.surface.update(rows(100), { ...presentation, revision: 'outer zero' });
+    expect(acted).toBe(true);
+    expect(guards[0]).toBe(false);
+    if (change === 'replaced') {
+      expect(guards.slice(1).every(Boolean)).toBe(true);
+      expect(guards.length).toBeGreaterThan(1);
+      expect(h.surface.rows.rowCount).toBe(50);
+      expect(h.scroll.scrollTop).toBe(96);
+      expect(h.mountedChanged).toHaveBeenCalledTimes(1);
+    } else expect(h.mountedChanged).not.toHaveBeenCalled();
+    expect(h.host.querySelector('[data-abyss-scroll-guard]')).toBeNull();
+    expect(h.reportFailure).not.toHaveBeenCalled();
+    h.surface.destroy();
+  },
+);
+
+it('preserves explicit callback scrolling during an ownerless zero-origin refresh', async () => {
+  const h = harness();
+  let move = false;
+  const original = expectDefined(h.mount.getMockImplementation());
+  h.mount.mockImplementation((host, row) => ({
+    ...original(host, row),
+    measurementReady: () => {
+      if (move) {
+        move = false;
+        expect(h.host.querySelector('[data-abyss-scroll-guard]')).toBeNull();
+        h.scroll.scrollTop = 96;
+      }
+      return true;
+    },
+  }));
+  h.surface.update(rows(100), presentation);
+  move = true;
+  h.writes.mockClear();
+  h.surface.refreshMeasurements();
+  await Promise.resolve();
+  expect(move).toBe(false);
+  expect(h.scroll.scrollTop).toBe(96);
+  expect(h.writes.mock.calls).toEqual([[96]]);
+  expect(h.reportFailure).not.toHaveBeenCalled();
+  h.surface.destroy();
+});
+
+it.each([false, true])('retains owned-zero admission, guard and veto (veto=%s)', async (veto) => {
+  const h = harness();
+  h.surface.update(rows(100), presentation);
+  const beforeWrite = vi.fn(() => !veto);
+  const afterWrite = vi.fn();
+  const release = h.surface.observeNativeWrites({ beforeWrite, afterWrite }, () => {});
+  const extent = vi.spyOn(h.scroll, 'scrollHeight', 'get');
+  h.surface.refreshMeasurements();
+  await Promise.resolve();
+  expect(beforeWrite).toHaveBeenCalledWith(0);
+  if (veto) {
+    expect(extent).not.toHaveBeenCalled();
+    expect(afterWrite).not.toHaveBeenCalled();
+  } else {
+    expect(extent).toHaveBeenCalled();
+    expect(afterWrite).toHaveBeenCalledWith(0);
+  }
+  expect(h.host.querySelector('[data-abyss-scroll-guard]')).toBeNull();
+  expect(h.scroll.scrollTop).toBe(0);
+  expect(h.reportFailure).not.toHaveBeenCalled();
+  release();
+  h.surface.destroy();
+});
+
 it.each([
   { sameHost: false, owned: false },
   { sameHost: true, owned: false },
@@ -2628,6 +2738,8 @@ it.each([
   async ({ sameHost, owned }) => {
     const h = harness(false, sameHost);
     h.surface.update(rows(100), presentation);
+    h.scrollTo(48);
+    h.frame();
     const release = owned
       ? h.surface.observeNativeWrites({ beforeWrite: () => true, afterWrite: () => {} }, () => {})
       : () => {};
@@ -2662,6 +2774,7 @@ it.each(['focus', 'pin'] as const)(
   (protection) => {
     const h = harness(false, protection === 'pin');
     h.surface.update(rows(100), presentation);
+    h.scrollTo(48);
     const card = expectDefined(h.surface.element('n.md:2'));
     const frame = expectDefined(card.parentElement);
     const input = card.createEl('input');
@@ -2711,6 +2824,7 @@ it.each([
     const h = harness();
     const owner = taskViewportOwner();
     h.surface.update(rows(100), presentation);
+    h.scrollTo(48);
     let expected = h.scroll.scrollTop;
     const afterWrite = vi.fn((top: number) => {
       expected = top;

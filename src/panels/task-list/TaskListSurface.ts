@@ -448,9 +448,10 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     extent = false,
   ): boolean {
     const owners = this.#nativeOwners();
-    // Ownerless extent changes still need the same transient native clamp protection.
+    // Exact zero cannot clamp downward; owned transactions still require their receipts.
     if (owners === undefined) {
-      if (extent) this.#mutateExtent(action, [], this.#options.scroll.scrollTop, current);
+      if (extent && this.#options.scroll.scrollTop !== 0)
+        this.#mutateExtent(action, [], this.#options.scroll.scrollTop, current);
       else action();
       return this.#admitReconciliation(current);
     }
