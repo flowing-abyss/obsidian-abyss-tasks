@@ -578,7 +578,7 @@ class RetainedSearchTree implements TaskSearchTreeMount {
   #commit(plan: TreePreparation): boolean {
     if (this.#focusedRemoval(plan) || !plan.updates.every((update) => update.canCommit()))
       return false;
-    for (const update of plan.updates) update.commit();
+    if (!plan.updates.every((update) => update.commit())) return false;
     for (const [host, elements] of plan.placements) reconcile(host, elements);
     for (const [key, record] of this.#records)
       if (plan.desired.get(key) !== record) releaseEntry(record, this.#owner);

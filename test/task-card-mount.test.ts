@@ -1754,6 +1754,135 @@ it('keeps direct title and description unchanged until delayed rendering and foc
   }
 });
 
+it('does not report direct fields ready when synchronous owner cleanup revokes commit authority', async () => {
+  let current = true;
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(
+    async (...[_app, markdown, holder, _path, owner]) => {
+      holder.setText(markdown);
+      if (markdown === '*old title*')
+        owner.register(() => {
+          current = false;
+        });
+    },
+  );
+  const h = renderer();
+  const flags = { selected: false, showDelete: false, isCurrent: () => current };
+  const mount = h.subject.mount(
+    document.body,
+    task({ markdownTitle: '*old title*', description: '*old description*' }),
+    [],
+    flags,
+  );
+  try {
+    expect(await mount.settled).toEqual({ type: 'ready' });
+    mount.update(
+      task({ markdownTitle: '*new title*', description: '*new description*' }),
+      [],
+      flags,
+    );
+    let complete = false;
+    const receipt = mount.settled.then((outcome) => {
+      complete = true;
+      return outcome;
+    });
+    await flushMicrotasks(30);
+    expect(current).toBe(false);
+    expect(complete).toBe(false);
+    expect(mount.element.querySelector('.abyss-task-desc')?.textContent).toBe('*old description*');
+    mount.destroy();
+    expect(await receipt).toEqual({ type: 'cancelled' });
+  } finally {
+    mount.destroy();
+    h.hostComponent.unload();
+  }
+});
+
+it('stops tree reconciliation when synchronous owner cleanup revokes a field commit', async () => {
+  const { mountTaskSearchTree } = await import('../src/panels/center/TaskSearchTree');
+  const { taskSearchContext, prepareSearchQuery } = await import('../src/tasks');
+  const { fallbackSearchWords } = await import('../src/tasks/domain/searchMatchPolicy');
+  let current = true;
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(
+    async (...[_app, markdown, holder, _path, owner]) => {
+      holder.setText(markdown);
+      if (markdown === '*old title*')
+        owner.register(() => {
+          current = false;
+        });
+    },
+  );
+  const canonical = await createCanonicalSearchHarness(
+    {
+      'a.md':
+        '- [ ] Root\n  - [ ] *old title*\n    - > *old title description*\n  - [ ] spare title',
+    },
+    structuredClone(DEFAULT_SETTINGS),
+  );
+  const root = expectDefined(canonical.index.list()[0]);
+  const owner = new Component();
+  owner.load();
+  const host = document.body.createDiv();
+  const base = document.body.createDiv();
+  const query = prepareSearchQuery('title', fallbackSearchWords);
+  const options = (root: TaskSnapshot) => ({
+    app: {} as App,
+    root,
+    base: root,
+    search: {
+      mode: 'search' as const,
+      query,
+      segment: fallbackSearchWords,
+      context: taskSearchContext(
+        root,
+        { epoch: 'test', rootId: 1, version: 1, childLines: [] },
+        query,
+        fallbackSearchWords,
+      ),
+      onActivate: () => {},
+    },
+    textOptions: { component: owner, isCurrent: () => current },
+    track: () => {},
+    editLink: () => {},
+    renderChildStatus: () => {},
+    metadataKey: () => '',
+    renderMetadata: () => {},
+  });
+  const tree = mountTaskSearchTree(host, base, options(root));
+  try {
+    expect(await tree.settled).toEqual({ type: 'ready' });
+    const sibling = expectDefined(host.querySelectorAll('.abyss-subtask-label')[1]);
+    const next = {
+      ...root,
+      subtasks: [
+        {
+          ...expectDefined(root.subtasks[0]),
+          markdownTitle: '*new title*',
+          description: '*new title description*',
+        },
+      ],
+    };
+    tree.update(options(next));
+    let complete = false;
+    const receipt = tree.settled.then((outcome) => {
+      complete = true;
+      return outcome;
+    });
+    await flushMicrotasks(30);
+    expect(current).toBe(false);
+    expect(complete).toBe(false);
+    expect(sibling.isConnected).toBe(true);
+    expect(host.querySelector('.abyss-task-desc')?.textContent).toBe('*old title description*');
+    tree.destroy();
+    expect(await receipt).toEqual({ type: 'cancelled' });
+  } finally {
+    tree.destroy();
+    owner.unload();
+    host.remove();
+    base.remove();
+    canonical.close();
+  }
+});
+
 it.each([
   {
     field: 'comment',

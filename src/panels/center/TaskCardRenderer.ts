@@ -224,8 +224,7 @@ function settleCardFields(
 ): TaskTextRender {
   const commitFields = (): boolean => {
     if (!updates.every((update) => update.canCommit())) return false;
-    for (const update of updates) update.commit();
-    return true;
+    return updates.every((update) => update.commit());
   };
   commitFields();
   let done = false;
