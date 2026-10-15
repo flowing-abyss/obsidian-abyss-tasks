@@ -672,3 +672,16 @@ it('bounds matched description height while retaining scoped compact Markdown bl
     'white-space: pre-wrap',
   );
 });
+
+it('uses compact logical list gutters inside descriptions only', () => {
+  for (const surface of [
+    '.abyss-right-desc-view',
+    '.abyss-task-card .abyss-search-context .abyss-task-desc',
+  ]) {
+    for (const list of ['ol', 'ul']) {
+      const rule = declarationsFor(`${surface} .abyss-md ${list}`);
+      expect(rule).toContain('padding-inline-start: 2em');
+      expect(rule).toContain('margin-inline: 0');
+    }
+  }
+});

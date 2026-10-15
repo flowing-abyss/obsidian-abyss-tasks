@@ -119,7 +119,7 @@ function* nodeEvidence(
   for (const field of fields(current.node)) {
     const projection = projectSearchText(
       field.markdown,
-      field.field === 'title' ? 'title' : 'prose',
+      field.field === 'comment' ? 'prose' : field.field,
     );
     yield fieldEvidence(current, field, projection.visible, { ...matching, target: false });
     for (const target of projection.destinations)

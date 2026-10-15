@@ -6,6 +6,7 @@ import {
   type LinkToken,
 } from '../markdown/links';
 import { projectSearchText } from '../markdown/searchText';
+import { analyzeTaskDescription } from '../markdown/taskDescriptionStructure';
 import { renderedAnchorSources } from './markSearchText';
 import { showMenuAtMouseEventWithFocus } from './nativeMenuFocus';
 import { runAsyncAction } from './runAsyncAction';
@@ -14,7 +15,7 @@ import type { TaskRenderOutcome, TaskTextRender } from './taskRenderScope';
 const activeRenders = new WeakMap<HTMLElement, TaskTextRender>();
 
 export interface RenderTaskTextOptions {
-  readonly presentation?: 'title' | 'markdown';
+  readonly presentation?: 'title' | 'markdown' | 'description';
   readonly signal?: AbortSignal;
   readonly onRendered?: (element: HTMLElement) => void;
   readonly isCurrent?: () => boolean;
@@ -39,8 +40,7 @@ export function renderTaskText(
   el.empty();
   // Editable occurrences always come from the authored source, even when labels change length.
   const tokens = parseLinks(markdownText);
-  const titleMode = opts.presentation === 'title';
-  const presented = titleMode ? inlineTaskTitleMarkdown(markdownText) : markdownText;
+  const presented = taskTextPresentation(markdownText, opts.presentation);
   // Explicit text presentations keep plain text synchronous; formatting, escapes and paragraph
   // structure use the host even without links. Unspecified callers retain link-driven dispatch.
   if (
@@ -60,10 +60,17 @@ export function renderTaskText(
   }
   return renderMarkdownText(el, presented, tokens, opts);
 }
-function needsMarkdown(text: string, presentation: 'title' | 'markdown'): boolean {
+function taskTextPresentation(
+  source: string,
+  presentation: RenderTaskTextOptions['presentation'],
+): string {
+  if (presentation === 'description') return analyzeTaskDescription(source).markdown;
+  return presentation === 'title' ? inlineTaskTitleMarkdown(source) : source;
+}
+function needsMarkdown(text: string, presentation: 'title' | 'markdown' | 'description'): boolean {
   return (
     /[\\*_~`[\]<>&!\r\n]/u.test(text) ||
-    (presentation === 'markdown' && /^\s*(?:#{1,6}\s|[-+]\s|\d+[.)]\s)/u.test(text))
+    (presentation !== 'title' && /^\s*(?:#{1,6}\s|[-+]\s|\d+[.)]\s)/u.test(text))
   );
 }
 function renderMarkdownText(
@@ -158,7 +165,9 @@ function wireLinks(
   const anchors = Array.from(holder.querySelectorAll('a'));
   // Prove identity before an explicitly supplied display label can replace rendered text.
   const occurrences =
-    opts.onEditLink === undefined ? [] : editableOccurrences(holder, anchors, tokens, presented);
+    opts.onEditLink === undefined
+      ? []
+      : editableOccurrences(holder, tokens, presented, opts.presentation);
   if (opts.exactLinkLabel !== undefined && anchors.length === 1) {
     anchors[0]?.setText(opts.exactLinkLabel);
   }
@@ -216,11 +225,12 @@ function wireLinks(
 
 function editableOccurrences(
   holder: HTMLElement,
-  anchors: HTMLAnchorElement[],
   tokens: LinkToken[],
   presented: string,
+  presentation: RenderTaskTextOptions['presentation'],
 ): number[] {
-  // Title embed labels can change source offsets, but cannot create new editable occurrences.
+  const anchors = Array.from(holder.querySelectorAll('a'));
+  // Presentation can change offsets, but cannot create new editable occurrences.
   const presentedTokens = parseLinks(presented);
   if (
     presentedTokens.length !== tokens.length ||
@@ -238,7 +248,10 @@ function editableOccurrences(
       anchor = anchors[index];
     if (token !== undefined && anchor !== undefined) labels.set(token.index, anchor.textContent);
   }
-  const sources = renderedAnchorSources(holder, projectSearchText(presented, 'prose', labels));
+  const sources = renderedAnchorSources(
+    holder,
+    projectSearchText(presented, presentation === 'description' ? 'description' : 'prose', labels),
+  );
   return candidates.map((occurrence, index) => {
     const token = presentedTokens[occurrence],
       anchor = anchors[index];

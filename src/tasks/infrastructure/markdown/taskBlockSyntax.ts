@@ -14,14 +14,14 @@ export interface TaskDescriptionLine {
 }
 
 /**
- * Reads a `- > ` description line: the text after the marker, trimmed. Any other line gives
+ * Reads a `- > ` description line: the exact text after the marker. Any other line gives
  * nothing.
  */
 export function readTaskDescriptionLine(line: string): TaskDescriptionLine | undefined {
   const match = DESCRIPTION_RE.exec(line);
   if (match == null) return undefined;
   const content = match[1] ?? '';
-  return { text: content.trim(), column: match[0].length - content.trimStart().length };
+  return { text: content, column: match[0].length - content.length };
 }
 
 type MarkdownFrontmatter =

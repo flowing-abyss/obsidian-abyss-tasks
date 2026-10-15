@@ -1410,6 +1410,33 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       },
     );
 
+    it.each(['\n', '\r\n'])(
+      'edits only the second duplicate description link while retaining nesting and hard breaks with %j',
+      async (ending) => {
+        const description = '  1. [[Target|same]]  \n     - nested\n\t - [[Target|same]]\n\nlast  ';
+        const source = `- [ ] root${ending}${description
+          .split('\n')
+          .map((line) => `\t- > ${line}`)
+          .join(ending)}`;
+        const h = await makeHarness(adapter, source);
+        const root = expectDefined(h.snapshots(source)[0]);
+        expect(root.description).toBe(description);
+        await expect(
+          h.repository.edit({
+            type: 'edit-link',
+            target: { type: 'description', target: { type: 'task', ref: root.ref } },
+            occurrence: 1,
+            replacement: '[[Changed|same]]',
+          }),
+        ).resolves.toMatchObject({ type: 'committed', changed: true });
+        const expected = source.replace('\t - [[Target|same]]', '\t - [[Changed|same]]');
+        expect(await h.read()).toBe(expected);
+        expect(h.snapshots(expected)[0]?.description).toBe(
+          description.replace('\t - [[Target|same]]', '\t - [[Changed|same]]'),
+        );
+      },
+    );
+
     it('edits links only inside the confirmed title, description, or revisioned comment target', async () => {
       const source =
         '- [ ] [[TitleA|same]] and [[TitleB|same]] #tag 🆔 keep ⛔ dep ^block\r\n' +

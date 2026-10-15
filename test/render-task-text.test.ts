@@ -1,10 +1,12 @@
 import { Component, MarkdownRenderer, Menu, type App, type MenuItem } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { projectSearchText } from '../src/markdown/searchText';
 import { prepareSearchQuery } from '../src/tasks';
 import { fallbackSearchWords } from '../src/tasks/domain/searchMatchPolicy';
+import { markSearchText } from '../src/ui/markSearchText';
 import { renderTaskText } from '../src/ui/renderTaskText';
 import { compactTaskDescriptionExcerpt } from '../src/ui/taskDescriptionExcerpt';
-import { renderTaskDescriptionText } from '../src/ui/taskNodeText';
+import { renderTaskCommentText, renderTaskDescriptionText } from '../src/ui/taskNodeText';
 import { deferred, expectDefined, flushMicrotasks } from './helpers';
 import { captureMenus, mockReadingView } from './support/linkEditHarness';
 
@@ -798,7 +800,7 @@ it('suppresses a held Markdown failure after its connected generation expires', 
 it('keeps an excerpted list anchor navigable without fabricating edit authority after alignment fails', async () => {
   let originalAnchor: HTMLAnchorElement | undefined;
   vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, source, holder) => {
-    expect(source).toBe('1. opening\n2. [[Target|needle]]');
+    expect(source).toBe('# opening\n2. [[Target|needle]]');
     const list = holder.createEl('ol');
     list.createEl('li').appendText('opening');
     originalAnchor = list.createEl('li').createEl('a', {
@@ -811,7 +813,7 @@ it('keeps an excerpted list anchor navigable without fabricating edit authority 
   const host = document.body.createDiv();
   const menus = captureMenus();
   const onEditLink = vi.fn();
-  const receipt = renderTaskDescriptionText(host, '1. opening\n2. [[Target|needle]]', {
+  const receipt = renderTaskDescriptionText(host, '# opening\n2. [[Target|needle]]', {
     app: { workspace: { openLinkText } } as unknown as App,
     sourcePath: 'tasks.md',
     component: new Component(),
@@ -835,4 +837,109 @@ it('keeps an excerpted list anchor navigable without fabricating edit authority 
   anchor.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
   expect(menus).toHaveLength(0);
   expect(onEditLink).not.toHaveBeenCalled();
+});
+
+it('marks the exact description fixture and retains its list anchor and source occurrence', async () => {
+  const source =
+    'Раз\nДва\n\nтри:\n1. [test](https://google.com)\n2. test\nдругой текст\n- test\n- test';
+  const render = vi
+    .spyOn(MarkdownRenderer, 'render')
+    .mockImplementation(async (_app, _source, holder) => {
+      const p = holder.createEl('p', { text: 'Раз' });
+      p.createEl('br');
+      p.appendText('Два');
+      holder.createEl('p', { text: 'три:' });
+      const ol = holder.createEl('ol');
+      ol.createEl('li').createEl('a', { href: 'https://google.com' }).appendText('test');
+      ol.createEl('li').appendText('test');
+      holder.createEl('p', { text: 'другой текст' });
+      const ul = holder.createEl('ul');
+      ul.createEl('li').appendText('test');
+      ul.createEl('li').appendText('test');
+    });
+  const host = document.body.createDiv();
+  const menus = captureMenus();
+  const onEditLink = vi.fn();
+  const receipt = renderTaskDescriptionText(host, source, {
+    app: {} as App,
+    component: new Component(),
+    sourcePath: 'tasks.md',
+    onEditLink,
+    onRendered: (element) => {
+      const query = prepareSearchQuery('три', fallbackSearchWords);
+      markSearchText(element, projectSearchText(source, 'description'), query, fallbackSearchWords);
+      compactTaskDescriptionExcerpt(element, query, fallbackSearchWords);
+    },
+  });
+  expect(await receipt.settled).toEqual({ type: 'ready' });
+  expect(render.mock.calls[0]?.[1]).toContain('2. test\n\nдругой текст');
+  expect(host.querySelector('mark')?.textContent).toBe('три');
+  expect(host.textContent.startsWith('… три:')).toBe(true);
+  expect(host.textContent.length).toBeLessThanOrEqual(240);
+  expectDefined(host.querySelector('a')).dispatchEvent(
+    new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+  );
+  expectDefined(menus[0]).pick('Edit link…');
+  expect(onEditLink).toHaveBeenCalledWith(
+    0,
+    expect.objectContaining({ raw: '[test](https://google.com)', index: 17 }),
+  );
+});
+
+it('keeps duplicate list links editable by original occurrence after presentation offsets shift', async () => {
+  const source = '1. [[Target|same]]\nparagraph\n\n12. [[Target|same]]\n13. [[Target|same]]';
+  let last: HTMLAnchorElement | undefined;
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _source, holder) => {
+    const add = (ol: HTMLOListElement): HTMLAnchorElement => {
+      const anchor = ol
+        .createEl('li')
+        .createEl('a', { cls: 'internal-link', attr: { 'data-href': 'Target' } });
+      anchor.appendText('same');
+      return anchor;
+    };
+    add(holder.createEl('ol'));
+    holder.createEl('p').appendText('paragraph');
+    const ol = holder.createEl('ol', { attr: { start: '12' } });
+    add(ol);
+    last = add(ol);
+  });
+  const menus = captureMenus();
+  const onEditLink = vi.fn();
+  const openLinkText = vi.fn().mockResolvedValue(undefined);
+  const host = document.body.createDiv();
+  const receipt = renderTaskDescriptionText(host, source, {
+    app: { workspace: { openLinkText } } as unknown as App,
+    component: new Component(),
+    sourcePath: 'tasks.md',
+    onEditLink,
+  });
+  expect(await receipt.settled).toEqual({ type: 'ready' });
+  expect(host.querySelector('ol[start]')?.getAttribute('start')).toBe('12');
+  expectDefined(last).dispatchEvent(
+    new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+  );
+  expectDefined(menus[0]).pick('Edit link…');
+  expect(onEditLink).toHaveBeenCalledWith(
+    2,
+    expect.objectContaining({ raw: '[[Target|same]]', index: source.lastIndexOf('[[') }),
+  );
+  expectDefined(last).dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+  await flushMicrotasks();
+  expect(openLinkText).toHaveBeenCalledWith('Target', 'tasks.md', false);
+});
+
+it('keeps comment list continuation source unchanged while descriptions use their own policy', async () => {
+  const source = '1. item\ncontinued';
+  const render = vi
+    .spyOn(MarkdownRenderer, 'render')
+    .mockImplementation(async (_app, markdown, holder) => {
+      holder.appendText(markdown);
+    });
+  const options = { app: {} as App, component: new Component(), sourcePath: 'tasks.md' };
+  const comment = renderTaskCommentText(document.body.createDiv(), source, options);
+  expect(await comment.render.settled).toEqual({ type: 'ready' });
+  expect(render.mock.calls[0]?.[1]).toBe(source);
+  const description = renderTaskDescriptionText(document.body.createDiv(), source, options);
+  expect(await description.settled).toEqual({ type: 'ready' });
+  expect(render.mock.calls[1]?.[1]).toBe('1. item\n\ncontinued');
 });

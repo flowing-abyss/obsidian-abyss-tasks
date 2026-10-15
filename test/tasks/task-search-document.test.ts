@@ -91,3 +91,30 @@ it('projects untruncated large own-node fields through the canonical source trav
   });
   expect(documents[1]).toMatchObject({ title: 'child', description: '', comments: '', links: '' });
 });
+
+it('indexes description list text without indexing its authored ordinal scaffolding', async () => {
+  const app = await createAppWithFiles({
+    'lists.md': '- [ ] root\n  - > 12. [[Target|visible]]\n  - > 13. next',
+  });
+  const index = new TaskIndex(app, { statusCatalog: canonicalStatusCatalog() });
+  indexes.push(index);
+  await index.initialize();
+  const source = index.searchSource();
+  const documents = [...source.documents(expectDefined(source.files()[0]))];
+  expect(documents[0]).toMatchObject({ description: 'visible\nnext', links: 'Target' });
+  const engine = createMiniSearchTaskEngine(fallbackSearchWords);
+  engine.add(documents);
+  try {
+    const search = (text: string) =>
+      engine.search({
+        kind: 'roots',
+        query: prepareSearchQuery(text, fallbackSearchWords),
+        includeSourcePath: false,
+      });
+    expect(search('12')).toEqual([]);
+    expect(search('visible')).toHaveLength(1);
+    expect(search('Target')).toHaveLength(1);
+  } finally {
+    engine.dispose();
+  }
+});

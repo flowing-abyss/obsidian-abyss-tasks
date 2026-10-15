@@ -1969,38 +1969,43 @@ it.each(['search', 'tasks'] as const)(
   },
 );
 
-it('selects a destination-only list excerpt by complete link correspondence without granting edit authority', async () => {
-  const menus = captureMenus();
-  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _source, holder) => {
-    const list = holder.createEl('ol');
-    list.createEl('li').appendText('unrelated opening '.repeat(100));
-    list.createEl('li').createEl('a', {
-      cls: 'internal-link',
-      text: 'Visible alias',
-      attr: { 'data-href': 'HiddenLedger' },
+it.each([false, true])(
+  'selects a destination-only list excerpt while requiring full-field edit proof (mismatch: %s)',
+  async (mismatch) => {
+    const menus = captureMenus();
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _source, holder) => {
+      const list = holder.createEl('ol');
+      list
+        .createEl('li')
+        .appendText(`${mismatch ? 'changed ' : ''}${'unrelated opening '.repeat(100)}`);
+      list.createEl('li').createEl('a', {
+        cls: 'internal-link',
+        text: 'Visible alias',
+        attr: { 'data-href': 'HiddenLedger' },
+      });
     });
-  });
-  const h = await mountCanonicalSearchUi(
-    {
-      'a.md': `- [ ] root\n  - > 1. ${'unrelated opening '.repeat(100)}\n  - > 2. [[HiddenLedger|Visible alias]]`,
-    },
-    structuredClone(DEFAULT_SETTINGS),
-  );
-  try {
-    h.query('HiddenLedger');
-    await h.completed();
-    const desc = expectDefined(h.root.querySelector('.abyss-task-desc'));
-    expect(desc.textContent).toBe('… Visible alias');
-    expect(desc.querySelector('li')?.getAttribute('value')).toBe('2');
-    expect(desc.querySelector('mark')).toBeNull();
-    expectDefined(desc.querySelector('a')).dispatchEvent(
-      new MouseEvent('contextmenu', { bubbles: false, cancelable: true }),
+    const h = await mountCanonicalSearchUi(
+      {
+        'a.md': `- [ ] root\n  - > 1. ${'unrelated opening '.repeat(100)}\n  - > 2. [[HiddenLedger|Visible alias]]`,
+      },
+      structuredClone(DEFAULT_SETTINGS),
     );
-    expect(menus.flatMap((menu) => menu.titles)).not.toContain('Edit link…');
-  } finally {
-    h.dispose();
-  }
-});
+    try {
+      h.query('HiddenLedger');
+      await h.completed();
+      const desc = expectDefined(h.root.querySelector('.abyss-task-desc'));
+      expect(desc.textContent).toBe('… Visible alias');
+      expect(desc.querySelector('li')?.getAttribute('value')).toBe('2');
+      expect(desc.querySelector('mark')).toBeNull();
+      expectDefined(desc.querySelector('a')).dispatchEvent(
+        new MouseEvent('contextmenu', { bubbles: false, cancelable: true }),
+      );
+      expect(menus.flatMap((menu) => menu.titles).includes('Edit link…')).toBe(!mismatch);
+    } finally {
+      h.dispose();
+    }
+  },
+);
 
 it('uses a bounded opening excerpt when host-generated duplicate anchors make destination correspondence ambiguous', async () => {
   const menus = captureMenus();
@@ -2038,3 +2043,50 @@ it('uses a bounded opening excerpt when host-generated duplicate anchors make de
     h.dispose();
   }
 });
+
+it.each(['tasks', 'search'] as const)(
+  'marks description paragraphs before lists through the real %s search path',
+  async (mode) => {
+    const description =
+      'Раз\nДва\n\nтри:\n1. [test](https://google.com)\n2. test\nдругой текст\n- test\n- test';
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, source, holder) => {
+      if (!source.includes('три:')) {
+        holder.appendText(source);
+        return;
+      }
+      const p = holder.createEl('p');
+      p.appendText('Раз');
+      p.createEl('br');
+      p.appendText('Два');
+      holder.createEl('p').appendText('три:');
+      const ol = holder.createEl('ol');
+      ol.createEl('li').createEl('a', { href: 'https://google.com' }).appendText('test');
+      ol.createEl('li').appendText('test');
+      holder.createEl('p').appendText('другой текст');
+      const ul = holder.createEl('ul');
+      ul.createEl('li').appendText('test');
+      ul.createEl('li').appendText('test');
+    });
+    const h = await mountCanonicalSearchUi(
+      {
+        'a.md': `- [ ] root\n${description
+          .split('\n')
+          .map((line) => `  - > ${line}`)
+          .join('\n')}`,
+      },
+      structuredClone(DEFAULT_SETTINGS),
+      mode,
+    );
+    try {
+      h.query('три');
+      await h.completed();
+      const rendered = expectDefined(h.root.querySelector('.abyss-task-desc'));
+      expect(rendered.querySelector('mark')?.textContent).toBe('три');
+      expect(rendered.textContent.startsWith('… три:')).toBe(true);
+      expect(rendered.textContent.length).toBeLessThanOrEqual(240);
+      expect(h.index.list()[0]?.description).toBe(description);
+    } finally {
+      h.dispose();
+    }
+  },
+);

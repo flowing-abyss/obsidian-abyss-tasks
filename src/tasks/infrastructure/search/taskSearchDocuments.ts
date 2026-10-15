@@ -9,7 +9,7 @@ export function taskSearchDocument(
   node: TaskNodeSnapshot['node'],
 ): TaskSearchDocument {
   const title = projectSearchText(node.markdownTitle, 'title');
-  const description = projectSearchText(node.description ?? '', 'prose');
+  const description = projectSearchText(node.description ?? '', 'description');
   const comments = node.comments.map((comment) => projectSearchText(comment.text, 'prose'));
   return {
     ...coordinate,

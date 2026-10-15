@@ -6,6 +6,7 @@ import type {
   SearchTextProjection,
   SearchTextValue,
 } from './searchTextTypes';
+import { analyzeTaskDescription } from './taskDescriptionStructure';
 export type { SearchTextProjection, SearchTextValue } from './searchTextTypes';
 
 interface Piece {
@@ -406,7 +407,7 @@ function nonOverlapping(replacements: Replacement[]): Replacement[] {
 }
 export function projectSearchText(
   source: string,
-  presentation: 'title' | 'prose',
+  presentation: 'title' | 'prose' | 'description',
   renderedLinkLabels?: ReadonlyMap<number, string>,
 ): SearchTextProjection {
   const replacements = [
@@ -415,7 +416,11 @@ export function projectSearchText(
       linkReplacement(link, renderedLinkLabels?.get(link.source.from)),
     ),
   ];
-  if (presentation === 'prose') replacements.push(...proseHtml(source));
+  if (presentation !== 'title') replacements.push(...proseHtml(source));
+  if (presentation === 'description')
+    replacements.push(
+      ...analyzeTaskDescription(source).markers.map((range) => ({ range, pieces: [] })),
+    );
   const accepted = nonOverlapping(replacements);
   return {
     visible: inlineProjection(source, 0, accepted),

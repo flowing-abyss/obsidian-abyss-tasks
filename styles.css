@@ -4586,6 +4586,12 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   margin-bottom: 0;
 }
 
+.abyss-right-desc-view .abyss-md :is(ol, ul),
+.abyss-task-card .abyss-search-context .abyss-task-desc .abyss-md :is(ol, ul) {
+  padding-inline-start: 2em;
+  margin-inline: 0;
+}
+
 .abyss-right-desc-view .abyss-md li > p,
 .abyss-task-card .abyss-search-context .abyss-task-desc .abyss-md li > p {
   margin-block: 0;

@@ -63,7 +63,7 @@ function fieldOptions(
   target: TaskTextTarget,
   excerptEvidence?: readonly TaskSearchEvidence[],
 ): RenderTaskTextOptions {
-  const presentation = target.type === 'title' ? 'title' : 'markdown';
+  const presentation = target.type === 'comment' ? 'markdown' : target.type;
   return {
     ...options.textOptions,
     app: options.app,
@@ -75,7 +75,7 @@ function fieldOptions(
     onRendered: (element) => {
       markSearchText(
         element,
-        projectSearchText(markdown, presentation === 'title' ? 'title' : 'prose'),
+        projectSearchText(markdown, presentation === 'markdown' ? 'prose' : presentation),
         options.search.query,
         options.search.segment,
       );

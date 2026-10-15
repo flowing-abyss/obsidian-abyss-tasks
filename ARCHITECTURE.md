@@ -305,6 +305,18 @@ descendant text or retaining descendant score arrays. Own contributions have wei
 descendants weight 0.8, independent of depth. Nonempty Tasks Filter requests subtree scope, then
 intersects exact hits with each node's ordinary list membership, sort, and grouping. Project Filter
 and Global Search retain root populations.
+
+Descriptions share the pure [`taskDescriptionStructure`](src/markdown/taskDescriptionStructure.ts)
+analysis for rendering and search projection. It identifies supported list marker ranges in the
+original field and adds presentation-only blank separators when unindented prose leaves a list.
+Indented continuations and nested lists retain their source whitespace; titles and comments keep
+their existing modes. Unsupported blocks and non-interrupting numeric continuations remain
+conservative. Obsidian remains the sole Markdown renderer. Complete rendered-field alignment and
+original token order/raw equality are required before an anchor receives link-edit authority.
+The `- > ` carrier reader retains its exact payload and physical column, including first-line
+indentation and trailing hard-break spaces. Rendering never rewrites that payload. Existing source
+needs no migration; a downgrade resumes the older whitespace trimming and list display behavior.
+
 Search text and link destinations remain separate from source edit authority. The Worker exchanges text documents and compact numeric results,
 never task refs, source-bearing revisions, or rich snapshots.
 

@@ -1,5 +1,6 @@
 import { TFile, type CachedMetadata } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
+import { TaskBlockEditor } from '../../src/tasks/infrastructure/markdown/TaskBlockEditor';
 import { TaskMarkdownCodec } from '../../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { projectTaskSnapshot } from '../../src/tasks/infrastructure/markdown/TaskSnapshotProjector';
 import { TaskIndex } from '../../src/tasks/infrastructure/TaskIndex';
@@ -484,5 +485,53 @@ it.each([false, true])(
     await h.service.execute(command);
     expect(await h.read('source.md')).toBe(beforeStaleAttempt);
     h.index.destroy();
+  },
+);
+
+it.each(['\n', '\r\n'])(
+  'preserves description carrier payload through read, save and link targeting with %j',
+  async (ending) => {
+    const description = '  1. [[Target|same]]  \n     - nested\n\t - [[Target|same]]\n\nlast  ';
+    const source = `- [ ] root${ending}${description
+      .split('\n')
+      .map((line) => `\t- > ${line}`)
+      .join(ending)}`;
+    const { index } = await snapshotIndex(source);
+    try {
+      const root = expectDefined(index.list()[0]);
+      expect(root.description).toBe(description);
+      const editor = new TaskBlockEditor();
+      const block = expectDefined(editor.rootBlocks(source)[0]);
+      const target = {
+        relativeLine: 0,
+        lineCount: 6,
+        childRanges: [],
+        description: expectDefined(root.description),
+      };
+      expect(editor.descriptionLink(source, block, target, 1)).toEqual({
+        type: 'ready',
+        relativeLine: 3,
+        column: 9,
+        raw: '[[Target|same]]',
+      });
+      expect(
+        editor.edit(source, block, target, { type: 'set-description', text: description }),
+      ).toMatchObject({ type: 'unchanged', content: source });
+      const edited = editor.edit(source, block, target, {
+        type: 'set-description',
+        text: `${description} changed  `,
+      });
+      expect(edited.type).toBe('changed');
+      if (edited.type !== 'changed') throw new Error('missing description edit');
+      expect(edited.content).toBe(`${source} changed  `);
+      const rebuilt = await snapshotIndex(edited.content);
+      try {
+        expect(rebuilt.index.list()[0]?.description).toBe(`${description} changed  `);
+      } finally {
+        rebuilt.index.destroy();
+      }
+    } finally {
+      index.destroy();
+    }
   },
 );

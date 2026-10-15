@@ -11,7 +11,7 @@ export function renderTaskDescriptionText(
   markdown: string,
   options: Omit<RenderTaskTextOptions, 'presentation'>,
 ): TaskTextRender {
-  return renderTaskText(element, markdown, { ...options, presentation: 'markdown' });
+  return renderTaskText(element, markdown, { ...options, presentation: 'description' });
 }
 export function renderSubtaskTitleText(
   host: HTMLElement,
