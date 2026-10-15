@@ -1519,6 +1519,89 @@ describe('LeftPanel lifecycle', () => {
 });
 
 describe('LeftPanel Pinned section', () => {
+  it('reorders a pinned drag at the target midpoint without issuing a task command', async () => {
+    const staleTask = task({ title: 'Older drag' });
+    const { el, state, merged, execute } = makePanel([staleTask], {}, ['#one', '#two', '#three']);
+    state.set('draggingTaskNode', {
+      source: 'center-card',
+      task: {
+        root: staleTask,
+        node: staleTask,
+        path: [],
+        target: { type: 'task', ref: staleTask.ref },
+      },
+    });
+    const rows = el.querySelectorAll<HTMLElement>('.abyss-pinned-tag');
+    const payload = new Map<string, string>();
+    const dataTransfer = {
+      types: ['application/x-abyss-pinned-tag'],
+      setData: (type: string, value: string) => payload.set(type, value),
+      getData: (type: string) => payload.get(type) ?? '',
+    };
+    const start = new Event('dragstart', { bubbles: true, cancelable: true });
+    Object.defineProperty(start, 'dataTransfer', { value: dataTransfer });
+    expectDefined(rows[2]).dispatchEvent(start);
+    expect(state.get('draggingTag')).toBe('#three');
+    expect(dataTransfer.getData('application/x-abyss-pinned-tag')).toBe('#three');
+
+    const target = expectDefined(rows[0]);
+    vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({ top: 10, height: 20 } as DOMRect);
+    const over = new MouseEvent('dragover', { bubbles: true, cancelable: true, clientY: 12 });
+    Object.defineProperty(over, 'dataTransfer', { value: dataTransfer });
+    target.dispatchEvent(over);
+    expect(over.defaultPrevented).toBe(true);
+    expect(target.classList.contains('abyss-reorder-before')).toBe(true);
+
+    const drop = new MouseEvent('drop', { bubbles: true, cancelable: true, clientY: 12 });
+    Object.defineProperty(drop, 'dataTransfer', { value: dataTransfer });
+    target.dispatchEvent(drop);
+    await flushMicrotasks();
+    expect(merged.pinnedTags).toEqual(['#three', '#one', '#two']);
+    expect(target.classList.contains('abyss-reorder-before')).toBe(false);
+    expect(execute).not.toHaveBeenCalled();
+    expect(state.get('draggingTag')).toBeNull();
+
+    expectDefined(rows[2]).dispatchEvent(new Event('dragend'));
+    expect(state.get('draggingTag')).toBeNull();
+  });
+
+  it('clears pin insertion preview on leave and canceled drag, and ignores unpinned payloads', () => {
+    const { el, state, merged, save, execute } = makePanel([], {}, ['#one', '#two']);
+    const rows = el.querySelectorAll<HTMLElement>('.abyss-pinned-tag');
+    const source = expectDefined(rows[0]);
+    const target = expectDefined(rows[1]);
+    vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({ top: 10, height: 20 } as DOMRect);
+    const dataTransfer = {
+      types: ['application/x-abyss-pinned-tag'],
+      setData: () => {},
+      getData: () => '#one',
+    };
+    const start = new Event('dragstart');
+    Object.defineProperty(start, 'dataTransfer', { value: dataTransfer });
+    source.dispatchEvent(start);
+    const over = new MouseEvent('dragover', { clientY: 25, cancelable: true });
+    Object.defineProperty(over, 'dataTransfer', { value: dataTransfer });
+    target.dispatchEvent(over);
+    expect(target.classList.contains('abyss-reorder-after')).toBe(true);
+    target.dispatchEvent(new Event('dragleave'));
+    expect(target.classList.contains('abyss-reorder-after')).toBe(false);
+    target.dispatchEvent(over);
+    source.dispatchEvent(new Event('dragend'));
+    expect(target.classList.contains('abyss-reorder-after')).toBe(false);
+    expect(state.get('draggingTag')).toBeNull();
+
+    const spoofed = {
+      ...dataTransfer,
+      getData: () => '#outside',
+    };
+    const drop = new MouseEvent('drop', { clientY: 25, cancelable: true });
+    Object.defineProperty(drop, 'dataTransfer', { value: spoofed });
+    target.dispatchEvent(drop);
+    expect(merged.pinnedTags).toEqual(['#one', '#two']);
+    expect(save).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it('renders Pinned section when pinnedTags is non-empty', () => {
     const { el } = makePanel([], {}, ['#task/next']);
     const headers = Array.from(el.querySelectorAll('.abyss-left-section-header')).map(

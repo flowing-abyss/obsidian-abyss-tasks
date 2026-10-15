@@ -408,6 +408,29 @@ export class TagManager {
     });
   }
 
+  async reorderPinnedTags(
+    draggedTag: string,
+    targetTag: string,
+    placement: 'before' | 'after',
+  ): Promise<void> {
+    const previous = this.settings.pinnedTags;
+    const from = previous.findIndex((candidate) => sameTag(candidate, draggedTag));
+    const target = previous.findIndex((candidate) => sameTag(candidate, targetTag));
+    if (from < 0 || target < 0 || from === target) return;
+
+    const applied = [...previous];
+    const [dragged] = applied.splice(from, 1);
+    if (dragged === undefined) return;
+    const targetAfterRemoval = applied.findIndex((candidate) => sameTag(candidate, targetTag));
+    applied.splice(targetAfterRemoval + (placement === 'after' ? 1 : 0), 0, dragged);
+    if (applied.every((tag, index) => tag === previous[index])) return;
+
+    this.settings.pinnedTags = applied;
+    await this.persistMutation(() => {
+      if (this.settings.pinnedTags === applied) this.settings.pinnedTags = previous;
+    });
+  }
+
   async archiveTag(tag: string): Promise<void> {
     if (this.settings.archivedTags.some((candidate) => sameTag(candidate, tag))) return;
     const previousArchived = this.settings.archivedTags;

@@ -67,7 +67,9 @@ export class TagNavigation {
   // When a tag is opened from the Pinned section, don't auto-expand the group
   // that contains it in the Tags tree — the pin exists precisely to avoid that.
   #tagSelectedFromPinned = false;
+  #pinnedReorderPreview: HTMLElement | null = null;
   static readonly #GROUP_DND = 'application/x-abyss-taggroup';
+  static readonly #PIN_DND = 'application/x-abyss-pinned-tag';
 
   constructor(options: TagNavigationOptions) {
     this.#state = options.state;
@@ -103,7 +105,8 @@ export class TagNavigation {
       this.#showPinnedTagMenu(e, tag);
     });
 
-    this.#attachTagDragSource(row, tag);
+    this.#attachTagDragSource(row, tag, true);
+    this.#attachPinnedReorder(row, tag);
     this.#attachDropZone(row, tag);
   }
 
@@ -583,21 +586,84 @@ export class TagNavigation {
     this.#host.render();
   }
 
-  #attachTagDragSource(el: HTMLElement, tag: string): void {
+  #attachTagDragSource(el: HTMLElement, tag: string, pinned = false): void {
     el.setAttribute('draggable', 'true');
     el.addEventListener('dragstart', (e) => {
       e.stopPropagation();
       this.#state.set('draggingTag', tag);
+      if (pinned) e.dataTransfer?.setData(TagNavigation.#PIN_DND, tag);
       el.classList.add('abyss-dragging');
     });
     el.addEventListener('dragend', () => {
       this.#state.set('draggingTag', null);
       el.classList.remove('abyss-dragging');
+      if (pinned) this.#clearPinnedReorderPreview();
     });
+  }
+
+  #clearPinnedReorderPreview(): void {
+    this.#pinnedReorderPreview?.classList.remove('abyss-reorder-before', 'abyss-reorder-after');
+    this.#pinnedReorderPreview = null;
+  }
+
+  #attachPinnedReorder(el: HTMLElement, targetTag: string): void {
+    const placement = (e: DragEvent): 'before' | 'after' => {
+      const { top, height } = el.getBoundingClientRect();
+      return e.clientY < top + height / 2 ? 'before' : 'after';
+    };
+    el.addEventListener('dragover', (e) => {
+      if (!(e.dataTransfer?.types.includes(TagNavigation.#PIN_DND) ?? false)) return;
+      const dragged = this.#state.get('draggingTag');
+      if (
+        dragged === null ||
+        sameTag(dragged, targetTag) ||
+        !this.#settings.pinnedTags.some((tag) => sameTag(tag, dragged)) ||
+        !this.#settings.pinnedTags.some((tag) => sameTag(tag, targetTag))
+      )
+        return;
+      e.preventDefault();
+      this.#clearPinnedReorderPreview();
+      el.classList.add(placement(e) === 'before' ? 'abyss-reorder-before' : 'abyss-reorder-after');
+      this.#pinnedReorderPreview = el;
+    });
+    el.addEventListener('dragleave', () => {
+      if (this.#pinnedReorderPreview === el) this.#clearPinnedReorderPreview();
+    });
+    el.addEventListener('drop', (e) => {
+      this.#clearPinnedReorderPreview();
+      const dragged = e.dataTransfer?.getData(TagNavigation.#PIN_DND);
+      if (
+        dragged === undefined ||
+        dragged === '' ||
+        !this.#settings.pinnedTags.some((tag) => sameTag(tag, dragged)) ||
+        !this.#settings.pinnedTags.some((tag) => sameTag(tag, targetTag)) ||
+        sameTag(dragged, targetTag)
+      )
+        return;
+      e.preventDefault();
+      e.stopPropagation();
+      this.#state.set('draggingTag', null);
+      runAsyncAction(this.#reorderPinnedTags(dragged, targetTag, placement(e)));
+    });
+  }
+
+  async #reorderPinnedTags(
+    dragged: string,
+    target: string,
+    placement: 'before' | 'after',
+  ): Promise<void> {
+    const before = this.#settings.pinnedTags;
+    await this.#runTagSettingsAction(
+      this.#tagManager.reorderPinnedTags(dragged, target, placement),
+      'reorder pinned tags',
+      () => this.#settings.pinnedTags === before,
+    );
+    this.#host.render();
   }
 
   #attachDropZone(el: HTMLElement, tag: string): void {
     el.addEventListener('dragover', (e) => {
+      if (e.dataTransfer?.types.includes(TagNavigation.#PIN_DND) ?? false) return;
       if (this.#host.draggedCenterNode() == null) return;
       e.preventDefault();
       el.classList.add('abyss-drop-target');
@@ -607,6 +673,7 @@ export class TagNavigation {
     });
     el.addEventListener('drop', (e) => {
       el.classList.remove('abyss-drop-target');
+      if (e.dataTransfer?.types.includes(TagNavigation.#PIN_DND) ?? false) return;
       const dragging = this.#host.draggedCenterNode();
       if (dragging == null) return;
       e.preventDefault();

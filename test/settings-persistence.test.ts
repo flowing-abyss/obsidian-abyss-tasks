@@ -106,6 +106,38 @@ function stateEnvelope(overrides: Record<string, unknown> = {}): Record<string, 
 }
 
 describe('SettingsPersistenceCoordinator migration', () => {
+  it('saves reordered pins as static settings and reloads their order without changing view state', async () => {
+    const port = memoryPort(
+      markedStatic({ pinnedTags: ['#one', '#two', '#three'], futureStatic: { keep: true } }),
+      stateEnvelope({ futureView: { keep: true } }),
+    );
+    const coordinator = new SettingsPersistenceCoordinator(port);
+    const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    const originalView = port.stateText;
+    const manager = new TagManager(
+      null as never,
+      settings,
+      () => coordinator.saveSettings(settings),
+      {
+        check: () => 'ready',
+        apply: async (_change, applyLive) => {
+          applyLive();
+        },
+      },
+    );
+
+    await manager.reorderPinnedTags('#three', '#one', 'before');
+
+    expect(port.writes).toEqual(['data.json']);
+    expect(port.stateText).toBe(originalView);
+    expect(port.staticData).toMatchObject({
+      pinnedTags: ['#three', '#one', '#two'],
+      futureStatic: { keep: true },
+    });
+    const reloaded = await new SettingsPersistenceCoordinator(port).loadSettings(DEFAULT_SETTINGS);
+    expect(reloaded.settings.pinnedTags).toEqual(['#three', '#one', '#two']);
+  });
+
   it.each([
     [undefined, 'A'],
     [7, 'A'],

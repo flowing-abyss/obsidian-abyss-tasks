@@ -5487,6 +5487,14 @@ body.abyss-modal-open .popover.hover-popover {
   color: var(--text-normal);
 }
 
+:where(.abyss-panel-view) .abyss-pinned-tag.abyss-reorder-before {
+  box-shadow: inset 0 2px 0 0 var(--interactive-accent);
+}
+
+:where(.abyss-panel-view) .abyss-pinned-tag.abyss-reorder-after {
+  box-shadow: inset 0 -2px 0 0 var(--interactive-accent);
+}
+
 /* ── Tag management: drag-to-tag ────────────────────────── */
 
 .abyss-drop-target {

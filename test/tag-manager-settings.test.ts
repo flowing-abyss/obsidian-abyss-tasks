@@ -87,6 +87,69 @@ describe('TagManager.unpinTag', () => {
   });
 });
 
+describe('TagManager.reorderPinnedTags', () => {
+  it('moves pins before and after targets in both directions', async () => {
+    const { tm, settings, save } = makeManager({ pinnedTags: ['#one', '#two', '#three'] });
+
+    await tm.reorderPinnedTags('#three', '#one', 'before');
+    expect(settings.pinnedTags).toEqual(['#three', '#one', '#two']);
+    await tm.reorderPinnedTags('#three', '#two', 'after');
+    expect(settings.pinnedTags).toEqual(['#one', '#two', '#three']);
+    await tm.reorderPinnedTags('#one', '#three', 'before');
+    expect(settings.pinnedTags).toEqual(['#two', '#one', '#three']);
+    await tm.reorderPinnedTags('#two', '#three', 'after');
+    expect(settings.pinnedTags).toEqual(['#one', '#three', '#two']);
+    expect(save).toHaveBeenCalledTimes(4);
+  });
+
+  it('ignores missing, identical, and already adjacent placements', async () => {
+    const { tm, settings, save } = makeManager({ pinnedTags: ['#one', '#two', '#three'] });
+    const original = settings.pinnedTags;
+
+    await tm.reorderPinnedTags('#one', '#ONE', 'after');
+    await tm.reorderPinnedTags('#missing', '#two', 'before');
+    await tm.reorderPinnedTags('#one', '#missing', 'before');
+    await tm.reorderPinnedTags('#one', '#two', 'before');
+    await tm.reorderPinnedTags('#three', '#two', 'after');
+
+    expect(settings.pinnedTags).toBe(original);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('uses case-insensitive identity while preserving stored spelling and untouched hidden pins', async () => {
+    const { tm, settings } = makeManager({
+      pinnedTags: ['#One', '#hidden', '#TWO', '#three'],
+      archivedTags: ['#hidden'],
+    });
+
+    await tm.reorderPinnedTags('#two', '#one', 'before');
+
+    expect(settings.pinnedTags).toEqual(['#TWO', '#One', '#hidden', '#three']);
+    expect(settings.archivedTags).toEqual(['#hidden']);
+  });
+
+  it('rolls back a failed save but preserves a newer saved order', async () => {
+    const failed = makeManager({ pinnedTags: ['#one', '#two', '#three'] });
+    failed.save.mockRejectedValueOnce(new Error('storage unavailable'));
+    await expect(failed.tm.reorderPinnedTags('#three', '#one', 'before')).rejects.toThrow(
+      'storage unavailable',
+    );
+    expect(failed.settings.pinnedTags).toEqual(['#one', '#two', '#three']);
+
+    let rejectSave!: (error: Error) => void;
+    const firstSave = new Promise<void>((_resolve, reject) => {
+      rejectSave = reject;
+    });
+    const newer = makeManager({ pinnedTags: ['#one', '#two', '#three'] });
+    newer.save.mockReturnValueOnce(firstSave).mockResolvedValueOnce(undefined);
+    const first = newer.tm.reorderPinnedTags('#three', '#one', 'before');
+    await newer.tm.reorderPinnedTags('#two', '#one', 'before');
+    rejectSave(new Error('storage unavailable'));
+    await expect(first).rejects.toThrow('storage unavailable');
+    expect(newer.settings.pinnedTags).toEqual(['#three', '#two', '#one']);
+  });
+});
+
 describe('TagManager.archiveTag', () => {
   it('adds tag to archivedTags, removes from pinnedTags, and saves', async () => {
     const { tm, settings, save } = makeManager({ pinnedTags: ['#task/next'] });
