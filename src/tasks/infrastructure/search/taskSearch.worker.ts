@@ -1,4 +1,5 @@
 import type { TaskSearchMessage, TaskSearchReply } from '../../application/TaskSearchBackend';
+import { validTaskSearchMatchScope } from '../../application/TaskSearchEngine';
 import { TaskSearchError } from '../../domain/taskSearchTypes';
 import { createMiniSearchTaskEngine } from './MiniSearchTaskEngine';
 import { createSearchWordSegmenter } from './searchWordSegmenter';
@@ -44,7 +45,7 @@ function query(value: unknown): boolean {
 function request(value: unknown): boolean {
   return (
     record(value) &&
-    (value['kind'] === 'roots' || value['kind'] === 'nodes') &&
+    validTaskSearchMatchScope({ kind: value['kind'], matchScope: value['matchScope'] }) &&
     typeof value['includeSourcePath'] === 'boolean' &&
     query(value['query']) &&
     ['filePath', 'preferFilePath'].every(

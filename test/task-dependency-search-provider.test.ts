@@ -753,3 +753,30 @@ it.each(['rename', 'delete'] as const)(
     await expect(session.resolve(address, h.signal)).rejects.toMatchObject({ code: 'stale' });
   },
 );
+
+it('keeps dependency picker matches on own title and tags after subtree search', async () => {
+  const h = await providerHarness({
+    'current.md': '- [ ] Current',
+    'other.md':
+      '- [ ] Parent\n  - [ ] Alpha #pickertag\n    detailneedle\n    - [ ] Beta\n      - > commentneedle',
+  });
+  const subtree = await h.search.open(
+    { kind: 'nodes', matchScope: 'subtree', query: 'commentneedle' },
+    h.signal,
+  );
+  expect(subtree.total).toBe(3);
+  h.search.release(subtree);
+  for (const query of ['commentneedle', 'detailneedle', 'Alpha commentneedle']) {
+    const session = await h.provider.open(query, h.current.target, 'blocks', h.signal);
+    expect(session.totalCandidates).toBe(0);
+    session.close();
+  }
+  for (const query of ['Alpha', 'pickertag']) {
+    const session = await h.provider.open(query, h.current.target, 'blocks', h.signal);
+    expect(session.totalCandidates).toBe(1);
+    expect(
+      (await session.readRange(0, 32, h.signal)).candidates[0]?.hit.address.childLines,
+    ).toEqual([1]);
+    session.close();
+  }
+});

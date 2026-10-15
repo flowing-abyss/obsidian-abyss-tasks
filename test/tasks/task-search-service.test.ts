@@ -930,3 +930,80 @@ it('carries the source semantics revision through subscription, recovery, failur
     h.close();
   }
 });
+
+it('returns exact subtree addresses without rich ranking reads and retires stale or cancelled cursors', async () => {
+  const h = await createCanonicalSearchHarness(
+    {
+      'a.md':
+        '- [ ] Parent\n  - [ ] Alpha\n    detailneedle\n    - [ ] Beta\n      - > commentneedle\n  - [ ] Unrelated',
+    },
+    DEFAULT_SETTINGS,
+  );
+  try {
+    const list = vi.spyOn(h.index, 'list');
+    const listNodes = vi.spyOn(h.index, 'listNodes');
+    const resolve = vi.spyOn(h.index, 'resolveSearchHits');
+    const request = { kind: 'nodes', matchScope: 'subtree', query: 'commentneedle' } as const;
+    expect((await h.search.open({ kind: 'nodes', query: 'commentneedle' }, signal())).total).toBe(
+      0,
+    );
+    const controller = new AbortController();
+    const cursor = await h.search.open(request, controller.signal);
+    const batch = await h.search.read(cursor, 0, 32, controller.signal);
+    expect(batch.hits.map((hit) => hit.address.childLines)).toEqual(
+      expect.arrayContaining([[], [1], [1, 2]]),
+    );
+    expect(batch.hits).toHaveLength(3);
+    expect(batch.hits.some((hit) => hit.address.childLines[0] === 5)).toBe(false);
+    expect(list).not.toHaveBeenCalled();
+    expect(listNodes).not.toHaveBeenCalled();
+    expect(resolve).not.toHaveBeenCalled();
+    const split = await h.search.open({ ...request, query: 'Alpha commentneedle' }, signal());
+    expect(
+      (await h.search.read(split, 0, 32, signal())).hits.map((hit) => hit.address.childLines),
+    ).toEqual(expect.arrayContaining([[], [1]]));
+    expect(split.total).toBe(2);
+    controller.abort();
+    await expect(h.search.read(cursor, 0, 32, signal())).rejects.toMatchObject({ code: 'aborted' });
+    h.index.installCommittedContent('a.md', '- [ ] Replacement');
+    await expect(h.search.read(split, 0, 32, signal())).rejects.toMatchObject({ code: 'stale' });
+    expect((await h.search.open(request, signal())).total).toBe(0);
+  } finally {
+    h.close();
+  }
+});
+it.each([
+  { kind: 'nodes', matchScope: 'invalid' },
+  { kind: 'roots', matchScope: 'subtree' },
+  { kind: 'roots', matchScope: 'node' },
+])('rejects invalid service scope %j before empty browsing', async (invalid) => {
+  const h = createTaskSearchHarness();
+  h.source.ready([nodeDocuments(1)]);
+  try {
+    await expect(
+      h.service.open(
+        { ...invalid, query: '' } as unknown as Parameters<typeof h.service.open>[0],
+        signal(),
+      ),
+    ).rejects.toMatchObject({ code: 'invalid-request' });
+    expect(h.backends).toHaveLength(0);
+  } finally {
+    h.service.dispose();
+  }
+});
+
+it('subtree empty browse stays canonical without constructing an engine', async () => {
+  const h = createTaskSearchHarness();
+  h.source.ready([nodeDocuments(3)]);
+  try {
+    const cursor = await h.service.open(
+      { kind: 'nodes', matchScope: 'subtree', query: '' },
+      signal(),
+    );
+    expect(cursor).toMatchObject({ kind: 'nodes', access: 'random', total: 3 });
+    expect((await h.service.read(cursor, 0, 32, signal())).hits).toHaveLength(3);
+    expect(h.backends).toHaveLength(0);
+  } finally {
+    h.service.dispose();
+  }
+});

@@ -367,3 +367,134 @@ describe('conditional UTF-16 candidate radius', () => {
     expect(spy.mock.calls.some(([term]) => term === 'axx')).toBe(true);
   });
 });
+
+describe('opt-in subtree node search', () => {
+  const options = { kind: 'nodes', matchScope: 'subtree' } as const;
+  function tree() {
+    return [
+      document(1, { title: 'Parent' }),
+      document(2, {
+        rootId: 1,
+        title: 'Alpha',
+        description: 'detailneedle',
+        order: { filePath: 'a.md', line: 0, childLines: [2] },
+      }),
+      document(3, {
+        rootId: 1,
+        title: 'Beta',
+        comments: 'commentneedle',
+        order: { filePath: 'a.md', line: 0, childLines: [2, 4] },
+      }),
+      document(4, {
+        rootId: 1,
+        title: 'Unrelated',
+        order: { filePath: 'a.md', line: 0, childLines: [6] },
+      }),
+      document(5, {
+        rootId: 1,
+        tags: 'siblingtag',
+        order: { filePath: 'a.md', line: 0, childLines: [6, 4] },
+      }),
+    ];
+  }
+  it('uses exact ancestry and AND coverage without ancestor or sibling leakage', () => {
+    const value = engine(tree());
+    for (const matchScope of [undefined, 'node'] as const)
+      expect(
+        search(value, 'commentneedle', {
+          kind: 'nodes',
+          ...(matchScope === undefined ? {} : { matchScope }),
+        }),
+      ).toEqual([]);
+    expect(
+      search(value, 'commentneedle', options)
+        .map((h) => h.id)
+        .sort((a, b) => a - b),
+    ).toEqual([1, 2, 3]);
+    expect(
+      search(value, 'detailneedle', options)
+        .map((h) => h.id)
+        .sort((a, b) => a - b),
+    ).toEqual([1, 2]);
+    expect(
+      search(value, 'Alpha commentneedle', options)
+        .map((h) => h.id)
+        .sort((a, b) => a - b),
+    ).toEqual([1, 2]);
+    expect(search(value, 'Parent commentneedle', options).map((h) => h.id)).toEqual([1]);
+    expect(search(value, 'siblingtag commentneedle', options).map((h) => h.id)).toEqual([1]);
+    expect(search(value, 'commentneedle').map((h) => h.id)).toEqual([1]);
+  });
+  it.each(['description', 'comments', 'tags', 'metadata', 'links', 'sourcePath'] as const)(
+    'searches %s with source path opt-in',
+    (field) => {
+      const value = engine([document(1, { [field]: 'needle' })]);
+      expect(search(value, 'needle', options).map((h) => h.id)).toEqual(
+        field === 'sourcePath' ? [] : [1],
+      );
+      expect(
+        search(value, 'needle', { ...options, includeSourcePath: true }).map((h) => h.id),
+      ).toEqual([1]);
+    },
+  );
+  it('keeps raw descendant scores independent of depth and matches root scoring', () => {
+    const value = engine(tree());
+    const hits = search(value, 'commentneedle', options);
+    const own = hits.find((h) => h.id === 3)?.score ?? 0;
+    expect(own).toBeGreaterThan(0);
+    expect(hits.find((h) => h.id === 2)?.score).toBeCloseTo(own * 0.8);
+    expect(hits.find((h) => h.id === 1)?.score).toBeCloseTo(own * 0.8);
+    const combined = search(value, 'Alpha commentneedle', options);
+    expect(combined.find((h) => h.id === 1)?.score).toBeCloseTo(
+      search(value, 'Alpha commentneedle')[0]?.score ?? 0,
+    );
+  });
+  it('caps wide subtree contributions and keeps exact-title relevance ahead of file preference', () => {
+    const value = engine([
+      document(1, { title: 'needle' }),
+      ...Array.from({ length: 20 }, (_, index) =>
+        document(index + 2, {
+          rootId: 1,
+          title: 'needle',
+          order: { filePath: 'a.md', line: 0, childLines: [index + 1] },
+        }),
+      ),
+      document(100, { title: 'needlf', order: { filePath: 'b.md', line: 0, childLines: [] } }),
+    ]);
+    const hits = search(value, 'needle', { ...options, preferFilePath: 'b.md' });
+    const own = search(value, 'needle', { kind: 'nodes' }).find((hit) => hit.id === 1)?.score ?? 0;
+    expect(hits[0]?.id).toBe(1);
+    expect(hits[0]?.score).toBeCloseTo(2 * own);
+    expect(hits[0]?.score).toBeCloseTo(search(value, 'needle')[0]?.score ?? 0);
+    expect(hits[hits.length - 1]?.id).toBe(100);
+  });
+  it('resolves unordered batches, removes old ancestry and restricts files', async () => {
+    const value = engine([]);
+    const docs = tree();
+    value.replaceBegin('a.md');
+    for (const doc of [...docs].reverse()) value.add([doc]);
+    value.replaceCommit('a.md');
+    expect(
+      search(value, 'commentneedle', options)
+        .map((h) => h.id)
+        .sort((a, b) => a - b),
+    ).toEqual([1, 2, 3]);
+    value.add([
+      document(20, {
+        comments: 'commentneedle',
+        order: { filePath: 'b.md', line: 0, childLines: [] },
+      }),
+    ]);
+    expect(
+      search(value, 'commentneedle', { ...options, filePath: 'b.md' }).map((h) => h.id),
+    ).toEqual([20]);
+    value.replaceBegin('a.md');
+    value.add([document(10, { title: 'Replacement' })]);
+    value.replaceCommit('a.md');
+    expect(search(value, 'commentneedle', options).map((h) => h.id)).toEqual([20]);
+    value.remove('b.md');
+    await value.vacuum();
+    expect(search(value, 'commentneedle', options)).toEqual([]);
+    expect(search(value, '', options).map((h) => h.id)).toEqual([10]);
+  });
+});

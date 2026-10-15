@@ -28,6 +28,9 @@ import process from 'process';
 // 2,024,448 bytes (1977 KiB). The CSS limit is unchanged.
 // Q calendar-day capture: baseline 2,051,744 bytes; measured 2,052,158 bytes (+414 bytes).
 // The next-KiB main limit is 2,053,120 bytes (2005 KiB). The CSS limit is unchanged.
+// Indexed subtree node search: baseline 2,054,781 bytes; measured 2,058,283 (+3,502 bytes).
+// Shared inline/Worker aggregation and scope validation use the next-KiB main limit of
+// 2,059,264 bytes (2011 KiB). CSS and dependency scope are unchanged.
 // Dependency scope and budget enforcement are unchanged.
 const { mainJsBudgetBytes: MAIN_JS_BUDGET_BYTES } = JSON.parse(
   readFileSync('package.json', 'utf8'),

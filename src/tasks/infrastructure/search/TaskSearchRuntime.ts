@@ -4,7 +4,11 @@ import type {
   TaskSearchBackendBatch,
   TaskSearchMutation,
 } from '../../application/TaskSearchBackend';
-import type { TaskSearchEngine, TaskSearchEngineRequest } from '../../application/TaskSearchEngine';
+import {
+  validTaskSearchMatchScope,
+  type TaskSearchEngine,
+  type TaskSearchEngineRequest,
+} from '../../application/TaskSearchEngine';
 import type { TaskSearchEngineHit } from '../../application/TaskSearchSource';
 import { TaskSearchError } from '../../domain/taskSearchTypes';
 
@@ -107,6 +111,8 @@ export class TaskSearchRuntime implements TaskSearchBackend {
     allocationId?: string,
   ): Promise<TaskSearchCursor> {
     this.check();
+    if (!validTaskSearchMatchScope(request))
+      throw new TaskSearchError('invalid-request', 'Invalid search match scope');
     if (!this.published) throw new TaskSearchError('unavailable', 'Search publication pending');
     if (generation !== this.generation)
       throw new TaskSearchError('stale', 'Search generation changed');

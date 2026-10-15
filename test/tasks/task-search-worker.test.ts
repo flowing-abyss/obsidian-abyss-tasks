@@ -554,3 +554,66 @@ it.each(['open', 'read'] as const)(
     }
   },
 );
+
+it.each([
+  ['nodes', undefined, true],
+  ['nodes', 'node', true],
+  ['nodes', 'subtree', true],
+  ['nodes', 'invalid', false],
+  ['nodes', null, false],
+  ['roots', 'node', false],
+  ['roots', 'subtree', false],
+] as const)('validates worker scope %s/%s', (kind, matchScope, accepted) => {
+  const message = {
+    epoch: 1,
+    id: 1,
+    type: 'open',
+    generation: 1,
+    request: {
+      kind,
+      matchScope,
+      query: prepareSearchQuery('needle', fallbackSearchWords),
+      includeSourcePath: false,
+    },
+  };
+  expect(decodeTaskSearchRequest(message) !== undefined).toBe(accepted);
+});
+it('round-trips subtree scope and numeric results with inline parity', async () => {
+  const backend = await BrowserTaskSearchBackend.create('source');
+  const inline = new TaskSearchRuntime(createMiniSearchTaskEngine(fallbackSearchWords));
+  try {
+    const docs = nodeDocuments(3).map((doc, index) => ({
+      ...doc,
+      rootId: 1,
+      title: ['Parent', 'Alpha', 'Beta'][index] ?? '',
+      comments: index === 2 ? 'commentneedle' : '',
+      order: { filePath: 'a.md', line: 0, childLines: [1, 2].slice(0, index) },
+    }));
+    for (const target of [backend, inline]) {
+      await target.mutate({ type: 'begin', path: 'a.md' });
+      await target.mutate({ type: 'add', documents: docs });
+      await target.mutate({ type: 'commit', path: 'a.md' });
+      await target.mutate({ type: 'publish', generation: 1 });
+    }
+    const request = {
+      kind: 'nodes',
+      matchScope: 'subtree',
+      query: prepareSearchQuery('commentneedle', fallbackSearchWords),
+      includeSourcePath: false,
+    } as const;
+    const remote = await backend.open(request, 1);
+    const local = await inline.open(request, 1);
+    const hits = (await backend.read(remote, 0, 32)).hits;
+    expect(hits.map((hit) => hit.id).sort((a, b) => a - b)).toEqual([1, 2, 3]);
+    expect(hits).toEqual((await inline.read(local, 0, 32)).hits);
+    expect(remote).toMatchObject({ kind: 'nodes', access: 'random' });
+    expect(
+      ControlledWorker.instances[0]?.outgoing.some(
+        (message) => decodeTaskSearchRequest(message)?.type === 'open',
+      ),
+    ).toBe(true);
+  } finally {
+    backend.dispose();
+    inline.dispose();
+  }
+});

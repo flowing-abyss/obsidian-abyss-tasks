@@ -18,7 +18,9 @@ export interface TaskSearchBackendBatch {
 export interface TaskSearchBackend {
   subscribeFailure(listener: (cause: unknown) => void): () => void;
   mutate(operation: TaskSearchMutation): Promise<void>;
-  /** A supplied allocation ID belongs to the service and may be released before open resolves. */
+  /** Uses the engine's opt-in node match scope; cursors keep their existing access contract.
+   * A supplied allocation ID belongs to the service and may be released before open resolves.
+   */
   open(
     request: TaskSearchEngineRequest,
     generation: number,

@@ -33,6 +33,7 @@ export type TaskSearchRequest =
     }
   | {
       readonly kind: 'nodes';
+      readonly matchScope?: 'node' | 'subtree';
       readonly query: string;
       readonly includeSourcePath?: boolean;
       readonly preferFilePath?: string;

@@ -149,7 +149,7 @@ it('actual compact runtime vectors exclude canonical source-bearing revisions', 
     await runtime.mutate({ type: 'commit', path: file.path });
   }
   await runtime.mutate({ type: 'publish', generation: 1 });
-  await runtime.open(request('nodes'), 1);
+  await runtime.open({ ...request('nodes'), kind: 'nodes', matchScope: 'subtree' }, 1);
   const vectors = (runtime as unknown as { vectors: Map<string, unknown> }).vectors;
   expect(vectors.size).toBe(1);
   assertNoRevision(structuredClone([...vectors.values()]), root.ref.revision);
@@ -165,4 +165,19 @@ it('releases a service allocation by its reserved ID before open delivery', asyn
   await expect(runtime.read(cursor, 0, 1)).rejects.toMatchObject({ code: 'cursor-expired' });
   expect((runtime as unknown as { vectors: Map<string, unknown> }).vectors.size).toBe(0);
   runtime.dispose();
+});
+
+it.each([
+  { kind: 'nodes', matchScope: 'invalid' },
+  { kind: 'roots', matchScope: 'subtree' },
+  { kind: 'roots', matchScope: 'node' },
+])('rejects invalid runtime scope %j', async (invalid) => {
+  const r = await ready();
+  try {
+    await expect(
+      r.open({ ...request('nodes'), ...invalid } as unknown as Parameters<typeof r.open>[0], 1),
+    ).rejects.toMatchObject({ code: 'invalid-request' });
+  } finally {
+    r.dispose();
+  }
 });

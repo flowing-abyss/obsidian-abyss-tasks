@@ -43,6 +43,8 @@ const boosts = {
 };
 interface IndexedNode extends TaskSearchSourceNode {
   readonly astralFields: number;
+  readonly coordinate: string;
+  readonly parentCoordinate: string | undefined;
 }
 function hasAstralWordPoint(term: string): boolean {
   return /[\u{10000}-\u{10ffff}]/u.test(term);
@@ -69,7 +71,9 @@ function compareOrder(a: TaskSearchSourceNode, b: TaskSearchSourceNode): number 
 }
 function searchFields(request: TaskSearchEngineRequest): TaskSearchField[] {
   const selected: TaskSearchField[] =
-    request.kind === 'nodes' ? ['title', 'tags'] : fields.filter((field) => field !== 'sourcePath');
+    request.kind === 'nodes' && request.matchScope !== 'subtree'
+      ? ['title', 'tags']
+      : fields.filter((field) => field !== 'sourcePath');
   if (request.includeSourcePath) selected.push('sourcePath');
   return selected;
 }
@@ -108,6 +112,81 @@ function addNodeScore(group: Aggregate, score: NodeScore, child: boolean): void 
   const total = [...score.tokens.values()].reduce((sum, value) => sum + value, 0);
   group.scores.push(total * (child ? 0.8 : 1));
 }
+interface SubtreeAggregate {
+  readonly node: IndexedNode;
+  readonly covered: Set<number>;
+  readonly exactTitle: Set<number>;
+  readonly own: number;
+  descendantSum: number;
+  descendantMax: number;
+}
+function coordinate(rootId: number, childLines: readonly number[]): string {
+  return `${rootId}:${childLines.join(',')}`;
+}
+function indexedParent<T>(
+  node: IndexedNode,
+  coordinates: ReadonlyMap<string, number>,
+  values: ReadonlyMap<number, T>,
+): T | undefined {
+  const id =
+    node.parentCoordinate === undefined ? undefined : coordinates.get(node.parentCoordinate);
+  return id === undefined ? undefined : values.get(id);
+}
+function touchedSubtrees(
+  nodes: ReadonlyMap<number, IndexedNode>,
+  coordinates: ReadonlyMap<string, number>,
+  scores: ReadonlyMap<number, NodeScore>,
+): Map<number, SubtreeAggregate> {
+  const groups = new Map<number, SubtreeAggregate>();
+  // Resolve parents at query time: source batches need not arrive in tree order.
+  // Stop at the first touched ancestor so every closure node is initialized once.
+  for (const id of scores.keys()) {
+    let node = nodes.get(id);
+    while (node !== undefined && !groups.has(node.id)) {
+      const own = scores.get(node.id);
+      groups.set(node.id, {
+        node,
+        covered: new Set(own?.tokens.keys()),
+        exactTitle: new Set(own?.exactTitle),
+        own:
+          own === undefined ? 0 : [...own.tokens.values()].reduce((sum, value) => sum + value, 0),
+        descendantSum: 0,
+        descendantMax: 0,
+      });
+      node = indexedParent(node, coordinates, nodes);
+    }
+  }
+  return groups;
+}
+function aggregateSubtrees(
+  nodes: ReadonlyMap<number, IndexedNode>,
+  coordinates: ReadonlyMap<string, number>,
+  scores: ReadonlyMap<number, NodeScore>,
+  request: TaskSearchEngineRequest,
+): readonly TaskSearchEngineHit[] {
+  const groups = touchedSubtrees(nodes, coordinates, scores);
+  const ordered = [...groups.values()].sort(
+    (a, b) => b.node.order.childLines.length - a.node.order.childLines.length,
+  );
+  for (const group of ordered) {
+    const parent = indexedParent(group.node, coordinates, groups);
+    if (parent === undefined) continue;
+    for (const token of group.covered) parent.covered.add(token);
+    for (const token of group.exactTitle) parent.exactTitle.add(token);
+    // Pass raw statistics upward; the descendant discount applies once per candidate.
+    parent.descendantSum += group.own + group.descendantSum;
+    parent.descendantMax = Math.max(parent.descendantMax, group.own, group.descendantMax);
+  }
+  return ordered
+    .filter((group) => group.covered.size === request.query.tokens.length)
+    .map((group) => {
+      const strongest = Math.max(group.own, 0.8 * group.descendantMax);
+      const remaining = group.own + 0.8 * group.descendantSum - strongest;
+      return { id: group.node.id, score: strongest + Math.min(strongest, 0.15 * remaining), group };
+    })
+    .sort((a, b) => compareRelevance(a, b, request.preferFilePath))
+    .map(({ id, score }) => ({ id, score }));
+}
 function comparePreferred(
   a: TaskSearchSourceNode,
   b: TaskSearchSourceNode,
@@ -117,8 +196,8 @@ function comparePreferred(
   return delta === 0 ? compareOrder(a, b) : delta;
 }
 function compareRelevance(
-  a: { score: number; group: Aggregate },
-  b: { score: number; group: Aggregate },
+  a: { score: number; group: Pick<Aggregate, 'node' | 'exactTitle'> },
+  b: { score: number; group: Pick<Aggregate, 'node' | 'exactTitle'> },
   preferred?: string,
 ): number {
   const exact = b.group.exactTitle.size - a.group.exactTitle.size;
@@ -149,6 +228,7 @@ function recordResult(
 class MiniSearchTaskEngine implements TaskSearchEngine {
   private readonly mini_abyssPrivate: MiniSearch<TaskSearchDocument>;
   private readonly nodes_abyssPrivate = new Map<number, IndexedNode>();
+  private readonly coordinates_abyssPrivate = new Map<string, number>();
   private readonly files_abyssPrivate = new Map<string, Set<number>>();
   private readonly replacing_abyssPrivate = new Set<string>();
   private readonly astralFieldCounts_abyssPrivate = fields.map(() => 0);
@@ -185,10 +265,17 @@ class MiniSearchTaskEngine implements TaskSearchEngine {
       const astralFields = this.indexingAstralFields_abyssPrivate;
       this.indexingAstralFields_abyssPrivate = 0;
       this.adjustAstralFields_abyssPrivate(astralFields, 1);
+      const key = coordinate(document.rootId, document.order.childLines);
+      this.coordinates_abyssPrivate.set(key, document.id);
       this.nodes_abyssPrivate.set(document.id, {
         id: document.id,
         rootId: document.rootId,
         astralFields,
+        coordinate: key,
+        parentCoordinate:
+          document.order.childLines.length === 0
+            ? undefined
+            : coordinate(document.rootId, document.order.childLines.slice(0, -1)),
         order: { ...document.order, childLines: [...document.order.childLines] },
       });
       const ids = this.files_abyssPrivate.get(document.order.filePath) ?? new Set<number>();
@@ -205,6 +292,8 @@ class MiniSearchTaskEngine implements TaskSearchEngine {
     for (const id of this.files_abyssPrivate.get(path) ?? []) {
       this.mini_abyssPrivate.discard(id);
       this.adjustAstralFields_abyssPrivate(this.nodes_abyssPrivate.get(id)?.astralFields ?? 0, -1);
+      const node = this.nodes_abyssPrivate.get(id);
+      if (node !== undefined) this.coordinates_abyssPrivate.delete(node.coordinate);
       this.nodes_abyssPrivate.delete(id);
     }
     this.files_abyssPrivate.delete(path);
@@ -228,7 +317,9 @@ class MiniSearchTaskEngine implements TaskSearchEngine {
       for (const result of this.tokenResults_abyssPrivate(token, request))
         recordResult(scores, result, token, tokenIndex);
     }
-    return aggregateScores(this.nodes_abyssPrivate, scores, request);
+    return request.kind === 'nodes' && request.matchScope === 'subtree'
+      ? aggregateSubtrees(this.nodes_abyssPrivate, this.coordinates_abyssPrivate, scores, request)
+      : aggregateScores(this.nodes_abyssPrivate, scores, request);
   }
   private *tokenResults_abyssPrivate(
     token: SearchToken,
@@ -299,6 +390,7 @@ class MiniSearchTaskEngine implements TaskSearchEngine {
     this.disposed_abyssPrivate = true;
     this.mini_abyssPrivate.removeAll();
     this.nodes_abyssPrivate.clear();
+    this.coordinates_abyssPrivate.clear();
     this.files_abyssPrivate.clear();
     this.replacing_abyssPrivate.clear();
     this.astralFieldCounts_abyssPrivate.fill(0);

@@ -273,9 +273,14 @@ it never guesses a child or uses write-reconciliation authority to revive a stal
 The inward [`MiniSearchTaskEngine`](src/tasks/infrastructure/search/MiniSearchTaskEngine.ts) is the
 sole MiniSearch import boundary. Shared [`searchMatchPolicy`](src/tasks/domain/searchMatchPolicy.ts)
 and [`markdown/searchText`](src/markdown/searchText.ts) define matching and visible-text provenance.
-Root Search can match fields across descendants and retains relevance order; node filtering and
-dependency search use each node's own searchable fields. Search text and link destinations remain
-separate from source edit authority. The Worker exchanges text documents and compact numeric results,
+Root Search can match fields across descendants and retains relevance order. Node requests default
+to each node's own title and tags, including dependency search. The internal opt-in
+`matchScope: 'subtree'` uses all Search fields within each candidate's exact subtree, with source
+paths still opt-in. A compact coordinate lookup resolves parents across unordered index batches;
+a query folds token coverage and raw score statistics through touched ancestors without copying
+descendant text or retaining descendant score arrays. Own contributions have weight 1 and all
+descendants weight 0.8, independent of depth. The Filter UI still uses the default node scope.
+Search text and link destinations remain separate from source edit authority. The Worker exchanges text documents and compact numeric results,
 never task refs, source-bearing revisions, or rich snapshots.
 
 Retrieval, compact organization, and DOM mounting have separate lifetimes. Organization publishes

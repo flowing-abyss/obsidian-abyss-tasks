@@ -10,7 +10,10 @@ import type {
   TaskSearchBackendBatch,
   TaskSearchServiceOptions,
 } from '../../application/TaskSearchBackend';
-import type { TaskSearchEngineRequest } from '../../application/TaskSearchEngine';
+import {
+  validTaskSearchMatchScope,
+  type TaskSearchEngineRequest,
+} from '../../application/TaskSearchEngine';
 import type {
   TaskSearchDocument,
   TaskSearchEngineHit,
@@ -533,6 +536,8 @@ export class TaskSearchService implements TaskSearchApi {
   }
   async open(request: TaskSearchRequest, signal: AbortSignal): Promise<TaskSearchCursor> {
     this.check_abyssPrivate(signal);
+    if (!validTaskSearchMatchScope(request))
+      throw new TaskSearchError('invalid-request', 'Invalid search match scope');
     const query = prepareSearchQuery(request.query, this.options.segment);
     const empty = request.query.trim() === '';
     if (empty) await this.waitReady_abyssPrivate(signal, false);
