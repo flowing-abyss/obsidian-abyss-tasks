@@ -2221,3 +2221,38 @@ it.each(['tasks', 'search'] as const)(
     }
   },
 );
+
+it.each(['tasks', 'search'] as const)(
+  'separates compact authored-highlight matches at their actual gaps in %s',
+  async (mode) => {
+    const text = `needle first ${'filler '.repeat(80)}needle second ${'filler '.repeat(80)}needle third`;
+    const description = `<mark>${text}</mark>`;
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, source, holder) => {
+      if (source === description) holder.createEl('p').createEl('mark').appendText(text);
+      else holder.appendText(source);
+    });
+    const h = await mountCanonicalSearchUi(
+      { 'a.md': `- [ ] root\n  - > ${description}` },
+      structuredClone(DEFAULT_SETTINGS),
+      mode,
+    );
+    try {
+      h.query('needle');
+      await h.completed();
+      const d = expectDefined(h.root.querySelector('.abyss-task-desc'));
+      const paragraph = expectDefined(d.querySelector('.abyss-md'));
+      expect(paragraph.children).toHaveLength(3);
+      expect(
+        [...paragraph.children].map(
+          (fragment) => fragment.querySelectorAll('.abyss-search-match').length,
+        ),
+      ).toEqual([1, 1, 1]);
+      expect(paragraph.children[0]?.nextSibling?.textContent).toBe(' … ');
+      expect(paragraph.children[1]?.nextSibling?.textContent).toBe(' … ');
+      for (const mark of d.querySelectorAll('mark')) expect(mark.textContent).not.toContain('…');
+      expect(h.index.list()[0]?.description).toBe(description);
+    } finally {
+      h.dispose();
+    }
+  },
+);

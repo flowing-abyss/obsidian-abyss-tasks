@@ -181,7 +181,8 @@ function collectListOrdinals(list: Element, ordinals: Map<Element, number>): voi
   }
 }
 function addEllipsis(container: HTMLElement, text: Text, before: boolean, gap = false): void {
-  const edge = ellipsisEdge(container, text, gap);
+  const boundary = ellipsisEdge(container, text, gap);
+  const edge = gap ? splitInlineGap(text, boundary) : boundary;
   const trailing = gap ? ' … ' : ' …';
   const cue = container.ownerDocument.createTextNode(before ? '… ' : trailing);
   edge.parentNode?.insertBefore(cue, before ? edge : edge.nextSibling);
@@ -197,4 +198,21 @@ function ellipsisEdge(container: HTMLElement, text: Text, gap: boolean): Node {
     if (!gap || parent.tagName === 'A' || parent.tagName === 'MARK') edge = parent;
   }
   return edge;
+}
+
+/** Split only non-interactive ancestors; anchors retain one contiguous original fragment. */
+function splitInlineGap(text: Text, boundary: Node): Node {
+  let edge: Node = text;
+  while (edge !== boundary && edge.parentElement !== null) {
+    const parent = edge.parentElement;
+    if (parent.tagName !== 'A') splitFollowingSiblings(edge, parent);
+    edge = parent;
+  }
+  return edge;
+}
+function splitFollowingSiblings(edge: Node, parent: HTMLElement): void {
+  const remainder = parent.cloneNode(false);
+  for (let next = edge.nextSibling; next !== null; next = edge.nextSibling)
+    remainder.appendChild(next);
+  if (remainder.hasChildNodes()) parent.parentNode?.insertBefore(remainder, parent.nextSibling);
 }

@@ -162,3 +162,50 @@ describe('compact matching description windows', () => {
     expect(expectDefined(holder.querySelector('ol ol')).hasAttribute('start')).toBe(true);
   });
 });
+
+it.each(['plain', 'nested'] as const)(
+  'places each shared %s highlight omission at its real gap outside all marks',
+  (shape) => {
+    const holder = createDiv();
+    const mark = holder.createEl('mark');
+    const body = shape === 'nested' ? mark.createEl('em').createEl('mark') : mark;
+    body.appendText(
+      `needle first ${'filler '.repeat(80)}needle second ${'filler '.repeat(80)}needle third`,
+    );
+    excerpt(holder, 'needle');
+    expect(holder.textContent).toContain('needle first');
+    expect(holder.textContent).toContain('needle second');
+    expect(holder.textContent).toContain('needle third');
+    const outer = [...holder.children];
+    expect(outer).toHaveLength(3);
+    expect(outer[0]).toBe(mark);
+    expect(outer.map((element) => element.textContent.match(/needle/gu)?.length)).toEqual([
+      1, 1, 1,
+    ]);
+    expect(outer[0]?.nextSibling?.textContent).toBe(' … ');
+    expect(outer[1]?.nextSibling?.textContent).toBe(' … ');
+    for (const retained of holder.querySelectorAll('mark'))
+      expect(retained.textContent).not.toContain('…');
+    expect(sourceText(holder).length).toBeLessThanOrEqual(240);
+  },
+);
+
+it('splits a shared highlight around original wired anchors without cloning them', () => {
+  const holder = createDiv();
+  const mark = holder.createEl('mark');
+  const first = mark.createEl('a', { href: 'https://first.test' });
+  first.appendText('needle first');
+  mark.appendText(`${' filler'.repeat(80)} `);
+  const second = mark.createEl('a', { href: 'https://second.test' });
+  second.appendText('needle second');
+  const clicked = vi.fn((event: Event) => {
+    event.preventDefault();
+  });
+  second.addEventListener('click', clicked);
+  excerpt(holder, 'needle');
+  expect([...holder.querySelectorAll('a')]).toEqual([first, second]);
+  expect(holder.children).toHaveLength(2);
+  expect(holder.firstElementChild?.nextSibling?.textContent).toBe(' … ');
+  second.dispatchEvent(new MouseEvent('click', { cancelable: true }));
+  expect(clicked).toHaveBeenCalledOnce();
+});
