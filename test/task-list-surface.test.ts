@@ -2524,9 +2524,62 @@ it('prevents intermediate extent clamping before later row callbacks restore som
   expect(h.reportFailure).not.toHaveBeenCalled();
 });
 
-it.each(['throw', 'destroy', 'replace', 'migrate', 'move'] as const)(
-  'cleans up the transient extent reservation after a row callback causes %s',
-  (operation) => {
+it('prevents ownerless tail-spacer reuse from clamping before pending frames regain their extent', () => {
+  const h = harness(true, true, true);
+  h.surface.update(rows(100), presentation);
+  const original = expectDefined(h.mount.getMockImplementation());
+  h.mount.mockImplementation((host, row) => {
+    h.heights.set(row.key, 16);
+    return { ...original(host, row), measurementReady: () => false };
+  });
+  const survivor = expectDefined(h.surface.element('n.md:12'));
+  h.scrollTo(550);
+  const before = survivor.getBoundingClientRect().top;
+  const extent = h.scroll.scrollHeight;
+  h.writes.mockClear();
+  const nativeReads: number[] = [];
+  // Native dimension reads flush layout and clamp a scroll offset to the current DOM extent.
+  h.onLayoutRead(() => {
+    nativeReads.push(h.scroll.scrollTop);
+  });
+  h.frame();
+  expect(h.scroll.scrollHeight).toBe(extent);
+  expect(h.surface.element('n.md:12')).toBe(survivor);
+  expect(h.scroll.scrollTop).toBe(550);
+  expect(nativeReads.length).toBeGreaterThan(0);
+  expect(nativeReads.every((top) => top === 550)).toBe(true);
+  expect(survivor.getBoundingClientRect().top).toBe(before);
+  expect(h.writes).not.toHaveBeenCalled();
+  expect(h.host.querySelector('[data-abyss-scroll-guard]')).toBeNull();
+  expect(h.reportFailure).not.toHaveBeenCalled();
+  h.surface.destroy();
+});
+
+it('allows a real final extent shrink to clamp an ownerless surface after the guard retires', () => {
+  const h = harness(true, true, true);
+  h.surface.update(rows(100), presentation);
+  h.surface.reveal('n.md:99');
+  expect(h.scroll.scrollTop).toBe(4320);
+  h.surface.update(rows(10), presentation);
+  expect(h.scroll.scrollHeight).toBe(480);
+  expect(h.scroll.scrollTop).toBe(0);
+  expect(h.host.querySelector('[data-abyss-scroll-guard]')).toBeNull();
+  expect(h.reportFailure).not.toHaveBeenCalled();
+  h.surface.destroy();
+});
+
+it.each([
+  ...(['throw', 'destroy', 'replace', 'migrate', 'move'] as const).map((operation) => ({
+    operation,
+    owned: true,
+  })),
+  ...(['throw', 'destroy', 'replace', 'migrate'] as const).map((operation) => ({
+    operation,
+    owned: false,
+  })),
+])(
+  'cleans up the transient extent reservation after a row callback causes $operation (owned=$owned)',
+  ({ operation, owned }) => {
     const h = harness();
     const owner = taskViewportOwner();
     h.surface.update(rows(100), presentation);
@@ -2534,10 +2587,12 @@ it.each(['throw', 'destroy', 'replace', 'migrate', 'move'] as const)(
     const afterWrite = vi.fn((top: number) => {
       expected = top;
     });
-    const release = h.surface.pin('n.md:80', undefined, {
-      beforeWrite: (top) => top === expected,
-      afterWrite,
-    });
+    const release = owned
+      ? h.surface.pin('n.md:80', undefined, {
+          beforeWrite: (top) => top === expected,
+          afterWrite,
+        })
+      : () => {};
     const original = expectDefined(h.mount.getMockImplementation());
     let acted = false;
     h.mount.mockImplementation((host, row) => {

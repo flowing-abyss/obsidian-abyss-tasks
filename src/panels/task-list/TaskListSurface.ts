@@ -444,9 +444,10 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
   }
   #nativeMutation(action: () => void, current: () => boolean, extent = false): boolean {
     const owners = this.#nativeOwners();
-    // Ordinary reconciliation retains its existing behavior and does no ownership proof work.
+    // Ownerless extent changes still need the same transient native clamp protection.
     if (owners === undefined) {
-      action();
+      if (extent) this.#mutateExtent(action, [], this.#options.scroll.scrollTop, current);
+      else action();
       return this.#admitReconciliation(current);
     }
     const scroll = this.#options.scroll;

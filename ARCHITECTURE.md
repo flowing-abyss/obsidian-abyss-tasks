@@ -433,6 +433,9 @@ When a measurement has no explicit anchor and its logical top row is pending, an
 visible mounted row supplies the retained model anchor when available. Source anchors and reveals keep their
 own placement authority; the pure row geometry and native write guards remain responsible for the
 resulting compensation.
+Frame extent transactions retain the existing native extent with a transient guard until the final
+DOM order exists, including when no native-write observer is registered. Guard removal permits a
+real final extent shrink to clamp normally.
 
 CalendarMode owns calendar state, view lifetime, and forecast presentation. CalendarCommands maps
 gestures to public commands. Materialized cards retain exact root/child ancestry and occupied-date
