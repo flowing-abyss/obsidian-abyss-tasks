@@ -31,6 +31,9 @@ import process from 'process';
 // Indexed subtree node search: baseline 2,054,781 bytes; measured 2,058,283 (+3,502 bytes).
 // Shared inline/Worker aggregation and scope validation use the next-KiB main limit of
 // 2,059,264 bytes (2011 KiB). CSS and dependency scope are unchanged.
+// Filter exact subtree context and guarded in-place activation: baseline 2,058,283 bytes;
+// measured 2,059,457 (+1,174 bytes), including retained base description previews.
+// The minimal next-KiB main limit is 2,060,288 bytes (2012 KiB); CSS and dependencies are unchanged.
 // Dependency scope and budget enforcement are unchanged.
 const { mainJsBudgetBytes: MAIN_JS_BUDGET_BYTES } = JSON.parse(
   readFileSync('package.json', 'utf8'),

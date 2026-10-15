@@ -1,5 +1,6 @@
 import { MarkdownRenderer, Menu, TFile } from 'obsidian';
 import { afterEach, expect, it, vi } from 'vitest';
+import { moment } from '../src/obsidianMoment';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { SettingsPersistenceCoordinator } from '../src/settings/persistence';
 import { deferred, expectDefined, flushMicrotasks, methodOf, useRealMoment } from './helpers';
@@ -8,38 +9,42 @@ import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
 import { taskViewportOwner } from './support/taskViewportOwner';
 useRealMoment();
 afterEach(() => vi.restoreAllMocks());
-it('reaches the logical end through bounded mounts without retrieving on scroll', async () => {
-  const h = await mountCanonicalSearchUi(
-    { 'a.md': Array.from({ length: 1200 }, (_, i) => `- [ ] needle ${i}`).join('\n') },
-    structuredClone(DEFAULT_SETTINGS),
-  );
-  try {
-    vi.spyOn(h.index, 'list').mockImplementation(() => {
-      throw new Error('Full list clone');
-    });
-    vi.spyOn(h.index, 'listNodes').mockImplementation(() => {
-      throw new Error('Full node clone');
-    });
-    h.query('needle');
-    await h.completed();
-    expect(h.root.querySelectorAll('.abyss-task-card').length).toBeGreaterThan(0);
-    expect(h.root.querySelectorAll('.abyss-task-card').length).toBeLessThanOrEqual(
-      taskCardMountBound(h.root, 1),
+it.each(['search', 'tasks'] as const)(
+  'reaches the logical end through bounded %s mounts without retrieving on scroll',
+  async (mode) => {
+    const h = await mountCanonicalSearchUi(
+      { 'a.md': Array.from({ length: 1200 }, (_, i) => `- [ ] needle ${i}`).join('\n') },
+      structuredClone(DEFAULT_SETTINGS),
+      mode,
     );
-    expect(h.root.dataset['searchLogicalResults']).toBe('1200');
-    expect(h.root.querySelector('[aria-label="Next page"]')).toBeNull();
-    const before = h.backends.reduce((sum, backend) => sum + backend.searchCalls, 0);
-    const scroll = expectDefined(h.root.querySelector<HTMLElement>('.abyss-center-scroll'));
-    scroll.scrollTop = 1200 * 64;
-    scroll.dispatchEvent(new Event('scroll'));
-    await vi.waitFor(() => {
-      expect(h.root.textContent).toContain('needle 1199');
-    });
-    expect(h.backends.reduce((sum, backend) => sum + backend.searchCalls, 0)).toBe(before);
-  } finally {
-    h.dispose();
-  }
-});
+    try {
+      vi.spyOn(h.index, 'list').mockImplementation(() => {
+        throw new Error('Full list clone');
+      });
+      vi.spyOn(h.index, 'listNodes').mockImplementation(() => {
+        throw new Error('Full node clone');
+      });
+      h.query('needle');
+      await h.completed();
+      expect(h.root.querySelectorAll('.abyss-task-card').length).toBeGreaterThan(0);
+      expect(h.root.querySelectorAll('.abyss-task-card').length).toBeLessThanOrEqual(
+        taskCardMountBound(h.root, 1),
+      );
+      expect(h.root.dataset['searchLogicalResults']).toBe('1200');
+      expect(h.root.querySelector('[aria-label="Next page"]')).toBeNull();
+      const before = h.backends.reduce((sum, backend) => sum + backend.searchCalls, 0);
+      const scroll = expectDefined(h.root.querySelector<HTMLElement>('.abyss-center-scroll'));
+      scroll.scrollTop = 1200 * 64;
+      scroll.dispatchEvent(new Event('scroll'));
+      await vi.waitFor(() => {
+        expect(h.root.textContent).toContain('needle 1199');
+      });
+      expect(h.backends.reduce((sum, backend) => sum + backend.searchCalls, 0)).toBe(before);
+    } finally {
+      h.dispose();
+    }
+  },
+);
 it.each([
   ['- [ ] needle', '- [ ] needle second', '2'],
   ['- [ ] other', '- [ ] needle', '1'],
@@ -1028,6 +1033,180 @@ it('keeps rendered Search descendant tag choices current and deduplicated beside
     for (const title of ['Include tag', 'Exclude tag'])
       expect(choices(title).map((item) => item.title__)).toEqual(['#work', '#needle-new']);
     menu.menu().hide();
+  } finally {
+    h.dispose();
+  }
+});
+
+it('filters Today by descendant comments without promoting an ineligible owner or dropping context', async () => {
+  const today = moment().format('YYYY-MM-DD');
+  const h = await mountCanonicalSearchUi(
+    {
+      'a.md': [
+        `- [ ] Today parent 📅 ${today}`,
+        '  - [ ] Undated child',
+        '    - 2026-10-04: commentneedle',
+        '  - [ ] Unrelated sibling',
+        '- [ ] Ineligible owner',
+        `  - [ ] Today child 📅 ${today}`,
+        '    - 2026-10-04: commentneedle',
+      ].join('\n'),
+    },
+    structuredClone(DEFAULT_SETTINGS),
+    'tasks',
+  );
+  try {
+    h.state.set('selectedList', 'today');
+    h.panel.refresh();
+    h.query('commentneedle');
+    await h.completed();
+    const cards = [...h.root.querySelectorAll<HTMLElement>('.abyss-task-card')];
+    expect(cards.map((card) => card.querySelector('.abyss-task-title')?.textContent)).toEqual([
+      'Today parent',
+      'Today child',
+    ]);
+    expect(h.root.dataset['searchLogicalResults']).toBe('2');
+    expect(cards[0]?.textContent).toContain('Undated child');
+    expect(h.root.textContent).not.toContain('Unrelated sibling');
+    expect(h.root.textContent).not.toContain('Ineligible owner');
+    expect(h.root.querySelector('.abyss-task-date')).toBeNull();
+    expectDefined(cards[0]?.querySelector<HTMLElement>('.abyss-comment-text')).click();
+    await vi.waitFor(() => {
+      expect(h.state.get('taskStack').slice(-1)[0]?.title).toBe('Undated child');
+    });
+    expect(h.state.get('centerFilter')).toBe('commentneedle');
+    expect(h.state.get('selectedList')).toBe('today');
+    expect(h.root.dataset['searchLogicalResults']).toBe('2');
+    h.query(today);
+    await h.completed();
+    expect(h.root.querySelectorAll('.abyss-task-date')).toHaveLength(2);
+    expect(h.root.dataset['searchLogicalResults']).toBe('2');
+  } finally {
+    h.dispose();
+  }
+});
+
+it('keeps parent and child as separate filtered cards with ordinary modifiers and base selection', async () => {
+  const h = await mountCanonicalSearchUi(
+    {
+      'a.md': [
+        '- [ ] Parent #eligible',
+        '  - > needle base description',
+        '  - [ ] Child #eligible',
+        '    - 2026-10-04: needle comment',
+      ].join('\n'),
+    },
+    structuredClone(DEFAULT_SETTINGS),
+    'tasks',
+  );
+  try {
+    h.state.set('selectedList', { type: 'tag', tag: '#eligible' });
+    h.state.set('centerListViewState', {
+      ...h.state.get('centerListViewState'),
+      groupBy: 'priority',
+      sortBy: { field: 'title', dir: 'desc' },
+    });
+    h.panel.refresh();
+    h.query('needle');
+    await h.completed();
+    const cards = [...h.root.querySelectorAll<HTMLElement>('.abyss-task-card')];
+    expect(cards.map((card) => card.querySelector('.abyss-task-title')?.textContent)).toEqual([
+      'Parent',
+      'Child',
+    ]);
+    expect(h.root.querySelector('.abyss-group-header')?.textContent).toContain('2');
+    const parent = expectDefined(cards[0]);
+    const child = expectDefined(cards[1]);
+    expectDefined(parent.querySelector<HTMLElement>('.abyss-task-desc')).click();
+    expect(h.state.get('taskStack').slice(-1)[0]?.title).toBe('Parent');
+    expectDefined(child.querySelector<HTMLElement>('.abyss-comment-text')).click();
+    expect(h.state.get('taskStack').slice(-1)[0]?.title).toBe('Child');
+    expectDefined(parent.querySelector<HTMLElement>('.abyss-subtask-label')).dispatchEvent(
+      new MouseEvent('click', { bubbles: true, metaKey: true }),
+    );
+    expect(h.panel['rowSelection_abyssPrivate'].size).toBe(1);
+    child.dispatchEvent(new MouseEvent('click', { bubbles: true, metaKey: true }));
+    expect(h.panel['rowSelection_abyssPrivate'].size).toBe(2);
+    expect(h.state.get('centerFilter')).toBe('needle');
+    const row = expectDefined(parent.querySelector<HTMLElement>('.abyss-subtask-row'));
+    row.focus();
+    row.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
+    await vi.waitFor(() => {
+      expect(h.state.get('taskStack').slice(-1)[0]?.title).toBe('Child');
+    });
+    expect(h.state.get('centerFilter')).toBe('needle');
+  } finally {
+    h.dispose();
+  }
+});
+
+it.each(['query', 'selection', 'generation', 'disposal'] as const)(
+  'rejects delayed nested Filter activation after %s changes',
+  async (reason) => {
+    const h = await mountCanonicalSearchUi(
+      { 'a.md': '- [ ] Parent\n  - [ ] Child needle' },
+      structuredClone(DEFAULT_SETTINGS),
+      'tasks',
+    );
+    const entered = deferred<void>(),
+      release = deferred<void>();
+    try {
+      h.query('needle');
+      await h.completed();
+      const resolve = h.search.resolveHits.bind(h.search);
+      let pending: Promise<unknown> | undefined;
+      vi.spyOn(h.search, 'resolveHits').mockImplementation((hits, signal) => {
+        if (hits[0]?.address.childLines.length === 0) return resolve(hits, signal);
+        pending = (async () => {
+          const result = await resolve(hits, signal);
+          entered.resolve();
+          await release.promise;
+          return result;
+        })();
+        return pending as ReturnType<typeof resolve>;
+      });
+      expectDefined(h.root.querySelector<HTMLElement>('.abyss-subtask-label')).click();
+      await entered.promise;
+      if (reason === 'query') h.query('other');
+      if (reason === 'selection') h.state.set('taskStack', []);
+      if (reason === 'generation')
+        h.index.installCommittedContent('a.md', '- [ ] Replacement\n  - [ ] Changed needle');
+      if (reason === 'disposal') h.panel.destroy();
+      release.resolve();
+      await pending;
+      await flushMicrotasks();
+      expect(h.state.get('taskStack')).toEqual([]);
+      expect(h.state.get('selectedList')).toBe('inbox');
+      if (reason !== 'disposal') await h.completed();
+    } finally {
+      release.resolve();
+      h.dispose();
+    }
+  },
+);
+
+it.each([
+  ['click', 'tag'],
+  ['contextmenu', 'tag-exclude'],
+] as const)('keeps nested Filter tag %s on the ordinary list', async (event, type) => {
+  const source = '- [ ] Parent\n  - [ ] needle child #nested';
+  const h = await mountCanonicalSearchUi(
+    { 'a.md': source },
+    structuredClone(DEFAULT_SETTINGS),
+    'tasks',
+  );
+  try {
+    h.query('needle');
+    await h.completed();
+    expectDefined(
+      h.root.querySelector<HTMLElement>('.abyss-search-context .abyss-task-tag'),
+    ).dispatchEvent(new MouseEvent(event, { bubbles: true, cancelable: true }));
+    expect(h.state.get('centerListViewState').filters).toEqual([{ type, value: '#nested' }]);
+    expect(h.state.get('centerFilter')).toBe('needle');
+    expect(h.state.get('taskStack')).toEqual([]);
+    expect(await h.app.vault.adapter.read('a.md')).toBe(source);
   } finally {
     h.dispose();
   }

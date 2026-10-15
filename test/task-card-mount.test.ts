@@ -810,6 +810,7 @@ it('refreshes only root Search metadata and leaves descendant headers and recurr
     const root = expectDefined(canonical.index.list()[0]);
     const query = prepareSearchQuery('needle', fallbackSearchWords);
     const search = {
+      mode: 'search' as const,
       context: taskSearchContext(
         root,
         { epoch: 'test', rootId: 1, version: 1, childLines: [] },

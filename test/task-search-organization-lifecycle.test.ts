@@ -35,7 +35,7 @@ it('admits blank Upcoming at timer zero while debouncing nonblank filters and su
     await vi.advanceTimersByTimeAsync(1);
     expect(projection).toHaveBeenCalledTimes(1);
     expect(open).toHaveBeenCalledExactlyOnceWith(
-      { kind: 'nodes', query: 'Range' },
+      { kind: 'nodes', matchScope: 'subtree', query: 'Range' },
       expect.any(AbortSignal),
     );
     projection.mockClear();
@@ -49,7 +49,7 @@ it('admits blank Upcoming at timer zero while debouncing nonblank filters and su
     await vi.advanceTimersByTimeAsync(1);
     expect(projection).toHaveBeenCalledTimes(1);
     expect(open).toHaveBeenCalledExactlyOnceWith(
-      { kind: 'nodes', query: 'Range final' },
+      { kind: 'nodes', matchScope: 'subtree', query: 'Range final' },
       expect.any(AbortSignal),
     );
   } finally {

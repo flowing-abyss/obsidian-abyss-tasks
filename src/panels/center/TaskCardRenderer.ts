@@ -74,6 +74,7 @@ export interface TaskCardHighlight {
 }
 
 export interface TaskCardSearchPresentation extends TaskCardHighlight {
+  readonly mode: 'search' | 'filter';
   readonly context: TaskSearchContext;
   readonly onActivate: (address: TaskSearchAddress) => void;
 }
@@ -535,7 +536,7 @@ export class TaskCardRenderer {
     node: TaskSelectionNode,
     flags?: TaskCardFlags,
   ): void {
-    if (flags?.search === undefined && node.recurrence !== undefined && node.recurrence !== '')
+    if (flags?.search?.mode !== 'search' && node.recurrence !== undefined && node.recurrence !== '')
       renderRecurrenceBadge(titleRow, recurrenceBadgeInput(node.recurrence));
   }
 
@@ -721,7 +722,7 @@ export class TaskCardRenderer {
     const titleRow = body.createDiv({ cls: 'abyss-task-title-row' });
     renderDependencyIndicator(titleRow, this.#host.dependenciesFor(task));
     const recurrence = task.recurrence;
-    if (flags?.search === undefined && recurrence !== undefined && recurrence !== '') {
+    if (flags?.search?.mode !== 'search' && recurrence !== undefined && recurrence !== '') {
       renderRecurrenceBadge(titleRow, recurrenceBadgeInput(recurrence));
     }
     this.#renderCountBadges(titleRow, task);
@@ -731,6 +732,7 @@ export class TaskCardRenderer {
     else
       this.#renderSearchContext(body, task, flags.search, {
         scope: flags.renderScope,
+        flags,
         tagGroups,
       });
   }
@@ -894,21 +896,22 @@ export class TaskCardRenderer {
     descriptionElement: HTMLElement,
     task: TaskSnapshot,
     context?: CardContentContext,
+    flags = context?.flags,
   ): void {
-    const description = cardDescription(task, context?.flags);
-    const hasContinuation = cardDescriptionContinues(task, context?.flags);
-    const highlight = this.#highlightOptions(description, 'prose', context?.flags?.highlight);
+    const description = cardDescription(task, flags);
+    const hasContinuation = cardDescriptionContinues(task, flags);
+    const highlight = this.#highlightOptions(description, 'prose', flags?.highlight);
     const descriptionRender = renderTaskDescriptionText(descriptionElement, description, {
       app: this.#app,
       sourcePath: task.source.filePath,
-      ...this.#textLifetime(context),
+      ...this.#textLifetime(context, flags),
       onRendered: (element) => {
         highlight.onRendered?.(element);
         if (hasContinuation) element.appendText(' …');
       },
     });
     if (context?.track !== undefined) context.track(descriptionRender);
-    else context?.flags?.renderScope?.track(descriptionRender);
+    else flags?.renderScope?.track(descriptionRender);
   }
 
   #renderSearchContext(
@@ -918,12 +921,31 @@ export class TaskCardRenderer {
     options: {
       readonly owner?: CardContentContext | undefined;
       readonly scope?: TaskRenderScope | undefined;
+      readonly flags?: TaskCardFlags | undefined;
       readonly tagGroups: readonly EffectiveTagGroup[];
     },
   ): void {
+    const flags = options.owner?.flags ?? options.flags;
+    const matchedDescription = search.context.tree.evidence.some(
+      (evidence) =>
+        evidence.provenance.type === 'field' && evidence.provenance.field === 'description',
+    );
+    if (
+      search.mode === 'filter' &&
+      !matchedDescription &&
+      (cardDescription(root, flags) !== '' || cardDescriptionContinues(root, flags))
+    ) {
+      this.#renderDescriptionText(
+        host.createDiv({ cls: 'abyss-task-desc' }),
+        root,
+        options.owner,
+        flags,
+      );
+    }
     renderTaskSearchTree(host, {
       app: this.#app,
       root,
+      base: options.owner?.currentProjection().node ?? cardNode(root, flags),
       search,
       textOptions: this.#textLifetime(options.owner),
       track: (render) => {
@@ -981,7 +1003,11 @@ export class TaskCardRenderer {
         metadata.host,
         cardNode(task, options),
         options.search.context.tree.evidence.filter(isTaskSearchSemanticEvidence),
-        { search: options.search, renderedValues: metadata.values },
+        {
+          search: options.search,
+          renderedValues: metadata.values,
+          recurrenceDecorated: options.search.mode === 'filter',
+        },
       );
   }
 
@@ -992,6 +1018,7 @@ export class TaskCardRenderer {
     options: {
       readonly search: TaskCardSearchPresentation;
       readonly renderedValues: ReadonlyMap<string, HTMLElement>;
+      readonly recurrenceDecorated?: boolean;
     },
   ): void {
     const groups = new Map<string, TaskSearchSemanticEvidence[]>();
@@ -1023,6 +1050,7 @@ export class TaskCardRenderer {
     options: {
       readonly search: TaskCardSearchPresentation;
       readonly renderedValues: ReadonlyMap<string, HTMLElement>;
+      readonly recurrenceDecorated?: boolean;
     },
   ): void {
     const { search, renderedValues } = options;
@@ -1046,7 +1074,12 @@ export class TaskCardRenderer {
       return;
     }
     const wrapper = host.createSpan({ attr: { role: 'group', 'aria-label': meaning } });
-    this.#renderSearchMetadataValue(wrapper, node, { keys, text: record.text, search });
+    this.#renderSearchMetadataValue(wrapper, node, {
+      keys,
+      text: record.text,
+      search,
+      recurrenceDecorated: options.recurrenceDecorated === true,
+    });
   }
 
   #searchEvidenceDate(node: TaskSelectionNode, keys: readonly string[]): LocalDate | undefined {
@@ -1062,6 +1095,7 @@ export class TaskCardRenderer {
       readonly keys: readonly string[];
       readonly text: string;
       readonly search: TaskCardSearchPresentation;
+      readonly recurrenceDecorated: boolean;
     },
   ): void {
     const date = this.#searchEvidenceDate(node, value.keys);
@@ -1075,7 +1109,11 @@ export class TaskCardRenderer {
       this.#renderTimeFilterPart(wrapper, node.planning.time, 'abyss-task-date');
       this.#markFormattedSemanticValue(wrapper, '.abyss-task-date > span:last-child', value);
     } else {
-      if (value.keys.includes('recurrence') && node.recurrence !== undefined)
+      if (
+        !value.recurrenceDecorated &&
+        value.keys.includes('recurrence') &&
+        node.recurrence !== undefined
+      )
         renderRecurrenceBadge(wrapper, recurrenceBadgeInput(node.recurrence));
       this.#markSemanticValue(wrapper.createSpan({ text: value.text }), value.text, value.search);
     }
@@ -1107,7 +1145,7 @@ export class TaskCardRenderer {
     const currentTask = (): TaskSelectionNode => node;
     const dates = cardDates(node.planning, options.occurrence);
     const tags = node.tags;
-    const suppressToday = options.search === undefined && this.#suppressTodayMetadata(node);
+    const suppressToday = options.search?.mode !== 'search' && this.#suppressTodayMetadata(node);
     const metaRight = mainRow.createDiv({ cls: 'abyss-task-meta-right' });
     const values = this.#renderDateMetadata(metaRight, node, dates, suppressToday);
     if ('source' in task) this.#renderSourceMetadata(metaRight, task);

@@ -75,6 +75,21 @@ export async function resolveTaskListRef(options: {
   if (path === undefined) throw new TaskSearchError('stale', 'Task changed');
   return { address, root: hydrated.task.root, path };
 }
+export async function resolveTaskListAddress(
+  search: TaskSearchApi,
+  address: TaskSearchAddress,
+  request: TaskListNavigationRequest,
+): Promise<ResolvedTaskListTarget | undefined> {
+  const current = (): boolean => !request.signal.aborted && request.isCurrent();
+  if (!current()) return undefined;
+  const hydrated = (await search.resolveHits([{ address, score: 0 }], request.signal))[0];
+  if (!current()) return undefined;
+  if (hydrated === undefined) throw new TaskSearchError('stale', 'Task changed');
+  const path = taskSelectionRefPath(hydrated.task.root, hydrated.task.target);
+  if (path === undefined) throw new TaskSearchError('stale', 'Task changed');
+  return { address, root: hydrated.task.root, path };
+}
+
 export async function navigateTaskListTarget(
   source:
     | { readonly type: 'address'; readonly address: TaskSearchAddress }
@@ -93,19 +108,11 @@ export async function navigateTaskListTarget(
   const { request, search, navigation, state } = options;
   const current = (): boolean => !request.signal.aborted && request.isCurrent();
   if (!current()) return;
-  let target: ResolvedTaskListTarget;
-  if (source.type === 'resolved') target = source.target;
-  else {
-    const hydrated = (
-      await search.resolveHits([{ address: source.address, score: 0 }], request.signal)
-    )[0];
-    if (!current()) return;
-    if (hydrated === undefined) throw new TaskSearchError('stale', 'Task changed');
-    const path = taskSelectionRefPath(hydrated.task.root, hydrated.task.target);
-    if (path === undefined) throw new TaskSearchError('stale', 'Task changed');
-    target = { address: source.address, root: hydrated.task.root, path };
-  }
-  if (!current()) return;
+  const target =
+    source.type === 'resolved'
+      ? source.target
+      : await resolveTaskListAddress(search, source.address, request);
+  if (target === undefined || !current()) return;
   const selection = options.destination(target.root);
   navigation.openList(selection, {
     afterCommit: () => options.afterCommit?.(),

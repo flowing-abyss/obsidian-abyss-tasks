@@ -279,14 +279,20 @@ to each node's own title and tags, including dependency search. The internal opt
 paths still opt-in. A compact coordinate lookup resolves parents across unordered index batches;
 a query folds token coverage and raw score statistics through touched ancestors without copying
 descendant text or retaining descendant score arrays. Own contributions have weight 1 and all
-descendants weight 0.8, independent of depth. The Filter UI still uses the default node scope.
+descendants weight 0.8, independent of depth. Nonempty Tasks Filter requests subtree scope, then
+intersects exact hits with each node's ordinary list membership, sort, and grouping. Project Filter
+and Global Search retain root populations.
 Search text and link destinations remain separate from source edit authority. The Worker exchanges text documents and compact numeric results,
 never task refs, source-bearing revisions, or rich snapshots.
 
 Retrieval, compact organization, and DOM mounting have separate lifetimes. Organization publishes
 the complete logical order before mounting; hydration and Markdown rendering belong only to demanded
-rows and finite interaction leases. Empty node browsing can use canonical source order without
-building the full-text index. Shared service capacity bounds cursors; cancellation, source changes,
+rows and finite interaction leases. Filter and Search build one pruned context per hydrated root and
+query, then cache presentations by full exact base address. Filter cards start at their eligible
+node; nested matches add explanatory context without adding logical rows or promoting an ineligible
+owner. Parent and child can remain independent cards. The mounted card count is bounded; a single
+matching tree can still render many context nodes. Empty node browsing can use canonical source
+order without building the full-text index. Shared service capacity bounds cursors; cancellation, source changes,
 and disposal retire obsolete work. Cooperative batches yield to the owning window, but individual
 source projection and inline search still contain synchronous work.
 
@@ -365,7 +371,12 @@ holds prevent delete/archive/move publications from selecting a task that inheri
 AppState distinguishes explicit selection intent from refresh. Later user selection or navigation
 wins over delayed command, capture, and reveal callbacks. Transient UI cancellation after submission
 does not cancel the submitted write. Search activation, inspector navigation, and capture reuse
-CenterPanel's exact-task reveal path. Temporary inclusion of a revealed or created task does not
+CenterPanel's exact-task reveal path. Nested Filter activation shares exact-address hydration, then
+selects the inspector path in place with generation, cancellation, and selection-intent guards. It
+retains the active list and query; main-card selection and modifier clicks use ordinary list behavior.
+Filter retains the base node's ordinary description preview unless its full description matches.
+It also retains ordinary recurrence and Today metadata, with explicit matching evidence shown when
+needed to explain the result. Temporary inclusion of a revealed or created task does not
 alter saved filters. Reveal consumes its scroll permission once and yields to later user scrolling,
 focus, source changes, or owner loss. Modal-to-sidebar draft transfer preserves both owners on conflict.
 

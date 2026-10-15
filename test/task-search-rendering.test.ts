@@ -1,6 +1,6 @@
 import { MarkdownRenderer, Menu, type MenuItem } from 'obsidian';
 import postcss from 'postcss';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { SubtaskSnapshot, TaskSnapshot } from '../src/tasks';
 import * as contextModule from '../src/tasks';
@@ -348,116 +348,133 @@ function fieldText(
   return node?.comments.slice(-1)[0]?.text;
 }
 
-it.each([
-  'root-title',
-  'root-description',
-  'root-comment',
-  'child-title',
-  'child-description',
-  'child-comment',
-] as const)('preserves full-field second link editing and modifier clicks for %s', async (kind) => {
-  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, source, holder) => {
-    expect([linkedField, 'prefix [[One|same]] middle [[Changed|needle]] suffix']).toContain(source);
-    holder.appendText('prefix ');
-    holder.createEl('a', { cls: 'internal-link', text: sameLabel, attr: { 'data-href': 'One' } });
-    holder.appendText(' middle ');
-    holder.createEl('a', {
-      cls: 'internal-link',
-      text: needleLabel,
-      attr: { 'data-href': source.includes('[[Changed|') ? 'Changed' : 'Two' },
-    });
-    holder.appendText(' suffix');
-  });
-  let edit: (() => void) | undefined;
-  vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (
-    this: Menu,
-    build: (item: MenuItem) => unknown,
-  ) {
-    build({
-      setTitle() {
-        return this;
-      },
-      setIcon() {
-        return this;
-      },
-      onClick(callback: () => void) {
-        edit = callback;
-        return this;
-      },
-    } as unknown as MenuItem);
-    return this;
-  });
-  vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (this: Menu) {
-    return this;
-  });
-  vi.spyOn(LinkEditModal.prototype, 'open').mockImplementation(function (this: LinkEditModal) {
-    (this as unknown as { onSave_abyssPrivate: (text: string) => void }).onSave_abyssPrivate(
-      '[[Changed|needle]]',
-    );
-  });
-  const fixture = linkedFixture(kind);
-  const h = await mountCanonicalSearchUi(
-    { 'a.md': fixture.markdown },
-    structuredClone(DEFAULT_SETTINGS),
-  );
-  try {
-    const execute = vi.spyOn(h.tasks, 'execute');
-    const open = vi.spyOn(h.app.workspace, 'openLinkText').mockResolvedValue(undefined);
-    h.query('needle');
-    await h.completed();
-    const anchors = [...h.root.querySelectorAll<HTMLAnchorElement>('.abyss-task-card a')].filter(
-      (a) => a.textContent === 'needle',
-    );
-    const anchor = expectDefined(anchors[anchors.length - 1]);
-    expect(anchor.querySelector('mark')?.textContent).toBe('needle');
-    anchor.dispatchEvent(
-      new MouseEvent('click', { bubbles: true, cancelable: true, ctrlKey: true }),
-    );
-    await vi.waitFor(() => {
-      expect(open).toHaveBeenCalledWith('Two', 'a.md', 'tab');
-    });
-    expect(h.state.get('mode')).toBe('search');
-    anchor.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-    expectDefined(edit)();
-    await vi.waitFor(() => {
-      expect(execute).toHaveBeenCalled();
-    });
-    const command = expectDefined(execute.mock.calls[0]?.[0]);
-    expect(command).toMatchObject({
-      type: 'edit-link',
-      occurrence: 1,
-      replacement: '[[Changed|needle]]',
-    });
-    const root = expectDefined(h.index.list()[0]);
-    if (command.type !== 'edit-link') throw new Error('Wrong command');
-    const field = fixture.field;
-    expect(command.target.type).toBe(field);
-    if (command.target.type === 'comment')
-      expect(command.target.ref.relativeLine).toBe(fixture.child ? 1 : 2);
-    const target =
-      command.target.type === 'comment' ? command.target.ref.parent : command.target.target;
-    if (fixture.child)
-      expect(target).toMatchObject({
-        type: 'subtask',
-        ref: {
-          relativeLine: 1,
-          parent: {
-            type: 'subtask',
-            ref: { relativeLine: 1, parent: { type: 'task', ref: { filePath: 'a.md', line: 0 } } },
-          },
-        },
+describe.each(['search', 'tasks'] as const)('%s exact commands', (mode) => {
+  it.each([
+    'root-title',
+    'root-description',
+    'root-comment',
+    'child-title',
+    'child-description',
+    'child-comment',
+  ] as const)(
+    'preserves full-field second link editing and modifier clicks for %s',
+    async (kind) => {
+      vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, source, holder) => {
+        expect([linkedField, 'prefix [[One|same]] middle [[Changed|needle]] suffix']).toContain(
+          source,
+        );
+        holder.appendText('prefix ');
+        holder.createEl('a', {
+          cls: 'internal-link',
+          text: sameLabel,
+          attr: { 'data-href': 'One' },
+        });
+        holder.appendText(' middle ');
+        holder.createEl('a', {
+          cls: 'internal-link',
+          text: needleLabel,
+          attr: { 'data-href': source.includes('[[Changed|') ? 'Changed' : 'Two' },
+        });
+        holder.appendText(' suffix');
       });
-    else expect(target).toMatchObject({ type: 'task', ref: { filePath: 'a.md', line: 0 } });
-    await vi.waitFor(() => {
-      const node = fixture.child ? h.index.list()[0]?.subtasks[0]?.subtasks[0] : h.index.list()[0];
-      const authored = fieldText(node, field);
-      expect(authored).toBe('prefix [[One|same]] middle [[Changed|needle]] suffix');
-      if (kind === 'root-comment') expect(node?.comments[0]?.text).toBe(linkedField);
-    });
-    expect(root.source.filePath).toBe('a.md');
-  } finally {
-    h.dispose();
-  }
+      let edit: (() => void) | undefined;
+      vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (
+        this: Menu,
+        build: (item: MenuItem) => unknown,
+      ) {
+        build({
+          setTitle() {
+            return this;
+          },
+          setIcon() {
+            return this;
+          },
+          onClick(callback: () => void) {
+            edit = callback;
+            return this;
+          },
+        } as unknown as MenuItem);
+        return this;
+      });
+      vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (this: Menu) {
+        return this;
+      });
+      vi.spyOn(LinkEditModal.prototype, 'open').mockImplementation(function (this: LinkEditModal) {
+        (this as unknown as { onSave_abyssPrivate: (text: string) => void }).onSave_abyssPrivate(
+          '[[Changed|needle]]',
+        );
+      });
+      const fixture = linkedFixture(kind);
+      const h = await mountCanonicalSearchUi(
+        { 'a.md': fixture.markdown },
+        structuredClone(DEFAULT_SETTINGS),
+        mode,
+      );
+      try {
+        const execute = vi.spyOn(h.tasks, 'execute');
+        const open = vi.spyOn(h.app.workspace, 'openLinkText').mockResolvedValue(undefined);
+        h.query('needle');
+        await h.completed();
+        const anchors = [
+          ...h.root.querySelectorAll<HTMLAnchorElement>('.abyss-task-card a'),
+        ].filter((a) => a.textContent === 'needle');
+        const anchor = expectDefined(anchors[anchors.length - 1]);
+        expect(anchor.querySelector('mark')?.textContent).toBe('needle');
+        anchor.dispatchEvent(
+          new MouseEvent('click', { bubbles: true, cancelable: true, ctrlKey: true }),
+        );
+        await vi.waitFor(() => {
+          expect(open).toHaveBeenCalledWith('Two', 'a.md', 'tab');
+        });
+        expect(h.state.get('mode')).toBe(mode);
+        anchor.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+        expectDefined(edit)();
+        await vi.waitFor(() => {
+          expect(execute).toHaveBeenCalled();
+        });
+        const command = expectDefined(execute.mock.calls[0]?.[0]);
+        expect(command).toMatchObject({
+          type: 'edit-link',
+          occurrence: 1,
+          replacement: '[[Changed|needle]]',
+        });
+        const root = expectDefined(h.index.list()[0]);
+        if (command.type !== 'edit-link') throw new Error('Wrong command');
+        const field = fixture.field;
+        expect(command.target.type).toBe(field);
+        if (command.target.type === 'comment')
+          expect(command.target.ref.relativeLine).toBe(fixture.child ? 1 : 2);
+        const target =
+          command.target.type === 'comment' ? command.target.ref.parent : command.target.target;
+        if (fixture.child)
+          expect(target).toMatchObject({
+            type: 'subtask',
+            ref: {
+              relativeLine: 1,
+              parent: {
+                type: 'subtask',
+                ref: {
+                  relativeLine: 1,
+                  parent: { type: 'task', ref: { filePath: 'a.md', line: 0 } },
+                },
+              },
+            },
+          });
+        else expect(target).toMatchObject({ type: 'task', ref: { filePath: 'a.md', line: 0 } });
+        await vi.waitFor(() => {
+          const node = fixture.child
+            ? h.index.list()[0]?.subtasks[0]?.subtasks[0]
+            : h.index.list()[0];
+          const authored = fieldText(node, field);
+          expect(authored).toBe('prefix [[One|same]] middle [[Changed|needle]] suffix');
+          if (kind === 'root-comment') expect(node?.comments[0]?.text).toBe(linkedField);
+        });
+        expect(root.source.filePath).toBe('a.md');
+      } finally {
+        h.dispose();
+      }
+    },
+  );
 });
 
 it('extracts contexts only for the demanded roots and rejects detached context activation', async () => {
@@ -1095,73 +1112,75 @@ it('renders duplicate semantic text per exact descendant and preserves it across
   }
 });
 
-it.each(['toggle', 'status', 'priority'] as const)(
-  'executes deepest repeated child %s through the shared commands and preserves all other bytes',
-  async (action) => {
-    // Negative control: advance the host date without freezing real scheduling.
-    const hostNow = Date.now.bind(Date);
-    const hostOffset = Date.UTC(2035, 0, 2, 12) - hostNow();
-    vi.spyOn(Date, 'now').mockImplementation(() => hostNow() + hostOffset);
-    const source = '- [ ] root\n  - [ ] repeated\n    - [ ] needle\n  - [ ] needle';
-    const h = await mountCanonicalSearchUi(
-      { 'a.md': source },
-      structuredClone(DEFAULT_SETTINGS),
-      'search',
-      undefined,
-      false,
-      clockFrom(Date.UTC(2026, 9, 5, 12), 0),
-    );
-    try {
-      h.query('needle');
-      await h.completed();
-      const root = expectDefined(h.index.list()[0]);
-      const child = expectDefined(root.subtasks[0]?.subtasks[0]);
-      const label = expectDefined(
-        [...h.root.querySelectorAll<HTMLElement>('.abyss-subtask-label')].find(
-          (e) => e.textContent === 'needle',
-        ),
+describe.each(['search', 'tasks'] as const)('%s exact commands', (mode) => {
+  it.each(['toggle', 'status', 'priority'] as const)(
+    'executes deepest repeated child %s through the shared commands and preserves all other bytes',
+    async (action) => {
+      // Negative control: advance the host date without freezing real scheduling.
+      const hostNow = Date.now.bind(Date);
+      const hostOffset = Date.UTC(2035, 0, 2, 12) - hostNow();
+      vi.spyOn(Date, 'now').mockImplementation(() => hostNow() + hostOffset);
+      const source = '- [ ] root\n  - [ ] repeated\n    - [ ] needle\n  - [ ] needle';
+      const h = await mountCanonicalSearchUi(
+        { 'a.md': source },
+        structuredClone(DEFAULT_SETTINGS),
+        mode,
+        undefined,
+        false,
+        clockFrom(Date.UTC(2026, 9, 5, 12), 0),
       );
-      const row = expectDefined(label.closest('.abyss-subtask-row'));
-      const marker = expectDefined(row.querySelector<HTMLElement>('[role="checkbox"]'));
-      const execute = vi.spyOn(h.tasks, 'execute');
-      if (action === 'toggle') marker.click();
-      else {
-        marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-        const popover = expectDefined(document.querySelector('.abyss-status-popover'));
-        const choice =
-          action === 'priority'
-            ? popover.querySelector<HTMLButtonElement>('[data-abyss-priority="A"]')
-            : [...popover.querySelectorAll<HTMLElement>('.abyss-status-popover-row')].find((e) =>
-                e.textContent.includes('In progress'),
-              );
-        expectDefined(choice).click();
-      }
-      await vi.waitFor(() => {
-        expect(execute).toHaveBeenCalledTimes(1);
-      });
-      const target = { type: 'subtask' as const, ref: child.ref };
-      const expectedCommands = {
-        toggle: { type: 'toggle-completion', target },
-        status: { type: 'set-status', target, symbol: '/' },
-        priority: { type: 'patch', target, patch: { priority: { type: 'set', value: 'A' } } },
-      };
-      expect(execute.mock.calls[0]?.[0]).toEqual(expectedCommands[action]);
-      const expectedLines = {
-        toggle: '    - [x] needle ✅ 2026-10-05',
-        status: '    - [/] needle',
-        priority: '    - [ ] needle 🔺',
-      };
-      await vi.waitFor(async () => {
-        expect(await h.app.vault.adapter.read('a.md')).toBe(
-          source.replace('    - [ ] needle', expectedLines[action]),
+      try {
+        h.query('needle');
+        await h.completed();
+        const root = expectDefined(h.index.list()[0]);
+        const child = expectDefined(root.subtasks[0]?.subtasks[0]);
+        const label = expectDefined(
+          [...h.root.querySelectorAll<HTMLElement>('.abyss-subtask-label')].find(
+            (e) => e.textContent === 'needle',
+          ),
         );
-      });
-      expect(h.state.get('mode')).toBe('search');
-    } finally {
-      h.dispose();
-    }
-  },
-);
+        const row = expectDefined(label.closest('.abyss-subtask-row'));
+        const marker = expectDefined(row.querySelector<HTMLElement>('[role="checkbox"]'));
+        const execute = vi.spyOn(h.tasks, 'execute');
+        if (action === 'toggle') marker.click();
+        else {
+          marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+          const popover = expectDefined(document.querySelector('.abyss-status-popover'));
+          const choice =
+            action === 'priority'
+              ? popover.querySelector<HTMLButtonElement>('[data-abyss-priority="A"]')
+              : [...popover.querySelectorAll<HTMLElement>('.abyss-status-popover-row')].find((e) =>
+                  e.textContent.includes('In progress'),
+                );
+          expectDefined(choice).click();
+        }
+        await vi.waitFor(() => {
+          expect(execute).toHaveBeenCalledTimes(1);
+        });
+        const target = { type: 'subtask' as const, ref: child.ref };
+        const expectedCommands = {
+          toggle: { type: 'toggle-completion', target },
+          status: { type: 'set-status', target, symbol: '/' },
+          priority: { type: 'patch', target, patch: { priority: { type: 'set', value: 'A' } } },
+        };
+        expect(execute.mock.calls[0]?.[0]).toEqual(expectedCommands[action]);
+        const expectedLines = {
+          toggle: '    - [x] needle ✅ 2026-10-05',
+          status: '    - [/] needle',
+          priority: '    - [ ] needle 🔺',
+        };
+        await vi.waitFor(async () => {
+          expect(await h.app.vault.adapter.read('a.md')).toBe(
+            source.replace('    - [ ] needle', expectedLines[action]),
+          );
+        });
+        expect(h.state.get('mode')).toBe(mode);
+      } finally {
+        h.dispose();
+      }
+    },
+  );
+});
 
 it.each([
   ['created', '➕', '2026-11-30'],
@@ -1392,7 +1411,10 @@ it('limits the narrow metadata width track to the root card row', async () => {
   }
 });
 
-it('marks Tasks filter title, visible description and tags without Search context', async () => {
+it('shows full matched Tasks filter descriptions and child context', async () => {
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, text, element) => {
+    element.setText(text);
+  });
   const h = await mountCanonicalSearchUi(
     {
       'tasks/active.md':
@@ -1410,9 +1432,9 @@ it('marks Tasks filter title, visible description and tags without Search contex
     expect(card.querySelector('.abyss-task-title mark')?.textContent).toBe('budget');
     expect(card.querySelector('.abyss-task-desc mark')?.textContent).toBe('budget');
     expect(card.querySelector('.abyss-task-tag mark')?.textContent).toBe('budget');
-    expect(card.querySelector('.abyss-search-context')).toBeNull();
-    expect(card.textContent).not.toContain('hidden second');
-    expect(card.textContent).not.toContain('hidden child');
+    expect(card.querySelector('.abyss-search-context')).not.toBeNull();
+    expect(card.textContent).toContain('hidden second');
+    expect(card.textContent).toContain('hidden child');
     h.query('ledger');
     await h.completed();
     expect(h.root.querySelector('.abyss-task-title mark')?.textContent).toBe('ledger');
@@ -1530,6 +1552,133 @@ it.each([
       expect(h.state.get('taskStack')).toEqual([]);
       expect(execute).not.toHaveBeenCalled();
       expect(await h.app.vault.adapter.read('a.md')).toBe(source);
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it('shares root context while isolating exact eligible child bases and refreshed descriptions', async () => {
+  const context = vi.spyOn(contextModule, 'taskSearchContext');
+  const source = [
+    '- [ ] Owning parent',
+    '  - [ ] First base #eligible',
+    '    - [ ] Repeated',
+    '      - > needle first description',
+    '  - [ ] Second base #eligible',
+    '    - [ ] Repeated',
+    '      - > needle second description',
+    '  - [ ] Hidden sibling',
+  ].join('\n');
+  const h = await mountCanonicalSearchUi(
+    { 'a.md': source },
+    structuredClone(DEFAULT_SETTINGS),
+    'tasks',
+  );
+  try {
+    h.state.set('selectedList', { type: 'tag', tag: '#eligible' });
+    h.panel.refresh();
+    h.query('needle');
+    await h.completed();
+    const cards = [...h.root.querySelectorAll<HTMLElement>('.abyss-task-card')];
+    expect(cards).toHaveLength(2);
+    expect(h.root.dataset['searchLogicalResults']).toBe('2');
+    expect(context).toHaveBeenCalledTimes(1);
+    for (const [index, own, other] of [
+      [0, 'first', 'second'],
+      [1, 'second', 'first'],
+    ] as const) {
+      const card = expectDefined(cards[index]);
+      expect(card.textContent).toContain(`needle ${own} description`);
+      expect(card.textContent).not.toContain(`needle ${other} description`);
+      expect(card.textContent).not.toContain('Owning parent');
+      expect(card.textContent).not.toContain('Hidden sibling');
+      expect(card.querySelectorAll('.abyss-subtask-label')).toHaveLength(1);
+      expectDefined(card.querySelector<HTMLElement>('.abyss-subtask-label')).click();
+      await vi.waitFor(() => {
+        expect(h.state.get('taskStack')).toHaveLength(3);
+        expect(h.state.get('taskStack')[1]?.title).toBe(index === 0 ? 'First base' : 'Second base');
+      });
+      expect(h.state.get('centerFilter')).toBe('needle');
+      expect(h.state.get('selectedList')).toEqual({ type: 'tag', tag: '#eligible' });
+    }
+    h.index.installCommittedContent(
+      'a.md',
+      source.replace('first description', 'changed description'),
+    );
+    await h.completed();
+    expect(h.root.textContent).toContain('needle changed description');
+    expect(h.root.textContent).not.toContain('needle first description');
+    h.query('');
+    await vi.waitFor(() => {
+      expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(2);
+      expect(h.root.querySelector('.abyss-search-context')).toBeNull();
+    });
+  } finally {
+    h.dispose();
+  }
+});
+
+it.each(['needle', 'every'])(
+  'keeps exactly one base recurrence badge in Filter for %s',
+  async (query) => {
+    const h = await mountCanonicalSearchUi(
+      { 'a.md': '- [ ] needle root 🔁 every day' },
+      structuredClone(DEFAULT_SETTINGS),
+      'tasks',
+    );
+    try {
+      h.query(query);
+      await h.completed();
+      expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(1);
+      expect(h.root.querySelectorAll('.abyss-recurrence-badge')).toHaveLength(1);
+      expect(h.root.querySelector('.abyss-task-title-row .abyss-recurrence-badge')).not.toBeNull();
+      if (query === 'every')
+        expect(h.root.querySelector('.abyss-task-meta-right mark')?.textContent).toBe('every');
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it.each(
+  (['root', 'child'] as const).flatMap((base) =>
+    ['baseneedle', 'childneedle', 'lastword'].map((query) => ({ base, query })),
+  ),
+)(
+  'preserves $base Filter description preview unless its full evidence matches $query',
+  async ({ base, query }) => {
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, text, element) => {
+      element.setText(text);
+    });
+    const lines = [
+      '- [ ] baseneedle #eligible',
+      '  - > first line',
+      '  - > lastword second line',
+      '  - [ ] childneedle',
+    ];
+    const source = (
+      base === 'child' ? ['- [ ] Owner', ...lines.map((line) => `  ${line}`)] : lines
+    ).join('\n');
+    const h = await mountCanonicalSearchUi(
+      { 'a.md': source },
+      structuredClone(DEFAULT_SETTINGS),
+      'tasks',
+    );
+    try {
+      h.state.set('selectedList', { type: 'tag', tag: '#eligible' });
+      h.panel.refresh();
+      h.query(query);
+      await h.completed();
+      expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(1);
+      const descriptions = [...h.root.querySelectorAll('.abyss-task-desc')];
+      expect(descriptions).toHaveLength(1);
+      expect(descriptions[0]?.textContent).toBe(
+        query === 'lastword' ? 'first line\nlastword second line' : 'first line …',
+      );
+      if (query === 'lastword')
+        expect(descriptions[0]?.querySelector('mark')?.textContent).toBe('lastword');
+      else expect(descriptions[0]?.querySelector('mark')).toBeNull();
     } finally {
       h.dispose();
     }

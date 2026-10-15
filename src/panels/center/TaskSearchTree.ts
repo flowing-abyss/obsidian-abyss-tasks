@@ -36,6 +36,7 @@ export function isTaskSearchSemanticEvidence(
 export interface TaskSearchTreeRenderOptions {
   readonly app: App;
   readonly root: TaskSnapshot;
+  readonly base: TaskSelectionNode;
   readonly search: TaskCardSearchPresentation;
   readonly textOptions: Omit<
     RenderTaskTextOptions,
@@ -85,6 +86,15 @@ function activate(
   options: TaskSearchTreeRenderOptions,
 ): void {
   options.textOptions.component.registerDomEvent(element, 'click', (event) => {
+    if (
+      options.search.mode === 'filter' &&
+      (tree === options.search.context.tree ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.shiftKey ||
+        event.altKey)
+    )
+      return;
     const target = event.target;
     const win = element.ownerDocument.defaultView;
     if (
@@ -107,7 +117,7 @@ function trackField(
 }
 function renderHeader(entry: TreeEntry, options: TaskSearchTreeRenderOptions): HTMLElement {
   const { node, host, tree } = entry;
-  if ('source' in node) return host;
+  if (tree === options.search.context.tree || 'source' in node) return host;
   const row = host.createDiv({ cls: 'abyss-subtask-row' });
   mountTaskSearchKeyboardActivation(row, options.textOptions.component, () => {
     options.search.onActivate(tree.address);
@@ -211,7 +221,7 @@ export function renderTaskSearchTree(
 ): void {
   const context = host.createDiv({ cls: 'abyss-search-context' });
   const pending: TreeEntry[] = [
-    { tree: options.search.context.tree, node: options.root, host: context },
+    { tree: options.search.context.tree, node: options.base, host: context },
   ];
   while (pending.length > 0) {
     const entry = pending.pop();

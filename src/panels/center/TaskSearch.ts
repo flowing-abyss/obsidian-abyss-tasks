@@ -17,6 +17,7 @@ import {
   localDate,
   prepareSearchQuery,
   shiftLocalDate,
+  taskSearchAddressKey,
   taskSearchContext,
   TaskSearchError,
   type TaskOrganizationRecord,
@@ -25,6 +26,7 @@ import {
   type TaskSearchApi,
   type TaskSearchHit,
   type TaskSearchState,
+  type TaskSearchTreeNode,
   type TaskSnapshot,
 } from '../../tasks';
 import type { LocalSearchFocusTarget } from '../../ui/localSearchKeys';
@@ -39,7 +41,7 @@ import {
 import type { TaskSearchRowsIdentity } from '../task-list/TaskSearchRows';
 import type { SearchViewState } from './SearchViewState';
 import type { TaskCardHighlight, TaskCardSearchPresentation } from './TaskCardRenderer';
-import { navigateTaskListTarget } from './TaskListNavigation';
+import { navigateTaskListTarget, resolveTaskListAddress } from './TaskListNavigation';
 import type { TaskListInclusion, TaskRevealReceipt } from './TaskSearchReveal';
 
 export interface TaskSearchRowOptions {
@@ -51,7 +53,8 @@ export interface TaskSearchRowOptions {
   readonly onActivate?: ((address: TaskSearchAddress) => void) | undefined;
   readonly highlight?: TaskCardHighlight | undefined;
   readonly presentation?:
-    ((task: TaskSnapshot, address: TaskSearchAddress) => TaskCardSearchPresentation) | undefined;
+    | ((task: TaskSnapshot, address: TaskSearchAddress) => TaskCardSearchPresentation | undefined)
+    | undefined;
 }
 
 interface TaskSearchHost {
@@ -566,7 +569,11 @@ export class TaskSearch {
   ): Promise<number> {
     const search = this.#options.search;
     if (search === undefined) throw new TaskSearchError('unavailable', 'Search capability missing');
-    const cursor = await search.open({ kind: this.#organizationScope(), query }, current.signal);
+    const kind = this.#organizationScope();
+    const cursor = await search.open(
+      kind === 'nodes' ? { kind, matchScope: 'subtree', query } : { kind, query },
+      current.signal,
+    );
     this.#joinPreparation(current, cursor.generation);
     let failed = false,
       failure: unknown;
@@ -972,23 +979,52 @@ export class TaskSearch {
     activate: (address: TaskSearchAddress) => void,
     highlight: TaskCardHighlight | undefined,
   ): TaskSearchRowOptions['presentation'] {
-    if (this.#filter || highlight === undefined) return undefined;
+    if (highlight === undefined) return undefined;
     const { query } = highlight;
-    const contexts = new WeakMap<TaskSnapshot, TaskCardSearchPresentation>();
+    const mode = this.#filter ? 'filter' : 'search';
+    const contexts = new WeakMap<
+      TaskSnapshot,
+      {
+        trees: Map<string, TaskSearchTreeNode>;
+        presentations: Map<string, TaskCardSearchPresentation>;
+      }
+    >();
     return (task, address) => {
-      let presentation = contexts.get(task);
+      let cached = contexts.get(task);
+      if (cached === undefined) {
+        const context = taskSearchContext(
+          task,
+          { ...address, childLines: [] },
+          query,
+          this.#segment,
+        );
+        const trees = new Map<string, TaskSearchTreeNode>();
+        const pending = [context.tree];
+        for (const tree of pending) {
+          trees.set(taskSearchAddressKey(tree.address), tree);
+          for (const child of tree.children) pending.push(child);
+        }
+        cached = { trees, presentations: new Map() };
+        contexts.set(task, cached);
+      }
+      const key = taskSearchAddressKey(address);
+      const tree = cached.trees.get(key);
+      if (tree === undefined) return undefined;
+      let presentation = cached.presentations.get(key);
       if (presentation === undefined) {
         presentation = {
-          context: taskSearchContext(task, address, query, this.#segment),
+          mode,
+          context: { tree },
           query,
           segment: this.#segment,
           onActivate: activate,
         };
-        contexts.set(task, presentation);
+        cached.presentations.set(key, presentation);
       }
       return presentation;
     };
   }
+
   #renderFailed(request: number, error: unknown): void {
     if (this.#failedRenderRequest === request) return;
     this.#failedRenderRequest = request;
@@ -1051,6 +1087,17 @@ export class TaskSearch {
       this.#options.state.taskSelectionIntentGeneration === intent &&
       this.canPublish_abyssPrivate(request, generation, controller.signal);
     try {
+      if (this.#filter) {
+        const target = await resolveTaskListAddress(search, address, {
+          signal: controller.signal,
+          isCurrent: current,
+        });
+        if (target !== undefined && current()) {
+          this.#activation = null;
+          this.#options.state.set('taskStack', target.path);
+        }
+        return;
+      }
       await navigateTaskListTarget(
         { type: 'address', address },
         {
