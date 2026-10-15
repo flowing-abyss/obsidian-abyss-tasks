@@ -333,6 +333,8 @@ movement follow the complete logical order. Counts and bulk writes deduplicate p
 selected occurrences determine occurrence-specific completion capability. Selection survives exact
 identity, a proven relocation of an unchanged source block, or a proven owned command transition.
 An unrelated task inheriting the same line cannot inherit selection.
+Finite grouped task rows carry their logical group key independently of the header row. The Today
+list omits its date heading when Today is the only group, while selection retains that group identity.
 
 [`TaskListSurface`](src/panels/task-list/TaskListSurface.ts) mounts bounded keyed rows over the
 pure [`RowViewport`](src/panels/virtualization/rowViewport.ts). Logical rows own order and selection;

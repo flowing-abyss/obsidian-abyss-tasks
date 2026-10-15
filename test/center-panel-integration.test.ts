@@ -2324,7 +2324,7 @@ describe('CenterPanel.renderWithGrouping (date grouping)', () => {
     ).toContain('No date');
   });
 
-  it('empty groups are skipped (only non-empty groups render)', () => {
+  it('omits the redundant Today heading when it is the only nonempty group', () => {
     const tasks = [
       task({
         title: 'today only',
@@ -2335,7 +2335,8 @@ describe('CenterPanel.renderWithGrouping (date grouping)', () => {
     const container = renderWithGroupingByDate(tasks);
     const headers = container.querySelectorAll('.abyss-group-header');
     const labels = Array.from(headers).map((h) => h.textContent.trim());
-    expect(labels).toEqual(['Today']);
+    expect(labels).toEqual([]);
+    expect(container.querySelectorAll('.abyss-task-card')).toHaveLength(1);
   });
 
   it('no-date task falls into "No date" bucket (not Overdue)', () => {
@@ -8462,7 +8463,10 @@ describe('date header capture through the retained task bar', () => {
       vi.useFakeTimers({ toFake: ['Date'] });
       vi.setSystemTime(new Date(2026, 9, 8, 12));
       const { panel, state, index, app } = await makePanel(
-        { 'range.md': '- [ ] Range 🛫 2026-10-08 📅 2026-10-11', 'capture.md': '' },
+        {
+          'range.md': '- [ ] Range 🛫 2026-10-08 📅 2026-10-11\n- [ ] Overdue 📅 2026-10-07',
+          'capture.md': '',
+        },
         { ...DEFAULT_SETTINGS, taskFilePath: 'capture.md', listViewStates: {} },
         [],
         { authority: true },
@@ -8478,9 +8482,10 @@ describe('date header capture through the retained task bar', () => {
       try {
         if (selection === 'upcoming') await searchUiCompleted(container);
         const headers = [...container.querySelectorAll<HTMLElement>('.abyss-group-header')];
-        const header = expectDefined(headers[selection === 'upcoming' ? 1 : 0]);
+        const header = expectDefined(headers[1]);
         const expectedDate = selection === 'upcoming' ? '2026-10-10' : '2026-10-08';
         if (selection === 'upcoming') expect(headers[0]?.textContent).toContain('Tomorrow');
+        else expect(headers[0]?.textContent).toContain('Overdue');
         expect(
           header.querySelector('button'),
           headers.map((h) => h.outerHTML).join('\n'),

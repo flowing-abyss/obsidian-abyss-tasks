@@ -30,6 +30,21 @@ function renderCard(container: HTMLElement, row: TaskListTaskRow): HTMLElement {
 }
 
 describe('mountTaskListRows', () => {
+  it('mounts a lone Today task at the ordinary first-row origin without a heading', () => {
+    const container = freshContainer();
+    const list = buildTaskListRows(
+      [task({ title: 'now', planning: { due: TODAY }, source: { filePath: 'n.md', line: 2 } })],
+      { by: 'date', today: TODAY, tomorrow: '2026-06-27', todayList: true },
+    );
+    const mounted = mountTaskListRows(container, list, renderCard);
+    expect(list.rowCount).toBe(1);
+    expect([...list.slice(0, list.rowCount)].map((row) => row.kind)).toEqual(['task']);
+    expect(list.estimatedOffset(0, { group: 20, task: 50 })).toBe(0);
+    expect(container.firstElementChild).toBe(mounted.element('n.md:2'));
+    expect(container.firstElementChild?.className).toBe('abyss-task-card');
+    expect(container.querySelector('.abyss-group-header')).toBeNull();
+  });
+
   it('appends one direct child per row in row order with the header classes and text', () => {
     const container = freshContainer();
 

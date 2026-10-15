@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { drainCollectionSteps } from '../src/collectionSteps';
 import { buildTaskListRows, taskListGrouping } from '../src/panels/task-list/taskListRows';
+import { TaskRowSelection } from '../src/panels/task-list/taskRowSelection';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { ListViewState } from '../src/settings/types';
 import { StatusRegistry } from '../src/status/StatusRegistry';
@@ -316,6 +317,125 @@ it('groups mixed Today dates together and orders compact records by time', async
       ['a.md:0', 'Today'],
       ['a.md:1', 'Today'],
     ]);
+  } finally {
+    h.close();
+  }
+});
+
+it('matches ordinary Today rows through filtering and keeps a proved compact selection', async () => {
+  const h = await createCanonicalSearchHarness(
+    { 'today.md': '- [ ] Due today #keep 📅 2026-10-04\n- [ ] Overdue #old 📅 2026-10-03' },
+    settings,
+  );
+  try {
+    const subscription = h.index.searchSource().subscribe(() => {});
+    const generation = subscription.state.generation;
+    subscription.unsubscribe();
+    const records: TaskOrganizationRecord[] = [];
+    for await (const batch of h.index.organization(
+      { expectedGeneration: generation },
+      new AbortController().signal,
+    ))
+      records.push(...batch.items);
+    const baseList: ListViewState = {
+      groupBy: 'date',
+      sortBy: { field: 'date', dir: 'asc' },
+      filters: [],
+    };
+    const input: TaskSearchOrganizationInput = {
+      generation,
+      records,
+      hits: null,
+      selection: 'today',
+      view: { list: baseList, relevance: false },
+      settings,
+      today,
+      nowMs: 0,
+      outgoingLinks: new Map(),
+    };
+    const withHeader = organizeTaskSearch(input).rows;
+    const filteredList = { ...baseList, filters: [{ type: 'tag' as const, value: '#keep' }] };
+    const withoutHeader = organizeTaskSearch({
+      ...input,
+      view: { list: filteredList, relevance: false },
+    }).rows;
+    const ordinary = (list: ListViewState) => {
+      const selected = selectTaskList({
+        tasks: h.index.list(),
+        settings,
+        today,
+        nowMs: 0,
+        selection: 'today' as const,
+        viewState: list,
+      });
+      return buildTaskListRows(
+        selected,
+        taskListGrouping('date', {
+          today,
+          tomorrow: '2026-10-05',
+          todayList: true,
+          statuses: new StatusRegistry(settings.taskStatuses),
+        }),
+      );
+    };
+    for (const [compact, list] of [
+      [withHeader, baseList],
+      [withoutHeader, filteredList],
+    ] as const) {
+      const rows = ordinary(list);
+      expect([...compact.slice(0, compact.rowCount)].map((row) => [row.kind, row.key])).toEqual(
+        [...rows.slice(0, rows.rowCount)].map((row) => [row.kind, row.key]),
+      );
+    }
+    expect([...withHeader.slice(0, withHeader.rowCount)].map((row) => row.kind)).toEqual([
+      'group',
+      'task',
+      'group',
+      'task',
+    ]);
+    expect([...withoutHeader.slice(0, withoutHeader.rowCount)].map((row) => row.kind)).toEqual([
+      'task',
+    ]);
+    expect(withoutHeader.rowCount).toBe(1);
+    const overdueOnly = organizeTaskSearch({
+      ...input,
+      view: {
+        list: { ...baseList, filters: [{ type: 'tag', value: '#old' }] },
+        relevance: false,
+      },
+    }).rows;
+    expect([...overdueOnly.slice(0, overdueOnly.rowCount)].map((row) => row.kind)).toEqual([
+      'group',
+      'task',
+    ]);
+    const allTasksDate = organizeTaskSearch({
+      ...input,
+      selection: null,
+      view: { list: filteredList, relevance: false },
+    }).rows;
+    expect([...allTasksDate.slice(0, allTasksDate.rowCount)].map((row) => row.kind)).toEqual([
+      'group',
+      'task',
+    ]);
+    const todayPriority = organizeTaskSearch({
+      ...input,
+      view: { list: { ...filteredList, groupBy: 'priority' }, relevance: false },
+    }).rows;
+    expect([...todayPriority.slice(0, todayPriority.rowCount)].map((row) => row.kind)).toEqual([
+      'group',
+      'task',
+    ]);
+    const selection = new TaskRowSelection();
+    const proof = { physicalKeys: new Map([['today.md:0', 'today.md:0']]) };
+    selection.bind(withHeader);
+    selection.collapseTo('today.md:0');
+    selection.extendTo('today.md:0', withHeader);
+    selection.bind(withoutHeader, proof);
+    expect(selection.size).toBe(1);
+    expect(selection.has('today.md:0')).toBe(true);
+    selection.bind(withHeader, proof);
+    expect(selection.size).toBe(1);
+    expect(selection.has('today.md:0')).toBe(true);
   } finally {
     h.close();
   }

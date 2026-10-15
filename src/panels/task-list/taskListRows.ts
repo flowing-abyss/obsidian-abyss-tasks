@@ -54,6 +54,7 @@ export interface TaskListTaskRow<T = TaskSnapshot> {
   readonly key: string;
   readonly taskKey: string;
   readonly task: T;
+  readonly groupKey?: string;
   readonly presentation?: TaskOccurrencePresentation;
 }
 
@@ -124,8 +125,18 @@ export function taskListGrouping(
   return { by: 'tag' };
 }
 
-function taskRow<T extends TaskGroupValue>(task: T, key = taskRowKey(task)): TaskListTaskRow<T> {
-  return { kind: 'task', key, taskKey: taskRowKey(task), task };
+function taskRow<T extends TaskGroupValue>(
+  task: T,
+  key = taskRowKey(task),
+  groupKey?: string,
+): TaskListTaskRow<T> {
+  return {
+    kind: 'task',
+    key,
+    taskKey: taskRowKey(task),
+    task,
+    ...(groupKey === undefined ? {} : { groupKey }),
+  };
 }
 
 function taskGroups<T extends TaskGroupValue>(
@@ -159,24 +170,40 @@ export function dateGroupMetadata(
   return {};
 }
 
+/** Decide header visibility from nonempty logical groups, before rows are materialized. */
+export function omitLoneTodayHeader(
+  groups: ReadonlyArray<{ readonly key: string }>,
+  grouping: { readonly by: string; readonly todayList?: boolean },
+): boolean {
+  return (
+    grouping.by === 'date' &&
+    grouping.todayList === true &&
+    groups.length === 1 &&
+    groups[0]?.key === 'Today'
+  );
+}
+
 function groupedRows<T extends TaskGroupValue>(
   tasks: readonly T[],
   grouping: Exclude<TaskListGrouping, { readonly by: 'none' }>,
 ): Array<TaskListRow<T>> {
   const rows: Array<TaskListRow<T>> = [];
-  for (const group of taskGroups(tasks, grouping)) {
-    if (group.tasks.length === 0) continue;
-    rows.push({
-      kind: 'group',
-      key: `group:${grouping.by}:${group.key}`,
-      label: group.label,
-      ...(grouping.by === 'date' && {
-        dateGroup: dateGroupMetadata(group.key, grouping.today, grouping.tomorrow),
-      }),
-      ...(grouping.by === 'source-note' && { sourcePath: group.key }),
-      count: group.tasks.length,
-      first: rows.length === 0,
-    });
+  const groups = taskGroups(tasks, grouping).filter((group) => group.tasks.length > 0);
+  const omitTodayHeader = omitLoneTodayHeader(groups, grouping);
+  for (const group of groups) {
+    const groupKey = `group:${grouping.by}:${group.key}`;
+    if (!omitTodayHeader)
+      rows.push({
+        kind: 'group',
+        key: groupKey,
+        label: group.label,
+        ...(grouping.by === 'date' && {
+          dateGroup: dateGroupMetadata(group.key, grouping.today, grouping.tomorrow),
+        }),
+        ...(grouping.by === 'source-note' && { sourcePath: group.key }),
+        count: group.tasks.length,
+        first: rows.length === 0,
+      });
     for (const task of group.tasks)
       rows.push(
         taskRow(
@@ -184,6 +211,7 @@ function groupedRows<T extends TaskGroupValue>(
           grouping.by === 'outgoing-link'
             ? JSON.stringify(['task-occurrence', 'outgoing-link', group.key, taskRowKey(task)])
             : taskRowKey(task),
+          groupKey,
         ),
       );
   }
@@ -315,7 +343,7 @@ export function indexedRows<T>(
     if (!places.has(row.key)) places.set(row.key, tasks.length);
     if (!first.has(row.taskKey)) first.set(row.taskKey, row.key);
     tasks.push(row);
-    occurrences.set(row.key, occurrenceRange(row, groupKey));
+    occurrences.set(row.key, occurrenceRange(row, row.groupKey ?? groupKey));
   }
   const taskRowAt = (key: string): TaskListTaskRow<T> | undefined => {
     const index = places.get(key);

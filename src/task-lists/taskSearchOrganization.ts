@@ -5,6 +5,7 @@ import { buildTaskDailyRowsSteps } from '../panels/task-list/taskDailyRows';
 import {
   dateGroupMetadata,
   indexedRows,
+  omitLoneTodayHeader,
   type TaskListRow,
   type TaskListRows,
 } from '../panels/task-list/taskListRows';
@@ -244,6 +245,7 @@ function* appendGroupRows(
   finite: Array<TaskListRow<TaskSearchOccurrence>>,
 ): CollectionSteps<boolean> {
   const grouped = context.input.view.list.groupBy !== 'none';
+  const groupKey = grouped ? `group:${context.input.view.list.groupBy}:${group.key}` : undefined;
   for (const record of group.tasks) {
     const task = context.makeOccurrence(
       record,
@@ -254,6 +256,7 @@ function* appendGroupRows(
       key: task.key,
       taskKey: task.taskKey,
       task,
+      ...(groupKey === undefined ? {} : { groupKey }),
       presentation: task.presentation,
     });
     yield 'atom';
@@ -270,9 +273,14 @@ function* finiteRows(
       ? [{ key: '', label: '', tasks: matching }]
       : yield* organizationGroups(matching, input);
   if (groups === undefined) throw new Error('Groups ended without a result');
-  for (const group of groups) {
+  const nonempty = groups.filter((group) => group.tasks.length > 0);
+  const omitTodayHeader = omitLoneTodayHeader(nonempty, {
+    by: input.view.list.groupBy,
+    todayList: input.selection === 'today',
+  });
+  for (const group of nonempty) {
     const grouped = input.view.list.groupBy !== 'none';
-    if (grouped)
+    if (grouped && !omitTodayHeader)
       finite.push({
         kind: 'group',
         key: `group:${input.view.list.groupBy}:${group.key}`,

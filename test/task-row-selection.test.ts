@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import {
+  buildTaskListRows,
   indexedRows,
   NO_TASK_LIST_ROWS,
   type TaskListOrder,
@@ -8,6 +9,7 @@ import {
 } from '../src/panels/task-list/taskListRows';
 import { TaskRowSelection } from '../src/panels/task-list/taskRowSelection';
 import { localDate } from '../src/tasks';
+import { task } from './helpers';
 
 function orderOf(...keys: string[]): TaskListOrder {
   return {
@@ -348,6 +350,33 @@ describe('bound occurrence selection', () => {
       entries.map(([key, taskKey, task]) => ({ kind: 'task' as const, key, taskKey, task })),
     );
   }
+
+  it('keeps the same physical Today task selected as its only header disappears and returns', () => {
+    const today = '2026-10-08';
+    const current = task({ planning: { due: today }, source: { filePath: 'list.md', line: 0 } });
+    const late = task({
+      planning: { due: '2026-10-07' },
+      source: { filePath: 'list.md', line: 1 },
+    });
+    const grouping = { by: 'date' as const, today, tomorrow: '2026-10-09', todayList: true };
+    const withHeader = buildTaskListRows([current, late], grouping);
+    const withoutHeader = buildTaskListRows([current], grouping);
+    const selection = new TaskRowSelection();
+    const proof = { physicalKeys: new Map([['list.md:0', 'list.md:0']]) };
+    selection.bind(withHeader);
+    selection.collapseTo('list.md:0');
+    selection.extendTo('list.md:0', withHeader);
+    expect(selection.size).toBe(1);
+    selection.bind(withoutHeader, proof);
+    expect(selection.size).toBe(1);
+    expect(selection.has('list.md:0')).toBe(true);
+    expect(selection.ranges()).toEqual([
+      { kind: 'group', taskKey: 'list.md:0', groupKey: 'group:date:Today' },
+    ]);
+    selection.bind(withHeader, proof);
+    expect(selection.size).toBe(1);
+    expect(selection.has('list.md:0')).toBe(true);
+  });
 
   it('captures the full order before reversal and never selects an inserted row', () => {
     const rows = rowsOf([

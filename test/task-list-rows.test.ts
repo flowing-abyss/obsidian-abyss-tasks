@@ -289,7 +289,35 @@ it('threads Today context to date rows for a scheduled task with a later due dat
     [at(0, { planning: { scheduled: TODAY, due: '2026-07-20' } })],
     grouping,
   );
-  expect(describeRows(rows)).toEqual(['group:date:Today | Today | 1 | first', 'list.md:0']);
+  expect(describeRows(rows)).toEqual(['list.md:0']);
+  expect(rows.rowCount).toBe(1);
+  expect(rows.captureSelection({ spans: [], include: ['list.md:0'], exclude: [] })).toEqual([
+    { kind: 'group', taskKey: 'list.md:0', groupKey: 'group:date:Today' },
+  ]);
+});
+
+it('retains Today headings outside the lone Today group of the Today selection', () => {
+  const todayTask = at(0, { planning: { due: TODAY } });
+  const overdue = at(1, { planning: { due: '2026-06-25' } });
+  const todayGrouping: TaskListGrouping = { ...byDate, todayList: true };
+  expect(describeRows(buildTaskListRows([todayTask], byDate))).toEqual([
+    'group:date:Today | Today | 1 | first',
+    'list.md:0',
+  ]);
+  expect(describeRows(buildTaskListRows([overdue], todayGrouping))).toEqual([
+    'group:date:Overdue | Overdue | 1 | first',
+    'list.md:1',
+  ]);
+  expect(describeRows(buildTaskListRows([todayTask, overdue], todayGrouping))).toEqual([
+    'group:date:Overdue | Overdue | 1 | first',
+    'list.md:1',
+    'group:date:Today | Today | 1',
+    'list.md:0',
+  ]);
+  expect(describeRows(buildTaskListRows([todayTask], { by: 'priority' }))).toEqual([
+    'group:priority:D | Normal | 1 | first',
+    'list.md:0',
+  ]);
 });
 
 describe('indexed finite row contract', () => {
