@@ -14,9 +14,11 @@ import {
 import { TagPickerModal } from '../src/ui/TagPickerModal';
 import {
   appWithFiles,
+  DataTransferStub,
   deferred,
   expectDefined,
   flushMicrotasks,
+  freshContainer,
   loseFocusOnRemoval,
   makeStubStore,
   methodOf,
@@ -24,7 +26,7 @@ import {
   task,
   useRealMoment,
 } from './helpers';
-import { makeCenterPanelForTest } from './support/panelHarness';
+import { makeCenterPanelForTest, makeLeftPanelForTest } from './support/panelHarness';
 import { prepareTaskPanelViewport } from './support/taskPanelViewport';
 
 import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
@@ -231,7 +233,43 @@ function makeCenter(
   const el = createElement.call(ownerDocument, 'div');
   prepareTaskPanelViewport(el);
   panel.mount(el);
-  return { el, state, tm, execute, panel, queries };
+  return { el, state, tm, execute, panel, queries, settings: s, store };
+}
+
+function dispatchDrag(
+  element: HTMLElement,
+  type: 'dragstart' | 'dragover' | 'drop' | 'dragend',
+  dataTransfer: DataTransferStub,
+): MouseEvent {
+  const event = new MouseEvent(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
+  element.dispatchEvent(event);
+  return event;
+}
+
+function mountPinnedSource(center: ReturnType<typeof makeCenter>): {
+  readonly row: HTMLElement;
+  readonly destroy: () => void;
+} {
+  const panel = makeLeftPanelForTest(
+    center.state,
+    center.store,
+    center.settings,
+    center.tm,
+    null as never,
+    undefined,
+    null,
+    null,
+    { queries: center.queries, execute: center.execute },
+  );
+  const left = freshContainer();
+  panel.mount(left);
+  return {
+    row: expectDefined(left.querySelector<HTMLElement>('.abyss-pinned-tag')),
+    destroy: () => {
+      panel.destroy();
+    },
+  };
 }
 
 function changedTaskResult(
@@ -420,6 +458,82 @@ describe('detached tag catalog menus', () => {
 });
 
 describe('CenterPanel tag→task drop target', () => {
+  it.each([
+    ['task body', '.abyss-task-card-main-row', { add: ['#task/next'] }],
+    ['tag chip', '.abyss-task-tag', { add: ['#task/next'], remove: ['#work'] }],
+  ])('assigns a pinned drag onto the %s through the task API', (_name, selector, tags) => {
+    const t = task({
+      status: 'open',
+      tags: ['#work', '#task/inbox'],
+      source: {
+        originalMarkdown: '- [ ] t #work #task/inbox',
+        originalBlock: '- [ ] t #work #task/inbox',
+      },
+    });
+    const center = makeCenter(
+      [t],
+      { inbox: { mode: 'both', tag: '#task/inbox', removeTagOnAssign: true } },
+      ['#task/next'],
+    );
+    const pinned = mountPinnedSource(center);
+    const dataTransfer = new DataTransferStub();
+    try {
+      dispatchDrag(pinned.row, 'dragstart', dataTransfer);
+      expect(center.state.get('draggingTag')).toBe('#task/next');
+      expect(dataTransfer.getData('application/x-abyss-pinned-tag')).toBe('#task/next');
+
+      const target = expectDefined(center.el.querySelector<HTMLElement>(selector));
+      expect(dispatchDrag(target, 'dragover', dataTransfer).defaultPrevented).toBe(true);
+      expect(dispatchDrag(target, 'drop', dataTransfer).defaultPrevented).toBe(true);
+      expect(center.execute).toHaveBeenCalledExactlyOnceWith({
+        type: 'patch',
+        target: {
+          type: 'task',
+          ref: objectMatching<TaskSnapshot['ref']>({ filePath: t.ref.filePath, line: t.ref.line }),
+        },
+        patch: { tags },
+      });
+    } finally {
+      dispatchDrag(pinned.row, 'dragend', dataTransfer);
+      pinned.destroy();
+      center.panel.destroy();
+    }
+    expect(center.state.get('draggingTag')).toBeNull();
+  });
+
+  it('assigns a dragged task onto a pinned row with its native drag payload', () => {
+    const t = task({
+      status: 'open',
+      tags: ['#task/inbox'],
+      source: { originalMarkdown: '- [ ] t #task/inbox', originalBlock: '- [ ] t #task/inbox' },
+    });
+    const center = makeCenter([t], {}, ['#task/next']);
+    const pinned = mountPinnedSource(center);
+    const dataTransfer = new DataTransferStub();
+    dataTransfer.setData('text/plain', 'task');
+    const card = expectDefined(center.el.querySelector<HTMLElement>('.abyss-task-card'));
+    try {
+      dispatchDrag(card, 'dragstart', dataTransfer);
+      expect(center.state.get('draggingTaskNode')).toMatchObject({ source: 'center-card' });
+      expect(dataTransfer.types).not.toContain('application/x-abyss-pinned-tag');
+      expect(dispatchDrag(pinned.row, 'dragover', dataTransfer).defaultPrevented).toBe(true);
+      expect(dispatchDrag(pinned.row, 'drop', dataTransfer).defaultPrevented).toBe(true);
+      expect(center.execute).toHaveBeenCalledExactlyOnceWith({
+        type: 'patch',
+        target: {
+          type: 'task',
+          ref: objectMatching<TaskSnapshot['ref']>({ filePath: t.ref.filePath, line: t.ref.line }),
+        },
+        patch: { tags: { add: ['#task/next'] } },
+      });
+    } finally {
+      dispatchDrag(card, 'dragend', dataTransfer);
+      pinned.destroy();
+      center.panel.destroy();
+    }
+    expect(center.state.get('draggingTaskNode')).toBeNull();
+  });
+
   it('task card delegates tag assignment policy to the application API', () => {
     const t = task({
       status: 'open',
