@@ -2620,15 +2620,8 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 .abyss-task-card .abyss-search-context .abyss-task-desc {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  line-clamp: 3;
   line-height: 1.3;
-  max-height: 3.9em;
   white-space: normal;
-  overflow: hidden;
-  text-overflow: clip;
   overflow-wrap: anywhere;
 }
 

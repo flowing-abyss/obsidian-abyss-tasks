@@ -866,7 +866,7 @@ it('marks the exact description fixture and retains its list anchor and source o
     sourcePath: 'tasks.md',
     onEditLink,
     onRendered: (element) => {
-      const query = prepareSearchQuery('три', fallbackSearchWords);
+      const query = prepareSearchQuery('три test', fallbackSearchWords);
       markSearchText(element, projectSearchText(source, 'description'), query, fallbackSearchWords);
       compactTaskDescriptionExcerpt(element, query, fallbackSearchWords);
     },

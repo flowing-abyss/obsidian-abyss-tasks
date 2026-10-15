@@ -84,16 +84,16 @@ function fieldOptions(
           element,
           options.search.query,
           options.search.segment,
-          matchingDescriptionAnchor(element, markdown, excerptEvidence),
+          matchingDescriptionAnchors(element, markdown, excerptEvidence),
         );
     },
   };
 }
-function matchingDescriptionAnchor(
+function matchingDescriptionAnchors(
   element: HTMLElement,
   markdown: string,
   evidence: readonly TaskSearchEvidence[],
-): HTMLAnchorElement | undefined {
+): readonly HTMLAnchorElement[] {
   const ranges = evidence
     .filter(
       (item) =>
@@ -102,7 +102,7 @@ function matchingDescriptionAnchor(
         item.provenance.field === 'description',
     )
     .flatMap((item) => item.matches.flatMap((match) => match.sourceRanges));
-  if (ranges.length === 0) return undefined;
+  if (ranges.length === 0) return [];
   const tokens = parseLinks(markdown);
   const anchors = [...element.querySelectorAll('a')];
   const occurrences = pairAnchorsToTokens(
@@ -118,16 +118,17 @@ function matchingDescriptionAnchor(
     anchors.length !== tokens.length ||
     occurrences.some((occurrence, index) => occurrence !== index)
   )
-    return undefined;
+    return [];
+  const matching: HTMLAnchorElement[] = [];
   for (const [index, token] of tokens.entries()) {
     if (
       ranges.some(
         (range) => range.from >= token.index && range.to <= token.index + token.raw.length,
       )
     )
-      return anchors[index];
+      matching.push(...anchors.slice(index, index + 1));
   }
-  return undefined;
+  return matching;
 }
 function activate(
   element: HTMLElement,

@@ -1,4 +1,5 @@
 import { matchSearchText, type PreparedSearchQuery, type SearchWordSegmenter } from '../tasks';
+import { planTaskDescriptionExcerpts, type TextRange } from './taskDescriptionExcerptRanges';
 
 export interface TextRun {
   readonly node: Text;
@@ -61,89 +62,105 @@ export function renderedText(container: HTMLElement): {
   return { text, runs, elements };
 }
 
+interface WindowEdges {
+  first?: Text;
+  last?: Text;
+}
 /** Display only: link source proof and event wiring must already be complete. */
 export function compactTaskDescriptionExcerpt(
   container: HTMLElement,
   query: PreparedSearchQuery,
   segment: SearchWordSegmenter,
-  preferredAnchor?: HTMLAnchorElement,
+  preferredAnchors: readonly HTMLAnchorElement[] = [],
 ): void {
   const { text, runs, elements } = renderedText(container);
-  const match = matchSearchText(text, query, segment)[0] ?? anchorRange(runs, preferredAnchor);
-  const range = excerptRange(text, match);
+  const anchors = anchorRanges(runs);
+  const candidates = [
+    ...matchSearchText(text, query, segment),
+    ...preferredAnchors.flatMap((anchor) => anchors.get(anchor) ?? []),
+  ];
+  const ranges = planTaskDescriptionExcerpts(text, candidates, [...anchors.values()]);
   const ordinals = listOrdinals(elements);
-  const { first, last } = trimTextRuns(runs, range);
+  const edges = trimTextRuns(runs, ranges);
   // The collector supplies postorder elements, so discarded children leave no hidden subtree.
   for (const element of elements) {
-    if (discardElement(element, range)) element.node.remove();
+    if (discardElement(element, ranges)) element.node.remove();
   }
   for (const [item, ordinal] of ordinals) {
     if (container.contains(item)) item.setAttribute('value', String(ordinal));
   }
-  if (first !== undefined && text.slice(0, range.start).trim() !== '')
-    addEllipsis(container, first, true);
-  if (last !== undefined && text.slice(range.end).trim() !== '')
-    addEllipsis(container, last, false);
+  addOmissionCues(container, text, ranges, edges);
 }
-interface TextRange {
-  readonly start: number;
-  readonly end: number;
-}
-function anchorRange(runs: readonly TextRun[], anchor?: HTMLAnchorElement): TextRange | undefined {
-  if (anchor === undefined) return undefined;
-  const retained = runs.filter((run) => run.anchor === anchor);
-  const first = retained[0],
-    last = retained[retained.length - 1];
-  return first === undefined || last === undefined
-    ? undefined
-    : { start: first.start, end: last.end };
-}
-function excerptRange(text: string, match: TextRange = { start: 0, end: 0 }): TextRange {
-  const prefix = Math.max(text.lastIndexOf('\n', match.start - 1) + 1, match.start - 24);
-  const start = safeStart(text, match.start - text.slice(prefix, match.start).trimStart().length);
-  const end = safeEnd(text, Math.min(text.length, Math.max(start + 240, match.end)));
-  return { start, end: start + text.slice(start, end).trimEnd().length };
-}
-function trimTextRuns(runs: readonly TextRun[], range: TextRange): { first?: Text; last?: Text } {
-  let first: Text | undefined, last: Text | undefined;
-  for (const run of runs) {
-    const from = Math.max(range.start, run.start),
-      to = Math.min(range.end, run.end);
-    if (from >= to) run.node.remove();
-    else {
-      run.node.data = run.node.data.slice(from - run.start, to - run.start);
-      first ??= run.node;
-      last = run.node;
-    }
+function addOmissionCues(
+  container: HTMLElement,
+  text: string,
+  ranges: readonly TextRange[],
+  edges: readonly WindowEdges[],
+): void {
+  addLeadingCue(container, text.slice(0, ranges[0]?.start ?? 0), edges[0]?.first);
+  for (const [index, range] of ranges.entries()) {
+    const last = edges[index]?.last;
+    const next = ranges[index + 1];
+    if (last !== undefined && hasOmittedGap(text, range.end, next))
+      addEllipsis(container, last, false, next !== undefined);
   }
-  return first === undefined || last === undefined ? {} : { first, last };
 }
-function discardElement(element: ElementRun, range: TextRange): boolean {
+function hasOmittedGap(text: string, end: number, next?: TextRange): boolean {
+  return next === undefined ? text.slice(end).trim() !== '' : end < next.start;
+}
+function addLeadingCue(container: HTMLElement, omitted: string, first?: Text): void {
+  if (first !== undefined && omitted.trim() !== '') addEllipsis(container, first, true);
+}
+function anchorRanges(runs: readonly TextRun[]): Map<HTMLAnchorElement, TextRange> {
+  const anchors = new Map<HTMLAnchorElement, TextRange>();
+  for (const run of runs) {
+    if (run.anchor === undefined || run.start === run.end) continue;
+    const range = anchors.get(run.anchor);
+    if (range === undefined) anchors.set(run.anchor, { start: run.start, end: run.end });
+    else range.end = run.end;
+  }
+  return anchors;
+}
+function trimTextRuns(runs: readonly TextRun[], ranges: readonly TextRange[]): WindowEdges[] {
+  const edges: WindowEdges[] = ranges.map(() => ({}));
+  for (const run of runs) trimTextRun(run, ranges, edges);
+  return edges;
+}
+function trimTextRun(run: TextRun, ranges: readonly TextRange[], edges: WindowEdges[]): void {
+  const data = run.node.data;
+  let previous: Text | undefined;
+  for (const [index, range] of ranges.entries()) {
+    const fragment = retainRunFragment(run, data, range, previous);
+    if (fragment === undefined) continue;
+    const edge = edges[index];
+    if (edge !== undefined) {
+      edge.first ??= fragment;
+      edge.last = fragment;
+    }
+    previous = fragment;
+  }
+  if (previous === undefined) run.node.remove();
+}
+function retainRunFragment(
+  run: TextRun,
+  data: string,
+  range: TextRange,
+  previous?: Text,
+): Text | undefined {
+  const from = Math.max(range.start, run.start),
+    to = Math.min(range.end, run.end);
+  if (from >= to) return undefined;
+  const fragment = previous === undefined ? run.node : run.node.ownerDocument.createTextNode('');
+  fragment.data = data.slice(from - run.start, to - run.start);
+  if (previous !== undefined) previous.parentNode?.insertBefore(fragment, previous.nextSibling);
+  return fragment;
+}
+function discardElement(element: ElementRun, ranges: readonly TextRange[]): boolean {
   return (
     element.start === element.end ||
-    element.end <= range.start ||
-    element.start >= range.end ||
+    !ranges.some((range) => element.start < range.end && range.start < element.end) ||
     (element.node.childNodes.length === 0 && element.node.tagName !== 'BR')
   );
-}
-function safeStart(text: string, offset: number): number {
-  let at = offset;
-  if (/[\uDC00-\uDFFF]/u.test(text[at] ?? '')) at++;
-  while (at < text.length && /\p{M}/u.test(String.fromCodePoint(text.codePointAt(at) ?? 0)))
-    at += (text.codePointAt(at) ?? 0) > 0xffff ? 2 : 1;
-  return at;
-}
-function safeEnd(text: string, offset: number): number {
-  let at = offset;
-  if (/[\uDC00-\uDFFF]/u.test(text[at] ?? '')) at--;
-  // If the boundary precedes a combining mark, omit its whole base/mark cluster.
-  while (at > 0 && /\p{M}/u.test(String.fromCodePoint(text.codePointAt(at) ?? 0))) {
-    at = previousPoint(text, at);
-  }
-  return at;
-}
-function previousPoint(text: string, at: number): number {
-  return at - (/[\uDC00-\uDFFF]/u.test(text[at - 1] ?? '') ? 2 : 1);
 }
 function listOrdinals(elements: readonly ElementRun[]): Map<Element, number> {
   const ordinals = new Map<Element, number>();
@@ -163,14 +180,21 @@ function collectListOrdinals(list: Element, ordinals: Map<Element, number>): voi
     ordinal += step;
   }
 }
-function addEllipsis(container: HTMLElement, text: Text, before: boolean): void {
-  let edge: Node = text;
-  while (
-    edge.parentElement !== null &&
-    edge.parentElement !== container &&
-    !blocks.has(edge.parentElement.tagName)
-  )
-    edge = edge.parentElement;
-  const cue = container.ownerDocument.createTextNode(before ? '… ' : ' …');
+function addEllipsis(container: HTMLElement, text: Text, before: boolean, gap = false): void {
+  const edge = ellipsisEdge(container, text, gap);
+  const trailing = gap ? ' … ' : ' …';
+  const cue = container.ownerDocument.createTextNode(before ? '… ' : trailing);
   edge.parentNode?.insertBefore(cue, before ? edge : edge.nextSibling);
+}
+function ellipsisEdge(container: HTMLElement, text: Text, gap: boolean): Node {
+  let edge: Node = text;
+  for (
+    let parent = text.parentElement;
+    parent !== null && parent !== container;
+    parent = parent.parentElement
+  ) {
+    if (blocks.has(parent.tagName)) break;
+    if (!gap || parent.tagName === 'A' || parent.tagName === 'MARK') edge = parent;
+  }
+  return edge;
 }

@@ -652,11 +652,11 @@ it('keeps the smaller nested search header on the shared responsive tracks', () 
   expect(declarationsFor('.abyss-task-meta-right')).toContain('flex-wrap: wrap');
 });
 
-it('bounds matched description height while retaining scoped compact Markdown block spacing', () => {
+it('keeps every selected description window visible with compact Markdown block spacing', () => {
   const excerpt = declarationsFor('.abyss-task-card .abyss-search-context .abyss-task-desc');
-  expect(excerpt).toContain('-webkit-line-clamp: 3');
-  expect(excerpt).toContain('overflow: hidden');
-  expect(excerpt).toContain('max-height:');
+  expect(excerpt).not.toContain('line-clamp:');
+  expect(excerpt).not.toContain('overflow: hidden');
+  expect(excerpt).not.toContain('max-height:');
   expect(declarationsFor('.abyss-right-desc-view')).toContain('white-space: normal');
   expect(declarationsFor('.abyss-right-desc-view .abyss-md p')).toContain(
     'margin-block: var(--size-2-2)',

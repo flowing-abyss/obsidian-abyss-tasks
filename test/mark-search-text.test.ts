@@ -247,7 +247,7 @@ it('bounds empty or transformed content and accepts a proved destination-only an
   const host = createDiv();
   host.createEl('p', { text: 'unrelated opening paragraph '.repeat(40) });
   const anchor = host.createEl('p').createEl('a', { text: 'Visible alias' });
-  compactTaskDescriptionExcerpt(host, query, fallbackSearchWords, anchor);
+  compactTaskDescriptionExcerpt(host, query, fallbackSearchWords, [anchor]);
   expect(host.querySelector('a')).toBe(anchor);
   expect(host.textContent).toBe('… Visible alias');
   expect(host.querySelector('mark')).toBeNull();
@@ -258,7 +258,7 @@ it('bounds empty or transformed content and accepts a proved destination-only an
   expect(transformed.querySelector('mark')).toBeNull();
 });
 
-it('keeps an exceptionally long single match and prunes a large fragmented field', () => {
+it('bounds an exceptionally long single match and prunes a large fragmented field', () => {
   const host = createDiv();
   for (let i = 0; i < 1000; i++) host.createEl('p').createEl('em').appendText('unrelated');
   const needle = 'a'.repeat(300);
@@ -269,12 +269,12 @@ it('keeps an exceptionally long single match and prunes a large fragmented field
     fallbackSearchWords,
   );
   expect(host.querySelector('a')).toBe(anchor);
-  expect(anchor.textContent).toBe(needle);
+  expect(anchor.textContent).toBe('a'.repeat(240));
   expect(host.querySelectorAll('p, em')).toHaveLength(0);
-  expect(host.textContent).toBe(`… ${needle}`);
+  expect(host.textContent).toBe(`… ${'a'.repeat(240)} …`);
 });
 
-it('removes excluded and discarded blocks while preserving in-window line breaks', () => {
+it('removes excluded blocks and unrelated lines beyond the matched logical line', () => {
   const host = createDiv();
   host.createEl('p').appendText('opening');
   const p = host.createEl('p');
@@ -291,7 +291,8 @@ it('removes excluded and discarded blocks while preserving in-window line breaks
     prepareSearchQuery('needle', fallbackSearchWords),
     fallbackSearchWords,
   );
-  expect(host.querySelectorAll('br')).toHaveLength(1);
+  expect(host.querySelectorAll('br')).toHaveLength(0);
+  expect(host.textContent).not.toContain('next line');
   expect(host.querySelector('[aria-hidden]')).toBeNull();
   expect(host.textContent).not.toContain('opening');
   expect(host.textContent.length).toBeLessThanOrEqual(246);

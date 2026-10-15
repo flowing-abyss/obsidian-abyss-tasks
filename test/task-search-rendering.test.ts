@@ -2090,3 +2090,134 @@ it.each(['tasks', 'search'] as const)(
     }
   },
 );
+
+it.each(['tasks', 'search'] as const)(
+  'shows both compact matches from the authored description through %s',
+  async (mode) => {
+    const description =
+      'раз\nдва\nтри:\n1. [раз](https://google.com)\n2. два\nтекст\n- test\n- test';
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, source, holder) => {
+      if (!source.includes('три:')) {
+        holder.appendText(source);
+        return;
+      }
+      const p = holder.createEl('p');
+      p.appendText('раз');
+      p.createEl('br');
+      p.appendText('два');
+      holder.createEl('p').appendText('три:');
+      const list = holder.createEl('ol');
+      list.createEl('li').createEl('a', { href: 'https://google.com', text: 'раз' });
+      list.createEl('li').appendText('два');
+      holder.createEl('p').appendText('текст');
+      const unordered = holder.createEl('ul');
+      unordered.createEl('li').appendText('test');
+      unordered.createEl('li').appendText('test');
+    });
+    const h = await mountCanonicalSearchUi(
+      {
+        'a.md': `- [ ] root\n${description
+          .split('\n')
+          .map((line) => `  - > ${line}`)
+          .join('\n')}`,
+      },
+      structuredClone(DEFAULT_SETTINGS),
+      mode,
+    );
+    try {
+      h.query('два');
+      await h.completed();
+      const d = expectDefined(h.root.querySelector('.abyss-task-desc'));
+      expect([...d.querySelectorAll('mark')].map((m) => m.textContent)).toEqual(['два', 'два']);
+      expect(d.textContent).not.toContain('три:');
+      expect(d.querySelector('a')).toBeNull();
+      expect(d.querySelector('li')?.getAttribute('value')).toBe('2');
+      expect(h.index.list()[0]?.description).toBe(description);
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it.each(['tasks', 'search'] as const)(
+  'retains multiple destination-only link matches through %s',
+  async (mode) => {
+    mockReadingView();
+    const description = `[[HiddenLedgerOne|first alias]]\n${'unrelated '.repeat(80)}\n[[HiddenLedgerTwo|second alias]]`;
+    const h = await mountCanonicalSearchUi(
+      {
+        'a.md': `- [ ] root\n${description
+          .split('\n')
+          .map((line) => `  - > ${line}`)
+          .join('\n')}`,
+      },
+      structuredClone(DEFAULT_SETTINGS),
+      mode,
+    );
+    try {
+      h.query('HiddenLedger');
+      await h.completed();
+      const d = expectDefined(h.root.querySelector('.abyss-task-desc'));
+      expect([...d.querySelectorAll('a')].map((a) => a.textContent)).toEqual([
+        'first alias',
+        'second alias',
+      ]);
+      expect(d.textContent).not.toContain('unrelated');
+      expect(h.index.list()[0]?.description).toBe(description);
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it.each(['tasks', 'search'] as const)(
+  'edits the original repeated-link occurrence after shortening an oversized alias in %s',
+  async (mode) => {
+    mockReadingView();
+    const menus = captureMenus();
+    const token = `[[Same|needle first ${'filler '.repeat(80)}needle second]]`;
+    const field = `[[Same|alias]]\n${token}\nneedle outside`;
+    vi.spyOn(LinkEditModal.prototype, 'open').mockImplementation(function (this: LinkEditModal) {
+      (this as unknown as { onSave_abyssPrivate: (text: string) => void }).onSave_abyssPrivate(
+        '[[Changed|alias]]',
+      );
+    });
+    const h = await mountCanonicalSearchUi(
+      {
+        'a.md': `- [ ] root\n${field
+          .split('\n')
+          .map((line) => `  - > ${line}`)
+          .join('\n')}`,
+      },
+      structuredClone(DEFAULT_SETTINGS),
+      mode,
+    );
+    try {
+      const execute = vi.spyOn(h.tasks, 'execute');
+      h.query('needle');
+      await h.completed();
+      const desc = expectDefined(h.root.querySelector('.abyss-task-desc'));
+      const anchor = expectDefined(desc.querySelector('a'));
+      expect(desc.querySelectorAll('a')).toHaveLength(1);
+      expect(anchor.textContent).toContain('needle first');
+      expect(anchor.textContent).not.toContain('needle second');
+      expect(anchor.textContent).not.toContain('…');
+      expect(desc.textContent).toContain('needle outside');
+      anchor.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      expectDefined(menus.find((menu) => menu.titles.includes('Edit link…'))).pick('Edit link…');
+      await vi.waitFor(() => {
+        expect(execute).toHaveBeenCalled();
+      });
+      expect(execute.mock.calls[0]?.[0]).toMatchObject({
+        type: 'edit-link',
+        occurrence: 1,
+        replacement: '[[Changed|alias]]',
+      });
+      await vi.waitFor(() => {
+        expect(h.index.list()[0]?.description).toBe(field.replace(token, '[[Changed|alias]]'));
+      });
+    } finally {
+      h.dispose();
+    }
+  },
+);
