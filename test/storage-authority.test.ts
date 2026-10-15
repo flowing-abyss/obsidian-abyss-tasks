@@ -40,6 +40,12 @@ const denied = [
     'declare const optionalVault: NoteVault | undefined; await optionalVault?.["modify"]?.(file, "text");',
     'Vault.modify',
   ],
+  ['await app.fileManager.trashFile(file);', 'FileManager.trashFile'],
+  ["await app.fileManager['trashFile'](file);", 'FileManager.trashFile'],
+  ['const extracted = app.fileManager.trashFile;', 'FileManager.trashFile'],
+  ['const bound = app.fileManager.trashFile.bind(app.fileManager);', 'FileManager.trashFile'],
+  ['const { trashFile: extracted } = app.fileManager;', 'FileManager.trashFile'],
+  ["const { ['trashFile']: extracted } = app.fileManager;", 'FileManager.trashFile'],
 ] as const;
 const assignmentExtractions = [
   ["let write: NoteVault['modify'];\n({ modify: write } = app.vault);", 'Vault.modify', 4],
@@ -81,6 +87,12 @@ void ordinaryObject;
 `;
 // These source-shaped fixtures independently enumerate the audited operation owners.
 const allowed = [
+  [
+    'src/tasks/infrastructure/obsidian/ObsidianTaskRepository.ts',
+    'ObsidianTaskRepository',
+    'cleanupEmptyTaskNote_abyssPrivate',
+    'FileManager.trashFile',
+  ],
   ['src/projects/ProjectManager.ts', 'ProjectManager', 'applyEditsGuarded', 'Vault.process'],
   ['src/projects/ProjectManager.ts', 'ProjectManager', 'createProjectFile', 'Vault.process'],
   ['src/projects/ProjectManager.ts', 'ProjectManager', 'writeStatusRename', 'Vault.process'],
@@ -184,10 +196,19 @@ sourceMap.set(
 for (const [file, className] of allowed) {
   const methods = allowed
     .filter(([candidate]) => candidate === file)
-    .map(
-      ([, , method, api]) =>
-        `async ${method}() { ${api === 'Vault.create' ? "await app.vault.create('a.md', '');" : 'await app.vault.process(file, text => text);'} }`,
-    );
+    .map(([, , method, api]) => {
+      const statements = {
+        'FileManager.trashFile': 'await app.fileManager.trashFile(file);',
+        'Vault.create': "await app.vault.create('a.md', '');",
+        'Vault.process': 'await app.vault.process(file, text => text);',
+      };
+      const statement = statements[api];
+      const body =
+        method === 'processFile_abyssPrivate'
+          ? `const work = async () => { ${statement} }; await work();`
+          : statement;
+      return `async ${method}() { ${body} }`;
+    });
   sourceMap.set(repoFile(file), `${prelude}export class ${className} { ${methods.join('\n')} }`);
 }
 sourceMap.set(
@@ -288,7 +309,7 @@ describe('resolved Obsidian storage authority', () => {
       const found = [...new Set([...allowed.map(([file]) => file), 'src/main.ts'])].flatMap(
         accesses,
       );
-      expect(found).toHaveLength(10);
+      expect(found).toHaveLength(11);
       expect(storageAuthorityViolations(found, STORAGE_AUTHORIZATIONS)).toEqual([]);
     },
     TYPESCRIPT_PROGRAM_TIMEOUT_MS,
@@ -387,7 +408,7 @@ describe('resolved Obsidian storage authority', () => {
           .map((source) => source.fileName),
       ).toEqual([]);
       const found = collectStorageAccesses(sourceProgram, sourceFiles);
-      expect(found).toHaveLength(10);
+      expect(found).toHaveLength(11);
       expect(storageAuthorityViolations(found, STORAGE_AUTHORIZATIONS)).toEqual([]);
     },
     TYPESCRIPT_PROGRAM_TIMEOUT_MS,

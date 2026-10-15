@@ -2366,3 +2366,19 @@ describe('subtask prefix root membership policy', () => {
     },
   );
 });
+
+it('keeps the cleanup warning on successful explicit deletion', async () => {
+  const outcome = {
+    type: 'deleted' as const,
+    ref,
+    noteCleanupWarning: { cause: 'read-failed' as const, path: ref.filePath },
+  };
+  const application = service({
+    edit: vi.fn().mockResolvedValue({ type: 'committed', changed: true, outcome }),
+  });
+  expect(await application.execute({ type: 'delete', ref })).toEqual({
+    type: 'ok',
+    changed: true,
+    outcome,
+  });
+});

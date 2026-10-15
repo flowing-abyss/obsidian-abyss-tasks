@@ -104,6 +104,29 @@ later subscribers or the reconciliation signal from receiving an accepted change
 
 ### Commands, creation, and transfers
 
+Explicit root deletion may remove its now-empty source note only when the path matches the current
+configured `taskFilePath`, including valid historical date expansions. The repository reuses the
+exact path-pattern compiler and canonical frontmatter parser; valid leading frontmatter and whitespace
+alone are empty. Other body text, invalid patterns/frontmatter, personal notes, and previous settings'
+nonmatching paths preserve the note. Completion deletion, subtask deletion, and transfers never
+acquire this cleanup authority. No provenance metadata or persisted schema is added.
+
+[`taskFileMutationQueue`](src/tasks/infrastructure/obsidian/taskFileMutationQueue.ts) orders repository
+`Vault.process` calls per App and path. Queued work rechecks the original file identity. Creation
+publication and edit publication plus cleanup finish before releasing that file. Transfers acquire
+one file at a time; their existing source reservations and postconditions remain in force. This queue
+does not cover note preparation, project metadata writes, manual edits, sync, or other plugins.
+After publishing successful task deletion, the repository freshly reads and compares every committed
+byte, then rechecks path, file identity and current policy before calling `FileManager.trashFile`.
+The host has no compare-and-trash API: an external edit after the proof read can still race removal.
+Removal follows Obsidian's deletion preference, including permanent deletion; there is no universal
+Undo, and downgrading cannot restore a removed note.
+
+A failed proof read or unconfirmed removal adds `noteCleanupWarning` to the successful `deleted`
+outcome. Selection clearing and bulk processing continue. Shared command presentation shows one
+warning; sanitized diagnostics contain phase, path and cause without note text. Expected preservation
+is silent. Cleanup never retries or rolls back the committed task deletion.
+
 [`TaskApplicationService`](src/tasks/application/TaskApplicationService.ts) captures the clock and
 behavior settings, resolves the command, validates it, and delegates persistence through ports.
 Conflict, invalid input, missing or ambiguous targets, partial transfers, and I/O failure are

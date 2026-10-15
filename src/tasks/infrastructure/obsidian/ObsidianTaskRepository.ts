@@ -1,4 +1,6 @@
 import { TFile, type App } from 'obsidian';
+import { compileNotePathPattern } from '../../../markdown/notePathPattern';
+import type { TaskDiagnosticSink } from '../../application/TaskDependencyService';
 import type { TaskHierarchyRequest } from '../../application/TaskRepository';
 import {
   dependencyMetadataIssues,
@@ -81,6 +83,7 @@ import type {
   TaskRootBlock,
 } from '../markdown/TaskBlockEditor';
 import { type TaskBlockEditor } from '../markdown/TaskBlockEditor';
+import { parseMarkdownFrontmatter } from '../markdown/taskBlockSyntax';
 import { type TaskLocator } from '../markdown/TaskLocator';
 import { type TaskMarkdownCodec } from '../markdown/TaskMarkdownCodec';
 import {
@@ -103,6 +106,7 @@ import {
   type TaskSnapshotState,
 } from '../TaskRefAuthority';
 import { reverseDependency } from './reverseDependency';
+import { runTaskFileMutation } from './taskFileMutationQueue';
 import { taskHierarchyTransaction } from './taskHierarchyTransaction';
 
 type LocateResult = ReturnType<TaskLocator['locate']>;
@@ -146,6 +150,26 @@ interface RepositoryOptions {
   readonly snapshotsFromContent: (filePath: string, content: string) => readonly TaskSnapshot[];
   readonly refAuthority?: TaskRefAuthority;
   readonly snapshotState?: TaskSnapshotState;
+  readonly configuredTaskNotePath?: () => string;
+  readonly diagnostics?: TaskDiagnosticSink;
+}
+
+function emptyTaskNote(content: string): boolean {
+  const lines = content.split(/\r?\n/u);
+  const frontmatter = parseMarkdownFrontmatter(lines);
+  return (
+    frontmatter.type !== 'invalid' && lines.slice(frontmatter.contentStart).join('\n').trim() === ''
+  );
+}
+
+function configuredTaskNote(policy: string | undefined, path: string): boolean {
+  if (policy === undefined || policy === '') return false;
+  try {
+    return compileNotePathPattern(policy).matches(path);
+  } catch {
+    // Invalid settings preserve the note; task deletion remains authorized.
+    return false;
+  }
 }
 
 type StructuralTaskEditCommand = Extract<
@@ -859,34 +883,44 @@ export class ObsidianTaskRepository implements TaskRepository {
     let result: TaskRepositoryResult | undefined;
     let createdContent: string | undefined;
     try {
-      await this.processFile_abyssPrivate(file, (content) => {
-        const inserted = this.editor_abyssPrivate.insertRootBlock(
-          content,
-          blockContent,
-          destination.insertion,
-        );
-        if (inserted == null) {
-          result = invalidTaskSyntax();
-          return content;
-        }
-        const task = this.snapshotFor_abyssPrivate(
-          destination.filePath,
-          inserted.content,
-          inserted.block,
-        );
-        if (task == null) {
-          result = invalidTaskSyntax();
-          return content;
-        }
-        result = committedTask(task, true);
-        createdContent = inserted.content;
-        return inserted.content;
-      });
+      await this.processFile_abyssPrivate(
+        file,
+        (content) => {
+          const inserted = this.editor_abyssPrivate.insertRootBlock(
+            content,
+            blockContent,
+            destination.insertion,
+          );
+          if (inserted == null) {
+            result = invalidTaskSyntax();
+            return content;
+          }
+          const task = this.snapshotFor_abyssPrivate(
+            destination.filePath,
+            inserted.content,
+            inserted.block,
+          );
+          if (task == null) {
+            result = invalidTaskSyntax();
+            return content;
+          }
+          result = committedTask(task, true);
+          createdContent = inserted.content;
+          return inserted.content;
+        },
+        async () => {
+          result = this.finalizeCreatedResult_abyssPrivate(
+            destination.filePath,
+            createdContent,
+            result,
+          );
+        },
+      );
     } catch {
       await this.reconcileCreateFailure_abyssPrivate(file, destination.filePath, createdContent);
       return this.processError_abyssPrivate(destination.filePath);
     }
-    return this.finalizeCreatedResult_abyssPrivate(destination.filePath, createdContent, result);
+    return result ?? this.processError_abyssPrivate(destination.filePath);
   }
 
   private async reconcileCreateFailure_abyssPrivate(
@@ -1893,6 +1927,9 @@ export class ObsidianTaskRepository implements TaskRepository {
       mutationTarget(input.command),
       transform,
       (file, transaction) => this.rejectMutation_abyssPrivate(file, input.rootRef, transaction),
+      input.command.type === 'delete'
+        ? this.options_abyssPrivate.configuredTaskNotePath?.()
+        : undefined,
     );
   }
 
@@ -1900,6 +1937,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     target: TaskMutationTarget,
     transform: (transaction: EditTransaction, content: string) => string,
     reject: (file: TFile, transaction: EditTransaction) => Promise<void>,
+    cleanupPolicy?: string,
   ): Promise<TaskRepositoryResult> {
     const path = rootRefOf(target).filePath;
     const file = this.app_abyssPrivate.vault.getAbstractFileByPath(path);
@@ -1910,12 +1948,18 @@ export class ObsidianTaskRepository implements TaskRepository {
       committedContent: undefined,
     };
     try {
-      await this.processFile_abyssPrivate(file, (content) => transform(transaction, content));
+      await this.processFile_abyssPrivate(
+        file,
+        (content) => transform(transaction, content),
+        async () => {
+          this.commitEdit_abyssPrivate(path, transaction);
+          await this.cleanupEmptyTaskNote_abyssPrivate(file, path, cleanupPolicy, transaction);
+        },
+      );
     } catch {
       await reject(file, transaction);
       return this.processError_abyssPrivate(path);
     }
-    this.commitEdit_abyssPrivate(path, transaction);
     return transaction.result ?? this.processError_abyssPrivate(path);
   }
 
@@ -2651,8 +2695,98 @@ export class ObsidianTaskRepository implements TaskRepository {
   private async processFile_abyssPrivate(
     file: TFile,
     transform: (content: string) => string,
+    afterProcess?: () => Promise<void>,
   ): Promise<void> {
-    await this.app_abyssPrivate.vault.process(file, transform);
+    const path = file.path;
+    const work = async (): Promise<void> => {
+      if (!this.isCurrentFile_abyssPrivate(file, path))
+        throw new Error('Task file identity changed');
+      await this.app_abyssPrivate.vault.process(file, transform);
+      await afterProcess?.();
+    };
+    await runTaskFileMutation(this.app_abyssPrivate, path, work);
+  }
+
+  private isCurrentFile_abyssPrivate(file: TFile, path: string): boolean {
+    return file.path === path && this.app_abyssPrivate.vault.getAbstractFileByPath(path) === file;
+  }
+
+  private async cleanupEmptyTaskNote_abyssPrivate(
+    file: TFile,
+    path: string,
+    policy: string | undefined,
+    transaction: EditTransaction,
+  ): Promise<void> {
+    const candidate = this.emptyNoteCandidate_abyssPrivate(transaction);
+    if (
+      candidate === undefined ||
+      !configuredTaskNote(policy, path) ||
+      !this.cleanupIdentityIsCurrent_abyssPrivate(file, path, policy)
+    )
+      return;
+    let cause: 'read-failed' | 'removal-unconfirmed' = 'read-failed';
+    try {
+      const fresh = await this.app_abyssPrivate.vault.read(file);
+      if (fresh !== candidate || !this.cleanupIdentityIsCurrent_abyssPrivate(file, path, policy))
+        return;
+      cause = 'removal-unconfirmed';
+      await this.app_abyssPrivate.fileManager.trashFile(file);
+      if (this.app_abyssPrivate.vault.getAbstractFileByPath(path) !== file) return;
+    } catch {
+      if (cause === 'read-failed' && !this.isCurrentFile_abyssPrivate(file, path)) return;
+      // Task deletion is committed; only cleanup failed. Never retry the task command.
+    }
+    this.recordCleanupWarning_abyssPrivate(transaction, path, cause);
+  }
+
+  private emptyNoteCandidate_abyssPrivate(transaction: EditTransaction): string | undefined {
+    const result = transaction.result;
+    const candidate = transaction.committedContent;
+    return result?.type === 'committed' &&
+      result.changed &&
+      result.outcome.type === 'deleted' &&
+      candidate !== undefined &&
+      emptyTaskNote(candidate)
+      ? candidate
+      : undefined;
+  }
+
+  private cleanupIdentityIsCurrent_abyssPrivate(
+    file: TFile,
+    path: string,
+    policy: string | undefined,
+  ): boolean {
+    return (
+      this.isCurrentFile_abyssPrivate(file, path) &&
+      this.options_abyssPrivate.configuredTaskNotePath?.() === policy
+    );
+  }
+
+  private recordCleanupWarning_abyssPrivate(
+    transaction: EditTransaction,
+    path: string,
+    cause: 'read-failed' | 'removal-unconfirmed',
+  ): void {
+    const result = transaction.result;
+    if (result?.type !== 'committed' || result.outcome.type !== 'deleted') return;
+    transaction.result = {
+      ...result,
+      outcome: { ...result.outcome, noteCleanupWarning: { cause, path } },
+    };
+    try {
+      this.options_abyssPrivate.diagnostics?.({
+        operation: 'delete',
+        phase: 'empty-note-cleanup',
+        path,
+        cause,
+      });
+    } catch {
+      console.error('[abyss-tasks] Cleanup diagnostic failed', {
+        phase: 'empty-note-cleanup',
+        path,
+        cause,
+      });
+    }
   }
 
   private editTextTarget_abyssPrivate(

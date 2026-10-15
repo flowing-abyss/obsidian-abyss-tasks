@@ -156,6 +156,7 @@ async function makePanel(
       codec: new TaskMarkdownCodec(statusCatalog),
       editor: new TaskBlockEditor(),
       locator: new TaskLocator(),
+      configuredTaskNotePath: () => settings.taskFilePath,
       snapshotsFromContent: (path, content) => index.snapshotsFromContent(path, content),
     }),
     statusCatalog,
@@ -2006,4 +2007,25 @@ describe('RightPanel — blockquote write-path preserves "> " formatting', () =>
     const lines = (await readMd(app, 't.md')).split('\n');
     expect(lines[1]).toBe('>   - 2026-06-20: new');
   });
+});
+
+it('clears inspector selection after a committed deletion with cleanup failure', async () => {
+  const { panel, state, app } = await makePanel(
+    { 't.md': '- [ ] task' },
+    { ...DEFAULT_SETTINGS, taskFilePath: 't.md' },
+  );
+  const current = task({
+    title: 'task',
+    source: {
+      filePath: 't.md',
+      line: 0,
+      originalMarkdown: '- [ ] task',
+      originalBlock: '- [ ] task',
+    },
+  });
+  state.set('taskStack', [current]);
+  vi.spyOn(app.fileManager, 'trashFile').mockRejectedValue(new Error('host rejection'));
+  await call<Promise<void>>(panel, 'deleteTask', current);
+  expect(state.get('taskStack')).toEqual([]);
+  expect(await readMd(app, 't.md')).toBe('');
 });

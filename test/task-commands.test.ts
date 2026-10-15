@@ -888,3 +888,39 @@ it('keeps normalized root and child batch proof after UI selection evidence is r
     h.index.destroy();
   }
 });
+
+it('clears selection and continues bulk deletion after cleanup warnings', async () => {
+  const f = await fixture();
+  const root = task();
+  const second = {
+    ...root,
+    ref: { ...root.ref, filePath: 'personal.md' },
+    source: { ...root.source, filePath: 'personal.md' },
+  };
+  f.state.set('taskStack', [root]);
+  f.selection.replaceWith(['selected-row']);
+  f.execute
+    .mockResolvedValueOnce({
+      type: 'ok',
+      changed: true,
+      outcome: {
+        type: 'deleted',
+        ref: root.ref,
+        noteCleanupWarning: { cause: 'removal-unconfirmed', path: root.ref.filePath },
+      },
+    })
+    .mockResolvedValueOnce({
+      type: 'ok',
+      changed: true,
+      outcome: { type: 'deleted', ref: second.ref },
+    });
+  vi.spyOn(f.tasks.queries, 'resolve').mockImplementation((ref) => {
+    const current = ref.filePath === root.ref.filePath ? root : second;
+    return { type: 'exact', task: current, basis: { observed: current } };
+  });
+  await f.commands.deleteBulkTasks([root, second]);
+  expect(f.execute).toHaveBeenCalledTimes(2);
+  expect(f.state.get('taskStack')).toEqual([]);
+  expect(f.selection.size).toBe(0);
+  f.commands.dispose();
+});

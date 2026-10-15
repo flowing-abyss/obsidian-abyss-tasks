@@ -233,7 +233,14 @@ export type TaskCommandOutcome =
     }
   /** Every `stop-tracking` result carries this one shape, whether or not anything was running. */
   | { readonly type: 'stopped'; readonly discardedShortEntry?: true }
-  | { readonly type: 'deleted'; readonly ref: TaskRef }
+  | {
+      readonly type: 'deleted';
+      readonly ref: TaskRef;
+      readonly noteCleanupWarning?: {
+        readonly cause: 'read-failed' | 'removal-unconfirmed';
+        readonly path: string;
+      };
+    }
   | { readonly type: 'archived'; readonly ref: TaskRef; readonly filePath: string }
   | {
       readonly type: 'recurrence';

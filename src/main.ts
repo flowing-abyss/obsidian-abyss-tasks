@@ -164,6 +164,9 @@ export default class TaskCalendarPlugin extends Plugin {
     this.taskStatistics = this.taskIndex;
     this.initializeSearch(scheduler);
     const codec = new TaskMarkdownCodec(this.statusCatalog);
+    const diagnostics: TaskDiagnosticSink = (diagnostic, error) => {
+      console.error('[abyss-tasks] task operation failed', diagnostic, error);
+    };
     const repository = new ObsidianTaskRepository(this.app, {
       codec,
       editor: new TaskBlockEditor(() => nativeTaskIndentUnit(this.app.vault)),
@@ -171,6 +174,8 @@ export default class TaskCalendarPlugin extends Plugin {
       snapshotsFromContent: (path, content) => this.taskIndex.snapshotsFromContent(path, content),
       refAuthority,
       snapshotState: this.taskIndex,
+      configuredTaskNotePath: () => this.settings.taskFilePath,
+      diagnostics,
     });
     const noteTemplates = new NoteTemplateService(this.app);
     const destinationProvider = new ObsidianTaskDestinationProvider(
@@ -185,9 +190,6 @@ export default class TaskCalendarPlugin extends Plugin {
       (filePath) => this.isExcludedDestination(filePath),
       (filePath) => this.canonicalTaskDestinationPath(filePath),
     );
-    const diagnostics: TaskDiagnosticSink = (diagnostic, error) => {
-      console.error('[abyss-tasks] task operation failed', diagnostic, error);
-    };
     const clock = this.initializeTaskInputServices();
     this.tasks = new TaskApplicationService(
       this.taskIndex,

@@ -21,6 +21,13 @@ export interface StorageAuthorization {
 // transactions. This adds the raw settings port and resolves the actual APIs.
 export const STORAGE_AUTHORIZATIONS: readonly StorageAuthorization[] = [
   {
+    file: 'src/tasks/infrastructure/obsidian/ObsidianTaskRepository.ts',
+    owner: 'ObsidianTaskRepository.cleanupEmptyTaskNote_abyssPrivate',
+    api: 'FileManager.trashFile',
+    reason:
+      'Removes only an empty configured task note after explicit root deletion, fresh byte and identity proof, and unchanged policy.',
+  },
+  {
     file: 'src/projects/ProjectManager.ts',
     owner: 'ProjectManager.applyEditsGuarded',
     api: 'Vault.process',
@@ -65,7 +72,7 @@ export const STORAGE_AUTHORIZATIONS: readonly StorageAuthorization[] = [
   },
   {
     file: 'src/tasks/infrastructure/obsidian/ObsidianTaskRepository.ts',
-    owner: 'ObsidianTaskRepository.processFile_abyssPrivate',
+    owner: 'ObsidianTaskRepository.processFile_abyssPrivate.work',
     api: 'Vault.process',
     reason: 'Sole revision-confirming task transaction boundary.',
   },
@@ -92,6 +99,7 @@ const SINKS = new Set([
   'DataAdapter.write',
   'DataAdapter.append',
   'FileManager.processFrontMatter',
+  'FileManager.trashFile',
   'Plugin.saveData',
 ]);
 const SINK_NAMES = new Set([...SINKS].map((api) => api.slice(api.indexOf('.') + 1)));

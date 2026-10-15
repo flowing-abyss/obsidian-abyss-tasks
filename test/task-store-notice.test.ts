@@ -41,3 +41,30 @@ describe('task command presentation error paths', () => {
     expect(String(noticeCalls()[0]?.[0])).toContain('Failed to update');
   });
 });
+
+it.each([
+  ['read-failed', 'Task deleted, but the empty note could not be removed: tasks.md.'],
+  ['removal-unconfirmed', 'Task deleted, but note cleanup could not be confirmed. Check tasks.md.'],
+] as const)('presents one cleanup warning for %s', (cause, message) => {
+  vi.mocked(Notice).mockClear();
+  presentTaskCommandResult({
+    type: 'ok',
+    changed: true,
+    outcome: {
+      type: 'deleted',
+      ref: { filePath: 'tasks.md', line: 0, revision: 'deleted' },
+      noteCleanupWarning: { cause, path: 'tasks.md' },
+    },
+  });
+  expect(Notice).toHaveBeenCalledExactlyOnceWith(message);
+});
+
+it('keeps successful deletion silent without a cleanup warning', () => {
+  vi.mocked(Notice).mockClear();
+  presentTaskCommandResult({
+    type: 'ok',
+    changed: true,
+    outcome: { type: 'deleted', ref: { filePath: 'tasks.md', line: 0, revision: 'deleted' } },
+  });
+  expect(Notice).not.toHaveBeenCalled();
+});

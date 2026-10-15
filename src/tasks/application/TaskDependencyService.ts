@@ -87,6 +87,7 @@ interface TaskCommandDiagnostic {
   readonly operation: TaskCommand['type'] | 'close-time-entry';
   readonly phase:
     | 'unexpected'
+    | 'empty-note-cleanup'
     | 'cross-file-edge-write'
     | 'close-others'
     | 'completion-follow-up'

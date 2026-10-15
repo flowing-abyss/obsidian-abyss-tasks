@@ -212,6 +212,14 @@ export function presentTaskCommandResult(result: TaskCommandResult): void {
     // Completing a task closes the session it was running, and a session under a minute leaves no
     // line, so the note changes in a way nothing else on screen would explain.
     if (droppedShortSession(result)) new Notice(SHORT_ENTRY_NOTICE);
+    if (result.outcome.type === 'deleted' && result.outcome.noteCleanupWarning !== undefined) {
+      const { cause, path } = result.outcome.noteCleanupWarning;
+      new Notice(
+        cause === 'read-failed'
+          ? `Task deleted, but the empty note could not be removed: ${path}.`
+          : `Task deleted, but note cleanup could not be confirmed. Check ${path}.`,
+      );
+    }
     return;
   }
   new Notice(describeCommandError(result).message);
