@@ -1021,6 +1021,7 @@ export class TaskCardRenderer {
           });
       },
     });
+    if (host.querySelector('.abyss-comment-row, .abyss-subtask-row') === null) host.remove();
   }
 
   #renderCardMetadata(

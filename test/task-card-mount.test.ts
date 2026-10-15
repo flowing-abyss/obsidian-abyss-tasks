@@ -904,6 +904,92 @@ it.each(['mount', 'render'] as const)(
   },
 );
 
+it.each([
+  { entry: 'mount', mode: 'search' },
+  { entry: 'mount', mode: 'filter' },
+  { entry: 'render', mode: 'search' },
+  { entry: 'render', mode: 'filter' },
+] as const)(
+  'omits empty $entry $mode context and restores populated context across query changes',
+  async ({ entry, mode }) => {
+    const { taskSearchContext, prepareSearchQuery } = await import('../src/tasks');
+    const { fallbackSearchWords } = await import('../src/tasks/domain/searchMatchPolicy');
+    const h = renderer();
+    const canonical = await createCanonicalSearchHarness(
+      {
+        'a.md':
+          '- [ ] rootneedle\n  - > rootneedle description\n  - 2026-10-04: commentneedle\n  - [ ] childneedle',
+      },
+      h.settings,
+    );
+    try {
+      const root = expectDefined(canonical.index.list()[0]);
+      const searchFor = (text: string) => {
+        const query = prepareSearchQuery(text, fallbackSearchWords);
+        return {
+          mode,
+          context: taskSearchContext(
+            root,
+            { epoch: 'test', rootId: 1, version: 1, childLines: [] },
+            query,
+            fallbackSearchWords,
+          ),
+          query,
+          segment: fallbackSearchWords,
+          onActivate: () => {},
+        };
+      };
+      const flags = { selected: false, showDelete: false };
+      const container = document.body.createDiv();
+      const mount =
+        entry === 'mount'
+          ? h.subject.mount(container, root, [], flags, searchFor('rootneedle'))
+          : undefined;
+      const renderQuery = async (query: string) => {
+        if (mount !== undefined) {
+          mount.update(root, [], flags, searchFor(query));
+          await mount.settled;
+          return mount.element;
+        }
+        container.empty();
+        return h.subject.render(container, root, [], { ...flags, search: searchFor(query) });
+      };
+      let retainedHost: Element | undefined;
+      for (const [query, children, comments] of [
+        ['rootneedle', 0, 0],
+        ['childneedle', 1, 0],
+        ['rootneedle', 0, 0],
+        ['commentneedle', 0, 1],
+        ['rootneedle', 0, 0],
+        ['childneedle', 1, 0],
+      ] as const) {
+        const card = await renderQuery(query);
+        const host = card.querySelector(':scope > .abyss-search-contexts');
+        if (query === 'rootneedle') {
+          expect(host).toBeNull();
+          expect(card.children).toHaveLength(1);
+          expect(card.querySelector('.abyss-task-body .abyss-task-desc')?.textContent).toBe(
+            'rootneedle description',
+          );
+          if (retainedHost !== undefined) expect(retainedHost.isConnected).toBe(false);
+        } else {
+          const context = expectDefined(host);
+          expect(context.querySelectorAll('.abyss-subtask-row')).toHaveLength(children);
+          expect(context.querySelectorAll('.abyss-comment-row')).toHaveLength(comments);
+          if (mount !== undefined) {
+            retainedHost ??= context;
+            expect(context).toBe(retainedHost);
+          }
+        }
+      }
+      mount?.destroy();
+    } finally {
+      canonical.close();
+      h.hostComponent.unload();
+    }
+  },
+);
+
 it.each(['base', 'child'] as const)(
   'retains focused %s search evidence across source refresh until focus leaves both hosts',
   async (region) => {
