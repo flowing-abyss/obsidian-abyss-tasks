@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   TaskListSurface,
   type TaskListPresentation,
+  type TaskRowMount,
 } from '../src/panels/task-list/TaskListSurface';
 import {
   buildTaskListRows,
@@ -72,6 +73,7 @@ function harness(clampWrites = false, sameHost = false, clampExtent = false) {
   host.getBoundingClientRect = () => ({ top: origin - top }) as DOMRect;
   scroll.getBoundingClientRect = () => ({ top: 0 }) as DOMRect;
   let onMeasure: ((key: string) => void) | undefined;
+  let onLayoutRead: (() => void) | undefined;
   const frameRow = (element: HTMLElement): HTMLElement =>
     element.hasClass('abyss-virtual-row-frame')
       ? (expectDefined(element.firstElementChild) as HTMLElement)
@@ -103,7 +105,12 @@ function harness(clampWrites = false, sameHost = false, clampExtent = false) {
       return sum + flowHeight(row);
     }, origin);
   Object.defineProperties(scroll, {
-    clientHeight: { get: () => height },
+    clientHeight: {
+      get: () => {
+        onLayoutRead?.();
+        return height;
+      },
+    },
     scrollHeight: { get: nativeExtent, configurable: true },
     scrollTop: {
       get: () => {
@@ -114,7 +121,12 @@ function harness(clampWrites = false, sameHost = false, clampExtent = false) {
       configurable: true,
     },
   });
-  Object.defineProperty(host, 'clientWidth', { get: () => width });
+  Object.defineProperty(host, 'clientWidth', {
+    get: () => {
+      onLayoutRead?.();
+      return width;
+    },
+  });
   const heights = new Map<string, number>();
   const destroyed: string[] = [];
   const mount = vi.fn((container: HTMLElement, row: TaskListRow) => {
@@ -198,6 +210,9 @@ function harness(clampWrites = false, sameHost = false, clampExtent = false) {
     mountedChanged,
     onMeasure(callback: ((key: string) => void) | undefined) {
       onMeasure = callback;
+    },
+    onLayoutRead(callback: () => void) {
+      onLayoutRead = callback;
     },
     resizeCallback: () => expectDefined(resize),
     origin(value: number) {
@@ -355,6 +370,91 @@ describe('pending row physical extent', () => {
     expect(h.reportFailure).not.toHaveBeenCalled();
     h.surface.destroy();
   });
+
+  it('batches reservation release writes without forcing layout between ready rows', async () => {
+    const h = pendingHarness();
+    h.surface.update(rows(100), { ...presentation, estimate: () => 64 });
+    let dirty = false;
+    let flushes = 0;
+    let releases = 0;
+    // A changed frame class invalidates layout; the next actual host size read forces it.
+    for (const frame of h.host.querySelectorAll<HTMLElement>('.abyss-virtual-row-frame')) {
+      const remove = frame.classList.remove.bind(frame.classList);
+      vi.spyOn(frame.classList, 'remove').mockImplementation((...tokens) => {
+        const before = frame.className;
+        remove(...tokens);
+        if (frame.className !== before && tokens.includes('abyss-virtual-row-frame-clipped')) {
+          releases++;
+          dirty = true;
+        }
+      });
+    }
+    h.onLayoutRead(() => {
+      if (dirty) {
+        flushes++;
+        dirty = false;
+      }
+    });
+    for (const key of h.live) {
+      h.actual.set(key, 64);
+      h.resolve(key);
+    }
+    const last = expectDefined(h.surface.element('n.md:10'));
+    h.surface.refreshMeasurements();
+    await Promise.resolve();
+    expect(releases).toBe(11);
+    expect(flushes).toBe(1);
+    expect(last.getBoundingClientRect().top).toBe(640);
+    expect(h.reportFailure).not.toHaveBeenCalled();
+    h.surface.destroy();
+  });
+
+  it.each(['source', 'hidden', 'adopted', 'destroyed'] as const)(
+    'keeps readiness callback admission when batched checks change the %s',
+    async (change) => {
+      const h = pendingHarness();
+      const original = expectDefined(h.mount.getMockImplementation());
+      const owner = change === 'adopted' ? taskViewportOwner() : undefined;
+      let armed = false;
+      let invalidated = false;
+      h.mount.mockImplementation((host, row) => {
+        const mount: ReturnType<typeof original> & TaskRowMount = original(host, row);
+        return {
+          ...mount,
+          measurementReady: () => {
+            if (armed && row.key === 'n.md:2') {
+              armed = false;
+              invalidated = true;
+              if (change === 'source') h.surface.update(rows(1), presentation);
+              else if (change === 'hidden') h.size(0, 0);
+              else if (owner !== undefined) owner.doc.body.append(h.scroll);
+              else h.surface.destroy();
+            }
+            return mount.measurementReady?.() ?? true;
+          },
+        };
+      });
+      h.surface.update(rows(100), { ...presentation, estimate: () => 64 });
+      const old = expectDefined(h.surface.element('n.md:1'));
+      const oldFrame = expectDefined(old.parentElement);
+      for (const key of h.live) h.resolve(key);
+      armed = true;
+      h.writes.mockClear();
+      h.surface.refreshMeasurements();
+      await Promise.resolve();
+      expect(invalidated).toBe(true);
+      if (change === 'source') {
+        expect(h.surface.rows.rowCount).toBe(1);
+        expect(oldFrame.isConnected).toBe(false);
+        expect(h.host.querySelectorAll('.abyss-virtual-row-frame')).toHaveLength(1);
+      } else if (change === 'destroyed') expect(oldFrame.isConnected).toBe(false);
+      else expect(oldFrame.hasClass('abyss-virtual-row-frame-clipped')).toBe(true);
+      expect(h.writes).not.toHaveBeenCalled();
+      expect(h.reportFailure).not.toHaveBeenCalled();
+      h.surface.destroy();
+      owner?.destroy();
+    },
+  );
 
   it.each([53.09375, 158.828125])(
     'commits a cold %s px receipt before the first paint without waiting for another frame',

@@ -976,14 +976,13 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     if ('height' in segment) return this.#spacer(segment.height, spacer);
     const row = this.#rows.rowAt(segment.index);
     if (row === undefined) return undefined;
-    let mount = this.#mounts.get(row.key);
+    const mount = this.#mounts.get(row.key);
     if (mount === undefined) {
-      mount = this.#mountRow(row, current);
+      this.#mountRow(row, current);
     } else if (update) {
       mount.update(row);
       if (!this.#admitReconciliation(current)) return;
     }
-    if (mount !== undefined && current()) this.#placeMount(row.key, mount, current);
     return this.#frames.get(row.key);
   }
   #reserveFrame(key: string, mount: TaskRowMount<T>, current: () => boolean): boolean {
@@ -993,7 +992,6 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     return true;
   }
   #placeMount(key: string, mount: TaskRowMount<T>, current: () => boolean): void {
-    if (!this.#reserveFrame(key, mount, current)) return;
     const element = mount.element;
     this.#placeFrame(key, element);
     if (!this.#parked.has(key)) {
@@ -1078,7 +1076,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
       !this.#nativeMutation(
         () => {
           const rendered = this.#renderSegments(this.#physicalSegments(window), update, current);
-          if (rendered === undefined) return;
+          if (rendered === undefined || !this.#placeRows(rendered.keys, current)) return;
           this.#evictOutside(rendered.keys, current);
           if (!current()) return;
           this.#order(rendered.desired, established);
@@ -1147,6 +1145,20 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     }
     for (const spacer of oldSpacers.slice(spacerIndex)) spacer.remove();
     return { desired, keys };
+  }
+  #placeRows(keys: ReadonlySet<string>, current: () => boolean): boolean {
+    // Keep callback admission reads ahead of frame CSS writes; releasing one row must not
+    // force layout while checking the next row's readiness.
+    for (const key of keys) {
+      const mount = this.#mounts.get(key);
+      if (mount !== undefined && !this.#reserveFrame(key, mount, current)) return false;
+    }
+    for (const key of keys) {
+      const mount = this.#mounts.get(key);
+      if (mount !== undefined) this.#placeMount(key, mount, current);
+      if (!current()) return false;
+    }
+    return true;
   }
   #segmentKey(segment: RowSegment): string | undefined {
     return 'index' in segment ? this.#rows.rowAt(segment.index)?.key : undefined;
