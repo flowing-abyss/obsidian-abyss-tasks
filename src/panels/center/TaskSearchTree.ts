@@ -129,7 +129,7 @@ interface TreePreparation {
   readonly candidates: Map<string, EntryRecord>;
   readonly updates: PreparedTaskTextUpdate[];
   readonly placements: Array<readonly [HTMLElement, readonly HTMLElement[]]>;
-  readonly removed: FieldRecord[];
+  readonly removed: Set<FieldRecord>;
   readonly added: Array<readonly [EntryRecord, number, FieldRecord]>;
   readonly descriptions: EntryRecord[];
 }
@@ -358,7 +358,7 @@ function prepareComments(
   for (const [line, field] of record.comments)
     if (!lines.has(line)) {
       field.desired = false;
-      plan.removed.push(field);
+      plan.removed.add(field);
     }
   return ordered;
 }
@@ -397,7 +397,7 @@ function prepareDescriptionField(
   if (!show) {
     if (record.description !== undefined) {
       record.description.desired = false;
-      plan.removed.push(record.description);
+      plan.removed.add(record.description);
     }
     return;
   }
@@ -520,7 +520,7 @@ class RetainedSearchTree implements TaskSearchTreeMount {
       candidates: new Map(this.#records),
       updates: [],
       placements: [],
-      removed: [],
+      removed: new Set(),
       added: [],
       descriptions: [],
     };
@@ -572,7 +572,7 @@ class RetainedSearchTree implements TaskSearchTreeMount {
         (record) =>
           plan.desired.get(taskNodeAddress(record.target)) !== record &&
           (record.host.contains(active) || record.description?.element.contains(active) === true),
-      ) || plan.removed.some((field) => field.element.contains(active))
+      ) || [...plan.removed].some((field) => field.element.contains(active))
     );
   }
   #commit(plan: TreePreparation): boolean {
@@ -590,11 +590,11 @@ class RetainedSearchTree implements TaskSearchTreeMount {
   }
   #removeComments(plan: TreePreparation): void {
     for (const record of plan.desired.values())
-      if (record.description !== undefined && plan.removed.includes(record.description))
+      if (record.description !== undefined && plan.removed.has(record.description))
         record.description = undefined;
     for (const record of plan.desired.values())
       for (const [line, field] of record.comments)
-        if (plan.removed.includes(field)) record.comments.delete(line);
+        if (plan.removed.has(field)) record.comments.delete(line);
   }
   #cancelPreparation(plan: TreePreparation): void {
     for (const update of plan.updates) update.cancel();

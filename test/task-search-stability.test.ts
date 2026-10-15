@@ -7,6 +7,65 @@ import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
 useRealMoment();
 afterEach(() => vi.restoreAllMocks());
 it.each(['tasks', 'search'] as const)(
+  'refreshes retained root and child date metadata across days in %s',
+  async (mode) => {
+    mockReadingView();
+    let now = new Date(2026, 9, 15, 12).valueOf();
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const h = await mountCanonicalSearchUi(
+      {
+        'a.md':
+          '- [ ] [needle root](https://root.example) 📅 2026-10-16\n  - [ ] [needle child](https://child.example) 📅 2026-10-16',
+      },
+      structuredClone(DEFAULT_SETTINGS),
+      mode,
+    );
+    try {
+      h.query('needle');
+      await h.completed();
+      const card = expectDefined(h.root.querySelector('.abyss-task-card'));
+      const anchors = [...card.querySelectorAll('a')];
+      const dates = [...card.querySelectorAll('.abyss-task-date')];
+      expect(dates.map((date) => date.textContent)).toEqual(['Tomorrow', 'Tomorrow']);
+      expect(dates.every((date) => date.classList.contains('is-tomorrow'))).toBe(true);
+      now = new Date(2026, 9, 15, 18).valueOf();
+      h.query('needle ');
+      await h.completed();
+      dates.forEach((date, index) => {
+        expect(card.querySelectorAll('.abyss-task-date')[index]).toBe(date);
+      });
+      now = new Date(2026, 9, 16, 12).valueOf();
+      h.query('needle');
+      await h.completed();
+      expect(
+        [...card.querySelectorAll('.abyss-task-date')].map((date) => date.textContent),
+      ).toEqual(['Today', 'Today']);
+      expect(
+        [...card.querySelectorAll('.abyss-task-date')].every((date) =>
+          date.classList.contains('is-today'),
+        ),
+      ).toBe(true);
+      now = new Date(2026, 9, 17, 12).valueOf();
+      h.panel.refresh();
+      await h.completed();
+      expect(
+        [...card.querySelectorAll('.abyss-task-date')].map((date) => date.textContent),
+      ).toEqual(['Fri 16 Oct', 'Fri 16 Oct']);
+      expect(
+        [...card.querySelectorAll('.abyss-task-date')].every((date) =>
+          date.classList.contains('is-overdue'),
+        ),
+      ).toBe(true);
+      expect(h.root.querySelector('.abyss-task-card')).toBe(card);
+      anchors.forEach((anchor, index) => {
+        expect(card.querySelectorAll('a')[index]).toBe(anchor);
+      });
+    } finally {
+      h.dispose();
+    }
+  },
+);
+it.each(['tasks', 'search'] as const)(
   'retains complete source DOM across query updates in %s',
   async (mode) => {
     mockReadingView();
@@ -232,6 +291,110 @@ it('preserves a focused child title when its contributing comment disappears', a
     h.dispose();
   }
 });
+
+it.each([
+  { kind: 'comments', count: 128 },
+  { kind: 'comments', count: 256 },
+  { kind: 'descriptions', count: 128 },
+  { kind: 'descriptions', count: 256 },
+])(
+  'removes $count $kind with linear membership work after focus leaves',
+  async ({ kind, count }) => {
+    mockReadingView();
+    const registrations = vi.spyOn(HTMLElement.prototype, 'addEventListener');
+    const removals = vi.spyOn(HTMLElement.prototype, 'removeEventListener');
+    const source = [
+      '- [ ] branchlong',
+      ...Array.from({ length: count }, (_, index) =>
+        kind === 'comments'
+          ? `  - 2026-10-04: [bravo ${index}](https://example.com/${index})`
+          : `  - [ ] branchlong ${index}\n    - > [bravo ${index}](https://example.com/${index})`,
+      ),
+    ].join('\n');
+    const h = await mountCanonicalSearchUi({ 'a.md': source }, structuredClone(DEFAULT_SETTINGS));
+    try {
+      h.query('bra');
+      await h.completed();
+      const card = expectDefined(h.root.querySelector('.abyss-task-card'));
+      const titles = [...card.querySelectorAll('.abyss-task-title, .abyss-subtask-label')];
+      const selector = kind === 'comments' ? '.abyss-comment-text' : '.abyss-task-desc';
+      const fields = [...card.querySelectorAll<HTMLElement>(selector)];
+      expect(fields).toHaveLength(count);
+      const originalFields = new WeakSet(fields);
+      const isField = (value: unknown): boolean =>
+        typeof value === 'object' &&
+        value !== null &&
+        'element' in value &&
+        value.element instanceof HTMLElement &&
+        originalFields.has(value.element);
+      const anchor = expectDefined(fields[0]?.querySelector('a'));
+      anchor.focus();
+      let membershipWork = 0;
+      const includes = Array.prototype.includes;
+      const has = methodOf(Set.prototype, 'has');
+      const arrayProbe = vi.spyOn(Array.prototype, 'includes').mockImplementation(function (
+        this: unknown[],
+        value: unknown,
+        from?: number,
+      ) {
+        if (!isField(value)) return includes.call(this, value, from);
+        return includes.call(
+          new Proxy(this, {
+            get: (target, key, receiver): unknown => {
+              if (typeof key === 'string' && /^\d+$/u.test(key)) membershipWork++;
+              return Reflect.get(target, key, receiver);
+            },
+          }),
+          value,
+          from,
+        );
+      });
+      const setProbe = vi.spyOn(Set.prototype, 'has').mockImplementation(function (
+        this: Set<unknown>,
+        value: unknown,
+      ) {
+        if (isField(value)) membershipWork++;
+        return has.call(this, value);
+      });
+      try {
+        const publications = vi.spyOn(h.panel, 'mountSearchRows_abyssPrivate');
+        h.query('branchlong');
+        await vi.waitFor(() => {
+          expect(publications).toHaveBeenCalled();
+        });
+        await flushMicrotasks(30);
+        expect(h.root.dataset['searchPhase']).toBe('pending');
+        expect(fields.every((field) => field.isConnected)).toBe(true);
+        expect(document.activeElement).toBe(anchor);
+        anchor.blur();
+        await h.completed();
+      } finally {
+        arrayProbe.mockRestore();
+        setProbe.mockRestore();
+      }
+      expect(card.querySelectorAll(selector)).toHaveLength(0);
+      expect(h.root.querySelector('.abyss-task-card')).toBe(card);
+      titles.forEach((title, index) => {
+        expect(card.querySelectorAll('.abyss-task-title, .abyss-subtask-label')[index]).toBe(title);
+      });
+      for (const field of fields) {
+        const index = registrations.mock.calls.findIndex(
+          ([type], index) => type === 'click' && registrations.mock.contexts[index] === field,
+        );
+        const listener = expectDefined(registrations.mock.calls[index]?.[1]);
+        expect(
+          removals.mock.calls.some(
+            ([type, removed], index) =>
+              type === 'click' && removed === listener && removals.mock.contexts[index] === field,
+          ),
+        ).toBe(true);
+      }
+      expect(membershipWork).toBeLessThanOrEqual(count * 4);
+    } finally {
+      h.dispose();
+    }
+  },
+);
 
 it('refreshes descendant status semantics without replacing its complete text', async () => {
   mockReadingView();

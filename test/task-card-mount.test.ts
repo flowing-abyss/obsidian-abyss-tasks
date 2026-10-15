@@ -1,6 +1,7 @@
 import { Component, MarkdownRenderer, Menu, type App, type MenuItem } from 'obsidian';
 import { afterEach, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
+import { moment } from '../src/obsidianMoment';
 import { ListViewControls } from '../src/panels/center/ListViewControls';
 import {
   TaskCardRenderer,
@@ -25,6 +26,7 @@ import type { TaskSelectionNode } from '../src/ui/taskSelection';
 import {
   deferred,
   expectDefined,
+  flushMicrotasks,
   task,
   taskComment,
   testStatusRegistry,
@@ -80,6 +82,7 @@ function renderer(useListControls = false) {
     listControls,
     trackingEnabled: true,
     host: {
+      currentDate: () => localDate(moment().format('YYYY-MM-DD')),
       component: () => hostComponent,
       showTaskInList,
       dependenciesFor,
@@ -1694,6 +1697,59 @@ it('commits changed tree fields together after the last focused replacement can 
   } finally {
     mount.destroy();
     canonical.close();
+    h.hostComponent.unload();
+  }
+});
+
+it('keeps direct title and description unchanged until delayed rendering and focus both permit commit', async () => {
+  const { mockReadingView } = await import('./support/linkEditHarness');
+  mockReadingView();
+  const h = renderer();
+  const flags = { selected: false, showDelete: false };
+  const mount = h.subject.mount(
+    document.body,
+    task({
+      markdownTitle: '[old title](https://title.example)',
+      description: '[old description](https://description.example)',
+    }),
+    [],
+    flags,
+  );
+  const held = deferred<void>();
+  try {
+    await mount.settled;
+    const title = expectDefined(mount.element.querySelector('.abyss-task-title a'));
+    const description = expectDefined(
+      mount.element.querySelector<HTMLAnchorElement>('.abyss-task-desc a'),
+    );
+    description.focus();
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, markdown, holder) => {
+      if (markdown === '*new title*') await held.promise;
+      holder.setText(markdown);
+    });
+    mount.update(
+      task({ markdownTitle: '*new title*', description: '*new description*' }),
+      [],
+      flags,
+    );
+    let complete = false;
+    const receipt = mount.settled.then((outcome) => {
+      complete = true;
+      return outcome;
+    });
+    held.resolve();
+    await flushMicrotasks(30);
+    expect(complete).toBe(false);
+    expect(mount.element.querySelector('.abyss-task-title a')).toBe(title);
+    expect(mount.element.querySelector('.abyss-task-desc a')).toBe(description);
+    expect(document.activeElement).toBe(description);
+    description.blur();
+    expect(await receipt).toEqual({ type: 'ready' });
+    expect(mount.element.querySelector('.abyss-task-title')?.textContent).toBe('*new title*');
+    expect(mount.element.querySelector('.abyss-task-desc')?.textContent).toBe('*new description*');
+  } finally {
+    held.resolve();
+    mount.destroy();
     h.hostComponent.unload();
   }
 });

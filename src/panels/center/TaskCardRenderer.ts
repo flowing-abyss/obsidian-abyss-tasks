@@ -2,14 +2,12 @@ import { Component, setIcon, type App } from 'obsidian';
 import type { AppState } from '../../app/AppState';
 import { countLinksIn } from '../../markdown/links';
 import { projectSearchText } from '../../markdown/searchText';
-import { moment } from '../../obsidianMoment';
 import type { CalendarSettings } from '../../settings/types';
 import type { StatusRegistry } from '../../status/StatusRegistry';
 import type { EffectiveTagGroup } from '../../tags/effectiveTagGroups';
 import type { TaskOccurrencePresentation } from '../../task-lists/taskOccurrencePresentation';
 import { todayTaskCategory } from '../../task-lists/todayTaskCategory';
 import {
-  localDate,
   rootTaskNodeSnapshot,
   subtreeTotal,
   taskNodeAddress,
@@ -138,6 +136,7 @@ interface CardContentContext {
   readonly badges: Array<readonly [string, HTMLElement]>;
 }
 interface TaskCardRendererHost {
+  currentDate(): LocalDate;
   component(): Component;
   showTaskInList(target: TaskNodeRef, request: TaskListNavigationRequest): Promise<void>;
   dependenciesFor: TaskDependencyLookup;
@@ -223,7 +222,12 @@ function settleCardFields(
   updates: readonly PreparedTaskTextUpdate[],
   tree: Promise<TaskRenderOutcome> | undefined,
 ): TaskTextRender {
-  if (updates.every((update) => update.canCommit())) for (const update of updates) update.commit();
+  const commitFields = (): boolean => {
+    if (!updates.every((update) => update.canCommit())) return false;
+    for (const update of updates) update.commit();
+    return true;
+  };
+  commitFields();
   let done = false;
   let ready = false;
   let resolve!: (outcome: TaskRenderOutcome) => void;
@@ -238,7 +242,7 @@ function settleCardFields(
   };
   const commit = (): void => {
     if (done || !ready || !context.isCurrent()) return;
-    if (updates.every((update) => update.commit())) finish({ type: 'ready' });
+    if (commitFields()) finish({ type: 'ready' });
   };
   const blur = (): void => {
     card.ownerDocument.defaultView?.queueMicrotask(commit);
@@ -428,6 +432,7 @@ export class TaskCardRenderer {
     const search = current.flags.search;
     const evidence = search?.context.tree.evidence.filter(isTaskSearchSemanticEvidence) ?? [];
     return JSON.stringify([
+      this.#host.currentDate(),
       this.#settings.sourceNoteDisplay,
       this.#settings.taskFilePath,
       current.tagGroups,
@@ -1012,6 +1017,7 @@ export class TaskCardRenderer {
     },
   ): TaskSearchTreeRenderOptions {
     const { owner, tagGroups, scope } = options;
+    const datePresentationDay = this.#host.currentDate();
     return {
       app: this.#app,
       root,
@@ -1050,6 +1056,7 @@ export class TaskCardRenderer {
       },
       metadataKey: (node, evidence) =>
         JSON.stringify([
+          datePresentationDay,
           tagGroups,
           this.#settings.sourceNoteDisplay,
           this.#settings.taskFilePath,
@@ -1251,7 +1258,7 @@ export class TaskCardRenderer {
   }
 
   #suppressTodayMetadata(node: TaskSelectionNode): boolean {
-    const today = localDate(moment().format('YYYY-MM-DD'));
+    const today = this.#host.currentDate();
     return (
       this.#state.get('mode') === 'tasks' &&
       this.#state.get('selectedList') === 'today' &&

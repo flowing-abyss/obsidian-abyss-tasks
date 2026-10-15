@@ -357,6 +357,7 @@ export class CenterPanel {
   private readonly taskCardRenderer_abyssPrivate: TaskCardRenderer;
   /** The one instant every card badge of the current render is read against. */
   private cardRenderNowMs_abyssPrivate = 0;
+  private cardRenderDate_abyssPrivate = localDate(moment().format('YYYY-MM-DD'));
   private trackingUnsubscribe_abyssPrivate: (() => void) | undefined;
 
   constructor(options: CenterPanelOptions) {
@@ -542,6 +543,7 @@ export class CenterPanel {
       },
       trackingEnabled: this.timeTracking_abyssPrivate !== undefined,
       host: {
+        currentDate: () => this.cardRenderDate_abyssPrivate,
         component: () => this.md_abyssPrivate,
         dependenciesFor: (task) => this.dependenciesFor_abyssPrivate(task),
         dependenciesForNode: (target) => this.tasks_abyssPrivate?.queries.dependencySummary(target),
@@ -555,8 +557,9 @@ export class CenterPanel {
         openStatusMenu: (event, task, completion) => {
           this.openStatusMenu_abyssPrivate(event, task, completion);
         },
-        formatDate: (date) => this.formatDate_abyssPrivate(date),
-        getDateClass: (date) => this.getDateClass_abyssPrivate(date),
+        formatDate: (date) => this.formatDate_abyssPrivate(date, this.cardRenderDate_abyssPrivate),
+        getDateClass: (date) =>
+          this.getDateClass_abyssPrivate(date, this.cardRenderDate_abyssPrivate),
         getTagColor: (tag, groups) => this.getTagColor_abyssPrivate(tag, groups),
       },
     });
@@ -3195,6 +3198,7 @@ export class CenterPanel {
    * render's badges go with it and every card in this one shows the same clock.
    */
   private beginTaskCardRender_abyssPrivate(): void {
+    this.cardRenderDate_abyssPrivate = localDate(moment().format('YYYY-MM-DD'));
     this.taskSearchReveal_abyssPrivate.cancelPulse();
     this.renderCardFocus_abyssPrivate = null;
     const active = this.el.ownerDocument.activeElement;

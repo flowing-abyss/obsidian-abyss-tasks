@@ -368,14 +368,17 @@ evidence stays in its title body; child descriptions stay in their own row bodie
 mount reconciles exact node and comment references in source order across both hosts.
 Each tree field owns its activation listener and text lifetime together; retirement releases both on
 removal, canceled creation, or entry disposal. Desired membership revokes ordinary activation before
-focus-deferred physical removal. Sibling pruning uses a desired-element set before reordering.
+focus-deferred physical removal. Sibling pruning and removed-field cleanup use membership sets.
 [`RetainedTaskText`](src/ui/retainedTaskText.ts) owns each title, description, and comment independently,
 with one visible Markdown Component and at most one connected hidden replacement. Complete fields
 retain their wired anchors and source projection across query decoration changes. Destructive
 excerpts replace only their affected field after rendering and focus checks. Link edit bindings keep
 the source target and occurrence that produced the anchor; ordinary actions read current snapshots.
-A synchronous field preflight checks focus and currentness before the tree commits its prepared
-fields. Card and tree receipts settle after publication, including focus-deferred commits. Query changes
+A synchronous field preflight checks focus and currentness before either the direct-card fields or
+tree fields commit, including deferred retries. CenterPanel captures the civil day at the existing
+card-render boundary; root and child metadata keys, date formatting, and Today suppression share that
+value. Existing updates refresh date presentation after a day change without replacing task text.
+Card and tree receipts settle after publication, including focus-deferred commits. Query changes
 retain the existing task surface and its logical scroll anchor; receipt completion refreshes row
 measurements through TaskSearchRows.
 
