@@ -1050,8 +1050,10 @@ export class TaskCardRenderer {
         const marker = host.querySelector<HTMLElement>(
           ':scope > .abyss-status-marker, :scope > .abyss-status-control > .abyss-status-marker',
         );
-        if (marker === null) renderStatusMarker(host, presentation);
-        else updateStatusMarker(marker, presentation);
+        if (marker === null) {
+          const created = renderStatusMarker(host, presentation);
+          host.prepend(created.closest('.abyss-status-control') ?? created);
+        } else updateStatusMarker(marker, presentation);
       },
       metadataKey: (node, evidence) =>
         JSON.stringify([

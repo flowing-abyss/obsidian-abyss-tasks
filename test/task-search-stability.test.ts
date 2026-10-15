@@ -6,6 +6,71 @@ import { mockReadingView } from './support/linkEditHarness';
 import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
 useRealMoment();
 afterEach(() => vi.restoreAllMocks());
+it.each([
+  { mode: 'tasks' as const, blocked: false },
+  { mode: 'tasks' as const, blocked: true },
+  { mode: 'search' as const, blocked: false },
+  { mode: 'search' as const, blocked: true },
+])('keeps child status before its body in $mode (blocked: $blocked)', async ({ mode, blocked }) => {
+  mockReadingView();
+  const h = await mountCanonicalSearchUi(
+    {
+      'prereq.md': '- [ ] Prerequisite 🆔 blocker',
+      'a.md': `- [ ] needle root 📅 2026-10-16\n  - [ ] [needle child](https://example.com) 📅 2026-10-16${blocked ? ' ⛔ blocker' : ''}`,
+    },
+    structuredClone(DEFAULT_SETTINGS),
+    mode,
+  );
+  try {
+    h.query('need');
+    await h.completed();
+    const card = expectDefined(h.root.querySelector('.abyss-task-card'));
+    const root = expectDefined(card.querySelector(':scope > .abyss-task-card-main-row'));
+    const child = expectDefined(card.querySelector('.abyss-subtask-row'));
+    const marker = expectDefined(child.querySelector<HTMLElement>('.abyss-status-marker'));
+    const control = blocked ? expectDefined(child.querySelector('.abyss-status-control')) : marker;
+    const body = expectDefined(child.querySelector(':scope > .abyss-task-body'));
+    const metadata = expectDefined(child.querySelector(':scope > .abyss-task-meta-right'));
+    const anchor = expectDefined(body.querySelector('a'));
+    const rootMarker = expectDefined(root.querySelector(':scope > .abyss-status-marker'));
+    const rootBody = expectDefined(root.querySelector(':scope > .abyss-task-body'));
+    const rootMetadata = expectDefined(root.querySelector(':scope > .abyss-task-meta-right'));
+    const assertOrder = (first: Element): void => {
+      expect(child.children).toHaveLength(3);
+      expect(child.children[0]).toBe(first);
+      expect(child.children[1]).toBe(body);
+      expect(child.children[2]).toBe(metadata);
+      expect(root.children[0]).toBe(rootMarker);
+      expect(root.children[1]).toBe(rootBody);
+      expect(root.children[2]).toBe(rootMetadata);
+    };
+    assertOrder(control);
+    for (const query of ['needle', 'needle ']) {
+      h.query(query);
+      await h.completed();
+      expect(h.root.querySelector('.abyss-task-card')).toBe(card);
+      expect(card.querySelector('.abyss-subtask-row')).toBe(child);
+      expect(child.querySelector('.abyss-status-marker')).toBe(marker);
+      expect(body.querySelector('a')).toBe(anchor);
+      assertOrder(control);
+    }
+    if (blocked) {
+      h.index.installCommittedContent('prereq.md', '- [x] Prerequisite 🆔 blocker');
+      await h.completed();
+      expect(child.querySelector('.abyss-status-control')).toBeNull();
+      expect(child.querySelector('.abyss-status-marker')).toBe(marker);
+      assertOrder(marker);
+      h.index.installCommittedContent('prereq.md', '- [ ] Prerequisite 🆔 blocker');
+      await h.completed();
+      const wrapped = expectDefined(child.querySelector('.abyss-status-control'));
+      expect(wrapped.querySelector('.abyss-status-marker')).toBe(marker);
+      assertOrder(wrapped);
+    }
+    expect(body.querySelector('a')).toBe(anchor);
+  } finally {
+    h.dispose();
+  }
+});
 it.each(['tasks', 'search'] as const)(
   'refreshes retained root and child date metadata across days in %s',
   async (mode) => {
