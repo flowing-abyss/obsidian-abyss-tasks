@@ -418,7 +418,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     return owners;
   }
   #mutateExtent(
-    action: () => void,
+    action: (guard?: HTMLElement) => void,
     owners: readonly CapturedPin[],
     before: number,
     current: () => boolean,
@@ -428,7 +428,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     const guard = this.#spacer(scroll.scrollHeight);
     guard.setAttribute('data-abyss-scroll-guard', '');
     try {
-      action();
+      action(guard);
       if (!current()) return;
       const actual = scroll.scrollTop;
       if (actual !== before) {
@@ -442,7 +442,11 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
       guard.remove();
     }
   }
-  #nativeMutation(action: () => void, current: () => boolean, extent = false): boolean {
+  #nativeMutation(
+    action: (guard?: HTMLElement) => void,
+    current: () => boolean,
+    extent = false,
+  ): boolean {
     const owners = this.#nativeOwners();
     // Ownerless extent changes still need the same transient native clamp protection.
     if (owners === undefined) {
@@ -783,6 +787,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     const revealKey = target?.revealKey;
     // Only a row already intersecting before provisional measurement retains tall-row placement.
     const alignTall = !this.#intersects(revealKey);
+    const retainedAnchor = this.#measurementAnchor(nativeTop);
     if (!this.#admitReconciliation(current)) return false;
     // A tall row's old offset can place its replacement estimate outside overscan.
     const anchor = target?.anchor;
@@ -792,17 +797,17 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
         : this.#viewport.rowAt(this.#viewport.restoreAnchor({ ...anchor, offset: 0 }, 0))?.key;
     this.#renderWindow(update, nativeTop, revealKey ?? anchorKey, current);
     if (!this.#admitReconciliation(current)) return false;
-    return this.#measureWindow(nativeTop, target, current, alignTall);
+    return this.#measureWindow(nativeTop, target, current, { alignTall, retainedAnchor });
   }
   #measureWindow(
     top: number,
     target: TaskListScroll | undefined,
     current: () => boolean,
-    alignTall: boolean,
+    { alignTall, retainedAnchor }: { alignTall: boolean; retainedAnchor: RowAnchor | undefined },
   ): boolean {
     if (target?.revealKey !== undefined)
       return this.#measureReveal(top, { ...target, key: target.revealKey, current, alignTall });
-    const measuredTop = this.#measure(top, target?.anchor, current);
+    const measuredTop = this.#measure(top, target?.anchor ?? retainedAnchor, current);
     if (!current()) return false;
     // Ordinary frames retain their fractional/key anchor policy and one measurement pass.
     if (measuredTop !== undefined) this.#renderWindow(false, measuredTop, undefined, current);
@@ -933,10 +938,14 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
   }
   #measurementAnchor(top: number): RowAnchor | undefined {
     const fallback = this.#viewport.captureAnchor(top);
-    if (fallback === undefined || !this.#pendingFrames.has(fallback.key)) return;
-    // Preserve settled visible ink when the logical anchor still occupies a pending frame.
+    if (
+      fallback === undefined ||
+      (this.#pendingFrames.size === 0 && this.#mounts.has(fallback.key))
+    )
+      return;
+    // Preserve the oldest settled visible ink while cold rows enter or finish in stages.
     const bottom = top + this.#height();
-    for (const key of this.#ordered) {
+    for (const key of this.#mounts.keys()) {
       const row = this.#viewport.rowBounds(key);
       if (
         row === undefined ||
@@ -1095,12 +1104,16 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     const established = new Set(this.#mounts.keys());
     if (
       !this.#nativeMutation(
-        () => {
+        (guard) => {
           const rendered = this.#renderSegments(this.#physicalSegments(window), update, current);
           if (rendered === undefined || !this.#placeRows(rendered.keys, current)) return;
           this.#evictOutside(rendered.keys, current);
           if (!current()) return;
-          this.#order(rendered.desired, established);
+          this.#order(
+            rendered.desired,
+            established,
+            guard?.parentElement === this.#options.host ? guard : undefined,
+          );
           this.#ordered = [...rendered.keys];
         },
         current,
@@ -1254,7 +1267,11 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
       return key !== undefined && keys.has(key) ? [key] : [];
     });
   }
-  #order(desired: readonly HTMLElement[], established: ReadonlySet<string>): void {
+  #order(
+    desired: readonly HTMLElement[],
+    established: ReadonlySet<string>,
+    guard?: HTMLElement,
+  ): void {
     const protectedElements = new Set<HTMLElement>();
     const focused = this.#options.host.ownerDocument.activeElement;
     for (const [key, frame] of this.#frames)
@@ -1263,7 +1280,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     // New mounts must first enter logical order. Only established pins own their position;
     // actual focus is protected regardless of when its row mounted.
     // Move ordinary neighbors around owners; never detach an interaction-owned subtree.
-    let next: HTMLElement | null = null;
+    let next: HTMLElement | null = guard ?? null;
     for (const element of [...desired].reverse()) {
       if (
         !protectedElements.has(element) &&

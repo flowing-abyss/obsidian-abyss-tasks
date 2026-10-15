@@ -284,7 +284,7 @@ function pendingHarness() {
   return { ...h, ready, live, actual, resolve, settle, warm };
 }
 
-function coldTopHarness(count = 100) {
+function coldTopHarness(count = 100, pinPrefix = false) {
   const h = pendingHarness();
   h.surface.update(rows(count), { ...presentation, estimate: () => 64 });
   for (const key of h.live) {
@@ -294,6 +294,7 @@ function coldTopHarness(count = 100) {
   }
   h.surface.refreshMeasurements();
   h.frame();
+  const releasePrefix = pinPrefix ? h.surface.pin('n.md:0') : () => {};
   h.scrollTo(535);
   h.frame();
   for (let round = 0; round < 2; round++) {
@@ -309,10 +310,72 @@ function coldTopHarness(count = 100) {
   h.frame();
   expect(survivor.getBoundingClientRect().top).toBe(before);
   expect(h.writes).not.toHaveBeenCalled();
-  return { ...h, survivor, before };
+  return { ...h, survivor, before, releasePrefix };
 }
 
 describe('pending row physical extent', () => {
+  it('keeps an established visible sibling stationary when fresh top rows are synchronously measurable', () => {
+    const h = harness();
+    for (let index = 0; index < 100; index++) h.heights.set(`n.md:${index}`, 36);
+    h.scrollTo(535);
+    h.surface.update(rows(100), {
+      ...presentation,
+      estimate: (row) => {
+        const index = Number(row.key.split(':')[1]);
+        return index >= 4 && index <= 6 ? 64 : 36;
+      },
+    });
+    expect(h.surface.element('n.md:4')).toBeUndefined();
+    const survivor = expectDefined(h.surface.element('n.md:7'));
+    h.scrollTo(175.28125);
+    const before = survivor.getBoundingClientRect().top;
+    expect(before).toBe(160.71875);
+    h.writes.mockClear();
+    h.frame();
+    expect(h.surface.element('n.md:7')).toBe(survivor);
+    expect(survivor.getBoundingClientRect().top).toBe(before);
+    expect(h.scroll.scrollTop).toBe(91.28125);
+    expect(h.reportFailure).not.toHaveBeenCalled();
+    h.surface.destroy();
+  });
+
+  it.each([
+    { first: [4, 5], second: [6], pinPrefix: false },
+    { first: [6], second: [4, 5], pinPrefix: false },
+    { first: [4, 5], second: [6], pinPrefix: true },
+  ])(
+    'retains established ink through staggered receipts $first then $second (offscreen pin=$pinPrefix)',
+    async ({ first, second, pinPrefix }) => {
+      const h = coldTopHarness(100, pinPrefix);
+      h.actual.set('n.md:4', 83.171875);
+      h.actual.set('n.md:5', 211.6875);
+      h.actual.set('n.md:6', 53.09375);
+      for (const index of [0, 1, 2, 3, ...first]) h.resolve(`n.md:${index}`);
+      h.surface.refreshMeasurements();
+      await Promise.resolve();
+      expect(h.survivor.getBoundingClientRect().top).toBe(h.before);
+      for (const index of second) h.resolve(`n.md:${index}`);
+      h.surface.refreshMeasurements();
+      // Both receipts complete before another animation callback or browser paint.
+      await Promise.resolve();
+      expect(h.survivor.getBoundingClientRect().top).toBe(h.before);
+      expect(h.scroll.scrollTop).toBe(331.234375);
+      expect(h.surface.element('n.md:7')).toBe(h.survivor);
+      // With the cohort fully settled, ordinary fractional row-offset policy still wins.
+      h.actual.set('n.md:5', 227.6875);
+      h.resolve('n.md:5');
+      h.writes.mockClear();
+      h.surface.refreshMeasurements();
+      await Promise.resolve();
+      expect(h.scroll.scrollTop).toBe(331.234375);
+      expect(h.survivor.getBoundingClientRect().top).toBe(h.before + 16);
+      expect(h.writes).not.toHaveBeenCalled();
+      expect(h.reportFailure).not.toHaveBeenCalled();
+      h.releasePrefix();
+      h.surface.destroy();
+    },
+  );
+
   it('keeps an explicit visible reveal ahead of the settled-visible fallback', () => {
     const h = coldTopHarness();
     for (const key of h.live) {
@@ -2555,6 +2618,32 @@ it('prevents ownerless tail-spacer reuse from clamping before pending frames reg
   h.surface.destroy();
 });
 
+it.each([
+  { sameHost: false, owned: false },
+  { sameHost: true, owned: false },
+  { sameHost: false, owned: true },
+  { sameHost: true, owned: true },
+])(
+  'keeps established DOM in place during unchanged guarded windows (same host=$sameHost, owned=$owned)',
+  async ({ sameHost, owned }) => {
+    const h = harness(false, sameHost);
+    h.surface.update(rows(100), presentation);
+    const release = owned
+      ? h.surface.observeNativeWrites({ beforeWrite: () => true, afterWrite: () => {} }, () => {})
+      : () => {};
+    const mounted = h.surface.mountedKeys().map((key) => h.surface.element(key));
+    const insert = vi.spyOn(h.host, 'insertBefore');
+    h.surface.refreshMeasurements();
+    await Promise.resolve();
+    expect(h.surface.mountedKeys().map((key) => h.surface.element(key))).toEqual(mounted);
+    expect(insert).not.toHaveBeenCalled();
+    release();
+    expect(h.host.querySelector('[data-abyss-scroll-guard]')).toBeNull();
+    expect(h.reportFailure).not.toHaveBeenCalled();
+    h.surface.destroy();
+  },
+);
+
 it('allows a real final extent shrink to clamp an ownerless surface after the guard retires', () => {
   const h = harness(true, true, true);
   h.surface.update(rows(100), presentation);
@@ -2567,6 +2656,45 @@ it('allows a real final extent shrink to clamp an ownerless surface after the gu
   expect(h.reportFailure).not.toHaveBeenCalled();
   h.surface.destroy();
 });
+
+it.each(['focus', 'pin'] as const)(
+  'keeps %s ownership while reentrant updates have distinct active extent guards',
+  (protection) => {
+    const h = harness(false, protection === 'pin');
+    h.surface.update(rows(100), presentation);
+    const card = expectDefined(h.surface.element('n.md:2'));
+    const frame = expectDefined(card.parentElement);
+    const input = card.createEl('input');
+    const release =
+      protection === 'pin'
+        ? h.surface.pin('n.md:2', undefined, { beforeWrite: () => true, afterWrite: () => {} })
+        : () => {};
+    if (protection === 'focus') input.focus();
+    let nested = false;
+    const guards: Element[] = [];
+    for (const result of h.mount.mock.results) {
+      const mount = result.value as ReturnType<typeof h.mount>;
+      vi.spyOn(mount, 'update').mockImplementation(() => {
+        if (!nested) {
+          nested = true;
+          h.surface.update(rows(100), { ...presentation, revision: 'nested' });
+        } else if (guards.length === 0)
+          guards.push(...h.host.querySelectorAll('[data-abyss-scroll-guard]'));
+      });
+    }
+    const insert = vi.spyOn(h.host, 'insertBefore');
+    h.surface.update(rows(100), { ...presentation, revision: 'outer' });
+    expect(guards).toHaveLength(2);
+    expect(guards[0]).not.toBe(guards[1]);
+    expect(insert.mock.calls.some(([element]) => element === frame)).toBe(false);
+    expect(h.surface.element('n.md:2')).toBe(card);
+    if (protection === 'focus') expect(document.activeElement).toBe(input);
+    expect(h.host.querySelector('[data-abyss-scroll-guard]')).toBeNull();
+    expect(h.reportFailure).not.toHaveBeenCalled();
+    release();
+    h.surface.destroy();
+  },
+);
 
 it.each([
   ...(['throw', 'destroy', 'replace', 'migrate', 'move'] as const).map((operation) => ({
