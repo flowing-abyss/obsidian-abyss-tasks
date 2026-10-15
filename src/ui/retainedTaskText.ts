@@ -144,7 +144,7 @@ class PreparedField implements PreparedTaskTextUpdate {
   #committed = false;
   #render: ReturnType<typeof renderTaskText> | undefined;
   readonly #staging: HTMLElement | undefined;
-  readonly #direct: boolean;
+  #direct: readonly ChildNode[] | undefined;
   readonly #input: RetainedTaskTextInput;
   readonly #field: VisibleField;
   readonly #host: HTMLElement;
@@ -163,7 +163,7 @@ class PreparedField implements PreparedTaskTextUpdate {
     },
   ) {
     this.#host = host;
-    this.#direct = options.direct;
+    this.#direct = options.direct ? [] : undefined;
     this.#input = input;
     this.#field = field;
     this.#publish = options.publish;
@@ -175,8 +175,9 @@ class PreparedField implements PreparedTaskTextUpdate {
       this.#finish({ type: 'ready' });
       return;
     }
-    if (this.#direct) {
-      this.#renderReplacement(host);
+    if (this.#direct !== undefined) {
+      if (!this.#current()) this.cancel();
+      else this.#renderReplacement(host);
       return;
     }
     this.#staging = host.createDiv();
@@ -193,6 +194,7 @@ class PreparedField implements PreparedTaskTextUpdate {
   #finish(outcome: TaskRenderOutcome): void {
     if (this.#outcome !== undefined) return;
     this.#outcome = outcome;
+    if (this.#direct !== undefined && outcome.type !== 'ready') this.cancel();
     this.#resolve(outcome);
   }
   #renderReplacement(staging: HTMLElement): void {
@@ -204,11 +206,15 @@ class PreparedField implements PreparedTaskTextUpdate {
         sourcePath: input.source.path,
         component: this.#field.owner,
         linkEventOwner: this.#field.owner,
-        isCurrent: () => !this.#cancelled && this.#field.input.callbacks.isCurrent?.() !== false,
+        isCurrent: () => {
+          if (this.#direct !== undefined) this.#direct = [...staging.childNodes];
+          return !this.#cancelled && this.#current();
+        },
         beforeOpenLink: () =>
           this.#field.input.callbacks.beforeOpenLink?.() ?? Promise.resolve(true),
         onRendered: (element) => {
           decorate(element, this.#field, input);
+          if (this.#direct !== undefined) this.#direct = [...element.childNodes];
           this.#finish({ type: 'ready' });
         },
       });
@@ -228,14 +234,21 @@ class PreparedField implements PreparedTaskTextUpdate {
     this.#finish({ type: 'failed', error });
     this.#input.callbacks.onRenderFailure?.(error);
   }
+  #current(): boolean {
+    const host = this.#host;
+    const nodes = this.#direct;
+    return (
+      this.#field.input.callbacks.isCurrent?.() !== false &&
+      !this.#cancelled &&
+      host.ownerDocument === this.#field.document &&
+      (this.#committed ||
+        nodes === undefined ||
+        (nodes.length === host.childNodes.length &&
+          nodes.every((node, index) => node === host.childNodes[index])))
+    );
+  }
   canCommit(): boolean {
-    if (this.#host.ownerDocument !== this.#field.document) return false;
-    if (
-      this.#cancelled ||
-      this.#outcome?.type !== 'ready' ||
-      this.#input.callbacks.isCurrent?.() === false
-    )
-      return false;
+    if (this.#cancelled || this.#outcome?.type !== 'ready' || !this.#current()) return false;
     return (
       this.#committed ||
       this.#staging === undefined ||
@@ -265,8 +278,11 @@ class PreparedField implements PreparedTaskTextUpdate {
     this.#cancelled = true;
     this.#render?.cancel();
     this.#staging?.remove();
-    if (this.#direct) this.#host.empty();
-    if (this.#direct || this.#staging !== undefined) this.#release(this.#field);
+    this.#direct?.forEach((node) => {
+      if (node.ownerDocument === this.#field.document && node.parentNode === this.#host)
+        node.remove();
+    });
+    if (this.#direct !== undefined || this.#staging !== undefined) this.#release(this.#field);
     this.#finish({ type: 'cancelled' });
   }
 }

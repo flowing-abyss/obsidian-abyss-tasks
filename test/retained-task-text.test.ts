@@ -147,6 +147,185 @@ it('does not cancel a newer field when a completed first render was never commit
     h.close();
   }
 });
+it('does not write an already-stale first plain field', async () => {
+  const h = harness();
+  try {
+    const input = h.input('needle');
+    const first = h.field.prepare({
+      ...input,
+      callbacks: { ...input.callbacks, isCurrent: () => false },
+    });
+    expect(h.host.hasChildNodes()).toBe(false);
+    expect(await first.ready).toEqual({ type: 'cancelled' });
+    expect(first.commit()).toBe(false);
+    expect(h.host.hasChildNodes()).toBe(false);
+  } finally {
+    h.close();
+  }
+});
+it('retires only its own plain text when currentness is lost before first commit', async () => {
+  const h = harness();
+  let current = true;
+  try {
+    const input = h.input('needle');
+    const first = h.field.prepare({
+      ...input,
+      callbacks: { ...input.callbacks, isCurrent: () => current },
+    });
+    expect(await first.ready).toEqual({ type: 'ready' });
+    current = false;
+    expect(first.canCommit()).toBe(false);
+    expect(first.commit()).toBe(false);
+    first.cancel();
+    expect(h.host.hasChildNodes()).toBe(false);
+  } finally {
+    h.close();
+  }
+});
+it('cleans provisional plain text when the renderer loses currentness after writing', async () => {
+  const h = harness();
+  try {
+    const input = h.input('needle');
+    const first = h.field.prepare({
+      ...input,
+      callbacks: { ...input.callbacks, isCurrent: () => !h.host.hasChildNodes() },
+    });
+    expect(await first.ready).toEqual({ type: 'cancelled' });
+    expect(h.host.hasChildNodes()).toBe(false);
+    expect(first.commit()).toBe(false);
+  } finally {
+    h.close();
+  }
+});
+it('preserves a successor installed by the renderer currentness callback', async () => {
+  const h = harness();
+  const successor = document.body.createEl('input');
+  successor.remove();
+  try {
+    const input = h.input('needle');
+    const first = h.field.prepare({
+      ...input,
+      callbacks: {
+        ...input.callbacks,
+        isCurrent: () => {
+          if (h.host.hasChildNodes()) {
+            h.host.replaceChildren(successor);
+            successor.focus();
+          }
+          return true;
+        },
+      },
+    });
+    expect(await first.ready).toEqual({ type: 'cancelled' });
+    expect(first.commit()).toBe(false);
+    expect(h.host.firstChild).toBe(successor);
+    expect(document.activeElement).toBe(successor);
+  } finally {
+    h.close();
+  }
+});
+it.each(['replace', 'append'] as const)(
+  'preserves a foreign focused successor on provisional cancellation (%s)',
+  async (change) => {
+    const h = harness();
+    try {
+      const first = h.field.prepare(h.input('needle'));
+      expect(await first.ready).toEqual({ type: 'ready' });
+      const successor = h.host.createEl('input');
+      successor.value = 'Recoverable draft';
+      if (change === 'replace') h.host.replaceChildren(successor);
+      successor.focus();
+      expect(first.canCommit()).toBe(false);
+      expect(first.commit()).toBe(false);
+      first.cancel();
+      expect(h.host.childNodes).toHaveLength(1);
+      expect(h.host.firstChild).toBe(successor);
+      expect(successor.value).toBe('Recoverable draft');
+      expect(document.activeElement).toBe(successor);
+    } finally {
+      h.close();
+    }
+  },
+);
+it('does not cancel provisional nodes after their host is adopted by another document', async () => {
+  const h = harness();
+  try {
+    const first = h.field.prepare(h.input('needle'));
+    expect(await first.ready).toEqual({ type: 'ready' });
+    const nodes = [...h.host.childNodes];
+    const frame = document.body.createEl('iframe');
+    const destination = expectDefined(frame.contentDocument);
+    destination.body.append(h.host);
+    const successor = h.host.createEl('input');
+    successor.focus();
+    expect(first.canCommit()).toBe(false);
+    expect(first.commit()).toBe(false);
+    first.cancel();
+    expect([...h.host.childNodes]).toEqual([...nodes, successor]);
+    expect(destination.activeElement).toBe(successor);
+  } finally {
+    h.close();
+  }
+});
+it('rechecks the document after a currentness callback before the first plain write', async () => {
+  const h = harness();
+  const frame = document.body.createEl('iframe');
+  const destination = expectDefined(frame.contentDocument);
+  try {
+    const input = h.input('needle');
+    const first = h.field.prepare({
+      ...input,
+      callbacks: {
+        ...input.callbacks,
+        isCurrent: () => {
+          destination.body.append(h.host);
+          return true;
+        },
+      },
+    });
+    expect(h.host.hasChildNodes()).toBe(false);
+    expect(await first.ready).toEqual({ type: 'cancelled' });
+    expect(first.commit()).toBe(false);
+  } finally {
+    h.close();
+  }
+});
+it.each(['replace', 'adopt'] as const)(
+  'rechecks direct node ownership after a currentness callback before commit (%s)',
+  async (change) => {
+    const h = harness();
+    const frame = document.body.createEl('iframe');
+    const destination = expectDefined(frame.contentDocument);
+    const successor = document.body.createEl('input');
+    successor.remove();
+    let armed = false;
+    try {
+      const input = h.input('needle');
+      const first = h.field.prepare({
+        ...input,
+        callbacks: {
+          ...input.callbacks,
+          isCurrent: () => {
+            if (armed) {
+              h.host.replaceChildren(successor);
+              if (change === 'adopt') destination.body.append(h.host);
+              successor.focus();
+            }
+            return true;
+          },
+        },
+      });
+      expect(await first.ready).toEqual({ type: 'ready' });
+      armed = true;
+      expect(first.commit()).toBe(false);
+      first.cancel();
+      expect(h.host.firstChild).toBe(successor);
+      expect(successor.ownerDocument.activeElement).toBe(successor);
+    } finally {
+      h.close();
+    }
+  },
+);
 it('re-marks complete fields without reparsing source and skips equivalent token work', async () => {
   const h = harness();
   const render = vi.spyOn(MarkdownRenderer, 'render');
