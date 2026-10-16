@@ -9123,6 +9123,15 @@ body.is-phone .abyss-project-table-controls .abyss-center-search {
   width: auto;
 }
 
+/* Keep phone toolbar vertical rhythm while constrained layout owns its inline spacing. */
+body.is-phone .abyss-cal-nav {
+  padding-block-end: var(--size-4-3);
+}
+
+body.is-phone .abyss-layout--calendar > .abyss-center-shell > .abyss-center > .abyss-cal-nav {
+  padding-top: calc(var(--size-4-3) + min(var(--abyss-shell-top-inset), 5px));
+}
+
 /* Every standalone phone control is a cell of the same family as the view switcher: the tray
    background, the tray radius and the shared control size. Colors stay with each control so the
    active sort accent and each hover color keep working. */
@@ -10736,7 +10745,7 @@ button.abyss-calendar-date[aria-pressed='true'] {
   min-block-size: 120px;
   flex: 1 1 auto;
   overflow: auto;
-  padding: var(--size-4-2) var(--size-2-1) max(var(--size-4-2), env(safe-area-inset-bottom));
+  padding: var(--size-4-2) var(--size-2-1);
 }
 
 .abyss-calendar-agenda-heading {
@@ -10823,6 +10832,11 @@ button.abyss-calendar-date[aria-pressed='true'] {
     border-bottom: 1px solid var(--background-modifier-border);
     padding: 0 var(--size-2-1);
     gap: 0;
+  }
+
+  /* This rail is above the content; its center shell alone reserves the host navigation inset. */
+  body.is-phone .abyss-layout--calendar > .abyss-rail {
+    padding-block-end: 0;
   }
 
   .abyss-layout--calendar :is(.abyss-rail-top, .abyss-rail-bottom, .abyss-rail-tracking) {

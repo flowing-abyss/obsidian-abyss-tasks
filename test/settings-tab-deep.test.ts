@@ -2540,7 +2540,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
       /@container abyss-panel-layout \(max-width: 45rem\)[\s\S]*?\.abyss-project-status-filters\s*\{(?=[^}]*grid-row: 2)(?=[^}]*max-width: none)/u,
     );
     expect(css).toMatch(
-      /@container abyss-task-list \(max-width: 30rem\)[\s\S]*?\.abyss-cal-nav\s*\{(?=[^}]*flex-wrap: nowrap)(?=[^}]*overflow-x: auto)/u,
+      /@container abyss-task-list \(max-width: 38rem\)[\s\S]*?\.abyss-cal-nav\s*\{(?=[^}]*flex-wrap: wrap)(?=[^}]*overflow: visible)/u,
     );
     expect(css).toContain('min(var(--abyss-shell-top-inset), 5px)');
   });

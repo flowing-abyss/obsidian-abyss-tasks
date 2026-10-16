@@ -261,36 +261,44 @@ describe('CenterPanel task metadata styles', () => {
     );
   });
 
-  it('lays the phone calendar toolbar out in two rows', () => {
-    const nav = declarationsFor('body.is-phone .abyss-cal-nav');
-    expect(nav).toContain('display: grid');
-    expect(nav).toContain('grid-template-columns: minmax(0, 1fr) auto');
+  it('wraps constrained calendar controls without clipping their touch targets', () => {
+    const compact = atRuleBlock('@container abyss-task-list (max-width: 38rem)');
+    const nav = declarationsForSource(compact, '.abyss-cal-nav');
+    expect(nav).toContain('display: flex');
+    expect(nav).toContain('flex-wrap: wrap');
     expect(nav).toContain('overflow: visible');
-    expect(declarationsFor('body.is-phone .abyss-cal-nav-left')).toContain('min-width: 0');
+    expect(nav).toContain('padding-inline: var(--size-4-1)');
+    for (const selector of ['.abyss-cal-nav-left', '.abyss-cal-nav-title-group']) {
+      expect(declarationsForSource(compact, selector), selector).toContain('flex-wrap: wrap');
+    }
+    expect(declarationsForSource(compact, '.abyss-cal-nav-left')).toContain('min-width: 0');
+    const controls = declarationsForSource(compact, '.abyss-cal-nav button');
+    expect(controls).toContain('min-inline-size: 44px');
+    expect(controls).toContain('min-block-size: 44px');
+    expect(controls).toContain('block-size: auto');
     // Scoped to the toolbar: the project timeline reuses these classes in its own control.
-    expect(declarationsFor('body.is-phone .abyss-cal-nav .abyss-cal-view-switcher')).toBe(
-      ['grid-column: 1 / -1;', 'margin-inline-start: 0;'].join('\n'),
+    const switcher = declarationsForSource(compact, '.abyss-cal-nav > .abyss-cal-view-switcher');
+    expect(switcher).toContain('flex: 1 1 auto');
+    expect(switcher).toContain('block-size: auto');
+    expect(switcher).toContain('margin-inline-start: 0');
+    expect(declarationsForSource(compact, '.abyss-cal-nav > .abyss-cal-nav-today')).toBe(
+      'margin-inline-start: 0;',
     );
-    // The phone grid places Today and the switcher itself, so neither keeps a desktop margin.
+    expect(declarationsForSource(compact, '.abyss-cal-view-switcher')).toBe('');
     expect(declarationsFor('body.is-phone .abyss-cal-nav .abyss-cal-nav-today')).toContain(
       ['padding: 0 var(--size-4-3);', 'margin-inline-start: 0;'].join('\n'),
-    );
-    expect(declarationsFor('body.is-phone .abyss-cal-nav .abyss-cal-view-btn')).toContain(
-      'flex: 1 1 0',
     );
     expect(declarationsFor('body.is-phone .abyss-cal-view-switcher')).toBe('');
     expect(declarationsFor('body.is-phone .abyss-panel-view .abyss-cal-nav-today')).toBe('');
   });
 
   it('ends the desktop calendar toolbar with Today and the switcher as one group', () => {
-    expect(declarationsFor('.abyss-cal-nav > .abyss-cal-nav-today')).toBe(
+    expect(cssDeclarationText(css, '.abyss-cal-nav > .abyss-cal-nav-today', true)).toBe(
       'margin-inline-start: auto;',
     );
-    expect(declarationsFor('.abyss-cal-nav > .abyss-cal-view-switcher')).toBe(
+    expect(cssDeclarationText(css, '.abyss-cal-nav > .abyss-cal-view-switcher', true)).toBe(
       'margin-inline-start: calc(var(--size-4-1) - var(--size-4-2));',
     );
-    const narrow = atRuleBlock('@container abyss-task-list (max-width: 30rem)');
-    expect(declarationsForSource(narrow, '.abyss-cal-nav-left')).toBe('max-width: 100%;');
     expect(css).not.toContain('abyss-cal-nav-right');
   });
 
@@ -330,7 +338,7 @@ describe('CenterPanel task metadata styles', () => {
     // The calendar toolbar sits on the same inset as the other phone toolbars, including the top
     // inset the desktop calendar rule would otherwise shorten.
     expect(declarationsFor('body.is-phone .abyss-cal-nav')).toContain(
-      'padding: var(--size-4-3) var(--size-4-4)',
+      'padding-block-end: var(--size-4-3)',
     );
     expect(declarationsFor('.abyss-center-header')).toContain(
       'padding: var(--size-4-3) var(--size-4-4)',
@@ -378,6 +386,34 @@ describe('CenterPanel task metadata styles', () => {
         'padding-block-end: var(--abyss-shell-bottom-inset)',
       );
     }
+  });
+
+  it('removes the bottom host reserve only from the horizontal phone calendar rail', () => {
+    const compact = atRuleBlock('@container abyss-calendar-panel (max-width: 38rem)');
+    const selector = 'body.is-phone .abyss-layout--calendar > .abyss-rail';
+    expect(declarationsForSource(compact, selector)).toBe('padding-block-end: 0;');
+    expect(cssDeclarationText(css, selector, true)).toBe('');
+    for (const pane of ['.abyss-center-shell', '.abyss-left', '.abyss-right']) {
+      expect(
+        declarationsForSource(compact, `body.is-phone .abyss-layout--calendar > ${pane}`),
+      ).toBe('');
+    }
+    expect(declarationsForSource(compact, '.abyss-layout--calendar .abyss-rail button')).toContain(
+      'min-block-size: 44px',
+    );
+  });
+
+  it('leaves agenda bottom clearance with the existing shell and keyboard inset owner', () => {
+    const agenda = declarationsFor('.abyss-calendar-agenda');
+    expect(agenda).toContain('padding: var(--size-4-2) var(--size-2-1)');
+    expect(agenda).not.toContain('safe-area-inset-bottom');
+    expect(agenda).not.toContain('--abyss-shell-bottom-inset');
+    expect(declarationsFor('body.is-phone .abyss-layout > .abyss-center-shell')).toContain(
+      'padding-block-end: var(--abyss-shell-bottom-inset)',
+    );
+    expect(declarationsFor('body.is-phone .abyss-panel-view.abyss-panel-view--keyboard')).toContain(
+      '--abyss-shell-bottom-inset: 0px',
+    );
   });
 
   it('keeps a usable title track under the observed 292px center metadata pressure', () => {

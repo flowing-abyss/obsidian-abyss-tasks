@@ -627,16 +627,19 @@ describe('CaptureSurface', () => {
 
   it('keeps narrow calendar controls horizontally reachable and clears feedback above mobile chrome', () => {
     const compact = lastAtRuleBlock('@container abyss-task-list (max-width: 30rem)');
-    const nav = declarationsForSource(compact, '.abyss-cal-nav');
+    const wrapped = lastAtRuleBlock('@container abyss-task-list (max-width: 38rem)');
+    const nav = declarationsForSource(wrapped, '.abyss-cal-nav');
     const calendarFeedback = declarationsForSource(
       compact,
       '.abyss-center .abyss-calendar-capture-feedback',
     );
     const globalFeedback = declarationsFor('body.is-phone .abyss-creation-feedback');
 
-    expect(nav).toContain('overflow-x: auto');
-    expect(nav).toContain('flex-wrap: nowrap');
-    expect(nav).toContain('scrollbar-width: none');
+    expect(nav).toContain('overflow: visible');
+    expect(nav).toContain('flex-wrap: wrap');
+    expect(declarationsForSource(wrapped, '.abyss-cal-nav button')).toContain(
+      'min-block-size: 44px',
+    );
     expect(calendarFeedback).toContain('inset-block-start:');
     expect(calendarFeedback).toContain('var(--size-4-16');
     expect(calendarFeedback).toContain('var(--size-4-12');
