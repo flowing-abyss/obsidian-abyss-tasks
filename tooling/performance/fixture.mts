@@ -1,16 +1,19 @@
 import { createHash } from 'node:crypto';
-import { FIXTURE_FOLDER } from './types.ts';
+import { FIXTURE_FOLDER, type FixtureKind } from './types.ts';
 export { FIXTURE_FOLDER } from './types.ts';
 
 export interface Fixture {
   version: 1;
   anchor: string;
+  kind: FixtureKind;
   files: Record<string, string>;
   digest: string;
-  roots: 4000;
-  nodes: 6000;
-  archiveRoots: 300;
-  projects: 100;
+  roots: number;
+  nodes: number;
+  archiveRoots: number;
+  projects: number;
+  maxChildrenPerRoot: number;
+  largestRootBytes: number;
   settings: Record<string, unknown>;
 }
 
@@ -26,7 +29,16 @@ function planningTokens(anchor: string, id: number, offset: number, date: string
   return parts;
 }
 
-function taskBlock(anchor: string, id: number): string {
+function wideChildren(kind: FixtureKind, id: number, date: string): string[] {
+  if (kind !== 'wide-tree' || id !== 0) return [];
+  return Array.from(
+    { length: 999 },
+    (_, index) =>
+      `  - [ ] Wide child ${index + 1} deterministic long title for canonical profile coverage #profile/child 📅 ${date}`,
+  );
+}
+
+function taskBlock(anchor: string, id: number, kind: FixtureKind): string {
   const symbol = [' ', '/', 'x', '-'][id % 4] ?? ' ';
   const offset = symbol === 'x' || symbol === '-' ? -(id % 300) - 1 : (id % 365) - 300;
   const date = dateAt(anchor, offset);
@@ -50,10 +62,11 @@ function taskBlock(anchor: string, id: number): string {
     lines.push(`  - ${date}T09:00:00Z → ${date}T09:45:00Z`);
     lines.push(`  - [ ] Child ${id} #profile/child 📅 ${date}`);
   }
+  lines.push(...wideChildren(kind, id, date));
   return lines.join('\n');
 }
 
-function projectFile(anchor: string, project: number): string {
+function projectFile(anchor: string, project: number, kind: FixtureKind): string {
   const status = ['inbox', 'todo', 'wip', 'done'][project % 4] ?? 'todo';
   const lines = [
     '---',
@@ -66,11 +79,11 @@ function projectFile(anchor: string, project: number): string {
     '---',
     '# Tasks',
   ];
-  for (let i = 0; i < 40; i++) lines.push(taskBlock(anchor, project * 40 + i));
+  for (let i = 0; i < 40; i++) lines.push(taskBlock(anchor, project * 40 + i, kind));
   return `${lines.join('\n')}\n`;
 }
 
-export function createFixture(anchor: string): Fixture {
+export function createFixture(anchor: string, kind: FixtureKind = 'standard'): Fixture {
   if (
     !/^\d{4}-\d{2}-\d{2}$/u.test(anchor) ||
     !Number.isFinite(Date.parse(`${anchor}T12:00:00Z`)) ||
@@ -82,6 +95,7 @@ export function createFixture(anchor: string): Fixture {
     files[`${FIXTURE_FOLDER}/projects/Project-${String(i).padStart(3, '0')}.md`] = projectFile(
       anchor,
       i,
+      kind,
     );
   files[`${FIXTURE_FOLDER}/archive.md`] = Array.from(
     { length: 300 },
@@ -89,13 +103,19 @@ export function createFixture(anchor: string): Fixture {
       `- [x] Archived ${i} #profile/archive ➕ ${dateAt(anchor, -180)} ✅ ${dateAt(anchor, -i % 90)}\n  - ${dateAt(anchor, -i % 90)}T10:00:00Z → ${dateAt(anchor, -i % 90)}T10:30:00Z`,
   ).join('\n');
   files[`${FIXTURE_FOLDER}/inbox.md`] = '# Performance command sandbox\n';
+  const blocks = Array.from({ length: 4000 }, (_, id) => taskBlock(anchor, id, kind));
   return {
     version: 1,
     anchor,
+    kind,
     files,
     digest: createHash('sha256').update(JSON.stringify(files)).digest('hex'),
     roots: 4000,
-    nodes: 6000,
+    nodes: kind === 'wide-tree' ? 6999 : 6000,
+    maxChildrenPerRoot: Math.max(
+      ...blocks.map((block) => block.split('\n').filter((line) => line.startsWith('  - [')).length),
+    ),
+    largestRootBytes: Math.max(...blocks.map((block) => Buffer.byteLength(block, 'utf8'))),
     archiveRoots: 300,
     projects: 100,
     settings: {

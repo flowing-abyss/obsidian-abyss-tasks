@@ -1,14 +1,25 @@
 import { Platform } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
+import { TaskIndex } from '../src/tasks/infrastructure/TaskIndex';
 import { fixtureReady, install, resetFixture } from '../tooling/performance/native';
 import { NativeCdp } from '../tooling/performance/native-cdp';
-import { assertViewport, scrollRange } from '../tooling/performance/native-helpers';
+import {
+  assertViewport,
+  calendarDiagnostics,
+  calendarEvidence,
+  calendarPopulation,
+  scrollRange,
+} from '../tooling/performance/native-helpers';
 import { activityMetrics } from '../tooling/performance/native-observation';
-import { taskTextTyping } from '../tooling/performance/native-scenarios';
+import {
+  queryScenarios,
+  scenarioIds,
+  taskTextTyping,
+} from '../tooling/performance/native-scenarios';
 import type { CdpListener, Host, NativeBridge } from '../tooling/performance/native-types';
 import { parseCliResult, parseOptions } from '../tooling/performance/options';
 import { AbyssProfiler, bounded, PendingWork } from '../tooling/performance/profiler';
-import { createAppWithFiles, seedTaskCache } from './helpers';
+import { canonicalStatusCatalog, createAppWithFiles, seedTaskCache } from './helpers';
 
 const loadClock = async () => {
   if (!Platform.isDesktop) throw new Error('Native clock test requires desktop');
@@ -82,6 +93,9 @@ describe('native profile boundaries', () => {
       vault: 'dev-vault-tasks',
       fixtureFolder: folder,
       anchor: '2026-10-16',
+      fixtureKind: 'standard',
+      expectedRoots: 4000,
+      expectedNodes: 6000,
       startup: true,
       viewport: '1024x768',
     });
@@ -285,6 +299,134 @@ describe('native profile boundaries', () => {
     expect(parseOptions(['--compare', 'before', 'after']).compare).toEqual(['before', 'after']);
     expect(parseOptions(['--recover-offline', 'run']).recoverOffline).toBe('run');
     expect(() => parseOptions(['--recover-offline', 'run', '--runs', '2'])).toThrow();
+  });
+  it('selects only the finite fixture roster and keeps startup mode startup-only', () => {
+    expect(parseOptions([]).fixture).toBe('standard');
+    expect(parseOptions(['--fixture', 'wide-tree']).fixture).toBe('wide-tree');
+    expect(() => parseOptions(['--fixture', 'unknown'])).toThrow();
+    expect(scenarioIds('standard', true)).toEqual(['startup.index']);
+    expect(scenarioIds('wide-tree', true)).toEqual(['startup.index']);
+    expect(scenarioIds('standard', false)).not.toContain('index.wide-child-edit');
+    expect(scenarioIds('wide-tree', false)).toEqual([
+      ...scenarioIds('standard', false).slice(0, -8),
+      'index.wide-child-edit',
+      'index.metadata-only',
+      ...scenarioIds('standard', false).slice(-8),
+    ]);
+  });
+  it.each([
+    ['abyss-mg-cell', 'data-mg-date', 'abyss-tg-body'],
+    ['abyss-tg-header-cell', 'data-tg-date', 'abyss-tg-block'],
+    ['abyss-calendar-date', 'data-calendar-date', 'abyss-calendar-item'],
+  ])('accepts populated calendar evidence from %s', (cls, attribute, cardClass) => {
+    const root = document.body.createDiv();
+    const date = root.createDiv({ cls });
+    date.setAttribute(attribute, '2026-10-16');
+    const cards =
+      cls === 'abyss-calendar-date' ? root.createDiv({ cls: 'abyss-calendar-agenda' }) : date;
+    if (cls === 'abyss-calendar-date') cards.setAttribute('data-calendar-date', '2026-10-16');
+    try {
+      expect(() => calendarEvidence(root, 1)).toThrow('populated');
+      const card = cards.createDiv({ cls: cardClass, text: 'Profile task' });
+      expect(calendarEvidence(root, 1)).toMatchObject({ dates: ['2026-10-16'], renderedCards: 1 });
+      card.setAttribute('aria-busy', 'true');
+      expect(() => calendarEvidence(root, 1)).toThrow('populated');
+      card.removeAttribute('aria-busy');
+      card.textContent = '';
+      expect(() => calendarEvidence(root, 1)).toThrow('populated');
+    } finally {
+      root.remove();
+    }
+  });
+  it('rejects invalid dates and a compact calendar without its selected agenda', () => {
+    const root = document.body.createDiv();
+    const date = root.createDiv({ cls: 'abyss-calendar-date' });
+    date.dataset['calendarDate'] = '2026-02-31';
+    try {
+      expect(() => calendarEvidence(root, 0)).toThrow('date');
+      date.dataset['calendarDate'] = '2026-10-16';
+      expect(() => calendarEvidence(root, 0)).toThrow('agenda');
+      const agenda = root.createDiv({ cls: 'abyss-calendar-agenda' });
+      agenda.dataset['calendarDate'] = '2026-10-17';
+      expect(() => calendarEvidence(root, 0)).toThrow('outside');
+      agenda.dataset['calendarDate'] = '2026-10-16';
+      expect(calendarEvidence(root, 0)).toMatchObject({
+        renderedCards: 0,
+        agendaDate: '2026-10-16',
+      });
+    } finally {
+      root.remove();
+    }
+  });
+  it('keeps semantic occurrence identity when compact rendering reduces cards and records zero-height geometry', async () => {
+    const app = await createAppWithFiles({
+      'calendar.md': '- [ ] First 📅 2026-10-16\n- [ ] Second 📅 2026-10-17',
+    });
+    seedTaskCache(app, 'calendar.md', [
+      { task: ' ', parent: -1, line: 0 },
+      { task: ' ', parent: -1, line: 1 },
+    ]);
+    const index = new TaskIndex(app, { statusCatalog: canonicalStatusCatalog() });
+    Object.defineProperty(app, 'plugins', {
+      value: { plugins: { 'abyss-tasks': { queries: index } } },
+    });
+    const root = document.body.createDiv();
+    try {
+      await index.initialize();
+      for (const day of ['2026-10-16', '2026-10-17']) {
+        const cell = root.createDiv({ cls: 'abyss-mg-cell' });
+        cell.dataset['mgDate'] = day;
+        cell.createDiv({ cls: 'abyss-tg-body', text: 'Populated' });
+      }
+      const options = {
+        vault: 'dev-vault-tasks',
+        fixtureFolder: '__abyss_profile_fixture_v1__',
+        anchor: '2026-10-16',
+        fixtureKind: 'standard' as const,
+        expectedRoots: 2,
+        expectedNodes: 3,
+        startup: false,
+        viewport: '1024x768',
+      };
+      const onlyPopulation = async (
+        id: string,
+        action: () => Promise<Record<string, string | number | boolean>>,
+      ): Promise<void> => {
+        if (id === 'query.roots' || id === 'query.nodes') await action();
+      };
+      await expect(queryScenarios(app as Host, options, onlyPopulation)).rejects.toThrow(
+        'Fixture nodes',
+      );
+      await expect(
+        queryScenarios(app as Host, { ...options, expectedRoots: 3 }, onlyPopulation),
+      ).rejects.toThrow('Fixture roots');
+      const before = calendarPopulation(app as Host, calendarEvidence(root, 2).dates);
+      expect(before.occurrences).toBe(2);
+      expect(JSON.parse(before.occurrencePopulation)).toEqual([
+        ['calendar.md:0:2026-10-16', 'materialized', { due: '2026-10-16' }],
+        ['calendar.md:1:2026-10-17', 'materialized', { due: '2026-10-17' }],
+      ]);
+      root.empty();
+      for (const day of ['2026-10-16', '2026-10-17'])
+        root.createDiv({ cls: 'abyss-calendar-date', attr: { 'data-calendar-date': day } });
+      const agenda = root.createDiv({
+        cls: 'abyss-calendar-agenda',
+        attr: { 'data-calendar-date': '2026-10-16' },
+      });
+      agenda.createDiv({ cls: 'abyss-calendar-item', text: 'First' });
+      expect(calendarEvidence(root, 2).renderedCards).toBe(1);
+      expect(calendarPopulation(app as Host, calendarEvidence(root, 2).dates)).toEqual(before);
+      const grid = root.createDiv({ cls: 'abyss-tg-grid-row' });
+      Object.defineProperty(grid, 'scrollHeight', { value: 1440 });
+      const diagnostics = calendarDiagnostics(root);
+      expect(diagnostics.renderedCards).toBe(1);
+      expect(
+        diagnostics.surfaces.find((surface) => surface.className === 'abyss-tg-grid-row'),
+      ).toMatchObject({ height: 0, clientHeight: 0, scrollHeight: 1440 });
+    } finally {
+      root.remove();
+      index.destroy();
+    }
   });
   it('recognizes only an explicit successful CLI envelope', () => {
     expect(parseCliResult('=> {"ok":true,"value":{"n":12}}\n')).toEqual({ n: 12 });

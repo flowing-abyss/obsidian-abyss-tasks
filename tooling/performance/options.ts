@@ -1,5 +1,9 @@
+import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
+import type { FixtureKind } from './types.ts';
+
 export interface Options {
   runs: number;
+  fixture: FixtureKind;
   width?: number;
   startup: boolean;
   diagnostics: boolean;
@@ -13,8 +17,18 @@ export interface Options {
   help: boolean;
 }
 
+function fixtureKind(value: string): FixtureKind {
+  if (value !== 'standard' && value !== 'wide-tree')
+    throw new Error('--fixture must be standard or wide-tree');
+  return value;
+}
+
 function applyOption(options: Options, args: string[], index: number): number {
   const arg = args[index];
+  if (arg === '--fixture') {
+    options.fixture = fixtureKind(argument(args, index + 1));
+    return index + 1;
+  }
   if (arg === '--startup') {
     options.startup = true;
     return index;
@@ -50,7 +64,13 @@ function applyOption(options: Options, args: string[], index: number): number {
 }
 
 export function parseOptions(args: string[]): Options {
-  const options: Options = { runs: 10, startup: false, diagnostics: true, help: false };
+  const options: Options = {
+    fixture: 'standard',
+    runs: 10,
+    startup: false,
+    diagnostics: true,
+    help: false,
+  };
   const seen = new Set<string>();
   let i = 0;
   while (i < args.length) {
@@ -97,4 +117,16 @@ export function parseCliResult(stdout: string): unknown {
       typeof envelope['error'] === 'string' ? envelope['error'] : 'Native command failed',
     );
   return envelope['value'];
+}
+
+export function settings(patch: Record<string, unknown>): unknown {
+  return {
+    ...DEFAULT_SETTINGS,
+    ...patch,
+    projects: {
+      ...DEFAULT_SETTINGS.projects,
+      ...(patch['projects'] as object),
+      propertyDefinitionsVersion: 1,
+    },
+  };
 }

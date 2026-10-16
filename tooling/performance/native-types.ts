@@ -8,6 +8,7 @@ import type {
   TaskStatisticsSource,
   TimeTrackingQueryApi,
 } from '../../src/tasks';
+import type { FixtureKind } from './types.ts';
 
 export interface ProfilePlugin {
   queries: TaskQueryApi & TaskDependencyQueryApi & TimeTrackingQueryApi;
@@ -51,6 +52,9 @@ export interface NativeOptions {
   vault: string;
   fixtureFolder: string;
   anchor: string;
+  fixtureKind: FixtureKind;
+  expectedRoots: number;
+  expectedNodes: number;
   startup: boolean;
   viewport: string;
 }

@@ -1,7 +1,17 @@
+import type { TFile } from 'obsidian';
 import type { TaskCommand, TaskSnapshot } from '../../src/tasks';
-import { click, element, frames, plugin, scrollRange, waitFor } from './native-helpers.ts';
+import {
+  calendarEvidence,
+  click,
+  element,
+  frames,
+  plugin,
+  scrollRange,
+  waitFor,
+} from './native-helpers.ts';
 import type { Host, NativeOptions } from './native-types.ts';
-import type { Sample } from './types.ts';
+import { ANALYSIS, type Sample } from './types.ts';
+export { scenarioIds, SCENARIOS } from './types.ts';
 
 export type Measure = (id: string, action: () => Promise<Sample['facts']>) => Promise<void>;
 
@@ -43,61 +53,24 @@ export async function taskTextTyping(input: HTMLInputElement | HTMLTextAreaEleme
     await frames();
   }
 }
-const ANALYSIS = [
-  'rhythm',
-  'completion',
-  'deadlines',
-  'cohorts',
-  'allocation',
-  'timeline',
-  'sessions',
-  'patterns',
-  'movement',
-  'aging',
-  'dependencies',
-];
-
-export const SCENARIOS = [
-  'startup.index',
-  'query.roots',
-  'query.nodes',
-  'query.dependencies',
-  'query.time',
-  'search.cold',
-  'search.warm',
-  'search.no-results',
-  'search.subtree',
-  'panel.first-open',
-  'ui.search',
-  'ui.scroll',
-  'ui.inspector',
-  'ui.inspector.link-input',
-  'ui.calendar.day',
-  'ui.calendar.week',
-  'ui.calendar.month',
-  'ui.projects.table',
-  'ui.projects.kanban',
-  'ui.projects.timeline',
-  'statistics.acquire',
-  ...ANALYSIS.map((id) => `ui.analysis.${id}`),
-  'command.create',
-  'command.edit',
-  'command.complete',
-  'command.comment',
-  'command.tracking',
-  'command.recurrence',
-  'index.external-edit',
-  'panel.close',
-];
-
 export async function queryScenarios(
   host: Host,
   options: NativeOptions,
   measure: Measure,
 ): Promise<void> {
   const q = plugin(host).queries;
-  await measure('query.roots', () => Promise.resolve({ roots: q.list().length }));
-  await measure('query.nodes', () => Promise.resolve({ nodes: q.listNodes().length }));
+  await measure('query.roots', () => {
+    const roots = q.list().length;
+    if (roots !== options.expectedRoots)
+      throw new Error(`Fixture roots: expected ${options.expectedRoots}, received ${roots}`);
+    return Promise.resolve({ roots });
+  });
+  await measure('query.nodes', () => {
+    const nodes = q.listNodes().length;
+    if (nodes !== options.expectedNodes)
+      throw new Error(`Fixture nodes: expected ${options.expectedNodes}, received ${nodes}`);
+    return Promise.resolve({ nodes });
+  });
   const first = q.list()[0];
   if (first === undefined) throw new Error('Dependency fixture missing');
   await measure('query.dependencies', () => {
@@ -211,9 +184,20 @@ export async function calendarScenarios(measure: Measure): Promise<void> {
         `calendar ${id}`,
       );
       await frames();
-      const cells = document.querySelectorAll('[data-mg-date], [data-tg-date]').length;
-      if (cells === 0) throw new Error('Calendar has no date cells');
-      return { view: id };
+      const evidence = calendarEvidence(element('.abyss-cal-body'), 1);
+      const expectedDays = { day: 1, week: 7, month: 42 }[id];
+      if (
+        evidence.dates.length !== expectedDays ||
+        evidence.dates.some(
+          (date, index) =>
+            index > 0 &&
+            Date.parse(`${date}T12:00:00Z`) -
+              Date.parse(`${evidence.dates[index - 1]}T12:00:00Z`) !==
+              86400000,
+        )
+      )
+        throw new Error(`Incomplete calendar ${id} range`);
+      return { view: id, visibleDates: evidence.dates.join(',') };
     });
   }
 }
@@ -348,4 +332,115 @@ export async function commandScenarios(
     }
     return { edits: 1 };
   });
+}
+
+function indexPopulation(host: Host, options: NativeOptions): { roots: number; nodes: number } {
+  const q = plugin(host).queries;
+  const roots = q.list().length;
+  const nodes = q.listNodes().length;
+  if (roots !== options.expectedRoots || nodes !== options.expectedNodes)
+    throw new Error(`Wide population changed: ${roots} roots, ${nodes} nodes`);
+  return { roots, nodes };
+}
+
+/** Wide scenarios precede commands so their counts describe the unchanged fixture population. */
+export async function indexScenarios(
+  host: Host,
+  options: NativeOptions,
+  measure: Measure,
+): Promise<void> {
+  if (options.fixtureKind !== 'wide-tree') return;
+  const q = plugin(host).queries;
+  const file = host.vault.getFileByPath(`${options.fixtureFolder}/projects/Project-000.md`);
+  if (file === null) throw new Error('Wide project missing');
+  await measure('index.wide-child-edit', async () => {
+    const source = await host.vault.read(file);
+    const lines = source.split('\n');
+    const line = lines.findIndex((value) => value.startsWith('  - [ ] Wide child 999 '));
+    const original = lines[line];
+    if (original?.includes(' #profile/child') !== true)
+      throw new Error('Final wide child source missing');
+    const title = `${original.slice('  - [ ] '.length, original.indexOf(' #profile/child'))} edited`;
+    lines[line] = original.replace(' #profile/child', ' edited #profile/child');
+    await host.vault.modify(file, lines.join('\n'));
+    const root = await waitFor(
+      () =>
+        q
+          .list({ filePath: file.path })
+          .find(
+            (task) =>
+              task.dependencyId === 'profile-0' &&
+              task.subtasks.length === 1000 &&
+              task.subtasks[999]?.title === title,
+          ),
+      'final wide descendant edit',
+    );
+    const last = root.subtasks[999];
+    if (
+      last?.ref.parent.type !== 'task' ||
+      last.ref.parent.ref.revision !== root.ref.revision ||
+      last.ref.parent.ref.filePath !== file.path ||
+      last.ref.parent.ref.line !== root.ref.line
+    )
+      throw new Error('Wide descendant ancestry missing');
+    return { ...indexPopulation(host, options), children: root.subtasks.length, edits: 1 };
+  });
+  await metadataOnly(host, file, options, measure);
+}
+
+async function metadataOnly(
+  host: Host,
+  file: TFile,
+  options: NativeOptions,
+  measure: Measure,
+): Promise<void> {
+  const q = plugin(host).queries;
+  const statistics = plugin(host).taskStatistics;
+  const offStatistics = statistics.subscribeStatistics(() => {});
+  try {
+    await statistics.whenStatisticsSettled();
+    await measure('index.metadata-only', async () => {
+      const source = await host.vault.read(file);
+      if (!source.startsWith('---\n') || !source.includes('\nbudget: 1000\n'))
+        throw new Error('Metadata fixture missing');
+      const next = source.replace('\nbudget: 1000\n', '\nbudget: 1001\n');
+      const prior = statistics
+        .readStatistics()
+        .files.find((entry) => entry.path === file.path)?.revision;
+      if (prior === undefined) throw new Error('Statistics fixture missing');
+      let accepted = false;
+      const offChanged = q.subscribe((event) => {
+        if (event.type === 'changed' && event.files.includes(file.path)) accepted = true;
+      });
+      const offReconciled = q.subscribeReconciled((files) => {
+        if (files.includes(file.path)) accepted = true;
+      });
+      try {
+        await host.vault.modify(file, next);
+        await waitFor(async () => {
+          await statistics.whenStatisticsSettled();
+          const snapshot = statistics.readStatistics();
+          return (
+            accepted &&
+            snapshot.ready &&
+            snapshot.issues.length === 0 &&
+            snapshot.files.some((entry) => entry.path === file.path && entry.revision > prior) &&
+            host.metadataCache.getFileCache(file)?.frontmatter?.['budget'] === 1001
+          );
+        }, 'accepted metadata and Statistics');
+        const actual = await host.vault.read(file);
+        const taskBytesUnchanged =
+          actual.slice(actual.indexOf('\n---\n') + 5) ===
+          source.slice(source.indexOf('\n---\n') + 5);
+        if (actual !== next || !taskBytesUnchanged)
+          throw new Error('Metadata scenario changed task bytes');
+        return { ...indexPopulation(host, options), accepted, taskBytesUnchanged };
+      } finally {
+        offChanged();
+        offReconciled();
+      }
+    });
+  } finally {
+    offStatistics();
+  }
 }

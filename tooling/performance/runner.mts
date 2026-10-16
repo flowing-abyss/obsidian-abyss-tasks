@@ -5,14 +5,12 @@ import { prepareBuild, protocolHash } from './build.mts';
 import { writeCpuEvidence } from './cpu.mts';
 import { cli, evaluate, preflight, type HostBefore } from './driver.mts';
 import { createFixture, type Fixture } from './fixture.mts';
-import { SCENARIOS } from './native-scenarios.ts';
-import { settings as effectiveSettings } from './native.ts';
-import { parseOptions, type Options } from './options.ts';
+import { settings as effectiveSettings, parseOptions, type Options } from './options.ts';
 import { recoverOffline } from './recovery.mts';
 import { parseRun, renderComparison, renderReport } from './report.ts';
 import { compareRuns, sampleProblems, summarize } from './statistics.ts';
 import { canonicalPath, sha256, VaultTransaction } from './transaction.mts';
-import { FIXTURE_FOLDER, type ProfileRun, type Sample } from './types.ts';
+import { FIXTURE_FOLDER, scenarioIds, type ProfileRun, type Sample } from './types.ts';
 
 let stopRequested = false;
 function requestStop(): void {
@@ -26,7 +24,7 @@ function checkCancellation(): void {
 }
 
 const HELP = `pnpm run profile [--runs 10] [--startup] [--anchor YYYY-MM-DD] [--out DIR] [--baseline DIR]
-             [--vault-path PATH] [--width 420] [--no-diagnostics]
+             [--vault-path PATH] [--width 420] [--fixture standard|wide-tree] [--no-diagnostics]
 pnpm profile:startup [--runs 10]
 pnpm profile:compare BEFORE_DIR AFTER_DIR
 pnpm run profile --recover RUN_DIR
@@ -64,6 +62,9 @@ async function inject(
     vault: before.vault,
     fixtureFolder: Object.keys(fixture.files)[0]?.split('/')[0],
     anchor: fixture.anchor,
+    fixtureKind: fixture.kind,
+    expectedRoots: fixture.roots,
+    expectedNodes: fixture.nodes,
     ...mode,
   };
   await evaluate(`const fs=require('fs'),path=require('path'),out=${JSON.stringify(output)};
@@ -271,7 +272,7 @@ async function runSuite(root: string, options: Options): Promise<void> {
   const before = await checkedHost(options);
   const id = new Date().toISOString().replaceAll(':', '-');
   const output = await reserveOutput(root, options, before.vault, id);
-  const fixture = createFixture(options.anchor ?? String(before.identity['day']));
+  const fixture = createFixture(options.anchor ?? String(before.identity['day']), options.fixture);
   await json(path.join(output, 'settings.json'), effectiveSettings(fixture.settings));
   await json(path.join(output, 'fixture-contents.json'), fixture.files);
   process.stdout.write(
@@ -335,6 +336,11 @@ async function newRun(input: {
     identity: {
       ...before.identity,
       fixture: fixture.digest,
+      fixtureKind: fixture.kind,
+      fixtureRoots: fixture.roots,
+      fixtureNodes: fixture.nodes,
+      maxChildrenPerRoot: fixture.maxChildrenPerRoot,
+      largestRootBytes: fixture.largestRootBytes,
       settings: sha256(JSON.stringify(effectiveSettings(fixture.settings))),
       protocol: await protocolHash(root),
       cpu: cpus()[0]?.model ?? 'unknown',
@@ -344,7 +350,7 @@ async function newRun(input: {
       preexistingDebugger: before.debugger,
       viewportOverride: options.width !== undefined,
     },
-    expectedScenarios: options.startup ? ['startup.index'] : SCENARIOS,
+    expectedScenarios: scenarioIds(fixture.kind, options.startup),
     samples: [],
     errors: [],
     diagnostics: [],

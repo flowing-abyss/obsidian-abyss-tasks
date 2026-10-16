@@ -26,14 +26,15 @@ pnpm profile:startup --runs 10
 
 # More observations, or a separate narrow desktop workload.
 pnpm run profile --runs 30
-pnpm run profile --width 420 --out docs/performance/narrow
+pnpm run profile --width 360 --out docs/performance/narrow
+pnpm run profile --fixture wide-tree --anchor 2026-10-16 --out docs/performance/wide-before
 ```
 
 Use **`pnpm run profile`**: `pnpm profile` is a pnpm built-in. Output directories must be new and
 outside the vault. The default is a timestamped folder in ignored `docs/performance/`.
 `--anchor YYYY-MM-DD` fixes generated dates; the default is the host's local day. The actual host
 day also belongs to comparison identity because calendar and statistics views use it. `--runs`
-accepts 1–100. `--no-diagnostics` omits the CPU, trace, screenshot, and heap pass.
+accepts 1–100. `--fixture standard|wide-tree` selects a finite corpus; the default is `standard`. `--no-diagnostics` omits the CPU, trace, screenshot, and heap pass.
 
 `--width` constrains the desktop renderer viewport through CDP, verifies it during every scenario,
 and clears the override afterward. Close existing DevTools/debugger before using this mode so the
@@ -52,27 +53,39 @@ over a year, undated tasks, 200 short intervals, 200 recurring tasks, 1,000 depe
 rich descriptions, comments, 2,000 live time entries, and archived completion/time history.
 Projects have statuses, date ranges, and budgets. Tests parse the corpus through the real TaskIndex.
 
+The `wide-tree` corpus inserts 999 additional direct children immediately after Child 0 under
+`profile-0` in Project-000. It retains the same files, 4,000 live roots, and 300 archived roots,
+and has **6,999 live nodes**. Its widest root has 1,000 children with deterministic long titles.
+`fixture.json` records the actual largest root byte size and maximum direct child count. The
+standard corpus keeps its original Markdown bytes and digest for a given anchor. Fixture kind,
+digest, counts, and scenario roster belong to comparison identity.
+
 Temporary settings select the corpus for tasks and projects. Existing notes stay in place.
 Startup still reads existing Markdown before applying source exclusion, so a content digest of
 those notes belongs to comparison identity. This is not an empty-host benchmark.
 
 | Scenarios                                        | Work and completion condition                                                                                                                                       |
 | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `startup.index`                                  | Enable the plugin, join TaskIndex initialization, assert 4,000 roots. Host and filesystem caches are warm.                                                          |
+| `startup.index`                                  | Enable the plugin, join TaskIndex initialization, assert the selected fixture's exact root and node counts after readiness. Host and filesystem caches are warm.    |
 | `query.roots/nodes/dependencies/time`            | Public read projections; dependencies include first acquisition in the cycle.                                                                                       |
 | `search.cold`                                    | Prepare the newly created Search service/Worker and await readiness; service-cold, not OS-cold.                                                                     |
 | `search.warm/no-results/subtree`                 | Open a cursor, read 40 hits, hydrate, and release it.                                                                                                               |
 | `panel.first-open`, `ui.search/scroll/inspector` | Open the real panel, join applied search results, visit three changed/hydrated virtual ranges, and open a task.                                                     |
 | `ui.inspector.link-input`                        | Open the title editor, type five progressive wiki-link prefixes, await nonempty results with highlights matching each query, then cancel the draft.                 |
-| `ui.calendar.day/week/month`                     | Enter Calendar and switch views, checking the active view and date cells. Day includes entering Calendar.                                                           |
+| `ui.calendar.day/week/month`                     | Enter Calendar and switch views, checking the active view, complete visible date range, and populated cards or compact agenda. Day includes entering Calendar.      |
 | `ui.projects.table/kanban/timeline`              | Enter Projects and render its three views. Table includes entering Projects.                                                                                        |
 | `statistics.acquire`                             | Subscribe to retained Statistics data, await settlement, reject projection issues.                                                                                  |
 | `ui.analysis.*`                                  | Rhythm, completion, deadlines, cohorts, allocation, timeline, sessions, patterns, movement, aging, dependencies. Await nonbusy content and rendering opportunities. |
 | `command.*`                                      | Create, edit, complete, comment, start/stop tracking, and advance recurrence through existing application commands; require successful receipts.                    |
 | `index.external-edit`                            | Modify the fixture inbox through the vault API and await its changed task projection.                                                                               |
+| `index.wide-child-edit` (wide-tree only)         | Edit only the final wide child's title through the vault API; await that descendant with matching ancestry and exact root/node counts.                              |
+| `index.metadata-only` (wide-tree only)           | Change Project-000's frontmatter budget, await accepted task metadata and a newer settled Statistics source, and verify task bytes/population stay unchanged.       |
 | `panel.close`                                    | Detach the panel. The shared Search Worker may remain alive until plugin unload.                                                                                    |
 
-Each repetition resets the modified inbox, recurrence note, and view state, then reloads the plugin.
+Wide scenarios run before commands, while task population still matches the generated fixture.
+Startup-only mode runs only `startup.index` for either fixture. The full standard roster is unchanged.
+
+Each repetition resets the modified inbox, Project-000 (including its children, recurrence, and metadata), and view state, then reloads the plugin.
 Preparation joins host metadata events and checks exact file/cache contents before timing starts.
 Scenario order is fixed. UI spans include two animation-frame opportunities; they are not OS
 input-to-photon measurements. Scrolling also waits for changed, populated, nonbusy cards and a
@@ -87,6 +100,13 @@ fixture, existing Markdown, host versions, CPU, viewport, locale, timezone, enab
 and protocol hash. `settings.json` contains the effective configuration, not just its patch.
 `fixture-contents.json` preserves the generated Markdown; `fixture.json` records its hashes and counts.
 
+Calendar completion accepts the existing month/time-grid dates and cards as well as compact date
+buttons with a selected agenda. Completed-work facts record the same visible dates and canonical
+semantic occurrence population in both forms; full-grid and selected-agenda card totals are not
+compared as work. Canonical occurrence facts are collected after each timed calendar span using
+the public query and existing occurrence projector. This extra evidence is outside the measured
+duration. A zero-height hour grid is recorded as baseline evidence and does not fail a run.
+
 Next read `diagnostics-summary.json`: source-mapped CPU hotspots by self/inclusive time and separate
 renderer/Worker heap observations at Search readiness, after Analysis, and after panel close.
 `cpu-summary.json` retains the complete frame table. CPU times are sample-weighted estimates from
@@ -96,17 +116,18 @@ Worker CPU recording begins after the standalone API search scenarios, before UI
 covers UI search and subsequent work; cold construction and the standalone warm/no-results/subtree
 queries have wall times but no Worker CPU attribution in this version.
 
-| Artifact                                                  | Use                                                                                                                                                  |
-| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `comparison.json/md`                                      | Compatibility reasons, median differences, confidence intervals, practical margins, verdicts. Written into the candidate directory.                  |
-| `iteration-*.json`                                        | Raw spans; `-1` is the discarded warmup. Diagnostic samples are separate.                                                                            |
-| `renderer.cpuprofile`, `worker-*.cpuprofile`              | Load in DevTools' JavaScript profiler. Worker recording covers UI search and subsequent work, after the standalone API search scenarios.             |
-| `trace.json`                                              | Load in DevTools Performance. User Timing spans sit alongside JS, layout, paint, and GC events.                                                      |
-| `main.js/map`, `search-worker.js/map`, `source-maps.json` | Exact builds/maps and Worker prefix offset. Mapped main JS must equal normal production bytes; live Worker source must equal the saved Worker build. |
-| `memory-*.json`                                           | Whole-isolate JS heap, no forced GC. Not RSS, plugin-exclusive allocation, or proof of a leak.                                                       |
-| `analysis.png`, `analysis-dom.json`, `runtime-errors.txt` | Screenshot, DOM evidence, captured host errors.                                                                                                      |
-| `progress.json`, `failure-dom.json`                       | Last attempted scenario and failure context when the renderer can respond.                                                                           |
-| `recovery.json`, `host-before.json`                       | Original managed bytes and native state for recovery.                                                                                                |
+| Artifact                                                          | Use                                                                                                                                                  |
+| ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `comparison.json/md`                                              | Compatibility reasons, median differences, confidence intervals, practical margins, verdicts. Written into the candidate directory.                  |
+| `iteration-*.json`                                                | Raw spans; `-1` is the discarded warmup. Diagnostic samples are separate.                                                                            |
+| `renderer.cpuprofile`, `worker-*.cpuprofile`                      | Load in DevTools' JavaScript profiler. Worker recording covers UI search and subsequent work, after the standalone API search scenarios.             |
+| `trace.json`                                                      | Load in DevTools Performance. User Timing spans sit alongside JS, layout, paint, and GC events.                                                      |
+| `main.js/map`, `search-worker.js/map`, `source-maps.json`         | Exact builds/maps and Worker prefix offset. Mapped main JS must equal normal production bytes; live Worker source must equal the saved Worker build. |
+| `memory-*.json`                                                   | Whole-isolate JS heap, no forced GC. Not RSS, plugin-exclusive allocation, or proof of a leak.                                                       |
+| `analysis.png`, `analysis-dom.json`, `runtime-errors.txt`         | Screenshot, DOM evidence, captured host errors.                                                                                                      |
+| `calendar-day/week/month-dom.json`, `calendar-day/week/month.png` | Diagnostic calendar DOM, rendered-card counts, selected agenda date, rectangles and scroll dimensions, plus screenshots taken outside timed spans.   |
+| `progress.json`, `failure-dom.json`                               | Last attempted scenario and failure context when the renderer can respond.                                                                           |
+| `recovery.json`, `host-before.json`                               | Original managed bytes and native state for recovery.                                                                                                |
 
 Long-task counts include entries of at least 50 ms overlapping a span; duration is clipped to
 that overlap. They cover the renderer, not just the plugin. Unsupported metrics are `null`.
@@ -127,7 +148,7 @@ At least 10 observations per side are required:
 - **no-material-difference:** the entire interval fits inside the margin;
 - **inconclusive:** neither conclusion is established.
 
-Below 30 observations, p95 is flagged as unstable. The 40 scenario comparisons have no multiplicity
+Below 30 observations, p95 is flagged as unstable. The full scenario comparisons have no multiplicity
 correction. Thermal drift, GC, JIT, sync, and background applications can affect a whole batch.
 Run A/A on unchanged code to learn the noise floor; confirm apparent wins/regressions in A/B/B/A
 order on the same host. These are investigation signals, not automatic causal proof.

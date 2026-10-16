@@ -1,4 +1,10 @@
-import type { Comparison, Distribution, ProfileRun, Sample } from './types.ts';
+import {
+  fixtureScenarioProblem,
+  type Comparison,
+  type Distribution,
+  type ProfileRun,
+  type Sample,
+} from './types.ts';
 
 function median(values: readonly number[]): number {
   const sorted = [...values].sort((a, b) => a - b);
@@ -44,6 +50,8 @@ function canonical(value: Record<string, string | number | boolean>): string {
 
 function runProblems(run: ProfileRun): string[] {
   const reasons: string[] = [];
+  const fixtureProblem = fixtureScenarioProblem(run);
+  if (fixtureProblem !== undefined) reasons.push(`${run.id}: ${fixtureProblem}`);
   if (run.status !== 'complete' || !run.restored || run.errors.length > 0)
     reasons.push(`${run.id}: failed or unrestored run`);
   if (

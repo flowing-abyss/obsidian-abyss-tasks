@@ -1,5 +1,5 @@
 import { summarize } from './statistics.ts';
-import type { Comparison, ProfileRun, Sample } from './types.ts';
+import { fixtureScenarioProblem, type Comparison, type ProfileRun, type Sample } from './types.ts';
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -63,7 +63,10 @@ export function parseRun(json: string): ProfileRun {
     typeof build['sha256'] !== 'string'
   )
     throw new Error('Invalid build identity');
-  return value as unknown as ProfileRun;
+  const run = value as unknown as ProfileRun;
+  const problem = fixtureScenarioProblem(run);
+  if (problem !== undefined) throw new Error(problem);
+  return run;
 }
 
 function escape(text: string): string {

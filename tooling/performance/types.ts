@@ -1,3 +1,5 @@
+export type FixtureKind = 'standard' | 'wide-tree';
+
 export interface Sample {
   scenario: string;
   iteration: number;
@@ -50,3 +52,79 @@ export interface Comparison {
   scenarios: ScenarioComparison[];
 }
 export const FIXTURE_FOLDER = '__abyss_profile_fixture_v1__';
+
+export const ANALYSIS = [
+  'rhythm',
+  'completion',
+  'deadlines',
+  'cohorts',
+  'allocation',
+  'timeline',
+  'sessions',
+  'patterns',
+  'movement',
+  'aging',
+  'dependencies',
+];
+
+export const SCENARIOS = [
+  'startup.index',
+  'query.roots',
+  'query.nodes',
+  'query.dependencies',
+  'query.time',
+  'search.cold',
+  'search.warm',
+  'search.no-results',
+  'search.subtree',
+  'panel.first-open',
+  'ui.search',
+  'ui.scroll',
+  'ui.inspector',
+  'ui.inspector.link-input',
+  'ui.calendar.day',
+  'ui.calendar.week',
+  'ui.calendar.month',
+  'ui.projects.table',
+  'ui.projects.kanban',
+  'ui.projects.timeline',
+  'statistics.acquire',
+  ...ANALYSIS.map((id) => `ui.analysis.${id}`),
+  'command.create',
+  'command.edit',
+  'command.complete',
+  'command.comment',
+  'command.tracking',
+  'command.recurrence',
+  'index.external-edit',
+  'panel.close',
+];
+
+export function scenarioIds(kind: FixtureKind, startup: boolean): string[] {
+  if (startup) return ['startup.index'];
+  const scenarios = [...SCENARIOS];
+  if (kind === 'wide-tree')
+    scenarios.splice(
+      scenarios.indexOf('command.create'),
+      0,
+      'index.wide-child-edit',
+      'index.metadata-only',
+    );
+  return scenarios;
+}
+
+/** Legacy schema-1 runs without fixtureKind remain readable for historical comparisons. */
+export function fixtureScenarioProblem(
+  run: Pick<ProfileRun, 'identity' | 'expectedScenarios'>,
+): string | undefined {
+  const kind = run.identity['fixtureKind'];
+  if (kind === undefined) return undefined;
+  const startup = run.identity['startupOnly'];
+  if (
+    (kind !== 'standard' && kind !== 'wide-tree') ||
+    typeof startup !== 'boolean' ||
+    JSON.stringify(run.expectedScenarios) !== JSON.stringify(scenarioIds(kind, startup))
+  )
+    return 'Invalid fixture scenario roster';
+  return undefined;
+}

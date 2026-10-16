@@ -1,9 +1,11 @@
-import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
 import { NativeCdp } from './native-cdp.ts';
 import {
   assertRoots,
   assertViewport,
+  calendarDiagnostics,
+  calendarPopulation,
   closePanels,
+  element,
   frames,
   indexed,
   plugin,
@@ -13,6 +15,7 @@ import { NativeObservation } from './native-observation.ts';
 import {
   calendarScenarios,
   commandScenarios,
+  indexScenarios,
   panelScenarios,
   projectScenarios,
   queryScenarios,
@@ -23,17 +26,7 @@ import type { Host, NativeBridge, NativeOptions } from './native-types.ts';
 import { AbyssProfiler, bounded, PendingWork } from './profiler.ts';
 import { FIXTURE_FOLDER, type Sample } from './types.ts';
 
-export function settings(patch: Record<string, unknown>): unknown {
-  return {
-    ...DEFAULT_SETTINGS,
-    ...patch,
-    projects: {
-      ...DEFAULT_SETTINGS.projects,
-      ...(patch['projects'] as object),
-      propertyDefinitionsVersion: 1,
-    },
-  };
-}
+export { settings } from './options.ts';
 
 export async function fixtureReady(
   host: Pick<Host, 'vault' | 'metadataCache'>,
@@ -87,6 +80,8 @@ export async function resetFixture(
 }
 
 interface MeasurementContext {
+  host: Host;
+  cdp: NativeCdp | undefined;
   bridge: NativeBridge;
   iteration: number;
   diagnostic: boolean;
@@ -94,6 +89,21 @@ interface MeasurementContext {
   pending: PendingWork;
   viewport: string;
   isActive(): boolean;
+}
+
+async function completeCalendarSample(context: MeasurementContext, sample: Sample): Promise<void> {
+  const id = sample.scenario;
+  if (!id.startsWith('ui.calendar.')) return;
+  const visibleDates = sample.facts['visibleDates'];
+  if (typeof visibleDates !== 'string') throw new Error('Calendar work dates missing');
+  Object.assign(sample.facts, calendarPopulation(context.host, visibleDates.split(',')));
+  if (context.diagnostic) {
+    context.bridge.save(
+      `calendar-${id.slice('ui.calendar.'.length)}-dom.json`,
+      calendarDiagnostics(element('.abyss-cal-body')),
+    );
+    await context.cdp?.screenshot(`calendar-${id.slice('ui.calendar.'.length)}`);
+  }
 }
 
 function createMeasure(context: MeasurementContext): Measure {
@@ -122,6 +132,7 @@ function createMeasure(context: MeasurementContext): Measure {
         bounded(pending.track(action()), 30000, id),
       );
       assertViewport(context.viewport);
+      await completeCalendarSample(context, sample);
       samples.push(sample);
       bridge.save(diagnostic ? 'diagnostic-samples.json' : `iteration-${iteration}.json`, samples);
       bridge.save('progress.json', {
@@ -174,6 +185,8 @@ export function install(host: Host, bridge: NativeBridge, options: NativeOptions
     }
     const samples: Sample[] = [];
     const measure = createMeasure({
+      host,
+      cdp: resources.get('cdp'),
       bridge,
       iteration,
       diagnostic,
@@ -185,9 +198,12 @@ export function install(host: Host, bridge: NativeBridge, options: NativeOptions
     await measure('startup.index', async () => {
       await host.plugins.enablePlugin('abyss-tasks');
       await indexed(host);
-      return { roots: 4000 };
+      return { roots: options.expectedRoots, nodes: options.expectedNodes };
     });
-    assertRoots(host);
+    assertRoots(host, options.expectedRoots);
+    const nodes = plugin(host).queries.listNodes().length;
+    if (nodes !== options.expectedNodes)
+      throw new Error(`Fixture nodes: expected ${options.expectedNodes}, received ${nodes}`);
     if (!options.startup)
       await suite(host, options, measure, { cdp: resources.get('cdp'), bridge });
     const cdp = resources.get('cdp');
@@ -227,6 +243,7 @@ async function suite(
       height: innerHeight,
     });
   await cdp?.screenshot('analysis');
+  await indexScenarios(host, options, measure);
   await commandScenarios(host, options, measure);
   await measure('panel.close', async () => {
     await closePanels(host);

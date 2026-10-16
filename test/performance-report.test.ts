@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseRun, renderReport } from '../tooling/performance/report';
 import { compareRuns, summarize } from '../tooling/performance/statistics';
-import type { ProfileRun } from '../tooling/performance/types';
+import { scenarioIds, type ProfileRun } from '../tooling/performance/types';
 
 function run(values: number[], overrides: Partial<ProfileRun> = {}): ProfileRun {
   return {
@@ -64,7 +64,8 @@ describe('native performance statistics', () => {
   it('rejects incompatible, failed, missing and logically different work', () => {
     const before = run(Array<number>(20).fill(100));
     for (const candidate of [
-      run([100], { identity: { fixture: 'changed' } }),
+      run([100], { identity: { ...before.identity, fixture: 'changed' } }),
+      run([100], { identity: { ...before.identity, fixtureKind: 'wide-tree' } }),
       run([100], { status: 'failed' }),
       run([100], { restored: false }),
       run([100], { expectedScenarios: ['startup', 'search'] }),
@@ -77,6 +78,44 @@ describe('native performance statistics', () => {
     if (first === undefined) throw new Error('Missing sample');
     first.facts = { roots: 3999 };
     expect(compareRuns(before, changed).compatible).toBe(false);
+  });
+  it('rejects canonical runs whose fixture kind and scenario roster disagree at parse and compare', () => {
+    const roster = scenarioIds('wide-tree', false);
+    const canonical = run([100], {
+      identity: { fixture: 'wide-digest', fixtureKind: 'wide-tree', startupOnly: false },
+      expectedScenarios: roster,
+      samples: roster.map((scenario) => ({
+        scenario,
+        iteration: 0,
+        durationMs: 100,
+        longTasks: 0,
+        longTaskMs: 0,
+        maxFrameGapMs: 0,
+        domNodes: 10,
+        facts: {},
+      })),
+    });
+    expect(parseRun(JSON.stringify(canonical))).toEqual(canonical);
+    for (const invalid of [
+      { ...canonical, identity: { ...canonical.identity, fixtureKind: 'unknown' } },
+      { ...canonical, identity: { ...canonical.identity, fixtureKind: 'standard' } },
+      {
+        ...canonical,
+        expectedScenarios: roster.filter((id) => id !== 'index.metadata-only'),
+        samples: canonical.samples.filter((sample) => sample.scenario !== 'index.metadata-only'),
+      },
+    ]) {
+      expect(() => parseRun(JSON.stringify(invalid))).toThrow('fixture scenario');
+      expect(compareRuns(invalid, invalid).compatible).toBe(false);
+    }
+    const startup = {
+      ...canonical,
+      identity: { ...canonical.identity, startupOnly: true },
+      expectedScenarios: ['startup.index'],
+      samples: canonical.samples.filter((sample) => sample.scenario === 'startup.index'),
+    };
+    expect(parseRun(JSON.stringify(startup))).toEqual(startup);
+    expect(compareRuns(canonical, startup).compatible).toBe(false);
   });
   it('validates saved results and escapes report labels', () => {
     const saved = run([12, 15], { id: 'test|<script>' });
