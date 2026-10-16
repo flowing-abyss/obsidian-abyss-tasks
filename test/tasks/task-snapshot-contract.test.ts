@@ -535,3 +535,37 @@ it.each(['\n', '\r\n'])(
     }
   },
 );
+
+it('projects the supplied canonical root parse with the same snapshot as a direct parse', () => {
+  const statusCatalog = canonicalStatusCatalog();
+  const codec = new TaskMarkdownCodec(statusCatalog);
+  const exactBlock = '- [ ] Root #tag 📅 2026-10-17\n  - [x] Child\n  - > Description';
+  const projection = {
+    codec,
+    statusCatalog,
+    filePath: 'tasks.md',
+    lines: exactBlock.split('\n'),
+    line: 0,
+    exactBlock,
+    ref: { filePath: 'tasks.md', line: 0, revision: 'canonical' },
+    presentation: { linkCount: 0 },
+    offsetAt: () => 0,
+  };
+  const parsedRoot = expectDefined(
+    codec.parseLine(projection.lines[0] ?? '', { filePath: 'tasks.md', line: 0 }),
+  );
+  const direct = expectDefined(projectTaskSnapshot(projection));
+  const parse = codec.parseLine.bind(codec);
+  vi.spyOn(codec, 'parseLine').mockImplementation((source, options) =>
+    options.line === 0 ? null : parse(source, options),
+  );
+  const supplied = projectTaskSnapshot({ ...projection, parsedRoot });
+  expect(supplied).toEqual(direct);
+  expect(supplied).toMatchObject({
+    title: 'Root',
+    tags: ['#tag'],
+    planning: { due: '2026-10-17' },
+    subtasks: [{ title: 'Child', status: 'done' }],
+    description: 'Description',
+  });
+});

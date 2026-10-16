@@ -21,7 +21,7 @@ import type {
 } from '../../domain/types';
 import { durationMinutes, localDate, localTime } from '../../domain/validation';
 import { isTaskBlockBlankLine, readTaskDescriptionLine } from './taskBlockSyntax';
-import type { TaskMarkdownCodec } from './TaskMarkdownCodec';
+import type { ParsedTaskLine, TaskMarkdownCodec } from './TaskMarkdownCodec';
 
 const PREFIX_RE = /^([\s>]*)/u;
 const ENTRY_ARROW = '→';
@@ -45,6 +45,7 @@ interface ProjectedChildren {
 }
 
 export interface TaskSnapshotProjection {
+  readonly parsedRoot?: ParsedTaskLine;
   readonly codec: TaskMarkdownCodec;
   readonly statusCatalog: StatusCatalog;
   readonly filePath: string;
@@ -396,10 +397,12 @@ export function* projectTaskSnapshotSteps(
   projection: TaskSnapshotProjection,
 ): Generator<void, TaskSnapshot | undefined> {
   const originalMarkdown = projection.lines[projection.line] ?? '';
-  const parsed = projection.codec.parseLine(originalMarkdown, {
-    filePath: projection.filePath,
-    line: projection.line,
-  });
+  const parsed =
+    projection.parsedRoot ??
+    projection.codec.parseLine(originalMarkdown, {
+      filePath: projection.filePath,
+      line: projection.line,
+    });
   if (parsed == null) return undefined;
   yield;
   const rootNode: TaskNodeRef = { type: 'task', ref: projection.ref };

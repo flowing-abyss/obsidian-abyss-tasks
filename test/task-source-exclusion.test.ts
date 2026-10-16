@@ -8,7 +8,11 @@ import {
   validateTaskStorageDraft,
 } from '../src/settings/taskStorageSettings';
 import { StatusCatalog } from '../src/tasks/domain/StatusCatalog';
-import { TaskIndex, type TaskSourceMetadata } from '../src/tasks/infrastructure/TaskIndex';
+import {
+  TaskIndex,
+  type TaskIndexOptions,
+  type TaskSourceMetadata,
+} from '../src/tasks/infrastructure/TaskIndex';
 import { createAppWithFiles, expectDefined, flushMicrotasks, seedTaskCache } from './helpers';
 
 function catalog(): StatusCatalog {
@@ -18,6 +22,7 @@ function catalog(): StatusCatalog {
 function sourceIndex(
   files: Record<string, string>,
   excludeSource?: (source: TaskSourceMetadata) => boolean,
+  statisticsFileKind?: TaskIndexOptions['statisticsFileKind'],
 ): Promise<{
   readonly app: Awaited<ReturnType<typeof createAppWithFiles>>;
   readonly index: TaskIndex;
@@ -26,6 +31,7 @@ function sourceIndex(
     app,
     index: new TaskIndex(app, {
       statusCatalog: catalog(),
+      ...(statisticsFileKind === undefined ? {} : { statisticsFileKind }),
 
       ...(excludeSource === undefined ? {} : { excludeSource }),
     }),
@@ -33,6 +39,100 @@ function sourceIndex(
 }
 
 describe('TaskIndex source exclusion', () => {
+  it('keeps authored policy metadata separate from cached presentation through unchanged-byte events and rename', async () => {
+    const content =
+      '---\nprivate: false\ntags: [authored]\ncolor: red\n---\n- [ ] Visible #body\n`#private`\n';
+    const { app, index } = await sourceIndex(
+      { 'active.md': content },
+      ({ filePath, frontmatter, tags }) =>
+        filePath.startsWith('archive/') ||
+        frontmatter['private'] === true ||
+        tags.includes('#private'),
+      (path, tags, frontmatter) => {
+        if (
+          frontmatter['private'] !== false ||
+          !tags.includes('#authored') ||
+          !tags.includes('#body') ||
+          tags.includes('#private')
+        )
+          return undefined;
+        return path.startsWith('archive/') ? 'archive' : 'live';
+      },
+    );
+    seedTaskCache(app, 'active.md', [{ task: ' ', parent: -1, line: 5 }], {
+      private: true,
+      tags: ['private'],
+      color: 'blue',
+    });
+    try {
+      await index.initialize();
+      index.subscribeStatistics(() => {});
+      await index.whenStatisticsSettled();
+      expect(index.list()[0]?.presentation.noteColor).toBe('blue');
+      expect(index.readStatistics().files).toMatchObject([
+        {
+          path: 'active.md',
+          kind: 'live',
+          roots: [{ title: 'Visible', presentation: { noteColor: 'blue' } }],
+        },
+      ]);
+      const file = app.vault.getAbstractFileByPath('active.md');
+      if (!(file instanceof TFile)) throw new Error('missing note');
+      app.metadataCache.trigger('changed', file, content, {
+        frontmatter: { private: true, tags: ['private'], color: 'green' },
+      });
+      await index.whenStatisticsSettled();
+      expect(index.list()[0]?.presentation.noteColor).toBe('green');
+      expect(index.readStatistics().files).toMatchObject([
+        { kind: 'live', roots: [{ presentation: { noteColor: 'green' } }] },
+      ]);
+      await app.vault.rename(file, 'archive/active.md');
+      await flushMicrotasks(20);
+      await index.whenStatisticsSettled();
+      expect(index.list()).toEqual([]);
+      expect(index.readStatistics().files).toMatchObject([
+        { path: 'archive/active.md', kind: 'archive', roots: [{ title: 'Visible' }] },
+      ]);
+    } finally {
+      index.destroy();
+    }
+  });
+
+  it.each([
+    { name: 'absent', content: '- [ ] Visible', line: 0, color: undefined },
+    { name: 'empty', content: '---\n{}\n---\n- [ ] Visible', line: 3, color: undefined },
+    { name: 'authored', content: '---\ncolor: red\n---\n- [ ] Visible', line: 3, color: 'red' },
+  ])(
+    'preserves $name frontmatter with an absent or explicitly empty host cache',
+    async ({ content, line, color }) => {
+      const { app, index } = await sourceIndex(
+        { 'active.md': content },
+        ({ frontmatter }) => frontmatter['private'] === true,
+      );
+      seedTaskCache(app, 'active.md', [{ task: ' ', parent: -1, line }]);
+      try {
+        await index.initialize();
+        index.subscribeStatistics(() => {});
+        await index.whenStatisticsSettled();
+        expect(index.list()[0]?.presentation.noteColor).toBe(color);
+        const before = index.readStatistics();
+        const file = app.vault.getAbstractFileByPath('active.md');
+        if (!(file instanceof TFile)) throw new Error('missing note');
+        app.metadataCache.trigger('changed', file, content, { frontmatter: {} });
+        await index.whenStatisticsSettled();
+        expect(index.list()[0]?.presentation.noteColor).toBeUndefined();
+        expect(index.readStatistics().files).toMatchObject([
+          { path: 'active.md', kind: 'live', roots: [{ title: 'Visible' }] },
+        ]);
+        if (color !== undefined || line === 0)
+          expect(index.readStatistics().revision).toBeGreaterThan(before.revision);
+        else expect(index.readStatistics()).toBe(before);
+      } finally {
+        index.destroy();
+      }
+    },
+  );
+
   it.each([
     {
       name: 'frontmatter field',

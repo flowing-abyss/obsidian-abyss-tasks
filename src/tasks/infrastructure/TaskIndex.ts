@@ -133,6 +133,11 @@ export interface TaskSourceMetadata {
   readonly frontmatter: Readonly<Record<string, unknown>>;
 }
 
+interface PreparedObservation {
+  readonly cache: CachedMetadata;
+  readonly metadata: TaskSourceMetadata;
+}
+
 /** Use the host random source already used by TaskRefAuthority, including mobile runtimes. */
 function searchEpoch(): string {
   const values = new Uint32Array(4);
@@ -2064,10 +2069,11 @@ export class TaskIndex
       this.options_abyssPrivate.refAuthority?.deferObservation(observation.path, content) === true
     )
       return false;
-    const selectedCache = this.cacheWithFrontmatter_abyssPrivate(content, cache);
-    if (this.sourceIsExcluded_abyssPrivate(observation.path, content)) {
+    const prepared = this.prepareObservation_abyssPrivate(observation.path, content, cache);
+    const selectedCache = prepared.cache;
+    if (this.excludeSource_abyssPrivate?.(prepared.metadata) === true) {
       this.options_abyssPrivate.refAuthority?.discard(observation.path);
-      this.acceptStatisticsSource_abyssPrivate(observation.path, content, selectedCache, []);
+      this.acceptStatisticsSource_abyssPrivate(observation.path, content, prepared, []);
       return this.commitEmptyObservation_abyssPrivate(observation);
     }
     const tasks = this.parseFile_abyssPrivate({
@@ -2078,7 +2084,7 @@ export class TaskIndex
       observedFile,
     });
     this.replaceFile_abyssPrivate(observation.path, tasks, [], true);
-    this.acceptStatisticsSource_abyssPrivate(observation.path, content, selectedCache, tasks);
+    this.acceptStatisticsSource_abyssPrivate(observation.path, content, prepared, tasks);
     return true;
   }
 
@@ -2109,25 +2115,28 @@ export class TaskIndex
   private cacheWithFrontmatter_abyssPrivate(
     content: string,
     cache: CachedMetadata | null | undefined,
+    authoredFrontmatter: Record<string, unknown> | undefined,
   ): CachedMetadata {
     const selected = cacheWithContentFallback(content, cache);
-    const frontmatter = selected.frontmatter ?? frontmatterFromContent(content);
+    const frontmatter = selected.frontmatter ?? authoredFrontmatter;
     return frontmatter === undefined ? selected : { ...selected, frontmatter };
   }
 
-  private sourceIsExcluded_abyssPrivate(filePath: string, content: string): boolean {
-    const exclude = this.excludeSource_abyssPrivate;
-    if (exclude === undefined) return false;
-    return exclude(this.sourceMetadata_abyssPrivate(filePath, content));
-  }
-
-  private sourceMetadata_abyssPrivate(filePath: string, content: string): TaskSourceMetadata {
-    const frontmatter = frontmatterFromContent(content) ?? {};
+  private prepareObservation_abyssPrivate(
+    filePath: string,
+    content: string,
+    cache: CachedMetadata | null | undefined,
+  ): PreparedObservation {
+    const authoredFrontmatter = frontmatterFromContent(content);
+    const frontmatter = authoredFrontmatter ?? {};
     const frontmatterTags = getAllTags({ frontmatter }) ?? [];
     return {
-      filePath,
-      tags: [...new Set([...frontmatterTags, ...extractMarkdownBodyTags(content)])],
-      frontmatter: { ...frontmatter },
+      cache: this.cacheWithFrontmatter_abyssPrivate(content, cache, authoredFrontmatter),
+      metadata: {
+        filePath,
+        tags: [...new Set([...frontmatterTags, ...extractMarkdownBodyTags(content)])],
+        frontmatter: { ...frontmatter },
+      },
     };
   }
 
@@ -2145,7 +2154,7 @@ export class TaskIndex
 
   private statisticsSource_abyssPrivate(path: string): StatisticsProjectionInput | undefined {
     const accepted = this.acceptedStatisticsSources_abyssPrivate.get(path);
-    const metadata = accepted?.metadata ?? this.sourceMetadata_abyssPrivate(path, '');
+    const metadata = accepted?.metadata ?? { filePath: path, tags: [], frontmatter: {} };
     const kind = this.statisticsKind_abyssPrivate(metadata);
     if (kind === undefined) return undefined;
     return {
@@ -2213,9 +2222,10 @@ export class TaskIndex
   private acceptStatisticsSource_abyssPrivate(
     path: string,
     content: string,
-    cache: CachedMetadata,
+    prepared: PreparedObservation,
     tasks: readonly TaskSnapshot[],
   ): void {
+    const { cache, metadata } = prepared;
     const frontmatterSignature = JSON.stringify([cache.frontmatter]);
     const prior = this.acceptedStatisticsSources_abyssPrivate.get(path);
     const changed =
@@ -2229,7 +2239,7 @@ export class TaskIndex
         tasks,
         frontmatterSignature,
         revision: ++this.statisticsSourceRevision_abyssPrivate,
-        metadata: this.sourceMetadata_abyssPrivate(path, content),
+        metadata,
       });
     }
     this.statisticsReadFailures_abyssPrivate.delete(path);
@@ -2378,9 +2388,11 @@ export class TaskIndex
     if (item.task === undefined || hasTaskAncestor(item, context.itemByLine)) return undefined;
     const line = item.position.start.line;
     const originalMarkdown = context.lines[line] ?? '';
-    if (context.codec.parseLine(originalMarkdown, { filePath: context.filePath, line }) == null) {
-      return undefined;
-    }
+    const parsedRoot = context.codec.parseLine(originalMarkdown, {
+      filePath: context.filePath,
+      line,
+    });
+    if (parsedRoot == null) return undefined;
     const exactBlock = context.blockByLine.get(line)?.source ?? originalMarkdown;
     const ref: TaskRef = {
       filePath: context.filePath,
@@ -2396,6 +2408,7 @@ export class TaskIndex
     };
     return {
       codec: context.codec,
+      parsedRoot,
       statusCatalog: this.statusCatalog_abyssPrivate,
       filePath: context.filePath,
       lines: context.lines,
@@ -2458,7 +2471,11 @@ export class TaskIndex
   }
 
   previewContent(filePath: string, content: string): readonly TaskSnapshot[] {
-    const cache = this.cacheWithFrontmatter_abyssPrivate(content, null);
+    const cache = this.cacheWithFrontmatter_abyssPrivate(
+      content,
+      null,
+      frontmatterFromContent(content),
+    );
     return this.parseFile_abyssPrivate({
       filePath,
       content,
@@ -2479,7 +2496,8 @@ export class TaskIndex
     for (const filePath of contents.keys()) this.invalidatePendingRead_abyssPrivate(filePath);
     const prepared = [...contents].map(([filePath, content]) => {
       let restored = false;
-      const cache = this.cacheWithFrontmatter_abyssPrivate(content, null);
+      const observation = this.prepareObservation_abyssPrivate(filePath, content, null);
+      const { cache, metadata } = observation;
       let authorityTransitions: readonly ProvenRootRevisionOverride[] = [];
       const rawTasks = this.parseFile_abyssPrivate({
         filePath,
@@ -2492,14 +2510,14 @@ export class TaskIndex
         },
         observedFile: this.fileGenerations_abyssPrivate.has(filePath),
       });
-      const tasks = this.sourceIsExcluded_abyssPrivate(filePath, content) ? [] : rawTasks;
+      const tasks = this.excludeSource_abyssPrivate?.(metadata) === true ? [] : rawTasks;
       roots.push(...tasks);
       return () => {
         this.committedContents_abyssPrivate.set(filePath, content);
         if (this.replaceFile_abyssPrivate(filePath, tasks, authorityTransitions))
           this.queueChanged_abyssPrivate(filePath);
         if (restored) this.reconciliationTransitions_abyssPrivate.delete(filePath);
-        this.acceptStatisticsSource_abyssPrivate(filePath, content, cache, tasks);
+        this.acceptStatisticsSource_abyssPrivate(filePath, content, observation, tasks);
       };
     });
     prove(roots);
@@ -2672,11 +2690,12 @@ export class TaskIndex
     cache: CachedMetadata,
   ): void {
     if (this.options_abyssPrivate.refAuthority?.deferObservation(path, data) === true) return;
-    const selectedCache = this.cacheWithFrontmatter_abyssPrivate(data, cache);
-    if (this.sourceIsExcluded_abyssPrivate(path, data)) {
+    const prepared = this.prepareObservation_abyssPrivate(path, data, cache);
+    const selectedCache = prepared.cache;
+    if (this.excludeSource_abyssPrivate?.(prepared.metadata) === true) {
       this.options_abyssPrivate.refAuthority?.discard(path);
       const changed = this.replaceFile_abyssPrivate(path, [], [], true);
-      this.acceptStatisticsSource_abyssPrivate(path, data, selectedCache, []);
+      this.acceptStatisticsSource_abyssPrivate(path, data, prepared, []);
       if (changed) this.queueChanged_abyssPrivate(path);
       else this.queueReconciled_abyssPrivate(path);
       return;
@@ -2693,7 +2712,7 @@ export class TaskIndex
       observedFile: this.fileGenerations_abyssPrivate.has(path),
     });
     const changed = this.replaceFile_abyssPrivate(path, tasks, authorityTransitions, true);
-    this.acceptStatisticsSource_abyssPrivate(path, data, selectedCache, tasks);
+    this.acceptStatisticsSource_abyssPrivate(path, data, prepared, tasks);
     if (changed) this.queueChanged_abyssPrivate(path);
     else this.queueReconciled_abyssPrivate(path);
   }
@@ -2734,7 +2753,7 @@ export class TaskIndex
     this.acceptStatisticsSource_abyssPrivate(
       path,
       accepted.content,
-      accepted.cache,
+      { cache: accepted.cache, metadata: { ...accepted.metadata, filePath: path } },
       tasks.map((task) => relocateSnapshot(task, path)),
     );
   }
@@ -2786,7 +2805,7 @@ export class TaskIndex
       this.acceptStatisticsSource_abyssPrivate(
         newPath,
         accepted.content,
-        accepted.cache,
+        { cache: accepted.cache, metadata: accepted.metadata },
         this.taskMap_abyssPrivate.get(newPath) ?? [],
       );
     }

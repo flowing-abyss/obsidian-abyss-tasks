@@ -1,13 +1,41 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
-import { evaluateQuery, validateQuerySyntax } from '../src/query/evaluateQuery';
+import { compileQuery, evaluateQuery, validateQuerySyntax } from '../src/query/evaluateQuery';
 import { localDate } from '../src/tasks';
 import { projectCalendarOccurrences } from '../src/views/calendarOccurrences';
 import { task, taskQueryApi } from './helpers';
 
 const fm = (o: Record<string, unknown> = {}) => o;
 
-describe('evaluateQuery', () => {
+describe.each([
+  { name: 'evaluateQuery', evaluate: evaluateQuery },
+  {
+    name: 'compileQuery',
+    evaluate: (query: string, path: string, tags: string[], frontmatter: Record<string, unknown>) =>
+      compileQuery(query)(path, tags, frontmatter),
+  },
+])('$name', ({ evaluate: evaluateQuery }) => {
+  it.each([
+    { query: 'NOT "../private.md"', expected: true },
+    { query: 'NOT "private/{{YYYY-MMMM}}.md"', expected: true },
+    { query: 'NOT (#private', expected: false },
+    { query: '#keep OR (', expected: false },
+    { query: '#keep trailing', expected: false },
+  ])('preserves leaf failure versus whole-grammar failure: $query', ({ query, expected }) => {
+    expect(evaluateQuery(query, 'A.md', ['#keep'], {})).toBe(expected);
+  });
+
+  it('short circuits and maps reached evaluation errors to false even under NOT', () => {
+    const frontmatter = {
+      get broken(): unknown {
+        throw new Error('unreadable');
+      },
+    };
+    expect(evaluateQuery('#keep OR broken=x', 'A.md', ['#keep'], frontmatter)).toBe(true);
+    expect(evaluateQuery('#missing AND broken=x', 'A.md', ['#keep'], frontmatter)).toBe(false);
+    expect(evaluateQuery('NOT broken=x', 'A.md', [], frontmatter)).toBe(false);
+  });
+
   it('matches a folder prefix', () => {
     expect(evaluateQuery('Projects/', 'Projects/A.md', [], fm())).toBe(true);
     expect(evaluateQuery('projects/', 'Projects/A.md', [], fm())).toBe(true);
@@ -192,4 +220,12 @@ describe('evaluateQuery', () => {
     expect(projection.occurrences).toHaveLength(3);
     expect(matches.map(({ ref }) => ref)).toEqual([persisted.ref]);
   });
+});
+
+it('reuses a compiled policy with current path, tags and frontmatter on each observation', () => {
+  const policy = compileQuery('"archive/{{YYYY}}.md" OR (#private AND state=hidden)');
+  expect(policy('archive/2026.md', [], {})).toBe(true);
+  expect(policy('active.md', ['#private'], { state: 'hidden' })).toBe(true);
+  expect(policy('active.md', ['#private'], { state: 'visible' })).toBe(false);
+  expect(policy('active.md', [], { state: 'hidden' })).toBe(false);
 });

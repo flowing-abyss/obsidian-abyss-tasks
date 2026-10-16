@@ -250,27 +250,60 @@ describe('TaskCalendarPlugin saveSettings', () => {
     expect(refresh).toHaveBeenCalledOnce();
   });
 
-  it('restores the prior storage settings and predicate when persistence rejects', async () => {
-    const plugin = makePlugin();
-    await plugin.onload();
-    const refresh = vi.spyOn(
-      plugin.taskIndex as unknown as {
-        refreshSourceExclusion(predicate: unknown): Promise<void>;
-      },
-      'refreshSourceExclusion',
-    );
-    vi.spyOn(plugin, 'saveSettings').mockRejectedValueOnce(new Error('disk full'));
+  it('retains ordinary and Statistics policy when the real settings write rejects', async () => {
+    const plugin = makePlugin({ taskArchivePath: 'old.md', taskIgnoreQuery: '#old-ignore' });
+    try {
+      await plugin.onload();
+      const index = plugin.taskIndex as TaskIndex;
+      await index.initialize();
+      const contents = new Map([
+        ['old.md', '- [ ] Old archive'],
+        ['new.md', '- [ ] New live'],
+        ['ignored.md', '- [ ] Old ignored #old-ignore'],
+        ['private.md', '- [ ] Private visible #private'],
+      ]);
+      const install = () => index.installCommittedBatch(contents, () => {});
+      install();
+      const release = index.subscribeStatistics(() => {});
+      await index.whenStatisticsSettled();
+      const before = index.readStatistics();
+      vi.spyOn(plugin, 'saveData').mockRejectedValueOnce(new Error('disk full'));
 
-    await expect(
-      plugin.saveTaskStorageSettings({
-        taskArchivePath: 'archive/new.md',
+      await expect(
+        plugin.saveTaskStorageSettings({ taskArchivePath: 'new.md', taskIgnoreQuery: '#private' }),
+      ).rejects.toThrow('disk full');
+
+      expect(plugin.settings.taskArchivePath).toBe('old.md');
+      expect(plugin.settings.taskIgnoreQuery).toBe('#old-ignore');
+      install();
+      await index.whenStatisticsSettled();
+      expect(
+        index
+          .list()
+          .map((task) => task.title)
+          .sort((left, right) => left.localeCompare(right)),
+      ).toEqual(['New live', 'Private visible']);
+      expect(index.readStatistics().files.map(({ path, kind }) => ({ path, kind }))).toEqual([
+        { path: 'new.md', kind: 'live' },
+        { path: 'old.md', kind: 'archive' },
+        { path: 'private.md', kind: 'live' },
+      ]);
+      expect(index.readStatistics().files).toEqual(before.files);
+      await plugin.saveTaskStorageSettings({
+        taskArchivePath: 'new.md',
         taskIgnoreQuery: '#private',
-      }),
-    ).rejects.toThrow('disk full');
-
-    expect(plugin.settings.taskArchivePath).toBe(DEFAULT_SETTINGS.taskArchivePath);
-    expect(plugin.settings.taskIgnoreQuery).toBe(DEFAULT_SETTINGS.taskIgnoreQuery);
-    expect(refresh).not.toHaveBeenCalled();
+      });
+      install();
+      await index.whenStatisticsSettled();
+      expect(index.list().map((task) => task.title)).toEqual(['Old ignored']);
+      expect(index.readStatistics().files.map(({ path, kind }) => ({ path, kind }))).toEqual([
+        { path: 'ignored.md', kind: 'live' },
+        { path: 'new.md', kind: 'archive' },
+      ]);
+      release();
+    } finally {
+      plugin.onunload();
+    }
   });
 
   it('refreshes project stores and table settings in open panel views after persistence', async () => {

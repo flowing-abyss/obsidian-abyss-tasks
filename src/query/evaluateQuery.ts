@@ -239,54 +239,78 @@ export function validateQuerySyntax(query: string): QuerySyntaxValidation {
   }
 }
 
+export type CompiledQuery = (
+  filePath: string,
+  fileTags: readonly string[],
+  frontmatter: Readonly<Record<string, unknown>>,
+) => boolean;
+
+export function compileQuery(query: string): CompiledQuery {
+  try {
+    const evaluate = compileNode(parseQuery(query));
+    return (filePath, fileTags, frontmatter) => {
+      try {
+        return evaluate(filePath, fileTags, frontmatter);
+      } catch {
+        return false;
+      }
+    };
+  } catch {
+    return () => false;
+  }
+}
+
 export function evaluateQuery(
   query: string,
   filePath: string,
-  fileTags: string[],
-  frontmatter: Record<string, unknown>,
+  fileTags: readonly string[],
+  frontmatter: Readonly<Record<string, unknown>>,
 ): boolean {
-  if (query.trim().length === 0) return false;
-  try {
-    return evaluateNode(parseQuery(query), filePath, fileTags, frontmatter);
-  } catch {
-    return false;
-  }
+  return compileQuery(query)(filePath, fileTags, frontmatter);
 }
 
-function evaluateNode(
-  node: QueryNode,
-  filePath: string,
-  fileTags: readonly string[],
-  frontmatter: Record<string, unknown>,
-): boolean {
+function compileNode(node: QueryNode): CompiledQuery {
   switch (node.type) {
     case 'and':
-      return (
-        evaluateNode(node.left, filePath, fileTags, frontmatter) &&
-        evaluateNode(node.right, filePath, fileTags, frontmatter)
-      );
-    case 'or':
-      return (
-        evaluateNode(node.left, filePath, fileTags, frontmatter) ||
-        evaluateNode(node.right, filePath, fileTags, frontmatter)
-      );
-    case 'not':
-      return !evaluateNode(node.child, filePath, fileTags, frontmatter);
+    case 'or': {
+      const left = compileNode(node.left);
+      const right = compileNode(node.right);
+      return node.type === 'and'
+        ? (path, tags, frontmatter) =>
+            left(path, tags, frontmatter) && right(path, tags, frontmatter)
+        : (path, tags, frontmatter) =>
+            left(path, tags, frontmatter) || right(path, tags, frontmatter);
+    }
+    case 'not': {
+      const child = compileNode(node.child);
+      return (path, tags, frontmatter) => !child(path, tags, frontmatter);
+    }
     case 'path':
-      return matchesPath(node.value, filePath);
+      return compilePath(node.value);
     case 'atom':
-      return evaluateAtom(node.value, filePath, fileTags, frontmatter);
+      return compileAtom(node.value);
   }
 }
 
-function matchesPath(pattern: string, filePath: string): boolean {
-  if (pattern.endsWith('/')) {
-    return filePath.toLocaleLowerCase().startsWith(pattern.toLocaleLowerCase());
-  }
+function compileFolder(pattern: string): CompiledQuery {
+  const prefix = pattern.toLocaleLowerCase();
+  return (filePath) => filePath.toLocaleLowerCase().startsWith(prefix);
+}
+
+function compilePath(pattern: string): CompiledQuery {
+  if (pattern.endsWith('/')) return compileFolder(pattern);
   try {
-    return compileNotePathPattern(pattern).matches(filePath);
+    const matcher = compileNotePathPattern(pattern);
+    return (filePath) => {
+      try {
+        return matcher.matches(filePath);
+      } catch {
+        return false;
+      }
+    };
   } catch {
-    return false;
+    // An invalid leaf is false; NOT still negates it, as in the direct evaluator.
+    return () => false;
   }
 }
 
@@ -345,24 +369,21 @@ function isJoinablePrimitive(
   );
 }
 
-function evaluateAtom(
-  term: string,
-  filePath: string,
-  fileTags: readonly string[],
-  frontmatter: Record<string, unknown>,
-): boolean {
+function compileAtom(term: string): CompiledQuery {
   if (term.startsWith('#')) {
     const tagName = term.slice(1).toLowerCase();
-    return fileTags.some((tag) => {
-      const normalized = tag.replace(/^#/u, '').toLowerCase();
-      return normalized === tagName || normalized.startsWith(`${tagName}/`);
-    });
+    return (_filePath, fileTags) =>
+      fileTags.some((tag) => {
+        const normalized = tag.replace(/^#/u, '').toLowerCase();
+        return normalized === tagName || normalized.startsWith(`${tagName}/`);
+      });
   }
   const equality = term.indexOf('=');
   if (equality >= 0) {
     const key = term.slice(0, equality).trim();
     const expected = decodeEqualityValue(term.slice(equality + 1));
-    return frontmatterEqualityText(frontmatter[key]) === expected;
+    return (_filePath, _fileTags, frontmatter) =>
+      frontmatterEqualityText(frontmatter[key]) === expected;
   }
-  return term.endsWith('/') && filePath.toLocaleLowerCase().startsWith(term.toLocaleLowerCase());
+  return term.endsWith('/') ? compileFolder(term) : () => false;
 }

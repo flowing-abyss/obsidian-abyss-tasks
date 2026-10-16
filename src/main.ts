@@ -9,7 +9,7 @@ import {
   type ProjectPropertyCatalog,
 } from './projects/ObsidianProjectProperties';
 import { ProjectManager } from './projects/ProjectManager';
-import { evaluateQuery } from './query/evaluateQuery';
+import { compileQuery, type CompiledQuery } from './query/evaluateQuery';
 import { DEFAULT_SETTINGS } from './settings/defaults';
 import {
   isViewStateWritesSuspended,
@@ -103,6 +103,8 @@ export default class TaskCalendarPlugin extends Plugin {
   taskStatistics!: TaskStatisticsSource;
   private taskInputServices!: TaskInputServices;
   private statisticsArchivePattern!: NotePathPattern;
+  private taskSourcePolicy!: CompiledQuery;
+  private taskIgnorePolicy!: CompiledQuery;
   private taskSearch!: TaskSearchService;
   get search(): TaskSearchApi {
     return this.taskSearch;
@@ -429,9 +431,7 @@ export default class TaskCalendarPlugin extends Plugin {
       throw error;
     }
     this.effectiveTaskStorage = { ...validated.settings };
-    this.statisticsArchivePattern = compileNotePathPattern(
-      this.effectiveTaskStorage.taskArchivePath,
-    );
+    this.compileTaskSourcePolicy();
     await this.taskIndex.refreshSourceExclusion((source) => this.isTaskSourceExcluded(source));
   }
 
@@ -440,18 +440,19 @@ export default class TaskCalendarPlugin extends Plugin {
       taskArchivePath: this.settings.taskArchivePath,
       taskIgnoreQuery: this.settings.taskIgnoreQuery,
     };
+    this.compileTaskSourcePolicy();
+  }
+
+  private compileTaskSourcePolicy(): void {
     this.statisticsArchivePattern = compileNotePathPattern(
       this.effectiveTaskStorage.taskArchivePath,
     );
+    this.taskSourcePolicy = compileQuery(taskSourceIgnoreQuery(this.effectiveTaskStorage));
+    this.taskIgnorePolicy = compileQuery(this.effectiveTaskStorage.taskIgnoreQuery);
   }
 
   private isTaskSourceExcluded(source: TaskSourceMetadata): boolean {
-    return evaluateQuery(
-      taskSourceIgnoreQuery(this.effectiveTaskStorage),
-      source.filePath,
-      [...source.tags],
-      { ...source.frontmatter },
-    );
+    return this.taskSourcePolicy(source.filePath, source.tags, source.frontmatter);
   }
 
   private taskStatisticsFileKind(
@@ -459,10 +460,7 @@ export default class TaskCalendarPlugin extends Plugin {
     tags: readonly string[],
     frontmatter: Readonly<Record<string, unknown>>,
   ): 'live' | 'archive' | undefined {
-    if (
-      evaluateQuery(this.effectiveTaskStorage.taskIgnoreQuery, path, [...tags], { ...frontmatter })
-    )
-      return undefined;
+    if (this.taskIgnorePolicy(path, tags, frontmatter)) return undefined;
     return this.statisticsArchivePattern.matches(path) ? 'archive' : 'live';
   }
 

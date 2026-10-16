@@ -854,6 +854,19 @@ describe('TaskIndex lifecycle and events', () => {
     index.destroy();
   });
 
+  it('does not allocate root authority for a candidate rejected by the canonical codec', async () => {
+    const authority = new TaskRefAuthority('rejected-root');
+    const revision = vi.spyOn(authority, 'revision');
+    const { index } = await setup({ 'task.md': '- [xx] Rejected\n- [ ] Accepted' }, authority);
+    try {
+      await index.initialize();
+      expect(index.list().map((task) => task.title)).toEqual(['Accepted']);
+      expect(revision.mock.calls.map(([source]) => source)).toEqual(['- [ ] Accepted']);
+    } finally {
+      index.destroy();
+    }
+  });
+
   it('creates one authority revision for a root with one thousand subtasks', async () => {
     const source = [
       '- [ ] root',

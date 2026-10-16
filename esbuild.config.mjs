@@ -42,6 +42,8 @@ import process from 'process';
 // Native inspector lifetime, date-based week links and mobile Day activation:
 // main 2,116,217 -> 2,117,294 bytes (+1,077). Approved next-KiB limit: 2,117,632 (2068 KiB).
 // CSS enforcement and dependency scope are unchanged.
+// Prepared index observations and compiled source policy: main 2,118,553 -> 2,118,969 bytes
+// (+416). Approved next-KiB limit: 2,119,680 (2070 KiB); CSS and dependencies are unchanged.
 const { mainJsBudgetBytes: MAIN_JS_BUDGET_BYTES } = JSON.parse(
   readFileSync('package.json', 'utf8'),
 ).release;

@@ -99,7 +99,11 @@ Obsidian comment blocks and excluding frontmatter and fenced examples. Host list
 enriches discovery; omissions do not remove source tasks. The canonical
 [`TaskMarkdownCodec`](src/tasks/infrastructure/markdown/TaskMarkdownCodec.ts) parses them. Source
 exclusions apply to paths, tags, and frontmatter before public projections and reconciliation
-transitions; excluded content remains available for repository proof.
+transitions; excluded content remains available for repository proof. Each accepted observation
+prepares authored frontmatter and canonical body tags once for exclusion and Statistics policy.
+Host-cache frontmatter remains the presentation authority, with authored frontmatter as its fallback.
+Snapshot projection reuses the successful canonical root parse; rejected candidates receive no
+root reference allocation.
 
 Existing Markdown retains authored list markers, indentation, quotes, line endings, and unrelated
 content. Creation has its own formatting policy. Comments, subtree bounds, source transfer, and
