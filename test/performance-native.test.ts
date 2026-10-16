@@ -4,6 +4,7 @@ import { fixtureReady, install, resetFixture } from '../tooling/performance/nati
 import { NativeCdp } from '../tooling/performance/native-cdp';
 import { assertViewport, scrollRange } from '../tooling/performance/native-helpers';
 import { activityMetrics } from '../tooling/performance/native-observation';
+import { taskTextTyping } from '../tooling/performance/native-scenarios';
 import type { CdpListener, Host, NativeBridge } from '../tooling/performance/native-types';
 import { parseCliResult, parseOptions } from '../tooling/performance/options';
 import { AbyssProfiler, bounded, PendingWork } from '../tooling/performance/profiler';
@@ -16,6 +17,22 @@ const loadClock = async () => {
 const performance = await loadClock();
 
 describe('native profile boundaries', () => {
+  it('profiles progressive link typing and cancels without submitting or retaining a changed draft', async () => {
+    const input = document.body.createEl('textarea');
+    input.value = 'Original task';
+    const seen: string[] = [];
+    const keys: string[] = [];
+    input.addEventListener('input', () => seen.push(input.value));
+    input.addEventListener('keydown', (event) => keys.push(event.key));
+    try {
+      await taskTextTyping(input);
+      expect(seen).toEqual(['Check [', 'Check [[', 'Check [[P', 'Check [[Pro', 'Check [[Project']);
+      expect(keys).toEqual(['Escape', 'Escape']);
+      expect(input.value).toBe('Original task');
+    } finally {
+      input.remove();
+    }
+  });
   it('drains in-flight preparation and cancels later writes before restoration', async () => {
     const folder = '__abyss_profile_fixture_v1__';
     const contents = { [`${folder}/first.md`]: 'expected', [`${folder}/second.md`]: 'expected' };

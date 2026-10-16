@@ -4,6 +4,28 @@ import type { Host, NativeOptions } from './native-types.ts';
 import type { Sample } from './types.ts';
 
 export type Measure = (id: string, action: () => Promise<Sample['facts']>) => Promise<void>;
+
+export async function taskTextTyping(input: HTMLInputElement | HTMLTextAreaElement): Promise<void> {
+  const original = input.value;
+  const cancel = (): void => {
+    input.value = original;
+    for (let i = 0; i < 2; i++) {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    }
+  };
+  input.focus();
+  try {
+    for (const value of ['Check [', 'Check [[', 'Check [[P', 'Check [[Pro', 'Check [[Project']) {
+      input.value = value;
+      input.setSelectionRange(value.length, value.length);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      await frames();
+    }
+  } finally {
+    cancel();
+    await frames();
+  }
+}
 const ANALYSIS = [
   'rhythm',
   'completion',
@@ -32,6 +54,7 @@ export const SCENARIOS = [
   'ui.search',
   'ui.scroll',
   'ui.inspector',
+  'ui.inspector.link-input',
   'ui.calendar.day',
   'ui.calendar.week',
   'ui.calendar.month',
@@ -142,6 +165,11 @@ export async function panelScenarios(host: Host, measure: Measure): Promise<void
     );
     await frames();
     return { opened: true };
+  });
+  await measure('ui.inspector.link-input', async () => {
+    await click('.abyss-right .abyss-right-title-view');
+    await taskTextTyping(element<HTMLTextAreaElement>('.abyss-right-title-edit'));
+    return { inputs: 5 };
   });
 }
 

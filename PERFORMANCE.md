@@ -63,6 +63,7 @@ those notes belongs to comparison identity. This is not an empty-host benchmark.
 | `search.cold`                                    | Prepare the newly created Search service/Worker and await readiness; service-cold, not OS-cold.                                                                     |
 | `search.warm/no-results/subtree`                 | Open a cursor, read 40 hits, hydrate, and release it.                                                                                                               |
 | `panel.first-open`, `ui.search/scroll/inspector` | Open the real panel, join applied search results, visit three changed/hydrated virtual ranges, and open a task.                                                     |
+| `ui.inspector.link-input`                        | Open the title editor, type five progressive wiki-link prefixes with rendering opportunities, then cancel the draft.                                                |
 | `ui.calendar.day/week/month`                     | Enter Calendar and switch views, checking the active view and date cells. Day includes entering Calendar.                                                           |
 | `ui.projects.table/kanban/timeline`              | Enter Projects and render its three views. Table includes entering Projects.                                                                                        |
 | `statistics.acquire`                             | Subscribe to retained Statistics data, await settlement, reject projection issues.                                                                                  |
@@ -126,7 +127,7 @@ At least 10 observations per side are required:
 - **no-material-difference:** the entire interval fits inside the margin;
 - **inconclusive:** neither conclusion is established.
 
-Below 30 observations, p95 is flagged as unstable. The 39 scenario comparisons have no multiplicity
+Below 30 observations, p95 is flagged as unstable. The 40 scenario comparisons have no multiplicity
 correction. Thermal drift, GC, JIT, sync, and background applications can affect a whole batch.
 Run A/A on unchanged code to learn the noise floor; confirm apparent wins/regressions in A/B/B/A
 order on the same host. These are investigation signals, not automatic causal proof.
