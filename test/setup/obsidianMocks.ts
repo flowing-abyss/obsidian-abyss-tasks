@@ -10,7 +10,11 @@ if (typeof Document === 'function') {
   const { setup } = await import('obsidian-test-mocks/setup');
   setup();
 }
-vi.mock('obsidian', async () => ({
-  ...(await import('obsidian-test-mocks/obsidian')),
-  Modal: (await import('../support/inspectorModalMock')).InspectorModalMock,
-}));
+vi.mock('obsidian', async () => {
+  const obsidian = await import('obsidian-test-mocks/obsidian');
+  const { InspectorModalMock } = await import('../support/inspectorModalMock');
+  return {
+    ...obsidian,
+    Modal: InspectorModalMock,
+  };
+});
