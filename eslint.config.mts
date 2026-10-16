@@ -547,7 +547,7 @@ export default defineConfig(
     rules: { 'project-policy/ambient': ['error', 'pure'] },
   },
   {
-    files: ['tooling/*.mjs'],
+    files: ['tooling/*.mjs', 'tooling/performance/**/*.ts'],
     languageOptions: {
       parserOptions: { projectService: false, project: './tooling/tsconfig.json' },
     },

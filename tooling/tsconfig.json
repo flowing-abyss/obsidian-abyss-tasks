@@ -1,5 +1,5 @@
 {
   "extends": "../tsconfig.json",
-  "compilerOptions": { "allowJs": true, "checkJs": true, "noEmit": true, "lib": ["ES2021"] },
-  "include": ["*.mjs"]
+  "compilerOptions": { "allowJs": true, "checkJs": true, "noEmit": true, "lib": ["ES2021", "DOM"] },
+  "include": ["*.mjs", "performance/**/*.ts"]
 }

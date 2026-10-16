@@ -12,6 +12,7 @@
 
     "strict": true,
     "allowJs": true,
+    "allowImportingTsExtensions": true,
     "checkJs": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
