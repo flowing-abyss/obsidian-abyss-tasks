@@ -11,6 +11,7 @@ import {
   projectCalendarOccurrences,
   taskSnapshotForCalendarOccurrence,
 } from '../src/views/calendarOccurrences';
+import { renderHourGrid } from '../src/views/timegrid/HourGrid';
 import { MIN_BLOCK_HEIGHT_PX } from '../src/views/timegrid/layout';
 import { renderTimedBlocksForDay } from '../src/views/timegrid/renderTimedBlocks';
 import {
@@ -1079,6 +1080,30 @@ describe('renderTimedBlocksForDay', () => {
     expect(declarationsFor('.abyss-tg-resize-handle::after')).toMatch(/height\s*:\s*2px/u);
     expect(declarationsFor('.abyss-tg-span-edge')).toMatch(/width\s*:\s*10px/u);
     expect(declarationsFor('.abyss-tg-span-edge::after')).toMatch(/width\s*:\s*2px/u);
+  });
+
+  it('reserves touch gestures for explicit edges while leaving task bodies and grid ancestors scrollable', () => {
+    const panel = freshContainer();
+    panel.classList.add('abyss-panel-view');
+    const grid = renderHourGrid(panel, ['2026-07-10']);
+    const day = expectDefined(grid.days[0]);
+    renderTimedBlocksForDay(day.hourColumnEl, [task({ planning: { time: '09:00' } })], callbacks());
+    const allDay = day.allDayCellEl.createDiv('abyss-span-piece');
+    allDay.createDiv('abyss-tg-body').createDiv('abyss-tg-body-title');
+    allDay.createDiv('abyss-tg-span-edge');
+    const edges = ['.abyss-tg-resize-handle', '.abyss-tg-span-edge'];
+    for (const edge of edges) {
+      expect(cssValue(declarationsFor(edge), 'touch-action')).toBe('none');
+    }
+    const elements = [panel, ...panel.querySelectorAll('*')];
+    postcss.parse(css).walkDecls('touch-action', (declaration) => {
+      const rule = declaration.parent;
+      if (rule?.type !== 'rule') return;
+      for (const element of elements) {
+        if (!rule.selectors.some((selector) => element.matches(selector))) continue;
+        expect(declaration.value).toBe(element.matches(edges.join(',')) ? 'none' : 'auto');
+      }
+    });
   });
 
   it('limits hover and active edge affordances to hover devices without hiding touch resize feedback', () => {

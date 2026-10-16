@@ -951,6 +951,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   height: 10px;
   z-index: 3;
   cursor: ns-resize;
+  touch-action: none;
 }
 
 .abyss-tg-resize-handle--start-time {
@@ -1103,6 +1104,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   z-index: 5;
   width: 10px;
   cursor: ew-resize;
+  touch-action: none;
 }
 
 .abyss-tg-span-edge::after {
