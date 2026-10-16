@@ -1,5 +1,10 @@
 {
   "mcpServers": {
+    "mobile-mcp": {
+      "type": "stdio",
+      "command": "pnpm",
+      "args": ["dlx", "@mobilenext/mobile-mcp@latest"]
+    },
     "context7": {
       "type": "http",
       "url": "https://mcp.context7.com/mcp",

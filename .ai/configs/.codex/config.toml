@@ -1,3 +1,7 @@
+[mcp_servers.mobile-mcp]
+command = "pnpm"
+args = ["dlx", "@mobilenext/mobile-mcp@latest"]
+
 [mcp_servers.context7]
 url = "https://mcp.context7.com/mcp"
 env_http_headers = { "CONTEXT7_API_KEY" = "CONTEXT7_API_KEY" }
