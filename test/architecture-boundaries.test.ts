@@ -214,6 +214,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   DateRange: ['src/views/calendarOccurrences.ts'],
   FieldUpdate: ['src/views/calendarOccurrences.ts'],
   LocalTime: ['src/views/calendarOccurrences.ts'],
+  taskOccurrenceCompletion: ['src/views/calendarDayModel.ts'],
   taskOccupiedDates: [
     'src/views/calendarOccurrences.ts',
     'src/panels/task-list/taskDailyRows.ts',

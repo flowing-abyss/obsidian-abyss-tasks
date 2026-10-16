@@ -153,6 +153,7 @@ export { normalizeCommentText } from './domain/commentText';
 export {
   taskHasFutureDate,
   taskOccupiedDates,
+  taskOccurrenceCompletion,
   taskTodayOccurrence,
 } from './domain/taskOccupiedDates';
 export { taskNodeSourceLine } from './domain/taskSearchProjection';

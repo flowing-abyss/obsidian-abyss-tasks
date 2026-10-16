@@ -535,6 +535,7 @@ export default defineConfig(
       'src/panels/calendar/calendarDateNavigation.ts',
       'src/panels/calendar/visibleCalendarDates.ts',
       'src/panels/calendar/calendarContent.ts',
+      'src/views/calendarDayModel.ts',
       'src/views/panelTitle.ts',
       'src/views/taskGrouping.ts',
       'src/task-lists/taskSearchOrganization.ts',

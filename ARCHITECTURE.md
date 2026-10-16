@@ -382,6 +382,8 @@ centre filters. Tag discovery uses canonical public task tags and the configured
 
 [`taskOccupiedDates`](src/tasks/domain/taskOccupiedDates.ts) represents a valid inclusive start/due
 interval, or distinct authored date points. Today, Upcoming, and Calendar use that same model.
+The public task API exposes `taskOccurrenceCompletion` so presentation models retain canonical
+date-specific completion capability alongside `taskOccupiedDates`.
 Today distinguishes overdue work; Upcoming admits any future occupied date without expanding
 recurrence forecasts. Date-specific continuation rows carry completion restrictions separately
 from the canonical task. Explicit status commands still target the physical node. PanelView owns
