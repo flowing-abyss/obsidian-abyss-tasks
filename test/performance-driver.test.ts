@@ -123,7 +123,7 @@ describe('canonical profiler evaluation transport', () => {
     expect(mutations).toBe(1);
     expect(bridge.run).toHaveBeenCalledTimes(1);
     await expectClean();
-  }, 1000);
+  });
 
   it('does not wait for a delayed launch acknowledgement and handles its late rejection', async () => {
     lateReply = true;
