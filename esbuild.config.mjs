@@ -39,6 +39,9 @@ import process from 'process';
 // 189,482 -> 192,748 bytes (+3,266), after consolidating superseded phone toolbar rules.
 // Approved next-KiB limits are 2,116,608 (2067 KiB) and 193,536 (189 KiB).
 // No dependencies were added; both artifact checks retain size enforcement.
+// Native inspector lifetime, date-based week links and mobile Day activation:
+// main 2,116,217 -> 2,117,294 bytes (+1,077). Approved next-KiB limit: 2,117,632 (2068 KiB).
+// CSS enforcement and dependency scope are unchanged.
 const { mainJsBudgetBytes: MAIN_JS_BUDGET_BYTES } = JSON.parse(
   readFileSync('package.json', 'utf8'),
 ).release;

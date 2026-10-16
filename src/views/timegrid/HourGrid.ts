@@ -173,8 +173,9 @@ export function renderHourGrid(
   const root = container.createDiv({ cls: 'abyss-tg-root' });
   const today = window.moment().format('YYYY-MM-DD');
   renderDayHeaders(root, dates, today, onDayHeaderClick);
-  const allDay = renderAllDayBand(root, dates);
-  const gridRow = renderGridRow(root);
+  const content = root.createDiv({ cls: 'abyss-tg-content' });
+  const allDay = renderAllDayBand(content, dates);
+  const gridRow = renderGridRow(content);
   const days = renderDayColumns(gridRow, dates, allDay.cells, {
     ...(onDropTime === undefined ? {} : { onDropTime }),
     ...(onCreateAtTime === undefined ? {} : { onCreateAtTime }),

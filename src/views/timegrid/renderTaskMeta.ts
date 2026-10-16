@@ -208,7 +208,32 @@ export function bindTaskSelection(
   element.addEventListener('focusin', () => {
     onTaskSelect?.(task);
   });
+  // Touch scrolling can finish with a compatibility click. Keep that click from opening
+  // an inspector; the next pointerdown begins a fresh tap and keyboard activation is separate.
+  let pointerStart: { x: number; y: number } | undefined;
+  let cancelled = false;
+  if (onTaskActivate !== undefined) {
+    element.addEventListener('pointerdown', (event) => {
+      pointerStart = { x: event.clientX, y: event.clientY };
+      cancelled = false;
+    });
+    element.addEventListener('pointermove', (event) => {
+      if (
+        pointerStart !== undefined &&
+        Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y) > 8
+      )
+        cancelled = true;
+    });
+    element.addEventListener('pointercancel', () => {
+      cancelled = true;
+      pointerStart = undefined;
+    });
+    element.addEventListener('pointerup', () => {
+      pointerStart = undefined;
+    });
+  }
   element.addEventListener('click', (event) => {
+    if (cancelled) return;
     const target = event.target as Element | null;
     if (target?.closest(TASK_SELECTION_EXCLUSION) != null) return;
     const wasFocused = element.contains(element.ownerDocument.activeElement);

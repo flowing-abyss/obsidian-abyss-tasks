@@ -663,7 +663,12 @@ function beginTimedSession(
   event: PointerEvent,
   kind: TimedInteractionKind,
 ): void {
-  if (event.button !== 0 || isBlockedMoveTarget(event, kind)) return;
+  if (
+    (kind === 'move' && event.pointerType === 'touch') ||
+    event.button !== 0 ||
+    isBlockedMoveTarget(event, kind)
+  )
+    return;
   event.preventDefault();
   event.stopPropagation();
   const geometry = measureSession(binding, event);

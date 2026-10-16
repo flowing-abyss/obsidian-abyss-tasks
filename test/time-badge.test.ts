@@ -690,5 +690,6 @@ describe('inspector tracked time badge weight', () => {
 
 vi.mock('obsidian', async () => ({
   ...(await import('obsidian-test-mocks/obsidian')),
+  Modal: (await import('./support/inspectorModalMock')).InspectorModalMock,
   setTooltip: vi.fn(),
 }));

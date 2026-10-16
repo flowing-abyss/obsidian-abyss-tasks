@@ -1,4 +1,4 @@
-import { Scope, type App } from 'obsidian';
+import { Modal, Scope, type App } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppState } from '../src/app/AppState';
 import type { RightPanel, RightPanelMutationLifecycle } from '../src/panels/RightPanel';
@@ -84,6 +84,41 @@ describe('TaskModal', () => {
   afterEach(() => {
     modal.close();
   });
+
+  it.each([false, true])(
+    'native close disposes once and respects moved focus (%s)',
+    (movedFocus) => {
+      const nativeOpen = vi.spyOn(Modal.prototype, 'open');
+      const unsubscribe = vi.fn();
+      const release = vi.fn();
+      modal = new TaskModal({
+        app,
+        statusRegistry: testStatusRegistry(),
+        queries: taskQueryApi({ subscribe: () => unsubscribe }),
+        interactionOwnership: { acquire: () => ({ release }) },
+      });
+      const opener = document.body.createEl('button');
+      const outside = document.body.createEl('input');
+      opener.focus();
+      modal.open(task());
+      expect(nativeOpen).toHaveBeenCalledOnce();
+      const host = expectDefined(nativeOpen.mock.instances[0]) as Modal;
+      expect(host.shouldRestoreSelection).toBe(false);
+      expect(host.modalEl.getAttribute('aria-label')).toBe('Task details');
+      expectDefined(document.querySelector<HTMLElement>('.abyss-modal-close-btn')).focus();
+      if (movedFocus) outside.focus();
+      host.close();
+      host.close();
+      modal.close();
+      expect(mockState.destroyImpl).toHaveBeenCalledOnce();
+      expect(unsubscribe).toHaveBeenCalledOnce();
+      expect(release).toHaveBeenCalledOnce();
+      expect(document.querySelector('.abyss-modal')).toBeNull();
+      expect(document.activeElement).toBe(movedFocus ? outside : opener);
+      opener.remove();
+      outside.remove();
+    },
+  );
 
   it.each(['backdrop', 'Escape', 'Close'])(
     'returns explicit %s close to its connected opener',
@@ -491,16 +526,18 @@ it('leaves no modal lease or mounted DOM after failed mount', () => {
   modal.close();
 });
 
-it('never pushes a modal scope when mount leaves its DOM inactive', () => {
+it('retires the native scope when mount leaves its DOM inactive', () => {
   const app = fakeApp();
   const push = vi.spyOn(app.keymap, 'pushScope');
+  const pop = vi.spyOn(app.keymap, 'popScope');
   const modal = new TaskModal({ app, statusRegistry: testStatusRegistry() });
   mockState.mountImpl.mockImplementationOnce((element: HTMLElement) => {
     expectDefined(element.closest<HTMLElement>('.abyss-modal')).hidden = true;
   });
   try {
     modal.open(task());
-    expect(push).not.toHaveBeenCalled();
+    expect(push).toHaveBeenCalledOnce();
+    expect(pop).toHaveBeenCalledOnce();
     expect(document.querySelector('.abyss-modal')).toBeNull();
   } finally {
     modal.close();

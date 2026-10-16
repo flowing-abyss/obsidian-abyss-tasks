@@ -357,7 +357,15 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
 /* ===== Calendar redesign: Today/Week/Month timegrid (abyss-tg-*) ===== */
 
+.abyss-tg-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-block-size: 0;
+}
+
 .abyss-tg-root {
+  min-block-size: 0;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -440,7 +448,8 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   display: flex;
   border-bottom: 1px solid var(--background-modifier-border);
   flex-shrink: 0;
-  min-height: 2.25em;
+  min-block-size: 0;
+  max-block-size: 40%;
   overflow-y: auto;
   scrollbar-gutter: stable;
 }
@@ -583,6 +592,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 .abyss-tg-grid-row {
+  min-block-size: 0;
   display: flex;
 
   /* flex-start, not the stretch default: without it, flex items (the hour-gutter and each
@@ -5512,6 +5522,7 @@ body.abyss-modal-open .popover.hover-popover {
 }
 
 .abyss-modal {
+  padding: 0;
   position: relative;
   background: var(--background-primary);
   border: 1px solid var(--background-modifier-border);
@@ -5523,7 +5534,17 @@ body.abyss-modal-open .popover.hover-popover {
 }
 
 .abyss-modal-close-btn {
-  /* positioned inside .abyss-right-header-actions flex row */
+  min-width: 44px;
+  min-height: 44px;
+}
+
+.abyss-modal > .modal-close-button,
+.abyss-modal > .modal-header {
+  display: none;
+}
+
+.abyss-modal > .modal-content {
+  margin: 0;
 }
 
 /* Modal body reuses abyss-right panel styles — no extra CSS needed */

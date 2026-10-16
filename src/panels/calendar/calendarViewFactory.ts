@@ -1,4 +1,4 @@
-import type { App } from 'obsidian';
+import { Platform, type App } from 'obsidian';
 import type { StatusRegistry } from '../../status/StatusRegistry';
 import type { EffectiveTagGroup } from '../../tags/effectiveTagGroups';
 import type { LocalDate, TaskPriority, TaskSnapshot } from '../../tasks';
@@ -65,7 +65,7 @@ export interface CalendarViewDependencies {
 
 export interface CalendarViewNavigation {
   readonly openDay: (date: string) => void;
-  readonly openWeek: (week: string, year: string) => void;
+  readonly openWeek: (date: string) => void;
 }
 
 /** The structural contract the controller drives: render, patch, destroy. */
@@ -86,6 +86,7 @@ function createTodayView(deps: CalendarViewDependencies, handlers: CalendarHandl
     forecastMenuOwner: deps.forecastMenuOwner,
     onTaskClick: handlers.onTaskClick,
     onTaskSelect: handlers.onTaskSelect,
+    onTaskActivate: Platform.isMobile ? handlers.onTaskClick : undefined,
     onShowParent: handlers.onShowParent,
     onForecastClick: handlers.onForecastClick,
     onForecastContextMenu: handlers.onForecastContextMenu,
@@ -182,8 +183,8 @@ function createMonthView(
     dependenciesFor: deps.dependenciesFor,
     onSetStatus: handlers.onSetStatus,
     onSetPriority: handlers.onSetPriority,
-    onWeekClick: (week, year) => {
-      navigation.openWeek(week, year);
+    onWeekClick: (date) => {
+      navigation.openWeek(date);
     },
     interactionOwnership: deps.interactionOwnership,
     statusRegistry: deps.statusRegistry,

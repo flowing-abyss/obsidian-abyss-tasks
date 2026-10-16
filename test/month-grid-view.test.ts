@@ -1401,16 +1401,19 @@ describe('MonthGridView', () => {
     expect(cbs.onWeekClick).toHaveBeenCalled();
   });
 
-  it('the week-number button passes the correct week number and year', () => {
+  it('passes the exact December row start across the year boundary', () => {
     const container = freshContainer();
     const cbs = callbacks();
-    const view = new MonthGridView(cbs);
-    view.render(container, [], resolvedConfig({ startPosition: '2026-07' }));
-    const weekBtns = container.querySelectorAll('.abyss-mg-week-btn');
-    (weekBtns[0] as HTMLElement).click();
-    const expectedWeek = window.moment('2026-06-29', 'YYYY-MM-DD').format('w');
-    const expectedYear = window.moment('2026-06-29', 'YYYY-MM-DD').format('YYYY');
-    expect(cbs.onWeekClick).toHaveBeenCalledWith(expectedWeek, expectedYear);
+    new MonthGridView(cbs).render(
+      container,
+      [],
+      resolvedConfig({ startPosition: '2026-12', firstDayOfWeek: 1 }),
+    );
+    const row = expectDefined(
+      container.querySelector('[data-mg-date="2026-12-28"]')?.closest('.abyss-mg-row'),
+    );
+    expectDefined(row.querySelector<HTMLElement>('.abyss-mg-week-btn')).click();
+    expect(cbs.onWeekClick).toHaveBeenCalledWith('2026-12-28');
   });
 
   it('clicking the week-number button does not bubble into any day-cell click handling', () => {

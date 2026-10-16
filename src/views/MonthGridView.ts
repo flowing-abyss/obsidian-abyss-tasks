@@ -103,7 +103,7 @@ export interface MonthGridViewCallbacks extends ForecastInteractionCallbacks {
   onToggle: (task: TaskSnapshot) => void;
   onSetStatus: (task: TaskSnapshot, status: string) => void;
   onSetPriority: (task: TaskSnapshot, priority: TaskPriority) => void;
-  onWeekClick: (weekNr: string, year: string) => void;
+  onWeekClick: (date: string) => void;
   statusRegistry: StatusRegistry;
   tagGroups?: TagGroup[];
 }
@@ -194,7 +194,7 @@ export class MonthGridView extends BaseView {
     weekButton.setAttribute('data-year', yearNr);
     weekButton.addEventListener('click', (event) => {
       event.stopPropagation();
-      this.callbacks.onWeekClick(weekNr, yearNr);
+      this.callbacks.onWeekClick(weekStart.format('YYYY-MM-DD'));
     });
     for (let index = startIndex; index < startIndex + 7; index++) {
       this.renderCell(row, index, monthRow, context);

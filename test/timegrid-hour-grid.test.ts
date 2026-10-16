@@ -22,6 +22,16 @@ function declarationsForRuleContaining(...selectors: string[]): string {
 }
 
 describe('renderHourGrid', () => {
+  it('gives the all-day band and hours one available-content owner below the header', () => {
+    const handles = renderHourGrid(freshContainer(), ['2026-12-28']);
+    const content = expectDefined(handles.rootEl.querySelector('.abyss-tg-content'));
+    expect(handles.gridRowEl.parentElement).toBe(content);
+    expect(handles.allDayDaysEl.parentElement?.parentElement).toBe(content);
+    expect(handles.rootEl.querySelector('.abyss-tg-header-row')?.parentElement).toBe(
+      handles.rootEl,
+    );
+  });
+
   it('defines the shared light/dark calendar scale and committed fill tokens', () => {
     const light = declarationsFor('.abyss-panel-view');
     const dark = declarationsFor('.theme-dark .abyss-panel-view');

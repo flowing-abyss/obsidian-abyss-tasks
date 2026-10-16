@@ -28,15 +28,6 @@ export function stepCalendarDate(
   return date.clone()[operation](1, 'months').date(1);
 }
 
-/** The Monday of ISO week `week` in ISO week-year `year`, as the month grid's week links name it. */
-export function isoWeekStart(week: string, year: string, now: CalendarMoment): CalendarMoment {
-  return now
-    .clone()
-    .isoWeekYear(Number.parseInt(year, 10))
-    .isoWeek(Number.parseInt(week, 10))
-    .startOf('isoWeek');
-}
-
 /** The two toolbar labels: the primary button text and the year button text. */
 export function calendarTitle(view: CalViewType, date: CalendarMoment): CalendarTitle {
   const year = date.format('YYYY');

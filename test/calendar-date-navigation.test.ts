@@ -4,7 +4,6 @@ import {
   calendarScrollKey,
   calendarTitle,
   dateForView,
-  isoWeekStart,
   stepCalendarDate,
 } from '../src/panels/calendar/calendarDateNavigation';
 import { initialCalendarView } from '../src/panels/calendar/calendarPolicy';
@@ -58,18 +57,6 @@ describe('stepCalendarDate', () => {
     const date = moment('2026-09-23');
     stepCalendarDate('month', date, 1);
     expect(date.format('YYYY-MM-DD')).toBe('2026-09-23');
-  });
-});
-
-describe('isoWeekStart', () => {
-  it('resolves the Monday of an ISO week that starts in the previous year', () => {
-    const now = moment('2026-09-23');
-    expect(isoWeekStart('1', '2026', now).format('YYYY-MM-DD')).toBe('2025-12-29');
-  });
-
-  it('resolves week 53 of a long year', () => {
-    const now = moment('2026-09-23');
-    expect(isoWeekStart('53', '2020', now).format('YYYY-MM-DD')).toBe('2020-12-28');
   });
 });
 

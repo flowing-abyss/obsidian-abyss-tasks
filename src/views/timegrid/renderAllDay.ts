@@ -47,6 +47,7 @@ export interface AllDayCallbacks extends ForecastInteractionCallbacks {
   onTaskClick: (task: TaskSnapshot) => void;
   onShowParent?: ShowInTaskList | undefined;
   onTaskSelect?: ((task: TaskSnapshot) => void) | undefined;
+  onTaskActivate?: ((task: TaskSnapshot) => void) | undefined;
   onDrop: (dragData: string, targetDate: string) => void; // native HTML5 DnD, existing convention
   onStartChange: (task: TaskSnapshot, newStart: string) => void; // pointer edge-resize
   onDueChange: (task: TaskSnapshot, newDue: string) => void; // pointer edge-resize
@@ -183,6 +184,7 @@ export type CalendarItemCallbacks = Pick<
   | 'occurrenceFor'
   | 'onTaskClick'
   | 'onTaskSelect'
+  | 'onTaskActivate'
   | 'onShowParent'
   | 'onToggle'
   | 'onSetStatus'
@@ -278,7 +280,7 @@ function bindAllDayBodyInteractions(
         el,
         task,
         callbacks.onTaskSelect,
-        options.activateBody ? callbacks.onTaskClick : undefined,
+        options.activateBody ? callbacks.onTaskClick : callbacks.onTaskActivate,
       );
     if (nativeDraggable) attachCalendarNativeDrag(el, task, callbacks.onNativeDragStart);
     el.addEventListener('contextmenu', (event) => {
@@ -436,7 +438,12 @@ function attachSegmentInteractions(
   const occurrence = context.callbacks.occurrenceFor(segment.task);
   bindMaterializedInteractions(occurrence, () => {
     if (segment.kind === 'ghost') {
-      bindTaskSelection(body, segment.task, context.callbacks.onTaskSelect);
+      bindTaskSelection(
+        body,
+        segment.task,
+        context.callbacks.onTaskSelect,
+        context.callbacks.onTaskActivate,
+      );
     }
     body.setAttribute('tabindex', '0');
     const exposesRangeProxy = context.indexByDate.size > 1 && segment.kind === 'ghost';
@@ -842,7 +849,7 @@ function renderDeadlineTask(context: AllDayCellRenderContext, task: TaskSnapshot
     renderCountBadges(meta, task);
   }
   bindMaterializedInteractions(occurrence, () => {
-    bindTaskSelection(marker, task, callbacks.onTaskSelect);
+    bindTaskSelection(marker, task, callbacks.onTaskSelect, callbacks.onTaskActivate);
     if (callbacks.onNativeDragStart !== undefined)
       attachCalendarNativeDrag(marker, task, callbacks.onNativeDragStart);
     if (calendarOccurrenceForTask(task)?.kind === 'materialized')

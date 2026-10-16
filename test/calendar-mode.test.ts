@@ -306,16 +306,32 @@ describe('CalendarMode navigation', () => {
     expect(h.host.rerender).toHaveBeenCalledOnce();
   });
 
-  it('a month week button opens that week through the host', () => {
-    const h = harness();
-    h.mode['date_abyssPrivate'] = moment('2026-09-01');
+  it.each([
+    [2026, 1, '2026-12-28'],
+    [2025, 1, '2025-12-29'],
+    [2026, 0, '2026-12-27'],
+    [2025, 0, '2025-12-28'],
+    [2026, 6, '2026-12-26'],
+    [2025, 6, '2025-12-27'],
+  ] as const)('opens the actual December %s row with week start %s', (year, firstDay, start) => {
+    const h = harness({}, firstDay);
+    h.mode['date_abyssPrivate'] = moment(`${year}-12-01`);
     h.mode.render(h.root);
-    // The grid labels weeks with the locale week number and the mode resolves it as an ISO week;
-    // ISO week 40 of 2026 starts on Monday 2026-09-28.
-    h.click('.abyss-mg-week-btn[data-week="40"]');
+    const row = expectDefined(
+      h.root.querySelector(`[data-mg-date="${start}"]`)?.closest('.abyss-mg-row'),
+    );
+    expectDefined(row.querySelector<HTMLElement>('.abyss-mg-week-btn')).click();
     expect(h.mode.view()).toBe('week');
-    expect(h.date()).toBe('2026-09-28');
-    expect(h.host.rerender).toHaveBeenCalledOnce();
+    expect(h.date()).toBe(start);
+    h.mode.render(h.root);
+    const weekDates = [...h.root.querySelectorAll<HTMLElement>('.abyss-tg-day-column')].map(
+      (el) => el.dataset['tgDate'],
+    );
+    expect(weekDates).toEqual(
+      Array.from({ length: 7 }, (_, index) =>
+        moment(start).add(index, 'days').format('YYYY-MM-DD'),
+      ),
+    );
   });
 
   it('a month add button asks the host for a month capture at that date', () => {

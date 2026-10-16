@@ -1,4 +1,4 @@
-import { Scope, setIcon, type App } from 'obsidian';
+import { Modal, Scope, setIcon, type App } from 'obsidian';
 import { AppState } from '../app/AppState';
 import { createBrowserTaskScheduler } from '../browserTaskScheduler';
 import { RightPanel, type RightPanelMutationLifecycle } from '../panels/RightPanel';
@@ -75,6 +75,26 @@ interface HierarchyContinuation {
   draft: RightPanelDraftBundle | undefined;
 }
 
+/** Native Modal owns platform Back and the scope stack; the facade owns inspector disposal. */
+class TaskModalHost extends Modal {
+  constructor(
+    app: App,
+    private readonly closed: () => void,
+  ) {
+    super(app);
+    this.shouldRestoreSelection = false;
+    // Replace the default Escape binding with the inspector's nested-editor-aware route.
+    this.scope = new Scope(app.scope);
+    this.containerEl.addClass('abyss-modal-backdrop');
+    this.modalEl.addClass('abyss-modal');
+    this.modalEl.setAttribute('aria-label', 'Task details');
+  }
+
+  override onClose(): void {
+    this.closed();
+  }
+}
+
 export class TaskModal {
   private readonly app_abyssPrivate: App;
   private readonly recurrenceInput_abyssPrivate: RecurrenceInputParser | undefined;
@@ -87,6 +107,7 @@ export class TaskModal {
   private readonly tasks_abyssPrivate: TaskApplicationApi | undefined;
   private readonly commentTimeContext_abyssPrivate: CommentTimeContextProvider | undefined;
   private readonly interactionOwnership_abyssPrivate: InteractionOwnershipPort;
+  private host_abyssPrivate: TaskModalHost | null = null;
   private backdropEl_abyssPrivate: HTMLElement | null = null;
   private modalEl_abyssPrivate: HTMLElement | null = null;
   private innerState_abyssPrivate: AppState | null = null;
@@ -157,20 +178,26 @@ export class TaskModal {
         this.ownedWriteRef_abyssPrivate = undefined;
     });
 
-    const backdrop = this.ownerDoc_abyssPrivate.body.createDiv({ cls: 'abyss-modal-backdrop' });
+    const host = new TaskModalHost(this.app_abyssPrivate, () => {
+      if (this.host_abyssPrivate !== host) return;
+      this.host_abyssPrivate = null;
+      this.closeFromUser_abyssPrivate();
+    });
+    this.host_abyssPrivate = host;
+    const backdrop = host.containerEl;
     this.backdropEl_abyssPrivate = backdrop;
     // Marks the document so hover-preview popovers can stack above the modal (see styles.css).
     this.ownerDoc_abyssPrivate.body.addClass('abyss-modal-open');
 
-    const modal = backdrop.createDiv({ cls: 'abyss-modal' });
+    const modal = host.modalEl;
     this.modalEl_abyssPrivate = modal;
     if (context !== undefined && context.length > 0) {
-      modal.createDiv({ cls: 'abyss-forecast-source-context', text: context });
+      host.contentEl.createDiv({ cls: 'abyss-forecast-source-context', text: context });
     }
 
-    const panelEl = modal.createDiv({ cls: 'abyss-right abyss-modal-body' });
+    const panelEl = host.contentEl.createDiv({ cls: 'abyss-right abyss-modal-body' });
     const openingState = this.innerState_abyssPrivate;
-    const scope = new Scope(this.app_abyssPrivate.scope);
+    const scope = host.scope;
     this.innerPanel_abyssPrivate = new RightPanel({
       recurrenceInput: this.recurrenceInput_abyssPrivate,
       localSearchScope: { parent: scope, keymap: this.app_abyssPrivate.keymap },
@@ -211,6 +238,7 @@ export class TaskModal {
       if (e.target === backdrop) this.closeFromUser_abyssPrivate();
     });
 
+    host.open();
     this.bindScope_abyssPrivate(modal, scope);
   }
 
@@ -262,10 +290,8 @@ export class TaskModal {
     const escape = scope.register([], 'Escape', (event) =>
       route(event, 'scope') ? false : undefined,
     );
-    this.app_abyssPrivate.keymap.pushScope(scope);
     this.releaseScope_abyssPrivate = () => {
       scope.unregister(escape);
-      this.app_abyssPrivate.keymap.popScope(scope);
     };
     this.keyHandler_abyssPrivate = (event) => {
       route(event, 'dom');
@@ -341,7 +367,10 @@ export class TaskModal {
     if (this.closing_abyssPrivate) return;
     this.closing_abyssPrivate = true;
     try {
+      const host = this.host_abyssPrivate;
+      this.host_abyssPrivate = null;
       this.closeContents_abyssPrivate();
+      host?.close();
     } finally {
       this.closing_abyssPrivate = false;
     }

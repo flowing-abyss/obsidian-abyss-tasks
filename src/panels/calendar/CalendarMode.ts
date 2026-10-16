@@ -40,7 +40,6 @@ import { calendarContent, type CalendarContent } from './calendarContent';
 import {
   calendarScrollKey,
   dateForView,
-  isoWeekStart,
   stepCalendarDate,
   type CalendarMoment,
 } from './calendarDateNavigation';
@@ -409,8 +408,8 @@ export class CalendarMode {
         openDay: (date) => {
           this.openDay_abyssPrivate(date);
         },
-        openWeek: (week, year) => {
-          this.openWeek_abyssPrivate(week, year);
+        openWeek: (date) => {
+          this.openWeek_abyssPrivate(date);
         },
       },
       this.constrained_abyssPrivate && this.viewType_abyssPrivate !== 'today'
@@ -504,10 +503,11 @@ export class CalendarMode {
     this.deps_abyssPrivate.host.rerender();
   }
 
-  private openWeek_abyssPrivate(week: string, year: string): void {
+  private openWeek_abyssPrivate(date: string): void {
     this.cancelKeyboardInteraction();
     this.viewType_abyssPrivate = 'week';
-    this.date_abyssPrivate = isoWeekStart(week, year, moment());
+    this.date_abyssPrivate = moment(date);
+    this.selectedDate_abyssPrivate = localDate(date);
     this.deps_abyssPrivate.host.rerender();
   }
 

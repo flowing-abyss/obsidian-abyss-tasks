@@ -65,6 +65,97 @@ function recurrenceBadgeDom(root: ParentNode): Record<string, string | undefined
 }
 
 describe('TodayView', () => {
+  it.each([false, true])(
+    'activates the exact %s timed body only on body tap or keyboard',
+    (timed) => {
+      vi.spyOn(Platform, 'isMobile', 'get').mockReturnValue(true);
+      const container = freshContainer();
+      document.body.append(container);
+      const selected = task({
+        planning: { due: '2026-07-10', ...(timed ? { time: '09:00' } : {}) },
+      });
+      const cbs = { ...callbacks(), onTaskSelect: vi.fn(), onTaskActivate: vi.fn() };
+      const view = new TodayView(cbs);
+      view.render(container, [selected], resolvedConfig({ startPosition: '2026-07-10' }), false);
+      const body = expectDefined(
+        container.querySelector<HTMLElement>(timed ? '.abyss-tg-block' : '.abyss-tg-body'),
+      );
+      body.focus();
+      expect(cbs.onTaskSelect).toHaveBeenCalledWith(selected);
+      expect(cbs.onTaskActivate).not.toHaveBeenCalled();
+      body.dispatchEvent(new PointerEvent('pointerdown', { pointerType: 'touch', bubbles: true }));
+      body.dispatchEvent(new PointerEvent('pointerup', { pointerType: 'touch', bubbles: true }));
+      body.click();
+      expect(cbs.onTaskActivate).toHaveBeenCalledExactlyOnceWith(selected);
+      const link = body.createEl('a', { href: '#', text: 'Link' });
+      link.click();
+      expectDefined(body.querySelector<HTMLElement>('.abyss-status-marker')).click();
+      expect(cbs.onTaskActivate).toHaveBeenCalledTimes(1);
+      const touchStart = new PointerEvent('pointerdown', {
+        pointerType: 'touch',
+        clientX: 10,
+        clientY: 10,
+        bubbles: true,
+        cancelable: true,
+      });
+      body.dispatchEvent(touchStart);
+      expect(touchStart.defaultPrevented).toBe(false);
+      body.dispatchEvent(
+        new PointerEvent('pointermove', {
+          pointerType: 'touch',
+          clientX: 10,
+          clientY: 70,
+          bubbles: true,
+        }),
+      );
+      body.click();
+      expect(cbs.onTaskActivate).toHaveBeenCalledTimes(1);
+      body.dispatchEvent(new PointerEvent('pointerdown', { pointerType: 'touch', bubbles: true }));
+      body.dispatchEvent(
+        new PointerEvent('pointercancel', { pointerType: 'touch', bubbles: true }),
+      );
+      body.click();
+      expect(cbs.onTaskActivate).toHaveBeenCalledTimes(1);
+      body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      expect(cbs.onTaskActivate).toHaveBeenCalledTimes(2);
+      expect(cbs.onTimeChange).not.toHaveBeenCalled();
+      expect(cbs.onDurationChange).not.toHaveBeenCalled();
+      expect(cbs.onCreateAtTime).not.toHaveBeenCalled();
+      expect(cbs.onDrop).not.toHaveBeenCalled();
+      expect(cbs.onStartChange).not.toHaveBeenCalled();
+      view.destroy();
+      container.remove();
+    },
+  );
+
+  it('activates an all-day continuation once and leaves its touch scroll unclaimed', () => {
+    const container = freshContainer();
+    const selected = task({ planning: { start: '2026-07-09', due: '2026-07-11' } });
+    const cbs = {
+      ...callbacks(),
+      onTaskSelect: vi.fn(),
+      onTaskActivate: vi.fn(),
+      onSpanMove: vi.fn(),
+    };
+    const view = new TodayView(cbs);
+    view.render(container, [selected], resolvedConfig({ startPosition: '2026-07-10' }), false);
+    const body = expectDefined(container.querySelector<HTMLElement>('.abyss-tg-body'));
+    const start = new PointerEvent('pointerdown', {
+      pointerType: 'touch',
+      bubbles: true,
+      cancelable: true,
+    });
+    body.dispatchEvent(start);
+    expect(start.defaultPrevented).toBe(false);
+    body.click();
+    expect(cbs.onTaskActivate).toHaveBeenCalledExactlyOnceWith(selected);
+    body.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true }));
+    body.click();
+    expect(cbs.onTaskActivate).toHaveBeenCalledTimes(1);
+    expect(cbs.onSpanMove).not.toHaveBeenCalled();
+    view.destroy();
+  });
+
   it('renders the shared recurrence badge DOM in a timed day item', () => {
     const container = freshContainer();
     new TodayView(callbacks()).render(

@@ -61,6 +61,7 @@ export interface TimedBlockCallbacks extends ForecastInteractionCallbacks {
   onTaskClick: (task: TaskSnapshot) => void;
   onShowParent?: ShowInTaskList | undefined;
   onTaskSelect?: ((task: TaskSnapshot) => void) | undefined;
+  onTaskActivate?: ((task: TaskSnapshot) => void) | undefined;
   onKeyboardIntent: (task: TaskSnapshot, intent: TimedBlockKeyboardIntent) => void;
   onTimeChange: (task: TaskSnapshot, newStartMinutes: number) => void;
   onDurationChange: (task: TaskSnapshot, newDurationMinutes: number) => void;
@@ -314,7 +315,7 @@ function renderTimedBlock(input: TimedBlockRenderInput): void {
   applyTimedBlockColor(block, task, tagGroups);
   renderTimedBlockContent(block, task, blockLayout, occurrence, terminal, callbacks);
   bindMaterializedInteractions(occurrence, () => {
-    bindTaskSelection(block, task, callbacks.onTaskSelect);
+    bindTaskSelection(block, task, callbacks.onTaskSelect, callbacks.onTaskActivate);
     attachTimedBlockControls({
       block,
       hourColumnEl,
@@ -757,6 +758,13 @@ function compatibilityResizeDuration(start: number, duration: number, delta: num
   return Math.min(MAX_DURATION_MINUTES - start, Math.max(SNAP_MINUTES, duration + delta));
 }
 
+function isTouchBodyMove(event: PointerEvent): boolean {
+  return (
+    event.pointerType === 'touch' &&
+    (event.target as HTMLElement).closest('.abyss-tg-resize-handle') == null
+  );
+}
+
 function attachDrag(input: LegacyDragInput): void {
   const { block, handle, initialStart, initialDuration, callbacks, task } = input;
   const restoreGeometry = compatibilityGeometryRestorer(block);
@@ -832,7 +840,7 @@ function attachDrag(input: LegacyDragInput): void {
   };
 
   const onPointerDown = (e: PointerEvent): void => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || isTouchBodyMove(e)) return;
     // A pointerdown that starts on the status marker or a rendered markdown link must never
     // arm move/resize — otherwise a plain checkbox click, or a click that navigates a
     // [[wikilink]]/markdown link in the title, also fires onTimeChange/onDurationChange as an

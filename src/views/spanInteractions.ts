@@ -619,7 +619,12 @@ function startSpanSession(
   event: PointerEvent,
   kind: SpanInteractionKind,
 ): void {
-  if (event.button !== 0 || (kind === 'move' && eventStartsMoveFromControl(event))) return;
+  if (
+    (kind === 'move' && event.pointerType === 'touch') ||
+    event.button !== 0 ||
+    (kind === 'move' && eventStartsMoveFromControl(event))
+  )
+    return;
   event.preventDefault();
   event.stopPropagation();
   binding.owner.disposeActive();

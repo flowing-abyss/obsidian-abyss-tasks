@@ -3160,5 +3160,6 @@ it.for(['End', 'Home'])(
 
 vi.mock('obsidian', async () => ({
   ...(await import('obsidian-test-mocks/obsidian')),
+  Modal: (await import('./support/inspectorModalMock')).InspectorModalMock,
   setTooltip: vi.fn(),
 }));

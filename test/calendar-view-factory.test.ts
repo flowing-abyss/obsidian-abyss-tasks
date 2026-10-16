@@ -1,5 +1,5 @@
 // @vitest-environment node
-import type { App } from 'obsidian';
+import { Platform, type App } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import {
   createCalendarView,
@@ -70,6 +70,17 @@ function monthCallbacks(view: object): MonthGridViewCallbacks {
 describe('createCalendarView', () => {
   const navigation = { openDay: vi.fn(), openWeek: vi.fn() };
 
+  it.each([true, false])('supplies body activation only for mobile Day (%s)', (mobile) => {
+    vi.spyOn(Platform, 'isMobile', 'get').mockReturnValue(mobile);
+    const h = handlers();
+    expect(
+      timeGridCallbacks(createCalendarView('today', deps(), h, navigation)).onTaskActivate,
+    ).toBe(mobile ? h.onTaskClick : undefined);
+    expect(
+      timeGridCallbacks(createCalendarView('week', deps(), h, navigation)).onTaskActivate,
+    ).toBeUndefined();
+  });
+
   it('creates the view class for each view type', () => {
     const d = deps();
     const h = handlers();
@@ -113,8 +124,8 @@ describe('createCalendarView', () => {
     const month = monthCallbacks(createCalendarView('month', d, h, navigation));
     month.onDayClick('2026-09-23');
     expect(navigation.openDay).toHaveBeenLastCalledWith('2026-09-23');
-    month.onWeekClick('39', '2026');
-    expect(navigation.openWeek).toHaveBeenCalledWith('39', '2026');
+    month.onWeekClick('2026-12-28');
+    expect(navigation.openWeek).toHaveBeenCalledWith('2026-12-28');
     expect(month.onCreateAtDate).toBe(h.onCreateAtDate);
     for (const name of [
       'onTaskClick',

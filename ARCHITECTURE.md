@@ -350,8 +350,14 @@ duplicate shell subscriptions.
 | [LeftPanel](src/panels/LeftPanel.ts)                | Navigation, counts, creation routing, and tag/project navigation sessions                        |
 | [CenterPanel](src/panels/CenterPanel.ts)            | Mode composition, task surfaces, subscriptions, selection, capture, and shared card interactions |
 | [RightPanel](src/panels/RightPanel.ts)              | Inspector targets, commands, drafts, recovery, Undo, history, and result ordering                |
-| [TaskModal](src/ui/TaskModal.ts)                    | The same inspector with local AppState and its own document/interaction lifetime                 |
+| [TaskModal](src/ui/TaskModal.ts)                    | The same inspector with local AppState, hosted in a native Obsidian Modal                        |
 | [CalendarSettingsTab](src/settings/SettingsTab.ts)  | Settings staging, persistence, retry, and semantic rebuild; section owners render controls       |
+
+TaskModal delegates platform Back and scope stacking to the native Modal host. Its facade owns
+one cleanup path for the local inspector, subscriptions, drafts, tracking ticker and interaction
+lease. The host uses the inspector's guarded Escape scope; nested editors and IME keep priority.
+Native selection restoration is disabled so explicit close restores only a connected opener when
+focus still belongs to the modal. Programmatic replacement and deletion do not restore focus.
 
 Centre surfaces reuse `TaskCommands`, `TaskMenus`, `CaptureSessions`, `ListViewControls`, and
 [`TaskCardRenderer`](src/panels/center/TaskCardRenderer.ts). Inspector planning, dependency, and
@@ -417,6 +423,9 @@ bounded calendar day model per publication and retains its date buttons. Selecti
 and replaces the agenda without querying or projecting occurrences again. Agenda rows share the
 all-day item renderer, exact occurrence ownership, status menus, and Markdown component lifetime.
 Details activation is independent of quick-completion eligibility for continuation rows.
+Month week links carry the rendered row's first civil date; configured week layout derives its
+seven dates. Mobile Day body taps open the same inspector. Touch body movement scrolls; explicit
+resize handles, mouse/pen dragging, native drag and empty-grid creation retain their own handlers.
 
 CaptureSessions retains the agenda editor's frozen date and draft through publications, width
 changes, and date selection. It mounts only on that date's agenda or corresponding full-grid host;
