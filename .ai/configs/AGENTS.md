@@ -24,6 +24,8 @@ An Obsidian sidebar plugin that renders vault tasks in month, week, and list vie
 
 - Strict TypeScript. Prefer `async/await`.
 - Tests in `test/*.test.ts` use [obsidian-test-mocks](https://github.com/mnaoumov/obsidian-test-mocks) (auto-setup in `vitest.config.ts`).
+- Before performance-sensitive changes, run `pnpm run profile --out docs/performance/before`; afterward run `pnpm run profile --out docs/performance/after --baseline docs/performance/before` with matching conditions and fresh output directories (see `PERFORMANCE.md`).
+- Reuse this workflow and extend missing scenarios before writing ad hoc performance benchmarks; inspect comparison verdicts, treat `inconclusive` as unresolved, and keep the normal correctness checks.
 - Conventional commits enforced by commitlint + husky hooks.
 - `pnpm release` runs scoped release preparation with fresh artifact checks, updates `manifest.json` + `versions.json`, commits, tags with **no `v` prefix**, and pushes. **Never tag manually.** `manifest.json` `id` must stay `abyss-tasks`.
 - Never disable, downgrade, bypass, or warn-only an applicable `eslint-plugin-obsidianmd` rule; fix the violation at its source. This includes runtime code, `manifest.json`, and `LICENSE`.
