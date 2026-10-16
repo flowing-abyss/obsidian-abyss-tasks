@@ -212,6 +212,7 @@ function project(over: Partial<Project>): Project {
 function settings(): CalendarSettings {
   const config = structuredClone(DEFAULT_SETTINGS);
   config.projects.statuses[0] = { ...active };
+  config.projects.defaultStatusId = active.id;
   config.projects.propertyDefinitions = {
     'property:Budget': { type: 'number' },
     'property:Flag': { type: 'checkbox' },

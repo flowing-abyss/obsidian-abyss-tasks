@@ -4451,6 +4451,7 @@ describe('project Kanban overview', () => {
         }),
     );
     const config = structuredClone(DEFAULT_SETTINGS);
+    config.projects.defaultStatusId = expectDefined(config.projects.statuses[0]).id;
     config.projects.overviewView = 'timeline';
     config.projects.timeline = buildDefaultProjectTimelineSettings(config.projects.table);
     config.projects.timeline.groupBy = 'status';

@@ -279,12 +279,20 @@ export default class TaskCalendarPlugin extends Plugin {
   }
 
   private registerCommands(): void {
+    const openPanel = async (): Promise<void> => {
+      try {
+        await this.openPanel();
+      } catch (error) {
+        console.error('[abyss-tasks] Could not open view', error);
+        const message = error instanceof Error ? error.message : String(error);
+        new Notice(`Could not open task view. ${message}`);
+      }
+    };
+    this.addRibbonIcon('list-checks', 'Open task view', openPanel);
     this.addCommand({
       id: 'open-panel',
       name: 'Open view',
-      callback: async () => {
-        await this.openPanel();
-      },
+      callback: openPanel,
     });
     this.addCommand({
       id: 'toggle-time-tracking',

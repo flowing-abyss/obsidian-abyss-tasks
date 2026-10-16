@@ -156,6 +156,24 @@ describe('TaskCalendarPlugin loadSettings', () => {
     expect(plugin.settings).toEqual(expectedDefaults);
   });
 
+  it('preserves a saved project default and custom colors through load and save', async () => {
+    const projects = buildDefaultProjectsSettings();
+    projects.defaultStatusId = 'status-1';
+    expectDefined(projects.statuses[0]).color = '#123456';
+    expectDefined(projects.statuses[2]).color = 'blue';
+    const plugin = makePlugin({ projects });
+    await plugin.onload();
+    try {
+      await plugin.saveSettings();
+      const saved = plugin.data__ as { projects: typeof projects };
+      expect(saved.projects.defaultStatusId).toBe('status-1');
+      expect(saved.projects.statuses[0]?.color).toBe('#123456');
+      expect(saved.projects.statuses[2]?.color).toBe('blue');
+    } finally {
+      plugin.onunload();
+    }
+  });
+
   it('loadSettings calls loadData exactly once', async () => {
     const plugin = makePlugin();
     const spy = vi.spyOn(plugin, 'loadData');
@@ -890,42 +908,89 @@ describe('TaskCalendarPlugin onunload', () => {
 });
 
 describe('TaskCalendarPlugin openPanel', () => {
-  it('opens and reuses the registered panel, closes its surface on replacement, and detaches the leaf', async () => {
-    const app = await createAppWithFiles({});
-    // Obsidian installs the plugin directory before loading its entry point.
-    await app.vault.adapter.mkdir(`${app.vault.configDir}/plugins/${MANIFEST.id}`);
-    const errors = vi.spyOn(console, 'error');
-    const warnings = vi.spyOn(console, 'warn');
-    const plugin = new TaskCalendarPlugin(app, MANIFEST);
-    vi.spyOn(plugin, 'loadData').mockResolvedValue(null);
-    const registerCommand = vi.spyOn(plugin, 'addCommand');
-    await plugin.onload();
-    const command = expectDefined(
-      registerCommand.mock.calls.find(([entry]) => entry.id === 'open-panel')?.[0],
-    );
-    const openPanel = expectDefined(command.callback);
-    try {
-      await openPanel();
-      const leaf = expectDefined(app.workspace.getLeavesOfType(PANEL_VIEW_TYPE)[0]);
-      const view = leaf.view;
-      expect(view).toBeInstanceOf(PanelView);
-      expect(
-        view.containerEl.querySelector('.abyss-panel-view')?.childElementCount,
-      ).toBeGreaterThan(0);
-      await openPanel();
-      expect(app.workspace.getLeavesOfType(PANEL_VIEW_TYPE)).toEqual([leaf]);
-      await leaf.setViewState({ type: 'empty' });
-      expect(view.containerEl.querySelector('.abyss-panel-view')?.childElementCount).toBe(0);
-      leaf.detach();
-      await flushMicrotasks();
-      expect(app.workspace.getLeavesOfType(PANEL_VIEW_TYPE)).toEqual([]);
-      expect(app.workspace.getLeavesOfType('empty')).not.toContain(leaf);
-      expect(errors).not.toHaveBeenCalled();
-      expect(warnings).not.toHaveBeenCalled();
-    } finally {
-      plugin.onunload();
-    }
-  });
+  it.each(['command', 'ribbon'] as const)(
+    '%s opens and reuses the panel and releases it on replacement',
+    async (entryPoint) => {
+      const app = await createAppWithFiles({});
+      // Obsidian installs the plugin directory before loading its entry point.
+      await app.vault.adapter.mkdir(`${app.vault.configDir}/plugins/${MANIFEST.id}`);
+      const errors = vi.spyOn(console, 'error');
+      const warnings = vi.spyOn(console, 'warn');
+      const plugin = new TaskCalendarPlugin(app, MANIFEST);
+      vi.spyOn(plugin, 'loadData').mockResolvedValue(null);
+      const registerCommand = vi.spyOn(plugin, 'addCommand');
+      const registerRibbon = vi.spyOn(plugin, 'addRibbonIcon');
+      await plugin.onload();
+      const command = expectDefined(
+        registerCommand.mock.calls.find(([entry]) => entry.id === 'open-panel')?.[0],
+      );
+      const openPanel =
+        entryPoint === 'command'
+          ? expectDefined(command.callback)
+          : async (): Promise<void> => {
+              await expectDefined(registerRibbon.mock.calls[0])[2](new MouseEvent('click'));
+            };
+      try {
+        await openPanel();
+        const leaf = expectDefined(app.workspace.getLeavesOfType(PANEL_VIEW_TYPE)[0]);
+        const view = leaf.view;
+        expect(view).toBeInstanceOf(PanelView);
+        expect(
+          view.containerEl.querySelector('.abyss-panel-view')?.childElementCount,
+        ).toBeGreaterThan(0);
+        await openPanel();
+        expect(app.workspace.getLeavesOfType(PANEL_VIEW_TYPE)).toEqual([leaf]);
+        await leaf.setViewState({ type: 'empty' });
+        expect(view.containerEl.querySelector('.abyss-panel-view')?.childElementCount).toBe(0);
+        leaf.detach();
+        await flushMicrotasks();
+        expect(app.workspace.getLeavesOfType(PANEL_VIEW_TYPE)).toEqual([]);
+        expect(app.workspace.getLeavesOfType('empty')).not.toContain(leaf);
+        expect(errors).not.toHaveBeenCalled();
+        expect(warnings).not.toHaveBeenCalled();
+      } finally {
+        plugin.onunload();
+      }
+    },
+  );
+
+  it.each(['command', 'ribbon'] as const)(
+    '%s reports a failed view activation without rejecting',
+    async (entryPoint) => {
+      const app = await createAppWithFiles({});
+      await app.vault.adapter.mkdir(`${app.vault.configDir}/plugins/${MANIFEST.id}`);
+      const plugin = new TaskCalendarPlugin(app, MANIFEST);
+      vi.spyOn(plugin, 'loadData').mockResolvedValue(null);
+      const registerCommand = vi.spyOn(plugin, 'addCommand');
+      const registerRibbon = vi.spyOn(plugin, 'addRibbonIcon');
+      await plugin.onload();
+      const failure = new Error('Workspace unavailable');
+      vi.spyOn(app.workspace, 'revealLeaf').mockRejectedValue(failure);
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      const notices = spyOnNotices();
+      const open =
+        entryPoint === 'command'
+          ? expectDefined(
+              registerCommand.mock.calls.find(([command]) => command.id === 'open-panel')?.[0]
+                .callback,
+            )
+          : async (): Promise<void> => {
+              await expectDefined(registerRibbon.mock.calls[0])[2](new MouseEvent('click'));
+            };
+      try {
+        await expect(Promise.resolve().then(open)).resolves.toBeUndefined();
+        expect(noticeMessages(notices)).toEqual([
+          'Could not open task view. Workspace unavailable',
+        ]);
+        expect(errors).toHaveBeenCalledExactlyOnceWith(
+          '[abyss-tasks] Could not open view',
+          failure,
+        );
+      } finally {
+        plugin.onunload();
+      }
+    },
+  );
 
   it('reveals existing leaf without creating a new one', async () => {
     const plugin = makePlugin();

@@ -381,10 +381,10 @@ describe('projects migration', () => {
       propertyCandidates: [],
     });
     expect(projects['statuses']).toEqual([
-      { id: 'status-1', name: 'inbox', color: 'orange', display: 'badge', onLeftPanel: false },
-      { id: 'status-2', name: 'todo', color: 'red', display: 'badge', onLeftPanel: false },
-      { id: 'status-3', name: 'wip', color: 'blue', display: 'badge', onLeftPanel: true },
-      { id: 'status-4', name: 'done', color: 'green', display: 'badge', onLeftPanel: false },
+      { id: 'status-1', name: 'inbox', color: '#d99345', display: 'badge', onLeftPanel: false },
+      { id: 'status-2', name: 'todo', color: '#d96c75', display: 'badge', onLeftPanel: false },
+      { id: 'status-3', name: 'wip', color: '#6b9cdb', display: 'badge', onLeftPanel: true },
+      { id: 'status-4', name: 'done', color: '#77ad7b', display: 'badge', onLeftPanel: false },
     ]);
   });
 

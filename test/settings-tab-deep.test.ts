@@ -385,7 +385,9 @@ function projectStatusOrder(tab: CalendarSettingsTab): string[] {
 
 describe('CalendarSettingsTab project value commits', () => {
   it('commits a focused status alias when its owner window deactivates and deduplicates later boundaries', async () => {
-    const { tab, plugin } = makeTab();
+    const projects = structuredClone(DEFAULT_SETTINGS.projects);
+    projects.defaultStatusId = expectDefined(projects.statuses[0]).id;
+    const { tab, plugin } = makeTab({ projects });
     document.body.append(tab.containerEl);
     try {
       const body = openSection(tab, 3);
@@ -2641,13 +2643,13 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     ).toBeNull();
   });
 
-  it('renders named default and persisted hex project status colors without saving', () => {
+  it('renders default hex and custom named project status colors without saving', () => {
     const projects = structuredClone(DEFAULT_SETTINGS.projects);
     projects.statuses.push({
       ...expectDefined(projects.statuses[0]),
-      id: 'status-hex',
-      name: 'hex',
-      color: '#123456',
+      id: 'status-custom',
+      name: 'custom',
+      color: 'orange',
     });
     const storedColors = projects.statuses.map(({ color }) => color);
     const { tab, plugin } = makeTab({ projects }, { expand: false });
@@ -2662,7 +2664,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
         expectDefined(row.querySelector<HTMLInputElement>('.abyss-project-value-color')).value,
     );
 
-    expect(renderedColors).toEqual(['#ffa500', '#ff0000', '#0000ff', '#008000', '#123456']);
+    expect(renderedColors).toEqual(['#d99345', '#d96c75', '#6b9cdb', '#77ad7b', '#ffa500']);
     expect(plugin.settings.projects.statuses.map(({ color }) => color)).toEqual(storedColors);
     expect(plugin.saveSettings).not.toHaveBeenCalled();
   });

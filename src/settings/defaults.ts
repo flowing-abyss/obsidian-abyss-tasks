@@ -13,28 +13,28 @@ export function buildDefaultProjectsSettings(): ProjectsSettings {
   const inbox: ProjectsSettings['statuses'][number] = {
     id: statusId(),
     name: 'inbox',
-    color: 'orange',
+    color: '#d99345',
     display: 'badge',
     onLeftPanel: false,
   };
   const todo: ProjectsSettings['statuses'][number] = {
     id: statusId(),
     name: 'todo',
-    color: 'red',
+    color: '#d96c75',
     display: 'badge',
     onLeftPanel: false,
   };
   const wip: ProjectsSettings['statuses'][number] = {
     id: statusId(),
     name: 'wip',
-    color: 'blue',
+    color: '#6b9cdb',
     display: 'badge',
     onLeftPanel: true,
   };
   const done: ProjectsSettings['statuses'][number] = {
     id: statusId(),
     name: 'done',
-    color: 'green',
+    color: '#77ad7b',
     display: 'badge',
     onLeftPanel: false,
   };
@@ -47,7 +47,7 @@ export function buildDefaultProjectsSettings(): ProjectsSettings {
     endProperty: 'end',
     propertyDefinitions: {},
     statuses: [inbox, todo, wip, done],
-    defaultStatusId: inbox.id,
+    defaultStatusId: wip.id,
     taskInsertionMode: 'section',
     taskInsertionSection: '# Tasks',
     taskInsertionSectionPosition: 'top',

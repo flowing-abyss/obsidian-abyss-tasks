@@ -583,20 +583,20 @@ describe('ProjectManager.create', () => {
     const file = expectDefined(await pm.create('My Project'));
 
     expect(file.path).toBe('projects/My Project.md');
-    expect(await app.vault.cachedRead(file)).toBe('---\nstatus: inbox\n---\n# Tasks\n');
+    expect(await app.vault.cachedRead(file)).toBe('---\nstatus: wip\n---\n# Tasks\n');
     expect(settings.projects).toMatchObject({
       membershipQuery: 'projects/',
       createFolder: 'projects',
       statusProperty: 'status',
-      defaultStatusId: 'status-1',
+      defaultStatusId: 'status-3',
       taskInsertionMode: 'section',
       taskInsertionSection: '# Tasks',
       taskInsertionSectionPosition: 'top',
       statuses: [
-        { id: 'status-1', name: 'inbox', color: 'orange', display: 'badge', onLeftPanel: false },
-        { id: 'status-2', name: 'todo', color: 'red', display: 'badge', onLeftPanel: false },
-        { id: 'status-3', name: 'wip', color: 'blue', display: 'badge', onLeftPanel: true },
-        { id: 'status-4', name: 'done', color: 'green', display: 'badge', onLeftPanel: false },
+        { id: 'status-1', name: 'inbox', color: '#d99345', display: 'badge', onLeftPanel: false },
+        { id: 'status-2', name: 'todo', color: '#d96c75', display: 'badge', onLeftPanel: false },
+        { id: 'status-3', name: 'wip', color: '#6b9cdb', display: 'badge', onLeftPanel: true },
+        { id: 'status-4', name: 'done', color: '#77ad7b', display: 'badge', onLeftPanel: false },
       ],
     });
   });
@@ -611,9 +611,9 @@ describe('ProjectManager.create', () => {
 
     expect(file.path).toBe('Projects/Case compatible.md');
     expect(createFolder).not.toHaveBeenCalledWith('projects');
-    expect(
-      evaluateQuery(settings.projects.membershipQuery, file.path, [], { status: 'inbox' }),
-    ).toBe(true);
+    expect(evaluateQuery(settings.projects.membershipQuery, file.path, [], { status: 'wip' })).toBe(
+      true,
+    );
   });
 
   it('builds a path under createFolder and applies the default status', async () => {
@@ -626,7 +626,10 @@ describe('ProjectManager.create', () => {
     expect(file).not.toBeNull();
     expect(expectDefined(file).path).toBe('projects/My Project.md');
     const fm = await readFm(app, 'projects/My Project.md');
-    expect(fm['status']).toBe('inbox');
+    expect(fm['status']).toBe('wip');
+    expect(settings.projects.statuses.find(({ name }) => name === fm['status'])?.onLeftPanel).toBe(
+      true,
+    );
   });
 
   it('never opens the created note', async () => {

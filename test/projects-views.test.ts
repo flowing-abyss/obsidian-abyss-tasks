@@ -726,6 +726,8 @@ describe('ProjectsPanel dispatch', () => {
   it('retries only the owned status write after partial project creation', async () => {
     const state = new AppState();
     const status = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.defaultStatusId = status.id;
     const failure = new ProjectCreationError('status failed', {
       createdPath: 'Projects/Owned.md',
       phase: 'status',
@@ -753,7 +755,7 @@ describe('ProjectsPanel dispatch', () => {
       state,
       store as never,
       manager as never,
-      structuredClone(DEFAULT_SETTINGS),
+      settings,
       null as never,
       { projectProperties },
     );
