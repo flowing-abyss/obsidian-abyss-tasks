@@ -297,6 +297,8 @@ export class CaptureSessions {
   #prepareCaptureHost(active: PanelCaptureSession, host: HTMLElement): HTMLElement | undefined {
     if (isCalendarCapturePlacement(active.placement)) {
       host.empty();
+      // Retained drafts can cross layouts; only clipped full-grid hosts need the portal.
+      if (host.classList.contains('abyss-calendar-agenda-capture')) return undefined;
       const feedbackHost = this.#root().createDiv({ cls: 'abyss-calendar-capture-feedback' });
       active.feedbackHost = feedbackHost;
       return feedbackHost;

@@ -2,15 +2,17 @@ import type { App } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { moment } from '../src/obsidianMoment';
+import type { CalendarCapturePlacement } from '../src/panels/calendar/calendarCapturePlacement';
 import { CalendarMode, type CalendarModeHost } from '../src/panels/calendar/CalendarMode';
 import type { CalViewType } from '../src/panels/calendar/calendarViewType';
 import { CaptureSessions } from '../src/panels/center/CaptureSessions';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
 import { StatusRegistry } from '../src/status/StatusRegistry';
-import type { TaskCreateSession, TaskIndexEvent } from '../src/tasks';
+import type { TaskCommandResult, TaskCreateSession, TaskIndexEvent } from '../src/tasks';
 import { noInteractionOwnership } from '../src/ui/interactionOwnership';
 import {
+  deferred,
   expectDefined,
   flushMicrotasks,
   subtask,
@@ -613,100 +615,173 @@ describe('compact CalendarMode', () => {
   });
 });
 
-it('preserves a frozen agenda draft through publication, width changes and date navigation', async () => {
-  const h = harness();
-  let width = 360;
-  vi.spyOn(h.root, 'getBoundingClientRect').mockImplementation(() => ({
-    width,
-    height: 700,
-    x: 0,
-    y: 0,
-    top: 0,
-    left: 0,
-    right: width,
-    bottom: 700,
-    toJSON: () => ({}),
-  }));
-  const execute = vi
-    .fn<TaskCreateSession['execute']>()
-    .mockResolvedValue({ type: 'invalid', issues: [] });
-  const application = {
-    queries: taskQueryApi(),
-    execute: vi.fn(),
-    planCreate: async (): Promise<TaskCreateSession> => ({
-      type: 'ready',
-      destination: { filePath: 'Capture.md', insertion: { type: 'append' } },
-      preview: () => ({ type: 'unavailable', cause: 'preview-capability' }),
-      execute,
-    }),
-  };
-  const captures = new CaptureSessions({
-    state: new AppState(),
-    settings: DEFAULT_SETTINGS,
-    application,
-    listNodes: () => [],
-    onCreationResult: () => {},
-    root: () => h.root,
-  });
-  vi.mocked(h.host.openCapture).mockImplementation((placement) => {
-    captures.openCapture(placement, { type: 'default', source: 'calendar' });
-  });
-  vi.mocked(h.host.unmountActiveCapture).mockImplementation(() => {
-    captures.unmountActiveCapture();
-  });
-  vi.mocked(h.host.remountActiveCapture).mockImplementation(() => {
-    captures.remountActiveCapture();
-  });
-  const input = (): HTMLInputElement =>
-    expectDefined(h.root.querySelector<HTMLInputElement>('.abyss-capture-input'));
-  const resize = async (next: number): Promise<void> => {
-    width = next;
-    window.dispatchEvent(new Event('resize'));
-    await new Promise<void>((resolve) =>
-      window.requestAnimationFrame(() => {
-        resolve();
-      }),
-    );
-  };
-  try {
-    h.mode['date_abyssPrivate'] = moment('2026-10-01');
-    h.mode.render(h.root);
-    h.click('.abyss-calendar-date[data-calendar-date="2026-10-16"]');
-    h.click('.abyss-calendar-agenda-add');
-    await flushMicrotasks();
-    input().value = 'Frozen draft';
-    input().dispatchEvent(new Event('input', { bubbles: true }));
-    h.emit();
-    expect(input().value).toBe('Frozen draft');
-    await resize(800);
-    expect(input().value).toBe('Frozen draft');
-    await resize(360);
-    expect(input().value).toBe('Frozen draft');
-    const next = expectDefined(
-      h.root.querySelector<HTMLButtonElement>(
-        '.abyss-calendar-date[data-calendar-date="2026-10-17"]',
-      ),
-    );
-    next.focus();
-    next.click();
-    await flushMicrotasks();
-    expect(execute).not.toHaveBeenCalled();
-    expect(h.root.querySelector('.abyss-capture-input')).toBeNull();
-    h.click('.abyss-calendar-date[data-calendar-date="2026-10-16"]');
-    expect(input().value).toBe('Frozen draft');
-    input().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    await flushMicrotasks();
-    expect(execute).toHaveBeenCalledOnce();
-    expect(execute).toHaveBeenCalledWith(
-      expect.objectContaining({
-        markdownBody: 'Frozen draft',
-        initial: { due: { type: 'set', value: '2026-10-16' } },
-      }),
-    );
-  } finally {
-    captures.cancelActiveCapture();
+function expectCalendarFeedback(root: HTMLElement, compact: boolean): void {
+  const input = expectDefined(root.querySelector<HTMLInputElement>('.abyss-capture-input'));
+  const surface = expectDefined(input.closest('.abyss-capture-surface'));
+  const portals = root.querySelectorAll('.abyss-calendar-capture-feedback');
+  expect(portals).toHaveLength(compact ? 0 : 1);
+  const feedback = compact ? surface : expectDefined(portals.item(0));
+  const destination = expectDefined(
+    feedback.querySelector<HTMLElement>('.abyss-capture-destination'),
+  );
+  const pending = expectDefined(feedback.querySelector<HTMLElement>('.abyss-capture-pending'));
+  const error = expectDefined(feedback.querySelector<HTMLElement>('.abyss-capture-error'));
+  expect(destination.textContent).toContain('2026-10-16');
+  for (const node of [destination, pending, error]) expect(node.isConnected).toBe(true);
+  if (compact) expect(surface.closest('.abyss-calendar-agenda')).not.toBeNull();
+  else expect(surface.contains(destination)).toBe(false);
+  expect(input.getAttribute('aria-describedby')).toContain(destination.id);
+  if (input.getAttribute('aria-invalid') === 'true') {
+    expect(input.getAttribute('aria-describedby')).toContain(error.id);
+    expect(error.hidden).toBe(false);
+    expect(error.textContent).not.toBe('');
   }
-});
+  expect(pending.hidden).toBe(input.getAttribute('aria-busy') !== 'true');
+}
+
+it.each([
+  { view: 'month', placement: { type: 'calendar-agenda', date: '2026-10-16' } },
+  { view: 'week', placement: { type: 'calendar-agenda', date: '2026-10-16' } },
+  { view: 'month', placement: { type: 'calendar-month', date: '2026-10-16' } },
+  { view: 'week', placement: { type: 'calendar-all-day', date: '2026-10-16' } },
+  { view: 'week', placement: { type: 'calendar-timed', date: '2026-10-16', time: '09:30' } },
+] satisfies Array<{ view: 'month' | 'week'; placement: CalendarCapturePlacement }>)(
+  'keeps frozen $placement.type draft and feedback with its mounted $view editor',
+  async ({ view, placement }) => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 16, 12));
+    const h = harness();
+    let width = placement.type === 'calendar-agenda' ? 360 : 800;
+    vi.spyOn(h.root, 'getBoundingClientRect').mockImplementation(() => ({
+      width,
+      height: 700,
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: width,
+      bottom: 700,
+      toJSON: () => ({}),
+    }));
+    const result = deferred<TaskCommandResult>();
+    const execute = vi.fn<TaskCreateSession['execute']>(() => result.promise);
+    const application = {
+      queries: taskQueryApi(),
+      execute: vi.fn(),
+      planCreate: async (): Promise<TaskCreateSession> => ({
+        type: 'ready',
+        destination: { filePath: 'Capture.md', insertion: { type: 'append' } },
+        preview: () => ({ type: 'unavailable', cause: 'preview-capability' }),
+        execute,
+      }),
+    };
+    const captures = new CaptureSessions({
+      state: new AppState(),
+      settings: DEFAULT_SETTINGS,
+      application,
+      listNodes: () => [],
+      onCreationResult: () => {},
+      root: () => h.root,
+    });
+    vi.mocked(h.host.openCapture).mockImplementation((placement) => {
+      captures.openCapture(placement, { type: 'default', source: 'calendar' });
+    });
+    vi.mocked(h.host.unmountActiveCapture).mockImplementation(() => {
+      captures.unmountActiveCapture();
+    });
+    vi.mocked(h.host.remountActiveCapture).mockImplementation(() => {
+      captures.remountActiveCapture();
+    });
+    const input = (): HTMLInputElement =>
+      expectDefined(h.root.querySelector<HTMLInputElement>('.abyss-capture-input'));
+    const resize = async (next: number): Promise<void> => {
+      width = next;
+      window.dispatchEvent(new Event('resize'));
+      await new Promise<void>((resolve) =>
+        window.requestAnimationFrame(() => {
+          resolve();
+        }),
+      );
+    };
+    try {
+      h.mode.setView(view);
+      h.mode['date_abyssPrivate'] = moment('2026-10-16');
+      h.mode.render(h.root);
+      if (placement.type === 'calendar-agenda') h.click('.abyss-calendar-agenda-add');
+      else captures.openCapture(placement, { type: 'default', source: 'calendar' });
+      await flushMicrotasks();
+      expectCalendarFeedback(h.root, width === 360);
+      input().value = 'Frozen draft';
+      input().dispatchEvent(new Event('input', { bubbles: true }));
+      h.emit();
+      expectCalendarFeedback(h.root, width === 360);
+      expect(input().value).toBe('Frozen draft');
+      await resize(800);
+      expectCalendarFeedback(h.root, false);
+      expect(input().value).toBe('Frozen draft');
+      await resize(360);
+      expectCalendarFeedback(h.root, true);
+      expect(input().value).toBe('Frozen draft');
+      const next = expectDefined(
+        h.root.querySelector<HTMLButtonElement>(
+          '.abyss-calendar-date[data-calendar-date="2026-10-17"]',
+        ),
+      );
+      next.focus();
+      next.click();
+      await flushMicrotasks();
+      expect(execute).not.toHaveBeenCalled();
+      expect(h.root.querySelector('.abyss-capture-input')).toBeNull();
+      expect(h.root.querySelector('.abyss-calendar-capture-feedback')).toBeNull();
+      h.click('.abyss-calendar-date[data-calendar-date="2026-10-16"]');
+      expect(input().value).toBe('Frozen draft');
+      input().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await flushMicrotasks();
+      expect(execute).toHaveBeenCalledOnce();
+      expect(execute).toHaveBeenCalledWith(
+        expect.objectContaining({
+          markdownBody: 'Frozen draft',
+          initial: {
+            due: { type: 'set', value: '2026-10-16' },
+            ...(placement.type === 'calendar-timed'
+              ? { time: { type: 'set', value: '09:30' } }
+              : {}),
+          },
+        }),
+      );
+      expect(input().readOnly).toBe(true);
+      expect(input().getAttribute('aria-busy')).toBe('true');
+      expectCalendarFeedback(h.root, true);
+      await resize(800);
+      expectCalendarFeedback(h.root, false);
+      expect(input().value).toBe('Frozen draft');
+      await resize(360);
+      expectCalendarFeedback(h.root, true);
+      result.resolve({ type: 'io-error', cause: 'repository-error', contentState: 'unchanged' });
+      await flushMicrotasks();
+      expect(input().getAttribute('aria-invalid')).toBe('true');
+      expect(input().readOnly).toBe(false);
+      expectCalendarFeedback(h.root, true);
+      for (const nextWidth of [800, 360]) {
+        await resize(nextWidth);
+        expect(input().getAttribute('aria-invalid')).toBe('true');
+        expect(input().value).toBe('Frozen draft');
+        expectCalendarFeedback(h.root, nextWidth === 360);
+      }
+      if (placement.type !== 'calendar-agenda') {
+        await resize(800);
+        expectCalendarFeedback(h.root, false);
+      }
+      expect(execute).toHaveBeenCalledOnce();
+      captures.cancelActiveCapture();
+      expect(h.root.querySelector('.abyss-capture-surface')).toBeNull();
+      expect(h.root.querySelector('.abyss-calendar-capture-feedback')).toBeNull();
+    } finally {
+      captures.cancelActiveCapture();
+      vi.useRealTimers();
+    }
+  },
+);
 
 it.each([
   { firstDay: 0 as const, start: '2026-11-01', next: '2026-11-08' },
