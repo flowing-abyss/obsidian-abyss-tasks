@@ -244,14 +244,8 @@ export class CaptureSessions {
     };
     const options = {
       ...(this.#app === undefined ? {} : { app: this.#app }),
-      ...(active.placement.type === 'list' && {
-        preserveDraftOnBlur: (next: EventTarget | null) =>
-          this.#activeCapture === active &&
-          isRealmHTMLElement(next) &&
-          next.isConnected &&
-          this.#root().contains(next) &&
-          next.matches('button.abyss-group-add'),
-      }),
+      preserveDraftOnBlur: (next: EventTarget | null) =>
+        this.#preserveCaptureDraftOnBlur(active, next),
       ...(active.placement.type === 'calendar-timed' && {
         placeholder: `Task at ${active.placement.time}…`,
       }),
@@ -268,6 +262,21 @@ export class CaptureSessions {
     active.surface = surface;
     active.host = host;
     this.#focusNewCaptureSurface(active, surface);
+  }
+
+  #preserveCaptureDraftOnBlur(active: PanelCaptureSession, next: EventTarget | null): boolean {
+    if (
+      this.#activeCapture !== active ||
+      !isRealmHTMLElement(next) ||
+      !next.isConnected ||
+      !this.#root().contains(next)
+    )
+      return false;
+    if (active.placement.type === 'list') return next.matches('button.abyss-group-add');
+    return (
+      isCalendarCapturePlacement(active.placement) &&
+      next.closest('.abyss-calendar-date, .abyss-cal-nav') !== null
+    );
   }
 
   #isCaptureSurfaceMounted(active: PanelCaptureSession, host: HTMLElement): boolean {
@@ -376,6 +385,8 @@ export class CaptureSessions {
         return `calendar-timed:${placement.date}:${placement.time}`;
       case 'calendar-all-day':
         return `calendar-all-day:${placement.date}`;
+      case 'calendar-agenda':
+        return `calendar-agenda:${placement.date}`;
       case 'calendar-month':
         return `calendar-month:${placement.date}`;
       case 'list':

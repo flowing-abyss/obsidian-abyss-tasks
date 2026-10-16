@@ -35,6 +35,10 @@ import process from 'process';
 // measured 2,059,457 (+1,174 bytes), including retained base description previews.
 // The minimal next-KiB main limit is 2,060,288 bytes (2012 KiB); CSS and dependencies are unchanged.
 // Dependency scope and budget enforcement are unchanged.
+// Compact calendar: main 2,108,351 -> 2,116,217 bytes (+7,866); shipped CSS
+// 189,482 -> 192,748 bytes (+3,266), after consolidating superseded phone toolbar rules.
+// Approved next-KiB limits are 2,116,608 (2067 KiB) and 193,536 (189 KiB).
+// No dependencies were added; both artifact checks retain size enforcement.
 const { mainJsBudgetBytes: MAIN_JS_BUDGET_BYTES } = JSON.parse(
   readFileSync('package.json', 'utf8'),
 ).release;

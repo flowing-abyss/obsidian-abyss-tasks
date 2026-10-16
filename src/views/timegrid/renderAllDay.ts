@@ -4,7 +4,7 @@ import type { TagGroup } from '../../settings/types';
 import type { StatusRegistry } from '../../status/StatusRegistry';
 import { tagColorFor } from '../../tags/tagColor';
 import { tagFillTextColorVar } from '../../tags/tagFillContrast';
-import type { TaskPriority, TaskSnapshot } from '../../tasks';
+import type { TaskOccurrenceCompletion, TaskPriority, TaskSnapshot } from '../../tasks';
 import { plainGhostTaskTitle } from '../../ui/plainGhostTaskTitle';
 import { renderTaskText } from '../../ui/renderTaskText';
 import { renderStatusMarker } from '../../ui/StatusMarker';
@@ -176,12 +176,34 @@ function attachSpanOverlayDropForwarding(
   });
 }
 
+export type CalendarItemCallbacks = Pick<
+  AllDayCallbacks,
+  | 'app'
+  | 'component'
+  | 'occurrenceFor'
+  | 'onTaskClick'
+  | 'onTaskSelect'
+  | 'onShowParent'
+  | 'onToggle'
+  | 'onSetStatus'
+  | 'onSetPriority'
+  | 'statusRegistry'
+  | 'dependenciesFor'
+  | 'forecastMenuOwner'
+  | 'onForecastClick'
+  | 'onForecastContextMenu'
+  | 'interactionOwnership'
+  | 'onNativeDragStart'
+>;
+
 interface AllDayBodyRenderContext {
   readonly cellEl: HTMLElement;
   readonly cls: string;
   readonly task: TaskSnapshot;
-  readonly callbacks: AllDayCallbacks;
+  readonly callbacks: CalendarItemCallbacks;
   readonly tagGroups: TagGroup[];
+  readonly activateBody?: boolean;
+  readonly completion?: TaskOccurrenceCompletion;
   readonly interactive: boolean;
   readonly nativeDraggable?: boolean;
   readonly continuity?: CalendarContinuity;
@@ -191,7 +213,8 @@ interface AllDayBodyRenderContext {
 function renderAllDayStatusControl(
   slot: HTMLElement,
   task: TaskSnapshot,
-  callbacks: AllDayCallbacks,
+  callbacks: CalendarItemCallbacks,
+  completion?: TaskOccurrenceCompletion,
 ): void {
   const projection = callbacks.dependenciesFor?.(task);
   renderStatusMarker(slot, {
@@ -199,6 +222,10 @@ function renderAllDayStatusControl(
     registry: callbacks.statusRegistry,
     interactive: true,
     completionBlocked: dependencyCompletionBlocked(projection),
+    ...(completion !== undefined && {
+      completion,
+      completionHint: completion.kind === 'continuation' ? `Complete on ${completion.due}.` : '',
+    }),
     onLeftClick: () => {
       callbacks.onToggle(task);
     },
@@ -236,13 +263,23 @@ function applyAllDayTagFill(el: HTMLElement, task: TaskSnapshot, tagGroups: TagG
 function bindAllDayBodyInteractions(
   el: HTMLElement,
   task: TaskSnapshot,
-  callbacks: AllDayCallbacks,
-  options: { readonly nativeDraggable: boolean; readonly selectable: boolean },
+  callbacks: CalendarItemCallbacks,
+  options: {
+    readonly nativeDraggable: boolean;
+    readonly selectable: boolean;
+    readonly activateBody: boolean;
+  },
 ): void {
   const { nativeDraggable, selectable } = options;
   const occurrence = callbacks.occurrenceFor(task);
   bindMaterializedInteractions(occurrence, () => {
-    if (selectable) bindTaskSelection(el, task, callbacks.onTaskSelect);
+    if (selectable || options.activateBody)
+      bindTaskSelection(
+        el,
+        task,
+        callbacks.onTaskSelect,
+        options.activateBody ? callbacks.onTaskClick : undefined,
+      );
     if (nativeDraggable) attachCalendarNativeDrag(el, task, callbacks.onNativeDragStart);
     el.addEventListener('contextmenu', (event) => {
       event.preventDefault();
@@ -253,7 +290,26 @@ function bindAllDayBodyInteractions(
   bindForecastInteractions(el, occurrence, callbacks);
 }
 
-function renderAllDayBody(context: AllDayBodyRenderContext): HTMLElement {
+function renderAllDayTitle(
+  el: HTMLElement,
+  task: TaskSnapshot,
+  callbacks: CalendarItemCallbacks,
+  markdown: boolean,
+): void {
+  const titleEl = el.createSpan({ cls: `abyss-tg-body-title${statusTitleClass(task.status)}` });
+  if (markdown) {
+    renderTaskText(titleEl, task.markdownTitle, {
+      presentation: 'title',
+      app: callbacks.app,
+      sourcePath: task.source.filePath,
+      component: callbacks.component,
+    });
+  } else {
+    titleEl.setText(plainGhostTaskTitle(task));
+  }
+}
+
+export function renderAllDayBody(context: AllDayBodyRenderContext): HTMLElement {
   const {
     cellEl,
     cls,
@@ -261,6 +317,8 @@ function renderAllDayBody(context: AllDayBodyRenderContext): HTMLElement {
     callbacks,
     tagGroups,
     interactive,
+    activateBody = false,
+    completion,
     nativeDraggable = interactive,
     continuity = 'single',
     spanRole = 'body',
@@ -274,7 +332,7 @@ function renderAllDayBody(context: AllDayBodyRenderContext): HTMLElement {
   const renderControl =
     occurrence.kind === 'materialized' && interactive
       ? (slot: HTMLElement): void => {
-          renderAllDayStatusControl(slot, task, callbacks);
+          renderAllDayStatusControl(slot, task, callbacks, completion);
         }
       : undefined;
   renderCalendarLeadingSlots(el, task.recurrence, occurrence.kind === 'forecast', renderControl);
@@ -286,17 +344,12 @@ function renderAllDayBody(context: AllDayBodyRenderContext): HTMLElement {
   // span/plain item read as plain/untouched while the same task's timed block elsewhere
   // showed struck-through.
   renderCalendarParentButton(el, occurrence, callbacks);
-  const titleEl = el.createSpan({ cls: `abyss-tg-body-title${statusTitleClass(task.status)}` });
-  if (occurrence.kind === 'materialized' && interactive) {
-    renderTaskText(titleEl, task.markdownTitle, {
-      presentation: 'title',
-      app: callbacks.app,
-      sourcePath: task.source.filePath,
-      component: callbacks.component,
-    });
-  } else {
-    titleEl.setText(plainGhostTaskTitle(task));
-  }
+  renderAllDayTitle(
+    el,
+    task,
+    callbacks,
+    occurrence.kind === 'materialized' && (interactive || activateBody),
+  );
   // Count badges (subtasks/comments/links) only — Task 44: tag chips were removed here too,
   // mirroring Task 35's identical removal for timed blocks (renderTimedBlocks.ts): the item's
   // own tag-colored fill (set below) already conveys the tag, so a chip repeating it was
@@ -316,6 +369,7 @@ function renderAllDayBody(context: AllDayBodyRenderContext): HTMLElement {
   bindAllDayBodyInteractions(el, task, callbacks, {
     nativeDraggable,
     selectable: interactive,
+    activateBody,
   });
   return el;
 }

@@ -190,7 +190,7 @@ export function bindMaterializedInteractions(
 }
 
 const TASK_SELECTION_EXCLUSION =
-  '.abyss-status-marker, a, button, input, select, textarea, [data-resize-edge]';
+  '.abyss-status-marker, .abyss-status-control, a, button, input, select, textarea, [data-resize-edge]';
 
 /**
  * Gives a materialized calendar surface the shared click-to-select contract without stealing
@@ -201,18 +201,28 @@ export function bindTaskSelection(
   element: HTMLElement,
   task: TaskSnapshot,
   onTaskSelect: ((task: TaskSnapshot) => void) | undefined,
+  onTaskActivate?: (task: TaskSnapshot) => void,
 ): void {
-  if (onTaskSelect === undefined) return;
+  if (onTaskSelect === undefined && onTaskActivate === undefined) return;
   element.setAttribute('tabindex', '0');
   element.addEventListener('focusin', () => {
-    onTaskSelect(task);
+    onTaskSelect?.(task);
   });
   element.addEventListener('click', (event) => {
     const target = event.target as Element | null;
     if (target?.closest(TASK_SELECTION_EXCLUSION) != null) return;
     const wasFocused = element.contains(element.ownerDocument.activeElement);
     element.focus({ preventScroll: true });
-    if (wasFocused || !element.contains(element.ownerDocument.activeElement)) onTaskSelect(task);
+    if (wasFocused || !element.contains(element.ownerDocument.activeElement)) onTaskSelect?.(task);
+    onTaskActivate?.(task);
+  });
+  element.addEventListener('keydown', (event) => {
+    if (event.target !== element || event.repeat || (event.key !== 'Enter' && event.key !== ' '))
+      return;
+    if (onTaskActivate === undefined) return;
+    event.preventDefault();
+    event.stopPropagation();
+    onTaskActivate(task);
   });
 }
 
@@ -395,6 +405,8 @@ export function bindForecastInteractions(
   // occurrence; not a tab stop, because focusing a forecast selects nothing and takes no keys.
   element.setAttribute('tabindex', '-1');
   element.addEventListener('click', (event) => {
+    const target = event.target as Element | null;
+    if (target?.closest(TASK_SELECTION_EXCLUSION) != null) return;
     event.stopPropagation();
     callbacks.onForecastClick?.(occurrence.source, occurrence.referenceDate);
   });

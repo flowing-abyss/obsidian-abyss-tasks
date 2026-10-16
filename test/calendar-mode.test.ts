@@ -4,11 +4,21 @@ import { AppState } from '../src/app/AppState';
 import { moment } from '../src/obsidianMoment';
 import { CalendarMode, type CalendarModeHost } from '../src/panels/calendar/CalendarMode';
 import type { CalViewType } from '../src/panels/calendar/calendarViewType';
+import { CaptureSessions } from '../src/panels/center/CaptureSessions';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
+import type { CalendarSettings } from '../src/settings/types';
 import { StatusRegistry } from '../src/status/StatusRegistry';
-import type { TaskIndexEvent } from '../src/tasks';
+import type { TaskCreateSession, TaskIndexEvent } from '../src/tasks';
 import { noInteractionOwnership } from '../src/ui/interactionOwnership';
-import { expectDefined, task, taskQueryApi, useRealMoment, type TestTaskQueries } from './helpers';
+import {
+  expectDefined,
+  flushMicrotasks,
+  subtask,
+  task,
+  taskQueryApi,
+  useRealMoment,
+  type TestTaskQueries,
+} from './helpers';
 
 useRealMoment();
 
@@ -40,7 +50,10 @@ afterEach(() => {
   for (const root of roots.splice(0)) root.remove();
 });
 
-function harness(queryOverrides: Omit<Partial<TestTaskQueries>, 'subscribe'> = {}): Harness {
+function harness(
+  queryOverrides: Omit<Partial<TestTaskQueries>, 'subscribe'> = {},
+  firstDayOfWeek: CalendarSettings['firstDayOfWeek'] = DEFAULT_SETTINGS.firstDayOfWeek,
+): Harness {
   const calls: string[] = [];
   const note = (name: string): void => {
     calls.push(name);
@@ -49,6 +62,7 @@ function harness(queryOverrides: Omit<Partial<TestTaskQueries>, 'subscribe'> = {
     rerender: vi.fn(() => {
       note('rerender');
     }),
+    onShowParent: vi.fn(async () => {}),
     openTask: vi.fn(() => {
       note('openTask');
     }),
@@ -105,7 +119,7 @@ function harness(queryOverrides: Omit<Partial<TestTaskQueries>, 'subscribe'> = {
   const mode = new CalendarMode({
     state,
     app: {} as App,
-    settings: DEFAULT_SETTINGS,
+    settings: { ...DEFAULT_SETTINGS, firstDayOfWeek },
     queries,
     tasks: { queries, execute: vi.fn() },
     statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
@@ -168,7 +182,7 @@ describe('CalendarMode session state', () => {
     const h = harness();
     h.mode.setView('week');
     expect(h.mode.view()).toBe('week');
-    expect(h.date()).toBe(moment().startOf('isoWeek').format('YYYY-MM-DD'));
+    expect(h.date()).toBe(moment().format('YYYY-MM-DD'));
     h.mode.setView('today');
     expect(h.date()).toBe(moment().format('YYYY-MM-DD'));
     h.mode.setView('month');
@@ -355,9 +369,9 @@ describe('CalendarMode week view', () => {
     expect(h.host.rerender).not.toHaveBeenCalled();
   });
 
-  it('Today returns the week view to the current ISO week and remounts', () => {
+  it('Today anchors the week on today and remounts', () => {
     const h = weekHarness();
-    const current = moment().startOf('isoWeek').format('YYYY-MM-DD');
+    const current = moment().format('YYYY-MM-DD');
     h.click('.abyss-cal-nav-btn[aria-label="Next"]');
     expect(h.date()).not.toBe(current);
     h.calls.length = 0;
@@ -435,5 +449,380 @@ it('does not acquire view focus for programmatic navigation', () => {
     expect(document.activeElement).toBe(outside);
   } finally {
     outside.remove();
+  }
+});
+
+describe('compact CalendarMode', () => {
+  function narrow(h: Harness, width = 360): void {
+    vi.spyOn(h.root, 'getBoundingClientRect').mockImplementation(() => ({
+      width,
+      height: 700,
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: width,
+      bottom: 700,
+      toJSON: () => ({}),
+    }));
+  }
+
+  it('changes only the selected agenda without querying another projection', () => {
+    const first = task({
+      source: { line: 1 },
+      title: 'First day',
+      planning: { due: '2026-10-16' },
+    });
+    const second = task({
+      source: { line: 2 },
+      title: 'Second day',
+      planning: { due: '2026-10-17' },
+    });
+    const forCalendarProjection = vi.fn(() => ({
+      materialized: [first, second].map((root) => ({
+        root,
+        node: root,
+        target: { type: 'task' as const, ref: root.ref },
+      })),
+      recurringSources: [],
+    }));
+    const h = harness({ forCalendarProjection });
+    narrow(h);
+    h.mode['date_abyssPrivate'] = moment('2026-10-01');
+    h.mode.render(h.root);
+    expect(h.root.querySelectorAll('.abyss-calendar-date')).toHaveLength(42);
+    h.click('[data-calendar-date="2026-10-16"].abyss-calendar-date');
+    const before = forCalendarProjection.mock.calls.length;
+    const skeleton = h.root.querySelector('.abyss-calendar-date');
+    h.click('[data-calendar-date="2026-10-17"].abyss-calendar-date');
+    expect(forCalendarProjection).toHaveBeenCalledTimes(before);
+    expect(h.root.querySelector('.abyss-calendar-agenda')?.getAttribute('data-calendar-date')).toBe(
+      '2026-10-17',
+    );
+    expect(h.root.querySelector('.abyss-calendar-agenda')?.textContent).toContain('Second day');
+    expect(h.root.querySelector('.abyss-calendar-agenda')?.textContent).not.toContain('First day');
+    expect(h.mode.captureDate()).toBe('2026-10-17');
+    h.click('.abyss-calendar-agenda-add');
+    expect(h.host.openCapture).toHaveBeenCalledWith({
+      type: 'calendar-agenda',
+      date: '2026-10-17',
+    });
+    h.emit();
+    expect(h.root.querySelector('.abyss-calendar-date')).toBe(skeleton);
+    expect(h.root.querySelector('.abyss-calendar-agenda')?.getAttribute('data-calendar-date')).toBe(
+      '2026-10-17',
+    );
+  });
+
+  it('coalesces width changes, remounts only across the threshold and ignores disposed work', async () => {
+    const callbacks: ResizeObserverCallback[] = [];
+    const disconnect = vi.fn();
+    const observer = vi.fn(function (callback: ResizeObserverCallback) {
+      callbacks.push(callback);
+      return { observe: vi.fn(), unobserve: vi.fn(), disconnect };
+    });
+    const saved = window.ResizeObserver;
+    window.ResizeObserver = observer;
+    try {
+      const h = harness();
+      let width = 800;
+      vi.spyOn(h.root, 'getBoundingClientRect').mockImplementation(() => ({
+        width,
+        height: 700,
+        x: 0,
+        y: 0,
+        top: 0,
+        left: 0,
+        right: width,
+        bottom: 700,
+        toJSON: () => ({}),
+      }));
+      h.mode.render(h.root);
+      const notify = (): void => {
+        callbacks.forEach((callback) => {
+          callback([], {} as ResizeObserver);
+        });
+      };
+      const frame = (): Promise<void> =>
+        new Promise((resolve) =>
+          window.requestAnimationFrame(() => {
+            resolve();
+          }),
+        );
+      width = 360;
+      notify();
+      notify();
+      await frame();
+      expect(h.root.querySelectorAll('.abyss-calendar-date')).toHaveLength(42);
+      const date = h.root.querySelector('.abyss-calendar-date');
+      width = 412;
+      notify();
+      await frame();
+      expect(h.root.querySelector('.abyss-calendar-date')).toBe(date);
+      width = 800;
+      notify();
+      await frame();
+      expect(h.root.querySelector('.abyss-mg-grid')).not.toBeNull();
+      const count = h.calls.length;
+      width = 360;
+      notify();
+      h.mode.unmount();
+      await frame();
+      notify();
+      await frame();
+      expect(disconnect).toHaveBeenCalled();
+      expect(h.calls).toHaveLength(count);
+    } finally {
+      Object.defineProperty(window, 'ResizeObserver', { configurable: true, value: saved });
+    }
+  });
+
+  it('anchors week and day switches to an overflow selection without moving its month', () => {
+    const h = harness();
+    narrow(h);
+    h.mode['date_abyssPrivate'] = moment('2026-10-01');
+    h.mode.render(h.root);
+    h.click('.abyss-calendar-date[data-calendar-date="2026-11-01"]');
+    expect(h.date()).toBe('2026-10-01');
+    h.mode.setView('week');
+    h.mode.render(h.root);
+    expect(h.root.querySelectorAll('.abyss-calendar-date')).toHaveLength(7);
+    expect(
+      h.root
+        .querySelector('.abyss-calendar-date[aria-pressed="true"]')
+        ?.getAttribute('data-calendar-date'),
+    ).toBe('2026-11-01');
+    h.mode.setView('today');
+    expect(h.date()).toBe('2026-11-01');
+  });
+});
+
+it('preserves a frozen agenda draft through publication, width changes and date navigation', async () => {
+  const h = harness();
+  let width = 360;
+  vi.spyOn(h.root, 'getBoundingClientRect').mockImplementation(() => ({
+    width,
+    height: 700,
+    x: 0,
+    y: 0,
+    top: 0,
+    left: 0,
+    right: width,
+    bottom: 700,
+    toJSON: () => ({}),
+  }));
+  const execute = vi
+    .fn<TaskCreateSession['execute']>()
+    .mockResolvedValue({ type: 'invalid', issues: [] });
+  const application = {
+    queries: taskQueryApi(),
+    execute: vi.fn(),
+    planCreate: async (): Promise<TaskCreateSession> => ({
+      type: 'ready',
+      destination: { filePath: 'Capture.md', insertion: { type: 'append' } },
+      preview: () => ({ type: 'unavailable', cause: 'preview-capability' }),
+      execute,
+    }),
+  };
+  const captures = new CaptureSessions({
+    state: new AppState(),
+    settings: DEFAULT_SETTINGS,
+    application,
+    listNodes: () => [],
+    onCreationResult: () => {},
+    root: () => h.root,
+  });
+  vi.mocked(h.host.openCapture).mockImplementation((placement) => {
+    captures.openCapture(placement, { type: 'default', source: 'calendar' });
+  });
+  vi.mocked(h.host.unmountActiveCapture).mockImplementation(() => {
+    captures.unmountActiveCapture();
+  });
+  vi.mocked(h.host.remountActiveCapture).mockImplementation(() => {
+    captures.remountActiveCapture();
+  });
+  const input = (): HTMLInputElement =>
+    expectDefined(h.root.querySelector<HTMLInputElement>('.abyss-capture-input'));
+  const resize = async (next: number): Promise<void> => {
+    width = next;
+    window.dispatchEvent(new Event('resize'));
+    await new Promise<void>((resolve) =>
+      window.requestAnimationFrame(() => {
+        resolve();
+      }),
+    );
+  };
+  try {
+    h.mode['date_abyssPrivate'] = moment('2026-10-01');
+    h.mode.render(h.root);
+    h.click('.abyss-calendar-date[data-calendar-date="2026-10-16"]');
+    h.click('.abyss-calendar-agenda-add');
+    await flushMicrotasks();
+    input().value = 'Frozen draft';
+    input().dispatchEvent(new Event('input', { bubbles: true }));
+    h.emit();
+    expect(input().value).toBe('Frozen draft');
+    await resize(800);
+    expect(input().value).toBe('Frozen draft');
+    await resize(360);
+    expect(input().value).toBe('Frozen draft');
+    const next = expectDefined(
+      h.root.querySelector<HTMLButtonElement>(
+        '.abyss-calendar-date[data-calendar-date="2026-10-17"]',
+      ),
+    );
+    next.focus();
+    next.click();
+    await flushMicrotasks();
+    expect(execute).not.toHaveBeenCalled();
+    expect(h.root.querySelector('.abyss-capture-input')).toBeNull();
+    h.click('.abyss-calendar-date[data-calendar-date="2026-10-16"]');
+    expect(input().value).toBe('Frozen draft');
+    input().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+    expect(execute).toHaveBeenCalledOnce();
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        markdownBody: 'Frozen draft',
+        initial: { due: { type: 'set', value: '2026-10-16' } },
+      }),
+    );
+  } finally {
+    captures.cancelActiveCapture();
+  }
+});
+
+it.each([
+  { firstDay: 0 as const, start: '2026-11-01', next: '2026-11-08' },
+  { firstDay: 6 as const, start: '2026-10-31', next: '2026-11-07' },
+])(
+  'keeps a selected Sunday inside the configured week ($firstDay)',
+  ({ firstDay, start, next }) => {
+    const h = harness({}, firstDay);
+    vi.spyOn(h.root, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 360, 700));
+    h.mode['date_abyssPrivate'] = moment('2026-10-01');
+    h.mode.render(h.root);
+    h.click('.abyss-calendar-date[data-calendar-date="2026-11-01"]');
+    h.openCalendarView.mockImplementation((view) => {
+      h.mode.setView(view);
+      h.mode.render(h.root);
+    });
+    expectDefined(
+      [...h.root.querySelectorAll<HTMLButtonElement>('.abyss-cal-view-btn')].find(
+        (button) => button.textContent === 'Week',
+      ),
+    ).click();
+    expect(h.root.querySelector('.abyss-calendar-date')?.getAttribute('data-calendar-date')).toBe(
+      start,
+    );
+    expect(h.mode.captureDate()).toBe('2026-11-01');
+    h.click('.abyss-cal-nav-btn[aria-label="Next"]');
+    expect(h.root.querySelector('.abyss-calendar-date')?.getAttribute('data-calendar-date')).toBe(
+      next,
+    );
+    expect(h.mode.captureDate()).toBe(next);
+  },
+);
+
+it('routes actual root, child and forecast agenda actions through canonical owners', async () => {
+  const parent = task({ title: 'Parent', planning: { due: '2026-10-16' } });
+  const child = subtask({
+    title: 'Dated child',
+    planning: { due: '2026-10-16' },
+    ref: { parent: { type: 'task', ref: parent.ref }, relativeLine: 1 },
+  });
+  const root = task({ ...parent, subtasks: [child] });
+  const repeating = task({
+    title: 'Repeating',
+    source: { line: 8 },
+    recurrence: 'every day',
+    planning: { due: '2026-10-15' },
+  });
+  const recurringSource = {
+    root: repeating,
+    node: repeating,
+    target: { type: 'task' as const, ref: repeating.ref },
+  };
+  const h = harness({
+    forCalendarProjection: () => ({
+      materialized: [
+        { root, node: root, target: { type: 'task', ref: root.ref } },
+        { root, node: child, target: { type: 'subtask', ref: child.ref } },
+      ],
+      recurringSources: [recurringSource],
+    }),
+  });
+  vi.spyOn(h.root, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 360, 700));
+  h.mode['date_abyssPrivate'] = moment('2026-10-01');
+  h.mode.render(h.root);
+  h.click('.abyss-calendar-date[data-calendar-date="2026-10-16"]');
+  const rows = [
+    ...h.root.querySelectorAll<HTMLElement>('.abyss-calendar-agenda .abyss-calendar-item'),
+  ];
+  expect(rows).toHaveLength(3);
+  const rootRow = expectDefined(
+    rows.find((row) => row.querySelector('.abyss-tg-body-title')?.textContent === 'Parent'),
+  );
+  rootRow.click();
+  expect(h.host.openTask).toHaveBeenLastCalledWith(root, { type: 'task', ref: root.ref });
+  const childRow = expectDefined(rows.find((row) => row.textContent.includes('Dated child')));
+  childRow.click();
+  expect(h.host.openTask).toHaveBeenLastCalledWith(root, { type: 'subtask', ref: child.ref });
+  expectDefined(childRow.querySelector<HTMLElement>('[role="checkbox"]')).click();
+  const displayedChild = expectDefined(vi.mocked(h.host.toggleTask).mock.calls[0]?.[0]);
+  expect(displayedChild.title).toBe('Dated child');
+  expectDefined(childRow.querySelector<HTMLButtonElement>('.abyss-task-parent-btn')).click();
+  await flushMicrotasks();
+  expect(h.host.onShowParent).toHaveBeenCalledWith(
+    { type: 'task', ref: root.ref },
+    expect.anything(),
+  );
+  const forecast = expectDefined(
+    rows.find((row) => row.getAttribute('data-occurrence-state') === 'forecast'),
+  );
+  expectDefined(forecast.querySelector<HTMLButtonElement>('.abyss-calendar-details')).click();
+  expect(h.host.openForecastTask).toHaveBeenCalledWith(recurringSource, '2026-10-16');
+});
+
+it('moves forecast menu ownership with a calendar mounted in another document', () => {
+  const root = task({ recurrence: 'every day', planning: { due: '2026-10-15' } });
+  const source = { root, node: root, target: { type: 'task' as const, ref: root.ref } };
+  const h = harness({
+    forCalendarProjection: () => ({ materialized: [], recurringSources: [source] }),
+  });
+  h.mode['date_abyssPrivate'] = moment('2026-10-01');
+  h.mode.render(h.root);
+  const other = document.implementation.createHTMLDocument();
+  other.body.append(h.root);
+  h.mode.render(h.root);
+  expectDefined(h.root.querySelector<HTMLElement>('.abyss-calendar-item')).dispatchEvent(
+    new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+  );
+  expect(other.querySelector('.abyss-forecast-context-menu')).not.toBeNull();
+  expect(document.querySelector('.abyss-forecast-context-menu')).toBeNull();
+});
+
+it('retains the current month on repeated Month navigation and applies period-step fallback', () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date(2026, 9, 16, 12));
+  try {
+    const h = harness();
+    vi.spyOn(h.root, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 360, 700));
+    h.mode.render(h.root);
+    h.click('.abyss-calendar-date[data-calendar-date="2026-11-01"]');
+    h.mode.setView('month');
+    h.mode.render(h.root);
+    expect(h.date()).toBe('2026-10-01');
+    expect(h.mode.captureDate()).toBe('2026-11-01');
+    h.click('.abyss-cal-nav-btn[aria-label="Next"]');
+    expect(h.date()).toBe('2026-11-01');
+    expect(h.mode.captureDate()).toBe('2026-11-01');
+    h.click('.abyss-cal-nav-btn[aria-label="Previous"]');
+    expect(h.mode.captureDate()).toBe('2026-10-16');
+    h.click('.abyss-calendar-date[data-calendar-date="2026-11-01"]');
+    h.click('.abyss-cal-nav-today');
+    expect(h.mode.captureDate()).toBe('2026-10-16');
+  } finally {
+    vi.useRealTimers();
   }
 });

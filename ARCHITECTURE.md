@@ -182,9 +182,9 @@ Unicode-letter uppercase mapping when it stays one code point; the neutral proje
 input remain unchanged. Canonical preview and frozen submission/retry receive that same request.
 Empty forms may expose manual choices without a valid creation preview.
 
-CalendarMode supplies its displayed day to the Q capture context; CaptureTargetResolver freezes it
-as the initial due date. Week and month retain the clock-day fallback. Explicit input and manual
-choices take precedence, and natural-language recognition keeps its own clock reference.
+CalendarMode supplies its displayed day or compact Month/Week selected day to the Q capture context;
+CaptureTargetResolver freezes it as the initial due date. Full-width Week and Month retain the
+clock-day fallback. Explicit input and manual choices take precedence, and natural-language recognition keeps its own clock reference.
 
 The retained create session's optional `previewContext(request?)` reads known prefix, initial, and
 resolver-seed metadata through the canonical validation, patch, and normalization stages. Its ready
@@ -410,7 +410,17 @@ Explicit source/reveal anchors and native scroll ownership keep priority. Replac
 changes, and disposal revoke stale measurement authority. Extent transactions preserve native scroll
 range through intermediate DOM changes while permitting a real final shrink.
 
-CalendarMode owns calendar state, view lifetime, and forecast presentation. CalendarCommands maps
+CalendarMode owns the period anchor, transient selected day, view lifetime, and forecast presentation.
+Its mounted center owner supplies the available width; an owner-window observer coalesces changes
+and rebuilds Month/Week only when the width category changes. ConstrainedCalendarView builds a
+bounded calendar day model per publication and retains its date buttons. Selecting a date reads that model
+and replaces the agenda without querying or projecting occurrences again. Agenda rows share the
+all-day item renderer, exact occurrence ownership, status menus, and Markdown component lifetime.
+Details activation is independent of quick-completion eligibility for continuation rows.
+
+CaptureSessions retains the agenda editor's frozen date and draft through publications, width
+changes, and date selection. It mounts only on that date's agenda or corresponding full-grid host;
+a temporarily absent date leaves the session retained and unmounted. CalendarCommands maps
 gestures to public commands. Materialized cards retain exact root/child ancestry and occupied-date
 roles; moves and resizes edit those roles through canonical targets. Layout, previews, recurrence
 forecasts, and display clamping do not themselves change stored planning.

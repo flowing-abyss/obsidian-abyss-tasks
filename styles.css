@@ -9067,16 +9067,6 @@ button.abyss-project-table-status-pill {
 
 /* Keep the complete calendar toolbar and its portal visible in narrow center panes. */
 @container abyss-task-list (max-width: 30rem) {
-  .abyss-cal-nav {
-    overflow-x: auto;
-    flex-wrap: nowrap;
-    scrollbar-width: none;
-  }
-
-  .abyss-cal-nav-left {
-    max-width: 100%;
-  }
-
   .abyss-center .abyss-calendar-capture-feedback {
     inset-block-start: calc(
       var(--size-4-16, 4rem) + var(--size-4-12, 3rem) + var(--size-4-4, 1rem)
@@ -9103,37 +9093,6 @@ body.is-phone .abyss-project-table-controls {
 body.is-phone .abyss-project-table-controls .abyss-center-search {
   flex: 1 1 auto;
   width: auto;
-}
-
-/* The calendar toolbar does not fit one phone row. Row one keeps the date and Today, row two is
-   the view switcher across the width. The pickers float from the center pane, so nothing here
-   needs to scroll or clip. */
-body.is-phone .abyss-cal-nav {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  overflow: visible;
-  padding: var(--size-4-3) var(--size-4-4);
-}
-
-/* The same top inset as the tasks header, so the controls do not jump between modes. This outranks
-   the desktop calendar rule above that keeps its toolbar one step shorter. */
-body.is-phone .abyss-layout--calendar > .abyss-center-shell > .abyss-center > .abyss-cal-nav {
-  padding-top: calc(var(--size-4-3) + min(var(--abyss-shell-top-inset), 5px));
-}
-
-body.is-phone .abyss-cal-nav-left {
-  min-width: 0;
-}
-
-/* Scoped to the calendar toolbar: the project timeline reuses the switcher and Today classes
-   inside its own segmented control and keeps its own layout. */
-body.is-phone .abyss-cal-nav .abyss-cal-view-switcher {
-  grid-column: 1 / -1;
-  margin-inline-start: 0;
-}
-
-body.is-phone .abyss-cal-nav .abyss-cal-view-btn {
-  flex: 1 1 0;
 }
 
 /* Every standalone phone control is a cell of the same family as the view switcher: the tray
@@ -10661,5 +10620,238 @@ button.abyss-statistics-row-button:focus-visible {
     .abyss-capture-chip
     > button.abyss-capture-chip-body:is(:hover, :focus, :focus-visible, :active, :disabled) {
     min-block-size: 24px;
+  }
+}
+
+/* The compact calendar keeps every date target usable and gives the selected day its own scroll. */
+.abyss-calendar-compact {
+  display: flex;
+  flex-direction: column;
+  min-block-size: 0;
+  min-inline-size: 0;
+  flex: 1;
+  overflow: auto;
+  padding-inline: var(--size-2-1);
+}
+
+.abyss-calendar-dates {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  flex: 0 0 auto;
+}
+
+.abyss-calendar-weekday {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  padding-block: var(--size-4-1);
+}
+
+button.abyss-calendar-date {
+  display: grid;
+  place-items: center;
+  gap: 3px;
+  min-block-size: 44px;
+  block-size: auto;
+  min-inline-size: 0;
+  margin: 0;
+  padding: var(--size-2-1) 0;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-normal);
+}
+
+button.abyss-calendar-date.is-outside-month {
+  color: var(--text-muted);
+}
+
+button.abyss-calendar-date[aria-current='date'] .abyss-calendar-date-number {
+  font-weight: var(--font-semibold);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+button.abyss-calendar-date[aria-pressed='true'] {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.abyss-calendar-compact :is(button, [tabindex='0']):focus-visible {
+  outline: 2px solid var(--background-modifier-border-focus);
+  outline-offset: -2px;
+}
+
+.abyss-calendar-marks {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  block-size: 8px;
+}
+
+.abyss-calendar-dot {
+  inline-size: 4px;
+  block-size: 4px;
+  border-radius: 50%;
+  background: currentcolor;
+}
+
+.abyss-calendar-overflow {
+  font-size: 10px;
+  line-height: 8px;
+  font-weight: var(--font-semibold);
+}
+
+.abyss-calendar-agenda {
+  min-block-size: 120px;
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: var(--size-4-2) var(--size-2-1) max(var(--size-4-2), env(safe-area-inset-bottom));
+}
+
+.abyss-calendar-agenda-heading {
+  margin: var(--size-4-2) 0;
+  font-size: var(--font-ui-medium);
+}
+
+.abyss-calendar-compact .abyss-calendar-agenda-item {
+  flex-wrap: wrap;
+  gap: 0 var(--size-4-1);
+  padding: var(--size-4-1);
+  margin-block: var(--size-4-2);
+  min-block-size: 44px;
+  cursor: pointer;
+  font-size: var(--font-ui-medium);
+}
+
+.abyss-calendar-compact .abyss-tg-body-title {
+  flex: 1 1 100px;
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
+}
+
+.abyss-calendar-agenda-context {
+  flex-basis: 100%;
+  order: 1;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.abyss-calendar-agenda button {
+  min-inline-size: 44px;
+  min-block-size: 44px;
+  block-size: auto;
+  flex-shrink: 0;
+}
+
+.abyss-calendar-compact .abyss-calendar-details {
+  background: transparent;
+  box-shadow: none;
+  border: 0;
+  padding: 0;
+  color: var(--text-muted);
+}
+
+/* Enlarge the control box while retaining the existing marker's priority color and shape. */
+.abyss-calendar-compact .abyss-status-marker {
+  position: relative;
+  inline-size: 44px;
+  min-inline-size: 44px;
+  block-size: 44px;
+  flex-basis: 44px;
+  border-width: 0;
+}
+
+.abyss-calendar-compact .abyss-status-marker::before {
+  content: '';
+  position: absolute;
+  inset: 12px;
+  border-width: 1.5px;
+  border-style: inherit;
+  border-color: inherit;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+/* An outer size container lets the existing rail reflow without measuring its new geometry. */
+.abyss-panel-view {
+  container-type: inline-size;
+  container-name: abyss-calendar-panel;
+}
+
+@container abyss-calendar-panel (max-width: 38rem) {
+  .abyss-layout--calendar {
+    flex-direction: column;
+  }
+
+  .abyss-layout--calendar > .abyss-rail {
+    flex-flow: row wrap;
+    inline-size: 100%;
+    box-sizing: border-box;
+    border-right: 0;
+    border-bottom: 1px solid var(--background-modifier-border);
+    padding: 0 var(--size-2-1);
+    gap: 0;
+  }
+
+  .abyss-layout--calendar :is(.abyss-rail-top, .abyss-rail-bottom, .abyss-rail-tracking) {
+    flex-flow: row wrap;
+    padding: 0;
+    gap: 0;
+  }
+
+  .abyss-layout--calendar .abyss-rail-top {
+    flex: 1 1 auto;
+  }
+
+  .abyss-layout--calendar .abyss-rail-tracking-rule {
+    display: none;
+  }
+
+  .abyss-layout--calendar .abyss-rail button {
+    min-inline-size: 44px;
+    min-block-size: 44px;
+  }
+}
+
+/* This follows the center width, including constrained desktop panes. */
+@container abyss-task-list (max-width: 38rem) {
+  .abyss-cal-nav {
+    display: flex;
+    flex-wrap: wrap;
+    overflow: visible;
+    padding-inline: var(--size-4-1);
+    gap: var(--size-4-1);
+  }
+
+  .abyss-cal-nav-left {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    min-width: 0;
+    justify-content: center;
+  }
+
+  .abyss-cal-nav-title-group {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .abyss-cal-nav button {
+    min-inline-size: 44px;
+    min-block-size: 44px;
+    block-size: auto;
+  }
+
+  .abyss-cal-nav > .abyss-cal-nav-today {
+    margin-inline-start: 0;
+  }
+
+  .abyss-cal-nav > .abyss-cal-view-switcher {
+    flex: 1 1 auto;
+    block-size: auto;
+    margin-inline-start: 0;
   }
 }

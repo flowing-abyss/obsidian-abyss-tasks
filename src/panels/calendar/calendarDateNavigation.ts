@@ -11,7 +11,7 @@ export interface CalendarTitle {
 
 /** The date a view opens on when the user switches to it or presses Today. */
 export function dateForView(view: CalViewType, now: CalendarMoment): CalendarMoment {
-  if (view === 'week') return now.clone().startOf('isoWeek');
+  if (view === 'week') return now.clone();
   if (view === 'today') return now.clone();
   return now.clone().date(1);
 }
@@ -23,7 +23,7 @@ export function stepCalendarDate(
   direction: -1 | 1,
 ): CalendarMoment {
   const operation = direction === 1 ? 'add' : 'subtract';
-  if (view === 'week') return date.clone()[operation](7, 'days').startOf('isoWeek');
+  if (view === 'week') return date.clone()[operation](7, 'days');
   if (view === 'today') return date.clone()[operation](1, 'day');
   return date.clone()[operation](1, 'months').date(1);
 }

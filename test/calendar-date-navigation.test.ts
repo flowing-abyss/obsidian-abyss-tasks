@@ -15,8 +15,8 @@ useRealMoment();
 describe('dateForView', () => {
   const now = moment('2026-09-23T15:30:00');
 
-  it('opens the week view on the ISO week start', () => {
-    expect(dateForView('week', now).format('YYYY-MM-DD')).toBe('2026-09-21');
+  it('retains the exact week anchor for configured week starts', () => {
+    expect(dateForView('week', now).format('YYYY-MM-DD')).toBe('2026-09-23');
   });
 
   it('opens the day view on the given instant', () => {
@@ -36,10 +36,10 @@ describe('dateForView', () => {
 });
 
 describe('stepCalendarDate', () => {
-  it('steps the week view by seven days and snaps to the ISO week start', () => {
+  it('steps the exact week anchor by seven days', () => {
     const date = moment('2026-09-23');
-    expect(stepCalendarDate('week', date, 1).format('YYYY-MM-DD')).toBe('2026-09-28');
-    expect(stepCalendarDate('week', date, -1).format('YYYY-MM-DD')).toBe('2026-09-14');
+    expect(stepCalendarDate('week', date, 1).format('YYYY-MM-DD')).toBe('2026-09-30');
+    expect(stepCalendarDate('week', date, -1).format('YYYY-MM-DD')).toBe('2026-09-16');
   });
 
   it('steps the day view by one day', () => {

@@ -1,10 +1,11 @@
 import type { App } from 'obsidian';
 import type { StatusRegistry } from '../../status/StatusRegistry';
 import type { EffectiveTagGroup } from '../../tags/effectiveTagGroups';
-import type { TaskPriority, TaskSnapshot } from '../../tasks';
+import type { LocalDate, TaskPriority, TaskSnapshot } from '../../tasks';
 import type { InteractionOwnershipPort } from '../../ui/interactionOwnership';
 import type { TaskDependencyLookup } from '../../ui/taskDependencyPresentation';
 import type { BaseView } from '../../views/BaseView';
+import { ConstrainedCalendarView } from '../../views/ConstrainedCalendarView';
 import { MonthGridView } from '../../views/MonthGridView';
 import { TodayView } from '../../views/TodayView';
 import { WeekTimeGridView } from '../../views/WeekTimeGridView';
@@ -68,7 +69,16 @@ export interface CalendarViewNavigation {
 }
 
 /** The structural contract the controller drives: render, patch, destroy. */
-export type CalendarViewInstance = Pick<BaseView, 'render' | 'patch' | 'destroy'>;
+export type CalendarViewInstance = Pick<BaseView, 'render' | 'patch' | 'destroy'> & {
+  readonly selectDate?: (date: LocalDate) => void;
+};
+
+export interface ConstrainedCalendarOptions {
+  readonly view: 'month' | 'week';
+  readonly dates: readonly LocalDate[];
+  readonly selectedDate: () => LocalDate;
+  readonly onSelectDate: (date: LocalDate) => void;
+}
 
 function createTodayView(deps: CalendarViewDependencies, handlers: CalendarHandlers): TodayView {
   return new TodayView({
@@ -186,12 +196,34 @@ function createMonthView(
  * selects a view class for a view type.
  */
 export function createCalendarView(
-  view: CalViewType,
-  deps: CalendarViewDependencies,
-  handlers: CalendarHandlers,
-  navigation: CalendarViewNavigation,
+  ...[view, deps, handlers, navigation, constrained]: [
+    view: CalViewType,
+    deps: CalendarViewDependencies,
+    handlers: CalendarHandlers,
+    navigation: CalendarViewNavigation,
+    constrained?: ConstrainedCalendarOptions,
+  ]
 ): CalendarViewInstance {
   if (view === 'today') return createTodayView(deps, handlers);
+  if (constrained !== undefined)
+    return new ConstrainedCalendarView({
+      ...constrained,
+      app: deps.app,
+      forecastMenuOwner: deps.forecastMenuOwner,
+      interactionOwnership: deps.interactionOwnership,
+      dependenciesFor: deps.dependenciesFor,
+      statusRegistry: deps.statusRegistry,
+      tagGroups: [...deps.tagGroups()],
+      onTaskClick: handlers.onTaskClick,
+      onTaskSelect: handlers.onTaskSelect,
+      onShowParent: handlers.onShowParent,
+      onForecastClick: handlers.onForecastClick,
+      onForecastContextMenu: handlers.onForecastContextMenu,
+      onCreateAtDate: handlers.onCreateAtDate,
+      onToggle: handlers.onToggle,
+      onSetStatus: handlers.onSetStatus,
+      onSetPriority: handlers.onSetPriority,
+    });
   if (view === 'week') return createWeekView(deps, handlers, navigation);
   return createMonthView(deps, handlers, navigation);
 }

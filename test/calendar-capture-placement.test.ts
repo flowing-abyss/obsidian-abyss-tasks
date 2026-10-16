@@ -141,3 +141,18 @@ describe('captureTargetForCalendarPlacement', () => {
     expect(target).not.toBe(base);
   });
 });
+
+it('mounts agenda capture only for its frozen date and seeds no time', () => {
+  const root = freshContainer();
+  const agenda = root.createDiv({
+    cls: 'abyss-calendar-agenda',
+    attr: { 'data-calendar-date': '2026-10-16' },
+  });
+  const placement = { type: 'calendar-agenda', date: '2026-10-16' } as const;
+  expect(calendarCaptureInputClass(placement)).toBe('abyss-calendar-agenda-input');
+  const host = calendarCaptureHost(root, placement);
+  expect(host?.parentElement).toBe(agenda);
+  expect(calendarCaptureHost(root, placement)).toBe(host);
+  agenda.dataset['calendarDate'] = '2026-10-17';
+  expect(calendarCaptureHost(root, placement)).toBeNull();
+});

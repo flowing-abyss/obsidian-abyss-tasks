@@ -544,9 +544,7 @@ describe('CenterPanel semantic navigation render boundary', () => {
     });
     expect(cancelKeyboardInteraction).toHaveBeenCalledOnce();
     expect(panel.calendarView()).toBe('week');
-    expect(calendarDateOf(panel).format('YYYY-MM-DD')).toBe(
-      window.moment().startOf('isoWeek').format('YYYY-MM-DD'),
-    );
+    expect(calendarDateOf(panel).format('YYYY-MM-DD')).toBe(window.moment().format('YYYY-MM-DD'));
 
     once(() => {
       navigator.openProjects();
@@ -3576,7 +3574,7 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     const root = task({
       title: 'Repeat source',
       recurrence: 'every day',
-      planning: { due: '2026-08-08', time: '09:00', duration: 60 },
+      planning: { due: '2026-07-31', time: '09:00', duration: 60 },
     });
     const source = {
       root,
@@ -3586,7 +3584,7 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     const spanRoot = task({
       title: 'Span repeat',
       recurrence: 'every day',
-      planning: { start: '2026-08-07', due: '2026-08-08' },
+      planning: { start: '2026-07-30', due: '2026-07-31' },
     });
     const spanSource = {
       root: spanRoot,
@@ -3640,6 +3638,7 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     expect(execute).not.toHaveBeenCalled();
 
     clickCalendarView(el, 'Day');
+    expect(calendarDateOf(panel).format('YYYY-MM-DD')).toBe('2026-08-01');
     const timedForecastBadge = expectDefined(
       el.querySelector<HTMLElement>(".abyss-tg-block [data-recurrence-forecast='true']"),
     );

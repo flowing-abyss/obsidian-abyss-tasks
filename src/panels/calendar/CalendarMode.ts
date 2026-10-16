@@ -102,10 +102,15 @@ interface CalendarRenderContext {
  * shares the `AppState` and the panel navigation port with the shell.
  */
 export class CalendarMode {
+  private selectedDate_abyssPrivate: LocalDate | undefined;
+  private constrained_abyssPrivate = false;
+  private stopWidthObservation_abyssPrivate: (() => void) | undefined;
+  private contentCache_abyssPrivate: CalendarContent | undefined;
   private viewType_abyssPrivate: CalViewType = 'month';
   private date_abyssPrivate: CalendarMoment = moment().date(1);
   private viewInstance_abyssPrivate: CalendarViewInstance | null = null;
   private unsubscribe_abyssPrivate: (() => void) | null = null;
+  private forecastOwnerDocument_abyssPrivate: Document | undefined;
   private forecastMenuOwner_abyssPrivate: ForecastContextMenuOwner | null = null;
   private projectionDiagnosticOwner_abyssPrivate: CalendarProjectionDiagnosticOwner | null = null;
   private navigationBar_abyssPrivate: CalendarNavigationBar | null = null;
@@ -138,15 +143,16 @@ export class CalendarMode {
   }
 
   captureDate(): LocalDate | undefined {
-    return this.viewType_abyssPrivate === 'today'
-      ? localDate(this.date_abyssPrivate.format('YYYY-MM-DD'))
-      : undefined;
+    if (this.viewType_abyssPrivate === 'today')
+      return localDate(this.date_abyssPrivate.format('YYYY-MM-DD'));
+    return this.constrained_abyssPrivate ? this.selectedDate_abyssPrivate : undefined;
   }
 
   /** Selects a view and its policy date without rendering; the navigator triggers the render. */
   setView(view: CalViewType): void {
+    if (view === this.viewType_abyssPrivate) return;
     this.viewType_abyssPrivate = view;
-    this.date_abyssPrivate = dateForView(view, moment());
+    this.date_abyssPrivate = dateForView(view, moment(this.selectedDate_abyssPrivate));
   }
 
   /** Full calendar render into the panel element. */
@@ -162,6 +168,9 @@ export class CalendarMode {
 
   /** Releases the mounted calendar; the owner empties the element. */
   unmount(): void {
+    this.stopWidthObservation_abyssPrivate?.();
+    this.stopWidthObservation_abyssPrivate = undefined;
+    this.contentCache_abyssPrivate = undefined;
     this.forecastMenuOwner_abyssPrivate?.dismiss();
     this.projectionDiagnosticOwner_abyssPrivate?.destroy();
     this.projectionDiagnosticOwner_abyssPrivate = null;
@@ -192,6 +201,11 @@ export class CalendarMode {
   }
 
   private renderShell_abyssPrivate(root: HTMLElement): void {
+    if (this.forecastOwnerDocument_abyssPrivate !== root.ownerDocument) {
+      this.forecastMenuOwner_abyssPrivate?.dismiss({ restoreFocus: false });
+      this.forecastMenuOwner_abyssPrivate = null;
+      this.forecastOwnerDocument_abyssPrivate = root.ownerDocument;
+    }
     const forecastMenuOwner =
       this.forecastMenuOwner_abyssPrivate ??
       createForecastContextMenuOwner(
@@ -222,10 +236,87 @@ export class CalendarMode {
       this.mountView_abyssPrivate(context);
     };
     pending.mountView = mountView;
+    this.observeWidth_abyssPrivate(root, context);
     mountView();
     this.unsubscribe_abyssPrivate = this.deps_abyssPrivate.queries.subscribe(() => {
       this.patchView_abyssPrivate(context, mountView);
     });
+  }
+
+  private resolveSelectedDate_abyssPrivate(): LocalDate[] {
+    const dates = visibleCalendarDates(
+      this.viewType_abyssPrivate,
+      this.date_abyssPrivate,
+      this.deps_abyssPrivate.settings.firstDayOfWeek,
+    ).map(localDate);
+    if (
+      this.selectedDate_abyssPrivate === undefined ||
+      !dates.includes(this.selectedDate_abyssPrivate)
+    ) {
+      const today = localDate(moment().format('YYYY-MM-DD'));
+      const primary =
+        this.viewType_abyssPrivate === 'month'
+          ? dates.filter((date) => date.startsWith(this.date_abyssPrivate.format('YYYY-MM')))
+          : dates;
+      this.selectedDate_abyssPrivate = primary.includes(today) ? today : primary[0];
+    }
+    return dates;
+  }
+
+  private selectDate_abyssPrivate(date: LocalDate): void {
+    if (this.selectedDate_abyssPrivate === date) return;
+    this.selectedDate_abyssPrivate = date;
+    const host = this.deps_abyssPrivate.host;
+    host.dismissRecurrenceEditor();
+    host.unmountActiveCapture();
+    this.viewInstance_abyssPrivate?.selectDate?.(date);
+    host.remountActiveCapture();
+    host.syncTaskStackSelection();
+  }
+
+  private observeWidth_abyssPrivate(root: HTMLElement, context: CalendarRenderContext): void {
+    const owner = root.ownerDocument.defaultView;
+    if (owner === null) {
+      this.constrained_abyssPrivate = false;
+      return;
+    }
+    // This mounted center is independent of the view's contents. Rail reflow is controlled by
+    // the outer layout's container query, never by this classification.
+    const classify = (): boolean => {
+      const width = root.getBoundingClientRect().width;
+      const measuredRem = Number.parseFloat(
+        owner.getComputedStyle(root.ownerDocument.documentElement).fontSize,
+      );
+      const rem = Number.isFinite(measuredRem) && measuredRem > 0 ? measuredRem : 16;
+      return width > 0
+        ? width <= 38 * rem
+        : root.ownerDocument.body.matches('.is-mobile, .is-phone');
+    };
+    this.constrained_abyssPrivate = classify();
+    let disposed = false;
+    let frame: number | undefined;
+    const schedule = (): void => {
+      if (disposed || frame !== undefined) return;
+      frame = owner.requestAnimationFrame(() => {
+        frame = undefined;
+        if (disposed) return;
+        const constrained = classify();
+        if (constrained === this.constrained_abyssPrivate) return;
+        this.constrained_abyssPrivate = constrained;
+        if (this.viewType_abyssPrivate !== 'today')
+          this.mountView_abyssPrivate(context, this.contentCache_abyssPrivate);
+      });
+    };
+    const Observer = owner.ResizeObserver;
+    const observer = typeof Observer === 'function' ? new Observer(schedule) : undefined;
+    observer?.observe(root);
+    owner.addEventListener('resize', schedule);
+    this.stopWidthObservation_abyssPrivate = () => {
+      disposed = true;
+      observer?.disconnect();
+      owner.removeEventListener('resize', schedule);
+      if (frame !== undefined) owner.cancelAnimationFrame(frame);
+    };
   }
 
   private createNavigationBar_abyssPrivate(
@@ -245,12 +336,14 @@ export class CalendarMode {
             this.date_abyssPrivate,
             direction,
           );
+          this.selectedDate_abyssPrivate = undefined;
           bar.updateTitle();
           mountView();
         },
         onToday: () => {
           this.cancelKeyboardInteraction();
           this.date_abyssPrivate = dateForView(this.viewType_abyssPrivate, moment());
+          this.selectedDate_abyssPrivate = localDate(moment().format('YYYY-MM-DD'));
           bar.updateTitle();
           mountView();
         },
@@ -258,6 +351,7 @@ export class CalendarMode {
           this.cancelKeyboardInteraction();
           bar.closePicker(true);
           this.date_abyssPrivate = this.date_abyssPrivate.clone().month(month).date(1);
+          this.selectedDate_abyssPrivate = undefined;
           bar.updateTitle();
           mountView();
         },
@@ -265,6 +359,7 @@ export class CalendarMode {
           this.cancelKeyboardInteraction();
           bar.closePicker(true);
           this.date_abyssPrivate = this.date_abyssPrivate.clone().year(year).date(1);
+          this.selectedDate_abyssPrivate = undefined;
           bar.updateTitle();
           mountView();
         },
@@ -285,7 +380,10 @@ export class CalendarMode {
     return bar;
   }
 
-  private mountView_abyssPrivate(context: CalendarRenderContext): void {
+  private mountView_abyssPrivate(
+    context: CalendarRenderContext,
+    retainedContent?: CalendarContent,
+  ): void {
     this.prepareViewUpdate_abyssPrivate(context);
     this.deps_abyssPrivate.host.unmountActiveCapture();
     const renderGeneration = this.focusRetention_abyssPrivate.beginRender();
@@ -294,7 +392,10 @@ export class CalendarMode {
     this.pendingScrollTop_abyssPrivate = undefined;
     this.viewInstance_abyssPrivate?.destroy();
     context.viewContainer.empty();
-    const { config, issues, tasks } = this.content_abyssPrivate();
+    const content = retainedContent ?? this.content_abyssPrivate();
+    this.contentCache_abyssPrivate = content;
+    const { config, issues, tasks } = content;
+    const dates = this.resolveSelectedDate_abyssPrivate();
     // A rebuilt grid with no position to restore would start at midnight, so it scrolls to now
     // even when this (view, date) pair was visited before. Only a same-date refresh that keeps its
     // position skips the scroll. The key check stays on the left so every mount records its key.
@@ -312,6 +413,18 @@ export class CalendarMode {
           this.openWeek_abyssPrivate(week, year);
         },
       },
+      this.constrained_abyssPrivate && this.viewType_abyssPrivate !== 'today'
+        ? {
+            view: this.viewType_abyssPrivate,
+            dates,
+            selectedDate: () =>
+              this.selectedDate_abyssPrivate ??
+              localDate(this.date_abyssPrivate.format('YYYY-MM-DD')),
+            onSelectDate: (date) => {
+              this.selectDate_abyssPrivate(date);
+            },
+          }
+        : undefined,
     );
     this.viewInstance_abyssPrivate = view;
     view.render(context.viewContainer, tasks, config, shouldScrollToNow, preservedScrollTop);
@@ -325,7 +438,9 @@ export class CalendarMode {
     }
     this.prepareViewUpdate_abyssPrivate(context);
     const renderGeneration = this.focusRetention_abyssPrivate.beginRender();
-    const { config, issues, tasks } = this.content_abyssPrivate();
+    const content = this.content_abyssPrivate();
+    this.contentCache_abyssPrivate = content;
+    const { config, issues, tasks } = content;
     this.deps_abyssPrivate.host.unmountActiveCapture();
     this.viewInstance_abyssPrivate.patch(context.viewContainer, tasks, config);
     this.finishViewUpdate_abyssPrivate(context, issues, renderGeneration);
@@ -385,6 +500,7 @@ export class CalendarMode {
     this.cancelKeyboardInteraction();
     this.viewType_abyssPrivate = 'today';
     this.date_abyssPrivate = moment(date);
+    this.selectedDate_abyssPrivate = localDate(date);
     this.deps_abyssPrivate.host.rerender();
   }
 
@@ -564,6 +680,10 @@ export class CalendarMode {
     date: string,
     allDay: boolean,
   ): void {
+    if (container.querySelector(`.abyss-calendar-agenda[data-calendar-date="${date}"]`) !== null) {
+      this.deps_abyssPrivate.host.openCapture({ type: 'calendar-agenda', date });
+      return;
+    }
     const selector = allDay
       ? `.abyss-tg-allday-cell[data-tg-date="${date}"]`
       : `[data-mg-date="${date}"]`;

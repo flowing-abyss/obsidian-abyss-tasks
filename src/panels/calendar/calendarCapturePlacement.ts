@@ -5,7 +5,8 @@ import { minutesToPixels, timeStringToMinutes } from '../../views/timegrid/layou
 export type CalendarCapturePlacement =
   | { readonly type: 'calendar-timed'; readonly date: string; readonly time: string }
   | { readonly type: 'calendar-all-day'; readonly date: string }
-  | { readonly type: 'calendar-month'; readonly date: string };
+  | { readonly type: 'calendar-month'; readonly date: string }
+  | { readonly type: 'calendar-agenda'; readonly date: string };
 
 export function isCalendarCapturePlacement<T extends { readonly type: string }>(
   placement: T,
@@ -18,6 +19,7 @@ export function calendarCaptureInputClass(placement: {
 }): string | undefined {
   if (placement.type === 'calendar-timed') return 'abyss-tg-quick-add-input';
   if (placement.type === 'calendar-all-day') return 'abyss-tg-allday-quick-add-input';
+  if (placement.type === 'calendar-agenda') return 'abyss-calendar-agenda-input';
   if (placement.type === 'calendar-month') return 'abyss-mg-quick-add-input';
   return undefined;
 }
@@ -52,6 +54,31 @@ function captureWrapper(parent: HTMLElement, className: string): HTMLElement {
   return current ?? parent.createDiv({ cls: className });
 }
 
+function calendarAgendaCaptureHost(
+  root: HTMLElement,
+  placement: CalendarCapturePlacement,
+): HTMLElement | null {
+  // A retained agenda draft can temporarily use the same date's full grid after a resize.
+  // Conversely, a full-grid draft mounts only when its date is the selected agenda date.
+  const agenda = [...root.querySelectorAll<HTMLElement>('.abyss-calendar-agenda')].find(
+    (candidate) => candidate.dataset['calendarDate'] === placement.date,
+  );
+  if (agenda !== undefined) {
+    const host = captureWrapper(agenda, 'abyss-calendar-agenda-capture');
+    host.dataset['abyssCaptureHost'] = placement.type;
+    host.dataset['abyssCaptureDate'] = placement.date;
+    return host;
+  }
+  return null;
+}
+
+function usesMonthCaptureHost(root: HTMLElement, placement: CalendarCapturePlacement): boolean {
+  return (
+    placement.type === 'calendar-month' ||
+    (placement.type === 'calendar-agenda' && root.querySelector('.abyss-mg-cell') !== null)
+  );
+}
+
 /**
  * The wrapper inside the mounted grid that hosts the capture surface, or null when the
  * cell is not rendered.
@@ -60,6 +87,8 @@ export function calendarCaptureHost(
   root: HTMLElement,
   placement: CalendarCapturePlacement,
 ): HTMLElement | null {
+  const agendaHost = calendarAgendaCaptureHost(root, placement);
+  if (agendaHost !== null) return agendaHost;
   if (placement.type === 'calendar-timed') {
     const day = [...root.querySelectorAll<HTMLElement>('.abyss-tg-day-column')].find(
       (candidate) => candidate.dataset['tgDate'] === placement.date,
@@ -74,14 +103,14 @@ export function calendarCaptureHost(
     return host;
   }
 
-  const selector = placement.type === 'calendar-month' ? '.abyss-mg-cell' : '.abyss-tg-allday-cell';
-  const dateKey = placement.type === 'calendar-month' ? 'mgDate' : 'tgDate';
+  const month = usesMonthCaptureHost(root, placement);
+  const selector = month ? '.abyss-mg-cell' : '.abyss-tg-allday-cell';
+  const dateKey = month ? 'mgDate' : 'tgDate';
   const cell = [...root.querySelectorAll<HTMLElement>(selector)].find(
     (candidate) => candidate.dataset[dateKey] === placement.date,
   );
   if (cell == null) return null;
-  const wrapperClass =
-    placement.type === 'calendar-month' ? 'abyss-mg-quick-add' : 'abyss-tg-allday-quick-add';
+  const wrapperClass = month ? 'abyss-mg-quick-add' : 'abyss-tg-allday-quick-add';
   const host = captureWrapper(cell, wrapperClass);
   host.dataset['abyssCaptureHost'] = placement.type;
   host.dataset['abyssCaptureDate'] = placement.date;
