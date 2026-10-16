@@ -17,20 +17,42 @@ const loadClock = async () => {
 const performance = await loadClock();
 
 describe('native profile boundaries', () => {
-  it('profiles progressive link typing and cancels without submitting or retaining a changed draft', async () => {
+  it('waits for updated link results before typing the next prefix and cancels the draft', async () => {
     const input = document.body.createEl('textarea');
     input.value = 'Original task';
     const seen: string[] = [];
+    const ready: string[] = [];
     const keys: string[] = [];
-    input.addEventListener('input', () => seen.push(input.value));
+    const menu = document.body.createDiv({ cls: 'abyss-link-suggest' });
+    let pending = false;
+    let raced = false;
+    input.addEventListener('input', () => {
+      if (pending) raced = true;
+      seen.push(input.value);
+      menu.empty();
+      if (!input.value.includes('[[')) return;
+      const query = input.value.split('[[')[1] ?? '';
+      pending = true;
+      window.setTimeout(() => {
+        const row = menu.createDiv({ cls: 'abyss-link-suggest-option' });
+        const title = row.createDiv({ cls: 'abyss-suggest-title' });
+        if (query.length > 0) title.createSpan({ cls: 'suggestion-highlight', text: query });
+        else title.textContent = 'Project';
+        ready.push(query);
+        pending = false;
+      }, 80);
+    });
     input.addEventListener('keydown', (event) => keys.push(event.key));
     try {
       await taskTextTyping(input);
+      expect(raced).toBe(false);
+      expect(ready).toEqual(['', 'P', 'Pro', 'Project']);
       expect(seen).toEqual(['Check [', 'Check [[', 'Check [[P', 'Check [[Pro', 'Check [[Project']);
       expect(keys).toEqual(['Escape', 'Escape']);
       expect(input.value).toBe('Original task');
     } finally {
       input.remove();
+      menu.remove();
     }
   });
   it('drains in-flight preparation and cancels later writes before restoration', async () => {

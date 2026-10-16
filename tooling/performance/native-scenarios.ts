@@ -19,6 +19,23 @@ export async function taskTextTyping(input: HTMLInputElement | HTMLTextAreaEleme
       input.value = value;
       input.setSelectionRange(value.length, value.length);
       input.dispatchEvent(new Event('input', { bubbles: true }));
+      if (value.includes('[[')) {
+        const query = value.split('[[')[1] ?? '';
+        await waitFor(() => {
+          const titles = [...document.querySelectorAll('.abyss-link-suggest .abyss-suggest-title')];
+          return (
+            titles.length > 0 &&
+            titles.every((title) => title.textContent.trim().length > 0) &&
+            (query === '' ||
+              titles.some((title) => {
+                const highlighted = [...title.querySelectorAll('.suggestion-highlight')]
+                  .map((part) => part.textContent)
+                  .join('');
+                return highlighted.toLowerCase() === query.toLowerCase();
+              }))
+          );
+        }, 'updated wiki-link results');
+      }
       await frames();
     }
   } finally {
