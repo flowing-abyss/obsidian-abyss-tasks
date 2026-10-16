@@ -1,6 +1,6 @@
 import { MarkdownRenderer, type TFile } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { VaultFileSuggestionSource } from '../src/ui/NoteSuggest';
+import { VaultFileSuggestionSource, type VaultLinkSuggestion } from '../src/ui/NoteSuggest';
 import { WikiLinkSuggest } from '../src/ui/WikiLinkSuggest';
 import { appWithFiles, expectDefined, methodOf } from './helpers';
 
@@ -258,6 +258,62 @@ describe('inline task link completion', () => {
     expect(h.input.hasAttribute('aria-controls')).toBe(false);
     expect(h.input.hasAttribute('role')).toBe(false);
   });
+  it.each([
+    ['input', 'combobox', 'true', 'false'],
+    ['textarea', null, null, null],
+  ] as const)(
+    'preserves %s semantics while exposing the active suggestion',
+    async (tag, role, expanded, collapsed) => {
+      const h = await setup(tag);
+      expect(h.input.getAttribute('role')).toBe(role);
+      expect(h.input.getAttribute('aria-expanded')).toBe(expanded);
+      expect(h.input.getAttribute('aria-autocomplete')).toBe('list');
+      expect(h.input.getAttribute('aria-haspopup')).toBe('listbox');
+      const menu = document.getElementById(h.input.getAttribute('aria-controls') ?? '');
+      expect(menu?.getAttribute('role')).toBe('listbox');
+      key(h.input, 'ArrowDown');
+      const active = document.getElementById(h.input.getAttribute('aria-activedescendant') ?? '');
+      expect(active?.getAttribute('aria-selected')).toBe('true');
+      expect(active?.querySelector('.suggestion-title')?.getAttribute('data-href')).toBe(
+        'Alpine.md',
+      );
+      key(h.input, 'Escape');
+      expect(h.input.getAttribute('role')).toBe(role);
+      expect(h.input.getAttribute('aria-expanded')).toBe(collapsed);
+      expect(h.input.hasAttribute('aria-controls')).toBe(false);
+      expect(h.input.hasAttribute('aria-activedescendant')).toBe(false);
+      h.controller.destroy();
+      expect(h.input.hasAttribute('aria-haspopup')).toBe(false);
+    },
+  );
+  it.each([
+    ['![[image.png]]', '[[image.png]]'],
+    ['![image](image.png)', '[image](image.png)'],
+    ['[[image.png]]', '[[image.png]]'],
+    ['[image](image.png)', '[image](image.png)'],
+  ])('preserves explicit embed intent with host output %s', async (generated, link) => {
+    const app = appWithFiles({ 'image.png': '' });
+    Object.assign(app.metadataCache, { isSupportedFile: undefined });
+    vi.spyOn(app.fileManager, 'generateMarkdownLink').mockReturnValue(generated);
+    for (const prefix of ['', '!']) {
+      const input = document.body.createEl('input');
+      input.value = `Before ${prefix}[[im]] after`;
+      input.focus();
+      input.setSelectionRange(11 + prefix.length, 11 + prefix.length);
+      const controller = new WikiLinkSuggest({ app, input, sourcePath: () => 'tasks.md' });
+      controllers.push(controller);
+      input.dispatchEvent(new Event('input'));
+      await vi.waitFor(() => {
+        expect(document.querySelectorAll('.abyss-link-suggest [role="option"]')).toHaveLength(1);
+      });
+      key(input, 'Enter');
+      expect(input.value).toBe(`Before ${prefix}${link} after`);
+      expect(input.selectionStart).toBe(7 + prefix.length + link.length);
+      expect(input.selectionEnd).toBe(input.selectionStart);
+      controller.destroy();
+      input.remove();
+    }
+  });
   it('reopens on keyboard caret re-entry while preserving Escape at the same selection', async () => {
     const h = await setup('textarea', '[[Alpha]] tail', 4);
     h.input.setSelectionRange(h.input.value.length, h.input.value.length);
@@ -327,7 +383,35 @@ describe('inline task link completion', () => {
     key(h.input, 'Enter');
     expect(h.input.value).toBe('Before [[Al]] after');
   });
-  it('discards delayed results after newer input or disposal', async () => {
+  it('keeps the latest results when an older query resolves after backspace', async () => {
+    const h = await setup();
+    const source = new VaultFileSuggestionSource(h.app);
+    const older = await source.links('Alp', new AbortController().signal, window);
+    const latest = await source.links('Al', new AbortController().signal, window);
+    const pending = new Map<string, (items: VaultLinkSuggestion[]) => void>();
+    vi.spyOn(VaultFileSuggestionSource.prototype, 'links').mockImplementation(
+      (query) => new Promise((resolve) => pending.set(query, resolve)),
+    );
+    for (const query of ['Alp', 'Al']) {
+      h.input.value = `[[${query}`;
+      h.input.setSelectionRange(h.input.value.length, h.input.value.length);
+      h.input.dispatchEvent(new Event('input'));
+    }
+    expectDefined(pending.get('Al'))(latest);
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll('.abyss-link-suggest [role="option"]')).toHaveLength(2);
+    });
+    key(h.input, 'ArrowDown');
+    const active = h.input.getAttribute('aria-activedescendant');
+    expectDefined(pending.get('Alp'))(older);
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(h.input.getAttribute('aria-activedescendant')).toBe(active);
+    key(h.input, 'Enter');
+    expect(h.input.value).toBe('[[Alpine]]');
+  });
+  it('discards delayed results after disposal', async () => {
     const h = await setup();
     let resolve:
       ((value: Awaited<ReturnType<VaultFileSuggestionSource['links']>>) => void) | undefined;

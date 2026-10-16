@@ -106,6 +106,74 @@ async function canonicalSurface(
 }
 
 describe('canonical Q context representation', () => {
+  it.each(['untagged', 'tag'] as const)(
+    'keeps the %s Inbox caption mounted while the first character is being recognized',
+    async (mode) => {
+      const h = await canonicalSurface(
+        { type: 'list', selection: 'inbox' },
+        {
+          sourceNoteDisplay: 'non-default',
+          inbox: { mode, tag: '#task/inbox', removeTagOnAssign: true },
+        },
+      );
+      try {
+        const caption = expectDefined(h.host.querySelector('.abyss-task-source-note'));
+        expect(caption.textContent).toBe('Inbox');
+        h.surface.input.value = 'x';
+        h.surface.input.dispatchEvent(new Event('input', { bubbles: true }));
+        expect(h.host.querySelector('.abyss-task-source-note')).toBe(caption);
+        expect(h.description()).toBe('Inbox');
+        h.controller.flushRecognition();
+        expect(h.host.querySelector('.abyss-task-source-note')).toBe(caption);
+        expect(h.description()).toBe('Inbox');
+        expect(await h.readCreated()).toBe('');
+      } finally {
+        h.close();
+      }
+    },
+  );
+
+  it('replaces the retained Inbox caption when the recognized draft leaves Inbox', async () => {
+    const h = await canonicalSurface(
+      { type: 'list', selection: 'inbox' },
+      {
+        sourceNoteDisplay: 'always',
+        inbox: { mode: 'untagged', tag: '', removeTagOnAssign: true },
+      },
+    );
+    try {
+      h.surface.input.value = 'Call #health';
+      h.surface.input.dispatchEvent(new Event('input', { bubbles: true }));
+      expect(h.description()).toBe('Inbox');
+      h.controller.flushRecognition();
+      expect(h.contents()).toEqual(['tasks', '#health']);
+      expect(h.description()).toBe('tasks');
+    } finally {
+      h.close();
+    }
+  });
+
+  it('clears the retained Inbox caption when draft preview becomes unavailable', async () => {
+    const h = await canonicalSurface(
+      { type: 'list', selection: 'inbox' },
+      { sourceNoteDisplay: 'non-default' },
+    );
+    try {
+      vi.spyOn(h.controller.target.session, 'preview').mockReturnValue({
+        type: 'unavailable',
+        cause: 'preview-capability',
+      });
+      h.surface.input.value = 'x';
+      h.surface.input.dispatchEvent(new Event('input', { bubbles: true }));
+      expect(h.description()).toBe('Inbox');
+      h.controller.flushRecognition();
+      expect(h.host.querySelector('.abyss-task-source-note')).toBeNull();
+      expect(h.description()).toBe('');
+    } finally {
+      h.close();
+    }
+  });
+
   it('keeps date-like note names inside the title when completion is accepted', async () => {
     const h = await canonicalSurface({ type: 'list', selection: 'inbox' });
     try {

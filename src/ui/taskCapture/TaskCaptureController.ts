@@ -299,7 +299,10 @@ export class TaskCaptureController {
     const { context: cachedContext, ...metadata }: Partial<CaptureMetadataSnapshot> =
       this.metadata_abyssPrivate ?? {};
     const preview = metadata.preview ?? missingTitlePreview();
-    const context = this.hasContextInput_abyssPrivate() ? cachedContext : undefined;
+    const context =
+      this.hasContextInput_abyssPrivate() || this.recognitionPending_abyssPrivate
+        ? cachedContext
+        : undefined;
     const destination = this.metadataDestination_abyssPrivate(preview, context);
     return {
       ...metadata,

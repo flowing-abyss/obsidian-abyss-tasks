@@ -52,6 +52,7 @@ export class WikiLinkSuggest {
     for (const name of [
       'role',
       'aria-autocomplete',
+      'aria-haspopup',
       'aria-expanded',
       'aria-controls',
       'aria-activedescendant',
@@ -159,7 +160,7 @@ export class WikiLinkSuggest {
     this.#releaseSurface?.();
     this.#releaseSurface = undefined;
     const { input } = this.#options;
-    input.setAttribute('aria-expanded', 'false');
+    if (input.getAttribute('role') === 'combobox') input.setAttribute('aria-expanded', 'false');
     input.removeAttribute('aria-controls');
     input.removeAttribute('aria-activedescendant');
   }
@@ -280,9 +281,12 @@ export class WikiLinkSuggest {
         this.#choose(index);
       });
     });
-    input.setAttribute('role', 'combobox');
+    if (input.tagName === 'INPUT') {
+      input.setAttribute('role', 'combobox');
+      input.setAttribute('aria-expanded', 'true');
+    }
     input.setAttribute('aria-autocomplete', 'list');
-    input.setAttribute('aria-expanded', 'true');
+    input.setAttribute('aria-haspopup', 'listbox');
     input.setAttribute('aria-controls', listId);
     this.#highlight();
     popup.reposition();
@@ -366,7 +370,9 @@ export class WikiLinkSuggest {
       );
       this.#dismiss();
       this.#inserting = true;
-      insertLink(this.#options.input, draft.range, text);
+      // Before Obsidian 1.10, attachments include an implicit embed marker.
+      // Any explicit marker typed by the user is already outside the replaced range.
+      insertLink(this.#options.input, draft.range, text.startsWith('![') ? text.slice(1) : text);
     } catch {
       this.#failed();
     } finally {
