@@ -9130,6 +9130,13 @@ body.is-phone .abyss-cal-nav {
   padding-block-end: var(--size-4-3);
 }
 
+/* Landscape phones can use the full grid while retaining the same toolbar touch targets. */
+body.is-phone .abyss-cal-nav :is(button, .abyss-cal-view-switcher) {
+  min-inline-size: 44px;
+  min-block-size: 44px;
+  block-size: auto;
+}
+
 body.is-phone .abyss-layout--calendar > .abyss-center-shell > .abyss-center > .abyss-cal-nav {
   padding-top: calc(var(--size-4-3) + min(var(--abyss-shell-top-inset), 5px));
 }

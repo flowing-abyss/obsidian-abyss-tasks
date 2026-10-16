@@ -292,6 +292,19 @@ describe('CenterPanel task metadata styles', () => {
     expect(declarationsFor('body.is-phone .abyss-panel-view .abyss-cal-nav-today')).toBe('');
   });
 
+  it('keeps phone calendar touch targets usable above the compact width threshold', () => {
+    expect(
+      cssDeclarationText(
+        css,
+        'body.is-phone .abyss-cal-nav :is(button, .abyss-cal-view-switcher)',
+        true,
+      ),
+    ).toBe(['min-inline-size: 44px;', 'min-block-size: 44px;', 'block-size: auto;'].join('\n'));
+    // The shared project switcher and wide vertical rail keep their existing sizing.
+    expect(cssDeclarationText(css, 'body.is-phone .abyss-cal-view-switcher', true)).toBe('');
+    expect(cssDeclarationText(css, 'body.is-phone .abyss-rail-btn', true)).toBe('');
+  });
+
   it('ends the desktop calendar toolbar with Today and the switcher as one group', () => {
     expect(cssDeclarationText(css, '.abyss-cal-nav > .abyss-cal-nav-today', true)).toBe(
       'margin-inline-start: auto;',
