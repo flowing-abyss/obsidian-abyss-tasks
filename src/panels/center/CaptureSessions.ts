@@ -78,6 +78,8 @@ export class CaptureSessions {
     readonly placement: PanelCapturePlacement;
   } | null = null;
   #activeCapture: PanelCaptureSession | null = null;
+  #calendarPointerTarget: HTMLElement | null = null;
+  #releaseCapturePointerIntent: (() => void) | undefined;
   readonly #state: AppState;
   readonly #root: () => HTMLElement;
   readonly #captureReveal: CaptureSessionsOptions['captureReveal'];
@@ -261,10 +263,55 @@ export class CaptureSessions {
     active.revealIntent?.mount(surface.input);
     active.surface = surface;
     active.host = host;
+    if (isCalendarCapturePlacement(active.placement))
+      this.#trackCalendarPointerIntent(active, surface);
     this.#focusNewCaptureSurface(active, surface);
   }
 
+  #trackCalendarPointerIntent(active: PanelCaptureSession, surface: CaptureSurface): void {
+    const root = this.#root();
+    const doc = root.ownerDocument;
+    const win = root.win;
+    let timer: number | undefined;
+    const clear = (): void => {
+      this.#calendarPointerTarget = null;
+      if (timer !== undefined) win.clearTimeout(timer);
+      timer = undefined;
+    };
+    const onPointer = (event: PointerEvent): void => {
+      clear();
+      if (
+        active.surface !== surface ||
+        !surface.input.isConnected ||
+        doc.activeElement !== surface.input ||
+        event.button > 0 ||
+        event.isPrimary === false
+      )
+        return;
+      const target = event.composedPath().find(isRealmHTMLElement) ?? null;
+      if (!this.#isCaptureNavigationTarget(active, target) || surface.element.contains(target))
+        return;
+      this.#calendarPointerTarget = target;
+      // Only the pointerdown default focus transition may consume this intent.
+      timer = win.setTimeout(clear, 0);
+    };
+    const endings = ['pointerup', 'pointercancel', 'click', 'keydown'] as const;
+    doc.addEventListener('pointerdown', onPointer, true);
+    for (const type of endings) doc.addEventListener(type, clear, true);
+    this.#releaseCapturePointerIntent = () => {
+      clear();
+      doc.removeEventListener('pointerdown', onPointer, true);
+      for (const type of endings) doc.removeEventListener(type, clear, true);
+    };
+  }
+
   #preserveCaptureDraftOnBlur(active: PanelCaptureSession, next: EventTarget | null): boolean {
+    const pointerTarget = this.#calendarPointerTarget;
+    this.#calendarPointerTarget = null;
+    return this.#isCaptureNavigationTarget(active, next ?? pointerTarget);
+  }
+
+  #isCaptureNavigationTarget(active: PanelCaptureSession, next: EventTarget | null): boolean {
     if (
       this.#activeCapture !== active ||
       !isRealmHTMLElement(next) ||
@@ -312,6 +359,8 @@ export class CaptureSessions {
   }
 
   unmountActiveCapture(): void {
+    this.#releaseCapturePointerIntent?.();
+    this.#releaseCapturePointerIntent = undefined;
     const active = this.#activeCapture;
     const surface = active?.surface;
     active?.revealIntent?.unmount();

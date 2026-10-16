@@ -26,6 +26,7 @@ function harness(
   const callbacks = {
     view: vi.fn(() => view),
     date: vi.fn(() => date),
+    firstDayOfWeek: vi.fn(() => 1),
     onStep: vi.fn(),
     onToday: vi.fn(),
     onSelectMonth: vi.fn(),

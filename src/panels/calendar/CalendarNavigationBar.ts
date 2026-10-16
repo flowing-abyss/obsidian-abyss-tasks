@@ -8,6 +8,7 @@ import type { CalViewType } from './calendarViewType';
 export interface CalendarNavigationBarCallbacks {
   readonly view: () => CalViewType;
   readonly date: () => CalendarMoment;
+  readonly firstDayOfWeek: () => number;
   readonly onStep: (direction: -1 | 1) => void;
   readonly onToday: () => void;
   /** Months are zero-based, as Moment numbers them. */
@@ -117,9 +118,11 @@ export class CalendarNavigationBar {
     const elements = this.elements_abyssPrivate;
     if (elements === null) return;
     const { callbacks } = this.options_abyssPrivate;
-    const title = calendarTitle(callbacks.view(), callbacks.date());
+    const title = calendarTitle(callbacks.view(), callbacks.date(), callbacks.firstDayOfWeek());
     elements.monthButton.textContent = title.primary;
     elements.yearButton.textContent = title.year;
+    // The picker edits the anchor's calendar year even when its rendered week crosses New Year.
+    elements.yearButton.setAttribute('aria-label', `Select calendar year, ${title.year}`);
   }
 
   closePicker(restoreFocus = false): void {

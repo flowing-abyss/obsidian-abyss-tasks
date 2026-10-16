@@ -328,6 +328,7 @@ export class CalendarMode {
       callbacks: {
         view: () => this.viewType_abyssPrivate,
         date: () => this.date_abyssPrivate,
+        firstDayOfWeek: () => this.deps_abyssPrivate.settings.firstDayOfWeek,
         onStep: (direction) => {
           this.cancelKeyboardInteraction();
           this.date_abyssPrivate = stepCalendarDate(

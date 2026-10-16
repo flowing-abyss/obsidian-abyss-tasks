@@ -639,15 +639,21 @@ function expectCalendarFeedback(root: HTMLElement, compact: boolean): void {
   expect(pending.hidden).toBe(input.getAttribute('aria-busy') !== 'true');
 }
 
-it.each([
+const calendarDraftCases = [
   { view: 'month', placement: { type: 'calendar-agenda', date: '2026-10-16' } },
   { view: 'week', placement: { type: 'calendar-agenda', date: '2026-10-16' } },
   { view: 'month', placement: { type: 'calendar-month', date: '2026-10-16' } },
   { view: 'week', placement: { type: 'calendar-all-day', date: '2026-10-16' } },
   { view: 'week', placement: { type: 'calendar-timed', date: '2026-10-16', time: '09:30' } },
-] satisfies Array<{ view: 'month' | 'week'; placement: CalendarCapturePlacement }>)(
-  'keeps frozen $placement.type draft and feedback with its mounted $view editor',
-  async ({ view, placement }) => {
+] satisfies Array<{ view: 'month' | 'week'; placement: CalendarCapturePlacement }>;
+
+it.each(
+  calendarDraftCases.flatMap((entry) =>
+    (['focus', 'pointer'] as const).map((activation) => ({ ...entry, activation })),
+  ),
+)(
+  'keeps frozen $placement.type draft and feedback with its mounted $view editor by $activation',
+  async ({ view, placement, activation }) => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date(2026, 9, 16, 12));
     const h = harness();
@@ -727,7 +733,11 @@ it.each([
           '.abyss-calendar-date[data-calendar-date="2026-10-17"]',
         ),
       );
-      next.focus();
+      if (activation === 'focus') next.focus();
+      else {
+        next.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+        input().dispatchEvent(new FocusEvent('blur', { relatedTarget: null }));
+      }
       next.click();
       await flushMicrotasks();
       expect(execute).not.toHaveBeenCalled();
@@ -735,6 +745,19 @@ it.each([
       expect(h.root.querySelector('.abyss-calendar-capture-feedback')).toBeNull();
       h.click('.abyss-calendar-date[data-calendar-date="2026-10-16"]');
       expect(input().value).toBe('Frozen draft');
+      if (activation === 'pointer') {
+        const forward = expectDefined(
+          h.root.querySelector<HTMLElement>('.abyss-cal-nav-btn[aria-label="Next"]'),
+        );
+        forward.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+        input().dispatchEvent(new FocusEvent('blur', { relatedTarget: null }));
+        forward.click();
+        await flushMicrotasks();
+        expect(execute).not.toHaveBeenCalled();
+        h.click('.abyss-cal-nav-btn[aria-label="Previous"]');
+        h.click('.abyss-calendar-date[data-calendar-date="2026-10-16"]');
+        expect(input().value).toBe('Frozen draft');
+      }
       input().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
       await flushMicrotasks();
       expect(execute).toHaveBeenCalledOnce();
@@ -917,3 +940,115 @@ it('retains the current month on repeated Month navigation and applies period-st
     vi.useRealTimers();
   }
 });
+
+// Literal starts and locale week numbers are independent of the production date helpers.
+it.each([
+  {
+    firstDay: 0,
+    october: '2026-10-18',
+    octoberWeek: 43,
+    december: '2026-12-27',
+    decemberWeek: 1,
+    january: '2026-12-27',
+    januaryWeek: 1,
+  },
+  {
+    firstDay: 1,
+    october: '2026-10-12',
+    octoberWeek: 42,
+    december: '2026-12-28',
+    decemberWeek: 1,
+    january: '2026-12-28',
+    januaryWeek: 1,
+  },
+  {
+    firstDay: 2,
+    october: '2026-10-13',
+    octoberWeek: 42,
+    december: '2026-12-29',
+    decemberWeek: 1,
+    january: '2026-12-29',
+    januaryWeek: 1,
+  },
+  {
+    firstDay: 3,
+    october: '2026-10-14',
+    octoberWeek: 42,
+    december: '2026-12-30',
+    decemberWeek: 1,
+    january: '2026-12-30',
+    januaryWeek: 1,
+  },
+  {
+    firstDay: 4,
+    october: '2026-10-15',
+    octoberWeek: 42,
+    december: '2026-12-31',
+    decemberWeek: 1,
+    january: '2026-12-31',
+    januaryWeek: 1,
+  },
+  {
+    firstDay: 5,
+    october: '2026-10-16',
+    octoberWeek: 42,
+    december: '2026-12-25',
+    decemberWeek: 52,
+    january: '2027-01-01',
+    januaryWeek: 1,
+  },
+  {
+    firstDay: 6,
+    october: '2026-10-17',
+    octoberWeek: 42,
+    december: '2026-12-26',
+    decemberWeek: 52,
+    january: '2026-12-26',
+    januaryWeek: 52,
+  },
+] as const)(
+  'labels the rendered configured week while the picker keeps calendar year ($firstDay)',
+  (fixture) => {
+    for (const [anchor, start, week] of [
+      ['2026-10-18', fixture.october, fixture.octoberWeek],
+      ['2026-12-31', fixture.december, fixture.decemberWeek],
+      ['2027-01-01', fixture.january, fixture.januaryWeek],
+    ] as const) {
+      const h = harness({}, fixture.firstDay);
+      vi.spyOn(h.root, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 360, 700));
+      h.mode['date_abyssPrivate'] = moment(anchor).date(1);
+      h.mode.render(h.root);
+      h.click(`.abyss-calendar-date[data-calendar-date="${anchor}"]`);
+      h.mode.setView('week');
+      h.mode.render(h.root);
+      expect(h.date()).toBe(anchor);
+      expect(h.mode.captureDate()).toBe(anchor);
+      expect(h.root.querySelector('.abyss-calendar-date')?.getAttribute('data-calendar-date')).toBe(
+        start,
+      );
+      expect(h.root.querySelector('.abyss-cal-nav-month')?.textContent).toBe(`Week ${week}`);
+      const year = expectDefined(h.root.querySelector<HTMLElement>('.abyss-cal-nav-year'));
+      expect(year.textContent).toBe(anchor.slice(0, 4));
+      expect(year.getAttribute('aria-label')).toBe(`Select calendar year, ${anchor.slice(0, 4)}`);
+      if (anchor === '2026-10-18') {
+        h.click('.abyss-cal-nav-btn[aria-label="Next"]');
+        expect(
+          h.root.querySelector('.abyss-calendar-date')?.getAttribute('data-calendar-date'),
+        ).toBe(moment(start).add(7, 'days').format('YYYY-MM-DD'));
+        expect(h.root.querySelector('.abyss-cal-nav-month')?.textContent).toBe(`Week ${week + 1}`);
+      } else {
+        year.click();
+        expect(h.root.querySelector('.abyss-year-picker-btn.is-active')?.textContent).toBe(
+          anchor.slice(0, 4),
+        );
+        const followingYear = String(Number(anchor.slice(0, 4)) + 1);
+        expectDefined(
+          [...h.root.querySelectorAll<HTMLElement>('.abyss-year-picker-btn')].find(
+            (button) => button.textContent === followingYear,
+          ),
+        ).click();
+        expect(h.date()).toBe(`${followingYear}-${anchor.slice(5, 7)}-01`);
+      }
+    }
+  },
+);

@@ -65,18 +65,18 @@ describe('calendarTitle', () => {
 
   it('labels the week view with the locale week number, not the ISO week', () => {
     // 2027-01-01 is locale week 1 and ISO week 53; the title must never read "Week 53".
-    expect(calendarTitle('week', moment('2027-01-01'))).toEqual({
+    expect(calendarTitle('week', moment('2027-01-01'), 1)).toEqual({
       primary: 'Week 1',
       year: '2027',
     });
   });
 
   it('labels the day view with month and day', () => {
-    expect(calendarTitle('today', date)).toEqual({ primary: 'September 23', year: '2026' });
+    expect(calendarTitle('today', date, 1)).toEqual({ primary: 'September 23', year: '2026' });
   });
 
   it('labels the month view with the month name', () => {
-    expect(calendarTitle('month', date)).toEqual({ primary: 'September', year: '2026' });
+    expect(calendarTitle('month', date, 1)).toEqual({ primary: 'September', year: '2026' });
   });
 });
 

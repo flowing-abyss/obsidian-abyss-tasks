@@ -44,6 +44,9 @@ import process from 'process';
 // CSS enforcement and dependency scope are unchanged.
 // Prepared index observations and compiled source policy: main 2,118,553 -> 2,118,969 bytes
 // (+416). Approved next-KiB limit: 2,119,680 (2070 KiB); CSS and dependencies are unchanged.
+// Configured-week titles and retained calendar pointer intent: main 2,119,033 -> 2,120,099
+// bytes (+1,066). Approved next-KiB limit: 2,120,704 (2071 KiB); CSS remains 193,508 bytes
+// within its unchanged 193,536-byte cap. Artifact enforcement and dependencies are unchanged.
 const { mainJsBudgetBytes: MAIN_JS_BUDGET_BYTES } = JSON.parse(
   readFileSync('package.json', 'utf8'),
 ).release;
