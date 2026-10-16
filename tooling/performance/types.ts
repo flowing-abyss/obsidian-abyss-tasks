@@ -67,7 +67,7 @@ export const ANALYSIS = [
   'dependencies',
 ];
 
-export const SCENARIOS = [
+const SCENARIOS = [
   'startup.index',
   'query.roots',
   'query.nodes',

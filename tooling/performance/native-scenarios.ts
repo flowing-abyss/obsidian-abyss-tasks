@@ -19,7 +19,7 @@ import {
 } from './native-helpers.ts';
 import type { Host, NativeOptions } from './native-types.ts';
 import { ANALYSIS, type Sample } from './types.ts';
-export { scenarioIds, SCENARIOS } from './types.ts';
+export { scenarioIds } from './types.ts';
 
 export type Measure = (
   id: string,
