@@ -488,6 +488,7 @@ export default defineConfig(
       'src/markdown/searchText.ts',
       'src/markdown/taskDescriptionStructure.ts',
       'src/ui/commentPreview.ts',
+      'src/ui/wikiLinkInput.ts',
       'src/ui/taskDescriptionExcerptRanges.ts',
       'src/markdown/searchTextTypes.ts',
       'src/tasks/domain/taskSearchProjection.ts',

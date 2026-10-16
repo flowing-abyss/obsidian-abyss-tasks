@@ -171,6 +171,8 @@ export const contracts = {
   runtime: {
     // Exact native spacer producer/consumer is exercised by css-policy.test.ts.
     produced: [
+      // The task-text mirror copies the active field's content width; tested against its source.
+      '--abyss-field-width',
       '--abyss-statistics-row-height',
       '--abyss-statistics-row-offset',
       '--abyss-virtual-row-height',

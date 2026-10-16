@@ -390,6 +390,14 @@ it('checks named colors in all color-bearing properties', () => {
   ).toEqual(['abyss/token-color', 'abyss/token-color']);
 });
 
+it('ties the task link mirror width to its field measurement and owned CSS', async () => {
+  const { default: ts } = await import('typescript');
+  const source = ts.sys.readFile(ts.sys.resolvePath('src/ui/textFieldAnchor.ts'));
+  expect(source).toBeDefined();
+  expect(discoverRuntimeVariables(source ?? '').produced).toContain('--abyss-field-width');
+  expect(contracts.runtime.produced).toContain('--abyss-field-width');
+});
+
 it('ties finite runtime producer families to calls in their actual source owners', async () => {
   const { default: ts } = await import('typescript');
   const { runtimeFamilies } = await import('../tooling/css-contracts.mjs');

@@ -6,6 +6,12 @@ export interface AnchoredPopoverOptions {
   readonly owner: HTMLElement;
   readonly anchor: HTMLElement;
   readonly boundary: HTMLElement;
+  /** Text editors measure a caret and the owning visual viewport instead of a whole element. */
+  readonly getAnchorRect?: () => DOMRect;
+  readonly getBoundaryRect?: () => DOMRect;
+  readonly viewportPositioned?: boolean;
+  readonly retainAnchorFocus?: boolean;
+  readonly handleEscape?: boolean;
   readonly preferred: AnchoredPlacementInput['preferred'];
   /** Classes beyond the shared `abyss-popover abyss-popover-anchored` pair. */
   readonly cls: string;
@@ -81,8 +87,7 @@ function fitToBoundary(state: PopoverState, boundary: DOMRect, anchor: DOMRect):
 function place(state: PopoverState): void {
   const { element } = state;
   if (state.closed || !element.isConnected) return;
-  const boundary = state.options.boundary.getBoundingClientRect();
-  const anchor = state.options.anchor.getBoundingClientRect();
+  const { boundary, anchor } = measuredRects(state.options);
   fitToBoundary(state, boundary, anchor);
   const floating = element.getBoundingClientRect();
   const placement = anchoredPlacement({
@@ -96,6 +101,12 @@ function place(state: PopoverState): void {
     edgeGap: EDGE_GAP,
     preferred: state.options.preferred,
   });
+  if (state.options.viewportPositioned === true) {
+    setLength(element, 'top', placement.top);
+    setLength(element, 'left', placement.left);
+    element.dataset['side'] = placement.side;
+    return;
+  }
   // The placement is in viewport space, so it is read back into the padding box of whichever
   // ancestor actually positions the popover.
   const block = (element.offsetParent as HTMLElement | null) ?? state.options.boundary;
@@ -103,6 +114,13 @@ function place(state: PopoverState): void {
   setLength(element, 'top', placement.top - rect.top - block.clientTop + block.scrollTop);
   setLength(element, 'left', placement.left - rect.left - block.clientLeft + block.scrollLeft);
   element.dataset['side'] = placement.side;
+}
+
+function measuredRects(options: AnchoredPopoverOptions): { boundary: DOMRect; anchor: DOMRect } {
+  return {
+    boundary: options.getBoundaryRect?.() ?? options.boundary.getBoundingClientRect(),
+    anchor: options.getAnchorRect?.() ?? options.anchor.getBoundingClientRect(),
+  };
 }
 
 function close(state: PopoverState, restoreFocus?: boolean): void {
@@ -126,7 +144,8 @@ function listen(state: PopoverState): () => void {
   const outside = (event: Event): void => {
     const target = event.target;
     if (
-      !(target instanceof Node) ||
+      ownerWindow === null ||
+      !(target instanceof ownerWindow.Node) ||
       element.contains(target) ||
       state.options.anchor.contains(target)
     )
@@ -137,7 +156,7 @@ function listen(state: PopoverState): () => void {
     close(state, false);
   };
   const keydown = (event: KeyboardEvent): void => {
-    if (event.key !== 'Escape') return;
+    if (event.key !== 'Escape' || state.options.handleEscape === false) return;
     event.preventDefault();
     event.stopPropagation();
     close(state, true);
@@ -147,12 +166,16 @@ function listen(state: PopoverState): () => void {
   ownerDocument.addEventListener('keydown', keydown, true);
   ownerDocument.addEventListener('scroll', reposition, true);
   ownerWindow?.addEventListener('resize', reposition);
+  ownerWindow?.visualViewport?.addEventListener('resize', reposition);
+  ownerWindow?.visualViewport?.addEventListener('scroll', reposition);
   return () => {
     ownerDocument.removeEventListener('pointerdown', outside, true);
     ownerDocument.removeEventListener('focusin', outside, true);
     ownerDocument.removeEventListener('keydown', keydown, true);
     ownerDocument.removeEventListener('scroll', reposition, true);
     ownerWindow?.removeEventListener('resize', reposition);
+    ownerWindow?.visualViewport?.removeEventListener('resize', reposition);
+    ownerWindow?.visualViewport?.removeEventListener('scroll', reposition);
   };
 }
 
@@ -180,7 +203,7 @@ export function openAnchoredPopover(options: AnchoredPopoverOptions): AnchoredPo
   state.release = listen(state);
   // The keyboard follows the surface it opened, so the next Tab reaches the list rather than
   // whatever sits after the anchor, which the outside-focus guard would read as a dismissal.
-  state.element.focus({ preventScroll: true });
+  if (options.retainAnchorFocus !== true) state.element.focus({ preventScroll: true });
   return {
     element: state.element,
     reposition: () => {
