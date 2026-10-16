@@ -146,11 +146,22 @@ export class InspectorSections {
   }> = [];
   #commentRows: InspectorCommentRow[] = [];
 
-  readonly #editors = new Map<HTMLElement, { parent: Component; component: Component }>();
+  readonly #editors = new Map<
+    HTMLElement,
+    {
+      parent: Component;
+      component: Component;
+      onReorder: ((proof: OwnedTaskSelectionProof) => void) | undefined;
+    }
+  >();
 
-  #editorOwner(element: HTMLElement, parent = this.#host.component()): Component {
+  #editorOwner(
+    element: HTMLElement,
+    parent = this.#host.component(),
+    onReorder?: (proof: OwnedTaskSelectionProof) => void,
+  ): Component {
     const component = parent.addChild(new Component());
-    this.#editors.set(element, { parent, component });
+    this.#editors.set(element, { parent, component, onReorder });
     component.register(() => {
       this.#editors.delete(element);
       element.remove();
@@ -201,6 +212,7 @@ export class InspectorSections {
     if (list === undefined || comments === undefined) return;
     this.#updateSubtasks(list, task);
     this.#updateComments(comments, task, context, proof);
+    this.#advanceReorderedEditors(proof);
     this.#updateCount(
       this.#subSection,
       task.subtasks.length === 0
@@ -211,6 +223,11 @@ export class InspectorSections {
       this.#commentSection,
       task.comments.length === 0 ? '' : String(task.comments.length),
     );
+  }
+
+  #advanceReorderedEditors(proof: OwnedTaskSelectionProof | undefined): void {
+    if (proof?.reordersSubtasks !== true) return;
+    for (const editor of this.#editors.values()) editor.onReorder?.(proof);
   }
 
   consumeCommentEditor(ref: CommentRef): void {
@@ -277,10 +294,10 @@ export class InspectorSections {
       if (entry === undefined) {
         this.#renderSubTask(list, sub, task);
         entry = this.#subRows[this.#subRows.length - 1];
-        if (entry !== undefined && list.children[index] !== entry.row)
-          list.insertBefore(entry.row, list.children[index] ?? null);
       }
       if (entry !== undefined) {
+        if (list.children[index] !== entry.row)
+          list.insertBefore(entry.row, list.children[index] ?? null);
         entry.snapshot = sub;
         entry.row
           .querySelector('.abyss-subtask-label')
@@ -418,8 +435,9 @@ export class InspectorSections {
   ): void {
     const owner = this.#host.taskOwner(task);
     let currentTask = task;
-    const advanceTarget = (): void => {
-      if (owner.current !== undefined) currentTask = owner.current;
+    const advanceTarget = (proof?: OwnedTaskSelectionProof): void => {
+      const next = proof === undefined ? owner.current : proof.successor(currentTask);
+      if (next !== undefined) currentTask = next;
     };
     const start = view.offsetHeight;
     view.hide();
@@ -429,7 +447,7 @@ export class InspectorSections {
     view.insertAdjacentElement('afterend', textarea);
     const lifecycle = new AsyncEditLifecycle();
     textarea.value = task.description ?? '';
-    const editorOwner = this.#editorOwner(textarea);
+    const editorOwner = this.#editorOwner(textarea, undefined, advanceTarget);
     editorOwner.register(() => {
       lifecycle.close();
     });
@@ -779,8 +797,9 @@ export class InspectorSections {
   ): void {
     const owner = this.#host.taskOwner(task);
     let currentTask = task;
-    const advanceTarget = (): void => {
-      if (owner.current !== undefined) currentTask = owner.current;
+    const advanceTarget = (proof?: OwnedTaskSelectionProof): void => {
+      const next = proof === undefined ? owner.current : proof.successor(currentTask);
+      if (next !== undefined) currentTask = next;
     };
     // Start editing at the rendered title height, then grow for the complete source.
     const startHeight = view.offsetHeight;
@@ -789,7 +808,7 @@ export class InspectorSections {
     // Keep the textarea in the title's slot so the ⋯/× action buttons stay on the right.
     view.insertAdjacentElement('afterend', ta);
     ta.value = task.markdownTitle;
-    const editorOwner = this.#editorOwner(ta);
+    const editorOwner = this.#editorOwner(ta, undefined, advanceTarget);
     this.#enablePaste(ta, task, () => () => !lifecycle.isClosed(), editorOwner);
     // Auto-grow to content, but never below the initial title height.
     const grow = (): void => {
@@ -1126,10 +1145,12 @@ export class InspectorSections {
     const owner = this.#host.taskOwner(task);
     let currentTask = task;
     let currentComment = entry.comment;
-    const advanceTarget = (): void => {
-      if (owner.current === undefined) return;
-      currentTask = owner.current;
-      currentComment = entry.comment;
+    const advanceTarget = (proof?: OwnedTaskSelectionProof): void => {
+      const next = proof === undefined ? owner.current : proof.successor(currentTask);
+      const comment = proof === undefined ? entry.comment : proof.commentSuccessor(currentComment);
+      if (next === undefined || comment === undefined) return;
+      currentTask = next;
+      currentComment = comment;
     };
     row.querySelector('.abyss-comment-text')?.remove();
     row.querySelector('.abyss-comment-disclosure')?.remove();
@@ -1139,6 +1160,7 @@ export class InspectorSections {
     const editorOwner = this.#editorOwner(
       textarea,
       this.#commentRows.find((entry) => entry.row === row)?.component,
+      advanceTarget,
     );
     editorOwner.register(() => {
       lifecycle.close();

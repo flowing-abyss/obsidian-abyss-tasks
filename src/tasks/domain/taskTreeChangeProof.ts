@@ -70,6 +70,12 @@ export function sameTaskTreeWithOwnedChanges(
     readonly fields: ReadonlySet<string>;
     readonly append?: boolean;
     readonly remove?: number;
+    readonly reorder?: {
+      readonly from: number;
+      readonly to: number;
+      readonly target: number;
+      readonly placement: 'before' | 'after';
+    };
     readonly tracking?: CompletionTrackingWitness;
     readonly comment?: { readonly ref: CommentRef; readonly text?: string };
     readonly insertion?: {
@@ -80,15 +86,16 @@ export function sameTaskTreeWithOwnedChanges(
   },
 ): boolean {
   if (!validOwnedSource(before, after, path, change)) return false;
-  const children = comparisonChildren(before, path, change.remove);
+  const children = comparisonChildren(before, path, change);
   if (children.length + addedChildCount(path, change.append) !== after.subtasks.length)
     return false;
   if (changedRemovalParent(before, after, path, change.remove)) return false;
-  if (changedUneditedSource(before, after, path)) return false;
+  if (change.reorder === undefined && changedUneditedSource(before, after, path)) return false;
   const omitted = new Set([
     'subtasks',
     'source',
     'presentation',
+    ...(change.reorder === undefined ? [] : ['timeEntries.originalMarkdown']),
     ...(path?.length === 0 ? change.fields : []),
   ]);
   if (!sameSnapshotValues(before, after, omitted)) return false;
@@ -116,6 +123,9 @@ function validOwnedSource(
     validTracking(before, after, path, change.tracking) &&
     validInsertion(before, after, path, change.insertion) &&
     (path === undefined ||
+      change.reorder === undefined ||
+      reorderSourceMatches(before, after, path, change.reorder)) &&
+    (path === undefined ||
       change.comment === undefined ||
       commentSourceMatches(before, after, path, change.comment))
   );
@@ -137,11 +147,83 @@ function changedUneditedSource(
 function comparisonChildren(
   node: Node,
   path: readonly number[] | undefined,
-  remove: number | undefined,
+  change: Parameters<typeof sameTaskTreeWithOwnedChanges>[3],
 ): readonly SubtaskSnapshot[] {
-  return path?.length === 0 && remove !== undefined
-    ? node.subtasks.filter((_, index) => index !== remove)
-    : node.subtasks;
+  if (path?.length !== 0) return node.subtasks;
+  if (change.remove !== undefined)
+    return node.subtasks.filter((_, index) => index !== change.remove);
+  if (change.reorder === undefined) return node.subtasks;
+  const children = [...node.subtasks];
+  const moved = children.splice(change.reorder.from, 1)[0];
+  if (moved !== undefined) children.splice(change.reorder.to, 0, moved);
+  return children;
+}
+
+function reorderSourceMatches(
+  before: Node,
+  after: Node,
+  path: readonly number[],
+  reorder: NonNullable<Parameters<typeof sameTaskTreeWithOwnedChanges>[3]['reorder']>,
+): boolean {
+  const location = commentOwner(before, after, path);
+  if (location === undefined) return false;
+  const { owner, offset } = location;
+  const moved = owner.subtasks[reorder.from];
+  const target = owner.subtasks[reorder.target];
+  if (moved === undefined || target === undefined) return false;
+  if (reorder.from === reorder.target) return sourceBlock(before) === sourceBlock(after);
+  const count = moved.ref.originalBlock.split('\n').length;
+  const insertion =
+    offset +
+    target.ref.relativeLine +
+    (reorder.placement === 'after' ? target.ref.originalBlock.split('\n').length : 0) -
+    (reorder.from < reorder.target ? count : 0);
+  return reorderedSources(
+    sourceBlock(before),
+    {
+      parentLine: offset,
+      from: offset + moved.ref.relativeLine,
+      count,
+      insertion,
+    },
+    [moved, target],
+  ).some((source) => reorderBlockSource(source) === reorderBlockSource(sourceBlock(after)));
+}
+
+function reorderBlockSource(source: string): string {
+  const lines = source.split('\n');
+  while (lines.length > 1 && /^[\s>]*$/u.test(lines[lines.length - 1] ?? '')) lines.pop();
+  return lines.join('\n').replace(/\r$/u, '');
+}
+
+function reorderedSources(
+  source: string,
+  range: {
+    readonly parentLine: number;
+    readonly from: number;
+    readonly count: number;
+    readonly insertion: number;
+  },
+  children: readonly SubtaskSnapshot[],
+): string[] {
+  const lines = source.split('\n');
+  const finalEnding = source.endsWith('\n');
+  if (finalEnding) lines.pop();
+  const last = lines.length - 1;
+  for (const child of children) {
+    const block = child.ref.originalBlock.split('\n');
+    if (range.parentLine + child.ref.relativeLine + block.length === lines.length)
+      lines[last] = block[block.length - 1] ?? '';
+  }
+  const ending = lines[range.parentLine]?.endsWith('\r') === true ? '\r' : '';
+  const endings = finalEnding || lines[last]?.endsWith('\r') === true ? [''] : ['', ending];
+  return [...new Set(endings)].map((suffix) => {
+    const reordered = [...lines];
+    reordered[last] += suffix;
+    const movedLines = reordered.splice(range.from, range.count);
+    reordered.splice(range.insertion, 0, ...movedLines);
+    return reordered.join('\n') + (finalEnding ? '\n' : '');
+  });
 }
 
 function addedChildCount(path: readonly number[] | undefined, append: boolean | undefined): number {

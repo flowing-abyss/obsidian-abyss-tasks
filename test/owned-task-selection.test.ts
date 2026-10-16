@@ -760,6 +760,100 @@ describe('owned non-structural inspector selection', () => {
   });
 });
 
+describe('owned sibling reorder selection', () => {
+  const prefix = '- [ ] Root ^opaque\n  - [ ] Owner\n';
+  const blocks = [
+    '    - [ ] First\n      - Note first\n      - [ ] Deep',
+    '    - [ ] Same',
+    '    - [ ] Same',
+    '    - [ ] Last',
+  ];
+  const suffix = '\n  - [ ] Unrelated';
+  const markdown = prefix + blocks.join('\n') + suffix;
+
+  it.each([
+    { moved: 0, target: 3, placement: 'after', order: [1, 2, 3, 0] },
+    { moved: 3, target: 0, placement: 'before', order: [3, 0, 1, 2] },
+    { moved: 1, target: 3, placement: 'after', order: [0, 2, 3, 1] },
+    { moved: 3, target: 1, placement: 'after', order: [0, 1, 3, 2] },
+    { moved: 0, target: 2, placement: 'before', order: [1, 0, 2, 3] },
+    { moved: 3, target: 1, placement: 'before', order: [0, 3, 1, 2] },
+  ] as const)(
+    'maps every exact occurrence when moving $moved $placement $target',
+    ({ moved, target, placement, order }) => {
+      const original = snapshot(markdown, 'before');
+      const owner = expectDefined(original.subtasks[0]);
+      const current = snapshot(
+        prefix + order.map((index) => blocks[index]).join('\n') + suffix,
+        'after',
+      );
+      const nextOwner = expectDefined(current.subtasks[0]);
+      const command: TaskCommand = {
+        type: 'reorder-subtask',
+        subtask: expectDefined(owner.subtasks[moved]).ref,
+        target: expectDefined(owner.subtasks[target]).ref,
+        placement,
+      };
+      const proof = expectDefined(proveOwnedTaskSelection(current, [original, owner], command));
+      expect(proof.selection).toEqual([current, nextOwner]);
+      expect(proof.successor(expectDefined(original.subtasks[1]))).toEqual(current.subtasks[1]);
+      owner.subtasks.forEach((child, index) => {
+        const next = expectDefined(nextOwner.subtasks[order.indexOf(index as 0 | 1 | 2 | 3)]);
+        expect(proof.successor(child)).toEqual(next);
+        expect(proof.nodeSuccessor({ type: 'subtask', ref: child.ref })).toEqual(next);
+        expect(
+          proveOwnedTaskSelection(current, [original, owner, child], command)?.selection,
+        ).toEqual([current, nextOwner, next]);
+        child.comments.forEach((comment, position) => {
+          expect(proof.commentSuccessor(comment)).toEqual(next.comments[position]);
+        });
+        child.subtasks.forEach((descendant, position) => {
+          expect(proof.successor(descendant)).toEqual(next.subtasks[position]);
+          expect(
+            proveOwnedTaskSelection(current, [original, owner, child, descendant], command)
+              ?.selection,
+          ).toEqual([current, nextOwner, next, next.subtasks[position]]);
+        });
+      });
+      expect(
+        proof.nodeSuccessor({
+          type: 'subtask',
+          ref: { ...command.subtask, originalBlock: 'foreign' },
+        }),
+      ).toBeUndefined();
+    },
+  );
+
+  it.each([
+    ['ancestor', (content: string) => content.replace('^opaque', '^foreign')],
+    ['neighbor', (content: string) => content.replace('Unrelated', 'Foreign')],
+    ['moved subtree', (content: string) => content.replace('Deep', 'Foreign')],
+    ['comment', (content: string) => content.replace('Note first', 'Foreign')],
+    [
+      'interior line ending',
+      (content: string) => content.replace('Note first\n', 'Note first\r\n'),
+    ],
+    ['insertion', (content: string) => `${content}\n  - [ ] Foreign`],
+    ['deletion', (content: string) => content.replace('    - [ ] Same\n', '')],
+    [
+      'wrong order',
+      () => prefix + [blocks[1], blocks[3], blocks[2], blocks[0]].join('\n') + suffix,
+    ],
+  ] as const)('rejects an unrelated %s change during reorder', (_label, tamper) => {
+    const original = snapshot(markdown, 'before');
+    const owner = expectDefined(original.subtasks[0]);
+    const changed = prefix + [blocks[1], blocks[2], blocks[3], blocks[0]].join('\n') + suffix;
+    expect(
+      proveOwnedTaskSelection(snapshot(tamper(changed), 'after'), [original, owner], {
+        type: 'reorder-subtask',
+        subtask: expectDefined(owner.subtasks[0]).ref,
+        target: expectDefined(owner.subtasks[3]).ref,
+        placement: 'after',
+      }),
+    ).toBeUndefined();
+  });
+});
+
 describe('exact existing comment transition proof', () => {
   it.each(['update-comment', 'delete-comment'] as const)(
     'accepts the actual formatted writer %s and rejects prefix/timestamp/neighbor tampering',

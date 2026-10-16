@@ -2402,31 +2402,94 @@ describe('consumed draft recovery over the real index', () => {
     },
   );
 
-  it('keeps the original open editor target while new actions acquire the proven successor', async () => {
-    const h = await inspectorHarness('- [ ] Owner\n  Original description', 'Owner');
-    const off = subscribeInspectorReconciliation(h);
-    try {
-      const original = taskNodeRef(h.node('Owner').node);
-      expectDefined(h.el.querySelector<HTMLElement>('.abyss-right-desc-view')).click();
-      const editor = expectDefined(
-        h.el.querySelector<HTMLTextAreaElement>('.abyss-right-desc-edit'),
+  it.each([false, true])(
+    'keeps the original open editor target across another action and later reorder=%s',
+    async (reorder) => {
+      const h = await inspectorHarness(
+        '- [ ] Owner\n  Original description\n  - [ ] Existing',
+        'Owner',
       );
-      await call<Promise<boolean>>(h.panel, 'addSubTask', h.node('Owner').node, 'Added');
-      expect(editor.isConnected).toBe(true);
-      const execute = vi.spyOn(h.api, 'execute');
-      editor.value = 'Captured edit';
-      editor.dispatchEvent(new Event('blur'));
-      await vi.waitFor(() => {
-        expect(execute).toHaveBeenCalledWith({
-          type: 'set-description',
-          target: original,
-          text: 'Captured edit',
+      const off = subscribeInspectorReconciliation(h);
+      try {
+        const original = taskNodeRef(h.node('Owner').node);
+        expectDefined(h.el.querySelector<HTMLElement>('.abyss-right-desc-view')).click();
+        const editor = expectDefined(
+          h.el.querySelector<HTMLTextAreaElement>('.abyss-right-desc-edit'),
+        );
+        await call<Promise<boolean>>(h.panel, 'addSubTask', h.node('Owner').node, 'Added');
+        if (reorder) {
+          const owner = h.node('Owner').node;
+          await call<Promise<void>>(
+            h.panel,
+            'reorderSubTask',
+            owner,
+            expectDefined(owner.subtasks[1]),
+            expectDefined(owner.subtasks[0]),
+            'before',
+          );
+        }
+        expect(editor.isConnected).toBe(true);
+        const execute = vi.spyOn(h.api, 'execute');
+        editor.value = 'Captured edit';
+        editor.dispatchEvent(new Event('blur'));
+        await vi.waitFor(() => {
+          expect(execute).toHaveBeenCalledWith({
+            type: 'set-description',
+            target: original,
+            text: 'Captured edit',
+          });
         });
-      });
-    } finally {
-      off();
-    }
-  });
+      } finally {
+        off();
+      }
+    },
+  );
+
+  it.each(['date', 'priority'] as const)(
+    'does not rebind an older captured %s popup across an add and reorder',
+    async (kind) => {
+      const h = await inspectorHarness('- [ ] Root\n  - [ ] Owner\n    - [ ] Existing', 'Owner');
+      const off = subscribeInspectorReconciliation(h);
+      try {
+        const original = taskNodeRef(h.node('Owner').node);
+        if (kind === 'priority')
+          expectDefined(h.el.querySelector<HTMLElement>('.abyss-priority-chip')).click();
+        else
+          expectDefined(
+            [...h.el.querySelectorAll<HTMLButtonElement>('.abyss-chips-row > button')].find(
+              (button) => button.textContent.startsWith('📅'),
+            ),
+          ).click();
+        await call<Promise<boolean>>(h.panel, 'addSubTask', h.node('Owner').node, 'Added');
+        const owner = h.node('Owner').node;
+        await call<Promise<void>>(
+          h.panel,
+          'reorderSubTask',
+          owner,
+          expectDefined(owner.subtasks[1]),
+          expectDefined(owner.subtasks[0]),
+          'before',
+        );
+        const execute = vi.spyOn(h.api, 'execute');
+        if (kind === 'priority')
+          expectDefined(
+            h.el.querySelector<HTMLElement>('.abyss-priority-option[data-priority="A"]'),
+          ).click();
+        else {
+          const input = expectDefined(h.el.querySelector<HTMLInputElement>('.abyss-date-input'));
+          input.value = '2031-02-12';
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        await vi.waitFor(() => {
+          expect(execute).toHaveBeenCalledWith(expect.objectContaining({ target: original }));
+        });
+        expect(h.node('Owner').node.priority).toBe('D');
+        expect(h.node('Owner').node.planning.due).toBeUndefined();
+      } finally {
+        off();
+      }
+    },
+  );
 
   it('retires document listeners on window migration and restores the owned entry draft', async () => {
     const h = await inspectorHarness('- [ ] Owner', 'Owner');

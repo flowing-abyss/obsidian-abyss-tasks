@@ -402,6 +402,12 @@ selection, and focus after a write require command-specific successor proof. Unp
 drafts remain recoverable with their original owner; newer live input, including an empty value,
 wins. Undo and inspector history are session-only and cannot overwrite external edits. Removal
 holds prevent delete/archive/move publications from selecting a task that inherits a source line.
+Sibling reorder proves the exact source permutation before mapping selection, drafts, and history
+to surviving occurrences. It moves existing inspector rows and advances only proven captured editor
+and planning-popup targets, preserving rendered Markdown, focus, drafts, and comment disclosure.
+Non-draft task-action menus close after reorder. Other commands keep their existing target-capture
+behavior. A drop that leaves the order and exact selected snapshot unchanged does not remount the
+inspector.
 
 AppState distinguishes explicit selection intent from refresh. Later user selection or navigation
 wins over delayed command, capture, and reveal callbacks. Transient UI cancellation after submission

@@ -1511,8 +1511,8 @@ describe('task architecture boundaries', () => {
       `${path}:missing-onSubmit`,
     ]);
     const unrelated = text.replace(
-      'onSubmit: (patch) => this.#commands.executePlanningPatch(task, patch)',
-      'onSubmit: (patch) => unrelated.executePlanningPatch(task, patch)',
+      'onSubmit: (patch) => this.#commands.executePlanningPatch(currentTask, patch)',
+      'onSubmit: (patch) => unrelated.executePlanningPatch(currentTask, patch)',
     );
     expect(unrelated).not.toBe(text);
     expect(recurrenceSubmitRoutesFor(path, parse(unrelated))).toEqual([

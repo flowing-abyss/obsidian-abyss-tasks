@@ -1,4 +1,4 @@
-import { Notice, TFile, WorkspaceLeaf, type App } from 'obsidian';
+import { MarkdownRenderer, Notice, TFile, WorkspaceLeaf, type App } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AppState } from '../src/app/AppState';
 import type { RightPanel } from '../src/panels/RightPanel';
@@ -9,6 +9,7 @@ import { PanelView } from '../src/views/PanelView';
 import {
   configuredTaskApplication,
   createAppWithFiles,
+  DataTransferStub,
   expectDefined,
   flushMicrotasks,
   useRealMoment,
@@ -97,6 +98,32 @@ async function harness(surface: 'panel' | 'modal', source: string, selected: str
 const back = '[aria-label="Back to previous task"]';
 const forward = '[data-dependency-direction="blocked-by"] .abyss-dep-title';
 const inverse = '[data-dependency-direction="blocks"] .abyss-dep-title';
+
+function reorderRows(
+  element: HTMLElement,
+  moved: number,
+  target: number,
+  placement: 'before' | 'after',
+) {
+  const rows = element.querySelectorAll<HTMLElement>('.abyss-subtask-row');
+  const source = expectDefined(rows[moved]);
+  const destination = expectDefined(rows[target]);
+  const dataTransfer = new DataTransferStub();
+  for (const [row, type] of [
+    [source, 'dragstart'],
+    [destination, 'dragover'],
+    [destination, 'drop'],
+    [source, 'dragend'],
+  ] as const) {
+    const event = new MouseEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      clientY: placement === 'before' ? -1 : 1,
+    });
+    Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
+    row.dispatchEvent(event);
+  }
+}
 const onlyChildSource = {
   'LF, adjacent, final newline': '- [ ] Source\n- [ ] Root\n  - [ ] Parent\n    - [ ] Only\n',
   'LF, adjacent, no final newline': '- [ ] Source\n- [ ] Root\n  - [ ] Parent\n    - [ ] Only',
@@ -113,6 +140,530 @@ const onlyChildSource = {
 } as const;
 
 describe.each(['panel', 'modal'] as const)('%s saved dependency frames', (surface) => {
+  it.each([
+    { moved: 0, target: 1, placement: 'before' as const },
+    { moved: 1, target: 0, placement: 'after' as const },
+  ])(
+    'keeps the inspector untouched for an unchanged $placement drop',
+    async ({ moved, target, placement }) => {
+      const h = await harness(
+        surface,
+        '- [ ] Root\n  - [ ] Parent\n    - > Description\n    - First comment line\n      Second comment line\n    - [ ] First\n    - [ ] Second\n',
+        'Parent',
+      );
+      h.click('.abyss-comment-disclosure');
+      h.click('.abyss-right-desc-view');
+      await flushMicrotasks(5);
+      const editor = expectDefined(
+        h.el.querySelector<HTMLTextAreaElement>('.abyss-right-desc-edit'),
+      );
+      editor.value = 'Unchanged drop draft';
+      editor.focus();
+      editor.setSelectionRange(2, 7);
+      const stack = h.state.get('taskStack');
+      reorderRows(h.el, moved, target, placement);
+      await flushMicrotasks(50);
+      expect(h.el.querySelector('.abyss-right-desc-edit')).toBe(editor);
+      expect(activeDocument.activeElement).toBe(editor);
+      expect([editor.selectionStart, editor.selectionEnd]).toEqual([2, 7]);
+      expect(h.el.querySelector('.abyss-comment-disclosure')?.getAttribute('aria-expanded')).toBe(
+        'true',
+      );
+      expect(h.state.get('taskStack')).toBe(stack);
+    },
+  );
+
+  it.each([
+    {
+      kind: 'date',
+      selector: '.abyss-date-input',
+      value: '2031-02-12',
+      expected: { planning: { due: '2031-02-12' } },
+    },
+    {
+      kind: 'time',
+      selector: '.abyss-time-input',
+      value: '10:45',
+      expected: { planning: { time: '10:45' } },
+    },
+    {
+      kind: 'tag',
+      selector: '.abyss-tag-input',
+      value: 'retained',
+      expected: { tags: ['#retained'] },
+    },
+  ])(
+    'saves an already open $kind popup after sibling reorder',
+    async ({ kind, selector, value, expected }) => {
+      const h = await harness(
+        surface,
+        '- [ ] Root\n  - [ ] Parent\n    - [ ] First\n    - [ ] Second\n',
+        'Parent',
+      );
+      if (kind === 'date')
+        expectDefined(
+          [...h.el.querySelectorAll<HTMLButtonElement>('.abyss-chips-row > button')].find(
+            (button) => button.textContent.startsWith('📅'),
+          ),
+        ).click();
+      else h.click(kind === 'time' ? '.abyss-chip-time' : '[aria-label="Add tag"]');
+      await flushMicrotasks(5);
+      const input = expectDefined(h.el.querySelector<HTMLInputElement>(selector));
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: '1', bubbles: true }));
+      input.value = value;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      reorderRows(h.el, 1, 0, 'before');
+      await flushMicrotasks(50);
+      expect(h.el.querySelector(selector)).toBe(input);
+      expect(input.value).toBe(value);
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await flushMicrotasks(50);
+      expect(h.node('Parent').node).toMatchObject(expected);
+      expect(h.node('Root').node).toMatchObject({ priority: 'D', tags: [], planning: {} });
+      expect(h.state.get('taskStack')).toEqual(h.liveStack('Parent'));
+    },
+  );
+
+  it('saves a priority choice from a popup opened before sibling reorder', async () => {
+    const h = await harness(
+      surface,
+      '- [ ] Root\n  - [ ] Parent\n    - [ ] First\n    - [ ] Second\n',
+      'Parent',
+    );
+    h.click('.abyss-priority-chip');
+    const popup = expectDefined(h.el.querySelector('.abyss-priority-popover'));
+    reorderRows(h.el, 1, 0, 'before');
+    await flushMicrotasks(50);
+    expect(h.el.querySelector('.abyss-priority-popover')).toBe(popup);
+    h.click('.abyss-priority-option[data-priority="A"]');
+    await flushMicrotasks(50);
+    expect(h.node('Parent').node.priority).toBe('A');
+    expect(h.node('Root').node.priority).toBe('D');
+    expect(h.state.get('taskStack')).toEqual(h.liveStack('Parent'));
+  });
+
+  it('opens the correct date target from an add-date menu retained through reorder', async () => {
+    const h = await harness(
+      surface,
+      '- [ ] Root\n  - [ ] Parent\n    - [ ] First\n    - [ ] Second\n',
+      'Parent',
+    );
+    h.click('[aria-label="Add start or plan date"]');
+    reorderRows(h.el, 1, 0, 'before');
+    await flushMicrotasks(50);
+    expectDefined(
+      [...h.el.querySelectorAll<HTMLElement>('.abyss-add-date-menu-item')].find(
+        (item) => item.textContent === '🛫 Start',
+      ),
+    ).click();
+    const input = expectDefined(h.el.querySelector<HTMLInputElement>('.abyss-date-input'));
+    input.value = '2031-02-12';
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    await flushMicrotasks(50);
+    expect(h.node('Parent').node.planning.start).toBe('2031-02-12');
+    expect(h.node('Root').node.planning.start).toBeUndefined();
+    expect(h.state.get('taskStack')).toEqual(h.liveStack('Parent'));
+  });
+
+  it('keeps an unsaved recurrence editor mounted and saves it after reorder', async () => {
+    const h = await harness(
+      surface,
+      '- [ ] Root\n  - [ ] Parent 📅 2031-02-10\n    - [ ] First\n    - [ ] Second\n',
+      'Parent',
+    );
+    h.click('.abyss-repeat-chip');
+    await flushMicrotasks(5);
+    const interval = expectDefined(
+      h.el.querySelector<HTMLInputElement>('.abyss-recurrence-interval'),
+    );
+    interval.value = '7';
+    interval.dispatchEvent(new Event('input', { bubbles: true }));
+    interval.focus();
+    reorderRows(h.el, 1, 0, 'before');
+    await flushMicrotasks(50);
+    expect(h.el.querySelector('.abyss-recurrence-interval')).toBe(interval);
+    expect(interval.value).toBe('7');
+    expect(activeDocument.activeElement).toBe(interval);
+    expectDefined(
+      [...h.el.querySelectorAll<HTMLButtonElement>('.abyss-recurrence-editor button')].find(
+        (button) => button.textContent === 'Save repeat',
+      ),
+    ).click();
+    await flushMicrotasks(50);
+    expect(h.node('Parent').node.recurrence).toBe('every 7 days');
+    expect(h.node('Root').node.recurrence).toBeUndefined();
+    expect(h.state.get('taskStack')).toEqual(h.liveStack('Parent'));
+  });
+
+  it('closes a non-draft actions menu after sibling reorder', async () => {
+    const h = await harness(
+      surface,
+      '- [ ] Root\n  - [ ] Parent\n    - [ ] First\n    - [ ] Second\n',
+      'Parent',
+    );
+    h.click('[aria-label="More actions"]');
+    expect(h.el.querySelector('.abyss-task-context-menu')).not.toBeNull();
+    reorderRows(h.el, 1, 0, 'before');
+    await flushMicrotasks(50);
+    expect(h.el.querySelector('.abyss-task-context-menu')).toBeNull();
+    expect(h.state.get('taskStack')).toEqual(h.liveStack('Parent'));
+  });
+
+  it.each(['date', 'time'] as const)(
+    'clears an already open %s popup after sibling reorder',
+    async (kind) => {
+      const h = await harness(
+        surface,
+        '- [ ] Root\n  - [ ] Parent 📅 2031-02-10 ⏰ 09:00\n    - [ ] First\n    - [ ] Second\n',
+        'Parent',
+      );
+      if (kind === 'date')
+        expectDefined(
+          [...h.el.querySelectorAll<HTMLButtonElement>('.abyss-chips-row > button')].find(
+            (button) => button.textContent.startsWith('📅'),
+          ),
+        ).click();
+      else h.click('.abyss-chip-time');
+      await flushMicrotasks(5);
+      reorderRows(h.el, 1, 0, 'before');
+      await flushMicrotasks(50);
+      h.click(`[aria-label="Clear ${kind}"]`);
+      await flushMicrotasks(50);
+      expect(h.node('Parent').node.planning[kind === 'date' ? 'due' : 'time']).toBeUndefined();
+      expect(h.state.get('taskStack')).toEqual(h.liveStack('Parent'));
+    },
+  );
+
+  it('saves root duration from an already open popup after sibling reorder', async () => {
+    const h = await harness(surface, '- [ ] Root\n  - [ ] First\n  - [ ] Second\n', 'Root');
+    h.click('.abyss-chip-time');
+    await flushMicrotasks(5);
+    reorderRows(h.el, 1, 0, 'before');
+    await flushMicrotasks(50);
+    const input = expectDefined(h.el.querySelector<HTMLInputElement>('.abyss-duration-input'));
+    input.value = '1h30m';
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    await flushMicrotasks(50);
+    expect(h.node('Root').node.planning.duration).toBe(90);
+    expect(h.state.get('taskStack')).toEqual(h.liveStack('Root'));
+  });
+
+  it('preserves expanded comments when sibling order changes', async () => {
+    const h = await harness(
+      surface,
+      '- [ ] Root\n  - [ ] Parent\n    - First comment line\n      Second comment line\n    - [ ] First\n    - [ ] Second\n',
+      'Parent',
+    );
+    h.click('.abyss-comment-disclosure');
+    expect(h.el.querySelector('.abyss-comment-disclosure')?.getAttribute('aria-expanded')).toBe(
+      'true',
+    );
+    reorderRows(h.el, 1, 0, 'before');
+    await flushMicrotasks(50);
+    expect(h.state.get('taskStack')).toEqual(h.liveStack('Parent'));
+    expect(h.node('Parent').node.subtasks.map((child) => child.title)).toEqual(['Second', 'First']);
+    expect(h.el.querySelector('.abyss-comment-disclosure')?.getAttribute('aria-expanded')).toBe(
+      'true',
+    );
+  });
+
+  it('keeps unchanged Markdown visible while a reorder settles', async () => {
+    let hold = false;
+    const pending: Array<() => void> = [];
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, source, holder) => {
+      if (hold) await new Promise<void>((resolve) => pending.push(resolve));
+      holder.setText(source);
+    });
+    const h = await harness(
+      surface,
+      '- [ ] Root\n  - [ ] Parent\n    - > **Formatted** description\n    - [ ] First\n    - [ ] Second\n',
+      'Parent',
+    );
+    await flushMicrotasks(5);
+    expect(h.el.querySelector('.abyss-right-desc-view')?.textContent).toBe(
+      '**Formatted** description',
+    );
+    hold = true;
+    reorderRows(h.el, 1, 0, 'before');
+    await flushMicrotasks(50);
+    const visible = h.el.querySelector('.abyss-right-desc-view')?.textContent;
+    for (const resolve of pending.splice(0)) resolve();
+    await flushMicrotasks(5);
+    expect(h.state.get('taskStack')).toEqual(h.liveStack('Parent'));
+    expect(visible).toBe('**Formatted** description');
+  });
+
+  it.each([
+    { label: 'EOF', quote: '', ending: '\n', following: '', trailing: '' },
+    { label: 'LF', quote: '', ending: '\n', following: '', trailing: '\n' },
+    {
+      label: 'following root',
+      quote: '',
+      ending: '\n',
+      following: '- [ ] Following\n',
+      trailing: '\n',
+    },
+    { label: 'quoted CRLF', quote: '> ', ending: '\r\n', following: '', trailing: '\r\n' },
+  ])(
+    'retains selection when a gap becomes trailing source: $label',
+    async ({ quote, ending, following, trailing }) => {
+      const head = `${quote}- [ ] Root${ending}${quote}  - [ ] Parent${ending}`;
+      const first = `${quote}    - [ ] First${ending}`;
+      const middle = `${quote}    - [ ] Middle${ending}`;
+      const gap = `${quote}\t `;
+      const last = `${quote}    - [ ] Last`;
+      const h = await harness(
+        surface,
+        `${head}${first}${middle}${gap}${ending}${last}${trailing}${following}`,
+        'Parent',
+      );
+      const file = h.app.vault.getFileByPath('tasks.md');
+      if (!(file instanceof TFile)) throw new Error('Missing fixture');
+      reorderRows(h.el, 2, 0, 'before');
+      await flushMicrotasks(50);
+      expect(await h.app.vault.read(file)).toBe(
+        `\n${head}${last}${ending}${first}${middle}${gap}${trailing}${following}`,
+      );
+      expect(h.state.get('taskStack')).toEqual(h.liveStack('Parent'));
+    },
+  );
+
+  it.each([
+    {
+      label: 'mixed child endings',
+      source: '- [ ] Root\n  - [ ] Parent\n    - [ ] First\r\n    - [ ] Last\n',
+      reordered: '- [ ] Root\n  - [ ] Parent\n    - [ ] Last\n    - [ ] First\r\n',
+      reversed: '- [ ] Root\n  - [ ] Parent\n    - [ ] First\r\n    - [ ] Last\n',
+    },
+    {
+      label: 'CRLF children under LF parent',
+      source: '- [ ] Root\n  - [ ] Parent\n    - [ ] First\r\n    - [ ] Last\r\n',
+      reordered: '- [ ] Root\n  - [ ] Parent\n    - [ ] Last\r\n    - [ ] First\r\n',
+      reversed: '- [ ] Root\n  - [ ] Parent\n    - [ ] First\r\n    - [ ] Last\r\n',
+    },
+    {
+      label: 'LF parent without final newline',
+      source: '- [ ] Root\n  - [ ] Parent\n    - [ ] First\r\n    - [ ] Last',
+      reordered: '- [ ] Root\n  - [ ] Parent\n    - [ ] Last\n    - [ ] First',
+      reversed: '- [ ] Root\n  - [ ] Parent\n    - [ ] First\n    - [ ] Last',
+    },
+    {
+      label: 'CRLF parent without final newline',
+      source: '- [ ] Root\r\n  - [ ] Parent\r\n    - [ ] First\n    - [ ] Last',
+      reordered: '- [ ] Root\r\n  - [ ] Parent\r\n    - [ ] Last\r\n    - [ ] First',
+      reversed: '- [ ] Root\r\n  - [ ] Parent\r\n    - [ ] First\r\n    - [ ] Last',
+    },
+    {
+      label: 'mixed endings before another root',
+      source:
+        '- [ ] Root\r\n  - [ ] Parent\r\n    - [ ] First\r\n    - [ ] Last\n- [ ] Following\n',
+      reordered:
+        '- [ ] Root\r\n  - [ ] Parent\r\n    - [ ] Last\n    - [ ] First\r\n- [ ] Following\n',
+      reversed:
+        '- [ ] Root\r\n  - [ ] Parent\r\n    - [ ] First\r\n    - [ ] Last\n- [ ] Following\n',
+    },
+  ])('retains selection with $label', async ({ source, reordered, reversed }) => {
+    const h = await harness(surface, source, 'Parent');
+    const file = h.app.vault.getFileByPath('tasks.md');
+    if (!(file instanceof TFile)) throw new Error('Missing fixture');
+    reorderRows(h.el, 1, 0, 'before');
+    await flushMicrotasks(50);
+    expect(await h.app.vault.read(file)).toBe(`\n${reordered}`);
+    expect(h.state.get('taskStack')).toEqual(h.liveStack('Parent'));
+    reorderRows(h.el, 0, 1, 'after');
+    await flushMicrotasks(50);
+    expect(await h.app.vault.read(file)).toBe(`\n${reversed}`);
+    expect(h.state.get('taskStack')).toEqual(h.liveStack('Parent'));
+  });
+
+  it.each(['\n', '    - Parent comment\n', '    - > Parent description\n'])(
+    'preserves selection when reorder crosses the parent separator %j',
+    async (separator) => {
+      const prefix = '- [ ] Root\n  - [ ] Parent\n';
+      const first = '    - [ ] First\n';
+      const middle = '    - [ ] Middle\n';
+      const last = '    - [ ] Last\n';
+      const h = await harness(surface, prefix + first + middle + separator + last, 'Parent');
+      const file = h.app.vault.getFileByPath('tasks.md');
+      if (!(file instanceof TFile)) throw new Error('Missing fixture');
+      reorderRows(h.el, 0, 2, 'before');
+      await flushMicrotasks(50);
+      expect(await h.app.vault.read(file)).toBe(`\n${prefix}${middle}${separator}${first}${last}`);
+      expect(h.state.get('taskStack')).toEqual(h.liveStack('Parent'));
+      reorderRows(h.el, 2, 0, 'after');
+      await flushMicrotasks(50);
+      expect(await h.app.vault.read(file)).toBe(`\n${prefix}${middle}${last}${separator}${first}`);
+      expect(h.state.get('taskStack')).toEqual(h.liveStack('Parent'));
+    },
+  );
+
+  it('retains the nested inspector when a CRLF tracked subtree moves to and from EOF', async () => {
+    const prefix = '- [ ] Root\r\n  - [ ] Parent\r\n';
+    const first = '    - [ ] First';
+    const last = '    - [ ] Last\r\n      - 2026-10-06T12:00:00Z → 2026-10-06T13:00:00Z';
+    const h = await harness(surface, `${prefix}${first}\r\n${last}`, 'Parent');
+    const file = h.app.vault.getFileByPath('tasks.md');
+    if (!(file instanceof TFile)) throw new Error('Missing fixture');
+    reorderRows(h.el, 1, 0, 'before');
+    await flushMicrotasks(50);
+    expect(await h.app.vault.read(file)).toBe(`\n${prefix}${last}\r\n${first}`);
+    expect(h.state.get('taskStack')).toEqual(h.liveStack('Parent'));
+    reorderRows(h.el, 0, 1, 'after');
+    await flushMicrotasks(50);
+    expect(await h.app.vault.read(file)).toBe(`\n${prefix}${first}\r\n${last}`);
+    expect(h.state.get('taskStack')).toEqual(h.liveStack('Parent'));
+  });
+
+  it.each([
+    { ending: '\n', trailing: '', prefix: '', indent: '  ' },
+    { ending: '\r\n', trailing: '\r\n', prefix: '', indent: '  ' },
+    { ending: '\r\n', trailing: '', prefix: '', indent: '  ' },
+    { ending: '\r\n', trailing: '\r\n', prefix: '> ', indent: '\t' },
+  ])(
+    'keeps the nested inspector across source formatting $ending/$trailing/$prefix/$indent',
+    async ({ ending, trailing, prefix, indent }) => {
+      const format = (lines: string[]) =>
+        lines.map((line) => prefix + line).join(ending) + trailing;
+      const head = ['- [ ] Root', `${indent}- [ ] Parent`];
+      const first = [`${indent}${indent}- [ ] First`, `${indent}${indent}${indent}- > Description`];
+      const second = `${indent}${indent}- [ ] Second`;
+      const h = await harness(surface, format([...head, ...first, second]), 'Parent');
+      const file = h.app.vault.getFileByPath('tasks.md');
+      if (!(file instanceof TFile)) throw new Error('Missing fixture');
+      reorderRows(h.el, 1, 0, 'before');
+      await flushMicrotasks(50);
+      expect(await h.app.vault.read(file)).toBe(`\n${format([...head, second, ...first])}`);
+      expect(h.state.get('taskStack')).toEqual(h.liveStack('Parent'));
+      reorderRows(h.el, 0, 1, 'after');
+      await flushMicrotasks(50);
+      expect(await h.app.vault.read(file)).toBe(`\n${format([...head, ...first, second])}`);
+      expect(h.state.get('taskStack')).toEqual(h.liveStack('Parent'));
+    },
+  );
+
+  it('keeps the title draft and saved navigation frames attached to the reordered owner', async () => {
+    const source = '- [ ] Source\n- [ ] Root\n  - [ ] Parent\n    - [ ] First\n    - [ ] Second\n';
+    const h = await harness(surface, source, 'Source');
+    h.state.openInspectorDependency(h.node('Parent'));
+    h.state.openInspectorDependency(h.node('Source'));
+    h.state.openInspectorDependency(h.node('Parent'));
+    h.click('.abyss-right-title-view');
+    await flushMicrotasks(5);
+    const editor = expectDefined(
+      h.el.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit'),
+    );
+    editor.value = 'Parent draft';
+    editor.dispatchEvent(new Event('input', { bubbles: true }));
+    reorderRows(h.el, 1, 0, 'before');
+    await flushMicrotasks(50);
+    const restored = expectDefined(
+      h.el.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit'),
+    );
+    expect(restored.value).toBe('Parent draft');
+    expect(h.state.get('taskStack')).toEqual(h.liveStack('Parent'));
+    expect(h.state.get('inspectorBackStack')[1]?.taskStack).toEqual(h.liveStack('Parent'));
+    restored.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks(50);
+    expect(h.state.get('taskStack')).toEqual(h.liveStack('Parent draft'));
+    h.click(back);
+    h.click(back);
+    expect(h.state.get('taskStack')).toEqual(h.liveStack('Parent draft'));
+    expect(h.node('Root').node.title).toBe('Root');
+  });
+
+  it.each([
+    { field: 'description', view: '.abyss-right-desc-view', editor: '.abyss-right-desc-edit' },
+    { field: 'comment', view: '.abyss-comment-text', editor: '.abyss-comment-edit-input' },
+  ] as const)(
+    'saves a retained $field draft after reorder to its current owner',
+    async ({ field, view, editor }) => {
+      const source =
+        '- [ ] Root\n  - [ ] Parent\n    - > Description before\n    - Existing comment\n    - [ ] First\n    - [ ] Second\n';
+      const h = await harness(surface, source, 'Parent');
+      h.click(view);
+      await flushMicrotasks(5);
+      const textarea = expectDefined(h.el.querySelector<HTMLTextAreaElement>(editor));
+      textarea.value = 'Retained draft';
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      textarea.focus();
+      textarea.setSelectionRange(2, 7);
+      reorderRows(h.el, 1, 0, 'before');
+      await flushMicrotasks(50);
+      const retained = expectDefined(h.el.querySelector<HTMLTextAreaElement>(editor));
+      expect(retained).toBe(textarea);
+      expect(retained.value).toBe('Retained draft');
+      expect([retained.selectionStart, retained.selectionEnd]).toEqual([2, 7]);
+      retained.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await flushMicrotasks(50);
+      const parent = h.node('Parent').node;
+      expect(field === 'description' ? parent.description : parent.comments[0]?.text).toBe(
+        'Retained draft',
+      );
+      expect(parent.subtasks.map((child) => child.title)).toEqual(['Second', 'First']);
+      expect(h.state.get('taskStack')).toEqual(h.liveStack('Parent'));
+    },
+  );
+
+  it.each([
+    { prefix: '- [ ] Parent\n', indent: '  ', titles: ['Parent'] },
+    { prefix: '- [ ] Root\n  - [ ] Parent\n', indent: '    ', titles: ['Root', 'Parent'] },
+    {
+      prefix: '- [ ] Root\n  - [ ] Middle\n    - [ ] Parent\n',
+      indent: '      ',
+      titles: ['Root', 'Middle', 'Parent'],
+    },
+  ])(
+    'retains $titles during repeated subtree reorder and subsequent editing',
+    async ({ prefix, indent, titles }) => {
+      const first = `${indent}- [ ] First\n${indent}  - > Keep description\n${indent}  - [ ] Deep\n`;
+      const second = `${indent}- [ ] Second\n`;
+      const third = `${indent}- [ ] Third\n`;
+      const h = await harness(surface, prefix + first + second + third, 'Parent');
+      const file = h.app.vault.getFileByPath('tasks.md');
+      if (!(file instanceof TFile)) throw new Error('Missing fixture');
+      const history = h.state.get('inspectorBackStack');
+      const publications: string[][] = [];
+      const unsubscribe = h.state.on('taskStack', (stack) => {
+        publications.push(stack.map((node) => node.title));
+      });
+      cleanups.push(unsubscribe);
+
+      reorderRows(h.el, 2, 0, 'before');
+      await flushMicrotasks(50);
+      expect(await h.app.vault.read(file)).toBe(`\n${prefix}${third}${first}${second}`);
+      expect(h.state.get('taskStack')).toEqual(h.liveStack('Parent'));
+      expect(publications.length).toBeGreaterThan(0);
+      expect(publications.every((stack) => JSON.stringify(stack) === JSON.stringify(titles))).toBe(
+        true,
+      );
+      expect(h.el.querySelector('.abyss-right-title')?.textContent).toBe('Parent');
+      expect(h.state.get('inspectorBackStack')).toEqual(history);
+
+      reorderRows(h.el, 1, 2, 'after');
+      await flushMicrotasks(50);
+      expect(await h.app.vault.read(file)).toBe(`\n${prefix}${third}${second}${first}`);
+      expect(h.state.get('taskStack')).toEqual(h.liveStack('Parent'));
+      expectDefined(
+        h.el
+          .querySelectorAll<HTMLElement>('.abyss-subtask-row')[2]
+          ?.querySelector<HTMLElement>('.abyss-subtask-label'),
+      ).click();
+      expect(h.state.get('taskStack')).toEqual(h.liveStack('First'));
+      h.click('.abyss-right-title-view');
+      const editor = expectDefined(
+        h.el.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit'),
+      );
+      editor.value = 'Edited First';
+      editor.dispatchEvent(new Event('input', { bubbles: true }));
+      editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await flushMicrotasks(50);
+      expect(await h.app.vault.read(file)).toBe(
+        `\n${prefix}${third}${second}${first.replace('First', 'Edited First')}`,
+      );
+      expect(h.state.get('taskStack')).toEqual(h.liveStack('Edited First'));
+    },
+  );
+
   it.each([
     {
       label: 'root',

@@ -1643,8 +1643,12 @@ export class RightPanel {
   ): void {
     const stack = this.state_abyssPrivate.get('taskStack');
     const task = stack[stack.length - 1];
+    const retainedFocus =
+      this.retainedProof_abyssPrivate?.reordersSubtasks === true
+        ? this.el_abyssPrivate.ownerDocument.activeElement
+        : null;
     if (task !== undefined && this.refreshRetainedInspector_abyssPrivate(task, stack)) {
-      this.planningSurfaces_abyssPrivate.restoreRenderFocus(statusFocus, controls);
+      this.planningSurfaces_abyssPrivate.restoreRenderFocus(statusFocus, controls, retainedFocus);
       return;
     }
     if (
@@ -1707,7 +1711,7 @@ export class RightPanel {
     this.updateBreadcrumbTitles_abyssPrivate();
     this.sections_abyssPrivate.update(next, this.commentTimeContext_abyssPrivate?.(), proof);
     this.refreshTaskMetadata_abyssPrivate(next);
-    this.planningSurfaces_abyssPrivate.updateTaskOwners();
+    this.planningSurfaces_abyssPrivate.updateTaskOwners(proof);
     this.dependencies_abyssPrivate.refresh();
     this.timeBadge_abyssPrivate?.update();
     this.undo_abyssPrivate.render(this.el_abyssPrivate);
@@ -2527,6 +2531,7 @@ export class RightPanel {
     stack: readonly TaskLike[],
     submission: PlanningResultSubmission | undefined,
   ): void {
+    if (this.isUnchangedReorder_abyssPrivate(root, stack, submission)) return;
     const owned = submission?.changed === true ? submission.token : undefined;
     const ownedSelection =
       owned === undefined
@@ -2537,6 +2542,19 @@ export class RightPanel {
       ownedSelection ?? this.resultSelection_abyssPrivate(root, target, stack, owned),
     );
     this.restoreDraftState(draft, root);
+  }
+
+  private isUnchangedReorder_abyssPrivate(
+    root: TaskSnapshot,
+    stack: readonly TaskLike[],
+    submission: PlanningResultSubmission | undefined,
+  ): boolean {
+    return (
+      submission?.changed === false &&
+      this.submittedDrafts_abyssPrivate.get(submission.token)?.command?.type ===
+        'reorder-subtask' &&
+      isCurrentTaskSelectionSnapshot(root, stack)
+    );
   }
 
   private resultDraftState_abyssPrivate(

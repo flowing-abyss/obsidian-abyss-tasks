@@ -182,6 +182,7 @@ function selectionPaths(
 
 export interface OwnedTaskSelectionProof {
   readonly selection: TaskSelectionNode[];
+  readonly reordersSubtasks: boolean;
   readonly successor: (previous: TaskSelectionNode) => TaskSelectionNode | undefined;
   readonly nodeSuccessor: (previous: TaskNodeRef) => TaskSelectionNode | undefined;
   readonly commentSuccessor: (previous: TaskCommentSnapshot) => TaskCommentSnapshot | undefined;
@@ -212,25 +213,25 @@ export function taskNodeOccurrencePath(target: TaskNodeRef): string {
   return lines.join('/');
 }
 
+interface IndexedTaskSuccessor {
+  previous: TaskNodeRef;
+  next: TaskSelectionNode;
+  comments: Map<number, { previous: TaskCommentSnapshot; next: TaskCommentSnapshot }>;
+}
+
 function indexSelectionProof(
   current: TaskSnapshot,
   before: TaskSelectionNode,
   command: TaskCommand,
   rebuilt: TaskSelectionNode[],
 ): OwnedTaskSelectionProof {
-  const successors = new Map<
-    string,
-    {
-      previous: TaskNodeRef;
-      next: TaskSelectionNode;
-      comments: Map<number, { previous: TaskCommentSnapshot; next: TaskCommentSnapshot }>;
-    }
-  >();
+  const successors = new Map<string, IndexedTaskSuccessor>();
   const splice = command.type === 'delete-subtask' || command.type === 'restore-subtask';
   const restore = command.type === 'restore-subtask';
   let parent: TaskNodeRef | undefined;
   if (command.type === 'restore-subtask') parent = command.parent;
   if (command.type === 'delete-subtask') parent = command.subtask.parent;
+  if (command.type === 'reorder-subtask') parent = command.subtask.parent;
   const visit = (previous: TaskSelectionNode, next: TaskSelectionNode): void => {
     const ref = taskNodeRef(previous);
     const comments = new Map<
@@ -257,10 +258,13 @@ function indexSelectionProof(
     const edited = parent !== undefined && sameTaskNodeRef(taskNodeRef(previous), parent);
     const expanded = restore ? next : previous;
     const index = edited && splice ? removalIndex(expanded, command) : -1;
+    const reorder =
+      edited && command.type === 'reorder-subtask' ? reorderIndices(previous, command) : undefined;
     previous.subtasks.forEach((child, position) => {
       if (edited && !restore && position === index) return;
       const shift = restore ? 1 : -1;
-      const shifted = edited && position >= index ? position + shift : position;
+      let shifted = edited && splice && position >= index ? position + shift : position;
+      if (reorder !== undefined) shifted = reorderedIndex(position, reorder);
       const successor = next.subtasks[shifted];
       if (successor !== undefined) visit(child, successor);
     });
@@ -274,6 +278,7 @@ function indexSelectionProof(
   };
   return {
     selection: rebuilt,
+    reordersSubtasks: command.type === 'reorder-subtask',
     successor: (previous) => exactOccurrence(taskNodeRef(previous))?.next,
     nodeSuccessor: (previous) => exactOccurrence(previous)?.next,
     commentSuccessor: (previous) => {
@@ -310,7 +315,62 @@ function rebuildSelection(
     return rebuildRemovalSelection(current, selection, command);
   if (command.type === 'add-subtask' || command.type === 'add-comment')
     return rebuildInsertionSelection(current, selection, command, policy);
+  if (command.type === 'reorder-subtask')
+    return rebuildReorderSelection(current, selection, command);
   return rebuildContentSelection(current, selection, command, policy);
+}
+
+function reorderIndices(
+  parent: TaskSelectionNode,
+  command: Extract<TaskCommand, { type: 'reorder-subtask' }>,
+): NonNullable<Parameters<typeof sameTaskTreeWithOwnedChanges>[3]['reorder']> | undefined {
+  const from = parent.subtasks.findIndex((child) =>
+    sameTaskNodeRef(taskNodeRef(child), { type: 'subtask', ref: command.subtask }),
+  );
+  const target = parent.subtasks.findIndex((child) =>
+    sameTaskNodeRef(taskNodeRef(child), { type: 'subtask', ref: command.target }),
+  );
+  if (from < 0 || target < 0) return undefined;
+  if (from === target) return { from, to: from, target, placement: command.placement };
+  let to = target;
+  if (command.placement === 'after') to++;
+  if (from < target) to--;
+  return { from, to, target, placement: command.placement };
+}
+
+function reorderedIndex(position: number, reorder: { from: number; to: number }): number {
+  if (position === reorder.from) return reorder.to;
+  if (position > reorder.from && position <= reorder.to) return position - 1;
+  if (position < reorder.from && position >= reorder.to) return position + 1;
+  return position;
+}
+
+function rebuildReorderSelection(
+  current: TaskSnapshot,
+  selection: readonly TaskSelectionNode[],
+  command: Extract<TaskCommand, { type: 'reorder-subtask' }>,
+): TaskSelectionNode[] | undefined {
+  if (!sameTaskNodeRef(command.subtask.parent, command.target.parent)) return undefined;
+  const paths = selectionPaths(current, selection, command.subtask.parent, false);
+  if (paths === undefined) return undefined;
+  const { before, selectedPath, editedPath } = paths;
+  const parent = follow(before, editedPath, false)?.[editedPath.length];
+  const reorder = parent === undefined ? undefined : reorderIndices(parent, command);
+  if (
+    reorder === undefined ||
+    !sameTaskTreeWithOwnedChanges(before, current, editedPath, {
+      fields: new Set(),
+      reorder,
+    })
+  )
+    return undefined;
+  const selectedChild = selectedPath[editedPath.length];
+  if (
+    selectedChild !== undefined &&
+    editedPath.every((part, index) => selectedPath[index] === part)
+  )
+    selectedPath[editedPath.length] = reorderedIndex(selectedChild, reorder);
+  return follow(current, selectedPath, false);
 }
 
 type LinkCommand = Extract<TaskCommand, { type: 'edit-link' }>;

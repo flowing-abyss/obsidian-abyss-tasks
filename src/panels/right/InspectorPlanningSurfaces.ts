@@ -26,6 +26,7 @@ import { anchoredPlacement, type AnchoredPlacementInput } from '../../ui/anchore
 import { isImeOwnedEvent } from '../../ui/ime';
 import { type InteractionOwnershipPort } from '../../ui/interactionOwnership';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
+import type { OwnedTaskSelectionProof } from '../../ui/ownedTaskSelection';
 import {
   mountRecurrenceEditor,
   type RecurrenceEditorHandle,
@@ -344,7 +345,10 @@ export class InspectorPlanningSurfaces {
   readonly #planningControlKeys = new Map<Element, PlanningControlKey>();
 
   /** The control each open anchored surface was opened from, while the surface is open. */
-  readonly #surfaceOpeners = new Map<HTMLElement, HTMLElement>();
+  readonly #surfaceOpeners = new Map<
+    HTMLElement,
+    { anchor: HTMLElement; onReorder: ((proof: OwnedTaskSelectionProof) => void) | undefined }
+  >();
 
   /** The field of the date popover "+ date" opened, until the next render. */
   #addDateField: AddDateField | undefined;
@@ -400,7 +404,7 @@ export class InspectorPlanningSurfaces {
     if (focused === null) return undefined;
     const direct = this.#planningControlKeys.get(focused);
     if (direct !== undefined) return direct;
-    for (const [surface, opener] of this.#surfaceOpeners) {
+    for (const [surface, { anchor: opener }] of this.#surfaceOpeners) {
       if (surface.contains(focused)) return this.#planningControlKeys.get(opener);
     }
     return undefined;
@@ -415,7 +419,13 @@ export class InspectorPlanningSurfaces {
   restoreRenderFocus(
     statusFocus: TaskNodeRef | undefined,
     controls: readonly PlanningControlKey[] | undefined,
+    retainedFocus?: Element | null,
   ): void {
+    if (
+      retainedFocus?.isConnected === true &&
+      this.#host.root().ownerDocument.activeElement === retainedFocus
+    )
+      return;
     if (statusFocus !== undefined) {
       this.#restoreStatusFocus(statusFocus);
       return;
@@ -608,6 +618,7 @@ export class InspectorPlanningSurfaces {
     task: TaskLike,
     options: Array<{ field: AddDateField; label: string }>,
   ): void {
+    let currentTask = task;
     const existing = this.#host.root().querySelector('.abyss-add-date-menu');
     if (existing != null) {
       this.#removeAnchoredSurface(existing as HTMLElement);
@@ -638,13 +649,17 @@ export class InspectorPlanningSurfaces {
         () => {
           this.#addDateField = opt.field;
           this.#removeAnchoredSurface(menu);
-          this.#showDatePopover(anchor, task, opt.field);
+          this.#showDatePopover(anchor, currentTask, opt.field);
         },
       );
     }
 
     this.positionAnchoredSurface(menu, anchor, 'below-start');
-    this.#dismissMenuOnOutsideClick(menu, anchor);
+    this.#dismissMenuOnOutsideClick(menu, anchor, undefined, {
+      onReorder: (proof) => {
+        currentTask = proof.successor(currentTask) ?? currentTask;
+      },
+    });
     menu.querySelector<HTMLElement>('.abyss-context-item')?.focus({ preventScroll: true });
   }
 
@@ -723,6 +738,7 @@ export class InspectorPlanningSurfaces {
     stack: readonly TaskLike[],
     restoring?: { readonly intent: RecurrenceIntent | undefined },
   ): void {
+    let currentTask = task;
     const existing = this.#host.root().querySelector<HTMLElement>('.abyss-recurrence-popover');
     this.clearPopovers();
     if (existing != null) return;
@@ -742,13 +758,14 @@ export class InspectorPlanningSurfaces {
         removeScheduledDate: this.#settings?.recurrence.removeScheduledDate === true,
       },
       ownershipConflict: this.#hasRecurrenceOwnershipConflict(task, stack),
-      onSubmit: (patch) => this.#commands.executePlanningPatch(task, patch),
+      onSubmit: (patch) => this.#commands.executePlanningPatch(currentTask, patch),
       onClose: () => {
         this.#removeAnchoredSurface(popover);
       },
       dismissalFocus,
     });
-    this.#recurrenceDraftEditor = { target, handle, surface: popover };
+    const entry = { target, handle, surface: popover };
+    this.#recurrenceDraftEditor = entry;
     const title = popover.querySelector<HTMLElement>('.abyss-recurrence-title');
     if (title !== null && title.id !== '') popover.setAttribute('aria-labelledby', title.id);
     this.#placeRecurrencePopover(popover, anchor, inline);
@@ -762,9 +779,19 @@ export class InspectorPlanningSurfaces {
       }
     };
     this.#anchoredSurfaceCleanups.set(popover, editorCleanup);
-    this.#dismissMenuOnOutsideClick(popover, anchor, () => {
-      this.#dismissRecurrencePopover(popover, handle);
-    });
+    this.#dismissMenuOnOutsideClick(
+      popover,
+      anchor,
+      () => {
+        this.#dismissRecurrencePopover(popover, handle);
+      },
+      {
+        onReorder: (proof) => {
+          currentTask = proof.successor(currentTask) ?? currentTask;
+          entry.target = taskNodeRef(currentTask);
+        },
+      },
+    );
     if (restoring === undefined) this.#deferRecurrenceFocus(handle);
   }
 
@@ -840,7 +867,7 @@ export class InspectorPlanningSurfaces {
   #removeAnchoredSurface(surface: HTMLElement): void {
     // Read before the cleanup: the recurrence cleanup empties the editor and drops focus to body.
     const heldFocus = surface.contains(surface.ownerDocument.activeElement);
-    const opener = this.#surfaceOpeners.get(surface);
+    const opener = this.#surfaceOpeners.get(surface)?.anchor;
     this.#host.closeSearchSurface(surface);
     this.#anchoredSurfaceCleanups.get(surface)?.();
     if (heldFocus && opener?.isConnected === true) opener.focus({ preventScroll: true });
@@ -885,6 +912,7 @@ export class InspectorPlanningSurfaces {
    * behavior are identical for all three; only the read/write pair differs.
    */
   #showDatePopover(anchor: HTMLElement, task: TaskLike, field: SchedulingDateField = 'due'): void {
+    let currentTask = task;
     const owner = this.#host.taskOwner(task);
     const already = this.#host.root().querySelector('.abyss-date-popover');
     this.clearPopovers();
@@ -918,7 +946,7 @@ export class InspectorPlanningSurfaces {
       commit: () => {
         if (!isUsableDateInputValue(input.value)) return;
         entry.submitted = true;
-        runAsyncAction(this.#commands.updateDate(task, field, localDate(input.value)));
+        runAsyncAction(this.#commands.updateDate(currentTask, field, localDate(input.value)));
         this.#removeAnchoredSurface(pop);
       },
     });
@@ -945,13 +973,17 @@ export class InspectorPlanningSurfaces {
     this.#renderPopoverClear(inputRow, 'Clear date', () => {
       entry.submitted = true;
       draft.cancel();
-      if (field === 'due') runAsyncAction(this.#commands.clearDate(task));
-      else runAsyncAction(this.#commands.clearPlanningDate(task, field));
+      if (field === 'due') runAsyncAction(this.#commands.clearDate(currentTask));
+      else runAsyncAction(this.#commands.clearPlanningDate(currentTask, field));
       this.#removeAnchoredSurface(pop);
     });
     this.positionAnchoredSurface(pop, anchor, 'below-start');
     this.#dismissMenuOnOutsideClick(pop, anchor, undefined, {
       focusLeaveDelay: 200,
+      onReorder: (proof) => {
+        currentTask = proof.successor(currentTask) ?? currentTask;
+        entry.target = taskNodeRef(currentTask);
+      },
       onCleanup: () => {
         clearOptionalTimer(ownerWindow, focusTimer);
         entry.openingFocusPending = false;
@@ -963,6 +995,7 @@ export class InspectorPlanningSurfaces {
   }
 
   #showPriorityPopover(anchor: HTMLElement, task: TaskLike): void {
+    let currentTask = task;
     const already = this.#host.root().querySelector('.abyss-priority-popover');
     this.clearPopovers();
     if (already != null) return;
@@ -990,15 +1023,19 @@ export class InspectorPlanningSurfaces {
       setIcon(flagEl, 'flag');
       btn.createSpan({ cls: 'abyss-priority-option-label', text: opt.label });
       btn.addEventListener('click', () => {
-        const previous = shownPriority(anchor, task);
+        const previous = shownPriority(anchor, currentTask);
         applyPriorityChipPresentation(anchor, opt.value);
         this.#removeAnchoredSurface(pop);
-        runAsyncAction(this.#commitPriorityChoice(anchor, task, opt.value, previous));
+        runAsyncAction(this.#commitPriorityChoice(anchor, currentTask, opt.value, previous));
       });
     }
     markPriorityOptions(pop, shownPriority(anchor, task));
     this.positionAnchoredSurface(pop, anchor, 'below-start');
-    this.#dismissMenuOnOutsideClick(pop, anchor);
+    this.#dismissMenuOnOutsideClick(pop, anchor, undefined, {
+      onReorder: (proof) => {
+        currentTask = proof.successor(currentTask) ?? currentTask;
+      },
+    });
     pop
       .querySelector<HTMLElement>('.abyss-priority-option.is-active')
       ?.focus({ preventScroll: true });
@@ -1145,6 +1182,7 @@ export class InspectorPlanningSurfaces {
   }
 
   showTagInput(container: HTMLElement, task: TaskLike, anchor: HTMLElement): void {
+    let currentTask = task;
     const existing = this.#host.root().querySelector<HTMLElement>('.abyss-tag-dropdown-wrap');
     if (existing != null) {
       this.#removeAnchoredSurface(existing);
@@ -1162,7 +1200,7 @@ export class InspectorPlanningSurfaces {
         const entry = this.#typedInput;
         if (entry?.surface === surface) entry.submitted = true;
         try {
-          const result = await this.#commands.addTags(task, tags);
+          const result = await this.#commands.addTags(currentTask, tags);
           if (result === 'failed') this.#resumeTypedInput(surface);
           return result;
         } catch (error) {
@@ -1194,6 +1232,11 @@ export class InspectorPlanningSurfaces {
       },
       {
         focusLeaveDelay: 200,
+        onReorder: (proof) => {
+          currentTask = proof.successor(currentTask) ?? currentTask;
+          if (this.#typedInput?.surface === surface)
+            this.#typedInput = { ...this.#typedInput, target: taskNodeRef(currentTask) };
+        },
         onCleanup: () => {
           anchor.removeClass('abyss-chip-add--hidden');
           this.#releaseTypedInput(surface);
@@ -1203,6 +1246,7 @@ export class InspectorPlanningSurfaces {
   }
 
   #showTimePopover(anchor: HTMLElement, task: TaskLike): void {
+    let currentTask = task;
     const already = this.#host.root().querySelector('.abyss-time-popover');
     this.clearPopovers();
     if (already != null) return;
@@ -1228,13 +1272,13 @@ export class InspectorPlanningSurfaces {
       commit: () => {
         if (written || input.validity.badInput) return;
         written = true;
-        this.#finishPopoverUpdate(pop, this.#commands.updateTime(task, input.value));
+        this.#finishPopoverUpdate(pop, this.#commands.updateTime(currentTask, input.value));
       },
     });
 
     this.#renderPopoverClear(inputRow, 'Clear time', () => {
       draft.cancel();
-      this.#finishPopoverUpdate(pop, this.#commands.updateTime(task, ''));
+      this.#finishPopoverUpdate(pop, this.#commands.updateTime(currentTask, ''));
     });
 
     const disarmDuration = 'source' in task ? this.#renderDurationInputs(pop, task) : undefined;
@@ -1242,6 +1286,9 @@ export class InspectorPlanningSurfaces {
     this.positionAnchoredSurface(pop, anchor, 'below-start');
     this.#dismissMenuOnOutsideClick(pop, anchor, undefined, {
       focusLeaveDelay: 200,
+      onReorder: (proof) => {
+        currentTask = proof.successor(currentTask) ?? currentTask;
+      },
       onCleanup: () => {
         draft.cancel();
         disarmDuration?.();
@@ -1445,7 +1492,11 @@ export class InspectorPlanningSurfaces {
     );
 
     this.positionAnchoredSurface(menu, anchor, 'below-end');
-    this.#dismissMenuOnOutsideClick(menu, anchor);
+    this.#dismissMenuOnOutsideClick(menu, anchor, undefined, {
+      onReorder: () => {
+        this.#removeAnchoredSurface(menu);
+      },
+    });
     editRepeat.focus({ preventScroll: true });
   }
 
@@ -1495,7 +1546,11 @@ export class InspectorPlanningSurfaces {
     dismissSurface: () => void = () => {
       this.#removeAnchoredSurface(menu);
     },
-    options: { focusLeaveDelay?: number; onCleanup?: () => void } = {},
+    options: {
+      focusLeaveDelay?: number;
+      onCleanup?: () => void;
+      onReorder?: (proof: OwnedTaskSelectionProof) => void;
+    } = {},
   ): void {
     const ownerDocument = this.#host.root().ownerDocument;
     const ownerWindow = ownerDocument.defaultView;
@@ -1557,13 +1612,15 @@ export class InspectorPlanningSurfaces {
       }
     };
     this.#anchoredSurfaceCleanups.set(menu, cleanup);
-    this.#surfaceOpeners.set(menu, anchor);
+    this.#surfaceOpeners.set(menu, { anchor, onReorder: options.onReorder });
   }
 
   registerStatusMarker(marker: HTMLElement, task: TaskLike): void {
     this.#dependencyStatusMarkers.set(marker, this.#host.taskOwner(task));
   }
-  updateTaskOwners(): void {
+  updateTaskOwners(proof?: OwnedTaskSelectionProof): void {
+    if (proof?.reordersSubtasks === true)
+      for (const { onReorder } of this.#surfaceOpeners.values()) onReorder?.(proof);
     for (const [marker, owner] of this.#dependencyStatusMarkers) {
       if (owner.current === undefined || !marker.isConnected)
         this.#dependencyStatusMarkers.delete(marker);
@@ -1592,6 +1649,13 @@ export class InspectorPlanningSurfaces {
     if (editor !== undefined) this.#removeAnchoredSurface(editor.surface);
   }
 
+  #hasRecurrenceDraftFor(target: TaskNodeRef): boolean {
+    const editor = this.#recurrenceDraftEditor;
+    return (
+      editor !== undefined && editor.surface.isConnected && sameTaskNodeRef(editor.target, target)
+    );
+  }
+
   restoreRecurrenceDraft(
     draft: Extract<RightPanelDraftState, { kind: 'recurrence-editor' }>,
     task: TaskLike,
@@ -1600,10 +1664,14 @@ export class InspectorPlanningSurfaces {
     const intent = this.#recurrenceIntent;
     const anchor = this.#planningControl(intent?.key ?? 'repeat');
     if (anchor === undefined) return { anchorFound: false, focus: undefined };
-    this.#showRecurrencePopover(anchor, task, stack, { intent });
-    const editor = this.#recurrenceDraftEditor;
+    let editor = this.#recurrenceDraftEditor;
+    if (!this.#hasRecurrenceDraftFor(draft.target)) {
+      this.#showRecurrencePopover(anchor, task, stack, { intent });
+      editor = this.#recurrenceDraftEditor;
+    }
     if (editor == null) return { anchorFound: true, focus: undefined };
-    editor.handle.restoreDraftState(draft.editor);
+    if (JSON.stringify(editor.handle.captureDraftState()) !== JSON.stringify(draft.editor))
+      editor.handle.restoreDraftState(draft.editor);
     return {
       anchorFound: true,
       focus: draft.hadFocus
