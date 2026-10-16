@@ -107,7 +107,7 @@ export async function closePanels(host: Host): Promise<void> {
 const CALENDAR_DATES =
   '.abyss-mg-cell[data-mg-date], .abyss-tg-header-cell[data-tg-date], .abyss-tg-day-column[data-tg-date], .abyss-tg-allday-cell[data-tg-date], .abyss-calendar-date[data-calendar-date]';
 const CALENDAR_CARDS =
-  '.abyss-tg-body, .abyss-tg-block, .abyss-tg-deadline-marker, .abyss-calendar-agenda .abyss-calendar-item';
+  '.abyss-tg-body, .abyss-tg-block, .abyss-tg-deadline-marker, .abyss-mg-plain, .abyss-mg-block-dot, .abyss-mg-deadline-marker, .abyss-calendar-agenda .abyss-calendar-item';
 
 function calendarDate(cell: HTMLElement): string {
   return cell.dataset['mgDate'] ?? cell.dataset['tgDate'] ?? cell.dataset['calendarDate'] ?? '';

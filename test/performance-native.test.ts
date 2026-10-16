@@ -315,7 +315,9 @@ describe('native profile boundaries', () => {
     ]);
   });
   it.each([
-    ['abyss-mg-cell', 'data-mg-date', 'abyss-tg-body'],
+    ['abyss-mg-cell', 'data-mg-date', 'abyss-mg-plain'],
+    ['abyss-mg-cell', 'data-mg-date', 'abyss-mg-block-dot'],
+    ['abyss-mg-cell', 'data-mg-date', 'abyss-mg-deadline-marker'],
     ['abyss-tg-header-cell', 'data-tg-date', 'abyss-tg-block'],
     ['abyss-calendar-date', 'data-calendar-date', 'abyss-calendar-item'],
   ])('accepts populated calendar evidence from %s', (cls, attribute, cardClass) => {
@@ -334,6 +336,21 @@ describe('native profile boundaries', () => {
       card.removeAttribute('aria-busy');
       card.textContent = '';
       expect(() => calendarEvidence(root, 1)).toThrow('populated');
+    } finally {
+      root.remove();
+    }
+  });
+  it('counts compact month cards and shared span bodies once in a populated month', () => {
+    const root = document.body.createDiv();
+    const cell = root.createDiv({ cls: 'abyss-mg-cell', attr: { 'data-mg-date': '2026-10-16' } });
+    try {
+      for (const cls of ['abyss-mg-plain', 'abyss-mg-block-dot', 'abyss-mg-deadline-marker']) {
+        cell.createDiv({ cls, text: 'Profile task' });
+      }
+      expect(calendarEvidence(root, 3)).toMatchObject({ dates: ['2026-10-16'], renderedCards: 3 });
+      cell.createDiv({ cls: 'abyss-tg-body', text: 'Shared span body' });
+      expect(calendarEvidence(root, 4).renderedCards).toBe(4);
+      expect(calendarDiagnostics(root).renderedCards).toBe(4);
     } finally {
       root.remove();
     }
@@ -376,7 +393,7 @@ describe('native profile boundaries', () => {
       for (const day of ['2026-10-16', '2026-10-17']) {
         const cell = root.createDiv({ cls: 'abyss-mg-cell' });
         cell.dataset['mgDate'] = day;
-        cell.createDiv({ cls: 'abyss-tg-body', text: 'Populated' });
+        cell.createDiv({ cls: 'abyss-mg-plain', text: 'Populated' });
       }
       const options = {
         vault: 'dev-vault-tasks',
