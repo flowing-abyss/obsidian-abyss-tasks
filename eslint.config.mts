@@ -381,6 +381,8 @@ export default defineConfig(
       'tooling/regex-audit.mjs',
       'tooling/regex-audit-process.mjs',
       'tooling/regex-audit-policy.mjs',
+      'tooling/performance/fixture.ts',
+      'tooling/performance/transaction.ts',
     ],
     languageOptions: {
       globals: { ...globals.node },
