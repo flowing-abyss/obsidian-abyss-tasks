@@ -5,7 +5,8 @@ import type { RightPanel, RightPanelMutationLifecycle } from '../src/panels/Righ
 import { localDate, type CommentTimeContextProvider, type TaskApplicationApi } from '../src/tasks';
 import type { TaskRef } from '../src/tasks/domain/types';
 import type { InteractionOwnershipPort } from '../src/ui/interactionOwnership';
-import { expectDefined, task, taskQueryApi, testStatusRegistry } from './helpers';
+import { cssDeclarationText } from './cssHelpers';
+import { expectDefined, loadPluginStyles, task, taskQueryApi, testStatusRegistry } from './helpers';
 import { scopeKeyboardEvent } from './support/scopeKeyboardEvent';
 
 // vi.hoisted runs BEFORE vi.mock factory execution, avoiding TDZ.
@@ -105,6 +106,8 @@ describe('TaskModal', () => {
       const host = expectDefined(nativeOpen.mock.instances[0]) as Modal;
       expect(host.shouldRestoreSelection).toBe(false);
       expect(host.modalEl.getAttribute('aria-label')).toBe('Task details');
+      expect(host.modalEl.getAttribute('role')).toBe('dialog');
+      expect(host.modalEl.getAttribute('aria-modal')).toBe('true');
       expectDefined(document.querySelector<HTMLElement>('.abyss-modal-close-btn')).focus();
       if (movedFocus) outside.focus();
       host.close();
@@ -119,6 +122,19 @@ describe('TaskModal', () => {
       outside.remove();
     },
   );
+
+  it('suppresses desktop and Android native close chrome only inside the inspector', async () => {
+    const css = await loadPluginStyles();
+    for (const nativeClass of ['modal-close-button', 'modal-header-button', 'modal-header']) {
+      expect(cssDeclarationText(css, `.abyss-modal > .${nativeClass}`)).toContain('display: none;');
+      expect(cssDeclarationText(css, `.${nativeClass}`)).not.toContain('display: none;');
+    }
+    const close = cssDeclarationText(css, '.abyss-modal-close-btn');
+    expect(close).toContain('min-width: 44px;');
+    expect(close).toContain('min-height: 44px;');
+    modal.open(task());
+    expect(document.querySelectorAll('.abyss-modal-close-btn')).toHaveLength(1);
+  });
 
   it.each(['backdrop', 'Escape', 'Close'])(
     'returns explicit %s close to its connected opener',

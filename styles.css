@@ -5539,6 +5539,7 @@ body.abyss-modal-open .popover.hover-popover {
 }
 
 .abyss-modal > .modal-close-button,
+.abyss-modal > .modal-header-button,
 .abyss-modal > .modal-header {
   display: none;
 }

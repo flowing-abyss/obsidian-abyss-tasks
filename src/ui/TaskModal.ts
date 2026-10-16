@@ -88,6 +88,8 @@ class TaskModalHost extends Modal {
     this.containerEl.addClass('abyss-modal-backdrop');
     this.modalEl.addClass('abyss-modal');
     this.modalEl.setAttribute('aria-label', 'Task details');
+    this.modalEl.setAttribute('role', 'dialog');
+    this.modalEl.setAttribute('aria-modal', 'true');
   }
 
   override onClose(): void {
