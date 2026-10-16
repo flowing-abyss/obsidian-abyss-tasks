@@ -90,6 +90,7 @@ const privateOwners = new Set([
   'CaptureTargetResolver',
   'TaskSearch',
   'TaskSearchService',
+  'TaskSearchRuntime',
 ]);
 
 function privateOwner(node: ts.Node): string | undefined {

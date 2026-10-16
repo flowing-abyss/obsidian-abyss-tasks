@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
 import type { TaskSearchState } from '../../src/tasks';
 import type { TaskSearchBackend } from '../../src/tasks/application/TaskSearchBackend';
@@ -1007,3 +1007,64 @@ it('subtree empty browse stays canonical without constructing an engine', async 
     h.service.dispose();
   }
 });
+
+it.each(['complete', 'fail'] as const)(
+  'inline service retires old cursors and replays current data when maintenance %s',
+  async (settlement) => {
+    const source = new FakeSearchSource();
+    source.ready([nodeDocuments(1)]);
+    const engines: Array<ReturnType<typeof createMiniSearchTaskEngine>> = [];
+    const diagnostics: unknown[] = [];
+    const finish = deferred<Error | undefined>();
+    const service = new TaskSearchService({
+      source,
+      reads: {
+        observedTags: () => [],
+        async *organization() {},
+        matchesSearchAddress: () => false,
+        resolveSearchHits: async () => [],
+      },
+      segment: fallbackSearchWords,
+      scheduler: new ControlledSearchScheduler(),
+      createBackend: async () => {
+        const engine = createMiniSearchTaskEngine(fallbackSearchWords);
+        engines.push(engine);
+        return new TaskSearchRuntime(engine);
+      },
+      diagnose: (diagnostic) => diagnostics.push(diagnostic),
+    });
+    onTestFinished(() => {
+      service.dispose();
+      finish.resolve(undefined);
+    });
+    const old = await service.open({ kind: 'nodes', query: 'needle' }, signal());
+    vi.spyOn(expectDefined(engines[0]), 'vacuum').mockReturnValue(
+      finish.promise.then((error) => {
+        if (error !== undefined) throw error;
+      }),
+    );
+    source.replace('a.md', nodeDocuments(2));
+    await service.prepare(signal());
+    source.replace('a.md', nodeDocuments(3));
+    let prepared = false;
+    const preparing = service
+      .prepare(signal())
+      .then(() => {
+        prepared = true;
+      })
+      .catch((error: unknown) => error);
+    for (let turn = 0; turn < 12; turn++) await Promise.resolve();
+    expect(prepared).toBe(false);
+    await expect(service.read(old, 0, 10, signal())).rejects.toMatchObject({ code: 'stale' });
+    if (settlement === 'complete') finish.resolve(undefined);
+    else finish.resolve(new Error('private task content'));
+    await preparing;
+    const next = await service.open({ kind: 'nodes', query: 'needle' }, signal());
+    expect(
+      (await service.read(next, 0, 10, signal())).hits.map((hit) => hit.address.rootId),
+    ).toEqual([1, 2, 3]);
+    expect(engines).toHaveLength(settlement === 'complete' ? 1 : 2);
+    expect(diagnostics).toHaveLength(settlement === 'complete' ? 0 : 1);
+    expect(JSON.stringify(diagnostics)).not.toContain('private');
+  },
+);

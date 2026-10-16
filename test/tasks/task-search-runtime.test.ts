@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
+import type { TaskSearchMutation } from '../../src/tasks/application/TaskSearchBackend';
 import { fallbackSearchWords, prepareSearchQuery } from '../../src/tasks/domain/searchMatchPolicy';
 import { createMiniSearchTaskEngine } from '../../src/tasks/infrastructure/search/MiniSearchTaskEngine';
 import { TaskSearchRuntime } from '../../src/tasks/infrastructure/search/TaskSearchRuntime';
@@ -180,4 +181,187 @@ it.each([
   } finally {
     r.dispose();
   }
+});
+
+async function flushMicrotasks(): Promise<void> {
+  for (let turn = 0; turn < 12; turn++) await Promise.resolve();
+}
+async function install(runtime: TaskSearchRuntime, id: number, title = 'needle') {
+  await runtime.mutate({ type: 'begin', path: 'a.md' });
+  await runtime.mutate({
+    type: 'add',
+    documents: nodeDocuments(1).map((doc) => ({ ...doc, id, rootId: id, title })),
+  });
+  await runtime.mutate({ type: 'commit', path: 'a.md' });
+  await runtime.mutate({ type: 'publish', generation: id });
+}
+
+it('keeps the radix iterator and published cursors valid until incremental vacuum finishes', async ({
+  onTestFinished,
+}) => {
+  const runtime = new TaskSearchRuntime(createMiniSearchTaskEngine(fallbackSearchWords));
+  const failures: unknown[] = [];
+  runtime.subscribeFailure((cause) => failures.push(cause));
+  onTestFinished(async () => {
+    try {
+      await vi.runAllTimersAsync();
+    } finally {
+      runtime.dispose();
+      vi.useRealTimers();
+    }
+  });
+  vi.useFakeTimers();
+  const title = ['scope', ...Array.from({ length: 1000 }, (_, i) => `z${i}`)].join(' ');
+  await install(runtime, 1, title);
+  await install(runtime, 2, title);
+  // Hold MiniSearch's actual first default incremental batch timer, without replacing vacuum.
+  expect(vi.getTimerCount()).toBe(1);
+  const scope = { ...request('nodes'), query: prepareSearchQuery('scope', fallbackSearchWords) };
+  const old = await runtime.open(scope, 2);
+  let settled = false;
+  const mutation = runtime.mutate({ type: 'begin', path: 'b.md' }).then(async () => {
+    await runtime.mutate({
+      type: 'add',
+      documents: nodeDocuments(1).map((doc) => ({
+        ...doc,
+        id: 3,
+        rootId: 3,
+        title: 'sandbox',
+        order: { ...doc.order, filePath: 'b.md' },
+      })),
+    });
+    await runtime.mutate({ type: 'commit', path: 'b.md' });
+    settled = true;
+  });
+  const outcome = mutation.catch((error: unknown) => error);
+  await vi.advanceTimersByTimeAsync(0);
+  expect.soft(settled).toBe(false);
+  const retained = await runtime.read(old, 0, 10).then(
+    (batch) => batch.hits.map((hit) => hit.id),
+    (error: unknown) => error,
+  );
+  expect.soft(retained).toEqual([2]);
+  const fresh = await runtime.open(scope, 2).then(
+    (cursor) => cursor.total,
+    (error: unknown) => error,
+  );
+  expect.soft(fresh).toBe(1);
+  await vi.runAllTimersAsync();
+  expect(await outcome).toBeUndefined();
+  await runtime.mutate({ type: 'publish', generation: 3 });
+  for (const [query, expected] of [
+    ['scope', [2]],
+    ['sandbox', [3]],
+  ] as const) {
+    const cursor = await runtime.open(
+      { ...scope, query: prepareSearchQuery(query, fallbackSearchWords) },
+      3,
+    );
+    expect((await runtime.read(cursor, 0, 10)).hits.map((hit) => hit.id)).toEqual(expected);
+  }
+  await expect(runtime.read(old, 0, 10)).rejects.toMatchObject({ code: 'stale' });
+  expect(failures).toEqual([]);
+});
+
+async function heldMaintenance() {
+  const engine = createMiniSearchTaskEngine(fallbackSearchWords);
+  const runtime = new TaskSearchRuntime(engine);
+  const finish = deferred<Error | undefined>();
+  onTestFinished(() => {
+    runtime.dispose();
+    finish.resolve(undefined);
+  });
+  await install(runtime, 1);
+  vi.spyOn(engine, 'vacuum').mockReturnValue(
+    finish.promise.then((error) => {
+      if (error !== undefined) throw error;
+    }),
+  );
+  await install(runtime, 2);
+  return { engine, runtime, finish };
+}
+
+it.each(['begin', 'add', 'commit', 'remove'] as const)(
+  'keeps %s and publication untouched while maintenance is pending',
+  async (type) => {
+    const h = await heldMaintenance();
+    const cursor = await h.runtime.open(request('nodes'), 2);
+    const documents = nodeDocuments(1).map((doc) => ({ ...doc, id: 3, rootId: 3 }));
+    const operation: TaskSearchMutation =
+      type === 'add' ? { type, documents } : { type, path: 'a.md' };
+    let completed = false;
+    const pending = h.runtime.mutate(operation).then(() => {
+      completed = true;
+    });
+    const outcome = pending.catch((error: unknown) => error);
+    await flushMicrotasks();
+    expect(completed).toBe(false);
+    expect((await h.runtime.read(cursor, 0, 10)).hits.map((hit) => hit.id)).toEqual([2]);
+    expect(h.engine.search(request('nodes')).map((hit) => hit.id)).toEqual([2]);
+    h.finish.resolve(undefined);
+    expect(await outcome).toBeUndefined();
+    if (type === 'begin') await h.runtime.mutate({ type: 'commit', path: 'a.md' });
+    await h.runtime.mutate({ type: 'publish', generation: 3 });
+    const next = await h.runtime.open(request('nodes'), 3);
+    const expected = { begin: [], add: [2, 3], commit: [2], remove: [] }[type];
+    expect((await h.runtime.read(next, 0, 10)).hits.map((hit) => hit.id)).toEqual(expected);
+    await expect(h.runtime.read(cursor, 0, 10)).rejects.toMatchObject({ code: 'stale' });
+  },
+);
+
+it.each(['resolve', 'reject'] as const)(
+  'disposal rejects a waiting mutation before late maintenance %s',
+  async (settlement) => {
+    const h = await heldMaintenance();
+    const failures: unknown[] = [];
+    h.runtime.subscribeFailure((cause) => failures.push(cause));
+    const begin = vi.spyOn(h.engine, 'replaceBegin');
+    let outcome: unknown = 'pending';
+    const pending = h.runtime.mutate({ type: 'begin', path: 'b.md' }).then(
+      () => {
+        outcome = 'completed';
+      },
+      (error: unknown) => {
+        outcome = error;
+      },
+    );
+    h.runtime.dispose();
+    await flushMicrotasks();
+    expect(outcome).toMatchObject({ code: 'disposed' });
+    expect(begin).not.toHaveBeenCalled();
+    if (settlement === 'resolve') h.finish.resolve(undefined);
+    else h.finish.resolve(new Error('private late maintenance failure'));
+    await flushMicrotasks();
+    await pending;
+    expect(begin).not.toHaveBeenCalled();
+    expect(failures).toEqual([]);
+  },
+);
+
+it('makes maintenance failure terminal and rejects waiting and subsequent operations safely', async () => {
+  const h = await heldMaintenance();
+  const failures: unknown[] = [];
+  h.runtime.subscribeFailure((cause) => failures.push(cause));
+  const cursor = await h.runtime.open(request('nodes'), 2);
+  const begin = vi.spyOn(h.engine, 'replaceBegin');
+  const pending = h.runtime
+    .mutate({ type: 'begin', path: 'b.md' })
+    .catch((error: unknown) => error);
+  h.finish.resolve(new Error('private maintenance content'));
+  const error: unknown = await pending;
+  expect(error).toMatchObject({ code: 'unavailable' });
+  expect(String(error)).not.toContain('private');
+  expect(begin).not.toHaveBeenCalled();
+  expect(failures).toHaveLength(1);
+  for (const operation of [
+    { type: 'begin', path: 'a.md' },
+    { type: 'add', documents: nodeDocuments(1) },
+    { type: 'commit', path: 'a.md' },
+    { type: 'remove', path: 'a.md' },
+    { type: 'publish', generation: 3 },
+  ] as const)
+    await expect(h.runtime.mutate(operation)).rejects.toMatchObject({ code: 'unavailable' });
+  await expect(h.runtime.open(request('nodes'), 2)).rejects.toMatchObject({ code: 'unavailable' });
+  await expect(h.runtime.read(cursor, 0, 10)).rejects.toMatchObject({ code: 'unavailable' });
+  expect(failures).toHaveLength(1);
 });

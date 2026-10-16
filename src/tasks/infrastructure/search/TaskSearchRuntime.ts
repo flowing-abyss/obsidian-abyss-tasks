@@ -51,7 +51,9 @@ export class TaskSearchRuntime implements TaskSearchBackend {
   private readonly files = new Set<string>();
   private readonly failures = new Set<(cause: unknown) => void>();
   private vacuumNeeded = false;
-  private vacuumRunning = false;
+  private maintenance_abyssPrivate: Promise<void> | undefined;
+  private releaseMaintenance_abyssPrivate: (() => void) | undefined;
+  private failed_abyssPrivate = false;
   constructor(private readonly engine: TaskSearchEngine) {}
   subscribeFailure(listener: (cause: unknown) => void): () => void {
     this.failures.add(listener);
@@ -61,6 +63,13 @@ export class TaskSearchRuntime implements TaskSearchBackend {
   }
   async mutate(operation: TaskSearchMutation): Promise<void> {
     this.check();
+    if (operation.type !== 'publish' && this.maintenance_abyssPrivate !== undefined) {
+      await this.maintenance_abyssPrivate;
+      this.check();
+    }
+    this.applyMutation_abyssPrivate(operation);
+  }
+  private applyMutation_abyssPrivate(operation: TaskSearchMutation): void {
     if (operation.type !== 'publish') {
       this.published = false;
       this.vectors.clear();
@@ -82,7 +91,6 @@ export class TaskSearchRuntime implements TaskSearchBackend {
         this.engine.remove(operation.path);
         break;
       case 'publish':
-        this.check();
         if (this.generation !== operation.generation) this.vectors.clear();
         this.generation = operation.generation;
         this.published = true;
@@ -90,19 +98,24 @@ export class TaskSearchRuntime implements TaskSearchBackend {
     }
   }
   private maintain(): void {
-    if (!this.vacuumNeeded || this.vacuumRunning || this.disposed) return;
+    if (!this.vacuumNeeded || this.maintenance_abyssPrivate !== undefined) return;
     this.vacuumNeeded = false;
-    this.vacuumRunning = true;
-    // MiniSearch's public incremental vacuum supports searches and discards between batches.
-    // Accepted publication is independent of reclaiming obsolete postings.
+    this.maintenance_abyssPrivate = new Promise<void>((resolve) => {
+      this.releaseMaintenance_abyssPrivate = resolve;
+    });
+    // Publication and direct reads remain available while the incremental iterator yields.
+    // Mutations must wait: additions can invalidate the radix tree iterator between batches.
     void this.engine
       .vacuum()
       .catch((cause: unknown) => {
-        if (!this.disposed) for (const listener of this.failures) listener(cause);
+        if (this.disposed) return;
+        this.failed_abyssPrivate = true;
+        for (const listener of this.failures) listener(cause);
       })
       .finally(() => {
-        this.vacuumRunning = false;
-        if (this.published) this.maintain();
+        this.releaseMaintenance_abyssPrivate?.();
+        this.releaseMaintenance_abyssPrivate = undefined;
+        this.maintenance_abyssPrivate = undefined;
       });
   }
   async open(
@@ -157,6 +170,7 @@ export class TaskSearchRuntime implements TaskSearchBackend {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.releaseMaintenance_abyssPrivate?.();
     this.vectors.clear();
     this.files.clear();
     this.failures.clear();
@@ -164,5 +178,7 @@ export class TaskSearchRuntime implements TaskSearchBackend {
   }
   private check(): void {
     if (this.disposed) throw new TaskSearchError('disposed', 'Search runtime disposed');
+    if (this.failed_abyssPrivate)
+      throw new TaskSearchError('unavailable', 'Search maintenance failed');
   }
 }

@@ -28,7 +28,9 @@ class ControlledWorker {
   static readonly settings = { autoReady: true };
   readonly outgoing: unknown[] = [];
   readonly incoming: unknown[] = [];
-  readonly runtime = new TaskSearchRuntime(createMiniSearchTaskEngine(fallbackSearchWords));
+  readonly engine = createMiniSearchTaskEngine(fallbackSearchWords);
+  readonly runtime = new TaskSearchRuntime(this.engine);
+  private epoch: number | undefined;
   onmessage: ((event: { data: TaskSearchReply }) => void) | undefined;
   onerror: ((event: { preventDefault(): void }) => void) | undefined;
   onmessageerror: (() => void) | undefined;
@@ -45,6 +47,16 @@ class ControlledWorker {
   private queue = Promise.resolve();
   constructor(readonly url: string) {
     ControlledWorker.instances.push(this);
+    this.runtime.subscribeFailure(() => {
+      if (!this.terminated && this.epoch !== undefined)
+        this.reply({
+          epoch: this.epoch,
+          id: 0,
+          type: 'failure',
+          code: 'unavailable',
+          message: 'Search maintenance failed',
+        });
+    });
   }
   reply(reply: TaskSearchReply): void {
     this.incoming.push(structuredClone(reply));
@@ -55,6 +67,7 @@ class ControlledWorker {
     this.outgoing.push(message);
     this.queue = this.queue.then(async () => {
       if (message.type === 'init') {
+        this.epoch = message.epoch;
         if (ControlledWorker.settings.autoReady)
           this.reply({ type: 'ready', epoch: message.epoch });
         return;
@@ -616,4 +629,120 @@ it('round-trips subtree scope and numeric results with inline parity', async () 
     backend.dispose();
     inline.dispose();
   }
+});
+
+it('keeps reads behind a waiting Worker mutation in FIFO order', async ({ onTestFinished }) => {
+  const backend = await BrowserTaskSearchBackend.create('source');
+  const worker = expectDefined(ControlledWorker.instances[0]);
+  const finish = deferred<Error | undefined>();
+  onTestFinished(() => {
+    backend.dispose();
+    finish.resolve(undefined);
+  });
+  for (const generation of [1, 2]) {
+    if (generation === 2)
+      vi.spyOn(worker.engine, 'vacuum').mockReturnValue(
+        finish.promise.then((error) => {
+          if (error !== undefined) throw error;
+        }),
+      );
+    await backend.mutate({ type: 'begin', path: 'a.md' });
+    await backend.mutate({ type: 'add', documents: nodeDocuments(1) });
+    await backend.mutate({ type: 'commit', path: 'a.md' });
+    await backend.mutate({ type: 'publish', generation });
+  }
+  const cursor = await backend.open(
+    {
+      kind: 'nodes',
+      query: prepareSearchQuery('needle', fallbackSearchWords),
+      includeSourcePath: false,
+    },
+    2,
+  );
+  let mutated = false;
+  let readOutcome: unknown = 'pending';
+  const mutation = backend
+    .mutate({ type: 'remove', path: 'a.md' })
+    .then(() => {
+      mutated = true;
+    })
+    .catch((error: unknown) => error);
+  const reading = backend.read(cursor, 0, 10).then(
+    (batch) => {
+      readOutcome = batch;
+    },
+    (error: unknown) => {
+      readOutcome = error;
+    },
+  );
+  for (let turn = 0; turn < 12; turn++) await Promise.resolve();
+  expect(mutated).toBe(false);
+  expect(readOutcome).toBe('pending');
+  finish.resolve(undefined);
+  expect(await mutation).toBeUndefined();
+  await reading;
+  expect(readOutcome).toMatchObject({ code: 'stale' });
+  await backend.mutate({ type: 'publish', generation: 3 });
+  const empty = await backend.open(
+    {
+      kind: 'nodes',
+      query: prepareSearchQuery('needle', fallbackSearchWords),
+      includeSourcePath: false,
+    },
+    3,
+  );
+  expect((await backend.read(empty, 0, 10)).hits).toEqual([]);
+});
+
+it('recovers a genuine maintenance failure through Worker id zero with one sanitized diagnostic', async ({
+  onTestFinished,
+}) => {
+  const source = new FakeSearchSource();
+  source.ready([nodeDocuments(1)]);
+  const diagnostics: unknown[] = [];
+  const finish = deferred<Error | undefined>();
+  const service = new TaskSearchService({
+    source,
+    reads: {
+      observedTags: () => [],
+      async *organization() {},
+      matchesSearchAddress: () => false,
+      resolveSearchHits: async () => [],
+    },
+    segment: fallbackSearchWords,
+    scheduler: new ControlledSearchScheduler(),
+    createBackend: async () => BrowserTaskSearchBackend.create('source'),
+    diagnose: (diagnostic) => diagnostics.push(diagnostic),
+  });
+  onTestFinished(() => {
+    service.dispose();
+    finish.resolve(undefined);
+  });
+  const signal = new AbortController().signal;
+  const old = await service.open({ kind: 'nodes', query: 'needle' }, signal);
+  const worker = expectDefined(ControlledWorker.instances[0]);
+  vi.spyOn(worker.engine, 'vacuum').mockReturnValue(
+    finish.promise.then((error) => {
+      if (error !== undefined) throw error;
+    }),
+  );
+  source.replace('a.md', nodeDocuments(2));
+  await service.prepare(signal);
+  finish.resolve(new Error('private authored content'));
+  for (let turn = 0; turn < 12; turn++) await Promise.resolve();
+  const next = await service.open({ kind: 'nodes', query: 'needle' }, signal);
+  expect((await service.read(next, 0, 10, signal)).hits.map((hit) => hit.address.rootId)).toEqual([
+    1, 2,
+  ]);
+  await expect(service.read(old, 0, 10, signal)).rejects.toMatchObject({ code: 'stale' });
+  expect(worker.terminated).toBe(true);
+  expect(ControlledWorker.instances).toHaveLength(2);
+  expect(
+    worker.incoming.filter(
+      (reply) =>
+        (reply as TaskSearchReply).type === 'failure' && (reply as { id: number }).id === 0,
+    ),
+  ).toHaveLength(1);
+  expect(diagnostics).toHaveLength(1);
+  expect(JSON.stringify(diagnostics)).not.toContain('private');
 });

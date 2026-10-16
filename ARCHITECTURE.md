@@ -302,8 +302,14 @@ Exact hydration checks current addresses and returns detached roots and nodes in
 it never guesses a child or uses write-reconciliation authority to revive a stale hit.
 
 The inward [`MiniSearchTaskEngine`](src/tasks/infrastructure/search/MiniSearchTaskEngine.ts) is the
-sole MiniSearch import boundary. Shared [`searchMatchPolicy`](src/tasks/domain/searchMatchPolicy.ts)
-and [`markdown/searchText`](src/markdown/searchText.ts) define matching and visible-text provenance.
+sole MiniSearch import boundary. The shared runtime publishes accepted replacements before starting
+incremental maintenance. Further mutations wait for that maintenance before changing the engine or
+invalidating publication and cursors; direct reads can use the published index during the wait.
+Worker requests retain FIFO order, so reads behind a waiting mutation also wait. This can delay the
+next search update by the remaining maintenance time. Disposal releases waiting mutations promptly,
+and a maintenance failure makes the runtime unusable through the existing recovery boundary.
+Shared [`searchMatchPolicy`](src/tasks/domain/searchMatchPolicy.ts) and
+[`markdown/searchText`](src/markdown/searchText.ts) define matching and visible-text provenance.
 Root Search can match fields across descendants and retains relevance order. Node requests default
 to their own title and tags, including dependency search. Tasks Filter opts into subtree matching
 across Search fields, with source paths still opt-in, then applies ordinary list membership, sort,
