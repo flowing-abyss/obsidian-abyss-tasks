@@ -1,6 +1,8 @@
+import type { App } from 'obsidian';
 import { isImeOwnedEvent } from '../ime';
 import type { InteractionOwnershipPort } from '../interactionOwnership';
 import { runAsyncAction } from '../runAsyncAction';
+import { WikiLinkSuggest } from '../WikiLinkSuggest';
 import { CaptureInteractionBoundary } from './CaptureInteractionBoundary';
 import { CaptureMetadataRow } from './CaptureMetadataRow';
 import type { CaptureSnapshot, TaskCaptureController } from './TaskCaptureController';
@@ -8,6 +10,7 @@ import type { CaptureSnapshot, TaskCaptureController } from './TaskCaptureContro
 export type CapturePresentation = 'default' | 'inline';
 
 export interface CaptureSurfaceOptions {
+  readonly app?: App;
   readonly inputLabel?: string;
   readonly getTagColor?: (tag: string) => string | undefined;
   readonly formatDate?: (value: string, referenceDate?: string) => string;
@@ -43,6 +46,7 @@ export class CaptureSurface {
   private recognitionTimer_abyssPrivate: number | undefined;
   private composing_abyssPrivate = false;
   private readonly timerWindow_abyssPrivate: Window;
+  private readonly links_abyssPrivate: WikiLinkSuggest | undefined;
 
   constructor(
     host: HTMLElement,
@@ -85,13 +89,34 @@ export class CaptureSurface {
     const smart = this.mountSmart_abyssPrivate(options);
     this.boundary_abyssPrivate = smart?.boundary;
     this.metadataRow_abyssPrivate = smart?.row;
+    this.links_abyssPrivate = this.mountLinks_abyssPrivate(options);
     this.bindInput_abyssPrivate(options);
 
-    const subscription = controller_abyssPrivate.subscribe((snapshot) => {
+    this.subscribe_abyssPrivate();
+  }
+
+  private subscribe_abyssPrivate(): void {
+    const subscription = this.controller_abyssPrivate.subscribe((snapshot) => {
       this.render_abyssPrivate(snapshot);
     });
     this.cleanup_abyssPrivate.push(() => {
       subscription.release();
+    });
+  }
+
+  private mountLinks_abyssPrivate(options: CaptureSurfaceOptions): WikiLinkSuggest | undefined {
+    if (options.app === undefined) return undefined;
+    return new WikiLinkSuggest({
+      app: options.app,
+      input: this.input,
+      sourcePath: () => {
+        const session = this.controller_abyssPrivate.target.session;
+        return session.type === 'ready' ? session.destination.filePath : undefined;
+      },
+      ...(options.interactionOwnership === undefined
+        ? {}
+        : { interactionOwnership: options.interactionOwnership }),
+      registerSurface: (surface) => this.boundary_abyssPrivate?.register(surface) ?? (() => {}),
     });
   }
 
@@ -265,10 +290,15 @@ export class CaptureSurface {
       this.input.setSelectionRange(0, 0);
   }
 
+  ownsInteraction(target: EventTarget | null): boolean {
+    return this.links_abyssPrivate?.owns(target) ?? false;
+  }
+
   destroy(): void {
     if (this.destroyed_abyssPrivate) return;
     this.destroyed_abyssPrivate = true;
     this.clearRecognitionTimer_abyssPrivate();
+    this.links_abyssPrivate?.destroy();
     this.boundary_abyssPrivate?.destroy();
     this.metadataRow_abyssPrivate?.destroy();
     for (const release of this.cleanup_abyssPrivate.splice(0).reverse()) release();

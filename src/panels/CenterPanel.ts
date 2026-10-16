@@ -1411,6 +1411,7 @@ export class CenterPanel {
 
   private createCaptureSessions_abyssPrivate(): CaptureSessions {
     return new CaptureSessions({
+      app: this.app_abyssPrivate,
       state: this.state_abyssPrivate,
       settings: this.settings_abyssPrivate,
       application: this.captureApplication_abyssPrivate,

@@ -32,6 +32,7 @@ import {
   renderTaskDescriptionText,
 } from '../../ui/taskNodeText';
 import { rootTaskRef, taskNodeRef } from '../../ui/taskSelection';
+import { WikiLinkSuggest } from '../../ui/WikiLinkSuggest';
 import { renderRowRemove } from './inspectorRowRemove';
 import type { InspectorTaskOwner, TaskLike } from './inspectorTypes';
 
@@ -124,6 +125,7 @@ class AsyncEditLifecycle {
 }
 
 export class InspectorSections {
+  readonly #links = new WeakMap<HTMLInputElement | HTMLTextAreaElement, WikiLinkSuggest>();
   readonly #app: App;
   readonly #state: AppState;
   readonly #interactionOwnership: InteractionOwnershipPort;
@@ -347,6 +349,28 @@ export class InspectorSections {
     );
   }
 
+  #enableWikiLinks(
+    input: HTMLInputElement | HTMLTextAreaElement,
+    task: TaskLike,
+    component = this.#host.component(),
+  ): void {
+    const owner = this.#host.taskOwner(task);
+    const links = new WikiLinkSuggest({
+      app: this.#app,
+      input,
+      interactionOwnership: this.#interactionOwnership,
+      sourcePath: () => {
+        const current = owner.current;
+        return current === undefined ? undefined : rootTaskRef(current).filePath;
+      },
+    });
+    this.#links.set(input, links);
+    component.register(() => {
+      links.destroy();
+      this.#links.delete(input);
+    });
+  }
+
   #enablePaste(
     el: HTMLTextAreaElement,
     task: TaskLike,
@@ -452,6 +476,7 @@ export class InspectorSections {
       lifecycle.close();
     });
     this.#enablePaste(textarea, task, () => () => !lifecycle.isClosed(), editorOwner);
+    this.#enableWikiLinks(textarea, task, editorOwner);
     textarea.setCssStyles({ height: `${Math.max(start, 60)}px` });
     textarea.ownerDocument.defaultView?.setTimeout(() => {
       textarea.focus();
@@ -573,6 +598,7 @@ export class InspectorSections {
     });
     const lifecycle = new AsyncEditLifecycle();
     const editorOwner = this.#editorOwner(input);
+    this.#enableWikiLinks(input, task, editorOwner);
     let retired = false;
     const close = (): void => {
       if (lifecycle.isClosed()) return;
@@ -610,6 +636,21 @@ export class InspectorSections {
     input.focus();
   }
 
+  #isEntryExit(
+    input: HTMLInputElement | HTMLTextAreaElement,
+    kind: 'new-subtask' | 'new-comment',
+    event: Event,
+  ): boolean {
+    return (
+      input.isConnected &&
+      event.target !== input &&
+      this.#links.get(input)?.owns(event.target) !== true &&
+      (event.type === 'focusin' ||
+        kind === 'new-subtask' ||
+        input.ownerDocument.activeElement === input)
+    );
+  }
+
   #registerEntryDismissal(
     input: HTMLInputElement | HTMLTextAreaElement,
     task: TaskLike,
@@ -636,11 +677,7 @@ export class InspectorSections {
     };
     const outside = (event: Event): void => {
       if (deferredClose) return;
-      if (
-        input.isConnected &&
-        event.target !== input &&
-        (event.type === 'focusin' || kind === 'new-subtask' || document.activeElement === input)
-      ) {
+      if (this.#isEntryExit(input, kind, event)) {
         retireSubmission();
         if (
           kind === 'new-subtask' &&
@@ -702,6 +739,7 @@ export class InspectorSections {
       cls: 'abyss-comment-input',
       attr: { placeholder: 'Write a comment…', rows: '2' },
     });
+    this.#enableWikiLinks(commentInput, task);
     this.#host.component().register(
       enableAttachmentDrop(commentInput, {
         app: this.#app,
@@ -810,6 +848,7 @@ export class InspectorSections {
     ta.value = task.markdownTitle;
     const editorOwner = this.#editorOwner(ta, undefined, advanceTarget);
     this.#enablePaste(ta, task, () => () => !lifecycle.isClosed(), editorOwner);
+    this.#enableWikiLinks(ta, task, editorOwner);
     // Auto-grow to content, but never below the initial title height.
     const grow = (): void => {
       ta.setCssStyles({ height: 'auto' });
@@ -1166,6 +1205,7 @@ export class InspectorSections {
       lifecycle.close();
     });
     this.#enablePaste(textarea, task, () => () => !lifecycle.isClosed(), editorOwner);
+    this.#enableWikiLinks(textarea, task, editorOwner);
     const isCurrent = (): boolean => !lifecycle.isClosed() && textarea.isConnected;
     const finish = async (): Promise<void> => {
       if (!lifecycle.begin()) return;

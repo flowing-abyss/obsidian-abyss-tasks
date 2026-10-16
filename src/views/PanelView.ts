@@ -945,6 +945,7 @@ export class PanelView extends ItemView {
     );
     let ownsSelection = this.center_abyssPrivate.captureCreationSelection();
     this.quickCapture_abyssPrivate = new QuickCaptureCoordinator({
+      app: this.app,
       host: elements.quickCaptureHost,
       getTagColor: (tag) => colorForTag(tag, this.settings_abyssPrivate.tagGroups),
       getDateClass: (value, referenceDate) =>

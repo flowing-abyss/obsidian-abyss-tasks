@@ -22,6 +22,10 @@ import {
 } from './helpers';
 import { codec, recognizer, reference } from './support/taskInputHarness';
 useRealMoment();
+vi.mock('../src/ui/textFieldAnchor', () => ({
+  textFieldAnchor: () => new DOMRect(100, 100, 1, 20),
+  textFieldViewport: () => new DOMRect(0, 0, 1000, 800),
+}));
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
@@ -67,6 +71,7 @@ async function canonicalSurface(
   });
   const host = document.body.createDiv();
   const surface = new CaptureSurface(host, controller, {
+    app,
     shouldShowSourceNote: (path) =>
       shouldShowSourcePath(path, settings.sourceNoteDisplay, settings.taskFilePath),
   });
@@ -81,6 +86,7 @@ async function canonicalSurface(
     application.index.destroy();
   };
   return {
+    app,
     async readCreated() {
       const file = app.vault.getAbstractFileByPath('tasks.md');
       if (!(file instanceof TFile)) throw new Error('Missing created note');
@@ -100,6 +106,35 @@ async function canonicalSurface(
 }
 
 describe('canonical Q context representation', () => {
+  it('keeps date-like note names inside the title when completion is accepted', async () => {
+    const h = await canonicalSurface({ type: 'list', selection: 'inbox' });
+    try {
+      await h.app.vault.create('Tomorrow.md', '');
+      vi.spyOn(h.app.fileManager, 'generateMarkdownLink').mockReturnValue('[[Tomorrow]]');
+      const input = h.surface.input;
+      input.focus();
+      input.value = 'Discuss [[Tom';
+      input.setSelectionRange(input.value.length, input.value.length);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      await vi.waitFor(() => {
+        expect(document.querySelector('.abyss-link-suggest-option')).not.toBeNull();
+      });
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+      expect(input.value).toBe('Discuss [[Tomorrow]]');
+      expect(await h.readCreated()).toBe('');
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+      await vi.waitFor(async () => {
+        expect(await h.readCreated()).toContain('Discuss [[Tomorrow]]');
+      });
+      expect(await h.readCreated()).not.toContain('📅');
+    } finally {
+      h.close();
+    }
+  });
   it.each([true, false])(
     'represents the Inbox service tag only through its actual caption, remove=%s',
     async (removeTagOnAssign) => {

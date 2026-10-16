@@ -25,7 +25,7 @@ let nextListId = 0;
 /** Owns suggestions only. The field's existing owner still owns saving its draft. */
 export class WikiLinkSuggest {
   readonly #options: WikiLinkSuggestOptions;
-  readonly #source: VaultFileSuggestionSource;
+  #source: VaultFileSuggestionSource | undefined;
   readonly #cleanup: Array<() => void> = [];
   readonly #aria = new Map<string, string | null>();
   #popover: AnchoredPopover | undefined;
@@ -40,7 +40,6 @@ export class WikiLinkSuggest {
 
   constructor(options: WikiLinkSuggestOptions) {
     this.#options = options;
-    this.#source = new VaultFileSuggestionSource(options.app);
     const { input } = options;
     for (const name of [
       'role',
@@ -158,8 +157,7 @@ export class WikiLinkSuggest {
     this.#draft = draft;
     const request = new AbortController();
     this.#request = request;
-    void this.#source
-      .links(range.query, request.signal, input.win)
+    void this.#suggestions(range.query, request.signal, input.win)
       .then((items) => {
         if (request.signal.aborted || this.#destroyed || !this.#matches(draft)) return;
         if (items.length === 0) {
@@ -173,6 +171,15 @@ export class WikiLinkSuggest {
       .catch(() => {
         if (!request.signal.aborted && !this.#destroyed) this.#failed();
       });
+  }
+
+  async #suggestions(
+    query: string,
+    signal: AbortSignal,
+    win: Window,
+  ): Promise<VaultLinkSuggestion[]> {
+    this.#source ??= new VaultFileSuggestionSource(this.#options.app);
+    return await this.#source.links(query, signal, win);
   }
 
   #failed(): void {
@@ -303,7 +310,7 @@ export class WikiLinkSuggest {
       return;
     }
     try {
-      if (!this.#source.isCurrent(item, draft.range.query)) {
+      if (this.#source?.isCurrent(item, draft.range.query) !== true) {
         this.#update();
         return;
       }

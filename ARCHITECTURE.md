@@ -29,6 +29,24 @@ Queries return detached, immutable snapshots. Commands validate current source, 
 and return structured outcomes. Successful writes enter the read model before the command returns;
 later vault and metadata events reconcile through the same parsing path as manual edits.
 
+Task text inputs share [WikiLinkSuggest](src/ui/WikiLinkSuggest.ts). Quick and inline capture,
+inspector titles and descriptions, subtask entry, and new or edited comments own a disposable
+controller for their exact input lifetime. Completion changes the draft through the field's input
+event; existing capture and inspector commands still own persistence. Portal clicks belong to the
+same interaction boundary, and accepting a suggestion consumes Enter before the editor can save.
+
+The file source in [NoteSuggest](src/ui/NoteSuggest.ts) has a separate inline-link mode using
+Obsidian's fuzzy search, aliases, and link formatting. Optional host configuration and supported-file
+capabilities stay at that boundary. Excluded files are absent from an empty query and downranked
+when matching text is entered. The existing note picker keeps its own filtering contract. The
+controller validates the draft, source destination, and candidate again before inserting.
+
+The shared anchored popover accepts measured text and viewport rectangles. A temporary mirror
+measures the opening brackets, falling back to the visible caret in a scrolled field. The menu lives
+in the input's document, shifts horizontally, flips vertically, and scrolls within the visible window.
+Native text insertion preserves Undo where the host supports the legacy editing command; otherwise
+range replacement preserves the draft and caret. Closing the editor releases its popup and listeners.
+
 ## Sources of truth
 
 | Concern                                                 | Authoritative source                                         | Derived or temporary state            |

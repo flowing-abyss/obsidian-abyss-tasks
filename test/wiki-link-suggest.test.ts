@@ -98,6 +98,22 @@ describe('inline task link completion', () => {
       x.destroy();
     });
   });
+  it('does not acquire vault settings until the input actually requests a link', () => {
+    const app = appWithFiles({});
+    const config = vi.fn(() => {
+      throw new Error('Unexpected early settings acquisition');
+    });
+    Object.assign(app.vault, { getConfig: config });
+    const input = document.body.createEl('input');
+    expect(() => {
+      const controller = new WikiLinkSuggest({ app, input, sourcePath: () => 'tasks.md' });
+      controllers.push(controller);
+      input.focus();
+      input.value = 'Plain task';
+      input.dispatchEvent(new Event('input'));
+    }).not.toThrow();
+    expect(config).not.toHaveBeenCalled();
+  });
   async function setup(
     tag: 'input' | 'textarea' = 'textarea',
     value = 'Before [[Al]] after',

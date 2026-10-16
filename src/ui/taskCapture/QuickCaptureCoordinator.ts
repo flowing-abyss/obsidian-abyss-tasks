@@ -1,3 +1,4 @@
+import type { App } from 'obsidian';
 import type { ShortcutActionId } from '../../settings/shortcuts';
 import type { TaskCommandResult } from '../../tasks';
 import type { CreationRevealAuthority } from '../creation/CreationPresentationController';
@@ -12,6 +13,7 @@ import { TaskCaptureController, type CaptureSmartOptions } from './TaskCaptureCo
 export type QuickCapturePhase = 'closed' | 'resolving' | 'open';
 
 interface QuickCaptureCoordinatorOptions {
+  readonly app?: App;
   readonly smart?: CaptureSmartOptions;
   readonly getTagColor?: (tag: string) => string | undefined;
   readonly formatDate?: (value: string, referenceDate?: string) => string;
@@ -183,6 +185,7 @@ export class QuickCaptureCoordinator {
   private mountSurface(controller: TaskCaptureController, generation: number): CaptureSurface {
     const surfaceGeneration = ++this.surfaceGeneration;
     return new CaptureSurface(this.options.host, controller, {
+      ...(this.options.app === undefined ? {} : { app: this.options.app }),
       closeOnEmptyBlur: false,
       ...(this.options.getTagColor === undefined ? {} : { getTagColor: this.options.getTagColor }),
       ...(this.options.formatDate === undefined ? {} : { formatDate: this.options.formatDate }),
@@ -240,7 +243,8 @@ export class QuickCaptureCoordinator {
       !this.destroyed &&
       this.generation === generation &&
       this.currentPhase !== 'closed' &&
-      !event.composedPath().includes(this.options.host)
+      !event.composedPath().includes(this.options.host) &&
+      this.surface?.ownsInteraction(event.target) !== true
     );
   }
 

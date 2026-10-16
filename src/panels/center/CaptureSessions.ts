@@ -1,3 +1,4 @@
+import type { App } from 'obsidian';
 import type { AppState } from '../../app/AppState';
 import { listSelectionToKey } from '../../app/listViewState';
 import type { CalendarSettings } from '../../settings/types';
@@ -54,6 +55,7 @@ interface PanelCaptureSession {
 }
 
 interface CaptureSessionsOptions {
+  readonly app?: App;
   readonly state: AppState;
   readonly settings: CalendarSettings;
   readonly application: (TaskApplicationApi & TaskCaptureApplicationApi) | null;
@@ -68,6 +70,7 @@ interface CaptureSessionsOptions {
 }
 
 export class CaptureSessions {
+  readonly #app: App | undefined;
   readonly #captureTargets: CaptureTargetResolver | null;
   #captureRequestId = 0;
   #resolvingCapture: {
@@ -81,6 +84,7 @@ export class CaptureSessions {
   readonly #onCreationResult: CaptureSessionsOptions['onCreationResult'];
 
   constructor(options: CaptureSessionsOptions) {
+    this.#app = options.app;
     this.#state = options.state;
     this.#root = options.root;
     this.#onCreationResult = options.onCreationResult;
@@ -239,6 +243,7 @@ export class CaptureSessions {
       active.restoreFocusOnClose = true;
     };
     const options = {
+      ...(this.#app === undefined ? {} : { app: this.#app }),
       ...(active.placement.type === 'list' && {
         preserveDraftOnBlur: (next: EventTarget | null) =>
           this.#activeCapture === active &&
