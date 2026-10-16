@@ -1118,14 +1118,53 @@ describe('TaskIndex lifecycle and events', () => {
     const { app, index, fireChanged } = await setup({ 'project.md': source });
     await index.initialize();
     const reconciled: string[][] = [];
+    const changes: unknown[] = [];
+    const before = index.list({ filePath: 'project.md' });
+    index.subscribe((event) => changes.push(event));
     index.subscribeReconciled((files) => reconciled.push([...files]));
 
     fireChanged(mdFile(app, 'project.md'), source, taskCache(0, { budget: 140 }));
     await flushMicrotasks();
 
     expect(index.list({ filePath: 'project.md' }).map(({ title }) => title)).toEqual(['unchanged']);
+    expect(index.list({ filePath: 'project.md' })).toEqual(before);
+    expect(changes).toEqual([]);
     expect(reconciled).toEqual([['project.md']]);
     index.destroy();
+  });
+
+  it('publishes reissued refs as a change even when task content stays equal', async () => {
+    const source = '- [ ] Same\n';
+    const authority = new TaskRefAuthority('reissued-reference');
+    const { app, index, fireChanged } = await setup({ 'task.md': source }, authority);
+    try {
+      await index.initialize();
+      const prior = expectDefined(index.list()[0]);
+      const revision = authority.mintRevision(prior.source.originalBlock);
+      const staged = authority.stage(
+        {
+          filePath: 'task.md',
+          candidateFingerprint: taskRefContentFingerprint(source),
+          candidateLength: source.length,
+          expectedRevision: prior.ref.revision,
+          roots: [{ line: 0, source: prior.source.originalBlock, revision }],
+        },
+        prior.ref.revision,
+      );
+      expect(staged.type).toBe('staged');
+      const events: unknown[] = [];
+      index.subscribe((event) => events.push(event));
+
+      fireChanged(mdFile(app, 'task.md'), source, taskCache());
+      await flushMicrotasks();
+
+      expect(index.list()[0]?.ref.revision).toBe(revision);
+      expect(index.list()[0]?.source).toEqual(prior.source);
+      expect(index.resolve(prior.ref).type).not.toBe('exact');
+      expect(events).toEqual([{ type: 'changed', files: ['task.md'] }]);
+    } finally {
+      index.destroy();
+    }
   });
 
   it('publishes an accepted metadata observation for an empty markdown note', async () => {

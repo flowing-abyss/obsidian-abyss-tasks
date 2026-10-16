@@ -483,6 +483,7 @@ export default defineConfig(
       'src/tags/effectiveTagGroups.ts',
       'src/task-lists/todayTaskCategory.ts',
       'src/tasks/infrastructure/search/TaskSearchRuntime.ts',
+      'src/tasks/infrastructure/taskSnapshotEquality.ts',
       'src/tasks/domain/taskSearchTypes.ts',
       'src/tasks/domain/searchMatchPolicy.ts',
       'src/markdown/searchText.ts',

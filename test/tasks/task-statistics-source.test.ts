@@ -569,6 +569,54 @@ describe('lazy complete task statistics evidence', () => {
     expect(index.list().map(({ title }) => title)).toEqual(['Same']);
   });
 
+  it('revises evidence when the same cached frontmatter object changes and reuses equal observations', async () => {
+    const content = '- [ ] Same\n';
+    const { index, changed } = await harness({ 'live.md': content });
+    await index.initialize();
+    index.subscribeStatistics(() => undefined);
+    const frontmatter = { budget: 100 };
+    const cache = { frontmatter };
+    changed('live.md', content, cache);
+    await index.whenStatisticsSettled();
+    const before = index.readStatistics();
+    const tasks = index.list();
+
+    frontmatter.budget = 200;
+    changed('live.md', content, cache);
+    await index.whenStatisticsSettled();
+
+    const after = index.readStatistics();
+    expect(after.revision).toBeGreaterThan(before.revision);
+    expect(after.files[0]).not.toBe(before.files[0]);
+    expect(index.list()).toEqual(tasks);
+    changed('live.md', content, cache);
+    await index.whenStatisticsSettled();
+    expect(index.readStatistics()).toBe(after);
+  });
+
+  it.each([
+    { initial: '- [ ] Same\n\nBody before\n', next: '- [ ] Same\n\nBody after\n' },
+    { initial: '---\nbudget: 100\n---\n', next: '---\nbudget: 200\n---\n' },
+  ])(
+    'revises accepted evidence for body-only or empty-task metadata edits (%#)',
+    async ({ initial, next }) => {
+      const { index, changed } = await harness({ 'live.md': initial });
+      await index.initialize();
+      index.subscribeStatistics(() => undefined);
+      await index.whenStatisticsSettled();
+      const before = index.readStatistics();
+      const tasks = index.list();
+
+      changed('live.md', next);
+      await index.whenStatisticsSettled();
+
+      const after = index.readStatistics();
+      expect(index.list()).toEqual(tasks);
+      expect(after.revision).toBeGreaterThan(before.revision);
+      expect(after.files[0]).not.toBe(before.files[0]);
+    },
+  );
+
   it('uses the current catalog plus raw cancellation precedence without changing ordinary list status', async () => {
     const { index } = await harness({
       'live.md': '- [?] Custom\n- [ ] Cancelled ❌ 2026-99-99\n  - [?] Nested\n',

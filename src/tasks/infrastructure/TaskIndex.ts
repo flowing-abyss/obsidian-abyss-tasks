@@ -102,6 +102,7 @@ import {
   type TaskRefAuthority,
   type TaskSnapshotState,
 } from './TaskRefAuthority';
+import { sameTaskSnapshots } from './taskSnapshotEquality';
 import {
   TaskStatisticsProjection,
   type StatisticsProjectionInput,
@@ -600,7 +601,7 @@ interface AcceptedStatisticsSource {
   readonly content: string;
   readonly cache: CachedMetadata;
   readonly tasks: readonly TaskSnapshot[];
-  readonly signature: string;
+  readonly frontmatterSignature: string;
   readonly revision: number;
   readonly metadata: TaskSourceMetadata;
 }
@@ -2215,14 +2216,18 @@ export class TaskIndex
     cache: CachedMetadata,
     tasks: readonly TaskSnapshot[],
   ): void {
-    const signature = JSON.stringify([cache.frontmatter, tasks]);
+    const frontmatterSignature = JSON.stringify([cache.frontmatter]);
     const prior = this.acceptedStatisticsSources_abyssPrivate.get(path);
-    if (prior?.content !== content || prior.signature !== signature) {
+    const changed =
+      prior?.content !== content ||
+      prior.frontmatterSignature !== frontmatterSignature ||
+      !sameTaskSnapshots(prior.tasks, tasks);
+    if (changed) {
       this.acceptedStatisticsSources_abyssPrivate.set(path, {
         content,
         cache,
         tasks,
-        signature,
+        frontmatterSignature,
         revision: ++this.statisticsSourceRevision_abyssPrivate,
         metadata: this.sourceMetadata_abyssPrivate(path, content),
       });
@@ -2533,7 +2538,7 @@ export class TaskIndex
     advanceGenerationOnUnchanged = false,
   ): boolean {
     const current = this.taskMap_abyssPrivate.get(filePath) ?? [];
-    const changed = JSON.stringify(current) !== JSON.stringify(tasks);
+    const changed = !sameTaskSnapshots(current, tasks);
     if (!changed && !advanceGenerationOnUnchanged) return false;
     // A repository install and Obsidian's matching metadata event can arrive in either order
     // before the already-queued notification is delivered. Keep that batch's proven transition
