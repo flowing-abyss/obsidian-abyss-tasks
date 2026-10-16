@@ -93,8 +93,12 @@ export class VaultFileSuggestionSource {
       found: [],
     };
     const files = this.app_abyssPrivate.vault.getFiles();
+    let sliceStarted = ownerWindow.performance.now();
     for (let index = 0; index < files.length; index += 256) {
-      if (index > 0) await yieldLinkSearch(ownerWindow, signal);
+      if (index > 0 && ownerWindow.performance.now() - sliceStarted >= 8) {
+        await yieldLinkSearch(ownerWindow, signal);
+        sliceStarted = ownerWindow.performance.now();
+      }
       if (isCancelled(signal)) return [];
       for (const file of files.slice(index, index + 256)) collectLinks(scan, file);
     }
@@ -242,12 +246,12 @@ function collectLinks(scan: LinkScan, file: TFile): void {
   for (const alias of aliases) addLink(scan, file, alias, ignored);
 }
 function addLink(scan: LinkScan, file: TFile, alias: string | undefined, ignored: boolean): void {
-  const match = scan.search(alias ?? file.path);
+  const match = scan.query.length > 0 ? scan.search(alias ?? file.path) : null;
   if (scan.query.length !== 0 && match === null) return;
   const title = file.extension === 'md' ? file.basename : file.name;
   const penalty = ignored ? 10 : 0;
   const score = scan.query.length === 0 ? file.stat.mtime : linkMatchScore(match) - penalty;
-  scan.found.push({
+  const ranked: RankedLink = {
     candidate: {
       file,
       path: file.path,
@@ -256,10 +260,24 @@ function addLink(scan: LinkScan, file: TFile, alias: string | undefined, ignored
       ...(alias === undefined ? {} : { alias }),
     },
     score,
-  });
-  scan.found.sort(compareLinks);
-  if (scan.found.length > 50) scan.found.pop();
+  };
+  insertRankedLink(scan.found, ranked);
 }
+
+function insertRankedLink(found: RankedLink[], ranked: RankedLink): void {
+  let low = 0;
+  let high = found.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    const existing = found[middle];
+    if (existing !== undefined && compareLinks(ranked, existing) >= 0) low = middle + 1;
+    else high = middle;
+  }
+  if (low >= 50) return;
+  found.splice(low, 0, ranked);
+  if (found.length > 50) found.pop();
+}
+
 function linkMatchScore(match: ReturnType<ReturnType<typeof prepareFuzzySearch>>): number {
   return match?.score ?? 0;
 }

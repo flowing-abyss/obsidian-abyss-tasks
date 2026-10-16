@@ -15,6 +15,8 @@ export interface AnchoredPopoverOptions {
   readonly preferred: AnchoredPlacementInput['preferred'];
   /** Classes beyond the shared `abyss-popover abyss-popover-anchored` pair. */
   readonly cls: string;
+  /** Host suggestion styling; geometry and interaction lifetime stay shared. */
+  readonly appearance?: 'suggestion';
   readonly attr?: Record<string, string>;
   /**
    * Holds the panel shortcuts for as long as the surface is open, because a list a reader types
@@ -190,7 +192,7 @@ export function openAnchoredPopover(options: AnchoredPopoverOptions): AnchoredPo
   const state: PopoverState = {
     options,
     element: options.owner.createDiv({
-      cls: `abyss-popover abyss-popover-anchored ${options.cls}`,
+      cls: `${options.appearance === 'suggestion' ? 'suggestion-container' : 'abyss-popover'} abyss-popover-anchored ${options.cls}`,
       // Focusable but out of the tab order, so the surface itself can hold the keyboard while its
       // own controls stay the only Tab stops inside it.
       attr: { tabindex: '-1', ...options.attr },

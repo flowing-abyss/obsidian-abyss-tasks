@@ -1,9 +1,8 @@
-import { Component, Notice, prepareFuzzySearch, renderResults, type App } from 'obsidian';
+import { Notice, prepareFuzzySearch, renderResults, type App } from 'obsidian';
 import { openAnchoredPopover, type AnchoredPopover } from './anchoredPopover';
 import { isImeOwnedEvent } from './ime';
 import type { InteractionOwnershipPort } from './interactionOwnership';
 import { VaultFileSuggestionSource, type VaultLinkSuggestion } from './NoteSuggest';
-import { renderTaskText } from './renderTaskText';
 import { textFieldAnchor, textFieldViewport } from './textFieldAnchor';
 import { wikiLinkInputRange, type WikiLinkInputRange } from './wikiLinkInput';
 
@@ -36,7 +35,7 @@ export class WikiLinkSuggest {
   readonly #cleanup: Array<() => void> = [];
   readonly #aria = new Map<string, string | null>();
   #popover: AnchoredPopover | undefined;
-  #renderOwner: Component | undefined;
+  #resizeObserver: ResizeObserver | undefined;
   #releaseSurface: (() => void) | undefined;
   #request: AbortController | undefined;
   #draft: Draft | undefined;
@@ -155,8 +154,8 @@ export class WikiLinkSuggest {
     const popup = this.#popover;
     this.#popover = undefined;
     popup?.close(false);
-    this.#renderOwner?.unload();
-    this.#renderOwner = undefined;
+    this.#resizeObserver?.disconnect();
+    this.#resizeObserver = undefined;
     this.#releaseSurface?.();
     this.#releaseSurface = undefined;
     const { input } = this.#options;
@@ -219,7 +218,7 @@ export class WikiLinkSuggest {
   }
 
   #render(draft: Draft): void {
-    const { app, input } = this.#options;
+    const { input } = this.#options;
     const listId = `abyss-link-suggest-${++nextListId}`;
     const popup = openAnchoredPopover({
       owner: input.ownerDocument.body,
@@ -227,6 +226,7 @@ export class WikiLinkSuggest {
       boundary: input.ownerDocument.body,
       preferred: 'below-start',
       cls: 'abyss-link-suggest',
+      appearance: 'suggestion',
       attr: { id: listId, role: 'listbox', 'aria-label': 'Note links' },
       getAnchorRect: () => textFieldAnchor(input, draft.range.from),
       getBoundaryRect: () => textFieldViewport(input),
@@ -247,36 +247,28 @@ export class WikiLinkSuggest {
     popup.element.addEventListener('pointerdown', keepFocus);
     popup.element.addEventListener('mousedown', keepFocus);
     popup.element.addEventListener('auxclick', keepFocus);
-    const component = new Component();
-    this.#renderOwner = component;
-    component.load();
+    const list = popup.element.createDiv({ cls: 'suggestion' });
     const search = prepareFuzzySearch(draft.range.query);
     this.#items.forEach((item, index) => {
-      const row = popup.element.createDiv({
-        cls: 'abyss-link-suggest-option',
+      const row = list.createDiv({
+        cls: 'suggestion-item mod-complex abyss-link-suggest-option',
         attr: { role: 'option', id: `${listId}-${index}` },
       });
       row.classList.toggle('is-excluded', item.ignored);
-      const label = row.createDiv({ cls: 'abyss-suggest-title is-link' });
-      renderTaskText(label, app.fileManager.generateMarkdownLink(item.file, draft.sourcePath), {
-        app,
-        sourcePath: draft.sourcePath,
-        component,
-        interactiveLinks: false,
-        isCurrent: () => this.#draft === draft && this.#popover === popup,
-        onRendered: (holder) => {
-          const link = holder.querySelector('a');
-          if (link !== null) {
-            link.tabIndex = -1;
-            link.empty();
-            renderResults(link, item.label, search(item.label) ?? { score: 0, matches: [] });
-          }
-          popup.reposition();
-        },
+      row.classList.toggle('mod-downranked', item.ignored);
+      const content = row.createDiv({ cls: 'suggestion-content' });
+      // Supercharged Links observes native suggestions and resolves aliases via data-href.
+      const label = content.createDiv({
+        cls: 'suggestion-title abyss-suggest-title',
+        attr: { 'data-href': item.path },
       });
-      row.createDiv({
-        cls: 'abyss-suggest-path',
-        text: item.alias === undefined ? (item.file.parent?.path ?? '/') : item.path,
+      renderResults(label, item.label, search(item.label) ?? { score: 0, matches: [] });
+      const parent = item.file.parent?.path;
+      const folder =
+        parent !== undefined && parent.length > 0 && parent !== '/' ? `${parent}/` : '/';
+      content.createDiv({
+        cls: 'suggestion-note',
+        text: item.alias === undefined ? folder : item.path,
       });
       row.addEventListener('pointermove', () => {
         this.#selected = index;
@@ -294,11 +286,18 @@ export class WikiLinkSuggest {
     input.setAttribute('aria-controls', listId);
     this.#highlight();
     popup.reposition();
+    const win = input.ownerDocument.defaultView;
+    if (win !== null && typeof win.ResizeObserver === 'function') {
+      this.#resizeObserver = new win.ResizeObserver(() => {
+        if (this.#popover === popup) popup.reposition();
+      });
+      this.#resizeObserver.observe(popup.element);
+    }
   }
 
   #highlight(): void {
-    const list = this.#popover?.element;
-    if (list === undefined) return;
+    const list = this.#popover?.element.querySelector<HTMLElement>('.suggestion');
+    if (list == null) return;
     list.querySelectorAll<HTMLElement>('[role="option"]').forEach((row, index) => {
       row.setAttribute('aria-selected', String(index === this.#selected));
       row.classList.toggle('is-selected', index === this.#selected);

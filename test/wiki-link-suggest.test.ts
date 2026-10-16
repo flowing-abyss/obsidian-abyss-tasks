@@ -73,6 +73,46 @@ describe('vault link candidates', () => {
     Object.assign(h.app.vault, { getConfig: undefined });
     expect(await h.source.links('', new AbortController().signal, window)).toHaveLength(1);
   });
+  it('finishes a cheap vault scan without mandatory timer delays between file batches', async () => {
+    const app = appWithFiles(
+      Object.fromEntries(
+        Array.from({ length: 600 }, (_, i) => [`Project ${String(i).padStart(3, '0')}.md`, '']),
+      ),
+    );
+    vi.spyOn(window.performance, 'now').mockReturnValue(0);
+    const abort = new AbortController();
+    let settled = false;
+    const pending = new VaultFileSuggestionSource(app)
+      .links('Project', abort.signal, window)
+      .then((items) => {
+        settled = true;
+        return items;
+      });
+    try {
+      await Promise.resolve();
+      expect(settled).toBe(true);
+      const items = await pending;
+      expect(items).toHaveLength(50);
+      expect(items[0]?.label).toBe('Project 000');
+      expect(items[49]?.label).toBe('Project 049');
+    } finally {
+      abort.abort();
+      await pending;
+    }
+  });
+  it('yields during expensive scans so a superseded query can cancel before scanning the vault', async () => {
+    const app = appWithFiles(
+      Object.fromEntries(Array.from({ length: 600 }, (_, i) => [`Project ${i}.md`, ''])),
+    );
+    let ticks = 0;
+    vi.spyOn(window.performance, 'now').mockImplementation(() => ++ticks * 10);
+    const read = vi.spyOn(app.metadataCache, 'getFileCache');
+    const abort = new AbortController();
+    const pending = new VaultFileSuggestionSource(app).links('Project', abort.signal, window);
+    abort.abort();
+    expect(await pending).toEqual([]);
+    expect(read.mock.calls.length).toBeLessThan(600);
+  });
   it('does not retain deleted or renamed candidates and cancels abandoned requests', async () => {
     const h = fixture();
     const found = expectDefined(
@@ -143,24 +183,20 @@ describe('inline task link completion', () => {
     input.dispatchEvent(event);
     return event;
   }
-  it('keeps host link decorations on selectable suggestion labels', async () => {
-    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, markdown, holder) => {
-      const target = markdown === '[[Alpha]]' ? 'Alpha' : 'Alpine';
-      holder.createEl('a', {
-        cls: 'internal-link data-link-icon',
-        text: target,
-        attr: { href: target, 'data-href': target, 'data-link-icon': '📝' },
-      });
-    });
+  it('renders native suggestion labels without waiting for Markdown postprocessors', async () => {
+    const markdown = vi
+      .spyOn(MarkdownRenderer, 'render')
+      .mockImplementation(() => new Promise(() => {}));
     const h = await setup();
     const open = vi.spyOn(h.app.workspace, 'openLinkText');
     const label = expectDefined(
-      document.querySelector<HTMLAnchorElement>('.abyss-link-suggest-option a.internal-link'),
+      document.querySelector<HTMLElement>(
+        '.suggestion-container .suggestion .suggestion-item.mod-complex .suggestion-title',
+      ),
     );
-    expect(label.getAttribute('data-link-icon')).toBe('📝');
-    expect(label.classList.contains('data-link-icon')).toBe(true);
-    expect(label.getAttribute('data-href')).toBe('Alpha');
-    expect(label.tabIndex).toBe(-1);
+    expect(label.getAttribute('data-href')).toBe('Alpha.md');
+    expect(markdown).not.toHaveBeenCalled();
+    expect(label.tagName).toBe('DIV');
     const auxiliary = new MouseEvent('auxclick', { button: 1, bubbles: true, cancelable: true });
     label.dispatchEvent(auxiliary);
     expect(auxiliary.defaultPrevented).toBe(true);
@@ -172,37 +208,19 @@ describe('inline task link completion', () => {
     expect(open).not.toHaveBeenCalled();
   });
 
-  it.each(['replace', 'dismiss', 'destroy'] as const)(
-    'releases host postprocessor resources when suggestions %s',
-    async (action) => {
-      const released: string[] = [];
-      const pending: Array<() => void> = [];
-      vi.spyOn(MarkdownRenderer, 'render').mockImplementation(
-        async (...[, markdown, holder, , component]) => {
-          component.register(() => {
-            released.push(markdown);
-          });
-          await new Promise<void>((resolve) => {
-            pending.push(resolve);
-          });
-          holder.createEl('a', { cls: 'internal-link', text: markdown });
-        },
-      );
-      const h = await setup();
-      if (action === 'replace') {
-        h.input.value = 'Plain task';
-        h.input.dispatchEvent(new Event('input'));
-      } else if (action === 'dismiss') key(h.input, 'Escape');
-      else h.controller.destroy();
-      released.sort((left, right) => left.localeCompare(right));
-      expect(released).toEqual(['[[Alpha]]', '[[Alpine]]']);
-      pending.forEach((resolve) => {
-        resolve();
-      });
-      await Promise.resolve();
-      expect(document.querySelector('.abyss-link-suggest')).toBeNull();
-    },
-  );
+  it('exposes the exact destination to native decorators even when the label is an alias', async () => {
+    const h = await setup();
+    vi.spyOn(h.app.metadataCache, 'getFileCache').mockImplementation((file) =>
+      file.path === 'Alpha.md' ? { frontmatter: { aliases: ['Dawn'] } } : null,
+    );
+    h.input.value = '[[Dawn';
+    h.input.setSelectionRange(6, 6);
+    h.input.dispatchEvent(new Event('input'));
+    await vi.waitFor(() => {
+      const title = document.querySelector('.abyss-link-suggest .suggestion-title');
+      expect(title?.getAttribute('data-href')).toBe('Alpha.md');
+    });
+  });
   it.each(['input', 'textarea'] as const)(
     'selects with arrows in %s, preserves suffix and leaves the caret after the link',
     async (tag) => {

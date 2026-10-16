@@ -3575,40 +3575,10 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   color: var(--text-muted);
 }
 
-.abyss-popover.abyss-link-suggest {
+.abyss-link-suggest.suggestion-container {
   position: fixed;
-  z-index: var(--layer-menu);
-  box-sizing: border-box;
-  width: min(360px, var(--abyss-pop-width));
-  max-width: var(--abyss-pop-width);
+  max-width: min(500px, var(--abyss-pop-width));
   max-height: min(300px, var(--abyss-pop-height));
-  min-width: 0;
-  overflow: auto;
-  overscroll-behavior: contain;
-  padding: var(--size-4-1);
-  font-family: var(--font-interface, var(--font-interface-theme));
-  font-size: var(--font-ui-small);
-}
-
-.abyss-link-suggest-option {
-  padding: var(--size-2-3) var(--size-4-2);
-  border-radius: var(--radius-s);
-  color: var(--text-normal);
-  cursor: pointer;
-}
-
-.abyss-link-suggest-option.is-selected {
-  background: var(--background-modifier-hover);
-}
-
-.abyss-link-suggest-option.is-excluded {
-  color: var(--text-muted);
-}
-
-.abyss-link-suggest-option :is(.abyss-suggest-title, .abyss-suggest-path) {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .abyss-text-field-mirror {
@@ -5518,6 +5488,9 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   top: var(--abyss-pop-top, 100%);
   left: var(--abyss-pop-left, 0);
   right: auto;
+}
+
+.abyss-popover-anchored:not(.suggestion-container) {
   z-index: 10;
 }
 
