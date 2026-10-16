@@ -1,4 +1,5 @@
 import { Component, Platform, type App } from 'obsidian';
+import postcss from 'postcss';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TimedBlockFocusRetention } from '../src/panels/calendar/timedBlockFocusRetention';
 import { buildDefaultTaskStatuses, DEFAULT_SETTINGS } from '../src/settings/defaults';
@@ -1080,13 +1081,42 @@ describe('renderTimedBlocksForDay', () => {
     expect(declarationsFor('.abyss-tg-span-edge::after')).toMatch(/width\s*:\s*2px/u);
   });
 
+  it('limits hover and active edge affordances to hover devices without hiding touch resize feedback', () => {
+    const edgeSelectors = [
+      '.abyss-tg-resize-handle:hover::after',
+      '.abyss-tg-span-edge:hover::after',
+      '.abyss-tg-resize-handle:active::after',
+      '.abyss-tg-span-edge:active::after',
+    ];
+    const seen = new Set<string>();
+    postcss.parse(css).walkRules((rule) => {
+      for (const selector of rule.selectors) {
+        if (!edgeSelectors.includes(selector)) continue;
+        seen.add(selector);
+        const parent = rule.parent;
+        expect(parent?.type).toBe('atrule');
+        if (parent?.type === 'atrule') {
+          expect(parent.name).toBe('media');
+          expect(parent.params).toBe('(hover: hover)');
+        }
+      }
+    });
+    expect(seen).toEqual(new Set(edgeSelectors));
+    expect(
+      cssDeclarationText(
+        css,
+        ":where(.abyss-panel-view, .abyss-modal) [data-active-resize='true']::after",
+        true,
+      ),
+    ).toMatch(/opacity\s*:\s*1/u);
+  });
+
   it('reveals only the exact hovered or actively resized edge, never whole-block focus', () => {
     const revealed = declarationsForRuleContaining(
       '.abyss-tg-resize-handle:hover::after',
       '.abyss-tg-span-edge:hover::after',
       '.abyss-tg-resize-handle:active::after',
       '.abyss-tg-span-edge:active::after',
-      ":where(.abyss-panel-view, .abyss-modal) [data-active-resize='true']::after",
     );
 
     expect(revealed).toMatch(/opacity\s*:\s*1/u);

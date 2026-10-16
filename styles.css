@@ -974,10 +974,16 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   pointer-events: none;
 }
 
-.abyss-tg-resize-handle:hover::after,
-.abyss-tg-span-edge:hover::after,
-.abyss-tg-resize-handle:active::after,
-.abyss-tg-span-edge:active::after,
+/* Touch browsers can promote hover-sensitive edges into nearby tap targets. */
+@media (hover: hover) {
+  .abyss-tg-resize-handle:hover::after,
+  .abyss-tg-span-edge:hover::after,
+  .abyss-tg-resize-handle:active::after,
+  .abyss-tg-span-edge:active::after {
+    opacity: 1;
+  }
+}
+
 :where(.abyss-panel-view, .abyss-modal) [data-active-resize='true']::after {
   opacity: 1;
 }
