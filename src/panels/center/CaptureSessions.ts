@@ -278,7 +278,7 @@ export class CaptureSessions {
       if (timer !== undefined) win.clearTimeout(timer);
       timer = undefined;
     };
-    const onPointer = (event: PointerEvent): void => {
+    const onPress = (event: MouseEvent & { readonly isPrimary?: boolean }): void => {
       clear();
       if (
         active.surface !== surface ||
@@ -292,15 +292,17 @@ export class CaptureSessions {
       if (!this.#isCaptureNavigationTarget(active, target) || surface.element.contains(target))
         return;
       this.#calendarPointerTarget = target;
-      // Only the pointerdown default focus transition may consume this intent.
+      // Pointerdown or compatibility mousedown may move focus during its default action.
       timer = win.setTimeout(clear, 0);
     };
-    const endings = ['pointerup', 'pointercancel', 'click', 'keydown'] as const;
-    doc.addEventListener('pointerdown', onPointer, true);
+    const endings = ['pointerup', 'pointercancel', 'mouseup', 'click', 'keydown'] as const;
+    doc.addEventListener('pointerdown', onPress, true);
+    doc.addEventListener('mousedown', onPress, true);
     for (const type of endings) doc.addEventListener(type, clear, true);
     this.#releaseCapturePointerIntent = () => {
       clear();
-      doc.removeEventListener('pointerdown', onPointer, true);
+      doc.removeEventListener('pointerdown', onPress, true);
+      doc.removeEventListener('mousedown', onPress, true);
       for (const type of endings) doc.removeEventListener(type, clear, true);
     };
   }

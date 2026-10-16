@@ -625,98 +625,116 @@ it.each(['other-panel', 'retired'] as const)(
   },
 );
 
-it.each([
+const calendarIntentEndings = [
   'consumed',
   'pointercancel',
   'pointerup',
+  'mouseup',
   'click',
   'keydown',
   'expired',
   'unmounted',
-  'outside-pointer',
+  'outside-pointerdown',
+  'outside-mousedown',
   'outside-focus',
   'other-panel',
   'removed-target',
   'unfocused-input',
   'secondary-pointer',
   'nonprimary-pointer',
-] as const)('submits a real outside blur after calendar pointer intent is %s', async (scenario) => {
-  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-  const root = activeDocument.body.createDiv();
-  const agenda = root.createDiv({ cls: 'abyss-calendar-agenda' });
-  agenda.dataset['calendarDate'] = '2026-10-16';
-  const next = root.createEl('button', { cls: 'abyss-calendar-date' });
-  const outside = activeDocument.body.createEl('button', { cls: 'abyss-calendar-date' });
-  const result = deferred<TaskCommandResult>();
-  const execute = vi.fn<TaskCreateSession['execute']>(() => result.promise);
-  const captures = new CaptureSessions({
-    state: new AppState(),
-    settings: DEFAULT_SETTINGS,
-    application: {
-      queries: taskQueryApi(),
-      execute: vi.fn(),
-      planCreate: async () => ({
-        type: 'ready',
-        destination: { filePath: 'Capture.md', insertion: { type: 'append' } },
-        preview: () => ({ type: 'unavailable', cause: 'preview-capability' }),
-        execute,
-      }),
-    },
-    listNodes: () => [],
-    onCreationResult: () => {},
-    root: () => root,
-  });
-  const input = (): HTMLInputElement =>
-    expectDefined(root.querySelector<HTMLInputElement>('.abyss-capture-input'));
-  try {
-    captures.openCapture(
-      { type: 'calendar-agenda', date: '2026-10-16' },
-      { type: 'default', source: 'calendar' },
-    );
-    await vi.advanceTimersByTimeAsync(10);
-    input().value = 'Outside draft';
-    input().dispatchEvent(new Event('input', { bubbles: true }));
-    const target = scenario === 'other-panel' ? outside : next;
-    if (scenario === 'unfocused-input') next.focus();
-    const pointer = calendarPointerEvent(scenario);
-    target.dispatchEvent(pointer);
-    if (scenario === 'consumed') {
-      input().dispatchEvent(new FocusEvent('blur', { relatedTarget: null }));
-      expect(execute).not.toHaveBeenCalled();
-    } else if (scenario === 'expired') await vi.runAllTimersAsync();
-    else if (scenario === 'unmounted') {
-      const oldInput = input();
-      captures.unmountActiveCapture();
-      next.dispatchEvent(new Event('pointerdown', { bubbles: true }));
-      oldInput.dispatchEvent(new FocusEvent('blur', { relatedTarget: null }));
-      expect(vi.getTimerCount()).toBe(0);
-      expect(execute).not.toHaveBeenCalled();
-      captures.remountActiveCapture();
-    } else if (scenario === 'outside-pointer')
-      outside.dispatchEvent(new Event('pointerdown', { bubbles: true }));
-    else if (scenario === 'removed-target') next.remove();
-    else if (['pointercancel', 'pointerup', 'click', 'keydown'].includes(scenario))
-      next.dispatchEvent(new Event(scenario, { bubbles: true }));
-    input().dispatchEvent(
-      new FocusEvent('blur', { relatedTarget: scenario === 'outside-focus' ? outside : null }),
-    );
-    await vi.advanceTimersByTimeAsync(10);
-    expect(execute).toHaveBeenCalledOnce();
-    expect(execute).toHaveBeenCalledWith(
-      expect.objectContaining({
-        markdownBody: 'Outside draft',
-        initial: { due: { type: 'set', value: '2026-10-16' } },
-      }),
-    );
-  } finally {
-    captures.cancelActiveCapture();
-    expect(vi.getTimerCount()).toBe(0);
-    vi.useRealTimers();
-  }
-});
+] as const;
 
-function calendarPointerEvent(scenario: string): MouseEvent {
-  const pointer = new MouseEvent('pointerdown', {
+it.each(
+  calendarIntentEndings.flatMap((scenario) =>
+    (['pointerdown', 'mousedown'] as const).map((press) => ({ scenario, press })),
+  ),
+)(
+  'submits a real outside blur after calendar $press intent is $scenario',
+  async ({ scenario, press }) => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const removedListeners = vi.spyOn(activeDocument, 'removeEventListener');
+    const root = activeDocument.body.createDiv();
+    const agenda = root.createDiv({ cls: 'abyss-calendar-agenda' });
+    agenda.dataset['calendarDate'] = '2026-10-16';
+    const next = root.createEl('button', { cls: 'abyss-calendar-date' });
+    const outside = activeDocument.body.createEl('button', { cls: 'abyss-calendar-date' });
+    const result = deferred<TaskCommandResult>();
+    const execute = vi.fn<TaskCreateSession['execute']>(() => result.promise);
+    const captures = new CaptureSessions({
+      state: new AppState(),
+      settings: DEFAULT_SETTINGS,
+      application: {
+        queries: taskQueryApi(),
+        execute: vi.fn(),
+        planCreate: async () => ({
+          type: 'ready',
+          destination: { filePath: 'Capture.md', insertion: { type: 'append' } },
+          preview: () => ({ type: 'unavailable', cause: 'preview-capability' }),
+          execute,
+        }),
+      },
+      listNodes: () => [],
+      onCreationResult: () => {},
+      root: () => root,
+    });
+    const input = (): HTMLInputElement =>
+      expectDefined(root.querySelector<HTMLInputElement>('.abyss-capture-input'));
+    try {
+      captures.openCapture(
+        { type: 'calendar-agenda', date: '2026-10-16' },
+        { type: 'default', source: 'calendar' },
+      );
+      await vi.advanceTimersByTimeAsync(10);
+      input().value = 'Outside draft';
+      input().dispatchEvent(new Event('input', { bubbles: true }));
+      const target = scenario === 'other-panel' ? outside : next;
+      if (scenario === 'unfocused-input') next.focus();
+      const pointer = calendarPointerEvent(scenario, press);
+      target.dispatchEvent(pointer);
+      if (scenario === 'consumed') {
+        input().dispatchEvent(new FocusEvent('blur', { relatedTarget: null }));
+        expect(execute).not.toHaveBeenCalled();
+      } else if (scenario === 'expired') await vi.runAllTimersAsync();
+      else if (scenario === 'unmounted') {
+        const oldInput = input();
+        captures.unmountActiveCapture();
+        next.dispatchEvent(new MouseEvent(press, { bubbles: true }));
+        oldInput.dispatchEvent(new FocusEvent('blur', { relatedTarget: null }));
+        expect(vi.getTimerCount()).toBe(0);
+        expect(execute).not.toHaveBeenCalled();
+        captures.remountActiveCapture();
+      } else if (['outside-pointerdown', 'outside-mousedown'].includes(scenario))
+        outside.dispatchEvent(
+          new MouseEvent(scenario.slice('outside-'.length), {
+            bubbles: true,
+          }),
+        );
+      else if (scenario === 'removed-target') next.remove();
+      else if (['pointercancel', 'pointerup', 'mouseup', 'click', 'keydown'].includes(scenario))
+        next.dispatchEvent(new Event(scenario, { bubbles: true }));
+      input().dispatchEvent(
+        new FocusEvent('blur', { relatedTarget: scenario === 'outside-focus' ? outside : null }),
+      );
+      await vi.advanceTimersByTimeAsync(10);
+      expect(execute).toHaveBeenCalledOnce();
+      expect(execute).toHaveBeenCalledWith(
+        expect.objectContaining({
+          markdownBody: 'Outside draft',
+          initial: { due: { type: 'set', value: '2026-10-16' } },
+        }),
+      );
+    } finally {
+      captures.cancelActiveCapture();
+      expect(vi.getTimerCount()).toBe(0);
+      expect(removedListeners).toHaveBeenCalledWith('mousedown', expect.any(Function), true);
+      expect(removedListeners).toHaveBeenCalledWith('mouseup', expect.any(Function), true);
+      vi.useRealTimers();
+    }
+  },
+);
+
+function calendarPointerEvent(scenario: string, press: 'pointerdown' | 'mousedown'): MouseEvent {
+  const pointer = new MouseEvent(press, {
     bubbles: true,
     button: scenario === 'secondary-pointer' ? 2 : 0,
   });

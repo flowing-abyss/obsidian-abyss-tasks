@@ -649,7 +649,10 @@ const calendarDraftCases = [
 
 it.each(
   calendarDraftCases.flatMap((entry) =>
-    (['focus', 'pointer'] as const).map((activation) => ({ ...entry, activation })),
+    (['focus', 'pointer', 'compatibility-mouse'] as const).map((activation) => ({
+      ...entry,
+      activation,
+    })),
   ),
 )(
   'keeps frozen $placement.type draft and feedback with its mounted $view editor by $activation',
@@ -733,25 +736,18 @@ it.each(
           '.abyss-calendar-date[data-calendar-date="2026-10-17"]',
         ),
       );
-      if (activation === 'focus') next.focus();
-      else {
-        next.dispatchEvent(new Event('pointerdown', { bubbles: true }));
-        input().dispatchEvent(new FocusEvent('blur', { relatedTarget: null }));
-      }
-      next.click();
+      await activateCalendarDraftNavigation(next, input(), activation);
       await flushMicrotasks();
       expect(execute).not.toHaveBeenCalled();
       expect(h.root.querySelector('.abyss-capture-input')).toBeNull();
       expect(h.root.querySelector('.abyss-calendar-capture-feedback')).toBeNull();
       h.click('.abyss-calendar-date[data-calendar-date="2026-10-16"]');
       expect(input().value).toBe('Frozen draft');
-      if (activation === 'pointer') {
+      if (activation !== 'focus') {
         const forward = expectDefined(
           h.root.querySelector<HTMLElement>('.abyss-cal-nav-btn[aria-label="Next"]'),
         );
-        forward.dispatchEvent(new Event('pointerdown', { bubbles: true }));
-        input().dispatchEvent(new FocusEvent('blur', { relatedTarget: null }));
-        forward.click();
+        await activateCalendarDraftNavigation(forward, input(), activation);
         await flushMicrotasks();
         expect(execute).not.toHaveBeenCalled();
         h.click('.abyss-cal-nav-btn[aria-label="Previous"]');
@@ -1052,3 +1048,24 @@ it.each([
     }
   },
 );
+
+async function activateCalendarDraftNavigation(
+  button: HTMLElement,
+  input: HTMLInputElement,
+  activation: 'focus' | 'pointer' | 'compatibility-mouse',
+): Promise<void> {
+  if (activation === 'focus') button.focus();
+  else {
+    button.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }));
+    if (activation === 'compatibility-mouse') {
+      // Native touch focus follows pointer release and compatibility mousedown, after expiry.
+      await flushMicrotasks();
+      button.dispatchEvent(new Event('pointerup', { bubbles: true }));
+      button.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }));
+    }
+    input.dispatchEvent(new FocusEvent('blur', { relatedTarget: null }));
+    if (activation === 'compatibility-mouse')
+      button.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0 }));
+  }
+  button.click();
+}
