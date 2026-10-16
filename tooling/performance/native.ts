@@ -19,6 +19,7 @@ import {
   panelScenarios,
   projectScenarios,
   queryScenarios,
+  searchEditScenario,
   statisticsScenarios,
   type Measure,
 } from './native-scenarios.ts';
@@ -106,14 +107,14 @@ async function completeCalendarSample(context: MeasurementContext, sample: Sampl
   }
 }
 
-function createMeasure(context: MeasurementContext): Measure {
+export function createMeasure(context: MeasurementContext): Measure {
   const { bridge, iteration, diagnostic, samples, pending } = context;
   const observation = new NativeObservation();
   const profiler = new AbyssProfiler(performance, async (start, end) => {
     await frames();
     return observation.read(start, end);
   });
-  return async (id, action) => {
+  return async (id, action, prepare) => {
     if (!context.isActive()) throw new Error('Profile harness stopped');
     assertViewport(context.viewport);
     if (document.visibilityState !== 'visible')
@@ -126,8 +127,12 @@ function createMeasure(context: MeasurementContext): Measure {
       at: new Date().toISOString(),
     });
     await frames();
-    observation.start();
     try {
+      if (!context.isActive()) throw new Error('Profile harness stopped');
+      if (prepare !== undefined)
+        await bounded(pending.track(prepare()), 30000, `${id} preparation`);
+      if (!context.isActive()) throw new Error('Profile harness stopped');
+      observation.start();
       const sample = await profiler.measure(id, iteration, () =>
         bounded(pending.track(action()), 30000, id),
       );
@@ -244,6 +249,7 @@ async function suite(
     });
   await cdp?.screenshot('analysis');
   await indexScenarios(host, options, measure);
+  await searchEditScenario(host, options, measure);
   await commandScenarios(host, options, measure);
   await measure('panel.close', async () => {
     await closePanels(host);

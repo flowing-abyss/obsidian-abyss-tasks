@@ -1,5 +1,13 @@
 import type { TFile } from 'obsidian';
-import type { TaskCommand, TaskSnapshot } from '../../src/tasks';
+import {
+  sameTaskNodeRef,
+  type TaskCommand,
+  type TaskQueryApi,
+  type TaskSearchApi,
+  type TaskSearchHydratedHit,
+  type TaskSearchState,
+  type TaskSnapshot,
+} from '../../src/tasks';
 import {
   calendarEvidence,
   click,
@@ -13,7 +21,11 @@ import type { Host, NativeOptions } from './native-types.ts';
 import { ANALYSIS, type Sample } from './types.ts';
 export { scenarioIds, SCENARIOS } from './types.ts';
 
-export type Measure = (id: string, action: () => Promise<Sample['facts']>) => Promise<void>;
+export type Measure = (
+  id: string,
+  action: () => Promise<Sample['facts']>,
+  prepare?: () => Promise<void>,
+) => Promise<void>;
 
 export async function taskTextTyping(input: HTMLInputElement | HTMLTextAreaElement): Promise<void> {
   const original = input.value;
@@ -102,6 +114,243 @@ export async function queryScenarios(
         search.release(cursor);
       }
     });
+  }
+}
+
+type SearchCursor = Awaited<ReturnType<TaskSearchApi['open']>>;
+interface SearchEdits {
+  readonly signal: AbortSignal;
+  check(): void;
+  generation(): number;
+  matchingGeneration(cursor: SearchCursor, after: number): boolean;
+  select(path: string, title: string): void;
+  canonical(): Promise<TaskSnapshot>;
+  publication(after: number): Promise<number>;
+  start(): void;
+  close(): void;
+}
+
+function observeSearchEdits(queries: TaskQueryApi, search: TaskSearchApi): SearchEdits {
+  const controller = new AbortController();
+  let latest: TaskSearchState | undefined;
+  let invalid: Error | undefined;
+  let wanted: { path: string; title: string } | undefined;
+  let accepted: TaskSnapshot | undefined;
+  let offQuery = (): void => {};
+  let offSearch = (): void => {};
+  const check = (): void => {
+    if (invalid !== undefined) throw invalid;
+    controller.signal.throwIfAborted();
+  };
+  const ready = (after: number): Extract<TaskSearchState, { phase: 'ready' }> | undefined => {
+    check();
+    return latest?.phase === 'ready' && latest.compatibility === false && latest.generation > after
+      ? latest
+      : undefined;
+  };
+  return {
+    signal: controller.signal,
+    check,
+    generation: () => latest?.generation ?? -1,
+    matchingGeneration: (cursor: SearchCursor, after: number) =>
+      ready(after)?.generation === cursor.generation,
+    select: (path: string, title: string) => {
+      wanted = { path, title };
+      accepted = undefined;
+    },
+    canonical: () =>
+      waitFor(() => {
+        check();
+        return accepted;
+      }, 'exact accepted search edit'),
+    publication: async (after: number): Promise<number> => {
+      await search.prepare(controller.signal);
+      return (await waitFor(() => ready(after), 'Worker search publication')).generation;
+    },
+    start: () => {
+      offQuery = queries.subscribe((event) => {
+        if (event.type !== 'changed' || wanted === undefined || !event.files.includes(wanted.path))
+          return;
+        accepted = queries
+          .list({ filePath: wanted.path })
+          .find((task) => task.title === wanted?.title);
+      });
+      offSearch = search.subscribe((state) => {
+        latest = state;
+        if (
+          (state.phase === 'ready' && state.compatibility !== false) ||
+          ['recovering', 'failed', 'disposed'].includes(state.phase)
+        ) {
+          invalid ??= new Error(
+            `Worker search workload invalidated: ${state.phase}${state.phase === 'ready' ? ' inline' : ''}`,
+          );
+          controller.abort(invalid);
+        }
+      });
+    },
+    close: () => {
+      offQuery();
+      offSearch();
+      controller.abort();
+    },
+  };
+}
+
+interface SearchEditMatches {
+  exactTitle: boolean;
+  exactPath: boolean;
+  currentTarget: boolean;
+}
+function searchEditMatches(
+  row: TaskSearchHydratedHit | undefined,
+  current: TaskSnapshot | undefined,
+  path: string,
+  title: string,
+): SearchEditMatches {
+  const missing = { exactTitle: false, exactPath: false, currentTarget: false };
+  if (row === undefined || current === undefined || row.task.path.length !== 0) return missing;
+  const ref = row.task.node.ref;
+  if (!('filePath' in ref)) return missing;
+  const target = { type: 'task' as const, ref: current.ref };
+  const exactTitle = row.task.node.title === title && row.task.root.title === title;
+  const exactPath = row.task.root.ref.filePath === path && ref.filePath === path;
+  const currentTarget = [
+    row.task.target,
+    { type: 'task' as const, ref: row.task.root.ref },
+    { type: 'task' as const, ref },
+  ].every((candidate) => sameTaskNodeRef(candidate, target));
+  return { exactTitle, exactPath, currentTarget };
+}
+
+function validateSearchEditBatch(
+  cursor: SearchCursor,
+  batch: Awaited<ReturnType<TaskSearchApi['read']>>,
+): void {
+  if (
+    batch.cursor.id !== cursor.id ||
+    batch.cursor.generation !== cursor.generation ||
+    batch.offset !== 0 ||
+    !batch.done ||
+    batch.hits.length !== 1
+  )
+    throw new Error('Search edit incomplete or stale batch');
+}
+
+interface SearchEditWorkload {
+  host: Host;
+  options: NativeOptions;
+  observed: SearchEdits;
+  primingGeneration: number;
+  path: string;
+  title: string;
+}
+
+async function readSearchEdit(workload: SearchEditWorkload): Promise<Sample['facts']> {
+  const { host, options, observed, primingGeneration, path, title } = workload;
+  const { queries, search } = plugin(host);
+  const cursor = await search.open(
+    { kind: 'nodes', query: 'abysssearchlatency', matchScope: 'node' },
+    observed.signal,
+  );
+  try {
+    if (!observed.matchingGeneration(cursor, primingGeneration))
+      throw new Error('Search cursor publication generation mismatch');
+    if (cursor.total !== 1)
+      throw new Error(`Search edit expected one result, received ${cursor.total}`);
+    const batch = await search.read(cursor, 0, 1, observed.signal);
+    validateSearchEditBatch(cursor, batch);
+    const rows = await search.resolveHits(batch.hits, observed.signal);
+    const current = queries.list({ filePath: path }).find((task) => task.title === title);
+    const matches = searchEditMatches(rows[0], current, path, title);
+    const matchingGeneration = observed.matchingGeneration(cursor, primingGeneration);
+    if (
+      rows.length !== 1 ||
+      !matches.exactTitle ||
+      !matches.exactPath ||
+      !matches.currentTarget ||
+      !matchingGeneration
+    )
+      throw new Error('Search edit hydration is not the exact current inbox task/publication');
+    const roots = queries.list().length;
+    const nodes = queries.listNodes().length;
+    if (roots !== options.expectedRoots + 1 || nodes !== options.expectedNodes + 1)
+      throw new Error(`Search edit population mismatch: ${roots} roots, ${nodes} nodes`);
+    return {
+      primingEdits: 1,
+      edits: 1,
+      roots,
+      nodes,
+      results: cursor.total,
+      hydrated: rows.length,
+      ...matches,
+      matchingGeneration,
+      backend: 'worker',
+    };
+  } finally {
+    search.release(cursor);
+    observed.check();
+  }
+}
+
+/** Public publication and current hydrated data define this end-to-end endpoint. */
+export async function searchEditScenario(
+  host: Host,
+  options: NativeOptions,
+  measure: Measure,
+): Promise<void> {
+  const { queries, search } = plugin(host);
+  const project = host.vault.getFileByPath(`${options.fixtureFolder}/projects/Project-000.md`);
+  const inbox = host.vault.getFileByPath(`${options.fixtureFolder}/inbox.md`);
+  if (project === null || inbox === null) throw new Error('Search edit fixture missing');
+  const projectSource = await host.vault.read(project);
+  const inboxSource = await host.vault.read(inbox);
+  const originalTitle = 'Profile task 0 database';
+  const primedTitle = `${originalTitle} abysssearchprime`;
+  const measuredTitle = 'abysssearchlatency sandbox';
+  const original = queries
+    .list({ filePath: project.path })
+    .find((task) => task.dependencyId === 'profile-0' && task.title === originalTitle);
+  if (original === undefined || projectSource.split(originalTitle).length !== 2)
+    throw new Error('Search priming root missing or ambiguous');
+  const observed = observeSearchEdits(queries, search);
+  let primingGeneration = -1;
+  try {
+    observed.start();
+    await measure(
+      'search.edit-to-query',
+      async () => {
+        observed.check();
+        observed.select(inbox.path, measuredTitle);
+        await host.vault.modify(inbox, `${inboxSource}\n- [ ] ${measuredTitle}\n`);
+        await observed.canonical();
+        await observed.publication(primingGeneration);
+        return readSearchEdit({
+          host,
+          options,
+          observed,
+          primingGeneration,
+          path: inbox.path,
+          title: measuredTitle,
+        });
+      },
+      async () => {
+        observed.check();
+        const before = observed.generation();
+        observed.select(project.path, primedTitle);
+        await host.vault.modify(project, projectSource.replace(originalTitle, primedTitle));
+        const primed = await observed.canonical();
+        if (
+          primed.ref.line !== original.ref.line ||
+          primed.dependencyId !== original.dependencyId ||
+          primed.ref.revision === original.ref.revision
+        )
+          throw new Error('Search priming task identity mismatch');
+        primingGeneration = await observed.publication(before);
+      },
+    );
+    observed.check();
+  } finally {
+    observed.close();
   }
 }
 

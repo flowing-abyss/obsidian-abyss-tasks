@@ -117,6 +117,38 @@ describe('native performance statistics', () => {
     expect(parseRun(JSON.stringify(startup))).toEqual(startup);
     expect(compareRuns(canonical, startup).compatible).toBe(false);
   });
+  it('rejects different edit-to-query backend and completed-work facts through existing comparison validation', () => {
+    const baseline = run(Array<number>(10).fill(100), {
+      expectedScenarios: ['search.edit-to-query'],
+    });
+    for (const sample of baseline.samples) {
+      sample.scenario = 'search.edit-to-query';
+      sample.facts = {
+        backend: 'worker',
+        results: 1,
+        hydrated: 1,
+        exactTitle: true,
+        matchingGeneration: true,
+      };
+    }
+    expect(compareRuns(baseline, baseline).compatible).toBe(true);
+    for (const change of [
+      { backend: 'inline' },
+      { results: 2 },
+      { hydrated: 0 },
+      { exactTitle: false },
+      { matchingGeneration: false },
+    ]) {
+      const candidate = structuredClone(baseline);
+      const sample = candidate.samples[0];
+      if (sample === undefined) throw new Error('Missing sample');
+      Object.assign(sample.facts, change);
+      const comparison = compareRuns(baseline, candidate);
+      expect(comparison.compatible).toBe(false);
+      expect(comparison.scenarios).toEqual([]);
+      expect(comparison.reasons).toContain('Different completed work: search.edit-to-query');
+    }
+  });
   it('validates saved results and escapes report labels', () => {
     const saved = run([12, 15], { id: 'test|<script>' });
     expect(parseRun(JSON.stringify(saved))).toEqual(saved);

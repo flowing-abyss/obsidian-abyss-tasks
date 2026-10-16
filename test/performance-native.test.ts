@@ -1,6 +1,8 @@
 import { Platform } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
+import type { TaskSearchApi, TaskSearchState } from '../src/tasks';
 import { TaskIndex } from '../src/tasks/infrastructure/TaskIndex';
+import * as native from '../tooling/performance/native';
 import { fixtureReady, install, resetFixture } from '../tooling/performance/native';
 import { NativeCdp } from '../tooling/performance/native-cdp';
 import {
@@ -10,15 +12,22 @@ import {
   calendarPopulation,
   scrollRange,
 } from '../tooling/performance/native-helpers';
-import { activityMetrics } from '../tooling/performance/native-observation';
+import { activityMetrics, NativeObservation } from '../tooling/performance/native-observation';
+import * as scenarios from '../tooling/performance/native-scenarios';
 import {
   queryScenarios,
   scenarioIds,
   taskTextTyping,
 } from '../tooling/performance/native-scenarios';
-import type { CdpListener, Host, NativeBridge } from '../tooling/performance/native-types';
+import type {
+  CdpListener,
+  Host,
+  NativeBridge,
+  NativeOptions,
+} from '../tooling/performance/native-types';
 import { parseCliResult, parseOptions } from '../tooling/performance/options';
 import { AbyssProfiler, bounded, PendingWork } from '../tooling/performance/profiler';
+import type { Sample } from '../tooling/performance/types';
 import { canonicalStatusCatalog, createAppWithFiles, seedTaskCache } from './helpers';
 
 const loadClock = async () => {
@@ -307,11 +316,15 @@ describe('native profile boundaries', () => {
     expect(scenarioIds('standard', true)).toEqual(['startup.index']);
     expect(scenarioIds('wide-tree', true)).toEqual(['startup.index']);
     expect(scenarioIds('standard', false)).not.toContain('index.wide-child-edit');
+    expect(scenarioIds('standard', false).slice(-9, -7)).toEqual([
+      'search.edit-to-query',
+      'command.create',
+    ]);
     expect(scenarioIds('wide-tree', false)).toEqual([
-      ...scenarioIds('standard', false).slice(0, -8),
+      ...scenarioIds('standard', false).slice(0, -9),
       'index.wide-child-edit',
       'index.metadata-only',
-      ...scenarioIds('standard', false).slice(-8),
+      ...scenarioIds('standard', false).slice(-9),
     ]);
   });
   it.each([
@@ -525,4 +538,545 @@ describe('native profile boundaries', () => {
       scroller.remove();
     }
   });
+});
+
+type SearchCursor = Awaited<ReturnType<TaskSearchApi['open']>>;
+type SearchRequest = Parameters<TaskSearchApi['open']>[0];
+
+async function searchEditHarness() {
+  const folder = '__abyss_profile_fixture_v1__';
+  const project = `${folder}/projects/Project-000.md`;
+  const inbox = `${folder}/inbox.md`;
+  const originalProject =
+    '- [ ] Profile task 0 database #profile/group0 🆔 profile-0\n  - [ ] Child 0\n';
+  const originalInbox = '# Performance command sandbox\n';
+  const app = await createAppWithFiles({ [project]: originalProject, [inbox]: originalInbox });
+  seedTaskCache(app, project, [{ task: ' ', parent: -1, line: 0 }]);
+  seedTaskCache(app, inbox, []);
+  const index = new TaskIndex(app, { statusCatalog: canonicalStatusCatalog() });
+  await index.initialize();
+  const states = new Set<(state: TaskSearchState) => void>();
+  const signals: AbortSignal[] = [];
+  let generation = 1;
+  let current: TaskSearchState = {
+    phase: 'ready',
+    generation,
+    compatibility: false,
+    semanticsRevision: 0,
+  };
+  const publish = (state: TaskSearchState): void => {
+    current = state;
+    for (const listener of states) listener(state);
+  };
+  const hit = { address: { epoch: 'profile', version: 1, rootId: 2, childLines: [] }, score: 1 };
+  const cursor = {
+    id: 'profile',
+    generation: 3,
+    total: 1,
+    kind: 'nodes' as const,
+    access: 'random' as const,
+  };
+  const resolveHits: TaskSearchApi['resolveHits'] = (_hits, _signal) => {
+    const task = index.listNodes({ filePath: inbox })[0];
+    if (task === undefined) throw new Error('Canonical inbox task missing');
+    return Promise.resolve([{ hit, task }]);
+  };
+  const search = {
+    subscribe: (listener) => {
+      states.add(listener);
+      listener(current);
+      return () => {
+        states.delete(listener);
+      };
+    },
+    prepare: vi.fn((signal: AbortSignal) => {
+      signals.push(signal);
+      publish({
+        phase: 'ready',
+        generation: ++generation,
+        compatibility: false,
+        semanticsRevision: 0,
+      });
+      return Promise.resolve();
+    }),
+    open: vi.fn((_request: SearchRequest, _signal: AbortSignal) => Promise.resolve(cursor)),
+    read: vi.fn((_cursor: SearchCursor, _offset: number, _limit: number, _signal: AbortSignal) =>
+      Promise.resolve({ cursor, offset: 0, hits: [hit], done: true }),
+    ),
+    resolveHits: vi.fn(resolveHits),
+    release: vi.fn((_cursor: SearchCursor) => {}),
+  } satisfies TaskSearchApi;
+  Object.defineProperty(app, 'plugins', {
+    value: { plugins: { 'abyss-tasks': { queries: index, search } } },
+  });
+  const modify = app.vault.modify.bind(app.vault);
+  const writes: string[] = [];
+  const modifySpy = vi.spyOn(app.vault, 'modify').mockImplementation(async (file, content) => {
+    writes.push(content);
+    await modify(file, content);
+    seedTaskCache(
+      app,
+      file.path,
+      content
+        .split('\n')
+        .flatMap((line, n) => (line.startsWith('- [') ? [{ task: ' ', parent: -1, line: n }] : [])),
+    );
+  });
+  const subscribe = index.subscribe.bind(index);
+  const subscriptions = vi
+    .spyOn(index, 'subscribe')
+    .mockImplementation((listener) => vi.fn(subscribe(listener)));
+  const options: NativeOptions = {
+    vault: 'dev-vault-tasks',
+    fixtureFolder: folder,
+    anchor: '2026-10-16',
+    fixtureKind: 'standard',
+    expectedRoots: 1,
+    expectedNodes: 2,
+    startup: false,
+    viewport: '1024x768',
+  };
+  let facts: Record<string, string | number | boolean> | undefined;
+  const run = async (): Promise<void> => {
+    expect(scenarios).toHaveProperty('searchEditScenario', expect.any(Function));
+    await scenarios.searchEditScenario(app as Host, options, async (id, action, prepare) => {
+      expect(id).toBe('search.edit-to-query');
+      expect(prepare).toBeTypeOf('function');
+      await prepare?.();
+      facts = await action();
+    });
+  };
+  const cleanup = (): void => {
+    modifySpy.mockRestore();
+    subscriptions.mockRestore();
+    index.destroy();
+  };
+  return {
+    app,
+    index,
+    search,
+    resolveHits,
+    publish,
+    cursor,
+    hit,
+    states,
+    signals,
+    writes,
+    subscriptions,
+    options,
+    run,
+    cleanup,
+    project,
+    inbox,
+    originalProject,
+    originalInbox,
+    facts: () => facts,
+  };
+}
+
+function searchFailureMessage(failure: string): string {
+  if (failure === 'preparation-failure') return 'prepare failed';
+  if (failure.startsWith('inline-') || ['recovering', 'failed', 'disposed'].includes(failure))
+    return 'Worker search workload invalidated';
+  if (failure === 'cursor-generation') return 'generation mismatch';
+  if (failure === 'wrong-count') return 'expected one result';
+  return 'hydration';
+}
+
+describe('edit-to-search native scenario', () => {
+  it('waits beyond canonical acceptance for actual search readiness and hydration, releases before completion, and leaves reset bytes', async () => {
+    expect(scenarios).toHaveProperty('searchEditScenario', expect.any(Function));
+    const h = await searchEditHarness();
+    let publishSearch = (): void => {};
+    let hydrate = (): void => {};
+    vi.mocked(h.search.prepare)
+      .mockImplementationOnce(() => {
+        h.publish({ phase: 'ready', generation: 2, compatibility: false, semanticsRevision: 0 });
+        return Promise.resolve();
+      })
+      .mockImplementationOnce((signal) => {
+        h.signals.push(signal);
+        h.publish({
+          phase: 'updating',
+          generation: 3,
+          semanticsRevision: 0,
+          completedFiles: 0,
+          totalFiles: 2,
+        });
+        publishSearch = () => {
+          h.publish({ phase: 'ready', generation: 3, compatibility: false, semanticsRevision: 0 });
+        };
+        return Promise.resolve();
+      });
+    const resolve = h.resolveHits;
+    vi.mocked(h.search.resolveHits).mockImplementation(
+      (hits, signal) =>
+        new Promise((accept, reject) => {
+          hydrate = () => {
+            resolve(hits, signal).then(accept, reject);
+          };
+        }),
+    );
+    let complete = false;
+    const pending = h.run().then(() => {
+      complete = true;
+    });
+    void pending.catch(() => {});
+    try {
+      await vi.waitFor(() => {
+        expect(h.search.prepare).toHaveBeenCalledTimes(2);
+      });
+      expect(h.index.list({ filePath: h.inbox })[0]?.title).toBe('abysssearchlatency sandbox');
+      expect(complete).toBe(false);
+      expect(h.search.open).not.toHaveBeenCalled();
+      publishSearch();
+      await vi.waitFor(() => {
+        expect(h.search.resolveHits).toHaveBeenCalledOnce();
+      });
+      expect(complete).toBe(false);
+      expect(h.search.release).not.toHaveBeenCalled();
+      hydrate();
+      await pending;
+      expect(h.search.release).toHaveBeenCalledExactlyOnceWith(h.cursor);
+      expect(h.search.open).toHaveBeenCalledWith(
+        { kind: 'nodes', query: 'abysssearchlatency', matchScope: 'node' },
+        expect.any(AbortSignal),
+      );
+      expect(h.facts()).toEqual({
+        primingEdits: 1,
+        edits: 1,
+        roots: 2,
+        nodes: 3,
+        results: 1,
+        hydrated: 1,
+        exactTitle: true,
+        exactPath: true,
+        currentTarget: true,
+        matchingGeneration: true,
+        backend: 'worker',
+      });
+      expect(h.writes).toEqual([
+        h.originalProject.replace(
+          'Profile task 0 database',
+          'Profile task 0 database abysssearchprime',
+        ),
+        `${h.originalInbox}\n- [ ] abysssearchlatency sandbox\n`,
+      ]);
+      expect(h.states.size).toBe(0);
+      expect(h.signals.every((signal) => signal.aborted)).toBe(true);
+      expect(h.subscriptions).toHaveBeenCalledOnce();
+      for (const result of h.subscriptions.mock.results)
+        if (result.type === 'return') expect(result.value).toHaveBeenCalledOnce();
+    } finally {
+      h.cleanup();
+    }
+  });
+  it.each([
+    'inline-prime',
+    'inline-measured',
+    'recovering',
+    'failed',
+    'disposed',
+    'cursor-generation',
+    'changed-after-hydration',
+    'stale-target',
+    'wrong-title',
+    'wrong-path',
+    'wrong-count',
+    'empty-hydration',
+    'preparation-failure',
+    'cancelled-measure',
+  ])('rejects %s and always cleans subscriptions and search work', async (failure) => {
+    expect(scenarios).toHaveProperty('searchEditScenario', expect.any(Function));
+    const h = await searchEditHarness();
+    let primed = false;
+    vi.mocked(h.search.prepare).mockImplementation((signal) => {
+      h.signals.push(signal);
+      const generation = primed ? 3 : 2;
+      if (failure === 'preparation-failure') return Promise.reject(new Error('prepare failed'));
+      const inline = failure === (primed ? 'inline-measured' : 'inline-prime');
+      h.publish({ phase: 'ready', generation, compatibility: inline, semanticsRevision: 0 });
+      primed = true;
+      return Promise.resolve();
+    });
+    if (['recovering', 'failed', 'disposed'].includes(failure))
+      vi.mocked(h.search.open).mockImplementation(() => {
+        const common = { generation: 3, semanticsRevision: 0 };
+        if (failure === 'recovering')
+          h.publish({ ...common, phase: 'recovering', completedFiles: 0, totalFiles: 2 });
+        if (failure === 'failed') h.publish({ ...common, phase: 'failed', episode: 1 });
+        if (failure === 'disposed') h.publish({ ...common, phase: 'disposed' });
+        h.publish({ ...common, phase: 'ready', compatibility: false });
+        return Promise.resolve(h.cursor);
+      });
+    if (failure === 'cursor-generation')
+      vi.mocked(h.search.open).mockResolvedValue({ ...h.cursor, generation: 2 });
+    if (failure === 'wrong-count')
+      vi.mocked(h.search.open).mockResolvedValue({ ...h.cursor, total: 2 });
+    const resolve = h.resolveHits;
+    vi.mocked(h.search.resolveHits).mockImplementation(async (hits, signal) => {
+      const rows = await resolve(hits, signal);
+      const row = rows[0];
+      if (row === undefined) throw new Error('Missing test row');
+      if (failure === 'empty-hydration') return [];
+      if (failure === 'changed-after-hydration')
+        h.publish({ phase: 'ready', generation: 4, compatibility: false, semanticsRevision: 0 });
+      if (failure === 'stale-target')
+        return [
+          {
+            ...row,
+            task: {
+              ...row.task,
+              target: {
+                type: 'task',
+                ref: { ...row.task.root.ref, revision: `${row.task.root.ref.revision}-stale` },
+              },
+            },
+          },
+        ];
+      if (failure === 'wrong-title')
+        return [{ ...row, task: { ...row.task, node: { ...row.task.root, title: 'old title' } } }];
+      if (failure === 'wrong-path')
+        return [
+          {
+            ...row,
+            task: {
+              ...row.task,
+              root: { ...row.task.root, ref: { ...row.task.root.ref, filePath: 'other.md' } },
+            },
+          },
+        ];
+      return rows;
+    });
+    try {
+      if (failure === 'cancelled-measure') {
+        expect(scenarios).toHaveProperty('searchEditScenario', expect.any(Function));
+        await expect(
+          scenarios.searchEditScenario(h.app as Host, h.options, async (_id, _action, prepare) => {
+            await prepare?.();
+            throw new Error('cancelled');
+          }),
+        ).rejects.toThrow('cancelled');
+      } else await expect(h.run()).rejects.toThrow(searchFailureMessage(failure));
+      for (const result of h.subscriptions.mock.results)
+        if (result.type === 'return') expect(result.value).toHaveBeenCalledOnce();
+      expect(h.states.size).toBe(0);
+      expect(h.signals.every((signal) => signal.aborted)).toBe(true);
+      if (vi.mocked(h.search.open).mock.results.some((result) => result.type === 'return'))
+        expect(h.search.release).toHaveBeenCalledOnce();
+      expect(h.writes.length).toBeLessThanOrEqual(2);
+    } finally {
+      h.cleanup();
+    }
+  });
+});
+
+describe('measurement preparation boundary', () => {
+  it('keeps timed-out preparation tracked until it settles before restoration', async () => {
+    vi.useFakeTimers();
+    const pending = new PendingWork();
+    const action = vi.fn(() => Promise.resolve({}));
+    let release = (): void => {};
+    const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      queueMicrotask(() => {
+        callback(0);
+      });
+      return 1;
+    });
+    const measure = native.createMeasure({
+      host: {} as Host,
+      cdp: undefined,
+      bridge: { save: () => {} } as unknown as NativeBridge,
+      iteration: 0,
+      diagnostic: false,
+      samples: [],
+      pending,
+      viewport: `${window.innerWidth}x${window.innerHeight}`,
+      isActive: () => true,
+    });
+    const result = measure(
+      'test.timeout',
+      action,
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    ).then(
+      () => 'complete',
+      (error: unknown) => String(error),
+    );
+    try {
+      await vi.advanceTimersByTimeAsync(30001);
+      expect(await result).toContain('Timed out: test.timeout preparation');
+      expect(action).not.toHaveBeenCalled();
+      let restored = false;
+      const restoration = pending.settle().then(() => {
+        restored = true;
+      });
+      await Promise.resolve();
+      expect(restored).toBe(false);
+      release();
+      await restoration;
+      expect(restored).toBe(true);
+    } finally {
+      release();
+      raf.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('unwinds both scenario listeners and aborts search when preparation times out', async () => {
+    const h = await searchEditHarness();
+    vi.useFakeTimers();
+    const pending = new PendingWork();
+    const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      queueMicrotask(() => {
+        callback(0);
+      });
+      return 1;
+    });
+    vi.mocked(h.search.prepare).mockImplementation((signal) => {
+      h.signals.push(signal);
+      return new Promise<void>((_resolve, reject) => {
+        signal.addEventListener(
+          'abort',
+          () => {
+            reject(new Error('search aborted'));
+          },
+          { once: true },
+        );
+      });
+    });
+    const measure = native.createMeasure({
+      host: h.app as Host,
+      cdp: undefined,
+      bridge: { save: () => {} } as unknown as NativeBridge,
+      iteration: 0,
+      diagnostic: false,
+      samples: [],
+      pending,
+      viewport: `${window.innerWidth}x${window.innerHeight}`,
+      isActive: () => true,
+    });
+    const result = scenarios.searchEditScenario(h.app as Host, h.options, measure).then(
+      () => 'complete',
+      (error: unknown) => String(error),
+    );
+    try {
+      await vi.advanceTimersByTimeAsync(30001);
+      expect(await result).toContain('Timed out: search.edit-to-query preparation');
+      await pending.settle();
+      expect(h.states.size).toBe(0);
+      expect(h.signals).toHaveLength(1);
+      expect(h.signals[0]?.aborted).toBe(true);
+      for (const returned of h.subscriptions.mock.results)
+        if (returned.type === 'return') expect(returned.value).toHaveBeenCalledOnce();
+      expect(h.writes).toHaveLength(1);
+    } finally {
+      raf.mockRestore();
+      vi.useRealTimers();
+      h.cleanup();
+    }
+  });
+
+  it('rejects cancellation during frame settling before preparation can write', async () => {
+    let active = true;
+    const prepare = vi.fn(() => Promise.resolve());
+    const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      queueMicrotask(() => {
+        active = false;
+        callback(0);
+      });
+      return 1;
+    });
+    const measure = native.createMeasure({
+      host: {} as Host,
+      cdp: undefined,
+      bridge: { save: () => {} } as unknown as NativeBridge,
+      iteration: 0,
+      diagnostic: false,
+      samples: [],
+      pending: new PendingWork(),
+      viewport: `${window.innerWidth}x${window.innerHeight}`,
+      isActive: () => active,
+    });
+    try {
+      await expect(measure('test.cancelled', () => Promise.resolve({}), prepare)).rejects.toThrow(
+        'Profile harness stopped',
+      );
+      expect(prepare).not.toHaveBeenCalled();
+    } finally {
+      raf.mockRestore();
+    }
+  });
+
+  it.each(['success', 'failure', 'cancellation'] as const)(
+    'settles frames before preparation and owns cleanup on %s',
+    async (outcome) => {
+      expect(native).toHaveProperty('createMeasure', expect.any(Function));
+      const events: string[] = [];
+      const samples: Sample[] = [];
+      const pending = new PendingWork();
+      let active = true;
+      const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) =>
+        window.setTimeout(() => {
+          events.push('frame');
+          callback(0);
+        }, 0),
+      );
+      const start = vi.spyOn(NativeObservation.prototype, 'start').mockImplementation(() => {
+        events.push('observe');
+      });
+      const stop = vi.spyOn(NativeObservation.prototype, 'stop').mockImplementation(() => {
+        events.push('stop');
+      });
+      const read = vi
+        .spyOn(NativeObservation.prototype, 'read')
+        .mockReturnValue({ longTasks: null, longTaskMs: null, maxFrameGapMs: 0, domNodes: 0 });
+      const measure = native.createMeasure({
+        host: {} as Host,
+        cdp: undefined,
+        bridge: { save: () => {} } as unknown as NativeBridge,
+        iteration: 0,
+        diagnostic: false,
+        samples,
+        pending,
+        viewport: `${window.innerWidth}x${window.innerHeight}`,
+        isActive: () => active,
+      });
+      try {
+        const operation = measure(
+          'test.preparation',
+          () => {
+            events.push('action');
+            return Promise.resolve({});
+          },
+          () => {
+            events.push('prepare');
+            if (outcome === 'failure') return Promise.reject(new Error('preparation failed'));
+            if (outcome === 'cancellation') active = false;
+            return Promise.resolve();
+          },
+        );
+        if (outcome === 'success') {
+          await operation;
+          expect(events.slice(0, 5)).toEqual(['frame', 'frame', 'prepare', 'observe', 'action']);
+          expect(samples).toHaveLength(1);
+        } else {
+          await expect(operation).rejects.toThrow(
+            outcome === 'failure' ? 'preparation failed' : 'Profile harness stopped',
+          );
+          expect(events).not.toContain('action');
+          expect(samples).toEqual([]);
+        }
+        await pending.settle();
+        expect(events[events.length - 1]).toBe('stop');
+      } finally {
+        raf.mockRestore();
+        start.mockRestore();
+        stop.mockRestore();
+        read.mockRestore();
+      }
+    },
+  );
 });

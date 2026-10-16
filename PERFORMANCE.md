@@ -64,26 +64,51 @@ Temporary settings select the corpus for tasks and projects. Existing notes stay
 Startup still reads existing Markdown before applying source exclusion, so a content digest of
 those notes belongs to comparison identity. This is not an empty-host benchmark.
 
-| Scenarios                                        | Work and completion condition                                                                                                                                       |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `startup.index`                                  | Enable the plugin, join TaskIndex initialization, assert the selected fixture's exact root and node counts after readiness. Host and filesystem caches are warm.    |
-| `query.roots/nodes/dependencies/time`            | Public read projections; dependencies include first acquisition in the cycle.                                                                                       |
-| `search.cold`                                    | Prepare the newly created Search service/Worker and await readiness; service-cold, not OS-cold.                                                                     |
-| `search.warm/no-results/subtree`                 | Open a cursor, read 40 hits, hydrate, and release it.                                                                                                               |
-| `panel.first-open`, `ui.search/scroll/inspector` | Open the real panel, join applied search results, visit three changed/hydrated virtual ranges, and open a task.                                                     |
-| `ui.inspector.link-input`                        | Open the title editor, type five progressive wiki-link prefixes, await nonempty results with highlights matching each query, then cancel the draft.                 |
-| `ui.calendar.day/week/month`                     | Enter Calendar and switch views, checking the active view, complete visible date range, and populated cards or compact agenda. Day includes entering Calendar.      |
-| `ui.projects.table/kanban/timeline`              | Enter Projects and render its three views. Table includes entering Projects.                                                                                        |
-| `statistics.acquire`                             | Subscribe to retained Statistics data, await settlement, reject projection issues.                                                                                  |
-| `ui.analysis.*`                                  | Rhythm, completion, deadlines, cohorts, allocation, timeline, sessions, patterns, movement, aging, dependencies. Await nonbusy content and rendering opportunities. |
-| `command.*`                                      | Create, edit, complete, comment, start/stop tracking, and advance recurrence through existing application commands; require successful receipts.                    |
-| `index.external-edit`                            | Modify the fixture inbox through the vault API and await its changed task projection.                                                                               |
-| `index.wide-child-edit` (wide-tree only)         | Edit only the final wide child's title through the vault API; await that descendant with matching ancestry and exact root/node counts.                              |
-| `index.metadata-only` (wide-tree only)           | Change Project-000's frontmatter budget, await accepted task metadata and a newer settled Statistics source, and verify task bytes/population stay unchanged.       |
-| `panel.close`                                    | Detach the panel. The shared Search Worker may remain alive until plugin unload.                                                                                    |
+| Scenarios                                        | Work and completion condition                                                                                                                                                                                                 |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `startup.index`                                  | Enable the plugin, join TaskIndex initialization, assert the selected fixture's exact root and node counts after readiness. Host and filesystem caches are warm.                                                              |
+| `query.roots/nodes/dependencies/time`            | Public read projections; dependencies include first acquisition in the cycle.                                                                                                                                                 |
+| `search.cold`                                    | Prepare the newly created Search service/Worker and await readiness; service-cold, not OS-cold.                                                                                                                               |
+| `search.warm/no-results/subtree`                 | Open a cursor, read 40 hits, hydrate, and release it.                                                                                                                                                                         |
+| `panel.first-open`, `ui.search/scroll/inspector` | Open the real panel, join applied search results, visit three changed/hydrated virtual ranges, and open a task.                                                                                                               |
+| `ui.inspector.link-input`                        | Open the title editor, type five progressive wiki-link prefixes, await nonempty results with highlights matching each query, then cancel the draft.                                                                           |
+| `ui.calendar.day/week/month`                     | Enter Calendar and switch views, checking the active view, complete visible date range, and populated cards or compact agenda. Day includes entering Calendar.                                                                |
+| `ui.projects.table/kanban/timeline`              | Enter Projects and render its three views. Table includes entering Projects.                                                                                                                                                  |
+| `statistics.acquire`                             | Subscribe to retained Statistics data, await settlement, reject projection issues.                                                                                                                                            |
+| `ui.analysis.*`                                  | Rhythm, completion, deadlines, cohorts, allocation, timeline, sessions, patterns, movement, aging, dependencies. Await nonbusy content and rendering opportunities.                                                           |
+| `search.edit-to-query`                           | After one untimed Project-000 title edit and Worker publication, append one inbox task and await its exact canonical acceptance, newer Worker publication, sole node-scoped query hit, current hydration, and cursor release. |
+| `command.*`                                      | Create, edit, complete, comment, start/stop tracking, and advance recurrence through existing application commands; require successful receipts.                                                                              |
+| `index.external-edit`                            | Modify the fixture inbox through the vault API and await its changed task projection.                                                                                                                                         |
+| `index.wide-child-edit` (wide-tree only)         | Edit only the final wide child's title through the vault API; await that descendant with matching ancestry and exact root/node counts.                                                                                        |
+| `index.metadata-only` (wide-tree only)           | Change Project-000's frontmatter budget, await accepted task metadata and a newer settled Statistics source, and verify task bytes/population stay unchanged.                                                                 |
+| `panel.close`                                    | Detach the panel. The shared Search Worker may remain alive until plugin unload.                                                                                                                                              |
 
-Wide scenarios run before commands, while task population still matches the generated fixture.
-Startup-only mode runs only `startup.index` for either fixture. The full standard roster is unchanged.
+Wide index scenarios run before `search.edit-to-query`, while task population still matches the
+generated fixture. Both full rosters then run `search.edit-to-query` immediately before
+`command.create`. Startup-only mode runs only `startup.index` for either fixture.
+
+`search.edit-to-query` primes only Project-000's root title from `Profile task 0 database` to
+`Profile task 0 database abysssearchprime`, after the measurement boundary's frame settling and
+before its observation and clock start. There is no frame or sleep between successful preparation
+and the timed inbox append of `- [ ] abysssearchlatency sandbox`. The span ends after hydrating
+the sole `abysssearchlatency` hit as the exact current inbox task and releasing its cursor.
+Canonical acceptance alone cannot finish this sample. Preparation and action both use tracked,
+bounded work; failure or cancellation unwinds subscriptions and aborts outstanding search work.
+The existing unload/reset and transaction restoration own temporary fixture bytes.
+
+Both publications must report `compatibility: false` through the public Search subscription. The
+cursor must match the latest ready generation, newer than the priming generation, before and
+after hydration. Any inline-ready, recovering, failed, or disposed transition invalidates the
+Worker workload, even if it later returns to ready. Deterministic completed-work facts record one
+priming edit, one measured edit, exact root/node counts plus one, one result and hydrated row,
+current title/path/target and publication matches, and `backend: 'worker'`. Absolute generations,
+durations, and incidental maintenance overlap stay out of these facts.
+
+This measures end-to-end update visibility, including vault events, canonical acceptance, Search
+publication, Worker queueing, query, and hydration. It does not isolate vacuum CPU or establish that
+maintenance overlaps the next mutation. The public compatibility flag attributes each sample's
+backend; the separate CDP diagnostic pass still owns Worker source and transport evidence.
+Inline behavior needs separately labeled evidence and a matching protocol/backend for comparison.
 
 Each repetition resets the modified inbox, Project-000 (including its children, recurrence, and metadata), and view state, then reloads the plugin.
 Preparation joins host metadata events and checks exact file/cache contents before timing starts.
@@ -138,7 +163,16 @@ DOM size counts plugin-panel descendants. Use care interpreting sub-frame UI cha
 
 Comparison rejects failed/unrestored runs, missing/duplicate scenarios, incomplete iterations,
 changed environment/protocol/settings/corpus, and different completed-work facts. Different bundle
-hashes are expected when testing an optimization.
+hashes are expected when testing an optimization. This scenario extension changes the protocol
+hash, so apply the same tooling to both product checkouts and collect fresh runs under the same
+host day, anchor, settings, viewport, diagnostic mode, and roster.
+
+Preserve failed original-product wide runs as diagnostics. Do not remove scenarios, accept partial
+iterations, filter failed samples, or repeat runs until a lucky pass. If the original wide workload
+cannot finish, report that comparison limit. Complete standard comparisons and candidate-wide
+correctness/latency evidence remain useful, but do not establish an original-wide latency result.
+A separately labeled original-product-plus-maintenance-fix control can isolate other optimization
+effects; it cannot replace the original-versus-fix latency comparison.
 
 The comparator uses 2,000 deterministic bootstrap resamples for an exploratory, unadjusted 95%
 interval of median difference. The practical margin is `max(5 ms, 10% of baseline median)`.

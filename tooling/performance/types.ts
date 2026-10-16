@@ -90,6 +90,7 @@ export const SCENARIOS = [
   'ui.projects.timeline',
   'statistics.acquire',
   ...ANALYSIS.map((id) => `ui.analysis.${id}`),
+  'search.edit-to-query',
   'command.create',
   'command.edit',
   'command.complete',
@@ -105,7 +106,7 @@ export function scenarioIds(kind: FixtureKind, startup: boolean): string[] {
   const scenarios = [...SCENARIOS];
   if (kind === 'wide-tree')
     scenarios.splice(
-      scenarios.indexOf('command.create'),
+      scenarios.indexOf('search.edit-to-query'),
       0,
       'index.wide-child-edit',
       'index.metadata-only',
