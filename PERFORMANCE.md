@@ -199,9 +199,28 @@ replacing installed plugin artifacts/settings. It restores those bytes, removes 
 restores layout/viewport/debugger state, and verifies the files. Existing notes and unrelated files
 are not intentionally written. Do not edit the dev vault while the runner owns its temporary state.
 
+Each evaluation launches its body once through a synchronous CLI acknowledgement. The renderer
+publishes completion separately into a unique controller-owned directory in the OS temporary
+folder, outside the vault. It writes only the serialized result or rejection, then renames the
+staging file so the controller reads a complete envelope with the matching call identity. The
+controller checks that file every 50 ms; it does not poll the renderer through CLI during native
+scenario spans. The action is never replayed to recover missing output. Body rejections, invalid
+results, delivery timeouts, and cleanup failures invalidate the run.
+
+The controller aborts its CLI subprocess and removes the temporary directory on success, failure,
+or the 120-second evaluation deadline. A queued launch checks that its pending file still exists
+before starting. Completion can only open an existing staging file, so work that settles after
+cleanup cannot recreate it. A non-cancellation publication error is logged in the renderer and a
+missing completion fails the evaluation. Cleanup errors are reported; if an operation also failed,
+both errors are retained. A force-killed controller can leave an OS temporary directory behind.
+
 Ctrl-C requests cancellation between native operations and restoration afterward. A hung renderer
 or force-killed controller can require recovery. Renderer timers cannot interrupt synchronous JS;
-the external CLI deadline bounds the controller's wait, not an arbitrary plugin operation.
+the evaluation deadline bounds the controller's wait, not an arbitrary plugin operation already
+in progress. Serialization and result-file I/O occur after the body settles, outside its native
+timing spans. They still add work between evaluations, so comparisons require matching protocol
+hashes and fresh baselines. The result transport does not establish why an earlier CLI response
+was missing after a completed operation.
 
 ```sh
 # Responsive dev vault:
