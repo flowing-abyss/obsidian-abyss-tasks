@@ -105,27 +105,19 @@ later subscribers or the reconciliation signal from receiving an accepted change
 ### Commands, creation, and transfers
 
 Explicit root deletion may remove its now-empty source note only when the path matches the current
-configured `taskFilePath`, including valid historical date expansions. The repository reuses the
-exact path-pattern compiler and canonical frontmatter parser; valid leading frontmatter and whitespace
-alone are empty. Other body text, invalid patterns/frontmatter, personal notes, and previous settings'
-nonmatching paths preserve the note. Completion deletion, subtask deletion, and transfers never
-acquire this cleanup authority. No provenance metadata or persisted schema is added.
+configured `taskFilePath`, including valid historical date expansions. Valid leading frontmatter and
+whitespace alone count as empty; other body content or invalid configuration/frontmatter preserves
+the note. Completion deletion, subtask deletion, transfers, and notes outside the current configured
+path have no cleanup authority. No provenance metadata is added.
 
 [`taskFileMutationQueue`](src/tasks/infrastructure/obsidian/taskFileMutationQueue.ts) orders repository
-`Vault.process` calls per App and path. Queued work rechecks the original file identity. Creation
-publication and edit publication plus cleanup finish before releasing that file. Transfers acquire
-one file at a time; their existing source reservations and postconditions remain in force. This queue
-does not cover note preparation, project metadata writes, manual edits, sync, or other plugins.
-After publishing successful task deletion, the repository freshly reads and compares every committed
-byte, then rechecks path, file identity and current policy before calling `FileManager.trashFile`.
-The host has no compare-and-trash API: an external edit after the proof read can still race removal.
-Removal follows Obsidian's deletion preference, including permanent deletion; there is no universal
-Undo, and downgrading cannot restore a removed note.
-
-A failed proof read or unconfirmed removal adds `noteCleanupWarning` to the successful `deleted`
-outcome. Selection clearing and bulk processing continue. Shared command presentation shows one
-warning; sanitized diagnostics contain phase, path and cause without note text. Expected preservation
-is silent. Cleanup never retries or rolls back the committed task deletion.
+writes, publication, and cleanup per App and path. It covers repository transactions only; transfers
+retain their source reservations and postconditions. Before `FileManager.trashFile`, the repository
+requires fresh proof of unchanged content, file identity, and cleanup policy. External edits can
+still race removal because Obsidian has no compare-and-trash API. Removal follows the host deletion
+preference, including permanent deletion; neither Undo nor a downgrade guarantees recovery.
+Cleanup failure adds `noteCleanupWarning` to the successful deletion outcome. Shared presentation
+reports the warning without retrying or rolling back task deletion; diagnostics omit note text.
 
 [`TaskApplicationService`](src/tasks/application/TaskApplicationService.ts) captures the clock and
 behavior settings, resolves the command, validates it, and delegates persistence through ports.
@@ -172,11 +164,9 @@ Unicode-letter uppercase mapping when it stays one code point; the neutral proje
 input remain unchanged. Canonical preview and frozen submission/retry receive that same request.
 Empty forms may expose manual choices without a valid creation preview.
 
-For Q in calendar day view, CalendarMode supplies a civil-date snapshot through
-`CenterPanel.calendarCaptureDate()` and PanelView's calendar capture context. CaptureTargetResolver
-freezes that day as the initial due date before awaiting configured-default creation planning.
-Week and month omit the exact day and retain the clock-day fallback. Explicit input and manual
-choices keep their existing precedence, and natural-language recognition uses its own clock reference.
+CalendarMode supplies its displayed day to the Q capture context; CaptureTargetResolver freezes it
+as the initial due date. Week and month retain the clock-day fallback. Explicit input and manual
+choices take precedence, and natural-language recognition keeps its own clock reference.
 
 The retained create session's optional `previewContext(request?)` reads known prefix, initial, and
 resolver-seed metadata through the canonical validation, patch, and normalization stages. Its ready
@@ -297,44 +287,31 @@ The inward [`MiniSearchTaskEngine`](src/tasks/infrastructure/search/MiniSearchTa
 sole MiniSearch import boundary. Shared [`searchMatchPolicy`](src/tasks/domain/searchMatchPolicy.ts)
 and [`markdown/searchText`](src/markdown/searchText.ts) define matching and visible-text provenance.
 Root Search can match fields across descendants and retains relevance order. Node requests default
-to each node's own title and tags, including dependency search. The internal opt-in
-`matchScope: 'subtree'` uses all Search fields within each candidate's exact subtree, with source
-paths still opt-in. A compact coordinate lookup resolves parents across unordered index batches;
-a query folds token coverage and raw score statistics through touched ancestors without copying
-descendant text or retaining descendant score arrays. Own contributions have weight 1 and all
-descendants weight 0.8, independent of depth. Nonempty Tasks Filter requests subtree scope, then
-intersects exact hits with each node's ordinary list membership, sort, and grouping. Project Filter
-and Global Search retain root populations.
+to their own title and tags, including dependency search. Tasks Filter opts into subtree matching
+across Search fields, with source paths still opt-in, then applies ordinary list membership, sort,
+and grouping. Project Filter and Global Search retain root populations.
 
 Descriptions share the pure [`taskDescriptionStructure`](src/markdown/taskDescriptionStructure.ts)
-analysis for rendering and search projection. It identifies supported list marker ranges in the
-original field and adds presentation-only blank separators when unindented prose leaves a list.
-Indented continuations and nested lists retain their source whitespace; titles and comments keep
-their existing modes. Unsupported blocks and non-interrupting numeric continuations remain
-conservative. Obsidian remains the sole Markdown renderer. Complete rendered-field alignment and
-original token order/raw equality are required before an anchor receives link-edit authority.
-The `- > ` carrier reader retains its exact payload and physical column, including first-line
-indentation and trailing hard-break spaces. Rendering never rewrites that payload. Existing source
-needs no migration; a downgrade resumes the older whitespace trimming and list display behavior.
+analysis for rendering and search projection. Display separators preserve list/prose boundaries
+without rewriting the authored `- > ` payload or its whitespace. Obsidian remains the Markdown
+renderer; link editing still requires complete field alignment and exact source occurrence proof.
+Existing source needs no migration; a downgrade resumes the older whitespace and list display.
 
-Search text and link destinations remain separate from source edit authority. The Worker exchanges text documents and compact numeric results,
-never task refs, source-bearing revisions, or rich snapshots.
+Search text and link destinations remain separate from source edit authority. The Worker exchanges
+text documents and compact numeric results, never task refs, source-bearing revisions, or rich snapshots.
 
 Retrieval, compact organization, and DOM mounting have separate lifetimes. Organization publishes
 the complete logical order before mounting; hydration and Markdown rendering belong only to demanded
-rows and finite interaction leases. Filter and Search build one pruned context per hydrated root and
-query, then cache presentations by full exact base address. Filter cards start at their eligible
-node; nested matches add explanatory context without adding logical rows or promoting an ineligible
-owner. Nonempty Tasks Filter retains only outermost eligible exact addresses, using a cooperative
-ancestry index before grouping and counting. Selection and bulk actions address those retained bases.
-Temporary reveal keeps its exact inspector target separate from the scrolling card: a covered target
-forces only its ancestry into the owner's context, while a revealed ancestor temporarily owns covered
-bases. Context caches belong to the current publication and its reveal path. Empty browsing and root
-Search retain their existing populations. The mounted card count is bounded; a single
-matching tree can still render many context nodes. Empty node browsing can use canonical source
-order without building the full-text index. Shared service capacity bounds cursors; cancellation, source changes,
-and disposal retire obsolete work. Cooperative batches yield to the owning window, but individual
-source projection and inline search still contain synchronous work.
+rows and finite interaction leases. Nonempty Tasks Filter retains outermost eligible exact nodes as
+logical rows; nested matches remain context within those trees. Selection and bulk actions use the
+retained bases without promoting an ineligible ancestor. Temporary reveal keeps its exact inspector
+target separate from the scrolling card and includes the required ancestry without duplicate rows.
+Contexts belong to the current publication and reveal path. Empty browsing and root Search keep
+their populations. Mounted cards are bounded, though one matching tree may contain many context nodes.
+Empty node browsing can use canonical source order without building the full-text index. Shared
+service capacity bounds cursors; cancellation, source changes, and disposal retire obsolete work.
+Cooperative batches yield to the owning window, but individual source projection and inline search
+still contain synchronous work.
 
 [`TaskSearch`](src/panels/center/TaskSearch.ts) joins retrieval, organization, dependency readiness,
 and current mounted-row render receipts before completing a presentation. Native scrolling only
@@ -361,31 +338,21 @@ duplicate shell subscriptions.
 Centre surfaces reuse `TaskCommands`, `TaskMenus`, `CaptureSessions`, `ListViewControls`, and
 [`TaskCardRenderer`](src/panels/center/TaskCardRenderer.ts). Inspector planning, dependency, and
 section owners render and invoke retained callbacks; RightPanel keeps submission and recovery
-authority. [`taskContextMenu`](src/ui/taskContextMenu.ts) registers the shared single-task menu
-from an explicit node/reference and surface-owned action callbacks. CenterPanel retains bulk menu
-routing; descendant context rows always use the single-task route. Inspector rows acquire their
-current retained owner at menu opening and keep commands, pending edits, recovery, and Undo in
-RightPanel. View-filter actions are a center-only capability. New workflows reuse these commands,
-menus, renderers, and state semantics.
+authority. [`taskContextMenu`](src/ui/taskContextMenu.ts) builds one shared menu from an exact node
+and surface-owned actions. Descendant rows always target that node; CenterPanel retains bulk routing.
+Inspector commands, pending edits, recovery, and Undo stay with RightPanel's current retained owner.
+View-filter actions are a center-only capability. New workflows reuse these commands, menus,
+renderers, and state semantics.
 
-Search and Filter descendants occupy a card-width region beside the base main row. Base description
-evidence stays in its title body; child descriptions stay in their own row bodies. The shared tree
-mount reconciles exact node and comment references in source order across both hosts.
-Each tree field owns its activation listener and text lifetime together; retirement releases both on
-removal, canceled creation, or entry disposal. Desired membership revokes ordinary activation before
-focus-deferred physical removal. Sibling pruning and removed-field cleanup use membership sets.
-[`RetainedTaskText`](src/ui/retainedTaskText.ts) owns each title, description, and comment independently,
-with one visible Markdown Component and at most one connected hidden replacement. Complete fields
-retain their wired anchors and source projection across query decoration changes. Destructive
-excerpts replace only their affected field after rendering and focus checks. Link edit bindings keep
-the source target and occurrence that produced the anchor; ordinary actions read current snapshots.
-A synchronous field preflight checks focus and currentness before either the direct-card fields or
-tree fields commit, including deferred retries. CenterPanel captures the civil day at the existing
-card-render boundary; root and child metadata keys, date formatting, and Today suppression share that
-value. Existing updates refresh date presentation after a day change without replacing task text.
-Card and tree receipts settle after publication, including focus-deferred commits. Query changes
-retain the existing task surface and its logical scroll anchor; receipt completion refreshes row
-measurements through TaskSearchRows.
+Search and Filter share tree rendering by exact node/comment references.
+[`RetainedTaskText`](src/ui/retainedTaskText.ts) owns each field's Markdown lifetime and preserves
+complete text and wired anchors when only highlighting changes. Changed excerpts replace only the
+affected field after source and focus checks. Retired fields lose activation authority even if
+physical removal waits for focus.
+Link edits retain the source occurrence that produced the anchor; ordinary actions use current
+snapshots. Render receipts settle after publication, including deferred commits, before geometry
+is accepted. Query changes preserve the task surface and its logical scroll anchor. Root and child
+metadata share CenterPanel's civil-day snapshot; date changes do not replace task text.
 
 ### Logical tasks and visual occurrences
 
@@ -408,8 +375,7 @@ movement follow the complete logical order. Counts and bulk writes deduplicate p
 selected occurrences determine occurrence-specific completion capability. Selection survives exact
 identity, a proven relocation of an unchanged source block, or a proven owned command transition.
 An unrelated task inheriting the same line cannot inherit selection.
-Finite grouped task rows carry their logical group key independently of the header row. The Today
-list omits its date heading when Today is the only group, while selection retains that group identity.
+Grouped rows retain their logical group identity even when a redundant Today heading is hidden.
 
 [`TaskListSurface`](src/panels/task-list/TaskListSurface.ts) mounts bounded keyed rows over the
 pure [`RowViewport`](src/panels/virtualization/rowViewport.ts). Logical rows own order and selection;
@@ -417,31 +383,12 @@ DOM owns geometry, focus, and interaction. Mounted rows own disposable Markdown 
 retain focused editors and active interactions, and invalidation ends those interactions before
 eviction. Date-grouped Upcoming uses [`taskDailyRows`](src/panels/task-list/taskDailyRows.ts) and
 bounded native scroll geometry without materializing every day. Full order remains available to
-selection and navigation regardless of the mounted window. Unready row frames reserve their current
-modeled extent while their children remain naturally measurable. The surface releases reservations
-with accepted measurements, spacer reconciliation, and the existing anchor correction, including
-when a ready measurement equals its cached height. Large logical-window clipping takes precedence
-and evicted frames retain no reservation. Explicit content receipts coalesce measurement commits in
-the owning window's microtask checkpoint before paint; ordinary scroll and resize work remains on
-animation frames. Ordinary CenterPanel rows admit geometry only after their current card receipt is
-ready and request this commit on completion; replaced cards, surfaces and documents retire that
-receipt's measurement authority. Refreshes raised during that commit retain next-frame work without
-extending the microtask chain, and document/lifecycle invalidation retires queued measurement authority. Mounted
-row readiness and admission checks finish before frame placement writes, so reservation release does
-not force a layout for each following row.
-When a measurement has no explicit anchor, an oldest settled visible mount supplies the retained
-model anchor while pending frames remain or before refill mounts a missing logical top row. Selection
-uses bounded mounted acquisition order and model bounds; refill carries only a pass-local anchor.
-Fully settled windows retain their ordinary fractional offset policy. Source anchors and reveals
-keep their own placement authority; pure row geometry and native write guards remain responsible
-for the resulting compensation.
-Frame extent transactions retain the existing native extent with a transient guard until the final
-DOM order exists, including when no native-write observer is registered and the native offset is
-nonzero. Ownerless exact-zero transactions run directly because zero cannot clamp downward;
-owned transactions retain their native receipt checks at every offset. Ordering uses that
-transaction’s active guard as its terminal sentinel when it belongs to the row host, avoiding moves
-of established rows across the guard. Guard removal permits a real final extent shrink to clamp
-normally.
+selection and navigation regardless of the mounted window. Pending rows reserve their modeled
+extent until current render receipts authorize measurement. The surface batches accepted geometry
+before paint and preserves settled visible rows through asynchronous rendering and window refills.
+Explicit source/reveal anchors and native scroll ownership keep priority. Replacement, document
+changes, and disposal revoke stale measurement authority. Extent transactions preserve native scroll
+range through intermediate DOM changes while permitting a real final shrink.
 
 CalendarMode owns calendar state, view lifetime, and forecast presentation. CalendarCommands maps
 gestures to public commands. Materialized cards retain exact root/child ancestry and occupied-date
@@ -459,16 +406,11 @@ holds prevent delete/archive/move publications from selecting a task that inheri
 AppState distinguishes explicit selection intent from refresh. Later user selection or navigation
 wins over delayed command, capture, and reveal callbacks. Transient UI cancellation after submission
 does not cancel the submitted write. Search activation, inspector navigation, and capture reuse
-CenterPanel's exact-task reveal path. Nested Filter activation shares exact-address hydration, then
-selects the inspector path in place with generation, cancellation, and selection-intent guards. It
-retains the active list and query; main-card selection and modifier clicks use ordinary list behavior.
-Filter retains the base node's ordinary description preview unless its full description matches.
-Matching descriptions in Search and Filter show bounded excerpts chosen after full-field rendering
-and link wiring. Excerpts retain original anchors and source occurrences; rendered-text fallback
-selects display only and grants no link-edit authority. The inspector keeps the complete Markdown
-with compact paragraph/list spacing, and its editor retains the full source.
-Filter also retains ordinary recurrence and Today metadata, with explicit matching evidence shown when
-needed to explain the result. Temporary inclusion of a revealed or created task does not
+CenterPanel's exact-task reveal path. Nested Filter activation resolves the exact inspector path
+without changing the active list or query; generation, cancellation, and selection intent guard
+publication. Matching descriptions use bounded excerpts after complete rendering and link wiring;
+display-only fallback grants no edit authority. The inspector retains the complete description and
+editor source. Temporary inclusion of a revealed or created task does not
 alter saved filters. Reveal consumes its scroll permission once and yields to later user scrolling,
 focus, source changes, or owner loss. Modal-to-sidebar draft transfer preserves both owners on conflict.
 
