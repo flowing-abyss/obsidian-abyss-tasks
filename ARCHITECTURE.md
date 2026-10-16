@@ -604,6 +604,14 @@ tooling, and uncertain history require full verification. The full gate checks s
 built artifact CSS. Release preparation also requires fresh artifacts, even for metadata-only changes.
 [`esbuild.config.mjs`](esbuild.config.mjs) embeds runtime dependency license notices in the bundle.
 
+Native performance evaluation is an opt-in development workflow described in
+[PERFORMANCE.md](PERFORMANCE.md). The Node controller in `tooling/performance/` owns fixture
+transactions, production artifact deployment to `dev-vault-tasks`, restoration, and comparison.
+Its separately bundled renderer helper drives existing query/command contracts and native UI,
+records Performance API spans, and owns secondary CDP sessions. It is not imported by product
+code and introduces no persisted product metadata or production write authority. Result files and
+recovery journals stay in ignored local storage; failed or incompatible runs cannot claim gains.
+
 Releases use the existing release command or the [patch preparation](.github/workflows/prepare-release.yml)
 and [merged-release tagging](.github/workflows/tag-release.yml) workflows. Automated tagging validates
 the merged version-only PR and successful master CI using trusted master code; tags are immutable.

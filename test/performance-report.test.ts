@@ -86,4 +86,15 @@ describe('native performance statistics', () => {
     expect(renderReport(saved)).toContain('12');
     expect(renderReport(saved)).not.toContain('<script>');
   });
+  it('refuses duplicate and incomplete iterations instead of inflating confidence', () => {
+    const baseline = run([100, 100]);
+    const duplicate = run([100, 100]);
+    duplicate.samples = [...duplicate.samples, ...duplicate.samples];
+    expect(compareRuns(baseline, duplicate).compatible).toBe(false);
+    const missing = run([100, 100], { expectedScenarios: ['startup', 'search'] });
+    const first = missing.samples[0];
+    if (first === undefined) throw new Error('Missing fixture sample');
+    missing.samples.push({ ...first, scenario: 'search' });
+    expect(compareRuns(missing, missing).compatible).toBe(false);
+  });
 });

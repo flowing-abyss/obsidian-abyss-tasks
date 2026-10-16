@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-
-export const FIXTURE_FOLDER = '__abyss_profile_fixture_v1__';
+import { FIXTURE_FOLDER } from './types.ts';
+export { FIXTURE_FOLDER } from './types.ts';
 
 export interface Fixture {
   version: 1;
@@ -18,15 +18,25 @@ function dateAt(anchor: string, offset: number): string {
   return new Date(Date.parse(`${anchor}T12:00:00Z`) + offset * 86400000).toISOString().slice(0, 10);
 }
 
+function planningTokens(anchor: string, id: number, offset: number, date: string): string[] {
+  const parts: string[] = [];
+  if (id % 5 !== 4) parts.push(`📅 ${date}`);
+  if (id % 3 === 0) parts.push(`⏳ ${date} ⏰ ${String(8 + (id % 10)).padStart(2, '0')}:00`);
+  if (id % 20 === 3) parts.push(`🛫 ${dateAt(anchor, offset - 2 - (id % 3))}`);
+  return parts;
+}
+
 function taskBlock(anchor: string, id: number): string {
-  const date = dateAt(anchor, (id % 61) - 30);
-  const created = dateAt(anchor, -(id % 120) - 31);
   const symbol = [' ', '/', 'x', '-'][id % 4] ?? ' ';
+  const offset = symbol === 'x' || symbol === '-' ? -(id % 300) - 1 : (id % 365) - 300;
+  const date = dateAt(anchor, offset);
+  const created = dateAt(anchor, offset - (id % 120) - 31);
   const parts = [
     `- [${symbol}] Profile task ${id} ${id % 2 === 0 ? 'database' : 'планирование'} #profile/group${id % 8}`,
   ];
   if (id % 20 === 0) parts.push('🔁 every week');
-  parts.push(`➕ ${created} 🛫 ${created} ⏳ ${date} 📅 ${date} ⏰ 09:00 ⏱️ 45m`);
+  parts.push(`➕ ${created} ⏱️ 45m`);
+  parts.push(...planningTokens(anchor, id, offset, date));
   if (symbol === 'x') parts.push(`✅ ${date}`);
   if (symbol === '-') parts.push(`❌ ${date}`);
   parts.push(`🆔 profile-${id}`);

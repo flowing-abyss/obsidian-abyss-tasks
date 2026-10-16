@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { TaskIndex } from '../src/tasks/infrastructure/TaskIndex';
-import { createFixture, FIXTURE_FOLDER } from '../tooling/performance/fixture';
+import { createFixture, FIXTURE_FOLDER } from '../tooling/performance/fixture.mts';
 import { canonicalStatusCatalog, createAppWithFiles, seedTaskCache } from './helpers';
 
 describe('performance corpus', () => {
@@ -34,6 +34,18 @@ describe('performance corpus', () => {
       const nodes = index.listNodes().map((entry) => entry.node);
       expect(index.list()).toHaveLength(4000);
       expect(nodes).toHaveLength(6000);
+      const spans = nodes.filter(
+        (n) => n.planning.start !== undefined && n.planning.due !== undefined,
+      );
+      expect(spans.length).toBeGreaterThan(100);
+      expect(spans.length).toBeLessThan(400);
+      expect(
+        spans.every(
+          (n) =>
+            Date.parse(n.planning.due ?? '') - Date.parse(n.planning.start ?? '') <= 7 * 86400000,
+        ),
+      ).toBe(true);
+      expect(nodes.filter((n) => n.planning.due === undefined).length).toBeGreaterThan(500);
       expect(nodes.filter((n) => n.recurrence !== undefined).length).toBeGreaterThan(150);
       expect(nodes.flatMap((n) => n.timeEntries).length).toBeGreaterThan(1000);
       expect(nodes.flatMap((n) => n.comments).length).toBeGreaterThan(1000);

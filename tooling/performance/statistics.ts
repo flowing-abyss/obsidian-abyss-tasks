@@ -1,4 +1,4 @@
-import type { Comparison, Distribution, ProfileRun } from './types.ts';
+import type { Comparison, Distribution, ProfileRun, Sample } from './types.ts';
 
 function median(values: readonly number[]): number {
   const sorted = [...values].sort((a, b) => a - b);
@@ -38,7 +38,7 @@ function bootstrap(before: readonly number[], after: readonly number[]): [number
   return [deltas[49] ?? 0, deltas[1949] ?? 0];
 }
 
-export function canonical(value: Record<string, string | number | boolean>): string {
+function canonical(value: Record<string, string | number | boolean>): string {
   return JSON.stringify(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)));
 }
 
@@ -57,6 +57,28 @@ function runProblems(run: ProfileRun): string[] {
   }
   if (run.samples.some((s) => !run.expectedScenarios.includes(s.scenario)))
     reasons.push(`${run.id}: unexpected scenario`);
+  reasons.push(
+    ...sampleProblems(run.samples, run.expectedScenarios).map((reason) => `${run.id}: ${reason}`),
+  );
+  return reasons;
+}
+
+export function sampleProblems(
+  samples: readonly Sample[],
+  scenarios: readonly string[],
+  count?: number,
+): string[] {
+  const iterations = [...new Set(samples.map((s) => s.iteration))].sort((a, b) => a - b);
+  const reasons: string[] = [];
+  if (iterations.some((n, i) => n !== i) || (count !== undefined && iterations.length !== count))
+    reasons.push('Incomplete iteration sequence');
+  const keys = samples.map((s) => `${s.iteration}:${s.scenario}`);
+  if (new Set(keys).size !== samples.length) reasons.push('Duplicate scenario samples');
+  for (const iteration of iterations) {
+    const actual = samples.filter((s) => s.iteration === iteration).map((s) => s.scenario);
+    if (actual.length !== scenarios.length || scenarios.some((id) => !actual.includes(id)))
+      reasons.push(`Incomplete scenario roster in iteration ${iteration}`);
+  }
   return reasons;
 }
 

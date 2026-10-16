@@ -96,7 +96,7 @@ export default defineConfig(
   ...obsidianmd.configs.recommendedWithLocalesEn,
   sonarjs.configs.recommended,
   {
-    files: ['**/*.ts'],
+    files: ['**/*.ts', 'tooling/performance/**/*.mts'],
     rules: {
       // Complexity budgets (cyclomatic + cognitive), mirrors the reference TypeScript template.
       complexity: ['error', 10],
@@ -381,8 +381,15 @@ export default defineConfig(
       'tooling/regex-audit.mjs',
       'tooling/regex-audit-process.mjs',
       'tooling/regex-audit-policy.mjs',
-      'tooling/performance/fixture.ts',
-      'tooling/performance/transaction.ts',
+      'tooling/performance/fixture.mts',
+      'tooling/performance/transaction.mts',
+      'tooling/profile.mjs',
+      'tooling/performance/build.mts',
+      'tooling/performance/driver.mts',
+      'tooling/performance/runner.mts',
+      'tooling/performance/cli.mts',
+      'tooling/performance/cpu.mts',
+      'tooling/performance/recovery.mts',
     ],
     languageOptions: {
       globals: { ...globals.node },
@@ -549,7 +556,7 @@ export default defineConfig(
     rules: { 'project-policy/ambient': ['error', 'pure'] },
   },
   {
-    files: ['tooling/*.mjs', 'tooling/performance/**/*.ts'],
+    files: ['tooling/*.mjs', 'tooling/performance/**/*.{ts,mts}'],
     languageOptions: {
       parserOptions: { projectService: false, project: './tooling/tsconfig.json' },
     },

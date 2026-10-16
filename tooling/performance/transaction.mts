@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { lstat, mkdir, readFile, realpath, rename, rm, rmdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { FIXTURE_FOLDER } from './fixture.ts';
+import { FIXTURE_FOLDER } from './fixture.mts';
 
 interface Journal {
   schemaVersion: 1;
@@ -23,7 +23,7 @@ export async function canonicalPath(file: string): Promise<string> {
 }
 
 function checkProcess(journal: Journal): void {
-  if (journal.pid === process.pid || journal.restored) return;
+  if (journal.pid === process.pid) return;
   try {
     process.kill(journal.pid, 0);
   } catch (error) {
@@ -171,8 +171,18 @@ export class VaultTransaction {
     await writeFile(file, content);
   }
 
-  async restore(): Promise<void> {
-    if (this.journal.restored) return;
+  async restore(releaseLock = true): Promise<void> {
+    await this.assertOwnership();
+    if (!this.journal.restored) {
+      await this.restoreOriginals();
+      if (!(await this.verify())) throw new Error('Restoration hash mismatch');
+      this.journal.restored = true;
+      await this.save();
+    }
+    if (releaseLock) await this.releaseLock();
+  }
+
+  private async restoreOriginals(): Promise<void> {
     const errors: unknown[] = [];
     for (const [relative, original] of Object.entries(this.journal.originals).reverse()) {
       try {
@@ -193,10 +203,23 @@ export class VaultTransaction {
         errors,
         'Restoration incomplete; retain recovery.json and retry recovery',
       );
-    if (!(await this.verify())) throw new Error('Restoration hash mismatch');
-    this.journal.restored = true;
-    await this.save();
-    await rm(await safePath(this.vault, `${this.journal.configDir}/abyss-profile.lock`));
+  }
+
+  async assertOwnership(): Promise<void> {
+    const content = await readOptional(
+      await safePath(this.vault, `${this.journal.configDir}/abyss-profile.lock`),
+    );
+    if (content === null) return;
+    const lock = JSON.parse(content.toString('utf8')) as { output?: unknown; pid?: unknown };
+    if (lock.output !== this.journal.output || lock.pid !== this.journal.pid)
+      throw new Error('Recovery lock ownership mismatch');
+  }
+
+  async releaseLock(): Promise<void> {
+    await this.assertOwnership();
+    await rm(await safePath(this.vault, `${this.journal.configDir}/abyss-profile.lock`), {
+      force: true,
+    });
   }
 
   private async removeEmptyFixtureDirectories(): Promise<void> {

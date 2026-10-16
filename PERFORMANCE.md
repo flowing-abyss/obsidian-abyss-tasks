@@ -1,0 +1,179 @@
+# Native performance evaluation
+
+Measure the production plugin in the real Obsidian desktop host and compare saved results. The
+harness uses Obsidian CLI, Performance API, and Electron's Chrome DevTools Protocol connection.
+It adds no packages or product behavior. Playwright, Appium, and device automation are not involved.
+
+## Run and compare
+
+Install repository dependencies and enable [Obsidian CLI](https://help.obsidian.md/cli). Open
+**dev-vault-tasks**, bring its window to the foreground, and leave the vault idle during the run.
+The running vault's canonical directory must also be named `dev-vault-tasks`. Use `--vault-path`
+to require a particular checkout's dev vault. Other vaults are refused.
+
+```sh
+# One discarded warmup, 10 measured repetitions, one separate diagnostic pass.
+pnpm run profile --out docs/performance/before
+
+# After a code change, repeat under the same conditions.
+pnpm run profile --out docs/performance/after --baseline docs/performance/before
+
+# Offline comparison: no running Obsidian or rebuild needed.
+pnpm profile:compare docs/performance/before docs/performance/after
+
+# Plugin restart through index readiness in an already-running host.
+pnpm profile:startup --runs 10
+
+# More observations, or a separate narrow desktop workload.
+pnpm run profile --runs 30
+pnpm run profile --width 420 --out docs/performance/narrow
+```
+
+Use **`pnpm run profile`**: `pnpm profile` is a pnpm built-in. Output directories must be new and
+outside the vault. The default is a timestamped folder in ignored `docs/performance/`.
+`--anchor YYYY-MM-DD` fixes generated dates; the default is the host's local day. The actual host
+day also belongs to comparison identity because calendar and statistics views use it. `--runs`
+accepts 1–100. `--no-diagnostics` omits the CPU, trace, screenshot, and heap pass.
+
+`--width` constrains the desktop renderer viewport through CDP, verifies it during every scenario,
+and clears the override afterward. Close existing DevTools/debugger before using this mode so the
+harness can own and restore that state. It does not test mobile Obsidian, touch, a slower CPU, or
+Android/iOS. Compare matching widths; this mode keeps the debugger attached during timing.
+
+Exit codes: `0` completed with no detected material regression, possibly **inconclusive**; `1`
+execution/diagnostics/restoration failure; `2` incompatible inputs; `3` exploratory regression
+signal. Read validity and verdicts instead of treating zero as proof that a patch is safe.
+
+## Snapshot and scenarios
+
+The deterministic corpus has 100 project notes, an inbox, and an archive: 4,000 live root tasks and
+2,000 children (**6,000 live nodes**), plus 300 archived roots. It covers four statuses, dates spread
+over a year, undated tasks, 200 short intervals, 200 recurring tasks, 1,000 dependency edges, tags,
+rich descriptions, comments, 2,000 live time entries, and archived completion/time history.
+Projects have statuses, date ranges, and budgets. Tests parse the corpus through the real TaskIndex.
+
+Temporary settings select the corpus for tasks and projects. Existing notes stay in place.
+Startup still reads existing Markdown before applying source exclusion, so a content digest of
+those notes belongs to comparison identity. This is not an empty-host benchmark.
+
+| Scenarios                                        | Work and completion condition                                                                                                                                       |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `startup.index`                                  | Enable the plugin, join TaskIndex initialization, assert 4,000 roots. Host and filesystem caches are warm.                                                          |
+| `query.roots/nodes/dependencies/time`            | Public read projections; dependencies include first acquisition in the cycle.                                                                                       |
+| `search.cold`                                    | Prepare the newly created Search service/Worker and await readiness; service-cold, not OS-cold.                                                                     |
+| `search.warm/no-results/subtree`                 | Open a cursor, read 40 hits, hydrate, and release it.                                                                                                               |
+| `panel.first-open`, `ui.search/scroll/inspector` | Open the real panel, join applied search results, visit three changed/hydrated virtual ranges, and open a task.                                                     |
+| `ui.calendar.day/week/month`                     | Enter Calendar and switch views, checking the active view and date cells. Day includes entering Calendar.                                                           |
+| `ui.projects.table/kanban/timeline`              | Enter Projects and render its three views. Table includes entering Projects.                                                                                        |
+| `statistics.acquire`                             | Subscribe to retained Statistics data, await settlement, reject projection issues.                                                                                  |
+| `ui.analysis.*`                                  | Rhythm, completion, deadlines, cohorts, allocation, timeline, sessions, patterns, movement, aging, dependencies. Await nonbusy content and rendering opportunities. |
+| `command.*`                                      | Create, edit, complete, comment, start/stop tracking, and advance recurrence through existing application commands; require successful receipts.                    |
+| `index.external-edit`                            | Modify the fixture inbox through the vault API and await its changed task projection.                                                                               |
+| `panel.close`                                    | Detach the panel. The shared Search Worker may remain alive until plugin unload.                                                                                    |
+
+Each repetition resets the modified inbox, recurrence note, and view state, then reloads the plugin.
+Preparation joins host metadata events and checks exact file/cache contents before timing starts.
+Scenario order is fixed. UI spans include two animation-frame opportunities; they are not OS
+input-to-photon measurements. Scrolling also waits for changed, populated, nonbusy cards and a
+stable range. A scenario or fixture change invalidates old baselines through the protocol hash.
+
+## Read the evidence
+
+Start with `report.md` or `summary.json`: per-scenario sample count, median, p95, median absolute
+deviation, min/max, long tasks, frame gaps, DOM size, and completed-work facts. `run.json` preserves
+all measured samples and identities: commit/dirty state, exact bundle hash, effective settings,
+fixture, existing Markdown, host versions, CPU, viewport, locale, timezone, enabled plugin versions,
+and protocol hash. `settings.json` contains the effective configuration, not just its patch.
+`fixture-contents.json` preserves the generated Markdown; `fixture.json` records its hashes and counts.
+
+Next read `diagnostics-summary.json`: source-mapped CPU hotspots by self/inclusive time and separate
+renderer/Worker heap observations at Search readiness, after Analysis, and after panel close.
+`cpu-summary.json` retains the complete frame table. CPU times are sample-weighted estimates from
+a separate run, including profiling/host/harness overhead. Inclusive frames overlap; do not sum
+parents and children. Only verified plugin frames receive the plugin source map.
+Worker CPU recording begins after the standalone API search scenarios, before UI scenarios. It
+covers UI search and subsequent work; cold construction and the standalone warm/no-results/subtree
+queries have wall times but no Worker CPU attribution in this version.
+
+| Artifact                                                  | Use                                                                                                                                                  |
+| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `comparison.json/md`                                      | Compatibility reasons, median differences, confidence intervals, practical margins, verdicts. Written into the candidate directory.                  |
+| `iteration-*.json`                                        | Raw spans; `-1` is the discarded warmup. Diagnostic samples are separate.                                                                            |
+| `renderer.cpuprofile`, `worker-*.cpuprofile`              | Load in DevTools' JavaScript profiler. Worker recording covers UI search and subsequent work, after the standalone API search scenarios.             |
+| `trace.json`                                              | Load in DevTools Performance. User Timing spans sit alongside JS, layout, paint, and GC events.                                                      |
+| `main.js/map`, `search-worker.js/map`, `source-maps.json` | Exact builds/maps and Worker prefix offset. Mapped main JS must equal normal production bytes; live Worker source must equal the saved Worker build. |
+| `memory-*.json`                                           | Whole-isolate JS heap, no forced GC. Not RSS, plugin-exclusive allocation, or proof of a leak.                                                       |
+| `analysis.png`, `analysis-dom.json`, `runtime-errors.txt` | Screenshot, DOM evidence, captured host errors.                                                                                                      |
+| `progress.json`, `failure-dom.json`                       | Last attempted scenario and failure context when the renderer can respond.                                                                           |
+| `recovery.json`, `host-before.json`                       | Original managed bytes and native state for recovery.                                                                                                |
+
+Long-task counts include entries of at least 50 ms overlapping a span; duration is clipped to
+that overlap. They cover the renderer, not just the plugin. Unsupported metrics are `null`.
+Frame gaps are a requestAnimationFrame proxy bounded by the span, not a dropped-frame count.
+DOM size counts plugin-panel descendants. Use care interpreting sub-frame UI changes.
+
+## Decide whether a change helped
+
+Comparison rejects failed/unrestored runs, missing/duplicate scenarios, incomplete iterations,
+changed environment/protocol/settings/corpus, and different completed-work facts. Different bundle
+hashes are expected when testing an optimization.
+
+The comparator uses 2,000 deterministic bootstrap resamples for an exploratory, unadjusted 95%
+interval of median difference. The practical margin is `max(5 ms, 10% of baseline median)`.
+At least 10 observations per side are required:
+
+- **improvement/regression:** the entire interval exceeds the practical margin in that direction;
+- **no-material-difference:** the entire interval fits inside the margin;
+- **inconclusive:** neither conclusion is established.
+
+Below 30 observations, p95 is flagged as unstable. The 39 scenario comparisons have no multiplicity
+correction. Thermal drift, GC, JIT, sync, and background applications can affect a whole batch.
+Run A/A on unchanged code to learn the noise floor; confirm apparent wins/regressions in A/B/B/A
+order on the same host. These are investigation signals, not automatic causal proof.
+
+Choose a slow scenario from the summary, inspect its trace span and CPU frames, then add a workload
+where evidence is thin: dense calendar overlap, large dependency components, different project
+distributions, long sessions, or device interaction. Keep stress workloads separate from the
+ordinary baseline. A 6,000-node fixture does not represent every 6,000-task vault.
+
+## Restoration and failures
+
+The transaction reserves a fixture directory and exclusive lock. It journals original bytes before
+replacing installed plugin artifacts/settings. It restores those bytes, removes generated files,
+restores layout/viewport/debugger state, and verifies the files. Existing notes and unrelated files
+are not intentionally written. Do not edit the dev vault while the runner owns its temporary state.
+
+Ctrl-C requests cancellation between native operations and restoration afterward. A hung renderer
+or force-killed controller can require recovery. Renderer timers cannot interrupt synchronous JS;
+the external CLI deadline bounds the controller's wait, not an arbitrary plugin operation.
+
+```sh
+# Responsive dev vault:
+pnpm run profile --recover docs/performance/RUN
+
+# Unresponsive host: close Obsidian completely, then restore files offline.
+pnpm run profile --recover-offline docs/performance/RUN
+# Reopen dev-vault-tasks, then restore its layout:
+pnpm run profile --recover docs/performance/RUN
+```
+
+Offline recovery refuses a running Obsidian process. Recovery never converts a failed benchmark
+into a successful one. Backups/traces stay local and may contain original settings or note text;
+inspect before sharing. `docs/` is ignored and must not be committed.
+
+## Implementation and references
+
+`tooling/performance/runner.mts` owns orchestration; `native.ts` is a separate renderer bundle.
+`AbyssProfiler` owns and cleans its Performance marks. CDP owns a secondary renderer session and
+verified Search Worker sessions, preserving a preexisting root debugger. None of this is imported
+by `src/main.ts`. `pnpm verify` remains the quality gate; native profiling is an explicit workflow.
+
+Sources: [User Timing](https://www.w3.org/TR/user-timing/),
+[Long Tasks](https://www.w3.org/TR/longtasks-1/),
+[Electron debugger](https://www.electronjs.org/docs/latest/api/debugger),
+[CDP viewport override](https://chromedevtools.github.io/devtools-protocol/tot/Emulation/#method-setDeviceMetricsOverride),
+[CDP tracing](https://chromedevtools.github.io/devtools-protocol/tot/Tracing/),
+[esbuild maps](https://esbuild.github.io/api/#sourcemap),
+[Node SourceMap](https://nodejs.org/api/module.html#class-modulesourcemap).
+CPU hotspot weighting follows the average-sample approach in
+[DevTools' profile tree](https://github.com/ChromeDevTools/devtools-frontend/blob/main/front_end/models/cpu_profile/CPUProfileDataModel.ts).

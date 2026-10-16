@@ -71,6 +71,7 @@ ${thirdPartyNotices}
 const args = process.argv.slice(2);
 const prod = args.includes('production');
 const analyze = args.includes('analyze');
+const profile = args.includes('profile');
 
 // Obsidian strips inline source maps from dev builds unless main.js ends with
 // this exact marker comment: https://forum.obsidian.md/t/source-map-trimming-in-dev-builds/87612
@@ -140,7 +141,7 @@ const context = await esbuild.context({
   format: 'cjs',
   target: 'es2021',
   logLevel: analyze ? 'silent' : 'info',
-  sourcemap: prod ? false : 'inline',
+  sourcemap: prod ? (profile ? 'external' : false) : 'inline',
   drop: ['debugger'],
   treeShaking: true,
   outfile: 'main.js',
@@ -165,7 +166,9 @@ if (prod) {
 }
 
 function checkSizeBudget(metafile) {
-  const bytes = Object.values(metafile.outputs).reduce((total, output) => total + output.bytes, 0);
+  const bytes = Object.entries(metafile.outputs)
+    .filter(([name]) => name.endsWith('.js'))
+    .reduce((total, [, output]) => total + output.bytes, 0);
 
   if (bytes > MAIN_JS_BUDGET_BYTES) {
     console.error(

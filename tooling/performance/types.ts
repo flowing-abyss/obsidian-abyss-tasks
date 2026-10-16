@@ -49,3 +49,4 @@ export interface Comparison {
   reasons: string[];
   scenarios: ScenarioComparison[];
 }
+export const FIXTURE_FOLDER = '__abyss_profile_fixture_v1__';
