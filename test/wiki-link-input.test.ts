@@ -30,6 +30,13 @@ describe('task wiki-link input range', () => {
     expect(wikiLinkInputRange(value, value.length, value.length)).toBeUndefined();
   });
 
+  it.each(['[[Alpha#Heading', '[[Alpha#^block', '[[Alpha|Alias'])(
+    'preserves manually authored unfinished syntax after the caret: %s',
+    (value) => {
+      expect(wikiLinkInputRange(value, 4, 4)).toBeUndefined();
+    },
+  );
+
   it('does not replace an explicit selection or a manually entered suffix', () => {
     expect(wikiLinkInputRange('[[Al', 2, 4)).toBeUndefined();
     expect(wikiLinkInputRange('[[Al#Heading]]', 4, 4)).toBeUndefined();

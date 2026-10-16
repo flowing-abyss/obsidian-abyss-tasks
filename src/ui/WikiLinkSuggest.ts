@@ -14,6 +14,12 @@ export interface WikiLinkSuggestOptions {
   readonly registerSurface?: (surface: HTMLElement) => () => void;
 }
 
+interface FieldSelection {
+  readonly value: string;
+  readonly start: number | null;
+  readonly end: number | null;
+}
+
 interface Draft {
   readonly value: string;
   readonly cursor: number;
@@ -32,6 +38,7 @@ export class WikiLinkSuggest {
   #releaseSurface: (() => void) | undefined;
   #request: AbortController | undefined;
   #draft: Draft | undefined;
+  #selection: FieldSelection | undefined;
   #items: VaultLinkSuggestion[] = [];
   #selected = 0;
   #composing = false;
@@ -86,7 +93,7 @@ export class WikiLinkSuggest {
       true,
     );
     listen(input.ownerDocument, 'selectionchange', () => {
-      if (this.#draft !== undefined && !this.#matches(this.#draft)) this.#update();
+      if (this.#editable() && !this.#sameSelection()) this.#update();
     });
   }
 
@@ -112,6 +119,16 @@ export class WikiLinkSuggest {
       if (value === null) this.#options.input.removeAttribute(name);
       else this.#options.input.setAttribute(name, value);
     }
+  }
+
+  #sameSelection(): boolean {
+    const { input } = this.#options;
+    return (
+      this.#selection?.value === input.value &&
+      this.#selection.start === input.selectionStart &&
+      this.#selection.end === input.selectionEnd &&
+      (this.#draft === undefined || this.#matches(this.#draft))
+    );
   }
 
   #matches(draft: Draft): boolean {
@@ -148,6 +165,11 @@ export class WikiLinkSuggest {
     this.#dismiss();
     const { input, sourcePath } = this.#options;
     if (!this.#editable()) return;
+    this.#selection = {
+      value: input.value,
+      start: input.selectionStart,
+      end: input.selectionEnd,
+    };
     const path = sourcePath();
     const cursor = input.selectionStart;
     if (path === undefined || cursor === null) return;

@@ -180,6 +180,44 @@ describe('inline task link completion', () => {
     expect(h.input.hasAttribute('aria-controls')).toBe(false);
     expect(h.input.hasAttribute('role')).toBe(false);
   });
+  it('reopens on keyboard caret re-entry while preserving Escape at the same selection', async () => {
+    const h = await setup('textarea', '[[Alpha]] tail', 4);
+    h.input.setSelectionRange(h.input.value.length, h.input.value.length);
+    document.dispatchEvent(new Event('selectionchange'));
+    expect(document.querySelector('.abyss-link-suggest')).toBeNull();
+    h.input.setSelectionRange(4, 4);
+    document.dispatchEvent(new Event('selectionchange'));
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll('[role="option"]')).toHaveLength(2);
+    });
+    key(h.input, 'Escape');
+    document.dispatchEvent(new Event('selectionchange'));
+    await Promise.resolve();
+    expect(document.querySelector('.abyss-link-suggest')).toBeNull();
+    h.input.setSelectionRange(5, 5);
+    document.dispatchEvent(new Event('selectionchange'));
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll('[role="option"]')).toHaveLength(2);
+    });
+  });
+
+  it('opens on keyboard navigation into an existing link without a previous draft', async () => {
+    const app = appWithFiles({ 'Alpha.md': '', 'Alpine.md': '' });
+    const input = document.body.createEl('input');
+    input.value = '[[Alpha]] tail';
+    input.setSelectionRange(input.value.length, input.value.length);
+    const controller = new WikiLinkSuggest({ app, input, sourcePath: () => 'tasks.md' });
+    controllers.push(controller);
+    input.focus();
+    document.dispatchEvent(new Event('selectionchange'));
+    expect(document.querySelector('.abyss-link-suggest')).toBeNull();
+    input.setSelectionRange(4, 4);
+    document.dispatchEvent(new Event('selectionchange'));
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll('[role="option"]')).toHaveLength(2);
+    });
+  });
+
   it('pointer selection belongs to the controller and keeps input focus', async () => {
     const h = await setup();
     const option = expectDefined(

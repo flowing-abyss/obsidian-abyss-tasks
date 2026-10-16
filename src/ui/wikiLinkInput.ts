@@ -23,9 +23,10 @@ export function wikiLinkInputRange(
   if (from < 0 || escaped(value, from)) return undefined;
   const query = value.slice(from + 2, start);
   if (/[[\]#|\r\n]/u.test(query) || codeAt(value, from)) return undefined;
+  const remainder = value.slice(start).split(/[[\]\r\n]/u, 1)[0] ?? '';
+  if (/[#|]/u.test(remainder)) return undefined;
   const close = value.indexOf(']]', start);
   if (close < 0 || /[[\]\r\n]/u.test(value.slice(start, close))) return { from, to: start, query };
-  if (/[#|]/u.test(value.slice(start, close))) return undefined;
   return { from, to: close + 2, query };
 }
 
