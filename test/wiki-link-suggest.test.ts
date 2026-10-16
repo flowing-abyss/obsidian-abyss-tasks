@@ -1,4 +1,4 @@
-import type { TFile } from 'obsidian';
+import { MarkdownRenderer, type TFile } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { VaultFileSuggestionSource } from '../src/ui/NoteSuggest';
 import { WikiLinkSuggest } from '../src/ui/WikiLinkSuggest';
@@ -143,6 +143,66 @@ describe('inline task link completion', () => {
     input.dispatchEvent(event);
     return event;
   }
+  it('keeps host link decorations on selectable suggestion labels', async () => {
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, markdown, holder) => {
+      const target = markdown === '[[Alpha]]' ? 'Alpha' : 'Alpine';
+      holder.createEl('a', {
+        cls: 'internal-link data-link-icon',
+        text: target,
+        attr: { href: target, 'data-href': target, 'data-link-icon': '📝' },
+      });
+    });
+    const h = await setup();
+    const open = vi.spyOn(h.app.workspace, 'openLinkText');
+    const label = expectDefined(
+      document.querySelector<HTMLAnchorElement>('.abyss-link-suggest-option a.internal-link'),
+    );
+    expect(label.getAttribute('data-link-icon')).toBe('📝');
+    expect(label.classList.contains('data-link-icon')).toBe(true);
+    expect(label.getAttribute('data-href')).toBe('Alpha');
+    expect(label.tabIndex).toBe(-1);
+    const auxiliary = new MouseEvent('auxclick', { button: 1, bubbles: true, cancelable: true });
+    label.dispatchEvent(auxiliary);
+    expect(auxiliary.defaultPrevented).toBe(true);
+    expect(h.input.value).toBe('Before [[Al]] after');
+    label.click();
+    expect(h.input.value).toBe('Before [[Alpha]] after');
+    expect(h.input.selectionStart).toBe(16);
+    expect(document.activeElement).toBe(h.input);
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it.each(['replace', 'dismiss', 'destroy'] as const)(
+    'releases host postprocessor resources when suggestions %s',
+    async (action) => {
+      const released: string[] = [];
+      const pending: Array<() => void> = [];
+      vi.spyOn(MarkdownRenderer, 'render').mockImplementation(
+        async (...[, markdown, holder, , component]) => {
+          component.register(() => {
+            released.push(markdown);
+          });
+          await new Promise<void>((resolve) => {
+            pending.push(resolve);
+          });
+          holder.createEl('a', { cls: 'internal-link', text: markdown });
+        },
+      );
+      const h = await setup();
+      if (action === 'replace') {
+        h.input.value = 'Plain task';
+        h.input.dispatchEvent(new Event('input'));
+      } else if (action === 'dismiss') key(h.input, 'Escape');
+      else h.controller.destroy();
+      released.sort((left, right) => left.localeCompare(right));
+      expect(released).toEqual(['[[Alpha]]', '[[Alpine]]']);
+      pending.forEach((resolve) => {
+        resolve();
+      });
+      await Promise.resolve();
+      expect(document.querySelector('.abyss-link-suggest')).toBeNull();
+    },
+  );
   it.each(['input', 'textarea'] as const)(
     'selects with arrows in %s, preserves suffix and leaves the caret after the link',
     async (tag) => {
