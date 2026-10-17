@@ -9249,6 +9249,9 @@ body.is-phone .abyss-panel-view :is(.abyss-view-state-btn, button.abyss-compact-
 /* The search field is a cell of the family too: the tray fill in both themes, an edge only when
    focused. */
 body.is-phone .abyss-panel-view .abyss-center-search {
+  box-sizing: border-box;
+  block-size: var(--abyss-toolbar-control-size);
+  min-block-size: 0;
   border-radius: 8px;
   border-color: var(--background-modifier-border);
   background: var(--background-modifier-border);
