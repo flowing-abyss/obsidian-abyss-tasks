@@ -96,8 +96,6 @@ export class CompactPaneAccess {
     if (mode !== 'tasks') {
       this.cancelPending();
       this.close(false);
-    } else if (this.#compactRightCollapsed && this.#options.hasSelectedTask()) {
-      this.open('right', false);
     }
   }
 

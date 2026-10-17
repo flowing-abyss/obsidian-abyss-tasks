@@ -1251,6 +1251,76 @@ async function editToday(panel: RemovalPanel, edit: (content: string) => string)
 }
 
 describe('PanelView compact details on a begun selection', () => {
+  it.each(
+    [390, 700].flatMap((width) =>
+      (['button', 'escape'] as const).flatMap((close) =>
+        (['calendar', 'search', 'projects', 'statistics'] as const).map((mode) => ({
+          width,
+          close,
+          mode,
+        })),
+      ),
+    ),
+  )(
+    'preserves details dismissal by $close after returning from $mode at $width pixels',
+    async ({ width, close, mode }) => {
+      const panel = await openRemovalPanel();
+      try {
+        const { right, details } = compactLayout(panel, width);
+        panel.select('First');
+        expect(right.classList.contains('is-compact-open')).toBe(true);
+        if (close === 'button') details.click();
+        else
+          right.dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+          );
+        expect(right.classList.contains('is-compact-open')).toBe(false);
+
+        panel.state.set('mode', mode);
+        expect(panel.state.get('mode')).toBe(mode);
+        expect(right.classList.contains('is-compact-open')).toBe(false);
+        panel.state.set('mode', 'tasks');
+
+        expect(panel.state.get('taskStack').map((node) => node.title)).toEqual(['First']);
+        expect(right.classList.contains('is-compact-open')).toBe(false);
+        expect(details.getAttribute('aria-expanded')).toBe('false');
+        expect(details.getAttribute('aria-label')).toBe('Show task details');
+        window.dispatchEvent(new Event('resize'));
+        expect(right.classList.contains('is-compact-open')).toBe(false);
+
+        panel.select('First');
+        expect(right.classList.contains('is-compact-open')).toBe(true);
+      } finally {
+        await panel.close();
+      }
+    },
+  );
+
+  it('preserves details dismissal through an index refresh after returning to Tasks', async () => {
+    const panel = await openRemovalPanel();
+    try {
+      const { right, details } = compactLayout(panel, 390);
+      panel.select('First');
+      details.click();
+      panel.state.set('mode', 'calendar');
+      expect(panel.state.get('mode')).toBe('calendar');
+      expect(right.classList.contains('is-compact-open')).toBe(false);
+      panel.state.set('mode', 'tasks');
+      expect(right.classList.contains('is-compact-open')).toBe(false);
+
+      await editToday(panel, (content) => `- [ ] Above\n${content}`);
+
+      expect(selectedRoot(panel)).toEqual({ title: 'First', filePath: 'today.md' });
+      expect(right.classList.contains('is-compact-open')).toBe(false);
+      expect(details.getAttribute('aria-expanded')).toBe('false');
+      expect(details.getAttribute('aria-label')).toBe('Show task details');
+      panel.select('First');
+      expect(right.classList.contains('is-compact-open')).toBe(true);
+    } finally {
+      await panel.close();
+    }
+  });
+
   it('closes automatic details outside the layout but preserves explicitly opened details', async () => {
     const panel = await openRemovalPanel();
     const outside = activeDocument.body.createEl('button');
