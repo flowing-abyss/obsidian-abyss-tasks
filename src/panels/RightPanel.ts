@@ -700,6 +700,10 @@ export class RightPanel {
     if (root !== undefined && 'source' in root) this.restoreDraftState(draft, root);
   }
 
+  dismissNestedSurface(): boolean {
+    return this.planningSurfaces_abyssPrivate.dismissNestedSurface();
+  }
+
   destroy(): void {
     this.listActivation_abyssPrivate.abort();
     this.retireTaskOwners_abyssPrivate();

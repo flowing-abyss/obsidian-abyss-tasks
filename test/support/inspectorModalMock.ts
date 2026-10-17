@@ -4,6 +4,11 @@ import { Modal } from 'obsidian-test-mocks/obsidian';
 export class InspectorModalMock extends Modal {
   private inspectorOpen = false;
 
+  // Obsidian's public history hook closes the modal; the package mock omits it.
+  onHistoryBack(): void {
+    this.close();
+  }
+
   override open(): void {
     if (!this.containerEl.hasClass('abyss-modal-backdrop')) {
       super.open();

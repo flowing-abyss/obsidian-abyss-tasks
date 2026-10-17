@@ -1,4 +1,4 @@
-import { Scope } from 'obsidian';
+import { Modal, Scope } from 'obsidian';
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { navigateTaskListTarget } from '../src/panels/center/TaskListNavigation';
@@ -13,6 +13,7 @@ import type {
   TaskResolution,
   TaskSnapshot,
 } from '../src/tasks';
+import { InteractionRegistry } from '../src/ui/interactionOwnership';
 import { TaskModal } from '../src/ui/TaskModal';
 import { PanelNavigator } from '../src/views/panelNavigation';
 import {
@@ -1726,7 +1727,7 @@ describe('TaskModal with real RightPanel', () => {
     expect(activeDocument.activeElement).toBe(repeatChip);
   });
 
-  it.each(['scope before DOM', 'DOM fallback'] as const)(
+  it.each(['native Back', 'scope before DOM', 'DOM fallback'] as const)(
     'dismisses More actions before its task modal through %s',
     async (route) => {
       const app = await createAppWithFiles({ 'f.md': '- [ ] Modal actions\n' });
@@ -1743,7 +1744,14 @@ describe('TaskModal with real RightPanel', () => {
         tasks: { queries, execute: vi.fn<TaskApplicationApi['execute']>() },
       });
       const register = vi.spyOn(Scope.prototype, 'register');
+      const nativeOpen = vi.spyOn(Modal.prototype, 'open');
       modal.open(current);
+      const host = expectDefined(nativeOpen.mock.instances[0]) as Modal;
+      const comment = expectDefined(
+        host.modalEl.querySelector<HTMLTextAreaElement>('.abyss-comment-input'),
+      );
+      comment.value = 'Keep this unsubmitted comment';
+      comment.dispatchEvent(new Event('input', { bubbles: true }));
       const modalEscape = expectDefined(
         register.mock.calls.find((call) => call[1] === 'Escape'),
       )[2];
@@ -1771,26 +1779,128 @@ describe('TaskModal with real RightPanel', () => {
         expect(modalEscape(first, context)).toBeUndefined();
         expect(first.defaultPrevented).toBe(false);
       }
-      item.dispatchEvent(first);
+      if (route === 'native Back') host.onHistoryBack();
+      else item.dispatchEvent(first);
 
-      expect(first.defaultPrevented).toBe(true);
+      if (route !== 'native Back') expect(first.defaultPrevented).toBe(true);
       expect(activeDocument.querySelector('.abyss-task-context-menu')).toBeNull();
       expect(activeDocument.querySelector('.abyss-modal')).not.toBeNull();
       expect(activeDocument.activeElement).toBe(more);
       expect(more.getAttribute('aria-expanded')).toBe('false');
+      expect(comment.isConnected).toBe(true);
+      expect(comment.value).toBe('Keep this unsubmitted comment');
 
       const second = new KeyboardEvent('keydown', {
         key: 'Escape',
         bubbles: true,
         cancelable: true,
       });
-      if (route === 'scope before DOM') expect(modalEscape(second, context)).toBe(false);
+      if (route === 'native Back') host.onHistoryBack();
+      else if (route === 'scope before DOM') expect(modalEscape(second, context)).toBe(false);
       else more.dispatchEvent(second);
 
-      expect(second.defaultPrevented).toBe(true);
+      if (route !== 'native Back') expect(second.defaultPrevented).toBe(true);
       expect(activeDocument.querySelector('.abyss-modal')).toBeNull();
     },
   );
+
+  it.each(['native Back', 'programmatic close', 'native close'] as const)(
+    'releases the inspector on %s, with nested surfaces only intercepting Back',
+    async (route) => {
+      const app = await createAppWithFiles({ 'f.md': '- [ ] Modal disposal\n' });
+      const current = task({ title: 'Modal disposal' });
+      let subscriptions = 0;
+      const queries = taskQueryApi({
+        list: () => [current],
+        resolve: () => ({ type: 'exact', task: current, basis: { observed: current } }),
+        subscribe: () => {
+          subscriptions++;
+          return () => {
+            subscriptions--;
+          };
+        },
+      });
+      const ownership = new InteractionRegistry();
+      modal = new TaskModal({
+        app,
+        statusRegistry: testStatusRegistry(),
+        settings: DEFAULT_SETTINGS,
+        queries,
+        tasks: { queries, execute: vi.fn<TaskApplicationApi['execute']>() },
+        interactionOwnership: ownership,
+      });
+      const nativeOpen = vi.spyOn(Modal.prototype, 'open');
+      modal.open(current);
+      const host = expectDefined(nativeOpen.mock.instances[0]) as Modal;
+      if (route !== 'native Back') {
+        click(
+          expectDefined(host.modalEl.querySelector<HTMLElement>('[aria-label="More actions"]')),
+        );
+        expect(host.modalEl.querySelector('.abyss-task-context-menu')).not.toBeNull();
+      }
+      expect(subscriptions).toBeGreaterThan(0);
+      expect(ownership.allows('navigate')).toBe(false);
+
+      if (route === 'native Back') host.onHistoryBack();
+      else if (route === 'native close') host.close();
+      else modal.close();
+      host.onHistoryBack();
+      modal.close();
+
+      expect(document.querySelector('.abyss-modal')).toBeNull();
+      expect(document.querySelector('.abyss-task-context-menu')).toBeNull();
+      expect(subscriptions).toBe(0);
+      expect(ownership.allows('navigate')).toBe(true);
+    },
+  );
+
+  it('dismisses the newest owned surface before cancelling the recurrence editor on native Back', async () => {
+    const app = await createAppWithFiles({ 'f.md': '- [ ] Modal repeat\n' });
+    const current = task({ title: 'Modal repeat' });
+    const queries = taskQueryApi({
+      list: () => [current],
+      resolve: () => ({ type: 'exact', task: current, basis: { observed: current } }),
+    });
+    modal = new TaskModal({
+      app,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
+      queries,
+      tasks: { queries, execute: vi.fn<TaskApplicationApi['execute']>() },
+    });
+    const nativeOpen = vi.spyOn(Modal.prototype, 'open');
+    modal.open(current);
+    const host = expectDefined(nativeOpen.mock.instances[0]) as Modal;
+    const repeat = expectDefined(host.modalEl.querySelector<HTMLElement>('.abyss-repeat-chip'));
+    click(repeat);
+    const daily = expectDefined(
+      host.modalEl.querySelector<HTMLButtonElement>('[data-recurrence-preset="daily"]'),
+    );
+    click(daily);
+    const more = expectDefined(
+      host.modalEl.querySelector<HTMLElement>('[aria-label="More actions"]'),
+    );
+    click(more);
+    expect(host.modalEl.querySelector('.abyss-recurrence-editor')).not.toBeNull();
+    expect(host.modalEl.querySelector('.abyss-task-context-menu')).not.toBeNull();
+
+    host.onHistoryBack();
+
+    expect(host.modalEl.isConnected).toBe(true);
+    expect(host.modalEl.querySelector('.abyss-task-context-menu')).toBeNull();
+    expect(pressedDailyPreset()).toBe('true');
+    expect(document.activeElement).toBe(more);
+
+    host.onHistoryBack();
+
+    expect(host.modalEl.isConnected).toBe(true);
+    expect(host.modalEl.querySelector('.abyss-recurrence-editor')).toBeNull();
+    expect(document.activeElement).toBe(repeat);
+
+    host.onHistoryBack();
+
+    expect(host.modalEl.isConnected).toBe(false);
+  });
 
   it('keeps the modal open when Escape dismisses its status menu', async () => {
     const app = await createAppWithFiles({ 'f.md': '- [ ] Modal status\n' });

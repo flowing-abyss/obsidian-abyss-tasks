@@ -344,11 +344,26 @@ export class InspectorPlanningSurfaces {
 
   readonly #planningControlKeys = new Map<Element, PlanningControlKey>();
 
-  /** The control each open anchored surface was opened from, while the surface is open. */
+  /** Each open anchored surface's opener and owned dismissal, in opening order. */
   readonly #surfaceOpeners = new Map<
     HTMLElement,
-    { anchor: HTMLElement; onReorder: ((proof: OwnedTaskSelectionProof) => void) | undefined }
+    {
+      anchor: HTMLElement;
+      dismiss: () => void;
+      onReorder: ((proof: OwnedTaskSelectionProof) => void) | undefined;
+    }
   >();
+
+  dismissNestedSurface(): boolean {
+    if (!this.#host.mounted()) return false;
+    const root = this.#host.root();
+    for (const [surface, owner] of [...this.#surfaceOpeners].reverse()) {
+      if (!surface.isConnected || !root.contains(surface)) continue;
+      owner.dismiss();
+      return true;
+    }
+    return false;
+  }
 
   /** The field of the date popover "+ date" opened, until the next render. */
   #addDateField: AddDateField | undefined;
@@ -1562,17 +1577,21 @@ export class InspectorPlanningSurfaces {
     let cleaned = false;
     let focusLeaveTimer: number | undefined;
     anchor.setAttribute('aria-expanded', 'true');
-    const dismiss = (e: MouseEvent): void => {
+    const dismissOnOutsideClick = (e: MouseEvent): void => {
       if (!menu.contains(e.target as Node) && e.target !== anchor) {
         dismissSurface();
       }
+    };
+    const dismiss = (): void => {
+      dismissSurface();
+      if (anchor.isConnected && anchor.ownerDocument === ownerDocument)
+        anchor.focus({ preventScroll: true });
     };
     const dismissOnEscape = (e: KeyboardEvent): void => {
       if (e.key !== 'Escape' || isImeOwnedEvent(e)) return;
       e.preventDefault();
       e.stopPropagation();
-      dismissSurface();
-      anchor.focus({ preventScroll: true });
+      dismiss();
     };
     const dismissAfterFocusLeaves = (): void => {
       if (options.focusLeaveDelay === undefined) return;
@@ -1589,7 +1608,7 @@ export class InspectorPlanningSurfaces {
     }
     let registrationTimer = ownerWindow?.setTimeout(() => {
       registrationTimer = undefined;
-      ownerDocument.addEventListener('click', dismiss, true);
+      ownerDocument.addEventListener('click', dismissOnOutsideClick, true);
       listening = true;
     }, 0);
     const cleanup = (): void => {
@@ -1598,7 +1617,7 @@ export class InspectorPlanningSurfaces {
       placementCleanup?.();
       clearOptionalTimer(ownerWindow, registrationTimer);
       clearOptionalTimer(ownerWindow, focusLeaveTimer);
-      if (listening) ownerDocument.removeEventListener('click', dismiss, true);
+      if (listening) ownerDocument.removeEventListener('click', dismissOnOutsideClick, true);
       ownerDocument.removeEventListener('keydown', dismissOnEscape, true);
       if (options.focusLeaveDelay !== undefined) {
         menu.removeEventListener('focusout', dismissAfterFocusLeaves);
@@ -1612,7 +1631,7 @@ export class InspectorPlanningSurfaces {
       }
     };
     this.#anchoredSurfaceCleanups.set(menu, cleanup);
-    this.#surfaceOpeners.set(menu, { anchor, onReorder: options.onReorder });
+    this.#surfaceOpeners.set(menu, { anchor, dismiss, onReorder: options.onReorder });
   }
 
   registerStatusMarker(marker: HTMLElement, task: TaskLike): void {

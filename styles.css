@@ -5588,7 +5588,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
 .abyss-modal-backdrop {
   position: fixed;
-  inset: 0;
+  inset: 0 0 max(0px, var(--keyboard-height, 0px));
   z-index: var(--layer-modal, 50);
   display: flex;
   align-items: center;
@@ -5610,7 +5610,7 @@ body.abyss-modal-open .popover.hover-popover {
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-l, 8px);
   width: min(480px, calc(100vw - 32px));
-  max-height: 80vh;
+  max-height: min(80vh, calc(100% - var(--size-4-8)));
   overflow-y: auto;
   box-shadow: var(--shadow-l, none);
 }

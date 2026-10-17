@@ -79,6 +79,7 @@ interface HierarchyContinuation {
 class TaskModalHost extends Modal {
   constructor(
     app: App,
+    private readonly dismissNested: () => boolean,
     private readonly closed: () => void,
   ) {
     super(app);
@@ -90,6 +91,10 @@ class TaskModalHost extends Modal {
     this.modalEl.setAttribute('aria-label', 'Task details');
     this.modalEl.setAttribute('role', 'dialog');
     this.modalEl.setAttribute('aria-modal', 'true');
+  }
+
+  override onHistoryBack(): void {
+    if (!this.dismissNested()) this.close();
   }
 
   override onClose(): void {
@@ -180,11 +185,17 @@ export class TaskModal {
         this.ownedWriteRef_abyssPrivate = undefined;
     });
 
-    const host = new TaskModalHost(this.app_abyssPrivate, () => {
-      if (this.host_abyssPrivate !== host) return;
-      this.host_abyssPrivate = null;
-      this.closeFromUser_abyssPrivate();
-    });
+    const host = new TaskModalHost(
+      this.app_abyssPrivate,
+      (): boolean =>
+        this.host_abyssPrivate === host &&
+        this.innerPanel_abyssPrivate?.dismissNestedSurface() === true,
+      () => {
+        if (this.host_abyssPrivate !== host) return;
+        this.host_abyssPrivate = null;
+        this.closeFromUser_abyssPrivate();
+      },
+    );
     this.host_abyssPrivate = host;
     const backdrop = host.containerEl;
     this.backdropEl_abyssPrivate = backdrop;

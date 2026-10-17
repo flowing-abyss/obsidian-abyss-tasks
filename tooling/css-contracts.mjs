@@ -94,6 +94,12 @@ const core = Object.fromEntries(
   ),
 );
 Object.assign(core, {
+  '--keyboard-height': {
+    source:
+      'Obsidian 1.14.4 Android 15 runtime CSSOM, 2026-10-17; body supplies 336.38095px while Gboard is open and the viewport remains 915px. No minimum-runtime proof.',
+    minimum: false,
+    fallback: '0px',
+  },
   '--highlight-background': {
     source:
       'Obsidian Default CSSOM, 2026-10-06; `.search-result-file-matched-text` uses background-color: var(--highlight-background), whose host definition is var(--text-highlight-bg, var(--highlight-background-yellow)). No minimum-runtime proof.',

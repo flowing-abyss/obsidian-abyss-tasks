@@ -345,7 +345,12 @@ describe('CenterPanel task-card primary row', () => {
       const recurrence = expectDefined(
         titleRow.querySelector<HTMLElement>('.abyss-recurrence-badge'),
       );
-      expect(recurrence.nextElementSibling?.classList.contains('abyss-task-title')).toBe(true);
+      const badges = expectDefined(titleRow.querySelector<HTMLElement>('.abyss-task-badges'));
+      const title = expectDefined(titleRow.querySelector<HTMLElement>('.abyss-task-title'));
+      expect(recurrence.parentElement).toBe(badges);
+      expect(badges.parentElement).toBe(titleRow);
+      expect(badges.nextElementSibling?.tagName).toBe('WBR');
+      expect(badges.nextElementSibling?.nextElementSibling).toBe(title);
 
       const body = expectDefined(mainRow.querySelector<HTMLElement>('.abyss-task-body'));
       const description = expectDefined(card.querySelector<HTMLElement>('.abyss-task-desc'));

@@ -365,9 +365,12 @@ and settings. Its outer render still settles inline sessions while hidden.
 | [TaskModal](src/ui/TaskModal.ts)                    | The same inspector with local AppState, hosted in a native Obsidian Modal                        |
 | [CalendarSettingsTab](src/settings/SettingsTab.ts)  | Settings staging, persistence, retry, and semantic rebuild; section owners render controls       |
 
-TaskModal delegates platform Back and scope stacking to the native Modal host. Its facade owns
-one cleanup path for the local inspector, subscriptions, drafts, tracking ticker and interaction
-lease. The host uses the inspector's guarded Escape scope; nested editors and IME keep priority.
+TaskModal delegates platform Back and scope stacking to the native Modal host. The host's public
+Back hook first asks RightPanel to dismiss its newest owned planning surface through that surface's
+existing cancellation and focus path; Back closes the modal when no nested surface remains.
+Its facade owns one cleanup path for the local inspector, subscriptions, drafts, tracking ticker
+and interaction lease. Programmatic close always disposes the inspector. The host uses the
+inspector's guarded Escape scope; nested editors and IME keep priority.
 Native selection restoration is disabled so explicit close restores only a connected opener when
 focus still belongs to the modal. Programmatic replacement and deletion do not restore focus.
 
