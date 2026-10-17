@@ -260,8 +260,11 @@ describe('center dependency indicator DOM', () => {
         ).toBe(true);
       } else {
         const group = expectDefined(indicator);
-        expect(group.parentElement?.matches('.abyss-task-title-row')).toBe(true);
-        expect(group.nextElementSibling?.matches('.abyss-task-title')).toBe(true);
+        const badges = expectDefined(group.parentElement);
+        expect(badges.matches('.abyss-task-badges')).toBe(true);
+        const boundary = expectDefined(badges.nextElementSibling);
+        expect(boundary.tagName).toBe('WBR');
+        expect(boundary.nextElementSibling).toBe(row.querySelector('.abyss-task-title'));
         expect(group.querySelectorAll('svg')).toHaveLength(1);
         expect(
           [...group.querySelectorAll('[data-dependency-count]')].map((count) => count.textContent),
@@ -289,7 +292,7 @@ describe('center dependency indicator DOM', () => {
     mountCenter(h);
     const row = element(h.el, '.abyss-task-card.is-selected .abyss-task-card-main-row');
 
-    expect(row.querySelector('.abyss-task-title-row > .abyss-dep-indicator')).not.toBeNull();
+    expect(row.querySelector('.abyss-task-badges > .abyss-dep-indicator')).not.toBeNull();
     expect(row.querySelector(':scope > .abyss-task-delete-btn')).not.toBeNull();
     expect(row.classList.contains('abyss-task-card-main-row--has-dep')).toBe(false);
     expect(row.classList.contains('abyss-task-card-main-row--has-delete')).toBe(true);
@@ -555,7 +558,7 @@ describe('strict dependency checkbox surfaces', () => {
       if (!surface.startsWith('inspector')) {
         const indicator = element(row, '.abyss-dep-indicator');
         if (['center', 'search'].includes(surface))
-          expect(indicator.parentElement?.matches('.abyss-task-title-row')).toBe(true);
+          expect(indicator.parentElement?.matches('.abyss-task-badges')).toBe(true);
         else expect(indicator.previousElementSibling).toBe(wrapper);
       }
     },

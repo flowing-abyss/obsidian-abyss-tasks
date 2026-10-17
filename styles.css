@@ -2397,17 +2397,17 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
    icon, so its baseline is the icon's bottom edge. The same strut as the marker's gives the lock a
    baseline half a cap height below its centre, so the icon centres on the title's caps instead of
    sitting on the baseline. */
-.abyss-task-title-row > .abyss-dep-indicator {
+.abyss-task-badges > .abyss-dep-indicator {
   min-height: var(--abyss-task-card-marker-size);
   margin-inline-end: var(--size-4-1);
   vertical-align: baseline;
 }
 
-.abyss-task-title-row > .abyss-dep-indicator > .abyss-dep-lock {
+.abyss-task-badges > .abyss-dep-indicator > .abyss-dep-lock {
   align-items: center;
 }
 
-.abyss-task-title-row > .abyss-dep-indicator > .abyss-dep-lock::before {
+.abyss-task-badges > .abyss-dep-indicator > .abyss-dep-lock::before {
   content: '';
   inline-size: 0;
   block-size: calc(2 * var(--abyss-task-card-cap-half));
@@ -2612,32 +2612,37 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
    that same baseline so it centres on the digits on every font rather than on a line box whose
    glyph position depends on the font's ascent. Neither badge reaches above the line's ascent or
    below its descent at the host's UI sizes, so the line keeps its height. */
-.abyss-task-title-row > :is(.abyss-task-count-badge, .abyss-recurrence-badge) {
+.abyss-task-badges > :is(.abyss-task-count-badge, .abyss-recurrence-badge) {
   margin-inline-end: var(--size-2-3);
 }
 
-.abyss-task-title-row > .abyss-task-count-badge {
-  display: inline;
+.abyss-task-badges > .abyss-task-count-badge {
+  display: inline-block;
   white-space: nowrap;
   vertical-align: calc(var(--abyss-task-card-cap-half) - var(--abyss-task-card-cap-ratio) * 1em);
 }
 
-.abyss-task-title-row > .abyss-task-count-badge > svg {
+.abyss-task-badges > .abyss-task-count-badge > svg {
   margin-inline-end: var(--size-2-1);
   vertical-align: calc(
     var(--abyss-task-card-cap-ratio) * 1em - var(--abyss-task-count-badge-icon-size) / 2
   );
 }
 
-.abyss-task-title-row > .abyss-recurrence-badge {
+.abyss-task-badges > .abyss-recurrence-badge {
   vertical-align: calc(
     var(--abyss-task-card-cap-half) - var(--abyss-recurrence-badge-icon-size) / 2
   );
 }
 
+.abyss-task-badges {
+  display: inline-block;
+  max-inline-size: 100%;
+}
+
 .abyss-task-title {
   display: inline;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
   font-size: var(--font-ui-medium);
   color: var(--text-normal);
 }
@@ -3250,9 +3255,10 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   row-gap: var(--size-4-4);
 }
 
-/* Keep the date tray intrinsic while allowing its month label to shrink. */
+/* Keep date controls intrinsic; oversized text uses the navigation's horizontal overflow. */
 :is(.abyss-cal-nav-left, .abyss-cal-nav-title-group) {
   flex-wrap: nowrap;
+  flex-shrink: 0;
   min-block-size: 0;
   min-inline-size: 0;
   gap: 0;
@@ -10858,7 +10864,7 @@ button.abyss-calendar-date[aria-pressed='true'] {
   button.abyss-cal-nav-month {
     flex: 0 1 auto;
     inline-size: auto;
-    min-inline-size: 3ch;
+    min-inline-size: max-content;
   }
 
   button.abyss-cal-nav-year {
@@ -10871,8 +10877,6 @@ button.abyss-calendar-date[aria-pressed='true'] {
 
   .abyss-cal-title-compact {
     display: block;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
 
   .abyss-cal-control-icon {
@@ -10903,9 +10907,18 @@ button.abyss-calendar-date[aria-pressed='true'] {
 
 /* A 320px phone leaves 272px beside the rail; keep all eight controls on that row. */
 @container abyss-task-list (max-width: 20rem) {
-  .abyss-cal-nav {
+  .abyss-cal-nav,
+  body.is-phone .abyss-panel-view .abyss-cal-nav {
     padding-inline: var(--size-4-1);
     gap: var(--size-2-1);
+  }
+
+  .abyss-cal-nav-right {
+    gap: var(--size-2-1);
+  }
+
+  .abyss-cal-view-switcher {
+    gap: 0;
   }
 
   .abyss-cal-nav button:is(.abyss-cal-nav-btn, .abyss-cal-nav-today, .abyss-cal-view-btn) {

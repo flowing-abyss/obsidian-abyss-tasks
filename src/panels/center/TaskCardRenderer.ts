@@ -642,16 +642,18 @@ export class TaskCardRenderer {
     context.badges.length = 0;
     for (const child of Array.from(titleRow.children)) if (child !== title) child.remove();
     const node = cardNode(task, context.flags);
-    this.#renderCardRecurrence(hosts, node, context.flags);
+    const badges = titleRow.createSpan({ cls: 'abyss-task-badges' });
+    this.#renderCardRecurrence({ mainRow: hosts.mainRow, titleRow: badges }, node, context.flags);
     renderDependencyIndicator(
-      titleRow,
+      badges,
       'source' in node
         ? this.#host.dependenciesFor(node)
         : this.#host.dependenciesForNode(taskNodeRef(node)),
     );
-    this.#renderCountBadges(titleRow, node, context);
+    this.#renderCountBadges(badges, node, context);
     // Only new decoration nodes move; the focused Markdown subtree stays connected.
-    for (const child of Array.from(titleRow.children)) if (child !== title) title.before(child);
+    if (badges.childElementCount > 0) title.before(badges, titleRow.createEl('wbr'));
+    else badges.remove();
   }
 
   #renderCardRecurrence(
@@ -866,12 +868,15 @@ export class TaskCardRenderer {
   #renderBody(mainRow: HTMLElement, task: TaskSnapshot, flags?: TaskCardFlags): HTMLElement {
     const body = mainRow.createDiv({ cls: 'abyss-task-body' });
     const titleRow = body.createDiv({ cls: 'abyss-task-title-row' });
-    renderDependencyIndicator(titleRow, this.#host.dependenciesFor(task));
+    const badges = titleRow.createSpan({ cls: 'abyss-task-badges' });
+    renderDependencyIndicator(badges, this.#host.dependenciesFor(task));
     const recurrence = task.recurrence;
     if (flags?.search?.mode !== 'search' && recurrence !== undefined && recurrence !== '') {
-      renderRecurrenceBadge(titleRow, recurrenceBadgeInput(recurrence));
+      renderRecurrenceBadge(badges, recurrenceBadgeInput(recurrence));
     }
-    this.#renderCountBadges(titleRow, task);
+    this.#renderCountBadges(badges, task);
+    if (badges.childElementCount > 0) titleRow.createEl('wbr');
+    else badges.remove();
     const titleEl = titleRow.createSpan({ cls: 'abyss-task-title' });
     this.#renderTitle(titleEl, task, undefined, flags);
     if (flags?.search === undefined) this.#renderDescription(body, task);

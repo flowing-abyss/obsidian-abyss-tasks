@@ -45,14 +45,14 @@ describe('CenterPanel task metadata styles', () => {
       '.abyss-task-delete-btn',
     ].map((child) => declarationsFor(`.abyss-task-card-main-row > ${child}`));
     const metadata = declarationsFor('.abyss-task-card-main-row > .abyss-task-meta-right');
-    const dependency = declarationsFor('.abyss-task-title-row > .abyss-dep-indicator');
+    const dependency = declarationsFor('.abyss-task-badges > .abyss-dep-indicator');
     const deleteStrut = declarationsFor(
       '.abyss-task-card-main-row > .abyss-task-delete-btn::before',
     );
     const compact = atRuleBlock('@container abyss-task-list (max-width: 28rem)');
     const titleRow = declarationsFor('.abyss-task-title-row');
-    const recurrenceBadge = declarationsFor('.abyss-task-title-row > .abyss-recurrence-badge');
-    const countBadge = declarationsFor('.abyss-task-title-row > .abyss-task-count-badge');
+    const recurrenceBadge = declarationsFor('.abyss-task-badges > .abyss-recurrence-badge');
+    const countBadge = declarationsFor('.abyss-task-badges > .abyss-task-count-badge');
     const title = declarationsFor('.abyss-task-title');
     const chips = declarationsFor('.abyss-task-card .abyss-task-meta-right > *');
     const deleteButton = declarationsFor('.abyss-task-delete-btn');
@@ -97,9 +97,9 @@ describe('CenterPanel task metadata styles', () => {
     expect(deleteStrut).toContain('block-size: calc(2 * var(--abyss-task-card-cap-half))');
     // The indicator's lock is an inline-flex box around the icon, so its baseline would be the
     // icon's bottom edge; the same strut centres the icon on the caps.
-    const lock = declarationsFor('.abyss-task-title-row > .abyss-dep-indicator > .abyss-dep-lock');
+    const lock = declarationsFor('.abyss-task-badges > .abyss-dep-indicator > .abyss-dep-lock');
     const lockStrut = declarationsFor(
-      '.abyss-task-title-row > .abyss-dep-indicator > .abyss-dep-lock::before',
+      '.abyss-task-badges > .abyss-dep-indicator > .abyss-dep-lock::before',
     );
     expect(lock).toContain('align-items: center');
     expect(lockStrut).toContain("content: ''");
@@ -133,12 +133,12 @@ describe('CenterPanel task metadata styles', () => {
     // The count badge is inline text: the digits sit on its baseline, raised so their cap centre
     // is the title's, and the icon is placed from that baseline so it centres on the digits on
     // every font.
-    expect(countBadge).toContain('display: inline');
+    expect(countBadge).toContain('display: inline-block');
     expect(countBadge).toContain('white-space: nowrap');
     expect(flat(countBadge)).toContain(
       'vertical-align:calc(var(--abyss-task-card-cap-half)-var(--abyss-task-card-cap-ratio)*1em)',
     );
-    const countBadgeIcon = declarationsFor('.abyss-task-title-row > .abyss-task-count-badge > svg');
+    const countBadgeIcon = declarationsFor('.abyss-task-badges > .abyss-task-count-badge > svg');
     expect(countBadgeIcon).toContain('margin-inline-end: var(--size-2-1)');
     expect(flat(countBadgeIcon)).toContain(
       'vertical-align:calc(var(--abyss-task-card-cap-ratio)*1em-var(--abyss-task-count-badge-icon-size)/2)',

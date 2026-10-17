@@ -1231,7 +1231,9 @@ it('keeps dependency decoration inside the title on initial and retained renderi
   const flags = { selected: false, showDelete: false };
   const mount = h.subject.mount(document.body, original, [], flags);
   const titleRow = expectDefined(mount.element.querySelector<HTMLElement>('.abyss-task-title-row'));
-  expect(mount.element.querySelector('.abyss-dep-indicator')?.parentElement).toBe(titleRow);
+  expect(mount.element.querySelector('.abyss-dep-indicator')?.parentElement).toBe(
+    titleRow.querySelector('.abyss-task-badges'),
+  );
   expect(
     mount.element
       .querySelector('.abyss-task-body')
@@ -1239,12 +1241,14 @@ it('keeps dependency decoration inside the title on initial and retained renderi
   ).toBe(true);
   mount.update(task({ description: 'Body', status: 'done', statusSymbol: 'x' }), [], flags);
   expect(mount.element.querySelectorAll('.abyss-dep-indicator')).toHaveLength(1);
-  expect(mount.element.querySelector('.abyss-dep-indicator')?.parentElement).toBe(titleRow);
+  expect(mount.element.querySelector('.abyss-dep-indicator')?.parentElement).toBe(
+    titleRow.querySelector('.abyss-task-badges'),
+  );
   expect(mount.element.querySelector('.abyss-dep-indicator')?.hasAttribute('title')).toBe(false);
   mount.destroy();
   const legacy = h.subject.render(document.body, original, [], flags);
   expect(
-    legacy.querySelector('.abyss-dep-indicator')?.parentElement?.matches('.abyss-task-title-row'),
+    legacy.querySelector('.abyss-dep-indicator')?.parentElement?.matches('.abyss-task-badges'),
   ).toBe(true);
 });
 
@@ -2122,6 +2126,48 @@ it.each([
   },
 );
 
+it('keeps header badges together before a title break without moving connected links', async () => {
+  const h = renderer();
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _text, holder) => {
+    holder.createEl('a', { href: 'https://example.com', text: 'Source' });
+  });
+  const source = task({
+    title: '[Source](https://example.com)',
+    recurrence: 'every day',
+    comments: [taskComment({ text: 'Note' })],
+    presentation: { linkCount: 1 },
+  });
+  const flags = { selected: false, showDelete: false };
+  const mount = h.subject.mount(document.body, source, [], flags);
+  await mount.settled;
+  const row = expectDefined(mount.element.querySelector('.abyss-task-title-row'));
+  const title = expectDefined(row.querySelector('.abyss-task-title'));
+  const link = expectDefined(title.querySelector('a'));
+  const observer = new MutationObserver(() => {});
+  observer.observe(row, { subtree: true, childList: true });
+  const assertGrouping = (card: HTMLElement): void => {
+    const header = expectDefined(card.querySelector('.abyss-task-title-row'));
+    const badges = expectDefined(header.querySelector(':scope > .abyss-task-badges'));
+    expect(badges.querySelectorAll('.abyss-recurrence-badge')).toHaveLength(1);
+    expect(badges.querySelectorAll('.abyss-task-count-badge')).toHaveLength(2);
+    const boundary = expectDefined(badges.nextElementSibling);
+    expect(boundary.tagName).toBe('WBR');
+    expect(boundary.nextElementSibling).toBe(header.querySelector('.abyss-task-title'));
+  };
+  assertGrouping(mount.element);
+  mount.update(task({ ...source, recurrence: 'every week' }), [], flags);
+  assertGrouping(mount.element);
+  assertGrouping(h.subject.render(document.body, source, [], flags));
+  await mount.settled;
+  expect(row.querySelector('.abyss-task-title')).toBe(title);
+  expect(title.querySelector('a')).toBe(link);
+  expect(link.isConnected).toBe(true);
+  for (const record of observer.takeRecords())
+    for (const removed of record.removedNodes) expect(removed.contains(link)).toBe(false);
+  observer.disconnect();
+  mount.destroy();
+});
+
 it('keeps materialized recurrence in the title with its canonical status control', async () => {
   const h = renderer();
   const mount = h.subject.mount(document.body, task({ recurrence: 'every day' }), [], {
@@ -2136,7 +2182,7 @@ it('keeps materialized recurrence in the title with its canonical status control
   });
   await mount.settled;
   expect(
-    mount.element.querySelector('.abyss-task-title-row > .abyss-recurrence-badge'),
+    mount.element.querySelector('.abyss-task-badges > .abyss-recurrence-badge'),
   ).not.toBeNull();
   expect(mount.element.querySelectorAll('.abyss-recurrence-badge')).toHaveLength(1);
   expect(
