@@ -684,7 +684,7 @@ function modalNestedEscapeOwner(event: KeyboardEvent, doc: Document): boolean {
   // Existing editor/popover DOM handlers get their cancellation before the modal fallback.
   const popover = (value: EventTarget | null): boolean =>
     typeof (value as Element | null)?.closest === 'function' &&
-    (value as Element).closest('.abyss-popover') !== null;
+    (value as Element).closest('.abyss-popover, .abyss-task-context-menu') !== null;
   return (
     localSearchEditorOwnsEvent(event, doc) ||
     popover(doc.activeElement) ||

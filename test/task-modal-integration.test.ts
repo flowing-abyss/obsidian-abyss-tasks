@@ -1726,6 +1726,72 @@ describe('TaskModal with real RightPanel', () => {
     expect(activeDocument.activeElement).toBe(repeatChip);
   });
 
+  it.each(['scope before DOM', 'DOM fallback'] as const)(
+    'dismisses More actions before its task modal through %s',
+    async (route) => {
+      const app = await createAppWithFiles({ 'f.md': '- [ ] Modal actions\n' });
+      const current = task({ title: 'Modal actions' });
+      const queries = taskQueryApi({
+        list: () => [current],
+        resolve: () => ({ type: 'exact', task: current, basis: { observed: current } }),
+      });
+      modal = new TaskModal({
+        app,
+        statusRegistry: testStatusRegistry(),
+        settings: DEFAULT_SETTINGS,
+        queries,
+        tasks: { queries, execute: vi.fn<TaskApplicationApi['execute']>() },
+      });
+      const register = vi.spyOn(Scope.prototype, 'register');
+      modal.open(current);
+      const modalEscape = expectDefined(
+        register.mock.calls.find((call) => call[1] === 'Escape'),
+      )[2];
+      const context = { key: 'Escape', vkey: 'Escape', modifiers: '' };
+      const more = expectDefined(
+        activeDocument.querySelector<HTMLButtonElement>(
+          '.abyss-modal .abyss-right-header-actions [aria-label="More actions"]',
+        ),
+      );
+      more.focus();
+      click(more);
+      const menu = expectDefined(
+        activeDocument.querySelector<HTMLElement>('.abyss-modal .abyss-task-context-menu'),
+      );
+      const item = expectDefined(menu.querySelector<HTMLElement>('[role="menuitem"]'));
+      expect(activeDocument.activeElement).toBe(item);
+      expect(more.getAttribute('aria-expanded')).toBe('true');
+
+      const first = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      });
+      if (route === 'scope before DOM') {
+        expect(modalEscape(first, context)).toBeUndefined();
+        expect(first.defaultPrevented).toBe(false);
+      }
+      item.dispatchEvent(first);
+
+      expect(first.defaultPrevented).toBe(true);
+      expect(activeDocument.querySelector('.abyss-task-context-menu')).toBeNull();
+      expect(activeDocument.querySelector('.abyss-modal')).not.toBeNull();
+      expect(activeDocument.activeElement).toBe(more);
+      expect(more.getAttribute('aria-expanded')).toBe('false');
+
+      const second = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      });
+      if (route === 'scope before DOM') expect(modalEscape(second, context)).toBe(false);
+      else more.dispatchEvent(second);
+
+      expect(second.defaultPrevented).toBe(true);
+      expect(activeDocument.querySelector('.abyss-modal')).toBeNull();
+    },
+  );
+
   it('keeps the modal open when Escape dismisses its status menu', async () => {
     const app = await createAppWithFiles({ 'f.md': '- [ ] Modal status\n' });
     const current = task({
