@@ -151,8 +151,10 @@ export class ConstrainedCalendarView extends BaseView {
     renderAddTaskTrigger(bottom, () => {
       this.callbacks.onCreateAtDate(date);
     });
-    list.scrollTop = scroll;
-    this.restoreAgendaScrollAfterSettlement(list, scroll);
+    if (scroll !== 0) {
+      list.scrollTop = scroll;
+      this.restoreAgendaScrollAfterSettlement(list, scroll);
+    }
   }
 
   private agendaScrollOffset(): number {

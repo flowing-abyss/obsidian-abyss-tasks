@@ -176,6 +176,49 @@ describe('constrained calendar', () => {
     expect(h.container.querySelector('.abyss-calendar-agenda-list')?.scrollTop).toBe(0);
   });
 
+  it.each([
+    ['initial', 0, false],
+    ['initial', 120, false],
+    ['initial', 120, true],
+    ['date change', 0, false],
+    ['date change', 120, false],
+    ['date change', 120, true],
+  ] as const)(
+    'keeps a %s agenda at its current offset %i after delayed text (scroll event=%s)',
+    async (origin, offset, event) => {
+      const renders: Array<ReturnType<typeof deferred<void>>> = [];
+      vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _text, container) => {
+        const pending = deferred<void>();
+        renders.push(pending);
+        await pending.promise;
+        container.createEl('strong', { text: 'Settled title' });
+      });
+      const h = mount(
+        project([
+          task({ title: '**First**', planning: { due: date } }),
+          task({ title: '**Second**', source: { line: 3 }, planning: { due: '2026-10-17' } }),
+        ]),
+      );
+      if (origin === 'date change') {
+        expectDefined(
+          h.container.querySelector<HTMLElement>('.abyss-calendar-agenda-list'),
+        ).scrollTop = 480;
+        h.view.selectDate(localDate('2026-10-17'));
+      }
+      const list = expectDefined(
+        h.container.querySelector<HTMLElement>('.abyss-calendar-agenda-list'),
+      );
+      expect(list.scrollTop).toBe(0);
+      expect(list.querySelector('strong')).toBeNull();
+      list.scrollTop = offset;
+      if (event) list.dispatchEvent(new Event('scroll'));
+      for (const render of renders) render.resolve();
+      await flushMicrotasks();
+      expect(list.querySelector('strong')?.textContent).toBe('Settled title');
+      expect(list.scrollTop).toBe(offset);
+    },
+  );
+
   it('restores a same-day offset after rich text expands the initially clamped list', async () => {
     const h = pendingAgendaRefresh();
     expect(h.list.scrollTop).toBe(300);
