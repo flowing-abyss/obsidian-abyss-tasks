@@ -431,7 +431,10 @@ Its mounted center owner supplies the available width; an owner-window observer 
 and rebuilds Month/Week only when the width category changes. ConstrainedCalendarView builds a
 bounded calendar day model per publication and retains its date buttons. Selecting a date reads that model
 and replaces the agenda without querying or projecting occurrences again. CenterPanel supplies agenda mounts from its retained TaskCardRenderer with exact source ancestry.
-The view destroys those mounts before replacing a day. A narrow calendar policy supplies activation
+The view captures scroll before destroying those mounts and replacing a day. It owns agenda scroll
+anchoring and restores the same-day offset again when the current card receipts are ready, including
+an offset clamped by unfinished rich text. A user scroll or retired list revokes that correction.
+Date changes reset the offset. A narrow calendar policy supplies activation
 and occurrence planning; forecasts omit mutation controls, editable links, drag/drop, tracking, and
 writable presentation identity. Materialized rows retain canonical commands and status menus.
 Agenda focus does not write inspector selection or install list multiselection; only native row

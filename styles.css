@@ -10748,6 +10748,7 @@ button.abyss-calendar-date[aria-pressed='true'] {
 }
 
 .abyss-calendar-agenda-list {
+  overflow-anchor: none;
   min-block-size: 0;
   flex: 1 1 auto;
   overflow: auto;

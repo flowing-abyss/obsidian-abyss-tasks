@@ -1,7 +1,9 @@
 import { moment } from '../obsidianMoment';
 import type { ResolvedConfig } from '../settings/types';
 import type { LocalDate, TaskSnapshot } from '../tasks';
+import { runAsyncAction } from '../ui/runAsyncAction';
 import { renderAddTaskTrigger } from '../ui/taskCapture/renderAddTaskTrigger';
+import type { TaskTextRender } from '../ui/taskRenderScope';
 import { BaseView } from './BaseView';
 import type { MonthGridViewCallbacks } from './MonthGridView';
 import {
@@ -13,6 +15,7 @@ import { calendarOccurrenceLookup } from './timegrid/renderTaskMeta';
 
 export interface CalendarAgendaRowMount {
   readonly element: HTMLElement;
+  readonly settled: TaskTextRender['settled'];
   destroy(): void;
 }
 interface CalendarAgendaRowActions {
@@ -44,6 +47,12 @@ export class ConstrainedCalendarView extends BaseView {
   private readonly buttons = new Map<LocalDate, HTMLButtonElement>();
   private model: ReadonlyMap<LocalDate, CalendarDaySummary> = new Map();
   private readonly agendaMounts: CalendarAgendaRowMount[] = [];
+  private agendaScroll: {
+    readonly list: HTMLElement;
+    readonly target: number;
+    readonly isUnchanged: () => boolean;
+    readonly cancel: () => void;
+  } | null = null;
 
   constructor(private readonly callbacks: ConstrainedCalendarViewCallbacks) {
     super();
@@ -119,10 +128,7 @@ export class ConstrainedCalendarView extends BaseView {
     const summary = this.model.get(date);
     if (this.agenda === null || summary === undefined) return;
     const previous = this.agenda.dataset['calendarDate'];
-    const scroll =
-      previous === date
-        ? (this.agenda.querySelector('.abyss-calendar-agenda-list')?.scrollTop ?? 0)
-        : 0;
+    const scroll = previous === date ? this.agendaScrollOffset() : 0;
     this.callbacks.forecastMenuOwner?.dismiss();
     this.destroyAgendaRows();
     for (const [day, button] of this.buttons)
@@ -146,6 +152,52 @@ export class ConstrainedCalendarView extends BaseView {
       this.callbacks.onCreateAtDate(date);
     });
     list.scrollTop = scroll;
+    this.restoreAgendaScrollAfterSettlement(list, scroll);
+  }
+
+  private agendaScrollOffset(): number {
+    const list = this.agenda?.querySelector<HTMLElement>('.abyss-calendar-agenda-list');
+    const pending = this.agendaScroll;
+    if (pending !== null && pending.list === list && pending.isUnchanged()) return pending.target;
+    return list?.scrollTop ?? 0;
+  }
+
+  private restoreAgendaScrollAfterSettlement(list: HTMLElement, target: number): void {
+    const initial = list.scrollTop;
+    let changed = false;
+    const onScroll = (): void => {
+      if (list.scrollTop !== initial) changed = true;
+    };
+    const mounts = this.agendaMounts.map((mount) => ({ mount, receipt: mount.settled }));
+    const pending = {
+      list,
+      target,
+      isUnchanged: () => !changed && list.scrollTop === initial,
+      cancel: () => {
+        list.removeEventListener('scroll', onScroll);
+        if (this.agendaScroll === pending) this.agendaScroll = null;
+      },
+    };
+    this.agendaScroll = pending;
+    list.addEventListener('scroll', onScroll);
+    runAsyncAction(
+      Promise.all(mounts.map(({ receipt }) => receipt))
+        .then((outcomes) => {
+          if (
+            this.agendaScroll === pending &&
+            list.isConnected &&
+            pending.isUnchanged() &&
+            outcomes.every((outcome) => outcome.type === 'ready') &&
+            mounts.every(
+              ({ mount, receipt }) =>
+                mount.settled === receipt && mount.element.parentElement === list,
+            )
+          )
+            list.scrollTop = target;
+        })
+        .finally(pending.cancel),
+      'Could not restore calendar agenda scroll',
+    );
   }
 
   private renderEntries(
@@ -162,6 +214,7 @@ export class ConstrainedCalendarView extends BaseView {
   }
 
   private destroyAgendaRows(): void {
+    this.agendaScroll?.cancel();
     for (const mount of this.agendaMounts.splice(0)) mount.destroy();
   }
 
