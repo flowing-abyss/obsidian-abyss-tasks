@@ -10901,6 +10901,11 @@ button.abyss-calendar-date[aria-pressed='true'] {
 
 /* A 320px phone leaves 272px beside the rail; keep all eight controls on that row. */
 @container abyss-task-list (max-width: 20rem) {
+  .abyss-cal-nav {
+    padding-inline: var(--size-4-1);
+    gap: var(--size-2-1);
+  }
+
   .abyss-cal-nav :is(.abyss-cal-nav-left, .abyss-cal-nav-title-group) {
     flex: 1 1 auto;
     min-inline-size: min-content;
