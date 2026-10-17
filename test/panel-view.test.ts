@@ -3440,25 +3440,46 @@ describe('PanelView', () => {
       expect(destroy).toHaveBeenCalledOnce();
     });
 
-    it('supplies one live interaction registry to both panels and destroys it after panel teardown', async () => {
+    it('shares shortcut ownership through the inspector scope and disposes both registries on close', async () => {
       const internals = view as unknown as {
         interactionRegistry_abyssPrivate: InteractionRegistry<string>;
-        center_abyssPrivate: { interactionOwnership_abyssPrivate: unknown };
-        right_abyssPrivate: { interactionOwnership_abyssPrivate: unknown };
+        center_abyssPrivate: { interactionOwnership_abyssPrivate: InteractionRegistry<string> };
+        right_abyssPrivate: { interactionOwnership_abyssPrivate: InteractionRegistry<string> };
       };
       const registry = internals.interactionRegistry_abyssPrivate;
+      const center = internals.center_abyssPrivate.interactionOwnership_abyssPrivate;
+      const inspector = internals.right_abyssPrivate.interactionOwnership_abyssPrivate;
+      const destroyRegistry = vi.spyOn(registry, 'destroy');
+      const destroyInspector = vi.spyOn(inspector, 'destroy');
 
       expect(registry).toBeDefined();
-      expect(internals.center_abyssPrivate.interactionOwnership_abyssPrivate).toBe(registry);
-      expect(internals.right_abyssPrivate.interactionOwnership_abyssPrivate).toBe(registry);
-      registry.acquire({ blocksShortcuts: true });
+      expect(center).toBe(registry);
+      const independent = center.acquire({ blocksShortcuts: true, allowActions: ['navigate'] });
+      expect(registry.allows('navigate')).toBe(true);
+      expect(registry.allows('openCalendar')).toBe(false);
+      const nested = inspector.acquire({ blocksShortcuts: true });
       expect(registry.allows('navigate')).toBe(false);
+      nested.release();
+      expect(registry.allows('navigate')).toBe(true);
+      expect(registry.allows('openCalendar')).toBe(false);
+      independent.release();
+      expect(registry.allows('openCalendar')).toBe(true);
+
+      registry.acquire({ blocksShortcuts: true });
+      inspector.acquire({ blocksShortcuts: true });
+      expect(registry.allows('navigate')).toBe(false);
+      expect(inspector.allows('navigate')).toBe(false);
 
       await view.onClose();
 
+      expect(destroyRegistry).toHaveBeenCalledOnce();
+      expect(destroyInspector).toHaveBeenCalledOnce();
       expect(registry.allows('navigate')).toBe(true);
+      expect(inspector.allows('navigate')).toBe(true);
       registry.acquire({ blocksShortcuts: true });
+      inspector.acquire({ blocksShortcuts: true });
       expect(registry.allows('navigate')).toBe(true);
+      expect(inspector.allows('navigate')).toBe(true);
     });
 
     it('keeps planCreate on the PanelView application wrapper', async () => {
