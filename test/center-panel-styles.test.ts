@@ -246,14 +246,16 @@ describe('CenterPanel task metadata styles', () => {
     expect(declarationsFor('body.is-phone .abyss-panel-view .abyss-center-title')).toContain(
       'display: none',
     );
-    expect(declarationsFor('body.is-phone .abyss-projects-toolbar')).toContain(
+    const projects = atRuleBlock('@container abyss-panel-layout (max-width: 45rem)');
+    expect(declarationsForSource(projects, '.abyss-projects-toolbar')).toContain(
       'grid-template-columns: minmax(0, 1fr)',
     );
-    expect(declarationsFor('body.is-phone .abyss-project-table-controls')).toContain(
+    expect(declarationsForSource(projects, '.abyss-projects-title')).toContain('display: none');
+    expect(declarationsForSource(projects, '.abyss-project-table-controls')).toContain(
       'justify-self: stretch',
     );
     expect(
-      declarationsFor('body.is-phone .abyss-project-table-controls .abyss-center-search'),
+      declarationsForSource(projects, '.abyss-project-table-controls .abyss-center-search'),
     ).toContain('flex: 1 1 auto');
     const narrow = atRuleBlock('@container abyss-panel-layout (max-width: 38rem)');
     expect(declarationsForSource(narrow, '.abyss-layout--tasks .abyss-center-controls')).toContain(
@@ -288,12 +290,13 @@ describe('CenterPanel task metadata styles', () => {
     expect(declarationsFor('.abyss-center-header')).toContain(
       'padding: var(--size-4-3) var(--size-4-4)',
     );
-    const topInset = 'padding-top: calc(var(--size-4-3) + min(var(--abyss-shell-top-inset), 5px))';
+    const topInset =
+      'padding-top: calc(var(--abyss-toolbar-top-padding, var(--size-4-3)) + min(var(--abyss-shell-top-inset), 5px))';
     expect(
       declarationsFor(
         '.abyss-layout--tasks > .abyss-center-shell > .abyss-center > .abyss-center-header',
-      ),
-    ).toContain(topInset);
+      ).replaceAll(/\s+/gu, ''),
+    ).toContain(topInset.replaceAll(/\s+/gu, ''));
   });
 
   it('paints the picker options as switcher cells on every platform', () => {

@@ -71,7 +71,7 @@ function defaultSpacingPx(base: valueParser.Node | undefined): number {
   // Independently documented Default-theme spacing; this assertion guards the original geometry.
   const defaults: Record<string, number> = { '--size-4-2': 8, '--size-4-3': 12 };
   if (base?.type === 'function' && base.value === 'var')
-    return defaults[base.nodes[0]?.value ?? ''] ?? NaN;
+    return defaults[base.nodes[0]?.value ?? ''] ?? defaultSpacingPx(base.nodes[2]);
   return base?.type === 'word' ? Number.parseFloat(base.value) : NaN;
 }
 
@@ -96,7 +96,7 @@ describe('Panel shell top rhythm', () => {
     ['.abyss-layout > .abyss-left > .abyss-left-section:first-child', 'var(--size-4-3)', false],
     [
       '.abyss-layout--tasks > .abyss-center-shell > .abyss-center > .abyss-center-header, .abyss-layout--search > .abyss-center-shell > .abyss-center > .abyss-center-header',
-      'var(--size-4-3)',
+      'var(--abyss-toolbar-top-padding, var(--size-4-3))',
       true,
     ],
     [
@@ -106,7 +106,7 @@ describe('Panel shell top rhythm', () => {
     ],
     [
       '.abyss-layout--projects > .abyss-center-shell > .abyss-center .abyss-projects-toolbar',
-      'var(--size-4-3)',
+      'var(--abyss-toolbar-top-padding, var(--size-4-3))',
       true,
     ],
     ['.abyss-layout > .abyss-right > .abyss-right-header:first-child', 'var(--size-4-3)', false],
@@ -117,8 +117,8 @@ describe('Panel shell top rhythm', () => {
       const inset = capped
         ? 'min(var(--abyss-shell-top-inset), 5px)'
         : 'var(--abyss-shell-top-inset)';
-      expect(declarationsFor(selector)).toContain(
-        `padding-top: calc(${existingTopPadding} + ${inset})`,
+      expect(withoutWhitespace(declarationsFor(selector))).toContain(
+        withoutWhitespace(`padding-top: calc(${existingTopPadding} + ${inset})`),
       );
     },
   );

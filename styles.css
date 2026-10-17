@@ -3220,39 +3220,35 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 .abyss-cal-nav-left {
-  display: flex;
-  align-items: center;
   gap: var(--size-2-1);
   min-inline-size: 0;
 }
 
 .abyss-cal-nav-right {
-  display: flex;
-  align-items: center;
   gap: var(--size-4-1);
   margin-inline-start: auto;
 }
 
 .abyss-cal-nav-title-group {
-  display: flex;
-  align-items: center;
   gap: var(--size-4-1);
   position: relative;
 }
 
 /* Reserve the transparent hit area in each row, without enlarging the painted controls. */
 :is(.abyss-cal-nav-left, .abyss-cal-nav-right, .abyss-cal-nav-title-group) {
+  display: flex;
+  align-items: center;
   flex-wrap: wrap;
   min-block-size: 44px;
   row-gap: var(--size-4-4);
 }
 
-.abyss-cal-nav .abyss-cal-control-icon,
-.abyss-cal-nav .abyss-cal-title-compact {
+.abyss-cal-control-icon,
+.abyss-cal-title-compact {
   display: none;
 }
 
-.abyss-cal-nav .abyss-cal-control-icon .svg-icon {
+.abyss-cal-control-icon .svg-icon {
   inline-size: 18px;
   block-size: 18px;
 }
@@ -3270,31 +3266,30 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   transform: translateY(-50%);
 }
 
-:is(.abyss-cal-nav-month, .abyss-cal-nav-year) {
+:is(.abyss-cal-nav-month, .abyss-cal-nav-year, .abyss-cal-nav-btn, .abyss-cal-nav-today) {
   background: transparent;
   border: none;
+  cursor: pointer;
+  block-size: var(--abyss-toolbar-control-size);
+}
+
+:is(.abyss-cal-nav-month, .abyss-cal-nav-year) {
   color: var(--text-normal);
   font-size: var(--font-ui-medium);
   font-weight: 600;
-  cursor: pointer;
   padding: 0 var(--size-4-1);
-  block-size: var(--abyss-toolbar-control-size);
   border-radius: 4px;
   transition: background 0.1s;
 }
 
-:is(.abyss-cal-nav-month, .abyss-cal-nav-year):hover {
+:is(.abyss-cal-nav-month, .abyss-cal-nav-year, .abyss-cal-nav-btn):hover {
   background: var(--background-modifier-hover);
 }
 
 .abyss-cal-nav-btn {
-  background: transparent;
-  border: none;
   padding: 0;
-  cursor: pointer;
   color: var(--icon-color);
   width: var(--abyss-toolbar-control-size);
-  height: var(--abyss-toolbar-control-size);
   border-radius: 4px;
   display: flex;
   align-items: center;
@@ -3306,25 +3301,17 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   height: 18px;
 }
 
-.abyss-cal-nav-btn:hover {
-  background: var(--background-modifier-hover);
-}
-
 .abyss-cal-nav-today {
   padding: 0 10px;
-  block-size: var(--abyss-toolbar-control-size);
   border-radius: 6px;
-  border: none;
-  background: transparent;
   color: var(--text-muted);
-  cursor: pointer;
   font-size: var(--font-ui-small);
   transition:
     background 0.1s,
     color 0.1s;
 }
 
-.abyss-cal-nav-today:hover {
+:is(.abyss-cal-nav-today, .abyss-cal-view-btn, .abyss-project-overview-mode):hover {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
 }
@@ -3351,11 +3338,6 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   transition:
     background 0.1s,
     color 0.1s;
-}
-
-:is(.abyss-cal-view-btn, .abyss-project-overview-mode):hover {
-  background: var(--background-modifier-hover);
-  color: var(--text-normal);
 }
 
 :is(.abyss-cal-view-btn, .abyss-project-overview-mode).is-active {
@@ -8596,7 +8578,7 @@ button.abyss-project-table-status-pill {
 @container abyss-panel-layout (max-width: 45rem) {
   .abyss-projects-toolbar {
     display: grid;
-    grid-template-columns: max-content minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
     gap: 7px 10px;
   }
 
@@ -8607,13 +8589,18 @@ button.abyss-project-table-status-pill {
     max-width: none;
   }
 
-  .abyss-projects-toolbar-spacer {
+  :is(.abyss-projects-title, .abyss-projects-toolbar-spacer) {
     display: none;
   }
 
   .abyss-project-table-controls {
     min-width: 0;
-    justify-self: end;
+    justify-self: stretch;
+  }
+
+  .abyss-project-table-controls .abyss-center-search {
+    flex: 1 1 auto;
+    width: auto;
   }
 }
 
@@ -9043,7 +9030,9 @@ button.abyss-project-table-status-pill {
   > .abyss-center-shell
   > .abyss-center
   > .abyss-center-header {
-  padding-top: calc(var(--size-4-3) + min(var(--abyss-shell-top-inset), 5px));
+  padding-top: calc(
+    var(--abyss-toolbar-top-padding, var(--size-4-3)) + min(var(--abyss-shell-top-inset), 5px)
+  );
 }
 
 .abyss-layout--calendar > .abyss-center-shell > .abyss-center > .abyss-cal-nav {
@@ -9051,7 +9040,9 @@ button.abyss-project-table-status-pill {
 }
 
 .abyss-layout--projects > .abyss-center-shell > .abyss-center .abyss-projects-toolbar {
-  padding-top: calc(var(--size-4-3) + min(var(--abyss-shell-top-inset), 5px));
+  padding-top: calc(
+    var(--abyss-toolbar-top-padding, var(--size-4-3)) + min(var(--abyss-shell-top-inset), 5px)
+  );
 }
 
 .abyss-layout > .abyss-right > .abyss-right-header:first-child {
@@ -9143,8 +9134,18 @@ button.abyss-project-table-status-pill {
 
 /* ---- Phone ---- */
 
-body.is-phone .abyss-panel-view :is(.abyss-center-header, .abyss-projects-toolbar) {
+body.is-phone .abyss-panel-view :is(.abyss-center-header, .abyss-projects-toolbar, .abyss-cal-nav) {
   --abyss-toolbar-control-size: 36px;
+  --abyss-toolbar-top-padding: var(--size-4-2);
+
+  min-height: 0;
+  padding: var(--size-4-2);
+}
+
+body.is-phone
+  .abyss-cal-nav
+  :is(.abyss-cal-nav-left, .abyss-cal-nav-right, .abyss-cal-nav-title-group) {
+  min-block-size: 0;
 }
 
 body.is-phone
@@ -9159,14 +9160,6 @@ body.is-phone
    plugin heading would only repeat it. The header keeps one control row. */
 body.is-phone .abyss-panel-view .abyss-center-title {
   display: none;
-}
-
-body.is-phone .abyss-projects-toolbar {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-body.is-phone .abyss-project-table-controls {
-  justify-self: stretch;
 }
 
 body.is-phone .abyss-project-table-controls .abyss-center-search {
@@ -10845,8 +10838,11 @@ button.abyss-calendar-date[aria-pressed='true'] {
   overflow: auto;
 }
 
-.abyss-calendar-agenda-heading {
+:is(.abyss-calendar-agenda-heading, .abyss-calendar-agenda-empty) {
   padding-inline: var(--size-4-3);
+}
+
+.abyss-calendar-agenda-heading {
   margin: var(--size-4-2) 0;
   font-size: var(--font-ui-medium);
 }
@@ -10860,24 +10856,50 @@ button.abyss-calendar-date[aria-pressed='true'] {
     gap: var(--size-4-1);
   }
 
-  .abyss-cal-nav :is(.abyss-cal-nav-left, .abyss-cal-nav-right, .abyss-cal-nav-title-group) {
-    flex: 0 0 auto;
+  :is(.abyss-cal-nav-left, .abyss-cal-nav-right, .abyss-cal-nav-title-group) {
     flex-wrap: nowrap;
   }
 
-  .abyss-cal-nav :is(.abyss-cal-nav-left, .abyss-cal-nav-title-group) {
+  :is(.abyss-cal-nav-left, .abyss-cal-nav-title-group) {
+    min-block-size: 0;
+    min-inline-size: 0;
     gap: var(--size-2-1);
   }
 
-  .abyss-cal-nav :is(.abyss-cal-control-label, .abyss-cal-title-full) {
+  .abyss-cal-nav-left {
+    box-sizing: border-box;
+    block-size: var(--abyss-toolbar-control-size);
+    background: var(--background-modifier-border);
+    border-radius: 8px;
+    padding: var(--size-2-1);
+  }
+
+  .abyss-cal-nav-left button {
+    block-size: calc(var(--abyss-toolbar-control-size) - 2 * var(--size-2-1));
+    border-radius: 6px;
+  }
+
+  button.abyss-cal-nav-month {
+    flex: 0 1 auto;
+    inline-size: auto;
+    min-inline-size: 3ch;
+  }
+
+  button.abyss-cal-nav-year {
+    flex: 0 0 auto;
+  }
+
+  :is(.abyss-cal-control-label, .abyss-cal-title-full) {
     display: none;
   }
 
-  .abyss-cal-nav .abyss-cal-title-compact {
-    display: inline;
+  .abyss-cal-title-compact {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
-  .abyss-cal-nav .abyss-cal-control-icon {
+  .abyss-cal-control-icon {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -10899,6 +10921,10 @@ button.abyss-calendar-date[aria-pressed='true'] {
   }
 }
 
+body.is-phone .abyss-cal-nav-today {
+  inline-size: 36px;
+}
+
 /* A 320px phone leaves 272px beside the rail; keep all eight controls on that row. */
 @container abyss-task-list (max-width: 20rem) {
   .abyss-cal-nav {
@@ -10906,30 +10932,8 @@ button.abyss-calendar-date[aria-pressed='true'] {
     gap: var(--size-2-1);
   }
 
-  .abyss-cal-nav :is(.abyss-cal-nav-left, .abyss-cal-nav-title-group) {
-    flex: 1 1 auto;
-    min-inline-size: min-content;
-  }
-
-  .abyss-cal-nav .abyss-cal-nav-left {
+  .abyss-cal-nav-left {
     gap: 0;
-  }
-
-  .abyss-cal-nav button.abyss-cal-nav-month {
-    flex: 1 1 0;
-    inline-size: 0;
-    min-inline-size: 3ch;
-  }
-
-  .abyss-cal-nav .abyss-cal-title-compact {
-    flex: 1 1 auto;
-    min-inline-size: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .abyss-cal-nav button.abyss-cal-nav-year {
-    flex: 0 0 auto;
   }
 
   .abyss-cal-nav button:is(.abyss-cal-nav-btn, .abyss-cal-nav-today, .abyss-cal-view-btn) {

@@ -627,10 +627,12 @@ describe('CaptureSurface', () => {
     const nav = declarationsForSource(compact, '.abyss-cal-nav');
     const compactRows = declarationsForSource(
       compact,
-      '.abyss-cal-nav :is(.abyss-cal-nav-left, .abyss-cal-nav-right, .abyss-cal-nav-title-group)',
-    );
-    const rows = declarationsFor(
       ':is(.abyss-cal-nav-left, .abyss-cal-nav-right, .abyss-cal-nav-title-group)',
+    );
+    const rows = cssDeclarationText(
+      css,
+      ':is(.abyss-cal-nav-left, .abyss-cal-nav-right, .abyss-cal-nav-title-group)',
+      true,
     );
     const hitArea = declarationsFor('.abyss-cal-nav button::after');
     const calendarFeedback = declarationsForSource(

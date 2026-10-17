@@ -2534,7 +2534,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
       /\.abyss-center-header,\s*\.abyss-cal-nav\s*\{[^}]*min-height: var\(--abyss-center-toolbar-height\)/u,
     );
     expect(css).toMatch(
-      /@container abyss-panel-layout \(max-width: 45rem\)[\s\S]*?\.abyss-projects-toolbar\s*\{(?=[^}]*display: grid)(?=[^}]*grid-template-columns: max-content minmax\(0, 1fr\))/u,
+      /@container abyss-panel-layout \(max-width: 45rem\)[\s\S]*?\.abyss-projects-toolbar\s*\{(?=[^}]*display: grid)(?=[^}]*grid-template-columns: minmax\(0, 1fr\))/u,
     );
     expect(css).toMatch(
       /@container abyss-panel-layout \(max-width: 45rem\)[\s\S]*?\.abyss-project-status-filters\s*\{(?=[^}]*grid-row: 2)(?=[^}]*max-width: none)/u,
