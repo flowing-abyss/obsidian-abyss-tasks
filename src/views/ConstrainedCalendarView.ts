@@ -15,7 +15,7 @@ export interface CalendarAgendaRowMount {
   readonly element: HTMLElement;
   destroy(): void;
 }
-export interface CalendarAgendaRowActions {
+interface CalendarAgendaRowActions {
   onActivate(): void;
   onForecastContextMenu(event: MouseEvent, element: HTMLElement): void;
 }

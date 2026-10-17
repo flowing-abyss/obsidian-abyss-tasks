@@ -177,7 +177,7 @@ function attachSpanOverlayDropForwarding(
   });
 }
 
-export type CalendarItemCallbacks = Pick<
+type CalendarItemCallbacks = Pick<
   AllDayCallbacks,
   | 'app'
   | 'component'
@@ -311,7 +311,7 @@ function renderAllDayTitle(
   }
 }
 
-export function renderAllDayBody(context: AllDayBodyRenderContext): HTMLElement {
+function renderAllDayBody(context: AllDayBodyRenderContext): HTMLElement {
   const {
     cellEl,
     cls,
