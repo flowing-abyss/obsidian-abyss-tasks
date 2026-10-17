@@ -125,6 +125,10 @@ fixture, existing Markdown, host versions, CPU, viewport, locale, timezone, enab
 and protocol hash. `settings.json` contains the effective configuration, not just its patch.
 `fixture-contents.json` preserves the generated Markdown; `fixture.json` records its hashes and counts.
 
+Each run invokes `release-artifacts.mjs` and installs the freshly generated `dist/styles.css`.
+The saved `styles.css` contains those exact release bytes. Final comparisons must use this
+artifact preparation in both checkouts; the build change invalidates earlier protocol hashes.
+
 Calendar completion accepts the existing month/time-grid dates and cards as well as compact date
 buttons with a selected agenda. Completed-work facts record the same visible dates and canonical
 semantic occurrence population in both forms; full-grid and selected-agenda card totals are not

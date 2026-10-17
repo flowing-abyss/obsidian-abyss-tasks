@@ -11,7 +11,9 @@ export async function prepareBuild(root: string, output: string): Promise<Profil
   await command(process.execPath, ['esbuild.config.mjs', 'production', 'profile'], root);
   if (sha256(await readFile(path.join(root, 'main.js'))) !== normal)
     throw new Error('Source-map build changed production JavaScript');
-  for (const name of ['main.js', 'main.js.map', 'styles.css', 'manifest.json'])
+  await command(process.execPath, ['release-artifacts.mjs'], root);
+  await copyFile(path.join(root, 'dist/styles.css'), path.join(output, 'styles.css'));
+  for (const name of ['main.js', 'main.js.map', 'manifest.json'])
     await copyFile(path.join(root, name), path.join(output, name));
   await build({
     entryPoints: [path.join(root, 'tooling/performance/native.ts')],
