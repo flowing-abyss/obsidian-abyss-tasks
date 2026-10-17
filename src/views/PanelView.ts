@@ -430,18 +430,14 @@ export class PanelView extends ItemView {
 
   /** A frame and a task offer the mounted shell a presentation opportunity, not a paint guarantee. */
   private checkSearchOpportunity_abyssPrivate(): void {
+    if (this.searchOpportunityConsumed_abyssPrivate) return;
     const owner = this.contentEl.ownerDocument.defaultView;
     if (owner === null || !this.canPrepareSearch_abyssPrivate(owner)) {
       this.cancelSearchPresentation_abyssPrivate?.();
       return;
     }
     const search = this.search_abyssPrivate;
-    if (
-      search === undefined ||
-      this.searchOpportunityConsumed_abyssPrivate ||
-      this.cancelSearchPresentation_abyssPrivate !== undefined
-    )
-      return;
+    if (search === undefined || this.cancelSearchPresentation_abyssPrivate !== undefined) return;
     const wait = this.searchWait_abyssPrivate;
     if (wait === undefined) return;
     let timer: number | undefined;

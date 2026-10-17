@@ -4922,6 +4922,65 @@ describe('PanelView useful shared prewarm', () => {
     },
   );
 
+  it('stops reading Search startup geometry after the visible preparation opportunity is consumed', async () => {
+    const h = await prewarmPanel();
+    const prepare = vi.spyOn(h.search, 'prepare');
+    try {
+      const { view } = await h.mount();
+      h.frames.present();
+      await vi.waitFor(() => {
+        expect(h.backends).toHaveLength(1);
+      });
+      expect(prepare).toHaveBeenCalledTimes(1);
+      const styles = vi.spyOn(window, 'getComputedStyle');
+      const containerBounds = vi.spyOn(view.containerEl, 'getBoundingClientRect');
+      const containerRects = vi.spyOn(view.containerEl, 'getClientRects');
+      const contentBounds = vi.spyOn(view.contentEl, 'getBoundingClientRect');
+      const contentRects = vi.spyOn(view.contentEl, 'getClientRects');
+
+      expectDefined(
+        view.contentEl.querySelector<HTMLButtonElement>('.abyss-rail-btn[aria-label="Calendar"]'),
+      ).click();
+      expect(view.contentEl.querySelector('.abyss-mg-grid')).not.toBeNull();
+      const month = view.contentEl.querySelector('.abyss-cal-nav-month')?.textContent;
+      expectDefined(
+        view.contentEl.querySelector<HTMLButtonElement>('.abyss-cal-nav-btn[aria-label="Next"]'),
+      ).click();
+      expect(view.contentEl.querySelector('.abyss-cal-nav-month')?.textContent).not.toBe(month);
+      expectDefined(
+        Array.from(view.contentEl.querySelectorAll<HTMLButtonElement>('.abyss-cal-view-btn')).find(
+          (button) => button.textContent === 'Week',
+        ),
+      ).click();
+      expect(view.contentEl.querySelector('.abyss-cal-view-btn.is-active')?.textContent).toBe(
+        'Week',
+      );
+      h.app.workspace.trigger('layout-change');
+      h.app.workspace.trigger('active-leaf-change', null);
+      h.app.workspace.trigger('resize');
+      h.frames.present();
+      await flushMicrotasks();
+
+      expect({
+        styles: styles.mock.calls.filter(([element]) => element === view.contentEl).length,
+        containerBounds: containerBounds.mock.calls.length,
+        containerRects: containerRects.mock.calls.length,
+        contentBounds: contentBounds.mock.calls.length,
+        contentRects: contentRects.mock.calls.length,
+      }).toEqual({
+        styles: 0,
+        containerBounds: 0,
+        containerRects: 0,
+        contentBounds: 0,
+        contentRects: 0,
+      });
+      expect(prepare).toHaveBeenCalledTimes(1);
+      expect(h.frames.frames.size).toBe(0);
+    } finally {
+      await h.dispose();
+    }
+  });
+
   it('leaves hidden restored and zero-area panels cold until a visible opportunity', async () => {
     const h = await prewarmPanel();
     try {
