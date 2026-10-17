@@ -68,8 +68,8 @@
     "to": ":is(.abyss-tg-body-title, .abyss-tg-deadline-title, .abyss-mg-item-title).is-cancelled"
   },
   {
-    "from": ".abyss-task-card-main-row > .abyss-status-marker,\n  .abyss-task-card-main-row > .abyss-status-control",
-    "to": ".abyss-task-card-main-row > :is(.abyss-status-marker, .abyss-status-control)"
+    "from": ".abyss-task-card-main-row > .abyss-status-marker,\n  .abyss-task-card-main-row > .abyss-status-control,\n  .abyss-task-card-main-row > .abyss-recurrence-badge",
+    "to": ".abyss-task-card-main-row > :is(.abyss-status-marker, .abyss-status-control, .abyss-recurrence-badge)"
   },
   {
     "from": ".abyss-chip-scheduled:not(.abyss-chip-empty),\n.abyss-chip-start:not(.abyss-chip-empty)",

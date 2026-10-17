@@ -2360,12 +2360,14 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
    are centred, so the icon stays in the middle. Under a short title line the bottom of a marker,
    an indicator or the delete button dips below the line by up to two pixels; the negative end
    margin keeps that out of the row height. */
-.abyss-task-card-main-row .abyss-status-marker {
+.abyss-task-card-main-row .abyss-status-marker,
+.abyss-task-card-main-row > .abyss-recurrence-badge {
   grid-auto-flow: column;
   justify-content: center;
 }
 
-.abyss-task-card-main-row .abyss-status-marker::before {
+.abyss-task-card-main-row .abyss-status-marker::before,
+.abyss-task-card-main-row > .abyss-recurrence-badge::before {
   content: '';
   inline-size: 0;
   block-size: calc(2 * var(--abyss-task-card-cap-half));
@@ -2373,7 +2375,13 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 .abyss-task-card-main-row
-  > :is(.abyss-status-marker, .abyss-status-control, .abyss-dep-indicator, .abyss-task-delete-btn) {
+  > :is(
+    .abyss-status-marker,
+    .abyss-status-control,
+    .abyss-recurrence-badge,
+    .abyss-dep-indicator,
+    .abyss-task-delete-btn
+  ) {
   margin-block-end: -2px;
 }
 
@@ -2406,6 +2414,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 .abyss-task-card-main-row > .abyss-status-marker,
+.abyss-task-card-main-row > .abyss-recurrence-badge,
 .abyss-task-card-main-row > .abyss-status-control > .abyss-status-marker {
   width: var(--abyss-task-card-marker-size);
   height: var(--abyss-task-card-marker-size);
@@ -2925,7 +2934,8 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
     grid-template-columns: var(--abyss-task-card-marker-size) minmax(0, 1fr) 24px;
   }
 
-  .abyss-task-card-main-row > :is(.abyss-status-marker, .abyss-status-control) {
+  .abyss-task-card-main-row
+    > :is(.abyss-status-marker, .abyss-status-control, .abyss-recurrence-badge) {
     grid-column: 1;
     grid-row: 1;
   }
@@ -3228,7 +3238,6 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 .abyss-cal-nav-title-group {
-  gap: var(--size-2-1);
   position: relative;
 }
 
@@ -3246,12 +3255,12 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   flex-wrap: nowrap;
   min-block-size: 0;
   min-inline-size: 0;
+  gap: 0;
 }
 
 .abyss-cal-nav-left {
   box-sizing: border-box;
   block-size: var(--abyss-toolbar-control-size);
-  gap: var(--size-2-1);
   background: var(--background-modifier-border);
   border-radius: 8px;
   padding: var(--size-2-1);
@@ -3952,6 +3961,11 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 .abyss-recurrence-badge[data-recurrence-forecast='true'] {
   outline: 1px dotted var(--text-faint);
   outline-offset: 1px;
+}
+
+.abyss-task-card-main-row > .abyss-recurrence-badge {
+  display: grid;
+  padding: 0;
 }
 
 .abyss-calendar-leading-row > .abyss-recurrence-badge {
@@ -8608,12 +8622,11 @@ button.abyss-project-table-status-pill {
 
   .abyss-project-table-controls {
     min-width: 0;
-    justify-self: stretch;
+    justify-self: end;
   }
 
-  .abyss-project-table-controls .abyss-center-search {
-    flex: 1 1 auto;
-    width: auto;
+  body.is-phone .abyss-project-table-controls {
+    justify-self: stretch;
   }
 }
 
@@ -10878,7 +10891,7 @@ button.abyss-calendar-date[aria-pressed='true'] {
   }
 
   .abyss-cal-nav button:is(.abyss-cal-nav-month, .abyss-cal-nav-year) {
-    padding-inline: var(--size-2-1);
+    padding-inline: var(--size-4-1);
     font-size: var(--font-ui-small);
     white-space: nowrap;
   }
@@ -10895,15 +10908,7 @@ button.abyss-calendar-date[aria-pressed='true'] {
     gap: var(--size-2-1);
   }
 
-  .abyss-cal-nav-left {
-    gap: 0;
-  }
-
   .abyss-cal-nav button:is(.abyss-cal-nav-btn, .abyss-cal-nav-today, .abyss-cal-view-btn) {
     inline-size: 28px;
-  }
-
-  .abyss-cal-nav button:is(.abyss-cal-nav-month, .abyss-cal-nav-year) {
-    padding-inline: 0;
   }
 }

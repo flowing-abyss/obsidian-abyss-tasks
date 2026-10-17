@@ -2045,6 +2045,108 @@ it.each([
   },
 );
 
+it.each([
+  { recurrence: 'every week', validity: 'valid', label: 'Repeats: every week' },
+  {
+    recurrence: 'invalid',
+    validity: 'invalid',
+    label: 'Invalid repeat rule: Start the rule with “every”.',
+  },
+  { recurrence: '', validity: undefined, label: undefined },
+  { recurrence: 'every month', validity: 'valid', label: 'Repeats: every month' },
+])(
+  'refreshes passive forecast marker to $recurrence while retaining connected title links',
+  async ({ recurrence, validity, label }) => {
+    const h = renderer();
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _text, holder) => {
+      holder.createEl('a', { href: 'https://example.com', text: 'Source' });
+    });
+    const source = task({ title: '[Source](https://example.com)', recurrence: 'every day' });
+    const flags = {
+      selected: false,
+      showDelete: false,
+      calendar: {
+        kind: 'forecast' as const,
+        planning: { due: localDate('2026-10-16') },
+        onActivate: vi.fn(),
+        onForecastContextMenu: vi.fn(),
+      },
+    };
+    const mount = h.subject.mount(document.body, source, [], flags);
+    await mount.settled;
+    const card = mount.element;
+    const mainRow = expectDefined(card.querySelector('.abyss-task-card-main-row'));
+    const titleRow = expectDefined(card.querySelector('.abyss-task-title-row'));
+    const title = expectDefined(titleRow.querySelector('.abyss-task-title'));
+    const link = expectDefined(title.querySelector('a'));
+    const previous = expectDefined(mainRow.querySelector(':scope > .abyss-recurrence-badge'));
+    expect(titleRow.querySelector('.abyss-recurrence-badge')).toBeNull();
+    expect(card.querySelectorAll('.abyss-recurrence-badge')).toHaveLength(1);
+    const observer = new MutationObserver(() => {});
+    observer.observe(card, { childList: true, subtree: true });
+
+    mount.update(task({ title: source.title, recurrence }), [], flags);
+    await mount.settled;
+    const indicator = mainRow.querySelector<HTMLElement>(':scope > .abyss-recurrence-badge');
+    expect(titleRow.querySelector('.abyss-recurrence-badge')).toBeNull();
+    expect(card.querySelectorAll('.abyss-recurrence-badge')).toHaveLength(
+      recurrence === '' ? 0 : 1,
+    );
+    expect(card.querySelector('[role="checkbox"]')).toBeNull();
+    expect(card.querySelector('input[type="checkbox"]')).toBeNull();
+    if (recurrence !== '') {
+      expect(indicator).not.toBeNull();
+      const badge = expectDefined(indicator);
+      expect(badge.nextElementSibling).toBe(card.querySelector('.abyss-task-body'));
+      expect(badge.tagName).toBe('SPAN');
+      expect(badge.hasAttribute('role')).toBe(false);
+      expect(badge.tabIndex).toBe(-1);
+      expect(badge.getAttribute('data-recurrence-forecast')).toBe('true');
+      expect(badge.getAttribute('data-recurrence-validity')).toBe(validity);
+      expect(badge.getAttribute('aria-label')).toBe(label);
+      badge.click();
+    }
+    expect(previous.isConnected).toBe(false);
+    expect(titleRow.querySelector('.abyss-task-title')).toBe(title);
+    expect(title.querySelector('a')).toBe(link);
+    expect(link.isConnected).toBe(true);
+    for (const record of observer.takeRecords())
+      for (const removed of record.removedNodes) expect(removed.contains(link)).toBe(false);
+    expect(h.toggleTask).not.toHaveBeenCalled();
+    expect(h.openStatusMenu).not.toHaveBeenCalled();
+    expect(h.deleteTask).not.toHaveBeenCalled();
+    expect(h.patchTaskTags).not.toHaveBeenCalled();
+    expect(h.editTaskLink).not.toHaveBeenCalled();
+    observer.disconnect();
+    mount.destroy();
+  },
+);
+
+it('keeps materialized recurrence in the title with its canonical status control', async () => {
+  const h = renderer();
+  const mount = h.subject.mount(document.body, task({ recurrence: 'every day' }), [], {
+    selected: false,
+    showDelete: false,
+    calendar: {
+      kind: 'materialized',
+      planning: {},
+      onActivate: vi.fn(),
+      onForecastContextMenu: vi.fn(),
+    },
+  });
+  await mount.settled;
+  expect(
+    mount.element.querySelector('.abyss-task-title-row > .abyss-recurrence-badge'),
+  ).not.toBeNull();
+  expect(mount.element.querySelectorAll('.abyss-recurrence-badge')).toHaveLength(1);
+  expect(
+    mount.element.querySelector('.abyss-task-card-main-row > .abyss-recurrence-badge'),
+  ).toBeNull();
+  expectDefined(mount.element.querySelector<HTMLElement>('[role="checkbox"]')).click();
+  expect(h.toggleTask).toHaveBeenCalledTimes(1);
+  mount.destroy();
+});
+
 it('renders forecast calendar planning without acquiring source writes or tracking', async () => {
   const h = renderer();
   const source = task({

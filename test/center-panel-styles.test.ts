@@ -252,11 +252,14 @@ describe('CenterPanel task metadata styles', () => {
     );
     expect(declarationsForSource(projects, '.abyss-projects-title')).toContain('display: none');
     expect(declarationsForSource(projects, '.abyss-project-table-controls')).toContain(
-      'justify-self: stretch',
+      'justify-self: end',
     );
     expect(
-      declarationsForSource(projects, '.abyss-project-table-controls .abyss-center-search'),
+      declarationsFor('body.is-phone .abyss-project-table-controls .abyss-center-search'),
     ).toContain('flex: 1 1 auto');
+    expect(
+      declarationsForSource(projects, 'body.is-phone .abyss-project-table-controls'),
+    ).toContain('justify-self: stretch');
     const narrow = atRuleBlock('@container abyss-panel-layout (max-width: 38rem)');
     expect(declarationsForSource(narrow, '.abyss-layout--tasks .abyss-center-controls')).toContain(
       'flex: 1 1 auto',

@@ -458,7 +458,7 @@ export class TaskCardRenderer {
     const searchContexts = card.createDiv({ cls: 'abyss-search-contexts' });
     searchContexts.remove();
     const text = this.#mountCardText(card, context, { title, description, searchContexts });
-    const header = this.#mountHeader(card, context, { titleRow, title });
+    const header = this.#mountHeader(card, context, { mainRow, titleRow, title });
     return {
       get settled() {
         return text.settled;
@@ -506,7 +506,7 @@ export class TaskCardRenderer {
   #mountHeader(
     card: HTMLElement,
     context: CardContentContext,
-    hosts: { titleRow: HTMLElement; title: HTMLElement },
+    hosts: { mainRow: HTMLElement; titleRow: HTMLElement; title: HTMLElement },
   ): (current: CardState) => void {
     let previous: CardState | undefined;
     let key = '';
@@ -521,7 +521,7 @@ export class TaskCardRenderer {
         if (owner !== undefined) context.component.removeChild(owner);
         owner = context.component.addChild(new Component());
         this.#identity(card, current, owner);
-        this.#refreshBadges(hosts.titleRow, hosts.title, current.task, {
+        this.#refreshBadges(hosts, current.task, {
           ...context,
           flags: current.flags,
         });
@@ -633,16 +633,16 @@ export class TaskCardRenderer {
   }
 
   #refreshBadges(
-    titleRow: HTMLElement,
-    title: HTMLElement,
+    hosts: { mainRow: HTMLElement; titleRow: HTMLElement; title: HTMLElement },
     task: TaskSnapshot,
     context: CardContentContext,
   ): void {
+    const { titleRow, title } = hosts;
     this.#releaseBadges(context.badges);
     context.badges.length = 0;
     for (const child of Array.from(titleRow.children)) if (child !== title) child.remove();
     const node = cardNode(task, context.flags);
-    this.#renderCardRecurrence(titleRow, node, context.flags);
+    this.#renderCardRecurrence(hosts, node, context.flags);
     renderDependencyIndicator(
       titleRow,
       'source' in node
@@ -655,15 +655,20 @@ export class TaskCardRenderer {
   }
 
   #renderCardRecurrence(
-    titleRow: HTMLElement,
+    hosts: { mainRow: HTMLElement; titleRow: HTMLElement },
     node: TaskSelectionNode,
     flags?: TaskCardFlags,
   ): void {
-    if (flags?.search?.mode !== 'search' && node.recurrence !== undefined && node.recurrence !== '')
-      renderRecurrenceBadge(
-        titleRow,
-        recurrenceBadgeInput(node.recurrence, flags?.calendar?.kind === 'forecast'),
-      );
+    hosts.mainRow.querySelector(':scope > .abyss-recurrence-badge')?.remove();
+    const { search, calendar } = flags ?? {};
+    if (search?.mode === 'search' || node.recurrence === undefined || node.recurrence === '')
+      return;
+    const forecast = calendar?.kind === 'forecast';
+    const badge = renderRecurrenceBadge(
+      forecast ? hosts.mainRow : hosts.titleRow,
+      recurrenceBadgeInput(node.recurrence, forecast),
+    );
+    if (forecast) hosts.mainRow.prepend(badge);
   }
 
   #renderParentButton(titleRow: HTMLElement, context: CardContentContext, owner: Component): void {
