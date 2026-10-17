@@ -5580,8 +5580,11 @@ body.abyss-modal-open .popover.hover-popover {
   z-index: calc(var(--layer-modal, 50) + 1);
 }
 
-.abyss-modal {
+.modal.abyss-modal {
   padding: 0;
+}
+
+.abyss-modal {
   position: relative;
   background: var(--background-primary);
   border: 1px solid var(--background-modifier-border);
