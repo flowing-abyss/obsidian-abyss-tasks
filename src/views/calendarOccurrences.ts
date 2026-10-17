@@ -60,7 +60,6 @@ export interface CalendarProjection {
 }
 
 interface ForecastTemplate {
-  readonly key: string;
   readonly planning: TaskPlanning;
   readonly referenceDate: LocalDate;
   readonly ordinal: number;
@@ -105,13 +104,21 @@ function projectionCacheKey(
   visible: DateRange,
   policy: RecurrencePolicy,
 ): string {
-  return [
-    semanticSourceKey(source),
-    source.root.ref.revision,
+  const { node } = source;
+  const { planning } = node;
+  // Only calculation inputs belong here; hydrate source identity on every projection.
+  return JSON.stringify([
+    node.status,
+    node.recurrence,
+    planning.start,
+    planning.scheduled,
+    planning.due,
+    planning.time,
+    planning.duration,
     visible.from,
     visible.to,
-    policy.removeScheduledDate ? 'remove-scheduled' : 'keep-scheduled',
-  ].join('|');
+    policy.removeScheduledDate,
+  ]);
 }
 
 function cachedForecast(key: string): ForecastCacheEntry | undefined {
@@ -225,7 +232,6 @@ function computeForecasts(
     if (planning === undefined || !intersectsVisible(planning, visible)) continue;
     forecasts.push(
       Object.freeze({
-        key: `${semanticSourceKey(source)}:${referenceDate}`,
         planning,
         referenceDate,
         ordinal: index + 1,
@@ -377,10 +383,11 @@ function addForecastEntry(
 ): void {
   const entry = forecastEntry(source, visible, policy);
   for (const template of entry.forecasts) {
-    if (!accumulator.occurrencesByKey.has(template.key)) {
+    const key = `${semanticSourceKey(source)}:${template.referenceDate}`;
+    if (!accumulator.occurrencesByKey.has(key)) {
       accumulator.occurrencesByKey.set(
-        template.key,
-        Object.freeze({ kind: 'forecast', source, ...template }),
+        key,
+        Object.freeze({ kind: 'forecast', key, source, ...template }),
       );
     }
   }

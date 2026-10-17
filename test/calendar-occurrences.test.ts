@@ -1,8 +1,9 @@
 // @vitest-environment node
 import { RRule } from 'rrule';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as tasks from '../src/tasks';
 import type { DateRange, TaskPlanning, TaskSnapshot } from '../src/tasks/domain/types';
-import { localDate } from '../src/tasks/domain/validation';
+import { durationMinutes, localDate, localTime } from '../src/tasks/domain/validation';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { projectTaskSnapshot } from '../src/tasks/infrastructure/markdown/TaskSnapshotProjector';
 import {
@@ -17,7 +18,7 @@ import {
   type CalendarTaskSource,
 } from '../src/views/calendarOccurrences';
 import { taskLayoutIdentity } from '../src/views/timegrid/layout';
-import { canonicalStatusCatalog, expectDefined, task } from './helpers';
+import { canonicalStatusCatalog, expectDefined, subtask, task } from './helpers';
 
 const keepScheduled = { removeScheduledDate: false } as const;
 
@@ -71,6 +72,8 @@ function project(
 }
 
 describe('projectCalendarOccurrences', () => {
+  afterEach(() => vi.restoreAllMocks());
+
   it('preserves materialized planning and creates revision-free semantic occurrence keys', () => {
     const current = rootSource('current', {
       planning: { due: localDate('2026-08-08') },
@@ -475,41 +478,350 @@ describe('projectCalendarOccurrences', () => {
     parseText.mockRestore();
   });
 
-  it('invalidates projection cache entries by revision and evicts old entries within 300 sources', () => {
-    let planningReads = 0;
-    const counted = (revision: string): CalendarTaskSource => {
-      const root = task({
-        title: revision,
-        recurrence: 'every 19 days',
-        ref: { revision },
-      });
-      Object.defineProperty(root, 'planning', {
-        configurable: true,
-        get: () => {
-          planningReads++;
-          return { due: localDate('2026-08-01') };
-        },
-      });
-      return source(root);
+  it('expands equivalent root and child forecasts once while hydrating exact current identities', () => {
+    const expansion = vi.spyOn(tasks, 'expandRecurrenceReferences');
+    const first = rootSource('first', {
+      filePath: 'A.md',
+      line: 7,
+      revision: 'first',
+      planning: { due: localDate('2051-08-01') },
+      recurrence: 'every 17 days',
+    });
+    const second = rootSource('second', {
+      filePath: 'B.md',
+      line: 9,
+      revision: 'second',
+      planning: { due: localDate('2051-08-01') },
+      recurrence: 'every 17 days',
+    });
+    const child = subtask({
+      title: 'child',
+      recurrence: 'every 17 days',
+      planning: { due: '2051-08-01' },
+      ref: { parent: second.target, relativeLine: 2 },
+    });
+    const nested = subtask({
+      title: 'nested',
+      recurrence: 'every 17 days',
+      planning: { due: '2051-08-01' },
+      ref: { parent: { type: 'subtask', ref: child.ref }, relativeLine: 3 },
+    });
+    const secondSource = source({ ...second.root, subtasks: [{ ...child, subtasks: [nested] }] });
+    const nestedSource: CalendarTaskSource = {
+      root: secondSource.root,
+      node: nested,
+      target: { type: 'subtask', ref: nested.ref },
     };
-    const first = counted('cache-first');
+    const result = project(
+      { recurringSources: [nestedSource, secondSource, first, first] },
+      range('2051-08-18', '2051-09-04'),
+    );
 
-    project({ recurringSources: [first] }, range('2026-08-20', '2026-08-20'));
-    expect(planningReads).toBeGreaterThan(0);
-    planningReads = 0;
-    project({ recurringSources: [first] }, range('2026-08-20', '2026-08-20'));
-    expect(planningReads).toBe(0);
-
-    const revised = counted('cache-revised');
-    project({ recurringSources: [revised] }, range('2026-08-20', '2026-08-20'));
-    expect(planningReads).toBeGreaterThan(0);
-
-    for (let index = 0; index < 300; index++) {
-      project({ recurringSources: [counted(`cache-${index}`)] }, range('2026-08-20', '2026-08-20'));
+    expect(result.occurrences.map(({ key }) => key)).toEqual([
+      'A.md:7:2051-08-18',
+      'B.md:9:2051-08-18',
+      'B.md:9:subtask:2.3:2051-08-18',
+      'A.md:7:2051-09-04',
+      'B.md:9:2051-09-04',
+      'B.md:9:subtask:2.3:2051-09-04',
+    ]);
+    expect(result.occurrences.map((value) => value.kind === 'forecast' && value.ordinal)).toEqual([
+      1, 1, 1, 2, 2, 2,
+    ]);
+    for (const [index, current] of [first, secondSource, nestedSource].entries()) {
+      const occurrence = expectDefined(result.occurrences[index]);
+      expect(occurrence.source).toBe(current);
+      expect(occurrence.source.target).toBe(current.target);
+      expect(taskSnapshotForCalendarOccurrence(occurrence).ref).toBe(current.root.ref);
     }
-    planningReads = 0;
-    project({ recurringSources: [first] }, range('2026-08-20', '2026-08-20'));
-    expect(planningReads).toBeGreaterThan(0);
+    expect(expansion).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps authored occurrences ahead of shared forecasts with the same semantic key', () => {
+    const original = rootSource('original', {
+      line: 12,
+      recurrence: 'every day',
+      planning: { due: localDate('2058-01-01') },
+    });
+    const other = rootSource('other', {
+      line: 13,
+      recurrence: 'every day',
+      planning: { due: localDate('2058-01-01') },
+    });
+    const authored = rootSource('authored', {
+      line: 12,
+      planning: { due: localDate('2058-01-02') },
+    });
+    const result = project(
+      { materialized: [authored], recurringSources: [other, original, original] },
+      range('2058-01-02', '2058-01-02'),
+    );
+    expect(result.occurrences.map(({ key, kind }) => [key, kind])).toEqual([
+      ['Tasks.md:12:2058-01-02', 'materialized'],
+      ['Tasks.md:13:2058-01-02', 'forecast'],
+    ]);
+    expect(result.occurrences[0]?.source).toBe(authored);
+    expect(result.occurrences[1]?.source).toBe(other);
+  });
+
+  it('reuses calculations after revision, title and unrelated metadata edits with fresh source data', () => {
+    const expansion = vi.spyOn(tasks, 'expandRecurrenceReferences');
+    const first = rootSource('before', {
+      planning: { due: localDate('2052-08-01') },
+      recurrence: 'every 19 days',
+      revision: 'before',
+    });
+    const visible = range('2052-08-20', '2052-08-20');
+    project({ recurringSources: [first] }, visible);
+    const current = source(
+      task({
+        ...first.root,
+        title: 'after',
+        markdownTitle: 'after',
+        tags: ['new'],
+        ref: { ...first.root.ref, revision: 'after' },
+        planning: {
+          ...first.node.planning,
+          created: '2050-01-01',
+          completion: '2050-02-01',
+          cancelled: '2050-03-01',
+        },
+      }),
+    );
+    const occurrence = expectDefined(
+      project({ recurringSources: [current] }, visible).occurrences[0],
+    );
+    expect(occurrence.key).toBe('Tasks.md:0:2052-08-20');
+    expect(occurrence.source).toBe(current);
+    expect(occurrence.planning).toEqual({ due: '2052-08-20' });
+    expect(taskSnapshotForCalendarOccurrence(occurrence)).toMatchObject({
+      title: 'after',
+      tags: ['new'],
+      ref: { revision: 'after' },
+    });
+    expect(expansion).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(
+    [
+      {
+        name: 'raw spelling',
+        recurrence: 'every 2 days ',
+        references: ['2053-03-03', '2053-03-05', '2053-03-07'],
+        first: { due: '2053-03-03', time: '09:00', duration: 60 },
+      },
+      {
+        name: 'raw recurrence',
+        recurrence: 'every 3 days',
+        references: ['2053-03-04', '2053-03-07'],
+        first: { due: '2053-03-04', time: '09:00', duration: 60 },
+      },
+      {
+        name: 'due reference',
+        planning: { due: localDate('2053-03-02') },
+        references: ['2053-03-04', '2053-03-06'],
+        first: { due: '2053-03-04', time: '09:00', duration: 60 },
+      },
+      {
+        name: 'start interval',
+        planning: { start: localDate('2053-02-28') },
+        references: ['2053-03-03', '2053-03-05', '2053-03-07'],
+        first: { start: '2053-03-02', due: '2053-03-03', time: '09:00', duration: 60 },
+      },
+      {
+        name: 'scheduled offset',
+        planning: { scheduled: localDate('2053-02-28') },
+        references: ['2053-03-03', '2053-03-05', '2053-03-07'],
+        first: { scheduled: '2053-03-02', due: '2053-03-03', time: '09:00', duration: 60 },
+      },
+      {
+        name: 'time',
+        planning: { time: localTime('10:00') },
+        references: ['2053-03-03', '2053-03-05', '2053-03-07'],
+        first: { due: '2053-03-03', time: '10:00', duration: 60 },
+      },
+      {
+        name: 'duration',
+        planning: { duration: durationMinutes(90) },
+        references: ['2053-03-03', '2053-03-05', '2053-03-07'],
+        first: { due: '2053-03-03', time: '09:00', duration: 90 },
+      },
+      {
+        name: 'status',
+        status: 'in-progress' as const,
+        references: ['2053-03-03', '2053-03-05', '2053-03-07'],
+        first: { due: '2053-03-03', time: '09:00', duration: 60 },
+      },
+      {
+        name: 'lower visible bound',
+        visible: range('2053-03-05', '2053-03-07'),
+        references: ['2053-03-05', '2053-03-07'],
+        first: { due: '2053-03-05', time: '09:00', duration: 60 },
+      },
+      {
+        name: 'upper visible bound',
+        visible: range('2053-03-03', '2053-03-05'),
+        references: ['2053-03-03', '2053-03-05'],
+        first: { due: '2053-03-03', time: '09:00', duration: 60 },
+      },
+      {
+        name: 'scheduled policy',
+        policy: { removeScheduledDate: true },
+        references: ['2053-03-03', '2053-03-05', '2053-03-07'],
+        first: { due: '2053-03-03', time: '09:00', duration: 60 },
+      },
+    ].map((testCase, index) => ({ ...testCase, cacheDuration: 100 + index })),
+  )(
+    'separates changed $name inputs without relying on source revisions',
+    ({
+      name,
+      planning,
+      recurrence,
+      status,
+      visible,
+      policy,
+      references,
+      first,
+      cacheDuration: duration,
+    }) => {
+      const expansion = vi.spyOn(tasks, 'expandRecurrenceReferences');
+      // Each case has its own consumed duration so the module cache starts cold.
+      const basePlanning = {
+        due: localDate('2053-03-01'),
+        time: localTime('09:00'),
+        duration: durationMinutes(duration),
+      };
+      const current = rootSource(`semantic ${name}`, {
+        planning: basePlanning,
+        recurrence: 'every 2 days',
+      });
+      const baseVisible = range('2053-03-03', '2053-03-07');
+      project({ recurringSources: [current] }, baseVisible);
+      const changed = source({
+        ...current.root,
+        planning: { ...basePlanning, ...planning },
+        recurrence: recurrence ?? 'every 2 days',
+        status: status ?? current.node.status,
+      });
+      const result = projectCalendarOccurrences(
+        { materialized: [], recurringSources: [changed] },
+        visible ?? baseVisible,
+        policy ?? keepScheduled,
+      );
+      expect(
+        result.occurrences.map((value) => value.kind === 'forecast' && value.referenceDate),
+      ).toEqual(references);
+      expect(result.occurrences[0]?.planning).toEqual({
+        ...first,
+        duration: planning?.duration ?? duration,
+      });
+      expect(result.occurrences[0]?.source).toBe(changed);
+      expect(expansion).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it('keeps invalid, when-done, missing-rule, undated and terminal sources excluded after warming compatible forecasts', () => {
+    const expansion = vi.spyOn(tasks, 'expandRecurrenceReferences');
+    const current = rootSource('eligibility', {
+      planning: { due: localDate('2054-08-01') },
+      recurrence: 'every day',
+    });
+    const visible = range('2054-08-02', '2054-08-02');
+    expect(project({ recurringSources: [current] }, visible).occurrences).toHaveLength(1);
+    for (const changes of [
+      { recurrence: 'weekly' },
+      { recurrence: 'every day when done' },
+      { planning: {} },
+      { status: 'done' as const },
+      { status: 'cancelled' as const },
+    ]) {
+      const changed = source({ ...current.root, ...changes });
+      expect(project({ recurringSources: [changed] }, visible)).toEqual({
+        occurrences: [],
+        issues: [],
+      });
+    }
+    const withoutRule = rootSource('eligibility', { planning: current.root.planning });
+    expect(project({ recurringSources: [withoutRule] }, visible)).toEqual({
+      occurrences: [],
+      issues: [],
+    });
+    expect(expansion).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    {
+      rule: 'every day',
+      anchor: '2055-01-01',
+      visible: range('2055-01-02', '2056-12-31'),
+      count: 512,
+      phase: 'visible-occurrences',
+      limit: 512,
+    },
+    {
+      rule: 'every month',
+      anchor: '1100-01-31',
+      visible: range('1500-01-01', '1500-12-31'),
+      count: 0,
+      phase: 'sequential-seek',
+      limit: 4096,
+    },
+  ])(
+    'shares $phase results with fresh diagnostic source refs',
+    ({ rule, anchor, visible, count, phase, limit }) => {
+      const expansion = vi.spyOn(tasks, 'expandRecurrenceReferences');
+      const first = rootSource('limited first', {
+        line: 21,
+        recurrence: rule,
+        planning: { due: localDate(anchor) },
+      });
+      project({ recurringSources: [first] }, visible);
+      const current = rootSource('limited current', {
+        filePath: 'Current.md',
+        line: 22,
+        revision: 'current-limit',
+        recurrence: rule,
+        planning: { due: localDate(anchor) },
+      });
+      const result = project({ recurringSources: [current] }, visible);
+      expect(result.occurrences).toHaveLength(count);
+      expect(result.issues).toEqual([
+        { code: 'forecast-limit-reached', source: current.root.ref, phase, limit },
+      ]);
+      expect(Object.isFrozen(result.issues[0])).toBe(true);
+      if (count > 0) {
+        const occurrence = expectDefined(result.occurrences[0]);
+        expect(occurrence).toMatchObject({ key: 'Current.md:22:2055-01-02', ordinal: 1 });
+        expect(occurrence.source).toBe(current);
+        expect(Object.isFrozen(occurrence.planning)).toBe(true);
+      }
+      expect(expansion).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('evicts semantic forecast entries beyond 256 while refreshing recently used entries', () => {
+    const expansion = vi.spyOn(tasks, 'expandRecurrenceReferences');
+    const entry = (duration: number, line = duration) =>
+      rootSource('bounded', {
+        line,
+        recurrence: 'every day',
+        planning: { due: localDate('2057-01-01'), duration: durationMinutes(duration) },
+      });
+    const visible = range('2057-01-02', '2057-01-02');
+    for (let index = 1; index <= 256; index++)
+      project({ recurringSources: [entry(index)] }, visible);
+    expect(expansion).toHaveBeenCalledTimes(256);
+    project({ recurringSources: [entry(1, 900)] }, visible);
+    expect(expansion).toHaveBeenCalledTimes(256);
+    project({ recurringSources: [entry(257)] }, visible);
+    project({ recurringSources: [entry(1)] }, visible);
+    expect(expansion).toHaveBeenCalledTimes(257);
+    project({ recurringSources: [entry(2)] }, visible);
+    expect(expansion).toHaveBeenCalledTimes(258);
+    for (let index = 258; index <= 300; index++)
+      project({ recurringSources: [entry(index)] }, visible);
+    project({ recurringSources: [entry(3)] }, visible);
+    expect(expansion).toHaveBeenCalledTimes(302);
   });
 });
 
