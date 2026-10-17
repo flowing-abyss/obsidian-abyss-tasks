@@ -352,7 +352,9 @@ exception causes. Hidden preparation failures remain quiet until an active surfa
 
 [`PanelView`](src/views/PanelView.ts) owns AppState, the rail, panels, shortcuts, and their lifetimes.
 It injects capabilities and callbacks; delegated UI owners do not add independent task writers or
-duplicate shell subscriptions.
+duplicate shell subscriptions. LeftPanel defers task navigation presentation in Calendar, Search
+and Projects; returning to Tasks rebuilds counts, tags, projects and active state from current data
+and settings. Its outer render still settles inline sessions while hidden.
 
 | Owner                                               | Responsibility                                                                                   |
 | --------------------------------------------------- | ------------------------------------------------------------------------------------------------ |

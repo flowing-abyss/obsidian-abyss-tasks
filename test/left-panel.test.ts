@@ -1500,22 +1500,25 @@ describe('LeftPanel lifecycle', () => {
     expect(el.children).toHaveLength(0);
   });
 
-  it('search mode hides panel (no children)', () => {
-    const state = new AppState();
-    state.set('mode', 'search');
-    const store = makeStubStore([]);
-    const save = vi.fn().mockResolvedValue(undefined);
-    const tm = new TagManager(null as never, DEFAULT_SETTINGS, save, {
-      check: () => 'ready',
-      apply: async (_change, applyLive) => {
-        applyLive();
-      },
-    });
-    const panel = makeLeftPanelForTest(state, store, DEFAULT_SETTINGS, tm, null as never);
-    const el = freshContainer();
-    panel.mount(el);
-    expect(el.children).toHaveLength(0);
-  });
+  it.each(['search', 'projects', 'calendar'] as const)(
+    '%s mode hides panel (no children)',
+    (mode) => {
+      const state = new AppState();
+      state.set('mode', mode);
+      const store = makeStubStore([]);
+      const save = vi.fn().mockResolvedValue(undefined);
+      const tm = new TagManager(null as never, DEFAULT_SETTINGS, save, {
+        check: () => 'ready',
+        apply: async (_change, applyLive) => {
+          applyLive();
+        },
+      });
+      const panel = makeLeftPanelForTest(state, store, DEFAULT_SETTINGS, tm, null as never);
+      const el = freshContainer();
+      panel.mount(el);
+      expect(el.children).toHaveLength(0);
+    },
+  );
 });
 
 describe('LeftPanel Pinned section', () => {
@@ -2137,8 +2140,9 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
     }));
     const refreshStore = vi.fn();
     let activeProjects = fullProjects;
+    const projectList = vi.fn(() => activeProjects);
     const projectStore = {
-      activeForLeftPanel: () => activeProjects,
+      activeForLeftPanel: projectList,
       refresh: refreshStore,
       onUpdate: () => () => {},
     } as never;
@@ -2175,6 +2179,7 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
       saveViewState,
       merged,
       taskList,
+      projectList,
       create,
       setStatus,
       refreshStore,
@@ -2182,16 +2187,17 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
     };
   }
 
-  it('renders once for a batched navigation commit and once for a standalone relevant change', () => {
+  it('renders visible Tasks once for a batched commit and once for a standalone relevant change', () => {
     const { state, el, taskList } = makeFull({
       tasks: [task({ tags: ['#work'] })],
       settings: { pinnedTags: ['#work'] },
     });
+    state.set('mode', 'calendar');
     taskList.mockClear();
 
     state.batch(() => {
       state.set('selectedList', { type: 'tag', tag: '#work' });
-      state.set('mode', 'calendar');
+      state.set('mode', 'tasks');
       state.set('centerListViewState', {
         groupBy: 'tag',
         sortBy: { field: 'title', dir: 'asc' },
@@ -2214,6 +2220,186 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
       'Upcoming',
     );
   });
+
+  it.each(['entry', 'query refresh', 'project settings refresh'] as const)(
+    'skips hidden Calendar navigation calculations on %s',
+    (trigger) => {
+      const collect = vi.spyOn(taskTagCatalog, 'collectTaskNodeTags');
+      const { panel, state, el, taskList, projectList } = makeFull({
+        tasks: [task({ tags: ['#work'] })],
+        settings: { pinnedTags: ['#work'] },
+        projects: [{ path: 'Projects/A.md', name: 'A' }],
+      });
+      try {
+        if (trigger !== 'entry') state.set('mode', 'calendar');
+        taskList.mockClear();
+        collect.mockClear();
+        projectList.mockClear();
+
+        if (trigger === 'entry') {
+          state.batch(() => {
+            state.set('selectedList', { type: 'tag', tag: '#work' });
+            state.set('mode', 'calendar');
+            state.set('centerListViewState', {
+              groupBy: 'tag',
+              sortBy: { field: 'title', dir: 'asc' },
+              filters: [],
+            });
+          });
+        } else if (trigger === 'query refresh') panel.refresh();
+        else panel.refreshProjectSettings();
+
+        expect(taskList).not.toHaveBeenCalled();
+        expect(collect).not.toHaveBeenCalled();
+        expect(projectList).not.toHaveBeenCalled();
+        expect(el.children).toHaveLength(0);
+      } finally {
+        panel.destroy();
+      }
+    },
+  );
+
+  it('rebuilds current Tasks counts, tags, projects and selection after hidden Calendar updates', () => {
+    const tasks = [task({ tags: ['#old'] })];
+    const { panel, state, el, merged, setActiveProjects } = makeFull({
+      tasks,
+      settings: { pinnedTags: ['#old'] },
+      projects: [{ path: 'Projects/Old.md', name: 'Old' }],
+    });
+    try {
+      state.set('mode', 'calendar');
+      tasks.splice(
+        0,
+        tasks.length,
+        task({ tags: ['#fresh'], source: { line: 0 } }),
+        task({ tags: ['#fresh'], source: { line: 1 } }),
+      );
+      merged.inbox = { mode: 'tag', tag: '#fresh', removeTagOnAssign: true };
+      merged.pinnedTags = ['#fresh'];
+      merged.sectionCollapse.projects = true;
+      merged.tagGroups = [
+        { id: 'latest', name: 'Latest tags', mode: 'manual', tags: ['#fresh', '#extra'] },
+      ];
+      setActiveProjects([
+        {
+          path: 'Projects/Latest.md',
+          name: 'Latest project',
+          frontmatter: {},
+          tags: [],
+          statusId: null,
+          rawStatus: null,
+          stats: {
+            total: 5,
+            done: 1,
+            cancelled: 1,
+            inProgress: 1,
+            tracked: { closedMs: 0, openStartsMs: [] },
+          },
+        },
+      ]);
+      state.set('selectedList', { type: 'project', path: 'Projects/Latest.md' });
+      panel.refresh();
+      panel.refreshProjectSettings();
+      expect(el.children).toHaveLength(0);
+
+      state.set('mode', 'tasks');
+
+      expect(el.querySelector('.abyss-left-item .abyss-left-count')?.textContent).toBe('2');
+      expect(el.querySelector('.abyss-pinned-tag .abyss-left-label')?.textContent).toBe('#fresh');
+      expect(el.querySelector('.abyss-pinned-tag .abyss-left-count')?.textContent).toBe('2');
+      expect(tagLabels(el)).toContain('Latest tags');
+      expect(el.querySelector('.abyss-tag-group-header .abyss-left-count')?.textContent).toBe('2');
+      const projects = expectDefined(el.querySelector('.abyss-left-section--projects'));
+      expect(projects.querySelector('.abyss-left-section-body')).toBeNull();
+      expectDefined(projects.querySelector<HTMLElement>('.abyss-left-section-header')).click();
+      expect(el.querySelectorAll('.abyss-project-item')).toHaveLength(1);
+      expect(el.querySelector('.abyss-project-item.is-active .abyss-left-label')?.textContent).toBe(
+        'Latest project',
+      );
+      expect(el.querySelector('.abyss-project-item .abyss-left-count')?.textContent).toBe('3');
+      expect(el.textContent).not.toContain('#old');
+      expect(el.textContent).not.toContain('Old');
+    } finally {
+      panel.destroy();
+    }
+  });
+
+  it.each(['tags', 'projects'] as const)(
+    'ends a focused %s draft on Calendar entry without a delayed blur commit',
+    (section) => {
+      vi.useFakeTimers();
+      const { panel, state, el, tm, create } = makeFull({
+        attached: true,
+        projects: [{ path: 'Projects/A.md', name: 'A' }],
+      });
+      const addTag = vi.spyOn(tm, 'createManualGroup');
+      try {
+        const input = openInlineAdd(el, section);
+        input.value = 'Partial';
+        simulateBlurDuringEmpty(el, input);
+
+        state.set('mode', 'calendar');
+        vi.advanceTimersByTime(150);
+        expect(el.children).toHaveLength(0);
+        expect(input.isConnected).toBe(false);
+        expect(create).not.toHaveBeenCalled();
+        expect(addTag).not.toHaveBeenCalled();
+
+        state.set('mode', 'tasks');
+        expect(el.querySelector('.abyss-left-add-input')).toBeNull();
+      } finally {
+        panel.destroy();
+        vi.useRealTimers();
+        el.remove();
+      }
+    },
+  );
+
+  it.each(['tags', 'projects'] as const)(
+    'keeps a dismissed committing %s session from owning a newer draft after Calendar',
+    async (section) => {
+      vi.useFakeTimers();
+      let settle!: () => void;
+      const pending = new Promise<null>((resolve) => {
+        settle = () => {
+          resolve(null);
+        };
+      });
+      const { panel, state, el, tm, create } = makeFull({
+        attached: true,
+        projects: [{ path: 'Projects/A.md', name: 'A' }],
+        create: () => pending,
+      });
+      const addTag = vi.spyOn(tm, 'createManualGroup').mockImplementation(async () => {
+        await pending;
+      });
+      try {
+        const input = openInlineAdd(el, section);
+        input.value = 'Submitted';
+        keydown(input, 'Enter');
+        keydown(input, 'Escape');
+        state.set('mode', 'calendar');
+        expect(el.children).toHaveLength(0);
+        state.set('mode', 'tasks');
+        const draft = openInlineAdd(el, section);
+        draft.value = 'New draft';
+        draft.setSelectionRange(1, 3);
+
+        settle();
+        await vi.advanceTimersByTimeAsync(150);
+
+        expect(el.querySelector('.abyss-left-add-input')).toBe(draft);
+        expect(draft.value).toBe('New draft');
+        expect([draft.selectionStart, draft.selectionEnd]).toEqual([1, 3]);
+        expect(activeDocument.activeElement).toBe(draft);
+        expect(section === 'tags' ? addTag : create).toHaveBeenCalledExactlyOnceWith('Submitted');
+      } finally {
+        panel.destroy();
+        vi.useRealTimers();
+        el.remove();
+      }
+    },
+  );
 
   it('renders a chevron span (SVG icon, not a text glyph) on the Tags header', () => {
     const { el } = makeFull({
@@ -3341,7 +3527,7 @@ it('counts independently active canonical children, ranges and custom status sym
 
 it('renders all Analysis rows from the owning port and preserves sidebar focus/scroll on active updates', () => {
   const state = new AppState();
-  state.set('mode', 'statistics');
+  state.set('mode', 'calendar');
   const settings = structuredClone(DEFAULT_SETTINGS);
   const tasks = makeStubStore([]);
   const tags = new TagManager(null as never, settings, async () => {}, {
@@ -3389,6 +3575,8 @@ it('renders all Analysis rows from the owning port and preserves sidebar focus/s
   const host = document.body.createDiv();
   try {
     panel.mount(host);
+    expect(host.children).toHaveLength(0);
+    state.set('mode', 'statistics');
     const rows = host.querySelectorAll<HTMLButtonElement>('[data-statistics-view]');
     expect(rows).toHaveLength(11);
     expect([...rows].map((row) => row.textContent)).toEqual([
@@ -3438,6 +3626,13 @@ it('renders all Analysis rows from the owning port and preserves sidebar focus/s
     expect(document.activeElement).toBe(host.querySelector('[data-statistics-group="tag"]'));
     expectDefined(host.querySelector<HTMLButtonElement>('[aria-label="Scope"]')).click();
     expect(close).toHaveBeenCalledTimes(4);
+    state.set('mode', 'calendar');
+    expect(host.children).toHaveLength(0);
+    expect(host.classList.contains('abyss-left--statistics')).toBe(false);
+    navigation.selectView('cohorts');
+    expect(host.children).toHaveLength(0);
+    state.set('mode', 'statistics');
+    expect(host.querySelector('[aria-current="page"]')?.textContent).toBe('Cohorts');
     state.set('mode', 'tasks');
     expect(host.textContent).toContain('Inbox');
     expect(host.querySelector('[data-statistics-view]')).toBeNull();

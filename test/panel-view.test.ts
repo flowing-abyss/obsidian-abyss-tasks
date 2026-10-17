@@ -3239,6 +3239,10 @@ describe('PanelView', () => {
       expectDefined(
         view.contentEl.querySelector<HTMLButtonElement>('.abyss-rail [aria-label="Calendar"]'),
       ).click();
+      expect(expectDefined(view.contentEl.querySelector('.abyss-left')).children).toHaveLength(0);
+      expectDefined(
+        view.contentEl.querySelector<HTMLButtonElement>('.abyss-rail [aria-label="Tasks"]'),
+      ).click();
       expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-left-item')).click();
 
       expect(openCalendar).toHaveBeenCalledOnce();

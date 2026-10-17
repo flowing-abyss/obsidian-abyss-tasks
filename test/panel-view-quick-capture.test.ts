@@ -961,7 +961,10 @@ describe('physical Q creation reveal through PanelView', () => {
         const input = await h.openQ();
         enter(input, 'Z retained navigation');
         await entered.promise;
-        if (origin === 'overview') openMode('Tasks');
+        if (origin === 'calendar') {
+          expect(expectDefined(h.root.querySelector('.abyss-left')).children).toHaveLength(0);
+        }
+        if (origin !== 'list') openMode('Tasks');
         openList('Today');
         expect(h.state.get('selectedList')).toBe('today');
         expect(h.state.get('taskStack')).toEqual([previous]);
