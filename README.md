@@ -77,7 +77,8 @@ Other views cover completion, deadlines, project aging and dependencies.
 
 ## Roadmap
 
-- [ ] Optimize the mobile interface.
+- [x] Optimize the mobile interface.
+- [ ] Improve individual project views.
 - [ ] Add AI integration and voice input.
 - [ ] Add hybrid search alongside fuzzy search.
 
