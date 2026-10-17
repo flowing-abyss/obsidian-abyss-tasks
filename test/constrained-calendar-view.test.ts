@@ -98,6 +98,33 @@ describe('constrained calendar', () => {
     },
   );
 
+  it('preserves same-day scroll before card removal clamps the old scroll range', () => {
+    const tasks = project(
+      Array.from({ length: 20 }, (_, line) =>
+        task({ source: { line }, title: `Title ${line}`, planning: { due: date } }),
+      ),
+    );
+    const h = mount(tasks);
+    const list = expectDefined(
+      h.container.querySelector<HTMLElement>('.abyss-calendar-agenda-list'),
+    );
+    const retired = Array.from(list.querySelectorAll('.abyss-task-card'));
+    // jsdom has no layout: model a 200px viewport with 40px cards, whose removal
+    // clamps the scroll range. Keep the actual card mounts and their disposal.
+    Object.defineProperty(list, 'scrollTop', {
+      get: () =>
+        Math.min(480, Math.max(0, list.querySelectorAll('.abyss-task-card').length * 40 - 200)),
+    });
+    h.view.patch(h.container, tasks, config);
+    const rebuilt = expectDefined(
+      h.container.querySelector<HTMLElement>('.abyss-calendar-agenda-list'),
+    );
+    expect(rebuilt.scrollTop).toBe(480);
+    expect(retired.every((row) => !row.isConnected)).toBe(true);
+    h.view.selectDate(localDate('2026-10-17'));
+    expect(h.container.querySelector('.abyss-calendar-agenda-list')?.scrollTop).toBe(0);
+  });
+
   it('activates materialized rows explicitly, with focus and control/link exclusions', () => {
     const tasks = project([task({ planning: { due: date } })]);
     const h = mount(tasks);

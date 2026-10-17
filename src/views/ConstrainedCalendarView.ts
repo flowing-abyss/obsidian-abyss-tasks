@@ -118,15 +118,15 @@ export class ConstrainedCalendarView extends BaseView {
   selectDate(date: LocalDate): void {
     const summary = this.model.get(date);
     if (this.agenda === null || summary === undefined) return;
-    this.callbacks.forecastMenuOwner?.dismiss();
-    this.destroyAgendaRows();
-    for (const [day, button] of this.buttons)
-      button.setAttribute('aria-pressed', String(day === date));
     const previous = this.agenda.dataset['calendarDate'];
     const scroll =
       previous === date
         ? (this.agenda.querySelector('.abyss-calendar-agenda-list')?.scrollTop ?? 0)
         : 0;
+    this.callbacks.forecastMenuOwner?.dismiss();
+    this.destroyAgendaRows();
+    for (const [day, button] of this.buttons)
+      button.setAttribute('aria-pressed', String(day === date));
     this.agenda.empty();
     this.agenda.dataset['calendarDate'] = date;
     const list = this.agenda.createDiv({ cls: 'abyss-calendar-agenda-list' });

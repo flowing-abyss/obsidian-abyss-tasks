@@ -2539,9 +2539,10 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     expect(css).toMatch(
       /@container abyss-panel-layout \(max-width: 45rem\)[\s\S]*?\.abyss-project-status-filters\s*\{(?=[^}]*grid-row: 2)(?=[^}]*max-width: none)/u,
     );
-    expect(css).toMatch(
-      /@container abyss-task-list \(max-width: 38rem\)[\s\S]*?\.abyss-cal-nav\s*\{(?=[^}]*flex-wrap: wrap)(?=[^}]*overflow: visible)/u,
-    );
+    const calendarNav = cssDeclarationsFor(css, '.abyss-cal-nav');
+    expect(calendarNav).toContain('flex-wrap: wrap');
+    expect(calendarNav).not.toMatch(/overflow(?:-x|-y)?:\s*(?:hidden|clip)/u);
+    expect(cssDeclarationsFor(css, '.abyss-cal-nav-left')).toContain('min-inline-size: 0');
     expect(css).toContain('min(var(--abyss-shell-top-inset), 5px)');
   });
 

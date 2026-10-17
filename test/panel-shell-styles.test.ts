@@ -154,7 +154,6 @@ describe('Panel shell top rhythm', () => {
         '.abyss-layout--projects > .abyss-center-shell > .abyss-center .abyss-projects-toolbar',
         '.abyss-layout > .abyss-right > .abyss-right-header:first-child',
         '.abyss-layout > .abyss-right > .abyss-breadcrumb:first-child',
-        'body.is-phone .abyss-layout--calendar > .abyss-center-shell > .abyss-center > .abyss-cal-nav',
       ].map(normalizeCssSelector),
     );
 
@@ -166,6 +165,7 @@ describe('Panel shell top rhythm', () => {
       '.abyss-modal-body',
       '.abyss-modal .abyss-right-header',
       '.abyss-layout > .abyss-right > .abyss-right-header',
+      'body.is-phone .abyss-layout--calendar > .abyss-center-shell > .abyss-center > .abyss-cal-nav',
     ]) {
       expect(declarationsFor(selector)).not.toContain('var(--abyss-shell-top-inset)');
     }

@@ -627,19 +627,30 @@ describe('CaptureSurface', () => {
 
   it('keeps narrow calendar controls horizontally reachable and clears feedback above mobile chrome', () => {
     const compact = lastAtRuleBlock('@container abyss-task-list (max-width: 30rem)');
-    const wrapped = lastAtRuleBlock('@container abyss-task-list (max-width: 38rem)');
-    const nav = declarationsForSource(wrapped, '.abyss-cal-nav');
+    const nav = declarationsFor('.abyss-cal-nav');
+    const rows = declarationsFor(
+      ':is(.abyss-cal-nav-left, .abyss-cal-nav-right, .abyss-cal-nav-title-group)',
+    );
+    const hitArea = declarationsFor('.abyss-cal-nav button::after');
     const calendarFeedback = declarationsForSource(
       compact,
       '.abyss-center .abyss-calendar-capture-feedback',
     );
     const globalFeedback = declarationsFor('body.is-phone .abyss-creation-feedback');
 
-    expect(nav).toContain('overflow: visible');
     expect(nav).toContain('flex-wrap: wrap');
-    expect(declarationsForSource(wrapped, '.abyss-cal-nav button')).toContain(
-      'min-block-size: 44px',
-    );
+    expect(nav).not.toMatch(/overflow(?:-x|-y)?:\s*(?:hidden|clip)/u);
+    expect(rows).toContain('flex-wrap: wrap');
+    expect(rows).toContain('min-block-size: 44px');
+    expect(rows).toContain('row-gap: var(--size-4-4)');
+    expect(declarationsFor('.abyss-cal-nav button')).toContain('position: relative');
+    expect(hitArea).toContain("content: ''");
+    expect(hitArea).toContain('position: absolute');
+    expect(hitArea).toContain('inset-inline: 0');
+    expect(hitArea).toContain('inset-block-start: 50%');
+    expect(hitArea).toContain('block-size: max(100%, 44px)');
+    expect(hitArea).toContain('transform: translateY(-50%)');
+    expect(hitArea).not.toContain('background:');
     expect(calendarFeedback).toContain('inset-block-start:');
     expect(calendarFeedback).toContain('var(--size-4-16');
     expect(calendarFeedback).toContain('var(--size-4-12');
