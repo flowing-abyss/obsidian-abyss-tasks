@@ -7,6 +7,7 @@ import { durationMinutes, localDate, localTime } from '../src/tasks/domain/valid
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { projectTaskSnapshot } from '../src/tasks/infrastructure/markdown/TaskSnapshotProjector';
 import {
+  calendarMutationTarget,
   calendarOccurrenceForTask,
   calendarPointPatchCommand,
   calendarShiftScheduleCommand,
@@ -503,7 +504,7 @@ describe('projectCalendarOccurrences', () => {
     const nested = subtask({
       title: 'nested',
       recurrence: 'every 17 days',
-      planning: { due: '2051-08-01' },
+      planning: { scheduled: '2051-08-01', due: '2051-08-01' },
       ref: { parent: { type: 'subtask', ref: child.ref }, relativeLine: 3 },
     });
     const secondSource = source({ ...second.root, subtasks: [{ ...child, subtasks: [nested] }] });
@@ -532,8 +533,242 @@ describe('projectCalendarOccurrences', () => {
       const occurrence = expectDefined(result.occurrences[index]);
       expect(occurrence.source).toBe(current);
       expect(occurrence.source.target).toBe(current.target);
+      expect(occurrence.planning).toEqual(
+        index === 2 ? { scheduled: '2051-08-18', due: '2051-08-18' } : { due: '2051-08-18' },
+      );
       expect(taskSnapshotForCalendarOccurrence(occurrence).ref).toBe(current.root.ref);
     }
+    expect(expansion).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([false, true])(
+    'shares duplicate effective dates while hydrating only current roles with removeScheduledDate=%s',
+    (removeScheduledDate) => {
+      const expansion = vi.spyOn(tasks, 'expandRecurrenceReferences');
+      const due = localDate('2062-01-01');
+      const first = rootSource('all roles', {
+        line: 30,
+        recurrence: 'every day',
+        planning: {
+          start: due,
+          scheduled: due,
+          due,
+          time: localTime('09:00'),
+          duration: durationMinutes(60),
+        },
+      });
+      const current = rootSource('due only', {
+        filePath: 'Current.md',
+        line: 31,
+        revision: 'new-role-revision',
+        recurrence: 'every day',
+        planning: { due },
+      });
+      const visible = range('2062-01-02', '2062-01-02');
+      const policy = { removeScheduledDate };
+      const warm = projectCalendarOccurrences(
+        { materialized: [], recurringSources: [first] },
+        visible,
+        policy,
+      );
+      const result = projectCalendarOccurrences(
+        { materialized: [], recurringSources: [current] },
+        visible,
+        policy,
+      );
+      expect(warm.occurrences[0]?.planning).toEqual({
+        start: '2062-01-02',
+        ...(!removeScheduledDate && { scheduled: '2062-01-02' }),
+        due: '2062-01-02',
+        time: '09:00',
+        duration: 60,
+      });
+      const occurrence = expectDefined(result.occurrences[0]);
+      expect(occurrence.planning).toEqual({ due: '2062-01-02' });
+      expect(Object.isFrozen(occurrence.planning)).toBe(true);
+      expect(occurrence.key).toBe('Current.md:31:2062-01-02');
+      expect(occurrence.source).toBe(current);
+      expect(taskSnapshotForCalendarOccurrence(occurrence).ref).toBe(current.root.ref);
+      expect(calendarMutationTarget(taskSnapshotForCalendarOccurrence(occurrence))).toBeUndefined();
+      expect(expansion).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([false, true])(
+    'filters shared date transforms by current geometry without closing ordinal gaps, points first=%s',
+    (pointsFirst) => {
+      const expansion = vi.spyOn(tasks, 'expandRecurrenceReferences');
+      const interval = rootSource('interval', {
+        line: 40,
+        recurrence: pointsFirst ? 'every day ' : 'every day',
+        planning: { start: localDate('2064-01-01'), due: localDate('2064-01-05') },
+      });
+      const points = rootSource('points', {
+        line: 41,
+        recurrence: pointsFirst ? 'every day ' : 'every day',
+        planning: { scheduled: localDate('2064-01-01'), due: localDate('2064-01-05') },
+      });
+      const visible = range('2064-01-08', '2064-01-08');
+      const first = project({ recurringSources: [pointsFirst ? points : interval] }, visible);
+      const second = project({ recurringSources: [pointsFirst ? interval : points] }, visible);
+      const warm = pointsFirst ? second : first;
+      expect(
+        warm.occurrences.map((value) => [
+          value.planning,
+          value.kind === 'forecast' && value.ordinal,
+        ]),
+      ).toEqual([
+        [{ start: '2064-01-04', due: '2064-01-08' }, 1],
+        [{ start: '2064-01-05', due: '2064-01-09' }, 2],
+        [{ start: '2064-01-06', due: '2064-01-10' }, 3],
+        [{ start: '2064-01-07', due: '2064-01-11' }, 4],
+        [{ start: '2064-01-08', due: '2064-01-12' }, 5],
+      ]);
+      const result = pointsFirst ? first : second;
+      expect(
+        result.occurrences.map((value) => [
+          value.planning,
+          value.kind === 'forecast' && value.ordinal,
+        ]),
+      ).toEqual([
+        [{ scheduled: '2064-01-04', due: '2064-01-08' }, 1],
+        [{ scheduled: '2064-01-08', due: '2064-01-12' }, 5],
+      ]);
+      expect(result.occurrences.every((value) => value.source === points)).toBe(true);
+      expect(expansion).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('aligns three unique effective dates across swapped authored roles', () => {
+    const expansion = vi.spyOn(tasks, 'expandRecurrenceReferences');
+    const first = rootSource('three dates', {
+      recurrence: 'every week',
+      planning: {
+        start: localDate('2071-01-01'),
+        due: localDate('2071-01-03'),
+        scheduled: localDate('2071-01-05'),
+      },
+    });
+    const current = rootSource('three dates swapped', {
+      recurrence: 'every week',
+      planning: {
+        start: localDate('2071-01-05'),
+        due: localDate('2071-01-03'),
+        scheduled: localDate('2071-01-01'),
+      },
+    });
+    const visible = range('2071-01-10', '2071-01-10');
+    expect(
+      project({ recurringSources: [first] }, visible).occurrences.map((value) => value.planning),
+    ).toEqual([{ start: '2071-01-08', due: '2071-01-10', scheduled: '2071-01-12' }]);
+    expect(
+      project({ recurringSources: [current] }, visible).occurrences.map((value) => value.planning),
+    ).toEqual([{ start: '2071-01-12', due: '2071-01-10', scheduled: '2071-01-08' }]);
+    expect(expansion).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps reference priority separate from an equal date set and rejects inverted interval interiors', () => {
+    const expansion = vi.spyOn(tasks, 'expandRecurrenceReferences');
+    const interval = rootSource('valid interval', {
+      recurrence: 'every week',
+      planning: { start: localDate('2067-01-01'), due: localDate('2067-01-05') },
+    });
+    const inverted = rootSource('inverted interval', {
+      recurrence: 'every week',
+      planning: { start: localDate('2067-01-05'), due: localDate('2067-01-01') },
+    });
+    const visible = range('2067-01-10', '2067-01-10');
+    expect(
+      project({ recurringSources: [interval] }, visible).occurrences.map((value) => value.planning),
+    ).toEqual([{ start: '2067-01-08', due: '2067-01-12' }]);
+    expect(project({ recurringSources: [inverted] }, visible).occurrences).toEqual([]);
+    expect(
+      project({ recurringSources: [inverted] }, range('2067-01-12', '2067-01-12')).occurrences.map(
+        (value) => value.planning,
+      ),
+    ).toEqual([{ start: '2067-01-12', due: '2067-01-08' }]);
+    expect(expansion).toHaveBeenCalledTimes(3);
+  });
+
+  it('shares removed scheduled offsets but never forecasts a scheduled-only source under removal', () => {
+    const expansion = vi.spyOn(tasks, 'expandRecurrenceReferences');
+    const due = localDate('2068-01-01');
+    const first = rootSource('scheduled far away', {
+      recurrence: 'every day',
+      planning: { due, scheduled: localDate('9999-12-31') },
+    });
+    const current = rootSource('scheduled absent', { recurrence: 'every day', planning: { due } });
+    const scheduledOnly = rootSource('scheduled only', {
+      recurrence: 'every day',
+      planning: { scheduled: due },
+    });
+    const visible = range('2068-01-02', '2068-01-02');
+    const run = (value: CalendarTaskSource) =>
+      projectCalendarOccurrences({ materialized: [], recurringSources: [value] }, visible, {
+        removeScheduledDate: true,
+      });
+    expect(run(first).occurrences[0]?.planning).toEqual({ due: '2068-01-02' });
+    expect(run(current).occurrences[0]?.planning).toEqual({ due: '2068-01-02' });
+    expect(run(scheduledOnly)).toEqual({ occurrences: [], issues: [] });
+    expect(expansion).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects the whole transformed planning when any effective date crosses year 9999', () => {
+    const expansion = vi.spyOn(tasks, 'expandRecurrenceReferences');
+    const first = rootSource('overflow scheduled', {
+      recurrence: 'every 2 days',
+      planning: { due: localDate('9999-12-25'), scheduled: localDate('9999-12-28') },
+    });
+    const current = rootSource('overflow start', {
+      recurrence: 'every 2 days',
+      planning: { due: localDate('9999-12-25'), start: localDate('9999-12-28') },
+    });
+    const visible = range('9999-12-30', '9999-12-30');
+    expect(
+      project({ recurringSources: [first] }, visible).occurrences.map((value) => [
+        value.planning,
+        value.kind === 'forecast' && value.ordinal,
+      ]),
+    ).toEqual([[{ scheduled: '9999-12-30', due: '9999-12-27' }, 1]]);
+    expect(
+      project({ recurringSources: [current] }, visible).occurrences.map((value) => [
+        value.planning,
+        value.kind === 'forecast' && value.ordinal,
+      ]),
+    ).toEqual([[{ start: '9999-12-30', due: '9999-12-27' }, 1]]);
+    expect(expansion).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves shared visible-limit diagnostics with current refs when every hydrated candidate rejects', () => {
+    const expansion = vi.spyOn(tasks, 'expandRecurrenceReferences');
+    const due = localDate('2066-01-01');
+    const scheduled = localDate('2086-01-01');
+    const first = rootSource('limited gap', {
+      recurrence: 'every day',
+      planning: { start: due, due, scheduled },
+    });
+    const current = rootSource('current limited gap', {
+      filePath: 'Limit.md',
+      line: 63,
+      revision: 'limit-current',
+      recurrence: 'every day',
+      planning: { due, scheduled },
+    });
+    const visible = range('2076-01-01', '2076-01-01');
+    expect(project({ recurringSources: [first] }, visible).occurrences).toEqual([]);
+    const result = project({ recurringSources: [current] }, visible);
+    expect(result).toEqual({
+      occurrences: [],
+      issues: [
+        {
+          code: 'forecast-limit-reached',
+          source: current.root.ref,
+          phase: 'visible-occurrences',
+          limit: 512,
+        },
+      ],
+    });
+    expect(Object.isFrozen(result.issues[0])).toBe(true);
     expect(expansion).toHaveBeenCalledTimes(1);
   });
 
@@ -670,22 +905,14 @@ describe('projectCalendarOccurrences', () => {
         references: ['2053-03-03', '2053-03-05', '2053-03-07'],
         first: { due: '2053-03-03', time: '09:00', duration: 60 },
       },
-    ].map((testCase, index) => ({ ...testCase, cacheDuration: 100 + index })),
+    ].map((testCase, index) => ({ ...testCase, rawSuffix: ' '.repeat(index + 20) })),
   )(
-    'separates changed $name inputs without relying on source revisions',
-    ({
-      name,
-      planning,
-      recurrence,
-      status,
-      visible,
-      policy,
-      references,
-      first,
-      cacheDuration: duration,
-    }) => {
+    'uses changed $name inputs with fresh planning and source data',
+    ({ name, planning, recurrence, status, visible, policy, references, first, rawSuffix }) => {
       const expansion = vi.spyOn(tasks, 'expandRecurrenceReferences');
-      // Each case has its own consumed duration so the module cache starts cold.
+      // Exact raw spelling isolates each case without retaining unrelated metadata.
+      const baseRule = `every 2 days${rawSuffix}`;
+      const duration = 60;
       const basePlanning = {
         due: localDate('2053-03-01'),
         time: localTime('09:00'),
@@ -693,14 +920,14 @@ describe('projectCalendarOccurrences', () => {
       };
       const current = rootSource(`semantic ${name}`, {
         planning: basePlanning,
-        recurrence: 'every 2 days',
+        recurrence: baseRule,
       });
       const baseVisible = range('2053-03-03', '2053-03-07');
       project({ recurringSources: [current] }, baseVisible);
       const changed = source({
         ...current.root,
         planning: { ...basePlanning, ...planning },
-        recurrence: recurrence ?? 'every 2 days',
+        recurrence: recurrence ?? baseRule,
         status: status ?? current.node.status,
       });
       const result = projectCalendarOccurrences(
@@ -716,7 +943,9 @@ describe('projectCalendarOccurrences', () => {
         duration: planning?.duration ?? duration,
       });
       expect(result.occurrences[0]?.source).toBe(changed);
-      expect(expansion).toHaveBeenCalledTimes(2);
+      expect(expansion).toHaveBeenCalledTimes(
+        ['time', 'duration', 'status'].includes(name) ? 1 : 2,
+      );
     },
   );
 
@@ -801,13 +1030,13 @@ describe('projectCalendarOccurrences', () => {
 
   it('evicts semantic forecast entries beyond 256 while refreshing recently used entries', () => {
     const expansion = vi.spyOn(tasks, 'expandRecurrenceReferences');
-    const entry = (duration: number, line = duration) =>
+    const entry = (offset: number, line = offset) =>
       rootSource('bounded', {
         line,
         recurrence: 'every day',
-        planning: { due: localDate('2057-01-01'), duration: durationMinutes(duration) },
+        planning: { due: expectDefined(tasks.shiftLocalDate(localDate('2057-01-01'), offset)) },
       });
-    const visible = range('2057-01-02', '2057-01-02');
+    const visible = range('2058-01-01', '2058-01-01');
     for (let index = 1; index <= 256; index++)
       project({ recurringSources: [entry(index)] }, visible);
     expect(expansion).toHaveBeenCalledTimes(256);

@@ -60,12 +60,13 @@ export interface CalendarProjection {
 }
 
 interface ForecastTemplate {
-  readonly planning: TaskPlanning;
+  readonly shiftedDates: readonly LocalDate[];
   readonly referenceDate: LocalDate;
   readonly ordinal: number;
 }
 
 interface ForecastCacheEntry {
+  readonly originalDates: readonly LocalDate[];
   readonly forecasts: readonly ForecastTemplate[];
   readonly issues: ReadonlyArray<Omit<CalendarProjectionIssue, 'source'>>;
 }
@@ -100,21 +101,15 @@ function semanticSourceKey(source: CalendarTaskSource): string {
 }
 
 function projectionCacheKey(
-  source: CalendarTaskSource,
+  request: ForecastExpansionRequest,
   visible: DateRange,
   policy: RecurrencePolicy,
 ): string {
-  const { node } = source;
-  const { planning } = node;
-  // Only calculation inputs belong here; hydrate source identity on every projection.
+  // Role geometry and source identity are hydrated only after shared date arithmetic.
   return JSON.stringify([
-    node.status,
-    node.recurrence,
-    planning.start,
-    planning.scheduled,
-    planning.due,
-    planning.time,
-    planning.duration,
+    request.rule,
+    request.reference,
+    request.originalDates,
     visible.from,
     visible.to,
     policy.removeScheduledDate,
@@ -139,13 +134,12 @@ function cacheForecast(key: string, entry: ForecastCacheEntry): ForecastCacheEnt
   return entry;
 }
 
-function shiftedPlanning(
+function hydratePlanning(
   planning: TaskPlanning,
-  reference: LocalDate,
-  nextReference: LocalDate,
+  entry: ForecastCacheEntry,
+  template: ForecastTemplate,
   policy: RecurrencePolicy,
 ): TaskPlanning | undefined {
-  const dayDelta = daysBetweenLocalDates(reference, nextReference);
   const shifted: {
     start?: LocalDate;
     scheduled?: LocalDate;
@@ -155,7 +149,7 @@ function shiftedPlanning(
     if (field === 'scheduled' && policy.removeScheduledDate) continue;
     const value = planning[field];
     if (value === undefined) continue;
-    const next = shiftLocalDate(value, dayDelta);
+    const next = template.shiftedDates[entry.originalDates.indexOf(value)];
     if (next === undefined) return undefined;
     shifted[field] = next;
   }
@@ -181,17 +175,10 @@ function intersectsVisible(planning: TaskPlanning, visible: DateRange): boolean 
 }
 
 function expansionBounds(
-  planning: TaskPlanning,
+  dates: readonly LocalDate[],
   reference: LocalDate,
   visible: DateRange,
-  policy: RecurrencePolicy,
 ): DateRange | undefined {
-  const dates = [
-    planning.start,
-    policy.removeScheduledDate ? undefined : planning.scheduled,
-    planning.due,
-  ].filter((date): date is LocalDate => date !== undefined);
-  if (dates.length === 0) return undefined;
   const offsets = dates.map((date) => daysBetweenLocalDates(reference, date));
   const earliestOffset = Math.min(...offsets);
   const latestOffset = Math.max(...offsets);
@@ -200,45 +187,44 @@ function expansionBounds(
   return from !== undefined && to !== undefined ? { from, to } : undefined;
 }
 
-function emptyCacheEntry(): ForecastCacheEntry {
-  return Object.freeze({ forecasts: Object.freeze([]), issues: Object.freeze([]) });
-}
-
 function computeForecasts(
-  source: CalendarTaskSource,
+  request: ForecastExpansionRequest,
   visible: DateRange,
   policy: RecurrencePolicy,
 ): ForecastCacheEntry {
-  const request = forecastExpansionRequest(source, visible, policy);
-  if (request === undefined) return emptyCacheEntry();
+  const forecasts: ForecastTemplate[] = [];
+  const issues: Array<Omit<CalendarProjectionIssue, 'source'>> = [];
+  const empty = (): ForecastCacheEntry =>
+    Object.freeze({
+      originalDates: request.originalDates,
+      forecasts: Object.freeze([]),
+      issues: Object.freeze([]),
+    });
+  const bounds = expansionBounds(request.originalDates, request.reference, visible);
+  if (bounds === undefined) return empty();
   const expansion = expandRecurrenceReferences({
     rule: request.rule,
-    planning: source.node.planning,
-    visible: request.bounds,
+    planning: { due: request.reference },
+    visible: bounds,
     policy,
     maxVisible: 512,
     maxSequentialSteps: 4096,
   });
-  if (expansion.type === 'invalid') return emptyCacheEntry();
+  if (expansion.type === 'invalid') return empty();
 
-  const forecasts: ForecastTemplate[] = [];
   for (const [index, referenceDate] of expansion.dates.entries()) {
-    const planning = shiftedPlanning(
-      source.node.planning,
-      request.reference,
-      referenceDate,
-      policy,
-    );
-    if (planning === undefined || !intersectsVisible(planning, visible)) continue;
+    const dayDelta = daysBetweenLocalDates(request.reference, referenceDate);
+    const shiftedDates = request.originalDates.map((date) => shiftLocalDate(date, dayDelta));
+    // Reject the entire planning if any effective date overflows, preserving expansion ordinals.
+    if (!shiftedDates.every((date): date is LocalDate => date !== undefined)) continue;
     forecasts.push(
       Object.freeze({
-        planning,
+        shiftedDates: Object.freeze(shiftedDates),
         referenceDate,
         ordinal: index + 1,
       }),
     );
   }
-  const issues: Array<Omit<CalendarProjectionIssue, 'source'>> = [];
   if (expansion.type === 'limited') {
     issues.push(
       Object.freeze({
@@ -249,6 +235,7 @@ function computeForecasts(
     );
   }
   return Object.freeze({
+    originalDates: request.originalDates,
     forecasts: Object.freeze(forecasts),
     issues: Object.freeze(issues),
   });
@@ -257,12 +244,11 @@ function computeForecasts(
 interface ForecastExpansionRequest {
   readonly rule: string;
   readonly reference: LocalDate;
-  readonly bounds: DateRange;
+  readonly originalDates: readonly LocalDate[];
 }
 
 function forecastExpansionRequest(
   source: CalendarTaskSource,
-  visible: DateRange,
   policy: RecurrencePolicy,
 ): ForecastExpansionRequest | undefined {
   const { node } = source;
@@ -273,17 +259,30 @@ function forecastExpansionRequest(
   if (parsed.type === 'invalid' || parsed.whenDone) return undefined;
   const reference = recurrenceReference(node.planning, policy);
   if (reference === undefined) return undefined;
-  const bounds = expansionBounds(node.planning, reference, visible, policy);
-  return bounds === undefined ? undefined : { rule: node.recurrence, reference, bounds };
+  const originalDates = Object.freeze(
+    [
+      ...new Set(
+        SHIFTED_DATE_FIELDS.filter((field) => field !== 'scheduled' || !policy.removeScheduledDate)
+          .map((field) => node.planning[field])
+          .filter((date): date is LocalDate => date !== undefined),
+      ),
+    ].sort((left, right) => left.localeCompare(right)),
+  );
+  return originalDates.length === 0
+    ? undefined
+    : { rule: node.recurrence, reference, originalDates };
 }
 
 function forecastEntry(
   source: CalendarTaskSource,
   visible: DateRange,
   policy: RecurrencePolicy,
-): ForecastCacheEntry {
-  const key = projectionCacheKey(source, visible, policy);
-  return cachedForecast(key) ?? cacheForecast(key, computeForecasts(source, visible, policy));
+): ForecastCacheEntry | undefined {
+  // Validate every current source before lookup; status is deliberately absent from the key.
+  const request = forecastExpansionRequest(source, policy);
+  if (request === undefined) return undefined;
+  const key = projectionCacheKey(request, visible, policy);
+  return cachedForecast(key) ?? cacheForecast(key, computeForecasts(request, visible, policy));
 }
 
 function materializedOccurrences(
@@ -382,12 +381,22 @@ function addForecastEntry(
   accumulator: ProjectionAccumulator,
 ): void {
   const entry = forecastEntry(source, visible, policy);
+  if (entry === undefined) return;
   for (const template of entry.forecasts) {
+    const planning = hydratePlanning(source.node.planning, entry, template, policy);
+    if (planning === undefined || !intersectsVisible(planning, visible)) continue;
     const key = `${semanticSourceKey(source)}:${template.referenceDate}`;
     if (!accumulator.occurrencesByKey.has(key)) {
       accumulator.occurrencesByKey.set(
         key,
-        Object.freeze({ kind: 'forecast', key, source, ...template }),
+        Object.freeze({
+          kind: 'forecast',
+          key,
+          source,
+          planning,
+          referenceDate: template.referenceDate,
+          ordinal: template.ordinal,
+        }),
       );
     }
   }
