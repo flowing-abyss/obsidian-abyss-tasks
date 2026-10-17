@@ -26,10 +26,17 @@ export interface CalendarNavigationBarOptions {
 
 interface CalendarNavigationElements {
   readonly monthButton: HTMLButtonElement;
+  readonly fullTitle: HTMLElement;
+  readonly compactTitle: HTMLElement;
   readonly yearButton: HTMLButtonElement;
 }
 
 const VIEW_LABELS: Record<CalViewType, string> = { today: 'Day', week: 'Week', month: 'Month' };
+const VIEW_ICONS: Record<CalViewType, string> = {
+  today: 'calendar',
+  week: 'calendar-range',
+  month: 'calendar-days',
+};
 const MONTH_NAMES = [
   'Jan',
   'Feb',
@@ -84,6 +91,8 @@ export class CalendarNavigationBar {
       cls: 'abyss-cal-nav-month',
       attr: { 'aria-haspopup': 'dialog', 'aria-expanded': 'false' },
     });
+    const fullTitle = monthButton.createSpan({ cls: 'abyss-cal-title-full' });
+    const compactTitle = monthButton.createSpan({ cls: 'abyss-cal-title-compact' });
     const yearButton = title.createEl('button', {
       cls: 'abyss-cal-nav-year',
       attr: { 'aria-haspopup': 'dialog', 'aria-expanded': 'false' },
@@ -94,9 +103,10 @@ export class CalendarNavigationBar {
     });
     setIcon(nextButton, 'chevron-right');
     const actions = nav.createDiv({ cls: 'abyss-cal-nav-right' });
-    const todayButton = actions.createEl('button', { cls: 'abyss-cal-nav-today', text: 'Today' });
+    const todayButton = actions.createEl('button', { cls: 'abyss-cal-nav-today' });
+    this.labelControl_abyssPrivate(todayButton, 'Today', 'locate-fixed');
     this.renderViewSwitcher_abyssPrivate(actions);
-    this.elements_abyssPrivate = { monthButton, yearButton };
+    this.elements_abyssPrivate = { monthButton, fullTitle, compactTitle, yearButton };
 
     monthButton.addEventListener('click', () => {
       this.toggleMonthPicker_abyssPrivate(monthButton);
@@ -119,8 +129,14 @@ export class CalendarNavigationBar {
     const elements = this.elements_abyssPrivate;
     if (elements === null) return;
     const { callbacks } = this.options_abyssPrivate;
-    const title = calendarTitle(callbacks.view(), callbacks.date(), callbacks.firstDayOfWeek());
-    elements.monthButton.textContent = title.primary;
+    const view = callbacks.view();
+    const date = callbacks.date();
+    const title = calendarTitle(view, date, callbacks.firstDayOfWeek());
+    elements.fullTitle.textContent = title.primary;
+    const compactFormat = view === 'today' ? 'MMM D' : 'MMM';
+    elements.compactTitle.textContent =
+      view === 'week' ? title.primary.replace(/^Week /u, 'W') : date.format(compactFormat);
+    elements.monthButton.setAttribute('aria-label', `Select month, ${title.primary}`);
     elements.yearButton.textContent = title.year;
     // The picker edits the anchor's calendar year even when its rendered week crosses New Year.
     elements.yearButton.setAttribute('aria-label', `Select calendar year, ${title.year}`);
@@ -145,14 +161,29 @@ export class CalendarNavigationBar {
     this.elements_abyssPrivate = null;
   }
 
+  private labelControl_abyssPrivate(
+    button: HTMLButtonElement,
+    label: string,
+    iconName: string,
+  ): void {
+    button.setAttribute('aria-label', label);
+    const icon = button.createSpan({
+      cls: 'abyss-cal-control-icon',
+      attr: { 'aria-hidden': 'true' },
+    });
+    setIcon(icon, iconName);
+    button.createSpan({ cls: 'abyss-cal-control-label', text: label });
+  }
+
   private renderViewSwitcher_abyssPrivate(host: HTMLElement): void {
     const { callbacks } = this.options_abyssPrivate;
     const switcher = host.createDiv({ cls: 'abyss-cal-view-switcher' });
     for (const view of ['today', 'week', 'month'] as const) {
       const button = switcher.createEl('button', {
         cls: `abyss-cal-view-btn${callbacks.view() === view ? ' is-active' : ''}`,
-        text: VIEW_LABELS[view],
+        attr: { 'aria-pressed': String(callbacks.view() === view) },
       });
+      this.labelControl_abyssPrivate(button, VIEW_LABELS[view], VIEW_ICONS[view]);
       this.viewButtons_abyssPrivate.set(view, button);
       button.addEventListener('click', () => {
         callbacks.onSelectView(view, button);

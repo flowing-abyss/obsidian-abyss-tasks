@@ -1143,7 +1143,7 @@ it.each([
       expect(h.root.querySelector('.abyss-calendar-date')?.getAttribute('data-calendar-date')).toBe(
         start,
       );
-      expect(h.root.querySelector('.abyss-cal-nav-month')?.textContent).toBe(`Week ${week}`);
+      expect(h.root.querySelector('.abyss-cal-title-full')?.textContent).toBe(`Week ${week}`);
       const year = expectDefined(h.root.querySelector<HTMLElement>('.abyss-cal-nav-year'));
       expect(year.textContent).toBe(anchor.slice(0, 4));
       expect(year.getAttribute('aria-label')).toBe(`Select calendar year, ${anchor.slice(0, 4)}`);
@@ -1152,7 +1152,7 @@ it.each([
         expect(
           h.root.querySelector('.abyss-calendar-date')?.getAttribute('data-calendar-date'),
         ).toBe(moment(start).add(7, 'days').format('YYYY-MM-DD'));
-        expect(h.root.querySelector('.abyss-cal-nav-month')?.textContent).toBe(`Week ${week + 1}`);
+        expect(h.root.querySelector('.abyss-cal-title-full')?.textContent).toBe(`Week ${week + 1}`);
       } else {
         year.click();
         expect(h.root.querySelector('.abyss-year-picker-btn.is-active')?.textContent).toBe(

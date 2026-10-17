@@ -3244,6 +3244,16 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   row-gap: var(--size-4-4);
 }
 
+.abyss-cal-nav .abyss-cal-control-icon,
+.abyss-cal-nav .abyss-cal-title-compact {
+  display: none;
+}
+
+.abyss-cal-nav .abyss-cal-control-icon .svg-icon {
+  inline-size: 18px;
+  block-size: 18px;
+}
+
 .abyss-cal-nav button {
   position: relative;
 }
@@ -3421,6 +3431,11 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
   line-height: var(--line-height-tight);
+}
+
+.abyss-calendar-projection-diagnostic:empty {
+  padding: 0;
+  border: 0;
 }
 
 .abyss-right-section-count {
@@ -10755,6 +10770,70 @@ button.abyss-calendar-date[aria-pressed='true'] {
 }
 
 .abyss-calendar-agenda-heading {
+  padding-inline: var(--size-4-3);
   margin: var(--size-4-2) 0;
   font-size: var(--font-ui-medium);
+}
+
+/* Calendar controls keep their nodes and focus targets when the center pane narrows. */
+@container abyss-task-list (max-width: 30rem) {
+  .abyss-cal-nav {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-inline: var(--size-4-2);
+    gap: var(--size-4-1);
+  }
+
+  .abyss-cal-nav :is(.abyss-cal-nav-left, .abyss-cal-nav-right, .abyss-cal-nav-title-group) {
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+  }
+
+  .abyss-cal-nav :is(.abyss-cal-nav-left, .abyss-cal-nav-title-group) {
+    gap: var(--size-2-1);
+  }
+
+  .abyss-cal-nav :is(.abyss-cal-control-label, .abyss-cal-title-full) {
+    display: none;
+  }
+
+  .abyss-cal-nav .abyss-cal-title-compact {
+    display: inline;
+  }
+
+  .abyss-cal-nav .abyss-cal-control-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .abyss-cal-nav button:is(.abyss-cal-nav-btn, .abyss-cal-nav-today, .abyss-cal-view-btn) {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    inline-size: 32px;
+    padding: 0;
+  }
+
+  .abyss-cal-nav button:is(.abyss-cal-nav-month, .abyss-cal-nav-year) {
+    padding-inline: var(--size-2-1);
+    font-size: var(--font-ui-small);
+    white-space: nowrap;
+  }
+}
+
+/* A 320px phone leaves 272px beside the rail; keep all eight controls on that row. */
+@container abyss-task-list (max-width: 20rem) {
+  .abyss-cal-nav :is(.abyss-cal-nav-left, .abyss-cal-nav-title-group) {
+    gap: 0;
+  }
+
+  .abyss-cal-nav button:is(.abyss-cal-nav-btn, .abyss-cal-nav-today, .abyss-cal-view-btn) {
+    inline-size: 28px;
+  }
+
+  .abyss-cal-nav button:is(.abyss-cal-nav-month, .abyss-cal-nav-year) {
+    padding-inline: 0;
+  }
 }

@@ -80,6 +80,68 @@ describe('CalendarNavigationBar DOM', () => {
     expect(h.button('.abyss-cal-view-btn.is-active').textContent).toBe('Month');
   });
 
+  it.each(['today', 'week', 'month'] as const)(
+    'keeps named icon controls and pressed state for the %s view after title updates',
+    (view) => {
+      const h = harness(view, moment('2027-01-01'));
+      const controls = [
+        h.button('.abyss-cal-nav-today'),
+        ...h.owner.querySelectorAll<HTMLElement>('.abyss-cal-view-btn'),
+      ];
+      const labels = ['Today', 'Day', 'Week', 'Month'];
+      for (const update of [false, true]) {
+        if (update) h.bar.updateTitle();
+        controls.forEach((button, index) => {
+          expect(button.getAttribute('aria-label')).toBe(labels[index]);
+          expect(button.querySelector('.abyss-cal-control-icon')?.getAttribute('aria-hidden')).toBe(
+            'true',
+          );
+          expect(button.querySelector('.abyss-cal-control-label')?.textContent).toBe(labels[index]);
+        });
+        [...h.owner.querySelectorAll('.abyss-cal-view-btn')].forEach((button, index) => {
+          expect(button.getAttribute('aria-pressed')).toBe(
+            String(['today', 'week', 'month'][index] === view),
+          );
+        });
+      }
+      controls.forEach((button) => {
+        button.click();
+      });
+      expect(h.callbacks.onToday).toHaveBeenCalledTimes(1);
+      expect(h.callbacks.onSelectView).toHaveBeenCalledTimes(3);
+      expect(h.callbacks.onSelectView).toHaveBeenNthCalledWith(1, 'today', controls[1]);
+      expect(h.callbacks.onSelectView).toHaveBeenNthCalledWith(2, 'week', controls[2]);
+      expect(h.callbacks.onSelectView).toHaveBeenNthCalledWith(3, 'month', controls[3]);
+    },
+  );
+
+  it.each([
+    { view: 'month', date: '2026-09-01', full: 'September', compact: 'Sep', year: '2026' },
+    { view: 'today', date: '2026-10-31', full: 'October 31', compact: 'Oct 31', year: '2026' },
+    { view: 'week', date: '2027-01-01', full: 'Week 1', compact: 'W1', year: '2027' },
+  ] as const)(
+    'retains the full picker name alongside $compact',
+    ({ view, date, full, compact, year }) => {
+      const h = harness(view, moment(date));
+      const month = h.button('.abyss-cal-nav-month');
+      h.bar.updateTitle();
+      expect(h.button('.abyss-cal-title-full').textContent).toBe(full);
+      expect(h.button('.abyss-cal-title-compact').textContent).toBe(compact);
+      expect(month.getAttribute('aria-label')).toBe(`Select month, ${full}`);
+      expect(h.button('.abyss-cal-nav-year').textContent).toBe(year);
+      expect(h.button('.abyss-cal-nav-year').getAttribute('aria-label')).toBe(
+        `Select calendar year, ${year}`,
+      );
+      const fullLabel = h.button('.abyss-cal-title-full');
+      const compactLabel = h.button('.abyss-cal-title-compact');
+      h.callbacks.date.mockReturnValue(moment('2026-11-30'));
+      h.bar.updateTitle();
+      expect(h.button('.abyss-cal-nav-month')).toBe(month);
+      expect(h.button('.abyss-cal-title-full')).toBe(fullLabel);
+      expect(h.button('.abyss-cal-title-compact')).toBe(compactLabel);
+    },
+  );
+
   // Obsidian flips the phone flag and its body class while the app runs, so the toolbar is one
   // DOM everywhere and CSS lays it out.
   it.each([false, true])('keeps date then action groups when the phone flag is %s', (phone) => {
@@ -111,7 +173,7 @@ describe('CalendarNavigationBar DOM', () => {
     const h = harness('week', moment('2027-01-01'));
     expect(h.button('.abyss-cal-nav-month').textContent).toBe('');
     h.bar.updateTitle();
-    expect(h.button('.abyss-cal-nav-month').textContent).toBe('Week 1');
+    expect(h.button('.abyss-cal-title-full').textContent).toBe('Week 1');
     expect(h.button('.abyss-cal-nav-year').textContent).toBe('2027');
   });
 });
