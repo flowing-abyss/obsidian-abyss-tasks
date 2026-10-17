@@ -428,9 +428,15 @@ range through intermediate DOM changes while permitting a real final shrink.
 
 CalendarMode owns the period anchor, transient selected day, view lifetime, and forecast presentation.
 Its mounted center owner supplies the available width; an owner-window observer coalesces changes
-and rebuilds Month/Week only when the width category changes. ConstrainedCalendarView builds a
-bounded calendar day model per publication and retains its date buttons. Selecting a date reads that model
-and replaces the agenda without querying or projecting occurrences again. CenterPanel supplies agenda mounts from its retained TaskCardRenderer with exact source ancestry.
+and rebuilds Month/Week only when the width category changes. CalendarContent retains one canonical
+occurrence projection per publication and visible range; width remounts reuse that content.
+ConstrainedCalendarView builds its bounded day model directly from those occurrences and retains its
+date buttons. Selecting a date reads that model and replaces the agenda without querying, projecting,
+or creating display snapshots. CenterPanel supplies eager agenda mounts from its retained
+TaskCardRenderer with exact source ancestry. The view factory adapts occurrences to TaskSnapshots only
+at full-grid Month/Week and Day render/patch calls. Materialized agenda activation adapts its single
+occurrence on demand through the existing exact-source lookup; forecasts activate their source and
+reference date directly.
 The view captures scroll before destroying those mounts and replacing a day. It owns agenda scroll
 anchoring and restores the same-day offset again when the current card receipts are ready, including
 an offset clamped by unfinished rich text. A user scroll or retired list revokes that correction.

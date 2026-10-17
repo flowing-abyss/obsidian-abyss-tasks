@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { localDate, shiftLocalDate, type LocalDate } from '../src/tasks';
-import { buildCalendarDayModel, type CalendarDaySource } from '../src/views/calendarDayModel';
+import { buildCalendarDayModel } from '../src/views/calendarDayModel';
 import {
   projectCalendarOccurrences,
-  taskSnapshotForCalendarOccurrence,
+  type CalendarOccurrence,
   type CalendarTaskSource,
 } from '../src/views/calendarOccurrences';
 import { expectDefined, subtask, task, type TaskFixtureInput } from './helpers';
@@ -20,18 +20,11 @@ function rootSource(input: TaskFixtureInput): CalendarTaskSource {
 function project(
   materialized: readonly CalendarTaskSource[],
   recurringSources: readonly CalendarTaskSource[] = [],
-): readonly CalendarDaySource[] {
-  return projectCalendarOccurrences(
-    { materialized, recurringSources },
-    range,
-    policy,
-  ).occurrences.map((occurrence) => ({
-    task: taskSnapshotForCalendarOccurrence(occurrence),
-    occurrence,
-  }));
+): readonly CalendarOccurrence[] {
+  return projectCalendarOccurrences({ materialized, recurringSources }, range, policy).occurrences;
 }
 
-function point(line: number): CalendarDaySource {
+function point(line: number): CalendarOccurrence {
   return expectDefined(
     project([rootSource({ title: `Item ${line}`, source: { line }, planning: { due: date } })])[0],
   );
@@ -76,8 +69,8 @@ describe('bounded calendar day model', () => {
     ]);
     for (const [index, source] of [last, span, first].entries()) {
       const entry = expectDefined(model.get(date)?.entries[index]);
-      expect(entry.task).toBe(source.task);
-      expect(entry.occurrence).toBe(source.occurrence);
+      expect(entry.occurrence).toBe(source);
+      expect(entry.occurrence.source).toBe(source.source);
     }
     expect(model.get(localDate('2026-10-15'))?.count).toBe(1);
     expect(model.get(localDate('2026-10-17'))?.count).toBe(1);
@@ -127,7 +120,9 @@ describe('bounded calendar day model', () => {
     for (const [index, child] of children.entries()) {
       const entry = expectDefined(entries[index]);
       expect(entry.occurrence.source.target).toEqual({ type: 'subtask', ref: child.ref });
-      expect(entry.task).toBe(expectDefined(sources[index]).task);
+      expect(entry.occurrence).toBe(expectDefined(sources[index]));
+      expect(entry.occurrence.source.node).toBe(child);
+      expect(entry.occurrence.source.root).toBe(root);
     }
   });
 
@@ -154,7 +149,7 @@ describe('bounded calendar day model', () => {
       due: '2026-10-17',
     });
     expect(model.get(localDate('2026-10-17'))?.entries[0]?.completion).toEqual({ kind: 'allowed' });
-    expect(model.get(date)?.entries[0]?.task.planning.time).toBe('09:30');
+    expect(model.get(date)?.entries[0]?.occurrence.planning.time).toBe('09:30');
   });
 
   it('keeps reversed spans as authored points without filling the dates between', () => {
@@ -189,7 +184,10 @@ describe('bounded calendar day model', () => {
       rootSource({ status: 'cancelled', source: { line: 2 }, planning: { due: date } }),
     ]);
     const summary = expectDefined(buildCalendarDayModel(sources, [date]).get(date));
-    expect(summary.entries.map((entry) => entry.task.status)).toEqual(['done', 'cancelled']);
+    expect(summary.entries.map((entry) => entry.occurrence.source.node.status)).toEqual([
+      'done',
+      'cancelled',
+    ]);
     expect(summary.count).toBe(2);
   });
 
@@ -207,17 +205,17 @@ describe('bounded calendar day model', () => {
     const pointForecast = expectDefined(
       forecasts.find(
         (source) =>
-          source.occurrence.kind === 'forecast' &&
-          source.occurrence.source === points &&
-          source.occurrence.referenceDate === '2026-10-17',
+          source.kind === 'forecast' &&
+          source.source === points &&
+          source.referenceDate === '2026-10-17',
       ),
     );
     const spanForecast = expectDefined(
       forecasts.find(
         (source) =>
-          source.occurrence.kind === 'forecast' &&
-          source.occurrence.source === span &&
-          source.occurrence.referenceDate === '2026-10-19',
+          source.kind === 'forecast' &&
+          source.source === span &&
+          source.referenceDate === '2026-10-19',
       ),
     );
     const model = buildCalendarDayModel([pointForecast, spanForecast], datesFrom(date, 5));
@@ -233,11 +231,11 @@ describe('bounded calendar day model', () => {
     });
     expect(model.get(localDate('2026-10-19'))?.entries[0]?.completion).toEqual({ kind: 'allowed' });
     const entry = expectDefined(model.get(localDate('2026-10-17'))?.entries[1]);
-    expect(entry.task).toBe(spanForecast.task);
-    expect(entry.occurrence).toBe(spanForecast.occurrence);
+    expect(entry.occurrence).toBe(spanForecast);
+    expect(entry.occurrence.source).toBe(span);
     expect(entry.occurrence.kind).toBe('forecast');
     expect(entry.occurrence.source.target).toEqual({ type: 'task', ref: span.root.ref });
-    expect(entry.key).toBe(spanForecast.occurrence.key);
+    expect(entry.key).toBe(spanForecast.key);
   });
 
   it('returns only requested empty dates, including a disjoint input order, and freezes exposed records', () => {
@@ -258,7 +256,7 @@ describe('bounded calendar day model', () => {
 });
 
 describe('nested calendar forecasts', () => {
-  it('retains a forecast child target even when its display snapshot has the root ref', () => {
+  it('retains the exact forecast child node, root and target', () => {
     const parent = task({ title: 'Parent', source: { filePath: 'Nested.md', line: 4 } });
     const child = subtask({
       title: 'Child forecast',
@@ -274,15 +272,17 @@ describe('nested calendar forecasts', () => {
     const forecasts = project([], [source]);
     const forecast = expectDefined(
       forecasts.find(
-        ({ occurrence }) => occurrence.kind === 'forecast' && occurrence.referenceDate === date,
+        (occurrence) => occurrence.kind === 'forecast' && occurrence.referenceDate === date,
       ),
     );
     const entry = expectDefined(buildCalendarDayModel([forecast], [date]).get(date)?.entries[0]);
     expect(entry.key).toBe('Nested.md:4:subtask:2:2026-10-16');
     expect(entry.occurrence.kind).toBe('forecast');
     expect(entry.occurrence.source.target).toEqual({ type: 'subtask', ref: child.ref });
-    expect(entry.task.ref).toEqual(parent.ref);
-    expect(entry.task).toBe(forecast.task);
+    expect(entry.occurrence).toBe(forecast);
+    expect(entry.occurrence.source).toBe(source);
+    expect(entry.occurrence.source.node).toBe(child);
+    expect(entry.occurrence.source.root).toBe(source.root);
     expect(entry.completion).toEqual({ kind: 'allowed' });
   });
 });

@@ -1,17 +1,16 @@
 import { moment } from '../obsidianMoment';
 import type { ResolvedConfig } from '../settings/types';
-import type { LocalDate, TaskSnapshot } from '../tasks';
+import type { LocalDate } from '../tasks';
 import { runAsyncAction } from '../ui/runAsyncAction';
 import { renderAddTaskTrigger } from '../ui/taskCapture/renderAddTaskTrigger';
 import type { TaskTextRender } from '../ui/taskRenderScope';
-import { BaseView } from './BaseView';
 import type { MonthGridViewCallbacks } from './MonthGridView';
 import {
   buildCalendarDayModel,
   type CalendarDayEntry,
   type CalendarDaySummary,
 } from './calendarDayModel';
-import { calendarOccurrenceLookup } from './timegrid/renderTaskMeta';
+import { taskSnapshotForCalendarOccurrence, type CalendarOccurrence } from './calendarOccurrences';
 
 export interface CalendarAgendaRowMount {
   readonly element: HTMLElement;
@@ -41,7 +40,7 @@ export interface ConstrainedCalendarViewCallbacks extends Omit<
 }
 
 /** A bounded date index and the selected day's ordinary calendar items. */
-export class ConstrainedCalendarView extends BaseView {
+export class ConstrainedCalendarView {
   private container: HTMLElement | null = null;
   private agenda: HTMLElement | null = null;
   private readonly buttons = new Map<LocalDate, HTMLButtonElement>();
@@ -54,11 +53,13 @@ export class ConstrainedCalendarView extends BaseView {
     readonly cancel: () => void;
   } | null = null;
 
-  constructor(private readonly callbacks: ConstrainedCalendarViewCallbacks) {
-    super();
-  }
+  constructor(private readonly callbacks: ConstrainedCalendarViewCallbacks) {}
 
-  render(container: HTMLElement, tasks: TaskSnapshot[], config: ResolvedConfig): void {
+  render(
+    container: HTMLElement,
+    occurrences: readonly CalendarOccurrence[],
+    config: ResolvedConfig,
+  ): void {
     this.destroy();
     this.container = container;
     container.empty();
@@ -92,19 +93,19 @@ export class ConstrainedCalendarView extends BaseView {
       this.buttons.set(date, button);
     }
     this.agenda = root.createDiv({ cls: 'abyss-calendar-agenda' });
-    this.patch(container, tasks, config);
+    this.patch(container, occurrences, config);
   }
 
-  override patch(container: HTMLElement, tasks: TaskSnapshot[], config: ResolvedConfig): void {
+  patch(
+    container: HTMLElement,
+    occurrences: readonly CalendarOccurrence[],
+    config: ResolvedConfig,
+  ): void {
     if (container !== this.container) {
-      this.render(container, tasks, config);
+      this.render(container, occurrences, config);
       return;
     }
-    const occurrenceFor = calendarOccurrenceLookup(tasks);
-    this.model = buildCalendarDayModel(
-      tasks.map((task) => ({ task, occurrence: occurrenceFor(task) })),
-      this.callbacks.dates,
-    );
+    this.model = buildCalendarDayModel(occurrences, this.callbacks.dates);
     for (const summary of this.model.values()) this.updateDateButton(summary);
     this.selectDate(this.callbacks.selectedDate());
   }
@@ -227,7 +228,7 @@ export class ConstrainedCalendarView extends BaseView {
         onActivate: () => {
           if (occurrence.kind === 'forecast')
             this.callbacks.onForecastClick?.(occurrence.source, occurrence.referenceDate);
-          else this.callbacks.onTaskClick(entry.task);
+          else this.callbacks.onTaskClick(taskSnapshotForCalendarOccurrence(occurrence));
         },
         onForecastContextMenu: (event, element) => {
           if (occurrence.kind === 'forecast')

@@ -1,8 +1,9 @@
-import { describe, expect, it, vi } from 'vitest';
+import { assert, describe, expect, it, vi } from 'vitest';
 import { moment } from '../src/obsidianMoment';
 import { calendarContent } from '../src/panels/calendar/calendarContent';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { TaskQueryApi } from '../src/tasks';
+import * as calendarOccurrences from '../src/views/calendarOccurrences';
 import { task, taskQueryApi, useRealMoment } from './helpers';
 
 useRealMoment();
@@ -54,7 +55,7 @@ describe('calendarContent', () => {
     expect(dates[6]).toBe('2026-09-27');
   });
 
-  it('projects materialized sources into calendar snapshots inside the visible range', () => {
+  it('projects materialized sources into canonical occurrences inside the visible range', () => {
     const inside = task({ title: 'inside', planning: { due: '2026-09-24' } });
     const outside = task({
       title: 'outside',
@@ -73,8 +74,41 @@ describe('calendarContent', () => {
       view: 'week',
       date: moment('2026-09-23'),
     });
-    expect(content.tasks.map((entry) => entry.title)).toEqual(['inside']);
+    expect(content.occurrences.map((entry) => entry.source.node.title)).toEqual(['inside']);
+    expect(content.occurrences[0]?.source).toEqual(source(inside));
     expect(content.issues).toEqual([]);
+  });
+
+  it('retains the exact sorted projection array and issues without adapting display snapshots', () => {
+    const project = vi.spyOn(calendarOccurrences, 'projectCalendarOccurrences');
+    const adapt = vi.spyOn(calendarOccurrences, 'taskSnapshotForCalendarOccurrence');
+    const later = task({ title: 'Later', planning: { due: '2026-09-25' } });
+    const earlier = task({
+      title: 'Earlier',
+      source: { line: 1 },
+      planning: { due: '2026-09-22' },
+    });
+    const forCalendarProjection = vi.fn(() => ({
+      materialized: [source(later), source(earlier)],
+      recurringSources: [],
+    }));
+    const content = calendarContent({
+      queries: taskQueryApi({ forCalendarProjection }),
+      settings,
+      view: 'week',
+      date: moment('2026-09-23'),
+    });
+    expect(forCalendarProjection).toHaveBeenCalledOnce();
+    expect(project).toHaveBeenCalledOnce();
+    const result = project.mock.results[0];
+    assert(result?.type === 'return');
+    expect(content.occurrences).toBe(result.value.occurrences);
+    expect(content.issues).toBe(result.value.issues);
+    expect(content.occurrences.map((entry) => entry.source.node.title)).toEqual([
+      'Earlier',
+      'Later',
+    ]);
+    expect(adapt).not.toHaveBeenCalled();
   });
 
   it('forwards the recurrence policy to the projection', () => {
@@ -104,8 +138,8 @@ describe('calendarContent', () => {
       view: 'week',
       date: moment('2026-09-23'),
     });
-    expect(keep.tasks.length).toBeGreaterThan(0);
-    expect(keep.tasks.every((entry) => entry.planning.scheduled !== undefined)).toBe(true);
-    expect(drop.tasks.every((entry) => entry.planning.scheduled === undefined)).toBe(true);
+    expect(keep.occurrences.length).toBeGreaterThan(0);
+    expect(keep.occurrences.every((entry) => entry.planning.scheduled !== undefined)).toBe(true);
+    expect(drop.occurrences.every((entry) => entry.planning.scheduled === undefined)).toBe(true);
   });
 });

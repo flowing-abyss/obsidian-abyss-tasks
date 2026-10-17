@@ -1,9 +1,9 @@
 import { firstVisibleWeekDate } from '../../domain/weekGridOffset';
 import type { CalendarSettings, ResolvedConfig } from '../../settings/types';
-import { localDate, type LocalDate, type TaskQueryApi, type TaskSnapshot } from '../../tasks';
+import { localDate, type TaskQueryApi } from '../../tasks';
 import {
   projectCalendarOccurrences,
-  taskSnapshotForCalendarOccurrence,
+  type CalendarOccurrence,
   type CalendarProjectionIssue,
 } from '../../views/calendarOccurrences';
 import type { CalendarMoment } from './calendarDateNavigation';
@@ -13,7 +13,7 @@ import { visibleCalendarDates } from './visibleCalendarDates';
 export interface CalendarContent {
   readonly config: ResolvedConfig;
   readonly issues: readonly CalendarProjectionIssue[];
-  readonly tasks: TaskSnapshot[];
+  readonly occurrences: readonly CalendarOccurrence[];
 }
 
 export interface CalendarContentInput {
@@ -41,7 +41,7 @@ function calendarConfig(
   return { firstDayOfWeek, startPosition: calendarStartPosition(view, date, firstDayOfWeek) };
 }
 
-/** The view config plus the projected tasks and issues for the dates the view will show. */
+/** The view config plus the projected occurrences and issues for the dates the view will show. */
 export function calendarContent(input: CalendarContentInput): CalendarContent {
   const { queries, settings, view, date } = input;
   const config = calendarConfig(view, date, settings.firstDayOfWeek);
@@ -49,9 +49,9 @@ export function calendarContent(input: CalendarContentInput): CalendarContent {
   const firstVisibleDate = visibleDates[0];
   const lastVisibleDate = visibleDates[visibleDates.length - 1];
   if (firstVisibleDate === undefined || lastVisibleDate === undefined) {
-    return { config, issues: [], tasks: [] };
+    return { config, issues: [], occurrences: [] };
   }
-  const projection = queries.forCalendarProjection(visibleDates as unknown as readonly LocalDate[]);
+  const projection = queries.forCalendarProjection(visibleDates.map(localDate));
   const occurrences = projectCalendarOccurrences(
     projection,
     { from: localDate(firstVisibleDate), to: localDate(lastVisibleDate) },
@@ -60,6 +60,6 @@ export function calendarContent(input: CalendarContentInput): CalendarContent {
   return {
     config,
     issues: occurrences.issues,
-    tasks: occurrences.occurrences.map(taskSnapshotForCalendarOccurrence),
+    occurrences: occurrences.occurrences,
   };
 }

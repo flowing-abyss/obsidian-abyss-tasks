@@ -5,13 +5,16 @@ import {
   createCalendarView,
   type CalendarHandlers,
   type CalendarViewDependencies,
+  type CalendarViewInstance,
 } from '../src/panels/calendar/calendarViewFactory';
 import type { EffectiveTagGroup } from '../src/tags/effectiveTagGroups';
+import { localDate } from '../src/tasks';
 import { noInteractionOwnership } from '../src/ui/interactionOwnership';
 import { MonthGridView, type MonthGridViewCallbacks } from '../src/views/MonthGridView';
 import { TodayView, type TimeGridCallbacks } from '../src/views/TodayView';
 import { WeekTimeGridView } from '../src/views/WeekTimeGridView';
-import { testStatusRegistry } from './helpers';
+import * as calendarOccurrences from '../src/views/calendarOccurrences';
+import { expectDefined, subtask, task, testStatusRegistry } from './helpers';
 
 const HANDLER_NAMES = [
   'onTaskClick',
@@ -60,12 +63,28 @@ function deps(groups: readonly EffectiveTagGroup[] = []): CalendarViewDependenci
   };
 }
 
-function timeGridCallbacks(view: object): TimeGridCallbacks {
-  return (view as { callbacks: TimeGridCallbacks }).callbacks;
+const config = { firstDayOfWeek: 1, startPosition: '2026-10-16' } as const;
+const container = {} as HTMLElement;
+
+function timeGridCallbacks(view: CalendarViewInstance): TimeGridCallbacks {
+  const today = vi.spyOn(TodayView.prototype, 'render').mockImplementation(() => {});
+  const week = vi.spyOn(WeekTimeGridView.prototype, 'render').mockImplementation(() => {});
+  view.render(container, [], config);
+  const instance = expectDefined(today.mock.contexts[0] ?? week.mock.contexts[0]);
+  today.mockRestore();
+  week.mockRestore();
+  if (instance instanceof TodayView) return instance['callbacks'];
+  if (instance instanceof WeekTimeGridView) return instance['callbacks'];
+  throw new Error('Expected a full time-grid instance');
 }
 
-function monthCallbacks(view: object): MonthGridViewCallbacks {
-  return (view as { callbacks: MonthGridViewCallbacks }).callbacks;
+function monthCallbacks(view: CalendarViewInstance): MonthGridViewCallbacks {
+  const render = vi.spyOn(MonthGridView.prototype, 'render').mockImplementation(() => {});
+  view.render(container, [], config);
+  const instance = expectDefined(render.mock.contexts[0]);
+  render.mockRestore();
+  if (!(instance instanceof MonthGridView)) throw new Error('Expected a month-grid instance');
+  return instance['callbacks'];
 }
 
 describe('createCalendarView', () => {
@@ -82,13 +101,80 @@ describe('createCalendarView', () => {
     ).toBeUndefined();
   });
 
-  it('creates the view class for each view type', () => {
-    const d = deps();
-    const h = handlers();
-    expect(createCalendarView('today', d, h, navigation)).toBeInstanceOf(TodayView);
-    expect(createCalendarView('week', d, h, navigation)).toBeInstanceOf(WeekTimeGridView);
-    expect(createCalendarView('month', d, h, navigation)).toBeInstanceOf(MonthGridView);
-  });
+  it.each([
+    ['today', TodayView],
+    ['week', WeekTimeGridView],
+    ['month', MonthGridView],
+  ] as const)(
+    'adapts %s render/patch occurrences and delegates every lifecycle argument',
+    (type, View) => {
+      const parent = task({ title: 'Parent' });
+      const child = subtask({
+        title: 'Exact child',
+        planning: { due: '2026-10-16', time: '09:30' },
+        ref: { parent: { type: 'task', ref: parent.ref }, relativeLine: 2 },
+      });
+      const root = task({ ...parent, subtasks: [child] });
+      const childSource = {
+        root,
+        node: child,
+        target: { type: 'subtask' as const, ref: child.ref },
+      };
+      const repeat = task({
+        title: 'Forecast',
+        recurrence: 'every day',
+        planning: { due: '2026-10-15' },
+      });
+      const forecastSource = {
+        root: repeat,
+        node: repeat,
+        target: { type: 'task' as const, ref: repeat.ref },
+      };
+      const occurrences = calendarOccurrences.projectCalendarOccurrences(
+        { materialized: [childSource], recurringSources: [forecastSource] },
+        { from: localDate('2026-10-16'), to: localDate('2026-10-16') },
+        { removeScheduledDate: false },
+      ).occurrences;
+      expect(occurrences).toHaveLength(2);
+      const render = vi.spyOn(View.prototype, 'render').mockImplementation(() => {});
+      const patch = vi.spyOn(View.prototype, 'patch').mockImplementation(() => {});
+      const destroy = vi.spyOn(View.prototype, 'destroy').mockImplementation(() => {});
+      const adapt = vi.spyOn(calendarOccurrences, 'taskSnapshotForCalendarOccurrence');
+      const view = createCalendarView(type, deps(), handlers(), navigation);
+      expect(adapt).not.toHaveBeenCalled();
+      view.render(container, occurrences, config, false, 317);
+      expect(render).toHaveBeenCalledOnce();
+      const snapshots = expectDefined(render.mock.calls[0]?.[1]);
+      expect(render.mock.calls[0]).toEqual([container, snapshots, config, false, 317]);
+      expect(adapt).toHaveBeenCalledTimes(2);
+      expect(snapshots.map(calendarOccurrences.calendarOccurrenceForTask)).toEqual(occurrences);
+      for (const [index, occurrence] of occurrences.entries()) {
+        const snapshot = expectDefined(snapshots[index]);
+        expect(calendarOccurrences.calendarOccurrenceForTask(snapshot)).toBe(occurrence);
+        expect(snapshot.title).toBe(occurrence.source.node.title);
+        expect(snapshot.planning).toEqual(occurrence.planning);
+        expect(snapshot.ref).toBe(occurrence.source.root.ref);
+      }
+      expect(snapshots.find((snapshot) => snapshot.title === 'Exact child')?.planning).toEqual({
+        due: '2026-10-16',
+        time: '09:30',
+      });
+      view.patch(container, occurrences, config);
+      expect(adapt).toHaveBeenCalledTimes(4);
+      expect(patch).toHaveBeenCalledOnce();
+      const updated = expectDefined(patch.mock.calls[0]?.[1]);
+      expect(patch.mock.calls[0]).toEqual([container, updated, config]);
+      for (const [index, occurrence] of occurrences.entries())
+        expect(calendarOccurrences.calendarOccurrenceForTask(expectDefined(updated[index]))).toBe(
+          occurrence,
+        );
+      expect(updated[0]).not.toBe(snapshots[0]);
+      view.destroy();
+      expect(destroy).toHaveBeenCalledOnce();
+      expect(render.mock.contexts[0]).toBe(patch.mock.contexts[0]);
+      expect(render.mock.contexts[0]).toBe(destroy.mock.contexts[0]);
+    },
+  );
 
   it('passes the handler functions through by identity for the time grids', () => {
     const d = deps();

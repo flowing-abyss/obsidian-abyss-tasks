@@ -6,9 +6,11 @@ import {
   ConstrainedCalendarView,
   type ConstrainedCalendarViewCallbacks,
 } from '../src/views/ConstrainedCalendarView';
+import * as calendarOccurrences from '../src/views/calendarOccurrences';
 import {
+  calendarOccurrenceForTask,
   projectCalendarOccurrences,
-  taskSnapshotForCalendarOccurrence,
+  type CalendarOccurrence,
   type CalendarTaskSource,
 } from '../src/views/calendarOccurrences';
 import {
@@ -32,7 +34,7 @@ afterEach(() => {
 });
 const date = localDate('2026-10-16');
 const config = { firstDayOfWeek: 1, startPosition: '2026-10' } as const;
-function project(roots: TaskSnapshot[], forecast = false): TaskSnapshot[] {
+function project(roots: TaskSnapshot[], forecast = false): readonly CalendarOccurrence[] {
   const sources: CalendarTaskSource[] = roots.map((root) => ({
     root,
     node: root,
@@ -42,9 +44,9 @@ function project(roots: TaskSnapshot[], forecast = false): TaskSnapshot[] {
     { materialized: forecast ? [] : sources, recurringSources: forecast ? sources : [] },
     { from: date, to: localDate('2026-10-18') },
     { removeScheduledDate: false },
-  ).occurrences.map(taskSnapshotForCalendarOccurrence);
+  ).occurrences;
 }
-function mount(tasks: TaskSnapshot[]) {
+function mount(tasks: readonly CalendarOccurrence[]) {
   let selected = date;
   const cards = calendarAgendaHarness();
   const callbacks: ConstrainedCalendarViewCallbacks = {
@@ -148,6 +150,56 @@ describe('constrained calendar', () => {
       expect(h.container.querySelectorAll('[draggable="true"]')).toHaveLength(0);
     },
   );
+
+  it('eagerly retains every rich link and its native focus order without display adaptation', async () => {
+    const { mockReadingView } = await import('./support/linkEditHarness');
+    mockReadingView();
+    const adapt = vi.spyOn(calendarOccurrences, 'taskSnapshotForCalendarOccurrence');
+    const h = mount(
+      project(
+        Array.from({ length: 20 }, (_, line) =>
+          task({
+            source: { line: 100 + line },
+            title: `Title ${line}`,
+            markdownTitle: `[[Note ${line}]]`,
+            description: `[Details ${line}](https://example.com/${line})`,
+            planning: { due: date },
+          }),
+        ),
+      ),
+    );
+    const rows = [
+      ...h.container.querySelectorAll<HTMLElement>('.abyss-calendar-agenda .abyss-task-card'),
+    ];
+    expect(rows).toHaveLength(20);
+    await flushMicrotasks(30);
+    const links = rows.flatMap((row) => [
+      ...row.querySelectorAll<HTMLAnchorElement>('.abyss-task-title a, .abyss-task-desc a'),
+    ]);
+    expect(links).toHaveLength(40);
+    expect(links.map((link) => link.textContent)).toEqual(
+      Array.from({ length: 20 }, (_, line) => [`Note ${line}`, `Details ${line}`]).flat(),
+    );
+    for (const row of rows) {
+      const status = expectDefined(row.querySelector<HTMLElement>('[role="checkbox"]'));
+      const title = expectDefined(row.querySelector<HTMLAnchorElement>('.abyss-task-title a'));
+      const description = expectDefined(row.querySelector<HTMLAnchorElement>('.abyss-task-desc a'));
+      expect(status.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+      expect(
+        title.compareDocumentPosition(description) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).not.toBe(0);
+      for (const control of [status, title, description]) {
+        expect(control.tabIndex).toBe(0);
+        control.focus();
+        expect(document.activeElement).toBe(control);
+        const tab = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+        control.dispatchEvent(tab);
+        expect(tab.defaultPrevented).toBe(false);
+      }
+    }
+    expect(adapt).not.toHaveBeenCalled();
+    expect(h.callbacks.onTaskClick).not.toHaveBeenCalled();
+  });
 
   it('preserves same-day scroll before card removal clamps the old scroll range', () => {
     const tasks = project(
@@ -359,7 +411,7 @@ describe('constrained calendar', () => {
     row.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     expect(h.callbacks.onTaskClick).toHaveBeenCalledTimes(3);
     expect(h.cards.toggleTask).toHaveBeenCalledWith(
-      expect.objectContaining({ title: tasks[0]?.title }),
+      expect.objectContaining({ title: tasks[0]?.source.node.title }),
       { kind: 'allowed' },
     );
   });
@@ -369,7 +421,8 @@ describe('constrained calendar', () => {
     const h = mount(tasks);
     const row = expectDefined(h.container.querySelector<HTMLElement>('.abyss-task-card'));
     row.click();
-    expect(h.callbacks.onTaskClick).toHaveBeenCalledWith(tasks[0]);
+    const activated = vi.mocked(h.callbacks.onTaskClick).mock.calls[0]?.[0];
+    expect(calendarOccurrenceForTask(expectDefined(activated))).toBe(tasks[0]);
     expectDefined(row.querySelector<HTMLElement>('[role="checkbox"]')).click();
     expect(h.cards.toggleTask).not.toHaveBeenCalled();
     expectDefined(
@@ -379,7 +432,7 @@ describe('constrained calendar', () => {
       h.container.querySelector<HTMLElement>('.abyss-calendar-agenda [role="checkbox"]'),
     ).click();
     expect(h.cards.toggleTask).toHaveBeenCalledWith(
-      expect.objectContaining({ title: tasks[0]?.title }),
+      expect.objectContaining({ title: tasks[0]?.source.node.title }),
       { kind: 'allowed' },
     );
   });

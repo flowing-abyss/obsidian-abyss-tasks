@@ -3,15 +3,11 @@ import {
   taskOccurrenceCompletion,
   type LocalDate,
   type TaskOccurrenceCompletion,
-  type TaskSnapshot,
 } from '../tasks';
 import type { CalendarOccurrence } from './calendarOccurrences';
 
-export interface CalendarDaySource {
-  readonly task: TaskSnapshot;
+export interface CalendarDayEntry {
   readonly occurrence: CalendarOccurrence;
-}
-export interface CalendarDayEntry extends CalendarDaySource {
   readonly key: string;
   readonly completion: TaskOccurrenceCompletion;
 }
@@ -28,51 +24,57 @@ interface DayBucket {
   readonly keys: Set<string>;
 }
 
-function addEntry(bucket: DayBucket | undefined, date: LocalDate, source: CalendarDaySource): void {
-  if (bucket === undefined || bucket.keys.has(source.occurrence.key)) return;
-  bucket.keys.add(source.occurrence.key);
+function addEntry(
+  bucket: DayBucket | undefined,
+  date: LocalDate,
+  occurrence: CalendarOccurrence,
+): void {
+  if (bucket === undefined || bucket.keys.has(occurrence.key)) return;
+  bucket.keys.add(occurrence.key);
   bucket.entries.push(
     Object.freeze({
-      task: source.task,
-      occurrence: source.occurrence,
-      key: source.occurrence.key,
-      completion: Object.freeze(taskOccurrenceCompletion(source.occurrence.planning, date)),
+      occurrence,
+      key: occurrence.key,
+      completion: Object.freeze(taskOccurrenceCompletion(occurrence.planning, date)),
     }),
   );
 }
 
 function addInterval(
   buckets: ReadonlyMap<LocalDate, DayBucket>,
-  source: CalendarDaySource,
+  occurrence: CalendarOccurrence,
   start: LocalDate,
   due: LocalDate,
 ): void {
   for (const [date, bucket] of buckets) {
-    if (start <= date && date <= due) addEntry(bucket, date, source);
+    if (start <= date && date <= due) addEntry(bucket, date, occurrence);
   }
 }
 
-function addSource(buckets: ReadonlyMap<LocalDate, DayBucket>, source: CalendarDaySource): void {
-  const { occurrence } = source;
+function addSource(
+  buckets: ReadonlyMap<LocalDate, DayBucket>,
+  occurrence: CalendarOccurrence,
+): void {
   const occupied =
     occurrence.kind === 'materialized'
       ? occurrence.occupied
       : taskOccupiedDates(occurrence.planning);
-  if (occupied.kind === 'interval') addInterval(buckets, source, occupied.start, occupied.due);
-  else if (occupied.kind === 'point') addEntry(buckets.get(occupied.date), occupied.date, source);
+  if (occupied.kind === 'interval') addInterval(buckets, occurrence, occupied.start, occupied.due);
+  else if (occupied.kind === 'point')
+    addEntry(buckets.get(occupied.date), occupied.date, occurrence);
   else {
-    for (const { date } of occupied.points) addEntry(buckets.get(date), date, source);
+    for (const { date } of occupied.points) addEntry(buckets.get(date), date, occurrence);
   }
 }
 
-/** Groups canonical occurrences only on the supplied visible dates, retaining display identity. */
+/** Groups canonical occurrences only on the supplied visible dates, retaining source identity. */
 export function buildCalendarDayModel(
-  sources: readonly CalendarDaySource[],
+  occurrences: readonly CalendarOccurrence[],
   visibleDates: readonly LocalDate[],
 ): ReadonlyMap<LocalDate, CalendarDaySummary> {
   const buckets = new Map<LocalDate, DayBucket>();
   for (const date of visibleDates) buckets.set(date, { entries: [], keys: new Set() });
-  for (const source of sources) addSource(buckets, source);
+  for (const occurrence of occurrences) addSource(buckets, occurrence);
   const model = new Map<LocalDate, CalendarDaySummary>();
   for (const [date, bucket] of buckets) {
     const entries = Object.freeze(bucket.entries);

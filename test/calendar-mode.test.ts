@@ -1,5 +1,5 @@
 import type { App } from 'obsidian';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, assert, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { moment } from '../src/obsidianMoment';
 import type { CalendarCapturePlacement } from '../src/panels/calendar/calendarCapturePlacement';
@@ -11,6 +11,7 @@ import type { CalendarSettings } from '../src/settings/types';
 import { StatusRegistry } from '../src/status/StatusRegistry';
 import type { TaskCommandResult, TaskCreateSession, TaskIndexEvent } from '../src/tasks';
 import { noInteractionOwnership } from '../src/ui/interactionOwnership';
+import * as calendarOccurrences from '../src/views/calendarOccurrences';
 import {
   deferred,
   expectDefined,
@@ -490,7 +491,9 @@ describe('compact CalendarMode', () => {
     }));
   }
 
-  it('changes only the selected agenda without querying another projection', () => {
+  it('changes the selected agenda without querying, projecting or adapting display snapshots', () => {
+    const adapt = vi.spyOn(calendarOccurrences, 'taskSnapshotForCalendarOccurrence');
+    const project = vi.spyOn(calendarOccurrences, 'projectCalendarOccurrences');
     const first = task({
       source: { line: 1 },
       title: 'First day',
@@ -514,11 +517,15 @@ describe('compact CalendarMode', () => {
     h.mode['date_abyssPrivate'] = moment('2026-10-01');
     h.mode.render(h.root);
     expect(h.root.querySelectorAll('.abyss-calendar-date')).toHaveLength(42);
+    expect(adapt).not.toHaveBeenCalled();
+    expect(project).toHaveBeenCalledOnce();
     h.click('[data-calendar-date="2026-10-16"].abyss-calendar-date');
     const before = forCalendarProjection.mock.calls.length;
     const skeleton = h.root.querySelector('.abyss-calendar-date');
     h.click('[data-calendar-date="2026-10-17"].abyss-calendar-date');
     expect(forCalendarProjection).toHaveBeenCalledTimes(before);
+    expect(project).toHaveBeenCalledOnce();
+    expect(adapt).not.toHaveBeenCalled();
     expect(h.root.querySelector('.abyss-calendar-agenda')?.getAttribute('data-calendar-date')).toBe(
       '2026-10-17',
     );
@@ -535,7 +542,82 @@ describe('compact CalendarMode', () => {
     expect(h.root.querySelector('.abyss-calendar-agenda')?.getAttribute('data-calendar-date')).toBe(
       '2026-10-17',
     );
+    expect(forCalendarProjection).toHaveBeenCalledTimes(before + 1);
+    expect(project).toHaveBeenCalledTimes(2);
+    expect(adapt).not.toHaveBeenCalled();
   });
+
+  it.each(['month', 'week'] as const)(
+    'reuses the latest %s occurrences across compact/grid remounts without extra projection',
+    async (view) => {
+      const adapt = vi.spyOn(calendarOccurrences, 'taskSnapshotForCalendarOccurrence');
+      const project = vi.spyOn(calendarOccurrences, 'projectCalendarOccurrences');
+      let current = task({ title: 'Original publication', planning: { due: '2026-10-16' } });
+      const forCalendarProjection = vi.fn(() => ({
+        materialized: [
+          { root: current, node: current, target: { type: 'task' as const, ref: current.ref } },
+        ],
+        recurringSources: [],
+      }));
+      const h = harness({ forCalendarProjection });
+      let width = 360;
+      vi.spyOn(h.root, 'getBoundingClientRect').mockImplementation(
+        () => new DOMRect(0, 0, width, 700),
+      );
+      h.mode.setView(view);
+      h.mode['date_abyssPrivate'] = moment('2026-10-16');
+      h.mode.render(h.root);
+      h.click('.abyss-calendar-date[data-calendar-date="2026-10-16"]');
+      const agendaText = () =>
+        expectDefined(h.root.querySelector('.abyss-calendar-agenda')).textContent;
+      expect(agendaText()).toContain('Original publication');
+      expect(adapt).not.toHaveBeenCalled();
+      expect(forCalendarProjection).toHaveBeenCalledOnce();
+      expect(project).toHaveBeenCalledOnce();
+      const resize = async (next: number): Promise<void> => {
+        width = next;
+        window.dispatchEvent(new Event('resize'));
+        await new Promise<void>((resolve) => {
+          window.requestAnimationFrame(() => {
+            resolve();
+          });
+        });
+      };
+      await resize(800);
+      expect(
+        h.root.querySelector(view === 'month' ? '.abyss-mg-grid' : '.abyss-tg-grid-row'),
+      ).not.toBeNull();
+      expect(adapt).toHaveBeenCalledOnce();
+      const initial = project.mock.results[0];
+      assert(initial?.type === 'return');
+      expect(adapt.mock.calls[0]?.[0]).toBe(initial.value.occurrences[0]);
+      current = task({
+        ...current,
+        title: 'Latest publication',
+        markdownTitle: 'Latest publication',
+      });
+      h.emit();
+      expect(adapt).toHaveBeenCalledTimes(2);
+      expect(forCalendarProjection).toHaveBeenCalledTimes(2);
+      expect(project).toHaveBeenCalledTimes(2);
+      const latest = project.mock.results[1];
+      assert(latest?.type === 'return');
+      await resize(360);
+      expect(agendaText()).toContain('Latest publication');
+      expect(agendaText()).not.toContain('Original publication');
+      expect(adapt).toHaveBeenCalledTimes(2);
+      expect(expectDefined(h.mode['contentCache_abyssPrivate']).occurrences).toBe(
+        latest.value.occurrences,
+      );
+      h.click('.abyss-calendar-date[data-calendar-date="2026-10-17"]');
+      expect(h.root.querySelector('.abyss-calendar-agenda-empty')?.textContent).toBe(
+        'No tasks for this day',
+      );
+      expect(forCalendarProjection).toHaveBeenCalledTimes(2);
+      expect(project).toHaveBeenCalledTimes(2);
+      expect(adapt).toHaveBeenCalledTimes(2);
+    },
+  );
 
   it('coalesces width changes, remounts only across the threshold and ignores disposed work', async () => {
     const callbacks: ResizeObserverCallback[] = [];
@@ -847,13 +929,18 @@ it.each([
 );
 
 it('routes actual root, child and forecast agenda actions through canonical owners', async () => {
+  const adapt = vi.spyOn(calendarOccurrences, 'taskSnapshotForCalendarOccurrence');
   const parent = task({ title: 'Parent', planning: { due: '2026-10-16' } });
+  const branch = subtask({
+    title: 'Undated branch',
+    ref: { parent: { type: 'task', ref: parent.ref }, relativeLine: 1 },
+  });
   const child = subtask({
     title: 'Dated child',
     planning: { due: '2026-10-16' },
-    ref: { parent: { type: 'task', ref: parent.ref }, relativeLine: 1 },
+    ref: { parent: { type: 'subtask', ref: branch.ref }, relativeLine: 2 },
   });
-  const root = task({ ...parent, subtasks: [child] });
+  const root = task({ ...parent, subtasks: [{ ...branch, subtasks: [child] }] });
   const repeating = task({
     title: 'Repeating',
     source: { line: 8 },
@@ -888,25 +975,36 @@ it('routes actual root, child and forecast agenda actions through canonical owne
   const rootRow = expectDefined(
     rows.find((row) => row.querySelector('.abyss-task-title')?.textContent === 'Parent'),
   );
+  expect(adapt).not.toHaveBeenCalled();
   rootRow.click();
+  expect(adapt).toHaveBeenCalledOnce();
   expect(h.host.openTask).toHaveBeenLastCalledWith(root, { type: 'task', ref: root.ref });
   expectDefined(rootRow.querySelector<HTMLElement>('[role=checkbox]')).click();
   expect(h.cards.toggleTask).toHaveBeenCalledWith(root, { kind: 'allowed' });
   const childRow = expectDefined(rows.find((row) => row.textContent.includes('Dated child')));
   childRow.click();
+  expect(adapt).toHaveBeenCalledTimes(2);
+  const activated = adapt.mock.results[1];
+  assert(activated?.type === 'return');
+  expect(calendarOccurrences.calendarOccurrenceForTask(activated.value)?.source).toEqual({
+    root,
+    node: child,
+    target: { type: 'subtask', ref: child.ref },
+  });
   expect(h.host.openTask).toHaveBeenLastCalledWith(root, { type: 'subtask', ref: child.ref });
   expectDefined(childRow.querySelector<HTMLElement>('[role="checkbox"]')).click();
   expect(h.cards.toggleTask).toHaveBeenCalledWith(child, { kind: 'allowed' });
   expectDefined(childRow.querySelector<HTMLButtonElement>('.abyss-task-parent-btn')).click();
   await flushMicrotasks();
   expect(h.cards.showTaskInList).toHaveBeenCalledWith(
-    { type: 'task', ref: root.ref },
+    { type: 'subtask', ref: branch.ref },
     expect.anything(),
   );
   const forecast = expectDefined(
     rows.find((row) => row.getAttribute('data-occurrence-state') === 'forecast'),
   );
   forecast.click();
+  expect(adapt).toHaveBeenCalledTimes(2);
   expect(h.host.openForecastTask).toHaveBeenCalledWith(recurringSource, '2026-10-16');
   forecast.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
   expect(h.host.openForecastRecurrenceEditor).not.toHaveBeenCalled();

@@ -394,7 +394,7 @@ export class CalendarMode {
     context.viewContainer.empty();
     const content = retainedContent ?? this.content_abyssPrivate();
     this.contentCache_abyssPrivate = content;
-    const { config, issues, tasks } = content;
+    const { config, issues, occurrences } = content;
     const dates = this.resolveSelectedDate_abyssPrivate();
     // A rebuilt grid with no position to restore would start at midnight, so it scrolls to now
     // even when this (view, date) pair was visited before. Only a same-date refresh that keeps its
@@ -427,7 +427,7 @@ export class CalendarMode {
         : undefined,
     );
     this.viewInstance_abyssPrivate = view;
-    view.render(context.viewContainer, tasks, config, shouldScrollToNow, preservedScrollTop);
+    view.render(context.viewContainer, occurrences, config, shouldScrollToNow, preservedScrollTop);
     this.finishViewUpdate_abyssPrivate(context, issues, renderGeneration);
   }
 
@@ -440,9 +440,9 @@ export class CalendarMode {
     const renderGeneration = this.focusRetention_abyssPrivate.beginRender();
     const content = this.content_abyssPrivate();
     this.contentCache_abyssPrivate = content;
-    const { config, issues, tasks } = content;
+    const { config, issues, occurrences } = content;
     this.deps_abyssPrivate.host.unmountActiveCapture();
-    this.viewInstance_abyssPrivate.patch(context.viewContainer, tasks, config);
+    this.viewInstance_abyssPrivate.patch(context.viewContainer, occurrences, config);
     this.finishViewUpdate_abyssPrivate(context, issues, renderGeneration);
   }
 

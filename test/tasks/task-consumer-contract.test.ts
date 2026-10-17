@@ -68,16 +68,29 @@ const PARSER_GRAMMAR_TESTS = new Set([
 // Rendering/claimed native drags project canonical sources; queued edits reconstruct only a
 // proven canonical successor through the same adapter boundary.
 const CALENDAR_PROJECTION_CONSUMERS = {
-  'src/panels/calendar/calendarContent.ts': [
-    'projectCalendarOccurrences',
-    'taskSnapshotForCalendarOccurrence',
-  ],
+  'src/panels/calendar/calendarContent.ts': ['projectCalendarOccurrences'],
+  'src/panels/calendar/calendarViewFactory.ts': ['taskSnapshotForCalendarOccurrence'],
+  'src/views/ConstrainedCalendarView.ts': ['taskSnapshotForCalendarOccurrence'],
   'src/views/calendarNativeDrag.ts': [
     'projectCalendarOccurrences',
     'taskSnapshotForCalendarOccurrence',
   ],
   'src/ui/timedBlockKeyboardQueue.ts': ['taskSnapshotForCalendarOccurrence'],
 };
+
+const CALENDAR_PROJECTION_BINDINGS = new Set([
+  'projectCalendarOccurrences',
+  'taskSnapshotForCalendarOccurrence',
+]);
+
+function unauthorizedCalendarProjectionImports(path: string, candidate: string): string[] {
+  const allowed =
+    Object.entries(CALENDAR_PROJECTION_CONSUMERS).find(([consumer]) => consumer === path)?.[1] ??
+    [];
+  return namedImports(path, candidate).filter(
+    (name) => CALENDAR_PROJECTION_BINDINGS.has(name) && !allowed.includes(name),
+  );
+}
 
 function source(path: string): string {
   return node.fs.readFileSync(resolve(ROOT, path), 'utf8');
@@ -363,21 +376,48 @@ describe('final task consumer contract', () => {
     expect(matchingFiles(taskMutationConsumers, /\.vault\.process\s*\(/u)).toEqual([]);
   });
 
+  it.each(['src/panels/calendar/calendarViewFactory.ts', 'src/views/ConstrainedCalendarView.ts'])(
+    'accepts display adaptation at the exact %s boundary',
+    (path) => {
+      expect(
+        unauthorizedCalendarProjectionImports(
+          path,
+          "import { taskSnapshotForCalendarOccurrence as adapt } from './calendarOccurrences';",
+        ),
+      ).toEqual([]);
+    },
+  );
+
+  it.each([
+    ['src/panels/calendar/calendarContent.ts', 'taskSnapshotForCalendarOccurrence'],
+    ['src/panels/calendar/calendarViewFactory.ts', 'projectCalendarOccurrences'],
+    ['src/views/ConstrainedCalendarView.ts', 'projectCalendarOccurrences'],
+    ['src/panels/unlisted.ts', 'taskSnapshotForCalendarOccurrence'],
+  ])('rejects misplaced %s import of %s', (path, binding) => {
+    expect(
+      unauthorizedCalendarProjectionImports(
+        path,
+        `import { ${binding} as misplaced } from './calendarOccurrences';`,
+      ),
+    ).toEqual([binding]);
+  });
+
   it(
     'confines projection adapters to exact calendar consumers and bindings',
     () => {
-      const projectionBindings = new Set([
-        'projectCalendarOccurrences',
-        'taskSnapshotForCalendarOccurrence',
-      ]);
       const consumers = productionFiles.filter((path) =>
-        namedImports(path, source(path)).some((name) => projectionBindings.has(name)),
+        namedImports(path, source(path)).some((name) => CALENDAR_PROJECTION_BINDINGS.has(name)),
       );
 
       expect(new Set(consumers)).toEqual(new Set(Object.keys(CALENDAR_PROJECTION_CONSUMERS)));
       for (const [path, bindings] of Object.entries(CALENDAR_PROJECTION_CONSUMERS)) {
+        expect(unauthorizedCalendarProjectionImports(path, source(path))).toEqual([]);
         expect(
-          new Set(namedImports(path, source(path)).filter((name) => projectionBindings.has(name))),
+          new Set(
+            namedImports(path, source(path)).filter((name) =>
+              CALENDAR_PROJECTION_BINDINGS.has(name),
+            ),
+          ),
         ).toEqual(new Set(bindings));
       }
     },

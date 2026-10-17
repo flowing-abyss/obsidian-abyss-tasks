@@ -1,18 +1,21 @@
 import { Platform, type App } from 'obsidian';
+import type { ResolvedConfig } from '../../settings/types';
 import type { StatusRegistry } from '../../status/StatusRegistry';
 import type { EffectiveTagGroup } from '../../tags/effectiveTagGroups';
 import type { LocalDate, TaskPriority, TaskSnapshot } from '../../tasks';
 import type { InteractionOwnershipPort } from '../../ui/interactionOwnership';
 import type { TaskDependencyLookup } from '../../ui/taskDependencyPresentation';
 import type { BaseView } from '../../views/BaseView';
+import type { CalendarNativeDragStart } from '../../views/calendarNativeDrag';
+import {
+  taskSnapshotForCalendarOccurrence,
+  type CalendarOccurrence,
+} from '../../views/calendarOccurrences';
 import {
   ConstrainedCalendarView,
   type MountCalendarAgendaEntry,
 } from '../../views/ConstrainedCalendarView';
 import { MonthGridView } from '../../views/MonthGridView';
-import { TodayView } from '../../views/TodayView';
-import { WeekTimeGridView } from '../../views/WeekTimeGridView';
-import type { CalendarNativeDragStart } from '../../views/calendarNativeDrag';
 import type { InteractiveSpanBoundaryTarget, SpanMoveTarget } from '../../views/spanInteractions';
 import type { TimedDragTarget, TimedVerticalResizeTarget } from '../../views/timegrid/dragGeometry';
 import type {
@@ -21,6 +24,8 @@ import type {
 } from '../../views/timegrid/renderTaskMeta';
 import type { TimedBlockKeyboardIntent } from '../../views/timegrid/renderTimedBlocks';
 import type { TimedBoundaryTarget } from '../../views/timegrid/timedInteractions';
+import { TodayView } from '../../views/TodayView';
+import { WeekTimeGridView } from '../../views/WeekTimeGridView';
 import type { ShowInTaskList } from '../right/inspectorTypes';
 import type { CalViewType } from './calendarViewType';
 
@@ -73,9 +78,47 @@ export interface CalendarViewNavigation {
 }
 
 /** The structural contract the controller drives: render, patch, destroy. */
-export type CalendarViewInstance = Pick<BaseView, 'render' | 'patch' | 'destroy'> & {
+export interface CalendarViewInstance {
+  render(
+    container: HTMLElement,
+    occurrences: readonly CalendarOccurrence[],
+    config: ResolvedConfig,
+    shouldScrollToNow?: boolean,
+    preservedScrollTop?: number,
+  ): void;
+  patch(
+    container: HTMLElement,
+    occurrences: readonly CalendarOccurrence[],
+    config: ResolvedConfig,
+  ): void;
+  destroy(): void;
   readonly selectDate?: (date: LocalDate) => void;
-};
+}
+
+/** Full grids keep their TaskSnapshot API; compact views consume the occurrences directly. */
+function adaptGridView(view: BaseView): CalendarViewInstance {
+  return {
+    render(
+      ...[container, occurrences, config, shouldScrollToNow, preservedScrollTop]: Parameters<
+        CalendarViewInstance['render']
+      >
+    ) {
+      view.render(
+        container,
+        occurrences.map(taskSnapshotForCalendarOccurrence),
+        config,
+        shouldScrollToNow,
+        preservedScrollTop,
+      );
+    },
+    patch(container, occurrences, config) {
+      view.patch(container, occurrences.map(taskSnapshotForCalendarOccurrence), config);
+    },
+    destroy() {
+      view.destroy();
+    },
+  };
+}
 
 export interface ConstrainedCalendarOptions {
   readonly view: 'month' | 'week';
@@ -209,7 +252,7 @@ export function createCalendarView(
     constrained?: ConstrainedCalendarOptions,
   ]
 ): CalendarViewInstance {
-  if (view === 'today') return createTodayView(deps, handlers);
+  if (view === 'today') return adaptGridView(createTodayView(deps, handlers));
   if (constrained !== undefined)
     return new ConstrainedCalendarView({
       ...constrained,
@@ -230,6 +273,6 @@ export function createCalendarView(
       onSetStatus: handlers.onSetStatus,
       onSetPriority: handlers.onSetPriority,
     });
-  if (view === 'week') return createWeekView(deps, handlers, navigation);
-  return createMonthView(deps, handlers, navigation);
+  if (view === 'week') return adaptGridView(createWeekView(deps, handlers, navigation));
+  return adaptGridView(createMonthView(deps, handlers, navigation));
 }
