@@ -14,7 +14,6 @@ import { scopeKeyboardEvent } from './support/scopeKeyboardEvent';
 const mockState = vi.hoisted(() => ({
   mountImpl: vi.fn(),
   destroyImpl: vi.fn(),
-  includeHeaderActions: { value: true },
   // Captures the AppState instance TaskModal constructs for RightPanel, so tests can
   // inspect taskStack after simulating a store update (RightPanel itself is mocked out).
   capturedState: null as AppState | null,
@@ -42,9 +41,10 @@ vi.mock('../src/panels/RightPanel', () => ({
 
     mount(el: HTMLElement): void {
       mockState.mountImpl(el);
-      if (mockState.includeHeaderActions.value) {
-        el.createDiv({ cls: 'abyss-right-header-actions' });
-      }
+      el.createDiv({ cls: 'abyss-right-header-actions' }).createEl('button', {
+        cls: 'abyss-right-action-btn',
+        attr: { 'aria-label': 'More actions' },
+      });
     }
 
     destroy(): void {
@@ -70,7 +70,6 @@ describe('TaskModal', () => {
   beforeEach(() => {
     mockState.mountImpl.mockClear();
     mockState.destroyImpl.mockClear();
-    mockState.includeHeaderActions.value = true;
     mockState.capturedState = null;
     mockState.capturedTasks = undefined;
     mockState.capturedOwnership = undefined;
@@ -108,7 +107,9 @@ describe('TaskModal', () => {
       expect(host.modalEl.getAttribute('aria-label')).toBe('Task details');
       expect(host.modalEl.getAttribute('role')).toBe('dialog');
       expect(host.modalEl.getAttribute('aria-modal')).toBe('true');
-      expectDefined(document.querySelector<HTMLElement>('.abyss-modal-close-btn')).focus();
+      expectDefined(
+        document.querySelector<HTMLElement>('.abyss-right-header-actions button'),
+      ).focus();
       if (movedFocus) outside.focus();
       host.close();
       host.close();
@@ -129,29 +130,21 @@ describe('TaskModal', () => {
       expect(cssDeclarationText(css, `.abyss-modal > .${nativeClass}`)).toContain('display: none;');
       expect(cssDeclarationText(css, `.${nativeClass}`)).not.toContain('display: none;');
     }
-    const close = cssDeclarationText(css, '.abyss-modal-close-btn');
-    expect(close).toContain('min-width: 44px;');
-    expect(close).toContain('min-height: 44px;');
-    modal.open(task());
-    expect(document.querySelectorAll('.abyss-modal-close-btn')).toHaveLength(1);
   });
 
-  it.each(['backdrop', 'Escape', 'Close'])(
-    'returns explicit %s close to its connected opener',
-    (action) => {
-      const opener = document.body.createEl('button');
-      opener.focus();
-      modal.open(task());
-      const backdrop = expectDefined(document.querySelector<HTMLElement>('.abyss-modal-backdrop'));
-      expectDefined(document.querySelector<HTMLButtonElement>('.abyss-modal-close-btn')).focus();
-      if (action === 'backdrop') backdrop.click();
-      else if (action === 'Close')
-        expectDefined(document.querySelector<HTMLElement>('.abyss-modal-close-btn')).click();
-      else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-      expect(document.activeElement).toBe(opener);
-      opener.remove();
-    },
-  );
+  it.each(['backdrop', 'Escape'])('returns explicit %s close to its connected opener', (action) => {
+    const opener = document.body.createEl('button');
+    opener.focus();
+    modal.open(task());
+    const backdrop = expectDefined(document.querySelector<HTMLElement>('.abyss-modal-backdrop'));
+    expectDefined(
+      document.querySelector<HTMLButtonElement>('.abyss-right-header-actions button'),
+    ).focus();
+    if (action === 'backdrop') backdrop.click();
+    else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(document.activeElement).toBe(opener);
+    opener.remove();
+  });
 
   it.each(['outside', 'detached', 'public-close', 'replacement'] as const)(
     'does not focus a modal opener on %s',
@@ -165,7 +158,7 @@ describe('TaskModal', () => {
         else if (action === 'detached') opener.remove();
         else
           expectDefined(
-            document.querySelector<HTMLButtonElement>('.abyss-modal-close-btn'),
+            document.querySelector<HTMLButtonElement>('.abyss-right-header-actions button'),
           ).focus();
         if (action === 'public-close') modal.close();
         else if (action === 'replacement') modal.open(task({ title: 'replacement' }));
@@ -255,31 +248,13 @@ describe('TaskModal', () => {
       expect(unsubscribe).toHaveBeenCalledOnce();
     });
 
-    it('close button has abyss-right-action-btn abyss-modal-close-btn class', () => {
+    it('keeps canonical inspector header actions without a custom close cross', () => {
       modal.open(task());
-      const btn = activeDocument.body.querySelector('.abyss-modal-close-btn') as HTMLButtonElement;
-      expect(btn).not.toBeNull();
-      expect(btn.classList.contains('abyss-right-action-btn')).toBe(true);
-    });
-
-    it('close button inserted into .abyss-right-header-actions when present', () => {
-      mockState.includeHeaderActions.value = true;
-      modal.open(task());
+      expect(activeDocument.querySelector('.abyss-modal-close-btn')).toBeNull();
       const actions = expectDefined(
-        activeDocument.body.querySelector('.abyss-right-header-actions'),
+        activeDocument.querySelector<HTMLElement>('.abyss-modal .abyss-right-header-actions'),
       );
-      expect(actions.querySelector('.abyss-modal-close-btn')).not.toBeNull();
-    });
-
-    it('close button appended to panelEl when .abyss-right-header-actions missing (fallback)', () => {
-      mockState.includeHeaderActions.value = false;
-      modal.open(task());
-      const panelEl = activeDocument.body.querySelector(
-        '.abyss-right.abyss-modal-body',
-      ) as HTMLElement;
-      expect(panelEl.querySelector(':scope > .abyss-modal-close-btn')).not.toBeNull();
-      // ensure not inside a header-actions (there is none)
-      expect(activeDocument.body.querySelector('.abyss-right-header-actions')).toBeNull();
+      expect(actions.querySelector('[aria-label="More actions"]')).not.toBeNull();
     });
 
     it('backdrop click (target === backdrop) closes modal', () => {

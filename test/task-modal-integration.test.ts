@@ -1577,7 +1577,12 @@ describe('TaskModal with real RightPanel', () => {
     await flushMicrotasks();
     expect(execute.mock.calls[0]?.[0]).toMatchObject({ type: 'toggle-completion' });
     expect(activeDocument.querySelector('.abyss-modal-backdrop')).not.toBeNull();
-    expect(activeDocument.querySelector('.abyss-modal-close-btn')).not.toBeNull();
+    expect(activeDocument.querySelector('.abyss-modal-close-btn')).toBeNull();
+    expect(
+      activeDocument.querySelector(
+        '.abyss-modal .abyss-right-header-actions [aria-label="More actions"]',
+      ),
+    ).not.toBeNull();
     expect(
       activeDocument
         .querySelector('.abyss-modal .abyss-right-header > .abyss-status-marker')
@@ -1597,7 +1602,12 @@ describe('TaskModal with real RightPanel', () => {
     click(waiting);
     await flushMicrotasks();
     expect(execute.mock.calls[1]?.[0]).toMatchObject({ type: 'set-status', symbol: 'w' });
-    expect(activeDocument.querySelector('.abyss-modal-close-btn')).not.toBeNull();
+    expect(activeDocument.querySelector('.abyss-modal-close-btn')).toBeNull();
+    expect(
+      activeDocument.querySelector(
+        '.abyss-modal .abyss-right-header-actions [aria-label="More actions"]',
+      ),
+    ).not.toBeNull();
     expect(
       activeDocument
         .querySelector('.abyss-modal .abyss-right-header > .abyss-status-marker')
@@ -1621,7 +1631,12 @@ describe('TaskModal with real RightPanel', () => {
       type: 'patch',
       patch: { priority: { type: 'set', value: 'A' } },
     });
-    expect(activeDocument.querySelector('.abyss-modal-close-btn')).not.toBeNull();
+    expect(activeDocument.querySelector('.abyss-modal-close-btn')).toBeNull();
+    expect(
+      activeDocument.querySelector(
+        '.abyss-modal .abyss-right-header-actions [aria-label="More actions"]',
+      ),
+    ).not.toBeNull();
     expect(
       activeDocument
         .querySelector('.abyss-modal .abyss-right-header > .abyss-status-marker')
@@ -1650,9 +1665,12 @@ describe('TaskModal with real RightPanel', () => {
     expect(activeDocument.querySelector('.abyss-task-selection-stale')).toBeNull();
     expect(refreshedMarker?.getAttribute('data-status')).toBe('status-4');
     expect(refreshedMarker?.getAttribute('data-priority')).toBe('B');
-    const closeButton = activeDocument.querySelector<HTMLElement>('.abyss-modal-close-btn');
-    expect(closeButton).not.toBeNull();
-    click(expectDefined(closeButton));
+    expect(
+      activeDocument.querySelector(
+        '.abyss-modal .abyss-right-header-actions [aria-label="More actions"]',
+      ),
+    ).not.toBeNull();
+    activeDocument.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     expect(activeDocument.querySelector('.abyss-modal-backdrop')).toBeNull();
   });
 
@@ -2159,7 +2177,11 @@ it('routes the real modal picker before its parent and releases child scopes fir
     expect(parentEscape(event(), context)).toBeUndefined();
     expect(document.querySelector('.abyss-modal')).not.toBeNull();
     const newEscape = expectDefined(register.mock.calls[register.mock.calls.length - 1])[2];
-    expectDefined(document.querySelector<HTMLButtonElement>('.abyss-modal-close-btn')).focus();
+    expectDefined(
+      document.querySelector<HTMLButtonElement>(
+        '.abyss-modal .abyss-right-header-actions [aria-label="More actions"]',
+      ),
+    ).focus();
     const final = event();
     expect(newEscape(final, context)).toBe(false);
     document.dispatchEvent(final);

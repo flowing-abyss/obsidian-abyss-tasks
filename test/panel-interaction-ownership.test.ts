@@ -194,7 +194,11 @@ const categories: ReadonlyArray<{
       });
       modal.open(task());
       return {
-        control: expectDefined(activeDocument.querySelector<HTMLElement>('.abyss-modal-close-btn')),
+        control: expectDefined(
+          activeDocument.querySelector<HTMLElement>(
+            '.abyss-modal .abyss-right-header-actions button[aria-label="More actions"]',
+          ),
+        ),
         close: () => {
           modal.close();
         },

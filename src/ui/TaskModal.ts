@@ -1,4 +1,4 @@
-import { Modal, Scope, setIcon, type App } from 'obsidian';
+import { Modal, Scope, type App } from 'obsidian';
 import { AppState } from '../app/AppState';
 import { createBrowserTaskScheduler } from '../browserTaskScheduler';
 import { RightPanel, type RightPanelMutationLifecycle } from '../panels/RightPanel';
@@ -211,9 +211,6 @@ export class TaskModal {
       search: this.search_abyssPrivate,
       onShowInTaskList: this.listHandoff_abyssPrivate(openingState),
       dependencySearch: this.createDependencySearch_abyssPrivate(),
-      onRenderHeaderActions: (actions) => {
-        this.renderCloseButton_abyssPrivate(actions);
-      },
       onMutationLifecycle: (event) => {
         if (this.innerState_abyssPrivate !== openingState) return;
         if (event.operation === 'hierarchy') this.trackHierarchy_abyssPrivate(event, openingState);
@@ -230,11 +227,6 @@ export class TaskModal {
       this.queries_abyssPrivate?.subscribe((event) => {
         this.onIndexEvent_abyssPrivate(event);
       }) ?? null;
-
-    // A mocked/legacy panel may not invoke the render hook. Preserve the direct fallback.
-    this.renderCloseButton_abyssPrivate(
-      panelEl.querySelector<HTMLElement>('.abyss-right-header-actions') ?? panelEl,
-    );
 
     backdrop.addEventListener('click', (e) => {
       if (e.target === backdrop) this.closeFromUser_abyssPrivate();
@@ -330,22 +322,6 @@ export class TaskModal {
     };
     this.timeTracking_abyssPrivate = surface;
     return surface;
-  }
-
-  private renderCloseButton_abyssPrivate(parent: HTMLElement): void {
-    const existing =
-      this.modalEl_abyssPrivate?.querySelector<HTMLElement>('.abyss-modal-close-btn');
-    if (existing != null) {
-      if (existing.parentElement !== parent) parent.appendChild(existing);
-      return;
-    }
-    const closeBtn = parent.createEl('button');
-    closeBtn.className = 'clickable-icon abyss-right-action-btn abyss-modal-close-btn';
-    closeBtn.setAttribute('aria-label', 'Close');
-    setIcon(closeBtn, 'x');
-    closeBtn.addEventListener('click', () => {
-      this.closeFromUser_abyssPrivate();
-    });
   }
 
   private closeFromUser_abyssPrivate(): void {

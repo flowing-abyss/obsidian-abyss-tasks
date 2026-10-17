@@ -108,7 +108,6 @@ interface RightPanelOptions {
   readonly search?: TaskSearchApi | undefined;
   readonly localSearchScope?: LocalSearchScopeHost | undefined;
   readonly dependencySearch?: TaskDependencySearchProvider | undefined;
-  readonly onRenderHeaderActions?: ((actions: HTMLElement) => void) | undefined;
   readonly onMutationLifecycle?: ((event: RightPanelMutationLifecycle) => void) | undefined;
   readonly commentTimeContext?: CommentTimeContextProvider | undefined;
   readonly interactionOwnership?: InteractionOwnershipPort | undefined;
@@ -306,7 +305,6 @@ export class RightPanel {
   private readonly statusRegistry_abyssPrivate: StatusRegistry;
   private readonly settings_abyssPrivate: CalendarSettings | undefined;
   private readonly tasks_abyssPrivate: TaskApplicationApi | undefined;
-  private readonly onRenderHeaderActions_abyssPrivate: ((actions: HTMLElement) => void) | undefined;
   private readonly onMutationLifecycle_abyssPrivate:
     ((event: RightPanelMutationLifecycle) => void) | undefined;
   private readonly commentTimeContext_abyssPrivate: CommentTimeContextProvider | undefined;
@@ -377,7 +375,6 @@ export class RightPanel {
       settings,
       onSuccessfulMutation,
       tasks,
-      onRenderHeaderActions,
       onMutationLifecycle,
       commentTimeContext,
       interactionOwnership = noInteractionOwnership,
@@ -389,7 +386,6 @@ export class RightPanel {
     this.settings_abyssPrivate = settings;
     this.onSuccessfulMutation_abyssPrivate = onSuccessfulMutation;
     this.tasks_abyssPrivate = tasks;
-    this.onRenderHeaderActions_abyssPrivate = onRenderHeaderActions;
     this.onMutationLifecycle_abyssPrivate = onMutationLifecycle;
     this.commentTimeContext_abyssPrivate = commentTimeContext;
     this.interactionOwnership_abyssPrivate = interactionOwnership;
@@ -1938,7 +1934,6 @@ export class RightPanel {
       if (current !== undefined)
         this.planningSurfaces_abyssPrivate.renderContextMenu(current, menuBtn);
     });
-    this.onRenderHeaderActions_abyssPrivate?.(headerActions);
     this.bindHierarchyDrop_abyssPrivate(header, task);
   }
 
