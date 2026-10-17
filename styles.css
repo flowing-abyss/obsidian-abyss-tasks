@@ -10899,7 +10899,29 @@ button.abyss-calendar-date[aria-pressed='true'] {
 /* A 320px phone leaves 272px beside the rail; keep all eight controls on that row. */
 @container abyss-task-list (max-width: 20rem) {
   .abyss-cal-nav :is(.abyss-cal-nav-left, .abyss-cal-nav-title-group) {
+    flex: 1 1 auto;
+    min-inline-size: min-content;
+  }
+
+  .abyss-cal-nav .abyss-cal-nav-left {
     gap: 0;
+  }
+
+  .abyss-cal-nav button.abyss-cal-nav-month {
+    flex: 1 1 0;
+    inline-size: 0;
+    min-inline-size: 3ch;
+  }
+
+  .abyss-cal-nav .abyss-cal-title-compact {
+    flex: 1 1 auto;
+    min-inline-size: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .abyss-cal-nav button.abyss-cal-nav-year {
+    flex: 0 0 auto;
   }
 
   .abyss-cal-nav button:is(.abyss-cal-nav-btn, .abyss-cal-nav-today, .abyss-cal-view-btn) {
