@@ -1,10 +1,12 @@
 import { Platform } from 'obsidian';
+import postcss from 'postcss';
 import { describe, expect, it, vi } from 'vitest';
 import type { TaskCommandResult, TaskCreateSession } from '../src/tasks';
 import { CaptureSurface } from '../src/ui/taskCapture/CaptureSurface';
 import type { CaptureTarget } from '../src/ui/taskCapture/CaptureTargetResolver';
 import { TaskCaptureController } from '../src/ui/taskCapture/TaskCaptureController';
 import { describeTaskCreationResult } from '../src/ui/taskCommandResult';
+import { cssDeclarationText } from './cssHelpers';
 import {
   cssDeclarationValue,
   cssRuleParts,
@@ -42,18 +44,13 @@ function declarationsForSource(source: string, selector: string): string {
   return matches[matches.length - 1]?.declarations ?? '';
 }
 
-function lastAtRuleBlock(header: string): string {
-  const start = css.lastIndexOf(header);
-  if (start < 0) return '';
-  const opening = css.indexOf('{', start + header.length);
-  if (opening < 0) return '';
-  let depth = 0;
-  for (let index = opening; index < css.length; index += 1) {
-    if (css[index] === '{') depth += 1;
-    if (css[index] === '}') depth -= 1;
-    if (depth === 0) return css.slice(opening + 1, index);
-  }
-  return '';
+function atRuleBlocks(header: string): string {
+  const blocks: string[] = [];
+  postcss.parse(css).walkAtRules((rule) => {
+    if (`@${rule.name} ${rule.params}` === header)
+      blocks.push(rule.nodes?.map((node) => node.toString()).join('\n') ?? '');
+  });
+  return blocks.join('\n');
 }
 
 const success = (): TaskCommandResult => ({
@@ -564,7 +561,7 @@ describe('CaptureSurface', () => {
   });
 
   it('matches the inline capture slot to the Add task trigger with one fixed block size', () => {
-    const bar = declarationsFor('.abyss-add-task-bar');
+    const bar = cssDeclarationText(css, '.abyss-add-task-bar', true);
     const trigger = declarationsFor('.abyss-add-task-trigger');
     const inlineSurface = declarationsFor('.abyss-capture-surface--inline');
     const inlineInput = declarationsFor('.abyss-capture-surface--inline .abyss-capture-input');
@@ -626,8 +623,12 @@ describe('CaptureSurface', () => {
   });
 
   it('keeps narrow calendar controls horizontally reachable and clears feedback above mobile chrome', () => {
-    const compact = lastAtRuleBlock('@container abyss-task-list (max-width: 30rem)');
-    const nav = declarationsFor('.abyss-cal-nav');
+    const compact = atRuleBlocks('@container abyss-task-list (max-width: 30rem)');
+    const nav = declarationsForSource(compact, '.abyss-cal-nav');
+    const compactRows = declarationsForSource(
+      compact,
+      '.abyss-cal-nav :is(.abyss-cal-nav-left, .abyss-cal-nav-right, .abyss-cal-nav-title-group)',
+    );
     const rows = declarationsFor(
       ':is(.abyss-cal-nav-left, .abyss-cal-nav-right, .abyss-cal-nav-title-group)',
     );
@@ -638,7 +639,9 @@ describe('CaptureSurface', () => {
     );
     const globalFeedback = declarationsFor('body.is-phone .abyss-creation-feedback');
 
-    expect(nav).toContain('flex-wrap: wrap');
+    expect(nav).toContain('flex-wrap: nowrap');
+    expect(nav).toContain('overflow-x: auto');
+    expect(compactRows).toContain('flex-wrap: nowrap');
     expect(nav).not.toMatch(/overflow(?:-x|-y)?:\s*(?:hidden|clip)/u);
     expect(rows).toContain('flex-wrap: wrap');
     expect(rows).toContain('min-block-size: 44px');
