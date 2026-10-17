@@ -281,8 +281,6 @@ export class CalendarMode {
       this.constrained_abyssPrivate = false;
       return;
     }
-    // This mounted center is independent of the view's contents. Rail reflow is controlled by
-    // the outer layout's container query, never by this classification.
     const classify = (): boolean => {
       const width = root.getBoundingClientRect().width;
       const measuredRem = Number.parseFloat(

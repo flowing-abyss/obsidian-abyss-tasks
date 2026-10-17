@@ -3207,6 +3207,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 /* ── Calendar Nav ─────────────────────────────────────── */
 .abyss-cal-nav {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   padding: var(--size-4-2) var(--size-4-3);
@@ -3219,6 +3220,14 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   display: flex;
   align-items: center;
   gap: var(--size-2-1);
+  min-inline-size: 0;
+}
+
+.abyss-cal-nav-right {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-1);
+  margin-inline-start: auto;
 }
 
 .abyss-cal-nav-title-group {
@@ -3226,6 +3235,26 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   align-items: center;
   gap: var(--size-4-1);
   position: relative;
+}
+
+/* Reserve the transparent hit area in each row, without enlarging the painted controls. */
+:is(.abyss-cal-nav-left, .abyss-cal-nav-right, .abyss-cal-nav-title-group) {
+  flex-wrap: wrap;
+  min-block-size: 44px;
+  row-gap: var(--size-4-4);
+}
+
+.abyss-cal-nav button {
+  position: relative;
+}
+
+.abyss-cal-nav button::after {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  inset-block-start: 50%;
+  block-size: max(100%, 44px);
+  transform: translateY(-50%);
 }
 
 :is(.abyss-cal-nav-month, .abyss-cal-nav-year) {
@@ -3285,16 +3314,6 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 .abyss-cal-nav-today:hover {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
-}
-
-/* Today and the view switcher end the toolbar as one group. Today's start margin takes the free
-   space, and the switcher sits one step closer to Today than the toolbar gap. */
-.abyss-cal-nav > .abyss-cal-nav-today {
-  margin-inline-start: auto;
-}
-
-.abyss-cal-nav > .abyss-cal-view-switcher {
-  margin-inline-start: calc(var(--size-4-1) - var(--size-4-2));
 }
 
 :is(.abyss-cal-view-switcher, .abyss-project-overview-switcher) {
@@ -9125,49 +9144,18 @@ body.is-phone .abyss-project-table-controls .abyss-center-search {
   width: auto;
 }
 
-/* Keep phone toolbar vertical rhythm while constrained layout owns its inline spacing. */
-body.is-phone .abyss-cal-nav {
-  padding-block-end: var(--size-4-3);
-}
-
-/* Landscape phones can use the full grid while retaining the same toolbar touch targets. */
-body.is-phone .abyss-cal-nav :is(button, .abyss-cal-view-switcher) {
-  min-inline-size: 44px;
-  min-block-size: 44px;
-  block-size: auto;
-}
-
-body.is-phone .abyss-layout--calendar > .abyss-center-shell > .abyss-center > .abyss-cal-nav {
-  padding-top: calc(var(--size-4-3) + min(var(--abyss-shell-top-inset), 5px));
-}
-
 /* Every standalone phone control is a cell of the same family as the view switcher: the tray
    background, the tray radius and the shared control size. Colors stay with each control so the
    active sort accent and each hover color keep working. */
-body.is-phone .abyss-panel-view :is(.abyss-view-state-btn, button.abyss-compact-pane-button),
-body.is-phone .abyss-cal-nav .abyss-cal-nav-today {
+body.is-phone .abyss-panel-view :is(.abyss-view-state-btn, button.abyss-compact-pane-button) {
   border: 0;
   border-radius: 8px;
   background: var(--background-modifier-border);
   box-shadow: none;
 }
 
-body.is-phone .abyss-panel-view :is(.abyss-view-state-btn, button.abyss-compact-pane-button):hover,
-body.is-phone .abyss-cal-nav .abyss-cal-nav-today:hover {
+body.is-phone .abyss-panel-view :is(.abyss-view-state-btn, button.abyss-compact-pane-button):hover {
   background: var(--background-modifier-hover);
-}
-
-body.is-phone .abyss-cal-nav .abyss-cal-nav-today {
-  padding: 0 var(--size-4-3);
-  margin-inline-start: 0;
-}
-
-/* The date is the toolbar's heading. Its buttons stay flat on the phone whatever the host paints
-   on plain buttons, so only the actions (Today and the switcher) read as cells. The hover fill
-   goes with the rest; there is no hover on touch. */
-body.is-phone .abyss-cal-nav :is(.abyss-cal-nav-btn, .abyss-cal-nav-month, .abyss-cal-nav-year) {
-  background: transparent;
-  box-shadow: none;
 }
 
 /* The search field is a cell of the family too: the tray fill in both themes, an edge only when
@@ -10768,89 +10756,4 @@ button.abyss-calendar-date[aria-pressed='true'] {
 .abyss-calendar-agenda-heading {
   margin: var(--size-4-2) 0;
   font-size: var(--font-ui-medium);
-}
-
-/* An outer size container lets the existing rail reflow without measuring its new geometry. */
-.abyss-panel-view {
-  container-type: inline-size;
-  container-name: abyss-calendar-panel;
-}
-
-@container abyss-calendar-panel (max-width: 38rem) {
-  .abyss-layout--calendar {
-    flex-direction: column;
-  }
-
-  .abyss-layout--calendar > .abyss-rail {
-    flex-flow: row wrap;
-    inline-size: 100%;
-    box-sizing: border-box;
-    border-right: 0;
-    border-bottom: 1px solid var(--background-modifier-border);
-    padding: 0 var(--size-2-1);
-    gap: 0;
-  }
-
-  /* This rail is above the content; its center shell alone reserves the host navigation inset. */
-  body.is-phone .abyss-layout--calendar > .abyss-rail {
-    padding-block-end: 0;
-  }
-
-  .abyss-layout--calendar :is(.abyss-rail-top, .abyss-rail-bottom, .abyss-rail-tracking) {
-    flex-flow: row wrap;
-    padding: 0;
-    gap: 0;
-  }
-
-  .abyss-layout--calendar .abyss-rail-top {
-    flex: 1 1 auto;
-  }
-
-  .abyss-layout--calendar .abyss-rail-tracking-rule {
-    display: none;
-  }
-
-  .abyss-layout--calendar .abyss-rail button {
-    min-inline-size: 44px;
-    min-block-size: 44px;
-  }
-}
-
-/* This follows the center width, including constrained desktop panes. */
-@container abyss-task-list (max-width: 38rem) {
-  .abyss-cal-nav {
-    display: flex;
-    flex-wrap: wrap;
-    overflow: visible;
-    padding-inline: var(--size-4-1);
-    gap: var(--size-4-1);
-  }
-
-  .abyss-cal-nav-left {
-    flex: 1 1 100%;
-    flex-wrap: wrap;
-    min-width: 0;
-    justify-content: center;
-  }
-
-  .abyss-cal-nav-title-group {
-    flex-wrap: wrap;
-    justify-content: center;
-  }
-
-  .abyss-cal-nav button {
-    min-inline-size: 44px;
-    min-block-size: 44px;
-    block-size: auto;
-  }
-
-  .abyss-cal-nav > .abyss-cal-nav-today {
-    margin-inline-start: 0;
-  }
-
-  .abyss-cal-nav > .abyss-cal-view-switcher {
-    flex: 1 1 auto;
-    block-size: auto;
-    margin-inline-start: 0;
-  }
 }

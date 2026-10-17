@@ -47,6 +47,10 @@ import process from 'process';
 // Configured-week titles and retained calendar pointer intent: main 2,119,033 -> 2,120,099
 // bytes (+1,066). Approved next-KiB limit: 2,120,704 (2071 KiB); CSS remains 193,508 bytes
 // within its unchanged 193,536-byte cap. Artifact enforcement and dependencies are unchanged.
+// Canonical calendar agenda/capture reuse and navigation correction: main 2,120,186 ->
+// 2,121,841 bytes (+1,655, including 43 bytes for the action group). No dependencies added.
+// The minimal containing next-KiB main limit is 2,122,752 bytes (2073 KiB); shipped CSS
+// is 190,883 bytes within its unchanged 193,536-byte cap. All artifact enforcement remains.
 const { mainJsBudgetBytes: MAIN_JS_BUDGET_BYTES } = JSON.parse(
   readFileSync('package.json', 'utf8'),
 ).release;

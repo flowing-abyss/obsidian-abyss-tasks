@@ -68,9 +68,12 @@ describe('CalendarNavigationBar DOM', () => {
     expect(monthButton.getAttribute('aria-haspopup')).toBe('dialog');
     expect(monthButton.getAttribute('aria-expanded')).toBe('false');
     expect(h.button('.abyss-cal-nav-year').getAttribute('aria-haspopup')).toBe('dialog');
-    expect(h.button(':scope > .abyss-cal-nav > .abyss-cal-nav-today').textContent).toBe('Today');
+    const actions = expectDefined(nav.querySelector('.abyss-cal-nav-right'));
+    expect(actions.querySelector('.abyss-cal-nav-today')?.textContent).toBe('Today');
+    expect(actions.querySelectorAll('.abyss-cal-view-btn')).toHaveLength(3);
+    expect(left.compareDocumentPosition(actions) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
     expect(
-      [...nav.querySelectorAll(':scope > .abyss-cal-view-switcher > .abyss-cal-view-btn')].map(
+      [...actions.querySelectorAll(':scope > .abyss-cal-view-switcher > .abyss-cal-view-btn')].map(
         (button) => button.textContent,
       ),
     ).toEqual(['Day', 'Week', 'Month']);
@@ -79,7 +82,7 @@ describe('CalendarNavigationBar DOM', () => {
 
   // Obsidian flips the phone flag and its body class while the app runs, so the toolbar is one
   // DOM everywhere and CSS lays it out.
-  it.each([false, true])('builds the same flat toolbar when the phone flag is %s', (phone) => {
+  it.each([false, true])('keeps date then action groups when the phone flag is %s', (phone) => {
     Platform.isPhone = phone;
     document.body.toggleClass('is-phone', phone);
     try {
@@ -87,10 +90,11 @@ describe('CalendarNavigationBar DOM', () => {
 
       expect([...nav.children].map((child) => child.className)).toEqual([
         'abyss-cal-nav-left',
-        'abyss-cal-nav-today',
-        'abyss-cal-view-switcher',
+        'abyss-cal-nav-right',
       ]);
-      expect(nav.querySelector('.abyss-cal-nav-right')).toBeNull();
+      const actions = expectDefined(nav.querySelector('.abyss-cal-nav-right'));
+      expect(actions.querySelector('.abyss-cal-nav-today')).not.toBeNull();
+      expect(actions.querySelectorAll('.abyss-cal-view-btn')).toHaveLength(3);
     } finally {
       Platform.isPhone = false;
       document.body.removeClass('is-phone');
