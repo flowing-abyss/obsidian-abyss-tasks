@@ -112,8 +112,8 @@
     "to": ":is(.abyss-dep-remove, .abyss-dep-search-field, .abyss-subtask-remove, .abyss-time-row-remove) svg"
   },
   {
-    "from": ".abyss-cal-nav-month:hover,\n.abyss-cal-nav-year:hover",
-    "to": ":is(.abyss-cal-nav-month, .abyss-cal-nav-year):hover"
+    "from": ".abyss-cal-nav-month:hover,\n.abyss-cal-nav-year:hover,\n.abyss-cal-nav-btn:hover",
+    "to": ":is(.abyss-cal-nav-month, .abyss-cal-nav-year, .abyss-cal-nav-btn):hover"
   },
   {
     "from": ".abyss-task-date-part:hover,\n.abyss-task-time-part:hover",
