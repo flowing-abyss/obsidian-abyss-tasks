@@ -429,8 +429,7 @@ describe('plugin button padding on a tablet', () => {
       '.abyss-rail-btn:hover',
       '.abyss-rail-btn.is-active',
       '.abyss-task-delete-btn:hover',
-      ':is(.abyss-cal-nav-month, .abyss-cal-nav-year):hover',
-      '.abyss-cal-nav-btn:hover',
+      ':is(.abyss-cal-nav-month, .abyss-cal-nav-year, .abyss-cal-nav-btn):hover',
       '.abyss-view-state-btn:hover',
       '.abyss-view-state-btn--active',
     ]) {

@@ -2156,6 +2156,9 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
 /* ---- Center Panel ---- */
 .abyss-center-header {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
   padding: var(--size-4-3) var(--size-4-4);
   flex-shrink: 0;
   border-bottom: 1px solid var(--background-modifier-border);
@@ -3248,7 +3251,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   display: none;
 }
 
-.abyss-cal-control-icon .svg-icon {
+:is(.abyss-cal-control-icon, .abyss-cal-nav-btn) .svg-icon {
   inline-size: 18px;
   block-size: 18px;
 }
@@ -3271,6 +3274,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   border: none;
   cursor: pointer;
   block-size: var(--abyss-toolbar-control-size);
+  border-radius: 4px;
 }
 
 :is(.abyss-cal-nav-month, .abyss-cal-nav-year) {
@@ -3278,7 +3282,6 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   font-size: var(--font-ui-medium);
   font-weight: 600;
   padding: 0 var(--size-4-1);
-  border-radius: 4px;
   transition: background 0.1s;
 }
 
@@ -3290,15 +3293,9 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   padding: 0;
   color: var(--icon-color);
   width: var(--abyss-toolbar-control-size);
-  border-radius: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
-}
-
-.abyss-cal-nav-btn .svg-icon {
-  width: 18px;
-  height: 18px;
 }
 
 .abyss-cal-nav-today {
@@ -5650,12 +5647,6 @@ body.abyss-modal-open .popover.hover-popover {
 }
 
 /* ── Center header controls ─────────────────────────────────── */
-.abyss-center-header {
-  display: flex;
-  align-items: center;
-  gap: var(--size-4-2);
-}
-
 .abyss-center-controls {
   margin-left: auto;
   display: flex;
@@ -10879,6 +10870,10 @@ button.abyss-calendar-date[aria-pressed='true'] {
     border-radius: 6px;
   }
 
+  .abyss-cal-nav-left button:not(:hover) {
+    background: transparent;
+  }
+
   button.abyss-cal-nav-month {
     flex: 0 1 auto;
     inline-size: auto;
@@ -10919,10 +10914,10 @@ button.abyss-calendar-date[aria-pressed='true'] {
     font-size: var(--font-ui-small);
     white-space: nowrap;
   }
-}
 
-body.is-phone .abyss-cal-nav-today {
-  inline-size: 36px;
+  body.is-phone .abyss-cal-nav-today {
+    inline-size: 36px;
+  }
 }
 
 /* A 320px phone leaves 272px beside the rail; keep all eight controls on that row. */
