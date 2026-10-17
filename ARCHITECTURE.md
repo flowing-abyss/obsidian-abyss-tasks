@@ -366,8 +366,12 @@ and settings. Its outer render still settles inline sessions while hidden.
 | [CalendarSettingsTab](src/settings/SettingsTab.ts)  | Settings staging, persistence, retry, and semantic rebuild; section owners render controls       |
 
 TaskModal delegates platform Back and scope stacking to the native Modal host. The host's public
-Back hook first asks RightPanel to dismiss its newest owned planning surface through that surface's
-existing cancellation and focus path; Back closes the modal when no nested surface remains.
+Back hook first asks RightPanel's local interaction registry to dismiss its newest connected surface
+through that surface's existing cancellation and focus path; Back closes the modal when no nested
+surface remains. Planning menus, dependency search and shared anchored popovers (including link
+suggestions attached to the document body) register exact surfaces and dismissal callbacks on their
+existing interaction leases. Ordinary editing leases do not consume Back. The local registry forwards
+shortcut blocking to its parent and releases those leases on inspector disposal.
 Its facade owns one cleanup path for the local inspector, subscriptions, drafts, tracking ticker
 and interaction lease. Programmatic close always disposes the inspector. The host uses the
 inspector's guarded Escape scope; nested editors and IME keep priority.

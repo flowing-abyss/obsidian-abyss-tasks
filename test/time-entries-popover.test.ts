@@ -662,12 +662,20 @@ describe('tracked sessions popover', () => {
 
   it('takes the panel keyboard for as long as the list is open', async () => {
     const release = vi.fn();
-    const ownership = { acquire: vi.fn(() => ({ release })) };
+    const ownership = { acquire: vi.fn<InteractionOwnershipPort['acquire']>(() => ({ release })) };
     const harness = await inspector(SESSIONS, 'Current', window, ownership);
     open(harness.el);
 
     expect(ownership.acquire).toHaveBeenCalledOnce();
-    expect(ownership.acquire).toHaveBeenCalledWith({ blocksShortcuts: true });
+    const dismiss = expectDefined(ownership.acquire.mock.calls[0]?.[0].dismiss);
+    expect(dismiss.element).toBe(
+      harness.el.querySelector('.abyss-time-tracking-popover--sessions'),
+    );
+    expect(typeof dismiss.close).toBe('function');
+    expect(ownership.acquire).toHaveBeenCalledWith({
+      blocksShortcuts: true,
+      dismiss,
+    });
     expect(release).not.toHaveBeenCalled();
   });
 

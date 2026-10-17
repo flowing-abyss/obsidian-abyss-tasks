@@ -344,26 +344,14 @@ export class InspectorPlanningSurfaces {
 
   readonly #planningControlKeys = new Map<Element, PlanningControlKey>();
 
-  /** Each open anchored surface's opener and owned dismissal, in opening order. */
+  /** Each open anchored surface's opener and retained selection callback. */
   readonly #surfaceOpeners = new Map<
     HTMLElement,
     {
       anchor: HTMLElement;
-      dismiss: () => void;
       onReorder: ((proof: OwnedTaskSelectionProof) => void) | undefined;
     }
   >();
-
-  dismissNestedSurface(): boolean {
-    if (!this.#host.mounted()) return false;
-    const root = this.#host.root();
-    for (const [surface, owner] of [...this.#surfaceOpeners].reverse()) {
-      if (!surface.isConnected || !root.contains(surface)) continue;
-      owner.dismiss();
-      return true;
-    }
-    return false;
-  }
 
   /** The field of the date popover "+ date" opened, until the next render. */
   #addDateField: AddDateField | undefined;
@@ -1570,9 +1558,6 @@ export class InspectorPlanningSurfaces {
     const ownerDocument = this.#host.root().ownerDocument;
     const ownerWindow = ownerDocument.defaultView;
     const placementCleanup = this.#anchoredSurfaceCleanups.get(menu);
-    const ownershipToken = this.#interactionOwnership.acquire({
-      blocksShortcuts: true,
-    });
     let listening = false;
     let cleaned = false;
     let focusLeaveTimer: number | undefined;
@@ -1587,6 +1572,10 @@ export class InspectorPlanningSurfaces {
       if (anchor.isConnected && anchor.ownerDocument === ownerDocument)
         anchor.focus({ preventScroll: true });
     };
+    const ownershipToken = this.#interactionOwnership.acquire({
+      blocksShortcuts: true,
+      dismiss: { element: menu, close: dismiss },
+    });
     const dismissOnEscape = (e: KeyboardEvent): void => {
       if (e.key !== 'Escape' || isImeOwnedEvent(e)) return;
       e.preventDefault();
@@ -1631,7 +1620,7 @@ export class InspectorPlanningSurfaces {
       }
     };
     this.#anchoredSurfaceCleanups.set(menu, cleanup);
-    this.#surfaceOpeners.set(menu, { anchor, dismiss, onReorder: options.onReorder });
+    this.#surfaceOpeners.set(menu, { anchor, onReorder: options.onReorder });
   }
 
   registerStatusMarker(marker: HTMLElement, task: TaskLike): void {

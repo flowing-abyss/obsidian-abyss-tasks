@@ -17,6 +17,7 @@ import {
   rejectionLabel,
   type DependencyPickerCommitResult,
 } from '../src/ui/dependencySearch';
+import { InteractionRegistry } from '../src/ui/interactionOwnership';
 import type { DependencyCandidate } from '../src/ui/TaskDependencySearchProvider';
 import { createTaskDependencySearchProvider } from '../src/ui/TaskDependencySearchProvider';
 import { deferred, dispatchImeKey, expectDefined, flushMicrotasks, methodOf } from './helpers';
@@ -1686,6 +1687,41 @@ it('gives an attached picker finite scope ownership, two Escape steps, and no st
   expect(h.callbacks.onClose).toHaveBeenCalledExactlyOnceWith(true);
   expect(host.keymap.popScope).toHaveBeenCalledTimes(2);
   frame.remove();
+});
+
+it('retains Back order during a render and reacquires it only after a full detach', async () => {
+  const h = await fixture(2);
+  const ownership = new InteractionRegistry();
+  const handle = mountDependencySearch(document.body, { ...h.callbacks, ownership });
+  cleanup.push(() => {
+    handle.destroy();
+    ownership.destroy();
+  });
+  const element = document.body.createDiv();
+  const close = vi.fn(() => {
+    token.release();
+  });
+  let token = ownership.acquire({ blocksShortcuts: true, dismiss: { element, close } });
+
+  handle.detach({ forRender: true });
+  handle.element.remove();
+  document.body.append(handle.element);
+  handle.attach();
+  expect(ownership.dismissLatest()).toBe(true);
+  expect(close).toHaveBeenCalledOnce();
+  expect(h.callbacks.onClose).not.toHaveBeenCalled();
+
+  handle.detach();
+  expect(ownership.dismissLatest()).toBe(false);
+  token = ownership.acquire({ blocksShortcuts: true, dismiss: { element, close } });
+  handle.attach();
+  expect(ownership.dismissLatest()).toBe(true);
+  expect(h.callbacks.onClose).toHaveBeenCalledExactlyOnceWith(true);
+  expect(close).toHaveBeenCalledOnce();
+  expect(handle.element.isConnected).toBe(false);
+  expect(ownership.allows('navigate')).toBe(false);
+  token.release();
+  expect(ownership.allows('navigate')).toBe(true);
 });
 
 it('does not acquire picker leases from detached or hidden DOM', async () => {

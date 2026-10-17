@@ -189,18 +189,27 @@ function listen(state: PopoverState): () => void {
  * caller's business.
  */
 export function openAnchoredPopover(options: AnchoredPopoverOptions): AnchoredPopover {
+  const element = options.owner.createDiv({
+    cls: `${options.appearance === 'suggestion' ? 'suggestion-container' : 'abyss-popover'} abyss-popover-anchored ${options.cls}`,
+    // Focusable but out of the tab order, so the surface itself can hold the keyboard while its
+    // own controls stay the only Tab stops inside it.
+    attr: { tabindex: '-1', ...options.attr },
+  });
   const state: PopoverState = {
     options,
-    element: options.owner.createDiv({
-      cls: `${options.appearance === 'suggestion' ? 'suggestion-container' : 'abyss-popover'} abyss-popover-anchored ${options.cls}`,
-      // Focusable but out of the tab order, so the surface itself can hold the keyboard while its
-      // own controls stay the only Tab stops inside it.
-      attr: { tabindex: '-1', ...options.attr },
-    }),
+    element,
     closed: false,
     holdingFocus: false,
     release: () => {},
-    ownership: (options.ownership ?? noInteractionOwnership).acquire({ blocksShortcuts: true }),
+    ownership: (options.ownership ?? noInteractionOwnership).acquire({
+      blocksShortcuts: true,
+      dismiss: {
+        element,
+        close: () => {
+          close(state, true);
+        },
+      },
+    }),
   };
   state.release = listen(state);
   // The keyboard follows the surface it opened, so the next Tab reaches the list rather than

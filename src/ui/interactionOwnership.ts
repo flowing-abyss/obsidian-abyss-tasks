@@ -1,13 +1,20 @@
-export interface InteractionOwnershipPort<Action extends string = string> {
-  acquire(options: {
-    readonly blocksShortcuts: boolean;
-    readonly allowActions?: readonly Action[];
-  }): { release(): void };
+interface InteractionOwnerOptions<Action extends string> {
+  readonly blocksShortcuts: boolean;
+  readonly allowActions?: readonly Action[];
+  /** Only an explicitly owned, connected surface can consume native Back. */
+  readonly dismiss?: { readonly element: HTMLElement; readonly close: () => void };
 }
 
-interface InteractionOwner<Action extends string> {
-  readonly blocksShortcuts: boolean;
+export interface InteractionOwnershipPort<Action extends string = string> {
+  acquire(options: InteractionOwnerOptions<Action>): { release(): void };
+}
+
+interface InteractionOwner<Action extends string> extends Omit<
+  InteractionOwnerOptions<Action>,
+  'allowActions'
+> {
   readonly allowActions: ReadonlySet<Action>;
+  release(): void;
 }
 
 export class InteractionRegistry<
@@ -16,24 +23,29 @@ export class InteractionRegistry<
   private readonly owners = new Set<InteractionOwner<Action>>();
   private destroyed = false;
 
-  acquire(options: {
-    readonly blocksShortcuts: boolean;
-    readonly allowActions?: readonly Action[];
-  }): { release(): void } {
+  constructor(private readonly parent?: InteractionOwnershipPort<Action>) {}
+
+  acquire(options: InteractionOwnerOptions<Action>): { release(): void } {
     if (this.destroyed) return { release: () => undefined };
+    const parent = this.parent?.acquire(options);
     const owner: InteractionOwner<Action> = {
-      blocksShortcuts: options.blocksShortcuts,
+      ...options,
       allowActions: new Set(options.allowActions ?? []),
-    };
-    this.owners.add(owner);
-    let released = false;
-    return {
       release: (): void => {
-        if (released) return;
-        released = true;
-        this.owners.delete(owner);
+        if (this.owners.delete(owner)) parent?.release();
       },
     };
+    this.owners.add(owner);
+    return owner;
+  }
+
+  dismissLatest(): boolean {
+    for (const owner of [...this.owners].reverse()) {
+      if (owner.dismiss?.element.isConnected !== true) continue;
+      owner.dismiss.close();
+      return true;
+    }
+    return false;
   }
 
   allows(action: Action): boolean {
@@ -46,7 +58,7 @@ export class InteractionRegistry<
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
-    this.owners.clear();
+    for (const owner of this.owners) owner.release();
   }
 }
 

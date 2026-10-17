@@ -5,6 +5,20 @@ import { InteractionRegistry, noInteractionOwnership } from '../src/ui/interacti
 type TestAction = 'openQuickCapture' | 'openTasks' | 'openCalendar';
 
 describe('InteractionRegistry', () => {
+  it('forwards child leases to its parent and releases them on child disposal', () => {
+    const parent = new InteractionRegistry<TestAction>();
+    const child = new InteractionRegistry(parent);
+    const own = parent.acquire({ blocksShortcuts: true, allowActions: ['openTasks'] });
+    const token = child.acquire({ blocksShortcuts: true });
+    expect(parent.allows('openTasks')).toBe(false);
+    child.destroy();
+    expect(parent.allows('openTasks')).toBe(true);
+    expect(parent.allows('openCalendar')).toBe(false);
+    token.release();
+    own.release();
+    expect(parent.allows('openCalendar')).toBe(true);
+  });
+
   it('allows actions when no blocking owner is active', () => {
     const registry = new InteractionRegistry<TestAction>();
 

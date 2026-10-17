@@ -231,6 +231,7 @@ export function mountDependencySearch(
     if (ownership === undefined) {
       ownership = (callbacks.ownership ?? noInteractionOwnership).acquire({
         blocksShortcuts: true,
+        dismiss: { element, close },
       });
       ownerDocument.addEventListener('focusin', outside);
       ownerDocument.addEventListener('pointerdown', outside);

@@ -598,13 +598,19 @@ describe('tracked tasks popover', () => {
 
   it('takes the panel keyboard while it is open and hands it back once', async () => {
     const release = vi.fn();
-    const ownership = { acquire: vi.fn(() => ({ release })) };
+    const ownership = { acquire: vi.fn<InteractionOwnershipPort['acquire']>(() => ({ release })) };
     const harness = await widgetFor(WORKING_WEEK, () => {}, ownership);
 
     taskTotal(harness.host).click();
 
     expect(ownership.acquire).toHaveBeenCalledOnce();
-    expect(ownership.acquire).toHaveBeenCalledWith({ blocksShortcuts: true });
+    const dismiss = expectDefined(ownership.acquire.mock.calls[0]?.[0].dismiss);
+    expect(dismiss.element).toBe(popover(harness.layout));
+    expect(typeof dismiss.close).toBe('function');
+    expect(ownership.acquire).toHaveBeenCalledWith({
+      blocksShortcuts: true,
+      dismiss,
+    });
     expect(release).not.toHaveBeenCalled();
 
     activeDocument.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));

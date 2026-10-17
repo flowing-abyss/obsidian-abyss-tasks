@@ -49,7 +49,7 @@ import {
 } from '../tasks';
 import { type DependencyPickerCommitResult } from '../ui/dependencySearch';
 import { createInlineTaskUndo, type InlineUndoPosition } from '../ui/inlineTaskUndo';
-import { noInteractionOwnership, type InteractionOwnershipPort } from '../ui/interactionOwnership';
+import { InteractionRegistry, type InteractionOwnershipPort } from '../ui/interactionOwnership';
 import {
   proveOwnedCompletionFollowUp,
   proveOwnedTaskSelection,
@@ -308,7 +308,7 @@ export class RightPanel {
   private readonly onMutationLifecycle_abyssPrivate:
     ((event: RightPanelMutationLifecycle) => void) | undefined;
   private readonly commentTimeContext_abyssPrivate: CommentTimeContextProvider | undefined;
-  private readonly interactionOwnership_abyssPrivate: InteractionOwnershipPort;
+  private readonly interactionOwnership_abyssPrivate: InteractionRegistry<string>;
   private readonly timeTracking_abyssPrivate: TrackingSurface | undefined;
   private timeBadge_abyssPrivate: TimeBadgeHandle | undefined;
   private off_abyssPrivate?: () => void;
@@ -377,7 +377,7 @@ export class RightPanel {
       tasks,
       onMutationLifecycle,
       commentTimeContext,
-      interactionOwnership = noInteractionOwnership,
+      interactionOwnership,
       timeTracking,
     } = options;
     this.state_abyssPrivate = state;
@@ -388,7 +388,7 @@ export class RightPanel {
     this.tasks_abyssPrivate = tasks;
     this.onMutationLifecycle_abyssPrivate = onMutationLifecycle;
     this.commentTimeContext_abyssPrivate = commentTimeContext;
-    this.interactionOwnership_abyssPrivate = interactionOwnership;
+    this.interactionOwnership_abyssPrivate = new InteractionRegistry(interactionOwnership);
     this.timeTracking_abyssPrivate = timeTracking;
     this.planningSurfaces_abyssPrivate = new InspectorPlanningSurfaces({
       recurrenceInput: options.recurrenceInput,
@@ -396,7 +396,7 @@ export class RightPanel {
       settings,
       statusRegistry,
       queries: tasks?.queries,
-      interactionOwnership,
+      interactionOwnership: this.interactionOwnership_abyssPrivate,
       timeTracking,
       host: {
         showInTaskList:
@@ -701,7 +701,7 @@ export class RightPanel {
   }
 
   dismissNestedSurface(): boolean {
-    return this.planningSurfaces_abyssPrivate.dismissNestedSurface();
+    return this.interactionOwnership_abyssPrivate.dismissLatest();
   }
 
   destroy(): void {
@@ -731,6 +731,7 @@ export class RightPanel {
     this.planningSurfaces_abyssPrivate.clearAnchoredSurfaces();
     this.el_abyssPrivate.empty();
     this.md_abyssPrivate.unload();
+    this.interactionOwnership_abyssPrivate.destroy();
   }
 
   captureDraftHandoff(): InspectorDraftHandoff {

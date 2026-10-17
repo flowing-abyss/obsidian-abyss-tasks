@@ -10,7 +10,7 @@ import {
   type TaskResolution,
 } from '../src/tasks';
 import { TaskModal } from '../src/ui/TaskModal';
-import { noInteractionOwnership } from '../src/ui/interactionOwnership';
+import { InteractionRegistry, type InteractionOwnershipPort } from '../src/ui/interactionOwnership';
 import { rebuildTaskSelection, rootTaskRef } from '../src/ui/taskSelection';
 import {
   createCssReader,
@@ -2421,9 +2421,11 @@ describe('RightPanel dependency inspector', () => {
 
   it('keeps a search draft through a proven selection refresh and drops it on another task', async () => {
     const h = await harness('- [ ] Current\n- [ ] Candidate\n');
-    const release = vi.fn();
-    const acquire = vi.spyOn(noInteractionOwnership, 'acquire').mockReturnValue({ release });
+    const acquire = vi.spyOn(InteractionRegistry.prototype, 'acquire');
     button(h.el, '.abyss-dep-badge-body').click();
+    const lease = acquire.mock.results[0];
+    if (lease?.type !== 'return') throw new Error('Picker did not acquire ownership');
+    const release = vi.spyOn(lease.value, 'release');
     const input = await search(h.el, 'Candidate');
     button(h.el, '[data-direction="blocks"]').click();
     await searchUiCompleted(expectDefined(h.el.querySelector<HTMLElement>('.abyss-dep-search')));
@@ -3104,7 +3106,9 @@ it.for(['End', 'Home'])(
       '\n',
     );
     const h = await harness(`- [ ] Current 🆔 current\n${candidates}\n`);
-    const ownership = { acquire: vi.fn(() => ({ release: vi.fn() })) };
+    const ownership = {
+      acquire: vi.fn<InteractionOwnershipPort['acquire']>(() => ({ release: vi.fn() })),
+    };
     const modal = new TaskModal({
       app: h.app,
       statusRegistry: testStatusRegistry(),
@@ -3154,7 +3158,15 @@ it.for(['End', 'Home'])(
     expect(el.querySelector('.abyss-dep-search')).toBeNull();
     expect(el.isConnected).toBe(true);
     expect(focused).toBe(input);
-    expect(ownership.acquire).toHaveBeenCalledWith({ blocksShortcuts: true });
+    const dismiss = expectDefined(
+      ownership.acquire.mock.calls.find(([owner]) => owner.dismiss?.element === picker)?.[0]
+        .dismiss,
+    );
+    expect(typeof dismiss.close).toBe('function');
+    expect(ownership.acquire).toHaveBeenCalledWith({
+      blocksShortcuts: true,
+      dismiss,
+    });
   },
 );
 
