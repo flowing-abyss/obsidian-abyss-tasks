@@ -2959,9 +2959,12 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 /* Add task bar */
-.abyss-add-task-bar {
+.abyss-add-task-bar,
+.abyss-project-table-footer {
   --abyss-inline-capture-block-size: 2rem;
+}
 
+.abyss-add-task-bar {
   padding: 0;
   flex-shrink: 0;
   border: 0;
@@ -9140,6 +9143,18 @@ button.abyss-project-table-status-pill {
 
 /* ---- Phone ---- */
 
+body.is-phone .abyss-panel-view :is(.abyss-center-header, .abyss-projects-toolbar) {
+  --abyss-toolbar-control-size: 36px;
+}
+
+body.is-phone
+  :is(.abyss-center-header, .abyss-projects-toolbar)
+  :is(.abyss-view-state-btn, .abyss-compact-pane-button, .abyss-project-overview-mode)
+  .svg-icon {
+  inline-size: 18px;
+  block-size: 18px;
+}
+
 /* Obsidian's view header carries the list name on the phone (PanelView.getDisplayText), so the
    plugin heading would only repeat it. The header keeps one control row. */
 body.is-phone .abyss-panel-view .abyss-center-title {
@@ -9157,6 +9172,64 @@ body.is-phone .abyss-project-table-controls {
 body.is-phone .abyss-project-table-controls .abyss-center-search {
   flex: 1 1 auto;
   width: auto;
+}
+
+body.is-phone .abyss-project-status-filters {
+  flex-wrap: wrap;
+}
+
+body.is-phone .abyss-projects-table button.abyss-project-status-filter {
+  box-sizing: border-box;
+  block-size: var(--abyss-toolbar-control-size);
+  min-block-size: 0;
+  padding-block: 0;
+}
+
+/* Keep both navigation rows in the axis's measured height, including the scale divider. */
+body.is-phone .abyss-project-timeline-navigation {
+  --abyss-toolbar-control-size: 36px;
+
+  display: block;
+}
+
+body.is-phone .abyss-project-timeline-range-navigation {
+  display: grid;
+  grid-template-columns: var(--abyss-toolbar-control-size) minmax(0, 1fr) var(
+      --abyss-toolbar-control-size
+    );
+  block-size: var(--abyss-toolbar-control-size);
+}
+
+body.is-phone .abyss-project-timeline-scale-control {
+  display: flex;
+  overflow-x: auto;
+  box-sizing: border-box;
+  block-size: var(--abyss-toolbar-control-size);
+  border-top: 1px solid var(--background-modifier-border);
+  border-left: 0;
+}
+
+body.is-phone .abyss-project-timeline-navigation button {
+  block-size: 100%;
+  min-block-size: 0;
+}
+
+body.is-phone .abyss-project-timeline-range-navigation button {
+  inline-size: 100%;
+  min-inline-size: 0;
+}
+
+body.is-phone .abyss-project-timeline-scale-control button {
+  flex: 1 0 auto;
+  grid-area: auto;
+  padding-inline: var(--size-4-1);
+}
+
+body.is-phone :is(.abyss-project-table-footer, .abyss-projects-table button.abyss-projects-new) {
+  box-sizing: border-box;
+  block-size: var(--abyss-inline-capture-block-size);
+  min-block-size: 0;
+  padding-block: 0;
 }
 
 /* Every standalone phone control is a cell of the same family as the view switcher: the tray
