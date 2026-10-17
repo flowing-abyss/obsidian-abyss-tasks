@@ -64,7 +64,10 @@ function calendarAgendaCaptureHost(
     (candidate) => candidate.dataset['calendarDate'] === placement.date,
   );
   if (agenda !== undefined) {
-    const host = captureWrapper(agenda, 'abyss-calendar-agenda-capture');
+    const host = captureWrapper(
+      agenda.querySelector<HTMLElement>('.abyss-add-task-bar') ?? agenda,
+      'abyss-calendar-agenda-capture',
+    );
     host.dataset['abyssCaptureHost'] = placement.type;
     host.dataset['abyssCaptureDate'] = placement.date;
     return host;

@@ -59,6 +59,7 @@ import { taskNodeRef, type TaskSelectionNode } from '../../ui/taskSelection';
 import type { TrackingTickerState } from '../../ui/timeTracking/TrackingTicker';
 import { formatTrackedDuration } from '../../ui/timeTracking/formatTracked';
 import { isForecastCalendarTask } from '../../views/calendarOccurrences';
+import { bindTaskSelection } from '../../views/timegrid/renderTaskMeta';
 import type { ListViewControls } from './ListViewControls';
 import type { TaskCommands } from './TaskCommands';
 import type { TaskListNavigationRequest } from './TaskListNavigation';
@@ -82,13 +83,22 @@ export interface TaskCardSearchPresentation extends TaskCardHighlight {
   readonly onActivate: (address: TaskSearchAddress) => void;
 }
 
+export interface CalendarCardPolicy {
+  readonly kind: 'materialized' | 'forecast';
+  readonly planning: TaskSnapshot['planning'];
+  onActivate(): void;
+  onForecastContextMenu(event: MouseEvent, element: HTMLElement): void;
+}
+
 export interface TaskCardInteractionContext {
+  readonly calendar?: CalendarCardPolicy;
   readonly component: Component;
   readonly currentTask: () => TaskSnapshot;
   readonly currentProjection?: () => TaskNodeSnapshot;
   readonly onActivate?: ((task: TaskSnapshot) => void) | undefined;
 }
 interface TaskCardFlags {
+  readonly calendar?: CalendarCardPolicy;
   readonly projection?: TaskNodeSnapshot | undefined;
   readonly occurrence?: TaskOccurrencePresentation;
   readonly selected: boolean;
@@ -131,6 +141,7 @@ interface CardContentContext {
   readonly currentTask: () => TaskSnapshot;
   readonly currentProjection: () => TaskNodeSnapshot;
   readonly currentOccurrence: () => TaskOccurrencePresentation | undefined;
+  readonly currentCalendar: () => CalendarCardPolicy | undefined;
   readonly isCurrent: () => boolean;
   readonly onRenderFailure: (error: unknown) => void;
   readonly tagGroups?: (() => readonly EffectiveTagGroup[]) | undefined;
@@ -191,6 +202,18 @@ function cardNode(
   flags?: Pick<TaskCardFlags, 'projection'>,
 ): TaskSelectionNode {
   return flags?.projection?.node ?? task;
+}
+function cardMetadataNode(
+  task: TaskSelectionNode,
+  options: {
+    readonly projection?: TaskNodeSnapshot | undefined;
+    readonly calendar?: CalendarCardPolicy | undefined;
+  },
+): TaskSelectionNode {
+  const node = options.projection?.node ?? task;
+  return options.calendar?.kind === 'forecast'
+    ? { ...node, planning: options.calendar.planning }
+    : node;
 }
 function cardDates(
   planning: TaskSelectionNode['planning'],
@@ -334,6 +357,7 @@ export class TaskCardRenderer {
       currentTask: () => current.task,
       currentProjection: () => current.flags.projection ?? rootTaskNodeSnapshot(current.task),
       currentOccurrence: () => current.flags.occurrence,
+      currentCalendar: () => current.flags.calendar,
       tagGroups: () => current.tagGroups,
       isCurrent: () => live && current.flags.isCurrent?.() !== false,
       onRenderFailure: (error) => {
@@ -355,18 +379,7 @@ export class TaskCardRenderer {
     try {
       content = this.#mountContents(card, context);
       content.update(current);
-      this.#host.mountInteractions(card, task, flags.rowKey, {
-        component: markdown,
-        currentTask: context.currentTask,
-        currentProjection: context.currentProjection,
-        ...(flags.onActivate === undefined
-          ? {}
-          : {
-              onActivate: (task: TaskSnapshot) => {
-                current.flags.onActivate?.(task);
-              },
-            }),
-      });
+      this.#mountInteractions(card, task, context, () => current);
     } catch (error) {
       destroy();
       throw error;
@@ -394,6 +407,47 @@ export class TaskCardRenderer {
     };
   }
 
+  #mountInteractions(
+    card: HTMLElement,
+    task: TaskSnapshot,
+    context: CardContentContext,
+    current: () => CardState,
+  ): void {
+    const flags = current().flags;
+    if (flags.calendar !== undefined) {
+      bindTaskSelection(
+        card,
+        task,
+        undefined,
+        () => {
+          if (context.isCurrent()) current().flags.calendar?.onActivate();
+        },
+        context.component,
+      );
+      context.component.registerDomEvent(card, 'contextmenu', (event) => {
+        const calendar = current().flags.calendar;
+        if (calendar?.kind !== 'forecast') return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (context.isCurrent()) calendar.onForecastContextMenu(event, card);
+      });
+    }
+    if (flags.calendar?.kind !== 'forecast')
+      this.#host.mountInteractions(card, task, flags.rowKey, {
+        ...(flags.calendar === undefined ? {} : { calendar: flags.calendar }),
+        component: context.component,
+        currentTask: context.currentTask,
+        currentProjection: context.currentProjection,
+        ...(flags.onActivate === undefined
+          ? {}
+          : {
+              onActivate: (task: TaskSnapshot) => {
+                current().flags.onActivate?.(task);
+              },
+            }),
+      });
+  }
+
   #mountContents(card: HTMLElement, context: CardContentContext): CardContents {
     const mainRow = card.createDiv({ cls: 'abyss-task-card-main-row' });
     this.#renderStatus(mainRow, context.currentTask(), context);
@@ -414,7 +468,9 @@ export class TaskCardRenderer {
         text.update(current);
         this.syncDeleteButton(
           card,
-          current.flags.showDelete ? context.currentProjection().node : undefined,
+          current.flags.showDelete && current.flags.calendar?.kind !== 'forecast'
+            ? context.currentProjection().node
+            : undefined,
           () => context.currentProjection().node,
         );
       },
@@ -438,6 +494,7 @@ export class TaskCardRenderer {
       this.#settings.taskFilePath,
       current.tagGroups,
       current.flags.occurrence,
+      current.flags.calendar?.planning,
       search?.mode,
       dependencies?.activeBlockedByCount,
       dependencies?.activeBlocksCount,
@@ -468,7 +525,8 @@ export class TaskCardRenderer {
           ...context,
           flags: current.flags,
         });
-        this.#renderParentButton(hosts.titleRow, context, owner);
+        if (current.flags.calendar?.kind !== 'forecast')
+          this.#renderParentButton(hosts.titleRow, context, owner);
       } else {
         card.toggleClass('is-selected', current.flags.selected);
         this.#refreshStatus(card, context.currentProjection().node, current.flags.occurrence);
@@ -502,14 +560,18 @@ export class TaskCardRenderer {
         app: this.#app,
         isCurrent: context.isCurrent,
         onRenderFailure: context.onRenderFailure,
-        onEditLink: (occurrence, token) => {
-          if (kind === 'title') this.#commands.editTaskLink(node, occurrence, token);
-          else
-            this.#commands.editTaskLink(node, occurrence, token, {
-              type: kind,
-              target: taskNodeRef(node),
-            });
-        },
+        ...(current.flags.calendar?.kind === 'forecast'
+          ? {}
+          : {
+              onEditLink: (occurrence, token) => {
+                if (kind === 'title') this.#commands.editTaskLink(node, occurrence, token);
+                else
+                  this.#commands.editTaskLink(node, occurrence, token, {
+                    type: kind,
+                    target: taskNodeRef(node),
+                  });
+              },
+            }),
       },
     };
   }
@@ -598,7 +660,10 @@ export class TaskCardRenderer {
     flags?: TaskCardFlags,
   ): void {
     if (flags?.search?.mode !== 'search' && node.recurrence !== undefined && node.recurrence !== '')
-      renderRecurrenceBadge(titleRow, recurrenceBadgeInput(node.recurrence));
+      renderRecurrenceBadge(
+        titleRow,
+        recurrenceBadgeInput(node.recurrence, flags?.calendar?.kind === 'forecast'),
+      );
   }
 
   #renderParentButton(titleRow: HTMLElement, context: CardContentContext, owner: Component): void {
@@ -635,15 +700,18 @@ export class TaskCardRenderer {
       left.task.source.filePath === right.task.source.filePath &&
       taskNodeAddress(taskNodeRef(cardNode(left.task, left.flags))) ===
         taskNodeAddress(taskNodeRef(cardNode(right.task, right.flags))) &&
+      left.flags.calendar?.kind === right.flags.calendar?.kind &&
       left.flags.rowKey === right.flags.rowKey
     );
   }
 
   #identity(card: HTMLElement, current: CardState, component: Component): void {
     const { task, flags } = current;
-    applyTaskPresentationIdentity(card, task.ref);
+    if (flags.calendar?.kind !== 'forecast') applyTaskPresentationIdentity(card, task.ref);
+    if (flags.calendar !== undefined) card.dataset['occurrenceState'] = flags.calendar.kind;
     const projection = flags.projection ?? rootTaskNodeSnapshot(task);
-    applyTaskNodePresentationIdentity(card, projection.target);
+    if (flags.calendar?.kind !== 'forecast')
+      applyTaskNodePresentationIdentity(card, projection.target);
     card.dataset['filePath'] = task.source.filePath;
     card.dataset['line'] = String(taskNodeSourceLine(projection.target));
     if (flags.rowKey !== undefined) card.dataset['rowKey'] = flags.rowKey;
@@ -662,6 +730,7 @@ export class TaskCardRenderer {
       component,
       projection: current.flags.projection,
       occurrence: current.flags.occurrence,
+      calendar: current.flags.calendar,
     });
     const metadata = mainRow.querySelector(':scope > .abyss-task-meta-right');
     if (metadata !== null) mainRow.querySelector('.abyss-task-delete-btn')?.before(metadata);
@@ -757,8 +826,12 @@ export class TaskCardRenderer {
   #renderStatus(
     mainRow: HTMLElement,
     task: TaskSnapshot,
-    current?: Pick<CardContentContext, 'currentProjection' | 'currentOccurrence' | 'isCurrent'>,
+    current?: Pick<
+      CardContentContext,
+      'currentProjection' | 'currentOccurrence' | 'currentCalendar' | 'isCurrent'
+    >,
   ): void {
+    if (current?.currentCalendar()?.kind === 'forecast') return;
     const projection = this.#host.dependenciesFor(task);
     renderStatusMarker(mainRow, {
       task,
@@ -877,7 +950,8 @@ export class TaskCardRenderer {
             ...task.comments.map((comment) => comment.text),
           ]);
     if (linkCount > 0) this.#renderCountBadge(titleRow, 'paperclip', String(linkCount));
-    this.#renderTrackedBadge(titleRow, task, context);
+    if (context?.flags?.calendar?.kind !== 'forecast')
+      this.#renderTrackedBadge(titleRow, task, context);
   }
 
   #renderCountBadge(
@@ -1093,6 +1167,7 @@ export class TaskCardRenderer {
       readonly highlight?: TaskCardHighlight | undefined;
       readonly component?: Component | undefined;
       readonly projection?: TaskNodeSnapshot | undefined;
+      readonly calendar?: CalendarCardPolicy | undefined;
       readonly occurrence?: TaskOccurrencePresentation | undefined;
     },
   ): void {
@@ -1235,12 +1310,13 @@ export class TaskCardRenderer {
     options: {
       readonly component?: Component | undefined;
       readonly projection?: TaskNodeSnapshot | undefined;
+      readonly calendar?: CalendarCardPolicy | undefined;
       readonly occurrence?: TaskOccurrencePresentation | undefined;
       readonly highlight?: TaskCardHighlight | undefined;
       readonly search?: TaskCardSearchPresentation | undefined;
     },
   ): { readonly host: HTMLElement; readonly values: ReadonlyMap<string, HTMLElement> } | undefined {
-    const node = options.projection?.node ?? task;
+    const node = cardMetadataNode(task, options);
     const currentTask = (): TaskSelectionNode => node;
     const dates = cardDates(node.planning, options.occurrence);
     const tags = node.tags;
@@ -1250,6 +1326,7 @@ export class TaskCardRenderer {
     if ('source' in task) this.#renderSourceMetadata(metaRight, task);
     for (const tag of tags) {
       const element = this.#renderTagMetadata(metaRight, tag, tagGroups, {
+        readOnly: options.calendar?.kind === 'forecast',
         component: options.component,
         task: node,
         currentTask,
@@ -1365,6 +1442,7 @@ export class TaskCardRenderer {
     dropContext?: {
       readonly component?: Component | undefined;
       readonly task: TaskSelectionNode;
+      readonly readOnly?: boolean;
       readonly currentTask?: (() => TaskSelectionNode) | undefined;
     },
   ): HTMLElement {
@@ -1380,6 +1458,7 @@ export class TaskCardRenderer {
       event.stopPropagation();
       this.#listControls.addPropertyFilter({ type: 'tag-exclude', value: tag });
     });
+    if (dropContext?.readOnly === true) return element;
     component.registerDomEvent(element, 'dragover', (event) => {
       if (dropContext === undefined) {
         event.stopPropagation();

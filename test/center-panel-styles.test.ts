@@ -416,6 +416,17 @@ describe('CenterPanel task metadata styles', () => {
     );
   });
 
+  it('keeps canonical agenda card geometry and separates scrolling from bottom capture', () => {
+    expect(declarationsFor('.abyss-calendar-agenda')).toContain('overflow: hidden');
+    expect(declarationsFor('.abyss-calendar-agenda-list')).toContain('overflow: auto');
+    expect(declarationsFor('.abyss-calendar-agenda button')).toBe('');
+    expect(declarationsFor('.abyss-calendar-compact .abyss-status-marker')).toBe('');
+    expect(declarationsFor('.abyss-calendar-compact .abyss-calendar-agenda-item')).toBe('');
+    expect(
+      declarationsFor(".abyss-calendar-compact :is(button, [tabindex='0']):focus-visible"),
+    ).toBe('');
+  });
+
   it('leaves agenda bottom clearance with the existing shell and keyboard inset owner', () => {
     const agenda = declarationsFor('.abyss-calendar-agenda');
     expect(agenda).toContain('padding: var(--size-4-2) var(--size-2-1)');

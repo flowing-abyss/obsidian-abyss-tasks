@@ -51,6 +51,7 @@ function deps(groups: readonly EffectiveTagGroup[] = []): CalendarViewDependenci
 } {
   return {
     app: {} as App,
+    mountAgendaEntry: vi.fn(),
     statusRegistry: testStatusRegistry(),
     interactionOwnership: noInteractionOwnership,
     dependenciesFor: () => undefined,

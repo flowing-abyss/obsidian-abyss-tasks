@@ -10724,7 +10724,7 @@ button.abyss-calendar-date[aria-pressed='true'] {
   color: var(--text-on-accent);
 }
 
-.abyss-calendar-compact :is(button, [tabindex='0']):focus-visible {
+.abyss-calendar-date:focus-visible {
   outline: 2px solid var(--background-modifier-border-focus);
   outline-offset: -2px;
 }
@@ -10751,75 +10751,23 @@ button.abyss-calendar-date[aria-pressed='true'] {
 }
 
 .abyss-calendar-agenda {
+  display: flex;
+  flex-direction: column;
   min-block-size: 120px;
   flex: 1 1 auto;
-  overflow: auto;
+  overflow: hidden;
   padding: var(--size-4-2) var(--size-2-1);
+}
+
+.abyss-calendar-agenda-list {
+  min-block-size: 0;
+  flex: 1 1 auto;
+  overflow: auto;
 }
 
 .abyss-calendar-agenda-heading {
   margin: var(--size-4-2) 0;
   font-size: var(--font-ui-medium);
-}
-
-.abyss-calendar-compact .abyss-calendar-agenda-item {
-  flex-wrap: wrap;
-  gap: 0 var(--size-4-1);
-  padding: var(--size-4-1);
-  margin-block: var(--size-4-2);
-  min-block-size: 44px;
-  cursor: pointer;
-  font-size: var(--font-ui-medium);
-}
-
-.abyss-calendar-compact .abyss-tg-body-title {
-  flex: 1 1 100px;
-  white-space: normal;
-  overflow: visible;
-  overflow-wrap: anywhere;
-}
-
-.abyss-calendar-agenda-context {
-  flex-basis: 100%;
-  order: 1;
-  color: var(--text-muted);
-  font-size: var(--font-ui-small);
-}
-
-.abyss-calendar-agenda button {
-  min-inline-size: 44px;
-  min-block-size: 44px;
-  block-size: auto;
-  flex-shrink: 0;
-}
-
-.abyss-calendar-compact .abyss-calendar-details {
-  background: transparent;
-  box-shadow: none;
-  border: 0;
-  padding: 0;
-  color: var(--text-muted);
-}
-
-/* Enlarge the control box while retaining the existing marker's priority color and shape. */
-.abyss-calendar-compact .abyss-status-marker {
-  position: relative;
-  inline-size: 44px;
-  min-inline-size: 44px;
-  block-size: 44px;
-  flex-basis: 44px;
-  border-width: 0;
-}
-
-.abyss-calendar-compact .abyss-status-marker::before {
-  content: '';
-  position: absolute;
-  inset: 12px;
-  border-width: 1.5px;
-  border-style: inherit;
-  border-color: inherit;
-  border-radius: inherit;
-  pointer-events: none;
 }
 
 /* An outer size container lets the existing rail reflow without measuring its new geometry. */

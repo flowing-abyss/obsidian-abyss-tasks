@@ -782,3 +782,68 @@ it.each([{ depths: [1, 1] }, { depths: [0, 1] }])(
     }
   },
 );
+
+it.each(['continuation', 'allowed'] as const)(
+  'keeps calendar %s quick completion separate from explicit child context-menu status',
+  async (kind) => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 7, 12));
+    mockMenuDom();
+    const before = '- [ ] Parent\n  - [ ] Child 🛫 2026-10-07 📅 2026-10-09\n';
+    const h = await hierarchyHarness({ 'source.md': before, 'target.md': '- [ ] Other\n' });
+    const child = expectDefined([...taskTreeNodes(h.source)][1]);
+    const state = new AppState();
+    state.set('mode', 'calendar');
+    const panel = new CenterPanel({
+      app: h.app,
+      state,
+      settings: structuredClone(DEFAULT_SETTINGS),
+      queries: h.index,
+      tasks: h.service,
+      statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+    });
+    const el = activeDocument.body.createDiv();
+    vi.spyOn(el, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 360, 700));
+    panel.mount(el);
+    const execute = vi.spyOn(h.service, 'execute');
+    try {
+      const date = kind === 'continuation' ? '2026-10-07' : '2026-10-09';
+      expectDefined(el.querySelector<HTMLButtonElement>(`[data-calendar-date="${date}"]`)).click();
+      const card = expectDefined(
+        el.querySelector<HTMLElement>('.abyss-calendar-agenda .abyss-task-card'),
+      );
+      if (kind === 'continuation') {
+        const control = expectDefined(card.querySelector<HTMLElement>('[role=checkbox]'));
+        control.click();
+        control.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        expect(execute).not.toHaveBeenCalled();
+        expect(await h.read('source.md')).toBe(before);
+      }
+      let menu: Menu | undefined;
+      vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (this: Menu) {
+        menu = this.setParentElement(document.body);
+        return this;
+      });
+      card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      const status = expectDefined(
+        items(expectDefined(menu)).find((item) => item.title__ === 'Status'),
+      );
+      const choice = expectDefined(
+        items(expectDefined(status.submenu)).find((item) => item.title__ === 'Done'),
+      );
+      (choice as unknown as { onClick__: () => void }).onClick__();
+      await vi.waitFor(async () => {
+        expect(await h.read('source.md')).toContain('  - [x] Child');
+      });
+      expect(execute).toHaveBeenCalledExactlyOnceWith({
+        type: 'set-status',
+        target: child.target,
+        symbol: 'x',
+      });
+    } finally {
+      panel.destroy();
+      h.index.destroy();
+      vi.useRealTimers();
+    }
+  },
+);

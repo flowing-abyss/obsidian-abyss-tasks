@@ -1,7 +1,7 @@
-import { Component, setIcon } from 'obsidian';
 import { moment } from '../obsidianMoment';
 import type { ResolvedConfig } from '../settings/types';
 import type { LocalDate, TaskSnapshot } from '../tasks';
+import { renderAddTaskTrigger } from '../ui/taskCapture/renderAddTaskTrigger';
 import { BaseView } from './BaseView';
 import type { MonthGridViewCallbacks } from './MonthGridView';
 import {
@@ -9,13 +9,28 @@ import {
   type CalendarDayEntry,
   type CalendarDaySummary,
 } from './calendarDayModel';
-import { renderAllDayBody, type CalendarItemCallbacks } from './timegrid/renderAllDay';
 import { calendarOccurrenceLookup } from './timegrid/renderTaskMeta';
+
+export interface CalendarAgendaRowMount {
+  readonly element: HTMLElement;
+  destroy(): void;
+}
+export interface CalendarAgendaRowActions {
+  onActivate(): void;
+  onForecastContextMenu(event: MouseEvent, element: HTMLElement): void;
+}
+export type MountCalendarAgendaEntry = (
+  container: HTMLElement,
+  entry: CalendarDayEntry,
+  date: LocalDate,
+  actions: CalendarAgendaRowActions,
+) => CalendarAgendaRowMount;
 
 export interface ConstrainedCalendarViewCallbacks extends Omit<
   MonthGridViewCallbacks,
   'onDayClick' | 'onWeekClick' | 'onDrop' | 'onNativeDragStart' | 'onSpanMove' | 'onSpanBoundary'
 > {
+  readonly mountAgendaEntry: MountCalendarAgendaEntry;
   readonly view: 'month' | 'week';
   readonly dates: readonly LocalDate[];
   readonly selectedDate: () => LocalDate;
@@ -28,8 +43,7 @@ export class ConstrainedCalendarView extends BaseView {
   private agenda: HTMLElement | null = null;
   private readonly buttons = new Map<LocalDate, HTMLButtonElement>();
   private model: ReadonlyMap<LocalDate, CalendarDaySummary> = new Map();
-  private md = new Component();
-  private itemCallbacks: CalendarItemCallbacks | null = null;
+  private readonly agendaMounts: CalendarAgendaRowMount[] = [];
 
   constructor(private readonly callbacks: ConstrainedCalendarViewCallbacks) {
     super();
@@ -82,7 +96,6 @@ export class ConstrainedCalendarView extends BaseView {
       tasks.map((task) => ({ task, occurrence: occurrenceFor(task) })),
       this.callbacks.dates,
     );
-    this.itemCallbacks = { ...this.callbacks, occurrenceFor, component: this.md };
     for (const summary of this.model.values()) this.updateDateButton(summary);
     this.selectDate(this.callbacks.selectedDate());
   }
@@ -104,83 +117,77 @@ export class ConstrainedCalendarView extends BaseView {
 
   selectDate(date: LocalDate): void {
     const summary = this.model.get(date);
-    if (this.agenda === null || this.itemCallbacks === null || summary === undefined) return;
+    if (this.agenda === null || summary === undefined) return;
     this.callbacks.forecastMenuOwner?.dismiss();
-    this.md.unload();
-    this.md = new Component();
-    this.md.load();
-    const callbacks = { ...this.itemCallbacks, component: this.md };
+    this.destroyAgendaRows();
     for (const [day, button] of this.buttons)
       button.setAttribute('aria-pressed', String(day === date));
     const previous = this.agenda.dataset['calendarDate'];
-    const scroll = previous === date ? this.agenda.scrollTop : 0;
+    const scroll =
+      previous === date
+        ? (this.agenda.querySelector('.abyss-calendar-agenda-list')?.scrollTop ?? 0)
+        : 0;
     this.agenda.empty();
     this.agenda.dataset['calendarDate'] = date;
-    this.agenda.createEl('h3', {
+    const list = this.agenda.createDiv({ cls: 'abyss-calendar-agenda-list' });
+    list.createEl('h3', {
       cls: 'abyss-calendar-agenda-heading',
       text: moment(date).format('dddd, LL'),
     });
-    const add = this.agenda.createEl('button', {
-      cls: 'abyss-calendar-agenda-add',
-      text: 'Add task',
-      attr: { type: 'button' },
-    });
-    add.addEventListener('click', () => {
-      this.callbacks.onCreateAtDate(date);
-    });
     const entries = summary.entries;
     if (entries.length === 0)
-      this.agenda.createEl('p', {
+      list.createEl('p', {
         cls: 'abyss-calendar-agenda-empty',
         text: 'No tasks for this day',
       });
-    for (const entry of entries) this.renderEntry(entry, callbacks);
-    this.agenda.scrollTop = scroll;
+    this.renderEntries(list, entries, date);
+    const bottom = this.agenda.createDiv({ cls: 'abyss-add-task-bar' });
+    renderAddTaskTrigger(bottom, () => {
+      this.callbacks.onCreateAtDate(date);
+    });
+    list.scrollTop = scroll;
   }
 
-  private renderEntry(entry: CalendarDayEntry, callbacks: CalendarItemCallbacks): void {
-    if (this.agenda === null) return;
-    const { task, occurrence, completion } = entry;
-    const row = renderAllDayBody({
-      cellEl: this.agenda,
-      cls: 'abyss-calendar-agenda-item',
-      task,
-      callbacks,
-      tagGroups: this.callbacks.tagGroups ?? [],
-      interactive: true,
-      activateBody: true,
-      nativeDraggable: false,
-      completion,
-      continuity: completion.kind === 'continuation' ? 'continuation' : 'single',
-      spanRole: 'agenda',
-    });
-    const context = [
-      task.planning.time,
-      ...(completion.kind === 'continuation' ? [`Until ${completion.due}`] : []),
-    ]
-      .filter(Boolean)
-      .join(' · ');
-    if (context !== '') row.createSpan({ cls: 'abyss-calendar-agenda-context', text: context });
-    const details = row.createEl('button', {
-      cls: 'abyss-calendar-details',
-      attr: { type: 'button', 'aria-label': `Details: ${task.title}` },
-    });
-    setIcon(details, 'chevron-right');
-    details.addEventListener('click', (event) => {
-      event.stopPropagation();
-      if (occurrence.kind === 'forecast')
-        callbacks.onForecastClick?.(occurrence.source, occurrence.referenceDate);
-      else callbacks.onTaskClick(task);
-    });
+  private renderEntries(
+    container: HTMLElement,
+    entries: readonly CalendarDayEntry[],
+    date: LocalDate,
+  ): void {
+    try {
+      for (const entry of entries) this.renderEntry(container, entry, date);
+    } catch (error) {
+      this.destroyAgendaRows();
+      throw error;
+    }
+  }
+
+  private destroyAgendaRows(): void {
+    for (const mount of this.agendaMounts.splice(0)) mount.destroy();
+  }
+
+  private renderEntry(container: HTMLElement, entry: CalendarDayEntry, date: LocalDate): void {
+    const { occurrence } = entry;
+    this.agendaMounts.push(
+      this.callbacks.mountAgendaEntry(container, entry, date, {
+        onActivate: () => {
+          if (occurrence.kind === 'forecast')
+            this.callbacks.onForecastClick?.(occurrence.source, occurrence.referenceDate);
+          else this.callbacks.onTaskClick(entry.task);
+        },
+        onForecastContextMenu: (event, element) => {
+          if (occurrence.kind === 'forecast')
+            this.callbacks.forecastMenuOwner?.open(element, event, occurrence, this.callbacks);
+        },
+      }),
+    );
   }
 
   destroy(): void {
     this.callbacks.forecastMenuOwner?.dismiss();
-    this.md.unload();
+    this.destroyAgendaRows();
     this.buttons.clear();
     this.model = new Map();
     this.container = null;
     this.agenda = null;
-    this.itemCallbacks = null;
   }
 }

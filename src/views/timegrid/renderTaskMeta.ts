@@ -4,6 +4,7 @@ import type { TagGroup } from '../../settings/types';
 import { colorForTag } from '../../tags/tagColor';
 import { subtreeRunning, type LocalDate, type TaskNodeRef, type TaskSnapshot } from '../../tasks';
 import { anchoredPlacement } from '../../ui/anchoredPlacement';
+import { isImeOwnedEvent } from '../../ui/ime';
 import {
   noInteractionOwnership,
   type InteractionOwnershipPort,
@@ -201,11 +202,21 @@ export function bindTaskSelection(
   element: HTMLElement,
   task: TaskSnapshot,
   onTaskSelect: ((task: TaskSnapshot) => void) | undefined,
-  onTaskActivate?: (task: TaskSnapshot) => void,
+  ...[onTaskActivate, component]: [
+    onTaskActivate?: (task: TaskSnapshot) => void,
+    component?: Component,
+  ]
 ): void {
   if (onTaskSelect === undefined && onTaskActivate === undefined) return;
+  const listen = <K extends keyof HTMLElementEventMap>(
+    type: K,
+    listener: (event: HTMLElementEventMap[K]) => void,
+  ): void => {
+    if (component === undefined) element.addEventListener(type, listener);
+    else component.registerDomEvent(element, type, listener);
+  };
   element.setAttribute('tabindex', '0');
-  element.addEventListener('focusin', () => {
+  listen('focusin', () => {
     onTaskSelect?.(task);
   });
   // Touch scrolling can finish with a compatibility click. Keep that click from opening
@@ -213,26 +224,26 @@ export function bindTaskSelection(
   let pointerStart: { x: number; y: number } | undefined;
   let cancelled = false;
   if (onTaskActivate !== undefined) {
-    element.addEventListener('pointerdown', (event) => {
+    listen('pointerdown', (event) => {
       pointerStart = { x: event.clientX, y: event.clientY };
       cancelled = false;
     });
-    element.addEventListener('pointermove', (event) => {
+    listen('pointermove', (event) => {
       if (
         pointerStart !== undefined &&
         Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y) > 8
       )
         cancelled = true;
     });
-    element.addEventListener('pointercancel', () => {
+    listen('pointercancel', () => {
       cancelled = true;
       pointerStart = undefined;
     });
-    element.addEventListener('pointerup', () => {
+    listen('pointerup', () => {
       pointerStart = undefined;
     });
   }
-  element.addEventListener('click', (event) => {
+  listen('click', (event) => {
     if (cancelled) return;
     const target = event.target as Element | null;
     if (target?.closest(TASK_SELECTION_EXCLUSION) != null) return;
@@ -241,8 +252,13 @@ export function bindTaskSelection(
     if (wasFocused || !element.contains(element.ownerDocument.activeElement)) onTaskSelect?.(task);
     onTaskActivate?.(task);
   });
-  element.addEventListener('keydown', (event) => {
-    if (event.target !== element || event.repeat || (event.key !== 'Enter' && event.key !== ' '))
+  listen('keydown', (event) => {
+    if (
+      event.target !== element ||
+      event.repeat ||
+      isImeOwnedEvent(event) ||
+      (event.key !== 'Enter' && event.key !== ' ')
+    )
       return;
     if (onTaskActivate === undefined) return;
     event.preventDefault();

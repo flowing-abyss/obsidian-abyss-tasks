@@ -5,7 +5,10 @@ import type { LocalDate, TaskPriority, TaskSnapshot } from '../../tasks';
 import type { InteractionOwnershipPort } from '../../ui/interactionOwnership';
 import type { TaskDependencyLookup } from '../../ui/taskDependencyPresentation';
 import type { BaseView } from '../../views/BaseView';
-import { ConstrainedCalendarView } from '../../views/ConstrainedCalendarView';
+import {
+  ConstrainedCalendarView,
+  type MountCalendarAgendaEntry,
+} from '../../views/ConstrainedCalendarView';
 import { MonthGridView } from '../../views/MonthGridView';
 import { TodayView } from '../../views/TodayView';
 import { WeekTimeGridView } from '../../views/WeekTimeGridView';
@@ -54,6 +57,7 @@ export interface CalendarHandlers {
 }
 
 export interface CalendarViewDependencies {
+  readonly mountAgendaEntry: MountCalendarAgendaEntry;
   readonly app: App;
   readonly statusRegistry: StatusRegistry;
   readonly interactionOwnership: InteractionOwnershipPort;
@@ -209,6 +213,7 @@ export function createCalendarView(
   if (constrained !== undefined)
     return new ConstrainedCalendarView({
       ...constrained,
+      mountAgendaEntry: deps.mountAgendaEntry,
       app: deps.app,
       forecastMenuOwner: deps.forecastMenuOwner,
       interactionOwnership: deps.interactionOwnership,

@@ -18,6 +18,7 @@ import { runAsyncAction } from '../../ui/runAsyncAction';
 import type { TaskDependencyLookup } from '../../ui/taskDependencyPresentation';
 import { startTaskNodeDrag } from '../../ui/taskNodeDrag';
 import { taskSelectionPath } from '../../ui/taskSelection';
+import type { MountCalendarAgendaEntry } from '../../views/ConstrainedCalendarView';
 import { calendarNativeDragPayload } from '../../views/calendarNativeDrag';
 import {
   calendarOccurrenceForTask,
@@ -55,6 +56,7 @@ import { visibleCalendarDates } from './visibleCalendarDates';
 
 /** What calendar mode needs from the panel that owns it. Every member reads panel state lazily. */
 export interface CalendarModeHost {
+  readonly mountAgendaEntry: MountCalendarAgendaEntry;
   /** Full panel render, used by open-day, open-week, and following a keyboard shift. */
   readonly rerender: () => void;
   readonly onShowParent?: ShowInTaskList | undefined;
@@ -475,6 +477,7 @@ export class CalendarMode {
       statusRegistry,
       interactionOwnership,
       dependenciesFor: host.dependenciesFor,
+      mountAgendaEntry: host.mountAgendaEntry,
       tagGroups: host.tagGroups,
       forecastMenuOwner,
     };

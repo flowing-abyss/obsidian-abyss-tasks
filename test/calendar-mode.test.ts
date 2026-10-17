@@ -21,6 +21,7 @@ import {
   useRealMoment,
   type TestTaskQueries,
 } from './helpers';
+import { calendarAgendaHarness } from './support/calendarAgendaHarness';
 
 useRealMoment();
 
@@ -34,6 +35,7 @@ const VIEW_UPDATE_CALLS = [
 ];
 
 interface Harness {
+  readonly cards: ReturnType<typeof calendarAgendaHarness>;
   readonly mode: CalendarMode;
   readonly host: CalendarModeHost;
   readonly root: HTMLElement;
@@ -60,7 +62,10 @@ function harness(
   const note = (name: string): void => {
     calls.push(name);
   };
+  const state = new AppState();
+  const cards = calendarAgendaHarness(state);
   const host: CalendarModeHost = {
+    mountAgendaEntry: cards.mountAgendaEntry,
     rerender: vi.fn(() => {
       note('rerender');
     }),
@@ -116,7 +121,6 @@ function harness(
     },
   });
   const openCalendarView = vi.fn<(view: CalViewType) => void>();
-  const state = new AppState();
   state.set('mode', 'calendar');
   const mode = new CalendarMode({
     state,
@@ -134,6 +138,7 @@ function harness(
   modes.push(mode);
   return {
     mode,
+    cards,
     host,
     root,
     calls,
@@ -520,7 +525,7 @@ describe('compact CalendarMode', () => {
     expect(h.root.querySelector('.abyss-calendar-agenda')?.textContent).toContain('Second day');
     expect(h.root.querySelector('.abyss-calendar-agenda')?.textContent).not.toContain('First day');
     expect(h.mode.captureDate()).toBe('2026-10-17');
-    h.click('.abyss-calendar-agenda-add');
+    h.click('.abyss-add-task-trigger');
     expect(h.host.openCapture).toHaveBeenCalledWith({
       type: 'calendar-agenda',
       date: '2026-10-17',
@@ -716,10 +721,17 @@ it.each(
       h.mode.setView(view);
       h.mode['date_abyssPrivate'] = moment('2026-10-16');
       h.mode.render(h.root);
-      if (placement.type === 'calendar-agenda') h.click('.abyss-calendar-agenda-add');
+      if (placement.type === 'calendar-agenda') h.click('.abyss-add-task-trigger');
       else captures.openCapture(placement, { type: 'default', source: 'calendar' });
       await flushMicrotasks();
       expectCalendarFeedback(h.root, width === 360);
+      if (width === 360) {
+        expect(input().closest('.abyss-add-task-bar')).not.toBeNull();
+        expect(input().closest('.abyss-calendar-agenda-list')).toBeNull();
+        expect(h.root.querySelector<HTMLButtonElement>('.abyss-add-task-trigger')?.hidden).toBe(
+          true,
+        );
+      }
       input().value = 'Frozen draft';
       input().dispatchEvent(new Event('input', { bubbles: true }));
       h.emit();
@@ -866,32 +878,43 @@ it('routes actual root, child and forecast agenda actions through canonical owne
   h.mode['date_abyssPrivate'] = moment('2026-10-01');
   h.mode.render(h.root);
   h.click('.abyss-calendar-date[data-calendar-date="2026-10-16"]');
-  const rows = [
-    ...h.root.querySelectorAll<HTMLElement>('.abyss-calendar-agenda .abyss-calendar-item'),
-  ];
+  const rows = [...h.root.querySelectorAll<HTMLElement>('.abyss-calendar-agenda .abyss-task-card')];
   expect(rows).toHaveLength(3);
+  expect(h.root.querySelector('.abyss-calendar-agenda .abyss-task-card-main-row')).not.toBeNull();
+  const bottom = expectDefined(h.root.querySelector('.abyss-add-task-bar'));
+  expect(
+    expectDefined(rows[2]).compareDocumentPosition(bottom) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).not.toBe(0);
   const rootRow = expectDefined(
-    rows.find((row) => row.querySelector('.abyss-tg-body-title')?.textContent === 'Parent'),
+    rows.find((row) => row.querySelector('.abyss-task-title')?.textContent === 'Parent'),
   );
   rootRow.click();
   expect(h.host.openTask).toHaveBeenLastCalledWith(root, { type: 'task', ref: root.ref });
+  expectDefined(rootRow.querySelector<HTMLElement>('[role=checkbox]')).click();
+  expect(h.cards.toggleTask).toHaveBeenCalledWith(root, { kind: 'allowed' });
   const childRow = expectDefined(rows.find((row) => row.textContent.includes('Dated child')));
   childRow.click();
   expect(h.host.openTask).toHaveBeenLastCalledWith(root, { type: 'subtask', ref: child.ref });
   expectDefined(childRow.querySelector<HTMLElement>('[role="checkbox"]')).click();
-  const displayedChild = expectDefined(vi.mocked(h.host.toggleTask).mock.calls[0]?.[0]);
-  expect(displayedChild.title).toBe('Dated child');
+  expect(h.cards.toggleTask).toHaveBeenCalledWith(child, { kind: 'allowed' });
   expectDefined(childRow.querySelector<HTMLButtonElement>('.abyss-task-parent-btn')).click();
   await flushMicrotasks();
-  expect(h.host.onShowParent).toHaveBeenCalledWith(
+  expect(h.cards.showTaskInList).toHaveBeenCalledWith(
     { type: 'task', ref: root.ref },
     expect.anything(),
   );
   const forecast = expectDefined(
     rows.find((row) => row.getAttribute('data-occurrence-state') === 'forecast'),
   );
-  expectDefined(forecast.querySelector<HTMLButtonElement>('.abyss-calendar-details')).click();
+  forecast.click();
   expect(h.host.openForecastTask).toHaveBeenCalledWith(recurringSource, '2026-10-16');
+  forecast.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+  expect(h.host.openForecastRecurrenceEditor).not.toHaveBeenCalled();
+  expectDefined(document.querySelector<HTMLElement>('.abyss-forecast-context-menu button')).click();
+  expect(h.host.openForecastRecurrenceEditor).toHaveBeenCalledWith(forecast, recurringSource);
+  expect(rootRow.querySelector('.abyss-task-title-row .abyss-task-count-badge')).not.toBeNull();
+  expect(rootRow.querySelector('.abyss-calendar-details')).toBeNull();
+  expect(rootRow.querySelector('.abyss-calendar-agenda-context')).toBeNull();
 });
 
 it('moves forecast menu ownership with a calendar mounted in another document', () => {

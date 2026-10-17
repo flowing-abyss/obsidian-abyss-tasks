@@ -35,6 +35,7 @@ import {
   type CommentTimeContextProvider,
   type LocalDate,
   type RecurrenceInputParser,
+  type SubtaskSnapshot,
   type TaskApplicationApi,
   type TaskCaptureApplicationApi,
   type TaskCommandResult,
@@ -73,6 +74,7 @@ import type { TaskRenderOutcome, TaskRenderScope } from '../ui/taskRenderScope';
 import {
   rootTaskRef,
   taskNodeRef,
+  taskSelectionPath,
   taskSelectionRefPath,
   type TaskSelectionNode,
 } from '../ui/taskSelection';
@@ -1869,7 +1871,25 @@ export class CenterPanel {
   }
 
   private createCalendarHost_abyssPrivate(): CalendarModeHost {
+    let tagGroups: readonly EffectiveTagGroup[] = [];
     return {
+      mountAgendaEntry: (container, entry, date, actions) => {
+        const { source, planning, kind } = entry.occurrence;
+        const path = taskSelectionPath(source.root, source.node);
+        if (path === undefined)
+          throw new Error('Cannot mount a calendar task outside its source tree');
+        return this.taskCardRenderer_abyssPrivate.mount(container, source.root, tagGroups, {
+          projection: {
+            ...source,
+            path: path.filter((node): node is SubtaskSnapshot => !('source' in node)),
+          },
+          occurrence: { kind: 'node', displayDate: date, completion: entry.completion },
+          rowKey: entry.key,
+          selected: false,
+          showDelete: false,
+          calendar: { kind, planning, ...actions },
+        });
+      },
       rerender: () => {
         this.render_abyssPrivate();
       },
@@ -1884,7 +1904,10 @@ export class CenterPanel {
       setTaskStatus: (task, symbol) => this.taskCommands_abyssPrivate.setTaskStatus(task, symbol),
       setPriority: (task, priority) => this.taskCommands_abyssPrivate.setPriority(task, priority),
       dependenciesFor: (task) => this.dependenciesFor_abyssPrivate(task),
-      tagGroups: () => this.effectiveTagGroups_abyssPrivate(),
+      tagGroups: () => {
+        tagGroups = this.effectiveTagGroups_abyssPrivate();
+        return tagGroups;
+      },
       openForecastRecurrenceEditor: (anchor, source) => {
         this.openForecastRecurrenceEditor_abyssPrivate(anchor, source);
       },
@@ -3280,6 +3303,26 @@ export class CenterPanel {
   }
 
   private mountTaskCardInteractions_abyssPrivate(
+    card: HTMLElement,
+    task: TaskSnapshot,
+    rowKey = taskRowKey(task),
+    context?: TaskCardInteractionContext,
+  ): void {
+    if (context?.calendar === undefined) {
+      this.mountOrdinaryTaskCardInteractions_abyssPrivate(card, task, rowKey, context);
+      return;
+    }
+    context.component.registerDomEvent(card, 'contextmenu', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const projection =
+        context.currentProjection?.() ?? rootTaskNodeSnapshot(context.currentTask());
+      const menu = this.taskMenus_abyssPrivate.createTaskContextMenu(card, projection);
+      this.showTaskMenu_abyssPrivate(menu, event, card);
+    });
+  }
+
+  private mountOrdinaryTaskCardInteractions_abyssPrivate(
     card: HTMLElement,
     task: TaskSnapshot,
     rowKey = taskRowKey(task),

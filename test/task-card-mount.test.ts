@@ -49,6 +49,7 @@ function renderer(useListControls = false) {
   let context: TaskCardInteractionContext | undefined;
   const unbound = vi.fn();
   const editTaskLink = vi.fn();
+  const patchTaskTags = vi.fn();
   const dependenciesFor = vi.fn<() => TaskDependencyProjection | undefined>(() => undefined);
   const showTaskInList = vi.fn<
     (target: TaskNodeRef, request: TaskListNavigationRequest) => Promise<void>
@@ -78,7 +79,7 @@ function renderer(useListControls = false) {
     state,
     settings,
     statusRegistry: registry,
-    commands: { toggleTask, deleteTask, patchTaskTags: vi.fn(), editTaskLink },
+    commands: { toggleTask, deleteTask, patchTaskTags, editTaskLink },
     listControls,
     trackingEnabled: true,
     host: {
@@ -112,6 +113,7 @@ function renderer(useListControls = false) {
     unbound,
     dependenciesFor,
     editTaskLink,
+    patchTaskTags,
     settings,
     registry,
     context: () => context,
@@ -2042,3 +2044,117 @@ it.each([
     }
   },
 );
+
+it('renders forecast calendar planning without acquiring source writes or tracking', async () => {
+  const h = renderer();
+  const source = task({
+    planning: { due: '2026-10-15' },
+    tags: ['old'],
+    comments: [taskComment({ text: 'Note' })],
+    recurrence: 'every day',
+    timeEntries: [{ relativeLine: 2, originalMarkdown: 'running', state: 'running', startMs: 0 }],
+  });
+  const mount = h.subject.mount(document.body, source, [], {
+    selected: false,
+    showDelete: true,
+    calendar: {
+      kind: 'forecast',
+      planning: { due: localDate('2026-10-16') },
+      onActivate: vi.fn(),
+      onForecastContextMenu: vi.fn(),
+    },
+  });
+  await mount.settled;
+  expect(
+    mount.element.querySelector('.abyss-task-title-row .abyss-task-count-badge'),
+  ).not.toBeNull();
+  expect(mount.element.querySelector('[role="checkbox"]')).toBeNull();
+  expect(mount.element.querySelector('.abyss-task-delete-btn')).toBeNull();
+  expect(mount.element.querySelector('.abyss-task-time-badge')).toBeNull();
+  expect(mount.element.hasAttribute('data-abyss-task-node-ref-key')).toBe(false);
+  expect(mount.element.hasAttribute('data-abyss-task-ref-key')).toBe(false);
+  expect(mount.element.querySelector('.abyss-task-date')?.textContent).toBe('2026-10-16');
+  mount.destroy();
+});
+
+it('keeps forecast body and menu actions while omitting write and retired metadata listeners', async () => {
+  const h = renderer();
+  const onActivate = vi.fn();
+  const onForecastContextMenu = vi.fn();
+  const source = task({
+    title: '[Source](https://example.com)',
+    tags: ['old'],
+    planning: { due: '2026-10-15' },
+  });
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _text, holder) => {
+    holder.createEl('a', { href: 'https://example.com', text: 'Source' });
+  });
+  const mount = h.subject.mount(document.body, source, [], {
+    selected: false,
+    showDelete: false,
+    calendar: {
+      kind: 'forecast',
+      planning: { due: localDate('2026-10-16') },
+      onActivate,
+      onForecastContextMenu,
+    },
+  });
+  await mount.settled;
+  const row = mount.element;
+  row.click();
+  row.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  row.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+  expect(onActivate).toHaveBeenCalledTimes(3);
+  const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+  row.dispatchEvent(event);
+  expect(onForecastContextMenu).toHaveBeenCalledWith(event, row);
+  const link = expectDefined(row.querySelector('a'));
+  link.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+  const tag = expectDefined(row.querySelector<HTMLElement>('.abyss-task-tag'));
+  h.state.set('draggingTag', 'new');
+  tag.dispatchEvent(new Event('drop', { bubbles: true, cancelable: true }));
+  row.dispatchEvent(new Event('drop', { bubbles: true, cancelable: true }));
+  row.dispatchEvent(new Event('dragstart', { bubbles: true, cancelable: true }));
+  expect(row.draggable).toBe(false);
+  expect(h.context()).toBeUndefined();
+  expect(h.toggleTask).not.toHaveBeenCalled();
+  expect(h.patchTaskTags).not.toHaveBeenCalled();
+  expect(h.editTaskLink).not.toHaveBeenCalled();
+  mount.destroy();
+  tag.click();
+  row.click();
+  row.dispatchEvent(event);
+  expect(h.listControls.addPropertyFilter).not.toHaveBeenCalled();
+  expect(onActivate).toHaveBeenCalledTimes(3);
+  expect(onForecastContextMenu).toHaveBeenCalledTimes(2);
+});
+
+it('retires calendar activation and pending Markdown when its day is replaced', async () => {
+  const h = renderer();
+  const pending = deferred<void>();
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _text, holder) => {
+    await pending.promise;
+    holder.createEl('a', { href: '#late', text: 'Late' });
+  });
+  const activate = vi.fn();
+  const mount = h.subject.mount(document.body, task({ title: '**Pending**' }), [], {
+    selected: false,
+    showDelete: false,
+    calendar: {
+      kind: 'materialized',
+      planning: {},
+      onActivate: activate,
+      onForecastContextMenu: vi.fn(),
+    },
+  });
+  const receipt = mount.settled;
+  mount.destroy();
+  pending.resolve();
+  await flushMicrotasks();
+  expect(await receipt).toEqual({ type: 'cancelled' });
+  mount.element.click();
+  mount.element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  expect(activate).not.toHaveBeenCalled();
+  expect(mount.element.isConnected).toBe(false);
+  expect(document.body.textContent).not.toContain('Late');
+});

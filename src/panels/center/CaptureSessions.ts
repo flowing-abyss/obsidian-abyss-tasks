@@ -22,6 +22,7 @@ import {
   type CaptureContext,
   type CaptureTarget,
 } from '../../ui/taskCapture/CaptureTargetResolver';
+import { renderAddTaskTrigger } from '../../ui/taskCapture/renderAddTaskTrigger';
 import { TaskCaptureController } from '../../ui/taskCapture/TaskCaptureController';
 import {
   describeTaskCreationResult,
@@ -109,13 +110,7 @@ export class CaptureSessions {
       host.dataset['abyssCaptureSelection'] = placement.selectionKey;
     }
     if (host.querySelector('.abyss-add-task-trigger') !== null) return;
-    const trigger = host.createEl('button', {
-      cls: 'abyss-add-task-trigger',
-      attr: { type: 'button' },
-    });
-    trigger.createSpan({ cls: 'abyss-add-task-plus', text: '+' });
-    trigger.createSpan({ cls: 'abyss-add-task-label', text: 'Add task' });
-    trigger.addEventListener('click', () => {
+    const trigger = renderAddTaskTrigger(host, (trigger) => {
       const context: CaptureContext =
         placement.type === 'project'
           ? { type: 'project-dashboard', path: placement.path }
@@ -347,7 +342,15 @@ export class CaptureSessions {
     if (isCalendarCapturePlacement(active.placement)) {
       host.empty();
       // Retained drafts can cross layouts; only clipped full-grid hosts need the portal.
-      if (host.classList.contains('abyss-calendar-agenda-capture')) return undefined;
+      if (host.classList.contains('abyss-calendar-agenda-capture')) {
+        const trigger =
+          host.parentElement?.querySelector<HTMLButtonElement>('.abyss-add-task-trigger');
+        if (trigger != null) {
+          trigger.hidden = true;
+          active.returnFocus = trigger;
+        }
+        return undefined;
+      }
       const feedbackHost = this.#root().createDiv({ cls: 'abyss-calendar-capture-feedback' });
       active.feedbackHost = feedbackHost;
       return feedbackHost;
@@ -420,6 +423,9 @@ export class CaptureSessions {
   #restoreCaptureHost(host: HTMLElement | undefined, placement: PanelCapturePlacement): void {
     if (host?.isConnected !== true) return;
     if (isCalendarCapturePlacement(placement)) {
+      host.parentElement
+        ?.querySelector<HTMLButtonElement>('.abyss-add-task-trigger')
+        ?.removeAttribute('hidden');
       host.remove();
       return;
     }

@@ -430,9 +430,13 @@ CalendarMode owns the period anchor, transient selected day, view lifetime, and 
 Its mounted center owner supplies the available width; an owner-window observer coalesces changes
 and rebuilds Month/Week only when the width category changes. ConstrainedCalendarView builds a
 bounded calendar day model per publication and retains its date buttons. Selecting a date reads that model
-and replaces the agenda without querying or projecting occurrences again. Agenda rows share the
-all-day item renderer, exact occurrence ownership, status menus, and Markdown component lifetime.
-Details activation is independent of quick-completion eligibility for continuation rows.
+and replaces the agenda without querying or projecting occurrences again. CenterPanel supplies agenda mounts from its retained TaskCardRenderer with exact source ancestry.
+The view destroys those mounts before replacing a day. A narrow calendar policy supplies activation
+and occurrence planning; forecasts omit mutation controls, editable links, drag/drop, tracking, and
+writable presentation identity. Materialized rows retain canonical commands and status menus.
+Agenda focus does not write inspector selection or install list multiselection; only native row
+focus paints the canonical outline. Details activation remains available on continuation rows.
+The shared bottom capture trigger sits outside the agenda list's scroll area.
 Month week links carry the rendered row's first civil date; configured week layout derives its
 seven dates. Mobile Day body taps open the same inspector. Touch body movement scrolls; explicit
 resize handles, mouse/pen dragging, native drag and empty-grid creation retain their own handlers.
