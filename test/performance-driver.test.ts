@@ -34,6 +34,10 @@ let vault = 'dev-vault-tasks';
 let lostResponse = false;
 let delayLaunch = false;
 let lateReply = false;
+let delayShutdown = false;
+let stopping = false;
+let stopped = false;
+let finishShutdown: () => void;
 let release: () => void;
 let reject: (error: unknown) => void;
 let settled: Promise<void>;
@@ -47,6 +51,9 @@ beforeEach(() => {
   lostResponse = false;
   delayLaunch = false;
   lateReply = false;
+  delayShutdown = false;
+  stopping = false;
+  stopped = false;
   rendererFs = fs;
   rendererErrors = [];
   now = 0;
@@ -61,8 +68,8 @@ beforeEach(() => {
     return dir;
   });
   vi.mocked(files.rm).mockImplementation(fs.promises.rm);
-  bridge.run.mockImplementation(
-    async (file: string, args: string[], options: { signal?: AbortSignal }) => {
+  bridge.run.mockImplementation((file: string, args: string[]) => {
+    const run = async () => {
       if (file !== 'obsidian' || args[0] !== 'vault=dev-vault-tasks' || args[1] !== 'eval')
         throw new Error('Unexpected CLI invocation');
       if (delayLaunch) await settled;
@@ -82,19 +89,29 @@ beforeEach(() => {
       if (lateReply) await settled;
       if (!lostResponse) return { stdout: `=> ${String(await observed)}\n` };
       await observed; // The renderer settles, but this CLI response never reaches the caller.
-      return await new Promise((_, fail) => {
-        options.signal?.addEventListener(
-          'abort',
-          () => {
-            fail(new Error('CLI aborted'));
-          },
-          {
-            once: true,
-          },
-        );
-      });
-    },
-  );
+      return await new Promise<never>(() => {});
+    };
+    let stop: () => void;
+    const termination = new Promise<never>((_, fail) => {
+      const finish = () => {
+        stopped = true;
+        fail(new Error('CLI aborted'));
+      };
+      finishShutdown = finish;
+      stop = () => {
+        stopping = true;
+        if (!delayShutdown) finish();
+      };
+    });
+    return Object.assign(Promise.race([run(), termination]), {
+      child: {
+        kill: () => {
+          stop();
+          return true;
+        },
+      },
+    });
+  });
 });
 afterEach(async () => {
   release();
@@ -133,6 +150,28 @@ describe('canonical profiler evaluation transport', () => {
     await delay(20);
     expect(mutations).toBe(1);
     await expectClean();
+  });
+
+  it('waits for launcher shutdown before returning the published result', async () => {
+    lostResponse = true;
+    delayShutdown = true;
+    let returned = false;
+    const result = evaluate('mutate(); return 7;').finally(() => {
+      returned = true;
+    });
+    try {
+      await vi.waitFor(() => {
+        expect(stopping).toBe(true);
+      });
+      expect(returned).toBe(false);
+      finishShutdown();
+      await expect(result).resolves.toBe(7);
+      expect(stopped).toBe(true);
+      await expectClean();
+    } finally {
+      finishShutdown();
+      await result;
+    }
   });
 
   it('propagates the original body rejection and stack through a lost response', async () => {
@@ -213,6 +252,31 @@ describe('canonical profiler evaluation transport', () => {
     release();
     await delay(20);
     expect(mutations).toBe(0);
+    await expectClean();
+  });
+
+  it('removes expired staging while launcher shutdown is pending', async () => {
+    delayLaunch = true;
+    delayShutdown = true;
+    const result = evaluate('mutate(); return 9;');
+    const rejected = expect(result).rejects.toThrow(/timed out/iu);
+    try {
+      await vi.waitFor(() => {
+        expect(bridge.run).toHaveBeenCalledTimes(1);
+      });
+      now = 120001;
+      await vi.waitFor(() => {
+        expect(stopping).toBe(true);
+        for (const dir of directories) expect(fs.existsSync(dir)).toBe(false);
+      });
+      expect(stopped).toBe(false);
+      release();
+      await delay(20);
+      expect(mutations).toBe(0);
+    } finally {
+      finishShutdown();
+      await rejected;
+    }
     await expectClean();
   });
 

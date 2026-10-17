@@ -13,14 +13,24 @@ export async function command(
   cwd?: string,
   signal?: AbortSignal,
 ): Promise<string> {
-  const result = await execute(file, args, {
+  const execution = execute(file, args, {
     timeout: 120000,
     killSignal: 'SIGKILL',
     maxBuffer: 32 * 1024 * 1024,
     ...(cwd === undefined ? {} : { cwd }),
-    ...(signal === undefined ? {} : { signal }),
   });
-  return result.stdout;
+  // execFile's AbortSignal path can settle before its child exits and ignores killSignal.
+  const abort = (): void => {
+    execution.child.kill('SIGKILL');
+  };
+  signal?.addEventListener('abort', abort, { once: true });
+  try {
+    if (signal?.aborted === true) abort();
+    const result = await execution;
+    return result.stdout;
+  } finally {
+    signal?.removeEventListener('abort', abort);
+  }
 }
 export async function cli(args: string[], signal?: AbortSignal): Promise<string> {
   return await command('obsidian', ['vault=dev-vault-tasks', ...args], undefined, signal);
@@ -76,6 +86,7 @@ export async function evaluate<T>(body: string): Promise<T> {
   const abort = new AbortController();
   let failure: Error | undefined;
   let value: T | undefined;
+  let launchFinished: Promise<void> | undefined;
   try {
     await writeFile(staging, '', { flag: 'wx', mode: 0o600 });
     // The launcher returns synchronously. Completion never depends on the CLI forwarding a Promise.
@@ -95,7 +106,7 @@ export async function evaluate<T>(body: string): Promise<T> {
     })()`;
     const launch: { error?: Error } = {};
     // Attach the rejection handler before awaiting; it also observes abort/late CLI failures.
-    cli(['eval', `code=${source}`], abort.signal)
+    launchFinished = cli(['eval', `code=${source}`], abort.signal)
       .then((stdout) => {
         if (parseCliResult(stdout) !== directory)
           throw new Error('Invalid profiler launch response');
@@ -109,11 +120,14 @@ export async function evaluate<T>(body: string): Promise<T> {
   }
   abort.abort();
   try {
+    // Revoke the result-file capability while the owned launcher is closing.
     await rm(directory, { recursive: true, force: true });
   } catch (cleanupError) {
     if (failure !== undefined)
       throw new AggregateError([failure, cleanupError], 'Profiler evaluation and cleanup failed');
     throw cleanupError;
+  } finally {
+    await launchFinished;
   }
   if (failure !== undefined) throw failure;
   return value as T;
