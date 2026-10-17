@@ -33,6 +33,7 @@ import type {
   TaskSnapshot,
 } from '../src/tasks';
 import { clockFrom } from '../src/tasks/domain/clock';
+import { TagGroupAppearanceModal } from '../src/ui/TagGroupAppearanceModal';
 import { TaskModal } from '../src/ui/TaskModal';
 import type { CreationPresentationController } from '../src/ui/creation/CreationPresentationController';
 import type { InteractionRegistry } from '../src/ui/interactionOwnership';
@@ -1433,6 +1434,207 @@ describe('PanelView compact details on a begun selection', () => {
       await panel.close();
     }
   });
+});
+
+describe('PanelView accepted left destinations', () => {
+  let panel: RemovalPanel;
+  let layout: HTMLElement;
+  let left: HTMLElement;
+  let lists: HTMLButtonElement;
+
+  beforeEach(async () => {
+    panel = await openRemovalPanel(
+      {
+        ...projectFiles(),
+        'tags.md': '- [ ] Tagged #work/client #next\n',
+      },
+      (settings) => {
+        settings.pinnedTags = ['#work/client'];
+        settings.tagGroups = [
+          { id: 'work', name: 'Work', mode: 'prefix', prefix: 'work' },
+          { id: 'next', name: 'Next', mode: 'manual', tags: ['#next'] },
+        ];
+      },
+    );
+    layout = expectDefined(panel.view.contentEl.querySelector<HTMLElement>('.abyss-layout'));
+    left = expectDefined(layout.querySelector<HTMLElement>('.abyss-left'));
+    lists = expectDefined(
+      layout.querySelector<HTMLButtonElement>('.abyss-compact-pane-button--left'),
+    );
+    setGeometry(layout, rect(0, 0, 390, 480));
+    window.dispatchEvent(new Event('resize'));
+    lists.click();
+    expect(left.classList.contains('is-compact-open')).toBe(true);
+  });
+
+  afterEach(async () => {
+    await panel.close();
+  });
+
+  function row(label: string): HTMLElement {
+    return expectDefined(
+      [...left.querySelectorAll<HTMLElement>('.abyss-left-item, .abyss-tag-group-header')].find(
+        (candidate) => candidate.querySelector('.abyss-left-label')?.textContent === label,
+      ),
+    );
+  }
+
+  it.each([
+    ['Today', 'today'],
+    ['Inbox', 'inbox'],
+    ['P', { type: 'project', path: 'Projects/P.md' }],
+    ['#work/client', { type: 'tag', tag: '#work/client' }],
+    ['Next', { type: 'tag', tag: '#next' }],
+    ['Work', { type: 'group', groupId: 'work' }],
+    ['client', { type: 'tag', tag: '#work/client' }],
+  ] as const)(
+    'dismisses after activating %s, including the current destination',
+    (label, selection) => {
+      if (label === 'client')
+        expectDefined(left.querySelector<HTMLElement>('.abyss-group-arrow')).click();
+      row(label).click();
+      expect(panel.state.get('selectedList')).toEqual(selection);
+      expect(left.classList.contains('is-compact-open')).toBe(false);
+      expect(lists.getAttribute('aria-expanded')).toBe('false');
+      expect(lists.getAttribute('aria-label')).toBe('Show task lists');
+      expect(activeDocument.activeElement).toBe(lists);
+    },
+  );
+
+  it('keeps disclosure, menu and inline add actions in the overlay', async () => {
+    expectDefined(left.querySelector<HTMLElement>('.abyss-group-arrow')).click();
+    expect(left.querySelector('.abyss-tag-child')).not.toBeNull();
+    expect(left.classList.contains('is-compact-open')).toBe(true);
+    const menu = vi.spyOn(Menu.prototype, 'showAtMouseEvent');
+    row('Next').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    expect(menu).toHaveBeenCalledTimes(1);
+    expect(left.classList.contains('is-compact-open')).toBe(true);
+    expectDefined(
+      left.querySelector<HTMLElement>('.abyss-left-section--tags .abyss-left-add'),
+    ).click();
+    await flushMicrotasks();
+    const input = expectDefined(left.querySelector<HTMLInputElement>('.abyss-left-add-input'));
+    input.value = 'Draft';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(left.classList.contains('is-compact-open')).toBe(true);
+    expect(activeDocument.activeElement).toBe(input);
+  });
+
+  it.each(['Archive', 'Rename display name…'] as const)(
+    'keeps the overlay open after the group menu action %s',
+    async (title) => {
+      const internals = panel.view as unknown as { panelNavigation_abyssPrivate: PanelNavigator };
+      internals.panelNavigation_abyssPrivate.rebaseListIdentity({ type: 'group', groupId: 'work' });
+      const show = vi.spyOn(Menu.prototype, 'showAtMouseEvent');
+      const edit = vi.spyOn(TagGroupAppearanceModal.prototype, 'open').mockImplementation(function (
+        this: TagGroupAppearanceModal,
+      ) {
+        this.onOpen();
+      });
+      row('Work').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      const menu = expectDefined(show.mock.instances[0]) as {
+        menuItems__: Array<{ title__: string; onClick__: ((event: MouseEvent) => void) | null }>;
+      };
+      const item = expectDefined(menu.menuItems__.find((candidate) => candidate.title__ === title));
+      expectDefined(item.onClick__)(new MouseEvent('click'));
+      await flushMicrotasks();
+      if (title === 'Archive') {
+        expect(panel.state.get('selectedList')).toBe('today');
+        expect(left.textContent).not.toContain('Work');
+      } else {
+        const modal = expectDefined(edit.mock.instances[0]) as TagGroupAppearanceModal;
+        expect(modal.contentEl.querySelector('input')).not.toBeNull();
+        modal.onClose();
+      }
+      expect(left.classList.contains('is-compact-open')).toBe(true);
+      expect(lists.getAttribute('aria-expanded')).toBe('true');
+    },
+  );
+
+  it('keeps the overlay open when a list identity is rebased in the background', () => {
+    const internals = panel.view as unknown as { panelNavigation_abyssPrivate: PanelNavigator };
+    internals.panelNavigation_abyssPrivate.rebaseListIdentity({ type: 'tag', tag: '#next' });
+    expect(panel.state.get('selectedList')).toEqual({ type: 'tag', tag: '#next' });
+    expect(left.classList.contains('is-compact-open')).toBe(true);
+    expect(lists.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('leaves the visible desktop left pane and its focus alone', () => {
+    setGeometry(layout, rect(0, 0, 1200, 480));
+    window.dispatchEvent(new Event('resize'));
+    const destination = row('Inbox');
+    destination.tabIndex = 0;
+    destination.focus();
+    destination.click();
+    expect(panel.state.get('selectedList')).toBe('inbox');
+    expect(left.isConnected).toBe(true);
+    expect(left.classList.contains('is-compact-open')).toBe(false);
+    expect(lists.classList.contains('is-compact-available')).toBe(false);
+    expect(activeDocument.activeElement).not.toBe(lists);
+  });
+
+  it('does not close an inspector-only overlay', () => {
+    const details = expectDefined(
+      layout.querySelector<HTMLButtonElement>('.abyss-compact-pane-button--right'),
+    );
+    details.click();
+    row('Today').click();
+    expect(layout.querySelector('.abyss-right')?.classList.contains('is-compact-open')).toBe(true);
+    expect(details.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it.each(['resize', 'destroy', 'remount'] as const)(
+    'ignores a stale dismissal after %s',
+    async (change) => {
+      const internals = panel.view as unknown as {
+        center_abyssPrivate: CenterPanel;
+      };
+      const destination = row('Inbox');
+      panel.state.set('mode', 'projects');
+      let continueNavigation: (() => void) | undefined;
+      vi.spyOn(internals.center_abyssPrivate, 'finishProjectTableEditorBefore').mockImplementation(
+        (action) => {
+          continueNavigation = action;
+        },
+      );
+      destination.click();
+      expect(panel.state.get('selectedList')).toBe('today');
+      const outside = activeDocument.body.createEl('button');
+      if (change === 'resize') {
+        panel.state.set('mode', 'tasks');
+        lists.click();
+        setGeometry(layout, rect(0, 0, 1200, 480));
+        window.dispatchEvent(new Event('resize'));
+        outside.focus();
+      } else {
+        await panel.view.onClose();
+        if (change === 'remount') {
+          await panel.view.onOpen();
+          layout = expectDefined(panel.view.contentEl.querySelector<HTMLElement>('.abyss-layout'));
+          left = expectDefined(layout.querySelector<HTMLElement>('.abyss-left'));
+          lists = expectDefined(
+            layout.querySelector<HTMLButtonElement>('.abyss-compact-pane-button--left'),
+          );
+          setGeometry(layout, rect(0, 0, 390, 480));
+          window.dispatchEvent(new Event('resize'));
+          lists.click();
+          expect(left.classList.contains('is-compact-open')).toBe(true);
+        }
+      }
+      expectDefined(continueNavigation)();
+      if (change === 'remount') {
+        expect(left.classList.contains('is-compact-open')).toBe(true);
+        expect(lists.getAttribute('aria-expanded')).toBe('true');
+        expect(activeDocument.activeElement).toBe(left);
+      } else if (change === 'resize') {
+        expect(left.classList.contains('is-compact-open')).toBe(false);
+        expect(activeDocument.activeElement).toBe(outside);
+      } else {
+        expect(panel.view.contentEl.children).toHaveLength(0);
+      }
+      outside.remove();
+    },
+  );
 });
 
 describe('PanelView', () => {
@@ -3246,7 +3448,7 @@ describe('PanelView', () => {
       expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-left-item')).click();
 
       expect(openCalendar).toHaveBeenCalledOnce();
-      expect(openList).toHaveBeenCalledWith('inbox');
+      expect(openList).toHaveBeenCalledWith('inbox', undefined, expect.any(Function));
 
       internals.state_abyssPrivate.set('selectedList', { type: 'tag', tag: '#work' });
       await tagManager.renameTagExact('#work', '#focus');

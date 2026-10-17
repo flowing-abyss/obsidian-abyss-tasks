@@ -686,8 +686,15 @@ export class PanelView extends ItemView {
     projectStore: ProjectStore,
     projectManager: ProjectManager,
   ): LeftPanel {
+    // AppState is recreated on every mount; CompactPaneAccess is reused after close/reopen.
+    const state = this.state_abyssPrivate;
+    const compactPaneAccess = this.compactPaneAccess_abyssPrivate;
     return new LeftPanel({
       statisticsNavigation: this.center_abyssPrivate.getStatisticsNavigation(),
+      onTaskNavigate: () => {
+        if (this.panelsMounted_abyssPrivate && this.state_abyssPrivate === state)
+          compactPaneAccess.close(true, 'left');
+      },
       onAnalysisNavigate: () => {
         this.compactPaneAccess_abyssPrivate.close(true, 'left');
       },

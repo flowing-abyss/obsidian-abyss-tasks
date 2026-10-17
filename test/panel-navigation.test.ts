@@ -53,6 +53,7 @@ function harness(
     }),
     openQuickCapture: vi.fn(),
     finishProjectTableEditorBefore,
+    clearTaskSearchReveal: vi.fn(),
   };
   const save = vi.fn().mockResolvedValue(undefined);
   const navigator = new PanelNavigator(state, options.settings ?? settings(), center, save);
@@ -104,6 +105,78 @@ describe('center inspector selection', () => {
 });
 
 describe('PanelNavigator', () => {
+  it.each(['today', 'inbox'] as const)(
+    'notifies an accepted %s destination after its complete state commit',
+    (selection) => {
+      const { state, center, navigator } = harness();
+      state.set('centerFilter', 'needle');
+      const order: string[] = [];
+      state.onCommit(() => order.push('state'));
+      const committed = vi.fn(() => {
+        expect(state.get('selectedList')).toBe(selection);
+        expect(state.get('centerFilter')).toBe('');
+        expect(state.get('mode')).toBe('tasks');
+        order.push('callback');
+      });
+
+      navigator.openList(selection, undefined, committed);
+
+      expect(committed).toHaveBeenCalledTimes(1);
+      expect(order).toEqual(['state', 'callback']);
+      expect(methodOf(center, 'clearTaskSearchReveal')).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('notifies only after the accepted transition afterCommit', () => {
+    const { state, center, navigator } = harness();
+    const order: string[] = [];
+    const committed = vi.fn(() => order.push('callback'));
+    navigator.openList(
+      'inbox',
+      {
+        canCommit: () => true,
+        commit: () => order.push('transition'),
+        afterCommit: () => {
+          expect(state.get('selectedList')).toBe('inbox');
+          order.push('afterCommit');
+        },
+      },
+      committed,
+    );
+    expect(order).toEqual(['transition', 'afterCommit', 'callback']);
+    expect(methodOf(center, 'clearTaskSearchReveal')).not.toHaveBeenCalled();
+  });
+
+  it('does not notify for a rejected transition', () => {
+    const { state, navigator } = harness();
+    const committed = vi.fn();
+    const commit = vi.fn();
+    const afterCommit = vi.fn();
+    navigator.openList('inbox', { canCommit: () => false, commit, afterCommit }, committed);
+    expect(state.get('selectedList')).toBe('today');
+    expect(committed).not.toHaveBeenCalled();
+    expect(commit).not.toHaveBeenCalled();
+    expect(afterCommit).not.toHaveBeenCalled();
+  });
+
+  it.each(['accept', 'reject'] as const)(
+    'waits for project editor %s before notifying the destination',
+    (outcome) => {
+      const { state, navigator, finishProjectTableEditorBefore } = harness({ mode: 'projects' });
+      let continuation: (() => void) | undefined;
+      finishProjectTableEditorBefore.mockImplementation((action) => {
+        continuation = action;
+      });
+      const committed = vi.fn();
+      navigator.openList('inbox', undefined, committed);
+      expect(committed).not.toHaveBeenCalled();
+      expect(state.get('mode')).toBe('projects');
+      if (outcome === 'accept') expectDefined(continuation)();
+      expect(committed).toHaveBeenCalledTimes(outcome === 'accept' ? 1 : 0);
+      expect(state.get('selectedList')).toBe(outcome === 'accept' ? 'inbox' : 'today');
+    },
+  );
+
   it('opens a list atomically after saving outgoing state and restoring incoming state', () => {
     const todayState = listState('priority');
     const inboxState = listState('status');

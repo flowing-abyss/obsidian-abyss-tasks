@@ -82,6 +82,7 @@ export interface LeftPanelOptions {
   readonly navigation?: PanelNavigationActions | undefined;
   readonly statisticsNavigation?: StatisticsNavigationPort | undefined;
   readonly onAnalysisNavigate?: (() => void) | undefined;
+  readonly onTaskNavigate?: (() => void) | undefined;
   readonly onSaveViewState?: (() => Promise<void>) | undefined;
 }
 
@@ -145,6 +146,7 @@ export class LeftPanel {
       tagManager,
       app,
       navigation: this.navigation_abyssPrivate,
+      onTaskNavigate: options.onTaskNavigate,
       queries: tasks.queries,
       host: {
         render: () => {
@@ -596,7 +598,11 @@ export class LeftPanel {
         row.createSpan({ cls: 'abyss-left-count', text: String(openCount) });
       }
       row.addEventListener('click', () => {
-        this.navigation_abyssPrivate.openList({ type: 'project', path: project.path });
+        this.navigation_abyssPrivate.openList(
+          { type: 'project', path: project.path },
+          undefined,
+          this.options_abyssPrivate.onTaskNavigate,
+        );
       });
       row.addEventListener('contextmenu', (e) => {
         e.preventDefault();
@@ -897,7 +903,11 @@ export class LeftPanel {
     }
 
     row.addEventListener('click', () => {
-      this.navigation_abyssPrivate.openList(selection);
+      this.navigation_abyssPrivate.openList(
+        selection,
+        undefined,
+        this.options_abyssPrivate.onTaskNavigate,
+      );
     });
   }
 

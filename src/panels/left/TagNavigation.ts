@@ -37,6 +37,7 @@ export interface TagNavigationOptions {
   readonly navigation: PanelNavigationActions;
   readonly queries: Pick<TaskDependencyQueryApi, 'listNodes'>;
   readonly host: TagNavigationHost;
+  readonly onTaskNavigate?: (() => void) | undefined;
 }
 
 type NodeCounter = (selection: ListSelection) => number;
@@ -62,6 +63,7 @@ export class TagNavigation {
   readonly #navigation: PanelNavigationActions;
   readonly #queries: Pick<TaskDependencyQueryApi, 'listNodes'>;
   readonly #host: TagNavigationHost;
+  readonly #onTaskNavigate: (() => void) | undefined;
   readonly #expandedGroups = new Set<string>();
   readonly #explicitlyCollapsed = new Set<string>();
   // When a tag is opened from the Pinned section, don't auto-expand the group
@@ -79,6 +81,7 @@ export class TagNavigation {
     this.#navigation = options.navigation;
     this.#queries = options.queries;
     this.#host = options.host;
+    this.#onTaskNavigate = options.onTaskNavigate;
   }
 
   renderPinnedTag(parent: HTMLElement, tag: string, countNodes: NodeCounter): void {
@@ -97,7 +100,7 @@ export class TagNavigation {
 
     row.addEventListener('click', () => {
       this.#tagSelectedFromPinned = true;
-      this.#navigation.openList({ type: 'tag', tag });
+      this.#navigation.openList({ type: 'tag', tag }, undefined, this.#onTaskNavigate);
     });
 
     row.addEventListener('contextmenu', (e) => {
@@ -137,7 +140,7 @@ export class TagNavigation {
 
     row.addEventListener('click', () => {
       this.#tagSelectedFromPinned = false;
-      this.#navigation.openList({ type: 'tag', tag });
+      this.#navigation.openList({ type: 'tag', tag }, undefined, this.#onTaskNavigate);
     });
     row.addEventListener('contextmenu', (e) => {
       e.preventDefault();
@@ -220,7 +223,11 @@ export class TagNavigation {
       header.createSpan({ cls: 'abyss-left-count', text: String(groupCount) });
     }
     header.addEventListener('click', () => {
-      this.#navigation.openList({ type: 'group', groupId: group.id });
+      this.#navigation.openList(
+        { type: 'group', groupId: group.id },
+        undefined,
+        this.#onTaskNavigate,
+      );
     });
     header.addEventListener('contextmenu', (e) => {
       e.preventDefault();
@@ -269,7 +276,7 @@ export class TagNavigation {
     child.addEventListener('click', (event) => {
       event.stopPropagation();
       this.#tagSelectedFromPinned = false;
-      this.#navigation.openList({ type: 'tag', tag });
+      this.#navigation.openList({ type: 'tag', tag }, undefined, this.#onTaskNavigate);
     });
     child.addEventListener('contextmenu', (event) => {
       event.preventDefault();

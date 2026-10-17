@@ -16,7 +16,11 @@ export interface PanelNavigationTransition {
 
 export interface PanelNavigationActions {
   openTasks(): void;
-  openList(selection: ListSelection, transition?: PanelNavigationTransition): void;
+  openList(
+    selection: ListSelection,
+    transition?: PanelNavigationTransition,
+    onCommitted?: () => void,
+  ): void;
   openCalendar(): void;
   openCalendarView(view: CalViewType): void;
   openProjects(): void;
@@ -50,7 +54,11 @@ export class PanelNavigator implements PanelNavigationActions {
     this.openList(this.lastTasksList);
   }
 
-  openList(selection: ListSelection, transition?: PanelNavigationTransition): void {
+  openList(
+    selection: ListSelection,
+    transition?: PanelNavigationTransition,
+    onCommitted?: () => void,
+  ): void {
     const change = (): void => {
       if (transition?.canCommit() === false) return;
       this.state.batch(() => {
@@ -65,6 +73,7 @@ export class PanelNavigator implements PanelNavigationActions {
         this.state.set('mode', 'tasks');
       });
       transition?.afterCommit?.();
+      onCommitted?.();
     };
     if (transition !== undefined && this.center.finishProjectTableEditorBefore !== undefined)
       this.center.finishProjectTableEditorBefore(change);

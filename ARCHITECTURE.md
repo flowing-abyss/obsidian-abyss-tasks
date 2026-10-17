@@ -485,7 +485,11 @@ alter saved filters. Reveal consumes its scroll permission once and yields to la
 focus, source changes, or owner loss. Modal-to-sidebar draft transfer preserves both owners on conflict.
 
 Navigation completes an active project editor before changing mode; rejected drafts keep the current
-mode. Focus return requires a connected opener and current interaction ownership. Each surface uses
+mode. Explicit left task destinations dismiss their compact overlay only after the navigator accepts
+and commits the destination, including reactivating the current list. Disclosure, editing, menus,
+and background identity changes retain their existing interaction ownership. Dismissal belongs to
+the initiating view mount; deferred completion cannot close a reopened view's overlay. Focus return
+requires a connected opener and current interaction ownership. Each surface uses
 its owning document/window, including after Obsidian popout migration, and releases listeners,
 observers, timers, frames, subscriptions, and Components on teardown. Finite Obsidian Scope bindings
 and the shared shortcut router respect active editors, nested surfaces, and interaction leases.
