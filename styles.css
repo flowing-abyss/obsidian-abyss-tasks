@@ -10909,6 +10909,10 @@ button.abyss-calendar-date[aria-pressed='true'] {
   }
 
   .abyss-cal-nav button:is(.abyss-cal-nav-btn, .abyss-cal-nav-today, .abyss-cal-view-btn) {
-    inline-size: 28px;
+    inline-size: calc(28px - var(--size-2-1));
+  }
+
+  .abyss-cal-nav button:is(.abyss-cal-nav-month, .abyss-cal-nav-year) {
+    padding-inline: var(--size-2-1);
   }
 }
