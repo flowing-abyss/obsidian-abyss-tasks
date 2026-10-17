@@ -51,6 +51,9 @@ import process from 'process';
 // 2,121,841 bytes (+1,655, including 43 bytes for the action group). No dependencies added.
 // The minimal containing next-KiB main limit is 2,122,752 bytes (2073 KiB); shipped CSS
 // is 190,883 bytes within its unchanged 193,536-byte cap. All artifact enforcement remains.
+// Source-independent forecast templates: main 2,122,720 -> 2,122,784 bytes (+64).
+// Approved next-KiB main limit: 2,123,776 bytes (2074 KiB). Shipped CSS is 190,904 bytes
+// within its unchanged 193,536-byte cap; dependency scope and artifact enforcement are unchanged.
 const { mainJsBudgetBytes: MAIN_JS_BUDGET_BYTES } = JSON.parse(
   readFileSync('package.json', 'utf8'),
 ).release;
