@@ -477,19 +477,64 @@ it('does not acquire view focus for programmatic navigation', () => {
 });
 
 describe('compact CalendarMode', () => {
-  function narrow(h: Harness, width = 360): void {
-    vi.spyOn(h.root, 'getBoundingClientRect').mockImplementation(() => ({
-      width,
-      height: 700,
-      x: 0,
-      y: 0,
-      top: 0,
-      left: 0,
-      right: width,
-      bottom: 700,
-      toJSON: () => ({}),
-    }));
+  function narrow(h: Harness, width: number | (() => number) = 360): void {
+    vi.spyOn(h.root, 'getBoundingClientRect').mockImplementation(() => {
+      const measuredWidth = typeof width === 'function' ? width() : width;
+      return new DOMRect(0, 0, measuredWidth, 700);
+    });
   }
+
+  function resizableWidth(h: Harness, initial: number): (next: number) => Promise<void> {
+    let width = initial;
+    narrow(h, () => width);
+    return async (next) => {
+      width = next;
+      window.dispatchEvent(new Event('resize'));
+      await new Promise<void>((resolve) => {
+        window.requestAnimationFrame(() => {
+          resolve();
+        });
+      });
+    };
+  }
+
+  it.each(['month', 'week'] as const)(
+    'keeps compact body spacing aligned with the mounted %s view across resize and Day replacement',
+    async (view) => {
+      const h = harness();
+      const resize = resizableWidth(h, 800);
+      const body = (): HTMLElement =>
+        expectDefined(h.root.querySelector<HTMLElement>('.abyss-cal-body'));
+      h.mode.setView(view);
+      h.mode.render(h.root);
+      const retainedBody = body();
+      expect(retainedBody.classList.contains('abyss-cal-body--compact')).toBe(false);
+      await resize(360);
+      expect(body()).toBe(retainedBody);
+      expect(body().classList.contains('abyss-cal-body--compact')).toBe(true);
+      expect(body().querySelector('.abyss-calendar-compact')).not.toBeNull();
+      h.emit();
+      expect(body().classList.contains('abyss-cal-body--compact')).toBe(true);
+      await resize(800);
+      expect(body()).toBe(retainedBody);
+      expect(body().classList.contains('abyss-cal-body--compact')).toBe(false);
+      expect(body().querySelector('.abyss-calendar-compact')).toBeNull();
+      await resize(360);
+      expect(body().classList.contains('abyss-cal-body--compact')).toBe(true);
+      h.mode.setView('today');
+      h.mode.render(h.root);
+      expect(body()).not.toBe(retainedBody);
+      expect(body().classList.contains('abyss-cal-body--compact')).toBe(false);
+      expect(body().querySelector('.abyss-calendar-compact')).toBeNull();
+      await resize(800);
+      await resize(360);
+      expect(body().classList.contains('abyss-cal-body--compact')).toBe(false);
+      h.mode.setView(view);
+      h.mode.render(h.root);
+      expect(body().classList.contains('abyss-cal-body--compact')).toBe(true);
+      expect(body().querySelector('.abyss-calendar-compact')).not.toBeNull();
+    },
+  );
 
   it('changes the selected agenda without querying, projecting or adapting display snapshots', () => {
     const adapt = vi.spyOn(calendarOccurrences, 'taskSnapshotForCalendarOccurrence');
@@ -560,10 +605,7 @@ describe('compact CalendarMode', () => {
         recurringSources: [],
       }));
       const h = harness({ forCalendarProjection });
-      let width = 360;
-      vi.spyOn(h.root, 'getBoundingClientRect').mockImplementation(
-        () => new DOMRect(0, 0, width, 700),
-      );
+      const resize = resizableWidth(h, 360);
       h.mode.setView(view);
       h.mode['date_abyssPrivate'] = moment('2026-10-16');
       h.mode.render(h.root);
@@ -574,15 +616,6 @@ describe('compact CalendarMode', () => {
       expect(adapt).not.toHaveBeenCalled();
       expect(forCalendarProjection).toHaveBeenCalledOnce();
       expect(project).toHaveBeenCalledOnce();
-      const resize = async (next: number): Promise<void> => {
-        width = next;
-        window.dispatchEvent(new Event('resize'));
-        await new Promise<void>((resolve) => {
-          window.requestAnimationFrame(() => {
-            resolve();
-          });
-        });
-      };
       await resize(800);
       expect(
         h.root.querySelector(view === 'month' ? '.abyss-mg-grid' : '.abyss-tg-grid-row'),

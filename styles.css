@@ -3430,7 +3430,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   flex-direction: column;
 }
 
-.abyss-cal-body:has(> .abyss-calendar-compact) {
+.abyss-cal-body--compact {
   padding-bottom: 0;
 }
 
@@ -7743,6 +7743,7 @@ button.abyss-project-table-status-pill {
 .abyss-project-timeline-scale-control {
   display: grid;
   overflow-x: auto;
+  scrollbar-width: none;
   box-sizing: border-box;
   min-width: 0;
   block-size: var(--abyss-toolbar-control-size);
@@ -9192,7 +9193,7 @@ body.is-phone .abyss-project-timeline-navigation {
 }
 
 body.is-phone .abyss-project-timeline-scale-control button {
-  padding-inline: var(--size-4-1);
+  padding-inline: var(--size-2-1);
 }
 
 body.is-phone :is(.abyss-project-table-footer, .abyss-projects-table button.abyss-projects-new) {
@@ -10879,7 +10880,7 @@ button.abyss-calendar-date[aria-pressed='true'] {
     white-space: nowrap;
   }
 
-  body.is-phone .abyss-cal-nav-today {
+  body.is-phone :where(.abyss-cal-nav) .abyss-cal-nav-today {
     inline-size: 36px;
   }
 }

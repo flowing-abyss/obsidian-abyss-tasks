@@ -401,6 +401,11 @@ export class CalendarMode {
     // position skips the scroll. The key check stays on the left so every mount records its key.
     const shouldScrollToNow =
       this.shouldScrollToNow_abyssPrivate() || preservedScrollTop === undefined;
+    const compactView =
+      this.constrained_abyssPrivate && this.viewType_abyssPrivate !== 'today'
+        ? this.viewType_abyssPrivate
+        : undefined;
+    context.viewContainer.toggleClass('abyss-cal-body--compact', compactView !== undefined);
     const view = createCalendarView(
       this.viewType_abyssPrivate,
       this.viewDependencies_abyssPrivate(context.forecastMenuOwner),
@@ -413,9 +418,9 @@ export class CalendarMode {
           this.openWeek_abyssPrivate(date);
         },
       },
-      this.constrained_abyssPrivate && this.viewType_abyssPrivate !== 'today'
+      compactView !== undefined
         ? {
-            view: this.viewType_abyssPrivate,
+            view: compactView,
             dates,
             selectedDate: () =>
               this.selectedDate_abyssPrivate ??
