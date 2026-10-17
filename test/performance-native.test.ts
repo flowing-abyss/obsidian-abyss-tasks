@@ -333,6 +333,7 @@ describe('native profile boundaries', () => {
     ['abyss-mg-cell', 'data-mg-date', 'abyss-mg-deadline-marker'],
     ['abyss-tg-header-cell', 'data-tg-date', 'abyss-tg-block'],
     ['abyss-calendar-date', 'data-calendar-date', 'abyss-calendar-item'],
+    ['abyss-calendar-date', 'data-calendar-date', 'abyss-task-card'],
   ])('accepts populated calendar evidence from %s', (cls, attribute, cardClass) => {
     const root = document.body.createDiv();
     const date = root.createDiv({ cls });
@@ -348,6 +349,27 @@ describe('native profile boundaries', () => {
       expect(() => calendarEvidence(root, 1)).toThrow('populated');
       card.removeAttribute('aria-busy');
       card.textContent = '';
+      expect(() => calendarEvidence(root, 1)).toThrow('populated');
+    } finally {
+      root.remove();
+    }
+  });
+  it('counts canonical task cards only inside the agenda and counts a matching card once', () => {
+    const root = document.body.createDiv();
+    root.createDiv({ cls: 'abyss-calendar-date', attr: { 'data-calendar-date': '2026-10-16' } });
+    const agenda = root.createDiv({
+      cls: 'abyss-calendar-agenda',
+      attr: { 'data-calendar-date': '2026-10-16' },
+    });
+    root.createDiv({ cls: 'abyss-task-card', text: 'Unrelated inspector card' });
+    try {
+      expect(() => calendarEvidence(root, 1)).toThrow('populated');
+      const card = agenda.createDiv({
+        cls: 'abyss-task-card abyss-calendar-item',
+        text: 'Agenda task',
+      });
+      expect(calendarEvidence(root, 1).renderedCards).toBe(1);
+      card.remove();
       expect(() => calendarEvidence(root, 1)).toThrow('populated');
     } finally {
       root.remove();
