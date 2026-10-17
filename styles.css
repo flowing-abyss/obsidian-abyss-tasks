@@ -3222,18 +3222,13 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   flex-shrink: 0;
 }
 
-.abyss-cal-nav-left {
-  gap: var(--size-2-1);
-  min-inline-size: 0;
-}
-
 .abyss-cal-nav-right {
   gap: var(--size-4-1);
   margin-inline-start: auto;
 }
 
 .abyss-cal-nav-title-group {
-  gap: var(--size-4-1);
+  gap: var(--size-2-1);
   position: relative;
 }
 
@@ -3244,6 +3239,43 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   flex-wrap: wrap;
   min-block-size: 44px;
   row-gap: var(--size-4-4);
+}
+
+/* Keep the date tray intrinsic while allowing its month label to shrink. */
+:is(.abyss-cal-nav-left, .abyss-cal-nav-title-group) {
+  flex-wrap: nowrap;
+  min-block-size: 0;
+  min-inline-size: 0;
+}
+
+.abyss-cal-nav-left {
+  box-sizing: border-box;
+  block-size: var(--abyss-toolbar-control-size);
+  gap: var(--size-2-1);
+  background: var(--background-modifier-border);
+  border-radius: 8px;
+  padding: var(--size-2-1);
+}
+
+.abyss-cal-nav-left button {
+  block-size: calc(var(--abyss-toolbar-control-size) - 2 * var(--size-2-1));
+  border-radius: 6px;
+}
+
+.abyss-cal-nav-left button:not(:hover) {
+  background: transparent;
+}
+
+.abyss-cal-nav-left .abyss-cal-nav-month::before,
+.abyss-cal-nav-left .abyss-cal-nav-year::before,
+.abyss-cal-nav-left > .abyss-cal-nav-btn:last-child::before {
+  content: '';
+  position: absolute;
+  inset-inline-start: 0;
+  inset-block: 25%;
+  width: 1px;
+  background: var(--background-modifier-border-focus);
+  pointer-events: none;
 }
 
 .abyss-cal-control-icon,
@@ -3396,6 +3428,10 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   padding: var(--size-4-2) 0;
   display: flex;
   flex-direction: column;
+}
+
+.abyss-cal-body:has(> .abyss-calendar-compact) {
+  padding-bottom: 0;
 }
 
 .abyss-cal-body :is(.grid, .list) {
@@ -7689,27 +7725,46 @@ button.abyss-project-table-status-pill {
   display: none;
 }
 
+/* Keep both navigation rows in the axis's measured height, including the scale divider. */
 .abyss-project-timeline-navigation {
   display: flex;
+  flex-direction: column;
   width: 100%;
-  min-height: 48px;
 }
 
 .abyss-project-timeline-range-navigation {
-  display: flex;
-  flex: none;
+  display: grid;
+  grid-template-columns: var(--abyss-toolbar-control-size) minmax(0, 1fr) var(
+      --abyss-toolbar-control-size
+    );
+  block-size: var(--abyss-toolbar-control-size);
 }
 
 .abyss-project-timeline-scale-control {
   display: grid;
+  overflow-x: auto;
+  box-sizing: border-box;
   min-width: 0;
-  flex: 1 16.5em;
-  grid-template-columns: 1fr 1.5fr 1.3fr 1.5fr 1fr;
+  block-size: var(--abyss-toolbar-control-size);
+  grid-template-columns:
+    minmax(max-content, 1fr) minmax(max-content, 1.5fr) minmax(max-content, 1.3fr)
+    minmax(max-content, 1.5fr) minmax(max-content, 1fr);
   gap: 0;
   padding: 0;
-  border-left: 1px solid var(--background-modifier-border);
+  border-top: 1px solid var(--background-modifier-border);
   border-radius: 0;
   background: transparent;
+}
+
+.abyss-project-timeline-navigation button {
+  block-size: 100%;
+  min-block-size: 0;
+  white-space: nowrap;
+}
+
+.abyss-project-timeline-range-navigation button {
+  inline-size: 100%;
+  min-inline-size: 0;
 }
 
 .abyss-project-timeline-axis .svg-icon {
@@ -7735,37 +7790,6 @@ button.abyss-project-table-status-pill {
 
 .abyss-project-timeline-axis button + button {
   border-left: 1px solid var(--background-modifier-border);
-}
-
-@container abyss-timeline-nav (width < 24.5em) {
-  .abyss-project-timeline-navigation {
-    display: block;
-  }
-
-  .abyss-project-timeline-range-navigation {
-    display: grid;
-    grid-template-columns: 28px 1fr 28px;
-  }
-
-  .abyss-project-timeline-scale-control {
-    border-top: 1px solid var(--background-modifier-border);
-    border-left: 0;
-  }
-}
-
-@container abyss-timeline-nav (width < 16.5em) {
-  .abyss-project-timeline-scale-control {
-    grid-template: repeat(2, 1fr) / repeat(3, 1fr);
-  }
-
-  .abyss-cal-view-btn:nth-child(2) {
-    grid-area: 2 / 1;
-    border-left: 0;
-  }
-
-  .abyss-cal-view-btn:nth-child(3) {
-    grid-area: 1 / 2 / 3;
-  }
 }
 
 .abyss-project-timeline-scroll {
@@ -7811,7 +7835,6 @@ button.abyss-project-table-status-pill {
 .abyss-project-timeline-axis-summary {
   display: flex;
   align-items: stretch;
-  container: abyss-timeline-nav / inline-size;
   background: var(--background-secondary);
   font-variant-numeric: tabular-nums;
 }
@@ -9164,43 +9187,11 @@ body.is-phone .abyss-projects-table button.abyss-project-status-filter {
   padding-block: 0;
 }
 
-/* Keep both navigation rows in the axis's measured height, including the scale divider. */
 body.is-phone .abyss-project-timeline-navigation {
   --abyss-toolbar-control-size: 36px;
-
-  display: block;
-}
-
-body.is-phone .abyss-project-timeline-range-navigation {
-  display: grid;
-  grid-template-columns: var(--abyss-toolbar-control-size) minmax(0, 1fr) var(
-      --abyss-toolbar-control-size
-    );
-  block-size: var(--abyss-toolbar-control-size);
-}
-
-body.is-phone .abyss-project-timeline-scale-control {
-  display: flex;
-  overflow-x: auto;
-  box-sizing: border-box;
-  block-size: var(--abyss-toolbar-control-size);
-  border-top: 1px solid var(--background-modifier-border);
-  border-left: 0;
-}
-
-body.is-phone .abyss-project-timeline-navigation button {
-  block-size: 100%;
-  min-block-size: 0;
-}
-
-body.is-phone .abyss-project-timeline-range-navigation button {
-  inline-size: 100%;
-  min-inline-size: 0;
 }
 
 body.is-phone .abyss-project-timeline-scale-control button {
-  flex: 1 0 auto;
-  grid-area: auto;
   padding-inline: var(--size-4-1);
 }
 
@@ -10735,13 +10726,13 @@ button.abyss-statistics-row-button:focus-visible {
   min-inline-size: 0;
   flex: 1;
   overflow: auto;
-  padding-inline: var(--size-2-1);
 }
 
 .abyss-calendar-dates {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
   flex: 0 0 auto;
+  padding-inline: var(--size-2-1);
 }
 
 .abyss-calendar-weekday {
@@ -10814,10 +10805,11 @@ button.abyss-calendar-date[aria-pressed='true'] {
   min-block-size: 120px;
   flex: 1 1 auto;
   overflow: hidden;
-  padding: var(--size-4-2) var(--size-2-1);
+  padding: 0;
 }
 
 .abyss-calendar-agenda-list {
+  padding: var(--size-4-2) var(--size-4-1) 0;
   overflow-anchor: none;
   min-block-size: 0;
   flex: 1 1 auto;
@@ -10844,29 +10836,6 @@ button.abyss-calendar-date[aria-pressed='true'] {
 
   :is(.abyss-cal-nav-left, .abyss-cal-nav-right, .abyss-cal-nav-title-group) {
     flex-wrap: nowrap;
-  }
-
-  :is(.abyss-cal-nav-left, .abyss-cal-nav-title-group) {
-    min-block-size: 0;
-    min-inline-size: 0;
-    gap: var(--size-2-1);
-  }
-
-  .abyss-cal-nav-left {
-    box-sizing: border-box;
-    block-size: var(--abyss-toolbar-control-size);
-    background: var(--background-modifier-border);
-    border-radius: 8px;
-    padding: var(--size-2-1);
-  }
-
-  .abyss-cal-nav-left button {
-    block-size: calc(var(--abyss-toolbar-control-size) - 2 * var(--size-2-1));
-    border-radius: 6px;
-  }
-
-  .abyss-cal-nav-left button:not(:hover) {
-    background: transparent;
   }
 
   button.abyss-cal-nav-month {

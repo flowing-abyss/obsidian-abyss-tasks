@@ -344,7 +344,7 @@ describe('CenterPanel task metadata styles', () => {
 
   it('leaves agenda bottom clearance with the existing shell and keyboard inset owner', () => {
     const agenda = declarationsFor('.abyss-calendar-agenda');
-    expect(agenda).toContain('padding: var(--size-4-2) var(--size-2-1)');
+    expect(agenda).toContain('padding: 0');
     expect(agenda).not.toContain('safe-area-inset-bottom');
     expect(agenda).not.toContain('--abyss-shell-bottom-inset');
     expect(declarationsFor('body.is-phone .abyss-layout > .abyss-center-shell')).toContain(
