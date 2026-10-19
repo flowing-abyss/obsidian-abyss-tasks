@@ -127,6 +127,7 @@ export interface RightPanelMutationLifecycle {
   readonly ref: TaskRef;
   readonly token: object;
   readonly operation?: 'hierarchy';
+  readonly proof?: OwnedTaskSelectionProof | undefined;
 }
 
 interface SubmittedDraft {
@@ -1213,7 +1214,12 @@ export class RightPanel {
     if (result.type !== 'ok' && submitted.consumed && submitted.draft != null) {
       this.recoverSubmittedDraft_abyssPrivate(submitted);
     }
-    this.onMutationLifecycle_abyssPrivate?.({ phase: 'settled', ref: { ...submitted.ref }, token });
+    this.onMutationLifecycle_abyssPrivate?.({
+      phase: 'settled',
+      ref: { ...submitted.ref },
+      token,
+      proof: result.type === 'ok' ? submitted.proof : undefined,
+    });
   }
 
   /**

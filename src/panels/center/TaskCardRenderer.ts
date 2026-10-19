@@ -159,7 +159,10 @@ interface TaskCardRendererHost {
     context?: TaskCardInteractionContext,
   ): void;
   reportFailure?(error: unknown): void;
-  runStatusAction?(action: () => Promise<void>): Promise<void>;
+  runStatusAction?(
+    subject: TaskSelectionNode,
+    action: (current: TaskSelectionNode) => Promise<void>,
+  ): Promise<void>;
   captureStatusTarget?(marker: HTMLElement, current: () => TaskSelectionNode | undefined): void;
   dependenciesForNode(target: TaskNodeRef): TaskDependencySummary | undefined;
   openChildContextMenu(event: MouseEvent, child: SubtaskSnapshot, row: HTMLElement): void;
@@ -848,12 +851,10 @@ export class TaskCardRenderer {
       completionBlocked: dependencyCompletionBlocked(projection),
       onLeftClick: () => {
         if (current?.isCurrent() === false) return;
-        const action = (): Promise<void> =>
-          this.#commands.toggleTask(
-            current?.currentProjection().node ?? task,
-            current?.currentOccurrence()?.completion,
-          );
-        runAsyncAction(this.#host.runStatusAction?.(action) ?? action());
+        const subject = current?.currentProjection().node ?? task;
+        const action = (subject: TaskSelectionNode): Promise<void> =>
+          this.#commands.toggleTask(subject, current?.currentOccurrence()?.completion);
+        runAsyncAction(this.#host.runStatusAction?.(subject, action) ?? action(subject));
       },
       onContextMenu: (event) => {
         event.stopPropagation();
@@ -1132,8 +1133,9 @@ export class TaskCardRenderer {
           onLeftClick: () => {
             const node = current();
             if (node !== undefined) {
-              const action = (): Promise<void> => this.#commands.toggleTask(node);
-              runAsyncAction(this.#host.runStatusAction?.(action) ?? action());
+              const action = (subject: TaskSelectionNode): Promise<void> =>
+                this.#commands.toggleTask(subject);
+              runAsyncAction(this.#host.runStatusAction?.(node, action) ?? action(node));
             }
           },
           onContextMenu: (event: MouseEvent) => {

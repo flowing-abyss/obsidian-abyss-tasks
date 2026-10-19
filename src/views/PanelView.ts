@@ -779,7 +779,10 @@ export class PanelView extends ItemView {
         this.center_abyssPrivate.showTaskInList(target, request),
       dependencySearch: this.createDependencySearch_abyssPrivate(),
       onMutationLifecycle: (event) => {
-        if (event.operation !== 'hierarchy') this.trackOwnWrite_abyssPrivate(event);
+        if (event.operation !== 'hierarchy') {
+          this.trackOwnWrite_abyssPrivate(event);
+          this.center_abyssPrivate.onInspectorMutation(event);
+        }
       },
       commentTimeContext: this.commentTimeContext_abyssPrivate,
       interactionOwnership: this.interactionRegistry_abyssPrivate,

@@ -355,8 +355,14 @@ Search and source queries remain live. Each publication must still resolve the c
 or through a repository-proven authority transition, with surviving descendants checked by the
 existing exact selection/source continuity rules; external replacements, ambiguity, deletion,
 semantic changes, navigation, cancellation, and owner loss revoke the hold. The original callback
-submits its captured task through the existing application command and rebasing checks. Releasing
-the last gesture, menu, or command lease delivers the latest deferred Search state.
+keeps its captured subject, while the gesture owner advances its actionable subject only through
+these source checks or the inspector's command-specific successor proof. `PanelView` forwards the
+inspector's existing mutation tokens and settled proof to this owner. An accepted list action waits
+for its matching inspector save to settle, revalidates the exact successor, and submits that subject
+once through the existing application command. Matching metadata echoes may expire the index's old
+transition without invalidating the proven current subject; external edits to that successor still
+cancel the action. This evidence lasts only for the gesture, menu, and command lifetime and grants
+no global source history or retry. Releasing the last lease delivers deferred Search presentation.
 
 ## Presentation and interaction ownership
 

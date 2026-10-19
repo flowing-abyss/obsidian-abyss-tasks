@@ -1,6 +1,7 @@
 import { WorkspaceLeaf, type App } from 'obsidian';
 import { expect, it, vi } from 'vitest';
 import type { AppState } from '../src/app/AppState';
+import type { CenterPanel } from '../src/panels/CenterPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { TagManager } from '../src/tags/TagManager';
 import { PanelView } from '../src/views/PanelView';
@@ -98,8 +99,10 @@ it('keeps the pressed list marker and captured callback through an inspector tit
 async function dirtyEditor(
   h: Awaited<ReturnType<typeof mountList>>,
   kind: 'title' | 'desc' = 'title',
+  child = false,
 ) {
-  h.state.set('taskStack', [expectDefined(h.index.list()[0])]);
+  const root = expectDefined(h.index.list()[0]);
+  h.state.set('taskStack', child ? [root, expectDefined(root.subtasks[0])] : [root]);
   expectDefined(h.view.contentEl.querySelector<HTMLElement>(`.abyss-right-${kind}-view`)).click();
   await flushMicrotasks();
   const editor = expectDefined(
@@ -309,7 +312,7 @@ it.each(['removed', 'ambiguous'] as const)(
           child.ref.originalBlock,
         ]);
       await h.search.prepare(new AbortController().signal);
-      await flushMicrotasks();
+      await searchUiCompleted(h.root);
       expect(marker.isConnected).toBe(false);
       expect(menu.isConnected).toBe(false);
     } finally {
@@ -341,6 +344,181 @@ it('flushes after a failed inspector save without losing the status activation',
     await h.close();
   }
 });
+
+function nextSourcePublication(h: Awaited<ReturnType<typeof mountList>>): Promise<void> {
+  return new Promise((resolve) => {
+    const off = h.index.subscribe((event) => {
+      if (event.type !== 'changed' || !event.files.includes('tasks.md')) return;
+      off();
+      resolve();
+    });
+  });
+}
+
+async function matchingMetadataEcho(h: Awaited<ReturnType<typeof mountList>>): Promise<void> {
+  const file = expectDefined(h.app.vault.getFileByPath('tasks.md'));
+  const content = await h.read();
+  await new Promise<void>((resolve) => {
+    const off = h.index.subscribeReconciled((files) => {
+      if (!files.includes(file.path)) return;
+      off();
+      resolve();
+    });
+    h.app.metadataCache.trigger(
+      'changed',
+      file,
+      content,
+      h.app.metadataCache.getFileCache(file) ?? {},
+    );
+  });
+}
+
+const echoedEdits = [
+  { kind: 'title', child: false },
+  { kind: 'desc', child: false },
+  { kind: 'title', child: true },
+  { kind: 'desc', child: true },
+] as const;
+
+function holdInspectorSave(h: Awaited<ReturnType<typeof mountList>>, fail = false) {
+  const commit = deferred<void>(),
+    started = deferred<void>(),
+    deliver = deferred<void>();
+  const echoed = deferred<void>(),
+    settled = deferred<void>();
+  const process = h.app.vault.process.bind(h.app.vault);
+  vi.spyOn(h.app.vault, 'process').mockImplementationOnce(async (...args) => {
+    started.resolve();
+    await commit.promise;
+    if (fail) throw new Error('fixture save failure');
+    return process(...args);
+  });
+  const center = (h.view as unknown as { center_abyssPrivate: CenterPanel }).center_abyssPrivate;
+  const mutation = center.onInspectorMutation.bind(center);
+  vi.spyOn(center, 'onInspectorMutation').mockImplementation((event) => {
+    mutation(event);
+    if (event.phase === 'settled') settled.resolve();
+  });
+  const raw = h.tasks.execute.bind(h.tasks);
+  const published = nextSourcePublication(h);
+  const execute = vi.spyOn(h.tasks, 'execute').mockImplementation(async (...args) => {
+    const result = await raw(...args);
+    const command = args[0];
+    if (
+      command.type === 'set-description' ||
+      (command.type === 'patch' && command.patch.markdownTitle !== undefined)
+    ) {
+      if (result.type === 'ok') {
+        await published;
+        await matchingMetadataEcho(h);
+      }
+      echoed.resolve();
+      await deliver.promise;
+    }
+    return result;
+  });
+  return {
+    commit,
+    started,
+    deliver,
+    echoed,
+    settled,
+    execute,
+    release() {
+      commit.resolve();
+      deliver.resolve();
+    },
+  };
+}
+
+it.each(echoedEdits)(
+  'submits the proven successor after metadata echo: $kind, child=$child',
+  async ({ kind, child }) => {
+    const h = await mountList(
+      '- [ ] needle\n  root description\n  - [ ] needle child\n    child description',
+    );
+    try {
+      const before = expectDefined(h.index.list()[0]);
+      await dirtyEditor(h, kind, child);
+      const published = nextSourcePublication(h);
+      const marker = child
+        ? expectDefined(
+            h.root.querySelector<HTMLElement>('.abyss-subtask-row .abyss-status-marker'),
+          )
+        : h.marker();
+      const execute = vi.spyOn(h.tasks, 'execute');
+      marker.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      marker.focus();
+      await published;
+      await matchingMetadataEcho(h);
+      const successor = expectDefined(h.index.list()[0]);
+      expect(h.index.resolve(before.ref).type).toBe('visual');
+      expect(h.index.resolve(successor.ref).type).toBe('exact');
+      expect(marker.isConnected).toBe(true);
+      marker.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+      marker.click();
+      await vi.waitFor(() => {
+        expect(child ? h.index.list()[0]?.subtasks[0]?.status : h.index.list()[0]?.status).toBe(
+          'done',
+        );
+      });
+      const commands = execute.mock.calls.filter(
+        ([command]) => command.type === 'toggle-completion',
+      );
+      expect(commands).toHaveLength(1);
+      expect(commands[0]?.[0]).toMatchObject(
+        child
+          ? { target: { type: 'subtask', ref: { parent: { ref: successor.ref } } } }
+          : { target: { type: 'task', ref: successor.ref } },
+      );
+    } finally {
+      await h.close();
+    }
+  },
+);
+
+it.each(echoedEdits)(
+  'waits for the owned save before successor submission: $kind, child=$child',
+  async ({ kind, child }) => {
+    const h = await mountList(
+      '- [ ] needle\n  root description\n  - [ ] needle child\n    child description',
+    );
+    const { commit, started, deliver, echoed, execute } = holdInspectorSave(h);
+    try {
+      const before = expectDefined(h.index.list()[0]);
+      await dirtyEditor(h, kind, child);
+      const marker = child
+        ? expectDefined(
+            h.root.querySelector<HTMLElement>('.abyss-subtask-row .abyss-status-marker'),
+          )
+        : h.marker();
+      marker.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      marker.focus();
+      await started.promise;
+      marker.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+      marker.click();
+      expect(execute).toHaveBeenCalledTimes(1);
+      commit.resolve();
+      await echoed.promise;
+      expect(h.index.resolve(before.ref).type).toBe('visual');
+      expect(marker.isConnected).toBe(true);
+      expect(execute).toHaveBeenCalledTimes(1);
+      deliver.resolve();
+      await vi.waitFor(() => {
+        expect(child ? h.index.list()[0]?.subtasks[0]?.status : h.index.list()[0]?.status).toBe(
+          'done',
+        );
+      });
+      expect(
+        execute.mock.calls.filter(([command]) => command.type === 'toggle-completion'),
+      ).toHaveLength(1);
+    } finally {
+      commit.resolve();
+      deliver.resolve();
+      await h.close();
+    }
+  },
+);
 
 it('keeps the original marker mounted until an accepted status command settles', async () => {
   const h = await mountList();
@@ -374,6 +552,115 @@ it('keeps the original marker mounted until an accepted status command settles',
     await h.close();
   }
 });
+
+it.each(['cancel', 'dispose', 'navigation', 'external'] as const)(
+  'releases an accepted action waiting on a proved save after %s',
+  async (reason) => {
+    const h = await mountList();
+    const gate = holdInspectorSave(h);
+    try {
+      await dirtyEditor(h);
+      const marker = h.marker();
+      marker.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      marker.focus();
+      await gate.started.promise;
+      marker.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+      marker.click();
+      gate.commit.resolve();
+      await gate.echoed.promise;
+      expect(gate.execute).toHaveBeenCalledTimes(1);
+      if (reason === 'cancel') window.dispatchEvent(new Event('pointercancel'));
+      else if (reason === 'dispose') await h.view.onClose();
+      else if (reason === 'navigation') h.state.set('selectedList', 'today');
+      else {
+        const file = expectDefined(h.app.vault.getFileByPath('tasks.md'));
+        await h.app.vault.modify(file, '- [ ] needle external');
+        h.index.installCommittedContent(file.path, '- [ ] needle external');
+      }
+      gate.deliver.resolve();
+      await gate.settled.promise;
+      if (reason !== 'dispose') await searchUiCompleted(h.root);
+      expect(
+        gate.execute.mock.calls.filter(([command]) => command.type === 'toggle-completion'),
+      ).toHaveLength(0);
+      expect(h.index.list()[0]?.status).toBe('open');
+    } finally {
+      gate.release();
+      await h.close();
+    }
+  },
+);
+
+it('uses the unchanged exact target once after a pending inspector save fails', async () => {
+  const h = await mountList();
+  const gate = holdInspectorSave(h, true);
+  try {
+    await dirtyEditor(h);
+    const marker = h.marker();
+    marker.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    marker.focus();
+    await gate.started.promise;
+    marker.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+    marker.click();
+    expect(gate.execute).toHaveBeenCalledTimes(1);
+    gate.commit.resolve();
+    await gate.echoed.promise;
+    expect(gate.execute).toHaveBeenCalledTimes(1);
+    gate.deliver.resolve();
+    await gate.settled.promise;
+    await vi.waitFor(() => {
+      expect(h.index.list()[0]).toMatchObject({ title: 'needle', status: 'done' });
+    });
+    expect(
+      gate.execute.mock.calls.filter(([command]) => command.type === 'toggle-completion'),
+    ).toHaveLength(1);
+  } finally {
+    gate.release();
+    await h.close();
+  }
+});
+
+it.each(['status', 'priority'] as const)(
+  'applies one %s menu action to the proved successor after a pending save and echo',
+  async (pick) => {
+    const h = await mountList();
+    const gate = holdInspectorSave(h);
+    try {
+      await dirtyEditor(h);
+      const marker = h.marker();
+      marker.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 2 }));
+      marker.focus();
+      await gate.started.promise;
+      marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, button: 2 }));
+      marker.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 2 }));
+      const menu = expectDefined(document.querySelector<HTMLElement>('.abyss-status-popover'));
+      const button =
+        pick === 'priority'
+          ? expectDefined(menu.querySelector<HTMLElement>('[data-abyss-priority="A"]'))
+          : expectDefined(
+              [...menu.querySelectorAll<HTMLElement>('.abyss-status-popover-row')].find(
+                (row) => row.querySelector('.abyss-status-popover-name')?.textContent === 'Done',
+              ),
+            );
+      button.click();
+      expect(gate.execute).toHaveBeenCalledTimes(1);
+      gate.commit.resolve();
+      await gate.echoed.promise;
+      gate.deliver.resolve();
+      await gate.settled.promise;
+      await vi.waitFor(() => {
+        expect(pick === 'priority' ? h.index.list()[0]?.priority : h.index.list()[0]?.status).toBe(
+          pick === 'priority' ? 'A' : 'done',
+        );
+      });
+      expect(h.index.list()[0]?.title).toBe('needle edited');
+      expect(gate.execute.mock.calls).toHaveLength(2);
+    } finally {
+      gate.release();
+      await h.close();
+    }
+  },
+);
 
 it.each(['semantics', 'source-loss'] as const)(
   'revokes an open held menu on %s',

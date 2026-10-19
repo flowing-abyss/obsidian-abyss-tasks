@@ -1,15 +1,41 @@
 import type { Component } from 'obsidian';
-import type { TaskQueryApi, TaskRef, TaskSnapshot } from '../../tasks';
+import { sameTaskNodeRef, type TaskQueryApi, type TaskRef, type TaskSnapshot } from '../../tasks';
+import type { OwnedTaskSelectionProof } from '../../ui/ownedTaskSelection';
 import {
   rebuildTaskSelection,
+  rootTaskRef,
   taskNodeRef,
   taskSelectionRefPath,
   type TaskSelectionNode,
 } from '../../ui/taskSelection';
+import type { RightPanelMutationLifecycle } from '../RightPanel';
 
+interface Completion {
+  readonly done: Promise<void>;
+  readonly finish: () => void;
+}
+function completion(): Completion {
+  let finish = (): void => {};
+  const done = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  return { done, finish };
+}
+interface InspectorOperation extends Completion {
+  readonly ref: TaskRef;
+}
+interface HeldTarget {
+  readonly original: TaskSelectionNode;
+  root: TaskSnapshot;
+  selection: TaskSelectionNode[];
+  waitingForProof: boolean;
+}
 interface StatusActivation {
   readonly marker: HTMLElement;
-  readonly owner: Window;
+  readonly owner: NonNullable<Document['defaultView']>;
+  readonly target: HeldTarget;
+  readonly cancelled: Completion;
+  readonly operations: Map<InspectorOperation, TaskSelectionNode>;
   readonly cleanup: Array<() => void>;
   readonly menus: Set<() => void>;
   releasePublication?: (() => void) | undefined;
@@ -17,7 +43,9 @@ interface StatusActivation {
   pressed: boolean;
   pending: number;
 }
-
+function sameRef(a: TaskRef, b: TaskRef): boolean {
+  return sameTaskNodeRef({ type: 'task', ref: a }, { type: 'task', ref: b });
+}
 function pressedStatusMarker(target: EventTarget | null): HTMLElement | null {
   if (target === null || !('closest' in target)) return null;
   const control = (target as Element).closest<HTMLElement>(
@@ -28,10 +56,12 @@ function pressedStatusMarker(target: EventTarget | null): HTMLElement | null {
     : control;
 }
 
-/** One pressed list status control owns its publication, row pin, menu and command lifetimes. */
+/** Owns one native status activation and its exact successors through inspector save settlement. */
 export class TaskListStatusPublication {
   #active: StatusActivation | undefined;
+  #disposed = false;
   readonly #targets = new WeakMap<HTMLElement, () => TaskSelectionNode | undefined>();
+  readonly #operations = new Map<object, InspectorOperation>();
   constructor(
     private readonly queries: Pick<TaskQueryApi, 'resolve'>,
     private readonly hold: (accept: () => boolean, cancel: () => void) => (() => void) | undefined,
@@ -40,6 +70,72 @@ export class TaskListStatusPublication {
 
   capture(marker: HTMLElement, current: () => TaskSelectionNode | undefined): void {
     this.#targets.set(marker, current);
+  }
+
+  mutation(event: RightPanelMutationLifecycle): void {
+    if (this.#disposed || event.operation === 'hierarchy') return;
+    if (event.phase === 'started') {
+      this.#startOperation(event);
+      return;
+    }
+    const operation = this.#operations.get(event.token);
+    if (operation === undefined) return;
+    this.#operations.delete(event.token);
+    const active = this.#active;
+    const basis = active?.operations.get(operation);
+    if (active !== undefined && basis !== undefined) {
+      active.operations.delete(operation);
+      if (!this.#settleTarget(active, basis, event.proof)) this.#cancel(active);
+    }
+    operation.finish();
+  }
+  #startOperation(event: RightPanelMutationLifecycle): void {
+    const operation = { ...completion(), ref: event.ref };
+    this.#operations.set(event.token, operation);
+    const active = this.#active;
+    if (active !== undefined && this.#matchesOperation(active.target, operation))
+      active.operations.set(operation, this.#current(active.target));
+  }
+
+  #matchesOperation(target: HeldTarget, operation: InspectorOperation): boolean {
+    return (
+      sameRef(target.root.ref, operation.ref) ||
+      sameRef(rootTaskRef(target.original), operation.ref)
+    );
+  }
+  #current(target: HeldTarget): TaskSelectionNode {
+    return target.selection[target.selection.length - 1] ?? target.original;
+  }
+  #settleTarget(
+    active: StatusActivation,
+    basis: TaskSelectionNode,
+    proof: OwnedTaskSelectionProof | undefined,
+  ): boolean {
+    if (proof === undefined) return this.#validate(active);
+    const successor = proof.nodeSuccessor(taskNodeRef(basis));
+    if (successor === undefined) return false;
+    const resolution = this.queries.resolve(rootTaskRef(successor));
+    if (resolution.type !== 'exact') return false;
+    const selection = taskSelectionRefPath(resolution.task, taskNodeRef(successor));
+    if (selection === undefined) return false;
+    active.target.root = resolution.task;
+    active.target.selection = selection;
+    active.target.waitingForProof = false;
+    return this.#validate(active);
+  }
+  #validate(active: StatusActivation): boolean {
+    if (!active.marker.isConnected || active.marker.ownerDocument.defaultView !== active.owner)
+      return false;
+    const target = active.target;
+    const resolution = this.queries.resolve(target.root.ref);
+    if (resolution.type === 'exact') return !target.waitingForProof || active.operations.size > 0;
+    if (resolution.type !== 'rebased' || resolution.evidence !== 'authority-transition')
+      return false;
+    const next = rebuildTaskSelection(resolution.current, target.selection);
+    target.root = resolution.current;
+    target.waitingForProof = next.length !== target.selection.length;
+    if (!target.waitingForProof) target.selection = next;
+    return !target.waitingForProof || active.operations.size > 0;
   }
 
   bind(
@@ -68,34 +164,28 @@ export class TaskListStatusPublication {
   #start(marker: HTMLElement, key: string, root: TaskSnapshot, node: TaskSelectionNode): void {
     this.#cancel();
     const owner = marker.ownerDocument.defaultView;
-    if (owner === null) return;
-    let ref = root.ref;
-    const path = taskSelectionRefPath(root, taskNodeRef(node));
-    if (path === undefined) return;
-    let selection = path;
-    const accept = (): boolean => {
-      if (!marker.isConnected || marker.ownerDocument.defaultView !== owner) return false;
-      const resolution = this.queries.resolve(ref);
-      if (resolution.type === 'exact') return true;
-      if (resolution.type !== 'rebased' || resolution.evidence !== 'authority-transition')
-        return false;
-      const next = rebuildTaskSelection(resolution.current, selection);
-      if (next.length !== selection.length) return false;
-      selection = next;
-      ref = resolution.current.ref;
-      return true;
-    };
+    const selection = taskSelectionRefPath(root, taskNodeRef(node));
+    if (this.#disposed || owner === null || selection === undefined) return;
+    const target: HeldTarget = { original: node, root, selection, waitingForProof: false };
     const active: StatusActivation = {
       marker,
       owner,
+      target,
+      cancelled: completion(),
+      operations: new Map(),
       cleanup: [],
       menus: new Set(),
       pressed: true,
       pending: 0,
     };
-    const release = this.hold(accept, () => {
-      this.#cancel(active);
-    });
+    for (const operation of this.#operations.values())
+      if (this.#matchesOperation(target, operation)) active.operations.set(operation, node);
+    const release = this.hold(
+      () => this.#validate(active),
+      () => {
+        this.#cancel(active);
+      },
+    );
     if (release === undefined) return;
     active.releasePublication = release;
     this.#active = active;
@@ -104,6 +194,10 @@ export class TaskListStatusPublication {
         this.#cancel(active);
       }),
     );
+    this.#listen(active);
+  }
+  #listen(active: StatusActivation): void {
+    const { owner } = active;
     const up = (): void => {
       active.pressed = false;
       this.#releaseLater(active);
@@ -123,16 +217,34 @@ export class TaskListStatusPublication {
     });
   }
 
-  async run(action: () => Promise<void>): Promise<void> {
+  async run(
+    subject: TaskSelectionNode,
+    action: (current: TaskSelectionNode) => Promise<void>,
+  ): Promise<void> {
     const active = this.#active;
-    if (active !== undefined) active.pending++;
+    if (
+      active === undefined ||
+      !sameTaskNodeRef(taskNodeRef(subject), taskNodeRef(active.target.original))
+    ) {
+      await action(subject);
+      return;
+    }
+    active.pending++;
     try {
-      await action();
-    } finally {
-      if (active !== undefined) {
-        active.pending--;
-        this.#releaseLater(active);
+      while (this.#active === active && active.operations.size > 0)
+        await Promise.race([
+          Promise.all([...active.operations.keys()].map((operation) => operation.done)),
+          active.cancelled.done,
+        ]);
+      if (this.#active !== active) return;
+      if (!this.#validate(active) || active.target.waitingForProof) {
+        this.#cancel(active);
+        return;
       }
+      await action(this.#current(active.target));
+    } finally {
+      active.pending--;
+      this.#releaseLater(active);
     }
   }
 
@@ -145,7 +257,6 @@ export class TaskListStatusPublication {
       this.#releaseLater(active);
     };
   }
-
   #releaseLater(active: StatusActivation): void {
     if (this.#active !== active || active.timer !== undefined) return;
     // Native click/contextmenu follows release in the same browser task, after pointerup handlers.
@@ -154,13 +265,19 @@ export class TaskListStatusPublication {
       if (!active.pressed && active.pending === 0 && active.menus.size === 0) this.#cancel(active);
     }, 0);
   }
-
   #cancel(active = this.#active): void {
     if (active === undefined || this.#active !== active) return;
     this.#active = undefined;
+    active.cancelled.finish();
     if (active.timer !== undefined) active.owner.clearTimeout(active.timer);
     for (const close of active.menus) close();
     for (const cleanup of active.cleanup) cleanup();
     active.releasePublication?.();
+  }
+  dispose(): void {
+    this.#disposed = true;
+    this.#cancel();
+    for (const operation of this.#operations.values()) operation.finish();
+    this.#operations.clear();
   }
 }

@@ -89,6 +89,7 @@ import {
 } from '../views/calendarOccurrences';
 import { PanelNavigator, type PanelNavigationActions } from '../views/panelNavigation';
 import { listSelectionTitle } from '../views/panelTitle';
+import type { RightPanelMutationLifecycle } from './RightPanel';
 import { CalendarMode, type CalendarModeHost } from './calendar/CalendarMode';
 import type { CalViewType } from './calendar/calendarViewType';
 import { CaptureSessions } from './center/CaptureSessions';
@@ -571,7 +572,8 @@ export class CenterPanel {
         openStatusMenu: (event, task, completion) => {
           this.openStatusMenu_abyssPrivate(event, task, completion);
         },
-        runStatusAction: (action) => this.statusPublication_abyssPrivate.run(action),
+        runStatusAction: (subject, action) =>
+          this.statusPublication_abyssPrivate.run(subject, action),
         captureStatusTarget: (marker, current) => {
           this.statusPublication_abyssPrivate.capture(marker, current);
         },
@@ -2458,7 +2460,12 @@ export class CenterPanel {
     this.calendar_abyssPrivate.setView(view);
   }
 
+  onInspectorMutation(event: RightPanelMutationLifecycle): void {
+    this.statusPublication_abyssPrivate.mutation(event);
+  }
+
   destroy(): void {
+    this.statusPublication_abyssPrivate.dispose();
     this.statistics_abyssPrivate?.destroy();
     this.releaseTaskSelection_abyssPrivate();
     this.mounted_abyssPrivate = false;
@@ -4281,15 +4288,15 @@ export class CenterPanel {
       },
       onPickStatus: (symbol) => {
         runAsyncAction(
-          this.statusPublication_abyssPrivate.run(() =>
-            this.taskCommands_abyssPrivate.setTaskStatus(task, symbol, completion),
+          this.statusPublication_abyssPrivate.run(task, (current) =>
+            this.taskCommands_abyssPrivate.setTaskStatus(current, symbol, completion),
           ),
         );
       },
       onPickPriority: (priority) => {
         runAsyncAction(
-          this.statusPublication_abyssPrivate.run(() =>
-            this.taskCommands_abyssPrivate.setPriority(task, priority),
+          this.statusPublication_abyssPrivate.run(task, (current) =>
+            this.taskCommands_abyssPrivate.setPriority(current, priority),
           ),
         );
       },
