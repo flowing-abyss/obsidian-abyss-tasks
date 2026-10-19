@@ -10,6 +10,7 @@ import {
   calendarShiftPlanning,
   calendarTaskWithPlanning,
 } from '../calendarOccurrences';
+import { settleCalendarInteraction } from '../settleCalendarInteraction';
 import { populateCalendarPreview } from './calendarPreview';
 import {
   resolveBoundaryTarget,
@@ -83,9 +84,12 @@ export interface TimedInteractionBinding {
         date: string,
       ) => PositionedBlock | undefined)
     | undefined;
-  readonly onMove: (task: TaskSnapshot, target: TimedDragTarget) => void;
-  readonly onDuration: (task: TaskSnapshot, target: TimedVerticalResizeTarget) => void;
-  readonly onBoundary: (task: TaskSnapshot, target: TimedBoundaryTarget) => void;
+  readonly onMove: (task: TaskSnapshot, target: TimedDragTarget) => void | Promise<void>;
+  readonly onDuration: (
+    task: TaskSnapshot,
+    target: TimedVerticalResizeTarget,
+  ) => void | Promise<void>;
+  readonly onBoundary: (task: TaskSnapshot, target: TimedBoundaryTarget) => void | Promise<void>;
 }
 
 interface MeasuredColumn {
@@ -546,6 +550,7 @@ class TimedInteractionSession {
   private readonly renderer: TimedPreviewRenderer;
   private latest: TimedPreviewTarget | undefined;
   private disposed = false;
+  private pointerReleased = false;
 
   constructor(private readonly input: TimedSessionInput) {
     this.resolver = new TimedTargetResolver(input.binding, input.startEvent, input.geometry);
@@ -562,6 +567,7 @@ class TimedInteractionSession {
     ownerWindow.addEventListener('pointerup', this.onPointerUp);
     ownerWindow.addEventListener('pointercancel', this.onCancel);
     ownerWindow.addEventListener('blur', this.onCancel);
+    ownerWindow.addEventListener('keydown', this.onKeyDown, true);
     capturedElement.addEventListener('lostpointercapture', this.onCancel);
   }
 
@@ -574,11 +580,20 @@ class TimedInteractionSession {
     if (pointer.pointerId !== this.input.startEvent.pointerId) return;
     this.update(pointer);
     const committed = this.latest;
-    this.dispose();
-    if (committed != null) this.commit(committed);
+    this.releasePointer();
+    if (committed == null) this.dispose();
+    else settleCalendarInteraction(() => this.commit(committed), this.dispose);
   };
 
-  private readonly onCancel = (): void => {
+  private readonly onCancel = (event: Event): void => {
+    if ('pointerId' in event && event.pointerId !== this.input.startEvent.pointerId) return;
+    this.dispose();
+  };
+
+  private readonly onKeyDown = (event: KeyboardEvent): void => {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopPropagation();
     this.dispose();
   };
 
@@ -593,33 +608,39 @@ class TimedInteractionSession {
     this.renderer.render(this.input.kind, target);
   }
 
-  private commit(target: TimedPreviewTarget): void {
+  private commit(target: TimedPreviewTarget): void | Promise<void> {
     const { binding, kind } = this.input;
     if (kind === 'move') {
-      binding.onMove(binding.task, target as TimedDragTarget);
-      return;
+      return binding.onMove(binding.task, target as TimedDragTarget);
     }
     if (kind === 'duration' || kind === 'start-time') {
-      binding.onDuration(binding.task, target as TimedVerticalResizeTarget);
-      return;
+      return binding.onDuration(binding.task, target as TimedVerticalResizeTarget);
     }
-    binding.onBoundary(binding.task, target as TimedBoundaryTarget);
+    return binding.onBoundary(binding.task, target as TimedBoundaryTarget);
+  }
+
+  private releasePointer(): void {
+    if (this.pointerReleased) return;
+    this.pointerReleased = true;
+    const { capturedElement, ownerWindow, startEvent } = this.input;
+    ownerWindow.removeEventListener('pointermove', this.onPointerMove);
+    ownerWindow.removeEventListener('pointerup', this.onPointerUp);
+    ownerWindow.removeEventListener('pointercancel', this.onCancel);
+    ownerWindow.removeEventListener('blur', this.onCancel);
+    ownerWindow.removeEventListener('keydown', this.onKeyDown, true);
+    capturedElement.removeEventListener('lostpointercapture', this.onCancel);
+    release(capturedElement, startEvent.pointerId);
   }
 
   private readonly dispose = (): void => {
     if (this.disposed) return;
     this.disposed = true;
-    const { binding, capturedElement, ownerWindow, startEvent } = this.input;
+    const { binding, capturedElement } = this.input;
+    this.releasePointer();
     this.renderer.clear();
     binding.source.classList.remove('is-picked-up');
     delete binding.source.dataset['activeResize'];
     delete capturedElement.dataset['activeResize'];
-    ownerWindow.removeEventListener('pointermove', this.onPointerMove);
-    ownerWindow.removeEventListener('pointerup', this.onPointerUp);
-    ownerWindow.removeEventListener('pointercancel', this.onCancel);
-    ownerWindow.removeEventListener('blur', this.onCancel);
-    capturedElement.removeEventListener('lostpointercapture', this.onCancel);
-    release(capturedElement, startEvent.pointerId);
     binding.owner.end(this.dispose);
   };
 }

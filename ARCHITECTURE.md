@@ -436,6 +436,17 @@ changes, and disposal revoke stale measurement authority. Extent transactions pr
 range through intermediate DOM changes while permitting a real final shrink.
 
 CalendarMode owns the period anchor, transient selected day, view lifetime, and forecast presentation.
+Its mounted publication hold defers query patches during a pointer press, native drag, calendar menu,
+or submitted task command, then reads the newest query state once those interactions settle.
+Pointer release waits through the native click/contextmenu turn before replacing its target.
+Submitted commands make the calendar body inert until settlement and queued publication, so another
+gesture cannot submit from the old task snapshot. Navigation, width remounts, disposal, and window
+migration retire the hold; late completion cannot publish into a replacement mount.
+Timed and span sessions release pointer capture and listeners at submission while retaining their
+preview until command settlement or view disposal. Explicit view patches still cancel sessions.
+CalendarCommands ignores malformed date/time/duration input during command construction and lets
+unexpected execution failures reach the existing UI action boundary. Retained presentation never
+grants new source authority; external edits and deletion can still cause a command to be refused.
 Its mounted center owner supplies the available width; an owner-window observer coalesces changes
 and rebuilds Month/Week only when the width category changes. CalendarContent retains one canonical
 occurrence projection per publication and visible range; width remounts reuse that content.

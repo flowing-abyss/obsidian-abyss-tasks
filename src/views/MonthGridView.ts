@@ -98,8 +98,11 @@ export interface MonthGridViewCallbacks extends ForecastInteractionCallbacks {
   onShowParent?: ShowInTaskList | undefined;
   onTaskSelect?: ((task: TaskSnapshot) => void) | undefined;
   onDrop: (dragData: string, targetDate: string) => void;
-  onSpanMove?: (task: TaskSnapshot, target: SpanMoveTarget) => void;
-  onSpanBoundary?: (task: TaskSnapshot, target: InteractiveSpanBoundaryTarget) => void;
+  onSpanMove?: (task: TaskSnapshot, target: SpanMoveTarget) => void | Promise<void>;
+  onSpanBoundary?: (
+    task: TaskSnapshot,
+    target: InteractiveSpanBoundaryTarget,
+  ) => void | Promise<void>;
   onToggle: (task: TaskSnapshot) => void;
   onSetStatus: (task: TaskSnapshot, status: string) => void;
   onSetPriority: (task: TaskSnapshot, priority: TaskPriority) => void;

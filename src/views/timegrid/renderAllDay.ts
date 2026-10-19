@@ -17,6 +17,7 @@ import {
 } from '../../ui/taskDependencyPresentation';
 import { attachCalendarNativeDrag, type CalendarNativeDragStart } from '../calendarNativeDrag';
 import { calendarOccurrenceForTask } from '../calendarOccurrences';
+import { settleCalendarInteraction } from '../settleCalendarInteraction';
 import {
   attachSpanInteractions,
   type InteractiveSpanBoundaryTarget,
@@ -49,12 +50,13 @@ export interface AllDayCallbacks extends ForecastInteractionCallbacks {
   onTaskSelect?: ((task: TaskSnapshot) => void) | undefined;
   onTaskActivate?: ((task: TaskSnapshot) => void) | undefined;
   onDrop: (dragData: string, targetDate: string) => void; // native HTML5 DnD, existing convention
-  onStartChange: (task: TaskSnapshot, newStart: string) => void; // pointer edge-resize
-  onDueChange: (task: TaskSnapshot, newDue: string) => void; // pointer edge-resize
-  onExtendToSpan: (task: TaskSnapshot, newDue: string) => void; // pointer edge-resize on a plain task
-  onSpanMove?: ((task: TaskSnapshot, target: SpanMoveTarget) => void) | undefined;
+  onStartChange: (task: TaskSnapshot, newStart: string) => void | Promise<void>; // pointer edge-resize
+  onDueChange: (task: TaskSnapshot, newDue: string) => void | Promise<void>; // pointer edge-resize
+  onExtendToSpan: (task: TaskSnapshot, newDue: string) => void | Promise<void>; // pointer edge-resize on a plain task
+  onSpanMove?: ((task: TaskSnapshot, target: SpanMoveTarget) => void | Promise<void>) | undefined;
   onSpanBoundary?:
-    ((task: TaskSnapshot, target: InteractiveSpanBoundaryTarget) => void) | undefined;
+    | ((task: TaskSnapshot, target: InteractiveSpanBoundaryTarget) => void | Promise<void>)
+    | undefined;
   spanInteractionOwner?: SpanInteractionOwner | undefined;
   spanPreviewLayoutFor?:
     ((task: TaskSnapshot, planning: TaskSnapshot['planning']) => VisibleSpanLayout) | undefined;
@@ -589,7 +591,7 @@ function attachEdgeResize(
     handle: HTMLElement,
     cellEl: HTMLElement,
     task: TaskSnapshot,
-    onResolve: (task: TaskSnapshot, date: string) => void,
+    onResolve: (task: TaskSnapshot, date: string) => void | Promise<void>,
     interactionOwner?: SpanInteractionOwner,
   ]
 ): void {
@@ -615,7 +617,14 @@ function attachEdgeResize(
   if (ownerWindow == null) return;
 
   const resolve = (date: string): void => {
-    onResolve(task, date);
+    releasePointer();
+    const submitted = generation;
+    settleCalendarInteraction(
+      () => onResolve(task, date),
+      () => {
+        if (generation === submitted) endResize();
+      },
+    );
   };
   const withHook = cellEl as AllDayResizeCell;
 
@@ -624,17 +633,25 @@ function attachEdgeResize(
   // DOM creation/measurement and no sibling elements touched, so it can't itself cause the sibling
   // layout thrash the "grid becomes uneven" report described.
   let capturedPointerId: number | null = null;
+  let generation = 0;
+  let active = false;
 
   const endResize = (): void => {
+    if (!active) return;
+    active = false;
     body?.setAttribute('draggable', 'true');
     body?.removeClass('is-edge-resizing');
+    releasePointer();
+    interactionOwner?.end(endResize);
+  };
+
+  const releasePointer = (): void => {
     ownerWindow.removeEventListener('pointerup', onPointerUp);
     ownerWindow.removeEventListener('pointercancel', onPointerCancel);
     if (capturedPointerId !== null) tryReleasePointer(handle, capturedPointerId);
     capturedPointerId = null;
     if (withHook.__tgPendingEdgeResize === resolve) delete withHook.__tgPendingEdgeResize;
     if (withHook.__tgActiveEdgeResize?.end === endResize) delete withHook.__tgActiveEdgeResize;
-    interactionOwner?.end(endResize);
   };
 
   const onPointerUp = (upEvent: PointerEvent): void => {
@@ -643,7 +660,7 @@ function attachEdgeResize(
     const dayEl = target?.closest('[data-tg-date]');
     const date = dayEl?.getAttribute('data-tg-date');
     if (date !== null && date !== undefined && date.length > 0) resolve(date);
-    endResize();
+    else endResize();
   };
 
   // Defensive belt-and-suspenders (mirrors renderTimedBlocks.ts's attachHorizontalResize): if a
@@ -659,6 +676,8 @@ function attachEdgeResize(
     if (e.button !== 0) return;
     e.stopPropagation();
     withHook.__tgActiveEdgeResize?.end();
+    generation++;
+    active = true;
     body?.setAttribute('draggable', 'false');
     body?.addClass('is-edge-resizing');
     capturedPointerId = e.pointerId;
@@ -758,7 +777,7 @@ export function renderPlainTaskResizeHandle(
     boundaryHandles: [{ element: rightEdge, boundary: 'create-span' }],
     onMove: (targetTask, target) => callbacks.onSpanMove?.(targetTask, target),
     onBoundary: (targetTask, target) => {
-      callbacks.onExtendToSpan(targetTask, target.date);
+      return callbacks.onExtendToSpan(targetTask, target.date);
     },
     enableMove:
       callbacks.onNativeDragStart === undefined &&

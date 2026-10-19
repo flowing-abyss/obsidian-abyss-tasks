@@ -142,107 +142,74 @@ function childNativeIntervalCommand(
 export class CalendarCommands {
   constructor(private readonly deps_abyssPrivate: CalendarCommandsDependencies) {}
 
+  private async execute_abyssPrivate(build: () => ExecutableCommand | undefined): Promise<void> {
+    const tasks = this.deps_abyssPrivate.tasks;
+    if (tasks === undefined) return;
+    let command: ExecutableCommand | undefined;
+    try {
+      command = build();
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        ['invalid-date', 'invalid-time', 'invalid-duration'].includes(error.message)
+      )
+        return;
+      throw error;
+    }
+    if (command !== undefined) presentTaskCommandResult(await tasks.execute(command));
+  }
+
   async rescheduleFromDrag(dragData: string, targetDate: string): Promise<void> {
     const task = taskFromDragData(this.deps_abyssPrivate, dragData);
-    const tasks = this.deps_abyssPrivate.tasks;
-    if (tasks == null || task == null) return;
-    try {
-      const date = localDate(targetDate);
-      const command = rescheduleCommand(task, date);
-      if (command !== undefined) presentTaskCommandResult(await tasks.execute(command));
-    } catch {
-      // Calendar controls supply the date; malformed gesture input remains a no-op.
-    }
+    if (task !== undefined)
+      await this.execute_abyssPrivate(() => rescheduleCommand(task, localDate(targetDate)));
   }
 
   async setTimeFromDrag(dragData: string, date: string, time: string): Promise<void> {
     const task = taskFromDragData(this.deps_abyssPrivate, dragData);
-    const tasks = this.deps_abyssPrivate.tasks;
-    if (tasks == null || task == null) return;
-    try {
-      const targetDate = localDate(date);
-      const targetTime = localTime(time);
-      const command = timeDropCommand(task, targetDate, targetTime);
-      if (command !== undefined) presentTaskCommandResult(await tasks.execute(command));
-    } catch {
-      // A malformed drag payload is ignored without touching the task.
-    }
+    if (task !== undefined)
+      await this.execute_abyssPrivate(() =>
+        timeDropCommand(task, localDate(date), localTime(time)),
+      );
   }
 
   async commitTimedMove(task: TaskSnapshot, target: TimedDragTarget): Promise<void> {
-    const tasks = this.deps_abyssPrivate.tasks;
-    if (tasks == null) return;
-    try {
-      const command = timedMoveCommand(task, target);
-      if (command !== undefined) presentTaskCommandResult(await tasks.execute(command));
-    } catch {
-      // Geometry and command validation share the same target; malformed values remain no-ops.
-    }
+    await this.execute_abyssPrivate(() => timedMoveCommand(task, target));
   }
 
   async commitTimedDuration(task: TaskSnapshot, target: TimedVerticalResizeTarget): Promise<void> {
-    const tasks = this.deps_abyssPrivate.tasks;
-    if (tasks == null) return;
-    try {
-      const command = calendarPatchCommand(task, {
+    await this.execute_abyssPrivate(() =>
+      calendarPatchCommand(task, {
         time: { type: 'set', value: localTime(minutesToTimeString(target.startMinutes)) },
         duration: { type: 'set', value: durationMinutes(target.durationMinutes) },
-      });
-      if (command == null) return;
-      presentTaskCommandResult(await tasks.execute(command));
-    } catch {
-      // Keep the previous duration if a forged target fails validation.
-    }
+      }),
+    );
   }
 
   async commitSpanMove(task: TaskSnapshot, target: SpanMoveTarget): Promise<void> {
-    const tasks = this.deps_abyssPrivate.tasks;
-    if (tasks == null) return;
-    try {
-      const command = calendarShiftScheduleCommand(task, target.days);
-      if (command != null) presentTaskCommandResult(await tasks.execute(command));
-    } catch {
-      // Calendar geometry supplies the target; malformed gesture input remains a no-op.
-    }
+    await this.execute_abyssPrivate(() => calendarShiftScheduleCommand(task, target.days));
   }
 
   async commitTimedBoundary(task: TaskSnapshot, target: TimedBoundaryTarget): Promise<void> {
-    const tasks = this.deps_abyssPrivate.tasks;
-    if (tasks == null) return;
-    try {
-      const command = calendarSpanBoundaryCommand(task, target.boundary, localDate(target.date));
-      if (command != null) presentTaskCommandResult(await tasks.execute(command));
-    } catch {
-      // Calendar geometry supplies the target; malformed gesture input remains a no-op.
-    }
+    await this.execute_abyssPrivate(() =>
+      calendarSpanBoundaryCommand(task, target.boundary, localDate(target.date)),
+    );
   }
 
   async setTime(task: TaskSnapshot, startMinutes: number): Promise<void> {
-    const tasks = this.deps_abyssPrivate.tasks;
-    if (tasks == null) return;
-    try {
-      const command = calendarPatchCommand(task, {
+    await this.execute_abyssPrivate(() =>
+      calendarPatchCommand(task, {
         time: { type: 'set', value: localTime(minutesToTimeString(startMinutes)) },
-      });
-      if (command == null) return;
-      presentTaskCommandResult(await tasks.execute(command));
-    } catch {
-      // Keep the previous valid time when gesture arithmetic is out of range.
-    }
+      }),
+    );
   }
 
   async setDuration(task: TaskSnapshot, minutes: number): Promise<void> {
-    const tasks = this.deps_abyssPrivate.tasks;
-    if (tasks == null) return;
-    try {
-      const command = calendarPatchCommand(task, {
+    await this.execute_abyssPrivate(() =>
+      calendarPatchCommand(task, {
         duration: { type: 'set', value: durationMinutes(minutes) },
-      });
-      if (command == null) return;
-      presentTaskCommandResult(await tasks.execute(command));
-    } catch {
-      // Keep the previous valid duration when gesture arithmetic is invalid.
-    }
+      }),
+    );
   }
 
   async setStart(task: TaskSnapshot, start: string): Promise<void> {
@@ -258,25 +225,15 @@ export class CalendarCommands {
     boundary: 'start' | 'due',
     value: string,
   ): Promise<void> {
-    const tasks = this.deps_abyssPrivate.tasks;
-    if (tasks == null) return;
-    try {
-      const command = calendarSpanBoundaryCommand(task, boundary, localDate(value));
-      if (command !== undefined) presentTaskCommandResult(await tasks.execute(command));
-    } catch {
-      // Calendar controls supply the boundary; malformed input remains a no-op.
-    }
+    await this.execute_abyssPrivate(() =>
+      calendarSpanBoundaryCommand(task, boundary, localDate(value)),
+    );
   }
 
   // Root commands and child patches preserve the same anchor and validate the final span atomically.
   async extendToSpan(task: TaskSnapshot, due: string): Promise<void> {
-    const tasks = this.deps_abyssPrivate.tasks;
-    if (tasks == null) return;
-    try {
-      const command = calendarSpanBoundaryCommand(task, 'create-span', localDate(due));
-      if (command != null) presentTaskCommandResult(await tasks.execute(command));
-    } catch {
-      // Calendar geometry supplies the target; malformed gesture input remains a no-op.
-    }
+    await this.execute_abyssPrivate(() =>
+      calendarSpanBoundaryCommand(task, 'create-span', localDate(due)),
+    );
   }
 }

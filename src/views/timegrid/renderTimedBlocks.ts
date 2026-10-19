@@ -17,6 +17,7 @@ import {
   type TaskDependencyLookup,
 } from '../../ui/taskDependencyPresentation';
 import { calendarOccurrenceForRender, type CalendarOccurrence } from '../calendarOccurrences';
+import { settleCalendarInteraction } from '../settleCalendarInteraction';
 import { renderTimedContent } from './calendarPreview';
 import type { TimedDragTarget, TimedVerticalResizeTarget } from './dragGeometry';
 import {
@@ -63,23 +64,25 @@ export interface TimedBlockCallbacks extends ForecastInteractionCallbacks {
   onTaskSelect?: ((task: TaskSnapshot) => void) | undefined;
   onTaskActivate?: ((task: TaskSnapshot) => void) | undefined;
   onKeyboardIntent: (task: TaskSnapshot, intent: TimedBlockKeyboardIntent) => void;
-  onTimeChange: (task: TaskSnapshot, newStartMinutes: number) => void;
-  onDurationChange: (task: TaskSnapshot, newDurationMinutes: number) => void;
+  onTimeChange: (task: TaskSnapshot, newStartMinutes: number) => void | Promise<void>;
+  onDurationChange: (task: TaskSnapshot, newDurationMinutes: number) => void | Promise<void>;
   /** Task 29: horizontal right-edge drag-resize, extending the block into a multi-day timed
    * span. Same mutation as renderAllDay.ts's onExtendToSpan (freezes the original `due` as
    * `start`, moves `due` to the dragged-to date) — reused as-is since it already leaves
    * `⏰`/`⏱️` untouched, which is exactly what preserving the task's time/duration needs. */
-  onExtendToSpan: (task: TaskSnapshot, newDue: string) => void;
+  onExtendToSpan: (task: TaskSnapshot, newDue: string) => void | Promise<void>;
   /** Task 34: horizontal left-edge drag-resize, moving/adding `start` while `due`/`⏰`/`⏱️`
    * stay untouched. Same mutation as renderAllDay.ts's onStartChange/CalendarCommands'
    * setStart — reused as-is: whether the task already has a `start` (moved directly)
    * or not (a fresh 🛫 is appended, anchored on the task's own unmoved `due`), `due` is never
    * part of this mutation's `build()` closure, so it can't be touched by it either way. */
-  onStartChange: (task: TaskSnapshot, newStart: string) => void;
-  onDueChange?: ((task: TaskSnapshot, newDue: string) => void) | undefined;
-  onTimedMove?: ((task: TaskSnapshot, target: TimedDragTarget) => void) | undefined;
-  onTimedDuration?: ((task: TaskSnapshot, target: TimedVerticalResizeTarget) => void) | undefined;
-  onTimedBoundary?: ((task: TaskSnapshot, target: TimedBoundaryTarget) => void) | undefined;
+  onStartChange: (task: TaskSnapshot, newStart: string) => void | Promise<void>;
+  onDueChange?: ((task: TaskSnapshot, newDue: string) => void | Promise<void>) | undefined;
+  onTimedMove?: ((task: TaskSnapshot, target: TimedDragTarget) => void | Promise<void>) | undefined;
+  onTimedDuration?:
+    ((task: TaskSnapshot, target: TimedVerticalResizeTarget) => void | Promise<void>) | undefined;
+  onTimedBoundary?:
+    ((task: TaskSnapshot, target: TimedBoundaryTarget) => void | Promise<void>) | undefined;
   interactionOwner?: TimedInteractionOwner | undefined;
   onToggle: (task: TaskSnapshot) => void;
   onSetStatus: (task: TaskSnapshot, status: string) => void;
@@ -603,20 +606,20 @@ function attachOwnedInteractions(input: OwnedInteractionsInput): void {
     owner,
     previewPositionFor: options.previewPositionFor,
     onMove: (movedTask, target) => {
-      if (callbacks.onTimedMove != null) callbacks.onTimedMove(movedTask, target);
-      else if (target.destination === 'time-grid') {
-        callbacks.onTimeChange(movedTask, target.startMinutes);
+      if (callbacks.onTimedMove != null) return callbacks.onTimedMove(movedTask, target);
+      if (target.destination === 'time-grid') {
+        return callbacks.onTimeChange(movedTask, target.startMinutes);
       }
     },
     onDuration: (resizedTask, target) => {
-      if (callbacks.onTimedDuration != null) callbacks.onTimedDuration(resizedTask, target);
-      else callbacks.onDurationChange(resizedTask, target.durationMinutes);
+      if (callbacks.onTimedDuration != null) return callbacks.onTimedDuration(resizedTask, target);
+      return callbacks.onDurationChange(resizedTask, target.durationMinutes);
     },
     onBoundary: (resizedTask, target: TimedBoundaryTarget) => {
-      if (callbacks.onTimedBoundary != null) callbacks.onTimedBoundary(resizedTask, target);
-      else if (target.boundary === 'start') callbacks.onStartChange(resizedTask, target.date);
-      else if (target.boundary === 'due') callbacks.onDueChange?.(resizedTask, target.date);
-      else callbacks.onExtendToSpan(resizedTask, target.date);
+      if (callbacks.onTimedBoundary != null) return callbacks.onTimedBoundary(resizedTask, target);
+      if (target.boundary === 'start') return callbacks.onStartChange(resizedTask, target.date);
+      if (target.boundary === 'due') return callbacks.onDueChange?.(resizedTask, target.date);
+      return callbacks.onExtendToSpan(resizedTask, target.date);
     },
   });
 }
@@ -816,18 +819,14 @@ function attachDrag(input: LegacyDragInput): void {
   const onPointerUp = (e: PointerEvent): void => {
     if (mode == null) return;
     const deltaMinutes = pointerDeltaMinutes(e, startY);
-    if (mode === 'move') {
-      callbacks.onTimeChange(
-        task,
-        Math.min(MAX_START_MINUTES, Math.max(0, startMinutes + deltaMinutes)),
-      );
-    } else {
-      callbacks.onDurationChange(
-        task,
-        compatibilityResizeDuration(startMinutes, startDuration, deltaMinutes),
-      );
-    }
+    const moved = mode === 'move';
+    const minutes = moved
+      ? Math.min(MAX_START_MINUTES, Math.max(0, startMinutes + deltaMinutes))
+      : compatibilityResizeDuration(startMinutes, startDuration, deltaMinutes);
     cleanup();
+    settleCalendarInteraction(() =>
+      moved ? callbacks.onTimeChange(task, minutes) : callbacks.onDurationChange(task, minutes),
+    );
   };
 
   // The compatibility path mutates source geometry as its preview. Any pointer cancellation must
@@ -886,7 +885,7 @@ type HorizontalResizeInput = {
   handle: HTMLElement;
   hourColumnEl: HTMLElement;
   task: TaskSnapshot;
-  onResolve: (task: TaskSnapshot, newDate: string) => void;
+  onResolve: (task: TaskSnapshot, newDate: string) => void | Promise<void>;
   bound?: { date: string; kind: 'max' | 'min' } | undefined;
 };
 
@@ -919,7 +918,7 @@ function attachHorizontalResize(input: HorizontalResizeInput): void {
   };
 
   const resolve = (date: string): void => {
-    onResolve(task, clampDate(date));
+    settleCalendarInteraction(() => onResolve(task, clampDate(date)));
   };
 
   const withHook = hourColumnEl as HTMLElement & {

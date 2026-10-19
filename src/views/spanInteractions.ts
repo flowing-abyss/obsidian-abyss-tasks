@@ -4,6 +4,7 @@ import {
   calendarShiftPlanning,
   calendarTaskWithPlanning,
 } from './calendarOccurrences';
+import { settleCalendarInteraction } from './settleCalendarInteraction';
 import type { VisibleSpanLayout } from './spanLayout';
 import { populateCalendarPreview } from './timegrid/calendarPreview';
 import { resolveBoundaryTarget, type SpanBoundaryTarget } from './timegrid/dragGeometry';
@@ -276,8 +277,11 @@ export interface SpanInteractionBinding {
     readonly element: HTMLElement;
     readonly boundary: 'start' | 'due' | 'create-span';
   }>;
-  readonly onMove: (task: TaskSnapshot, target: SpanMoveTarget) => void;
-  readonly onBoundary: (task: TaskSnapshot, target: InteractiveSpanBoundaryTarget) => void;
+  readonly onMove: (task: TaskSnapshot, target: SpanMoveTarget) => void | Promise<void>;
+  readonly onBoundary: (
+    task: TaskSnapshot,
+    target: InteractiveSpanBoundaryTarget,
+  ) => void | Promise<void>;
   readonly enableMove?: boolean | undefined;
 }
 
@@ -413,6 +417,7 @@ class SpanDragSession {
   private renderedTargetKey: string | undefined;
   private dragStarted = false;
   private disposed = false;
+  private pointerReleased = false;
 
   constructor(options: SpanDragSessionOptions) {
     this.binding = options.binding;
@@ -555,6 +560,7 @@ class SpanDragSession {
     if (this.disposed) return;
     this.disposed = true;
     const { owner, source } = this.binding;
+    this.releasePointer();
     this.clearPreview();
     source.classList.remove('is-picked-up');
     delete source.dataset['activeResize'];
@@ -563,6 +569,12 @@ class SpanDragSession {
       if (this.originalDraggable === null) source.removeAttribute('draggable');
       else source.setAttribute('draggable', this.originalDraggable);
     }
+    owner.end(this.dispose);
+  };
+
+  private releasePointer(): void {
+    if (this.pointerReleased) return;
+    this.pointerReleased = true;
     this.ownerWindow.removeEventListener('pointermove', this.onPointerMove);
     this.ownerWindow.removeEventListener('pointerup', this.onPointerUp);
     this.ownerWindow.removeEventListener('pointercancel', this.onCancel);
@@ -570,8 +582,7 @@ class SpanDragSession {
     this.ownerWindow.removeEventListener('keydown', this.onKeyDown, true);
     this.capturedElement.removeEventListener('lostpointercapture', this.onCancel);
     release(this.capturedElement, this.pointerId);
-    owner.end(this.dispose);
-  };
+  }
 
   private pointerMovedPastThreshold(pointer: PointerEvent): boolean {
     const x = pointer.clientX - this.pointerOrigin.x;
@@ -591,10 +602,16 @@ class SpanDragSession {
     this.dragStarted ||= this.pointerMovedPastThreshold(pointer);
     if (this.dragStarted) this.update(pointer);
     const target = this.latest;
-    this.dispose();
-    if (target == null) return;
-    if ('grabbedDate' in target) this.binding.onMove(this.binding.task, target);
-    else this.binding.onBoundary(this.binding.task, target);
+    this.releasePointer();
+    if (target == null) this.dispose();
+    else
+      settleCalendarInteraction(
+        () =>
+          'grabbedDate' in target
+            ? this.binding.onMove(this.binding.task, target)
+            : this.binding.onBoundary(this.binding.task, target),
+        this.dispose,
+      );
   };
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
@@ -604,7 +621,8 @@ class SpanDragSession {
     this.dispose();
   };
 
-  private readonly onCancel = (): void => {
+  private readonly onCancel = (event: Event): void => {
+    if ('pointerId' in event && event.pointerId !== this.pointerId) return;
     this.dispose();
   };
 }

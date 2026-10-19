@@ -10,8 +10,10 @@ import { renderAllDayCell, renderAllDaySpanLayer } from '../src/views/timegrid/r
 import { cssDeclarationText, cssRuleContaining, cssValue } from './cssHelpers';
 import {
   cssDeclarationValue,
+  deferred,
   dispatchDnD,
   expectDefined,
+  flushMicrotasks,
   freshContainer,
   loadPluginStyles,
   methodOf,
@@ -91,6 +93,64 @@ const callbacks = () => ({
 });
 
 describe('renderAllDayCell', () => {
+  it.each(['resolve', 'reject', 'dispose'] as const)(
+    'releases legacy resize capture immediately and retains its state until %s',
+    async (ending) => {
+      const container = freshContainer();
+      const owner = createSpanInteractionOwner();
+      const write = deferred<void>();
+      const failure = new Error('Controlled resize failure');
+      const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const onDueChange = vi.fn(async () => {
+        await write.promise;
+        if (ending === 'reject') throw failure;
+      });
+      const source = task({ planning: { start: '2026-07-10', due: '2026-07-12' } });
+      renderAllDayCell(container, '2026-07-12', [source], [], [], {
+        ...callbacks(),
+        onDueChange,
+        spanInteractionOwner: owner,
+      });
+      const handle = expectDefined(container.querySelector<HTMLElement>('[data-boundary="due"]'));
+      const body = expectDefined(handle.closest<HTMLElement>('.abyss-tg-body'));
+      const destination = container.createDiv({ attr: { 'data-tg-date': '2026-07-14' } });
+      const release = vi.fn();
+      handle.setPointerCapture = vi.fn();
+      handle.releasePointerCapture = release;
+      const originalElementFromPoint = methodOf(document, 'elementFromPoint');
+      document.elementFromPoint = () => destination;
+      try {
+        handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 56 }));
+        window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 56 }));
+        expect(release).toHaveBeenCalledExactlyOnceWith(56);
+        expect(body.classList.contains('is-edge-resizing')).toBe(true);
+        window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 56 }));
+        expect(onDueChange).toHaveBeenCalledExactlyOnceWith(source, '2026-07-14');
+        if (ending === 'dispose') {
+          owner.disposeActive();
+          expect(body.classList.contains('is-edge-resizing')).toBe(false);
+        }
+        write.resolve();
+        await flushMicrotasks();
+        expect(body.classList.contains('is-edge-resizing')).toBe(false);
+        expect(release).toHaveBeenCalledOnce();
+        if (ending === 'reject')
+          expect(log).toHaveBeenCalledExactlyOnceWith(
+            '[abyss-tasks] Could not complete UI action',
+            failure,
+          );
+        else expect(log).not.toHaveBeenCalled();
+      } finally {
+        owner.disposeActive();
+        Object.defineProperty(document, 'elementFromPoint', {
+          configurable: true,
+          writable: true,
+          value: originalElementFromPoint,
+        });
+      }
+    },
+  );
+
   it('renders one shared recurrence badge in an all-day task body', () => {
     const container = freshContainer();
     const recurring = task({

@@ -57,16 +57,19 @@ export interface TimeGridCallbacks extends ForecastInteractionCallbacks {
    * Month's onDayClick. Optional since TodayView itself has no need to re-drill into itself. */
   onDayHeaderClick?: (date: string) => void;
   onKeyboardIntent: (task: TaskSnapshot, intent: TimedBlockKeyboardIntent) => void;
-  onTimeChange: (task: TaskSnapshot, newStartMinutes: number) => void;
-  onDurationChange: (task: TaskSnapshot, newDurationMinutes: number) => void;
-  onTimedMove?: (task: TaskSnapshot, target: TimedDragTarget) => void;
-  onTimedDuration?: (task: TaskSnapshot, target: TimedVerticalResizeTarget) => void;
-  onTimedBoundary?: (task: TaskSnapshot, target: TimedBoundaryTarget) => void;
-  onSpanMove?: (task: TaskSnapshot, target: SpanMoveTarget) => void;
-  onSpanBoundary?: (task: TaskSnapshot, target: InteractiveSpanBoundaryTarget) => void;
-  onStartChange: (task: TaskSnapshot, newStart: string) => void;
-  onDueChange: (task: TaskSnapshot, newDue: string) => void;
-  onExtendToSpan: (task: TaskSnapshot, newDue: string) => void;
+  onTimeChange: (task: TaskSnapshot, newStartMinutes: number) => void | Promise<void>;
+  onDurationChange: (task: TaskSnapshot, newDurationMinutes: number) => void | Promise<void>;
+  onTimedMove?: (task: TaskSnapshot, target: TimedDragTarget) => void | Promise<void>;
+  onTimedDuration?: (task: TaskSnapshot, target: TimedVerticalResizeTarget) => void | Promise<void>;
+  onTimedBoundary?: (task: TaskSnapshot, target: TimedBoundaryTarget) => void | Promise<void>;
+  onSpanMove?: (task: TaskSnapshot, target: SpanMoveTarget) => void | Promise<void>;
+  onSpanBoundary?: (
+    task: TaskSnapshot,
+    target: InteractiveSpanBoundaryTarget,
+  ) => void | Promise<void>;
+  onStartChange: (task: TaskSnapshot, newStart: string) => void | Promise<void>;
+  onDueChange: (task: TaskSnapshot, newDue: string) => void | Promise<void>;
+  onExtendToSpan: (task: TaskSnapshot, newDue: string) => void | Promise<void>;
   onToggle: (task: TaskSnapshot) => void;
   onSetStatus: (task: TaskSnapshot, status: string) => void;
   onSetPriority: (task: TaskSnapshot, priority: TaskPriority) => void;

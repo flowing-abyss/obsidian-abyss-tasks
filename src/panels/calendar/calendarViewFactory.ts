@@ -45,16 +45,25 @@ export interface CalendarHandlers {
   readonly onCreateAtTime: (date: string, time: string) => void;
   readonly onCreateAtDate: (date: string) => void;
   readonly onCreateAtDateAllDay: (date: string) => void;
-  readonly onTimeChange: (task: TaskSnapshot, minutes: number) => void;
-  readonly onDurationChange: (task: TaskSnapshot, minutes: number) => void;
-  readonly onTimedMove: (task: TaskSnapshot, target: TimedDragTarget) => void;
-  readonly onTimedDuration: (task: TaskSnapshot, target: TimedVerticalResizeTarget) => void;
-  readonly onTimedBoundary: (task: TaskSnapshot, target: TimedBoundaryTarget) => void;
-  readonly onSpanMove: (task: TaskSnapshot, target: SpanMoveTarget) => void;
-  readonly onSpanBoundary: (task: TaskSnapshot, target: InteractiveSpanBoundaryTarget) => void;
-  readonly onStartChange: (task: TaskSnapshot, start: string) => void;
-  readonly onDueChange: (task: TaskSnapshot, due: string) => void;
-  readonly onExtendToSpan: (task: TaskSnapshot, due: string) => void;
+  readonly onTimeChange: (task: TaskSnapshot, minutes: number) => void | Promise<void>;
+  readonly onDurationChange: (task: TaskSnapshot, minutes: number) => void | Promise<void>;
+  readonly onTimedMove: (task: TaskSnapshot, target: TimedDragTarget) => void | Promise<void>;
+  readonly onTimedDuration: (
+    task: TaskSnapshot,
+    target: TimedVerticalResizeTarget,
+  ) => void | Promise<void>;
+  readonly onTimedBoundary: (
+    task: TaskSnapshot,
+    target: TimedBoundaryTarget,
+  ) => void | Promise<void>;
+  readonly onSpanMove: (task: TaskSnapshot, target: SpanMoveTarget) => void | Promise<void>;
+  readonly onSpanBoundary: (
+    task: TaskSnapshot,
+    target: InteractiveSpanBoundaryTarget,
+  ) => void | Promise<void>;
+  readonly onStartChange: (task: TaskSnapshot, start: string) => void | Promise<void>;
+  readonly onDueChange: (task: TaskSnapshot, due: string) => void | Promise<void>;
+  readonly onExtendToSpan: (task: TaskSnapshot, due: string) => void | Promise<void>;
   readonly onKeyboardIntent: (task: TaskSnapshot, intent: TimedBlockKeyboardIntent) => void;
   readonly onToggle: (task: TaskSnapshot) => void;
   readonly onSetStatus: (task: TaskSnapshot, status: string) => void;
