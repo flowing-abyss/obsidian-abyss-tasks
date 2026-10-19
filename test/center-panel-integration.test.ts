@@ -4626,7 +4626,7 @@ describe('CenterPanel calendar mode — click-to-create', () => {
   );
 
   it.each(['month', 'timed', 'all-day'] as const)(
-    '%s capture remounts pending/error state for query and full rerenders without updating the stale surface',
+    '%s capture preserves pending/error state through a deferred query patch and full rerender',
     async (kind) => {
       const result = deferred<TaskCommandResult>();
       const captureHarness = sharedCalendarCaptureHarness(() => result.promise);
@@ -4641,6 +4641,14 @@ describe('CenterPanel calendar mode — click-to-create', () => {
         expect(opened.input.readOnly).toBe(true);
 
         emitQueryChange();
+        await Promise.resolve();
+        expect(el.querySelector('.abyss-capture-input')).toBe(opened.input);
+        expect(opened.input.isConnected).toBe(true);
+        expect(opened.input.value).toBe('repair this calendar task');
+        expect(opened.input.readOnly).toBe(true);
+
+        // Escape's native turn finishes before the queued query can remount the pending capture.
+        await flushMicrotasks();
         const afterQuery = expectDefined(
           el.querySelector<HTMLInputElement>('.abyss-capture-input'),
         );
@@ -4657,8 +4665,13 @@ describe('CenterPanel calendar mode — click-to-create', () => {
         await flushMicrotasks();
         expect(sessionExecute).toHaveBeenCalledOnce();
         expect(el.querySelector('.abyss-capture-input')).toBe(afterQuery);
+        expect(opened.input.readOnly).toBe(true);
+        expect(afterQuery.value).toBe('repair this calendar task');
         expect(afterQuery.readOnly).toBe(false);
         expect(afterQuery.closest('.abyss-capture-surface')?.classList).toContain('has-error');
+        expect(el.querySelector('.abyss-calendar-capture-feedback')?.textContent).toContain(
+          'Failed to create task',
+        );
 
         panel.refresh();
         const afterFullRender = expectDefined(
@@ -4667,10 +4680,53 @@ describe('CenterPanel calendar mode — click-to-create', () => {
         expect(afterFullRender).not.toBe(afterQuery);
         expect(afterQuery.isConnected).toBe(false);
         expect(afterFullRender.value).toBe('repair this calendar task');
+        expect(afterFullRender.readOnly).toBe(false);
         expect(afterFullRender.closest('.abyss-capture-surface')?.classList).toContain('has-error');
+        expect(sessionExecute).toHaveBeenCalledOnce();
       } finally {
         panel.destroy();
         el.remove();
+      }
+    },
+  );
+
+  it.each(['month', 'timed', 'all-day'] as const)(
+    '%s explicit refresh replaces the pending capture and retires its queued query patch',
+    async (kind) => {
+      const result = deferred<TaskCommandResult>();
+      const h = sharedCalendarCaptureHarness(() => result.promise);
+      try {
+        const opened = await openCalendarCapture(h.el, kind);
+        setCaptureDraft(opened.input, 'pending through refresh');
+        pressCaptureKey(opened.input, 'Enter');
+        pressCaptureKey(opened.input, 'Escape');
+        h.emitQueryChange();
+        h.panel.refresh();
+        const remounted = expectDefined(
+          h.el.querySelector<HTMLInputElement>('.abyss-capture-input'),
+        );
+        expect(remounted).not.toBe(opened.input);
+        expect(opened.input.isConnected).toBe(false);
+        expect(remounted.value).toBe('pending through refresh');
+        expect(remounted.readOnly).toBe(true);
+        await flushMicrotasks();
+        expect(h.el.querySelector('.abyss-capture-input')).toBe(remounted);
+
+        result.resolve({
+          type: 'io-error',
+          cause: 'repository-error',
+          contentState: 'unknown',
+        });
+        await flushMicrotasks();
+        expect(h.sessionExecute).toHaveBeenCalledOnce();
+        expect(h.el.querySelector('.abyss-capture-input')).toBe(remounted);
+        expect(remounted.value).toBe('pending through refresh');
+        expect(remounted.readOnly).toBe(false);
+        expect(remounted.closest('.abyss-capture-surface')?.classList).toContain('has-error');
+        expect(opened.input.readOnly).toBe(true);
+      } finally {
+        h.panel.destroy();
+        h.el.remove();
       }
     },
   );
@@ -8358,7 +8414,55 @@ describe('calendar child inspector and parent navigation', () => {
     }
   });
 
-  it.each(['pointercancel', 'blur', 'view', 'patch', 'next-press', 'no-click'] as const)(
+  it('keeps the parent release guard through publication and allows the next genuine cell press', async () => {
+    const h = await mounted('⏳ 2026-10-08', 'Day');
+    try {
+      const button = expectDefined(h.el.querySelector<HTMLButtonElement>('.abyss-task-parent-btn'));
+      const initialEmpty = expectDefined(button.closest<HTMLElement>('.abyss-tg-cell-items'));
+      const execute = vi.spyOn(h.tasks, 'execute');
+      parentPress(button);
+      const child = expectDefined(h.index.list()[0]?.subtasks[0]?.subtasks[0]);
+      await h.tasks.execute({
+        type: 'set-status',
+        target: { type: 'subtask', ref: child.ref },
+        symbol: ' ',
+      });
+      const published = await readMd(h.app, 'calendar-child.md');
+      await vi.advanceTimersByTimeAsync(30);
+      expect(button.isConnected).toBe(true);
+
+      releaseParentPress(initialEmpty);
+      releasedClick(initialEmpty);
+      expect(h.el.querySelector('.abyss-capture-input')).toBeNull();
+      await vi.advanceTimersByTimeAsync(30);
+      expect(h.el.querySelector('.abyss-capture-input')).toBeNull();
+      expect(button.isConnected).toBe(false);
+      expect(h.state.get('mode')).toBe('calendar');
+      expect(h.state.get('taskStack')).toEqual([]);
+      expect(execute).toHaveBeenCalledOnce();
+      expect(await readMd(h.app, 'calendar-child.md')).toBe(published);
+
+      const empty = expectDefined(h.el.querySelector<HTMLElement>('.abyss-tg-cell-items'));
+      for (const type of ['pointerdown', 'pointerup', 'click'])
+        empty.dispatchEvent(
+          new PointerEvent(type, {
+            pointerId: 8,
+            button: 0,
+            detail: type === 'click' ? 1 : 0,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      await vi.advanceTimersByTimeAsync(30);
+      expect(h.el.querySelectorAll('.abyss-capture-input')).toHaveLength(1);
+      expect(execute).toHaveBeenCalledOnce();
+    } finally {
+      h.panel.destroy();
+      h.el.remove();
+    }
+  });
+
+  it.each(['pointercancel', 'blur', 'view', 'next-press', 'no-click'] as const)(
     'parent press releases its click guard on %s',
     async (end) => {
       const h = await mounted('⏳ 2026-10-08', 'Day');
@@ -8374,14 +8478,6 @@ describe('calendar child inspector and parent navigation', () => {
         if (end === 'view') {
           clickCalendarView(h.el, 'Month');
           clickCalendarView(h.el, 'Day');
-        }
-        if (end === 'patch') {
-          const child = expectDefined(h.index.list()[0]?.subtasks[0]?.subtasks[0]);
-          await h.tasks.execute({
-            type: 'set-status',
-            target: { type: 'subtask', ref: child.ref },
-            symbol: ' ',
-          });
         }
         if (end === 'next-press')
           initialEmpty.dispatchEvent(
