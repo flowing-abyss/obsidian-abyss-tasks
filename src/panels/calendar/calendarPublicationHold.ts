@@ -7,7 +7,7 @@ export class CalendarPublicationHold {
   private readonly pointers = new Set<number>();
   private pending = 0;
   private leases = 0;
-  private dragging = false;
+  private dragging: DragEvent | undefined;
   private dirty = false;
   private disposed = false;
   private releaseTimer: number | undefined;
@@ -83,7 +83,7 @@ export class CalendarPublicationHold {
       this.pending > 0 ||
       this.leases > 0 ||
       this.pointers.size > 0 ||
-      this.dragging ||
+      this.dragging !== undefined ||
       this.releaseTimer !== undefined
     )
       return;
@@ -99,6 +99,7 @@ export class CalendarPublicationHold {
     // Native click/contextmenu follows pointerup. Microtasks run too early to replace its target.
     this.releaseTimer = this.ownerWindow?.setTimeout(() => {
       this.releaseTimer = undefined;
+      if (this.dragging?.defaultPrevented === true) this.dragging = undefined;
       this.flush();
     }, 0);
   }
@@ -116,13 +117,15 @@ export class CalendarPublicationHold {
     if (this.pointers.delete(event.pointerId)) this.scheduleRelease();
   };
 
-  private readonly onDragStart = (): void => {
-    this.dragging = true;
+  private readonly onDragStart = (event: DragEvent): void => {
+    this.dragging = event;
+    // Descendant handlers can decline the start; inspect it after native dispatch finishes.
+    this.scheduleRelease();
   };
 
   private readonly onCancel = (): void => {
     this.pointers.clear();
-    this.dragging = false;
+    this.dragging = undefined;
     this.scheduleRelease();
   };
 

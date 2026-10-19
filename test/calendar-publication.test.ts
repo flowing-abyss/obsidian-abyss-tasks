@@ -6,6 +6,7 @@ import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { localDate, localTime, type TaskApplicationApi } from '../src/tasks';
 import { noInteractionOwnership } from '../src/ui/interactionOwnership';
 import { closeStatusPopovers } from '../src/ui/statusMenu';
+import { attachCalendarNativeDrag } from '../src/views/calendarNativeDrag';
 import {
   configuredTaskApplication,
   createAppWithFiles,
@@ -139,7 +140,70 @@ function timedResize(root: HTMLElement) {
   return { block, handle, release, finish };
 }
 
+function startNativeDrag(source: HTMLElement): boolean {
+  const event = new MouseEvent('dragstart', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'dataTransfer', { value: null });
+  return source.dispatchEvent(event);
+}
+
 describe('calendar publication during an owned gesture', () => {
+  it('applies publication after a declined native drag start and pointer release', async () => {
+    const h = await setup('month');
+    const body = expectDefined(h.root.querySelector<HTMLElement>('.abyss-cal-body'));
+    const source = body.createDiv();
+    attachCalendarNativeDrag(
+      source,
+      expectDefined(h.application.index.list({ filePath: 'calendar.md' })[0]),
+      () => undefined,
+    );
+    const marker = expectDefined(h.root.querySelector<HTMLElement>('.abyss-status-marker'));
+    source.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 41 }));
+    expect(startNativeDrag(source)).toBe(false);
+    window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 41 }));
+    await h.publish();
+    await flushMicrotasks();
+    expect(marker.isConnected).toBe(false);
+  });
+
+  it.each(['dragend', 'drop'] as const)(
+    'keeps an accepted native drag publication until %s',
+    async (ending) => {
+      const h = await setup('month');
+      const source = expectDefined(h.root.querySelector<HTMLElement>('[draggable="true"]'));
+      source.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 42 }));
+      expect(startNativeDrag(source)).toBe(true);
+      window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 42 }));
+      await h.publish();
+      await flushMicrotasks();
+      expect(source.isConnected).toBe(true);
+      source.dispatchEvent(new Event(ending, { bubbles: true }));
+      await flushMicrotasks();
+      expect(source.isConnected).toBe(false);
+    },
+  );
+
+  it('keeps a newer accepted native drag when an older start was canceled', async () => {
+    const h = await setup('month');
+    const source = expectDefined(h.root.querySelector<HTMLElement>('[draggable="true"]'));
+    source.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 42 }));
+    source.addEventListener(
+      'dragstart',
+      (event) => {
+        event.preventDefault();
+      },
+      { once: true },
+    );
+    expect(startNativeDrag(source)).toBe(false);
+    expect(startNativeDrag(source)).toBe(true);
+    window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 42 }));
+    await h.publish();
+    await flushMicrotasks();
+    expect(source.isConnected).toBe(true);
+    source.dispatchEvent(new Event('dragend', { bubbles: true }));
+    await flushMicrotasks();
+    expect(source.isConnected).toBe(false);
+  });
+
   it.each([false, true])(
     'preserves the requested resize and exact source target (child: %s)',
     async (child) => {
