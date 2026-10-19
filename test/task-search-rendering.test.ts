@@ -1515,6 +1515,7 @@ it('shows short matched Tasks filter descriptions and child context', async () =
 });
 
 it('keeps title-only root and child context, with only title matches highlighted, across publication', async () => {
+  vi.spyOn(Date, 'now').mockReturnValue(new Date('2026-10-01T12:00:00Z').getTime());
   const settings = structuredClone(DEFAULT_SETTINGS);
   settings.sourceNoteDisplay = 'always';
   const source =

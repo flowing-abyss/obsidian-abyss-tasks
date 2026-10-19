@@ -1060,6 +1060,35 @@ describe('RightPanel.renderTask', () => {
     expect(expectDefined(ta).value).toBe('My task');
   });
 
+  it.each([
+    ['.abyss-right-title-view', '.abyss-right-title-edit', 31.8],
+    ['.abyss-right-desc-view', '.abyss-right-desc-edit', 71.25],
+    ['.abyss-subtask-add-row', '.abyss-subtask-new-input', 26.9],
+    ['.abyss-comment-text', '.abyss-comment-edit-input', 18.2],
+  ] as const)(
+    'preserves the measured slot when opening %s',
+    async (viewSelector, editorSelector, height) => {
+      vi.useFakeTimers();
+      const { state, el } = await makePanel();
+      activeDocument.body.append(el);
+      state.set('taskStack', [
+        task({
+          title: 'Short title',
+          description: 'Short description',
+          comments: [taskComment({ text: 'Short comment' })],
+        }),
+      ]);
+      const view = expectDefined(el.querySelector<HTMLElement>(viewSelector));
+      vi.spyOn(view, 'getBoundingClientRect').mockReturnValue(rect(0, 0, 200, height));
+      click(view);
+      await vi.runOnlyPendingTimersAsync();
+      const editor = expectDefined(el.querySelector<HTMLElement>(editorSelector));
+      expect(editor.style.height).toBe(`${height}px`);
+      expect(activeDocument.activeElement).toBe(editor);
+      el.remove();
+    },
+  );
+
   it('editing the title and blurring writes back via updateTaskTitle', async () => {
     const fileContent = '- [ ] My task\n';
     const { panel, state, el, app } = await makePanel({ 'f.md': fileContent });
@@ -1088,7 +1117,7 @@ describe('RightPanel.renderTask', () => {
   });
 
   it.each(['blur', 'Escape'] as const)(
-    'returns a title auto-grown for raw Markdown to its natural display height on %s',
+    'keeps the title slot on entry and grows only after input, restoring display height on %s',
     async (finish) => {
       vi.useFakeTimers();
       const markdownTitle = `[Short link label](https://example.test/${'long-url-segment/'.repeat(25)})`;
@@ -1112,6 +1141,8 @@ describe('RightPanel.renderTask', () => {
           get: () => measuredHeight(editor, 420),
         });
         await vi.runOnlyPendingTimersAsync();
+        expect(editor.style.height).toBe('48px');
+        editor.dispatchEvent(new Event('input', { bubbles: true }));
         expect(editor.style.height).toBe('420px');
 
         if (finish === 'blur') editor.dispatchEvent(new FocusEvent('blur'));
@@ -1228,7 +1259,7 @@ describe('RightPanel.renderTask', () => {
         get: () => measuredHeight(editor, 420),
       });
       await vi.runOnlyPendingTimersAsync();
-      expect(editor.style.height).toBe('420px');
+      expect(editor.style.height).toBe('88px');
       editor.dispatchEvent(new FocusEvent('blur'));
       await vi.runOnlyPendingTimersAsync();
       expect(view.style.height).toBe('');

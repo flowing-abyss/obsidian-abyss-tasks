@@ -3,6 +3,7 @@ import { PRIORITY_LEVELS } from '../priority';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import type { SubtaskSnapshot, TaskPriority, TaskSnapshot } from '../tasks';
 import { renderStatusMarker } from './StatusMarker';
+import { createControlName } from './guardedDomWrites';
 import { noInteractionOwnership, type InteractionOwnershipPort } from './interactionOwnership';
 
 export interface StatusMenuOpts {
@@ -225,8 +226,9 @@ function renderPriorityRow(
 ): HTMLElement {
   const row = popover.createDiv({
     cls: 'abyss-status-popover-priority-row',
-    attr: { role: 'group', 'aria-label': 'Priority' },
+    attr: { role: 'group' },
   });
+  createControlName(row, row).setText('Priority');
   for (const option of PRIORITY_OPTIONS) {
     const active = task.priority === option.p;
     const button = row.createEl('button', {
@@ -326,7 +328,8 @@ export function showStatusMenuAt(ev: MouseEvent, opts: StatusMenuOpts): StatusMe
     }),
   });
   lifecycle.initialize();
-  popover.setAttrs({ role: 'menu', 'aria-label': 'Task status and priority' });
+  popover.setAttribute('role', 'menu');
+  createControlName(popover, popover).setText('Task status and priority');
   const priorityRow = renderPriorityRow(popover, opts.task, opts.onPickPriority, lifecycle.close);
   popover.createDiv({ cls: 'abyss-status-popover-divider' });
   renderStatusList(popover, opts, lifecycle.close);

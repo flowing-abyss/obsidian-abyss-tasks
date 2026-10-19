@@ -102,6 +102,22 @@ interface InspectorCommentRow {
   disclosure: HTMLButtonElement | undefined;
 }
 
+function renderedHeight(element: HTMLElement | null): number {
+  if (element === null) return 0;
+  const height = element.getBoundingClientRect().height;
+  return height > 0 ? height : element.offsetHeight;
+}
+
+function replaceCommentText(row: HTMLElement): HTMLTextAreaElement {
+  const text = row.querySelector<HTMLElement>('.abyss-comment-text');
+  const height = renderedHeight(text);
+  const textarea = row.createEl('textarea', { cls: 'abyss-comment-edit-input' });
+  text?.replaceWith(textarea);
+  if (height > 0) textarea.setCssStyles({ height: `${height}px` });
+  row.addClass('is-editing');
+  return textarea;
+}
+
 class AsyncEditLifecycle {
   #phase: 'idle' | 'saving' | 'closed' = 'idle';
 
@@ -463,7 +479,7 @@ export class InspectorSections {
       const next = proof === undefined ? owner.current : proof.successor(currentTask);
       if (next !== undefined) currentTask = next;
     };
-    const start = view.offsetHeight;
+    const start = renderedHeight(view);
     view.hide();
     const textarea = section.createEl('textarea', {
       cls: 'abyss-right-desc abyss-right-desc-edit',
@@ -590,12 +606,14 @@ export class InspectorSections {
 
   #openSubtaskInput(section: HTMLElement, trigger: HTMLElement, task: TaskLike): void {
     const owner = this.#host.taskOwner(task);
+    const height = renderedHeight(trigger);
     trigger.addClass('abyss-subtask-add-row--hidden');
     const input = section.createEl('input', {
       cls: 'abyss-subtask-new-input',
       // Android's default Next action changes focus without sending the Enter that adds the draft.
       attr: { type: 'text', placeholder: 'New sub-task…', enterkeyhint: 'enter' },
     });
+    if (height > 0) input.setCssStyles({ height: `${height}px` });
     const lifecycle = new AsyncEditLifecycle();
     const editorOwner = this.#editorOwner(input);
     this.#enableWikiLinks(input, task, editorOwner);
@@ -839,13 +857,14 @@ export class InspectorSections {
       const next = proof === undefined ? owner.current : proof.successor(currentTask);
       if (next !== undefined) currentTask = next;
     };
-    // Start editing at the rendered title height, then grow for the complete source.
-    const startHeight = view.offsetHeight;
+    // Opening preserves the rendered slot; typing can grow it for the complete source.
+    const startHeight = renderedHeight(view);
     view.hide();
     const ta = header.createEl('textarea', { cls: 'abyss-right-title abyss-right-title-edit' });
     // Keep the textarea in the title's slot so the ⋯/× action buttons stay on the right.
     view.insertAdjacentElement('afterend', ta);
     ta.value = task.markdownTitle;
+    ta.setCssStyles({ height: `${startHeight}px` });
     const editorOwner = this.#editorOwner(ta, undefined, advanceTarget);
     this.#enablePaste(ta, task, () => () => !lifecycle.isClosed(), editorOwner);
     this.#enableWikiLinks(ta, task, editorOwner);
@@ -857,7 +876,6 @@ export class InspectorSections {
     ta.addEventListener('input', grow);
     ta.ownerDocument.defaultView?.setTimeout(() => {
       ta.focus();
-      grow();
     }, 0);
 
     const lifecycle = new AsyncEditLifecycle();
@@ -1191,9 +1209,7 @@ export class InspectorSections {
       currentTask = next;
       currentComment = comment;
     };
-    row.querySelector('.abyss-comment-text')?.remove();
-    row.querySelector('.abyss-comment-disclosure')?.remove();
-    const textarea = row.createEl('textarea', { cls: 'abyss-comment-edit-input' });
+    const textarea = replaceCommentText(row);
     const lifecycle = new AsyncEditLifecycle();
     textarea.value = entry.comment.text;
     const editorOwner = this.#editorOwner(
@@ -1203,6 +1219,7 @@ export class InspectorSections {
     );
     editorOwner.register(() => {
       lifecycle.close();
+      row.removeClass('is-editing');
     });
     this.#enablePaste(textarea, task, () => () => !lifecycle.isClosed(), editorOwner);
     this.#enableWikiLinks(textarea, task, editorOwner);

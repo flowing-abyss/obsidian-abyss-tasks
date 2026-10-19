@@ -3776,7 +3776,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 .abyss-chip-add--hidden {
-  display: none;
+  visibility: hidden;
 }
 
 .abyss-chip-add {
@@ -4356,7 +4356,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
    intentionally left uncolored/muted, matching the priority popover. */
 .abyss-status-popover {
   position: fixed;
-  z-index: 1000;
+  z-index: var(--layer-menu);
   display: flex;
   flex-direction: column;
   min-width: 12rem;
@@ -4646,6 +4646,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 .abyss-right-desc {
+  display: block;
   width: 100%;
   border: 1px solid var(--background-modifier-border);
   border-radius: 6px;
@@ -5196,6 +5197,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 .abyss-subtask-new-input {
+  display: block;
   width: 100%;
   padding: var(--size-4-1) var(--size-4-2);
   border: 1px solid var(--interactive-accent);
@@ -5203,7 +5205,8 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   background: var(--background-secondary);
   color: var(--text-normal);
   font-size: var(--font-ui-small);
-  margin: var(--size-4-1) 0;
+  margin: 0;
+  min-height: 0;
   box-sizing: border-box;
   outline: none;
 }
@@ -5304,18 +5307,27 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
 .abyss-comment-edit-input {
   width: 100%;
-  border: 1px solid var(--interactive-accent);
-  border-radius: 6px;
-  padding: var(--size-2-3) var(--size-4-2);
+  border: none;
+  border-radius: 0;
+  padding: 0;
   background: var(--background-secondary);
   color: var(--text-normal);
   font-size: 13px;
   font-family: var(--font-text, var(--font-text-theme));
   resize: vertical;
-  min-height: 48px;
+  min-height: 0;
   outline: none;
   box-sizing: border-box;
-  margin-top: var(--size-4-1);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.abyss-comment-row.is-editing {
+  box-shadow: inset 0 0 0 1px var(--interactive-accent);
+}
+
+.abyss-comment-row.is-editing .abyss-comment-disclosure {
+  visibility: hidden;
 }
 
 .abyss-tag-input {
@@ -5335,6 +5347,26 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   flex-direction: column;
   align-items: flex-start;
   max-width: min(100%, 240px);
+}
+
+.abyss-tag-dropdown-wrap.abyss-tag-dropdown-anchored {
+  position: absolute;
+  top: var(--abyss-pop-top);
+  left: var(--abyss-pop-left);
+  width: var(--abyss-pop-width);
+  max-width: none;
+}
+
+.abyss-tag-dropdown-anchored .abyss-tag-input {
+  width: 100%;
+  min-width: 0;
+  height: 24px;
+}
+
+.abyss-tag-dropdown-anchored .abyss-tag-dropdown {
+  left: var(--abyss-pop-left);
+  width: var(--abyss-pop-width);
+  min-width: 0;
 }
 
 /* Tag picker multi-select modal */

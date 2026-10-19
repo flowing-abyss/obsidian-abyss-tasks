@@ -29,6 +29,31 @@ function forecastFixture(): {
 }
 
 describe('status menu interaction ownership', () => {
+  it('names menu containers without giving them hover tooltips', () => {
+    const menu = showStatusMenuAt(new MouseEvent('contextmenu'), {
+      task: task(),
+      registry: testStatusRegistry(),
+      onPickStatus: () => {},
+      onPickPriority: () => {},
+    });
+    try {
+      const group = menu.element.querySelector('[role="group"]');
+      for (const [element, name] of [
+        [menu.element, 'Task status and priority'],
+        [group, 'Priority'],
+      ] as const) {
+        expect(element?.hasAttribute('aria-label')).toBe(false);
+        const label = element?.getAttribute('aria-labelledby');
+        expect(activeDocument.getElementById(label ?? '')?.textContent).toBe(name);
+      }
+      expect(
+        menu.element.querySelector('.abyss-status-popover-flag')?.getAttribute('aria-label'),
+      ).toBe('Highest');
+    } finally {
+      menu.close();
+    }
+  });
+
   it('acquires once per open and releases idempotently on replacement and external close', () => {
     const releases = [vi.fn(), vi.fn()];
     const interactionOwnership = {

@@ -1064,7 +1064,7 @@ export class InspectorPlanningSurfaces {
   positionAnchoredSurface(
     popover: HTMLElement,
     anchor: HTMLElement,
-    preferred: 'below-start' | 'below-end',
+    preferred: 'below-start' | 'below-end' | 'replace',
   ): void {
     this.#anchoredSurfaceCleanups.get(popover)?.();
     const ownerDocument = this.#host.root().ownerDocument;
@@ -1072,7 +1072,9 @@ export class InspectorPlanningSurfaces {
     const overlay = anchor.closest('.abyss-modal');
     let disposed = false;
     const position = (): void => {
-      if (!disposed) this.#placeAnchoredSurface(popover, anchor, preferred);
+      if (disposed) return;
+      if (preferred === 'replace') this.#placeTagSurface(popover, anchor);
+      else this.#placeAnchoredSurface(popover, anchor, preferred);
     };
     position();
     const listen = (method: 'addEventListener' | 'removeEventListener'): void => {
@@ -1154,17 +1156,39 @@ export class InspectorPlanningSurfaces {
         height: dimensionOrFallback(floating.height, popover.offsetHeight, 0),
       },
     });
-    // Convert viewport placement into the actual offset parent's padding box,
-    // independently of the visible panel/modal boundary used to contain it.
+    this.#setSurfacePosition(popover, placement.top, placement.left);
+    popover.dataset['side'] = placement.side;
+  }
+
+  #placeTagSurface(popover: HTMLElement, anchor: HTMLElement): void {
+    const boundary = this.#host.root().getBoundingClientRect();
+    const rect = anchor.getBoundingClientRect();
+    const computed = popover.ownerDocument.defaultView?.getComputedStyle(popover);
+    const edgeGap = this.#cssLengthToPx(
+      computed?.getPropertyValue('--abyss-popover-edge-gap') ?? '',
+      popover,
+      8,
+    );
+    const available = boundary.right - edgeGap - rect.left;
+    setPopoverLength(popover, 'width', Math.max(rect.width, Math.min(100, available)));
+    this.#setSurfacePosition(popover, rect.top, rect.left);
+    const dropdown = popover.querySelector<HTMLElement>('.abyss-tag-dropdown');
+    if (dropdown === null) return;
+    const width = Math.min(
+      Math.max(160, dropdown.scrollWidth + 2 * dropdown.clientLeft),
+      Math.max(0, boundary.width - 2 * edgeGap),
+      240,
+    );
+    setPopoverLength(dropdown, 'width', width);
+    setPopoverLength(dropdown, 'left', Math.min(0, available - width));
+  }
+
+  #setSurfacePosition(popover: HTMLElement, top: number, left: number): void {
+    // Convert viewport placement into the actual offset parent's padding box.
     const block = popover.offsetParent ?? this.#host.root();
     const rect = block.getBoundingClientRect();
-    setPopoverLength(popover, 'top', placement.top - rect.top - block.clientTop + block.scrollTop);
-    setPopoverLength(
-      popover,
-      'left',
-      placement.left - rect.left - block.clientLeft + block.scrollLeft,
-    );
-    popover.dataset['side'] = placement.side;
+    setPopoverLength(popover, 'top', top - rect.top - block.clientTop + block.scrollTop);
+    setPopoverLength(popover, 'left', left - rect.left - block.clientLeft + block.scrollLeft);
   }
 
   #cssLengthToPx(value: string, relativeTo: HTMLElement, fallback: number): number {
@@ -1215,6 +1239,8 @@ export class InspectorPlanningSurfaces {
         this.#removeAnchoredSurface(surface);
       },
     );
+    surface.addClass('abyss-tag-dropdown-anchored');
+    this.positionAnchoredSurface(surface, anchor, 'replace');
     const input = surface.querySelector<HTMLInputElement>('.abyss-tag-input');
     if (input !== null) {
       this.#typedInput = {
