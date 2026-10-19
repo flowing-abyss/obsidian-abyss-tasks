@@ -3083,6 +3083,10 @@ describe('RightPanel popovers', () => {
       configurable: true,
       value: () => rect(300, 80, 50, 24),
     });
+    // The suggestion list itself also has a classic vertical scrollbar.
+    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(160);
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(143);
+    vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockReturnValue(150);
 
     click(trigger);
 
@@ -3094,7 +3098,7 @@ describe('RightPanel popovers', () => {
       Number.parseFloat(wrap.style.getPropertyValue('--abyss-pop-left')) +
       Number.parseFloat(dropdown.style.getPropertyValue('--abyss-pop-left'));
     const width = Number.parseFloat(dropdown.style.getPropertyValue('--abyss-pop-width'));
-    expect(width).toBeGreaterThan(0);
+    expect(width).toBeGreaterThanOrEqual(167);
     expect(viewportLeft).toBeGreaterThanOrEqual(100 + el.clientLeft + 8);
     expect(viewportLeft + width).toBeLessThanOrEqual(100 + el.clientLeft + el.clientWidth - 8);
     panel.destroy();

@@ -55,7 +55,7 @@ import process from 'process';
 // Approved next-KiB main limit: 2,123,776 bytes (2074 KiB). Shipped CSS is 190,904 bytes
 // within its unchanged 193,536-byte cap; dependency scope and artifact enforcement are unchanged.
 // Inspector edit slots and retained calendar/list interactions: main 2,124,496 ->
-// 2,135,362 bytes (+10,866); shipped CSS 194,520 -> 195,043 bytes (+523).
+// 2,135,375 bytes (+10,879); shipped CSS 194,520 -> 195,043 bytes (+523).
 // Includes exact successor submission after inspector saves and scrollport containment.
 // Minimal containing KiB limits: 2,136,064 (2086 KiB) and 195,584 (191 KiB).
 // Bundled dependency modules are unchanged; both artifact size checks remain enforced.

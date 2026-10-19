@@ -1187,7 +1187,7 @@ export class InspectorPlanningSurfaces {
     const dropdown = popover.querySelector<HTMLElement>('.abyss-tag-dropdown');
     if (dropdown === null) return;
     const width = Math.min(
-      Math.max(160, dropdown.scrollWidth + 2 * dropdown.clientLeft),
+      Math.max(160, dropdown.scrollWidth + dropdown.offsetWidth - dropdown.clientWidth),
       Math.max(0, boundary.width - 2 * edgeGap),
       240,
     );
