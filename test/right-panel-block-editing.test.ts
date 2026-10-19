@@ -2778,7 +2778,7 @@ describe('multiline inspector comment and description editing', () => {
     for (const cleanup of inspectorCleanups.splice(0)) cleanup();
   });
 
-  it('collapses multiline comments, retains disclosure through proven refresh and edits full text', async () => {
+  it('retains multiline disclosure through refresh and editing, restoring expanded text on cancel', async () => {
     vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, source, holder) => {
       holder.setText(source);
     });
@@ -2808,11 +2808,33 @@ describe('multiline inspector comment and description editing', () => {
     expect(h.el.querySelector('.abyss-comment-row')).toBe(row);
     expect(row.querySelector('button[aria-expanded]')?.getAttribute('aria-expanded')).toBe('true');
     expect(h.el.querySelectorAll('.abyss-comment-row button[aria-expanded]')).toHaveLength(1);
-    expectDefined(row.querySelector<HTMLElement>('.abyss-comment-text')).click();
-    expect(row.querySelector<HTMLTextAreaElement>('.abyss-comment-edit-input')?.value).toBe(
-      'first\nsecond',
+    const before = await h.read();
+    const text = expectDefined(row.querySelector<HTMLElement>('.abyss-comment-text'));
+    const slot = [...row.children].indexOf(disclosure);
+    vi.spyOn(text, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 200, 42.5));
+    text.click();
+    const editor = expectDefined(
+      row.querySelector<HTMLTextAreaElement>('.abyss-comment-edit-input'),
     );
-    expect(row.querySelector('button[aria-expanded]')).toBeNull();
+    expect(editor.value).toBe('first\nsecond');
+    expect(editor.style.height).toBe('42.5px');
+    expect(row.classList.contains('is-editing')).toBe(true);
+    expect(row.querySelector('button[aria-expanded]')).toBe(disclosure);
+    expect(disclosure.getAttribute('aria-expanded')).toBe('true');
+    expect([...row.children].indexOf(disclosure)).toBe(slot);
+
+    editor.value = 'Discarded edit';
+    editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await flushMicrotasks();
+    expect(row.querySelector('.abyss-comment-edit-input')).toBeNull();
+    expect(row.classList.contains('is-editing')).toBe(false);
+    expect(row.querySelector('button[aria-expanded]')).toBe(disclosure);
+    expect(disclosure.getAttribute('aria-expanded')).toBe('true');
+    expect(row.querySelector('.abyss-comment-text')?.textContent).toBe('first\nsecond');
+    expect(await h.read()).toBe(before);
+    disclosure.click();
+    expect(disclosure.getAttribute('aria-expanded')).toBe('false');
+    expect(row.querySelector('.abyss-comment-text')?.textContent).toBe('first');
   });
 
   it('keeps Shift+Enter native and retains the multiline description draft until plain Enter', async () => {

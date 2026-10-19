@@ -175,16 +175,17 @@ function element(root: ParentNode, selector: string): HTMLElement {
   return expectDefined(root.querySelector<HTMLElement>(selector), `Missing ${selector}`);
 }
 function physicalActivation(control: HTMLElement, type: 'pointer' | 'touch'): void {
-  const pointer = new Event('pointerdown', { bubbles: true, cancelable: true });
-  Object.defineProperties(pointer, {
-    pointerType: { value: type === 'touch' ? 'touch' : 'mouse' },
-    button: { value: 0 },
-    pointerId: { value: 1 },
-  });
-  control.dispatchEvent(pointer);
+  const pointer = {
+    bubbles: true,
+    cancelable: true,
+    pointerType: type === 'touch' ? 'touch' : 'mouse',
+    button: 0,
+    pointerId: 1,
+  };
+  control.dispatchEvent(new PointerEvent('pointerdown', pointer));
   if (type === 'touch')
     control.dispatchEvent(new Event('touchstart', { bubbles: true, cancelable: true }));
-  control.dispatchEvent(new Event('pointerup', { bubbles: true, cancelable: true }));
+  control.dispatchEvent(new PointerEvent('pointerup', pointer));
   if (type === 'touch')
     control.dispatchEvent(new Event('touchend', { bubbles: true, cancelable: true }));
   // Even a browser's compatibility click (including detail=0 from touch/AT) must stay blocked.

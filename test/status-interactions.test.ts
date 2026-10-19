@@ -269,8 +269,14 @@ describe('status and priority consumer delegation', () => {
 
     expect(current.tagName).toBe('BUTTON');
     expect(current.tabIndex).toBe(0);
-    expect(current.parentElement?.getAttribute('role')).toBe('group');
-    expect(current.parentElement?.getAttribute('aria-label')).toBe('Priority');
+    const group = expectDefined(current.parentElement);
+    expect(group.getAttribute('role')).toBe('group');
+    expect(group.hasAttribute('aria-label')).toBe(false);
+    const label = expectDefined(
+      group.ownerDocument.getElementById(expectDefined(group.getAttribute('aria-labelledby'))),
+    );
+    expect(label.isConnected).toBe(true);
+    expect(label.textContent).toBe('Priority');
     expect(current.getAttribute('role')).toBe('menuitemradio');
     expect(current.getAttribute('aria-checked')).toBe('true');
     expect(other.getAttribute('aria-checked')).toBe('false');
