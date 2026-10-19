@@ -162,10 +162,12 @@ export class TaskListStatusPublication {
   }
 
   #start(marker: HTMLElement, key: string, root: TaskSnapshot, node: TaskSelectionNode): void {
-    this.#cancel();
     const owner = marker.ownerDocument.defaultView;
     const selection = taskSelectionRefPath(root, taskNodeRef(node));
-    if (this.#disposed || owner === null || selection === undefined) return;
+    if (this.#disposed || owner === null || selection === undefined) {
+      this.#cancel();
+      return;
+    }
     const target: HeldTarget = { original: node, root, selection, waitingForProof: false };
     const active: StatusActivation = {
       marker,
@@ -186,6 +188,8 @@ export class TaskListStatusPublication {
         this.#cancel(active);
       },
     );
+    // Acquire the next publication lease before retiring the previous marker and menu.
+    this.#cancel();
     if (release === undefined) return;
     active.releasePublication = release;
     this.#active = active;

@@ -189,9 +189,10 @@ export function showTagDropdown(
     getTagColor: (tag: string) => string | undefined,
     onCommit: (tags: readonly string[]) => TagCommitOutcome | Promise<TagCommitOutcome>,
     onClose?: () => void,
+    options?: { focus?: boolean },
   ]
 ): HTMLElement {
-  const [container, candidates, getTagColor, onCommit, onClose] = args;
+  const [container, candidates, getTagColor, onCommit, onClose, options] = args;
   container.querySelector('.abyss-tag-dropdown-wrap')?.remove();
   const wrap = container.createDiv({ cls: 'abyss-tag-dropdown-wrap' });
   const dropdownId = `abyss-tag-dropdown-${nextTagDropdownId++}`;
@@ -241,6 +242,6 @@ export function showTagDropdown(
   });
   bindInput(context, close);
   renderOptions(context, '');
-  input.focus();
+  if (options?.focus !== false) input.focus();
   return wrap;
 }

@@ -3061,6 +3061,63 @@ describe('RightPanel popovers', () => {
     }
   });
 
+  it('places the tag editor before focus can scroll to a temporary flex row', async () => {
+    const { panel, state, el } = await makePanel();
+    activeDocument.body.append(el);
+    state.set('taskStack', [task({ title: 'Short inspector' })]);
+    const trigger = expectDefined(el.querySelector<HTMLElement>('[aria-label="Add tag"]'));
+    const atFocus: Array<{ top: string; anchored: boolean }> = [];
+    const focus = methodOf(HTMLElement.prototype, 'focus');
+    vi.spyOn(HTMLElement.prototype, 'focus').mockImplementation(function (this: HTMLElement) {
+      if (this.matches('.abyss-tag-input')) {
+        const surface = expectDefined(this.parentElement);
+        atFocus.push({
+          top: surface.style.getPropertyValue('--abyss-pop-top'),
+          anchored: surface.matches('.abyss-tag-dropdown-anchored'),
+        });
+      }
+      focus.call(this);
+    });
+
+    click(trigger);
+
+    expect(atFocus).toHaveLength(1);
+    expect(expectDefined(atFocus[0]).anchored).toBe(true);
+    expect(Number.isFinite(Number.parseFloat(expectDefined(atFocus[0]).top))).toBe(true);
+    expect(activeDocument.activeElement).toBe(el.querySelector('.abyss-tag-input'));
+    panel.destroy();
+    el.remove();
+  });
+
+  it.each(['ltr', 'rtl'] as const)(
+    'expands the tag editor away from preceding chips in %s layout',
+    async (direction) => {
+      const { panel, state, el } = await makePanel();
+      el.style.direction = direction;
+      state.set('taskStack', [task({ title: 'Directional tags' })]);
+      const trigger = expectDefined(el.querySelector<HTMLElement>('[aria-label="Add tag"]'));
+      Object.defineProperties(el, {
+        getBoundingClientRect: { configurable: true, value: () => rect(100, 50, 300, 720) },
+        clientLeft: { configurable: true, value: 0 },
+        clientWidth: { configurable: true, value: 300 },
+        clientHeight: { configurable: true, value: 720 },
+      });
+      Object.defineProperty(trigger, 'getBoundingClientRect', {
+        configurable: true,
+        value: () => rect(200, 80, 50, 24),
+      });
+
+      click(trigger);
+
+      const wrap = expectDefined(el.querySelector<HTMLElement>('.abyss-tag-dropdown-wrap'));
+      const width = Number.parseFloat(wrap.style.getPropertyValue('--abyss-pop-width'));
+      const left = 100 + Number.parseFloat(wrap.style.getPropertyValue('--abyss-pop-left'));
+      expect(width).toBe(100);
+      expect(direction === 'rtl' ? left + width : left).toBe(direction === 'rtl' ? 250 : 200);
+      panel.destroy();
+    },
+  );
+
   it('keeps tag suggestions inside the inspector scrollport when a scrollbar takes space', async () => {
     const { panel, state, el, app } = await makePanel();
     Object.defineProperty(app.metadataCache, 'getTags', {

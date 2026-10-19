@@ -363,6 +363,8 @@ once through the existing application command. Matching metadata echoes may expi
 transition without invalidating the proven current subject; external edits to that successor still
 cancel the action. This evidence lasts only for the gesture, menu, and command lifetime and grants
 no global source history or retry. Releasing the last lease delivers deferred Search presentation.
+Moving to another valid marker transfers the presentation lease before retiring the previous menu
+and row pin, retaining the latest deferred state through the next native activation.
 
 ## Presentation and interaction ownership
 
@@ -469,6 +471,8 @@ grants new source authority; external edits and deletion can still cause a comma
 Its mounted center owner supplies the available width; an owner-window observer coalesces changes
 and rebuilds Month/Week only when the width category changes. CalendarContent retains one canonical
 occurrence projection per publication and visible range; width remounts reuse that content.
+Query intake invalidates this cache immediately, so a width remount reads current content even when
+the retired interaction had deferred its publication.
 ConstrainedCalendarView builds its bounded day model directly from those occurrences and retains its
 date buttons. Selecting a date reads that model and replaces the agenda without querying, projecting,
 or creating display snapshots. CenterPanel supplies eager agenda mounts from its retained

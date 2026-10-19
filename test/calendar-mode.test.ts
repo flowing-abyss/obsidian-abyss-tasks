@@ -592,6 +592,52 @@ describe('compact CalendarMode', () => {
     expect(adapt).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { view: 'month' as const, from: 800, to: 360 },
+    { view: 'month' as const, from: 360, to: 800 },
+    { view: 'week' as const, from: 800, to: 360 },
+    { view: 'week' as const, from: 360, to: 800 },
+  ])(
+    'keeps a queued $view publication when resizing from $from to $to',
+    async ({ view, from, to }) => {
+      let current = task({ title: 'Original publication', planning: { due: '2026-10-16' } });
+      const forCalendarProjection = vi.fn(() => ({
+        materialized: [
+          { root: current, node: current, target: { type: 'task' as const, ref: current.ref } },
+        ],
+        recurringSources: [],
+      }));
+      const h = harness({ forCalendarProjection });
+      const resize = resizableWidth(h, from);
+      h.mode.setView(view);
+      h.mode['date_abyssPrivate'] = moment('2026-10-16');
+      h.mode.render(h.root);
+      if (from === 360) h.click('.abyss-calendar-date[data-calendar-date="2026-10-16"]');
+      const body = expectDefined(h.root.querySelector<HTMLElement>('.abyss-cal-body'));
+      body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 73 }));
+      current = task({
+        ...current,
+        title: 'Latest publication',
+        markdownTitle: 'Latest publication',
+      });
+      h.emit();
+      expect(body.textContent).toContain('Original publication');
+      expect(body.textContent).not.toContain('Latest publication');
+      expect(forCalendarProjection).toHaveBeenCalledOnce();
+
+      await resize(to);
+
+      expect(forCalendarProjection).toHaveBeenCalledTimes(2);
+      if (to === 360) h.click('.abyss-calendar-date[data-calendar-date="2026-10-16"]');
+      expect(body.textContent).toContain('Latest publication');
+      expect(body.textContent).not.toContain('Original publication');
+      expect(forCalendarProjection).toHaveBeenCalledTimes(2);
+      window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 73 }));
+      await flushMicrotasks();
+      expect(forCalendarProjection).toHaveBeenCalledTimes(2);
+    },
+  );
+
   it.each(['month', 'week'] as const)(
     'reuses the latest %s occurrences across compact/grid remounts without extra projection',
     async (view) => {

@@ -2,6 +2,7 @@ import { WorkspaceLeaf, type App } from 'obsidian';
 import { expect, it, vi } from 'vitest';
 import type { AppState } from '../src/app/AppState';
 import type { CenterPanel } from '../src/panels/CenterPanel';
+import { TaskListStatusPublication } from '../src/panels/task-list/TaskListStatusPublication';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { TagManager } from '../src/tags/TagManager';
 import { PanelView } from '../src/views/PanelView';
@@ -259,6 +260,64 @@ it.each(['external', 'delete', 'ambiguous', 'external-after-owned'] as const)(
       expect(marker.isConnected).toBe(false);
       expect(menu.isConnected).toBe(false);
       expect(h.index.list().every((task) => task.status === 'open')).toBe(true);
+    } finally {
+      await h.close();
+    }
+  },
+);
+
+it.each(['left', 'right'] as const)(
+  'transfers a deferred menu publication to the next marker before its first %s activation',
+  async (button) => {
+    const h = await mountList('- [ ] needle first\n- [ ] needle second');
+    try {
+      const markerFor = (title: string) => {
+        const card = expectDefined(
+          [...h.root.querySelectorAll<HTMLElement>('.abyss-task-card')].find((node) =>
+            node.textContent.includes(title),
+          ),
+        );
+        return expectDefined(card.querySelector<HTMLElement>('.abyss-status-marker'));
+      };
+      const first = markerFor('needle first');
+      const second = markerFor('needle second');
+      const execute = vi.spyOn(h.tasks, 'execute');
+      first.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 2 }));
+      first.focus();
+      first.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, button: 2 }));
+      first.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 2 }));
+      const priorMenu = expectDefined(document.querySelector<HTMLElement>('.abyss-status-popover'));
+      await h.app.vault.create('other.md', '- [ ] unrelated');
+      h.index.installCommittedContent('other.md', '- [ ] unrelated');
+      await h.search.prepare(new AbortController().signal);
+      await flushMicrotasks();
+      expect(priorMenu.isConnected).toBe(true);
+      expect(second.isConnected).toBe(true);
+
+      const nativeButton = button === 'left' ? 0 : 2;
+      second.dispatchEvent(
+        new PointerEvent('pointerdown', { bubbles: true, button: nativeButton }),
+      );
+      second.focus();
+      second.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: nativeButton }));
+      expect(second.isConnected).toBe(true);
+      if (button === 'left') second.click();
+      else {
+        second.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, button: 2 }));
+        const menu = expectDefined(document.querySelector<HTMLElement>('.abyss-status-popover'));
+        expectDefined(menu.querySelector<HTMLElement>('[data-abyss-priority="A"]')).click();
+      }
+      await vi.waitFor(() => {
+        const task = expectDefined(h.index.list().find((node) => node.title === 'needle second'));
+        expect(button === 'left' ? task.status : task.priority).toBe(
+          button === 'left' ? 'done' : 'A',
+        );
+      });
+      expect(execute).toHaveBeenCalledOnce();
+      expect(h.index.list().find((node) => node.title === 'needle first')?.status).toBe('open');
+      await searchUiCompleted(h.root);
+      expect(second.isConnected).toBe(false);
+      expect(priorMenu.isConnected).toBe(false);
     } finally {
       await h.close();
     }
@@ -553,11 +612,16 @@ it('keeps the original marker mounted until an accepted status command settles',
   }
 });
 
-it.each(['cancel', 'dispose', 'navigation', 'external'] as const)(
+it.each(['cancel', 'blur', 'dispose', 'navigation', 'external'] as const)(
   'releases an accepted action waiting on a proved save after %s',
   async (reason) => {
     const h = await mountList();
     const gate = holdInspectorSave(h);
+    const run = vi.spyOn(TaskListStatusPublication.prototype, 'run');
+    let inspectorSettled = false;
+    const inspectorSettlement = gate.settled.promise.then(() => {
+      inspectorSettled = true;
+    });
     try {
       await dirtyEditor(h);
       const marker = h.marker();
@@ -566,10 +630,17 @@ it.each(['cancel', 'dispose', 'navigation', 'external'] as const)(
       await gate.started.promise;
       marker.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
       marker.click();
+      const accepted = run.mock.results[0];
+      if (accepted?.type !== 'return') throw new Error('Expected an accepted status action');
+      let actionSettled = false;
+      const actionSettlement = accepted.value.then(() => {
+        actionSettled = true;
+      });
       gate.commit.resolve();
       await gate.echoed.promise;
       expect(gate.execute).toHaveBeenCalledTimes(1);
       if (reason === 'cancel') window.dispatchEvent(new Event('pointercancel'));
+      else if (reason === 'blur') window.dispatchEvent(new Event('blur'));
       else if (reason === 'dispose') await h.view.onClose();
       else if (reason === 'navigation') h.state.set('selectedList', 'today');
       else {
@@ -577,8 +648,13 @@ it.each(['cancel', 'dispose', 'navigation', 'external'] as const)(
         await h.app.vault.modify(file, '- [ ] needle external');
         h.index.installCommittedContent(file.path, '- [ ] needle external');
       }
+      await vi.waitFor(() => {
+        expect(actionSettled).toBe(true);
+      });
+      await actionSettlement;
+      expect(inspectorSettled).toBe(false);
       gate.deliver.resolve();
-      await gate.settled.promise;
+      await inspectorSettlement;
       if (reason !== 'dispose') await searchUiCompleted(h.root);
       expect(
         gate.execute.mock.calls.filter(([command]) => command.type === 'toggle-completion'),

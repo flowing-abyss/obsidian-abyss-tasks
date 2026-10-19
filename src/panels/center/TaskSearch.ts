@@ -1101,9 +1101,10 @@ export class TaskSearch {
   /** Retain one mounted status activation; the backend and source authority remain live. */
   holdStatusPublication(accept: () => boolean, cancel: () => void): (() => void) | undefined {
     if (!this.#live() || this.#generation === null || !accept()) return undefined;
-    this.#endPublicationHold();
+    const previous = this.#publicationHold;
     const hold = { accept, cancel };
     this.#publicationHold = hold;
+    previous?.cancel();
     return () => {
       if (this.#publicationHold !== hold) return;
       const deferred = this.#deferredState;

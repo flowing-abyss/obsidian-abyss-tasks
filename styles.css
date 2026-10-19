@@ -5352,6 +5352,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
 .abyss-tag-dropdown-wrap.abyss-tag-dropdown-anchored {
   position: absolute;
+  z-index: var(--layer-menu);
   top: var(--abyss-pop-top);
   left: var(--abyss-pop-left);
   width: var(--abyss-pop-width);
@@ -5368,6 +5369,15 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   left: var(--abyss-pop-left);
   width: var(--abyss-pop-width);
   min-width: 0;
+}
+
+.abyss-tag-dropdown-anchored .abyss-tag-input-feedback:not(:empty) {
+  align-self: stretch;
+  padding: var(--size-4-1);
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  box-shadow: var(--shadow-s, none);
 }
 
 /* Tag picker multi-select modal */

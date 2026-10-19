@@ -1181,9 +1181,14 @@ export class InspectorPlanningSurfaces {
       popover,
       8,
     );
-    const available = boundary.right - edgeGap - rect.left;
-    setPopoverLength(popover, 'width', Math.max(rect.width, Math.min(100, available)));
-    this.#setSurfacePosition(popover, rect.top, rect.left);
+    const rtl = computed?.direction === 'rtl';
+    const available = rtl
+      ? rect.right - boundary.left - edgeGap
+      : boundary.right - edgeGap - rect.left;
+    const inputWidth = Math.max(rect.width, Math.min(100, available));
+    const left = rtl ? rect.right - inputWidth : rect.left;
+    setPopoverLength(popover, 'width', inputWidth);
+    this.#setSurfacePosition(popover, rect.top, left);
     const dropdown = popover.querySelector<HTMLElement>('.abyss-tag-dropdown');
     if (dropdown === null) return;
     const width = Math.min(
@@ -1192,7 +1197,13 @@ export class InspectorPlanningSurfaces {
       240,
     );
     setPopoverLength(dropdown, 'width', width);
-    setPopoverLength(dropdown, 'left', Math.min(0, available - width));
+    const preferredLeft = rtl ? left + inputWidth - width : left;
+    setPopoverLength(
+      dropdown,
+      'left',
+      Math.max(boundary.left + edgeGap, Math.min(preferredLeft, boundary.right - edgeGap - width)) -
+        left,
+    );
   }
 
   #setSurfacePosition(popover: HTMLElement, top: number, left: number): void {
@@ -1250,6 +1261,7 @@ export class InspectorPlanningSurfaces {
       () => {
         this.#removeAnchoredSurface(surface);
       },
+      { focus: false },
     );
     surface.addClass('abyss-tag-dropdown-anchored');
     this.positionAnchoredSurface(surface, anchor, 'replace');
@@ -1284,6 +1296,7 @@ export class InspectorPlanningSurfaces {
         },
       },
     );
+    input?.focus();
   }
 
   #showTimePopover(anchor: HTMLElement, task: TaskLike): void {

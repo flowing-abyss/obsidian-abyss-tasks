@@ -242,6 +242,7 @@ export class CalendarMode {
     this.observeWidth_abyssPrivate(root, context);
     mountView();
     this.unsubscribe_abyssPrivate = this.deps_abyssPrivate.queries.subscribe(() => {
+      this.contentCache_abyssPrivate = undefined;
       this.publicationHold_abyssPrivate?.request();
     });
   }
