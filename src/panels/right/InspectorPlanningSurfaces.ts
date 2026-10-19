@@ -132,6 +132,18 @@ function finiteNonzeroOr(value: number, fallback: number): number {
   return Number.isFinite(value) && value !== 0 ? value : fallback;
 }
 
+function scrollportBoundary(root: HTMLElement): DOMRect {
+  const rect = root.getBoundingClientRect();
+  const width = root.clientWidth;
+  const height = root.clientHeight;
+  return new DOMRect(
+    rect.left + (width > 0 ? root.clientLeft : 0),
+    rect.top + (height > 0 ? root.clientTop : 0),
+    finiteNonzeroOr(width, rect.width),
+    finiteNonzeroOr(height, rect.height),
+  );
+}
+
 function visiblePickerBoundary(panel: DOMRect, overlay: DOMRect, window: Window | null): DOMRect {
   const left = Math.max(0, panel.left, overlay.left);
   const top = Math.max(0, panel.top, overlay.top);
@@ -1128,7 +1140,7 @@ export class InspectorPlanningSurfaces {
   ): void {
     const computed = popover.ownerDocument.defaultView?.getComputedStyle(popover);
     const geometry = {
-      boundary: this.#host.root().getBoundingClientRect(),
+      boundary: scrollportBoundary(this.#host.root()),
       anchor: anchor.getBoundingClientRect(),
       edgeGap: this.#cssLengthToPx(
         computed?.getPropertyValue('--abyss-popover-edge-gap') ?? '',
@@ -1161,7 +1173,7 @@ export class InspectorPlanningSurfaces {
   }
 
   #placeTagSurface(popover: HTMLElement, anchor: HTMLElement): void {
-    const boundary = this.#host.root().getBoundingClientRect();
+    const boundary = scrollportBoundary(this.#host.root());
     const rect = anchor.getBoundingClientRect();
     const computed = popover.ownerDocument.defaultView?.getComputedStyle(popover);
     const edgeGap = this.#cssLengthToPx(

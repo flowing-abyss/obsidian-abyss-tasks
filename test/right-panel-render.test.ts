@@ -3061,6 +3061,75 @@ describe('RightPanel popovers', () => {
     }
   });
 
+  it('keeps tag suggestions inside the inspector scrollport when a scrollbar takes space', async () => {
+    const { panel, state, el, app } = await makePanel();
+    Object.defineProperty(app.metadataCache, 'getTags', {
+      configurable: true,
+      value: () => ({ '#alpha': 1 }),
+    });
+    state.set('taskStack', [task({ title: 'Narrow tags' })]);
+    const trigger = expectDefined(
+      Array.from(el.querySelectorAll<HTMLButtonElement>('.abyss-chip-add')).find(
+        (candidate) => candidate.textContent === '+ tag',
+      ),
+    );
+    Object.defineProperties(el, {
+      getBoundingClientRect: { configurable: true, value: () => rect(100, 50, 272, 720) },
+      clientLeft: { configurable: true, value: 1 },
+      clientWidth: { configurable: true, value: 256 },
+      clientHeight: { configurable: true, value: 720 },
+    });
+    Object.defineProperty(trigger, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => rect(300, 80, 50, 24),
+    });
+
+    click(trigger);
+
+    const wrap = expectDefined(el.querySelector<HTMLElement>('.abyss-tag-dropdown-wrap'));
+    const dropdown = expectDefined(wrap.querySelector<HTMLElement>('.abyss-tag-dropdown'));
+    const viewportLeft =
+      100 +
+      el.clientLeft +
+      Number.parseFloat(wrap.style.getPropertyValue('--abyss-pop-left')) +
+      Number.parseFloat(dropdown.style.getPropertyValue('--abyss-pop-left'));
+    const width = Number.parseFloat(dropdown.style.getPropertyValue('--abyss-pop-width'));
+    expect(width).toBeGreaterThan(0);
+    expect(viewportLeft).toBeGreaterThanOrEqual(100 + el.clientLeft + 8);
+    expect(viewportLeft + width).toBeLessThanOrEqual(100 + el.clientLeft + el.clientWidth - 8);
+    panel.destroy();
+  });
+
+  it('keeps a priority popover inside the inspector scrollport rather than its outer border', async () => {
+    const { panel, state, el } = await makePanel();
+    state.set('taskStack', [task({ title: 'Narrow priority', priority: 'B' })]);
+    const chip = expectDefined(el.querySelector<HTMLElement>('.abyss-priority-chip'));
+    Object.defineProperties(el, {
+      getBoundingClientRect: { configurable: true, value: () => rect(100, 50, 272, 240) },
+      clientLeft: { configurable: true, value: 1 },
+      clientWidth: { configurable: true, value: 256 },
+      clientHeight: { configurable: true, value: 240 },
+    });
+    Object.defineProperty(chip, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => rect(330, 80, 20, 20),
+    });
+    const real = methodOf(HTMLElement.prototype, 'getBoundingClientRect');
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.matches('.abyss-priority-popover') ? rect(0, 0, 120, 80) : real.call(this);
+    });
+
+    click(chip);
+
+    const popover = expectDefined(el.querySelector<HTMLElement>('.abyss-priority-popover'));
+    const viewportLeft =
+      100 + el.clientLeft + Number.parseFloat(popover.style.getPropertyValue('--abyss-pop-left'));
+    expect(viewportLeft + 120).toBeLessThanOrEqual(100 + el.clientLeft + el.clientWidth - 8);
+    panel.destroy();
+  });
+
   it('converts viewport placement to a bordered and scrolled panel padding box', async () => {
     const { panel, state, el } = await makePanel();
     state.set('taskStack', [task({ title: 'P', priority: 'B' })]);

@@ -350,6 +350,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   background: var(--background-secondary-alt, var(--background-primary));
   border-left: 1px solid var(--background-modifier-border);
   overflow-y: auto;
+  scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;
   position: relative;

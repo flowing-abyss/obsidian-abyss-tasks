@@ -118,7 +118,7 @@ describe('dependency picker visible containment', () => {
       panel: [490, -200, 460, 1300],
       overlay: [480, 220, 480, 440],
       anchor: [880, 600],
-      limit: [444, 368],
+      limit: [437, 368],
       position: [638, 228],
     },
     {
@@ -127,7 +127,7 @@ describe('dependency picker visible containment', () => {
       panel: [240, -200, 460, 1300],
       overlay: [230, 100, 480, 440],
       anchor: [630, 480],
-      limit: [444, 368],
+      limit: [437, 368],
       position: [388, 108],
     },
     {
@@ -183,6 +183,11 @@ describe('dependency picker visible containment', () => {
         new DOMRect(...(overlay ?? [30, 20, 1000, 800])),
       );
       vi.spyOn(h.el, 'getBoundingClientRect').mockReturnValue(new DOMRect(...panel));
+      // Override the task-list harness's generic 700x900 client box with this panel's geometry.
+      Object.defineProperties(h.el, {
+        clientWidth: { configurable: true, value: expectDefined(panel[2]) - h.el.clientLeft },
+        clientHeight: { configurable: true, value: expectDefined(panel[3]) - h.el.clientTop },
+      });
       if (source !== 'badge') button(h.el, '.abyss-dep-badge-add').click();
       const selector =
         source === 'badge'
