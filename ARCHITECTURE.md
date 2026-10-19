@@ -348,6 +348,16 @@ from publishing. `SearchStatus` owns the mounted surface's accessible state and 
 inward reads never create Notices. Diagnostics omit query text, task content, paths, and arbitrary
 exception causes. Hidden preparation failures remain quiet until an active surface needs feedback.
 
+[`TaskListStatusPublication`](src/panels/task-list/TaskListStatusPublication.ts) captures a list
+status press before an inspector blur can save. It pins the row and holds Search presentation intake
+through the native activation task, an opened status menu, and accepted asynchronous commands.
+Search and source queries remain live. Each publication must still resolve the captured root exactly
+or through a repository-proven authority transition, with surviving descendants checked by the
+existing exact selection/source continuity rules; external replacements, ambiguity, deletion,
+semantic changes, navigation, cancellation, and owner loss revoke the hold. The original callback
+submits its captured task through the existing application command and rebasing checks. Releasing
+the last gesture, menu, or command lease delivers the latest deferred Search state.
+
 ## Presentation and interaction ownership
 
 [`PanelView`](src/views/PanelView.ts) owns AppState, the rail, panels, shortcuts, and their lifetimes.

@@ -153,6 +153,8 @@ export class TaskSearch {
   #restart = false;
   #failedRenderRequest = -1;
   #organization: TaskSearchOrganization | undefined;
+  #publicationHold: { accept: () => boolean; cancel: () => void } | undefined;
+  #deferredState: TaskSearchState | undefined;
   constructor(options: TaskSearchOptions) {
     this.#options = options;
   }
@@ -271,6 +273,10 @@ export class TaskSearch {
     }
   }
   #changed(state: TaskSearchState): void {
+    if (this.#deferPublication(state)) return;
+    this.#acceptPublication(state);
+  }
+  #acceptPublication(state: TaskSearchState): void {
     this.#observed = state;
     this.#markChangedActivation(state);
     if (this.#invalidates(state)) {
@@ -297,6 +303,22 @@ export class TaskSearch {
     if (this.#activation !== null && this.#invalidates(state))
       this.#status?.announceChanged(this.#request);
   }
+  #deferPublication(state: TaskSearchState): boolean {
+    const hold = this.#publicationHold;
+    if (hold === undefined) return false;
+    if (
+      this.#live() &&
+      state.phase !== 'failed' &&
+      state.phase !== 'disposed' &&
+      state.semanticsRevision === this.#observed?.semanticsRevision &&
+      hold.accept()
+    ) {
+      this.#deferredState = state;
+      return true;
+    }
+    this.#endPublicationHold();
+    return false;
+  }
   #invalidates(state: TaskSearchState): boolean {
     return (
       this.#generation !== null &&
@@ -314,6 +336,7 @@ export class TaskSearch {
   onWindowMigrated(): void {
     const owner = this.#root?.ownerDocument.defaultView ?? null;
     if (owner === this.#owner) return;
+    this.#endPublicationHold();
     this.#cancelPending();
     this.#cancelFocus?.();
     this.#cancelFocus = null;
@@ -358,6 +381,7 @@ export class TaskSearch {
     this.#pending = null;
   }
   #schedule(query: string, delay = 60): void {
+    this.#endPublicationHold();
     this.#cancelPending();
     const changedQuery = this.#query !== query;
     this.#query = query;
@@ -1053,6 +1077,7 @@ export class TaskSearch {
     );
   }
   clear(): void {
+    this.#endPublicationHold();
     this.#cancelPending();
     this.#cancelFocus?.();
     this.#cancelFocus = null;
@@ -1072,6 +1097,27 @@ export class TaskSearch {
     this.#generation = null;
     this.#restart = false;
     this.#organization = undefined;
+  }
+  /** Retain one mounted status activation; the backend and source authority remain live. */
+  holdStatusPublication(accept: () => boolean, cancel: () => void): (() => void) | undefined {
+    if (!this.#live() || this.#generation === null || !accept()) return undefined;
+    this.#endPublicationHold();
+    const hold = { accept, cancel };
+    this.#publicationHold = hold;
+    return () => {
+      if (this.#publicationHold !== hold) return;
+      const deferred = this.#deferredState;
+      this.#publicationHold = undefined;
+      this.#deferredState = undefined;
+      if (deferred !== undefined) this.#changed(deferred);
+    };
+  }
+  #endPublicationHold(): void {
+    const hold = this.#publicationHold;
+    this.#publicationHold = undefined;
+    if (this.#deferredState !== undefined) this.#observed = this.#deferredState;
+    this.#deferredState = undefined;
+    hold?.cancel();
   }
   /** Shared card/context activation; exact hydration remains valid through delayed guard acceptance. */
   async activate(address: TaskSearchAddress): Promise<void> {

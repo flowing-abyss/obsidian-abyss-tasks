@@ -159,6 +159,8 @@ interface TaskCardRendererHost {
     context?: TaskCardInteractionContext,
   ): void;
   reportFailure?(error: unknown): void;
+  runStatusAction?(action: () => Promise<void>): Promise<void>;
+  captureStatusTarget?(marker: HTMLElement, current: () => TaskSelectionNode | undefined): void;
   dependenciesForNode(target: TaskNodeRef): TaskDependencySummary | undefined;
   openChildContextMenu(event: MouseEvent, child: SubtaskSnapshot, row: HTMLElement): void;
   openStatusMenu(
@@ -840,18 +842,18 @@ export class TaskCardRenderer {
   ): void {
     if (current?.currentCalendar()?.kind === 'forecast') return;
     const projection = this.#host.dependenciesFor(task);
-    renderStatusMarker(mainRow, {
+    const marker = renderStatusMarker(mainRow, {
       task,
       registry: this.#statusRegistry,
       completionBlocked: dependencyCompletionBlocked(projection),
       onLeftClick: () => {
         if (current?.isCurrent() === false) return;
-        runAsyncAction(
+        const action = (): Promise<void> =>
           this.#commands.toggleTask(
             current?.currentProjection().node ?? task,
             current?.currentOccurrence()?.completion,
-          ),
-        );
+          );
+        runAsyncAction(this.#host.runStatusAction?.(action) ?? action());
       },
       onContextMenu: (event) => {
         event.stopPropagation();
@@ -863,6 +865,7 @@ export class TaskCardRenderer {
         );
       },
     });
+    this.#host.captureStatusTarget?.(marker, () => current?.currentProjection().node ?? task);
   }
 
   #renderBody(mainRow: HTMLElement, task: TaskSnapshot, flags?: TaskCardFlags): HTMLElement {
@@ -1128,7 +1131,10 @@ export class TaskCardRenderer {
           ),
           onLeftClick: () => {
             const node = current();
-            if (node !== undefined) runAsyncAction(this.#commands.toggleTask(node));
+            if (node !== undefined) {
+              const action = (): Promise<void> => this.#commands.toggleTask(node);
+              runAsyncAction(this.#host.runStatusAction?.(action) ?? action());
+            }
           },
           onContextMenu: (event: MouseEvent) => {
             event.stopPropagation();
@@ -1139,10 +1145,10 @@ export class TaskCardRenderer {
         const marker = host.querySelector<HTMLElement>(
           ':scope > .abyss-status-marker, :scope > .abyss-status-control > .abyss-status-marker',
         );
-        if (marker === null) {
-          const created = renderStatusMarker(host, presentation);
-          host.prepend(created.closest('.abyss-status-control') ?? created);
-        } else updateStatusMarker(marker, presentation);
+        const retained = marker ?? renderStatusMarker(host, presentation);
+        if (marker === null) host.prepend(retained.closest('.abyss-status-control') ?? retained);
+        else updateStatusMarker(marker, presentation);
+        this.#host.captureStatusTarget?.(retained, current);
       },
       metadataKey: (node, evidence) =>
         JSON.stringify([

@@ -122,6 +122,7 @@ import { ProjectsPanel } from './projects/ProjectsPanel';
 import { StatisticsMode } from './statistics/StatisticsMode';
 import type { StatisticsNavigationPort } from './statistics/StatisticsNavigation';
 import { TanStackStatisticsChart } from './statistics/TanStackStatisticsChart';
+import { TaskListStatusPublication } from './task-list/TaskListStatusPublication';
 import { TaskListSurface, type TaskRowMount } from './task-list/TaskListSurface';
 import { TaskSearchRows, type TaskSearchRowsIdentity } from './task-list/TaskSearchRows';
 import {
@@ -314,6 +315,11 @@ export class CenterPanel {
   private revealId_abyssPrivate = 0;
   private creationInclusion_abyssPrivate: CreationInclusion | undefined;
   private readonly taskSearch_abyssPrivate: TaskSearch;
+  private readonly statusPublication_abyssPrivate = new TaskListStatusPublication(
+    { resolve: (ref) => this.queries_abyssPrivate.resolve(ref) },
+    (accept, cancel) => this.taskSearch_abyssPrivate.holdStatusPublication(accept, cancel),
+    (key, ref, cancel) => this.pinTaskInteraction_abyssPrivate(key, ref, cancel),
+  );
   private readonly taskSearchReveal_abyssPrivate: TaskSearchReveal;
   private readonly searchApi_abyssPrivate: TaskSearchApi | undefined;
   private readonly searchControls_abyssPrivate: ListViewControls;
@@ -564,6 +570,10 @@ export class CenterPanel {
         },
         openStatusMenu: (event, task, completion) => {
           this.openStatusMenu_abyssPrivate(event, task, completion);
+        },
+        runStatusAction: (action) => this.statusPublication_abyssPrivate.run(action),
+        captureStatusTarget: (marker, current) => {
+          this.statusPublication_abyssPrivate.capture(marker, current);
         },
         formatDate: (date) => this.formatDate_abyssPrivate(date, this.cardRenderDate_abyssPrivate),
         getDateClass: (date) =>
@@ -3332,6 +3342,7 @@ export class CenterPanel {
     const currentProjection =
       context?.currentProjection ?? (() => rootTaskNodeSnapshot(currentTask()));
     const component = context?.component ?? this.md_abyssPrivate;
+    this.statusPublication_abyssPrivate.bind(card, component, rowKey, currentTask);
     component.registerDomEvent(card, 'click', (event) => {
       if (context?.onActivate !== undefined) {
         context.onActivate(currentTask());
@@ -4251,6 +4262,9 @@ export class CenterPanel {
       return;
     }
     const key = this.eventTaskCardKey_abyssPrivate(event.target);
+    const releasePublication = this.statusPublication_abyssPrivate.menu(() => {
+      handle.close();
+    });
     const releasePin =
       key === undefined
         ? undefined
@@ -4263,12 +4277,21 @@ export class CenterPanel {
       ...(this.taskSurface_abyssPrivate === null ? { owner: this.md_abyssPrivate } : {}),
       onClose: () => {
         releasePin?.();
+        releasePublication();
       },
       onPickStatus: (symbol) => {
-        runAsyncAction(this.taskCommands_abyssPrivate.setTaskStatus(task, symbol, completion));
+        runAsyncAction(
+          this.statusPublication_abyssPrivate.run(() =>
+            this.taskCommands_abyssPrivate.setTaskStatus(task, symbol, completion),
+          ),
+        );
       },
       onPickPriority: (priority) => {
-        runAsyncAction(this.taskCommands_abyssPrivate.setPriority(task, priority));
+        runAsyncAction(
+          this.statusPublication_abyssPrivate.run(() =>
+            this.taskCommands_abyssPrivate.setPriority(task, priority),
+          ),
+        );
       },
       interactionOwnership: this.interactionOwnership_abyssPrivate,
     });
