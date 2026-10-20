@@ -214,7 +214,12 @@ describe('Task 2 unified timed interaction contract', () => {
     block.getBoundingClientRect = () => rect(index * 100, 532, 100, 48);
     expect(block.querySelector('.abyss-tg-span-edge,.abyss-status-marker')).toBeNull();
     expect(block.hasAttribute('data-abyss-task-node-ref-key')).toBe(false);
-    const gesture = (target: HTMLElement, delta: number, x = index * 100 + 50) => {
+    const gesture = (
+      target: HTMLElement,
+      delta: number,
+      x = index * 100 + 50,
+      outsideX?: number,
+    ) => {
       target.dispatchEvent(
         new PointerEvent('pointerdown', {
           bubbles: true,
@@ -223,6 +228,16 @@ describe('Task 2 unified timed interaction contract', () => {
           pointerId: 41,
         }),
       );
+      if (outsideX !== undefined) {
+        window.dispatchEvent(
+          new PointerEvent('pointermove', {
+            clientX: outsideX,
+            clientY: 552 + delta,
+            pointerId: 41,
+          }),
+        );
+        expect(root.querySelector('.abyss-tg-drag-preview')).toBeNull();
+      }
       window.dispatchEvent(
         new PointerEvent('pointermove', {
           clientX: x,
@@ -277,6 +292,20 @@ describe('Task 2 unified timed interaction contract', () => {
     gesture(block, 0, index === 0 ? 150 : 50);
     gesture(block, -532);
     expect(onTimedMove).not.toHaveBeenCalled();
+    for (const outsideX of [-50, 350]) {
+      gesture(block, 48, outsideX);
+      expect(onTimedMove).not.toHaveBeenCalled();
+      expect(root.querySelector('.abyss-tg-drag-preview')).toBeNull();
+      expect(block.classList.contains('is-picked-up')).toBe(false);
+      gesture(block, 48, index === 0 ? 150 : 50, outsideX);
+      expect(onTimedMove).toHaveBeenCalledExactlyOnceWith(projected, {
+        destination: 'time-grid',
+        date: column.date,
+        dayDelta: 0,
+        startMinutes: 600,
+      });
+      onTimedMove.mockClear();
+    }
     block.dispatchEvent(
       new PointerEvent('pointerdown', {
         bubbles: true,

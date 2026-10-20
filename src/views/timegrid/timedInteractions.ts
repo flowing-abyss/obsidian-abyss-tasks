@@ -517,20 +517,18 @@ class TimedTargetResolver {
   ): TimedPreviewTarget | undefined {
     const forecast =
       calendarOccurrenceForRender(this.binding_abyssPrivate.task).kind === 'forecast';
-    const origin = columns.find((column) => column.date === this.binding_abyssPrivate.segmentDate);
-    if (forecast && origin === undefined) return undefined;
+    const date = this.binding_abyssPrivate.segmentDate as TimedDragColumn['date'];
     const target = resolveTimedDragTarget(
       {
-        date: this.binding_abyssPrivate.segmentDate as TimedDragColumn['date'],
+        date,
         startMinutes: this.binding_abyssPrivate.startMinutes,
         durationMinutes: this.binding_abyssPrivate.durationMinutes,
         renderedHeightMinutes: this.geometry_abyssPrivate.renderedHeightMinutes,
         grabOffsetMinutes: this.geometry_abyssPrivate.grabOffsetMinutes,
       },
-      forecast && origin !== undefined
-        ? { clientX: (origin.drag.left + origin.drag.right) / 2, clientY: pointer.clientY }
-        : pointer,
-      columns.map((column) => column.drag),
+      pointer,
+      // Keep forecast previews on their segment while preserving the real drop bounds.
+      columns.map(({ drag }) => (forecast ? { ...drag, date } : drag)),
     );
     return target == null || (forecast && target.destination === 'all-day')
       ? undefined
