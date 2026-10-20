@@ -752,11 +752,16 @@ function compatibilityGeometryRestorer(block: HTMLElement): () => void {
     height: block.style.height,
     minHeight: block.style.minHeight,
   };
+  const trackGeometry = {
+    '--abyss-tg-block-top': block.style.getPropertyValue('--abyss-tg-block-top'),
+    '--abyss-tg-block-duration': block.style.getPropertyValue('--abyss-tg-block-duration'),
+  };
   const constrained = block.classList.contains('is-height-constrained');
   const subtitle = block.querySelector<HTMLElement>('.abyss-tg-block-subtitle');
   const label = subtitle?.textContent ?? '';
   return () => {
     Object.assign(block.style, geometry);
+    block.setCssProps(trackGeometry);
     block.classList.toggle('is-height-constrained', constrained);
     if (subtitle != null) subtitle.textContent = label;
   };

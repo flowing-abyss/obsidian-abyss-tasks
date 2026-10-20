@@ -131,7 +131,7 @@ describe('renderHourGrid', () => {
     expect(headers[1]?.hasClass('is-today')).toBe(false);
   });
 
-  it('marks only today for inner now tracks without adding a full-column border', () => {
+  it('marks today for the stronger clock accent without adding a full-column border', () => {
     const container = freshContainer();
     const today = window.moment().format('YYYY-MM-DD');
     const other = window.moment().add(1, 'day').format('YYYY-MM-DD');

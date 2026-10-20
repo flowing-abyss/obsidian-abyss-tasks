@@ -2000,8 +2000,10 @@ describe('renderTimedBlocksForDay', () => {
       );
       window.dispatchEvent(new PointerEvent('pointermove', { clientY: 148, pointerId: 1 }));
       expect(block.style.height).not.toBe(originalHeight);
+      expect(block.style.getPropertyValue('--abyss-tg-block-duration')).toBe('96px');
       window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 1 }));
       expect(block.style.height).toBe(originalHeight);
+      expect(block.style.getPropertyValue('--abyss-tg-block-duration')).toBe('48px');
     });
 
     describe('legacy no-date resize returns the root to its attribute-free draggable state', () => {
@@ -3373,6 +3375,8 @@ describe('compatibility timed preview day bounds', () => {
       top: block.style.top,
       height: block.style.height,
       minHeight: block.style.minHeight,
+      trackTop: block.style.getPropertyValue('--abyss-tg-block-top'),
+      trackDuration: block.style.getPropertyValue('--abyss-tg-block-duration'),
       width: block.style.width,
       left: block.style.left,
       constrained: block.classList.contains('is-height-constrained'),
@@ -3394,6 +3398,8 @@ describe('compatibility timed preview day bounds', () => {
       top: block.style.top,
       height: block.style.height,
       minHeight: block.style.minHeight,
+      trackTop: block.style.getPropertyValue('--abyss-tg-block-top'),
+      trackDuration: block.style.getPropertyValue('--abyss-tg-block-duration'),
       width: block.style.width,
       left: block.style.left,
       constrained: block.classList.contains('is-height-constrained'),
