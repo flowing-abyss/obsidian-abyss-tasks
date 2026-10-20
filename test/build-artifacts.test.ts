@@ -75,6 +75,8 @@ const privateOwners = new Set([
   // Gesture owners keep DOM state behind methods; their instances are never serialized or spread.
   'CalendarPublicationHold',
   'TimedInteractionSession',
+  'TimedPreviewRenderer',
+  'TimedTargetResolver',
   'TimedBlockFocusRetention',
   // The keyboard queue exposes methods and hooks, never its mutable execution bookkeeping.
   'TimedBlockKeyboardQueue',

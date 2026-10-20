@@ -367,9 +367,97 @@ it('resizes an actual materialized child through exact planning and the canonica
 
 import { projectTaskSnapshot } from '../src/tasks/infrastructure/markdown/TaskSnapshotProjector';
 import {
+  calendarOccurrenceForRender,
   projectCalendarOccurrences,
   taskSnapshotForCalendarOccurrence,
 } from '../src/views/calendarOccurrences';
+
+it.each(['task', 'subtask'] as const)(
+  'edits only the %s source timing from a future recurring interval',
+  async (kind) => {
+    const statuses = canonicalStatusCatalog();
+    const codec = new TaskMarkdownCodec(statuses);
+    const line = '- [ ] Repeat 🔁 every week 🛫 2026-10-05 📅 2026-10-07 ⏰ 09:00 ⏱️ 1h';
+    const text = kind === 'task' ? line : `- [ ] Parent\n  ${line}`;
+    const root = expectDefined(
+      projectTaskSnapshot({
+        codec,
+        statusCatalog: statuses,
+        filePath: 'repeat.md',
+        lines: text.split('\n'),
+        line: 0,
+        exactBlock: text,
+        ref: { filePath: 'repeat.md', line: 0, revision: 'original' },
+        presentation: { linkCount: 0 },
+        offsetAt: () => 0,
+      }),
+    );
+    const node = kind === 'task' ? root : expectDefined(root.subtasks[0]);
+    const target =
+      kind === 'task'
+        ? { type: 'task' as const, ref: root.ref }
+        : { type: 'subtask' as const, ref: expectDefined(root.subtasks[0]).ref };
+    const occurrence = expectDefined(
+      projectCalendarOccurrences(
+        { materialized: [], recurringSources: [{ root, node, target }] },
+        { from: localDate('2026-10-12'), to: localDate('2026-10-14') },
+        { removeScheduledDate: false },
+      ).occurrences.find((entry) => entry.kind === 'forecast'),
+    );
+    const display = taskSnapshotForCalendarOccurrence(occurrence);
+    expect(calendarOccurrenceForRender(display).kind).toBe('forecast');
+    const h = harness();
+    await h.commands.commitTimedMove(display, {
+      destination: 'time-grid',
+      date: localDate('2026-10-13'),
+      dayDelta: 0,
+      startMinutes: 480,
+    });
+    expect(h.lastCommand()).toEqual({
+      type: 'patch',
+      target,
+      patch: { time: { type: 'set', value: '08:00' } },
+    });
+    await h.commands.commitTimedDuration(display, {
+      edge: 'start',
+      startMinutes: 510,
+      durationMinutes: 90,
+      endMinutes: 600,
+    });
+    const command = expectDefined(h.lastCommand());
+    expect(command).toEqual({
+      type: 'patch',
+      target,
+      patch: { time: { type: 'set', value: '08:30' }, duration: { type: 'set', value: 90 } },
+    });
+    if (command.type !== 'patch') throw new Error('expected source timing patch');
+    expect(applyTaskCommand(codec, kind === 'task' ? line : `  ${line}`, command)).toEqual({
+      type: 'changed',
+      content: `${kind === 'task' ? '' : '  '}${line.replace('09:00', '08:30').replace('⏱️ 1h', '⏱️ 1h30m')}`,
+    });
+    h.execute.mockClear();
+    for (const destination of ['time-grid', 'all-day'] as const) {
+      await h.commands.commitTimedMove(display, {
+        destination,
+        date: localDate('2026-10-14'),
+        dayDelta: 1,
+        startMinutes: 480,
+      });
+    }
+    await h.commands.commitTimedMove(display, {
+      destination: 'all-day',
+      date: localDate('2026-10-13'),
+      dayDelta: 0,
+      startMinutes: 480,
+    });
+    await h.commands.commitTimedBoundary(display, {
+      boundary: 'due',
+      date: localDate('2026-10-15'),
+      dayDelta: 1,
+    });
+    expect(h.execute).not.toHaveBeenCalled();
+  },
+);
 
 it('keeps the start-only role when a root is dropped from a native task payload', async () => {
   const root = task({ planning: { start: '2026-10-08' } });

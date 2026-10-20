@@ -172,6 +172,132 @@ function timedGestureGrid() {
 }
 
 describe('Task 2 unified timed interaction contract', () => {
+  it.each([0, 1, 2])('moves and resizes a future series from segment %s', (index) => {
+    const { root, owner, columns } = timedGestureGrid();
+    const sourceTask = task({
+      recurrence: 'every week',
+      planning: { start: '2026-06-29', due: '2026-07-01', time: '09:00', duration: 60 },
+    });
+    const occurrence = expectDefined(
+      projectCalendarOccurrences(
+        {
+          materialized: [],
+          recurringSources: [
+            {
+              root: sourceTask,
+              node: sourceTask,
+              target: { type: 'task', ref: sourceTask.ref },
+            },
+          ],
+        },
+        { from: localDate('2026-07-06'), to: localDate('2026-07-08') },
+        { removeScheduledDate: false },
+      ).occurrences.find((entry) => entry.kind === 'forecast'),
+    );
+    const projected = taskSnapshotForCalendarOccurrence(occurrence);
+    const column = expectDefined(columns[index]);
+    const onTimedMove = vi.fn();
+    const onTimedDuration = vi.fn();
+    renderTimedBlocksForDay(
+      column.hour,
+      [projected],
+      {
+        ...callbacks(),
+        onTimedMove,
+        onTimedDuration,
+        interactionOwner: owner,
+      },
+      [],
+      { date: column.date },
+    );
+    const block = expectDefined(column.hour.querySelector<HTMLElement>('.abyss-tg-block'));
+    block.getBoundingClientRect = () => rect(index * 100, 532, 100, 48);
+    expect(block.querySelector('.abyss-tg-span-edge,.abyss-status-marker')).toBeNull();
+    expect(block.hasAttribute('data-abyss-task-node-ref-key')).toBe(false);
+    const gesture = (target: HTMLElement, delta: number, x = index * 100 + 50) => {
+      target.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          bubbles: true,
+          clientX: index * 100 + 50,
+          clientY: 552,
+          pointerId: 41,
+        }),
+      );
+      window.dispatchEvent(
+        new PointerEvent('pointermove', {
+          clientX: x,
+          clientY: 552 + delta,
+          pointerId: 41,
+        }),
+      );
+      window.dispatchEvent(
+        new PointerEvent('pointerup', {
+          clientX: x,
+          clientY: 552 + delta,
+          pointerId: 41,
+        }),
+      );
+    };
+    // Horizontal drift changes neither the series date nor which projected segment is shown.
+    gesture(block, -48, index === 0 ? 150 : 50);
+    expect(onTimedMove).toHaveBeenLastCalledWith(projected, {
+      destination: 'time-grid',
+      date: column.date,
+      dayDelta: 0,
+      startMinutes: 480,
+    });
+    gesture(block, 48);
+    expect(onTimedMove).toHaveBeenLastCalledWith(projected, {
+      destination: 'time-grid',
+      date: column.date,
+      dayDelta: 0,
+      startMinutes: 600,
+    });
+    const start = expectDefined(
+      block.querySelector<HTMLElement>('[data-resize-edge="start-time"]'),
+    );
+    const end = expectDefined(block.querySelector<HTMLElement>('[data-resize-edge="duration"]'));
+    for (const delta of [-24, 24]) {
+      gesture(start, delta);
+      expect(onTimedDuration).toHaveBeenLastCalledWith(projected, {
+        edge: 'start',
+        startMinutes: 540 + delta / 0.8,
+        durationMinutes: 60 - delta / 0.8,
+        endMinutes: 600,
+      });
+      gesture(end, delta);
+      expect(onTimedDuration).toHaveBeenLastCalledWith(projected, {
+        edge: 'end',
+        startMinutes: 540,
+        durationMinutes: 60 + delta / 0.8,
+        endMinutes: 600 + delta / 0.8,
+      });
+    }
+    onTimedMove.mockClear();
+    gesture(block, 0, index === 0 ? 150 : 50);
+    gesture(block, -532);
+    expect(onTimedMove).not.toHaveBeenCalled();
+    block.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        bubbles: true,
+        clientX: index * 100 + 50,
+        clientY: 552,
+        pointerId: 42,
+      }),
+    );
+    window.dispatchEvent(
+      new PointerEvent('pointermove', {
+        clientX: index * 100 + 50,
+        clientY: 500,
+        pointerId: 42,
+      }),
+    );
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(root.querySelector('.abyss-tg-drag-preview')).toBeNull();
+    expect(onTimedMove).not.toHaveBeenCalled();
+    owner.disposeActive();
+  });
+
   it('renders the actual projected forecast as the common inert readable title', () => {
     const root = taskFromCodecLine(
       '- [ ] **Forecast** *label* `code` [[Folder/Note.md|Readable alias]] 🔁 every day 📅 2026-07-09 ⏰ 09:00 ⏱️ 1h',
@@ -3236,6 +3362,15 @@ describe('renderTimedBlocksForDay', () => {
 });
 
 describe('calendar surface style contract', () => {
+  it('gives the whole top and bottom edge priority over date corners', () => {
+    const vertical = declarationsFor('.abyss-tg-resize-handle');
+    const horizontal = declarationsFor('.abyss-tg-span-edge');
+    expect(cssValue(vertical, 'left')).toBe('0');
+    expect(cssValue(vertical, 'right')).toBe('0');
+    expect(Number(cssValue(vertical, 'z-index'))).toBeGreaterThan(
+      Number(cssValue(horizontal, 'z-index')),
+    );
+  });
   it('gives timed terminal and ghost blocks one shared scale, rail geometry, fill, and tag outline', () => {
     const terminal = declarationsFor('.abyss-tg-block');
     const ghost = declarationsFor('.abyss-tg-block-continuation');

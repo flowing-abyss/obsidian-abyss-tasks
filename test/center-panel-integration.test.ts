@@ -3575,7 +3575,7 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     }
   });
 
-  it('renders forecast occurrences as inert, non-draggable calendar items', () => {
+  it('keeps forecast timing controls separate from task selection and native drag', () => {
     const root = task({
       title: 'Repeat source',
       recurrence: 'every day',
@@ -3651,7 +3651,8 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     expect(timedBlock.querySelector('.abyss-status-marker')).toBeNull();
     expect(timedBlock.querySelector('.abyss-task-parent-btn')).toBeNull();
     expect(timedBlock.getAttribute('tabindex')).toBe('-1');
-    expect(timedBlock.querySelector('[data-resize-edge]')).toBeNull();
+    expect(timedBlock.querySelectorAll('.abyss-tg-resize-handle')).toHaveLength(2);
+    expect(timedBlock.querySelector('.abyss-tg-span-edge')).toBeNull();
     timedBlock.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(state.get('taskStack')).toEqual([]);
     timedBlock.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
@@ -5003,6 +5004,7 @@ function keyboardPanelHarness(
   initial: readonly TaskSnapshot[],
   execute: TaskApplicationApi['execute'],
   ownerDocument: Document = activeDocument,
+  includeForecasts = false,
 ): {
   panel: CenterPanel;
   state: AppState;
@@ -5014,6 +5016,17 @@ function keyboardPanelHarness(
   let snapshots = initial;
   const listeners = new Set<(event: TaskIndexEvent) => void>();
   const queries = queryApiForSnapshots(() => snapshots);
+  if (includeForecasts) {
+    const project = queries.forCalendarProjection.bind(queries);
+    queries.forCalendarProjection = (dates) => ({
+      ...project(dates),
+      recurringSources: snapshots.map((root) => ({
+        root,
+        node: root,
+        target: { type: 'task' as const, ref: root.ref },
+      })),
+    });
+  }
   queries.subscribe = (listener) => {
     listeners.add(listener);
     return () => listeners.delete(listener);
@@ -5122,6 +5135,95 @@ function press(block: HTMLElement, key: string, shiftKey = false): void {
 }
 
 describe('CenterPanel calendar mode — task-index patch coordinator', () => {
+  it.each(['move', 'start-time', 'duration'] as const)(
+    'holds a future repeat %s preview until its source timing command publishes',
+    async (kind) => {
+      const original = task({
+        recurrence: 'every day',
+        planning: {
+          due: moment(TODAY).subtract(7, 'days').format('YYYY-MM-DD'),
+          time: '09:00',
+          duration: 60,
+        },
+      });
+      const receipt = deferredResult();
+      const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(receipt.promise);
+      const h = keyboardPanelHarness([original], execute, activeDocument, true);
+      try {
+        clickCalendarView(h.el, 'Day');
+        const block = timedBlock(h.el);
+        expect(block.dataset['occurrenceState']).toBe('forecast');
+        const column = expectDefined(block.closest<HTMLElement>('.abyss-tg-day-column'));
+        column.getBoundingClientRect = () => new DOMRect(0, 100, 200, 1152);
+        expectDefined(
+          column.querySelector<HTMLElement>('.abyss-tg-hour-column'),
+        ).getBoundingClientRect = () => new DOMRect(0, 100, 200, 1152);
+        expectDefined(
+          h.el.querySelector<HTMLElement>('.abyss-tg-allday-cell'),
+        ).getBoundingClientRect = () => new DOMRect(0, 10, 200, 30);
+        block.getBoundingClientRect = () => new DOMRect(0, 532, 200, 48);
+        const handle =
+          kind === 'move'
+            ? block
+            : expectDefined(block.querySelector<HTMLElement>(`[data-resize-edge="${kind}"]`));
+        handle.dispatchEvent(
+          new PointerEvent('pointerdown', {
+            bubbles: true,
+            pointerId: 47,
+            clientX: 100,
+            clientY: 552,
+          }),
+        );
+        window.dispatchEvent(
+          new PointerEvent('pointerup', {
+            pointerId: 47,
+            clientX: 100,
+            clientY: 528,
+          }),
+        );
+        expect(execute).toHaveBeenCalledOnce();
+        expect(execute).toHaveBeenCalledWith({
+          type: 'patch',
+          target: { type: 'task', ref: original.ref },
+          patch: {
+            time: { type: 'set', value: kind === 'duration' ? '09:00' : '08:30' },
+            ...(kind === 'move'
+              ? {}
+              : {
+                  duration: { type: 'set', value: kind === 'start-time' ? 90 : 30 },
+                }),
+          },
+        });
+        const resizedDuration = kind === 'start-time' ? 90 : 30;
+        const updated = task({
+          ...original,
+          ref: { ...original.ref, revision: 'timing-updated' },
+          planning: {
+            ...original.planning,
+            time: kind === 'duration' ? '09:00' : '08:30',
+            duration: kind === 'move' ? 60 : resizedDuration,
+          },
+        });
+        h.setSnapshots([updated]);
+        h.emit();
+        expect(block.isConnected).toBe(true);
+        expect(h.el.querySelector('.abyss-tg-drag-preview')).not.toBeNull();
+        receipt.resolve(okTask(updated));
+        await vi.waitFor(() => {
+          expect(h.el.querySelector('.abyss-tg-drag-preview')).toBeNull();
+          expect(timedBlock(h.el).dataset['abyssStartMinutes']).toBe(
+            kind === 'duration' ? '540' : '510',
+          );
+        });
+        expect(h.state.get('taskStack')).toEqual([]);
+        expect(h.el.querySelector('.abyss-tg-quick-add')).toBeNull();
+      } finally {
+        h.panel.destroy();
+        h.el.remove();
+      }
+    },
+  );
+
   it('keeps one subscription and performs one patch for each notification after repeated updates', () => {
     const original = keyboardSnapshot(TODAY);
     const h = keyboardPanelHarness([original], vi.fn());

@@ -357,118 +357,146 @@ function clearAllDayPreviewGeometry(preview: HTMLElement): void {
 }
 
 class TimedPreviewRenderer {
-  private preview: HTMLElement | undefined;
+  private preview_abyssPrivate: HTMLElement | undefined;
 
   constructor(
-    private readonly binding: TimedInteractionBinding,
-    private readonly geometry: TimedSessionGeometry,
+    private readonly binding_abyssPrivate: TimedInteractionBinding,
+    private readonly geometry_abyssPrivate: TimedSessionGeometry,
   ) {}
 
   clear(): void {
-    this.preview?.remove();
-    this.preview = undefined;
+    this.preview_abyssPrivate?.remove();
+    this.preview_abyssPrivate = undefined;
   }
 
   render(kind: TimedInteractionKind, target: TimedPreviewTarget): void {
     if (kind === 'move') {
-      this.renderMove(target as Readonly<TimedDragTarget>);
+      this.renderMove_abyssPrivate(target as Readonly<TimedDragTarget>);
       return;
     }
     if (kind === 'duration' || kind === 'start-time') {
-      this.renderDuration(target as Readonly<TimedVerticalResizeTarget>);
+      this.renderDuration_abyssPrivate(target as Readonly<TimedVerticalResizeTarget>);
       return;
     }
-    this.renderBoundary(target as Readonly<TimedBoundaryTarget>);
+    this.renderBoundary_abyssPrivate(target as Readonly<TimedBoundaryTarget>);
   }
 
-  private renderMove(target: Readonly<TimedDragTarget>): void {
-    const column = this.geometry.columns.find((candidate) => candidate.date === target.date);
+  private renderMove_abyssPrivate(target: Readonly<TimedDragTarget>): void {
+    const column = this.geometry_abyssPrivate.columns.find(
+      (candidate) => candidate.date === target.date,
+    );
     const host = target.destination === 'all-day' ? column?.allDay : column?.hour;
     if (host == null) return;
     const timeLabel =
       target.destination === 'time-grid'
-        ? timedPreviewText(target.startMinutes, movedDuration(this.binding, target.startMinutes))
+        ? timedPreviewText(
+            target.startMinutes,
+            movedDuration(this.binding_abyssPrivate, target.startMinutes),
+          )
         : 'All day';
-    const preview = this.replace({
+    const preview = this.replace_abyssPrivate({
       target,
       className: 'abyss-tg-drag-preview',
       content: previewContent(
-        this.binding,
+        this.binding_abyssPrivate,
         timeLabel,
-        previewPhase(this.binding, target, target.date),
+        previewPhase(this.binding_abyssPrivate, target, target.date),
       ),
       copyLaneGeometry: target.destination === 'time-grid',
     });
-    if (target.destination === 'time-grid') this.applyTimedMoveGeometry(preview, target);
+    if (target.destination === 'time-grid')
+      this.applyTimedMoveGeometry_abyssPrivate(preview, target);
     else clearAllDayPreviewGeometry(preview);
     if (preview.parentElement !== host) host.appendChild(preview);
   }
 
-  private applyTimedMoveGeometry(preview: HTMLElement, target: Readonly<TimedDragTarget>): void {
+  private applyTimedMoveGeometry_abyssPrivate(
+    preview: HTMLElement,
+    target: Readonly<TimedDragTarget>,
+  ): void {
     preview.classList.remove('is-all-day');
-    applyPreviewPacking(preview, this.binding, target, target.date);
+    applyPreviewPacking(preview, this.binding_abyssPrivate, target, target.date);
     applyTimedPreviewHeight(
       preview,
       target.startMinutes,
       Math.max(
-        minutesToPixels(movedDuration(this.binding, target.startMinutes)),
-        this.geometry.sourceRect.height,
+        minutesToPixels(movedDuration(this.binding_abyssPrivate, target.startMinutes)),
+        this.geometry_abyssPrivate.sourceRect.height,
       ),
     );
   }
 
-  private renderDuration(target: Readonly<TimedVerticalResizeTarget>): void {
-    const preview = this.replace({
+  private renderDuration_abyssPrivate(target: Readonly<TimedVerticalResizeTarget>): void {
+    const preview = this.replace_abyssPrivate({
       target,
       className: 'abyss-tg-drag-preview',
       content: previewContent(
-        this.binding,
+        this.binding_abyssPrivate,
         timedPreviewText(target.startMinutes, target.durationMinutes),
-        previewPhase(this.binding, target, this.binding.segmentDate),
+        previewPhase(this.binding_abyssPrivate, target, this.binding_abyssPrivate.segmentDate),
       ),
     });
-    applyPreviewPacking(preview, this.binding, target, this.binding.segmentDate);
+    applyPreviewPacking(
+      preview,
+      this.binding_abyssPrivate,
+      target,
+      this.binding_abyssPrivate.segmentDate,
+    );
     applyTimedPreviewHeight(
       preview,
       target.startMinutes,
-      Math.max(minutesToPixels(target.durationMinutes), minimumPreviewHeight(this.binding.source)),
+      Math.max(
+        minutesToPixels(target.durationMinutes),
+        minimumPreviewHeight(this.binding_abyssPrivate.source),
+      ),
     );
-    const host = this.geometry.originColumn.hour;
+    const host = this.geometry_abyssPrivate.originColumn.hour;
     if (preview.parentElement !== host) host.appendChild(preview);
   }
 
-  private renderBoundary(target: Readonly<TimedBoundaryTarget>): void {
-    const column = this.geometry.columns.find((candidate) => candidate.date === target.date);
+  private renderBoundary_abyssPrivate(target: Readonly<TimedBoundaryTarget>): void {
+    const column = this.geometry_abyssPrivate.columns.find(
+      (candidate) => candidate.date === target.date,
+    );
     if (column == null) return;
-    const preview = this.replace({
+    const preview = this.replace_abyssPrivate({
       target,
       className: 'abyss-tg-boundary-preview',
       content: previewContent(
-        this.binding,
-        timedPreviewText(this.binding.startMinutes, this.binding.durationMinutes),
-        previewPhase(this.binding, target, target.date),
+        this.binding_abyssPrivate,
+        timedPreviewText(
+          this.binding_abyssPrivate.startMinutes,
+          this.binding_abyssPrivate.durationMinutes,
+        ),
+        previewPhase(this.binding_abyssPrivate, target, target.date),
       ),
     });
-    applyPreviewPacking(preview, this.binding, target, target.date);
-    applyTimedPreviewHeight(preview, this.binding.startMinutes, this.geometry.sourceRect.height);
+    applyPreviewPacking(preview, this.binding_abyssPrivate, target, target.date);
+    applyTimedPreviewHeight(
+      preview,
+      this.binding_abyssPrivate.startMinutes,
+      this.geometry_abyssPrivate.sourceRect.height,
+    );
     if (preview.parentElement !== column.hour) column.hour.appendChild(preview);
   }
 
-  private replace(options: Omit<PreviewElementOptions, 'existing' | 'source'>): HTMLElement {
-    this.preview = previewElement({
+  private replace_abyssPrivate(
+    options: Omit<PreviewElementOptions, 'existing' | 'source'>,
+  ): HTMLElement {
+    this.preview_abyssPrivate = previewElement({
       ...options,
-      existing: this.preview,
-      source: this.binding.source,
+      existing: this.preview_abyssPrivate,
+      source: this.binding_abyssPrivate.source,
     });
-    return this.preview;
+    return this.preview_abyssPrivate;
   }
 }
 
 class TimedTargetResolver {
   constructor(
-    private readonly binding: TimedInteractionBinding,
-    private readonly startEvent: PointerEvent,
-    private readonly geometry: TimedSessionGeometry,
+    private readonly binding_abyssPrivate: TimedInteractionBinding,
+    private readonly startEvent_abyssPrivate: PointerEvent,
+    private readonly geometry_abyssPrivate: TimedSessionGeometry,
   ) {}
 
   resolve(
@@ -476,49 +504,58 @@ class TimedTargetResolver {
     pointer: PointerEvent,
     columns: readonly MeasuredColumn[],
   ): TimedPreviewTarget | undefined {
-    if (kind === 'move') return this.resolveMove(pointer, columns);
+    if (kind === 'move') return this.resolveMove_abyssPrivate(pointer, columns);
     if (kind === 'duration' || kind === 'start-time') {
-      return this.resolveVertical(kind, pointer, columns);
+      return this.resolveVertical_abyssPrivate(kind, pointer, columns);
     }
-    return this.resolveBoundary(kind, pointer, columns);
+    return this.resolveBoundary_abyssPrivate(kind, pointer, columns);
   }
 
-  private resolveMove(
+  private resolveMove_abyssPrivate(
     pointer: PointerEvent,
     columns: readonly MeasuredColumn[],
   ): TimedPreviewTarget | undefined {
+    const forecast =
+      calendarOccurrenceForRender(this.binding_abyssPrivate.task).kind === 'forecast';
+    const origin = columns.find((column) => column.date === this.binding_abyssPrivate.segmentDate);
+    if (forecast && origin === undefined) return undefined;
     const target = resolveTimedDragTarget(
       {
-        date: this.binding.segmentDate as TimedDragColumn['date'],
-        startMinutes: this.binding.startMinutes,
-        durationMinutes: this.binding.durationMinutes,
-        renderedHeightMinutes: this.geometry.renderedHeightMinutes,
-        grabOffsetMinutes: this.geometry.grabOffsetMinutes,
+        date: this.binding_abyssPrivate.segmentDate as TimedDragColumn['date'],
+        startMinutes: this.binding_abyssPrivate.startMinutes,
+        durationMinutes: this.binding_abyssPrivate.durationMinutes,
+        renderedHeightMinutes: this.geometry_abyssPrivate.renderedHeightMinutes,
+        grabOffsetMinutes: this.geometry_abyssPrivate.grabOffsetMinutes,
       },
-      pointer,
+      forecast && origin !== undefined
+        ? { clientX: (origin.drag.left + origin.drag.right) / 2, clientY: pointer.clientY }
+        : pointer,
       columns.map((column) => column.drag),
     );
-    return target == null ? undefined : frozen(target);
+    return target == null || (forecast && target.destination === 'all-day')
+      ? undefined
+      : frozen(target);
   }
 
-  private resolveVertical(
+  private resolveVertical_abyssPrivate(
     kind: 'duration' | 'start-time',
     pointer: PointerEvent,
     columns: readonly MeasuredColumn[],
   ): TimedPreviewTarget | undefined {
-    const origin = columns.find((column) => column.date === this.binding.segmentDate);
+    const origin = columns.find((column) => column.date === this.binding_abyssPrivate.segmentDate);
     if (origin === undefined) return undefined;
     const pixelsPerMinute = (origin.drag.timeGridBottom - origin.drag.timeGridTop) / (24 * 60);
     const grabMinutes =
-      (this.startEvent.clientY - this.geometry.originColumn.drag.timeGridTop) /
-      this.geometry.pixelsPerMinute;
+      (this.startEvent_abyssPrivate.clientY -
+        this.geometry_abyssPrivate.originColumn.drag.timeGridTop) /
+      this.geometry_abyssPrivate.pixelsPerMinute;
     let target: TimedVerticalResizeTarget;
     try {
       target = resolveTimedVerticalResizeTarget(
         {
           edge: kind === 'start-time' ? 'start' : 'end',
-          startMinutes: this.binding.startMinutes,
-          durationMinutes: this.binding.durationMinutes,
+          startMinutes: this.binding_abyssPrivate.startMinutes,
+          durationMinutes: this.binding_abyssPrivate.durationMinutes,
           grabClientY: origin.drag.timeGridTop + grabMinutes * pixelsPerMinute,
           pixelsPerMinute,
         },
@@ -527,22 +564,22 @@ class TimedTargetResolver {
     } catch {
       return undefined;
     }
-    return this.isOriginalVerticalTarget(target) ? undefined : frozen(target);
+    return this.isOriginalVerticalTarget_abyssPrivate(target) ? undefined : frozen(target);
   }
 
-  private isOriginalVerticalTarget(target: TimedVerticalResizeTarget): boolean {
+  private isOriginalVerticalTarget_abyssPrivate(target: TimedVerticalResizeTarget): boolean {
     return (
-      target.startMinutes === this.binding.startMinutes &&
-      target.durationMinutes === this.binding.durationMinutes
+      target.startMinutes === this.binding_abyssPrivate.startMinutes &&
+      target.durationMinutes === this.binding_abyssPrivate.durationMinutes
     );
   }
 
-  private resolveBoundary(
+  private resolveBoundary_abyssPrivate(
     kind: 'start' | 'due' | 'create-span',
     pointer: PointerEvent,
     columns: readonly MeasuredColumn[],
   ): TimedPreviewTarget | undefined {
-    const planning = this.binding.task.planning;
+    const planning = this.binding_abyssPrivate.task.planning;
     const start = planning.start ?? planning.scheduled ?? planning.due;
     const due = planning.due ?? planning.scheduled ?? planning.start;
     if (start == null || due == null) return undefined;

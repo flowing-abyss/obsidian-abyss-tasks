@@ -653,13 +653,19 @@ export class CalendarMode {
         );
       },
       onTimedMove: (task, target) => {
-        return this.runTaskAction_abyssPrivate(publicationHold, task, (current) =>
-          commands.commitTimedMove(current, target, task),
+        return this.runTaskAction_abyssPrivate(
+          publicationHold,
+          task,
+          (current) => commands.commitTimedMove(current, target, task),
+          true,
         );
       },
       onTimedDuration: (task, target) => {
-        return this.runTaskAction_abyssPrivate(publicationHold, task, (current) =>
-          commands.commitTimedDuration(current, target, task),
+        return this.runTaskAction_abyssPrivate(
+          publicationHold,
+          task,
+          (current) => commands.commitTimedDuration(current, target, task),
+          true,
         );
       },
       onTimedBoundary: (task, target) => {
@@ -711,10 +717,12 @@ export class CalendarMode {
     publicationHold: CalendarPublicationHold,
     task: TaskSnapshot,
     action: (current: TaskSnapshot) => Promise<void>,
+    seriesTiming = false,
   ): Promise<void> {
-    if (isForecastCalendarTask(task)) return Promise.resolve();
+    const forecast = isForecastCalendarTask(task);
+    if (forecast && !seriesTiming) return Promise.resolve();
     return publicationHold.run(() => {
-      const current = this.focusRetention_abyssPrivate.settlePointerTask(task);
+      const current = forecast ? task : this.focusRetention_abyssPrivate.settlePointerTask(task);
       return current instanceof Promise ? current.then(action) : action(current);
     });
   }

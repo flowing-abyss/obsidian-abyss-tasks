@@ -367,9 +367,13 @@ function expectAxes(
   expect(element.getAttribute('data-recurring')).toBe(recurring);
 }
 
-function expectForecastInert(element: HTMLElement): void {
+function expectForecastPresentation(element: HTMLElement): void {
   expect(element.querySelector('.abyss-status-marker')).toBeNull();
-  expect(element.querySelector('[data-resize-edge]')).toBeNull();
+  expect(
+    Array.from(element.querySelectorAll<HTMLElement>('[data-resize-edge]')).map(
+      (handle) => handle.dataset['resizeEdge'],
+    ),
+  ).toEqual(element.matches('.abyss-tg-block') ? ['duration', 'start-time'] : []);
   expect(element.getAttribute('draggable')).toBeNull();
   // Focusable for menu and editor dismissal focus, never a tab stop.
   expect(element.getAttribute('tabindex')).toBe('-1');
@@ -423,7 +427,7 @@ describe('forecast rendering contract', () => {
       expect(block.querySelector('[data-recurrence-forecast="true"]')).not.toBeNull();
       expectAxes(block, 'forecast', 'single', 'true');
       expect(block.getAttribute('data-occurrence-key')).toBe(fixture.occurrence.key);
-      expectForecastInert(block);
+      expectForecastPresentation(block);
     }
   });
 
@@ -485,7 +489,7 @@ describe('forecast rendering contract', () => {
         expect(piece.getAttribute('data-segment-identity')).toBe(
           `${expectDefined(forecast).occurrence.key}:${piece.getAttribute('data-span-role')}`,
         );
-        expectForecastInert(piece);
+        expectForecastPresentation(piece);
       }
     }
   });
@@ -539,7 +543,7 @@ describe('forecast rendering contract', () => {
       expect(block.dataset['segmentIdentity']).toBe(
         `${expectDefined(forecast).occurrence.key}:${block.dataset['spanRole']}`,
       );
-      expectForecastInert(block);
+      expectForecastPresentation(block);
       expect(block.classList.contains('abyss-calendar-item')).toBe(true);
       const head = expectDefined(block.querySelector<HTMLElement>('.abyss-calendar-leading-row'));
       expect(head.dataset['controlSlot']).toBe('reserved');

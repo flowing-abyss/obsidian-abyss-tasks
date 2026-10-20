@@ -488,6 +488,11 @@ pointer's preview.
 CalendarCommands ignores malformed date/time/duration input during command construction and lets
 unexpected execution failures reach the existing UI action boundary. Retained presentation never
 grants new source authority; external edits and deletion can still cause a command to be refused.
+Timed forecast bodies and their top/bottom handles use the same pointer sessions and publication
+hold to edit the series time or duration through an explicit canonical source patch. Forecast
+movement is vertical only: projected dates, recurrence and source date roles remain unchanged.
+These gestures grant no task selection, status controls, keyboard editing or native drag identity.
+Top/bottom time handles cover the full edge and take priority over date handles at corners.
 Its mounted center owner supplies the available width; an owner-window observer coalesces changes
 and rebuilds Month/Week only when the width category changes. CalendarContent retains one canonical
 occurrence projection per publication and visible range; width remounts reuse that content.

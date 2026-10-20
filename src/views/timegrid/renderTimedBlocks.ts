@@ -319,6 +319,8 @@ function renderTimedBlock(input: TimedBlockRenderInput): void {
   renderTimedBlockContent(block, task, blockLayout, occurrence, terminal, callbacks);
   bindMaterializedInteractions(occurrence, () => {
     bindTaskSelection(block, task, callbacks.onTaskSelect, callbacks.onTaskActivate);
+  });
+  if (occurrence.kind === 'materialized' || options != null) {
     attachTimedBlockControls({
       block,
       hourColumnEl,
@@ -329,7 +331,7 @@ function renderTimedBlock(input: TimedBlockRenderInput): void {
       callbacks,
       options,
     });
-  });
+  }
   bindForecastInteractions(block, occurrence, callbacks);
 }
 
@@ -465,18 +467,10 @@ type TimedBlockControlsInput = {
 
 function attachTimedBlockControls(input: TimedBlockControlsInput): void {
   const { block, task, startMinutes, durationMinutes, callbacks, options } = input;
+  const forecast = calendarOccurrenceForRender(task).kind === 'forecast';
   const durationHandle = createVerticalHandle(block, 'duration');
   const startHandle = createVerticalHandle(block, 'start-time');
-  const boundaryHandles = createBoundaryHandles(input);
-
-  block.addEventListener('contextmenu', (event) => {
-    event.preventDefault();
-    if (
-      (event.target as HTMLElement).closest('.abyss-tg-resize-handle, .abyss-tg-span-edge') != null
-    )
-      return;
-    callbacks.onTaskClick(task);
-  });
+  const boundaryHandles = forecast ? [] : createBoundaryHandles(input);
 
   if (options != null) {
     attachOwnedInteractions({
@@ -500,6 +494,15 @@ function attachTimedBlockControls(input: TimedBlockControlsInput): void {
       task,
     });
   }
+  if (forecast) return;
+  block.addEventListener('contextmenu', (event) => {
+    event.preventDefault();
+    if (
+      (event.target as HTMLElement).closest('.abyss-tg-resize-handle, .abyss-tg-span-edge') != null
+    )
+      return;
+    callbacks.onTaskClick(task);
+  });
   attachKeyboardHandling(block, callbacks, task);
   attachSelectedState(block);
 }

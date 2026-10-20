@@ -1030,15 +1030,14 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   color: var(--abyss-tag-text-color, var(--text-muted));
 }
 
-/* Task 33: .abyss-tg-block clips its content (overflow: hidden, for the tag-fill background), so
-   the resize target sits fully inside the block and exposes its complete 10px hit area rather
-   than straddling the edge and losing half of the target to clipping. */
+/* Time edges own the full top/bottom strip, including corners shared with date handles.
+   Keep the hit area inside the clipping block; only the visible grip stays centered. */
 .abyss-tg-resize-handle {
   position: absolute;
-  left: 25%;
-  right: 25%;
+  left: 0;
+  right: 0;
   height: 10px;
-  z-index: 3;
+  z-index: 6;
   cursor: ns-resize;
   touch-action: none;
 }
@@ -1054,8 +1053,8 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 .abyss-tg-resize-handle::after {
   content: '';
   position: absolute;
-  left: 0;
-  right: 0;
+  left: 25%;
+  right: 25%;
   top: 4px;
   height: 2px;
   border-radius: 1px;

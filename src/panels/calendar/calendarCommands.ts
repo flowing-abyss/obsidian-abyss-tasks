@@ -17,6 +17,7 @@ import {
   calendarPointPatchCommand,
   calendarRootTaskRef,
   calendarShiftScheduleCommand,
+  calendarSourcePatchCommand,
   calendarSpanBoundaryCommand,
 } from '../../views/calendarOccurrences';
 import type { SpanMoveTarget } from '../../views/spanInteractions';
@@ -207,12 +208,19 @@ export class CalendarCommands {
     target: TimedDragTarget,
     previous = task,
   ): Promise<void> {
-    await this.execute_abyssPrivate(() =>
-      timedMoveCommand(task, {
+    await this.execute_abyssPrivate(() => {
+      const occurrence = calendarOccurrenceForRender(task);
+      if (occurrence.kind === 'forecast') {
+        if (target.dayDelta !== 0 || target.destination !== 'time-grid') return undefined;
+        return calendarSourcePatchCommand(occurrence.source, {
+          time: { type: 'set', value: localTime(minutesToTimeString(target.startMinutes)) },
+        });
+      }
+      return timedMoveCommand(task, {
         ...target,
         dayDelta: target.dayDelta - ownedScheduleShift(previous, task),
-      }),
-    );
+      });
+    });
   }
 
   async commitTimedDuration(
@@ -221,12 +229,16 @@ export class CalendarCommands {
     previous = task,
   ): Promise<void> {
     const resized = previous === task ? target : ownedResizeTarget(task, target);
-    await this.execute_abyssPrivate(() =>
-      calendarPatchCommand(task, {
+    await this.execute_abyssPrivate(() => {
+      const patch = {
         time: { type: 'set', value: localTime(minutesToTimeString(resized.startMinutes)) },
         duration: { type: 'set', value: durationMinutes(resized.durationMinutes) },
-      }),
-    );
+      } as const;
+      const occurrence = calendarOccurrenceForRender(task);
+      return occurrence.kind === 'forecast'
+        ? calendarSourcePatchCommand(occurrence.source, patch)
+        : calendarPatchCommand(task, patch);
+    });
   }
 
   async commitSpanMove(task: TaskSnapshot, target: SpanMoveTarget): Promise<void> {

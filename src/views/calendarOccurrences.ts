@@ -581,7 +581,7 @@ export function calendarPointPatchCommand(
   return calendarPatchCommand(task, time === undefined ? patch : { ...patch, time });
 }
 
-/** Builds the source-owner patch used by the forecast's explicit Edit repeat action. */
+/** Builds the source-owner patch for explicit series edits from a forecast. */
 export function calendarSourcePatchCommand(
   source: CalendarTaskSource,
   patch: TaskPatch,
