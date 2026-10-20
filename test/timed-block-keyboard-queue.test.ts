@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { CalendarCommands } from '../src/panels/calendar/calendarCommands';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import {
   localDate,
@@ -22,6 +23,7 @@ import {
   createAppWithFiles,
   expectDefined,
   flushMicrotasks,
+  metadataChangedEmitter,
   queryApiForTasks,
   seedTaskCache,
   task,
@@ -95,6 +97,271 @@ async function expectSecondCall(execute: ReturnType<typeof vi.fn>): Promise<void
 }
 
 describe('TimedBlockKeyboardQueue', () => {
+  it.each(['pending', 'settled'] as const)(
+    'preserves the due point authority after a %s keyboard edit of its scheduled point',
+    async (phase) => {
+      const app = await createAppWithFiles({
+        'qa.md': '- [ ] Paired ⏳ 2026-10-19 📅 2026-10-20 ⏰ 09:00 ⏱️ 1h',
+      });
+      seedTaskCache(app, 'qa.md', [{ task: ' ', parent: -1, line: 0 }]);
+      const application = configuredTaskApplication(app, DEFAULT_SETTINGS);
+      await application.index.initialize();
+      try {
+        const displays = () => {
+          const root = expectDefined(application.index.list()[0]);
+          return projectCalendarOccurrences(
+            {
+              materialized: [{ root, node: root, target: { type: 'task', ref: root.ref } }],
+              recurringSources: [],
+            },
+            { from: localDate('2026-10-19'), to: localDate('2026-10-22') },
+            { removeScheduledDate: false },
+          ).occurrences.map(taskSnapshotForCalendarOccurrence);
+        };
+        const gate = deferred<void>();
+        const execute = vi.fn<TaskApplicationApi['execute']>(async (...args) => {
+          await gate.promise;
+          return application.tasks.execute(...args);
+        });
+        const hooks = harness().hooks;
+        const queue = new TimedBlockKeyboardQueue({ ...application.tasks, execute }, hooks);
+        const [scheduled, due] = displays();
+        queue.enqueue(expectDefined(scheduled), { type: 'move-time', deltaMinutes: 15 });
+        const pending =
+          phase === 'pending' ? queue.settlePointerTask(expectDefined(due)) : undefined;
+        gate.resolve();
+        await vi.waitFor(() => {
+          expect(hooks.onSettled).toHaveBeenCalledOnce();
+        });
+        const currentDue = expectDefined(displays()[1]);
+        const pointer = await (pending ?? queue.settlePointerTask(currentDue));
+        const commands = new CalendarCommands({
+          tasks: application.tasks,
+          queries: application.tasks.queries,
+        });
+        await commands.commitTimedMove(
+          pointer,
+          {
+            date: localDate('2026-10-22'),
+            startMinutes: 600,
+            dayDelta: 2,
+            destination: 'time-grid',
+          },
+          phase === 'pending' ? expectDefined(due) : currentDue,
+        );
+        expect(application.index.list()[0]?.planning).toMatchObject({
+          scheduled: '2026-10-19',
+          due: '2026-10-22',
+          time: '10:00',
+        });
+      } finally {
+        application.index.destroy();
+      }
+    },
+  );
+
+  it.each(['keyboard', 'external', 'pointer'] as const)(
+    'carries only the owned sibling root change (%s)',
+    async (handoff) => {
+      const external = handoff === 'external';
+      const app = await createAppWithFiles({
+        'qa.md': '- [ ] Parent\n  - [ ] A 📅 2026-10-20 ⏰ 09:00\n  - [ ] B 📅 2026-10-20 ⏰ 10:00',
+      });
+      seedTaskCache(app, 'qa.md', [{ task: ' ', parent: -1, line: 0 }]);
+      const application = configuredTaskApplication(app, DEFAULT_SETTINGS);
+      await application.index.initialize();
+      try {
+        const root = expectDefined(application.index.list()[0]);
+        const displays = projectCalendarOccurrences(
+          {
+            materialized: root.subtasks.map((node) => ({
+              root,
+              node,
+              target: { type: 'subtask' as const, ref: node.ref },
+            })),
+            recurringSources: [],
+          },
+          { from: localDate('2026-10-20'), to: localDate('2026-10-20') },
+          { removeScheduledDate: false },
+        ).occurrences.map(taskSnapshotForCalendarOccurrence);
+        const gate = deferred<void>();
+        const execute = vi.fn<TaskApplicationApi['execute']>(async (...args) => {
+          const first = execute.mock.calls.length === 1;
+          if (first) await gate.promise;
+          const result = await application.tasks.execute(...args);
+          if (!first || !external || result.type !== 'ok' || result.outcome.type !== 'task')
+            return result;
+          const file = expectDefined(app.vault.getFileByPath('qa.md'));
+          const text = (await app.vault.read(file)).replace('- [ ] B ', '- [ ] Replacement ');
+          await app.vault.modify(file, text);
+          metadataChangedEmitter(app)(file, text, app.metadataCache.getFileCache(file) ?? {});
+          await flushMicrotasks();
+          return {
+            ...result,
+            outcome: { ...result.outcome, task: expectDefined(application.index.list()[0]) },
+          };
+        });
+        const hooks = harness().hooks;
+        const queue = new TimedBlockKeyboardQueue({ ...application.tasks, execute }, hooks);
+        queue.enqueue(expectDefined(displays[0]), { type: 'move-time', deltaMinutes: 15 });
+        queue.enqueue(expectDefined(displays[1]), { type: 'move-time', deltaMinutes: 15 });
+        queue.enqueue(expectDefined(displays[1]), { type: 'move-time', deltaMinutes: 15 });
+        const pointer =
+          handoff === 'pointer' ? queue.settlePointerTask(expectDefined(displays[1])) : undefined;
+        gate.resolve();
+        if (pointer !== undefined) {
+          const commands = new CalendarCommands({
+            tasks: application.tasks,
+            queries: application.tasks.queries,
+          });
+          await commands.setDuration(await pointer, 90);
+          expect(application.index.list()[0]?.subtasks[1]?.planning.duration).toBe(90);
+        }
+        await vi.waitFor(() => {
+          expect(hooks.onSettled).toHaveBeenCalledOnce();
+        });
+        expect(hooks.onInvalidated).not.toHaveBeenCalled();
+        expect(application.index.list()[0]?.subtasks.map((node) => node.planning.time)).toEqual([
+          '09:15',
+          handoff === 'keyboard' ? '10:30' : '10:00',
+        ]);
+        expect(application.index.list()[0]?.subtasks[1]?.title).toBe(
+          external ? 'Replacement' : 'B',
+        );
+      } finally {
+        application.index.destroy();
+      }
+    },
+  );
+
+  it('continues keyboard edits on an origin still retained by a pointer gesture', async () => {
+    const original = taskAt('09:00');
+    const updated = taskAt('09:15', 'revision-2');
+    const execute = vi
+      .fn<TaskApplicationApi['execute']>()
+      .mockResolvedValueOnce(ok(updated))
+      .mockResolvedValueOnce(ok(taskAt('09:30', 'revision-3')));
+    const { queue, hooks } = harness(execute);
+    queue.enqueue(original, { type: 'move-time', deltaMinutes: 15 });
+    await vi.waitFor(() => {
+      expect(hooks.onSettled).toHaveBeenCalledOnce();
+    });
+    queue.enqueue(original, { type: 'move-time', deltaMinutes: 15 });
+    expect(execute).toHaveBeenLastCalledWith({
+      type: 'patch',
+      target: { type: 'task', ref: updated.ref },
+      patch: { time: { type: 'set', value: '09:30' } },
+    });
+  });
+
+  it('hands a pending pointer commit its owned receipt and discards unsent repeats', async () => {
+    const receipt = deferred<TaskCommandResult>();
+    const execute = vi.fn().mockReturnValue(receipt.promise);
+    const { queue } = harness(execute);
+    const original = taskAt('09:00');
+    const updated = taskAt('09:15', 'revision-2');
+    queue.enqueue(original, { type: 'move-time', deltaMinutes: 15 });
+    queue.enqueue(original, { type: 'move-time', deltaMinutes: 15 });
+    const successor = queue.settlePointerTask(original);
+    receipt.resolve(ok(updated));
+    expect(await successor).toBe(updated);
+    expect(execute).toHaveBeenCalledOnce();
+    expect(await queue.settlePointerTask(original)).toBe(updated);
+    const external = taskAt('12:00', 'external-replacement');
+    expect(await queue.settlePointerTask(external)).toBe(external);
+    queue.cancel();
+    expect(await queue.settlePointerTask(original)).toBe(original);
+  });
+
+  it.each(['cancel', 'refuse'] as const)(
+    'does not grant a pointer successor after keyboard %s',
+    async (ending) => {
+      const receipt = deferred<TaskCommandResult>();
+      const { queue } = harness(vi.fn().mockReturnValue(receipt.promise));
+      const original = taskAt('09:00');
+      queue.enqueue(original, { type: 'move-time', deltaMinutes: 15 });
+      const successor = queue.settlePointerTask(original);
+      if (ending === 'cancel') queue.cancel();
+      receipt.resolve(
+        ending === 'cancel'
+          ? ok(taskAt('09:15', 'revision-2'))
+          : { type: 'not-found', target: { type: 'task', ref: original.ref } },
+      );
+      expect(await successor).toBe(original);
+    },
+  );
+
+  it.each(['move-time', 'resize-duration'] as const)(
+    'preserves reversal after a coalesced %s reaches its lower clamp',
+    async (type) => {
+      const app = await createAppWithFiles({
+        'qa.md': '- [ ] task 📅 2026-07-20 ⏰ 00:15 ⏱️ 10m\n',
+      });
+      seedTaskCache(app, 'qa.md', [{ task: ' ', parent: -1, line: 0 }]);
+      const application = configuredTaskApplication(app, DEFAULT_SETTINGS);
+      await application.index.initialize();
+      const gate = deferred<void>();
+      const execute = vi.fn<TaskApplicationApi['execute']>(async (...args) => {
+        if (execute.mock.calls.length === 1) await gate.promise;
+        return application.tasks.execute(...args);
+      });
+      const hooks = harness().hooks;
+      const queue = new TimedBlockKeyboardQueue({ ...application.tasks, execute }, hooks);
+      const original = expectDefined(application.index.list({ filePath: 'qa.md' })[0]);
+      const up: TimedBlockKeyboardIntent =
+        type === 'move-time' ? { type, deltaMinutes: -15 } : { type, deltaMinutes: -5 };
+      const down: TimedBlockKeyboardIntent =
+        type === 'move-time' ? { type, deltaMinutes: 15 } : { type, deltaMinutes: 5 };
+      for (let index = 0; index < 11; index++) queue.enqueue(original, up);
+      queue.enqueue(original, down);
+      queue.enqueue(original, down);
+      gate.resolve();
+      await vi.waitFor(() => {
+        expect(hooks.onSettled).toHaveBeenCalledOnce();
+      });
+      expect(application.index.list({ filePath: 'qa.md' })[0]?.planning).toMatchObject(
+        type === 'move-time' ? { time: '00:30', duration: 10 } : { time: '00:15', duration: 15 },
+      );
+      expect(execute).toHaveBeenCalledTimes(3);
+      application.index.destroy();
+    },
+  );
+
+  it.each([
+    ['move-time', '14:15', 60],
+    ['resize-duration', '09:00', 165],
+  ] as const)(
+    'coalesces held %s inputs behind one pending write and rebases the accumulated target',
+    async (type, expectedTime, expectedDuration) => {
+      const source = '- [ ] task 📅 2026-07-20 ⏰ 09:00 ⏱️ 1h\n';
+      const app = await createAppWithFiles({ 'qa.md': source });
+      seedTaskCache(app, 'qa.md', [{ task: ' ', parent: -1, line: 0 }]);
+      const application = configuredTaskApplication(app, DEFAULT_SETTINGS);
+      await application.index.initialize();
+      const gate = deferred<void>();
+      const execute = vi.fn<TaskApplicationApi['execute']>(async (...args) => {
+        if (execute.mock.calls.length === 1) await gate.promise;
+        return application.tasks.execute(...args);
+      });
+      const hooks = harness().hooks;
+      const queue = new TimedBlockKeyboardQueue({ ...application.tasks, execute }, hooks);
+      const original = expectDefined(application.index.list({ filePath: 'qa.md' })[0]);
+      const intent: TimedBlockKeyboardIntent =
+        type === 'move-time' ? { type, deltaMinutes: 15 } : { type, deltaMinutes: 5 };
+      for (let index = 0; index < 21; index++) queue.enqueue(original, intent);
+      gate.resolve();
+      await vi.waitFor(() => {
+        expect(hooks.onSettled).toHaveBeenCalledOnce();
+      });
+      expect(application.index.list({ filePath: 'qa.md' })[0]?.planning).toMatchObject({
+        time: expectedTime,
+        duration: expectedDuration,
+      });
+      expect(execute).toHaveBeenCalledTimes(2);
+      application.index.destroy();
+    },
+  );
+
   it('reports each committed result changed state to the focus owner', async () => {
     const first = deferred<TaskCommandResult>();
     const second = deferred<TaskCommandResult>();
@@ -796,6 +1063,12 @@ describe('materialized child timed keyboard authority', () => {
           expect(committed.title).toBe('Child');
           expect(calendarMutationTarget(committed)?.type).toBe('subtask');
         }
+        const pointerTask = await queue.settlePointerTask(display);
+        expect(pointerTask.planning).toEqual(planning);
+        expect(calendarMutationTarget(pointerTask)).toEqual({
+          type: 'subtask',
+          ref: updated.subtasks[0]?.ref,
+        });
         const file = expectDefined(app.vault.getFileByPath('qa.md'));
         const bytes = await app.vault.read(file);
         expect(bytes.startsWith('Untouched prose.\n- [ ] Parent ⏳ 2026-10-08 ⏰ 12:00\n')).toBe(

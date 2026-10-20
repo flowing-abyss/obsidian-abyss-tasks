@@ -5717,9 +5717,11 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
 
     h.setSnapshots([]);
     h.emit();
+    calendarOf(h.panel).render(h.el);
     expect(outgoing.isConnected).toBe(false);
     h.setSnapshots([updated]);
     h.emit();
+    calendarOf(h.panel).render(h.el);
     pending.resolve(okTask(updated));
     await flushMicrotasks();
 
@@ -5794,7 +5796,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
 
     expect(h.el.querySelector('.abyss-tg-day-column')?.getAttribute('data-tg-date')).toBe(tomorrow);
     const movedBlock = timedBlock(h.el);
-    expect(activeDocument.activeElement).toBe(activeDocument.body);
+    expect(activeDocument.activeElement).toBe(movedBlock);
 
     vi.runOnlyPendingTimers();
 
@@ -5842,7 +5844,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     expect(h.el.querySelector('.abyss-tg-day-column')?.getAttribute('data-tg-date')).toBe(
       dayThreeDate,
     );
-    expect(patch).toHaveBeenCalledTimes(2);
+    expect(patch).not.toHaveBeenCalled();
     await vi.waitFor(() => {
       expect(activeDocument.activeElement).toBe(timedBlock(h.el));
     });
@@ -6007,7 +6009,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     expect(activeDocument.activeElement).toBe(blockB);
   });
 
-  it('defers remount focus until the command commits and does not steal it after settlement', async () => {
+  it('retains focus until publication commits and does not steal it after settlement', async () => {
     const pending = deferredResult();
     const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(pending.promise);
     const original = keyboardSnapshot(TODAY);
@@ -6022,13 +6024,14 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     h.setSnapshots([updated]);
     h.emit();
     await flushMicrotasks();
-    const remounted = timedBlock(h.el);
     expect(h.el.querySelector('.abyss-tg-grid-row')).toBe(gridRow);
-    expect(activeDocument.activeElement).not.toBe(remounted);
+    expect(timedBlock(h.el)).toBe(block);
+    expect(activeDocument.activeElement).toBe(block);
 
     pending.resolve(okTask(updated));
     await flushMicrotasks();
-    expect(activeDocument.activeElement).toBe(remounted);
+    expect(timedBlock(h.el)).not.toBe(block);
+    expect(activeDocument.activeElement).toBe(timedBlock(h.el));
 
     const other = expectDefined(h.el.querySelector<HTMLElement>('.abyss-cal-nav-today'));
     other.focus();
@@ -6460,22 +6463,24 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     },
   );
 
-  it('finishes a pending remount restoration when changed:false settles before its timer', async () => {
+  it('focuses a dirty publication synchronously when changed:false settles', async () => {
     const pending = deferredResult();
     const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(pending.promise);
     const original = keyboardSnapshot(TODAY, '09:00', 'same.md', 'revision-1', 4);
     const rebuilt = keyboardSnapshot(TODAY, '09:00', 'same.md', 'revision-2', 4);
     const h = keyboardPanelHarness([original], execute);
     clickCalendarView(h.el, 'Day');
+    vi.useFakeTimers();
 
     const outgoing = timedBlock(h.el);
     outgoing.focus();
     press(outgoing, 'ArrowDown');
     h.setSnapshots([rebuilt]);
     h.emit();
-    expect(outgoing.isConnected).toBe(false);
+    expect(outgoing.isConnected).toBe(true);
     pending.resolve(okTaskUnchanged(rebuilt));
-    await flushMicrotasks();
+    await Promise.resolve();
+    await Promise.resolve();
 
     const focused = timedBlock(h.el);
     expect(focused).not.toBe(outgoing);
@@ -6608,6 +6613,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
 
     h.setSnapshots([replacement, moved]);
     h.emit();
+    calendarOf(h.panel).render(h.el);
     await flushMicrotasks();
     const replacementBlock = expectDefined(
       Array.from(h.el.querySelectorAll<HTMLElement>('.abyss-tg-block')).find(
@@ -6655,6 +6661,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       press(originBlock, 'ArrowDown');
       h.setSnapshots([replacement, moved]);
       h.emit();
+      calendarOf(h.panel).render(h.el);
       await flushMicrotasks();
 
       const replacementBlock = expectDefined(

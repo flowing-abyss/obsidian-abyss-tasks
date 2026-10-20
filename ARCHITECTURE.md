@@ -463,9 +463,23 @@ after movement or scrolling, including after capture loss or Escape. A fresh pre
 activation; keyboard clicks retain their own path.
 Commands submitted through those callbacks make the calendar body inert until settlement and queued
 publication, so another gesture cannot submit from the old task snapshot. Compact agenda status actions
-retain the shared TaskCardRenderer and CenterPanel command and menu owners; keyboard timing intents
-retain TimedBlockKeyboardQueue through TimedBlockFocusRetention. Navigation, width remounts, disposal,
-and window migration retire the hold; late completion cannot publish into a replacement mount.
+retain the shared TaskCardRenderer and CenterPanel command and menu owners. TimedBlockKeyboardQueue
+holds publication during each keyboard write without making the focused block inert. Its receipt
+updates TimedBlockFocusRetention before releasing the hold; the replacement receives focus in that
+publication turn, keeping repeated keys out of native page scrolling. Consecutive vertical repeats
+of the same kind and direction accumulate behind the active write; reversal and modifier changes
+retain their order and clamps. Tab transfers the publication hold to a queued edit of the next block.
+A sibling's pending command can adopt the preceding command's root only through the existing
+whole-tree owned-change proof. Even an unchanged receipt releases dirty publication before settling
+focus ownership.
+A pointer commit on a retained keyboard origin discards unsent repeats and waits for the active
+receipt. Only an identity already owned by that sequence can use its proven successor; no query
+lookup acquires a replacement. Rebasing keeps the caller's occurrence and date roles, including
+separate scheduled and due points. CalendarCommands preserves the pointer's absolute edge or date
+against that successor, retaining the opposite resized edge. Keyboard navigation across periods
+preserves the scroll offset instead of scrolling to the current time.
+Navigation, width remounts, disposal, and window migration retire the hold; late completion cannot
+publish into a replacement mount.
 Timed and span sessions release pointer capture and listeners at submission while retaining their
 preview until the command and held publication settle, or the view is disposed. Explicit view patches
 still cancel sessions. Timed gestures retain their original planning and grab offset while refreshing

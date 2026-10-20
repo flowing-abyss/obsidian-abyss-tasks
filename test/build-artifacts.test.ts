@@ -76,6 +76,8 @@ const privateOwners = new Set([
   'CalendarPublicationHold',
   'TimedInteractionSession',
   'TimedBlockFocusRetention',
+  // The keyboard queue exposes methods and hooks, never its mutable execution bookkeeping.
+  'TimedBlockKeyboardQueue',
   'TagPickerModal',
   'TagGroupAppearanceModal',
   'StatisticsMode',

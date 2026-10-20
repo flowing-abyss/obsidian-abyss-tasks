@@ -134,6 +134,8 @@ export class CalendarMode {
     this.focusRetention_abyssPrivate = new TimedBlockFocusRetention(deps_abyssPrivate.tasks, {
       isCalendarActive: () => deps_abyssPrivate.state.get('mode') === 'calendar',
       root: () => this.root_abyssPrivate,
+      holdPublication: () =>
+        this.publicationHold_abyssPrivate?.holdKeyboardPublication() ?? (() => {}),
       follow: (updated, nextSegmentDate) => {
         this.followShiftedTask_abyssPrivate(updated, nextSegmentDate);
       },
@@ -510,7 +512,7 @@ export class CalendarMode {
     const key = calendarScrollKey(this.viewType_abyssPrivate, this.date_abyssPrivate);
     const shouldScroll = key !== this.lastScrolledKey_abyssPrivate;
     this.lastScrolledKey_abyssPrivate = key;
-    return shouldScroll;
+    return shouldScroll && !this.focusRetention_abyssPrivate.hasPending();
   }
 
   private openDay_abyssPrivate(date: string): void {
@@ -641,53 +643,53 @@ export class CalendarMode {
     return {
       ...this.createSelectionAndCaptureHandlers_abyssPrivate(viewContainer, publicationHold),
       onTimeChange: (task, minutes) => {
-        return this.runTaskAction_abyssPrivate(publicationHold, task, () =>
-          commands.setTime(task, minutes),
+        return this.runTaskAction_abyssPrivate(publicationHold, task, (current) =>
+          commands.setTime(current, minutes),
         );
       },
       onDurationChange: (task, minutes) => {
-        return this.runTaskAction_abyssPrivate(publicationHold, task, () =>
-          commands.setDuration(task, minutes),
+        return this.runTaskAction_abyssPrivate(publicationHold, task, (current) =>
+          commands.setDuration(current, minutes),
         );
       },
       onTimedMove: (task, target) => {
-        return this.runTaskAction_abyssPrivate(publicationHold, task, () =>
-          commands.commitTimedMove(task, target),
+        return this.runTaskAction_abyssPrivate(publicationHold, task, (current) =>
+          commands.commitTimedMove(current, target, task),
         );
       },
       onTimedDuration: (task, target) => {
-        return this.runTaskAction_abyssPrivate(publicationHold, task, () =>
-          commands.commitTimedDuration(task, target),
+        return this.runTaskAction_abyssPrivate(publicationHold, task, (current) =>
+          commands.commitTimedDuration(current, target, task),
         );
       },
       onTimedBoundary: (task, target) => {
-        return this.runTaskAction_abyssPrivate(publicationHold, task, () =>
-          commands.commitTimedBoundary(task, target),
+        return this.runTaskAction_abyssPrivate(publicationHold, task, (current) =>
+          commands.commitTimedBoundary(current, target),
         );
       },
       onSpanMove: (task, target) => {
-        return this.runTaskAction_abyssPrivate(publicationHold, task, () =>
-          commands.commitSpanMove(task, target),
+        return this.runTaskAction_abyssPrivate(publicationHold, task, (current) =>
+          commands.commitSpanMove(current, target),
         );
       },
       onSpanBoundary: (task, target) => {
-        return this.runTaskAction_abyssPrivate(publicationHold, task, () =>
-          commands.commitTimedBoundary(task, target),
+        return this.runTaskAction_abyssPrivate(publicationHold, task, (current) =>
+          commands.commitTimedBoundary(current, target),
         );
       },
       onStartChange: (task, start) => {
-        return this.runTaskAction_abyssPrivate(publicationHold, task, () =>
-          commands.setStart(task, start),
+        return this.runTaskAction_abyssPrivate(publicationHold, task, (current) =>
+          commands.setStart(current, start),
         );
       },
       onDueChange: (task, due) => {
-        return this.runTaskAction_abyssPrivate(publicationHold, task, () =>
-          commands.setDue(task, due),
+        return this.runTaskAction_abyssPrivate(publicationHold, task, (current) =>
+          commands.setDue(current, due),
         );
       },
       onExtendToSpan: (task, due) => {
-        return this.runTaskAction_abyssPrivate(publicationHold, task, () =>
-          commands.extendToSpan(task, due),
+        return this.runTaskAction_abyssPrivate(publicationHold, task, (current) =>
+          commands.extendToSpan(current, due),
         );
       },
       onKeyboardIntent: (task, intent) => {
@@ -708,10 +710,13 @@ export class CalendarMode {
   private runTaskAction_abyssPrivate(
     publicationHold: CalendarPublicationHold,
     task: TaskSnapshot,
-    action: () => Promise<void>,
+    action: (current: TaskSnapshot) => Promise<void>,
   ): Promise<void> {
     if (isForecastCalendarTask(task)) return Promise.resolve();
-    return publicationHold.run(action);
+    return publicationHold.run(() => {
+      const current = this.focusRetention_abyssPrivate.settlePointerTask(task);
+      return current instanceof Promise ? current.then(action) : action(current);
+    });
   }
 
   private createTaskAtTime_abyssPrivate(container: HTMLElement, date: string, time: string): void {

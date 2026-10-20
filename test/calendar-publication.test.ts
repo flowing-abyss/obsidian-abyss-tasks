@@ -186,6 +186,144 @@ function timedMove(root: HTMLElement) {
   };
 }
 
+describe('timed keyboard publication', () => {
+  it('applies an end resize started during a keyboard write to that owned successor', async () => {
+    const h = await setup('week');
+    const gate = deferred<void>();
+    h.execute.mockImplementationOnce(async (...args) => {
+      await gate.promise;
+      return h.application.tasks.execute(...args);
+    });
+    const origin = expectDefined(h.root.querySelector<HTMLElement>('.abyss-tg-block'));
+    origin.focus();
+    origin.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    const gesture = timedResize(h.root);
+    gate.resolve();
+    await h.execute.mock.results[0]?.value;
+    await flushMicrotasks();
+    expect(h.current().planning.time).toBe('09:15');
+    gesture.finish();
+    await flushMicrotasks();
+    expect(h.current().planning).toMatchObject({ time: '09:15', duration: 75 });
+    expect(h.root.querySelector('.abyss-tg-drag-preview')).toBeNull();
+  });
+
+  it('retains the next Tab target when its command is queued behind the previous task', async () => {
+    const h = await setup('week');
+    const other = expectDefined(h.application.index.list({ filePath: 'other.md' })[0]);
+    await h.application.tasks.execute({
+      type: 'patch',
+      target: { type: 'task', ref: other.ref },
+      patch: {
+        due: { type: 'set', value: localDate('2026-10-19') },
+        time: { type: 'set', value: localTime('09:30') },
+      },
+    });
+    h.root.addEventListener('focusin', (event) => {
+      const block = (event.target as HTMLElement).closest<HTMLElement>('.abyss-tg-block');
+      if (block !== null) h.mode.retainTimedBlockFocus(block);
+    });
+    const first = deferred<void>();
+    const second = deferred<void>();
+    h.execute
+      .mockImplementationOnce(async (...args) => {
+        await first.promise;
+        return h.application.tasks.execute(...args);
+      })
+      .mockImplementationOnce(async (...args) => {
+        await second.promise;
+        return h.application.tasks.execute(...args);
+      });
+    const origin = expectDefined(
+      h.root.querySelector<HTMLElement>('.abyss-tg-block[data-abyss-task-file="calendar.md"]'),
+    );
+    origin.focus();
+    const press = (key: string) =>
+      document.activeElement?.dispatchEvent(
+        new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }),
+      );
+    press('ArrowDown');
+    press('Tab');
+    const next = document.activeElement;
+    expect((next as HTMLElement).dataset['abyssTaskFile']).toBe('other.md');
+    press('ArrowDown');
+    first.resolve();
+    await h.execute.mock.results[0]?.value;
+    await flushMicrotasks();
+    expect(document.activeElement).toBe(next);
+    second.resolve();
+    await flushMicrotasks();
+    expect(h.application.index.list({ filePath: 'other.md' })[0]?.planning.time).toBe('09:45');
+    expect((document.activeElement as HTMLElement).dataset['abyssTaskFile']).toBe('other.md');
+  });
+
+  it('carries the scroll offset when a keyboard date shift follows into another week', async () => {
+    const h = await setup('week');
+    const original = expectDefined(h.application.index.list({ filePath: 'calendar.md' })[0]);
+    await h.application.tasks.execute({
+      type: 'patch',
+      target: { type: 'task', ref: original.ref },
+      patch: { due: { type: 'set', value: localDate('2026-10-25') } },
+    });
+    vi.mocked(h.host.rerender).mockImplementation(() => {
+      h.mode.render(h.root);
+    });
+    vi.useFakeTimers();
+    vi.runOnlyPendingTimers();
+    const grid = expectDefined(h.root.querySelector<HTMLElement>('.abyss-tg-grid-row'));
+    grid.scrollTop = 300;
+    expectDefined(h.root.querySelector<HTMLElement>('.abyss-tg-block')).focus();
+    document.activeElement?.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }),
+    );
+    await h.execute.mock.results[0]?.value;
+    await Promise.resolve();
+    vi.runOnlyPendingTimers();
+    expect(h.current().planning.due).toBe('2026-10-26');
+    expect(h.root.querySelector<HTMLElement>('.abyss-tg-grid-row')?.scrollTop).toBe(300);
+    expect((document.activeElement as HTMLElement).dataset['tgSegmentDate']).toBe('2026-10-26');
+  });
+
+  it('retains the native keyboard target until receipt and focuses its replacement in the publication turn', async () => {
+    const h = await setup('week');
+    vi.useFakeTimers();
+    vi.runOnlyPendingTimers();
+    const accepted = deferred<void>();
+    const receipt = deferred<void>();
+    h.execute.mockImplementationOnce(async (...args) => {
+      const result = await h.application.tasks.execute(...args);
+      accepted.resolve();
+      await receipt.promise;
+      return result;
+    });
+    const origin = expectDefined(h.root.querySelector<HTMLElement>('.abyss-tg-block'));
+    origin.focus();
+    origin.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }),
+    );
+    await accepted.promise;
+    expect(h.current().planning.time).toBe('09:15');
+    expect(document.activeElement).toBe(origin);
+    expect(origin.isConnected).toBe(true);
+    expect(h.root.querySelector<HTMLElement>('.abyss-cal-body')?.inert).not.toBe(true);
+    receipt.resolve();
+    await h.execute.mock.results[0]?.value;
+    await Promise.resolve();
+    const replacement = expectDefined(h.root.querySelector<HTMLElement>('.abyss-tg-block'));
+    expect(replacement).not.toBe(origin);
+    expect(document.activeElement).toBe(replacement);
+    const nextKey = new KeyboardEvent('keydown', {
+      key: 'ArrowDown',
+      bubbles: true,
+      cancelable: true,
+    });
+    document.activeElement?.dispatchEvent(nextKey);
+    expect(nextKey.defaultPrevented).toBe(true);
+    await h.execute.mock.results[1]?.value;
+    expect(h.current().planning.time).toBe('09:30');
+  });
+});
+
 describe('timed drag release ownership', () => {
   it.each(['lostpointercapture', 'Escape'] as const)(
     'does not create a task when %s cancels the press before the first movement',

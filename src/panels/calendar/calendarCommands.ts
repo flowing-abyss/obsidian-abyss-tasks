@@ -21,7 +21,7 @@ import {
 } from '../../views/calendarOccurrences';
 import type { SpanMoveTarget } from '../../views/spanInteractions';
 import type { TimedDragTarget, TimedVerticalResizeTarget } from '../../views/timegrid/dragGeometry';
-import { minutesToTimeString } from '../../views/timegrid/layout';
+import { minutesToTimeString, timeStringToMinutes } from '../../views/timegrid/layout';
 import type { TimedBoundaryTarget } from '../../views/timegrid/timedInteractions';
 
 export interface CalendarCommandsDependencies {
@@ -104,6 +104,35 @@ function timedMoveCommand(
   return childTimedMoveCommand(task, target.dayDelta, time);
 }
 
+function ownedScheduleShift(previous: TaskSnapshot, current: TaskSnapshot): number {
+  const previousOccurrence = calendarOccurrenceForRender(previous);
+  const currentOccurrence = calendarOccurrenceForRender(current);
+  if (previousOccurrence.kind === 'forecast' || currentOccurrence.kind === 'forecast') return 0;
+  const before = previousOccurrence.occupied;
+  const after = currentOccurrence.occupied;
+  return daysBetweenLocalDates(
+    before.kind === 'interval' ? before.start : before.date,
+    after.kind === 'interval' ? after.start : after.date,
+  );
+}
+
+function ownedResizeTarget(
+  task: TaskSnapshot,
+  target: TimedVerticalResizeTarget,
+): TimedVerticalResizeTarget {
+  const currentStart = timeStringToMinutes(task.planning.time ?? '00:00');
+  const currentEnd = Math.min(1440, currentStart + (task.planning.duration ?? 60));
+  const startMinutes =
+    target.edge === 'end'
+      ? currentStart
+      : Math.max(0, Math.min(target.startMinutes, currentEnd - 15));
+  const endMinutes =
+    target.edge === 'start'
+      ? currentEnd
+      : Math.min(1440, Math.max(target.endMinutes, startMinutes + 15));
+  return { ...target, startMinutes, endMinutes, durationMinutes: endMinutes - startMinutes };
+}
+
 function clearPointDurationForAllDay(
   task: TaskSnapshot,
   command: ExecutableCommand | undefined,
@@ -173,15 +202,29 @@ export class CalendarCommands {
       );
   }
 
-  async commitTimedMove(task: TaskSnapshot, target: TimedDragTarget): Promise<void> {
-    await this.execute_abyssPrivate(() => timedMoveCommand(task, target));
+  async commitTimedMove(
+    task: TaskSnapshot,
+    target: TimedDragTarget,
+    previous = task,
+  ): Promise<void> {
+    await this.execute_abyssPrivate(() =>
+      timedMoveCommand(task, {
+        ...target,
+        dayDelta: target.dayDelta - ownedScheduleShift(previous, task),
+      }),
+    );
   }
 
-  async commitTimedDuration(task: TaskSnapshot, target: TimedVerticalResizeTarget): Promise<void> {
+  async commitTimedDuration(
+    task: TaskSnapshot,
+    target: TimedVerticalResizeTarget,
+    previous = task,
+  ): Promise<void> {
+    const resized = previous === task ? target : ownedResizeTarget(task, target);
     await this.execute_abyssPrivate(() =>
       calendarPatchCommand(task, {
-        time: { type: 'set', value: localTime(minutesToTimeString(target.startMinutes)) },
-        duration: { type: 'set', value: durationMinutes(target.durationMinutes) },
+        time: { type: 'set', value: localTime(minutesToTimeString(resized.startMinutes)) },
+        duration: { type: 'set', value: durationMinutes(resized.durationMinutes) },
       }),
     );
   }

@@ -36,11 +36,6 @@ function forecastBlock(
   return element;
 }
 
-/** The restorations the retention has reserved but not yet run. */
-function restorations(retention: TimedBlockFocusRetention): ReadonlyMap<number, unknown> {
-  return retention['pendingRestorations_abyssPrivate'];
-}
-
 function harness(options: { active?: boolean; execute?: TaskApplicationApi['execute'] } = {}): {
   root: HTMLElement;
   retention: TimedBlockFocusRetention;
@@ -114,14 +109,12 @@ describe('TimedBlockFocusRetention intents', () => {
     origin.focus();
     h.retention.handleIntent(snapshot, { type: 'move-time', deltaMinutes: 15 });
     await settle();
-    // The query patch replaces the block: prepare, render, defer, then the timer restores focus.
+    // A committed query patch replaces and focuses the block before another native key can land.
     h.retention.beforeViewUpdate();
     const generation = h.retention.beginRender();
     origin.remove();
     const replacement = block(h.root, snapshot);
     h.retention.deferFocus(h.root, generation);
-    expect(document.activeElement).not.toBe(replacement);
-    vi.runOnlyPendingTimers();
     expect(document.activeElement).toBe(replacement);
     expect(replacement.classList.contains('is-selected')).toBe(true);
   });
@@ -288,7 +281,7 @@ describe('TimedBlockFocusRetention focus capture', () => {
     expect(document.activeElement).not.toBe(staleReplacement);
   });
 
-  it('reserves nothing when the container has no owning window', async () => {
+  it('waits for an owning window before restoring committed focus', async () => {
     vi.useFakeTimers();
     const h = harness();
     const snapshot = task({ planning: { due: '2026-09-23', time: '09:00' } });
@@ -310,12 +303,9 @@ describe('TimedBlockFocusRetention focus capture', () => {
     h.retention.deferFocus(container, generation);
     expect(vi.getTimerCount()).toBe(scheduled);
     expect(h.retention.hasPending()).toBe(true);
-    expect(restorations(h.retention).size).toBe(0);
-    // The same pending focus against a container with a window does reserve and schedule.
+    // A committed replacement in the owning window is focused within the publication turn.
     const replacement = block(h.root, snapshot);
     h.retention.deferFocus(h.root, generation);
-    expect(restorations(h.retention).size).toBe(1);
-    vi.runOnlyPendingTimers();
     expect(document.activeElement).toBe(replacement);
   });
 });

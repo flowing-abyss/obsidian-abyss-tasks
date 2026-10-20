@@ -20,17 +20,12 @@ interface TimedBlockFocusLocator {
   readonly originElement?: HTMLElement;
 }
 
-interface PendingTimedBlockRestoration {
-  readonly queueSequence: number;
-  readonly focusSequence: number;
-  readonly renderGeneration: number;
-}
-
 export interface TimedBlockFocusRetentionHost {
   /** Whether the centre panel currently shows the calendar (restorations and commits need it). */
   readonly isCalendarActive: () => boolean;
   /** The panel element of the last calendar render; null until the first render. */
   readonly root: () => HTMLElement | null;
+  readonly holdPublication?: () => () => void;
   /** Re-anchors the calendar on the task a keyboard shift moved out of view. */
   readonly follow: (updated: TaskSnapshot, nextSegmentDate: string | undefined) => void;
 }
@@ -76,8 +71,8 @@ function shiftFocusedSegmentDate(
 
 /**
  * Keeps keyboard focus on a timed block across the re-renders its own commands cause. Owns the
- * keyboard queue, the pending focus locator, and the per-sequence bookkeeping; restores focus on
- * the owning window's next timer tick once the committed render is on screen.
+ * keyboard queue, the pending focus locator, and the per-sequence bookkeeping. A committed
+ * replacement receives focus in the publication turn so native repeated keys keep their target.
  */
 export class TimedBlockFocusRetention {
   private readonly queue_abyssPrivate: TimedBlockKeyboardQueue | null;
@@ -85,11 +80,6 @@ export class TimedBlockFocusRetention {
   private readonly settledSequences_abyssPrivate = new Set<number>();
   private readonly restoredSequences_abyssPrivate = new Set<number>();
   private readonly committedSequences_abyssPrivate = new Set<number>();
-  private readonly pendingRestorations_abyssPrivate = new Map<
-    number,
-    PendingTimedBlockRestoration
-  >();
-  private nextRestoration_abyssPrivate = 0;
   private nextFocusSequence_abyssPrivate = 0;
   private renderGeneration_abyssPrivate = 0;
 
@@ -101,6 +91,9 @@ export class TimedBlockFocusRetention {
       tasks == null
         ? null
         : new TimedBlockKeyboardQueue(tasks, {
+            ...(host_abyssPrivate.holdPublication !== undefined && {
+              holdPublication: host_abyssPrivate.holdPublication,
+            }),
             onCommitted: (task, intent, sequence, changed) => {
               this.handleCommit_abyssPrivate(task, intent, sequence, changed);
             },
@@ -177,13 +170,16 @@ export class TimedBlockFocusRetention {
     return this.pendingFocus_abyssPrivate != null;
   }
 
+  settlePointerTask(task: TaskSnapshot): TaskSnapshot | Promise<TaskSnapshot> {
+    return this.queue_abyssPrivate?.settlePointerTask(task) ?? task;
+  }
+
   cancel(): void {
     this.queue_abyssPrivate?.cancel();
     this.pendingFocus_abyssPrivate = undefined;
     this.settledSequences_abyssPrivate.clear();
     this.restoredSequences_abyssPrivate.clear();
     this.committedSequences_abyssPrivate.clear();
-    this.pendingRestorations_abyssPrivate.clear();
     this.renderGeneration_abyssPrivate += 1;
   }
 
@@ -218,19 +214,14 @@ export class TimedBlockFocusRetention {
     if (queueSequence !== undefined && scheduledCandidate === scheduled.originElement) return;
     const ownerWindow = container.ownerDocument.defaultView;
     if (ownerWindow === null) return;
-    const restorationId = this.reserveRestoration_abyssPrivate(
-      scheduledCandidate,
-      scheduled,
-      renderGeneration,
-    );
-
-    ownerWindow.setTimeout(() => {
+    const restore = (): void => {
       this.restoreDeferredFocus_abyssPrivate(container, {
         focusSequence,
         renderGeneration,
-        ...(restorationId !== undefined && { restorationId }),
       });
-    }, 0);
+    };
+    if (queueSequence !== undefined) restore();
+    else ownerWindow.setTimeout(restore, 0);
   }
 
   /** Defers the pending focus against the mounted panel; a null root is a no-op. */
@@ -249,11 +240,7 @@ export class TimedBlockFocusRetention {
       this.committedSequences_abyssPrivate.add(sequence);
       this.deferFocusAtRoot_abyssPrivate();
     }
-    const pendingRestoration = this.hasPendingRestoration_abyssPrivate(sequence);
-    if (
-      (!anyChanged && !sourceChanged && !pendingRestoration) ||
-      this.restoredSequences_abyssPrivate.has(sequence)
-    ) {
+    if ((!anyChanged && !sourceChanged) || this.restoredSequences_abyssPrivate.has(sequence)) {
       this.clearFocus_abyssPrivate(sequence);
       return;
     }
@@ -353,37 +340,14 @@ export class TimedBlockFocusRetention {
     };
   }
 
-  private reserveRestoration_abyssPrivate(
-    candidate: HTMLElement | undefined,
-    scheduled: TimedBlockFocusLocator,
-    renderGeneration: number,
-  ): number | undefined {
-    const queueSequence = scheduled.queueSequence;
-    if (
-      queueSequence === undefined ||
-      candidate?.isConnected !== true ||
-      candidate === scheduled.originElement
-    ) {
-      return undefined;
-    }
-    const restorationId = ++this.nextRestoration_abyssPrivate;
-    this.pendingRestorations_abyssPrivate.set(restorationId, {
-      queueSequence,
-      focusSequence: scheduled.sequence,
-      renderGeneration,
-    });
-    return restorationId;
-  }
-
   private restoreDeferredFocus_abyssPrivate(
     container: HTMLElement,
     options: {
       readonly focusSequence: number;
       readonly renderGeneration: number;
-      readonly restorationId?: number;
     },
   ): void {
-    if (!this.canRunRestoration_abyssPrivate(options)) return;
+    if (options.renderGeneration !== this.renderGeneration_abyssPrivate) return;
     const pending = this.pendingFocus_abyssPrivate;
     if (!this.isPendingRestorable_abyssPrivate(pending, options.focusSequence)) return;
     const candidate = findTimedBlock(container, pending);
@@ -393,19 +357,6 @@ export class TimedBlockFocusRetention {
     if (candidate.dataset['occurrenceState'] !== 'forecast') candidate.classList.add('is-selected');
     if (!this.didRestore_abyssPrivate(candidate, pending.sequence)) return;
     this.finishRestoration_abyssPrivate(pending.queueSequence);
-  }
-
-  private canRunRestoration_abyssPrivate(options: {
-    readonly renderGeneration: number;
-    readonly restorationId?: number;
-  }): boolean {
-    if (
-      options.restorationId !== undefined &&
-      !this.pendingRestorations_abyssPrivate.delete(options.restorationId)
-    ) {
-      return false;
-    }
-    return options.renderGeneration === this.renderGeneration_abyssPrivate;
   }
 
   private isPendingRestorable_abyssPrivate(
@@ -447,26 +398,10 @@ export class TimedBlockFocusRetention {
     this.pendingFocus_abyssPrivate = undefined;
   }
 
-  private hasPendingRestoration_abyssPrivate(queueSequence: number): boolean {
-    const pending = this.pendingFocus_abyssPrivate;
-    if (pending?.queueSequence !== queueSequence) return false;
-    return Array.from(this.pendingRestorations_abyssPrivate.values()).some(
-      (restoration) =>
-        restoration.queueSequence === queueSequence &&
-        restoration.focusSequence === pending.sequence &&
-        restoration.renderGeneration === this.renderGeneration_abyssPrivate,
-    );
-  }
-
   private clearSequenceState_abyssPrivate(queueSequence: number): void {
     this.settledSequences_abyssPrivate.delete(queueSequence);
     this.restoredSequences_abyssPrivate.delete(queueSequence);
     this.committedSequences_abyssPrivate.delete(queueSequence);
-    for (const [id, restoration] of this.pendingRestorations_abyssPrivate) {
-      if (restoration.queueSequence === queueSequence) {
-        this.pendingRestorations_abyssPrivate.delete(id);
-      }
-    }
   }
 
   private handleCommit_abyssPrivate(

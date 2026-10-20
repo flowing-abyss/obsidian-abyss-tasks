@@ -123,6 +123,56 @@ describe('CalendarCommands.setTimeFromDrag', () => {
 });
 
 describe('CalendarCommands timed gestures', () => {
+  it.each([
+    { edge: 'start', startMinutes: 525, time: '08:45', duration: 90 },
+    { edge: 'end', startMinutes: 540, time: '09:15', duration: 75 },
+  ] as const)(
+    'keeps the pointer $edge edge and the owned successor opposite edge',
+    async ({ edge, startMinutes, time, duration }) => {
+      const previous = task({ planning: { due: '2026-09-20', time: '09:00', duration: 60 } });
+      const current = task({ planning: { due: '2026-09-20', time: '09:15', duration: 60 } });
+      const h = harness();
+      await h.commands.commitTimedDuration(
+        current,
+        { edge, startMinutes, endMinutes: 630, durationMinutes: 630 - startMinutes },
+        previous,
+      );
+      expect(h.lastCommand()).toMatchObject({
+        target: { type: 'task', ref: current.ref },
+        patch: {
+          time: { type: 'set', value: time },
+          duration: { type: 'set', value: duration },
+        },
+      });
+    },
+  );
+
+  it('keeps a span drop at its absolute date after an owned keyboard date shift', async () => {
+    const previous = task({
+      planning: { start: '2026-09-20', due: '2026-09-22', time: '09:00' },
+    });
+    const current = task({
+      planning: { start: '2026-09-21', due: '2026-09-23', time: '09:00' },
+    });
+    const h = harness();
+    await h.commands.commitTimedMove(
+      current,
+      {
+        date: localDate('2026-09-24'),
+        dayDelta: 2,
+        destination: 'time-grid',
+        startMinutes: 615,
+      },
+      previous,
+    );
+    expect(h.lastCommand()).toMatchObject({
+      type: 'move-time-slot',
+      ref: current.ref,
+      days: 1,
+      time: '10:15',
+    });
+  });
+
   it('moves a timed block to the all-day row or to a slot', async () => {
     const timed = task({ planning: { due: '2026-09-20', time: '09:00' } });
     const h = harness();

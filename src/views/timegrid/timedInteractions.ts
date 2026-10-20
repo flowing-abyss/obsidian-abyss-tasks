@@ -562,81 +562,89 @@ class TimedTargetResolver {
 }
 
 class TimedInteractionSession {
-  private readonly resolver: TimedTargetResolver;
-  private readonly renderer: TimedPreviewRenderer;
-  private latest: TimedPreviewTarget | undefined;
-  private disposed = false;
-  private pointerReleased = false;
+  private readonly resolver_abyssPrivate: TimedTargetResolver;
+  private readonly renderer_abyssPrivate: TimedPreviewRenderer;
+  private latest_abyssPrivate: TimedPreviewTarget | undefined;
+  private disposed_abyssPrivate = false;
+  private pointerReleased_abyssPrivate = false;
   private lastPointer_abyssPrivate: PointerEvent;
 
   constructor(private readonly input: TimedSessionInput) {
     this.lastPointer_abyssPrivate = input.startEvent;
-    this.resolver = new TimedTargetResolver(input.binding, input.startEvent, input.geometry);
-    this.renderer = new TimedPreviewRenderer(input.binding, input.geometry);
+    this.resolver_abyssPrivate = new TimedTargetResolver(
+      input.binding,
+      input.startEvent,
+      input.geometry,
+    );
+    this.renderer_abyssPrivate = new TimedPreviewRenderer(input.binding, input.geometry);
   }
 
   start(): void {
     const { binding, capturedElement, kind, ownerWindow, startEvent } = this.input;
-    binding.owner.begin(this.dispose);
+    binding.owner.begin(this.dispose_abyssPrivate);
     binding.source.classList.toggle('is-picked-up', kind === 'move');
     if (kind !== 'move') capturedElement.dataset['activeResize'] = 'true';
     capture(capturedElement, startEvent.pointerId);
-    ownerWindow.addEventListener('pointermove', this.onPointerMove);
-    ownerWindow.addEventListener('pointerup', this.onPointerUp);
-    ownerWindow.addEventListener('pointercancel', this.onCancel);
-    ownerWindow.addEventListener('blur', this.onCancel);
-    ownerWindow.addEventListener('keydown', this.onKeyDown, true);
+    ownerWindow.addEventListener('pointermove', this.onPointerMove_abyssPrivate);
+    ownerWindow.addEventListener('pointerup', this.onPointerUp_abyssPrivate);
+    ownerWindow.addEventListener('pointercancel', this.onCancel_abyssPrivate);
+    ownerWindow.addEventListener('blur', this.onCancel_abyssPrivate);
+    ownerWindow.addEventListener('keydown', this.onKeyDown_abyssPrivate, true);
     ownerWindow.addEventListener('scroll', this.onScroll_abyssPrivate, true);
-    capturedElement.addEventListener('lostpointercapture', this.onCancel);
+    capturedElement.addEventListener('lostpointercapture', this.onCancel_abyssPrivate);
   }
 
-  private readonly onPointerMove = (pointer: PointerEvent): void => {
+  private readonly onPointerMove_abyssPrivate = (pointer: PointerEvent): void => {
     if (pointer.pointerId !== this.input.startEvent.pointerId) return;
     pointer.preventDefault();
-    this.update(pointer);
+    this.update_abyssPrivate(pointer);
   };
 
   private readonly onScroll_abyssPrivate = (event: Event): void => {
     const target = event.target as Partial<Pick<Node, 'contains'>> | null;
     if (target?.contains?.(this.input.binding.source) === true)
-      this.update(this.lastPointer_abyssPrivate);
+      this.update_abyssPrivate(this.lastPointer_abyssPrivate);
   };
 
-  private readonly onPointerUp = (pointer: PointerEvent): void => {
+  private readonly onPointerUp_abyssPrivate = (pointer: PointerEvent): void => {
     if (pointer.pointerId !== this.input.startEvent.pointerId) return;
-    this.update(pointer);
-    const committed = this.latest;
-    this.releasePointer();
-    if (committed == null) this.dispose();
-    else settleCalendarInteraction(() => this.commit(committed), this.dispose);
+    this.update_abyssPrivate(pointer);
+    const committed = this.latest_abyssPrivate;
+    this.releasePointer_abyssPrivate();
+    if (committed == null) this.dispose_abyssPrivate();
+    else
+      settleCalendarInteraction(
+        () => this.commit_abyssPrivate(committed),
+        this.dispose_abyssPrivate,
+      );
   };
 
-  private readonly onCancel = (event: Event): void => {
+  private readonly onCancel_abyssPrivate = (event: Event): void => {
     if ('pointerId' in event && event.pointerId !== this.input.startEvent.pointerId) return;
-    this.dispose();
+    this.dispose_abyssPrivate();
   };
 
-  private readonly onKeyDown = (event: KeyboardEvent): void => {
+  private readonly onKeyDown_abyssPrivate = (event: KeyboardEvent): void => {
     if (event.key !== 'Escape') return;
     event.preventDefault();
     event.stopPropagation();
-    this.dispose();
+    this.dispose_abyssPrivate();
   };
 
-  private update(pointer: PointerEvent): void {
-    if (this.disposed || pointer.pointerId !== this.input.startEvent.pointerId) return;
+  private update_abyssPrivate(pointer: PointerEvent): void {
+    if (this.disposed_abyssPrivate || pointer.pointerId !== this.input.startEvent.pointerId) return;
     this.lastPointer_abyssPrivate = pointer;
     const columns = this.input.geometry.columns.map(measureColumn);
-    const target = this.resolver.resolve(this.input.kind, pointer, columns);
-    this.latest = target;
+    const target = this.resolver_abyssPrivate.resolve(this.input.kind, pointer, columns);
+    this.latest_abyssPrivate = target;
     if (target == null) {
-      this.renderer.clear();
+      this.renderer_abyssPrivate.clear();
       return;
     }
-    this.renderer.render(this.input.kind, target);
+    this.renderer_abyssPrivate.render(this.input.kind, target);
   }
 
-  private commit(target: TimedPreviewTarget): void | Promise<void> {
+  private commit_abyssPrivate(target: TimedPreviewTarget): void | Promise<void> {
     const { binding, kind } = this.input;
     if (kind === 'move') {
       return binding.onMove(binding.task, target as TimedDragTarget);
@@ -647,30 +655,30 @@ class TimedInteractionSession {
     return binding.onBoundary(binding.task, target as TimedBoundaryTarget);
   }
 
-  private releasePointer(): void {
-    if (this.pointerReleased) return;
-    this.pointerReleased = true;
+  private releasePointer_abyssPrivate(): void {
+    if (this.pointerReleased_abyssPrivate) return;
+    this.pointerReleased_abyssPrivate = true;
     const { capturedElement, ownerWindow, startEvent } = this.input;
-    ownerWindow.removeEventListener('pointermove', this.onPointerMove);
-    ownerWindow.removeEventListener('pointerup', this.onPointerUp);
-    ownerWindow.removeEventListener('pointercancel', this.onCancel);
-    ownerWindow.removeEventListener('blur', this.onCancel);
-    ownerWindow.removeEventListener('keydown', this.onKeyDown, true);
+    ownerWindow.removeEventListener('pointermove', this.onPointerMove_abyssPrivate);
+    ownerWindow.removeEventListener('pointerup', this.onPointerUp_abyssPrivate);
+    ownerWindow.removeEventListener('pointercancel', this.onCancel_abyssPrivate);
+    ownerWindow.removeEventListener('blur', this.onCancel_abyssPrivate);
+    ownerWindow.removeEventListener('keydown', this.onKeyDown_abyssPrivate, true);
     ownerWindow.removeEventListener('scroll', this.onScroll_abyssPrivate, true);
-    capturedElement.removeEventListener('lostpointercapture', this.onCancel);
+    capturedElement.removeEventListener('lostpointercapture', this.onCancel_abyssPrivate);
     release(capturedElement, startEvent.pointerId);
   }
 
-  private readonly dispose = (): void => {
-    if (this.disposed) return;
-    this.disposed = true;
+  private readonly dispose_abyssPrivate = (): void => {
+    if (this.disposed_abyssPrivate) return;
+    this.disposed_abyssPrivate = true;
     const { binding, capturedElement } = this.input;
-    this.releasePointer();
-    this.renderer.clear();
+    this.releasePointer_abyssPrivate();
+    this.renderer_abyssPrivate.clear();
     binding.source.classList.remove('is-picked-up');
     delete binding.source.dataset['activeResize'];
     delete capturedElement.dataset['activeResize'];
-    binding.owner.end(this.dispose);
+    binding.owner.end(this.dispose_abyssPrivate);
   };
 }
 
