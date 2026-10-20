@@ -24,6 +24,7 @@ useRealMoment();
 
 const cleanups: Array<() => void> = [];
 afterEach(() => {
+  vi.useRealTimers();
   closeStatusPopovers(document);
   for (const cleanup of cleanups.splice(0).reverse()) cleanup();
 });
@@ -146,6 +147,224 @@ function startNativeDrag(source: HTMLElement): boolean {
   return source.dispatchEvent(event);
 }
 
+function timedMove(root: HTMLElement) {
+  let gridTop = 100;
+  for (const day of root.querySelectorAll<HTMLElement>('.abyss-tg-day-column')) {
+    const left = (Number(day.dataset['tgDate']?.slice(-2)) - 19) * 100;
+    const hour = expectDefined(day.querySelector<HTMLElement>('.abyss-tg-hour-column'));
+    day.getBoundingClientRect = hour.getBoundingClientRect = () =>
+      new DOMRect(left, gridTop, 100, 1152);
+  }
+  const block = expectDefined(root.querySelector<HTMLElement>('.abyss-tg-block'));
+  const hour = expectDefined(block.closest<HTMLElement>('.abyss-tg-hour-column'));
+  block.getBoundingClientRect = () => new DOMRect(0, gridTop + 432, 100, 48);
+  block.setPointerCapture = vi.fn();
+  block.releasePointerCapture = vi.fn();
+  const pointer = (type: string, x = 25, y = 552) =>
+    new PointerEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      pointerId: 51,
+      pointerType: 'mouse',
+      clientX: x,
+      clientY: y,
+      button: 0,
+    });
+  block.dispatchEvent(pointer('pointerdown'));
+  return {
+    block,
+    hour,
+    pointer,
+    move: (x = 25, y = 648) => window.dispatchEvent(pointer('pointermove', x, y)),
+    finish: (x = 25, y = 648) => window.dispatchEvent(pointer('pointerup', x, y)),
+    scroll: (pixels: number) => {
+      gridTop -= pixels;
+      expectDefined(root.querySelector('.abyss-tg-grid-row')).dispatchEvent(
+        new Event('scroll', { bubbles: false }),
+      );
+    },
+  };
+}
+
+describe('timed drag release ownership', () => {
+  it.each(['lostpointercapture', 'Escape'] as const)(
+    'does not create a task when %s cancels the press before the first movement',
+    async (ending) => {
+      const h = await setup('week');
+      const gesture = timedMove(h.root);
+      if (ending === 'Escape')
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+      else gesture.block.dispatchEvent(gesture.pointer(ending));
+      gesture.move();
+      gesture.finish();
+      gesture.hour.dispatchEvent(
+        new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1, clientY: 648 }),
+      );
+      expect(h.host.openCapture).not.toHaveBeenCalled();
+      expect(h.execute).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['lostpointercapture', 'Escape'] as const)(
+    'consumes the drag click after %s without blocking a fresh grid click',
+    async (ending) => {
+      const h = await setup('week');
+      const gesture = timedMove(h.root);
+      gesture.move();
+      if (ending === 'Escape')
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+      else gesture.block.dispatchEvent(gesture.pointer(ending));
+      await h.publish();
+      await flushMicrotasks();
+      gesture.hour.dispatchEvent(gesture.pointer('pointerup', 25, 648));
+      gesture.hour.dispatchEvent(
+        new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1, clientY: 648 }),
+      );
+      expect(h.host.openCapture).not.toHaveBeenCalled();
+      expect(h.execute).not.toHaveBeenCalled();
+      await flushMicrotasks();
+      gesture.hour.dispatchEvent(gesture.pointer('pointerdown', 25, 648));
+      gesture.hour.dispatchEvent(gesture.pointer('pointerup', 25, 648));
+      gesture.hour.dispatchEvent(
+        new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1, clientY: 648 }),
+      );
+      expect(h.host.openCapture).toHaveBeenCalledOnce();
+    },
+  );
+
+  it('keeps a plain task click selectable without writing a timing change', async () => {
+    const h = await setup('week');
+    const gesture = timedMove(h.root);
+    gesture.finish(25, 552);
+    gesture.block.click();
+    expect(h.execute).not.toHaveBeenCalled();
+    expect(gesture.block.classList.contains('is-selected')).toBe(true);
+    expect(h.host.openCapture).not.toHaveBeenCalled();
+  });
+
+  it.each(['before', 'after'] as const)(
+    'retains the cancelled drag click when another pointer presses the grid %s capture loss',
+    async (order) => {
+      const h = await setup('week');
+      const gesture = timedMove(h.root);
+      gesture.move();
+      const touch = (type: string) =>
+        new PointerEvent(type, { bubbles: true, pointerId: 52, pointerType: 'touch' });
+      if (order === 'before') gesture.hour.dispatchEvent(touch('pointerdown'));
+      gesture.block.dispatchEvent(gesture.pointer('lostpointercapture'));
+      if (order === 'after') gesture.hour.dispatchEvent(touch('pointerdown'));
+      gesture.finish();
+      gesture.hour.dispatchEvent(
+        new PointerEvent('click', {
+          bubbles: true,
+          cancelable: true,
+          detail: 1,
+          pointerId: 51,
+          clientY: 648,
+        }),
+      );
+      gesture.hour.dispatchEvent(touch('pointerup'));
+      expect(h.host.openCapture).not.toHaveBeenCalled();
+      expect(h.execute).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['release', 'scroll'] as const)(
+    'consumes a drag click when movement is first observed on %s',
+    async (movement) => {
+      const h = await setup('week');
+      const gesture = timedMove(h.root);
+      if (movement === 'scroll') {
+        gesture.scroll(96);
+        gesture.block.dispatchEvent(gesture.pointer('lostpointercapture'));
+      }
+      gesture.finish();
+      gesture.hour.dispatchEvent(
+        new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1, clientY: 648 }),
+      );
+      expect(h.host.openCapture).not.toHaveBeenCalled();
+      await flushMicrotasks();
+      expect(h.current().planning.time).toBe(movement === 'release' ? '11:00' : '09:00');
+    },
+  );
+
+  it('updates a stationary drag preview after scrolling and commits that visible slot', async () => {
+    const h = await setup('week');
+    const gesture = timedMove(h.root);
+    gesture.move(125, 600);
+    gesture.scroll(96);
+    expect(
+      JSON.parse(
+        expectDefined(h.root.querySelector<HTMLElement>('.abyss-tg-drag-preview')).dataset[
+          'target'
+        ] ?? '{}',
+      ),
+    ).toMatchObject({ date: '2026-10-20', startMinutes: 720 });
+    gesture.finish(125, 600);
+    await flushMicrotasks();
+    expect(h.current().planning).toMatchObject({
+      due: '2026-10-20',
+      time: '12:00',
+      duration: 60,
+    });
+    expect(h.execute).toHaveBeenCalledOnce();
+  });
+
+  it('reads current geometry on release even before a scroll event is delivered', async () => {
+    const h = await setup('week');
+    const gesture = timedMove(h.root);
+    const target = expectDefined(
+      h.root.querySelector<HTMLElement>('.abyss-tg-day-column[data-tg-date="2026-10-20"]'),
+    );
+    const targetHour = expectDefined(target.querySelector<HTMLElement>('.abyss-tg-hour-column'));
+    target.getBoundingClientRect = targetHour.getBoundingClientRect = () =>
+      new DOMRect(100, 4, 100, 1152);
+    gesture.finish(125, 552);
+    await flushMicrotasks();
+    expect(h.current().planning).toMatchObject({
+      due: '2026-10-20',
+      time: '11:00',
+      duration: 60,
+    });
+  });
+
+  it('keeps the resize endpoint under the pointer when the grid scrolls', async () => {
+    const h = await setup('week');
+    const gesture = timedResize(h.root);
+    const day = expectDefined(gesture.block.closest<HTMLElement>('.abyss-tg-day-column'));
+    const hour = expectDefined(gesture.block.closest<HTMLElement>('.abyss-tg-hour-column'));
+    day.getBoundingClientRect = hour.getBoundingClientRect = () => new DOMRect(0, 4, 100, 1152);
+    expectDefined(h.root.querySelector('.abyss-tg-grid-row')).dispatchEvent(new Event('scroll'));
+    expect(
+      JSON.parse(
+        expectDefined(h.root.querySelector<HTMLElement>('.abyss-tg-drag-preview')).dataset[
+          'target'
+        ] ?? '{}',
+      ),
+    ).toMatchObject({ startMinutes: 540, durationMinutes: 210 });
+    gesture.finish();
+    await flushMicrotasks();
+    expect(h.current().planning).toMatchObject({ time: '09:00', duration: 210 });
+  });
+
+  it('retains the preview until the native activation turn publishes the committed task', async () => {
+    const h = await setup('week');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const gesture = timedMove(h.root);
+    gesture.move();
+    gesture.finish();
+    await h.execute.mock.results[0]?.value;
+    // Drain command continuations without releasing the native click-turn timer.
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    expect(h.current().planning.time).toBe('11:00');
+    expect(h.root.querySelector('.abyss-tg-drag-preview')).not.toBeNull();
+    expect(gesture.block.isConnected).toBe(true);
+    await vi.runAllTimersAsync();
+    expect(h.root.querySelector('.abyss-tg-drag-preview')).toBeNull();
+    expect(gesture.block.isConnected).toBe(false);
+  });
+});
+
 describe('calendar publication during an owned gesture', () => {
   it('applies publication after a declined native drag start and pointer release', async () => {
     const h = await setup('month');
@@ -256,10 +475,12 @@ describe('calendar publication during an owned gesture', () => {
     'keeps the first %s checkbox click through an unrelated publication',
     async (view) => {
       const h = await setup(view);
+      h.root.createEl('button').focus();
       const marker = expectDefined(h.root.querySelector<HTMLElement>('.abyss-status-marker'));
       marker.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
       marker.focus();
       await h.publish();
+      await flushMicrotasks();
       expect(marker.isConnected).toBe(true);
       marker.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 }));
       await Promise.resolve();

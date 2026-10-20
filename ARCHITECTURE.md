@@ -458,13 +458,19 @@ Its mounted publication hold defers query patches during pointer presses and nat
 the full-grid pointer and status callbacks and menu leases that CalendarMode wraps. It reads the newest
 query state once those interactions settle.
 Pointer release waits through the native click/contextmenu turn before replacing its target.
+The hold retains the origin of a timed-block press across query patches and consumes its click
+after movement or scrolling, including after capture loss or Escape. A fresh press restores normal
+activation; keyboard clicks retain their own path.
 Commands submitted through those callbacks make the calendar body inert until settlement and queued
 publication, so another gesture cannot submit from the old task snapshot. Compact agenda status actions
 retain the shared TaskCardRenderer and CenterPanel command and menu owners; keyboard timing intents
 retain TimedBlockKeyboardQueue through TimedBlockFocusRetention. Navigation, width remounts, disposal,
 and window migration retire the hold; late completion cannot publish into a replacement mount.
 Timed and span sessions release pointer capture and listeners at submission while retaining their
-preview until command settlement or view disposal. Explicit view patches still cancel sessions.
+preview until the command and held publication settle, or the view is disposed. Explicit view patches
+still cancel sessions. Timed gestures retain their original planning and grab offset while refreshing
+column rectangles on movement, ancestor scrolling, and release; scrolling also updates a stationary
+pointer's preview.
 CalendarCommands ignores malformed date/time/duration input during command construction and lets
 unexpected execution failures reach the existing UI action boundary. Retained presentation never
 grants new source authority; external edits and deletion can still cause a command to be refused.

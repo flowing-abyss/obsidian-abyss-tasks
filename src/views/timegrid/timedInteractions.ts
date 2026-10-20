@@ -101,6 +101,29 @@ interface MeasuredColumn {
   readonly boundary: DragDateColumn;
 }
 
+function measureColumn(
+  column: Pick<MeasuredColumn, 'date' | 'day' | 'hour' | 'allDay'>,
+): MeasuredColumn {
+  const dayRect = column.day.getBoundingClientRect();
+  const hourRect = column.hour.getBoundingClientRect();
+  const allDayRect = column.allDay?.getBoundingClientRect();
+  const drag: TimedDragColumn = {
+    date: column.date as TimedDragColumn['date'],
+    left: dayRect.left,
+    right: dayRect.right,
+    timeGridTop: hourRect.top,
+    timeGridBottom: hourRect.bottom,
+    ...(allDayRect != null && allDayRect.bottom > allDayRect.top
+      ? { allDayTop: allDayRect.top, allDayBottom: allDayRect.bottom }
+      : {}),
+  };
+  return {
+    ...column,
+    drag,
+    boundary: { date: drag.date, left: drag.left, right: drag.right },
+  };
+}
+
 function measuredColumns(source: HTMLElement): MeasuredColumn[] {
   const root = source.closest<HTMLElement>('.abyss-tg-root');
   if (root == null) return [];
@@ -110,30 +133,8 @@ function measuredColumns(source: HTMLElement): MeasuredColumn[] {
     const date = day.dataset['tgDate'];
     const hour = day.querySelector<HTMLElement>('.abyss-tg-hour-column');
     if (date === undefined || date.length === 0 || hour === null) return [];
-    const dayRect = day.getBoundingClientRect();
-    const hourRect = hour.getBoundingClientRect();
     const allDay = root.querySelector<HTMLElement>(`.abyss-tg-allday-cell[data-tg-date="${date}"]`);
-    const allDayRect = allDay?.getBoundingClientRect();
-    const drag: TimedDragColumn = {
-      date: date as TimedDragColumn['date'],
-      left: dayRect.left,
-      right: dayRect.right,
-      timeGridTop: hourRect.top,
-      timeGridBottom: hourRect.bottom,
-      ...(allDayRect != null && allDayRect.bottom > allDayRect.top
-        ? { allDayTop: allDayRect.top, allDayBottom: allDayRect.bottom }
-        : {}),
-    };
-    return [
-      {
-        date,
-        day,
-        hour,
-        allDay: allDay ?? undefined,
-        drag,
-        boundary: { date: drag.date, left: drag.left, right: drag.right },
-      },
-    ];
+    return [measureColumn({ date, day, hour, allDay: allDay ?? undefined })];
   });
 }
 
@@ -470,15 +471,22 @@ class TimedTargetResolver {
     private readonly geometry: TimedSessionGeometry,
   ) {}
 
-  resolve(kind: TimedInteractionKind, pointer: PointerEvent): TimedPreviewTarget | undefined {
-    if (kind === 'move') return this.resolveMove(pointer);
+  resolve(
+    kind: TimedInteractionKind,
+    pointer: PointerEvent,
+    columns: readonly MeasuredColumn[],
+  ): TimedPreviewTarget | undefined {
+    if (kind === 'move') return this.resolveMove(pointer, columns);
     if (kind === 'duration' || kind === 'start-time') {
-      return this.resolveVertical(kind, pointer);
+      return this.resolveVertical(kind, pointer, columns);
     }
-    return this.resolveBoundary(kind, pointer);
+    return this.resolveBoundary(kind, pointer, columns);
   }
 
-  private resolveMove(pointer: PointerEvent): TimedPreviewTarget | undefined {
+  private resolveMove(
+    pointer: PointerEvent,
+    columns: readonly MeasuredColumn[],
+  ): TimedPreviewTarget | undefined {
     const target = resolveTimedDragTarget(
       {
         date: this.binding.segmentDate as TimedDragColumn['date'],
@@ -488,7 +496,7 @@ class TimedTargetResolver {
         grabOffsetMinutes: this.geometry.grabOffsetMinutes,
       },
       pointer,
-      this.geometry.columns.map((column) => column.drag),
+      columns.map((column) => column.drag),
     );
     return target == null ? undefined : frozen(target);
   }
@@ -496,7 +504,14 @@ class TimedTargetResolver {
   private resolveVertical(
     kind: 'duration' | 'start-time',
     pointer: PointerEvent,
+    columns: readonly MeasuredColumn[],
   ): TimedPreviewTarget | undefined {
+    const origin = columns.find((column) => column.date === this.binding.segmentDate);
+    if (origin === undefined) return undefined;
+    const pixelsPerMinute = (origin.drag.timeGridBottom - origin.drag.timeGridTop) / (24 * 60);
+    const grabMinutes =
+      (this.startEvent.clientY - this.geometry.originColumn.drag.timeGridTop) /
+      this.geometry.pixelsPerMinute;
     let target: TimedVerticalResizeTarget;
     try {
       target = resolveTimedVerticalResizeTarget(
@@ -504,8 +519,8 @@ class TimedTargetResolver {
           edge: kind === 'start-time' ? 'start' : 'end',
           startMinutes: this.binding.startMinutes,
           durationMinutes: this.binding.durationMinutes,
-          grabClientY: this.startEvent.clientY,
-          pixelsPerMinute: this.geometry.pixelsPerMinute,
+          grabClientY: origin.drag.timeGridTop + grabMinutes * pixelsPerMinute,
+          pixelsPerMinute,
         },
         pointer,
       );
@@ -525,6 +540,7 @@ class TimedTargetResolver {
   private resolveBoundary(
     kind: 'start' | 'due' | 'create-span',
     pointer: PointerEvent,
+    columns: readonly MeasuredColumn[],
   ): TimedPreviewTarget | undefined {
     const planning = this.binding.task.planning;
     const start = planning.start ?? planning.scheduled ?? planning.due;
@@ -533,7 +549,7 @@ class TimedTargetResolver {
     const target = resolveBoundaryTarget(
       { boundary: kind === 'start' ? 'start' : 'due', start, due },
       pointer,
-      this.geometry.columns.map((column) => column.boundary),
+      columns.map((column) => column.boundary),
     );
     if (target == null) return undefined;
     if (kind !== 'create-span') return frozen(target);
@@ -551,8 +567,10 @@ class TimedInteractionSession {
   private latest: TimedPreviewTarget | undefined;
   private disposed = false;
   private pointerReleased = false;
+  private lastPointer_abyssPrivate: PointerEvent;
 
   constructor(private readonly input: TimedSessionInput) {
+    this.lastPointer_abyssPrivate = input.startEvent;
     this.resolver = new TimedTargetResolver(input.binding, input.startEvent, input.geometry);
     this.renderer = new TimedPreviewRenderer(input.binding, input.geometry);
   }
@@ -568,12 +586,20 @@ class TimedInteractionSession {
     ownerWindow.addEventListener('pointercancel', this.onCancel);
     ownerWindow.addEventListener('blur', this.onCancel);
     ownerWindow.addEventListener('keydown', this.onKeyDown, true);
+    ownerWindow.addEventListener('scroll', this.onScroll_abyssPrivate, true);
     capturedElement.addEventListener('lostpointercapture', this.onCancel);
   }
 
   private readonly onPointerMove = (pointer: PointerEvent): void => {
+    if (pointer.pointerId !== this.input.startEvent.pointerId) return;
     pointer.preventDefault();
     this.update(pointer);
+  };
+
+  private readonly onScroll_abyssPrivate = (event: Event): void => {
+    const target = event.target as Partial<Pick<Node, 'contains'>> | null;
+    if (target?.contains?.(this.input.binding.source) === true)
+      this.update(this.lastPointer_abyssPrivate);
   };
 
   private readonly onPointerUp = (pointer: PointerEvent): void => {
@@ -599,7 +625,9 @@ class TimedInteractionSession {
 
   private update(pointer: PointerEvent): void {
     if (this.disposed || pointer.pointerId !== this.input.startEvent.pointerId) return;
-    const target = this.resolver.resolve(this.input.kind, pointer);
+    this.lastPointer_abyssPrivate = pointer;
+    const columns = this.input.geometry.columns.map(measureColumn);
+    const target = this.resolver.resolve(this.input.kind, pointer, columns);
     this.latest = target;
     if (target == null) {
       this.renderer.clear();
@@ -628,6 +656,7 @@ class TimedInteractionSession {
     ownerWindow.removeEventListener('pointercancel', this.onCancel);
     ownerWindow.removeEventListener('blur', this.onCancel);
     ownerWindow.removeEventListener('keydown', this.onKeyDown, true);
+    ownerWindow.removeEventListener('scroll', this.onScroll_abyssPrivate, true);
     capturedElement.removeEventListener('lostpointercapture', this.onCancel);
     release(capturedElement, startEvent.pointerId);
   }

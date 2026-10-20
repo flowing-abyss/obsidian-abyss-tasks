@@ -72,6 +72,9 @@ const privateOwners = new Set([
   'CalendarCommands',
   'CalendarMode',
   'CalendarNavigationBar',
+  // Gesture owners keep DOM state behind methods; their instances are never serialized or spread.
+  'CalendarPublicationHold',
+  'TimedInteractionSession',
   'TimedBlockFocusRetention',
   'TagPickerModal',
   'TagGroupAppearanceModal',
