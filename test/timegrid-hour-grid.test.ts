@@ -131,26 +131,23 @@ describe('renderHourGrid', () => {
     expect(headers[1]?.hasClass('is-today')).toBe(false);
   });
 
-  it('never marks the day-column itself with is-today (no full-column border in any view)', () => {
-    // Round 3: the day-column's box-shadow border was removed entirely — Day view found it
-    // redundant (only one column, obviously "today") and Week found a full-height border
-    // around one column too visually noisy. "Today" is now conveyed only via the header's
-    // accented day-number (see the header-cell tests below), never a column-level class.
+  it('marks only today for inner now tracks without adding a full-column border', () => {
     const container = freshContainer();
     const today = window.moment().format('YYYY-MM-DD');
     const other = window.moment().add(1, 'day').format('YYYY-MM-DD');
     renderHourGrid(container, [today, other]);
     const columns = Array.from(container.querySelectorAll('.abyss-tg-day-column'));
-    expect(columns[0]?.hasClass('is-today')).toBe(false);
+    expect(columns[0]?.hasClass('is-today')).toBe(true);
     expect(columns[1]?.hasClass('is-today')).toBe(false);
+    expect(declarationsFor('.abyss-tg-day-column')).not.toMatch(/box-shadow/u);
   });
 
-  it('single-date (Day/Today view) render has no is-today day-column anywhere', () => {
+  it('marks the only day column when Day view shows today', () => {
     const container = freshContainer();
     const today = window.moment().format('YYYY-MM-DD');
     renderHourGrid(container, [today]);
     const columns = Array.from(container.querySelectorAll('.abyss-tg-day-column'));
-    expect(columns.every((c) => !c.hasClass('is-today'))).toBe(true);
+    expect(columns.every((c) => c.hasClass('is-today'))).toBe(true);
   });
 
   it("splits the header cell's date into an independently-selectable weekday span and day-number span", () => {
@@ -242,27 +239,29 @@ describe('renderHourGrid', () => {
     expect(top).toBeGreaterThanOrEqual(0);
   });
 
-  it("centers the now-line dot in today's column across the full grid", () => {
+  it("anchors the now-line dot and strong track at today's left edge", () => {
     const container = freshContainer();
     const today = window.moment().format('YYYY-MM-DD');
     const yesterday = window.moment().subtract(1, 'day').format('YYYY-MM-DD');
-    const tomorrow = window.moment().add(1, 'day').format('YYYY-MM-DD');
-    const handles = renderHourGrid(container, [yesterday, today, tomorrow]);
+    const handles = renderHourGrid(container, [yesterday, today]);
     const dot = handles.nowLineEl?.querySelector('.abyss-tg-now-line-dot') as HTMLElement;
     expect(dot).not.toBeNull();
     expect(dot.style.left).toBe('50%');
+    const track = handles.nowLineEl?.querySelector<HTMLElement>('.abyss-tg-now-today');
+    expect(track?.style.left).toBe('50%');
+    expect(track?.style.width).toBe('50%');
   });
 
-  it('single-date (Day view) centers the now-line dot in its only column', () => {
+  it('single-date (Day view) places the now-line dot beside the time gutter', () => {
     const container = freshContainer();
     const today = window.moment().format('YYYY-MM-DD');
     const handles = renderHourGrid(container, [today]);
     const dot = handles.nowLineEl?.querySelector('.abyss-tg-now-line-dot') as HTMLElement;
     expect(dot).not.toBeNull();
-    expect(dot.style.left).toBe('50%');
+    expect(dot.style.left).toBe('0%');
   });
 
-  it('keeps the full-width now-line beneath timed task blocks', () => {
+  it('keeps the background track below cards and the clock above them', () => {
     const nowLine = declarationsFor('.abyss-tg-now-line');
     const calendarTokens = declarationsFor('.abyss-panel-view');
     const taskBlock = declarationsFor('.abyss-tg-block');
@@ -270,14 +269,47 @@ describe('renderHourGrid', () => {
     expect(nowLine).toMatch(/left\s*:\s*3\.5em/u);
     expect(nowLine).toMatch(/right\s*:\s*0/u);
     expect(nowLine).toMatch(/height\s*:\s*1px/u);
-    expect(nowLine).toMatch(/z-index\s*:\s*0/u);
-    expect(nowLine).toMatch(/background\s*:\s*var\(--abyss-calendar-now\)/u);
-    expect(nowLine).not.toMatch(/opacity\s*:/u);
-    expect(calendarTokens).toMatch(
-      /--abyss-calendar-now\s*:\s*color-mix\(in srgb, var\(--text-error\) 48%, transparent\)/u,
+    expect(nowLine).not.toMatch(/z-index\s*:/u);
+    expect(declarationsForRuleContaining('.abyss-tg-now-track', '.abyss-tg-now-today')).toMatch(
+      /z-index\s*:\s*0/u,
     );
+    expect(declarationsForRuleContaining('.abyss-tg-now-line-dot', '.abyss-tg-now-label')).toMatch(
+      /z-index\s*:\s*4/u,
+    );
+    expect(nowLine).not.toMatch(/opacity\s*:/u);
+    expect(calendarTokens).toMatch(/--abyss-calendar-now\s*:\s*var\(--text-error\)/u);
     expect(taskBlock).toMatch(/z-index\s*:\s*2/u);
     expect(continuation).toMatch(/z-index\s*:\s*2/u);
+    const label = cssRuleContaining(css, ['.abyss-tg-now-label'], true);
+    expect(cssValue(label, 'line-height')).toBe('1.4');
+    expect(cssValue(label, 'top')).toBe('max(50%, calc(0.7em - var(--abyss-tg-now-top, 0px)))');
+  });
+
+  it('refreshes the time label, shared geometry and colliding hour labels from one clock sample', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date(2026, 9, 20, 15, 15));
+      const handles = renderHourGrid(freshContainer(), ['2026-10-19', '2026-10-20']);
+      const line = expectDefined(handles.nowLineEl);
+      const label = line.querySelector('.abyss-tg-now-label');
+      const hours = handles.gridRowEl.querySelectorAll('.abyss-tg-hour-label');
+      expect(label?.textContent).toBe('15:15');
+      expect(line.style.top).toBe('732px');
+      expect(handles.gridRowEl.style.getPropertyValue('--abyss-tg-now-top')).toBe('732px');
+      expect(hours[15]?.classList.contains('is-obscured-by-now')).toBe(true);
+      vi.setSystemTime(new Date(2026, 9, 20, 15, 35));
+      repositionNowLine(line);
+      expect(label?.textContent).toBe('15:35');
+      expect(handles.gridRowEl.style.getPropertyValue('--abyss-tg-now-top')).toBe('748px');
+      expect(hours[15]?.classList.contains('is-obscured-by-now')).toBe(false);
+      vi.setSystemTime(new Date(2026, 9, 20, 0, 0));
+      repositionNowLine(line);
+      expect(label?.textContent).toBe('00:00');
+      expect(line.style.top).toBe('0px');
+      expect(hours[0]?.classList.contains('is-obscured-by-now')).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('gives ghost span pieces the same track-fitting surface geometry as committed calendar items', () => {

@@ -1298,6 +1298,7 @@ describe('WeekTimeGridView', () => {
   it('periodically repositions the now-line while the mounted week includes today, and clears the interval on destroy', () => {
     vi.useFakeTimers();
     try {
+      vi.setSystemTime(new Date(2026, 9, 20, 15, 15));
       const container = freshContainer();
       const view = new WeekTimeGridView(callbacks());
       const todayWeek = firstVisibleWeekDate(window.moment(), 1);
@@ -1309,9 +1310,9 @@ describe('WeekTimeGridView', () => {
 
       const clearIntervalSpy = vi.spyOn(window, 'clearInterval');
 
-      vi.setSystemTime(new Date(Date.now() + 2 * 60 * 60 * 1000));
-      vi.advanceTimersByTime(5 * 60 * 1000);
+      vi.advanceTimersByTime(60 * 1000);
       expect(nowLineEl.style.top).not.toBe(initialTop);
+      expect(nowLineEl.querySelector('.abyss-tg-now-label')?.textContent).toBe('15:16');
 
       view.destroy();
       expect(clearIntervalSpy).toHaveBeenCalled();

@@ -190,7 +190,7 @@ export function previewTimedPositionFor(
 }
 
 /** How often the now-line is repositioned while a Today/Week view showing today stays mounted. */
-export const NOW_LINE_REFRESH_MS = 5 * 60 * 1000;
+export const NOW_LINE_REFRESH_MS = 60 * 1000;
 
 export class TodayView extends BaseView {
   private containerEl: HTMLElement | null = null;

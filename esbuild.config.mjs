@@ -59,6 +59,9 @@ import process from 'process';
 // Includes exact successor submission after inspector saves and scrollport containment.
 // Minimal containing KiB limits: 2,136,064 (2086 KiB) and 195,584 (191 KiB).
 // Bundled dependency modules are unchanged; both artifact size checks remain enforced.
+// Current-time label and interrupted card tracks: main 2,135,563 -> 2,136,212 bytes (+649),
+// shipped CSS 195,331 -> 196,857 bytes (+1,526). No dependencies added. Minimal containing
+// KiB limits are 2,137,088 (2087 KiB) and 197,632 (193 KiB); both checks remain enforced.
 const { mainJsBudgetBytes: MAIN_JS_BUDGET_BYTES } = JSON.parse(
   readFileSync('package.json', 'utf8'),
 ).release;

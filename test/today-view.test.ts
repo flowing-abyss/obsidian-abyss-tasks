@@ -232,7 +232,7 @@ describe('TodayView', () => {
       expect(container.querySelector('.abyss-tg-allday-cell')).toBe(allDayCell);
       expect(container.querySelector('.abyss-tg-now-line')).toBe(nowLine);
       expect(nowLine?.parentElement).toBe(gridRow);
-      expect(nowLine?.querySelector<HTMLElement>('.abyss-tg-now-line-dot')?.style.left).toBe('50%');
+      expect(nowLine?.querySelector<HTMLElement>('.abyss-tg-now-line-dot')?.style.left).toBe('0%');
       expect(container.querySelector('.abyss-tg-quick-add')).toBe(quickAdd);
       expect(gridRow.scrollTop).toBe(321);
       expect(container.textContent).not.toContain('Initial task');
@@ -462,6 +462,7 @@ describe('TodayView', () => {
   it('periodically repositions the now-line while mounted on today, and clears the interval on destroy', () => {
     vi.useFakeTimers();
     try {
+      vi.setSystemTime(new Date(2026, 9, 20, 15, 15));
       const container = freshContainer();
       const view = new TodayView(callbacks());
       const today = window.moment().format('YYYY-MM-DD');
@@ -474,11 +475,9 @@ describe('TodayView', () => {
       const setIntervalSpy = vi.spyOn(window, 'setInterval');
       const clearIntervalSpy = vi.spyOn(window, 'clearInterval');
 
-      // Advance real+fake clock together by moving forward 2 hours, then let the 5-minute
-      // interval fire; the now-line's `top` should change to reflect the new time.
-      vi.setSystemTime(new Date(Date.now() + 2 * 60 * 60 * 1000));
-      vi.advanceTimersByTime(5 * 60 * 1000);
+      vi.advanceTimersByTime(60 * 1000);
       expect(nowLineEl.style.top).not.toBe(initialTop);
+      expect(nowLineEl.querySelector('.abyss-tg-now-label')?.textContent).toBe('15:16');
 
       view.destroy();
       expect(clearIntervalSpy).toHaveBeenCalled();

@@ -345,6 +345,7 @@ function createTimedBlockElement(
   const block = hourColumnEl.createDiv({
     cls: `abyss-tg-block${terminal ? '' : ' abyss-tg-block-continuation'}`,
   });
+  block.createDiv({ cls: 'abyss-tg-block-now', attr: { 'aria-hidden': 'true' } });
   const continuity = timedContinuity(layout.task, terminal);
   applyOccurrenceDomState(
     block,
@@ -384,6 +385,10 @@ function applyTimedBlockVerticalGeometry(
   block.style.top = `${minutesToPixels(layout.startMinutes)}px`;
   const heightPx = minutesToPixels(layout.durationMinutes);
   block.style.height = `${heightPx}px`;
+  block.setCssProps({
+    '--abyss-tg-block-top': `${minutesToPixels(layout.startMinutes)}px`,
+    '--abyss-tg-block-duration': `${heightPx}px`,
+  });
   const constrained = minHeightCap < MIN_BLOCK_HEIGHT_PX;
   block.classList.toggle('is-height-constrained', constrained);
   if (constrained) block.style.minHeight = `${Math.max(heightPx, minHeightCap)}px`;

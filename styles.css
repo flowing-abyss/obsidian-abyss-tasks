@@ -53,7 +53,7 @@
     var(--background-modifier-border)
   );
   --abyss-calendar-foreground: var(--abyss-tag-text-color, var(--text-normal));
-  --abyss-calendar-now: color-mix(in srgb, var(--text-error) 48%, transparent);
+  --abyss-calendar-now: var(--text-error);
 
   /* Task 40 (Round 4): fixed contrast anchors consumed by --abyss-tag-text-color (set per-element,
      in JS, by tagFillContrast.ts's tagFillTextColorVar — see that module's own doc comment for
@@ -652,25 +652,64 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 .abyss-tg-now-line {
-  /* A one-pixel track across all rendered day columns, behind their interactive task layers. */
+  /* Leave this wrapper out of the stacking hierarchy: tracks sit below cards, clock above. */
   position: absolute;
   left: 3.5em;
   right: 0;
   height: 1px;
-  background: var(--abyss-calendar-now);
-  z-index: 0;
   pointer-events: none;
 }
 
-.abyss-tg-now-line-dot {
-  /* Marks today's column on the otherwise full-width track. */
+.abyss-tg-now-track,
+.abyss-tg-now-today {
+  position: absolute;
+  inset-block-start: 0;
+  height: 1px;
+  z-index: 0;
+  background: color-mix(in srgb, var(--abyss-calendar-now) 40%, transparent);
+}
+
+.abyss-tg-now-track {
+  inset-inline: 0;
+}
+
+.abyss-tg-now-today {
+  height: 2px;
+  background: var(--abyss-calendar-now);
+}
+
+.abyss-tg-now-line-dot,
+.abyss-tg-now-label {
   position: absolute;
   top: 50%;
+  z-index: 4;
+}
+
+.abyss-tg-now-line-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   background: var(--abyss-calendar-now);
   transform: translate(-50%, -50%);
+}
+
+.abyss-tg-now-label {
+  /* Keep the first minutes of the day readable at the scrollport's top edge. */
+  top: max(50%, calc(0.7em - var(--abyss-tg-now-top, 0px)));
+  right: 100%;
+  padding-right: var(--size-4-2);
+  color: var(--abyss-calendar-now);
+  background: var(--background-primary);
+  font-size: 0.75em;
+  line-height: 1.4;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  transform: translateY(-50%);
+}
+
+.abyss-tg-hour-label.is-obscured-by-now {
+  visibility: hidden;
 }
 
 /* Rebase tag-dependent tokens on the task root itself. Custom properties declared only on the
@@ -739,6 +778,8 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 .abyss-tg-block {
+  --abyss-tg-now-surface: var(--abyss-calendar-surface);
+
   position: absolute;
 
   /* Explicit, deliberate stacking (not DOM-order accident): above the hour-grid lines
@@ -765,6 +806,52 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
      comment) — the two are kept in sync by cross-referencing comments on both sides, not by
      sharing a single value at build time. */
   min-height: calc(1.6em + 4px);
+}
+
+.abyss-tg-block[data-occurrence-state='forecast'] {
+  --abyss-tg-now-surface: var(--abyss-calendar-surface-forecast);
+}
+
+/* The card's visible minimum height can exceed its scheduled duration. Clip the inner
+   track to both bounds so a finished short task never appears to be still running. */
+.abyss-tg-block-now {
+  display: none;
+  position: absolute;
+  top: 0;
+  inset-inline: 0;
+  height: var(--abyss-tg-block-duration);
+  max-height: 100%;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.abyss-tg-day-column.is-today .abyss-tg-block-now {
+  display: block;
+}
+
+.abyss-tg-block-now::after {
+  content: '';
+  position: absolute;
+  top: calc(var(--abyss-tg-now-top, -1px) - var(--abyss-tg-block-top));
+  inset-inline: 0;
+  height: 1px;
+  background: var(--abyss-calendar-now);
+}
+
+/* Protect actual fragments, leaving the rest of each row open for the thin track.
+   The halo gives glyphs breathing room without changing layout or hit targets. */
+.abyss-tg-block .abyss-tg-block-head > *,
+.abyss-tg-block .abyss-tg-block-toprow > * {
+  position: relative;
+  z-index: 1;
+}
+
+.abyss-tg-block .abyss-tg-block-head > :not(.abyss-status-marker),
+.abyss-tg-block .abyss-tg-block-toprow > * {
+  background: var(--abyss-tg-now-surface);
+  box-shadow:
+    2px 0 var(--abyss-tg-now-surface),
+    -2px 0 var(--abyss-tg-now-surface);
 }
 
 /* Padding must not impose a box-height floor on blocks constrained by day end or a neighbor. */

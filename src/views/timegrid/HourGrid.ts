@@ -118,12 +118,14 @@ function renderDayColumns(
   dates: readonly string[],
   allDayCells: readonly HTMLElement[],
   callbacks: {
+    readonly today: string;
     readonly onDropTime?: DropTimeCallback;
     readonly onCreateAtTime?: CreateAtTimeCallback;
   },
 ): DayColumnHandles[] {
   return dates.map((date, index) => {
     const dayColumn = row.createDiv({ cls: 'abyss-tg-day-column' });
+    dayColumn.toggleClass('is-today', date === callbacks.today);
     dayColumn.setAttribute('data-tg-date', date);
     for (let hour = 0; hour < 24; hour++) dayColumn.createDiv({ cls: 'abyss-tg-hour-row' });
     const hourColumnEl = dayColumn.createDiv({ cls: 'abyss-tg-hour-column' });
@@ -144,8 +146,14 @@ function renderNowLine(
 ): HTMLElement | null {
   if (todayIndex === -1) return null;
   const line = row.createDiv({ cls: 'abyss-tg-now-line' });
+  line.createDiv({ cls: 'abyss-tg-now-track' });
+  const today = line.createDiv({ cls: 'abyss-tg-now-today' });
+  const left = `${(todayIndex / dateCount) * 100}%`;
+  today.style.left = left;
+  today.style.width = `${100 / dateCount}%`;
   const dot = line.createDiv({ cls: 'abyss-tg-now-line-dot' });
-  dot.style.left = `${((todayIndex + 0.5) / dateCount) * 100}%`;
+  dot.style.left = left;
+  line.createSpan({ cls: 'abyss-tg-now-label' });
   repositionNowLine(line);
   return line;
 }
@@ -154,8 +162,17 @@ function renderNowLine(
  * at initial render and by the periodic refresh (TodayView/WeekTimeGridView) so the line doesn't
  * silently drift out of sync while the view stays mounted for a while. */
 export function repositionNowLine(nowLineEl: HTMLElement): void {
-  const nowMinutes = window.moment().hours() * 60 + window.moment().minutes();
-  nowLineEl.style.top = `${minutesToPixels(nowMinutes)}px`;
+  const now = window.moment();
+  const nowMinutes = now.hours() * 60 + now.minutes();
+  const top = `${minutesToPixels(nowMinutes)}px`;
+  nowLineEl.style.top = top;
+  const row = nowLineEl.parentElement;
+  row?.setCssProps({ '--abyss-tg-now-top': top });
+  const label = nowLineEl.querySelector('.abyss-tg-now-label');
+  if (label !== null) label.textContent = minutesToTimeString(nowMinutes);
+  row?.querySelectorAll('.abyss-tg-hour-label').forEach((hour, index) => {
+    hour.classList.toggle('is-obscured-by-now', Math.abs(index * 60 - nowMinutes) <= 20);
+  });
 }
 
 /** Render the static hour-grid + all-day band skeleton for the given dates (1 = Today, 7 = Week). */
@@ -177,6 +194,7 @@ export function renderHourGrid(
   const allDay = renderAllDayBand(content, dates);
   const gridRow = renderGridRow(content);
   const days = renderDayColumns(gridRow, dates, allDay.cells, {
+    today,
     ...(onDropTime === undefined ? {} : { onDropTime }),
     ...(onCreateAtTime === undefined ? {} : { onCreateAtTime }),
   });

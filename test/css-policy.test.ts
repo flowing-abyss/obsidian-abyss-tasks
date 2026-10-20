@@ -14,6 +14,34 @@ const fixtureContracts = { ...contracts, exceptions: [], runtime: { produced: []
 const analyze = (css: string) =>
   analyzeCss(css, { file: 'fixture.css', contracts: fixtureContracts });
 
+it('enrolls only the exact time-grid clock and card geometry producers', async () => {
+  const { default: ts } = await import('typescript');
+  const files = ['HourGrid.ts', 'renderTimedBlocks.ts'];
+  const produced = files.flatMap((file) => {
+    const source = ts.sys.readFile(ts.sys.resolvePath(`src/views/timegrid/${file}`));
+    if (source === undefined) throw new Error(`Missing time-grid owner ${file}`);
+    return discoverRuntimeVariables(source).produced;
+  });
+  const names = ['--abyss-tg-now-top', '--abyss-tg-block-top', '--abyss-tg-block-duration'];
+  for (const name of names) {
+    expect(produced).toContain(name);
+    expect(contracts.runtime.produced).toContain(name);
+  }
+  const runtime = { produced, consumed: [] };
+  const consumer =
+    '.abyss-tg-block-now { height: var(--abyss-tg-block-duration); top: calc(var(--abyss-tg-now-top, -1px) - var(--abyss-tg-block-top)); }';
+  expect(
+    analyzeCss(consumer, { file: 'fixture.css', contracts: { ...fixtureContracts, runtime } }),
+  ).toEqual([]);
+  expect(analyze(consumer)).not.toEqual([]);
+  expect(
+    analyzeCss('.abyss-tg-block-now { top: var(--abyss-tg-unowned); }', {
+      file: 'fixture.css',
+      contracts: { ...fixtureContracts, runtime },
+    }),
+  ).not.toEqual([]);
+});
+
 describe('nested image color policy', () => {
   it.each([
     ['mask-image', 'linear-gradient(red, transparent)'],

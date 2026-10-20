@@ -186,6 +186,10 @@ export const contracts = {
       '--abyss-virtual-row-width',
       '--abyss-project-kanban-spacer-height',
       '--abyss-project-timeline-spacer-height',
+      // HourGrid and timed block geometry share pixel lengths without measuring rendered text.
+      '--abyss-tg-now-top',
+      '--abyss-tg-block-top',
+      '--abyss-tg-block-duration',
     ],
     // The pinned external DOM host reads only these documented inputs on our owned tooltip class.
     // https://github.com/TanStack/charts/blob/v1.0.0/docs/reference/focus-and-interaction.md#css-variables

@@ -1052,6 +1052,24 @@ describe('Task 2 unified timed interaction contract', () => {
 });
 
 describe('renderTimedBlocksForDay', () => {
+  it('clips the inert now track to actual duration even when a short card has a larger minimum height', () => {
+    const container = freshContainer();
+    renderTimedBlocksForDay(
+      container,
+      [task({ planning: { time: '15:00', duration: 5 } })],
+      callbacks(),
+    );
+    const block = expectDefined(container.querySelector<HTMLElement>('.abyss-tg-block'));
+    expect(block.style.getPropertyValue('--abyss-tg-block-top')).toBe('720px');
+    expect(block.style.getPropertyValue('--abyss-tg-block-duration')).toBe('4px');
+    expect(block.querySelector('.abyss-tg-block-now')?.getAttribute('aria-hidden')).toBe('true');
+    const track = declarationsFor('.abyss-tg-block-now');
+    expect(track).toContain('height: var(--abyss-tg-block-duration)');
+    expect(track).toContain('max-height: 100%');
+    expect(track).toContain('overflow: hidden');
+    expect(track).toContain('pointer-events: none');
+  });
+
   it('renders all four explicit resize edges with 10px targets and 2px local grips', () => {
     const container = freshContainer();
     renderTimedBlocksForDay(

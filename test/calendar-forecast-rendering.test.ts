@@ -812,8 +812,13 @@ describe('forecast visual system', () => {
     const nowLine = declarationsFor('.abyss-tg-now-line');
     expect(nowLine).toMatch(/left\s*:\s*3\.5em/u);
     expect(nowLine).toMatch(/right\s*:\s*0/u);
-    expect(nowLine).toMatch(/background\s*:\s*var\(--abyss-calendar-now\)/u);
-    expect(nowLine).toMatch(/z-index\s*:\s*0/u);
+    expect(declarationsFor('.abyss-tg-now-today')).toMatch(
+      /background\s*:\s*var\(--abyss-calendar-now\)/u,
+    );
+    expect(declarationsForRuleContaining('.abyss-tg-now-track', '.abyss-tg-now-today')).toMatch(
+      /z-index\s*:\s*0/u,
+    );
+    expect(nowLine).not.toMatch(/z-index\s*:/u);
     expect(nowLine).not.toMatch(/opacity\s*:/u);
     expect(declarationsFor('.abyss-tg-now-line-dot')).toMatch(
       /background\s*:\s*var\(--abyss-calendar-now\)/u,
