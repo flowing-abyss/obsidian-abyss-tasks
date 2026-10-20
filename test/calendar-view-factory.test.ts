@@ -74,7 +74,7 @@ function timeGridCallbacks(view: CalendarViewInstance): TimeGridCallbacks {
   today.mockRestore();
   week.mockRestore();
   if (instance instanceof TodayView) return instance['callbacks'];
-  if (instance instanceof WeekTimeGridView) return instance['callbacks'];
+  if (instance instanceof WeekTimeGridView) return instance['callbacks_abyssPrivate'];
   throw new Error('Expected a full time-grid instance');
 }
 

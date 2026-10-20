@@ -105,8 +105,8 @@ describe('renderHourGrid', () => {
     );
   });
 
-  it('provides full 10px vertical and horizontal resize hit targets', () => {
-    expect(declarationsFor('.abyss-tg-resize-handle')).toMatch(/height\s*:\s*10px/u);
+  it('reserves the body on short blocks while keeping full horizontal date targets', () => {
+    expect(declarationsFor('.abyss-tg-resize-handle')).toMatch(/height\s*:\s*min\(10px,\s*25%\)/u);
     expect(declarationsFor('.abyss-tg-span-edge')).toMatch(/width\s*:\s*10px/u);
   });
 

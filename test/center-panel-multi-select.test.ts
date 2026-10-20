@@ -1317,6 +1317,9 @@ it.each([false, true])(
 );
 
 it('reveals an exact offscreen Search destination in the bounded list without moving focus', async () => {
+  // This complete navigation flow needs the owning window's animation frames to settle reveal.
+  vi.spyOn(window, 'requestAnimationFrame').mockRestore();
+  vi.spyOn(window, 'cancelAnimationFrame').mockRestore();
   const h = await mountCanonicalSearchUi(
     {
       'large.md': Array.from(
@@ -1336,10 +1339,6 @@ it('reveals an exact offscreen Search destination in the bounded list without mo
   result.click();
   await vi.waitFor(() => {
     expect(state.get('mode')).toBe('tasks');
-  });
-  await vi.waitFor(() => {
-    flushViewport();
-    expect(el.dataset['searchPhase']).toBe('complete');
   });
   await h.completed();
   expect(state.get('selectedList')).toBe('inbox');

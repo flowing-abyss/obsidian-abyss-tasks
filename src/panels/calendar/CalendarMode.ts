@@ -110,6 +110,7 @@ export class CalendarMode {
   private viewType_abyssPrivate: CalViewType = 'month';
   private date_abyssPrivate: CalendarMoment = moment().date(1);
   private viewInstance_abyssPrivate: CalendarViewInstance | null = null;
+  private pendingFollowDate_abyssPrivate: string | undefined;
   private publicationHold_abyssPrivate: CalendarPublicationHold | undefined;
   private unsubscribe_abyssPrivate: (() => void) | null = null;
   private forecastOwnerDocument_abyssPrivate: Document | undefined;
@@ -172,6 +173,7 @@ export class CalendarMode {
 
   /** Releases the mounted calendar; the owner empties the element. */
   unmount(): void {
+    this.pendingFollowDate_abyssPrivate = undefined;
     this.publicationHold_abyssPrivate?.dispose();
     this.publicationHold_abyssPrivate = undefined;
     this.stopWidthObservation_abyssPrivate?.();
@@ -194,6 +196,7 @@ export class CalendarMode {
   }
 
   cancelKeyboardInteraction(): void {
+    this.pendingFollowDate_abyssPrivate = undefined;
     this.focusRetention_abyssPrivate.cancel();
   }
 
@@ -390,6 +393,7 @@ export class CalendarMode {
     retainedContent?: CalendarContent,
   ): void {
     this.publicationHold_abyssPrivate?.dispose();
+    this.pendingFollowDate_abyssPrivate = undefined;
     this.prepareViewUpdate_abyssPrivate(context);
     this.deps_abyssPrivate.host.unmountActiveCapture();
     const renderGeneration = this.focusRetention_abyssPrivate.beginRender();
@@ -413,6 +417,13 @@ export class CalendarMode {
         : undefined;
     context.viewContainer.toggleClass('abyss-cal-body--compact', compactView !== undefined);
     const publicationHold = new CalendarPublicationHold(context.viewContainer, () => {
+      const followDate = this.pendingFollowDate_abyssPrivate;
+      if (followDate !== undefined) {
+        this.pendingFollowDate_abyssPrivate = undefined;
+        this.date_abyssPrivate = moment(followDate);
+        this.deps_abyssPrivate.host.rerender();
+        return;
+      }
       this.patchView_abyssPrivate(context, () => {
         this.mountView_abyssPrivate(context);
       });
@@ -540,7 +551,7 @@ export class CalendarMode {
         ? updated.planning.due
         : (updated.planning.scheduled ?? updated.planning.due);
     const followDate = nextSegmentDate ?? anchor;
-    if (followDate === undefined || followDate === '') return;
+    if (followDate === undefined) return;
     const firstDayOfWeek = this.deps_abyssPrivate.settings.firstDayOfWeek;
     const outsideWeek = !visibleCalendarDates(
       'week',
@@ -552,8 +563,8 @@ export class CalendarMode {
       (this.viewType_abyssPrivate !== 'week' || !outsideWeek)
     )
       return;
-    this.date_abyssPrivate = moment(followDate);
-    this.deps_abyssPrivate.host.rerender();
+    this.pendingFollowDate_abyssPrivate = followDate;
+    this.publicationHold_abyssPrivate?.request();
   }
 
   private createSelectionAndCaptureHandlers_abyssPrivate(
@@ -721,9 +732,15 @@ export class CalendarMode {
   ): Promise<void> {
     const forecast = isForecastCalendarTask(task);
     if (forecast && !seriesTiming) return Promise.resolve();
+    const apply = (current: TaskSnapshot): Promise<void> => {
+      // A submitted pointer gesture owns navigation; cancellation leaves keyboard following intact.
+      if (this.publicationHold_abyssPrivate === publicationHold)
+        this.pendingFollowDate_abyssPrivate = undefined;
+      return action(current);
+    };
     return publicationHold.run(() => {
-      const current = forecast ? task : this.focusRetention_abyssPrivate.settlePointerTask(task);
-      return current instanceof Promise ? current.then(action) : action(current);
+      const current = this.focusRetention_abyssPrivate.settlePointerTask(task);
+      return current instanceof Promise ? current.then(apply) : apply(current);
     });
   }
 

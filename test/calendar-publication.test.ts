@@ -114,9 +114,9 @@ async function setup(view: CalViewType = 'today', child = false, timing = '⏰ 0
   return { app, application, execute, host, mode, root, publish, current };
 }
 
-function timedResize(root: HTMLElement) {
+function timedResize(root: HTMLElement, date = '2026-10-19') {
   const day = expectDefined(
-    root.querySelector<HTMLElement>('.abyss-tg-day-column[data-tg-date="2026-10-19"]'),
+    root.querySelector<HTMLElement>(`.abyss-tg-day-column[data-tg-date="${date}"]`),
   );
   const hour = expectDefined(day.querySelector<HTMLElement>('.abyss-tg-hour-column'));
   const block = expectDefined(hour.querySelector<HTMLElement>('.abyss-tg-block'));
@@ -206,6 +206,102 @@ describe('timed keyboard publication', () => {
     await flushMicrotasks();
     expect(h.current().planning).toMatchObject({ time: '09:15', duration: 75 });
     expect(h.root.querySelector('.abyss-tg-drag-preview')).toBeNull();
+  });
+
+  it.each(['drop', 'cancel'] as const)(
+    'defers Day following until a held pointer %s',
+    async (ending) => {
+      const h = await setup();
+      vi.mocked(h.host.rerender).mockImplementation(() => {
+        h.mode.render(h.root);
+      });
+      const gate = deferred<void>();
+      h.execute.mockImplementationOnce(async (...args) => {
+        await gate.promise;
+        return h.application.tasks.execute(...args);
+      });
+      const origin = expectDefined(h.root.querySelector<HTMLElement>('.abyss-tg-block'));
+      origin.focus();
+      origin.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+      const gesture = timedMove(h.root);
+      gesture.move();
+      gate.resolve();
+      await h.execute.mock.results[0]?.value;
+      await flushMicrotasks();
+      expect(h.current().planning.due).toBe('2026-10-20');
+      expect(gesture.block.isConnected).toBe(true);
+      expect(h.root.querySelector('.abyss-tg-drag-preview')).not.toBeNull();
+      if (ending === 'drop') gesture.finish();
+      else window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+      await flushMicrotasks();
+      expect(h.current().planning).toMatchObject(
+        ending === 'drop'
+          ? { due: '2026-10-19', time: '11:00' }
+          : { due: '2026-10-20', time: '09:00' },
+      );
+      expect(h.mode.captureDate()).toBe(ending === 'drop' ? '2026-10-19' : '2026-10-20');
+      expect(h.root.querySelector('.abyss-tg-drag-preview')).toBeNull();
+    },
+  );
+
+  it.each([false, true])(
+    'hands a future series resize the pending keyboard receipt (child=%s)',
+    async (child) => {
+      const h = await setup('week', child, '⏰ 09:00 ⏱️ 1h 🔁 every day');
+      const gate = deferred<void>();
+      h.execute.mockImplementationOnce(async (...args) => {
+        await gate.promise;
+        return h.application.tasks.execute(...args);
+      });
+      const origin = expectDefined(
+        h.root.querySelector<HTMLElement>('.abyss-tg-block[data-occurrence-state="materialized"]'),
+      );
+      origin.focus();
+      for (let i = 0; i < 3; i += 1)
+        origin.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+      const gesture = timedResize(h.root, '2026-10-20');
+      gesture.finish();
+      gate.resolve();
+      await flushMicrotasks();
+      expect(h.current().planning).toMatchObject({
+        due: '2026-10-19',
+        time: '09:15',
+        duration: 75,
+      });
+      expect(h.current().recurrence).toBeDefined();
+      expect(h.execute).toHaveBeenCalledTimes(2);
+      expect(h.root.querySelector('.abyss-tg-drag-preview')).toBeNull();
+    },
+  );
+
+  it('retains a Sunday drag when the keyboard receipt crosses the week boundary', async () => {
+    const h = await setup('week');
+    const original = expectDefined(h.application.index.list({ filePath: 'calendar.md' })[0]);
+    await h.application.tasks.execute({
+      type: 'patch',
+      target: { type: 'task', ref: original.ref },
+      patch: { due: { type: 'set', value: localDate('2026-10-25') } },
+    });
+    vi.mocked(h.host.rerender).mockImplementation(() => {
+      h.mode.render(h.root);
+    });
+    const gate = deferred<void>();
+    h.execute.mockImplementationOnce(async (...args) => {
+      await gate.promise;
+      return h.application.tasks.execute(...args);
+    });
+    const origin = expectDefined(h.root.querySelector<HTMLElement>('.abyss-tg-block'));
+    origin.focus();
+    origin.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    const gesture = timedMove(h.root);
+    gesture.move(625, 648);
+    gate.resolve();
+    await flushMicrotasks();
+    expect(gesture.block.isConnected).toBe(true);
+    gesture.finish(625, 648);
+    await flushMicrotasks();
+    expect(h.current().planning).toMatchObject({ due: '2026-10-25', time: '11:00' });
+    expect(h.root.querySelector('.abyss-tg-day-column[data-tg-date="2026-10-25"]')).not.toBeNull();
   });
 
   it('retains the next Tab target when its command is queued behind the previous task', async () => {

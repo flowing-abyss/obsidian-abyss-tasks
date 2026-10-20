@@ -473,11 +473,16 @@ A sibling's pending command can adopt the preceding command's root only through 
 whole-tree owned-change proof. Even an unchanged receipt releases dirty publication before settling
 focus ownership.
 A pointer commit on a retained keyboard origin discards unsent repeats and waits for the active
-receipt. Only an identity already owned by that sequence can use its proven successor; no query
-lookup acquires a replacement. Rebasing keeps the caller's occurrence and date roles, including
+receipt. A sibling or forecast timing gesture can use a successor only after the existing whole-tree
+owned-change proof accepts each keyboard patch. The queue retains one original/current root pair
+for the mounted DOM, resetting its baseline on publication; it does not accumulate receipt history
+or acquire replacements through a query lookup. Rebasing keeps the caller's occurrence and date roles, including
 separate scheduled and due points. CalendarCommands preserves the pointer's absolute edge or date
 against that successor, retaining the opposite resized edge. Keyboard navigation across periods
-preserves the scroll offset instead of scrolling to the current time.
+preserves the scroll offset instead of scrolling to the current time. Automatic following shares
+the mounted publication hold, so an accepted keyboard date cannot destroy a held pointer gesture.
+A submitted pointer gesture takes over navigation; cancellation lets the keyboard follow settle.
+Shortening an interval clamps keyboard focus to a surviving segment.
 Navigation, width remounts, disposal, and window migration retire the hold; late completion cannot
 publish into a replacement mount.
 Timed and span sessions release pointer capture and listeners at submission while retaining their
@@ -493,6 +498,8 @@ hold to edit the series time or duration through an explicit canonical source pa
 movement is vertical only: projected dates, recurrence and source date roles remain unchanged.
 These gestures grant no task selection, status controls, keyboard editing or native drag identity.
 Top/bottom time handles cover the full edge and take priority over date handles at corners.
+Their height is limited to a quarter of the block, retaining a distinct body and lateral date
+targets even when dense or midnight geometry constrains a block below its usual minimum height.
 Its mounted center owner supplies the available width; an owner-window observer coalesces changes
 and rebuilds Month/Week only when the width category changes. CalendarContent retains one canonical
 occurrence projection per publication and visible range; width remounts reuse that content.

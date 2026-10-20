@@ -80,6 +80,8 @@ const privateOwners = new Set([
   'TimedBlockFocusRetention',
   // The keyboard queue exposes methods and hooks, never its mutable execution bookkeeping.
   'TimedBlockKeyboardQueue',
+  // The week view owns private DOM handles and callbacks, never reflected or persisted.
+  'WeekTimeGridView',
   'TagPickerModal',
   'TagGroupAppearanceModal',
   'StatisticsMode',

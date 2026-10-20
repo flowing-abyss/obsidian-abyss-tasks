@@ -1,6 +1,7 @@
 import {
   durationMinutes,
   localTime,
+  sameTaskNodeRef,
   shiftLocalDate,
   taskNodeSourceLine,
   type TaskApplicationApi,
@@ -20,7 +21,7 @@ import {
   type CalendarOccurrence,
 } from '../views/calendarOccurrences';
 import type { TimedBlockKeyboardIntent } from '../views/timegrid/renderTimedBlocks';
-import { proveOwnedTaskSelection } from './ownedTaskSelection';
+import { proveOwnedTaskSelection, type OwnedTaskSelectionProof } from './ownedTaskSelection';
 import { runAsyncAction } from './runAsyncAction';
 import { taskNodeRef, taskSelectionRefPath, type TaskSelectionNode } from './taskSelection';
 
@@ -56,8 +57,8 @@ const MAX_DURATION_MINUTES = 24 * 60;
 const DEFAULT_DURATION_MINUTES = 60;
 
 function sourceKey(task: TaskSnapshot): string {
-  const target = calendarMutationTarget(task);
-  return `${task.source.filePath}:${target === undefined ? task.source.line : taskNodeSourceLine(target)}`;
+  const target = calendarOccurrenceForRender(task).source.target;
+  return `${task.source.filePath}:${taskNodeSourceLine(target)}`;
 }
 
 function sourceIdentity(task: TaskSnapshot): string {
@@ -135,9 +136,9 @@ function committedSnapshot(
   previous: TaskSnapshot,
   current: TaskSnapshot,
   change: {
-    readonly command: TaskCommand;
     readonly intent: TimedBlockKeyboardIntent;
     readonly changed: boolean;
+    readonly proof: OwnedTaskSelectionProof | undefined;
   },
 ): TaskSnapshot | undefined {
   const occurrence = calendarOccurrenceForTask(previous);
@@ -147,9 +148,7 @@ function committedSnapshot(
   if (occurrence.source.target.type === 'subtask') {
     const path = taskSelectionRefPath(current, occurrence.source.target);
     node = change.changed
-      ? proveOwnedTaskSelection(current, [occurrence.source.root], change.command)?.nodeSuccessor(
-          occurrence.source.target,
-        )
+      ? change.proof?.nodeSuccessor(occurrence.source.target)
       : path?.[path.length - 1];
   }
   if (node === undefined) return undefined;
@@ -157,17 +156,42 @@ function committedSnapshot(
 }
 
 function snapshotWithOwnedNode(
-  occurrence: Extract<CalendarOccurrence, { kind: 'materialized' }>,
+  occurrence: CalendarOccurrence,
   current: TaskSnapshot,
   node: TaskSelectionNode,
   promote = false,
 ): TaskSnapshot {
+  const planning =
+    occurrence.kind === 'forecast'
+      ? {
+          ...occurrence.planning,
+          ...(node.planning.time !== undefined && { time: node.planning.time }),
+          ...(node.planning.duration !== undefined && { duration: node.planning.duration }),
+        }
+      : node.planning;
   const display = taskSnapshotForCalendarOccurrence({
     ...occurrence,
     source: { root: current, node, target: taskNodeRef(node) },
-    planning: node.planning,
+    planning,
   });
-  return calendarTaskWithPlanning(display, node.planning, promote ? 'create-span' : undefined);
+  return calendarTaskWithPlanning(display, planning, promote ? 'create-span' : undefined);
+}
+
+function snapshotWithOwnedRoot(
+  occurrence: CalendarOccurrence,
+  owned: { before: TaskSnapshot; current: TaskSnapshot },
+): TaskSnapshot | undefined {
+  const path = taskSelectionRefPath(owned.before, occurrence.source.target);
+  if (path === undefined) return undefined;
+  // Every transition was a proved content patch: child order and ancestry are unchanged.
+  let node: TaskSelectionNode | undefined = owned.current;
+  for (let index = 1; index < path.length; index += 1) {
+    const parent = path[index - 1];
+    const child = path[index];
+    if (parent === undefined || child === undefined) return undefined;
+    node = node?.subtasks[parent.subtasks.findIndex((candidate) => candidate === child)];
+  }
+  return node === undefined ? undefined : snapshotWithOwnedNode(occurrence, owned.current, node);
 }
 
 export class TimedBlockKeyboardQueue {
@@ -185,6 +209,8 @@ export class TimedBlockKeyboardQueue {
   private settlement_abyssPrivate: (() => void) | undefined;
   private accepted_abyssPrivate:
     { readonly task: TaskSnapshot; readonly identities: ReadonlySet<string> } | undefined;
+
+  private ownedRoot_abyssPrivate: { before: TaskSnapshot; current: TaskSnapshot } | undefined;
 
   constructor(
     private readonly api_abyssPrivate: TaskApplicationApi,
@@ -242,12 +268,22 @@ export class TimedBlockKeyboardQueue {
     this.activeSourceChanged_abyssPrivate = false;
     this.accepted_abyssPrivate = undefined;
     this.settlement_abyssPrivate = undefined;
+    this.ownedRoot_abyssPrivate = undefined;
+  }
+
+  /** A replacement mount now exposes the current root, retiring the old DOM baseline. */
+  published(): void {
+    const owned = this.ownedRoot_abyssPrivate;
+    if (owned !== undefined) owned.before = owned.current;
   }
 
   /** A pointer gesture can have started on a retained version of our own keyboard edit. */
   settlePointerTask(task: TaskSnapshot): TaskSnapshot | Promise<TaskSnapshot> {
-    const identity = sourceIdentity(task);
-    if (this.activeTaskIdentities_abyssPrivate.has(identity)) {
+    const root = calendarOccurrenceForRender(task).source.root;
+    const active = this.activeSnapshot_abyssPrivate;
+    const activeRoot =
+      active === undefined ? undefined : calendarOccurrenceForRender(active).source.root;
+    if (activeRoot?.ref.filePath === root.ref.filePath && activeRoot.ref.line === root.ref.line) {
       const sequence = this.activeSequence_abyssPrivate;
       this.pending_abyssPrivate = [];
       return (
@@ -263,18 +299,20 @@ export class TimedBlockKeyboardQueue {
   private ownedSuccessor_abyssPrivate(task: TaskSnapshot): TaskSnapshot {
     const accepted = this.accepted_abyssPrivate;
     const identity = sourceIdentity(task);
-    if (accepted?.identities.has(identity) !== true || sourceIdentity(accepted.task) === identity)
-      return task;
     const occurrence = calendarOccurrenceForTask(task);
-    const successor = calendarOccurrenceForTask(accepted.task);
-    if (occurrence?.kind !== 'materialized' || successor?.kind !== 'materialized')
-      return accepted.task;
-    return snapshotWithOwnedNode(
-      occurrence,
-      successor.source.root,
-      successor.source.node,
-      successor.occupied.kind === 'interval',
-    );
+    if (accepted?.identities.has(identity) === true && sourceIdentity(accepted.task) !== identity) {
+      const successor = calendarOccurrenceForRender(accepted.task);
+      if (occurrence === undefined) return accepted.task;
+      return snapshotWithOwnedNode(
+        occurrence,
+        successor.source.root,
+        successor.source.node,
+        successor.kind === 'materialized' && successor.occupied.kind === 'interval',
+      );
+    }
+    const owned = this.ownedRoot_abyssPrivate;
+    if (owned === undefined || occurrence === undefined) return task;
+    return snapshotWithOwnedRoot(occurrence, owned) ?? task;
   }
 
   private processNext_abyssPrivate(): void {
@@ -337,16 +375,19 @@ export class TimedBlockKeyboardQueue {
   ): Promise<void> {
     try {
       let prepared = command;
-      const result =
-        calendarMutationTarget(previous)?.type === 'subtask'
-          ? await this.api_abyssPrivate.execute(command, {
-              onPreparedPatch: (patch) => {
-                prepared = patch;
-              },
-            })
-          : await this.api_abyssPrivate.execute(command);
+      const result = [
+        calendarMutationTarget(previous)?.type === 'subtask',
+        command.type !== 'patch',
+      ].includes(true)
+        ? await this.api_abyssPrivate.execute(command, {
+            onPreparedPatch: (patch) => {
+              prepared = patch;
+            },
+          })
+        : await this.api_abyssPrivate.execute(command);
+      const proof = this.recordOwnedRoot_abyssPrivate(previous, result, prepared);
       if (queued.sequence !== this.activeSequence_abyssPrivate) {
-        this.carryOwnedRoot_abyssPrivate(result, prepared);
+        this.carryOwnedRoot_abyssPrivate();
         return;
       }
 
@@ -360,9 +401,9 @@ export class TimedBlockKeyboardQueue {
       }
 
       const updated = committedSnapshot(previous, result.outcome.task, {
-        command: prepared,
         intent: queued.intent,
         changed: result.changed,
+        proof,
       });
       if (updated === undefined) {
         this.hooks_abyssPrivate.onInvalidated(queued.sequence);
@@ -384,17 +425,41 @@ export class TimedBlockKeyboardQueue {
     }
   }
 
-  private carryOwnedRoot_abyssPrivate(result: TaskCommandResult, command: TaskCommand): void {
-    if (result.type !== 'ok' || result.outcome.type !== 'task') return;
+  private recordOwnedRoot_abyssPrivate(
+    previous: TaskSnapshot,
+    result: TaskCommandResult,
+    command: TaskCommand,
+  ): OwnedTaskSelectionProof | undefined {
+    if (
+      result.type !== 'ok' ||
+      result.outcome.type !== 'task' ||
+      this.activeSequence_abyssPrivate === undefined
+    )
+      return;
     const current = result.outcome.task;
+    const root = calendarOccurrenceForRender(previous).source.root;
+    const owned = this.ownedRoot_abyssPrivate;
+    const proof =
+      command.type === 'patch' ? proveOwnedTaskSelection(current, [root], command) : undefined;
+    if (proof === undefined) {
+      this.ownedRoot_abyssPrivate = undefined;
+      return;
+    }
+    this.ownedRoot_abyssPrivate = {
+      before:
+        owned !== undefined && sameTaskNodeRef(taskNodeRef(owned.current), taskNodeRef(root))
+          ? owned.before
+          : root,
+      current,
+    };
+    return proof;
+  }
+
+  private carryOwnedRoot_abyssPrivate(): void {
     const active = this.activeSnapshot_abyssPrivate;
-    const occurrence = active === undefined ? undefined : calendarOccurrenceForTask(active);
-    if (occurrence?.kind !== 'materialized') return;
-    const node = proveOwnedTaskSelection(current, [occurrence.source.root], command)?.nodeSuccessor(
-      occurrence.source.target,
-    );
-    if (node === undefined) return;
-    this.rememberOwnedSnapshot_abyssPrivate(snapshotWithOwnedNode(occurrence, current, node));
+    if (active === undefined) return;
+    const successor = this.ownedSuccessor_abyssPrivate(active);
+    if (successor !== active) this.rememberOwnedSnapshot_abyssPrivate(successor);
   }
 
   private acceptCommit_abyssPrivate(

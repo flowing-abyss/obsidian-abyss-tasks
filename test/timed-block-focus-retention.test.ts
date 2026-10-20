@@ -129,6 +129,35 @@ describe('TimedBlockFocusRetention intents', () => {
     expect(h.follow.mock.calls[0]?.[1]).toBe('2026-09-24');
   });
 
+  it.each([
+    ['2026-09-25', '2026-09-24'],
+    ['2026-09-23', '2026-09-23'],
+  ])(
+    'keeps focus from %s on surviving segment %s after shortening',
+    async (originDate, expectedDate) => {
+      const original = task({
+        planning: { start: '2026-09-22', due: '2026-09-25', time: '09:00' },
+      });
+      const updated = task({ planning: { start: '2026-09-22', due: '2026-09-24', time: '09:00' } });
+      const h = harness({
+        execute: vi.fn<TaskApplicationApi['execute']>().mockResolvedValue(okTask(updated)),
+      });
+      const origin = block(h.root, original, originDate);
+      origin.focus();
+      h.retention.handleIntent(original, { type: 'extend-due', days: -1 });
+      await settle();
+      h.retention.beforeViewUpdate();
+      const generation = h.retention.beginRender();
+      origin.remove();
+      const replacement = block(h.root, updated, expectedDate);
+      h.retention.deferFocus(h.root, generation);
+      expect(document.activeElement).toBe(replacement);
+      if (originDate !== expectedDate)
+        expect(h.follow).toHaveBeenCalledWith(expect.anything(), expectedDate);
+      else expect(h.follow).not.toHaveBeenCalled();
+    },
+  );
+
   it('clears the pending focus when a sequence settles without changes', async () => {
     const execute = vi.fn<TaskApplicationApi['execute']>().mockImplementation(async (command) => {
       const ref = 'ref' in command ? command.ref : undefined;

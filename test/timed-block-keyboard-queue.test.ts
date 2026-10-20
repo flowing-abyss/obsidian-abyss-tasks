@@ -160,10 +160,60 @@ describe('TimedBlockKeyboardQueue', () => {
     },
   );
 
-  it.each(['keyboard', 'external', 'pointer'] as const)(
-    'carries only the owned sibling root change (%s)',
-    async (handoff) => {
-      const external = handoff === 'external';
+  it.each([
+    {
+      handoff: 'keyboard',
+      external: false,
+      direct: false,
+      pointer: false,
+      duration: undefined,
+      settled: 'onSettled',
+      time: '10:30',
+      title: 'B',
+    },
+    {
+      handoff: 'external',
+      external: true,
+      direct: false,
+      pointer: false,
+      duration: undefined,
+      settled: 'onSettled',
+      time: '10:00',
+      title: 'Replacement',
+    },
+    {
+      handoff: 'pointer',
+      external: false,
+      direct: false,
+      pointer: true,
+      duration: 90,
+      settled: 'onSettled',
+      time: '10:00',
+      title: 'B',
+    },
+    {
+      handoff: 'direct-pointer',
+      external: false,
+      direct: true,
+      pointer: true,
+      duration: 90,
+      settled: 'onSettled',
+      time: '10:00',
+      title: 'B',
+    },
+    {
+      handoff: 'direct-pointer-external',
+      external: true,
+      direct: true,
+      pointer: true,
+      duration: undefined,
+      settled: 'onInvalidated',
+      time: '10:00',
+      title: 'Replacement',
+    },
+  ] as const)(
+    'carries only the owned sibling root change ($handoff)',
+    async ({ external, direct, pointer: usePointer, duration, settled, time, title }) => {
       const app = await createAppWithFiles({
         'qa.md': '- [ ] Parent\n  - [ ] A 📅 2026-10-20 ⏰ 09:00\n  - [ ] B 📅 2026-10-20 ⏰ 10:00',
       });
@@ -204,10 +254,13 @@ describe('TimedBlockKeyboardQueue', () => {
         const hooks = harness().hooks;
         const queue = new TimedBlockKeyboardQueue({ ...application.tasks, execute }, hooks);
         queue.enqueue(expectDefined(displays[0]), { type: 'move-time', deltaMinutes: 15 });
-        queue.enqueue(expectDefined(displays[1]), { type: 'move-time', deltaMinutes: 15 });
-        queue.enqueue(expectDefined(displays[1]), { type: 'move-time', deltaMinutes: 15 });
-        const pointer =
-          handoff === 'pointer' ? queue.settlePointerTask(expectDefined(displays[1])) : undefined;
+        if (!direct) {
+          queue.enqueue(expectDefined(displays[1]), { type: 'move-time', deltaMinutes: 15 });
+          queue.enqueue(expectDefined(displays[1]), { type: 'move-time', deltaMinutes: 15 });
+        }
+        const pointer = usePointer
+          ? queue.settlePointerTask(expectDefined(displays[1]))
+          : undefined;
         gate.resolve();
         if (pointer !== undefined) {
           const commands = new CalendarCommands({
@@ -215,19 +268,124 @@ describe('TimedBlockKeyboardQueue', () => {
             queries: application.tasks.queries,
           });
           await commands.setDuration(await pointer, 90);
-          expect(application.index.list()[0]?.subtasks[1]?.planning.duration).toBe(90);
+          expect(application.index.list()[0]?.subtasks[1]?.planning.duration).toBe(duration);
         }
         await vi.waitFor(() => {
-          expect(hooks.onSettled).toHaveBeenCalledOnce();
+          expect(hooks[settled]).toHaveBeenCalledOnce();
         });
-        expect(hooks.onInvalidated).not.toHaveBeenCalled();
         expect(application.index.list()[0]?.subtasks.map((node) => node.planning.time)).toEqual([
           '09:15',
-          handoff === 'keyboard' ? '10:30' : '10:00',
+          time,
         ]);
-        expect(application.index.list()[0]?.subtasks[1]?.title).toBe(
-          external ? 'Replacement' : 'B',
+        expect(application.index.list()[0]?.subtasks[1]?.title).toBe(title);
+      } finally {
+        application.index.destroy();
+      }
+    },
+  );
+
+  it.each([false, true])(
+    'carries sibling authority across successive receipts (published=%s)',
+    async (published) => {
+      const app = await createAppWithFiles({
+        'qa.md': '- [ ] Parent\n  - [ ] A 📅 2026-10-20 ⏰ 09:00\n  - [ ] B 📅 2026-10-20 ⏰ 11:00',
+      });
+      seedTaskCache(app, 'qa.md', [{ task: ' ', parent: -1, line: 0 }]);
+      const application = configuredTaskApplication(app, DEFAULT_SETTINGS);
+      await application.index.initialize();
+      try {
+        const displays = () =>
+          projectCalendarOccurrences(
+            application.index.forCalendarProjection([localDate('2026-10-20')]),
+            { from: localDate('2026-10-20'), to: localDate('2026-10-20') },
+            { removeScheduledDate: false },
+          )
+            .occurrences.filter((o) => o.source.target.type === 'subtask')
+            .map(taskSnapshotForCalendarOccurrence);
+        let [a, b] = displays();
+        const hooks = harness().hooks;
+        const queue = new TimedBlockKeyboardQueue(application.tasks, hooks);
+        queue.enqueue(expectDefined(a), { type: 'move-time', deltaMinutes: 15 });
+        await vi.waitFor(() => {
+          expect(hooks.onSettled).toHaveBeenCalledTimes(1);
+        });
+        if (published) {
+          queue.published();
+          [a, b] = displays();
+        }
+        queue.enqueue(expectDefined(a), { type: 'move-time', deltaMinutes: 15 });
+        await vi.waitFor(() => {
+          expect(hooks.onSettled).toHaveBeenCalledTimes(2);
+        });
+        const commands = new CalendarCommands({
+          tasks: application.tasks,
+          queries: application.index,
+        });
+        await commands.setDuration(await queue.settlePointerTask(expectDefined(b)), 90);
+        expect(application.index.list()[0]?.subtasks.map((node) => node.planning)).toEqual([
+          expect.objectContaining({ time: '09:30' }),
+          expect.objectContaining({ time: '11:00', duration: 90 }),
+        ]);
+      } finally {
+        application.index.destroy();
+      }
+    },
+  );
+
+  it.each([false, true])(
+    'settles a forecast pointer against its owned series (child=%s)',
+    async (child) => {
+      const text = '- [ ] Series 📅 2026-10-20 ⏰ 09:00 ⏱️ 1h 🔁 every day';
+      const app = await createAppWithFiles({ 'qa.md': child ? `- [ ] Parent\n  ${text}` : text });
+      seedTaskCache(app, 'qa.md', [{ task: ' ', parent: -1, line: 0 }]);
+      const application = configuredTaskApplication(app, DEFAULT_SETTINGS);
+      await application.index.initialize();
+      try {
+        const range = { from: localDate('2026-10-20'), to: localDate('2026-10-21') };
+        const occurrences = projectCalendarOccurrences(
+          application.index.forCalendarProjection([range.from, range.to]),
+          range,
+          { removeScheduledDate: false },
+        ).occurrences;
+        const materialized = taskSnapshotForCalendarOccurrence(
+          expectDefined(
+            occurrences.find(
+              (o) => o.kind === 'materialized' && o.source.node.recurrence !== undefined,
+            ),
+          ),
         );
+        const forecast = taskSnapshotForCalendarOccurrence(
+          expectDefined(occurrences.find((o) => o.kind === 'forecast')),
+        );
+        const gate = deferred<void>();
+        const execute = vi.fn<TaskApplicationApi['execute']>(async (...args) => {
+          await gate.promise;
+          return application.tasks.execute(...args);
+        });
+        const queue = new TimedBlockKeyboardQueue(
+          { ...application.tasks, execute },
+          harness().hooks,
+        );
+        queue.enqueue(materialized, { type: 'move-time', deltaMinutes: 15 });
+        queue.enqueue(materialized, { type: 'move-time', deltaMinutes: 15 });
+        const pending = queue.settlePointerTask(forecast);
+        gate.resolve();
+        const successor = await pending;
+        expect(successor.planning.due).toBe('2026-10-21');
+        const commands = new CalendarCommands({
+          tasks: application.tasks,
+          queries: application.index,
+        });
+        await commands.commitTimedDuration(
+          successor,
+          { startMinutes: 540, durationMinutes: 90, endMinutes: 630, edge: 'end' },
+          forecast,
+        );
+        const root = expectDefined(application.index.list()[0]);
+        const node = child ? expectDefined(root.subtasks[0]) : root;
+        expect(node.planning).toMatchObject({ due: '2026-10-20', time: '09:15', duration: 75 });
+        expect(node.recurrence).toBeDefined();
+        expect(execute).toHaveBeenCalledOnce();
       } finally {
         application.index.destroy();
       }
@@ -471,19 +629,27 @@ describe('TimedBlockKeyboardQueue', () => {
 
     queue.enqueue(taskAt('09:00', 'revision-1', { due: '2026-07-20' }), intent);
     queue.enqueue(taskAt('09:00', 'revision-1', { due: '2026-07-20' }), intent);
-    expect(execute).toHaveBeenNthCalledWith(1, {
-      type: 'shift-schedule',
-      ref: refMatching({ revision: 'revision-1' }),
-      days: 1,
-    });
+    expect(execute).toHaveBeenNthCalledWith(
+      1,
+      {
+        type: 'shift-schedule',
+        ref: refMatching({ revision: 'revision-1' }),
+        days: 1,
+      },
+      expect.any(Object) as NonNullable<Parameters<TaskApplicationApi['execute']>[1]>,
+    );
 
     first.resolve(ok(taskAt('09:00', 'revision-2', { due: '2026-07-21' })));
     await expectSecondCall(execute);
-    expect(execute).toHaveBeenNthCalledWith(2, {
-      type: 'shift-schedule',
-      ref: refMatching({ revision: 'revision-2' }),
-      days: 1,
-    });
+    expect(execute).toHaveBeenNthCalledWith(
+      2,
+      {
+        type: 'shift-schedule',
+        ref: refMatching({ revision: 'revision-2' }),
+        days: 1,
+      },
+      expect.any(Object) as NonNullable<Parameters<TaskApplicationApi['execute']>[1]>,
+    );
     second.resolve(ok(taskAt('09:00', 'revision-3', { due: '2026-07-22' })));
   });
 
@@ -534,11 +700,15 @@ describe('TimedBlockKeyboardQueue', () => {
 
       queue.enqueue(original, { type: 'extend-due', days: 1 });
       queue.enqueue(original, { type: 'extend-due', days: 1 });
-      expect(execute).toHaveBeenNthCalledWith(1, {
-        type: 'extend-span',
-        ref: refMatching({ revision: 'revision-1' }),
-        due: '2026-07-11',
-      });
+      expect(execute).toHaveBeenNthCalledWith(
+        1,
+        {
+          type: 'extend-span',
+          ref: refMatching({ revision: 'revision-1' }),
+          due: '2026-07-11',
+        },
+        expect.any(Object) as NonNullable<Parameters<TaskApplicationApi['execute']>[1]>,
+      );
 
       first.resolve(
         ok(
@@ -550,11 +720,15 @@ describe('TimedBlockKeyboardQueue', () => {
         ),
       );
       await expectSecondCall(execute);
-      expect(execute).toHaveBeenNthCalledWith(2, {
-        type: 'extend-span',
-        ref: refMatching({ revision: 'revision-2' }),
-        due: '2026-07-12',
-      });
+      expect(execute).toHaveBeenNthCalledWith(
+        2,
+        {
+          type: 'extend-span',
+          ref: refMatching({ revision: 'revision-2' }),
+          due: '2026-07-12',
+        },
+        expect.any(Object) as NonNullable<Parameters<TaskApplicationApi['execute']>[1]>,
+      );
       second.resolve(
         ok(
           taskAt('09:00', 'revision-3', {

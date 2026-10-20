@@ -8,7 +8,10 @@ import {
 import { isRealmHTMLElement } from '../../ui/domRealm';
 import { presentTaskCommandResult } from '../../ui/taskCommandResult';
 import { TimedBlockKeyboardQueue } from '../../ui/timedBlockKeyboardQueue';
-import { calendarMutationTarget } from '../../views/calendarOccurrences';
+import {
+  calendarMutationTarget,
+  calendarOccurrenceForRender,
+} from '../../views/calendarOccurrences';
 import type { TimedBlockKeyboardIntent } from '../../views/timegrid/renderTimedBlocks';
 
 interface TimedBlockFocusLocator {
@@ -54,18 +57,29 @@ function isRestorableTimedBlock(
   );
 }
 
+function clampFocusedSegmentDate(updated: TaskSnapshot, date: string): string {
+  const occurrence = calendarOccurrenceForRender(updated);
+  if (occurrence.kind !== 'materialized') return date;
+  const occupied = occurrence.occupied;
+  if (occupied.kind === 'point') return occupied.date;
+  if (date < occupied.start) return occupied.start;
+  return date > occupied.due ? occupied.due : date;
+}
+
 function shiftFocusedSegmentDate(
   pending: TimedBlockFocusLocator,
   intent: TimedBlockKeyboardIntent,
   changed: boolean,
+  updated: TaskSnapshot,
 ): string | undefined {
-  if (!changed || intent.type !== 'shift-schedule' || pending.segmentDate === undefined) {
-    return pending.segmentDate;
-  }
+  const date = pending.segmentDate;
+  if (!changed || date === undefined) return date;
+  if (intent.type === 'extend-due') return clampFocusedSegmentDate(updated, date);
+  if (intent.type !== 'shift-schedule') return date;
   try {
-    return shiftLocalDate(localDate(pending.segmentDate), intent.days);
+    return shiftLocalDate(localDate(date), intent.days);
   } catch {
-    return pending.segmentDate;
+    return date;
   }
 }
 
@@ -194,6 +208,7 @@ export class TimedBlockFocusRetention {
 
   /** Before a view mount or patch: the coming render must restore this sequence again. */
   beforeViewUpdate(): void {
+    this.queue_abyssPrivate?.published();
     const queueSequence = this.pendingFocus_abyssPrivate?.queueSequence;
     if (queueSequence !== undefined) this.restoredSequences_abyssPrivate.delete(queueSequence);
   }
@@ -417,7 +432,7 @@ export class TimedBlockFocusRetention {
       calendarMutationTarget(updated) ?? { type: 'task', ref: updated.ref },
     );
     const sourceChanged = pending.filePath !== updated.source.filePath || pending.line !== line;
-    const nextSegmentDate = shiftFocusedSegmentDate(pending, intent, changed);
+    const nextSegmentDate = shiftFocusedSegmentDate(pending, intent, changed, updated);
     const segmentChanged = nextSegmentDate !== pending.segmentDate;
     const identityChanged = [sourceChanged, segmentChanged].includes(true);
     const presentationChanged = [changed, identityChanged].includes(true);
@@ -434,7 +449,8 @@ export class TimedBlockFocusRetention {
     if (presentationChanged || !this.restoredSequences_abyssPrivate.has(queueSequence)) {
       this.deferFocusAtRoot_abyssPrivate();
     }
-    if (intent.type === 'shift-schedule') this.host_abyssPrivate.follow(updated, nextSegmentDate);
+    if ([intent.type === 'shift-schedule', segmentChanged].includes(true))
+      this.host_abyssPrivate.follow(updated, nextSegmentDate);
   }
 
   private acceptsCommit_abyssPrivate(

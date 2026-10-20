@@ -5647,7 +5647,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       }
       await flushMicrotasks();
 
-      expect(execute).toHaveBeenCalledWith({
+      expect(execute.mock.calls[0]?.[0]).toEqual({
         type: 'shift-schedule',
         ref: original.ref,
         days: key === 'ArrowLeft' ? -1 : 1,
@@ -5894,6 +5894,8 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     const block = timedBlock(h.el);
     block.focus();
     press(block, 'ArrowRight');
+    await execute.mock.results[0]?.value;
+    // The receipt updates focus, then releasing its publication lease follows the new date.
     await Promise.resolve();
 
     expect(h.el.querySelector('.abyss-tg-day-column')?.getAttribute('data-tg-date')).toBe(tomorrow);

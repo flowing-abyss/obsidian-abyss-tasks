@@ -38,16 +38,16 @@ interface WeekLayerContext {
 }
 
 export class WeekTimeGridView extends BaseView {
-  private containerEl: HTMLElement | null = null;
-  private skeletonKey: string | null = null;
-  private gridHandles: HourGridHandles | null = null;
-  private visibleDates: string[] = [];
-  private md = new Component();
-  private nowLineIntervalId: number | null = null;
-  private readonly timedInteractions = createTimedInteractionOwner();
-  private readonly spanInteractions = createSpanInteractionOwner();
+  private containerEl_abyssPrivate: HTMLElement | null = null;
+  private skeletonKey_abyssPrivate: string | null = null;
+  private gridHandles_abyssPrivate: HourGridHandles | null = null;
+  private visibleDates_abyssPrivate: string[] = [];
+  private md_abyssPrivate = new Component();
+  private nowLineIntervalId_abyssPrivate: number | null = null;
+  private readonly timedInteractions_abyssPrivate = createTimedInteractionOwner();
+  private readonly spanInteractions_abyssPrivate = createSpanInteractionOwner();
 
-  constructor(private readonly callbacks: TimeGridCallbacks) {
+  constructor(private readonly callbacks_abyssPrivate: TimeGridCallbacks) {
     super();
   }
 
@@ -58,50 +58,50 @@ export class WeekTimeGridView extends BaseView {
     ...options: [shouldScrollToNow?: boolean, preservedScrollTop?: number]
   ): void {
     const [shouldScrollToNow = true, preservedScrollTop] = options;
-    this.timedInteractions.disposeActive();
-    this.spanInteractions.disposeActive();
-    this.md.unload();
-    this.md = new Component();
-    this.md.load();
+    this.timedInteractions_abyssPrivate.disposeActive();
+    this.spanInteractions_abyssPrivate.disposeActive();
+    this.md_abyssPrivate.unload();
+    this.md_abyssPrivate = new Component();
+    this.md_abyssPrivate.load();
 
     // A re-render on the same instance (e.g. week change) must not stack a second interval on
     // top of one already registered from a prior render() without an intervening destroy().
-    this.clearNowLineInterval();
+    this.clearNowLineInterval_abyssPrivate();
 
-    this.containerEl = container;
-    const dates = this.resolveDates(config);
-    this.visibleDates = dates;
-    this.skeletonKey = this.buildSkeletonKey(dates);
+    this.containerEl_abyssPrivate = container;
+    const dates = this.resolveDates_abyssPrivate(config);
+    this.visibleDates_abyssPrivate = dates;
+    this.skeletonKey_abyssPrivate = this.buildSkeletonKey_abyssPrivate(dates);
 
     const handles = renderHourGrid(
       container,
       dates,
-      this.callbacks.onDropTime,
-      this.callbacks.onCreateAtTime,
-      this.callbacks.onDayHeaderClick,
+      this.callbacks_abyssPrivate.onDropTime,
+      this.callbacks_abyssPrivate.onCreateAtTime,
+      this.callbacks_abyssPrivate.onDayHeaderClick,
     );
     handles.rootEl.addClass('abyss-tg-root--week');
-    this.gridHandles = handles;
-    this.renderTaskLayers(tasks, dates, handles, true);
+    this.gridHandles_abyssPrivate = handles;
+    this.renderTaskLayers_abyssPrivate(tasks, dates, handles, true);
 
     const today = window.moment().format('YYYY-MM-DD');
     const containsToday = dates.includes(today);
-    this.scheduleInitialScroll(
+    this.scheduleInitialScroll_abyssPrivate(
       handles.gridRowEl,
       containsToday,
       shouldScrollToNow,
       preservedScrollTop,
     );
-    this.startNowLineRefresh(containsToday ? handles.nowLineEl : null);
+    this.startNowLineRefresh_abyssPrivate(containsToday ? handles.nowLineEl : null);
   }
 
-  private clearNowLineInterval(): void {
-    if (this.nowLineIntervalId === null) return;
-    window.clearInterval(this.nowLineIntervalId);
-    this.nowLineIntervalId = null;
+  private clearNowLineInterval_abyssPrivate(): void {
+    if (this.nowLineIntervalId_abyssPrivate === null) return;
+    window.clearInterval(this.nowLineIntervalId_abyssPrivate);
+    this.nowLineIntervalId_abyssPrivate = null;
   }
 
-  private scheduleInitialScroll(
+  private scheduleInitialScroll_abyssPrivate(
     grid: HTMLElement,
     containsToday: boolean,
     shouldScrollToNow: boolean,
@@ -122,31 +122,36 @@ export class WeekTimeGridView extends BaseView {
     }
   }
 
-  private startNowLineRefresh(nowLine: HTMLElement | null): void {
+  private startNowLineRefresh_abyssPrivate(nowLine: HTMLElement | null): void {
     if (nowLine === null) return;
-    this.nowLineIntervalId = window.setInterval(() => {
+    this.nowLineIntervalId_abyssPrivate = window.setInterval(() => {
       repositionNowLine(nowLine);
     }, NOW_LINE_REFRESH_MS);
   }
 
   override patch(container: HTMLElement, tasks: TaskSnapshot[], config: ResolvedConfig): void {
-    const dates = this.resolveDates(config);
+    const dates = this.resolveDates_abyssPrivate(config);
     if (
-      container !== this.containerEl ||
-      this.skeletonKey !== this.buildSkeletonKey(dates) ||
-      this.gridHandles === null
+      container !== this.containerEl_abyssPrivate ||
+      this.skeletonKey_abyssPrivate !== this.buildSkeletonKey_abyssPrivate(dates) ||
+      this.gridHandles_abyssPrivate === null
     ) {
       this.render(container, tasks, config);
       return;
     }
 
-    this.timedInteractions.disposeActive();
-    this.spanInteractions.disposeActive();
-    this.resetTaskComponent();
-    this.renderTaskLayers(tasks, this.visibleDates, this.gridHandles, false);
+    this.timedInteractions_abyssPrivate.disposeActive();
+    this.spanInteractions_abyssPrivate.disposeActive();
+    this.resetTaskComponent_abyssPrivate();
+    this.renderTaskLayers_abyssPrivate(
+      tasks,
+      this.visibleDates_abyssPrivate,
+      this.gridHandles_abyssPrivate,
+      false,
+    );
   }
 
-  private resolveDates(config: ResolvedConfig): string[] {
+  private resolveDates_abyssPrivate(config: ResolvedConfig): string[] {
     const week = resolveWeekStartPosition(
       config.startPosition,
       config.firstDayOfWeek,
@@ -157,27 +162,27 @@ export class WeekTimeGridView extends BaseView {
     );
   }
 
-  private buildSkeletonKey(dates: readonly string[]): string {
+  private buildSkeletonKey_abyssPrivate(dates: readonly string[]): string {
     return `${dates.join(',')}|today:${window.moment().format('YYYY-MM-DD')}`;
   }
 
-  private resetTaskComponent(): void {
-    this.md.unload();
-    this.md = new Component();
-    this.md.load();
+  private resetTaskComponent_abyssPrivate(): void {
+    this.md_abyssPrivate.unload();
+    this.md_abyssPrivate = new Component();
+    this.md_abyssPrivate.load();
   }
 
-  private renderTaskLayers(
+  private renderTaskLayers_abyssPrivate(
     tasks: TaskSnapshot[],
     dates: readonly string[],
     handles: HourGridHandles,
     installCellBindings: boolean,
   ): void {
     const occurrenceFor = calendarOccurrenceLookup(tasks);
-    const timedCallbacks = this.buildTimedCallbacks(occurrenceFor);
+    const timedCallbacks = this.buildTimedCallbacks_abyssPrivate(occurrenceFor);
     const spanTasks = tasks.filter((task) => task.planning.time === undefined);
-    const allDayCallbacks = this.buildAllDayCallbacks(spanTasks, dates, occurrenceFor);
-    const tagGroups = this.callbacks.tagGroups ?? [];
+    const allDayCallbacks = this.buildAllDayCallbacks_abyssPrivate(spanTasks, dates, occurrenceFor);
+    const tagGroups = this.callbacks_abyssPrivate.tagGroups ?? [];
     const spanRow = layoutVisibleSpans(spanTasks, dates).rows[0];
     if (spanRow === undefined) throw new Error('Week time-grid requires one visible span row');
     renderAllDaySpanLayer(
@@ -186,7 +191,7 @@ export class WeekTimeGridView extends BaseView {
       dates,
       allDayCallbacks,
       tagGroups,
-      this.spanInteractions,
+      this.spanInteractions_abyssPrivate,
       'timegrid',
     );
     const previewPositionFor = (
@@ -203,95 +208,98 @@ export class WeekTimeGridView extends BaseView {
       spanRow,
       previewPositionFor,
     };
-    for (const day of handles.days) this.renderDayLayers(day, context);
+    for (const day of handles.days) this.renderDayLayers_abyssPrivate(day, context);
   }
 
-  private buildTimedCallbacks(
+  private buildTimedCallbacks_abyssPrivate(
     occurrenceFor: ReturnType<typeof calendarOccurrenceLookup>,
   ): TimedBlockCallbacks {
     return {
       occurrenceFor,
-      app: this.callbacks.app,
-      component: this.md,
-      onTaskClick: this.callbacks.onTaskClick,
-      onTaskSelect: this.callbacks.onTaskSelect,
-      onTaskActivate: this.callbacks.onTaskActivate,
-      onShowParent: this.callbacks.onShowParent,
-      onKeyboardIntent: this.callbacks.onKeyboardIntent,
-      onTimeChange: this.callbacks.onTimeChange,
-      onDurationChange: this.callbacks.onDurationChange,
-      onTimedMove: this.callbacks.onTimedMove,
-      onTimedDuration: this.callbacks.onTimedDuration,
-      onTimedBoundary: this.callbacks.onTimedBoundary,
-      interactionOwner: this.timedInteractions,
-      onExtendToSpan: this.callbacks.onExtendToSpan,
-      onStartChange: this.callbacks.onStartChange,
-      onDueChange: this.callbacks.onDueChange,
-      onToggle: this.callbacks.onToggle,
-      dependenciesFor: this.callbacks.dependenciesFor,
-      onSetStatus: this.callbacks.onSetStatus,
-      onSetPriority: this.callbacks.onSetPriority,
-      ...(this.callbacks.forecastMenuOwner != null && {
-        forecastMenuOwner: this.callbacks.forecastMenuOwner,
+      app: this.callbacks_abyssPrivate.app,
+      component: this.md_abyssPrivate,
+      onTaskClick: this.callbacks_abyssPrivate.onTaskClick,
+      onTaskSelect: this.callbacks_abyssPrivate.onTaskSelect,
+      onTaskActivate: this.callbacks_abyssPrivate.onTaskActivate,
+      onShowParent: this.callbacks_abyssPrivate.onShowParent,
+      onKeyboardIntent: this.callbacks_abyssPrivate.onKeyboardIntent,
+      onTimeChange: this.callbacks_abyssPrivate.onTimeChange,
+      onDurationChange: this.callbacks_abyssPrivate.onDurationChange,
+      onTimedMove: this.callbacks_abyssPrivate.onTimedMove,
+      onTimedDuration: this.callbacks_abyssPrivate.onTimedDuration,
+      onTimedBoundary: this.callbacks_abyssPrivate.onTimedBoundary,
+      interactionOwner: this.timedInteractions_abyssPrivate,
+      onExtendToSpan: this.callbacks_abyssPrivate.onExtendToSpan,
+      onStartChange: this.callbacks_abyssPrivate.onStartChange,
+      onDueChange: this.callbacks_abyssPrivate.onDueChange,
+      onToggle: this.callbacks_abyssPrivate.onToggle,
+      dependenciesFor: this.callbacks_abyssPrivate.dependenciesFor,
+      onSetStatus: this.callbacks_abyssPrivate.onSetStatus,
+      onSetPriority: this.callbacks_abyssPrivate.onSetPriority,
+      ...(this.callbacks_abyssPrivate.forecastMenuOwner != null && {
+        forecastMenuOwner: this.callbacks_abyssPrivate.forecastMenuOwner,
       }),
-      ...(this.callbacks.onForecastClick != null && {
-        onForecastClick: this.callbacks.onForecastClick,
+      ...(this.callbacks_abyssPrivate.onForecastClick != null && {
+        onForecastClick: this.callbacks_abyssPrivate.onForecastClick,
       }),
-      ...(this.callbacks.onForecastContextMenu != null && {
-        onForecastContextMenu: this.callbacks.onForecastContextMenu,
+      ...(this.callbacks_abyssPrivate.onForecastContextMenu != null && {
+        onForecastContextMenu: this.callbacks_abyssPrivate.onForecastContextMenu,
       }),
-      ...(this.callbacks.interactionOwnership != null && {
-        interactionOwnership: this.callbacks.interactionOwnership,
+      ...(this.callbacks_abyssPrivate.interactionOwnership != null && {
+        interactionOwnership: this.callbacks_abyssPrivate.interactionOwnership,
       }),
-      statusRegistry: this.callbacks.statusRegistry,
+      statusRegistry: this.callbacks_abyssPrivate.statusRegistry,
     };
   }
 
-  private buildAllDayCallbacks(
+  private buildAllDayCallbacks_abyssPrivate(
     spanTasks: readonly TaskSnapshot[],
     dates: readonly string[],
     occurrenceFor: ReturnType<typeof calendarOccurrenceLookup>,
   ): AllDayCallbacks {
     return {
       occurrenceFor,
-      app: this.callbacks.app,
-      component: this.md,
-      onTaskClick: this.callbacks.onTaskClick,
-      onTaskSelect: this.callbacks.onTaskSelect,
-      onTaskActivate: this.callbacks.onTaskActivate,
-      onShowParent: this.callbacks.onShowParent,
-      onDrop: this.callbacks.onDrop,
-      onNativeDragStart: this.callbacks.onNativeDragStart,
-      onStartChange: this.callbacks.onStartChange,
-      onDueChange: this.callbacks.onDueChange,
-      onExtendToSpan: this.callbacks.onExtendToSpan,
-      onSpanMove: this.callbacks.onSpanMove,
-      onSpanBoundary: this.callbacks.onSpanBoundary,
-      spanInteractionOwner: this.spanInteractions,
+      app: this.callbacks_abyssPrivate.app,
+      component: this.md_abyssPrivate,
+      onTaskClick: this.callbacks_abyssPrivate.onTaskClick,
+      onTaskSelect: this.callbacks_abyssPrivate.onTaskSelect,
+      onTaskActivate: this.callbacks_abyssPrivate.onTaskActivate,
+      onShowParent: this.callbacks_abyssPrivate.onShowParent,
+      onDrop: this.callbacks_abyssPrivate.onDrop,
+      onNativeDragStart: this.callbacks_abyssPrivate.onNativeDragStart,
+      onStartChange: this.callbacks_abyssPrivate.onStartChange,
+      onDueChange: this.callbacks_abyssPrivate.onDueChange,
+      onExtendToSpan: this.callbacks_abyssPrivate.onExtendToSpan,
+      onSpanMove: this.callbacks_abyssPrivate.onSpanMove,
+      onSpanBoundary: this.callbacks_abyssPrivate.onSpanBoundary,
+      spanInteractionOwner: this.spanInteractions_abyssPrivate,
       spanPreviewLayoutFor: (task, planning) =>
         layoutVisibleSpansWithReplacement(spanTasks, dates, task, planning),
-      onToggle: this.callbacks.onToggle,
-      dependenciesFor: this.callbacks.dependenciesFor,
-      onSetStatus: this.callbacks.onSetStatus,
-      onSetPriority: this.callbacks.onSetPriority,
-      ...(this.callbacks.forecastMenuOwner != null && {
-        forecastMenuOwner: this.callbacks.forecastMenuOwner,
+      onToggle: this.callbacks_abyssPrivate.onToggle,
+      dependenciesFor: this.callbacks_abyssPrivate.dependenciesFor,
+      onSetStatus: this.callbacks_abyssPrivate.onSetStatus,
+      onSetPriority: this.callbacks_abyssPrivate.onSetPriority,
+      ...(this.callbacks_abyssPrivate.forecastMenuOwner != null && {
+        forecastMenuOwner: this.callbacks_abyssPrivate.forecastMenuOwner,
       }),
-      ...(this.callbacks.onForecastClick != null && {
-        onForecastClick: this.callbacks.onForecastClick,
+      ...(this.callbacks_abyssPrivate.onForecastClick != null && {
+        onForecastClick: this.callbacks_abyssPrivate.onForecastClick,
       }),
-      ...(this.callbacks.onForecastContextMenu != null && {
-        onForecastContextMenu: this.callbacks.onForecastContextMenu,
+      ...(this.callbacks_abyssPrivate.onForecastContextMenu != null && {
+        onForecastContextMenu: this.callbacks_abyssPrivate.onForecastContextMenu,
       }),
-      ...(this.callbacks.interactionOwnership != null && {
-        interactionOwnership: this.callbacks.interactionOwnership,
+      ...(this.callbacks_abyssPrivate.interactionOwnership != null && {
+        interactionOwnership: this.callbacks_abyssPrivate.interactionOwnership,
       }),
-      statusRegistry: this.callbacks.statusRegistry,
-      onCreateAtDate: this.callbacks.onCreateAtDate,
+      statusRegistry: this.callbacks_abyssPrivate.statusRegistry,
+      onCreateAtDate: this.callbacks_abyssPrivate.onCreateAtDate,
     };
   }
 
-  private renderDayLayers(day: HourGridHandles['days'][number], context: WeekLayerContext): void {
+  private renderDayLayers_abyssPrivate(
+    day: HourGridHandles['days'][number],
+    context: WeekLayerContext,
+  ): void {
     const { timed, timedSpans, plain, deadlines } = bucketTasksForDate(context.tasks, day.date);
     if (!context.installCellBindings) {
       day.hourColumnEl
@@ -356,13 +364,13 @@ export class WeekTimeGridView extends BaseView {
   }
 
   destroy(): void {
-    this.timedInteractions.disposeActive();
-    this.spanInteractions.disposeActive();
-    this.containerEl = null;
-    this.skeletonKey = null;
-    this.gridHandles = null;
-    this.visibleDates = [];
-    this.md.unload();
-    this.clearNowLineInterval();
+    this.timedInteractions_abyssPrivate.disposeActive();
+    this.spanInteractions_abyssPrivate.disposeActive();
+    this.containerEl_abyssPrivate = null;
+    this.skeletonKey_abyssPrivate = null;
+    this.gridHandles_abyssPrivate = null;
+    this.visibleDates_abyssPrivate = [];
+    this.md_abyssPrivate.unload();
+    this.clearNowLineInterval_abyssPrivate();
   }
 }

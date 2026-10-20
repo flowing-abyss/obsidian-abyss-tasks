@@ -1225,7 +1225,7 @@ describe('renderTimedBlocksForDay', () => {
     expect(track).toContain('pointer-events: none');
   });
 
-  it('renders all four explicit resize edges with 10px targets and 2px local grips', () => {
+  it('renders four distinct resize edges with adaptive time targets and local grips', () => {
     const container = freshContainer();
     renderTimedBlocksForDay(
       container,
@@ -1249,7 +1249,7 @@ describe('renderTimedBlocksForDay', () => {
         .map((handle) => handle.dataset['resizeEdge'])
         .sort((left, right) => (left ?? '').localeCompare(right ?? '')),
     ).toEqual(['due-date', 'duration', 'start-date', 'start-time']);
-    expect(declarationsFor('.abyss-tg-resize-handle')).toMatch(/height\s*:\s*10px/u);
+    expect(declarationsFor('.abyss-tg-resize-handle')).toMatch(/height\s*:\s*min\(10px,\s*25%\)/u);
     expect(declarationsFor('.abyss-tg-resize-handle::after')).toMatch(/height\s*:\s*2px/u);
     expect(declarationsFor('.abyss-tg-span-edge')).toMatch(/width\s*:\s*10px/u);
     expect(declarationsFor('.abyss-tg-span-edge::after')).toMatch(/width\s*:\s*2px/u);

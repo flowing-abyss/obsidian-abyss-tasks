@@ -1036,7 +1036,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   position: absolute;
   left: 0;
   right: 0;
-  height: 10px;
+  height: min(10px, 25%);
   z-index: 6;
   cursor: ns-resize;
   touch-action: none;
@@ -1055,7 +1055,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   position: absolute;
   left: 25%;
   right: 25%;
-  top: 4px;
+  top: calc(50% - 1px);
   height: 2px;
   border-radius: 1px;
   background: var(--abyss-tag-text-color, var(--text-normal));
