@@ -533,9 +533,14 @@ involved column widths; clear column interiors select their own date regardless 
 Time selection retains the current five-minute snap bucket within three quarters of a step, so
 small reversals at a rounding boundary do not flicker while every slot center remains reachable.
 Resize limits retain their pre-clamp snap bucket, preserving adjacent off-grid endpoints. Date and
-time preferences are independent, and date-only handles ignore vertical drift. Invalid or ambiguous
-hits and original/no-op targets clear the preview; cleared previews cannot restore an earlier target.
-All decisions use current geometry, and ancestor scrolling recalculates without a prior preference.
+time preferences are independent, and date-only handles ignore vertical drift. A timed session also
+retains the pointer sample that directly resolved its displayed target. If a later sample has no
+target but stays within twelve CSS pixels on the gesture's relevant axes, the session keeps that
+preview only when resolving the retained sample against current geometry still proves the same
+target. Tolerated misses do not advance the retained sample. A new valid target takes precedence;
+a larger miss clears the preview and cannot restore an earlier target. Stationary clicks never
+acquire this fallback. Explicit cancellation still disposes the session. Ancestor scrolling
+recalculates without either preference.
 Shared span geometry keeps strict hit selection unless the timed session supplies a current target.
 CalendarCommands ignores malformed date/time/duration input during command construction and lets
 unexpected execution failures reach the existing UI action boundary. Retained presentation never

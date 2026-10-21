@@ -37,6 +37,32 @@ export type TimedBoundaryTarget =
 type TimedPreviewTarget =
   Readonly<TimedDragTarget> | Readonly<TimedVerticalResizeTarget> | Readonly<TimedBoundaryTarget>;
 
+const DROP_ACCEPTANCE_PX = 12;
+
+function samePreviewTarget(left: TimedPreviewTarget, right: TimedPreviewTarget): boolean {
+  if ('destination' in left && 'destination' in right)
+    return [
+      left.destination === right.destination,
+      left.date === right.date,
+      left.startMinutes === right.startMinutes,
+      left.dayDelta === right.dayDelta,
+    ].every(Boolean);
+  if ('edge' in left && 'edge' in right)
+    return [
+      left.edge === right.edge,
+      left.startMinutes === right.startMinutes,
+      left.durationMinutes === right.durationMinutes,
+      left.endMinutes === right.endMinutes,
+    ].every(Boolean);
+  if ('boundary' in left && 'boundary' in right)
+    return [
+      left.boundary === right.boundary,
+      left.date === right.date,
+      left.dayDelta === right.dayDelta,
+    ].every(Boolean);
+  return false;
+}
+
 export interface TimedInteractionOwner {
   begin(dispose: () => void): void;
   end(dispose: () => void): void;
@@ -591,6 +617,7 @@ class TimedInteractionSession {
   private disposed_abyssPrivate = false;
   private pointerReleased_abyssPrivate = false;
   private lastPointer_abyssPrivate: PointerEvent;
+  private acceptedPointer_abyssPrivate: PointerEvent | undefined;
 
   constructor(private readonly input: TimedSessionInput) {
     this.lastPointer_abyssPrivate = input.startEvent;
@@ -661,18 +688,42 @@ class TimedInteractionSession {
   ): void {
     if (this.disposed_abyssPrivate || pointer.pointerId !== this.input.startEvent.pointerId) return;
     this.lastPointer_abyssPrivate = pointer;
-    const target = this.resolver_abyssPrivate.resolve(
+    const previous = preferCurrent ? this.latest_abyssPrivate : undefined;
+    const resolved = this.resolver_abyssPrivate.resolve(
       this.input.kind,
       pointer,
       columns,
-      preferCurrent ? this.latest_abyssPrivate : undefined,
+      previous,
     );
+    const target = resolved ?? this.nearbyPreview_abyssPrivate(pointer, columns, previous);
+    // A tolerated miss must not advance the anchor and walk acceptance out of bounds.
+    if (resolved !== undefined) this.acceptedPointer_abyssPrivate = pointer;
+    else if (target === undefined) this.acceptedPointer_abyssPrivate = undefined;
     this.latest_abyssPrivate = target;
     if (target == null) {
       this.renderer_abyssPrivate.clear();
       return;
     }
     this.renderer_abyssPrivate.render(this.input.kind, target);
+  }
+
+  private nearbyPreview_abyssPrivate(
+    pointer: PointerEvent,
+    columns: readonly MeasuredColumn[],
+    previous: TimedPreviewTarget | undefined,
+  ): TimedPreviewTarget | undefined {
+    const anchor = this.acceptedPointer_abyssPrivate;
+    if (anchor === undefined || previous === undefined) return undefined;
+    const { kind } = this.input;
+    const nearX = Math.abs(pointer.clientX - anchor.clientX) <= DROP_ACCEPTANCE_PX;
+    const nearY = Math.abs(pointer.clientY - anchor.clientY) <= DROP_ACCEPTANCE_PX;
+    let nearby = nearX;
+    if (kind === 'move') nearby = nearX && nearY;
+    else if (kind === 'duration' || kind === 'start-time') nearby = nearY;
+    if (!nearby) return undefined;
+    // Current geometry must still prove the shown target; a stale preview grants no fallback.
+    const current = this.resolver_abyssPrivate.resolve(kind, anchor, columns, previous);
+    return current !== undefined && samePreviewTarget(previous, current) ? previous : undefined;
   }
 
   private commit_abyssPrivate(target: TimedPreviewTarget): void | Promise<void> {

@@ -208,6 +208,59 @@ const dates = (root: HTMLElement) =>
     ...root.querySelectorAll<HTMLElement>('.abyss-tg-block[data-abyss-task-file="calendar.md"]'),
   ].map((block) => block.dataset['tgSegmentDate']);
 
+it.each([false, true])(
+  'persists two imprecise pointer edits and a key while the first receipt waits (child=%s)',
+  async (child) => {
+    const h = await setup('today', child);
+    const gate = deferred<void>();
+    h.execute.mockImplementationOnce(async (...args) => {
+      await gate.promise;
+      return h.application.tasks.execute(...args);
+    });
+    const gesture = (resize: boolean) => {
+      const block = expectDefined(h.root.querySelector<HTMLElement>('.abyss-tg-block'));
+      const day = expectDefined(block.closest<HTMLElement>('.abyss-tg-day-column'));
+      const hour = expectDefined(block.closest<HTMLElement>('.abyss-tg-hour-column'));
+      day.getBoundingClientRect = hour.getBoundingClientRect = () => new DOMRect(0, 100, 100, 1152);
+      const top = 100 + Number.parseFloat(block.style.top);
+      const height = Number.parseFloat(block.style.height);
+      block.getBoundingClientRect = () => new DOMRect(0, top, 100, height);
+      const handle = resize
+        ? expectDefined(block.querySelector<HTMLElement>('[data-resize-edge="duration"]'))
+        : block;
+      const y = top + (resize ? height - 1 : 12);
+      const event = (type: string, clientY: number) =>
+        new PointerEvent(type, {
+          bubbles: true,
+          clientX: 25,
+          clientY,
+          pointerId: 105,
+        });
+      handle.dispatchEvent(event('pointerdown', y));
+      window.dispatchEvent(event('pointermove', y + 8));
+      window.dispatchEvent(event('pointermove', y));
+      window.dispatchEvent(event('pointerup', y));
+    };
+    try {
+      gesture(false);
+      expect(h.root.querySelector('.abyss-tg-block')?.textContent).toContain('09:10–10:10');
+      gesture(true);
+      const pending = expectDefined(h.root.querySelector<HTMLElement>('.abyss-tg-block'));
+      expect(pending.textContent).toContain('09:10–10:20');
+      pending.focus();
+      pending.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    } finally {
+      gate.resolve();
+      await flushMicrotasks();
+    }
+    expect(h.execute).toHaveBeenCalledTimes(3);
+    expect(h.current().planning).toMatchObject({ time: '09:15', duration: 70 });
+    const file = expectDefined(h.app.vault.getFileByPath('calendar.md'));
+    expect(await h.app.vault.read(file)).toContain('⏰ 09:15 ⏱️ 1h10m');
+    expect(h.root.querySelector('.abyss-calendar-preview')).toBeNull();
+  },
+);
+
 describe('timed date pointer persistence', () => {
   it.each(['start', 'create-span'] as const)(
     'preserves authored overnight duration on %s date resize',
