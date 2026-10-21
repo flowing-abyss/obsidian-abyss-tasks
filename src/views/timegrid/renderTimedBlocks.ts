@@ -528,7 +528,7 @@ function createBoundaryHandles(input: TimedBlockControlsInput): BoundaryHandleBi
     occurrence.kind === 'materialized'
       ? occurrence.occupied.kind === 'interval'
       : task.planning.start != null && task.planning.due != null;
-  if (isSpan && String(task.planning.start) === options.date)
+  if (String(isSpan ? task.planning.start : task.planning.due) === options.date)
     handles.push({ element: createBoundaryHandle(block, 'left', 'start'), boundary: 'start' });
   if (isSpan && String(task.planning.due) === options.date)
     handles.push({ element: createBoundaryHandle(block, 'right', 'due'), boundary: 'due' });

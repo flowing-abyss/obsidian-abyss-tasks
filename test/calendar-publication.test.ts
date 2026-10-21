@@ -3,7 +3,7 @@ import { AppState } from '../src/app/AppState';
 import { CalendarMode, type CalendarModeHost } from '../src/panels/calendar/CalendarMode';
 import type { CalViewType } from '../src/panels/calendar/calendarViewType';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import { localDate, localTime, type TaskApplicationApi } from '../src/tasks';
+import { durationMinutes, localDate, localTime, type TaskApplicationApi } from '../src/tasks';
 import { noInteractionOwnership } from '../src/ui/interactionOwnership';
 import { closeStatusPopovers } from '../src/ui/statusMenu';
 import { attachCalendarNativeDrag } from '../src/views/calendarNativeDrag';
@@ -29,9 +29,14 @@ afterEach(() => {
   for (const cleanup of cleanups.splice(0).reverse()) cleanup();
 });
 
-async function setup(view: CalViewType = 'today', child = false, timing = '⏰ 09:00 ⏱️ 1h') {
+async function setup(
+  view: CalViewType = 'today',
+  child = false,
+  timing = '⏰ 09:00 ⏱️ 1h',
+  due = '2026-10-19',
+) {
   vi.spyOn(Date, 'now').mockReturnValue(new Date(2026, 9, 19, 12).getTime());
-  const line = `- [ ] Target 📅 2026-10-19 ${timing}`.trim();
+  const line = `- [ ] Target 📅 ${due} ${timing}`.trim();
   const app = await createAppWithFiles({
     'calendar.md': child ? `- [ ] Parent\n  ${line}\n  - [ ] Sibling` : line,
     'other.md': '- [ ] Other',
@@ -147,7 +152,7 @@ function startNativeDrag(source: HTMLElement): boolean {
   return source.dispatchEvent(event);
 }
 
-function timedMove(root: HTMLElement) {
+function timedMove(root: HTMLElement, date?: string, boundary?: 'start') {
   let gridTop = 100;
   for (const day of root.querySelectorAll<HTMLElement>('.abyss-tg-day-column')) {
     const left = (Number(day.dataset['tgDate']?.slice(-2)) - 19) * 100;
@@ -155,11 +160,22 @@ function timedMove(root: HTMLElement) {
     day.getBoundingClientRect = hour.getBoundingClientRect = () =>
       new DOMRect(left, gridTop, 100, 1152);
   }
-  const block = expectDefined(root.querySelector<HTMLElement>('.abyss-tg-block'));
+  const block = expectDefined(
+    root.querySelector<HTMLElement>(
+      date === undefined
+        ? '.abyss-tg-block'
+        : `.abyss-tg-block[data-abyss-task-file="calendar.md"][data-tg-segment-date="${date}"]`,
+    ),
+  );
   const hour = expectDefined(block.closest<HTMLElement>('.abyss-tg-hour-column'));
-  block.getBoundingClientRect = () => new DOMRect(0, gridTop + 432, 100, 48);
-  block.setPointerCapture = vi.fn();
-  block.releasePointerCapture = vi.fn();
+  const left = date === undefined ? 0 : (Number(date.slice(-2)) - 19) * 100;
+  block.getBoundingClientRect = () => new DOMRect(left, gridTop + 432, 100, 48);
+  const source =
+    boundary !== undefined
+      ? expectDefined(block.querySelector<HTMLElement>(`[data-boundary="${boundary}"]`))
+      : block;
+  source.setPointerCapture = vi.fn();
+  source.releasePointerCapture = vi.fn();
   const pointer = (type: string, x = 25, y = 552) =>
     new PointerEvent(type, {
       bubbles: true,
@@ -170,7 +186,7 @@ function timedMove(root: HTMLElement) {
       clientY: y,
       button: 0,
     });
-  block.dispatchEvent(pointer('pointerdown'));
+  source.dispatchEvent(pointer('pointerdown', left + 25));
   return {
     block,
     hour,
@@ -185,6 +201,120 @@ function timedMove(root: HTMLElement) {
     },
   };
 }
+
+describe('timed date pointer persistence', () => {
+  const dates = (root: HTMLElement) =>
+    [
+      ...root.querySelectorAll<HTMLElement>('.abyss-tg-block[data-abyss-task-file="calendar.md"]'),
+    ].map((block) => block.dataset['tgSegmentDate']);
+
+  it.each([false, true])(
+    'keeps consecutive center moves left after remount (child=%s)',
+    async (child) => {
+      const h = await setup('week', child, undefined, '2026-10-22');
+      const file = expectDefined(h.app.vault.getFileByPath('calendar.md'));
+      for (const [from, to] of [
+        ['2026-10-22', '2026-10-21'],
+        ['2026-10-21', '2026-10-20'],
+      ] as const) {
+        const gesture = timedMove(h.root, from);
+        const x = (Number(to.slice(-2)) - 19) * 100 + 50;
+        gesture.move(x, 552);
+        gesture.finish(x, 552);
+        await flushMicrotasks();
+        expect(h.current().planning).toEqual({ due: to, time: '09:00', duration: 60 });
+        expect(await h.app.vault.read(file)).toContain(`📅 ${to}`);
+        h.mode.render(h.root);
+        expect(dates(h.root)).toEqual([to]);
+      }
+      expect(h.host.openCapture).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([false, true])(
+    'persists left extension, further extension and shrink (child=%s)',
+    async (child) => {
+      const h = await setup('week', child, undefined, '2026-10-22');
+      const file = expectDefined(h.app.vault.getFileByPath('calendar.md'));
+      const other = expectDefined(h.application.index.list({ filePath: 'other.md' })[0]);
+      await h.application.tasks.execute({
+        type: 'patch',
+        target: { type: 'task', ref: other.ref },
+        patch: {
+          due: { type: 'set', value: localDate('2026-10-21') },
+          time: { type: 'set', value: localTime('09:00') },
+          duration: { type: 'set', value: durationMinutes(60) },
+        },
+      });
+      await flushMicrotasks();
+      const write = deferred<void>();
+      h.execute.mockImplementationOnce(async (command) => {
+        await write.promise;
+        return h.application.tasks.execute(command);
+      });
+      const first = timedMove(h.root, '2026-10-22', 'start');
+      first.move(250, 552);
+      const preview = expectDefined(
+        h.root.querySelector<HTMLElement>('.abyss-tg-boundary-preview'),
+      );
+      expect(preview.style.width).toBe('50%');
+      first.finish(250, 552);
+      await h.publish();
+      expect(preview.isConnected).toBe(true);
+      expect(h.current().planning.start).toBeUndefined();
+      write.resolve();
+      await flushMicrotasks();
+      for (const [start, occupied] of [
+        ['2026-10-21', ['2026-10-21', '2026-10-22']],
+        ['2026-10-20', ['2026-10-20', '2026-10-21', '2026-10-22']],
+        ['2026-10-22', ['2026-10-22']],
+      ] as const) {
+        if (start !== '2026-10-21') {
+          const gesture = timedMove(h.root, String(h.current().planning.start), 'start');
+          const x = (Number(start.slice(-2)) - 19) * 100 + 50;
+          gesture.move(x, 552);
+          gesture.finish(x, 552);
+          await flushMicrotasks();
+        }
+        expect(h.current().planning).toEqual({
+          start,
+          due: '2026-10-22',
+          time: '09:00',
+          duration: 60,
+        });
+        const persisted = await h.app.vault.read(file);
+        expect(persisted).toContain(`🛫 ${start}`);
+        expect(persisted).toContain('📅 2026-10-22');
+        if (child) expect(persisted).toContain('- [ ] Parent\n  - [ ] Target');
+        h.mode.render(h.root);
+        expect(dates(h.root)).toEqual(occupied);
+        if (start === '2026-10-21') {
+          expect(
+            h.root.querySelector<HTMLElement>(
+              '.abyss-tg-block[data-abyss-task-file="calendar.md"][data-tg-segment-date="2026-10-21"]',
+            )?.style.width,
+          ).toBe(preview.style.width);
+        }
+        expect(h.root.querySelector('.abyss-tg-boundary-preview')).toBeNull();
+      }
+      expect(h.host.openCapture).not.toHaveBeenCalled();
+    },
+  );
+
+  it('does not add a start boundary to a scheduled block with a separate deadline', async () => {
+    const h = await setup('week', false, '⏰ 09:00 ⏱️ 1h ⏳ 2026-10-21', '2026-10-22');
+    expect(dates(h.root)).toEqual(['2026-10-21']);
+    expect(h.root.querySelector('.abyss-tg-block [data-boundary="start"]')).toBeNull();
+  });
+
+  it('keeps forecast date boundaries unavailable', async () => {
+    const h = await setup('week', false, '⏰ 09:00 ⏱️ 1h 🔁 every day');
+    const future = expectDefined(
+      h.root.querySelector('.abyss-tg-block[data-tg-segment-date="2026-10-20"]'),
+    );
+    expect(future.querySelector('[data-boundary]')).toBeNull();
+  });
+});
 
 describe('timed keyboard publication', () => {
   it('applies an end resize started during a keyboard write to that owned successor', async () => {

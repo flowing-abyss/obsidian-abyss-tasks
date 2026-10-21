@@ -239,7 +239,7 @@ function applyPreviewPacking(
   const source = calendarTaskWithPlanning(
     binding.task,
     planning,
-    'boundary' in target && target.boundary === 'create-span' ? 'create-span' : undefined,
+    'boundary' in target ? 'create-span' : undefined,
   );
   const positioned = binding.previewPositionFor(source, planning, date);
   if (positioned === undefined) return;
