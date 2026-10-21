@@ -38,6 +38,115 @@ function mockPopoverRect(width: number, height: number): void {
 }
 
 describe('showDatePickerPopover', () => {
+  it.each([undefined, ''])(
+    'opens the calendar for an empty date (%s) without picking',
+    (initialValue) => {
+      vi.useFakeTimers();
+      const { anchor, boundary, owner } = host();
+      const onPick = vi.fn();
+      const close = showDatePickerPopover({
+        owner,
+        anchor,
+        boundary,
+        onPick,
+        ...(initialValue === undefined ? {} : { initialValue }),
+      });
+      const input = expectDefined(owner.querySelector<HTMLInputElement>('input[type="date"]'));
+      const showPicker = vi.fn(function (this: HTMLInputElement) {
+        expect(this).toBe(input);
+        expect(owner.ownerDocument.activeElement).toBe(input);
+      });
+      Object.defineProperty(input, 'showPicker', { value: showPicker });
+
+      vi.runAllTimers();
+
+      expect(showPicker).toHaveBeenCalledOnce();
+      expect(input.value).toBe('');
+      expect(onPick).not.toHaveBeenCalled();
+      close();
+      expect(onPick).not.toHaveBeenCalled();
+      owner.remove();
+    },
+  );
+
+  it('keeps a populated date editable without automatically opening its calendar', () => {
+    vi.useFakeTimers();
+    const { anchor, boundary, owner } = host();
+    const close = showDatePickerPopover({
+      owner,
+      anchor,
+      boundary,
+      initialValue: '2031-02-12',
+      onPick: vi.fn(),
+    });
+    const input = expectDefined(owner.querySelector<HTMLInputElement>('input[type="date"]'));
+    const showPicker = vi.fn();
+    Object.defineProperty(input, 'showPicker', { value: showPicker });
+
+    vi.runAllTimers();
+
+    expect(showPicker).not.toHaveBeenCalled();
+    expect(input.value).toBe('2031-02-12');
+    expect(owner.ownerDocument.activeElement).toBe(input);
+    close();
+    owner.remove();
+  });
+
+  it('does not open a calendar after the popover is dismissed before focus', () => {
+    vi.useFakeTimers();
+    const { anchor, boundary, owner } = host();
+    const close = showDatePickerPopover({ owner, anchor, boundary, onPick: vi.fn() });
+    const input = expectDefined(owner.querySelector<HTMLInputElement>('input[type="date"]'));
+    const showPicker = vi.fn();
+    Object.defineProperty(input, 'showPicker', { value: showPicker });
+
+    close();
+    vi.runAllTimers();
+
+    expect(showPicker).not.toHaveBeenCalled();
+    expect(input.isConnected).toBe(false);
+    owner.remove();
+  });
+
+  it.each(['unavailable', 'denied'] as const)(
+    'preserves manual entry when the native picker is %s',
+    (availability) => {
+      vi.useFakeTimers();
+      const { anchor, boundary, owner } = host();
+      const onPick = vi.fn();
+      showDatePickerPopover({ owner, anchor, boundary, onPick });
+      const input = expectDefined(owner.querySelector<HTMLInputElement>('input[type="date"]'));
+      const failure = new DOMException('User activation required', 'NotAllowedError');
+      const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+      Object.defineProperty(input, 'showPicker', {
+        value:
+          availability === 'unavailable'
+            ? undefined
+            : () => {
+                throw failure;
+              },
+      });
+
+      vi.runAllTimers();
+
+      expect(input.isConnected).toBe(true);
+      expect(owner.ownerDocument.activeElement).toBe(input);
+      if (availability === 'denied')
+        expect(debug).toHaveBeenCalledWith(
+          '[abyss-tasks] Native date picker unavailable; date input remains editable.',
+          failure,
+        );
+      else expect(debug).not.toHaveBeenCalled();
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: '2', bubbles: true }));
+      input.value = '2031-02-12';
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      expect(onPick).not.toHaveBeenCalled();
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      expect(onPick).toHaveBeenCalledExactlyOnceWith('2031-02-12', { returnFocus: true });
+      owner.remove();
+    },
+  );
+
   it('acquires one blocking owner and releases it idempotently on replacement and close', () => {
     vi.useFakeTimers();
     const { anchor, boundary, owner } = host();

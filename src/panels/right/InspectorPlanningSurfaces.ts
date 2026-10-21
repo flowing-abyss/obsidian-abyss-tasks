@@ -25,6 +25,7 @@ import {
 import { anchoredPlacement, type AnchoredPlacementInput } from '../../ui/anchoredPlacement';
 import { isImeOwnedEvent } from '../../ui/ime';
 import { type InteractionOwnershipPort } from '../../ui/interactionOwnership';
+import { focusOpeningDateInput } from '../../ui/nativeDateInput';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import type { OwnedTaskSelectionProof } from '../../ui/ownedTaskSelection';
 import {
@@ -976,7 +977,7 @@ export class InspectorPlanningSurfaces {
           this.hasFocusedTypedInputFor(taskNodeRef(current)) &&
           this.#canFocusOpeningInput(input, anchor)
         )
-          input.focus();
+          focusOpeningDateInput(input);
       } finally {
         if (this.#typedInput === entry) {
           entry.openingFocusPending = false;

@@ -1,6 +1,7 @@
 import { anchoredPlacement } from './anchoredPlacement';
 import { isImeOwnedEvent } from './ime';
 import { noInteractionOwnership, type InteractionOwnershipPort } from './interactionOwnership';
+import { focusOpeningDateInput } from './nativeDateInput';
 import {
   bindSegmentedInputCommit,
   isUsableDateInputValue,
@@ -173,7 +174,7 @@ class DatePickerLifecycle {
 
   private readonly focusInput_abyssPrivate = (): void => {
     this.focusTimer_abyssPrivate = undefined;
-    if (!this.closed_abyssPrivate) this.input_abyssPrivate.focus();
+    if (!this.closed_abyssPrivate) focusOpeningDateInput(this.input_abyssPrivate);
   };
 
   private readonly cleanup_abyssPrivate = (restoreFocus = true): void => {

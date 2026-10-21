@@ -851,6 +851,49 @@ describe('CenterPanel task date context menus', () => {
     }
   });
 
+  it.each([undefined, '2026-07-30'])(
+    'opens Set date calendar only when the due date is empty (%s)',
+    (due) => {
+      vi.useFakeTimers();
+      const items = captureMenu();
+      const selected =
+        due === undefined
+          ? first
+          : { ...first, planning: { ...first.planning, due: localDate(due) } };
+      const { el, execute, panel } = makeCenter([selected]);
+      activeDocument.body.append(el);
+      try {
+        const card = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
+        openMenu(card);
+        expectDefined(expectDefined(items.find((item) => item.title__ === 'Set date…')).onClick__)(
+          new MouseEvent('click'),
+        );
+        const input = expectDefined(
+          el.querySelector<HTMLInputElement>('.abyss-date-picker-popover input[type="date"]'),
+        );
+        const showPicker = vi.fn();
+        Object.defineProperty(input, 'showPicker', { value: showPicker });
+
+        vi.advanceTimersByTime(0);
+
+        expect(showPicker).toHaveBeenCalledTimes(due === undefined ? 1 : 0);
+        expect(input.value).toBe(due ?? '');
+        expect(execute).not.toHaveBeenCalled();
+        input.value = '2031-02-12';
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        expect(execute).toHaveBeenCalledOnce();
+        expect(execute.mock.calls[0]?.[0]).toEqual({
+          type: 'patch',
+          target: { type: 'task', ref: selected.ref },
+          patch: { due: { type: 'set', value: '2031-02-12' } },
+        });
+      } finally {
+        panel.destroy();
+        el.remove();
+      }
+    },
+  );
+
   it('orders Today, Tomorrow, Set date…, and Set tag… in the single menu', () => {
     const items = captureMenu();
     const { el } = makeCenter([first]);

@@ -146,6 +146,37 @@ function holdNextWrite(h: InspectorHarness, { outcome, dropSaveFocus }: HeldWrit
 }
 
 describe('inspector planning focus continuity', () => {
+  it.each([
+    ['due', '📅'],
+    ['start', '🛫'],
+    ['scheduled', '⏳'],
+  ] as const)(
+    'opens the empty %s calendar and saves only the selected date',
+    async (field, token) => {
+      const h = await hosted('- [ ] Current\n');
+      if (field === 'due') activate(dateChip(h));
+      else {
+        activate(control(h, '.abyss-chip-add-date'));
+        activate(addDateItem(h, field === 'start' ? '🛫 Start' : '⏳ Plan'));
+      }
+      const input = control<HTMLInputElement>(h, '.abyss-date-popover .abyss-date-input');
+      const showPicker = vi.fn(function (this: HTMLInputElement) {
+        expect(this).toBe(input);
+        expect(activeDocument.activeElement).toBe(input);
+      });
+      Object.defineProperty(input, 'showPicker', { value: showPicker });
+
+      await flushMicrotasks();
+
+      expect(showPicker).toHaveBeenCalledOnce();
+      expect(await h.read()).toBe('- [ ] Current\n');
+      change(input, '2031-02-12');
+      await flushMicrotasks();
+      expect(await h.read()).toBe(`- [ ] Current ${token} 2031-02-12\n`);
+      expect(h.el.querySelector('.abyss-date-popover')).toBeNull();
+    },
+  );
+
   const childPlain = '- [ ] Current #parent\n  - [ ] Child #child\n  - [ ] Sibling #sibling\n';
   const childTagged = childPlain.replace('Child #child', 'Child #child #added');
   const childCompleted = childPlain.replace('- [ ] Child', '- [x] Child');
