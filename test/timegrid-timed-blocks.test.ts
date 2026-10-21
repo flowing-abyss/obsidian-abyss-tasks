@@ -576,6 +576,55 @@ describe('Task 2 unified timed interaction contract', () => {
     },
   );
 
+  it.each([true, false])(
+    'moves a fractionally rounded block on release (terminal=%s)',
+    (terminal) => {
+      const { owner, columns } = timedGestureGrid();
+      const onTimedMove = vi.fn();
+      const t = task({
+        planning: {
+          ...(!terminal && { start: '2026-07-06' }),
+          due: terminal ? '2026-07-06' : '2026-07-08',
+          time: '09:00',
+          duration: 110,
+        },
+      });
+      renderTimedBlocksForDay(
+        columns[0].hour,
+        [t],
+        { ...callbacks(), onTimedMove, interactionOwner: owner },
+        [],
+        { date: '2026-07-06', terminal },
+      );
+      const block = expectDefined(columns[0].hour.querySelector<HTMLElement>('.abyss-tg-block'));
+      block.getBoundingClientRect = () => rect(0, 532, 100, 87.984375);
+      const press = () =>
+        block.dispatchEvent(
+          new PointerEvent('pointerdown', {
+            bubbles: true,
+            clientX: 25,
+            clientY: 544,
+            pointerId: 21,
+          }),
+        );
+      press();
+      window.dispatchEvent(
+        new PointerEvent('pointerup', { clientX: 25, clientY: 544, pointerId: 21 }),
+      );
+      expect(onTimedMove).not.toHaveBeenCalled();
+      press();
+      window.dispatchEvent(
+        new PointerEvent('pointerup', { clientX: 25, clientY: 592, pointerId: 21 }),
+      );
+      expect(onTimedMove).toHaveBeenCalledExactlyOnceWith(t, {
+        date: '2026-07-06',
+        startMinutes: 600,
+        dayDelta: 0,
+        destination: 'time-grid',
+      });
+    },
+  );
+
   it.each([
     { duration: 5, terminal: true },
     { duration: 15, terminal: false },

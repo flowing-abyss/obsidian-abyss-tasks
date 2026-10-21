@@ -42,6 +42,34 @@ const columns: readonly TimedDragColumn[] = [
 ];
 
 describe('resolveTimedDragTarget', () => {
+  it('accepts fractional rendered height without changing semantic duration', () => {
+    expect(
+      resolveTimedDragTarget(
+        { ...origin, durationMinutes: 110, renderedHeightMinutes: 109.98046875 },
+        { clientX: 150, clientY: 697 },
+        columns,
+      ),
+    ).toEqual({
+      date: localDate('2026-07-20'),
+      startMinutes: 570,
+      dayDelta: 0,
+      destination: 'time-grid',
+    });
+  });
+
+  it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY, 10])(
+    'rejects an invalid or out-of-grab rendered height of %s',
+    (renderedHeightMinutes) => {
+      expect(
+        resolveTimedDragTarget(
+          { ...origin, renderedHeightMinutes },
+          { clientX: 150, clientY: 697 },
+          columns,
+        ),
+      ).toBeUndefined();
+    },
+  );
+
   it('preserves the grab offset and snaps the target start to 15 minutes', () => {
     expect(resolveTimedDragTarget(origin, { clientX: 150, clientY: 697 }, columns)).toEqual({
       date: localDate('2026-07-20'),

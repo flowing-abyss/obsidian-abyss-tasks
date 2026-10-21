@@ -205,7 +205,7 @@ function validTimedDragOrigin(origin: TimedDragOrigin, renderedHeightMinutes: nu
     origin.durationMinutes > 0,
     origin.durationMinutes <= MINUTES_PER_DAY,
     Number.isFinite(renderedHeightMinutes),
-    renderedHeightMinutes >= origin.durationMinutes,
+    renderedHeightMinutes > 0,
     Number.isFinite(origin.grabOffsetMinutes),
     origin.grabOffsetMinutes >= 0,
     origin.grabOffsetMinutes <= renderedHeightMinutes,
