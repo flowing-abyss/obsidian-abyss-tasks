@@ -201,6 +201,26 @@ export function proveOwnedTaskSelection(
   return indexSelectionProof(current, before, command, rebuilt);
 }
 
+/** A public root planning receipt may rebase its line within the same file. */
+export function proveOwnedRootPlanningReceipt(
+  current: TaskSnapshot,
+  before: TaskSnapshot,
+  command: TaskCommand,
+): OwnedTaskSelectionProof | undefined {
+  if (
+    command.type !== 'patch' ||
+    command.target.type !== 'task' ||
+    !sameTaskNodeRef(command.target, taskNodeRef(before)) ||
+    before.ref.filePath !== current.ref.filePath ||
+    Object.keys(command.patch).some((key) => !PLANNING_FIELDS.has(key))
+  )
+    return undefined;
+  const fields = patchFields(before, current, command.patch);
+  return fields !== undefined && sameTaskTreeWithOwnedChanges(before, current, [], { fields })
+    ? indexSelectionProof(current, before, command, [current])
+    : undefined;
+}
+
 /** Root-scoped candidate address only; callers must still validate the complete reference. */
 export function taskNodeOccurrencePath(target: TaskNodeRef): string {
   const lines: number[] = [];

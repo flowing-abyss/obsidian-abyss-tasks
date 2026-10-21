@@ -140,7 +140,7 @@ describe('CalendarCommands timed gestures', () => {
       expect(h.lastCommand()).toMatchObject({
         target: { type: 'task', ref: current.ref },
         patch: {
-          time: { type: 'set', value: time },
+          ...(edge === 'start' && { time: { type: 'set', value: time } }),
           duration: { type: 'set', value: duration },
         },
       });
@@ -166,10 +166,13 @@ describe('CalendarCommands timed gestures', () => {
       previous,
     );
     expect(h.lastCommand()).toMatchObject({
-      type: 'move-time-slot',
-      ref: current.ref,
-      days: 1,
-      time: '10:15',
+      type: 'patch',
+      target: { type: 'task', ref: current.ref },
+      patch: {
+        start: { type: 'set', value: '2026-09-22' },
+        due: { type: 'set', value: '2026-09-24' },
+        time: { type: 'set', value: '10:15' },
+      },
     });
   });
 
@@ -188,7 +191,6 @@ describe('CalendarCommands timed gestures', () => {
       patch: {
         due: { type: 'set', value: '2026-09-21' },
         time: { type: 'clear' },
-        duration: { type: 'clear' },
       },
     });
     await h.commands.commitTimedMove(timed, {
@@ -217,7 +219,6 @@ describe('CalendarCommands timed gestures', () => {
       type: 'patch',
       target: { type: 'task', ref: timed.ref },
       patch: {
-        time: { type: 'set', value: '09:00' },
         duration: { type: 'set', value: 45 },
       },
     });
@@ -232,10 +233,9 @@ describe('CalendarCommands timed gestures', () => {
       dayDelta: 4,
     });
     expect(h.lastCommand()).toEqual({
-      type: 'set-span-boundary',
-      ref: span.ref,
-      boundary: 'due',
-      date: '2026-09-25',
+      type: 'patch',
+      target: { type: 'task', ref: span.ref },
+      patch: { due: { type: 'set', value: '2026-09-25' } },
     });
     await h.commands.commitSpanMove(span, {
       grabbedDate: localDate('2026-09-20'),

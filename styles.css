@@ -1228,7 +1228,16 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   inset-inline: auto -5px;
 }
 
-/* Clipping roots keep the complete 10px target inside their box. */
+/* Overlapping timed blocks retain a movable center even at narrow widths. */
+.abyss-tg-block > .abyss-tg-span-edge {
+  width: min(10px, 25%);
+}
+
+.abyss-tg-block > .abyss-tg-span-edge::after {
+  inset-inline-start: calc(50% - 1px);
+}
+
+/* Clipping roots keep the complete target inside their box. */
 .abyss-tg-block > .abyss-tg-span-edge--right {
   inset-inline: auto 0;
 }

@@ -80,6 +80,10 @@ const privateOwners = new Set([
   'TimedBlockFocusRetention',
   // The keyboard queue exposes methods and hooks, never its mutable execution bookkeeping.
   'TimedBlockKeyboardQueue',
+  // Calendar editing owners expose commands/projection; their mutable source and DOM state stays private.
+  'CalendarEditQueue',
+  'CalendarPointerEdits',
+  'CalendarNativeDragContext',
   // The week view owns private DOM handles and callbacks, never reflected or persisted.
   'WeekTimeGridView',
   'TagPickerModal',

@@ -3,10 +3,13 @@ import {
   shiftLocalDate,
   taskNodeSourceLine,
   type TaskApplicationApi,
+  type TaskNodeRef,
   type TaskSnapshot,
 } from '../../tasks';
+import type { CalendarEditQueue } from '../../ui/calendarEditQueue';
 import { isRealmHTMLElement } from '../../ui/domRealm';
 import { presentTaskCommandResult } from '../../ui/taskCommandResult';
+import { renderedTaskNodeElements } from '../../ui/taskPresentationIdentity';
 import { TimedBlockKeyboardQueue } from '../../ui/timedBlockKeyboardQueue';
 import {
   calendarMutationTarget,
@@ -21,9 +24,12 @@ interface TimedBlockFocusLocator {
   readonly sequence: number;
   readonly queueSequence?: number;
   readonly originElement?: HTMLElement;
+  readonly suppressFollow?: boolean;
+  readonly noopTarget?: TaskNodeRef | undefined;
 }
 
 export interface TimedBlockFocusRetentionHost {
+  readonly editQueue?: CalendarEditQueue | undefined;
   /** Whether the centre panel currently shows the calendar (restorations and commits need it). */
   readonly isCalendarActive: () => boolean;
   /** The panel element of the last calendar render; null until the first render. */
@@ -33,11 +39,32 @@ export interface TimedBlockFocusRetentionHost {
   readonly follow: (updated: TaskSnapshot, nextSegmentDate: string | undefined) => void;
 }
 
+function shouldFollowCommit(
+  pending: TimedBlockFocusLocator,
+  intent: TimedBlockKeyboardIntent,
+  segmentChanged: boolean,
+): boolean {
+  return (
+    pending.suppressFollow !== true &&
+    [intent.type === 'shift-schedule', segmentChanged].includes(true)
+  );
+}
+
 function findTimedBlock(
   container: HTMLElement,
   locator: Pick<TimedBlockFocusLocator, 'filePath' | 'line' | 'segmentDate'>,
+  projectedOrigin?: HTMLElement,
 ): HTMLElement | undefined {
-  return Array.from(container.querySelectorAll<HTMLElement>('.abyss-tg-block')).find(
+  const blocks = Array.from(container.querySelectorAll<HTMLElement>('.abyss-tg-block'));
+  const sourceKey = projectedOrigin?.dataset['abyssTaskNodeRefKey'];
+  if (sourceKey !== undefined)
+    return blocks.find(
+      (block) =>
+        block.dataset['abyssTaskNodeRefKey'] === sourceKey &&
+        (locator.segmentDate === undefined ||
+          block.dataset['tgSegmentDate'] === locator.segmentDate),
+    );
+  return blocks.find(
     (block) =>
       block.dataset['abyssTaskFile'] === locator.filePath &&
       block.dataset['abyssTaskLine'] === String(locator.line) &&
@@ -73,7 +100,7 @@ function shiftFocusedSegmentDate(
   updated: TaskSnapshot,
 ): string | undefined {
   const date = pending.segmentDate;
-  if (!changed || date === undefined) return date;
+  if (!changed || date === undefined || pending.suppressFollow === true) return date;
   if (intent.type === 'extend-due') return clampFocusedSegmentDate(updated, date);
   if (intent.type !== 'shift-schedule') return date;
   try {
@@ -96,6 +123,7 @@ export class TimedBlockFocusRetention {
   private readonly committedSequences_abyssPrivate = new Set<number>();
   private nextFocusSequence_abyssPrivate = 0;
   private renderGeneration_abyssPrivate = 0;
+  private submittedProjection_abyssPrivate = false;
 
   constructor(
     tasks: TaskApplicationApi | undefined,
@@ -104,26 +132,37 @@ export class TimedBlockFocusRetention {
     this.queue_abyssPrivate =
       tasks == null
         ? null
-        : new TimedBlockKeyboardQueue(tasks, {
-            ...(host_abyssPrivate.holdPublication !== undefined && {
-              holdPublication: host_abyssPrivate.holdPublication,
-            }),
-            onCommitted: (task, intent, sequence, changed) => {
-              this.handleCommit_abyssPrivate(task, intent, sequence, changed);
-            },
-            onSettled: (_taskKey, sequence, summary) => {
-              this.handleSettled_abyssPrivate(sequence, summary.anyChanged, summary.sourceChanged);
-            },
-            onInvalidated: () => {
-              this.clearFocus_abyssPrivate();
-            },
-            present: (result) => {
-              presentTaskCommandResult(result);
-              if (result.type !== 'ok' || result.outcome.type !== 'task') {
+        : new TimedBlockKeyboardQueue(
+            tasks,
+            {
+              ...(host_abyssPrivate.holdPublication !== undefined && {
+                holdPublication: host_abyssPrivate.holdPublication,
+              }),
+              onCommitted: (task, intent, sequence, changed) => {
+                this.handleCommit_abyssPrivate(task, intent, sequence, changed);
+              },
+              onNoop: (task, sequence) => {
+                this.handleNoop_abyssPrivate(task, sequence);
+              },
+              onSettled: (_taskKey, sequence, summary) => {
+                this.handleSettled_abyssPrivate(
+                  sequence,
+                  summary.anyChanged,
+                  summary.sourceChanged,
+                );
+              },
+              onInvalidated: () => {
                 this.clearFocus_abyssPrivate();
-              }
+              },
+              present: (result) => {
+                presentTaskCommandResult(result);
+                if (result.type !== 'ok' || result.outcome.type !== 'task') {
+                  this.clearFocus_abyssPrivate();
+                }
+              },
             },
-          });
+            host_abyssPrivate.editQueue,
+          );
   }
 
   handleIntent(task: TaskSnapshot, intent: TimedBlockKeyboardIntent): void {
@@ -167,7 +206,7 @@ export class TimedBlockFocusRetention {
       });
       return;
     }
-    if (this.sameFocus_abyssPrivate(pending, filePath, line, segmentDate)) return;
+    if (this.sameFocus_abyssPrivate(pending, filePath, line, block)) return;
     if (pending?.queueSequence !== undefined) {
       this.queue_abyssPrivate?.cancel();
       this.clearSequenceState_abyssPrivate(pending.queueSequence);
@@ -184,8 +223,51 @@ export class TimedBlockFocusRetention {
     return this.pendingFocus_abyssPrivate != null;
   }
 
-  settlePointerTask(task: TaskSnapshot): TaskSnapshot | Promise<TaskSnapshot> {
+  settlePointerTask(
+    task: TaskSnapshot,
+    segmentDate?: string,
+  ): TaskSnapshot | Promise<TaskSnapshot> {
+    const root = this.host_abyssPrivate.root();
+    if (root !== null) this.captureActiveFocus(root);
+    const pending = this.pendingFocus_abyssPrivate;
+    const sameSource = this.isPointerSource_abyssPrivate(task, pending);
+    if (pending !== undefined)
+      this.pendingFocus_abyssPrivate = {
+        ...pending,
+        ...(sameSource && segmentDate !== undefined && { segmentDate }),
+        suppressFollow: true,
+      };
     return this.queue_abyssPrivate?.settlePointerTask(task) ?? task;
+  }
+
+  private isSubmittedOrigin_abyssPrivate(
+    block: HTMLElement,
+    pending: TimedBlockFocusLocator | undefined,
+  ): boolean {
+    return (
+      this.submittedProjection_abyssPrivate &&
+      (pending?.suppressFollow === true || pending?.noopTarget !== undefined) &&
+      pending.originElement === block
+    );
+  }
+
+  private isPointerSource_abyssPrivate(
+    task: TaskSnapshot,
+    pending: TimedBlockFocusLocator | undefined,
+  ): boolean {
+    const target = calendarOccurrenceForRender(task).source.target;
+    const root = this.host_abyssPrivate.root();
+    const origin = pending?.originElement;
+    const sameOrigin =
+      root !== null &&
+      origin !== undefined &&
+      renderedTaskNodeElements(root, target).includes(origin);
+    return (
+      sameOrigin ||
+      (!this.submittedProjection_abyssPrivate &&
+        pending?.filePath === task.source.filePath &&
+        pending.line === taskNodeSourceLine(target))
+    );
   }
 
   cancel(): void {
@@ -198,7 +280,11 @@ export class TimedBlockFocusRetention {
   }
 
   captureActiveFocus(root: HTMLElement): void {
-    if (this.pendingFocus_abyssPrivate?.queueSequence !== undefined) return;
+    if (
+      this.pendingFocus_abyssPrivate?.queueSequence !== undefined ||
+      this.pendingFocus_abyssPrivate?.suppressFollow === true
+    )
+      return;
     const active = root.ownerDocument.activeElement;
     if (!isRealmHTMLElement(active) || !root.contains(active)) return;
     const block = active.closest<HTMLElement>('.abyss-tg-block');
@@ -207,8 +293,9 @@ export class TimedBlockFocusRetention {
   }
 
   /** Before a view mount or patch: the coming render must restore this sequence again. */
-  beforeViewUpdate(): void {
-    this.queue_abyssPrivate?.published();
+  beforeViewUpdate(canonical = true): void {
+    this.submittedProjection_abyssPrivate = !canonical;
+    if (canonical) this.queue_abyssPrivate?.published();
     const queueSequence = this.pendingFocus_abyssPrivate?.queueSequence;
     if (queueSequence !== undefined) this.restoredSequences_abyssPrivate.delete(queueSequence);
   }
@@ -222,10 +309,9 @@ export class TimedBlockFocusRetention {
     if (scheduled == null) return;
     const focusSequence = scheduled.sequence;
     const queueSequence = scheduled.queueSequence;
-    if (queueSequence !== undefined && !this.committedSequences_abyssPrivate.has(queueSequence))
-      return;
+    if (!this.isPendingRestorable_abyssPrivate(scheduled, focusSequence)) return;
 
-    const scheduledCandidate = findTimedBlock(container, scheduled);
+    const scheduledCandidate = this.findBlock_abyssPrivate(container, scheduled);
     if (queueSequence !== undefined && scheduledCandidate === scheduled.originElement) return;
     const ownerWindow = container.ownerDocument.defaultView;
     if (ownerWindow === null) return;
@@ -235,7 +321,7 @@ export class TimedBlockFocusRetention {
         renderGeneration,
       });
     };
-    if (queueSequence !== undefined) restore();
+    if (queueSequence !== undefined || this.submittedProjection_abyssPrivate) restore();
     else ownerWindow.setTimeout(restore, 0);
   }
 
@@ -245,17 +331,44 @@ export class TimedBlockFocusRetention {
     if (root !== null) this.deferFocus(root, this.renderGeneration_abyssPrivate);
   }
 
+  private findBlock_abyssPrivate(
+    container: HTMLElement,
+    pending: TimedBlockFocusLocator,
+  ): HTMLElement | undefined {
+    if (pending.noopTarget !== undefined && !this.submittedProjection_abyssPrivate)
+      return renderedTaskNodeElements(container, pending.noopTarget).find(
+        (block) =>
+          block.classList.contains('abyss-tg-block') &&
+          (pending.segmentDate === undefined ||
+            block.dataset['tgSegmentDate'] === pending.segmentDate),
+      );
+    if (
+      pending.noopTarget !== undefined &&
+      pending.originElement?.dataset['abyssTaskNodeRefKey'] === undefined
+    )
+      return undefined;
+    return findTimedBlock(
+      container,
+      pending,
+      this.submittedProjection_abyssPrivate ? pending.originElement : undefined,
+    );
+  }
+
   private handleSettled_abyssPrivate(
     sequence: number,
     anyChanged: boolean,
     sourceChanged: boolean,
   ): void {
-    if (this.pendingFocus_abyssPrivate?.queueSequence !== sequence) return;
+    const pending = this.pendingFocus_abyssPrivate;
+    if (pending?.queueSequence !== sequence) return;
     if ((anyChanged || sourceChanged) && !this.committedSequences_abyssPrivate.has(sequence)) {
       this.committedSequences_abyssPrivate.add(sequence);
       this.deferFocusAtRoot_abyssPrivate();
     }
-    if ((!anyChanged && !sourceChanged) || this.restoredSequences_abyssPrivate.has(sequence)) {
+    if (
+      (!anyChanged && !sourceChanged && pending.noopTarget === undefined) ||
+      this.restoredSequences_abyssPrivate.has(sequence)
+    ) {
       this.clearFocus_abyssPrivate(sequence);
       return;
     }
@@ -333,10 +446,13 @@ export class TimedBlockFocusRetention {
     pending: TimedBlockFocusLocator | undefined,
     filePath: string,
     line: number,
-    segmentDate: string | undefined,
+    block: HTMLElement,
   ): boolean {
     return (
-      pending?.filePath === filePath && pending.line === line && pending.segmentDate === segmentDate
+      this.isSubmittedOrigin_abyssPrivate(block, pending) ||
+      (pending?.filePath === filePath &&
+        pending.line === line &&
+        pending.segmentDate === block.dataset['tgSegmentDate'])
     );
   }
 
@@ -365,9 +481,11 @@ export class TimedBlockFocusRetention {
     if (options.renderGeneration !== this.renderGeneration_abyssPrivate) return;
     const pending = this.pendingFocus_abyssPrivate;
     if (!this.isPendingRestorable_abyssPrivate(pending, options.focusSequence)) return;
-    const candidate = findTimedBlock(container, pending);
+    const candidate = this.findBlock_abyssPrivate(container, pending);
     if (!isRestorableTimedBlock(candidate, container)) return;
-    candidate.focus();
+    // Restoring our own projection is not a new focus transfer that cancels the queued write.
+    this.pendingFocus_abyssPrivate = { ...pending, originElement: candidate };
+    candidate.focus({ preventScroll: pending.suppressFollow === true });
     // A forecast block is never selected; the selection sync owns the class only for task nodes.
     if (candidate.dataset['occurrenceState'] !== 'forecast') candidate.classList.add('is-selected');
     if (!this.didRestore_abyssPrivate(candidate, pending.sequence)) return;
@@ -382,6 +500,8 @@ export class TimedBlockFocusRetention {
       return false;
     return (
       pending.queueSequence === undefined ||
+      pending.suppressFollow === true ||
+      pending.noopTarget !== undefined ||
       this.committedSequences_abyssPrivate.has(pending.queueSequence)
     );
   }
@@ -394,6 +514,11 @@ export class TimedBlockFocusRetention {
   }
 
   private finishRestoration_abyssPrivate(queueSequence: number | undefined): void {
+    if (
+      this.submittedProjection_abyssPrivate &&
+      this.pendingFocus_abyssPrivate?.noopTarget !== undefined
+    )
+      return;
     if (queueSequence === undefined) {
       this.clearFocus_abyssPrivate();
       return;
@@ -427,6 +552,7 @@ export class TimedBlockFocusRetention {
   ): void {
     const pending = this.pendingFocus_abyssPrivate;
     if (!this.acceptsCommit_abyssPrivate(pending, queueSequence)) return;
+    this.pendingFocus_abyssPrivate = { ...pending, noopTarget: undefined };
     this.committedSequences_abyssPrivate.add(queueSequence);
     const line = taskNodeSourceLine(
       calendarMutationTarget(updated) ?? { type: 'task', ref: updated.ref },
@@ -440,6 +566,7 @@ export class TimedBlockFocusRetention {
     if (identityChanged) {
       this.pendingFocus_abyssPrivate = {
         ...pending,
+        noopTarget: undefined,
         filePath: updated.source.filePath,
         line,
         ...(nextSegmentDate !== undefined && { segmentDate: nextSegmentDate }),
@@ -449,8 +576,23 @@ export class TimedBlockFocusRetention {
     if (presentationChanged || !this.restoredSequences_abyssPrivate.has(queueSequence)) {
       this.deferFocusAtRoot_abyssPrivate();
     }
-    if ([intent.type === 'shift-schedule', segmentChanged].includes(true))
+    if (shouldFollowCommit(pending, intent, segmentChanged))
       this.host_abyssPrivate.follow(updated, nextSegmentDate);
+  }
+
+  private handleNoop_abyssPrivate(task: TaskSnapshot, queueSequence: number): void {
+    const pending = this.pendingFocus_abyssPrivate;
+    if (!this.acceptsCommit_abyssPrivate(pending, queueSequence)) return;
+    const target = calendarMutationTarget(task);
+    if (target === undefined) return;
+    this.restoredSequences_abyssPrivate.delete(queueSequence);
+    this.pendingFocus_abyssPrivate = {
+      ...pending,
+      filePath: task.source.filePath,
+      line: taskNodeSourceLine(target),
+      noopTarget: target,
+    };
+    this.deferFocusAtRoot_abyssPrivate();
   }
 
   private acceptsCommit_abyssPrivate(

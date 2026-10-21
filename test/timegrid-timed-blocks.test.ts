@@ -1304,6 +1304,15 @@ describe('renderTimedBlocksForDay', () => {
     expect(declarationsFor('.abyss-tg-span-edge::after')).toMatch(/width\s*:\s*2px/u);
   });
 
+  it('keeps the center of narrow overlapping timed blocks available for moving', () => {
+    expect(declarationsFor('.abyss-tg-block > .abyss-tg-span-edge')).toMatch(
+      /width\s*:\s*min\(10px,\s*25%\)/u,
+    );
+    expect(declarationsFor('.abyss-tg-block > .abyss-tg-span-edge::after')).toMatch(
+      /inset-inline-start\s*:\s*calc\(50% - 1px\)/u,
+    );
+  });
+
   it('reserves touch gestures for explicit edges while leaving task bodies and grid ancestors scrollable', () => {
     const panel = freshContainer();
     panel.classList.add('abyss-panel-view');

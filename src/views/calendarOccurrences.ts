@@ -54,6 +54,11 @@ export interface CalendarProjectionIssue {
   readonly limit: 512 | 4096;
 }
 
+export interface CalendarPlanningOverride {
+  readonly source: CalendarTaskSource;
+  readonly planning: TaskPlanning;
+}
+
 export interface CalendarProjection {
   readonly occurrences: readonly CalendarOccurrence[];
   readonly issues: readonly CalendarProjectionIssue[];
@@ -289,8 +294,9 @@ function materializedOccurrences(
   source: CalendarTaskSource,
   visible: DateRange,
   policy: RecurrencePolicy,
+  effectivePlanning = source.node.planning,
 ): readonly CalendarOccurrence[] {
-  const planning = Object.freeze({ ...source.node.planning });
+  const planning = Object.freeze({ ...effectivePlanning });
   const occupied = taskOccupiedDates(planning);
   const common = {
     kind: 'materialized' as const,
@@ -344,14 +350,39 @@ export function projectCalendarOccurrences(
   sources: CalendarProjectionSources,
   visible: DateRange,
   policy: RecurrencePolicy,
+  pending: readonly CalendarPlanningOverride[] = [],
 ): CalendarProjection {
+  const overrides = new Map(pending.map((entry) => [semanticSourceKey(entry.source), entry]));
+  const retained = (
+    input: readonly CalendarTaskSource[],
+    recurring = false,
+  ): CalendarTaskSource[] => [
+    ...new Map(
+      [
+        ...input,
+        ...pending
+          .map((entry) => entry.source)
+          .filter((source) => !recurring || source.node.recurrence !== undefined),
+      ].map((source) => [
+        semanticSourceKey(source),
+        overrides.get(semanticSourceKey(source))?.source ?? source,
+      ]),
+    ).values(),
+  ];
   const occurrencesByKey = new Map<string, CalendarOccurrence>();
-  addMaterializedOccurrences(sources.materialized, visible, policy, occurrencesByKey);
-
   const issues: CalendarProjectionIssue[] = [];
   const issueKeys = new Set<string>();
-  const accumulator = { occurrencesByKey, issues, issueKeys };
-  for (const source of sources.recurringSources) {
+  const accumulator = { occurrencesByKey, issues, issueKeys, overrides };
+  addMaterializedOccurrences(
+    pending.length === 0 ? sources.materialized : retained(sources.materialized),
+    visible,
+    policy,
+    accumulator,
+  );
+
+  for (const source of pending.length === 0
+    ? sources.recurringSources
+    : retained(sources.recurringSources, true)) {
     addForecastEntry(source, visible, policy, accumulator);
   }
 
@@ -365,10 +396,16 @@ function addMaterializedOccurrences(
   sources: readonly CalendarTaskSource[],
   visible: DateRange,
   policy: RecurrencePolicy,
-  occurrencesByKey: Map<string, CalendarOccurrence>,
+  accumulator: ProjectionAccumulator,
 ): void {
+  const { occurrencesByKey, overrides } = accumulator;
   for (const source of sources) {
-    for (const occurrence of materializedOccurrences(source, visible, policy)) {
+    for (const occurrence of materializedOccurrences(
+      source,
+      visible,
+      policy,
+      overrides.get(semanticSourceKey(source))?.planning,
+    )) {
       if (!occurrencesByKey.has(occurrence.key)) occurrencesByKey.set(occurrence.key, occurrence);
     }
   }
@@ -380,10 +417,18 @@ function addForecastEntry(
   policy: RecurrencePolicy,
   accumulator: ProjectionAccumulator,
 ): void {
-  const entry = forecastEntry(source, visible, policy);
+  const effectivePlanning =
+    accumulator.overrides.get(semanticSourceKey(source))?.planning ?? source.node.planning;
+  const entry = forecastEntry(
+    effectivePlanning === source.node.planning
+      ? source
+      : { ...source, node: { ...source.node, planning: effectivePlanning } },
+    visible,
+    policy,
+  );
   if (entry === undefined) return;
   for (const template of entry.forecasts) {
-    const planning = hydratePlanning(source.node.planning, entry, template, policy);
+    const planning = hydratePlanning(effectivePlanning, entry, template, policy);
     if (planning === undefined || !intersectsVisible(planning, visible)) continue;
     const key = `${semanticSourceKey(source)}:${template.referenceDate}`;
     if (!accumulator.occurrencesByKey.has(key)) {
@@ -404,6 +449,7 @@ function addForecastEntry(
 }
 
 interface ProjectionAccumulator {
+  readonly overrides: ReadonlyMap<string, CalendarPlanningOverride>;
   readonly occurrencesByKey: Map<string, CalendarOccurrence>;
   readonly issues: CalendarProjectionIssue[];
   readonly issueKeys: Set<string>;

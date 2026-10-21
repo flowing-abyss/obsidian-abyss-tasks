@@ -2,18 +2,22 @@ import { describe, expect, it, vi } from 'vitest';
 import { CalendarCommands } from '../src/panels/calendar/calendarCommands';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import {
+  durationMinutes,
   localDate,
   type TaskApplicationApi,
   type TaskCommandResult,
   type TaskRef,
   type TaskSnapshot,
 } from '../src/tasks';
+import { CalendarEditQueue } from '../src/ui/calendarEditQueue';
 import {
   TimedBlockKeyboardQueue,
   type TimedBlockKeyboardQueueHooks,
 } from '../src/ui/timedBlockKeyboardQueue';
 import {
   calendarMutationTarget,
+  calendarOccurrenceForRender,
+  calendarTaskWithPlanning,
   projectCalendarOccurrences,
   taskSnapshotForCalendarOccurrence,
 } from '../src/views/calendarOccurrences';
@@ -1490,3 +1494,98 @@ it.each([
     }
   },
 );
+
+it('accepts span shortening against a pending pointer successor after a settled key', async () => {
+  const before = taskAt('09:00', 'before', { due: '2026-10-21', duration: 60 });
+  const keyed = taskAt('09:15', 'keyed', { due: '2026-10-21', duration: 60 });
+  const spanned = taskAt('09:15', 'spanned', {
+    start: '2026-10-21',
+    due: '2026-10-22',
+    duration: 60,
+  });
+  const shortened = taskAt('09:15', 'shortened', {
+    start: '2026-10-21',
+    due: '2026-10-21',
+    duration: 60,
+  });
+  const gate = deferred<void>();
+  const execute = vi
+    .fn<TaskApplicationApi['execute']>()
+    .mockResolvedValueOnce(ok(keyed))
+    .mockImplementationOnce(async () => {
+      await gate.promise;
+      return ok(spanned);
+    })
+    .mockResolvedValueOnce(ok(shortened));
+  const h = harness(execute);
+  const edits = new CalendarEditQueue(h.api);
+  const keyboard = new TimedBlockKeyboardQueue(h.api, h.hooks, edits);
+  const display = (root: TaskSnapshot) =>
+    taskSnapshotForCalendarOccurrence(calendarOccurrenceForRender(root));
+  keyboard.enqueue(display(before), { type: 'move-time', deltaMinutes: 15 });
+  await vi.waitFor(() => {
+    expect(h.hooks.onSettled).toHaveBeenCalledOnce();
+  });
+  keyboard.published();
+  const origin = display(keyed);
+  await keyboard.settlePointerTask(origin);
+  const pointer = edits.execute(origin, (current) => ({
+    type: 'patch',
+    target: { type: 'task', ref: current.ref },
+    patch: {
+      start: { type: 'set', value: localDate('2026-10-21') },
+      due: { type: 'set', value: localDate('2026-10-22') },
+    },
+  }));
+  const submitted = calendarTaskWithPlanning(origin, spanned.planning, 'create-span');
+  const sequence = keyboard.enqueue(submitted, { type: 'extend-due', days: -1 });
+  gate.resolve();
+  await pointer;
+  await vi.waitFor(() => {
+    expect(execute).toHaveBeenCalledTimes(3);
+  });
+  expect(sequence).toBeDefined();
+  expect(execute.mock.calls[2]?.[0]).toMatchObject({
+    type: 'extend-span',
+    ref: spanned.ref,
+    due: '2026-10-21',
+  });
+});
+
+it('keeps a shared no-op unexecuted and preserves a later queued intent', async () => {
+  const before = taskAt('09:00', 'before', { due: '2026-10-21', duration: 60 });
+  const execute = vi.fn<TaskApplicationApi['execute']>();
+  const h = harness(execute);
+  const edits = new CalendarEditQueue(h.api);
+  const keyboard = new TimedBlockKeyboardQueue(h.api, h.hooks, edits);
+  keyboard.enqueue(before, { type: 'extend-due', days: -1 });
+  await vi.waitFor(() => {
+    expect(h.hooks.onSettled).toHaveBeenCalledOnce();
+  });
+  expect(execute).not.toHaveBeenCalled();
+  expect(h.hooks.onSettled.mock.calls[0]?.[2].executed).toBe(false);
+  const gate = deferred<void>();
+  const pointerTask = taskAt('09:00', 'pointer', { due: '2026-10-21', duration: 90 });
+  execute.mockImplementationOnce(async () => {
+    await gate.promise;
+    return ok(pointerTask);
+  });
+  execute.mockResolvedValueOnce(ok(taskAt('09:15', 'keyed', { due: '2026-10-21', duration: 90 })));
+  const pointer = edits.execute(before, (current) => ({
+    type: 'patch',
+    target: { type: 'task', ref: current.ref },
+    patch: { duration: { type: 'set', value: durationMinutes(90) } },
+  }));
+  keyboard.enqueue(before, { type: 'extend-due', days: -1 });
+  keyboard.enqueue(before, { type: 'move-time', deltaMinutes: 15 });
+  gate.resolve();
+  await pointer;
+  await vi.waitFor(() => {
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
+  expect(execute.mock.calls[1]?.[0]).toMatchObject({
+    type: 'patch',
+    target: { type: 'task', ref: pointerTask.ref },
+    patch: { time: { type: 'set', value: '09:15' } },
+  });
+});

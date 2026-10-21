@@ -7,6 +7,7 @@ export class CalendarPublicationHold {
   private readonly pointers_abyssPrivate = new Set<number>();
   private pending_abyssPrivate = 0;
   private leases_abyssPrivate = 0;
+  private edits_abyssPrivate = 0;
   private dragging_abyssPrivate: DragEvent | undefined;
   private dirty_abyssPrivate = false;
   private disposed_abyssPrivate = false;
@@ -53,14 +54,32 @@ export class CalendarPublicationHold {
     this.flush_abyssPrivate();
   }
 
-  /** Keyboard writes keep the focused target live until their receipt authorizes replacement. */
-  holdKeyboardPublication(): () => void {
-    this.leases_abyssPrivate++;
+  /** A submitted timed gesture has released capture; its following click still belongs to it. */
+  publishSubmitted(): void {
+    if (this.disposed_abyssPrivate) return;
+    this.suppressClick_abyssPrivate = true;
+    if (this.releaseTimer_abyssPrivate !== undefined) {
+      this.ownerWindow_abyssPrivate?.clearTimeout(this.releaseTimer_abyssPrivate);
+      this.releaseTimer_abyssPrivate = undefined;
+    }
+    if (
+      this.pointers_abyssPrivate.size === 0 &&
+      this.pending_abyssPrivate === 0 &&
+      this.leases_abyssPrivate === 0
+    ) {
+      this.dirty_abyssPrivate = false;
+      this.publish_abyssPrivate();
+    } else this.request();
+  }
+
+  /** Writes retain canonical publication; submitted planning may expose the next pointer target. */
+  holdEditPublication(): () => void {
+    this.edits_abyssPrivate++;
     let released = false;
     return () => {
       if (released) return;
       released = true;
-      this.leases_abyssPrivate--;
+      this.edits_abyssPrivate--;
       this.flush_abyssPrivate();
     };
   }
@@ -117,6 +136,7 @@ export class CalendarPublicationHold {
       this.disposed_abyssPrivate ||
       this.pending_abyssPrivate > 0 ||
       this.leases_abyssPrivate > 0 ||
+      this.edits_abyssPrivate > 0 ||
       this.pointers_abyssPrivate.size > 0 ||
       this.dragging_abyssPrivate !== undefined ||
       this.releaseTimer_abyssPrivate !== undefined

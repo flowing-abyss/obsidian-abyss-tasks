@@ -1,9 +1,10 @@
 import { firstVisibleWeekDate } from '../../domain/weekGridOffset';
 import type { CalendarSettings, ResolvedConfig } from '../../settings/types';
-import { localDate, type TaskQueryApi } from '../../tasks';
+import { localDate, type CalendarProjectionSources, type TaskQueryApi } from '../../tasks';
 import {
   projectCalendarOccurrences,
   type CalendarOccurrence,
+  type CalendarPlanningOverride,
   type CalendarProjectionIssue,
 } from '../../views/calendarOccurrences';
 import type { CalendarMoment } from './calendarDateNavigation';
@@ -14,6 +15,8 @@ export interface CalendarContent {
   readonly config: ResolvedConfig;
   readonly issues: readonly CalendarProjectionIssue[];
   readonly occurrences: readonly CalendarOccurrence[];
+  readonly sources: CalendarProjectionSources;
+  readonly submittedPlanning: readonly CalendarPlanningOverride[];
 }
 
 export interface CalendarContentInput {
@@ -21,6 +24,8 @@ export interface CalendarContentInput {
   readonly settings: Pick<CalendarSettings, 'firstDayOfWeek' | 'recurrence'>;
   readonly view: CalViewType;
   readonly date: CalendarMoment;
+  readonly pendingPlanning?: readonly CalendarPlanningOverride[];
+  readonly mounted?: CalendarContent | undefined;
 }
 
 function calendarStartPosition(
@@ -49,17 +54,35 @@ export function calendarContent(input: CalendarContentInput): CalendarContent {
   const firstVisibleDate = visibleDates[0];
   const lastVisibleDate = visibleDates[visibleDates.length - 1];
   if (firstVisibleDate === undefined || lastVisibleDate === undefined) {
-    return { config, issues: [], occurrences: [] };
+    return {
+      config,
+      issues: [],
+      occurrences: [],
+      sources: { materialized: [], recurringSources: [] },
+      submittedPlanning: [],
+    };
   }
-  const projection = queries.forCalendarProjection(visibleDates.map(localDate));
+  const projection =
+    input.mounted?.sources ?? queries.forCalendarProjection(visibleDates.map(localDate));
+  // One latest plan per captured node survives partial settlement until canonical publication.
+  const submittedPlanning = [
+    ...new Map(
+      [...(input.mounted?.submittedPlanning ?? []), ...(input.pendingPlanning ?? [])].map(
+        (entry) => [entry.source.node, entry],
+      ),
+    ).values(),
+  ];
   const occurrences = projectCalendarOccurrences(
     projection,
     { from: localDate(firstVisibleDate), to: localDate(lastVisibleDate) },
     { removeScheduledDate: settings.recurrence.removeScheduledDate },
+    submittedPlanning,
   );
   return {
     config,
     issues: occurrences.issues,
     occurrences: occurrences.occurrences,
+    sources: projection,
+    submittedPlanning,
   };
 }

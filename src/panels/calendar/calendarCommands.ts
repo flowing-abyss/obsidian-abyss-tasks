@@ -17,12 +17,12 @@ import {
   calendarPointPatchCommand,
   calendarRootTaskRef,
   calendarShiftScheduleCommand,
-  calendarSourcePatchCommand,
   calendarSpanBoundaryCommand,
 } from '../../views/calendarOccurrences';
 import type { SpanMoveTarget } from '../../views/spanInteractions';
 import type { TimedDragTarget, TimedVerticalResizeTarget } from '../../views/timegrid/dragGeometry';
-import { minutesToTimeString, timeStringToMinutes } from '../../views/timegrid/layout';
+import { minutesToTimeString } from '../../views/timegrid/layout';
+import { timedEditCommand } from '../../views/timegrid/timedEditPlanning';
 import type { TimedBoundaryTarget } from '../../views/timegrid/timedInteractions';
 
 export interface CalendarCommandsDependencies {
@@ -83,57 +83,6 @@ function timeDropCommand(
   return { type: 'set-time-slot', ref: task.ref, date, time };
 }
 
-function timedMoveCommand(
-  task: TaskSnapshot,
-  target: TimedDragTarget,
-): ExecutableCommand | undefined {
-  const occurrence = calendarOccurrenceForRender(task);
-  if (occurrence.kind === 'forecast' || !Number.isSafeInteger(target.dayDelta)) return undefined;
-  const time =
-    target.destination === 'all-day'
-      ? { type: 'clear' as const }
-      : { type: 'set' as const, value: localTime(minutesToTimeString(target.startMinutes)) };
-  if (occurrence.occupied.kind === 'point') {
-    const command = calendarPointPatchCommand(task, target.date, time);
-    return time.type === 'clear' ? clearPointDurationForAllDay(task, command) : command;
-  }
-  const ref = calendarRootTaskRef(task);
-  if (ref !== undefined)
-    return time.type === 'clear'
-      ? { type: 'move-to-all-day', ref, days: target.dayDelta }
-      : { type: 'move-time-slot', ref, days: target.dayDelta, time: time.value };
-  return childTimedMoveCommand(task, target.dayDelta, time);
-}
-
-function ownedScheduleShift(previous: TaskSnapshot, current: TaskSnapshot): number {
-  const previousOccurrence = calendarOccurrenceForRender(previous);
-  const currentOccurrence = calendarOccurrenceForRender(current);
-  if (previousOccurrence.kind === 'forecast' || currentOccurrence.kind === 'forecast') return 0;
-  const before = previousOccurrence.occupied;
-  const after = currentOccurrence.occupied;
-  return daysBetweenLocalDates(
-    before.kind === 'interval' ? before.start : before.date,
-    after.kind === 'interval' ? after.start : after.date,
-  );
-}
-
-function ownedResizeTarget(
-  task: TaskSnapshot,
-  target: TimedVerticalResizeTarget,
-): TimedVerticalResizeTarget {
-  const currentStart = timeStringToMinutes(task.planning.time ?? '00:00');
-  const currentEnd = Math.min(1440, currentStart + (task.planning.duration ?? 60));
-  const startMinutes =
-    target.edge === 'end'
-      ? currentStart
-      : Math.max(0, Math.min(target.startMinutes, currentEnd - 15));
-  const endMinutes =
-    target.edge === 'start'
-      ? currentEnd
-      : Math.min(1440, Math.max(target.endMinutes, startMinutes + 15));
-  return { ...target, startMinutes, endMinutes, durationMinutes: endMinutes - startMinutes };
-}
-
 function clearPointDurationForAllDay(
   task: TaskSnapshot,
   command: ExecutableCommand | undefined,
@@ -191,16 +140,20 @@ export class CalendarCommands {
 
   async rescheduleFromDrag(dragData: string, targetDate: string): Promise<void> {
     const task = taskFromDragData(this.deps_abyssPrivate, dragData);
-    if (task !== undefined)
-      await this.execute_abyssPrivate(() => rescheduleCommand(task, localDate(targetDate)));
+    if (task !== undefined) await this.reschedule(task, targetDate);
   }
 
   async setTimeFromDrag(dragData: string, date: string, time: string): Promise<void> {
     const task = taskFromDragData(this.deps_abyssPrivate, dragData);
-    if (task !== undefined)
-      await this.execute_abyssPrivate(() =>
-        timeDropCommand(task, localDate(date), localTime(time)),
-      );
+    if (task !== undefined) await this.dropAtTime(task, date, time);
+  }
+
+  async reschedule(task: TaskSnapshot, date: string): Promise<void> {
+    await this.execute_abyssPrivate(() => rescheduleCommand(task, localDate(date)));
+  }
+
+  async dropAtTime(task: TaskSnapshot, date: string, time: string): Promise<void> {
+    await this.execute_abyssPrivate(() => timeDropCommand(task, localDate(date), localTime(time)));
   }
 
   async commitTimedMove(
@@ -208,19 +161,9 @@ export class CalendarCommands {
     target: TimedDragTarget,
     previous = task,
   ): Promise<void> {
-    await this.execute_abyssPrivate(() => {
-      const occurrence = calendarOccurrenceForRender(task);
-      if (occurrence.kind === 'forecast') {
-        if (target.dayDelta !== 0 || target.destination !== 'time-grid') return undefined;
-        return calendarSourcePatchCommand(occurrence.source, {
-          time: { type: 'set', value: localTime(minutesToTimeString(target.startMinutes)) },
-        });
-      }
-      return timedMoveCommand(task, {
-        ...target,
-        dayDelta: target.dayDelta - ownedScheduleShift(previous, task),
-      });
-    });
+    await this.execute_abyssPrivate(() =>
+      timedEditCommand(task, { type: 'move', target }, previous),
+    );
   }
 
   async commitTimedDuration(
@@ -228,17 +171,9 @@ export class CalendarCommands {
     target: TimedVerticalResizeTarget,
     previous = task,
   ): Promise<void> {
-    const resized = previous === task ? target : ownedResizeTarget(task, target);
-    await this.execute_abyssPrivate(() => {
-      const patch = {
-        time: { type: 'set', value: localTime(minutesToTimeString(resized.startMinutes)) },
-        duration: { type: 'set', value: durationMinutes(resized.durationMinutes) },
-      } as const;
-      const occurrence = calendarOccurrenceForRender(task);
-      return occurrence.kind === 'forecast'
-        ? calendarSourcePatchCommand(occurrence.source, patch)
-        : calendarPatchCommand(task, patch);
-    });
+    await this.execute_abyssPrivate(() =>
+      timedEditCommand(task, { type: 'resize', target }, previous),
+    );
   }
 
   async commitSpanMove(task: TaskSnapshot, target: SpanMoveTarget): Promise<void> {
@@ -246,9 +181,7 @@ export class CalendarCommands {
   }
 
   async commitTimedBoundary(task: TaskSnapshot, target: TimedBoundaryTarget): Promise<void> {
-    await this.execute_abyssPrivate(() =>
-      calendarSpanBoundaryCommand(task, target.boundary, localDate(target.date)),
-    );
+    await this.execute_abyssPrivate(() => timedEditCommand(task, { type: 'boundary', target }));
   }
 
   async setTime(task: TaskSnapshot, startMinutes: number): Promise<void> {

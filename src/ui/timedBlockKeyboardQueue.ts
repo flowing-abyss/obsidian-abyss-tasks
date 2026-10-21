@@ -16,11 +16,15 @@ import {
   calendarPatchCommand,
   calendarShiftScheduleCommand,
   calendarSpanBoundaryCommand,
-  calendarTaskWithPlanning,
-  taskSnapshotForCalendarOccurrence,
-  type CalendarOccurrence,
 } from '../views/calendarOccurrences';
 import type { TimedBlockKeyboardIntent } from '../views/timegrid/renderTimedBlocks';
+import type {
+  CalendarEditExecutor,
+  CalendarEditQueue,
+  CalendarEditReceipt,
+} from './calendarEditQueue';
+import { calendarEditWitness } from './calendarEditWitness';
+import { calendarTaskWithOwnedNode, calendarTaskWithOwnedRoot } from './calendarOwnedTask';
 import { proveOwnedTaskSelection, type OwnedTaskSelectionProof } from './ownedTaskSelection';
 import { runAsyncAction } from './runAsyncAction';
 import { taskNodeRef, taskSelectionRefPath, type TaskSelectionNode } from './taskSelection';
@@ -34,6 +38,7 @@ export interface TimedBlockKeyboardQueueHooks {
     changed: boolean,
   ): void;
   onSettled(taskKey: string, sequence: number, summary: TimedBlockKeyboardSequenceSummary): void;
+  onNoop?(task: TaskSnapshot, sequence: number): void;
   present(result: TaskCommandResult): void;
   onInvalidated(sequence: number): void;
 }
@@ -48,6 +53,7 @@ interface QueuedIntent {
   readonly intent: TimedBlockKeyboardIntent;
   readonly sequence: number;
   readonly repetitions: number;
+  readonly execute: CalendarEditExecutor | undefined;
 }
 
 const MIN_START_MINUTES = 0;
@@ -152,46 +158,7 @@ function committedSnapshot(
       : path?.[path.length - 1];
   }
   if (node === undefined) return undefined;
-  return snapshotWithOwnedNode(occurrence, current, node, change.intent.type === 'extend-due');
-}
-
-function snapshotWithOwnedNode(
-  occurrence: CalendarOccurrence,
-  current: TaskSnapshot,
-  node: TaskSelectionNode,
-  promote = false,
-): TaskSnapshot {
-  const planning =
-    occurrence.kind === 'forecast'
-      ? {
-          ...occurrence.planning,
-          ...(node.planning.time !== undefined && { time: node.planning.time }),
-          ...(node.planning.duration !== undefined && { duration: node.planning.duration }),
-        }
-      : node.planning;
-  const display = taskSnapshotForCalendarOccurrence({
-    ...occurrence,
-    source: { root: current, node, target: taskNodeRef(node) },
-    planning,
-  });
-  return calendarTaskWithPlanning(display, planning, promote ? 'create-span' : undefined);
-}
-
-function snapshotWithOwnedRoot(
-  occurrence: CalendarOccurrence,
-  owned: { before: TaskSnapshot; current: TaskSnapshot },
-): TaskSnapshot | undefined {
-  const path = taskSelectionRefPath(owned.before, occurrence.source.target);
-  if (path === undefined) return undefined;
-  // Every transition was a proved content patch: child order and ancestry are unchanged.
-  let node: TaskSelectionNode | undefined = owned.current;
-  for (let index = 1; index < path.length; index += 1) {
-    const parent = path[index - 1];
-    const child = path[index];
-    if (parent === undefined || child === undefined) return undefined;
-    node = node?.subtasks[parent.subtasks.findIndex((candidate) => candidate === child)];
-  }
-  return node === undefined ? undefined : snapshotWithOwnedNode(occurrence, owned.current, node);
+  return calendarTaskWithOwnedNode(occurrence, current, node, change.intent.type === 'extend-due');
 }
 
 export class TimedBlockKeyboardQueue {
@@ -199,6 +166,7 @@ export class TimedBlockKeyboardQueue {
   private processing_abyssPrivate = false;
   private nextSequence_abyssPrivate = 0;
   private activeSequence_abyssPrivate: number | undefined;
+  private pointerInterrupted_abyssPrivate = false;
   private activeTaskKey_abyssPrivate: string | undefined;
   private activeTaskIdentities_abyssPrivate = new Set<string>();
   private activeSnapshot_abyssPrivate: TaskSnapshot | undefined;
@@ -215,6 +183,7 @@ export class TimedBlockKeyboardQueue {
   constructor(
     private readonly api_abyssPrivate: TaskApplicationApi,
     private readonly hooks_abyssPrivate: TimedBlockKeyboardQueueHooks,
+    private readonly edits_abyssPrivate?: CalendarEditQueue,
   ) {}
 
   enqueue(task: TaskSnapshot, intent: TimedBlockKeyboardIntent): number | undefined {
@@ -222,11 +191,13 @@ export class TimedBlockKeyboardQueue {
     const taskIdentity = sourceIdentity(task);
     if (
       this.activeSequence_abyssPrivate === undefined ||
+      this.pointerInterrupted_abyssPrivate ||
       !this.activeTaskIdentities_abyssPrivate.has(taskIdentity)
     ) {
       const current = this.ownedSuccessor_abyssPrivate(task);
       this.accepted_abyssPrivate = undefined;
       this.activeSequence_abyssPrivate = ++this.nextSequence_abyssPrivate;
+      this.pointerInterrupted_abyssPrivate = false;
       this.activeTaskKey_abyssPrivate = sourceKey(current);
       this.activeTaskIdentities_abyssPrivate = new Set([taskIdentity, sourceIdentity(current)]);
       this.activeSnapshot_abyssPrivate = current;
@@ -236,12 +207,16 @@ export class TimedBlockKeyboardQueue {
       this.pending_abyssPrivate = [];
     }
     const sequence = this.activeSequence_abyssPrivate;
-    this.append_abyssPrivate(intent, sequence);
+    this.append_abyssPrivate(task, intent, sequence);
     this.processNext_abyssPrivate();
     return this.activeSequence_abyssPrivate === sequence ? sequence : undefined;
   }
 
-  private append_abyssPrivate(intent: TimedBlockKeyboardIntent, sequence: number): void {
+  private append_abyssPrivate(
+    task: TaskSnapshot,
+    intent: TimedBlockKeyboardIntent,
+    sequence: number,
+  ): void {
     const last = this.pending_abyssPrivate[this.pending_abyssPrivate.length - 1];
     if (
       last?.sequence === sequence &&
@@ -254,12 +229,19 @@ export class TimedBlockKeyboardQueue {
         ...last,
         repetitions: last.repetitions + 1,
       };
-    } else this.pending_abyssPrivate.push({ intent, sequence, repetitions: 1 });
+    } else
+      this.pending_abyssPrivate.push({
+        intent,
+        sequence,
+        repetitions: 1,
+        execute: this.edits_abyssPrivate?.capture(task),
+      });
   }
 
   cancel(): void {
     this.pending_abyssPrivate = [];
     this.activeSequence_abyssPrivate = undefined;
+    this.pointerInterrupted_abyssPrivate = false;
     this.activeTaskKey_abyssPrivate = undefined;
     this.activeTaskIdentities_abyssPrivate.clear();
     this.activeSnapshot_abyssPrivate = undefined;
@@ -273,6 +255,9 @@ export class TimedBlockKeyboardQueue {
 
   /** A replacement mount now exposes the current root, retiring the old DOM baseline. */
   published(): void {
+    // An undispatched repeat already owns a captured lineage; the new DOM must still join it.
+    if (!this.processing_abyssPrivate && this.pending_abyssPrivate.length === 0)
+      this.edits_abyssPrivate?.published();
     const owned = this.ownedRoot_abyssPrivate;
     if (owned !== undefined) owned.before = owned.current;
   }
@@ -285,6 +270,7 @@ export class TimedBlockKeyboardQueue {
       active === undefined ? undefined : calendarOccurrenceForRender(active).source.root;
     if (activeRoot?.ref.filePath === root.ref.filePath && activeRoot.ref.line === root.ref.line) {
       const sequence = this.activeSequence_abyssPrivate;
+      this.pointerInterrupted_abyssPrivate = true;
       this.pending_abyssPrivate = [];
       return (
         this.execution_abyssPrivate?.then(() => {
@@ -303,7 +289,7 @@ export class TimedBlockKeyboardQueue {
     if (accepted?.identities.has(identity) === true && sourceIdentity(accepted.task) !== identity) {
       const successor = calendarOccurrenceForRender(accepted.task);
       if (occurrence === undefined) return accepted.task;
-      return snapshotWithOwnedNode(
+      return calendarTaskWithOwnedNode(
         occurrence,
         successor.source.root,
         successor.source.node,
@@ -312,7 +298,7 @@ export class TimedBlockKeyboardQueue {
     }
     const owned = this.ownedRoot_abyssPrivate;
     if (owned === undefined || occurrence === undefined) return task;
-    return snapshotWithOwnedRoot(occurrence, owned) ?? task;
+    return calendarTaskWithOwnedRoot(occurrence, owned) ?? task;
   }
 
   private processNext_abyssPrivate(): void {
@@ -327,8 +313,12 @@ export class TimedBlockKeyboardQueue {
       return;
     }
 
-    const command = commandFor(this.activeSnapshot_abyssPrivate, queued.intent, queued.repetitions);
-    if (command == null) {
+    // Shared intents are validated only after preceding pointer edits have a proved receipt.
+    const command =
+      queued.execute === undefined
+        ? commandFor(this.activeSnapshot_abyssPrivate, queued.intent, queued.repetitions)
+        : undefined;
+    if (queued.execute === undefined && command === undefined) {
       if (this.pending_abyssPrivate.some((entry) => entry.sequence === queued.sequence)) {
         this.processNext_abyssPrivate();
         return;
@@ -338,7 +328,6 @@ export class TimedBlockKeyboardQueue {
     }
 
     this.processing_abyssPrivate = true;
-    this.activeExecuted_abyssPrivate = true;
     this.execution_abyssPrivate = this.run_abyssPrivate(
       command,
       queued,
@@ -348,7 +337,7 @@ export class TimedBlockKeyboardQueue {
   }
 
   private async run_abyssPrivate(
-    command: TaskCommand,
+    command: TaskCommand | undefined,
     queued: QueuedIntent,
     previous: TaskSnapshot,
   ): Promise<void> {
@@ -369,23 +358,18 @@ export class TimedBlockKeyboardQueue {
   }
 
   private async execute_abyssPrivate(
-    command: TaskCommand,
+    command: TaskCommand | undefined,
     queued: QueuedIntent,
     previous: TaskSnapshot,
   ): Promise<void> {
     try {
-      let prepared = command;
-      const result = [
-        calendarMutationTarget(previous)?.type === 'subtask',
-        command.type !== 'patch',
-      ].includes(true)
-        ? await this.api_abyssPrivate.execute(command, {
-            onPreparedPatch: (patch) => {
-              prepared = patch;
-            },
-          })
-        : await this.api_abyssPrivate.execute(command);
-      const proof = this.recordOwnedRoot_abyssPrivate(previous, result, prepared);
+      const receipt = await this.executeCommand_abyssPrivate(command, queued, previous);
+      if (receipt === undefined) {
+        this.finishIfDrained_abyssPrivate(queued.sequence);
+        return;
+      }
+      const { result, previous: current, proof: sharedProof } = receipt;
+      const proof = this.recordOwnedRoot_abyssPrivate(receipt);
       if (queued.sequence !== this.activeSequence_abyssPrivate) {
         this.carryOwnedRoot_abyssPrivate();
         return;
@@ -400,7 +384,12 @@ export class TimedBlockKeyboardQueue {
         return;
       }
 
-      const updated = committedSnapshot(previous, result.outcome.task, {
+      if (this.edits_abyssPrivate !== undefined && sharedProof === undefined) {
+        this.hooks_abyssPrivate.onInvalidated(queued.sequence);
+        this.cancel();
+        return;
+      }
+      const updated = committedSnapshot(current, result.outcome.task, {
         intent: queued.intent,
         changed: result.changed,
         proof,
@@ -425,11 +414,52 @@ export class TimedBlockKeyboardQueue {
     }
   }
 
-  private recordOwnedRoot_abyssPrivate(
+  private async executeCommand_abyssPrivate(
+    command: TaskCommand | undefined,
+    queued: QueuedIntent,
     previous: TaskSnapshot,
-    result: TaskCommandResult,
-    command: TaskCommand,
+  ): Promise<CalendarEditReceipt | undefined> {
+    if (queued.execute !== undefined)
+      return this.executeQueued_abyssPrivate(queued.execute, queued);
+    if (command === undefined) return undefined;
+    this.recordExecution_abyssPrivate(queued.sequence);
+    let prepared = calendarEditWitness(previous, command);
+    const withWitness =
+      calendarMutationTarget(previous)?.type === 'subtask' || command.type !== 'patch';
+    const result = withWitness
+      ? await this.api_abyssPrivate.execute(command, {
+          onPreparedPatch: (patch) => {
+            prepared = calendarEditWitness(previous, patch);
+          },
+        })
+      : await this.api_abyssPrivate.execute(command);
+    return { previous, command: prepared, result, proof: undefined };
+  }
+
+  private async executeQueued_abyssPrivate(
+    execute: CalendarEditExecutor,
+    queued: QueuedIntent,
+  ): Promise<CalendarEditReceipt | undefined> {
+    let unchanged: TaskSnapshot | undefined;
+    const receipt = await execute((current) => {
+      const command = commandFor(current, queued.intent, queued.repetitions);
+      if (command !== undefined) this.recordExecution_abyssPrivate(queued.sequence);
+      else unchanged = current;
+      return command;
+    });
+    // Let the focus owner finish accepting this sequence before reporting a validated no-op.
+    if (unchanged !== undefined) this.hooks_abyssPrivate.onNoop?.(unchanged, queued.sequence);
+    return receipt;
+  }
+
+  private recordExecution_abyssPrivate(sequence: number): void {
+    if (sequence === this.activeSequence_abyssPrivate) this.activeExecuted_abyssPrivate = true;
+  }
+
+  private recordOwnedRoot_abyssPrivate(
+    receipt: CalendarEditReceipt,
   ): OwnedTaskSelectionProof | undefined {
+    const { previous, result, command } = receipt;
     if (
       result.type !== 'ok' ||
       result.outcome.type !== 'task' ||
@@ -439,8 +469,10 @@ export class TimedBlockKeyboardQueue {
     const current = result.outcome.task;
     const root = calendarOccurrenceForRender(previous).source.root;
     const owned = this.ownedRoot_abyssPrivate;
-    const proof =
-      command.type === 'patch' ? proveOwnedTaskSelection(current, [root], command) : undefined;
+    let proof = receipt.proof;
+    if (this.edits_abyssPrivate === undefined)
+      proof =
+        command.type === 'patch' ? proveOwnedTaskSelection(current, [root], command) : undefined;
     if (proof === undefined) {
       this.ownedRoot_abyssPrivate = undefined;
       return;
@@ -470,9 +502,12 @@ export class TimedBlockKeyboardQueue {
     this.rememberOwnedSnapshot_abyssPrivate(updated);
     this.activeAnyChanged_abyssPrivate ||= changed;
     this.hooks_abyssPrivate.onCommitted(updated, queued.intent, queued.sequence, changed);
-    if (!this.pending_abyssPrivate.some((entry) => entry.sequence === queued.sequence)) {
-      this.finishSequence_abyssPrivate(queued.sequence);
-    }
+    this.finishIfDrained_abyssPrivate(queued.sequence);
+  }
+
+  private finishIfDrained_abyssPrivate(sequence: number): void {
+    if (!this.pending_abyssPrivate.some((entry) => entry.sequence === sequence))
+      this.finishSequence_abyssPrivate(sequence);
   }
 
   private rememberOwnedSnapshot_abyssPrivate(updated: TaskSnapshot): void {

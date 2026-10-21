@@ -1,7 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TimedBlockFocusRetention } from '../src/panels/calendar/timedBlockFocusRetention';
-import type { TaskApplicationApi, TaskCommandResult, TaskSnapshot } from '../src/tasks';
-import { task, taskQueryApi } from './helpers';
+import {
+  localTime,
+  type TaskApplicationApi,
+  type TaskCommandResult,
+  type TaskSnapshot,
+} from '../src/tasks';
+import { CalendarEditQueue } from '../src/ui/calendarEditQueue';
+import { applyTaskNodePresentationIdentity } from '../src/ui/taskPresentationIdentity';
+import { deferred, expectDefined, task, taskQueryApi } from './helpers';
 
 function okTask(snapshot: TaskSnapshot, changed = true): TaskCommandResult {
   return { type: 'ok', changed, outcome: { type: 'task', task: snapshot } };
@@ -13,7 +20,7 @@ async function settle(): Promise<void> {
 
 // The attributes `renderTimedBlocks.ts` puts on a timed block; the retention reads only these.
 function block(root: HTMLElement, snapshot: TaskSnapshot, segmentDate = '2026-09-23'): HTMLElement {
-  return root.createDiv({
+  const element = root.createDiv({
     cls: 'abyss-tg-block',
     attr: {
       tabindex: '0',
@@ -22,6 +29,8 @@ function block(root: HTMLElement, snapshot: TaskSnapshot, segmentDate = '2026-09
       'data-tg-segment-date': segmentDate,
     },
   });
+  applyTaskNodePresentationIdentity(element, { type: 'task', ref: snapshot.ref });
+  return element;
 }
 
 // A forecast timed block: the same locator attributes, focusable only programmatically.
@@ -36,11 +45,19 @@ function forecastBlock(
   return element;
 }
 
-function harness(options: { active?: boolean; execute?: TaskApplicationApi['execute'] } = {}): {
+function harness(
+  options: {
+    active?: boolean;
+    execute?: TaskApplicationApi['execute'];
+    shared?: boolean;
+    holdPublication?: () => () => void;
+  } = {},
+): {
   root: HTMLElement;
   retention: TimedBlockFocusRetention;
   follow: ReturnType<typeof vi.fn>;
   execute: TaskApplicationApi['execute'];
+  editQueue: CalendarEditQueue | undefined;
   pending(): TimedBlockFocusRetention['pendingFocus_abyssPrivate'];
 } {
   const root = document.body.createDiv();
@@ -52,7 +69,10 @@ function harness(options: { active?: boolean; execute?: TaskApplicationApi['exec
       return okTask(task({ source: { filePath: ref?.filePath ?? 'f.md', line: ref?.line ?? 0 } }));
     });
   const tasks: TaskApplicationApi = { queries: taskQueryApi(), execute };
+  const editQueue = options.shared === true ? new CalendarEditQueue(tasks) : undefined;
   const retention = new TimedBlockFocusRetention(tasks, {
+    ...(editQueue !== undefined && { editQueue }),
+    ...(options.holdPublication !== undefined && { holdPublication: options.holdPublication }),
     isCalendarActive: () => options.active ?? true,
     root: () => root,
     follow,
@@ -62,6 +82,7 @@ function harness(options: { active?: boolean; execute?: TaskApplicationApi['exec
     retention,
     follow,
     execute,
+    editQueue,
     pending: () => retention['pendingFocus_abyssPrivate'],
   };
 }
@@ -72,6 +93,225 @@ afterEach(() => {
 });
 
 describe('TimedBlockFocusRetention intents', () => {
+  it.each([false, true])(
+    'restores submitted pointer focus before the next native key (after settled key: %s)',
+    async (afterKey) => {
+      const original = task({ planning: { due: '2026-09-23', time: '09:00' } });
+      const keyed: TaskSnapshot = {
+        ...original,
+        ref: { ...original.ref, revision: 'keyed' },
+        planning: { ...original.planning, time: localTime('09:15') },
+      };
+      const h = harness({
+        execute: vi.fn<TaskApplicationApi['execute']>().mockResolvedValue(okTask(keyed)),
+      });
+      block(h.root, original).focus();
+      if (afterKey) {
+        h.retention.handleIntent(original, { type: 'move-time', deltaMinutes: 15 });
+        await settle();
+        h.retention.beforeViewUpdate();
+        const generation = h.retention.beginRender();
+        h.root.empty();
+        const replacement = block(h.root, keyed);
+        h.retention.deferFocus(h.root, generation);
+        expect(document.activeElement).toBe(replacement);
+        expect(h.retention.hasPending()).toBe(false);
+      }
+      const current = afterKey ? keyed : original;
+      await h.retention.settlePointerTask(current, '2026-09-24');
+      h.retention.captureActiveFocus(h.root);
+      h.retention.beforeViewUpdate(false);
+      const generation = h.retention.beginRender();
+      h.root.empty();
+      const submitted = block(h.root, current, '2026-09-24');
+      h.retention.deferFocus(h.root, generation);
+      expect(document.activeElement).toBe(submitted);
+    },
+  );
+
+  it('restores the exact canonical source when a valid shared no-op releases publication', async () => {
+    const snapshot = task({ planning: { due: '2026-09-23', time: '09:00' } });
+    let replacement: HTMLElement | undefined;
+    const release = vi.fn(() => {
+      h.retention.beforeViewUpdate();
+      const generation = h.retention.beginRender();
+      h.root.empty();
+      replacement = block(h.root, snapshot);
+      h.retention.deferFocus(h.root, generation);
+    });
+    const h = harness({ shared: true, holdPublication: () => release });
+    h.root.addEventListener('focusin', (event) => {
+      if (event.target instanceof HTMLElement) h.retention.retain(event.target);
+    });
+    block(h.root, snapshot).focus();
+    h.retention.handleIntent(snapshot, { type: 'extend-due', days: -1 });
+    await vi.waitFor(() => {
+      expect(release).toHaveBeenCalledOnce();
+    });
+    expect(h.execute).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(replacement);
+    expect(h.retention.hasPending()).toBe(false);
+  });
+
+  it('keeps a settled no-op target until another hold permits canonical publication', async () => {
+    const snapshot = task({ planning: { due: '2026-09-23', time: '09:00' } });
+    const release = vi.fn();
+    const h = harness({ shared: true, holdPublication: () => release });
+    block(h.root, snapshot).focus();
+    h.retention.handleIntent(snapshot, { type: 'extend-due', days: -1 });
+    await vi.waitFor(() => {
+      expect(release).toHaveBeenCalledOnce();
+    });
+    expect(h.retention.hasPending()).toBe(true);
+    h.retention.beforeViewUpdate();
+    const generation = h.retention.beginRender();
+    h.root.empty();
+    const replacement = block(h.root, snapshot);
+    h.retention.deferFocus(h.root, generation);
+    expect(document.activeElement).toBe(replacement);
+    expect(h.retention.hasPending()).toBe(false);
+    expect(h.execute).not.toHaveBeenCalled();
+  });
+
+  it('keeps projected no-op focus on its origin before publishing the exact canonical successor', async () => {
+    const snapshot = task({ planning: { due: '2026-09-23', time: '09:00' } });
+    const successor: TaskSnapshot = {
+      ...snapshot,
+      ref: { ...snapshot.ref, line: 1, revision: 'canonical' },
+      source: { ...snapshot.source, line: 1 },
+      planning: { ...snapshot.planning, time: localTime('09:15') },
+    };
+    const gate = deferred<TaskCommandResult>();
+    const release = vi.fn();
+    const h = harness({
+      shared: true,
+      execute: vi.fn<TaskApplicationApi['execute']>().mockReturnValue(gate.promise),
+      holdPublication: () => release,
+    });
+    h.root.addEventListener('focusin', (event) => {
+      if (event.target instanceof HTMLElement) h.retention.retain(event.target);
+    });
+    block(h.root, snapshot).focus();
+    const pointer = expectDefined(h.editQueue).execute(snapshot, (current) => ({
+      type: 'patch',
+      target: { type: 'task', ref: current.ref },
+      patch: { time: { type: 'set', value: localTime('09:15') } },
+    }));
+    h.retention.handleIntent(snapshot, { type: 'extend-due', days: -1 });
+    gate.resolve(okTask(successor));
+    await pointer;
+    await vi.waitFor(() => {
+      expect(release).toHaveBeenCalledOnce();
+    });
+    h.retention.beforeViewUpdate(false);
+    let generation = h.retention.beginRender();
+    h.root.empty();
+    const submitted = block(h.root, snapshot);
+    block(h.root, { ...successor, ref: { ...successor.ref, revision: 'neighbor' } });
+    h.retention.deferFocus(h.root, generation);
+    expect(document.activeElement).toBe(submitted);
+    expect(h.retention.hasPending()).toBe(true);
+    h.retention.beforeViewUpdate();
+    generation = h.retention.beginRender();
+    h.root.empty();
+    const canonical = block(h.root, successor);
+    h.retention.deferFocus(h.root, generation);
+    expect(document.activeElement).toBe(canonical);
+    expect(h.retention.hasPending()).toBe(false);
+    expect(h.execute).toHaveBeenCalledOnce();
+  });
+
+  it.each([false, true])(
+    'does not restore a no-op onto a foreign replacement at the same file and line (missing ref: %s)',
+    async (missingRef) => {
+      const snapshot = task({ planning: { due: '2026-09-23', time: '09:00' } });
+      const release = vi.fn();
+      const h = harness({ shared: true, holdPublication: () => release });
+      block(h.root, snapshot).focus();
+      h.retention.handleIntent(snapshot, { type: 'extend-due', days: -1 });
+      await vi.waitFor(() => {
+        expect(release).toHaveBeenCalledOnce();
+      });
+      expect(h.retention.hasPending()).toBe(true);
+      h.retention.beforeViewUpdate();
+      const generation = h.retention.beginRender();
+      h.root.empty();
+      const replacement = block(h.root, {
+        ...snapshot,
+        ref: { ...snapshot.ref, revision: 'foreign' },
+      });
+      if (missingRef) replacement.removeAttribute('data-abyss-task-node-ref-key');
+      h.retention.deferFocus(h.root, generation);
+      expect(document.activeElement).not.toBe(replacement);
+      expect(h.execute).not.toHaveBeenCalled();
+    },
+  );
+
+  it('supersedes a no-op target when a later intent in the same sequence commits', async () => {
+    const snapshot = task({ planning: { due: '2026-09-23', time: '09:00' } });
+    const updated: TaskSnapshot = {
+      ...snapshot,
+      ref: { ...snapshot.ref, revision: 'committed' },
+      planning: { ...snapshot.planning, time: localTime('09:15') },
+    };
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue(okTask(updated));
+    const h = harness({ shared: true, execute });
+    block(h.root, snapshot).focus();
+    h.retention.handleIntent(snapshot, { type: 'extend-due', days: -1 });
+    h.retention.handleIntent(snapshot, { type: 'move-time', deltaMinutes: 15 });
+    await vi.waitFor(() => {
+      expect(h.retention['settledSequences_abyssPrivate'].size).toBe(1);
+    });
+    h.retention.beforeViewUpdate();
+    const generation = h.retention.beginRender();
+    h.root.empty();
+    const replacement = block(h.root, updated);
+    h.retention.deferFocus(h.root, generation);
+    expect(document.activeElement).toBe(replacement);
+    expect(execute).toHaveBeenCalledOnce();
+    expect(h.retention.hasPending()).toBe(false);
+  });
+
+  it.each([0, 1])(
+    'does not restore an absent submitted source onto another root at line %s',
+    async (line) => {
+      const gate = deferred<TaskCommandResult>();
+      const original = task({
+        ref: { filePath: 'focus.md', line: 0, revision: 'original' },
+        source: { filePath: 'focus.md', line: 0 },
+        planning: { due: '2026-09-23', time: '09:00' },
+      });
+      const moved: TaskSnapshot = {
+        ...original,
+        ref: { ...original.ref, line: 1, revision: 'moved' },
+        source: { ...original.source, line: 1 },
+        planning: { ...original.planning, time: localTime('09:15') },
+      };
+      const h = harness({
+        execute: vi.fn<TaskApplicationApi['execute']>().mockReturnValue(gate.promise),
+      });
+      const origin = block(h.root, original);
+      applyTaskNodePresentationIdentity(origin, { type: 'task', ref: original.ref });
+      origin.focus();
+      h.retention.handleIntent(original, { type: 'move-time', deltaMinutes: 15 });
+      const settlement = h.retention.settlePointerTask(original);
+      gate.resolve(okTask(moved));
+      await settlement;
+      await settle();
+      h.retention.beforeViewUpdate(false);
+      const generation = h.retention.beginRender();
+      origin.remove();
+      const other = task({
+        ref: { filePath: 'focus.md', line, revision: 'replacement' },
+        source: { filePath: 'focus.md', line },
+      });
+      const replacement = block(h.root, other);
+      applyTaskNodePresentationIdentity(replacement, { type: 'task', ref: other.ref });
+      h.retention.deferFocus(h.root, generation);
+      expect(document.activeElement).not.toBe(replacement);
+    },
+  );
+
   it('does nothing without an application or a mounted root', () => {
     const root = document.body.createDiv();
     const orphan = new TimedBlockFocusRetention(undefined, {

@@ -13,17 +13,15 @@ import {
   type TaskQueryApi,
   type TaskSnapshot,
 } from '../../tasks';
+import { CalendarEditQueue } from '../../ui/calendarEditQueue';
 import type { InteractionOwnershipPort } from '../../ui/interactionOwnership';
 import { runAsyncAction } from '../../ui/runAsyncAction';
 import type { TaskDependencyLookup } from '../../ui/taskDependencyPresentation';
-import { startTaskNodeDrag } from '../../ui/taskNodeDrag';
 import { taskSelectionPath } from '../../ui/taskSelection';
 import type { MountCalendarAgendaEntry } from '../../views/ConstrainedCalendarView';
-import { calendarNativeDragPayload } from '../../views/calendarNativeDrag';
 import {
   calendarOccurrenceForTask,
   isForecastCalendarTask,
-  type CalendarProjectionIssue,
   type CalendarTaskSource,
 } from '../../views/calendarOccurrences';
 import type { PanelNavigationActions } from '../../views/panelNavigation';
@@ -33,6 +31,7 @@ import {
   type CalendarProjectionDiagnosticOwner,
   type ForecastContextMenuOwner,
 } from '../../views/timegrid/renderTaskMeta';
+import type { TimedCalendarEdit } from '../../views/timegrid/timedEditPlanning';
 import type { ShowInTaskList } from '../right/inspectorTypes';
 import { CalendarNavigationBar } from './CalendarNavigationBar';
 import type { CalendarCapturePlacement } from './calendarCapturePlacement';
@@ -44,6 +43,8 @@ import {
   stepCalendarDate,
   type CalendarMoment,
 } from './calendarDateNavigation';
+import { CalendarNativeDragContext } from './calendarNativeDragContext';
+import { CalendarPointerEdits } from './calendarPointerEdits';
 import { CalendarPublicationHold } from './calendarPublicationHold';
 import {
   createCalendarView,
@@ -107,6 +108,8 @@ export class CalendarMode {
   private constrained_abyssPrivate = false;
   private stopWidthObservation_abyssPrivate: (() => void) | undefined;
   private contentCache_abyssPrivate: CalendarContent | undefined;
+  // Query intake invalidates the cache, while submitted paints retain the mounted source basis.
+  private mountedContent_abyssPrivate: CalendarContent | undefined;
   private viewType_abyssPrivate: CalViewType = 'month';
   private date_abyssPrivate: CalendarMoment = moment().date(1);
   private viewInstance_abyssPrivate: CalendarViewInstance | null = null;
@@ -124,19 +127,29 @@ export class CalendarMode {
   // The panel element of the last render; the focus retention resolves blocks inside it.
   private root_abyssPrivate: HTMLElement | null = null;
   private readonly commands_abyssPrivate: CalendarCommands;
+  private readonly editQueue_abyssPrivate: CalendarEditQueue | undefined;
+  private readonly pointerEdits_abyssPrivate: CalendarPointerEdits | undefined;
   private readonly focusRetention_abyssPrivate: TimedBlockFocusRetention;
 
   constructor(private readonly deps_abyssPrivate: CalendarModeDependencies) {
+    this.editQueue_abyssPrivate =
+      deps_abyssPrivate.tasks === undefined
+        ? undefined
+        : new CalendarEditQueue(deps_abyssPrivate.tasks);
+    this.pointerEdits_abyssPrivate =
+      this.editQueue_abyssPrivate === undefined
+        ? undefined
+        : new CalendarPointerEdits(this.editQueue_abyssPrivate);
     this.commands_abyssPrivate = new CalendarCommands({
       tasks: deps_abyssPrivate.tasks,
       queries: deps_abyssPrivate.queries,
       nativeDrag: () => deps_abyssPrivate.state.get('draggingTaskNode'),
     });
     this.focusRetention_abyssPrivate = new TimedBlockFocusRetention(deps_abyssPrivate.tasks, {
+      editQueue: this.editQueue_abyssPrivate,
       isCalendarActive: () => deps_abyssPrivate.state.get('mode') === 'calendar',
       root: () => this.root_abyssPrivate,
-      holdPublication: () =>
-        this.publicationHold_abyssPrivate?.holdKeyboardPublication() ?? (() => {}),
+      holdPublication: () => this.publicationHold_abyssPrivate?.holdEditPublication() ?? (() => {}),
       follow: (updated, nextSegmentDate) => {
         this.followShiftedTask_abyssPrivate(updated, nextSegmentDate);
       },
@@ -173,12 +186,14 @@ export class CalendarMode {
 
   /** Releases the mounted calendar; the owner empties the element. */
   unmount(): void {
+    this.pointerEdits_abyssPrivate?.retire();
     this.pendingFollowDate_abyssPrivate = undefined;
     this.publicationHold_abyssPrivate?.dispose();
     this.publicationHold_abyssPrivate = undefined;
     this.stopWidthObservation_abyssPrivate?.();
     this.stopWidthObservation_abyssPrivate = undefined;
     this.contentCache_abyssPrivate = undefined;
+    this.mountedContent_abyssPrivate = undefined;
     this.forecastMenuOwner_abyssPrivate?.dismiss();
     this.projectionDiagnosticOwner_abyssPrivate?.destroy();
     this.projectionDiagnosticOwner_abyssPrivate = null;
@@ -388,11 +403,22 @@ export class CalendarMode {
     return bar;
   }
 
+  private retirePointerPlanning_abyssPrivate(
+    retained: CalendarContent | undefined,
+  ): CalendarContent | undefined {
+    if ((this.pointerEdits_abyssPrivate?.pending().length ?? 0) === 0) return retained;
+    this.pointerEdits_abyssPrivate?.retire();
+    this.contentCache_abyssPrivate = undefined;
+    return undefined;
+  }
+
   private mountView_abyssPrivate(
     context: CalendarRenderContext,
     retainedContent?: CalendarContent,
   ): void {
     this.publicationHold_abyssPrivate?.dispose();
+    this.mountedContent_abyssPrivate = undefined;
+    const retained = this.retirePointerPlanning_abyssPrivate(retainedContent);
     this.pendingFollowDate_abyssPrivate = undefined;
     this.prepareViewUpdate_abyssPrivate(context);
     this.deps_abyssPrivate.host.unmountActiveCapture();
@@ -402,9 +428,9 @@ export class CalendarMode {
     this.pendingScrollTop_abyssPrivate = undefined;
     this.viewInstance_abyssPrivate?.destroy();
     context.viewContainer.empty();
-    const content = retainedContent ?? this.content_abyssPrivate();
+    const content = retained ?? this.content_abyssPrivate();
     this.contentCache_abyssPrivate = content;
-    const { config, issues, occurrences } = content;
+    const { config, occurrences } = content;
     const dates = this.resolveSelectedDate_abyssPrivate();
     // A rebuilt grid with no position to restore would start at midnight, so it scrolls to now
     // even when this (view, date) pair was visited before. Only a same-date refresh that keeps its
@@ -456,7 +482,7 @@ export class CalendarMode {
     );
     this.viewInstance_abyssPrivate = view;
     view.render(context.viewContainer, occurrences, config, shouldScrollToNow, preservedScrollTop);
-    this.finishViewUpdate_abyssPrivate(context, issues, renderGeneration);
+    this.finishViewUpdate_abyssPrivate(context, content, renderGeneration);
   }
 
   private patchView_abyssPrivate(context: CalendarRenderContext, mountView: () => void): void {
@@ -468,25 +494,31 @@ export class CalendarMode {
     const renderGeneration = this.focusRetention_abyssPrivate.beginRender();
     const content = this.content_abyssPrivate();
     this.contentCache_abyssPrivate = content;
-    const { config, issues, occurrences } = content;
+    const { config, occurrences } = content;
     this.deps_abyssPrivate.host.unmountActiveCapture();
     this.viewInstance_abyssPrivate.patch(context.viewContainer, occurrences, config);
-    this.finishViewUpdate_abyssPrivate(context, issues, renderGeneration);
+    this.finishViewUpdate_abyssPrivate(context, content, renderGeneration);
   }
 
   private prepareViewUpdate_abyssPrivate(context: CalendarRenderContext): void {
     this.deps_abyssPrivate.host.dismissRecurrenceEditor();
     context.forecastMenuOwner.dismiss();
     this.focusRetention_abyssPrivate.captureActiveFocus(context.root);
-    this.focusRetention_abyssPrivate.beforeViewUpdate();
+    this.focusRetention_abyssPrivate.beforeViewUpdate(
+      this.pointerEdits_abyssPrivate?.pending().length === 0,
+    );
   }
 
   private finishViewUpdate_abyssPrivate(
     context: CalendarRenderContext,
-    issues: readonly CalendarProjectionIssue[],
+    content: CalendarContent,
     renderGeneration: number,
   ): void {
-    context.projectionDiagnosticOwner.update(context.viewContainer, issues);
+    this.mountedContent_abyssPrivate = content;
+    this.editQueue_abyssPrivate?.retainRendered(
+      content.occurrences.map((entry) => entry.source.root),
+    );
+    context.projectionDiagnosticOwner.update(context.viewContainer, content.issues);
     const { host } = this.deps_abyssPrivate;
     host.remountActiveCapture();
     host.syncTaskStackSelection();
@@ -511,8 +543,11 @@ export class CalendarMode {
   }
 
   private content_abyssPrivate(): CalendarContent {
+    const pendingPlanning = this.pointerEdits_abyssPrivate?.pending() ?? [];
     return calendarContent({
       queries: this.deps_abyssPrivate.queries,
+      pendingPlanning,
+      mounted: pendingPlanning.length === 0 ? undefined : this.mountedContent_abyssPrivate,
       settings: this.deps_abyssPrivate.settings,
       view: this.viewType_abyssPrivate,
       date: this.date_abyssPrivate,
@@ -586,6 +621,7 @@ export class CalendarMode {
   > {
     const { state, host } = this.deps_abyssPrivate;
     const commands = this.commands_abyssPrivate;
+    const nativeDrag = new CalendarNativeDragContext(state, viewContainer);
     return {
       onShowParent: host.onShowParent,
       onTaskClick: (task) => {
@@ -614,24 +650,26 @@ export class CalendarMode {
       onForecastContextMenu: (source, _referenceDate, anchor) => {
         host.openForecastRecurrenceEditor(anchor, source);
       },
-      onNativeDragStart: (task, source) => {
-        const payload = calendarNativeDragPayload(task);
-        if (payload?.source !== 'center-card' || payload.calendar === undefined) return undefined;
-        startTaskNodeDrag(state, viewContainer, source, {
-          payload,
-          onEnd: () => {
-            source.removeClass('is-dragging');
-          },
-        });
-        return state.get('draggingTaskNode') === null ? undefined : payload.calendar.nativePayload;
-      },
+      onNativeDragStart: (task, source) => nativeDrag.start(task, source),
       onDrop: (dragData, targetDate) => {
+        const task = nativeDrag.capture(dragData);
         runAsyncAction(
-          publicationHold.run(() => commands.rescheduleFromDrag(dragData, targetDate)),
+          task === undefined
+            ? publicationHold.run(() => commands.rescheduleFromDrag(dragData, targetDate))
+            : this.runTaskAction_abyssPrivate(publicationHold, task, (current) =>
+                commands.reschedule(current, targetDate),
+              ),
         );
       },
       onDropTime: (dragData, date, time) => {
-        runAsyncAction(publicationHold.run(() => commands.setTimeFromDrag(dragData, date, time)));
+        const task = nativeDrag.capture(dragData);
+        runAsyncAction(
+          task === undefined
+            ? publicationHold.run(() => commands.setTimeFromDrag(dragData, date, time))
+            : this.runTaskAction_abyssPrivate(publicationHold, task, (current) =>
+                commands.dropAtTime(current, date, time),
+              ),
+        );
       },
       onCreateAtTime: (date, time) => {
         this.createTaskAtTime_abyssPrivate(viewContainer, date, time);
@@ -663,27 +701,12 @@ export class CalendarMode {
           commands.setDuration(current, minutes),
         );
       },
-      onTimedMove: (task, target) => {
-        return this.runTaskAction_abyssPrivate(
-          publicationHold,
-          task,
-          (current) => commands.commitTimedMove(current, target, task),
-          true,
-        );
-      },
-      onTimedDuration: (task, target) => {
-        return this.runTaskAction_abyssPrivate(
-          publicationHold,
-          task,
-          (current) => commands.commitTimedDuration(current, target, task),
-          true,
-        );
-      },
-      onTimedBoundary: (task, target) => {
-        return this.runTaskAction_abyssPrivate(publicationHold, task, (current) =>
-          commands.commitTimedBoundary(current, target),
-        );
-      },
+      onTimedMove: (task, target) =>
+        this.runTimedEdit_abyssPrivate(publicationHold, task, { type: 'move', target }),
+      onTimedDuration: (task, target) =>
+        this.runTimedEdit_abyssPrivate(publicationHold, task, { type: 'resize', target }),
+      onTimedBoundary: (task, target) =>
+        this.runTimedEdit_abyssPrivate(publicationHold, task, { type: 'boundary', target }),
       onSpanMove: (task, target) => {
         return this.runTaskAction_abyssPrivate(publicationHold, task, (current) =>
           commands.commitSpanMove(current, target),
@@ -713,25 +736,57 @@ export class CalendarMode {
         this.focusRetention_abyssPrivate.handleIntent(task, intent);
       },
       onToggle: (task) => {
-        runAsyncAction(publicationHold.run(() => host.toggleTask(task)));
+        runAsyncAction(
+          this.runTaskAction_abyssPrivate(publicationHold, task, (current) =>
+            host.toggleTask(current),
+          ),
+        );
       },
       onSetStatus: (task, status) => {
-        runAsyncAction(publicationHold.run(() => host.setTaskStatus(task, status)));
+        runAsyncAction(
+          this.runTaskAction_abyssPrivate(publicationHold, task, (current) =>
+            host.setTaskStatus(current, status),
+          ),
+        );
       },
       onSetPriority: (task, priority) => {
-        runAsyncAction(publicationHold.run(() => host.setPriority(task, priority)));
+        runAsyncAction(
+          this.runTaskAction_abyssPrivate(publicationHold, task, (current) =>
+            host.setPriority(current, priority),
+          ),
+        );
       },
     };
+  }
+
+  private runTimedEdit_abyssPrivate(
+    hold: CalendarPublicationHold,
+    task: TaskSnapshot,
+    edit: TimedCalendarEdit,
+  ): Promise<void> {
+    if (this.pointerEdits_abyssPrivate === undefined) return Promise.resolve();
+    const date = edit.type === 'resize' ? undefined : edit.target.date;
+    runAsyncAction(Promise.resolve(this.focusRetention_abyssPrivate.settlePointerTask(task, date)));
+    this.pendingFollowDate_abyssPrivate = undefined;
+    const release = hold.holdEditPublication();
+    const completion = this.pointerEdits_abyssPrivate
+      .submit(task, edit, (phase) => {
+        if (phase === 'submitted' && this.publicationHold_abyssPrivate !== hold) return;
+        this.contentCache_abyssPrivate = undefined;
+        if (phase === 'submitted') hold.publishSubmitted();
+        else this.publicationHold_abyssPrivate?.request();
+      })
+      .finally(release);
+    runAsyncAction(completion);
+    return completion.catch(() => undefined);
   }
 
   private runTaskAction_abyssPrivate(
     publicationHold: CalendarPublicationHold,
     task: TaskSnapshot,
     action: (current: TaskSnapshot) => Promise<void>,
-    seriesTiming = false,
   ): Promise<void> {
-    const forecast = isForecastCalendarTask(task);
-    if (forecast && !seriesTiming) return Promise.resolve();
+    if (isForecastCalendarTask(task)) return Promise.resolve();
     const apply = (current: TaskSnapshot): Promise<void> => {
       // A submitted pointer gesture owns navigation; cancellation leaves keyboard following intact.
       if (this.publicationHold_abyssPrivate === publicationHold)
@@ -740,7 +795,17 @@ export class CalendarMode {
     };
     return publicationHold.run(() => {
       const current = this.focusRetention_abyssPrivate.settlePointerTask(task);
-      return current instanceof Promise ? current.then(apply) : apply(current);
+      const edits = this.editQueue_abyssPrivate;
+      let completion: Promise<void>;
+      if (edits === undefined)
+        completion = current instanceof Promise ? current.then(apply) : apply(current);
+      else {
+        runAsyncAction(Promise.resolve(current));
+        completion = edits.runAfter(task, apply);
+      }
+      return completion.finally(() => {
+        this.publicationHold_abyssPrivate?.request();
+      });
     });
   }
 

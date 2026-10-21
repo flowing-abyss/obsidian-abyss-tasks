@@ -5,11 +5,7 @@ import {
   durationMinutes as validatedDurationMinutes,
   type TaskSnapshot,
 } from '../../tasks';
-import {
-  calendarOccurrenceForRender,
-  calendarShiftPlanning,
-  calendarTaskWithPlanning,
-} from '../calendarOccurrences';
+import { calendarOccurrenceForRender, calendarTaskWithPlanning } from '../calendarOccurrences';
 import { settleCalendarInteraction } from '../settleCalendarInteraction';
 import { populateCalendarPreview } from './calendarPreview';
 import {
@@ -28,6 +24,7 @@ import {
   minutesToTimeString,
   type PositionedBlock,
 } from './layout';
+import { timedEditPlanning } from './timedEditPlanning';
 
 export type TimedBoundaryTarget =
   | SpanBoundaryTarget
@@ -188,44 +185,13 @@ function previewElement(options: PreviewElementOptions): HTMLElement {
   return preview;
 }
 
-function shiftedPlanning(task: TaskSnapshot, days: number): TaskSnapshot['planning'] | undefined {
-  const occurrence = calendarOccurrenceForRender(task);
-  return calendarShiftPlanning(
-    task.planning,
-    days,
-    occurrence.kind === 'materialized' ? occurrence.occupied : undefined,
-  );
-}
-
-function withoutTimedPlanning(planning: TaskSnapshot['planning']): TaskSnapshot['planning'] {
-  const result = { ...planning };
-  delete result.time;
-  delete result.duration;
-  return result;
-}
-
 function prospectivePlanning(
   task: TaskSnapshot,
   target: TimedPreviewTarget,
 ): TaskSnapshot['planning'] | undefined {
-  if ('destination' in target) {
-    const shifted = shiftedPlanning(task, target.dayDelta);
-    if (shifted == null) return undefined;
-    return target.destination === 'time-grid'
-      ? { ...shifted, time: localTime(minutesToTimeString(target.startMinutes)) }
-      : withoutTimedPlanning(shifted);
-  }
-  if ('durationMinutes' in target) {
-    return {
-      ...task.planning,
-      time: localTime(minutesToTimeString(target.startMinutes)),
-      duration: validatedDurationMinutes(target.durationMinutes),
-    };
-  }
-  if (target.boundary === 'start') return { ...task.planning, start: target.date };
-  if (target.boundary === 'due') return { ...task.planning, due: target.date };
-  const anchor = task.planning.start ?? task.planning.scheduled ?? task.planning.due;
-  return anchor != null ? { ...task.planning, start: anchor, due: target.date } : undefined;
+  if ('destination' in target) return timedEditPlanning(task, { type: 'move', target });
+  if ('durationMinutes' in target) return timedEditPlanning(task, { type: 'resize', target });
+  return timedEditPlanning(task, { type: 'boundary', target });
 }
 
 function applyPreviewPacking(

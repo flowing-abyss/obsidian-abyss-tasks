@@ -75,7 +75,7 @@ const CALENDAR_PROJECTION_CONSUMERS = {
     'projectCalendarOccurrences',
     'taskSnapshotForCalendarOccurrence',
   ],
-  'src/ui/timedBlockKeyboardQueue.ts': ['taskSnapshotForCalendarOccurrence'],
+  'src/ui/calendarOwnedTask.ts': ['taskSnapshotForCalendarOccurrence'],
 };
 
 const CALENDAR_PROJECTION_BINDINGS = new Set([

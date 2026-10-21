@@ -62,6 +62,9 @@ import process from 'process';
 // Current-time label and interrupted card tracks: main 2,135,563 -> 2,136,212 bytes (+649),
 // shipped CSS 195,331 -> 196,857 bytes (+1,526). No dependencies added. Minimal containing
 // KiB limits are 2,137,088 (2087 KiB) and 197,632 (193 KiB); both checks remain enforced.
+// Calendar pointer publication, serialized editing and focus retention: main 2,145,556 bytes.
+// No dependencies added; the minimal containing main limit is 2,146,304 bytes (2096 KiB).
+// CSS remains within 197,632 bytes. Both artifact checks remain enforced.
 const { mainJsBudgetBytes: MAIN_JS_BUDGET_BYTES } = JSON.parse(
   readFileSync('package.json', 'utf8'),
 ).release;

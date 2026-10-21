@@ -7,6 +7,7 @@ import { durationMinutes, localDate, localTime, type TaskApplicationApi } from '
 import { noInteractionOwnership } from '../src/ui/interactionOwnership';
 import { closeStatusPopovers } from '../src/ui/statusMenu';
 import { attachCalendarNativeDrag } from '../src/views/calendarNativeDrag';
+import { calendarPatchCommand } from '../src/views/calendarOccurrences';
 import {
   configuredTaskApplication,
   createAppWithFiles,
@@ -152,7 +153,7 @@ function startNativeDrag(source: HTMLElement): boolean {
   return source.dispatchEvent(event);
 }
 
-function timedMove(root: HTMLElement, date?: string, boundary?: 'start') {
+function timedMove(root: HTMLElement, date?: string, boundary?: 'start' | 'create-span' | 'due') {
   let gridTop = 100;
   for (const day of root.querySelectorAll<HTMLElement>('.abyss-tg-day-column')) {
     const left = (Number(day.dataset['tgDate']?.slice(-2)) - 19) * 100;
@@ -202,11 +203,92 @@ function timedMove(root: HTMLElement, date?: string, boundary?: 'start') {
   };
 }
 
+const dates = (root: HTMLElement) =>
+  [
+    ...root.querySelectorAll<HTMLElement>('.abyss-tg-block[data-abyss-task-file="calendar.md"]'),
+  ].map((block) => block.dataset['tgSegmentDate']);
+
 describe('timed date pointer persistence', () => {
-  const dates = (root: HTMLElement) =>
-    [
-      ...root.querySelectorAll<HTMLElement>('.abyss-tg-block[data-abyss-task-file="calendar.md"]'),
-    ].map((block) => block.dataset['tgSegmentDate']);
+  it.each(['start', 'create-span'] as const)(
+    'preserves authored overnight duration on %s date resize',
+    async (boundary) => {
+      const h = await setup('week', false, '⏰ 23:45 ⏱️ 1h', '2026-10-22');
+      timedMove(h.root, '2026-10-22', boundary).finish(boundary === 'start' ? 250 : 450, 552);
+      await flushMicrotasks();
+      expect(h.current().planning.duration).toBe(60);
+      expect(h.current().planning).toMatchObject(
+        boundary === 'start'
+          ? { start: '2026-10-21', due: '2026-10-22', time: '23:45' }
+          : { start: '2026-10-22', due: '2026-10-23', time: '23:45' },
+      );
+    },
+  );
+
+  it.each([false, true])(
+    'keeps both fast left moves while the first save is pending (child=%s)',
+    async (child) => {
+      const h = await setup('week', child, undefined, '2026-10-22');
+      const write = deferred<void>();
+      h.execute.mockImplementationOnce(async (...args) => {
+        await write.promise;
+        return h.application.tasks.execute(...args);
+      });
+      timedMove(h.root, '2026-10-22').finish(250, 552);
+      expect(h.root.querySelector('[data-tg-segment-date="2026-10-21"]')).not.toBeNull();
+      timedMove(h.root, '2026-10-21').finish(150, 552);
+      write.resolve();
+      await flushMicrotasks();
+      expect(h.current().planning).toEqual({ due: '2026-10-20', time: '09:00', duration: 60 });
+      expect(h.execute).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it.each([false, true])(
+    'accepts a second resize from pending geometry (child=%s)',
+    async (child) => {
+      const h = await setup('today', child);
+      const write = deferred<void>();
+      h.execute.mockImplementationOnce(async (command, options) => {
+        await write.promise;
+        return h.application.tasks.execute(command, options);
+      });
+      timedResize(h.root).finish();
+      const pending = expectDefined(h.root.querySelector<HTMLElement>('.abyss-tg-block'));
+      expect(pending.style.height).toBe('72px');
+      expect(h.root.querySelector<HTMLElement>('.abyss-cal-body')?.inert).not.toBe(true);
+      const hour = expectDefined(pending.closest<HTMLElement>('.abyss-tg-hour-column'));
+      const day = expectDefined(pending.closest<HTMLElement>('.abyss-tg-day-column'));
+      day.getBoundingClientRect = hour.getBoundingClientRect = () => new DOMRect(0, 100, 100, 1152);
+      pending.getBoundingClientRect = () => new DOMRect(0, 532, 100, 72);
+      const handle = expectDefined(
+        pending.querySelector<HTMLElement>('[data-resize-edge="duration"]'),
+      );
+      handle.setPointerCapture = vi.fn();
+      handle.releasePointerCapture = vi.fn();
+      handle.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          bubbles: true,
+          clientX: 25,
+          clientY: 600,
+          pointerId: 22,
+        }),
+      );
+      window.dispatchEvent(
+        new PointerEvent('pointerup', { clientX: 25, clientY: 624, pointerId: 22 }),
+      );
+      expect(h.root.querySelector<HTMLElement>('.abyss-tg-block')?.style.height).toBe('96px');
+      expect(h.current().planning.duration).toBe(60);
+      write.resolve();
+      await flushMicrotasks();
+      expect(h.current().planning.duration).toBe(120);
+      const file = expectDefined(h.app.vault.getFileByPath('calendar.md'));
+      expect(await h.app.vault.read(file)).toContain('⏱️ 2h');
+      expect(h.execute).toHaveBeenCalledTimes(2);
+      h.mode.render(h.root);
+      expect(h.root.querySelector<HTMLElement>('.abyss-tg-block')?.style.height).toBe('96px');
+      expect(h.host.openCapture).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([false, true])(
     'keeps consecutive center moves left after remount (child=%s)',
@@ -260,7 +342,8 @@ describe('timed date pointer persistence', () => {
       expect(preview.style.width).toBe('50%');
       first.finish(250, 552);
       await h.publish();
-      expect(preview.isConnected).toBe(true);
+      expect(preview.isConnected).toBe(false);
+      expect(dates(h.root)).toEqual(['2026-10-21', '2026-10-22']);
       expect(h.current().planning.start).toBeUndefined();
       write.resolve();
       await flushMicrotasks();
@@ -317,6 +400,94 @@ describe('timed date pointer persistence', () => {
 });
 
 describe('timed keyboard publication', () => {
+  it('keeps a submitted pointer on its week when a keyboard receipt arrives later', async () => {
+    const h = await setup('week', false, '⏰ 09:00 ⏱️ 1h', '2026-10-25');
+    vi.mocked(h.host.rerender).mockImplementation(() => {
+      h.mode.render(h.root);
+    });
+    const gate = deferred<void>();
+    h.execute.mockImplementationOnce(async (...args) => {
+      await gate.promise;
+      return h.application.tasks.execute(...args);
+    });
+    const block = expectDefined(h.root.querySelector<HTMLElement>('.abyss-tg-block'));
+    block.focus();
+    block.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    timedMove(h.root, '2026-10-25').finish(625, 648);
+    gate.resolve();
+    await flushMicrotasks();
+    expect(h.execute).toHaveBeenCalledTimes(2);
+    expect(h.current().planning).toMatchObject({ due: '2026-10-25', time: '11:00' });
+    expect(h.root.querySelector('.abyss-tg-day-column[data-tg-date="2026-10-25"]')).not.toBeNull();
+    expect(dates(h.root)).toEqual(['2026-10-25']);
+  });
+
+  it.each([false, true].flatMap((child) => ['due', 'start'].map((anchor) => ({ child, anchor }))))(
+    'moves the whole newly extended span from a retained $anchor point (child=$child)',
+    async ({ child, anchor }) => {
+      const h = await setup('week', child, '⏰ 09:00 ⏱️ 1h', '2026-10-22');
+      if (anchor === 'start') {
+        const display = expectDefined(h.root.querySelector<HTMLElement>('.abyss-tg-block'));
+        const root = expectDefined(h.application.index.list({ filePath: 'calendar.md' })[0]);
+        const patch = {
+          start: { type: 'set', value: localDate('2026-10-22') },
+          due: { type: 'clear' },
+        } as const;
+        await h.application.tasks.execute(
+          child
+            ? {
+                type: 'patch',
+                target: { type: 'subtask', ref: expectDefined(root.subtasks[0]).ref },
+                patch,
+              }
+            : { type: 'patch', target: { type: 'task', ref: root.ref }, patch },
+        );
+        expect(display.isConnected).toBe(false);
+      }
+      const gate = deferred<void>();
+      h.execute.mockImplementationOnce(async (...args) => {
+        await gate.promise;
+        return h.application.tasks.execute(...args);
+      });
+      const block = expectDefined(h.root.querySelector<HTMLElement>('.abyss-tg-block'));
+      block.focus();
+      block.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowRight', shiftKey: true, bubbles: true }),
+      );
+      timedMove(h.root, '2026-10-22').finish(225, 552);
+      gate.resolve();
+      await flushMicrotasks();
+      expect(h.execute).toHaveBeenCalledTimes(2);
+      expect(h.current().planning).toEqual({
+        start: '2026-10-21',
+        due: '2026-10-22',
+        time: '09:00',
+        duration: 60,
+      });
+      expect(dates(h.root)).toEqual(['2026-10-21', '2026-10-22']);
+    },
+  );
+
+  it.each([false, true])(
+    'continues queued keyboard moves when timing clips at midnight (child=%s)',
+    async (child) => {
+      const h = await setup('today', child, '⏰ 23:00 ⏱️ 1h');
+      const gate = deferred<void>();
+      h.execute.mockImplementationOnce(async (...args) => {
+        await gate.promise;
+        return h.application.tasks.execute(...args);
+      });
+      const block = expectDefined(h.root.querySelector<HTMLElement>('.abyss-tg-block'));
+      block.focus();
+      for (let i = 0; i < 2; i++)
+        block.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+      gate.resolve();
+      await flushMicrotasks();
+      expect(h.current().planning).toMatchObject({ time: '23:30', duration: 30 });
+      expect(h.execute).toHaveBeenCalledTimes(2);
+    },
+  );
+
   it('applies an end resize started during a keyboard write to that owned successor', async () => {
     const h = await setup('week');
     const gate = deferred<void>();
@@ -503,7 +674,7 @@ describe('timed keyboard publication', () => {
       new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }),
     );
     await h.execute.mock.results[0]?.value;
-    await Promise.resolve();
+    for (let turn = 0; turn < 20; turn++) await Promise.resolve();
     vi.runOnlyPendingTimers();
     expect(h.current().planning.due).toBe('2026-10-26');
     expect(h.root.querySelector<HTMLElement>('.abyss-tg-grid-row')?.scrollTop).toBe(300);
@@ -534,7 +705,7 @@ describe('timed keyboard publication', () => {
     expect(h.root.querySelector<HTMLElement>('.abyss-cal-body')?.inert).not.toBe(true);
     receipt.resolve();
     await h.execute.mock.results[0]?.value;
-    await Promise.resolve();
+    for (let turn = 0; turn < 20; turn++) await Promise.resolve();
     const replacement = expectDefined(h.root.querySelector<HTMLElement>('.abyss-tg-block'));
     expect(replacement).not.toBe(origin);
     expect(document.activeElement).toBe(replacement);
@@ -711,7 +882,7 @@ describe('timed drag release ownership', () => {
     expect(h.current().planning).toMatchObject({ time: '09:00', duration: 210 });
   });
 
-  it('retains the preview until the native activation turn publishes the committed task', async () => {
+  it('publishes interactive geometry before the next native activation turn', async () => {
     const h = await setup('week');
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const gesture = timedMove(h.root);
@@ -721,8 +892,9 @@ describe('timed drag release ownership', () => {
     // Drain command continuations without releasing the native click-turn timer.
     for (let i = 0; i < 20; i++) await Promise.resolve();
     expect(h.current().planning.time).toBe('11:00');
-    expect(h.root.querySelector('.abyss-tg-drag-preview')).not.toBeNull();
-    expect(gesture.block.isConnected).toBe(true);
+    expect(h.root.querySelector('.abyss-tg-drag-preview')).toBeNull();
+    expect(gesture.block.isConnected).toBe(false);
+    expect(h.root.querySelector<HTMLElement>('.abyss-tg-block')?.style.top).toBe('528px');
     await vi.runAllTimersAsync();
     expect(h.root.querySelector('.abyss-tg-drag-preview')).toBeNull();
     expect(gesture.block.isConnected).toBe(false);
@@ -810,7 +982,7 @@ describe('calendar publication during an owned gesture', () => {
     },
   );
 
-  it('keeps the preview but releases capture while persistence is pending', async () => {
+  it('releases capture and retires the old handle while persistence is pending', async () => {
     const h = await setup();
     const write = deferred<void>();
     h.execute.mockImplementation(async (command) => {
@@ -820,9 +992,9 @@ describe('calendar publication during an owned gesture', () => {
     const gesture = timedResize(h.root);
     gesture.finish();
     expect(gesture.release).toHaveBeenCalledExactlyOnceWith(21);
-    expect(h.root.querySelector('.abyss-tg-drag-preview')).not.toBeNull();
+    expect(h.root.querySelector<HTMLElement>('.abyss-tg-block')?.style.height).toBe('72px');
     await h.publish();
-    expect(gesture.handle.isConnected).toBe(true);
+    expect(gesture.handle.isConnected).toBe(false);
     gesture.handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 22 }));
     window.dispatchEvent(
       new PointerEvent('pointerup', { clientX: 25, clientY: 628, pointerId: 22 }),
@@ -953,6 +1125,7 @@ describe('calendar publication during an owned gesture', () => {
     });
     expect(projection).not.toHaveBeenCalled();
     gesture.finish();
+    expect(projection).not.toHaveBeenCalled();
     await flushMicrotasks();
     expect(h.execute).toHaveBeenCalledOnce();
     expect(h.current().planning.duration).toBe(90);
@@ -1137,3 +1310,684 @@ describe('calendar span publication', () => {
     },
   );
 });
+
+it.each(['before-write', 'after-write'] as const)(
+  'serializes child priority while resize is pending (%s)',
+  async (phase) => {
+    const h = await setup('today', true);
+    const gate = deferred<void>(),
+      accepted = deferred<void>();
+    h.execute.mockImplementationOnce(async (...args) => {
+      if (phase === 'before-write') await gate.promise;
+      const result = await h.application.tasks.execute(...args);
+      accepted.resolve();
+      if (phase === 'after-write') await gate.promise;
+      return result;
+    });
+    vi.mocked(h.host.setPriority).mockImplementation(async (task, priority) => {
+      const command = calendarPatchCommand(task, { priority: { type: 'set', value: priority } });
+      if (command !== undefined) await h.execute(command);
+    });
+    timedResize(h.root).finish();
+    if (phase === 'after-write') await accepted.promise;
+    const marker = expectDefined(h.root.querySelector<HTMLElement>('.abyss-status-marker'));
+    marker.dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2 }),
+    );
+    expectDefined(
+      document.querySelector<HTMLElement>('.abyss-status-popover [data-abyss-priority="A"]'),
+    ).click();
+    await flushMicrotasks();
+    gate.resolve();
+    await flushMicrotasks();
+    expect(h.current().planning.duration).toBe(90);
+    expect(h.current().priority).toBe('A');
+  },
+);
+
+it('stops queued keyboard writes after a receipt includes an unrelated source edit', async () => {
+  const h = await setup();
+  const gate = deferred<void>();
+  h.execute.mockImplementationOnce(async (...args) => {
+    await gate.promise;
+    return h.application.tasks.execute(...args);
+  });
+  const block = expectDefined(h.root.querySelector<HTMLElement>('.abyss-tg-block'));
+  block.focus();
+  for (let i = 0; i < 3; i++)
+    block.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+  const task = expectDefined(h.application.index.list({ filePath: 'calendar.md' })[0]);
+  await h.application.tasks.execute({
+    type: 'patch',
+    target: { type: 'task', ref: task.ref },
+    patch: { priority: { type: 'set', value: 'A' } },
+  });
+  gate.resolve();
+  await flushMicrotasks();
+  expect(h.current().planning.time).toBe('09:15');
+  expect(h.current().priority).toBe('A');
+  expect(h.execute).toHaveBeenCalledTimes(1);
+});
+
+it('retires pending planning and allows a fresh retry after navigating during a failed save', async () => {
+  const h = await setup('week');
+  const gate = deferred<void>();
+  h.execute.mockImplementationOnce(async () => {
+    await gate.promise;
+    return { type: 'io-error', cause: 'repository-error', contentState: 'unknown' };
+  });
+  timedResize(h.root).finish();
+  expect(h.root.querySelector<HTMLElement>('.abyss-tg-block')?.style.height).toBe('72px');
+  expectDefined(h.root.querySelector<HTMLElement>('[aria-label="Next"]')).click();
+  expectDefined(h.root.querySelector<HTMLElement>('[aria-label="Previous"]')).click();
+  gate.resolve();
+  await flushMicrotasks();
+  expect(h.current().planning.duration).toBe(60);
+  expect(h.root.querySelector<HTMLElement>('.abyss-tg-block')?.style.height).toBe('48px');
+  timedResize(h.root).finish();
+  await flushMicrotasks();
+  expect(h.current().planning.duration).toBe(90);
+  expect(h.execute).toHaveBeenCalledTimes(2);
+});
+
+it.each([false, true])('allows resize after unchanged priority (child=%s)', async (child) => {
+  const h = await setup('today', child);
+  vi.mocked(h.host.setPriority).mockImplementation(async (task, priority) => {
+    const command = calendarPatchCommand(task, { priority: { type: 'set', value: priority } });
+    if (command !== undefined) await h.execute(command);
+  });
+  expectDefined(h.root.querySelector<HTMLElement>('.abyss-status-marker')).dispatchEvent(
+    new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2 }),
+  );
+  expectDefined(
+    document.querySelector<HTMLElement>('.abyss-status-popover [data-abyss-priority="D"]'),
+  ).click();
+  await flushMicrotasks();
+  timedResize(h.root).finish();
+  await flushMicrotasks();
+  expect(h.current().planning.duration).toBe(90);
+  expect(h.execute).toHaveBeenCalledTimes(2);
+});
+
+it('retains source proof for a held gesture on a replacement mount', async () => {
+  const h = await setup('week', true),
+    gate = deferred<void>();
+  h.execute.mockImplementationOnce(async (...args) => {
+    await gate.promise;
+    return h.application.tasks.execute(...args);
+  });
+  timedResize(h.root).finish();
+  expectDefined(h.root.querySelector<HTMLElement>('[aria-label="Next"]')).click();
+  expectDefined(h.root.querySelector<HTMLElement>('[aria-label="Previous"]')).click();
+  const second = timedResize(h.root);
+  gate.resolve();
+  await flushMicrotasks();
+  expect(second.handle.isConnected).toBe(true);
+  expect(h.current().planning.duration).toBe(90);
+  window.dispatchEvent(new PointerEvent('pointerup', { clientX: 25, clientY: 628, pointerId: 21 }));
+  await flushMicrotasks();
+  expect(h.current().planning.duration).toBe(120);
+});
+
+it.each([0, 1])(
+  'drops a pending all-day projection at its requested date (shift=%s)',
+  async (delta) => {
+    const h = await setup('week', true),
+      receipt = deferred<void>(),
+      committed = deferred<void>();
+    h.execute.mockImplementationOnce(async (...args) => {
+      const result = await h.application.tasks.execute(...args);
+      committed.resolve();
+      await receipt.promise;
+      return result;
+    });
+    const first = timedMove(h.root);
+    for (const cell of h.root.querySelectorAll<HTMLElement>('.abyss-tg-allday-cell')) {
+      const left = (Number(cell.dataset['tgDate']?.slice(-2)) - 19) * 100;
+      cell.getBoundingClientRect = () => new DOMRect(left, 50, 100, 50);
+    }
+    first.finish(25 + delta * 100, 75);
+    await committed.promise;
+    const source = expectDefined(h.root.querySelector<HTMLElement>('[draggable="true"]'));
+    let serialized = '';
+    const transfer = {
+      setData: (_type: string, value: string) => {
+        serialized = value;
+      },
+      getData: () => serialized,
+      effectAllowed: 'move',
+      dropEffect: 'move',
+    };
+    const start = new Event('dragstart', { bubbles: true, cancelable: true });
+    Object.defineProperty(start, 'dataTransfer', { value: transfer });
+    source.dispatchEvent(start);
+    expect(serialized).not.toBe('');
+    const target = expectDefined(
+      h.root.querySelector<HTMLElement>('.abyss-tg-allday-cell[data-tg-date="2026-10-21"]'),
+    );
+    const drop = new Event('drop', { bubbles: true, cancelable: true });
+    Object.defineProperty(drop, 'dataTransfer', { value: transfer });
+    target.dispatchEvent(drop);
+    await flushMicrotasks();
+    receipt.resolve();
+    await flushMicrotasks();
+    expect(h.current().planning.due).toBe('2026-10-21');
+  },
+);
+
+it.each([false, true])(
+  'retains failed keyboard lineage for a legacy action already accepted (child=%s)',
+  async (child) => {
+    const h = await setup('today', child),
+      gate = deferred<void>();
+    h.execute.mockImplementationOnce(async () => {
+      await gate.promise;
+      return { type: 'io-error', cause: 'repository-error', contentState: 'unknown' };
+    });
+    vi.mocked(h.host.setPriority).mockImplementation(async (task, priority) => {
+      const command = calendarPatchCommand(task, { priority: { type: 'set', value: priority } });
+      if (command !== undefined) await h.execute(command);
+    });
+    const block = expectDefined(h.root.querySelector<HTMLElement>('.abyss-tg-block'));
+    block.focus();
+    block.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    expectDefined(h.root.querySelector<HTMLElement>('.abyss-status-marker')).dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2 }),
+    );
+    expectDefined(
+      document.querySelector<HTMLElement>('.abyss-status-popover [data-abyss-priority="A"]'),
+    ).click();
+    expect(h.execute).toHaveBeenCalledTimes(1);
+    gate.resolve();
+    await flushMicrotasks();
+    expect(h.current().priority).toBe('D');
+    expect(h.execute).toHaveBeenCalledTimes(1);
+  },
+);
+
+it.each([false, true])(
+  'follows a new keyboard action after pointer submission (child=%s)',
+  async (child) => {
+    const h = await setup('week', child, '⏰ 09:00 ⏱️ 1h', '2026-10-25');
+    vi.mocked(h.host.rerender).mockImplementation(() => {
+      h.mode.render(h.root);
+    });
+    const gate = deferred<void>();
+    h.execute.mockImplementationOnce(async (...args) => {
+      await gate.promise;
+      return h.application.tasks.execute(...args);
+    });
+    const block = expectDefined(h.root.querySelector<HTMLElement>('.abyss-tg-block'));
+    block.focus();
+    block.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    expectDefined(h.root.querySelector<HTMLElement>('.abyss-tg-hour-column')).dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, pointerId: 77, pointerType: 'touch' }),
+    );
+    timedResize(h.root, '2026-10-25').finish();
+    expect(block.isConnected).toBe(true);
+    expect(document.activeElement).toBe(block);
+    block.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    gate.resolve();
+    await flushMicrotasks();
+    window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 77 }));
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    await flushMicrotasks();
+    expect(h.current().planning.due).toBe('2026-10-26');
+    expect(dates(h.root)).toContain('2026-10-26');
+    expect(h.execute).toHaveBeenCalledTimes(3);
+  },
+);
+
+it.each([false, true])(
+  'invalidates a keyboard action accepted before pointer failure (child=%s)',
+  async (child) => {
+    const h = await setup('today', child);
+    const gate = deferred<void>();
+    h.execute.mockImplementationOnce(async (...args) => {
+      await gate.promise;
+      return h.application.tasks.execute(...args);
+    });
+    h.execute.mockImplementationOnce(async () => ({
+      type: 'io-error',
+      cause: 'repository-error',
+      contentState: 'unknown',
+    }));
+    const block = expectDefined(h.root.querySelector<HTMLElement>('.abyss-tg-block'));
+    block.focus();
+    block.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    timedResize(h.root).finish();
+    const current = expectDefined(h.root.querySelector<HTMLElement>('.abyss-tg-block'));
+    current.focus();
+    expect(current.isConnected).toBe(true);
+    current.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    gate.resolve();
+    await flushMicrotasks();
+    expect(h.current().planning.time).toBe('09:15');
+    expect(h.execute).toHaveBeenCalledTimes(2);
+  },
+);
+
+it('keeps native keyboard focus when submitted planning replaces an uncommitted keyboard block', async () => {
+  const h = await setup();
+  const gate = deferred<void>();
+  h.execute.mockImplementationOnce(async (...args) => {
+    await gate.promise;
+    return h.application.tasks.execute(...args);
+  });
+  const block = expectDefined(h.root.querySelector<HTMLElement>('.abyss-tg-block'));
+  block.focus();
+  block.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+  timedResize(h.root).finish();
+  const pending = expectDefined(h.root.querySelector<HTMLElement>('.abyss-tg-block'));
+  expect(block.isConnected).toBe(false);
+  expect(document.activeElement).toBe(pending);
+  pending.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+  gate.resolve();
+  await flushMicrotasks();
+  expect(h.current().planning).toMatchObject({ time: '09:30', duration: 75 });
+  expect(h.execute).toHaveBeenCalledTimes(3);
+});
+
+it('keeps focus on the pointer destination after an earlier keyboard date receipt', async () => {
+  const h = await setup('week', false, '⏰ 09:00 ⏱️ 1h', '2026-10-21');
+  const gate = deferred<void>();
+  h.execute.mockImplementationOnce(async (...args) => {
+    await gate.promise;
+    return h.application.tasks.execute(...args);
+  });
+  const original = expectDefined(h.root.querySelector<HTMLElement>('.abyss-tg-block'));
+  original.focus();
+  original.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+  timedMove(h.root, '2026-10-21').finish(125, 552);
+  expect(document.activeElement?.getAttribute('data-tg-segment-date')).toBe('2026-10-20');
+  gate.resolve();
+  await flushMicrotasks();
+  expect(h.current().planning.due).toBe('2026-10-20');
+  expect(document.activeElement?.getAttribute('data-tg-segment-date')).toBe('2026-10-20');
+});
+
+it.each([false, true])(
+  'pins a rendered source while a gesture spans another keyboard receipt (child=%s)',
+  async (child) => {
+    const h = await setup('today', child);
+    const first = deferred<void>(),
+      second = deferred<void>();
+    h.execute.mockImplementationOnce(async (...args) => {
+      await first.promise;
+      return h.application.tasks.execute(...args);
+    });
+    h.execute.mockImplementationOnce(async (...args) => {
+      await second.promise;
+      return h.application.tasks.execute(...args);
+    });
+    const original = expectDefined(h.root.querySelector<HTMLElement>('.abyss-tg-block'));
+    original.focus();
+    original.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    original.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    first.resolve();
+    await flushMicrotasks();
+    const resize = timedResize(h.root);
+    second.resolve();
+    await flushMicrotasks();
+    expect(resize.handle.isConnected).toBe(true);
+    resize.finish();
+    await flushMicrotasks();
+    expect(h.current().planning).toMatchObject({ time: '09:30', duration: 75 });
+    expect(h.execute).toHaveBeenCalledTimes(3);
+  },
+);
+
+it.each([false, true])(
+  'joins a remounted committed source after its delayed receipt (child=%s)',
+  async (child) => {
+    const h = await setup('week', child);
+    const receipt = deferred<void>(),
+      committed = deferred<void>(),
+      pointer = deferred<void>();
+    h.execute.mockImplementationOnce(async (...args) => {
+      const result = await h.application.tasks.execute(...args);
+      committed.resolve();
+      await receipt.promise;
+      return result;
+    });
+    h.execute.mockImplementationOnce(async (...args) => {
+      await pointer.promise;
+      return h.application.tasks.execute(...args);
+    });
+    const original = expectDefined(h.root.querySelector<HTMLElement>('.abyss-tg-block'));
+    original.focus();
+    original.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    await committed.promise;
+    expectDefined(h.root.querySelector<HTMLElement>('[aria-label="Next"]')).click();
+    expectDefined(h.root.querySelector<HTMLElement>('[aria-label="Previous"]')).click();
+    timedResize(h.root).finish();
+    receipt.resolve();
+    await flushMicrotasks();
+    expect(h.execute).toHaveBeenCalledTimes(2);
+    const current = expectDefined(h.root.querySelector<HTMLElement>('.abyss-tg-block'));
+    current.focus();
+    expect(current.isConnected).toBe(true);
+    current.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    current.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    pointer.resolve();
+    await flushMicrotasks();
+    expect(h.current().planning).toMatchObject({ time: '09:45', duration: 90 });
+    expect(h.execute).toHaveBeenCalledTimes(4);
+  },
+);
+
+it('does not put another task destination into a pending keyboard focus locator', async () => {
+  const h = await setup('week', true, '⏰ 09:00 ⏱️ 1h', '2026-10-21');
+  const root = expectDefined(h.application.index.list({ filePath: 'calendar.md' })[0]);
+  await h.application.tasks.execute({
+    type: 'patch',
+    target: { type: 'subtask', ref: expectDefined(root.subtasks[1]).ref },
+    patch: {
+      due: { type: 'set', value: localDate('2026-10-22') },
+      time: { type: 'set', value: localTime('10:00') },
+      duration: { type: 'set', value: durationMinutes(60) },
+    },
+  });
+  await flushMicrotasks();
+  const gate = deferred<void>();
+  h.execute.mockImplementationOnce(async (...args) => {
+    await gate.promise;
+    return h.application.tasks.execute(...args);
+  });
+  const focused = expectDefined(
+    h.root.querySelector<HTMLElement>('.abyss-tg-block[data-abyss-task-line="1"]'),
+  );
+  focused.focus();
+  focused.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+  timedMove(h.root, '2026-10-22').finish(125, 552);
+  expect(document.activeElement?.getAttribute('data-abyss-task-line')).toBe('1');
+  gate.resolve();
+  await flushMicrotasks();
+  expect(document.activeElement?.getAttribute('data-abyss-task-line')).toBe('1');
+});
+
+it('does not dispatch a sibling key accepted before an unproved root receipt', async () => {
+  const h = await setup('today', true);
+  let root = expectDefined(h.application.index.list({ filePath: 'calendar.md' })[0]);
+  await h.application.tasks.execute({
+    type: 'patch',
+    target: { type: 'subtask', ref: expectDefined(root.subtasks[1]).ref },
+    patch: {
+      due: { type: 'set', value: localDate('2026-10-19') },
+      time: { type: 'set', value: localTime('10:00') },
+      duration: { type: 'set', value: durationMinutes(60) },
+    },
+  });
+  await flushMicrotasks();
+  const gate = deferred<void>();
+  h.execute.mockImplementationOnce(async (...args) => {
+    await gate.promise;
+    return h.application.tasks.execute(...args);
+  });
+  const first = expectDefined(
+    h.root.querySelector<HTMLElement>('.abyss-tg-block[data-abyss-task-line="1"]'),
+  );
+  const second = expectDefined(
+    h.root.querySelector<HTMLElement>('.abyss-tg-block[data-abyss-task-line="2"]'),
+  );
+  first.focus();
+  first.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+  second.focus();
+  second.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+  root = expectDefined(h.application.index.list({ filePath: 'calendar.md' })[0]);
+  await h.application.tasks.execute({
+    type: 'patch',
+    target: { type: 'task', ref: root.ref },
+    patch: { priority: { type: 'set', value: 'A' } },
+  });
+  gate.resolve();
+  await flushMicrotasks();
+  root = expectDefined(h.application.index.list({ filePath: 'calendar.md' })[0]);
+  expect(root.subtasks[0]?.planning.time).toBe('09:15');
+  expect(root.subtasks[1]?.planning.time).toBe('10:00');
+  expect(h.execute).toHaveBeenCalledTimes(1);
+});
+
+it.each([false, true].flatMap((child) => [false, true].map((failure) => ({ child, failure }))))(
+  'keeps a published source linked to deferred keyboard input ($child / failure=$failure)',
+  async ({ child, failure }) => {
+    const h = await setup('today', child);
+    const first = deferred<void>(),
+      second = deferred<void>();
+    h.execute.mockImplementationOnce(async (...args) => {
+      await first.promise;
+      return h.application.tasks.execute(...args);
+    });
+    h.execute.mockImplementationOnce(async (...args) => {
+      await second.promise;
+      return failure
+        ? { type: 'io-error', cause: 'repository-error', contentState: 'unknown' }
+        : h.application.tasks.execute(...args);
+    });
+    const original = expectDefined(h.root.querySelector<HTMLElement>('.abyss-tg-block'));
+    original.focus();
+    original.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    original.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    first.resolve();
+    await flushMicrotasks();
+    expect(h.execute).toHaveBeenCalledTimes(2);
+    expect(original.isConnected).toBe(false);
+    timedResize(h.root).finish();
+    second.resolve();
+    await flushMicrotasks();
+    expect(h.execute).toHaveBeenCalledTimes(failure ? 2 : 3);
+    expect(h.current().planning).toMatchObject({
+      time: failure ? '09:15' : '09:30',
+      duration: failure ? 60 : 75,
+    });
+  },
+);
+
+it.each([false, true])(
+  'keeps one submitted block when metadata relocates its held source (child=%s)',
+  async (child) => {
+    const h = await setup('today', child);
+    const gate = deferred<void>();
+    h.execute.mockImplementationOnce(async (...args) => {
+      await gate.promise;
+      return h.application.tasks.execute(...args);
+    });
+    const original = expectDefined(h.root.querySelector<HTMLElement>('.abyss-tg-block'));
+    original.focus();
+    original.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    const file = expectDefined(h.app.vault.getFileByPath('calendar.md'));
+    await h.app.vault.modify(file, `# Header\n${await h.app.vault.read(file)}`);
+    seedTaskCache(
+      h.app,
+      'calendar.md',
+      child
+        ? [
+            { task: ' ', parent: -1, line: 1 },
+            { task: ' ', parent: 1, line: 2 },
+            { task: ' ', parent: 1, line: 3 },
+          ]
+        : [{ task: ' ', parent: -1, line: 1 }],
+    );
+    await flushMicrotasks();
+    try {
+      expect(h.application.index.list({ filePath: 'calendar.md' })[0]?.ref.line).toBe(1);
+      expect(original.isConnected).toBe(true);
+      timedResize(h.root).finish();
+      expect(h.root.querySelectorAll('.abyss-tg-block')).toHaveLength(1);
+      expect(h.root.querySelector('.abyss-tg-block')?.textContent).toContain('09:00–10:30');
+    } finally {
+      gate.resolve();
+      await flushMicrotasks();
+    }
+    expect(h.root.querySelectorAll('.abyss-tg-block')).toHaveLength(1);
+    expect(h.root.querySelector<HTMLElement>('.abyss-tg-block')?.dataset['abyssTaskLine']).toBe(
+      child ? '2' : '1',
+    );
+  },
+);
+
+it('retains settled submitted planning while another source still holds publication', async () => {
+  const h = await setup('week', true);
+  const root = expectDefined(h.application.index.list({ filePath: 'calendar.md' })[0]);
+  await h.application.tasks.execute({
+    type: 'patch',
+    target: { type: 'subtask', ref: expectDefined(root.subtasks[1]).ref },
+    patch: {
+      due: { type: 'set', value: localDate('2026-10-20') },
+      time: { type: 'set', value: localTime('09:00') },
+      duration: { type: 'set', value: durationMinutes(60) },
+    },
+  });
+  await flushMicrotasks();
+  const first = deferred<void>(),
+    second = deferred<void>();
+  h.execute.mockImplementationOnce(async (...args) => {
+    await first.promise;
+    return h.application.tasks.execute(...args);
+  });
+  h.execute.mockImplementationOnce(async (...args) => {
+    await second.promise;
+    return h.application.tasks.execute(...args);
+  });
+  try {
+    timedResize(h.root).finish();
+    timedResize(h.root, '2026-10-20').finish();
+    first.resolve();
+    await flushMicrotasks();
+    expect(h.current().planning.duration).toBe(90);
+    timedMove(h.root, '2026-10-20').finish(125, 648);
+    const settled = expectDefined(
+      h.root.querySelector<HTMLElement>('.abyss-tg-block[data-tg-segment-date="2026-10-19"]'),
+    );
+    expect(settled.textContent).toContain('09:00–10:30');
+  } finally {
+    first.resolve();
+    second.resolve();
+    await flushMicrotasks();
+  }
+  expect(h.current().planning.duration).toBe(90);
+});
+
+it.each([false, true])(
+  'keeps keyboard focus on submitted planning after its root receipt relocates (adjacent=%s)',
+  async (adjacent) => {
+    const h = await setup();
+    const file = expectDefined(h.app.vault.getFileByPath('calendar.md'));
+    if (adjacent) {
+      await h.app.vault.modify(
+        file,
+        `${await h.app.vault.read(file)}\n- [ ] Sibling 📅 2026-10-19 ⏰ 12:00 ⏱️ 1h`,
+      );
+      seedTaskCache(h.app, 'calendar.md', [
+        { task: ' ', parent: -1, line: 0 },
+        { task: ' ', parent: -1, line: 1 },
+      ]);
+      await flushMicrotasks();
+    }
+    const first = deferred<void>(),
+      second = deferred<void>();
+    h.execute.mockImplementationOnce(async (...args) => {
+      await first.promise;
+      return h.application.tasks.execute(...args);
+    });
+    h.execute.mockImplementationOnce(async (...args) => {
+      await second.promise;
+      return h.application.tasks.execute(...args);
+    });
+    const original = expectDefined(h.root.querySelector<HTMLElement>('.abyss-tg-block'));
+    original.focus();
+    original.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    await h.app.vault.modify(file, `# Header\n${await h.app.vault.read(file)}`);
+    try {
+      timedResize(h.root).finish();
+      first.resolve();
+      await flushMicrotasks();
+      expect(h.current().ref).toMatchObject({ line: 1 });
+      timedMove(h.root).finish(25, 648);
+      const pending = expectDefined(h.root.querySelector<HTMLElement>('.abyss-tg-block'));
+      expect(document.activeElement).toBe(pending);
+      pending.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    } finally {
+      first.resolve();
+      second.resolve();
+      await flushMicrotasks();
+    }
+    expect(h.current().planning).toMatchObject({ time: '11:15', duration: 75 });
+    if (adjacent)
+      expect(h.application.index.list({ filePath: 'calendar.md' })[1]?.planning.time).toBe('12:00');
+  },
+);
+
+it.each(['resize', 'keyboard'] as const)(
+  'uses canonical planning for a fresh %s after failure while another task still saves',
+  async (kind) => {
+    const h = await setup('week');
+    const other = expectDefined(h.application.index.list({ filePath: 'other.md' })[0]);
+    await h.application.tasks.execute({
+      type: 'patch',
+      target: { type: 'task', ref: other.ref },
+      patch: {
+        due: { type: 'set', value: localDate('2026-10-20') },
+        time: { type: 'set', value: localTime('09:00') },
+        duration: { type: 'set', value: durationMinutes(60) },
+      },
+    });
+    await flushMicrotasks();
+    const first = deferred<void>(),
+      second = deferred<void>();
+    h.execute.mockImplementationOnce(async () => {
+      await first.promise;
+      return { type: 'io-error', cause: 'repository-error', contentState: 'unknown' };
+    });
+    h.execute.mockImplementationOnce(async (...args) => {
+      await second.promise;
+      return h.application.tasks.execute(...args);
+    });
+    try {
+      timedMove(h.root, '2026-10-19').finish(25, 600);
+      timedResize(h.root, '2026-10-20').finish();
+      first.resolve();
+      await flushMicrotasks();
+      expect(h.execute).toHaveBeenCalledTimes(2);
+      expect(h.current().planning.time).toBe('09:00');
+      const block = expectDefined(
+        h.root.querySelector<HTMLElement>('.abyss-tg-block[data-abyss-task-file="calendar.md"]'),
+      );
+      expect(block.textContent).toContain('10:00–11:00');
+      if (kind === 'keyboard') {
+        block.focus();
+        block.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+      } else {
+        const day = expectDefined(block.closest<HTMLElement>('.abyss-tg-day-column'));
+        const hour = expectDefined(day.querySelector<HTMLElement>('.abyss-tg-hour-column'));
+        day.getBoundingClientRect = hour.getBoundingClientRect = () =>
+          new DOMRect(0, 100, 100, 1152);
+        block.getBoundingClientRect = () => new DOMRect(0, 580, 100, 48);
+        const handle = expectDefined(
+          block.querySelector<HTMLElement>('[data-resize-edge="duration"]'),
+        );
+        handle.dispatchEvent(
+          new PointerEvent('pointerdown', {
+            bubbles: true,
+            clientX: 25,
+            clientY: 628,
+            pointerId: 87,
+          }),
+        );
+        window.dispatchEvent(
+          new PointerEvent('pointerup', { clientX: 25, clientY: 652, pointerId: 87 }),
+        );
+      }
+      second.resolve();
+      await flushMicrotasks();
+      expect(h.execute).toHaveBeenCalledTimes(3);
+      expect(h.current().planning).toMatchObject(
+        kind === 'keyboard' ? { time: '09:15', duration: 60 } : { time: '09:00', duration: 150 },
+      );
+    } finally {
+      first.resolve();
+      second.resolve();
+      await flushMicrotasks();
+    }
+  },
+);

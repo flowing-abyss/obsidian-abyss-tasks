@@ -461,33 +461,66 @@ Pointer release waits through the native click/contextmenu turn before replacing
 The hold retains the origin of a timed-block press across query patches and consumes its click
 after movement or scrolling, including after capture loss or Escape. A fresh press restores normal
 activation; keyboard clicks retain their own path.
-Commands submitted through those callbacks make the calendar body inert until settlement and queued
-publication, so another gesture cannot submit from the old task snapshot. Compact agenda status actions
-retain the shared TaskCardRenderer and CenterPanel command and menu owners. TimedBlockKeyboardQueue
-holds publication during each keyboard write without making the focused block inert. Its receipt
-updates TimedBlockFocusRetention before releasing the hold; the replacement receives focus in that
-publication turn, keeping repeated keys out of native page scrolling. Consecutive vertical repeats
-of the same kind and direction accumulate behind the active write; reversal and modifier changes
-retain their order and clamps. Tab transfers the publication hold to a queued edit of the next block.
-A sibling's pending command can adopt the preceding command's root only through the existing
-whole-tree owned-change proof. Even an unchanged receipt releases dirty publication before settling
-focus ownership.
-A pointer commit on a retained keyboard origin discards unsent repeats and waits for the active
-receipt. A sibling or forecast timing gesture can use a successor only after the existing whole-tree
-owned-change proof accepts each keyboard patch. The queue retains one original/current root pair
-for the mounted DOM, resetting its baseline on publication; it does not accumulate receipt history
-or acquire replacements through a query lookup. Rebasing keeps the caller's occurrence and date roles, including
-separate scheduled and due points. CalendarCommands preserves the pointer's absolute edge or date
-against that successor, retaining the opposite resized edge. Keyboard navigation across periods
+Submitted timed gestures publish temporary planning through the existing occurrence projector and
+view patch. Submitted paints retain the last mounted projection sources and each node’s latest
+submitted plan until canonical publication, so external source relocation cannot duplicate a block
+or partial settlement undo its displayed geometry. CalendarPointerEdits owns these pending plans; CalendarTaskSource keeps the exact captured
+canonical root, node and target. The replacement block exposes real handles immediately. The
+publication hold consumes the submitting gesture's click and defers canonical replacement during a
+later press. Status, menus and legacy callbacks retain their existing inert settlement boundary;
+compact agenda actions retain TaskCardRenderer and CenterPanel command owners.
+
+CalendarEditQueue serializes pointer and keyboard commands. Command builders receive a successor
+only after the whole-tree owned-change proof accepts the preceding receipt. The queue retains source
+reference aliases for mounted sources and the latest receipt, with one current snapshot per lineage;
+intermediate unrendered receipt aliases are retired. Rendering pins exact source refs for gestures
+that have not submitted yet, without acquiring replacement authority. Queued captures
+hold that lineage directly. Keyboard input captures it before deferring or coalescing repeats;
+shared keyboard intents are validated against that lineage only after earlier pointer edits settle.
+If a remount exposes an already committed source before its delayed receipt, the whole-tree proof
+joins captures of that exact reference; redirects discard obsolete snapshots and compress on access.
+Failed or unproved receipts invalidate already queued dependents. A fresh
+submission may retry its explicit source through the public API. The queue never acquires replacement
+sources through query lookup. Command planning always comes from the canonical node, even when its
+reference matches a block showing speculative planning; a failed edit cannot move the opposite edge
+of the next resize. CalendarEditWitness describes declared date writes and the existing
+midnight duration normalization for proof; it never infers permitted edits from a receipt diff.
+Root planning receipts may retain the public API’s same-file line rebase after the expected planning
+values and full task tree pass the owned-change proof. Prepared patches retain their originally
+issued target for that check; the ordinary inspector selection proof keeps its existing line guard.
+
+timedEditPlanning supplies both previews and submitted command patches. It preserves absolute pointer
+dates and resized edges against the proved successor, retaining the opposite edge and the caller's
+occurrence roles. A newly created interval replaces the preceding point semantics. Horizontal boundary
+edits preserve authored timing. CalendarNativeDragContext retains rendered planning only for its exact
+registered AppState payload, capturing it before native drop cleanup. Native drops and status actions
+wait behind submitted timed edits and use their proved source successor.
+
+TimedBlockKeyboardQueue holds publication during each keyboard write without making the focused block
+inert. Its receipt updates TimedBlockFocusRetention before releasing the hold; the replacement receives
+focus in that publication turn, keeping repeated keys out of native page scrolling. Consecutive vertical
+repeats of the same kind and direction accumulate behind the active write; reversal and modifier changes
+retain their order and clamps. Tab transfers the hold to a queued edit of the next block. A pointer
+submission discards unsent repeats on its source and suppresses late keyboard following. Subsequent
+keyboard input starts a new sequence with its own following intent. Submitted planning restores focus
+before the predecessor receipt, preserving native key input without letting that receipt change the
+pointer's destination. Cancellation
+leaves keyboard following intact. Even unchanged receipts release dirty publication before settling
+focus ownership. Shared no-op intents retain only the exact canonical node reference supplied by the
+queue’s validated builder; they preserve focus through publication without claiming a write.
+Submitted pointer paints restore captured focus synchronously even without an active keyboard sequence.
+Keyboard navigation across periods
 preserves the scroll offset instead of scrolling to the current time. Automatic following shares
 the mounted publication hold, so an accepted keyboard date cannot destroy a held pointer gesture.
 A submitted pointer gesture takes over navigation; cancellation lets the keyboard follow settle.
 Shortening an interval clamps keyboard focus to a surviving segment.
 Navigation, width remounts, disposal, and window migration retire the hold; late completion cannot
-publish into a replacement mount.
-Timed and span sessions release pointer capture and listeners at submission while retaining their
-preview until the command and held publication settle, or the view is disposed. Explicit view patches
-still cancel sessions. Timed gestures retain their original planning and grab offset while refreshing
+restore the retired view or its temporary projection.
+Timed and span sessions release pointer capture and listeners at submission. The timed planning patch
+replaces its preview with an interactive block; other span previews remain until command publication.
+Explicit view patches still cancel sessions. View replacement retires temporary planning and its cached
+projection. Late settlement requests a canonical refresh through the current hold, which still respects
+any new pointer or menu owner; it cannot restore the retired view. Timed gestures retain their original planning and grab offset while refreshing
 column rectangles on movement, ancestor scrolling, and release; scrolling also updates a stationary
 pointer's preview.
 CalendarCommands ignores malformed date/time/duration input during command construction and lets
@@ -498,8 +531,10 @@ hold to edit the series time or duration through an explicit canonical source pa
 movement is vertical only: projected dates, recurrence and source date roles remain unchanged.
 These gestures grant no task selection, status controls, keyboard editing or native drag identity.
 Top/bottom time handles cover the full edge and take priority over date handles at corners.
-Their height is limited to a quarter of the block, retaining a distinct body and lateral date
-targets even when dense or midnight geometry constrains a block below its usual minimum height.
+Time handles are limited to a quarter of the block's height; lateral date handles are limited to a
+quarter of its width. This retains a movable center in short or densely overlapping blocks. Positive
+physical height bounds the grab offset independently of semantic duration, including fractional layout
+rounding.
 Its mounted center owner supplies the available width; an owner-window observer coalesces changes
 and rebuilds Month/Week only when the width category changes. CalendarContent retains one canonical
 occurrence projection per publication and visible range; width remounts reuse that content.

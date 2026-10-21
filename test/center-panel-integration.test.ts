@@ -3278,11 +3278,14 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
 
       press(weekTimed, 'ArrowDown');
       expect(execute).toHaveBeenCalledOnce();
-      expect(execute).toHaveBeenCalledWith({
-        type: 'patch',
-        target: { type: 'task', ref: timed.ref },
-        patch: { time: { type: 'set', value: '09:15' } },
-      });
+      expect(execute).toHaveBeenCalledWith(
+        {
+          type: 'patch',
+          target: { type: 'task', ref: timed.ref },
+          patch: { time: { type: 'set', value: '09:15' } },
+        },
+        { onPreparedPatch: expect.any(Function) as unknown },
+      );
 
       press(weekTimed, 'Tab');
       const secondWeekTimed = timedBlock(h.el, secondTimed.source.filePath);
@@ -5134,10 +5137,39 @@ function press(block: HTMLElement, key: string, shiftKey = false): void {
   block.dispatchEvent(new KeyboardEvent('keydown', { key, shiftKey, bubbles: true }));
 }
 
+async function flushPromiseJobsUntil(settled: () => boolean): Promise<void> {
+  for (let turn = 0; turn < 20 && !settled(); turn++) await Promise.resolve();
+}
+
 describe('CenterPanel calendar mode — task-index patch coordinator', () => {
-  it.each(['move', 'start-time', 'duration'] as const)(
-    'holds a future repeat %s preview until its source timing command publishes',
-    async (kind) => {
+  it.each([
+    {
+      kind: 'move',
+      patch: { time: { type: 'set', value: '08:30' } },
+      planning: { time: '08:30', duration: 60 },
+      startMinutes: '510',
+      height: '48px',
+    },
+    {
+      kind: 'start-time',
+      patch: {
+        time: { type: 'set', value: '08:30' },
+        duration: { type: 'set', value: 90 },
+      },
+      planning: { time: '08:30', duration: 90 },
+      startMinutes: '510',
+      height: '72px',
+    },
+    {
+      kind: 'duration',
+      patch: { duration: { type: 'set', value: 30 } },
+      planning: { time: '09:00', duration: 30 },
+      startMinutes: '540',
+      height: '24px',
+    },
+  ] as const)(
+    'keeps a future repeat $kind interactive at pending timing until its source command publishes',
+    async ({ kind, patch, planning, startMinutes, height }) => {
       const original = task({
         recurrence: 'every day',
         planning: {
@@ -5182,39 +5214,43 @@ describe('CenterPanel calendar mode — task-index patch coordinator', () => {
           }),
         );
         expect(execute).toHaveBeenCalledOnce();
-        expect(execute).toHaveBeenCalledWith({
-          type: 'patch',
-          target: { type: 'task', ref: original.ref },
-          patch: {
-            time: { type: 'set', value: kind === 'duration' ? '09:00' : '08:30' },
-            ...(kind === 'move'
-              ? {}
-              : {
-                  duration: { type: 'set', value: kind === 'start-time' ? 90 : 30 },
-                }),
+        expect(execute).toHaveBeenCalledWith(
+          {
+            type: 'patch',
+            target: { type: 'task', ref: original.ref },
+            patch,
           },
-        });
-        const resizedDuration = kind === 'start-time' ? 90 : 30;
+          { onPreparedPatch: expect.any(Function) as unknown },
+        );
+        const pendingBlock = timedBlock(h.el);
+        expect(block.isConnected).toBe(false);
+        expect(pendingBlock.isConnected).toBe(true);
+        expect(pendingBlock.dataset['occurrenceState']).toBe('forecast');
+        expect(pendingBlock.dataset['abyssStartMinutes']).toBe(startMinutes);
+        expect(pendingBlock.style.height).toBe(height);
+        expect(pendingBlock.querySelector('[data-resize-edge="duration"]')).not.toBeNull();
+        expect(h.el.querySelector<HTMLElement>('.abyss-cal-body')?.inert).not.toBe(true);
+        expect(h.el.querySelector('.abyss-tg-drag-preview')).toBeNull();
         const updated = task({
           ...original,
           ref: { ...original.ref, revision: 'timing-updated' },
           planning: {
             ...original.planning,
-            time: kind === 'duration' ? '09:00' : '08:30',
-            duration: kind === 'move' ? 60 : resizedDuration,
+            ...planning,
           },
         });
         h.setSnapshots([updated]);
         h.emit();
-        expect(block.isConnected).toBe(true);
-        expect(h.el.querySelector('.abyss-tg-drag-preview')).not.toBeNull();
+        expect(pendingBlock.isConnected).toBe(true);
+        expect(timedBlock(h.el)).toBe(pendingBlock);
+        expect(h.el.querySelector('.abyss-tg-drag-preview')).toBeNull();
         receipt.resolve(okTask(updated));
         await vi.waitFor(() => {
+          expect(pendingBlock.isConnected).toBe(false);
           expect(h.el.querySelector('.abyss-tg-drag-preview')).toBeNull();
-          expect(timedBlock(h.el).dataset['abyssStartMinutes']).toBe(
-            kind === 'duration' ? '540' : '510',
-          );
+          expect(timedBlock(h.el).dataset['abyssStartMinutes']).toBe(startMinutes);
         });
+        expect(execute).toHaveBeenCalledOnce();
         expect(h.state.get('taskStack')).toEqual([]);
         expect(h.el.querySelector('.abyss-tg-quick-add')).toBeNull();
       } finally {
@@ -5439,30 +5475,37 @@ describe('CenterPanel calendar mode — timed pointer command bridge', () => {
     });
 
     expect(execute).toHaveBeenNthCalledWith(1, {
-      type: 'move-time-slot',
-      ref: t.ref,
-      days: 1,
-      time: '10:00',
+      type: 'patch',
+      target: { type: 'task', ref: t.ref },
+      patch: {
+        start: { type: 'set', value: '2026-07-07' },
+        due: { type: 'set', value: '2026-07-09' },
+        time: { type: 'set', value: '10:00' },
+      },
     });
     expect(execute).toHaveBeenNthCalledWith(2, {
-      type: 'move-to-all-day',
-      ref: t.ref,
-      days: 1,
+      type: 'patch',
+      target: { type: 'task', ref: t.ref },
+      patch: {
+        start: { type: 'set', value: '2026-07-07' },
+        due: { type: 'set', value: '2026-07-09' },
+        time: { type: 'clear' },
+        duration: { type: 'clear' },
+      },
     });
     expect(execute).toHaveBeenNthCalledWith(3, {
       type: 'patch',
       target: { type: 'task', ref: t.ref },
       patch: {
-        time: { type: 'set', value: '09:00' },
         duration: { type: 'set', value: 120 },
       },
     });
     expect(execute).toHaveBeenNthCalledWith(4, {
-      type: 'set-span-boundary',
-      ref: t.ref,
-      boundary: 'start',
-      date: '2026-07-05',
+      type: 'patch',
+      target: { type: 'task', ref: t.ref },
+      patch: { start: { type: 'set', value: '2026-07-05' } },
     });
+    expect(execute).toHaveBeenCalledTimes(4);
   });
 
   it('keeps create-span as the explicit single-date exception', async () => {
@@ -5485,10 +5528,14 @@ describe('CenterPanel calendar mode — timed pointer command bridge', () => {
     });
 
     expect(execute).toHaveBeenCalledWith({
-      type: 'extend-span',
-      ref: t.ref,
-      due: '2026-07-10',
+      type: 'patch',
+      target: { type: 'task', ref: t.ref },
+      patch: {
+        start: { type: 'set', value: '2026-07-08' },
+        due: { type: 'set', value: '2026-07-10' },
+      },
     });
+    expect(execute).toHaveBeenCalledOnce();
   });
 });
 
@@ -5895,8 +5942,10 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     block.focus();
     press(block, 'ArrowRight');
     await execute.mock.results[0]?.value;
-    // The receipt updates focus, then releasing its publication lease follows the new date.
-    await Promise.resolve();
+    // Settle receipt/publication jobs without advancing a deferred focus timer.
+    await flushPromiseJobsUntil(
+      () => h.el.querySelector('.abyss-tg-day-column')?.getAttribute('data-tg-date') === tomorrow,
+    );
 
     expect(h.el.querySelector('.abyss-tg-day-column')?.getAttribute('data-tg-date')).toBe(tomorrow);
     const movedBlock = timedBlock(h.el);
@@ -6533,14 +6582,22 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     async (indexOrder) => {
       const pending = deferredResult();
       const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(pending.promise);
-      const original = keyboardSnapshot(TODAY, '09:00', 'moved.md', 'revision-1', 4);
-      const moved = keyboardSnapshot(TODAY, '09:00', 'moved.md', 'revision-2', 5);
+      const original = keyboardSnapshot(TODAY, '00:00', 'moved.md', 'revision-1', 4);
+      const moved = keyboardSnapshot(TODAY, '00:00', 'moved.md', 'revision-2', 5);
       const h = keyboardPanelHarness([original], execute);
       clickCalendarView(h.el, 'Day');
 
       const outgoing = timedBlock(h.el);
       outgoing.focus();
-      press(outgoing, 'ArrowDown');
+      press(outgoing, 'ArrowUp');
+      expect(execute).toHaveBeenCalledExactlyOnceWith(
+        {
+          type: 'patch',
+          target: { type: 'task', ref: original.ref },
+          patch: { time: { type: 'set', value: '00:00' } },
+        },
+        { onPreparedPatch: expect.any(Function) as unknown },
+      );
       if (indexOrder === 'before') {
         h.setSnapshots([moved]);
         h.emit();
@@ -6570,21 +6627,28 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
   it('focuses a dirty publication synchronously when changed:false settles', async () => {
     const pending = deferredResult();
     const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(pending.promise);
-    const original = keyboardSnapshot(TODAY, '09:00', 'same.md', 'revision-1', 4);
-    const rebuilt = keyboardSnapshot(TODAY, '09:00', 'same.md', 'revision-2', 4);
+    const original = keyboardSnapshot(TODAY, '00:00', 'same.md', 'revision-1', 4);
+    const rebuilt = keyboardSnapshot(TODAY, '00:00', 'same.md', 'revision-2', 4);
     const h = keyboardPanelHarness([original], execute);
     clickCalendarView(h.el, 'Day');
     vi.useFakeTimers();
 
     const outgoing = timedBlock(h.el);
     outgoing.focus();
-    press(outgoing, 'ArrowDown');
+    press(outgoing, 'ArrowUp');
+    expect(execute).toHaveBeenCalledExactlyOnceWith(
+      {
+        type: 'patch',
+        target: { type: 'task', ref: original.ref },
+        patch: { time: { type: 'set', value: '00:00' } },
+      },
+      { onPreparedPatch: expect.any(Function) as unknown },
+    );
     h.setSnapshots([rebuilt]);
     h.emit();
     expect(outgoing.isConnected).toBe(true);
     pending.resolve(okTaskUnchanged(rebuilt));
-    await Promise.resolve();
-    await Promise.resolve();
+    await flushPromiseJobsUntil(() => !outgoing.isConnected);
 
     const focused = timedBlock(h.el);
     expect(focused).not.toBe(outgoing);
@@ -6702,7 +6766,14 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     const original = keyboardSnapshot(TODAY, '09:00', 'shared.md', 'shared-revision', 4);
     const moved = keyboardSnapshot(TODAY, '09:15', 'shared.md', 'moved-revision', 5);
     const staleFinal = keyboardSnapshot(TODAY, '09:30', 'shared.md', 'stale-revision', 5);
-    const replacement = keyboardSnapshot(TODAY, '14:00', 'shared.md', 'shared-revision', 4);
+    // Different source bytes require a different revision, including at the same line.
+    const replacement = keyboardSnapshot(
+      TODAY,
+      '14:00',
+      'shared.md',
+      'replacement-index-revision',
+      4,
+    );
     const h = keyboardPanelHarness([original], execute);
     clickCalendarView(h.el, 'Day');
 
@@ -6733,7 +6804,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     });
     const replacementCommand = expectRootTaskPatch(expectDefined(execute.mock.calls[2]?.[0]), {
       line: 4,
-      revision: 'shared-revision',
+      revision: 'replacement-index-revision',
     });
     expect(replacementCommand.patch).toEqual({ time: { type: 'set', value: '14:15' } });
 
@@ -6743,11 +6814,11 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
   });
 
   it.each([
-    ['same-revision', 'shared-revision'],
-    ['different-revision', 'replacement-index-revision'],
+    [4, 'replacement-line-4'],
+    [6, 'replacement-line-6'],
   ] as const)(
-    'cancels a pre-commit alias when %s replacement focus precedes the original result',
-    async (_revisionKind, replacementRevision) => {
+    'cancels a pre-commit alias when replacement focus at line %i precedes the original result',
+    async (replacementLine, replacementRevision) => {
       const originalResult = deferredResult();
       const replacementResult = deferredResult();
       const execute = vi
@@ -6756,7 +6827,13 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
         .mockReturnValueOnce(replacementResult.promise);
       const original = keyboardSnapshot(TODAY, '09:00', 'shared.md', 'shared-revision', 4);
       const moved = keyboardSnapshot(TODAY, '09:15', 'shared.md', 'moved-revision', 5);
-      const replacement = keyboardSnapshot(TODAY, '14:00', 'shared.md', replacementRevision, 4);
+      const replacement = keyboardSnapshot(
+        TODAY,
+        '14:00',
+        'shared.md',
+        replacementRevision,
+        replacementLine,
+      );
       const h = keyboardPanelHarness([original], execute);
       clickCalendarView(h.el, 'Day');
 
@@ -6770,7 +6847,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
 
       const replacementBlock = expectDefined(
         Array.from(h.el.querySelectorAll<HTMLElement>('.abyss-tg-block')).find(
-          (block) => block.dataset['abyssTaskLine'] === '4',
+          (block) => block.dataset['abyssTaskLine'] === String(replacementLine),
         ),
       );
       expect(activeDocument.activeElement).not.toBe(replacementBlock);
@@ -6782,12 +6859,14 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       });
 
       const replacementCommand = expectRootTaskPatch(expectDefined(execute.mock.calls[1]?.[0]), {
-        line: 4,
+        line: replacementLine,
         revision: replacementRevision,
       });
       expect(replacementCommand.patch).toEqual({ time: { type: 'set', value: '14:15' } });
       replacementResult.resolve(
-        okTask(keyboardSnapshot(TODAY, '14:15', 'shared.md', 'replacement-revision', 4)),
+        okTask(
+          keyboardSnapshot(TODAY, '14:15', 'shared.md', 'replacement-revision', replacementLine),
+        ),
       );
     },
   );
