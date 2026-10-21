@@ -186,6 +186,7 @@ function timedMove(root: HTMLElement, date?: string, boundary?: 'start' | 'creat
       clientX: x,
       clientY: y,
       button: 0,
+      buttons: type === 'pointerup' ? 0 : 1,
     });
   source.dispatchEvent(pointer('pointerdown', left + 25));
   return {
@@ -208,9 +209,9 @@ const dates = (root: HTMLElement) =>
     ...root.querySelectorAll<HTMLElement>('.abyss-tg-block[data-abyss-task-file="calendar.md"]'),
   ].map((block) => block.dataset['tgSegmentDate']);
 
-it.each([false, true])(
-  'persists two imprecise pointer edits and a key while the first receipt waits (child=%s)',
-  async (child) => {
+it.each([false, true].flatMap((child) => [false, true].map((earlyLoss) => ({ child, earlyLoss }))))(
+  'persists two imprecise pointer edits and a key while the first receipt waits (child=$child, earlyLoss=$earlyLoss)',
+  async ({ child, earlyLoss }) => {
     const h = await setup('today', child);
     const gate = deferred<void>();
     h.execute.mockImplementationOnce(async (...args) => {
@@ -235,10 +236,13 @@ it.each([false, true])(
           clientX: 25,
           clientY,
           pointerId: 105,
+          pointerType: 'mouse',
+          buttons: type === 'pointerup' || type === 'lostpointercapture' ? 0 : 1,
         });
       handle.dispatchEvent(event('pointerdown', y));
       window.dispatchEvent(event('pointermove', y + 8));
       window.dispatchEvent(event('pointermove', y));
+      if (earlyLoss) handle.dispatchEvent(event('lostpointercapture', y));
       window.dispatchEvent(event('pointerup', y));
     };
     try {
@@ -775,6 +779,234 @@ describe('timed keyboard publication', () => {
 });
 
 describe('timed drag release ownership', () => {
+  it.each(['child', 'forecast'] as const)(
+    'persists a %s time change through early released-mouse capture loss',
+    async (subject) => {
+      const h = await setup(
+        'week',
+        subject === 'child',
+        subject === 'forecast' ? '⏰ 09:00 ⏱️ 1h 🔁 every week' : '⏰ 09:00 ⏱️ 1h',
+        subject === 'forecast' ? '2026-10-12' : '2026-10-19',
+      );
+      const gesture = timedMove(h.root, '2026-10-19');
+      gesture.move();
+      gesture.block.dispatchEvent(
+        new PointerEvent('lostpointercapture', {
+          bubbles: true,
+          pointerId: 51,
+          pointerType: 'mouse',
+          buttons: 0,
+        }),
+      );
+      await h.publish();
+      await flushMicrotasks();
+      gesture.finish();
+      await flushMicrotasks();
+      expect(h.execute).toHaveBeenCalledTimes(1);
+      expect(h.current().planning).toMatchObject({
+        time: '11:00',
+        duration: 60,
+        due: subject === 'forecast' ? '2026-10-12' : '2026-10-19',
+      });
+      if (subject === 'forecast') expect(h.current().recurrence).toBe('every week');
+    },
+  );
+
+  it.each(['Escape', 'pointercancel', 'blur', 'destroy', 'new grid press'] as const)(
+    'still cancels with %s while awaiting up after released-mouse capture loss',
+    async (ending) => {
+      const h = await setup('week');
+      const gesture = timedMove(h.root);
+      gesture.move();
+      gesture.block.dispatchEvent(
+        new PointerEvent('lostpointercapture', {
+          bubbles: true,
+          pointerId: 51,
+          pointerType: 'mouse',
+          buttons: 0,
+        }),
+      );
+      if (ending === 'Escape')
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+      else if (ending === 'destroy') h.mode.destroy();
+      else if (ending === 'new grid press')
+        gesture.hour.dispatchEvent(gesture.pointer('pointerdown', 25, 648));
+      else if (ending === 'blur') window.dispatchEvent(new Event('blur'));
+      else window.dispatchEvent(gesture.pointer('pointercancel'));
+      gesture.finish();
+      await h.publish();
+      await flushMicrotasks();
+      expect(h.execute).not.toHaveBeenCalled();
+      expect(h.current().planning.time).toBe('09:00');
+      expect(h.root.querySelector('.abyss-calendar-preview')).toBeNull();
+      if (ending === 'new grid press') {
+        gesture.hour.dispatchEvent(
+          new MouseEvent('click', { bubbles: true, detail: 1, clientX: 25, clientY: 648 }),
+        );
+        expect(h.host.openCapture).toHaveBeenCalledOnce();
+      }
+    },
+  );
+
+  it('keeps stationary clicks and other pointers separate from an early mouse release', async () => {
+    const h = await setup('week');
+    const first = timedMove(h.root);
+    first.block.dispatchEvent(
+      new PointerEvent('lostpointercapture', {
+        bubbles: true,
+        pointerId: 51,
+        pointerType: 'mouse',
+        buttons: 0,
+      }),
+    );
+    first.finish(25, 552);
+    first.block.dispatchEvent(
+      new MouseEvent('click', { bubbles: true, detail: 1, clientX: 25, clientY: 552 }),
+    );
+    expect(first.block.classList.contains('is-selected')).toBe(true);
+    expect(h.execute).not.toHaveBeenCalled();
+    const next = timedMove(h.root);
+    next.move();
+    next.block.dispatchEvent(
+      new PointerEvent('lostpointercapture', {
+        bubbles: true,
+        pointerId: 51,
+        pointerType: 'mouse',
+        buttons: 0,
+      }),
+    );
+    for (const type of ['pointerdown', 'lostpointercapture', 'pointercancel', 'pointerup']) {
+      next.block.dispatchEvent(
+        new PointerEvent(type, { bubbles: true, pointerId: 99, pointerType: 'touch' }),
+      );
+    }
+    next.finish();
+    next.finish();
+    await flushMicrotasks();
+    expect(h.execute).toHaveBeenCalledTimes(1);
+    expect(h.current().planning.time).toBe('11:00');
+  });
+
+  it.each([
+    {
+      name: 'move left',
+      selector: '',
+      x: 150,
+      dy: 0,
+      want: { start: '2026-10-20', due: '2026-10-20', time: '10:30', duration: 235 },
+    },
+    {
+      name: 'move right',
+      selector: '',
+      x: 350,
+      dy: 0,
+      want: { start: '2026-10-22', due: '2026-10-22', time: '10:30', duration: 235 },
+    },
+    { name: 'move up', selector: '', x: 250, dy: -48, want: { time: '09:30', duration: 235 } },
+    { name: 'move down', selector: '', x: 250, dy: 48, want: { time: '11:30', duration: 235 } },
+    {
+      name: 'shorten bottom',
+      selector: '[data-resize-edge="duration"]',
+      x: 250,
+      dy: -96,
+      want: { time: '10:30', duration: 115 },
+    },
+    {
+      name: 'extend bottom',
+      selector: '[data-resize-edge="duration"]',
+      x: 250,
+      dy: 96,
+      want: { time: '10:30', duration: 355 },
+    },
+    {
+      name: 'extend top',
+      selector: '[data-resize-edge="start-time"]',
+      x: 250,
+      dy: -24,
+      want: { time: '10:00', duration: 265 },
+    },
+    {
+      name: 'shorten top',
+      selector: '[data-resize-edge="start-time"]',
+      x: 250,
+      dy: 24,
+      want: { time: '11:00', duration: 205 },
+    },
+    {
+      name: 'extend left date',
+      selector: '[data-boundary="start"]',
+      x: 150,
+      dy: 0,
+      want: { start: '2026-10-20', due: '2026-10-21', time: '10:30', duration: 235 },
+    },
+    {
+      name: 'extend right date',
+      selector: '[data-boundary="due"]',
+      x: 350,
+      dy: 0,
+      want: { start: '2026-10-21', due: '2026-10-22', time: '10:30', duration: 235 },
+    },
+  ])('persists $name when trackpad capture is lost before pointerup', async (row) => {
+    const h = await setup('week', false, '🛫 2026-10-21 ⏰ 10:30 ⏱️ 3h55m', '2026-10-21');
+    for (const [i, day] of [
+      ...h.root.querySelectorAll<HTMLElement>('.abyss-tg-day-column'),
+    ].entries()) {
+      const hour = expectDefined(day.querySelector<HTMLElement>('.abyss-tg-hour-column'));
+      day.getBoundingClientRect = hour.getBoundingClientRect = () =>
+        new DOMRect(i * 100, 100, 100, 1152);
+    }
+    const block = expectDefined(h.root.querySelector<HTMLElement>('.abyss-tg-block'));
+    block.getBoundingClientRect = () => new DOMRect(200, 604, 100, 188);
+    const handle =
+      row.selector === '' ? block : expectDefined(block.querySelector<HTMLElement>(row.selector));
+    let fromY = 650;
+    if (row.selector.includes('duration')) fromY = 789;
+    else if (row.selector.includes('start-time')) fromY = 607;
+    const event = (type: string, x: number, y: number, buttons: number) =>
+      new PointerEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        pointerId: 61,
+        pointerType: 'mouse',
+        button: type === 'pointermove' || type === 'lostpointercapture' ? -1 : 0,
+        buttons,
+        clientX: x,
+        clientY: y,
+      });
+    handle.dispatchEvent(event('pointerdown', 250, fromY, 1));
+    window.dispatchEvent(event('pointermove', row.x, fromY + row.dy, 1));
+    const preview = expectDefined(h.root.querySelector<HTMLElement>('.abyss-calendar-preview'));
+    const target = preview.dataset['target'];
+    handle.dispatchEvent(event('lostpointercapture', row.x, fromY + row.dy, 0));
+    // Chromium can emit a final unpressed move before up; it is no longer a drag sample.
+    window.dispatchEvent(event('pointermove', 250, fromY, 0));
+    await h.publish();
+    await flushMicrotasks();
+    expect(block.isConnected).toBe(true);
+    expect(h.root.querySelector<HTMLElement>('.abyss-calendar-preview')?.dataset['target']).toBe(
+      target,
+    );
+    expect(h.execute).not.toHaveBeenCalled();
+    const hour = expectDefined(block.closest('.abyss-tg-hour-column'));
+    hour.dispatchEvent(event('pointerup', row.x, fromY + row.dy, 0));
+    hour.dispatchEvent(
+      new MouseEvent('click', {
+        bubbles: true,
+        detail: 1,
+        clientX: row.x,
+        clientY: fromY + row.dy,
+      }),
+    );
+    await flushMicrotasks();
+    expect(h.execute).toHaveBeenCalledTimes(1);
+    expect(h.current().planning).toMatchObject(row.want);
+    expect(
+      await h.app.vault.read(expectDefined(h.app.vault.getFileByPath('calendar.md'))),
+    ).toContain(`⏰ ${row.want.time}`);
+    expect(h.host.openCapture).not.toHaveBeenCalled();
+    expect(h.root.querySelector('.abyss-calendar-preview')).toBeNull();
+  });
+
   it.each(['lostpointercapture', 'Escape'] as const)(
     'does not create a task when %s cancels the press before the first movement',
     async (ending) => {

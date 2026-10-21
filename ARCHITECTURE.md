@@ -522,6 +522,11 @@ Navigation, width remounts, disposal, and window migration retire the hold; late
 restore the retired view or its temporary projection.
 Timed and span sessions release pointer capture and listeners at submission. The timed planning patch
 replaces its preview with an interactive block; other span previews remain until command publication.
+For timed mouse gestures, capture loss with no buttons pressed can precede `pointerup` on a trackpad.
+Both the session and its publication hold retain ownership through that notification; unpressed
+mouse movement does not alter the preview. Only the subsequent matching `pointerup` submits.
+Escape, pointer cancellation, window blur, active-button capture loss and view disposal still cancel;
+a new press with the same pointer anywhere retires an unfinished session before the next release.
 Explicit view patches still cancel sessions. View replacement retires temporary planning and its cached
 projection. Late settlement requests a canonical refresh through the current hold, which still respects
 any new pointer or menu owner; it cannot restore the retired view. Timed gestures retain their original planning and grab offset while refreshing

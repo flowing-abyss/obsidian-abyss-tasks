@@ -1,4 +1,5 @@
 import type { InteractionOwnershipPort } from '../../ui/interactionOwnership';
+import { isReleasedMousePointer } from '../../ui/pointerRelease';
 import { runAsyncAction } from '../../ui/runAsyncAction';
 
 /** Retains a mounted calendar's targets until native activation and submitted commands settle. */
@@ -219,6 +220,13 @@ export class CalendarPublicationHold {
   };
 
   private readonly onPointerEnd_abyssPrivate = (event: PointerEvent): void => {
+    // Timed sessions still await pointerup after a trackpad's unpressed motion loses capture.
+    if (
+      event.type === 'lostpointercapture' &&
+      this.timedPress_abyssPrivate?.pointerId === event.pointerId &&
+      isReleasedMousePointer(event)
+    )
+      return;
     if (!this.pointers_abyssPrivate.delete(event.pointerId)) return;
     if (event.type !== 'pointerup' && this.timedPress_abyssPrivate?.pointerId === event.pointerId)
       this.suppressClick_abyssPrivate = true;

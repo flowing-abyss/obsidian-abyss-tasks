@@ -5,6 +5,7 @@ import {
   durationMinutes as validatedDurationMinutes,
   type TaskSnapshot,
 } from '../../tasks';
+import { isReleasedMousePointer } from '../../ui/pointerRelease';
 import { calendarOccurrenceForRender, calendarTaskWithPlanning } from '../calendarOccurrences';
 import { settleCalendarInteraction } from '../settleCalendarInteraction';
 import { populateCalendarPreview } from './calendarPreview';
@@ -635,17 +636,19 @@ class TimedInteractionSession {
     binding.source.classList.toggle('is-picked-up', kind === 'move');
     if (kind !== 'move') capturedElement.dataset['activeResize'] = 'true';
     capture(capturedElement, startEvent.pointerId);
+    ownerWindow.addEventListener('pointerdown', this.onCancel_abyssPrivate, true);
     ownerWindow.addEventListener('pointermove', this.onPointerMove_abyssPrivate);
     ownerWindow.addEventListener('pointerup', this.onPointerUp_abyssPrivate);
     ownerWindow.addEventListener('pointercancel', this.onCancel_abyssPrivate);
     ownerWindow.addEventListener('blur', this.onCancel_abyssPrivate);
     ownerWindow.addEventListener('keydown', this.onKeyDown_abyssPrivate, true);
     ownerWindow.addEventListener('scroll', this.onScroll_abyssPrivate, true);
-    capturedElement.addEventListener('lostpointercapture', this.onCancel_abyssPrivate);
+    capturedElement.addEventListener('lostpointercapture', this.onCaptureLost_abyssPrivate);
   }
 
   private readonly onPointerMove_abyssPrivate = (pointer: PointerEvent): void => {
     if (pointer.pointerId !== this.input.startEvent.pointerId) return;
+    if (isReleasedMousePointer(pointer)) return;
     pointer.preventDefault();
     this.update_abyssPrivate(pointer);
   };
@@ -672,6 +675,11 @@ class TimedInteractionSession {
   private readonly onCancel_abyssPrivate = (event: Event): void => {
     if ('pointerId' in event && event.pointerId !== this.input.startEvent.pointerId) return;
     this.dispose_abyssPrivate();
+  };
+
+  private readonly onCaptureLost_abyssPrivate = (pointer: PointerEvent): void => {
+    // Keep the window's up/cancel listeners when capture ends during release motion.
+    if (!isReleasedMousePointer(pointer)) this.onCancel_abyssPrivate(pointer);
   };
 
   private readonly onKeyDown_abyssPrivate = (event: KeyboardEvent): void => {
@@ -741,13 +749,14 @@ class TimedInteractionSession {
     if (this.pointerReleased_abyssPrivate) return;
     this.pointerReleased_abyssPrivate = true;
     const { capturedElement, ownerWindow, startEvent } = this.input;
+    ownerWindow.removeEventListener('pointerdown', this.onCancel_abyssPrivate, true);
     ownerWindow.removeEventListener('pointermove', this.onPointerMove_abyssPrivate);
     ownerWindow.removeEventListener('pointerup', this.onPointerUp_abyssPrivate);
     ownerWindow.removeEventListener('pointercancel', this.onCancel_abyssPrivate);
     ownerWindow.removeEventListener('blur', this.onCancel_abyssPrivate);
     ownerWindow.removeEventListener('keydown', this.onKeyDown_abyssPrivate, true);
     ownerWindow.removeEventListener('scroll', this.onScroll_abyssPrivate, true);
-    capturedElement.removeEventListener('lostpointercapture', this.onCancel_abyssPrivate);
+    capturedElement.removeEventListener('lostpointercapture', this.onCaptureLost_abyssPrivate);
     release(capturedElement, startEvent.pointerId);
   }
 

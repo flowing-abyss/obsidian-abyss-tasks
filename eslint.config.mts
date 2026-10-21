@@ -538,6 +538,7 @@ export default defineConfig(
       'src/panels/calendar/calendarContent.ts',
       'src/ui/calendarEditWitness.ts',
       'src/ui/calendarOwnedTask.ts',
+      'src/ui/pointerRelease.ts',
       'src/views/timegrid/timedEditPlanning.ts',
       'src/views/calendarDayModel.ts',
       'src/views/panelTitle.ts',
