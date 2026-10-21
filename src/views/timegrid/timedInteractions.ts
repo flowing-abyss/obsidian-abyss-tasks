@@ -26,6 +26,7 @@ import {
   type PositionedBlock,
 } from './layout';
 import { timedEditPlanning } from './timedEditPlanning';
+import { TimedTouchActivation } from './timedTouchActivation';
 
 export type TimedBoundaryTarget =
   | SpanBoundaryTarget
@@ -321,6 +322,7 @@ interface TimedSessionInput {
   readonly kind: TimedInteractionKind;
   readonly capturedElement: HTMLElement;
   readonly geometry: TimedSessionGeometry;
+  readonly onRelease?: (() => void) | undefined;
 }
 
 function previewContent(
@@ -673,7 +675,17 @@ class TimedInteractionSession {
   };
 
   private readonly onCancel_abyssPrivate = (event: Event): void => {
-    if ('pointerId' in event && event.pointerId !== this.input.startEvent.pointerId) return;
+    const anotherTouch =
+      event.type === 'pointerdown' &&
+      this.input.startEvent.pointerType === 'touch' &&
+      'pointerType' in event &&
+      event.pointerType === 'touch';
+    if (
+      !anotherTouch &&
+      'pointerId' in event &&
+      event.pointerId !== this.input.startEvent.pointerId
+    )
+      return;
     this.dispose_abyssPrivate();
   };
 
@@ -758,6 +770,7 @@ class TimedInteractionSession {
     ownerWindow.removeEventListener('scroll', this.onScroll_abyssPrivate, true);
     capturedElement.removeEventListener('lostpointercapture', this.onCaptureLost_abyssPrivate);
     release(capturedElement, startEvent.pointerId);
+    this.input.onRelease?.();
   }
 
   private readonly dispose_abyssPrivate = (): void => {
@@ -806,31 +819,13 @@ function measureSession(
   };
 }
 
-function beginTimedSession(
-  binding: TimedInteractionBinding,
-  ownerWindow: Window,
-  event: PointerEvent,
-  kind: TimedInteractionKind,
-): void {
-  if (
-    (kind === 'move' && event.pointerType === 'touch') ||
-    event.button !== 0 ||
-    isBlockedMoveTarget(event, kind)
-  )
+function beginTimedSession(input: Omit<TimedSessionInput, 'geometry'>): void {
+  const geometry = measureSession(input.binding, input.startEvent);
+  if (geometry === undefined) {
+    input.onRelease?.();
     return;
-  event.preventDefault();
-  event.stopPropagation();
-  const geometry = measureSession(binding, event);
-  if (geometry === undefined) return;
-  const capturedElement = event.currentTarget as HTMLElement;
-  new TimedInteractionSession({
-    binding,
-    ownerWindow,
-    startEvent: event,
-    kind,
-    capturedElement,
-    geometry,
-  }).start();
+  }
+  new TimedInteractionSession({ ...input, geometry }).start();
 }
 
 function attachPointerStart(
@@ -839,8 +834,36 @@ function attachPointerStart(
   ownerWindow: Window,
   kind: TimedInteractionKind,
 ): void {
+  const touch = kind === 'move' ? new TimedTouchActivation(element, ownerWindow) : undefined;
   element.addEventListener('pointerdown', (event) => {
-    beginTimedSession(binding, ownerWindow, event, kind);
+    if (event.button !== 0 || isBlockedMoveTarget(event, kind)) return;
+    if (event.pointerType === 'touch' && !event.isPrimary) return;
+    if (event.pointerType === 'touch' && touch !== undefined) {
+      const dispose = touch.arm(
+        event,
+        () => {
+          // Keep the original target's implicit touch capture when the hold becomes a drag.
+          beginTimedSession({
+            binding,
+            ownerWindow,
+            startEvent: event,
+            kind,
+            capturedElement: event.target as HTMLElement,
+            onRelease: () => {
+              touch.finish();
+            },
+          });
+        },
+        () => {
+          binding.owner.end(dispose);
+        },
+      );
+      binding.owner.begin(dispose);
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    beginTimedSession({ binding, ownerWindow, startEvent: event, kind, capturedElement: element });
   });
 }
 

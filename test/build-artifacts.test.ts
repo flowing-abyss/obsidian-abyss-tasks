@@ -75,6 +75,7 @@ const privateOwners = new Set([
   // Gesture owners keep DOM state behind methods; their instances are never serialized or spread.
   'CalendarPublicationHold',
   'TimedInteractionSession',
+  'TimedTouchActivation',
   'TimedPreviewRenderer',
   'TimedTargetResolver',
   'TimedBlockFocusRetention',

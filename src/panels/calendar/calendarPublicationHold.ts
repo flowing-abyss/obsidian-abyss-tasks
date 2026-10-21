@@ -179,17 +179,25 @@ export class CalendarPublicationHold {
       return;
     }
     this.pointers_abyssPrivate.add(event.pointerId);
+    if (event.pointerType === 'touch' && !event.isPrimary) {
+      if (this.timedPress_abyssPrivate?.pointerType === 'touch')
+        this.suppressClick_abyssPrivate = true;
+      return;
+    }
+    this.rememberTimedPress_abyssPrivate(event);
+  };
+
+  private rememberTimedPress_abyssPrivate(event: PointerEvent): void {
     const target = event.target as Element | null;
     const timed =
       event.button === 0 &&
-      event.pointerType !== 'touch' &&
       target?.closest('.abyss-tg-block, .abyss-tg-block-continuation') != null &&
       target.closest('.abyss-status-marker, a') === null;
     if (timed || this.timedPress_abyssPrivate?.pointerId === event.pointerId) {
       this.timedPress_abyssPrivate = timed ? event : undefined;
       this.suppressClick_abyssPrivate = false;
     }
-  };
+  }
 
   private readonly onScroll_abyssPrivate = (event: Event): void => {
     const press = this.timedPress_abyssPrivate;
@@ -209,7 +217,8 @@ export class CalendarPublicationHold {
       event.detail === 0 ||
       ('pointerId' in event && event.pointerId !== press.pointerId) ||
       (!this.suppressClick_abyssPrivate &&
-        Math.hypot(event.clientX - press.clientX, event.clientY - press.clientY) <= 4)
+        Math.hypot(event.clientX - press.clientX, event.clientY - press.clientY) <=
+          (press.pointerType === 'touch' ? 8 : 4))
     )
       return;
     // A cancelled drag can click the empty grid after capture is lost. Keep ownership

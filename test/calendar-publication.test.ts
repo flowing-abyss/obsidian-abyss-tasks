@@ -1,3 +1,4 @@
+import { Platform } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { CalendarMode, type CalendarModeHost } from '../src/panels/calendar/CalendarMode';
@@ -2276,3 +2277,135 @@ it.each(['resize', 'keyboard'] as const)(
     }
   },
 );
+
+describe('mobile Day timed gestures', () => {
+  function gesture(root: HTMLElement) {
+    const block = expectDefined(root.querySelector<HTMLElement>('.abyss-tg-block'));
+    const hour = expectDefined(block.closest<HTMLElement>('.abyss-tg-hour-column'));
+    const day = expectDefined(hour.closest<HTMLElement>('.abyss-tg-day-column'));
+    const body = expectDefined(block.querySelector<HTMLElement>('.abyss-tg-block-head'));
+    const start = Number(block.dataset['abyssStartMinutes']);
+    const y = 100 + start * 0.8 + 20;
+    day.getBoundingClientRect = hour.getBoundingClientRect = () => new DOMRect(0, 100, 100, 1152);
+    block.getBoundingClientRect = () => new DOMRect(0, y - 20, 100, 48);
+    const pointer = (type: string, delta = 0) =>
+      new PointerEvent(type, {
+        pointerId: 91,
+        pointerType: 'touch',
+        isPrimary: true,
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        buttons: type === 'pointerup' || type === 'click' ? 0 : 1,
+        detail: type === 'click' ? 1 : 0,
+        clientX: 50,
+        clientY: y + delta,
+      });
+    body.dispatchEvent(pointer('pointerdown'));
+    return { block, body, hour, pointer };
+  }
+
+  it.each(['task', 'child', 'forecast'] as const)(
+    'persists consecutive held %s moves through a pending receipt and consumes the grid click',
+    async (subject) => {
+      vi.spyOn(Platform, 'isMobile', 'get').mockReturnValue(true);
+      const h = await setup(
+        'today',
+        subject === 'child',
+        subject === 'forecast' ? '⏰ 09:00 ⏱️ 1h 🔁 every week' : '⏰ 09:00 ⏱️ 1h',
+        subject === 'forecast' ? '2026-10-12' : '2026-10-19',
+      );
+      vi.useFakeTimers();
+      const gate = deferred<void>();
+      h.execute.mockImplementationOnce(async (...args) => {
+        await gate.promise;
+        return h.application.tasks.execute(...args);
+      });
+      const first = gesture(h.root);
+      await vi.advanceTimersByTimeAsync(500);
+      first.body.dispatchEvent(first.pointer('contextmenu'));
+      await h.publish();
+      expect(first.block.isConnected).toBe(true);
+      first.body.dispatchEvent(first.pointer('pointermove', 48));
+      first.body.dispatchEvent(first.pointer('pointerup', 48));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(h.execute).toHaveBeenCalledTimes(1);
+      expectDefined(h.root.querySelector('.abyss-tg-hour-column')).dispatchEvent(
+        first.pointer('click', 48),
+      );
+      expect(h.host.openCapture).not.toHaveBeenCalled();
+      expect(h.host.openTask).not.toHaveBeenCalled();
+      expect(h.host.openForecastTask).not.toHaveBeenCalled();
+      const second = gesture(h.root);
+      await vi.advanceTimersByTimeAsync(500);
+      second.body.dispatchEvent(second.pointer('pointermove', -4));
+      second.body.dispatchEvent(second.pointer('pointerup', -4));
+      gate.resolve();
+      await vi.advanceTimersByTimeAsync(20);
+      expect(h.execute).toHaveBeenCalledTimes(2);
+      expect(h.current().planning).toMatchObject({ time: '09:55', duration: 60 });
+      if (subject === 'forecast') {
+        expect(h.current().planning.due).toBe('2026-10-12');
+        expect(h.current().recurrence).toBe('every week');
+      }
+      const file = expectDefined(h.app.vault.getFileByPath('calendar.md'));
+      expect(await h.app.vault.read(file)).toContain('⏰ 09:55');
+      expect(h.root.querySelector('.abyss-calendar-preview')).toBeNull();
+      expect(h.host.openTask).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([false, true].flatMap((otherBlock) => [200, 500].map((held) => ({ otherBlock, held }))))(
+    'retains the primary release click when another finger touches a timed block (other=$otherBlock, held=$held)',
+    async ({ otherBlock, held }) => {
+      vi.spyOn(Platform, 'isMobile', 'get').mockReturnValue(true);
+      const h = await setup();
+      vi.useFakeTimers();
+      const first = gesture(h.root);
+      await vi.advanceTimersByTimeAsync(held);
+      const secondaryTarget = otherBlock
+        ? first.hour.createDiv({ cls: 'abyss-tg-block' })
+        : first.body;
+      const secondary = (type: string) =>
+        new PointerEvent(type, {
+          pointerType: 'touch',
+          pointerId: 92,
+          isPrimary: false,
+          bubbles: true,
+          button: 0,
+          clientX: 60,
+          clientY: 556,
+        });
+      secondaryTarget.dispatchEvent(secondary('pointerdown'));
+      if (held >= 450) first.body.dispatchEvent(first.pointer('lostpointercapture'));
+      secondaryTarget.dispatchEvent(secondary('pointerup'));
+      first.body.dispatchEvent(first.pointer('pointerup'));
+      await h.publish();
+      await vi.advanceTimersByTimeAsync(0);
+      expectDefined(h.root.querySelector('.abyss-tg-hour-column')).dispatchEvent(
+        first.pointer('click'),
+      );
+      expect(h.host.openCapture).not.toHaveBeenCalled();
+      expect(h.host.openTask).not.toHaveBeenCalled();
+      expect(h.execute).not.toHaveBeenCalled();
+    },
+  );
+
+  it('opens a short touch tap with slight drift and cancels a pending hold on a view rebuild', async () => {
+    vi.spyOn(Platform, 'isMobile', 'get').mockReturnValue(true);
+    const h = await setup();
+    vi.useFakeTimers();
+    const tap = gesture(h.root);
+    tap.body.dispatchEvent(tap.pointer('pointermove', 6));
+    tap.body.dispatchEvent(tap.pointer('pointerup', 6));
+    tap.body.dispatchEvent(tap.pointer('click', 6));
+    expect(h.host.openTask).toHaveBeenCalledOnce();
+    const pending = gesture(h.root);
+    h.mode.render(h.root);
+    await vi.advanceTimersByTimeAsync(500);
+    pending.body.dispatchEvent(pending.pointer('pointermove', 48));
+    pending.body.dispatchEvent(pending.pointer('pointerup', 48));
+    expect(h.execute).not.toHaveBeenCalled();
+    expect(h.root.querySelector('.abyss-calendar-preview')).toBeNull();
+  });
+});

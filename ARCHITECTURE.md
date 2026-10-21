@@ -581,8 +581,14 @@ Agenda focus does not write inspector selection or install list multiselection; 
 focus paints the canonical outline. Details activation remains available on continuation rows.
 The shared bottom capture trigger sits outside the agenda list's scroll area.
 Month week links carry the rendered row's first civil date; configured week layout derives its
-seven dates. Mobile Day body taps open the same inspector. Touch body movement scrolls; explicit
-resize handles, mouse/pen dragging, native drag and empty-grid creation retain their own handlers.
+seven dates. Mobile Day body taps open the same inspector. `TimedTouchActivation` leaves early
+body movement to native scrolling; a stationary 450 ms hold hands the original touch to the shared
+timed session. Only the claimed hold suppresses touch scrolling, context-menu activation and its
+release click. The existing timed owner disposes pending holds on view changes; cancellation, blur
+and an additional touch retire pending or active gestures. `CalendarPublicationHold` retains the
+touch origin across submitted planning so a compatibility click cannot open empty-grid capture.
+Explicit resize handles, mouse/pen dragging, native drag and empty-grid creation retain their own
+handlers.
 
 CaptureSessions retains the agenda editor's frozen date and draft through publications, width
 changes, and date selection. It mounts only on that date's agenda or corresponding full-grid host;
