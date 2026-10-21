@@ -172,6 +172,282 @@ function timedGestureGrid() {
 }
 
 describe('Task 2 unified timed interaction contract', () => {
+  it.each([
+    {
+      handle: 'body',
+      selector: '',
+      callback: 'move',
+      column: 0,
+      y: 544,
+      moveX: 50,
+      upX: 50,
+      delta: 2.1,
+      releaseDelta: 1.9,
+      expectedStartMinutes: 545,
+    },
+    {
+      handle: 'body',
+      selector: '',
+      callback: 'move',
+      column: 0,
+      y: 544,
+      moveX: 50,
+      upX: 50,
+      delta: -2.1,
+      releaseDelta: -1.9,
+      expectedStartMinutes: 535,
+    },
+    {
+      handle: 'body',
+      selector: '',
+      callback: 'move',
+      column: 0,
+      y: 544,
+      moveX: 50,
+      upX: 50,
+      delta: 6.1,
+      releaseDelta: 5.9,
+    },
+    {
+      handle: 'body',
+      selector: '',
+      callback: 'move',
+      column: 0,
+      y: 544,
+      moveX: 50,
+      upX: 50,
+      delta: -6.1,
+      releaseDelta: -5.9,
+    },
+    {
+      handle: 'body',
+      selector: '',
+      callback: 'move',
+      column: 0,
+      y: 544,
+      moveX: 50,
+      upX: 50,
+      delta: 18.1,
+      releaseDelta: 17.9,
+    },
+    {
+      handle: 'start-time',
+      selector: '[data-resize-edge="start-time"]',
+      callback: 'resize',
+      column: 0,
+      y: 533,
+      moveX: 50,
+      upX: 50,
+      delta: 6.1,
+      releaseDelta: 5.9,
+    },
+    {
+      handle: 'start-time',
+      selector: '[data-resize-edge="start-time"]',
+      callback: 'resize',
+      column: 0,
+      y: 533,
+      moveX: 50,
+      upX: 50,
+      delta: -6.1,
+      releaseDelta: -5.9,
+    },
+    {
+      handle: 'duration',
+      selector: '[data-resize-edge="duration"]',
+      callback: 'resize',
+      column: 0,
+      y: 579,
+      moveX: 50,
+      upX: 50,
+      delta: 6.1,
+      releaseDelta: 5.9,
+    },
+    {
+      handle: 'duration',
+      selector: '[data-resize-edge="duration"]',
+      callback: 'resize',
+      column: 0,
+      y: 579,
+      moveX: 50,
+      upX: 50,
+      delta: -6.1,
+      releaseDelta: -5.9,
+    },
+    {
+      handle: 'create-span',
+      selector: '[data-boundary="create-span"]',
+      callback: 'boundary',
+      column: 0,
+      y: 544,
+      moveX: 100.1,
+      upX: 99.9,
+      delta: 0,
+      releaseDelta: 0,
+    },
+    {
+      handle: 'start',
+      selector: '[data-boundary="start"]',
+      callback: 'boundary',
+      column: 1,
+      y: 544,
+      moveX: 99.9,
+      upX: 100.1,
+      delta: 0,
+      releaseDelta: 0,
+    },
+  ] as const)(
+    'commits the visible $handle preview despite subpixel release jitter ($delta)',
+    (row) => {
+      const { owner, columns } = timedGestureGrid();
+      const column = expectDefined(columns[row.column]);
+      const t = task({
+        planning: {
+          due: column.date,
+          time: '09:00',
+          duration: 60,
+          ...(row.handle === 'start' ? { start: column.date, due: '2026-07-08' } : {}),
+        },
+      });
+      const onTimedMove = vi.fn(),
+        onTimedDuration = vi.fn(),
+        onTimedBoundary = vi.fn();
+      renderTimedBlocksForDay(
+        column.hour,
+        [t],
+        {
+          ...callbacks(),
+          interactionOwner: owner,
+          onTimedMove,
+          onTimedDuration,
+          onTimedBoundary,
+        },
+        [],
+        { date: column.date },
+      );
+      const block = expectDefined(column.hour.querySelector<HTMLElement>('.abyss-tg-block'));
+      block.getBoundingClientRect = () => rect(row.column * 100, 532, 100, 48);
+      const handle =
+        row.handle === 'body'
+          ? block
+          : expectDefined(block.querySelector<HTMLElement>(row.selector));
+      const x = row.column * 100 + 50;
+      const { y, moveX, upX } = row;
+      handle.dispatchEvent(
+        new PointerEvent('pointerdown', { bubbles: true, clientX: x, clientY: y, pointerId: 81 }),
+      );
+      window.dispatchEvent(
+        new PointerEvent('pointermove', { clientX: moveX, clientY: y + row.delta, pointerId: 81 }),
+      );
+      const preview = expectDefined(
+        column.hour
+          .closest('.abyss-tg-root')
+          ?.querySelector<HTMLElement>('.abyss-calendar-preview'),
+      );
+      const expected: unknown = JSON.parse(expectDefined(preview.dataset['target']));
+      if ('expectedStartMinutes' in row)
+        expect(expected).toMatchObject({ startMinutes: row.expectedStartMinutes });
+      window.dispatchEvent(
+        new PointerEvent('pointerup', {
+          clientX: upX,
+          clientY: y + row.releaseDelta,
+          pointerId: 81,
+        }),
+      );
+      const committed = { move: onTimedMove, resize: onTimedDuration, boundary: onTimedBoundary }[
+        row.callback
+      ];
+      expect(committed).toHaveBeenCalledExactlyOnceWith(t, expected);
+      owner.disposeActive();
+    },
+  );
+
+  it.each(['source', 'outside'] as const)(
+    'does not revive an older preview after the final move clears it at $0',
+    (destination) => {
+      const { owner, columns } = timedGestureGrid();
+      const t = task({ planning: { due: '2026-07-06', time: '09:00', duration: 60 } });
+      const onTimedMove = vi.fn();
+      renderTimedBlocksForDay(
+        columns[0].hour,
+        [t],
+        { ...callbacks(), interactionOwner: owner, onTimedMove },
+        [],
+        { date: '2026-07-06' },
+      );
+      const block = expectDefined(columns[0].hour.querySelector<HTMLElement>('.abyss-tg-block'));
+      block.getBoundingClientRect = () => rect(0, 532, 100, 48);
+      block.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          bubbles: true,
+          clientX: 50,
+          clientY: 544,
+          pointerId: 82,
+        }),
+      );
+      window.dispatchEvent(
+        new PointerEvent('pointermove', { clientX: 50, clientY: 592, pointerId: 82 }),
+      );
+      expect(columns[0].hour.querySelector('.abyss-calendar-preview')).not.toBeNull();
+      const x = destination === 'source' ? 50 : 350;
+      window.dispatchEvent(
+        new PointerEvent('pointermove', { clientX: x, clientY: 544, pointerId: 82 }),
+      );
+      expect(columns[0].hour.querySelector('.abyss-calendar-preview')).toBeNull();
+      window.dispatchEvent(
+        new PointerEvent('pointerup', { clientX: x, clientY: 544, pointerId: 82 }),
+      );
+      expect(onTimedMove).not.toHaveBeenCalled();
+      owner.disposeActive();
+    },
+  );
+
+  it.each(['large release', 'geometry change'] as const)(
+    'recomputes an existing preview for $0',
+    (change) => {
+      const { owner, columns } = timedGestureGrid();
+      const t = task({ planning: { due: '2026-07-06', time: '09:00', duration: 60 } });
+      const onTimedMove = vi.fn();
+      renderTimedBlocksForDay(
+        columns[0].hour,
+        [t],
+        { ...callbacks(), interactionOwner: owner, onTimedMove },
+        [],
+        { date: '2026-07-06' },
+      );
+      const block = expectDefined(columns[0].hour.querySelector<HTMLElement>('.abyss-tg-block'));
+      block.getBoundingClientRect = () => rect(0, 532, 100, 48);
+      block.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          bubbles: true,
+          clientX: 50,
+          clientY: 544,
+          pointerId: 83,
+        }),
+      );
+      window.dispatchEvent(
+        new PointerEvent('pointermove', { clientX: 50, clientY: 550.1, pointerId: 83 }),
+      );
+      expect(columns[0].hour.querySelector('.abyss-calendar-preview')).not.toBeNull();
+      if (change === 'geometry change')
+        columns[0].hour.getBoundingClientRect = () => rect(0, 88, 100, 24 * 48);
+      window.dispatchEvent(
+        new PointerEvent('pointerup', {
+          clientX: 50,
+          clientY: change === 'large release' ? 592 : 550.1,
+          pointerId: 83,
+        }),
+      );
+      expect(onTimedMove).toHaveBeenCalledExactlyOnceWith(t, {
+        date: '2026-07-06',
+        startMinutes: change === 'large release' ? 600 : 565,
+        dayDelta: 0,
+        destination: 'time-grid',
+      });
+      owner.disposeActive();
+    },
+  );
+
   it.each([0, 1, 2])('moves and resizes a future series from segment %s', (index) => {
     const { root, owner, columns } = timedGestureGrid();
     const sourceTask = task({
@@ -780,7 +1056,7 @@ describe('Task 2 unified timed interaction contract', () => {
     block.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
     expect(cbs.onKeyboardIntent).toHaveBeenCalledWith(t, {
       type: 'move-time',
-      deltaMinutes: 15,
+      deltaMinutes: 5,
     });
     root.remove();
   });
@@ -1798,7 +2074,7 @@ describe('renderTimedBlocksForDay', () => {
     expect(expectDefined(blocks[0]).style.left).not.toBe(expectDefined(blocks[1]).style.left);
   });
 
-  it('dragging the block body by one hour snaps to 15-minute steps and fires onTimeChange on pointerup', () => {
+  it('dragging the block body by one hour fires onTimeChange on pointerup', () => {
     const container = freshContainer();
     const onTimeChange = vi.fn();
     const t = task({ planning: { time: '09:00', duration: 60 } });
@@ -1974,7 +2250,7 @@ describe('renderTimedBlocksForDay', () => {
     // exact scenario that reproduced it live (a huge downward pointer delta) and confirm the
     // callback is now clamped to a value that always stays inside 00:00–23:59.
 
-    it('an extreme downward drag on the block body clamps onTimeChange to the last valid slot of the day (23:45), not an out-of-range value', () => {
+    it('an extreme downward drag on the block body clamps onTimeChange to the last valid slot of the day (23:55), not an out-of-range value', () => {
       const container = freshContainer();
       const onTimeChange = vi.fn();
       const t = task({ planning: { time: '10:00', duration: 60 } });
@@ -1992,7 +2268,7 @@ describe('renderTimedBlocksForDay', () => {
       window.dispatchEvent(new PointerEvent('pointerup', { clientY: 100 + 100000, pointerId: 1 }));
       expect(onTimeChange).toHaveBeenCalledTimes(1);
       const [, minutes] = onTimeChange.mock.calls[0] as [unknown, number];
-      expect(minutes).toBe(24 * 60 - 15); // 23:45
+      expect(minutes).toBe(24 * 60 - 5); // 23:55
       expect(minutes).toBeLessThan(24 * 60);
     });
 
@@ -2343,7 +2619,7 @@ describe('renderTimedBlocksForDay', () => {
 
   describe('Task 39: live preview during vertical move/resize matches the committed value exactly', () => {
     // attachDrag already repositions the actual block element (top/height) live on every
-    // pointermove, snapped via the same `snapMinutes(rawDelta, SNAP_MINUTES)` call the
+    // pointermove, snapped via the same `snapMinutes(rawDelta, TIMED_STEP_MINUTES)` call the
     // pointerup commit handler uses — this suite locks in that the two can never drift apart
     // (e.g. a future edit that snaps one but not the other), which is exactly what "release
     // and it lands where you saw it" depends on.
@@ -2358,7 +2634,7 @@ describe('renderTimedBlocksForDay', () => {
       block.dispatchEvent(
         new PointerEvent('pointerdown', { bubbles: true, clientY: 100, pointerId: 1 }),
       );
-      // +37px is not an exact 15-minute increment in pixels (48px/hour => 12px/15min), so this
+      // +37px is not an exact 5-minute increment in pixels (48px/hour => 4px/5min), so this
       // also exercises that the live preview snaps rather than tracking the raw pixel delta.
       window.dispatchEvent(new PointerEvent('pointermove', { clientY: 137, pointerId: 1 }));
       const liveTopPx = parseFloat(block.style.top);
@@ -2414,8 +2690,8 @@ describe('renderTimedBlocksForDay', () => {
     });
 
     it.each([
-      ['ArrowUp', false, { type: 'move-time', deltaMinutes: -15 }],
-      ['ArrowDown', false, { type: 'move-time', deltaMinutes: 15 }],
+      ['ArrowUp', false, { type: 'move-time', deltaMinutes: -5 }],
+      ['ArrowDown', false, { type: 'move-time', deltaMinutes: 5 }],
       ['ArrowUp', true, { type: 'resize-duration', deltaMinutes: -5 }],
       ['ArrowDown', true, { type: 'resize-duration', deltaMinutes: 5 }],
       ['ArrowLeft', false, { type: 'shift-schedule', days: -1 }],
@@ -2495,7 +2771,7 @@ describe('renderTimedBlocksForDay', () => {
       expect(cbs.onKeyboardIntent).toHaveBeenCalledTimes(1);
       expect(cbs.onKeyboardIntent).toHaveBeenCalledWith(t, {
         type: 'move-time',
-        deltaMinutes: 15,
+        deltaMinutes: 5,
       });
     });
 
@@ -2765,7 +3041,7 @@ describe('renderTimedBlocksForDay', () => {
       link.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
       expect(onKeyboardIntent).toHaveBeenCalledWith(t, {
         type: 'move-time',
-        deltaMinutes: 15,
+        deltaMinutes: 5,
       });
       container.remove();
     });
@@ -3608,13 +3884,13 @@ describe('compatibility timed preview day bounds', () => {
       new PointerEvent('pointerdown', { bubbles: true, clientY: 100, pointerId: 81 }),
     );
     window.dispatchEvent(new PointerEvent('pointermove', { clientY: 100000, pointerId: 81 }));
-    expect(block.style.top).toBe('1140px');
-    expect(block.style.height).toBe('12px');
-    expect(block.style.minHeight).toBe('12px');
+    expect(block.style.top).toBe('1148px');
+    expect(block.style.height).toBe('4px');
+    expect(block.style.minHeight).toBe('4px');
     expect(block.classList.contains('is-height-constrained')).toBe(true);
     expect(block.style.width).toBe(original.width);
     expect(block.style.left).toBe(original.left);
-    expect(block.querySelector('.abyss-tg-block-subtitle')?.textContent).toBe('23:45–24:00 (15m)');
+    expect(block.querySelector('.abyss-tg-block-subtitle')?.textContent).toBe('23:55–24:00 (5m)');
     window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 81 }));
     expect({
       top: block.style.top,

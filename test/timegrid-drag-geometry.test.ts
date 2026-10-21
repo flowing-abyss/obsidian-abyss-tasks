@@ -42,6 +42,17 @@ const columns: readonly TimedDragColumn[] = [
 ];
 
 describe('resolveTimedDragTarget', () => {
+  it.each([-5, 5])('moves by a five-minute step of %i minutes', (delta) => {
+    expect(resolveTimedDragTarget(origin, { clientX: 150, clientY: 670 + delta }, columns)).toEqual(
+      {
+        date: localDate('2026-07-20'),
+        startMinutes: 540 + delta,
+        dayDelta: 0,
+        destination: 'time-grid',
+      },
+    );
+  });
+
   it('accepts fractional rendered height without changing semantic duration', () => {
     expect(
       resolveTimedDragTarget(
@@ -51,7 +62,7 @@ describe('resolveTimedDragTarget', () => {
       ),
     ).toEqual({
       date: localDate('2026-07-20'),
-      startMinutes: 570,
+      startMinutes: 565,
       dayDelta: 0,
       destination: 'time-grid',
     });
@@ -70,10 +81,10 @@ describe('resolveTimedDragTarget', () => {
     },
   );
 
-  it('preserves the grab offset and snaps the target start to 15 minutes', () => {
+  it('preserves the grab offset and snaps the target start to 5 minutes', () => {
     expect(resolveTimedDragTarget(origin, { clientX: 150, clientY: 697 }, columns)).toEqual({
       date: localDate('2026-07-20'),
-      startMinutes: 570,
+      startMinutes: 565,
       dayDelta: 0,
       destination: 'time-grid',
     });
@@ -82,7 +93,7 @@ describe('resolveTimedDragTarget', () => {
   it('resolves a cross-day move with the same snapped start', () => {
     expect(resolveTimedDragTarget(origin, { clientX: 250, clientY: 677 }, columns)).toEqual({
       date: localDate('2026-07-21'),
-      startMinutes: 540,
+      startMinutes: 545,
       dayDelta: 1,
       destination: 'time-grid',
     });
@@ -107,14 +118,14 @@ describe('resolveTimedDragTarget', () => {
     });
   });
 
-  it('clamps the snapped start to the final valid 15-minute slot', () => {
+  it('clamps the snapped start to the final valid 5-minute slot', () => {
     expect(
       resolveTimedDragTarget(
         { ...origin, grabOffsetMinutes: 0 },
         { clientX: 150, clientY: 1539 },
         columns,
       ),
-    ).toMatchObject({ startMinutes: 1425, destination: 'time-grid' });
+    ).toMatchObject({ startMinutes: 1435, destination: 'time-grid' });
   });
 
   it.each([
@@ -198,6 +209,15 @@ describe('resolveTimedVerticalResizeTarget', () => {
     pixelsPerMinute: 0.8,
   };
 
+  it.each([
+    { edge: 'start', startMinutes: 545, durationMinutes: 55, endMinutes: 600 },
+    { edge: 'end', startMinutes: 540, durationMinutes: 65, endMinutes: 605 },
+  ] as const)('resizes the $edge edge by five minutes', (expected) => {
+    expect(
+      resolveTimedVerticalResizeTarget({ ...endOrigin, edge: expected.edge }, { clientY: 104 }),
+    ).toEqual(expected);
+  });
+
   it('moves the start edge earlier while preserving the original end', () => {
     expect(
       resolveTimedVerticalResizeTarget(
@@ -213,8 +233,8 @@ describe('resolveTimedVerticalResizeTarget', () => {
   });
 
   it.each([
-    [100 + 60 * 0.8, 585],
-    [100 + 300 * 0.8, 585],
+    [100 + 60 * 0.8, 595],
+    [100 + 300 * 0.8, 595],
   ])(
     'clamps a start-edge pointer at y=%i to the minimum duration without moving the end',
     (clientY, startMinutes) => {
@@ -223,7 +243,7 @@ describe('resolveTimedVerticalResizeTarget', () => {
       ).toEqual({
         edge: 'start',
         startMinutes,
-        durationMinutes: 15,
+        durationMinutes: 5,
         endMinutes: 600,
       });
     },
@@ -239,7 +259,7 @@ describe('resolveTimedVerticalResizeTarget', () => {
   });
 
   it.each([
-    [-100, 15, 555],
+    [-100, 5, 545],
     [2_000, 900, 1_440],
   ])('clamps pointer y=%i to a %i-minute duration', (clientY, durationMinutes, endMinutes) => {
     expect(resolveTimedVerticalResizeTarget(endOrigin, { clientY })).toEqual({

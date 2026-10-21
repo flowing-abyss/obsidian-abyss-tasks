@@ -282,7 +282,7 @@ describe('TodayView', () => {
 
     expect(cbs.onKeyboardIntent).toHaveBeenCalledWith(t, {
       type: 'move-time',
-      deltaMinutes: 15,
+      deltaMinutes: 5,
     });
   });
 

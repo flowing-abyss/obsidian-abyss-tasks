@@ -100,14 +100,14 @@ describe('TimedBlockFocusRetention intents', () => {
       const keyed: TaskSnapshot = {
         ...original,
         ref: { ...original.ref, revision: 'keyed' },
-        planning: { ...original.planning, time: localTime('09:15') },
+        planning: { ...original.planning, time: localTime('09:05') },
       };
       const h = harness({
         execute: vi.fn<TaskApplicationApi['execute']>().mockResolvedValue(okTask(keyed)),
       });
       block(h.root, original).focus();
       if (afterKey) {
-        h.retention.handleIntent(original, { type: 'move-time', deltaMinutes: 15 });
+        h.retention.handleIntent(original, { type: 'move-time', deltaMinutes: 5 });
         await settle();
         h.retention.beforeViewUpdate();
         const generation = h.retention.beginRender();
@@ -252,13 +252,13 @@ describe('TimedBlockFocusRetention intents', () => {
     const updated: TaskSnapshot = {
       ...snapshot,
       ref: { ...snapshot.ref, revision: 'committed' },
-      planning: { ...snapshot.planning, time: localTime('09:15') },
+      planning: { ...snapshot.planning, time: localTime('09:05') },
     };
     const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue(okTask(updated));
     const h = harness({ shared: true, execute });
     block(h.root, snapshot).focus();
     h.retention.handleIntent(snapshot, { type: 'extend-due', days: -1 });
-    h.retention.handleIntent(snapshot, { type: 'move-time', deltaMinutes: 15 });
+    h.retention.handleIntent(snapshot, { type: 'move-time', deltaMinutes: 5 });
     await vi.waitFor(() => {
       expect(h.retention['settledSequences_abyssPrivate'].size).toBe(1);
     });
@@ -285,7 +285,7 @@ describe('TimedBlockFocusRetention intents', () => {
         ...original,
         ref: { ...original.ref, line: 1, revision: 'moved' },
         source: { ...original.source, line: 1 },
-        planning: { ...original.planning, time: localTime('09:15') },
+        planning: { ...original.planning, time: localTime('09:05') },
       };
       const h = harness({
         execute: vi.fn<TaskApplicationApi['execute']>().mockReturnValue(gate.promise),
@@ -293,7 +293,7 @@ describe('TimedBlockFocusRetention intents', () => {
       const origin = block(h.root, original);
       applyTaskNodePresentationIdentity(origin, { type: 'task', ref: original.ref });
       origin.focus();
-      h.retention.handleIntent(original, { type: 'move-time', deltaMinutes: 15 });
+      h.retention.handleIntent(original, { type: 'move-time', deltaMinutes: 5 });
       const settlement = h.retention.settlePointerTask(original);
       gate.resolve(okTask(moved));
       await settlement;
@@ -319,13 +319,13 @@ describe('TimedBlockFocusRetention intents', () => {
       root: () => root,
       follow: vi.fn(),
     });
-    orphan.handleIntent(task(), { type: 'move-time', deltaMinutes: 15 });
+    orphan.handleIntent(task(), { type: 'move-time', deltaMinutes: 5 });
     expect(orphan.hasPending()).toBe(false);
     const unmounted = new TimedBlockFocusRetention(
       { queries: taskQueryApi(), execute: vi.fn() },
       { isCalendarActive: () => true, root: () => null, follow: vi.fn() },
     );
-    unmounted.handleIntent(task(), { type: 'move-time', deltaMinutes: 15 });
+    unmounted.handleIntent(task(), { type: 'move-time', deltaMinutes: 5 });
     expect(unmounted.hasPending()).toBe(false);
   });
 
@@ -334,7 +334,7 @@ describe('TimedBlockFocusRetention intents', () => {
     const snapshot = task({ planning: { due: '2026-09-23', time: '09:00' } });
     const origin = block(h.root, snapshot);
     origin.focus();
-    h.retention.handleIntent(snapshot, { type: 'move-time', deltaMinutes: 15 });
+    h.retention.handleIntent(snapshot, { type: 'move-time', deltaMinutes: 5 });
     expect(h.retention.hasPending()).toBe(true);
     expect(h.pending()?.queueSequence).toBe(1);
     await settle();
@@ -347,7 +347,7 @@ describe('TimedBlockFocusRetention intents', () => {
     const snapshot = task({ planning: { due: '2026-09-23', time: '09:00' } });
     const origin = block(h.root, snapshot);
     origin.focus();
-    h.retention.handleIntent(snapshot, { type: 'move-time', deltaMinutes: 15 });
+    h.retention.handleIntent(snapshot, { type: 'move-time', deltaMinutes: 5 });
     await settle();
     // A committed query patch replaces and focuses the block before another native key can land.
     h.retention.beforeViewUpdate();
@@ -409,7 +409,7 @@ describe('TimedBlockFocusRetention intents', () => {
     const h = harness({ execute });
     const snapshot = task({ planning: { due: '2026-09-23', time: '09:00' } });
     block(h.root, snapshot).focus();
-    h.retention.handleIntent(snapshot, { type: 'move-time', deltaMinutes: 15 });
+    h.retention.handleIntent(snapshot, { type: 'move-time', deltaMinutes: 5 });
     await settle();
     expect(h.retention.hasPending()).toBe(false);
   });
@@ -422,7 +422,7 @@ describe('TimedBlockFocusRetention intents', () => {
     const h = harness({ execute });
     const snapshot = task({ planning: { due: '2026-09-23', time: '09:00' } });
     block(h.root, snapshot).focus();
-    h.retention.handleIntent(snapshot, { type: 'move-time', deltaMinutes: 15 });
+    h.retention.handleIntent(snapshot, { type: 'move-time', deltaMinutes: 5 });
     await settle();
     expect(h.retention.hasPending()).toBe(false);
   });
@@ -495,7 +495,7 @@ describe('TimedBlockFocusRetention focus capture', () => {
     );
     const h = harness({ execute });
     block(h.root, first).focus();
-    h.retention.handleIntent(first, { type: 'move-time', deltaMinutes: 15 });
+    h.retention.handleIntent(first, { type: 'move-time', deltaMinutes: 5 });
     const other = block(h.root, second);
     h.retention.retain(other);
     expect(h.pending()?.filePath).toBe('g.md');
@@ -556,7 +556,7 @@ describe('TimedBlockFocusRetention focus capture', () => {
     const snapshot = task({ planning: { due: '2026-09-23', time: '09:00' } });
     const origin = block(h.root, snapshot);
     origin.focus();
-    h.retention.handleIntent(snapshot, { type: 'move-time', deltaMinutes: 15 });
+    h.retention.handleIntent(snapshot, { type: 'move-time', deltaMinutes: 5 });
     await settle();
     // A document created through the DOM API has no window, so its elements have no timers.
     const foreign = document.implementation.createHTMLDocument();

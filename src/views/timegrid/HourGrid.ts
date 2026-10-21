@@ -1,6 +1,5 @@
+import { TIMED_STEP_MINUTES } from './dragGeometry';
 import { minutesToPixels, minutesToTimeString, pixelsToMinutes, snapMinutes } from './layout';
-
-const DROP_SNAP_MINUTES = 15;
 
 interface DayColumnHandles {
   date: string;
@@ -89,7 +88,10 @@ function bindDropTime(column: HTMLElement, date: string, onDropTime: DropTimeCal
     const dragData = event.dataTransfer?.getData('text/plain');
     if (dragData === undefined || dragData.length === 0) return;
     const offsetY = event.clientY - column.getBoundingClientRect().top;
-    const snapped = Math.max(0, snapMinutes(pixelsToMinutes(offsetY), DROP_SNAP_MINUTES));
+    const snapped = Math.min(
+      24 * 60 - TIMED_STEP_MINUTES,
+      Math.max(0, snapMinutes(pixelsToMinutes(offsetY), TIMED_STEP_MINUTES)),
+    );
     onDropTime(dragData, date, minutesToTimeString(snapped));
   });
 }
@@ -106,8 +108,8 @@ function bindCreateAtTime(
     if (blockedTarget !== null) return;
     const offsetY = event.clientY - column.getBoundingClientRect().top;
     const snapped = Math.min(
-      24 * 60 - DROP_SNAP_MINUTES,
-      Math.max(0, snapMinutes(pixelsToMinutes(offsetY), DROP_SNAP_MINUTES)),
+      24 * 60 - TIMED_STEP_MINUTES,
+      Math.max(0, snapMinutes(pixelsToMinutes(offsetY), TIMED_STEP_MINUTES)),
     );
     onCreateAtTime(date, minutesToTimeString(snapped));
   });

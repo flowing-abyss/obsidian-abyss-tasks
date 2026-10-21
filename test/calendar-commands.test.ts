@@ -206,6 +206,23 @@ describe('CalendarCommands timed gestures', () => {
     });
   });
 
+  it.each([
+    { edge: 'start', startMinutes: 595, durationMinutes: 5, endMinutes: 600, time: '09:55' },
+    { edge: 'end', startMinutes: 540, durationMinutes: 5, endMinutes: 545, time: '09:00' },
+  ] as const)(
+    'preserves a five-minute canonical resize from the $edge edge',
+    async ({ time, ...target }) => {
+      const timed = task({ planning: { due: '2026-09-20', time: '09:00', duration: 60 } });
+      const h = harness([timed]);
+      await h.commands.commitTimedDuration(timed, target);
+      const command = h.lastCommand();
+      expect(command?.type).toBe('patch');
+      if (command?.type !== 'patch') throw new Error('Expected planning patch');
+      expect(command.patch.duration).toEqual({ type: 'set', value: 5 });
+      if (target.edge === 'start') expect(command.patch.time).toEqual({ type: 'set', value: time });
+    },
+  );
+
   it('sets time and duration from a vertical resize', async () => {
     const timed = task({ planning: { due: '2026-09-20', time: '09:00', duration: 30 } });
     const h = harness();

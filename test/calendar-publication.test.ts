@@ -483,7 +483,7 @@ describe('timed keyboard publication', () => {
         block.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
       gate.resolve();
       await flushMicrotasks();
-      expect(h.current().planning).toMatchObject({ time: '23:30', duration: 30 });
+      expect(h.current().planning).toMatchObject({ time: '23:10', duration: 50 });
       expect(h.execute).toHaveBeenCalledTimes(2);
     },
   );
@@ -502,10 +502,10 @@ describe('timed keyboard publication', () => {
     gate.resolve();
     await h.execute.mock.results[0]?.value;
     await flushMicrotasks();
-    expect(h.current().planning.time).toBe('09:15');
+    expect(h.current().planning.time).toBe('09:05');
     gesture.finish();
     await flushMicrotasks();
-    expect(h.current().planning).toMatchObject({ time: '09:15', duration: 75 });
+    expect(h.current().planning).toMatchObject({ time: '09:05', duration: 85 });
     expect(h.root.querySelector('.abyss-tg-drag-preview')).toBeNull();
   });
 
@@ -566,8 +566,8 @@ describe('timed keyboard publication', () => {
       await flushMicrotasks();
       expect(h.current().planning).toMatchObject({
         due: '2026-10-19',
-        time: '09:15',
-        duration: 75,
+        time: '09:05',
+        duration: 85,
       });
       expect(h.current().recurrence).toBeDefined();
       expect(h.execute).toHaveBeenCalledTimes(2);
@@ -650,7 +650,7 @@ describe('timed keyboard publication', () => {
     expect(document.activeElement).toBe(next);
     second.resolve();
     await flushMicrotasks();
-    expect(h.application.index.list({ filePath: 'other.md' })[0]?.planning.time).toBe('09:45');
+    expect(h.application.index.list({ filePath: 'other.md' })[0]?.planning.time).toBe('09:35');
     expect((document.activeElement as HTMLElement).dataset['abyssTaskFile']).toBe('other.md');
   });
 
@@ -699,7 +699,7 @@ describe('timed keyboard publication', () => {
       new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }),
     );
     await accepted.promise;
-    expect(h.current().planning.time).toBe('09:15');
+    expect(h.current().planning.time).toBe('09:05');
     expect(document.activeElement).toBe(origin);
     expect(origin.isConnected).toBe(true);
     expect(h.root.querySelector<HTMLElement>('.abyss-cal-body')?.inert).not.toBe(true);
@@ -717,7 +717,7 @@ describe('timed keyboard publication', () => {
     document.activeElement?.dispatchEvent(nextKey);
     expect(nextKey.defaultPrevented).toBe(true);
     await h.execute.mock.results[1]?.value;
-    expect(h.current().planning.time).toBe('09:30');
+    expect(h.current().planning.time).toBe('09:10');
   });
 });
 
@@ -1364,7 +1364,7 @@ it('stops queued keyboard writes after a receipt includes an unrelated source ed
   });
   gate.resolve();
   await flushMicrotasks();
-  expect(h.current().planning.time).toBe('09:15');
+  expect(h.current().planning.time).toBe('09:05');
   expect(h.current().priority).toBe('A');
   expect(h.execute).toHaveBeenCalledTimes(1);
 });
@@ -1562,7 +1562,7 @@ it.each([false, true])(
     current.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
     gate.resolve();
     await flushMicrotasks();
-    expect(h.current().planning.time).toBe('09:15');
+    expect(h.current().planning.time).toBe('09:05');
     expect(h.execute).toHaveBeenCalledTimes(2);
   },
 );
@@ -1584,7 +1584,7 @@ it('keeps native keyboard focus when submitted planning replaces an uncommitted 
   pending.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
   gate.resolve();
   await flushMicrotasks();
-  expect(h.current().planning).toMatchObject({ time: '09:30', duration: 75 });
+  expect(h.current().planning).toMatchObject({ time: '09:10', duration: 85 });
   expect(h.execute).toHaveBeenCalledTimes(3);
 });
 
@@ -1632,7 +1632,7 @@ it.each([false, true])(
     expect(resize.handle.isConnected).toBe(true);
     resize.finish();
     await flushMicrotasks();
-    expect(h.current().planning).toMatchObject({ time: '09:30', duration: 75 });
+    expect(h.current().planning).toMatchObject({ time: '09:10', duration: 85 });
     expect(h.execute).toHaveBeenCalledTimes(3);
   },
 );
@@ -1671,7 +1671,7 @@ it.each([false, true])(
     current.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
     pointer.resolve();
     await flushMicrotasks();
-    expect(h.current().planning).toMatchObject({ time: '09:45', duration: 90 });
+    expect(h.current().planning).toMatchObject({ time: '09:15', duration: 90 });
     expect(h.execute).toHaveBeenCalledTimes(4);
   },
 );
@@ -1743,7 +1743,7 @@ it('does not dispatch a sibling key accepted before an unproved root receipt', a
   gate.resolve();
   await flushMicrotasks();
   root = expectDefined(h.application.index.list({ filePath: 'calendar.md' })[0]);
-  expect(root.subtasks[0]?.planning.time).toBe('09:15');
+  expect(root.subtasks[0]?.planning.time).toBe('09:05');
   expect(root.subtasks[1]?.planning.time).toBe('10:00');
   expect(h.execute).toHaveBeenCalledTimes(1);
 });
@@ -1777,8 +1777,8 @@ it.each([false, true].flatMap((child) => [false, true].map((failure) => ({ child
     await flushMicrotasks();
     expect(h.execute).toHaveBeenCalledTimes(failure ? 2 : 3);
     expect(h.current().planning).toMatchObject({
-      time: failure ? '09:15' : '09:30',
-      duration: failure ? 60 : 75,
+      time: failure ? '09:05' : '09:10',
+      duration: failure ? 60 : 85,
     });
   },
 );
@@ -1912,7 +1912,7 @@ it.each([false, true])(
       second.resolve();
       await flushMicrotasks();
     }
-    expect(h.current().planning).toMatchObject({ time: '11:15', duration: 75 });
+    expect(h.current().planning).toMatchObject({ time: '11:05', duration: 85 });
     if (adjacent)
       expect(h.application.index.list({ filePath: 'calendar.md' })[1]?.planning.time).toBe('12:00');
   },
@@ -1982,7 +1982,7 @@ it.each(['resize', 'keyboard'] as const)(
       await flushMicrotasks();
       expect(h.execute).toHaveBeenCalledTimes(3);
       expect(h.current().planning).toMatchObject(
-        kind === 'keyboard' ? { time: '09:15', duration: 60 } : { time: '09:00', duration: 150 },
+        kind === 'keyboard' ? { time: '09:05', duration: 60 } : { time: '09:00', duration: 150 },
       );
     } finally {
       first.resolve();

@@ -1,8 +1,8 @@
 import { daysBetweenLocalDates, localDate, type LocalDate } from '../../tasks';
 
 const MINUTES_PER_DAY = 24 * 60;
-const SNAP_MINUTES = 15;
-const LAST_SNAP_MINUTE = MINUTES_PER_DAY - SNAP_MINUTES;
+export const TIMED_STEP_MINUTES = 5;
+const LAST_SNAP_MINUTE = MINUTES_PER_DAY - TIMED_STEP_MINUTES;
 const MINUTE_EPSILON = 1e-7;
 
 export interface TimedDragOrigin {
@@ -175,7 +175,7 @@ function resolveTimeGridTarget(
   if (dayDelta === 0 && Math.abs(rawStartMinutes - origin.startMinutes) < MINUTE_EPSILON) {
     return undefined;
   }
-  const snapped = Math.round(rawStartMinutes / SNAP_MINUTES) * SNAP_MINUTES;
+  const snapped = Math.round(rawStartMinutes / TIMED_STEP_MINUTES) * TIMED_STEP_MINUTES;
   const startMinutes = Math.min(Math.max(snapped, 0), LAST_SNAP_MINUTE);
   if (dayDelta === 0 && startMinutes === origin.startMinutes) return undefined;
   return { date: column.date, startMinutes, dayDelta, destination: 'time-grid' };
@@ -222,7 +222,7 @@ export function resolveTimedVerticalResizeTarget(
   }
 
   const deltaMinutes = (pointer.clientY - origin.grabClientY) / origin.pixelsPerMinute;
-  const snappedDelta = Math.round(deltaMinutes / SNAP_MINUTES) * SNAP_MINUTES;
+  const snappedDelta = Math.round(deltaMinutes / TIMED_STEP_MINUTES) * TIMED_STEP_MINUTES;
   if (snappedDelta === 0) {
     return {
       edge: origin.edge,
@@ -234,7 +234,7 @@ export function resolveTimedVerticalResizeTarget(
   if (origin.edge === 'start') {
     const startMinutes = Math.min(
       Math.max(origin.startMinutes + snappedDelta, 0),
-      originEndMinutes - SNAP_MINUTES,
+      originEndMinutes - TIMED_STEP_MINUTES,
     );
     return {
       edge: 'start',
@@ -245,7 +245,7 @@ export function resolveTimedVerticalResizeTarget(
   }
 
   const endMinutes = Math.min(
-    Math.max(originEndMinutes + snappedDelta, origin.startMinutes + SNAP_MINUTES),
+    Math.max(originEndMinutes + snappedDelta, origin.startMinutes + TIMED_STEP_MINUTES),
     MINUTES_PER_DAY,
   );
   return {

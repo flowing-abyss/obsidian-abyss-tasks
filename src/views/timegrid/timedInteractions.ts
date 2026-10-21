@@ -37,6 +37,8 @@ export type TimedBoundaryTarget =
 type TimedPreviewTarget =
   Readonly<TimedDragTarget> | Readonly<TimedVerticalResizeTarget> | Readonly<TimedBoundaryTarget>;
 
+const RELEASE_JITTER_PX = 2;
+
 export interface TimedInteractionOwner {
   begin(dispose: () => void): void;
   end(dispose: () => void): void;
@@ -609,7 +611,18 @@ class TimedInteractionSession {
 
   private readonly onPointerUp_abyssPrivate = (pointer: PointerEvent): void => {
     if (pointer.pointerId !== this.input.startEvent.pointerId) return;
-    this.update_abyssPrivate(pointer);
+    const columns = this.input.geometry.columns.map(measureColumn);
+    // Keep the visible target across release jitter only while current geometry still agrees.
+    const retainPreview =
+      this.latest_abyssPrivate !== undefined &&
+      Math.hypot(
+        pointer.clientX - this.lastPointer_abyssPrivate.clientX,
+        pointer.clientY - this.lastPointer_abyssPrivate.clientY,
+      ) <= RELEASE_JITTER_PX &&
+      JSON.stringify(
+        this.resolver_abyssPrivate.resolve(this.input.kind, this.lastPointer_abyssPrivate, columns),
+      ) === JSON.stringify(this.latest_abyssPrivate);
+    if (!retainPreview) this.update_abyssPrivate(pointer, columns);
     const committed = this.latest_abyssPrivate;
     this.releasePointer_abyssPrivate();
     if (committed == null) this.dispose_abyssPrivate();
@@ -632,10 +645,12 @@ class TimedInteractionSession {
     this.dispose_abyssPrivate();
   };
 
-  private update_abyssPrivate(pointer: PointerEvent): void {
+  private update_abyssPrivate(
+    pointer: PointerEvent,
+    columns: readonly MeasuredColumn[] = this.input.geometry.columns.map(measureColumn),
+  ): void {
     if (this.disposed_abyssPrivate || pointer.pointerId !== this.input.startEvent.pointerId) return;
     this.lastPointer_abyssPrivate = pointer;
-    const columns = this.input.geometry.columns.map(measureColumn);
     const target = this.resolver_abyssPrivate.resolve(this.input.kind, pointer, columns);
     this.latest_abyssPrivate = target;
     if (target == null) {

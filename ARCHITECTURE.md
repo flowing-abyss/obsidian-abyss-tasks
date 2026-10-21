@@ -495,6 +495,10 @@ occurrence roles. A newly created interval replaces the preceding point semantic
 edits preserve authored timing. CalendarNativeDragContext retains rendered planning only for its exact
 registered AppState payload, capturing it before native drop cleanup. Native drops and status actions
 wait behind submitted timed edits and use their proved source successor.
+Time-grid moves, vertical resizing, keyboard timing edits, native drops and empty-grid placement
+share the five-minute step from dragGeometry. Preview and command planning use the same minimum
+duration; the final start slot is 23:55. Authored durations and default durations retain their existing
+storage semantics.
 
 TimedBlockKeyboardQueue holds publication during each keyboard write without making the focused block
 inert. Its receipt updates TimedBlockFocusRetention before releasing the hold; the replacement receives
@@ -523,6 +527,10 @@ projection. Late settlement requests a canonical refresh through the current hol
 any new pointer or menu owner; it cannot restore the retired view. Timed gestures retain their original planning and grab offset while refreshing
 column rectangles on movement, ancestor scrolling, and release; scrolling also updates a stationary
 pointer's preview.
+On release, the current preview survives up to two CSS pixels of terminal jitter only if resolving
+the preceding pointer against current column geometry still produces that preview. Larger release
+movement, changed geometry and gestures without a current preview resolve from the release itself.
+Cleared previews cannot restore an earlier target.
 CalendarCommands ignores malformed date/time/duration input during command construction and lets
 unexpected execution failures reach the existing UI action boundary. Retained presentation never
 grants new source authority; external edits and deletion can still cause a command to be refused.

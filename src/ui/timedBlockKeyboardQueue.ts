@@ -17,6 +17,7 @@ import {
   calendarShiftScheduleCommand,
   calendarSpanBoundaryCommand,
 } from '../views/calendarOccurrences';
+import { TIMED_STEP_MINUTES } from '../views/timegrid/dragGeometry';
 import type { TimedBlockKeyboardIntent } from '../views/timegrid/renderTimedBlocks';
 import type {
   CalendarEditExecutor,
@@ -57,8 +58,8 @@ interface QueuedIntent {
 }
 
 const MIN_START_MINUTES = 0;
-const MAX_START_MINUTES = 24 * 60 - 15;
-const MIN_DURATION_MINUTES = 5;
+const MAX_START_MINUTES = 24 * 60 - TIMED_STEP_MINUTES;
+const MIN_DURATION_MINUTES = TIMED_STEP_MINUTES;
 const MAX_DURATION_MINUTES = 24 * 60;
 const DEFAULT_DURATION_MINUTES = 60;
 

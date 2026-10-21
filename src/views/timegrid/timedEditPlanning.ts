@@ -14,7 +14,11 @@ import {
   calendarShiftPlanning,
   calendarSourcePatchCommand,
 } from '../calendarOccurrences';
-import type { TimedDragTarget, TimedVerticalResizeTarget } from './dragGeometry';
+import {
+  TIMED_STEP_MINUTES,
+  type TimedDragTarget,
+  type TimedVerticalResizeTarget,
+} from './dragGeometry';
 import { minutesToTimeString, timeStringToMinutes } from './layout';
 import type { TimedBoundaryTarget } from './timedInteractions';
 
@@ -66,9 +70,11 @@ function resizedPlanning(task: TaskSnapshot, target: TimedVerticalResizeTarget):
   const start =
     target.edge === 'end'
       ? currentStart
-      : Math.max(0, Math.min(target.startMinutes, currentEnd - 15));
+      : Math.max(0, Math.min(target.startMinutes, currentEnd - TIMED_STEP_MINUTES));
   const end =
-    target.edge === 'start' ? currentEnd : Math.min(1440, Math.max(target.endMinutes, start + 15));
+    target.edge === 'start'
+      ? currentEnd
+      : Math.min(1440, Math.max(target.endMinutes, start + TIMED_STEP_MINUTES));
   return {
     ...task.planning,
     time: localTime(minutesToTimeString(start)),

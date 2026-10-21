@@ -19,7 +19,11 @@ import {
 import { calendarOccurrenceForRender, type CalendarOccurrence } from '../calendarOccurrences';
 import { settleCalendarInteraction } from '../settleCalendarInteraction';
 import { renderTimedContent } from './calendarPreview';
-import type { TimedDragTarget, TimedVerticalResizeTarget } from './dragGeometry';
+import {
+  TIMED_STEP_MINUTES,
+  type TimedDragTarget,
+  type TimedVerticalResizeTarget,
+} from './dragGeometry';
 import {
   layoutTimedDay,
   MIN_BLOCK_HEIGHT_PX,
@@ -49,7 +53,7 @@ import {
 } from './timedInteractions';
 
 export type TimedBlockKeyboardIntent =
-  | { readonly type: 'move-time'; readonly deltaMinutes: -15 | 15 }
+  | { readonly type: 'move-time'; readonly deltaMinutes: -5 | 5 }
   | { readonly type: 'resize-duration'; readonly deltaMinutes: -5 | 5 }
   | { readonly type: 'shift-schedule'; readonly days: -1 | 1 }
   | { readonly type: 'extend-due'; readonly days: -1 | 1 };
@@ -108,11 +112,10 @@ type BoundaryHandleBinding = {
 };
 
 const DEFAULT_DURATION_MINUTES = 60;
-const SNAP_MINUTES = 15;
 // Task 33: hard bounds on drag-computed move/resize values. Neither `onTimeChange` nor
 // `onDurationChange` touches the task's date — only its time-of-day/duration — so a vertical
 // drag was previously left completely unclamped on the upper end (only `Math.max(0, ...)` /
-// `Math.max(SNAP_MINUTES, ...)` guarded the lower end). Root cause of the disappearing-task bug:
+// `Math.max(TIMED_STEP_MINUTES, ...)` guarded the lower end). Root cause of the disappearing-task bug:
 // an extreme drag (e.g. the pointer released far outside the visible grid) could compute a start
 // time whose hour needs 3+ digits (e.g. "2093:15") — `⏰`'s own `\d{1,2}` grammar can't match
 // that, so the token silently fails to round-trip through the parser on the next read, `time`
@@ -121,7 +124,7 @@ const SNAP_MINUTES = 15;
 // inside a single real calendar day, so it can never produce that class of value in the first
 // place — the validated TaskApplicationApi command is the last line of defense for anything that
 // still slips through, not the first one.
-const MAX_START_MINUTES = 24 * 60 - SNAP_MINUTES; // 23:45 — the last valid quarter-hour slot.
+const MAX_START_MINUTES = 24 * 60 - TIMED_STEP_MINUTES; // 23:55 — the final five-minute slot.
 const MAX_DURATION_MINUTES = 24 * 60; // A full day is already a generous, unambiguous cap.
 
 // The helpers below serve only the retained no-date compatibility handlers (`attachDrag` and
@@ -633,8 +636,8 @@ function attachOwnedInteractions(input: OwnedInteractionsInput): void {
 }
 
 const KEYBOARD_INTENTS: Readonly<Record<string, TimedBlockKeyboardIntent>> = {
-  ArrowUp: { type: 'move-time', deltaMinutes: -15 },
-  ArrowDown: { type: 'move-time', deltaMinutes: 15 },
+  ArrowUp: { type: 'move-time', deltaMinutes: -5 },
+  ArrowDown: { type: 'move-time', deltaMinutes: 5 },
   ArrowLeft: { type: 'shift-schedule', days: -1 },
   ArrowRight: { type: 'shift-schedule', days: 1 },
 };
@@ -732,7 +735,7 @@ type LegacyDragInput = {
 };
 
 function pointerDeltaMinutes(event: PointerEvent, startY: number): number {
-  return snapMinutes(((event.clientY - startY) / minutesToPixels(60)) * 60, SNAP_MINUTES);
+  return snapMinutes(((event.clientY - startY) / minutesToPixels(60)) * 60, TIMED_STEP_MINUTES);
 }
 
 function applyCompatibilityPreview(
@@ -771,7 +774,7 @@ function compatibilityGeometryRestorer(block: HTMLElement): () => void {
 }
 
 function compatibilityResizeDuration(start: number, duration: number, delta: number): number {
-  return Math.min(MAX_DURATION_MINUTES - start, Math.max(SNAP_MINUTES, duration + delta));
+  return Math.min(MAX_DURATION_MINUTES - start, Math.max(TIMED_STEP_MINUTES, duration + delta));
 }
 
 function isTouchBodyMove(event: PointerEvent): boolean {

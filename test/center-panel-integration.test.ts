@@ -3282,7 +3282,7 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
         {
           type: 'patch',
           target: { type: 'task', ref: timed.ref },
-          patch: { time: { type: 'set', value: '09:15' } },
+          patch: { time: { type: 'set', value: '09:05' } },
         },
         { onPreparedPatch: expect.any(Function) as unknown },
       );
@@ -4855,7 +4855,7 @@ describe('CenterPanel calendar mode — click-to-create', () => {
         const input = expectDefined(
           el.querySelector<HTMLInputElement>('.abyss-tg-quick-add-input'),
         );
-        expect(input.placeholder).toBe('Task at 23:45…');
+        expect(input.placeholder).toBe('Task at 23:55…');
         expect(await readMd(app, 'inbox.md')).toBe(before);
         setCaptureDraft(input, 'late capture');
         pressCaptureKey(input, key);
@@ -4863,7 +4863,7 @@ describe('CenterPanel calendar mode — click-to-create', () => {
 
         const after = await readMd(app, 'inbox.md');
         if (key === 'Enter') {
-          expect(after).toContain('- [ ] late capture ⏰ 23:45');
+          expect(after).toContain('- [ ] late capture ⏰ 23:55');
         } else {
           expect(after).toBe(before);
           expect(el.querySelector('.abyss-tg-quick-add-input')).toBeNull();
@@ -5555,7 +5555,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     const updated = task({
       ...original,
       ref: { filePath: 'span.md', line: 4, revision: 'revision-2' },
-      planning: { start, due, time: '09:15', duration: 60 },
+      planning: { start, due, time: '09:05', duration: 60 },
     });
     const h = keyboardPanelHarness([original], execute);
     clickCalendarView(h.el, 'Week');
@@ -5790,7 +5790,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     const pending = deferredResult();
     const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(pending.promise);
     const original = keyboardSnapshot(TODAY);
-    const updated = keyboardSnapshot(TODAY, '09:15', original.source.filePath, 'revision-2');
+    const updated = keyboardSnapshot(TODAY, '09:05', original.source.filePath, 'revision-2');
     const h = keyboardPanelHarness([original], execute, foreignDocument);
     try {
       clickCalendarView(h.el, 'Day');
@@ -5855,7 +5855,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     const pending = deferredResult();
     const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(pending.promise);
     const original = keyboardSnapshot(TODAY);
-    const updated = keyboardSnapshot(TODAY, '09:15', original.source.filePath, 'revision-2');
+    const updated = keyboardSnapshot(TODAY, '09:05', original.source.filePath, 'revision-2');
     const h = keyboardPanelHarness([original], execute);
     clickCalendarView(h.el, 'Day');
 
@@ -6166,7 +6166,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     const pending = deferredResult();
     const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(pending.promise);
     const original = keyboardSnapshot(TODAY);
-    const updated = keyboardSnapshot(TODAY, '09:15', original.source.filePath, 'revision-2');
+    const updated = keyboardSnapshot(TODAY, '09:05', original.source.filePath, 'revision-2');
     const h = keyboardPanelHarness([original], execute);
     clickCalendarView(h.el, 'Day');
 
@@ -6435,7 +6435,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       .fn<TaskApplicationApi['execute']>()
       .mockReturnValueOnce(first.promise)
       .mockReturnValueOnce(second.promise);
-    const original = keyboardSnapshot(TODAY, '00:15');
+    const original = keyboardSnapshot(TODAY, '00:05');
     const changed = keyboardSnapshot(TODAY, '00:00', original.source.filePath, 'revision-2');
     const h = keyboardPanelHarness([original], execute);
     clickCalendarView(h.el, 'Day');
@@ -6467,7 +6467,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       .mockReturnValueOnce(first.promise)
       .mockReturnValueOnce(second.promise)
       .mockReturnValueOnce(third.promise);
-    const original = keyboardSnapshot(TODAY, '00:15', 'clamped.md', 'revision-1');
+    const original = keyboardSnapshot(TODAY, '00:05', 'clamped.md', 'revision-1');
     const boundary = keyboardSnapshot(TODAY, '00:00', 'clamped.md', 'revision-2');
     const h = keyboardPanelHarness([original], execute);
     clickCalendarView(h.el, 'Day');
@@ -6512,9 +6512,9 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       .mockReturnValueOnce(first.promise)
       .mockReturnValueOnce(second.promise)
       .mockReturnValueOnce(third.promise);
-    const original = keyboardSnapshot(TODAY, '00:15', 'clamped.md', 'revision-1');
+    const original = keyboardSnapshot(TODAY, '00:05', 'clamped.md', 'revision-1');
     const boundary = keyboardSnapshot(TODAY, '00:00', 'clamped.md', 'revision-2');
-    const final = keyboardSnapshot(TODAY, '00:15', 'clamped.md', 'revision-3');
+    const final = keyboardSnapshot(TODAY, '00:05', 'clamped.md', 'revision-3');
     const h = keyboardPanelHarness([original], execute);
     clickCalendarView(h.el, 'Day');
 
@@ -6549,7 +6549,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
   });
 
   it.each([
-    ['vertical', 'ArrowDown', TODAY, '09:15'],
+    ['vertical', 'ArrowDown', TODAY, '09:05'],
     ['horizontal', 'ArrowRight', moment(TODAY).add(1, 'day').format('YYYY-MM-DD'), '09:00'],
   ] as const)(
     'preserves a rebased queue locator when a %s result arrives before the index',
@@ -6659,7 +6659,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     const pending = deferredResult();
     const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(pending.promise);
     const original = keyboardSnapshot(TODAY, '09:00', 'newer.md', 'revision-1', 4);
-    const returned = keyboardSnapshot(TODAY, '09:15', 'newer.md', 'revision-2', 4);
+    const returned = keyboardSnapshot(TODAY, '09:05', 'newer.md', 'revision-2', 4);
     const indexed = keyboardSnapshot(TODAY, '09:30', 'newer.md', 'revision-3', 4);
     const h = keyboardPanelHarness([original], execute);
     clickCalendarView(h.el, 'Day');
@@ -6687,8 +6687,8 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       .mockReturnValueOnce(first.promise)
       .mockReturnValueOnce(second.promise);
     const original = keyboardSnapshot(TODAY, '09:00', 'moved.md', 'revision-1', 4);
-    const moved = keyboardSnapshot(TODAY, '09:15', 'moved.md', 'revision-2', 5);
-    const final = keyboardSnapshot(TODAY, '09:30', 'moved.md', 'revision-3', 5);
+    const moved = keyboardSnapshot(TODAY, '09:05', 'moved.md', 'revision-2', 5);
+    const final = keyboardSnapshot(TODAY, '09:10', 'moved.md', 'revision-3', 5);
     const h = keyboardPanelHarness([original], execute);
     clickCalendarView(h.el, 'Day');
 
@@ -6725,8 +6725,8 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       .mockReturnValueOnce(first.promise)
       .mockReturnValueOnce(second.promise);
     const original = keyboardSnapshot(TODAY, '09:00', 'moved.md', 'revision-1', 4);
-    const intermediate = keyboardSnapshot(TODAY, '09:15', 'moved.md', 'revision-2', 5);
-    const final = keyboardSnapshot(TODAY, '09:30', 'moved.md', 'revision-3', 6);
+    const intermediate = keyboardSnapshot(TODAY, '09:05', 'moved.md', 'revision-2', 5);
+    const final = keyboardSnapshot(TODAY, '09:10', 'moved.md', 'revision-3', 6);
     const h = keyboardPanelHarness([original], execute);
     clickCalendarView(h.el, 'Day');
 
@@ -6764,8 +6764,8 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       .mockReturnValueOnce(staleSecond.promise)
       .mockReturnValueOnce(replacementResult.promise);
     const original = keyboardSnapshot(TODAY, '09:00', 'shared.md', 'shared-revision', 4);
-    const moved = keyboardSnapshot(TODAY, '09:15', 'shared.md', 'moved-revision', 5);
-    const staleFinal = keyboardSnapshot(TODAY, '09:30', 'shared.md', 'stale-revision', 5);
+    const moved = keyboardSnapshot(TODAY, '09:05', 'shared.md', 'moved-revision', 5);
+    const staleFinal = keyboardSnapshot(TODAY, '09:10', 'shared.md', 'stale-revision', 5);
     // Different source bytes require a different revision, including at the same line.
     const replacement = keyboardSnapshot(
       TODAY,
@@ -6806,10 +6806,10 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       line: 4,
       revision: 'replacement-index-revision',
     });
-    expect(replacementCommand.patch).toEqual({ time: { type: 'set', value: '14:15' } });
+    expect(replacementCommand.patch).toEqual({ time: { type: 'set', value: '14:05' } });
 
     replacementResult.resolve(
-      okTask(keyboardSnapshot(TODAY, '14:15', 'shared.md', 'replacement-revision', 4)),
+      okTask(keyboardSnapshot(TODAY, '14:05', 'shared.md', 'replacement-revision', 4)),
     );
   });
 
@@ -6826,7 +6826,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
         .mockReturnValueOnce(originalResult.promise)
         .mockReturnValueOnce(replacementResult.promise);
       const original = keyboardSnapshot(TODAY, '09:00', 'shared.md', 'shared-revision', 4);
-      const moved = keyboardSnapshot(TODAY, '09:15', 'shared.md', 'moved-revision', 5);
+      const moved = keyboardSnapshot(TODAY, '09:05', 'shared.md', 'moved-revision', 5);
       const replacement = keyboardSnapshot(
         TODAY,
         '14:00',
@@ -6862,10 +6862,10 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
         line: replacementLine,
         revision: replacementRevision,
       });
-      expect(replacementCommand.patch).toEqual({ time: { type: 'set', value: '14:15' } });
+      expect(replacementCommand.patch).toEqual({ time: { type: 'set', value: '14:05' } });
       replacementResult.resolve(
         okTask(
-          keyboardSnapshot(TODAY, '14:15', 'shared.md', 'replacement-revision', replacementLine),
+          keyboardSnapshot(TODAY, '14:05', 'shared.md', 'replacement-revision', replacementLine),
         ),
       );
     },

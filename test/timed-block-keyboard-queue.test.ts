@@ -130,7 +130,7 @@ describe('TimedBlockKeyboardQueue', () => {
         const hooks = harness().hooks;
         const queue = new TimedBlockKeyboardQueue({ ...application.tasks, execute }, hooks);
         const [scheduled, due] = displays();
-        queue.enqueue(expectDefined(scheduled), { type: 'move-time', deltaMinutes: 15 });
+        queue.enqueue(expectDefined(scheduled), { type: 'move-time', deltaMinutes: 5 });
         const pending =
           phase === 'pending' ? queue.settlePointerTask(expectDefined(due)) : undefined;
         gate.resolve();
@@ -172,7 +172,7 @@ describe('TimedBlockKeyboardQueue', () => {
       pointer: false,
       duration: undefined,
       settled: 'onSettled',
-      time: '10:30',
+      time: '10:10',
       title: 'B',
     },
     {
@@ -257,10 +257,10 @@ describe('TimedBlockKeyboardQueue', () => {
         });
         const hooks = harness().hooks;
         const queue = new TimedBlockKeyboardQueue({ ...application.tasks, execute }, hooks);
-        queue.enqueue(expectDefined(displays[0]), { type: 'move-time', deltaMinutes: 15 });
+        queue.enqueue(expectDefined(displays[0]), { type: 'move-time', deltaMinutes: 5 });
         if (!direct) {
-          queue.enqueue(expectDefined(displays[1]), { type: 'move-time', deltaMinutes: 15 });
-          queue.enqueue(expectDefined(displays[1]), { type: 'move-time', deltaMinutes: 15 });
+          queue.enqueue(expectDefined(displays[1]), { type: 'move-time', deltaMinutes: 5 });
+          queue.enqueue(expectDefined(displays[1]), { type: 'move-time', deltaMinutes: 5 });
         }
         const pointer = usePointer
           ? queue.settlePointerTask(expectDefined(displays[1]))
@@ -278,7 +278,7 @@ describe('TimedBlockKeyboardQueue', () => {
           expect(hooks[settled]).toHaveBeenCalledOnce();
         });
         expect(application.index.list()[0]?.subtasks.map((node) => node.planning.time)).toEqual([
-          '09:15',
+          '09:05',
           time,
         ]);
         expect(application.index.list()[0]?.subtasks[1]?.title).toBe(title);
@@ -309,7 +309,7 @@ describe('TimedBlockKeyboardQueue', () => {
         let [a, b] = displays();
         const hooks = harness().hooks;
         const queue = new TimedBlockKeyboardQueue(application.tasks, hooks);
-        queue.enqueue(expectDefined(a), { type: 'move-time', deltaMinutes: 15 });
+        queue.enqueue(expectDefined(a), { type: 'move-time', deltaMinutes: 5 });
         await vi.waitFor(() => {
           expect(hooks.onSettled).toHaveBeenCalledTimes(1);
         });
@@ -317,7 +317,7 @@ describe('TimedBlockKeyboardQueue', () => {
           queue.published();
           [a, b] = displays();
         }
-        queue.enqueue(expectDefined(a), { type: 'move-time', deltaMinutes: 15 });
+        queue.enqueue(expectDefined(a), { type: 'move-time', deltaMinutes: 5 });
         await vi.waitFor(() => {
           expect(hooks.onSettled).toHaveBeenCalledTimes(2);
         });
@@ -327,7 +327,7 @@ describe('TimedBlockKeyboardQueue', () => {
         });
         await commands.setDuration(await queue.settlePointerTask(expectDefined(b)), 90);
         expect(application.index.list()[0]?.subtasks.map((node) => node.planning)).toEqual([
-          expect.objectContaining({ time: '09:30' }),
+          expect.objectContaining({ time: '09:10' }),
           expect.objectContaining({ time: '11:00', duration: 90 }),
         ]);
       } finally {
@@ -370,8 +370,8 @@ describe('TimedBlockKeyboardQueue', () => {
           { ...application.tasks, execute },
           harness().hooks,
         );
-        queue.enqueue(materialized, { type: 'move-time', deltaMinutes: 15 });
-        queue.enqueue(materialized, { type: 'move-time', deltaMinutes: 15 });
+        queue.enqueue(materialized, { type: 'move-time', deltaMinutes: 5 });
+        queue.enqueue(materialized, { type: 'move-time', deltaMinutes: 5 });
         const pending = queue.settlePointerTask(forecast);
         gate.resolve();
         const successor = await pending;
@@ -387,7 +387,7 @@ describe('TimedBlockKeyboardQueue', () => {
         );
         const root = expectDefined(application.index.list()[0]);
         const node = child ? expectDefined(root.subtasks[0]) : root;
-        expect(node.planning).toMatchObject({ due: '2026-10-20', time: '09:15', duration: 75 });
+        expect(node.planning).toMatchObject({ due: '2026-10-20', time: '09:05', duration: 85 });
         expect(node.recurrence).toBeDefined();
         expect(execute).toHaveBeenCalledOnce();
       } finally {
@@ -398,21 +398,21 @@ describe('TimedBlockKeyboardQueue', () => {
 
   it('continues keyboard edits on an origin still retained by a pointer gesture', async () => {
     const original = taskAt('09:00');
-    const updated = taskAt('09:15', 'revision-2');
+    const updated = taskAt('09:05', 'revision-2');
     const execute = vi
       .fn<TaskApplicationApi['execute']>()
       .mockResolvedValueOnce(ok(updated))
-      .mockResolvedValueOnce(ok(taskAt('09:30', 'revision-3')));
+      .mockResolvedValueOnce(ok(taskAt('09:10', 'revision-3')));
     const { queue, hooks } = harness(execute);
-    queue.enqueue(original, { type: 'move-time', deltaMinutes: 15 });
+    queue.enqueue(original, { type: 'move-time', deltaMinutes: 5 });
     await vi.waitFor(() => {
       expect(hooks.onSettled).toHaveBeenCalledOnce();
     });
-    queue.enqueue(original, { type: 'move-time', deltaMinutes: 15 });
+    queue.enqueue(original, { type: 'move-time', deltaMinutes: 5 });
     expect(execute).toHaveBeenLastCalledWith({
       type: 'patch',
       target: { type: 'task', ref: updated.ref },
-      patch: { time: { type: 'set', value: '09:30' } },
+      patch: { time: { type: 'set', value: '09:10' } },
     });
   });
 
@@ -421,9 +421,9 @@ describe('TimedBlockKeyboardQueue', () => {
     const execute = vi.fn().mockReturnValue(receipt.promise);
     const { queue } = harness(execute);
     const original = taskAt('09:00');
-    const updated = taskAt('09:15', 'revision-2');
-    queue.enqueue(original, { type: 'move-time', deltaMinutes: 15 });
-    queue.enqueue(original, { type: 'move-time', deltaMinutes: 15 });
+    const updated = taskAt('09:05', 'revision-2');
+    queue.enqueue(original, { type: 'move-time', deltaMinutes: 5 });
+    queue.enqueue(original, { type: 'move-time', deltaMinutes: 5 });
     const successor = queue.settlePointerTask(original);
     receipt.resolve(ok(updated));
     expect(await successor).toBe(updated);
@@ -441,12 +441,12 @@ describe('TimedBlockKeyboardQueue', () => {
       const receipt = deferred<TaskCommandResult>();
       const { queue } = harness(vi.fn().mockReturnValue(receipt.promise));
       const original = taskAt('09:00');
-      queue.enqueue(original, { type: 'move-time', deltaMinutes: 15 });
+      queue.enqueue(original, { type: 'move-time', deltaMinutes: 5 });
       const successor = queue.settlePointerTask(original);
       if (ending === 'cancel') queue.cancel();
       receipt.resolve(
         ending === 'cancel'
-          ? ok(taskAt('09:15', 'revision-2'))
+          ? ok(taskAt('09:05', 'revision-2'))
           : { type: 'not-found', target: { type: 'task', ref: original.ref } },
       );
       expect(await successor).toBe(original);
@@ -470,10 +470,8 @@ describe('TimedBlockKeyboardQueue', () => {
       const hooks = harness().hooks;
       const queue = new TimedBlockKeyboardQueue({ ...application.tasks, execute }, hooks);
       const original = expectDefined(application.index.list({ filePath: 'qa.md' })[0]);
-      const up: TimedBlockKeyboardIntent =
-        type === 'move-time' ? { type, deltaMinutes: -15 } : { type, deltaMinutes: -5 };
-      const down: TimedBlockKeyboardIntent =
-        type === 'move-time' ? { type, deltaMinutes: 15 } : { type, deltaMinutes: 5 };
+      const up: TimedBlockKeyboardIntent = { type, deltaMinutes: -5 };
+      const down: TimedBlockKeyboardIntent = { type, deltaMinutes: 5 };
       for (let index = 0; index < 11; index++) queue.enqueue(original, up);
       queue.enqueue(original, down);
       queue.enqueue(original, down);
@@ -482,7 +480,7 @@ describe('TimedBlockKeyboardQueue', () => {
         expect(hooks.onSettled).toHaveBeenCalledOnce();
       });
       expect(application.index.list({ filePath: 'qa.md' })[0]?.planning).toMatchObject(
-        type === 'move-time' ? { time: '00:30', duration: 10 } : { time: '00:15', duration: 15 },
+        type === 'move-time' ? { time: '00:10', duration: 10 } : { time: '00:15', duration: 15 },
       );
       expect(execute).toHaveBeenCalledTimes(3);
       application.index.destroy();
@@ -490,7 +488,7 @@ describe('TimedBlockKeyboardQueue', () => {
   );
 
   it.each([
-    ['move-time', '14:15', 60],
+    ['move-time', '10:45', 60],
     ['resize-duration', '09:00', 165],
   ] as const)(
     'coalesces held %s inputs behind one pending write and rebases the accumulated target',
@@ -508,8 +506,7 @@ describe('TimedBlockKeyboardQueue', () => {
       const hooks = harness().hooks;
       const queue = new TimedBlockKeyboardQueue({ ...application.tasks, execute }, hooks);
       const original = expectDefined(application.index.list({ filePath: 'qa.md' })[0]);
-      const intent: TimedBlockKeyboardIntent =
-        type === 'move-time' ? { type, deltaMinutes: 15 } : { type, deltaMinutes: 5 };
+      const intent: TimedBlockKeyboardIntent = { type, deltaMinutes: 5 };
       for (let index = 0; index < 21; index++) queue.enqueue(original, intent);
       gate.resolve();
       await vi.waitFor(() => {
@@ -532,11 +529,11 @@ describe('TimedBlockKeyboardQueue', () => {
       .mockReturnValueOnce(first.promise)
       .mockReturnValueOnce(second.promise);
     const { queue, hooks } = harness(execute);
-    const original = taskAt('00:15', 'revision-1');
+    const original = taskAt('00:05', 'revision-1');
     const boundary = taskAt('00:00', 'revision-2');
 
-    queue.enqueue(original, { type: 'move-time', deltaMinutes: -15 });
-    queue.enqueue(original, { type: 'move-time', deltaMinutes: -15 });
+    queue.enqueue(original, { type: 'move-time', deltaMinutes: -5 });
+    queue.enqueue(original, { type: 'move-time', deltaMinutes: -5 });
     first.resolve(ok(boundary));
     await expectSecondCall(execute);
     second.resolve(okUnchanged(boundary));
@@ -556,23 +553,23 @@ describe('TimedBlockKeyboardQueue', () => {
       .mockReturnValueOnce(second.promise);
     const { queue } = harness(execute);
 
-    queue.enqueue(taskAt('09:00'), { type: 'move-time', deltaMinutes: 15 });
-    queue.enqueue(taskAt('09:00'), { type: 'move-time', deltaMinutes: 15 });
+    queue.enqueue(taskAt('09:00'), { type: 'move-time', deltaMinutes: 5 });
+    queue.enqueue(taskAt('09:00'), { type: 'move-time', deltaMinutes: 5 });
 
     expect(execute).toHaveBeenCalledTimes(1);
     expect(execute).toHaveBeenNthCalledWith(
       1,
-      expect.objectContaining({ patch: { time: { type: 'set', value: '09:15' } } }),
+      expect.objectContaining({ patch: { time: { type: 'set', value: '09:05' } } }),
     );
 
-    first.resolve(ok(taskAt('09:15', 'revision-2')));
+    first.resolve(ok(taskAt('09:05', 'revision-2')));
     await expectSecondCall(execute);
     expect(execute).toHaveBeenNthCalledWith(2, {
       type: 'patch',
       target: { type: 'task', ref: refMatching({ revision: 'revision-2' }) },
-      patch: { time: { type: 'set', value: '09:30' } },
+      patch: { time: { type: 'set', value: '09:10' } },
     });
-    second.resolve(ok(taskAt('09:30', 'revision-3')));
+    second.resolve(ok(taskAt('09:10', 'revision-3')));
   });
 
   it('accumulates duration changes and defaults missing duration to 60 minutes', async () => {
@@ -823,9 +820,9 @@ describe('TimedBlockKeyboardQueue', () => {
     const { queue, hooks } = harness(execute);
     const original = taskAt('09:00', 'revision-1', { line: 4 });
 
-    queue.enqueue(original, { type: 'move-time', deltaMinutes: 15 });
-    queue.enqueue(original, { type: 'move-time', deltaMinutes: 15 });
-    const moved = taskAt('09:15', 'revision-2', { line: 5 });
+    queue.enqueue(original, { type: 'move-time', deltaMinutes: 5 });
+    queue.enqueue(original, { type: 'move-time', deltaMinutes: 5 });
+    const moved = taskAt('09:05', 'revision-2', { line: 5 });
     first.resolve(ok(moved));
     await expectSecondCall(execute);
 
@@ -838,7 +835,7 @@ describe('TimedBlockKeyboardQueue', () => {
         },
       }),
     );
-    const final = taskAt('09:30', 'revision-3', { line: 5 });
+    const final = taskAt('09:10', 'revision-3', { line: 5 });
     second.resolve(ok(final));
     await vi.waitFor(() => {
       expect(hooks.onSettled).toHaveBeenCalledOnce();
@@ -860,13 +857,13 @@ describe('TimedBlockKeyboardQueue', () => {
       .mockReturnValueOnce(second.promise);
     const { queue, hooks } = harness(execute);
     const original = taskAt('09:00', 'revision-1', { line: 4 });
-    const moved = taskAt('09:15', 'revision-2', { line: 5 });
-    const final = taskAt('09:30', 'revision-3', { line: 6 });
+    const moved = taskAt('09:05', 'revision-2', { line: 5 });
+    const final = taskAt('09:10', 'revision-3', { line: 6 });
     hooks.onCommitted.mockImplementationOnce(() => {
-      expect(queue.enqueue(original, { type: 'move-time', deltaMinutes: 15 })).toBe(1);
+      expect(queue.enqueue(original, { type: 'move-time', deltaMinutes: 5 })).toBe(1);
     });
 
-    expect(queue.enqueue(original, { type: 'move-time', deltaMinutes: 15 })).toBe(1);
+    expect(queue.enqueue(original, { type: 'move-time', deltaMinutes: 5 })).toBe(1);
     first.resolve(ok(moved));
     await expectSecondCall(execute);
 
@@ -901,14 +898,14 @@ describe('TimedBlockKeyboardQueue', () => {
       .mockReturnValueOnce(second.promise);
     const { queue, hooks } = harness(execute);
     const original = taskAt('09:00', 'revision-1', { line: 4 });
-    const moved = taskAt('09:15', 'revision-2', { line: 5 });
+    const moved = taskAt('09:05', 'revision-2', { line: 5 });
     const replacement = taskAt('14:00', 'replacement-revision', { line: 4 });
     let replacementSequence: number | undefined;
     hooks.onCommitted.mockImplementationOnce(() => {
-      replacementSequence = queue.enqueue(replacement, { type: 'move-time', deltaMinutes: 15 });
+      replacementSequence = queue.enqueue(replacement, { type: 'move-time', deltaMinutes: 5 });
     });
 
-    queue.enqueue(original, { type: 'move-time', deltaMinutes: 15 });
+    queue.enqueue(original, { type: 'move-time', deltaMinutes: 5 });
     first.resolve(ok(moved));
     await expectSecondCall(execute);
 
@@ -922,7 +919,7 @@ describe('TimedBlockKeyboardQueue', () => {
         },
       }),
     );
-    second.resolve(ok(taskAt('14:15', 'replacement-revision-2', { line: 4 })));
+    second.resolve(ok(taskAt('14:05', 'replacement-revision-2', { line: 4 })));
     await vi.waitFor(() => {
       expect(hooks.onSettled).toHaveBeenCalledOnce();
     });
@@ -953,7 +950,7 @@ describe('TimedBlockKeyboardQueue', () => {
     const { queue, hooks } = harness(execute);
     const snapshot = taskAt('00:00');
 
-    queue.enqueue(snapshot, { type: 'move-time', deltaMinutes: -15 });
+    queue.enqueue(snapshot, { type: 'move-time', deltaMinutes: -5 });
     result.resolve(okUnchanged(snapshot));
     await vi.waitFor(() => {
       expect(hooks.onSettled).toHaveBeenCalledOnce();
@@ -978,7 +975,7 @@ describe('TimedBlockKeyboardQueue', () => {
       const original = taskAt('09:00', 'revision-1', originalOverrides);
       const moved = taskAt('09:00', 'revision-2', movedOverrides);
 
-      queue.enqueue(original, { type: 'move-time', deltaMinutes: 15 });
+      queue.enqueue(original, { type: 'move-time', deltaMinutes: 5 });
       result.resolve(okUnchanged(moved));
       await vi.waitFor(() => {
         expect(hooks.onSettled).toHaveBeenCalledOnce();
@@ -1004,11 +1001,11 @@ describe('TimedBlockKeyboardQueue', () => {
       .mockReturnValueOnce(first.promise)
       .mockReturnValueOnce(second.promise);
     const { queue, hooks } = harness(execute);
-    const original = taskAt('00:15');
+    const original = taskAt('00:05');
     const clamped = taskAt('00:00', 'revision-2');
 
-    queue.enqueue(original, { type: 'move-time', deltaMinutes: -15 });
-    queue.enqueue(original, { type: 'move-time', deltaMinutes: -15 });
+    queue.enqueue(original, { type: 'move-time', deltaMinutes: -5 });
+    queue.enqueue(original, { type: 'move-time', deltaMinutes: -5 });
     first.resolve(ok(clamped));
     await expectSecondCall(execute);
     second.resolve(okUnchanged(clamped));
@@ -1033,9 +1030,9 @@ describe('TimedBlockKeyboardQueue', () => {
       const { queue, hooks } = harness(execute);
       const original = taskAt('09:00');
 
-      queue.enqueue(original, { type: 'move-time', deltaMinutes: 15 });
+      queue.enqueue(original, { type: 'move-time', deltaMinutes: 5 });
       if (failureMode === 'reject') {
-        queue.enqueue(original, { type: 'move-time', deltaMinutes: 15 });
+        queue.enqueue(original, { type: 'move-time', deltaMinutes: 5 });
       }
       await vi.waitFor(() => {
         expect(hooks.onSettled).toHaveBeenCalledOnce();
@@ -1052,8 +1049,8 @@ describe('TimedBlockKeyboardQueue', () => {
   );
 
   it.each([
-    ['time lower', taskAt('00:00'), { type: 'move-time', deltaMinutes: -15 }, 'time', '00:00'],
-    ['time upper', taskAt('23:45'), { type: 'move-time', deltaMinutes: 15 }, 'time', '23:45'],
+    ['time lower', taskAt('00:00'), { type: 'move-time', deltaMinutes: -5 }, 'time', '00:00'],
+    ['time upper', taskAt('23:55'), { type: 'move-time', deltaMinutes: 5 }, 'time', '23:55'],
     [
       'duration lower',
       taskAt('09:00', 'revision-1', { duration: 5 }),
@@ -1096,8 +1093,8 @@ describe('TimedBlockKeyboardQueue', () => {
     const { queue, hooks } = harness(execute);
     const snapshot = taskAt('09:00');
 
-    queue.enqueue(snapshot, { type: 'move-time', deltaMinutes: 15 });
-    queue.enqueue(snapshot, { type: 'move-time', deltaMinutes: 15 });
+    queue.enqueue(snapshot, { type: 'move-time', deltaMinutes: 5 });
+    queue.enqueue(snapshot, { type: 'move-time', deltaMinutes: 5 });
     const failure: TaskCommandResult = { type: 'conflict', current: snapshot };
     first.resolve(failure);
     await vi.waitFor(() => {
@@ -1126,7 +1123,7 @@ describe('TimedBlockKeyboardQueue', () => {
     const taskB = taskAt('10:00', 'b-1', { filePath: 'b.md' });
 
     queue.enqueue(taskA, { type: 'shift-schedule', days: 1 });
-    queue.enqueue(taskB, { type: 'move-time', deltaMinutes: 15 });
+    queue.enqueue(taskB, { type: 'move-time', deltaMinutes: 5 });
     first.resolve(ok(taskAt('09:00', 'a-2', { filePath: 'a.md', due: '2026-07-21' })));
     await expectSecondCall(execute);
 
@@ -1139,14 +1136,14 @@ describe('TimedBlockKeyboardQueue', () => {
       }),
     );
 
-    const updatedB = taskAt('10:15', 'b-2', { filePath: 'b.md' });
+    const updatedB = taskAt('10:05', 'b-2', { filePath: 'b.md' });
     second.resolve(ok(updatedB));
     await vi.waitFor(() => {
       expect(hooks.onSettled).toHaveBeenCalledTimes(1);
     });
     expect(hooks.onCommitted).toHaveBeenCalledWith(
       updatedB,
-      { type: 'move-time', deltaMinutes: 15 },
+      { type: 'move-time', deltaMinutes: 5 },
       2,
       true,
     );
@@ -1162,9 +1159,9 @@ describe('TimedBlockKeyboardQueue', () => {
     const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValueOnce(result.promise);
     const { queue, hooks } = harness(execute);
 
-    queue.enqueue(taskAt('09:00'), { type: 'move-time', deltaMinutes: 15 });
+    queue.enqueue(taskAt('09:00'), { type: 'move-time', deltaMinutes: 5 });
     queue.cancel();
-    result.resolve(ok(taskAt('09:15', 'revision-2')));
+    result.resolve(ok(taskAt('09:05', 'revision-2')));
     await Promise.resolve();
     await Promise.resolve();
 
@@ -1178,8 +1175,8 @@ describe('materialized child timed keyboard authority', () => {
   it.each([
     [
       'time',
-      { type: 'move-time', deltaMinutes: 15 },
-      { time: '10:30', duration: 90, scheduled: '2026-10-08' },
+      { type: 'move-time', deltaMinutes: 5 },
+      { time: '10:10', duration: 90, scheduled: '2026-10-08' },
     ],
     [
       'duration',
@@ -1286,13 +1283,13 @@ it('rebinds normalized child duration before the next queued time edit', async (
     const hooks = harness().hooks,
       queue = new TimedBlockKeyboardQueue(application.tasks, hooks);
     queue.enqueue(display, { type: 'resize-duration', deltaMinutes: 5 });
-    queue.enqueue(display, { type: 'move-time', deltaMinutes: -15 });
+    queue.enqueue(display, { type: 'move-time', deltaMinutes: -5 });
     await vi.waitFor(() => {
       expect(hooks.onSettled).toHaveBeenCalledOnce();
     });
     expect(application.index.list()[0]?.subtasks[0]?.planning).toEqual({
       scheduled: '2026-10-08',
-      time: '23:15',
+      time: '23:25',
       duration: 30,
     });
     expect(application.index.list()[0]?.planning).toEqual({});
@@ -1317,7 +1314,7 @@ it('never executes forecast keyboard intents even when called directly', () => {
   const execute = vi.fn<TaskApplicationApi['execute']>();
   const { queue, hooks } = harness(execute);
   for (const intent of [
-    { type: 'move-time', deltaMinutes: 15 },
+    { type: 'move-time', deltaMinutes: 5 },
     { type: 'resize-duration', deltaMinutes: 5 },
     { type: 'shift-schedule', days: 1 },
     { type: 'extend-due', days: 1 },
@@ -1367,7 +1364,7 @@ it('retires queued child edits when a successful result cannot prove the owned c
     const hooks = harness().hooks,
       queue = new TimedBlockKeyboardQueue(api, hooks);
     queue.enqueue(display, { type: 'resize-duration', deltaMinutes: 5 });
-    queue.enqueue(display, { type: 'move-time', deltaMinutes: 15 });
+    queue.enqueue(display, { type: 'move-time', deltaMinutes: 5 });
     release.resolve();
     await vi.waitFor(() => {
       expect(hooks.onInvalidated).toHaveBeenCalledOnce();
@@ -1424,7 +1421,7 @@ it('does not let a queued child intent overwrite a source replacement after its 
     const hooks = harness().hooks,
       queue = new TimedBlockKeyboardQueue(api, hooks);
     queue.enqueue(display, { type: 'resize-duration', deltaMinutes: 5 });
-    queue.enqueue(display, { type: 'move-time', deltaMinutes: 15 });
+    queue.enqueue(display, { type: 'move-time', deltaMinutes: 5 });
     await committed.promise;
     const file = expectDefined(app.vault.getFileByPath('qa.md')),
       external = (await app.vault.read(file)).replace('Child', 'External replacement');
@@ -1497,13 +1494,13 @@ it.each([
 
 it('accepts span shortening against a pending pointer successor after a settled key', async () => {
   const before = taskAt('09:00', 'before', { due: '2026-10-21', duration: 60 });
-  const keyed = taskAt('09:15', 'keyed', { due: '2026-10-21', duration: 60 });
-  const spanned = taskAt('09:15', 'spanned', {
+  const keyed = taskAt('09:05', 'keyed', { due: '2026-10-21', duration: 60 });
+  const spanned = taskAt('09:05', 'spanned', {
     start: '2026-10-21',
     due: '2026-10-22',
     duration: 60,
   });
-  const shortened = taskAt('09:15', 'shortened', {
+  const shortened = taskAt('09:05', 'shortened', {
     start: '2026-10-21',
     due: '2026-10-21',
     duration: 60,
@@ -1522,7 +1519,7 @@ it('accepts span shortening against a pending pointer successor after a settled 
   const keyboard = new TimedBlockKeyboardQueue(h.api, h.hooks, edits);
   const display = (root: TaskSnapshot) =>
     taskSnapshotForCalendarOccurrence(calendarOccurrenceForRender(root));
-  keyboard.enqueue(display(before), { type: 'move-time', deltaMinutes: 15 });
+  keyboard.enqueue(display(before), { type: 'move-time', deltaMinutes: 5 });
   await vi.waitFor(() => {
     expect(h.hooks.onSettled).toHaveBeenCalledOnce();
   });
@@ -1570,14 +1567,14 @@ it('keeps a shared no-op unexecuted and preserves a later queued intent', async 
     await gate.promise;
     return ok(pointerTask);
   });
-  execute.mockResolvedValueOnce(ok(taskAt('09:15', 'keyed', { due: '2026-10-21', duration: 90 })));
+  execute.mockResolvedValueOnce(ok(taskAt('09:05', 'keyed', { due: '2026-10-21', duration: 90 })));
   const pointer = edits.execute(before, (current) => ({
     type: 'patch',
     target: { type: 'task', ref: current.ref },
     patch: { duration: { type: 'set', value: durationMinutes(90) } },
   }));
   keyboard.enqueue(before, { type: 'extend-due', days: -1 });
-  keyboard.enqueue(before, { type: 'move-time', deltaMinutes: 15 });
+  keyboard.enqueue(before, { type: 'move-time', deltaMinutes: 5 });
   gate.resolve();
   await pointer;
   await vi.waitFor(() => {
@@ -1586,6 +1583,6 @@ it('keeps a shared no-op unexecuted and preserves a later queued intent', async 
   expect(execute.mock.calls[1]?.[0]).toMatchObject({
     type: 'patch',
     target: { type: 'task', ref: pointerTask.ref },
-    patch: { time: { type: 'set', value: '09:15' } },
+    patch: { time: { type: 'set', value: '09:05' } },
   });
 });

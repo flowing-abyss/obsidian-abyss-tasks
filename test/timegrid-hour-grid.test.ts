@@ -401,6 +401,22 @@ describe('renderHourGrid', () => {
     expect(onDropTime).toHaveBeenCalledWith('f.md:::0', '2026-07-10', '01:00'); // (148-100)px = 48px = 60min
   });
 
+  it.each([
+    { clientY: 104, time: '00:05' },
+    { clientY: 1252, time: '23:55' },
+  ])('drops at five-minute in-day precision: $time', ({ clientY, time }) => {
+    const onDropTime = vi.fn();
+    const handles = renderHourGrid(freshContainer(), ['2026-07-10'], onDropTime);
+    const column = expectDefined(handles.days[0]).hourColumnEl;
+    vi.spyOn(column, 'getBoundingClientRect').mockReturnValue({ top: 100, left: 0 } as DOMRect);
+    const data = new DataTransferStub();
+    data.setData('text/plain', 'f.md:::0');
+    const event = new MouseEvent('drop', { bubbles: true, clientY });
+    Object.defineProperty(event, 'dataTransfer', { value: data });
+    column.dispatchEvent(event);
+    expect(onDropTime).toHaveBeenCalledExactlyOnceWith('f.md:::0', '2026-07-10', time);
+  });
+
   it('clicking empty hour-grid space fires onCreateAtTime with the computed time', () => {
     const container = freshContainer();
     const onCreateAtTime = vi.fn();
@@ -415,8 +431,8 @@ describe('renderHourGrid', () => {
   });
 
   it.each([
-    { top: -96.015625, clientY: 1053, expected: '23:45' },
-    { top: 100, clientY: 706, expected: '12:45' },
+    { top: -96.015625, clientY: 1053, expected: '23:55' },
+    { top: 100, clientY: 706, expected: '12:40' },
     { top: 100, clientY: 700, expected: '12:30' },
   ])('snaps an empty-grid click to an in-day start $expected', ({ top, clientY, expected }) => {
     const onCreateAtTime = vi.fn();
