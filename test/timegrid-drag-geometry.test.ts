@@ -343,3 +343,311 @@ describe('resolveBoundaryTarget', () => {
     ).toBeUndefined();
   });
 });
+
+describe('bounded timed target preference', () => {
+  it.each([
+    { edge: 'start' as const, start: 0, duration: 1, delta: -5, wantStart: 0, wantDuration: 1 },
+    { edge: 'start' as const, start: 1, duration: 1, delta: 5, wantStart: 0, wantDuration: 2 },
+  ])('keeps authored short starts within midnight: $start/$duration', (row) => {
+    expect(
+      resolveTimedVerticalResizeTarget(
+        {
+          edge: row.edge,
+          startMinutes: row.start,
+          durationMinutes: row.duration,
+          grabClientY: 100,
+          pixelsPerMinute: 0.8,
+        },
+        { clientY: 100 + row.delta * 0.8 },
+      ),
+    ).toEqual({
+      edge: row.edge,
+      startMinutes: row.wantStart,
+      durationMinutes: row.wantDuration,
+      endMinutes: row.wantStart + row.wantDuration,
+    });
+  });
+
+  it.each([
+    {
+      edge: 'end' as const,
+      start: 1438,
+      duration: 1,
+      delta: -2.4,
+      priorStart: 1438,
+      priorDuration: 2,
+    },
+    {
+      edge: 'end' as const,
+      start: 1435,
+      duration: 1,
+      delta: 2.4,
+      priorStart: 1435,
+      priorDuration: 5,
+    },
+    { edge: 'start' as const, start: 1, duration: 1, delta: -2.4, priorStart: 0, priorDuration: 2 },
+    { edge: 'start' as const, start: 1, duration: 1, delta: 2.4, priorStart: 0, priorDuration: 2 },
+  ])('retains short-block $edge jitter at a single legal day boundary: $delta', (row) => {
+    const input = {
+      edge: row.edge,
+      startMinutes: row.start,
+      durationMinutes: row.duration,
+      grabClientY: 100,
+      pixelsPerMinute: 0.8,
+    };
+    const previous = {
+      edge: row.edge,
+      startMinutes: row.priorStart,
+      durationMinutes: row.priorDuration,
+      endMinutes: row.priorStart + row.priorDuration,
+    };
+    expect(
+      resolveTimedVerticalResizeTarget(input, { clientY: 100 + row.delta * 0.8 }, previous),
+    ).toEqual(previous);
+    expect(resolveTimedVerticalResizeTarget(input, { clientY: 100 }, previous)).toEqual({
+      edge: row.edge,
+      startMinutes: row.start,
+      durationMinutes: row.duration,
+      endMinutes: row.start + row.duration,
+    });
+  });
+
+  const previousMove = {
+    date: localDate('2026-07-20'),
+    startMinutes: 550,
+    dayDelta: 0,
+    destination: 'time-grid' as const,
+  };
+
+  it.each([677.4, 677, 676.3])(
+    'retains the current time across nearby snap-boundary tremor at %s',
+    (clientY) => {
+      expect(
+        resolveTimedDragTarget(origin, { clientX: 150, clientY }, columns, previousMove),
+      ).toEqual(previousMove);
+    },
+  );
+
+  it.each([535, 545, 550, 555, 600])(
+    'reaches a clear five-minute center at %s despite the previous target',
+    (startMinutes) => {
+      expect(
+        resolveTimedDragTarget(
+          origin,
+          { clientX: 150, clientY: 130 + startMinutes },
+          columns,
+          previousMove,
+        ),
+      ).toMatchObject({ startMinutes });
+    },
+  );
+
+  it.each([541, 542])('returns exactly to the authored off-grid origin %s', (startMinutes) => {
+    expect(
+      resolveTimedDragTarget(
+        { ...origin, startMinutes },
+        { clientX: 150, clientY: 130 + startMinutes },
+        columns,
+        { ...previousMove, startMinutes: 540 },
+      ),
+    ).toBeUndefined();
+  });
+
+  it.each([
+    { clientX: 99.5, clientY: 680 },
+    { clientX: 300.5, clientY: 680 },
+    { clientX: 150, clientY: 80 },
+  ])('rejects an invalid final region even with a previous target: %o', (pointer) => {
+    expect(resolveTimedDragTarget(origin, pointer, columns, previousMove)).toBeUndefined();
+  });
+
+  it('lets the all-day region replace a timed preview', () => {
+    expect(
+      resolveTimedDragTarget(origin, { clientX: 150, clientY: 40 }, columns, previousMove),
+    ).toEqual({ ...previousMove, startMinutes: 540, destination: 'all-day' });
+  });
+
+  const boundaryOrigin: SpanBoundaryOrigin = {
+    boundary: 'due',
+    start: localDate('2026-07-20'),
+    due: localDate('2026-07-20'),
+  };
+  const previousBoundary = { boundary: 'due' as const, date: localDate('2026-07-21'), dayDelta: 1 };
+  it.each([199.9, 198.5, 192])(
+    'keeps the preview date in the narrow seam band at %s',
+    (clientX) => {
+      expect(resolveBoundaryTarget(boundaryOrigin, { clientX }, columns, previousBoundary)).toEqual(
+        previousBoundary,
+      );
+    },
+  );
+
+  it('keeps the date and time decisions independent', () => {
+    expect(
+      resolveTimedDragTarget(origin, { clientX: 198.5, clientY: 730 }, columns, {
+        ...previousMove,
+        date: localDate('2026-07-21'),
+        dayDelta: 1,
+      }),
+    ).toEqual({ ...previousMove, date: localDate('2026-07-21'), dayDelta: 1, startMinutes: 600 });
+  });
+
+  it('lets a clear source interior cancel a date change', () => {
+    expect(
+      resolveBoundaryTarget(boundaryOrigin, { clientX: 191 }, columns, previousBoundary),
+    ).toBeUndefined();
+  });
+
+  it('does not let a wide prior column consume a narrow neighbor', () => {
+    const narrow = [
+      { ...expectDefined(columns[0]), right: 298 },
+      { ...expectDefined(columns[1]), left: 298 },
+    ];
+    expect(
+      resolveBoundaryTarget(
+        { ...boundaryOrigin, due: localDate('2026-07-21') },
+        { clientX: 299 },
+        narrow,
+        { date: localDate('2026-07-20') },
+      ),
+    ).toBeUndefined();
+  });
+
+  it.each([
+    { label: 'outside', pointer: 300.5, grid: columns },
+    {
+      label: 'overlap',
+      pointer: 199.9,
+      grid: [expectDefined(columns[0]), { ...expectDefined(columns[1]), left: 190 }],
+    },
+    {
+      label: 'gap',
+      pointer: 199.9,
+      grid: [{ ...expectDefined(columns[0]), right: 199 }, expectDefined(columns[1])],
+    },
+  ])('does not use history to repair $label hit geometry', ({ pointer, grid }) => {
+    expect(
+      resolveBoundaryTarget(boundaryOrigin, { clientX: pointer }, grid, previousBoundary),
+    ).toBeUndefined();
+  });
+
+  it('uses current column rectangles instead of an old date area', () => {
+    const shifted = columns.map((column) => ({
+      ...column,
+      left: column.left + 20,
+      right: column.right + 20,
+    }));
+    expect(
+      resolveBoundaryTarget(boundaryOrigin, { clientX: 199.9 }, shifted, previousBoundary),
+    ).toBeUndefined();
+  });
+
+  it.each([
+    {
+      edge: 'start' as const,
+      start: 540,
+      duration: 60,
+      priorStart: 550,
+      priorDuration: 50,
+      pointerDelta: 7.4,
+      wantStart: 550,
+      wantDuration: 50,
+    },
+    {
+      edge: 'end' as const,
+      start: 540,
+      duration: 60,
+      priorStart: 540,
+      priorDuration: 70,
+      pointerDelta: 7.4,
+      wantStart: 540,
+      wantDuration: 70,
+    },
+    {
+      edge: 'end' as const,
+      start: 540,
+      duration: 59,
+      priorStart: 540,
+      priorDuration: 900,
+      pointerDelta: 840,
+      wantStart: 540,
+      wantDuration: 899,
+    },
+    {
+      edge: 'start' as const,
+      start: 541,
+      duration: 60,
+      priorStart: 0,
+      priorDuration: 601,
+      pointerDelta: -540,
+      wantStart: 1,
+      wantDuration: 600,
+    },
+    {
+      edge: 'end' as const,
+      start: 540,
+      duration: 7,
+      priorStart: 540,
+      priorDuration: 5,
+      pointerDelta: 0,
+      wantStart: 540,
+      wantDuration: 7,
+    },
+    {
+      edge: 'start' as const,
+      start: 540,
+      duration: 7,
+      priorStart: 542,
+      priorDuration: 5,
+      pointerDelta: 0,
+      wantStart: 540,
+      wantDuration: 7,
+    },
+    {
+      edge: 'start' as const,
+      start: 1439,
+      duration: 1,
+      priorStart: 1435,
+      priorDuration: 5,
+      pointerDelta: 2.4,
+      wantStart: 1435,
+      wantDuration: 5,
+    },
+    {
+      edge: 'end' as const,
+      start: 540,
+      duration: 1,
+      priorStart: 540,
+      priorDuration: 5,
+      pointerDelta: -2.4,
+      wantStart: 540,
+      wantDuration: 5,
+    },
+  ])(
+    'retains resize intent without swallowing reachable endpoints: $edge $start/$duration delta$pointerDelta',
+    (row) => {
+      const result = resolveTimedVerticalResizeTarget(
+        {
+          edge: row.edge,
+          startMinutes: row.start,
+          durationMinutes: row.duration,
+          grabClientY: 100,
+          pixelsPerMinute: 0.8,
+        },
+        { clientY: 100 + row.pointerDelta * 0.8 },
+        {
+          edge: row.edge,
+          startMinutes: row.priorStart,
+          durationMinutes: row.priorDuration,
+          endMinutes: row.priorStart + row.priorDuration,
+        },
+      );
+      expect(result).toEqual({
+        edge: row.edge,
+        startMinutes: row.wantStart,
+        durationMinutes: row.wantDuration,
+        endMinutes: row.wantStart + row.wantDuration,
+      });
+    },
+  );
+});

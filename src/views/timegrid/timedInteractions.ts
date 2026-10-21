@@ -37,8 +37,6 @@ export type TimedBoundaryTarget =
 type TimedPreviewTarget =
   Readonly<TimedDragTarget> | Readonly<TimedVerticalResizeTarget> | Readonly<TimedBoundaryTarget>;
 
-const RELEASE_JITTER_PX = 2;
-
 export interface TimedInteractionOwner {
   begin(dispose: () => void): void;
   end(dispose: () => void): void;
@@ -471,17 +469,34 @@ class TimedTargetResolver {
     kind: TimedInteractionKind,
     pointer: PointerEvent,
     columns: readonly MeasuredColumn[],
+    previous?: TimedPreviewTarget,
   ): TimedPreviewTarget | undefined {
-    if (kind === 'move') return this.resolveMove_abyssPrivate(pointer, columns);
+    if (kind === 'move')
+      return this.resolveMove_abyssPrivate(
+        pointer,
+        columns,
+        previous !== undefined && 'destination' in previous ? previous : undefined,
+      );
     if (kind === 'duration' || kind === 'start-time') {
-      return this.resolveVertical_abyssPrivate(kind, pointer, columns);
+      return this.resolveVertical_abyssPrivate(
+        kind,
+        pointer,
+        columns,
+        previous !== undefined && 'edge' in previous ? previous : undefined,
+      );
     }
-    return this.resolveBoundary_abyssPrivate(kind, pointer, columns);
+    return this.resolveBoundary_abyssPrivate(
+      kind,
+      pointer,
+      columns,
+      previous !== undefined && 'boundary' in previous ? previous : undefined,
+    );
   }
 
   private resolveMove_abyssPrivate(
     pointer: PointerEvent,
     columns: readonly MeasuredColumn[],
+    previous?: TimedDragTarget,
   ): TimedPreviewTarget | undefined {
     const forecast =
       calendarOccurrenceForRender(this.binding_abyssPrivate.task).kind === 'forecast';
@@ -497,6 +512,7 @@ class TimedTargetResolver {
       pointer,
       // Keep forecast previews on their segment while preserving the real drop bounds.
       columns.map(({ drag }) => (forecast ? { ...drag, date } : drag)),
+      previous,
     );
     return target == null || (forecast && target.destination === 'all-day')
       ? undefined
@@ -507,6 +523,7 @@ class TimedTargetResolver {
     kind: 'duration' | 'start-time',
     pointer: PointerEvent,
     columns: readonly MeasuredColumn[],
+    previous?: TimedVerticalResizeTarget,
   ): TimedPreviewTarget | undefined {
     const origin = columns.find((column) => column.date === this.binding_abyssPrivate.segmentDate);
     if (origin === undefined) return undefined;
@@ -526,6 +543,7 @@ class TimedTargetResolver {
           pixelsPerMinute,
         },
         pointer,
+        previous,
       );
     } catch {
       return undefined;
@@ -544,6 +562,7 @@ class TimedTargetResolver {
     kind: 'start' | 'due' | 'create-span',
     pointer: PointerEvent,
     columns: readonly MeasuredColumn[],
+    previous?: TimedBoundaryTarget,
   ): TimedPreviewTarget | undefined {
     const planning = this.binding_abyssPrivate.task.planning;
     const start = planning.start ?? planning.scheduled ?? planning.due;
@@ -553,6 +572,7 @@ class TimedTargetResolver {
       { boundary: kind === 'start' ? 'start' : 'due', start, due },
       pointer,
       columns.map((column) => column.boundary),
+      previous,
     );
     if (target == null) return undefined;
     if (kind !== 'create-span') return frozen(target);
@@ -606,23 +626,12 @@ class TimedInteractionSession {
   private readonly onScroll_abyssPrivate = (event: Event): void => {
     const target = event.target as Partial<Pick<Node, 'contains'>> | null;
     if (target?.contains?.(this.input.binding.source) === true)
-      this.update_abyssPrivate(this.lastPointer_abyssPrivate);
+      this.update_abyssPrivate(this.lastPointer_abyssPrivate, undefined, false);
   };
 
   private readonly onPointerUp_abyssPrivate = (pointer: PointerEvent): void => {
     if (pointer.pointerId !== this.input.startEvent.pointerId) return;
-    const columns = this.input.geometry.columns.map(measureColumn);
-    // Keep the visible target across release jitter only while current geometry still agrees.
-    const retainPreview =
-      this.latest_abyssPrivate !== undefined &&
-      Math.hypot(
-        pointer.clientX - this.lastPointer_abyssPrivate.clientX,
-        pointer.clientY - this.lastPointer_abyssPrivate.clientY,
-      ) <= RELEASE_JITTER_PX &&
-      JSON.stringify(
-        this.resolver_abyssPrivate.resolve(this.input.kind, this.lastPointer_abyssPrivate, columns),
-      ) === JSON.stringify(this.latest_abyssPrivate);
-    if (!retainPreview) this.update_abyssPrivate(pointer, columns);
+    this.update_abyssPrivate(pointer);
     const committed = this.latest_abyssPrivate;
     this.releasePointer_abyssPrivate();
     if (committed == null) this.dispose_abyssPrivate();
@@ -648,10 +657,16 @@ class TimedInteractionSession {
   private update_abyssPrivate(
     pointer: PointerEvent,
     columns: readonly MeasuredColumn[] = this.input.geometry.columns.map(measureColumn),
+    preferCurrent = true,
   ): void {
     if (this.disposed_abyssPrivate || pointer.pointerId !== this.input.startEvent.pointerId) return;
     this.lastPointer_abyssPrivate = pointer;
-    const target = this.resolver_abyssPrivate.resolve(this.input.kind, pointer, columns);
+    const target = this.resolver_abyssPrivate.resolve(
+      this.input.kind,
+      pointer,
+      columns,
+      preferCurrent ? this.latest_abyssPrivate : undefined,
+    );
     this.latest_abyssPrivate = target;
     if (target == null) {
       this.renderer_abyssPrivate.clear();

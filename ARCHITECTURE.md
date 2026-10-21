@@ -527,10 +527,16 @@ projection. Late settlement requests a canonical refresh through the current hol
 any new pointer or menu owner; it cannot restore the retired view. Timed gestures retain their original planning and grab offset while refreshing
 column rectangles on movement, ancestor scrolling, and release; scrolling also updates a stationary
 pointer's preview.
-On release, the current preview survives up to two CSS pixels of terminal jitter only if resolving
-the preceding pointer against current column geometry still produces that preview. Larger release
-movement, changed geometry and gestures without a current preview resolve from the release itself.
-Cleared previews cannot restore an earlier target.
+Timed moves and releases use the same bounded geometric preference for the current preview.
+Date selection tolerates up to eight CSS pixels across a column seam, capped at one tenth of both
+involved column widths; clear column interiors select their own date regardless of the path.
+Time selection retains the current five-minute snap bucket within three quarters of a step, so
+small reversals at a rounding boundary do not flicker while every slot center remains reachable.
+Resize limits retain their pre-clamp snap bucket, preserving adjacent off-grid endpoints. Date and
+time preferences are independent, and date-only handles ignore vertical drift. Invalid or ambiguous
+hits and original/no-op targets clear the preview; cleared previews cannot restore an earlier target.
+All decisions use current geometry, and ancestor scrolling recalculates without a prior preference.
+Shared span geometry keeps strict hit selection unless the timed session supplies a current target.
 CalendarCommands ignores malformed date/time/duration input during command construction and lets
 unexpected execution failures reach the existing UI action boundary. Retained presentation never
 grants new source authority; external edits and deletion can still cause a command to be refused.

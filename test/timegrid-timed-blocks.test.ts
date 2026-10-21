@@ -172,6 +172,269 @@ function timedGestureGrid() {
 }
 
 describe('Task 2 unified timed interaction contract', () => {
+  it.each([-1, 1])(
+    'keeps a short end-of-day resize through release tremor in direction %s',
+    (direction) => {
+      const { root, owner, columns } = timedGestureGrid();
+      const t = task({ planning: { due: '2026-07-06', time: '23:58', duration: 1 } });
+      const onTimedDuration = vi.fn();
+      renderTimedBlocksForDay(
+        columns[0].hour,
+        [t],
+        { ...callbacks(), interactionOwner: owner, onTimedDuration },
+        [],
+        { date: '2026-07-06' },
+      );
+      const block = expectDefined(columns[0].hour.querySelector<HTMLElement>('.abyss-tg-block'));
+      block.getBoundingClientRect = () => rect(0, 1250.4, 100, 23.2);
+      const handle = expectDefined(
+        block.querySelector<HTMLElement>('[data-resize-edge="duration"]'),
+      );
+      const y = 1251.2;
+      handle.dispatchEvent(
+        new PointerEvent('pointerdown', { bubbles: true, clientX: 50, clientY: y, pointerId: 93 }),
+      );
+      window.dispatchEvent(
+        new PointerEvent('pointermove', {
+          clientX: 50,
+          clientY: y + direction * 2.6 * 0.8,
+          pointerId: 93,
+        }),
+      );
+      const preview = expectDefined(root.querySelector<HTMLElement>('.abyss-calendar-preview'));
+      const expected = { edge: 'end', startMinutes: 1438, durationMinutes: 2, endMinutes: 1440 };
+      expect(JSON.parse(expectDefined(preview.dataset['target']))).toEqual(expected);
+      window.dispatchEvent(
+        new PointerEvent('pointerup', {
+          clientX: 50,
+          clientY: y + direction * 2.4 * 0.8,
+          pointerId: 93,
+        }),
+      );
+      expect(onTimedDuration).toHaveBeenCalledExactlyOnceWith(t, expected);
+      owner.disposeActive();
+    },
+  );
+
+  it.each(['ancestor', 'unrelated'] as const)(
+    'resolves a stationary pointer after $0 scrolling',
+    (source) => {
+      const { root, owner, columns } = timedGestureGrid();
+      document.body.append(root);
+      const t = task({ planning: { due: '2026-07-06', time: '09:00', duration: 60 } });
+      const onTimedMove = vi.fn();
+      renderTimedBlocksForDay(
+        columns[0].hour,
+        [t],
+        { ...callbacks(), interactionOwner: owner, onTimedMove },
+        [],
+        { date: '2026-07-06' },
+      );
+      const block = expectDefined(columns[0].hour.querySelector<HTMLElement>('.abyss-tg-block'));
+      block.getBoundingClientRect = () => rect(0, 532, 100, 48);
+      block.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          bubbles: true,
+          clientX: 50,
+          clientY: 544,
+          pointerId: 94,
+        }),
+      );
+      window.dispatchEvent(
+        new PointerEvent('pointermove', { clientX: 50, clientY: 550.1, pointerId: 94 }),
+      );
+      const scrollTarget = source === 'ancestor' ? columns[0].hour : root.createDiv();
+      if (source === 'ancestor')
+        columns[0].hour.getBoundingClientRect = () => rect(0, 100.2, 100, 1152);
+      scrollTarget.dispatchEvent(new Event('scroll'));
+      const expected = {
+        date: '2026-07-06',
+        startMinutes: source === 'ancestor' ? 545 : 550,
+        dayDelta: 0,
+        destination: 'time-grid',
+      };
+      const preview = expectDefined(root.querySelector<HTMLElement>('.abyss-calendar-preview'));
+      expect(JSON.parse(expectDefined(preview.dataset['target']))).toEqual(expected);
+      window.dispatchEvent(
+        new PointerEvent('pointerup', { clientX: 50, clientY: 550.1, pointerId: 94 }),
+      );
+      expect(onTimedMove).toHaveBeenCalledExactlyOnceWith(t, expected);
+      owner.disposeActive();
+      root.remove();
+    },
+  );
+
+  it.each(
+    [
+      {
+        kind: 'move',
+        selector: '',
+        column: 0,
+        y: 544,
+        moveX: 50,
+        moveY: 550.1,
+        endX: 50,
+        endY: 549.9,
+        expected: { date: '2026-07-06', startMinutes: 550, dayDelta: 0, destination: 'time-grid' },
+      },
+      {
+        kind: 'move',
+        selector: '',
+        column: 0,
+        y: 544,
+        moveX: 50,
+        moveY: 537.9,
+        endX: 50,
+        endY: 538.1,
+        expected: { date: '2026-07-06', startMinutes: 530, dayDelta: 0, destination: 'time-grid' },
+      },
+      {
+        kind: 'resize',
+        selector: '[data-resize-edge="start-time"]',
+        column: 0,
+        y: 533,
+        moveX: 50,
+        moveY: 539.1,
+        endX: 50,
+        endY: 538.9,
+        expected: { edge: 'start', startMinutes: 550, durationMinutes: 50, endMinutes: 600 },
+      },
+      {
+        kind: 'resize',
+        selector: '[data-resize-edge="duration"]',
+        column: 0,
+        y: 579,
+        moveX: 50,
+        moveY: 572.9,
+        endX: 50,
+        endY: 573.1,
+        expected: { edge: 'end', startMinutes: 540, durationMinutes: 50, endMinutes: 590 },
+      },
+      {
+        kind: 'boundary',
+        selector: '[data-boundary="create-span"]',
+        column: 0,
+        y: 544,
+        moveX: 100.1,
+        moveY: 544,
+        endX: 99.9,
+        endY: 544,
+        expected: { boundary: 'create-span', date: '2026-07-07', dayDelta: 1 },
+      },
+      {
+        kind: 'boundary',
+        selector: '[data-boundary="start"]',
+        column: 1,
+        y: 544,
+        moveX: 99.9,
+        moveY: 544,
+        endX: 100.1,
+        endY: 544,
+        expected: { boundary: 'start', date: '2026-07-06', dayDelta: -1 },
+      },
+    ].flatMap((row) => ['move', 'orthogonal-release'].map((event) => ({ ...row, event }))),
+  )('keeps the $kind target through $event tremor ($moveY)', (row) => {
+    const { root, owner, columns } = timedGestureGrid();
+    const column = expectDefined(columns[row.column]);
+    const t = task({
+      planning: {
+        due: column.date,
+        time: '09:00',
+        duration: 60,
+        ...(row.column === 1 ? { start: column.date, due: '2026-07-08' } : {}),
+      },
+    });
+    const onTimedMove = vi.fn(),
+      onTimedDuration = vi.fn(),
+      onTimedBoundary = vi.fn();
+    renderTimedBlocksForDay(
+      column.hour,
+      [t],
+      { ...callbacks(), interactionOwner: owner, onTimedMove, onTimedDuration, onTimedBoundary },
+      [],
+      { date: column.date },
+    );
+    const block = expectDefined(column.hour.querySelector<HTMLElement>('.abyss-tg-block'));
+    block.getBoundingClientRect = () => rect(row.column * 100, 532, 100, 48);
+    const handle =
+      row.selector === '' ? block : expectDefined(block.querySelector<HTMLElement>(row.selector));
+    handle.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        bubbles: true,
+        clientX: row.column * 100 + 50,
+        clientY: row.y,
+        pointerId: 91,
+      }),
+    );
+    window.dispatchEvent(
+      new PointerEvent('pointermove', { clientX: row.moveX, clientY: row.moveY, pointerId: 91 }),
+    );
+    const expectedPreview = () => {
+      const preview = expectDefined(root.querySelector<HTMLElement>('.abyss-calendar-preview'));
+      expect(JSON.parse(expectDefined(preview.dataset['target']))).toEqual(row.expected);
+    };
+    expectedPreview();
+    const clientX =
+      row.endX + (row.event === 'orthogonal-release' && row.kind !== 'boundary' ? 20 : 0);
+    const clientY =
+      row.endY + (row.event === 'orthogonal-release' && row.kind === 'boundary' ? 30 : 0);
+    if (row.event === 'move') {
+      // Multiple identical samples cannot move a stable target or clear it before pointerup.
+      for (let count = 0; count < 3; count++) {
+        window.dispatchEvent(new PointerEvent('pointermove', { clientX, clientY, pointerId: 91 }));
+        expectedPreview();
+      }
+    }
+    window.dispatchEvent(new PointerEvent('pointerup', { clientX, clientY, pointerId: 91 }));
+    const committed = { move: onTimedMove, resize: onTimedDuration, boundary: onTimedBoundary }[
+      row.kind
+    ];
+    expect(committed).toHaveBeenCalledExactlyOnceWith(t, row.expected);
+    owner.disposeActive();
+  });
+
+  it.each(['body', 'create-span'] as const)(
+    'cancels $0 just outside the grid even after a nearby preview',
+    (kind) => {
+      const { root, owner, columns } = timedGestureGrid();
+      const t = task({ planning: { due: '2026-07-06', time: '09:00', duration: 60 } });
+      const onTimedMove = vi.fn(),
+        onTimedBoundary = vi.fn();
+      renderTimedBlocksForDay(
+        columns[0].hour,
+        [t],
+        { ...callbacks(), interactionOwner: owner, onTimedMove, onTimedBoundary },
+        [],
+        { date: '2026-07-06' },
+      );
+      const block = expectDefined(columns[0].hour.querySelector<HTMLElement>('.abyss-tg-block'));
+      block.getBoundingClientRect = () => rect(0, 532, 100, 48);
+      const handle =
+        kind === 'body'
+          ? block
+          : expectDefined(block.querySelector<HTMLElement>('[data-boundary="create-span"]'));
+      handle.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          bubbles: true,
+          clientX: 50,
+          clientY: 544,
+          pointerId: 92,
+        }),
+      );
+      window.dispatchEvent(
+        new PointerEvent('pointermove', { clientX: 299.5, clientY: 544, pointerId: 92 }),
+      );
+      expect(root.querySelector('.abyss-calendar-preview')).not.toBeNull();
+      window.dispatchEvent(
+        new PointerEvent('pointerup', { clientX: 300.5, clientY: 544, pointerId: 92 }),
+      );
+      expect(onTimedMove).not.toHaveBeenCalled();
+      expect(onTimedBoundary).not.toHaveBeenCalled();
+      expect(root.querySelector('.abyss-calendar-preview')).toBeNull();
+      owner.disposeActive();
+    },
+  );
+
   it.each([
     {
       handle: 'body',

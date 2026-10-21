@@ -111,29 +111,46 @@ function validTimeGridRange(column: TimedDragColumn): boolean {
   );
 }
 
-function columnAt<T extends DragDateColumn>(clientX: number, columns: readonly T[]): T | undefined {
+function columnAt<T extends DragDateColumn>(
+  clientX: number,
+  columns: readonly T[],
+  previousDate?: LocalDate,
+): T | undefined {
   const matches = columns.filter(
     (column, index) =>
       clientX >= column.left &&
       (clientX < column.right || (index === columns.length - 1 && clientX === column.right)),
   );
-  return matches.length === 1 ? matches[0] : undefined;
+  const hit = matches.length === 1 ? matches[0] : undefined;
+  if (hit === undefined || previousDate === undefined) return hit;
+  const priorMatches = columns.filter((column) => column.date === previousDate);
+  const previous = priorMatches.length === 1 ? priorMatches[0] : undefined;
+  if (previous === undefined) return hit;
+  const margin = Math.min(8, (previous.right - previous.left) / 10, (hit.right - hit.left) / 10);
+  return clientX >= previous.left - margin && clientX <= previous.right + margin ? previous : hit;
+}
+
+function snapTimedMinutes(value: number, previous?: number): number {
+  // Only the seam between adjacent slots is ambiguous; every slot center remains reachable.
+  return previous !== undefined && Math.abs(value - previous) <= TIMED_STEP_MINUTES * 0.75
+    ? previous
+    : Math.round(value / TIMED_STEP_MINUTES) * TIMED_STEP_MINUTES;
 }
 
 export function resolveTimedDragTarget(
   origin: TimedDragOrigin,
   pointer: TimedDragPointer,
   columns: readonly TimedDragColumn[],
+  previous?: TimedDragTarget,
 ): TimedDragTarget | undefined {
   const renderedHeightMinutes = origin.renderedHeightMinutes ?? origin.durationMinutes;
   if (!validTimedDragInput(origin, pointer, columns, renderedHeightMinutes)) return undefined;
 
-  const column = columnAt(pointer.clientX, columns);
+  const column = columnAt(pointer.clientX, columns, previous?.date);
   if (column == null) return undefined;
-  const dayDelta = daysBetweenLocalDates(origin.date, column.date);
   return (
-    resolveAllDayTarget(origin, pointer, column, dayDelta) ??
-    resolveTimeGridTarget(origin, pointer, column, dayDelta)
+    resolveAllDayTarget(origin, pointer, column) ??
+    resolveTimeGridTarget(origin, pointer, column, previous)
   );
 }
 
@@ -141,7 +158,6 @@ function resolveAllDayTarget(
   origin: TimedDragOrigin,
   pointer: TimedDragPointer,
   column: TimedDragColumn,
-  dayDelta: number,
 ): TimedDragTarget | undefined {
   if (
     column.allDayTop !== undefined &&
@@ -152,7 +168,7 @@ function resolveAllDayTarget(
     return {
       date: column.date,
       startMinutes: origin.startMinutes,
-      dayDelta,
+      dayDelta: daysBetweenLocalDates(origin.date, column.date),
       destination: 'all-day',
     };
   }
@@ -163,11 +179,12 @@ function resolveTimeGridTarget(
   origin: TimedDragOrigin,
   pointer: TimedDragPointer,
   column: TimedDragColumn,
-  dayDelta: number,
+  previous?: TimedDragTarget,
 ): TimedDragTarget | undefined {
   if (pointer.clientY < column.timeGridTop || pointer.clientY > column.timeGridBottom) {
     return undefined;
   }
+  const dayDelta = daysBetweenLocalDates(origin.date, column.date);
   const pointerMinutes =
     ((pointer.clientY - column.timeGridTop) / (column.timeGridBottom - column.timeGridTop)) *
     MINUTES_PER_DAY;
@@ -175,7 +192,10 @@ function resolveTimeGridTarget(
   if (dayDelta === 0 && Math.abs(rawStartMinutes - origin.startMinutes) < MINUTE_EPSILON) {
     return undefined;
   }
-  const snapped = Math.round(rawStartMinutes / TIMED_STEP_MINUTES) * TIMED_STEP_MINUTES;
+  const snapped = snapTimedMinutes(
+    rawStartMinutes,
+    previous?.destination === 'time-grid' ? previous.startMinutes : undefined,
+  );
   const startMinutes = Math.min(Math.max(snapped, 0), LAST_SNAP_MINUTE);
   if (dayDelta === 0 && startMinutes === origin.startMinutes) return undefined;
   return { date: column.date, startMinutes, dayDelta, destination: 'time-grid' };
@@ -215,6 +235,7 @@ function validTimedDragOrigin(origin: TimedDragOrigin, renderedHeightMinutes: nu
 export function resolveTimedVerticalResizeTarget(
   origin: TimedVerticalResizeOrigin,
   pointer: TimedDurationPointer,
+  previous?: TimedVerticalResizeTarget,
 ): TimedVerticalResizeTarget {
   const originEndMinutes = origin.startMinutes + origin.durationMinutes;
   if (!validVerticalResizeInput(origin, pointer, originEndMinutes)) {
@@ -222,7 +243,10 @@ export function resolveTimedVerticalResizeTarget(
   }
 
   const deltaMinutes = (pointer.clientY - origin.grabClientY) / origin.pixelsPerMinute;
-  const snappedDelta = Math.round(deltaMinutes / TIMED_STEP_MINUTES) * TIMED_STEP_MINUTES;
+  const snappedDelta = snapTimedMinutes(
+    deltaMinutes,
+    resizeSnapDelta(origin, previous, deltaMinutes),
+  );
   if (snappedDelta === 0) {
     return {
       edge: origin.edge,
@@ -234,7 +258,7 @@ export function resolveTimedVerticalResizeTarget(
   if (origin.edge === 'start') {
     const startMinutes = Math.min(
       Math.max(origin.startMinutes + snappedDelta, 0),
-      originEndMinutes - TIMED_STEP_MINUTES,
+      Math.max(0, originEndMinutes - TIMED_STEP_MINUTES),
     );
     return {
       edge: 'start',
@@ -254,6 +278,34 @@ export function resolveTimedVerticalResizeTarget(
     durationMinutes: endMinutes - origin.startMinutes,
     endMinutes,
   };
+}
+
+function resizeSnapDelta(
+  origin: TimedVerticalResizeOrigin,
+  previous: TimedVerticalResizeTarget | undefined,
+  currentDelta: number,
+): number | undefined {
+  if (previous?.edge !== origin.edge) return undefined;
+  const startEdge = origin.edge === 'start';
+  const originEnd = origin.startMinutes + origin.durationMinutes;
+  const endpoint = startEdge ? previous.startMinutes : previous.endMinutes;
+  const delta = endpoint - (startEdge ? origin.startMinutes : originEnd);
+  const lower = startEdge ? 0 : origin.startMinutes + TIMED_STEP_MINUTES;
+  const upper = startEdge ? originEnd - TIMED_STEP_MINUTES : MINUTES_PER_DAY;
+  // Near midnight, a short authored interval can have only one legal resized endpoint.
+  // Either nonzero direction reaches it, while the original pointer center still cancels.
+  if (lower >= upper) return Math.sign(currentDelta) * TIMED_STEP_MINUTES;
+  // Use the snapping bucket that first reaches a clamp, not its possibly off-grid endpoint.
+  // Zero means unchanged, even for authored intervals shorter than the five-minute minimum.
+  if (endpoint === lower) return snapClampDelta(delta, -1);
+  if (endpoint === upper) return snapClampDelta(delta, 1);
+  return delta;
+}
+
+function snapClampDelta(delta: number, direction: -1 | 1): number {
+  const steps = delta / TIMED_STEP_MINUTES;
+  const snapped = (direction === -1 ? Math.floor(steps) : Math.ceil(steps)) * TIMED_STEP_MINUTES;
+  return snapped === 0 && delta !== 0 ? direction * TIMED_STEP_MINUTES : snapped;
 }
 
 function validVerticalResizeInput(
@@ -280,10 +332,11 @@ export function resolveBoundaryTarget(
   origin: SpanBoundaryOrigin,
   pointer: Pick<TimedDragPointer, 'clientX'>,
   columns: readonly DragDateColumn[],
+  previous?: Pick<SpanBoundaryTarget, 'date'>,
 ): SpanBoundaryTarget | undefined {
   if (!validBoundaryInput(origin, pointer, columns)) return undefined;
 
-  const column = columnAt(pointer.clientX, columns);
+  const column = columnAt(pointer.clientX, columns, previous?.date);
   if (column == null) return undefined;
   const current = origin[origin.boundary];
   const date = clampBoundaryDate(origin, column.date);
