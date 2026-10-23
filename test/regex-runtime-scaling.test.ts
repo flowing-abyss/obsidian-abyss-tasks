@@ -109,11 +109,22 @@ describe('bounded actual-module regex probes', () => {
   );
 
   it(
-    'hard-terminates a synchronous child before reporting the deadline failure',
+    'hard-terminates a synchronous child at the actual probe deadline',
     async () => {
+      // Use the probe's normal startup budget before requiring proof that its code ran.
       await expect(
-        runRegexChild('process.stdout.write("blocking"); while (true) {}', 300),
-      ).rejects.toThrow(/exceeded 300ms deadline; exit=null signal=SIGKILL.*stdout=blocking/u);
+        runRegexChild('require("node:fs").writeSync(1, "blocking"); while (true) {}'),
+      ).rejects.toThrow(/exceeded 4000ms deadline; exit=null signal=SIGKILL.*stdout=blocking/u);
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
+
+  it(
+    'enforces an immediate deadline without requiring output from the child',
+    async () => {
+      await expect(runRegexChild('while (true) {}', 0)).rejects.toThrow(
+        /exceeded 0ms deadline; exit=null signal=SIGKILL.*stdout=$/u,
+      );
     },
     CHILD_PROCESS_TIMEOUT_MS,
   );

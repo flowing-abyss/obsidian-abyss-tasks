@@ -6129,12 +6129,17 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       expect(execute).toHaveBeenCalledTimes(2);
     });
     expect(h.el.querySelector('.abyss-tg-day-column')?.getAttribute('data-tg-date')).toBe(TODAY);
+    expect(execute.mock.calls[1]?.[0]).toMatchObject({
+      type: 'patch',
+      target: { type: 'task', ref: taskB.ref },
+      patch: { time: { type: 'set', value: '10:05' } },
+    });
 
-    const updatedB = keyboardSnapshot(TODAY, '10:15', 'b.md', 'b-2');
+    const updatedB = keyboardSnapshot(TODAY, '10:05', 'b.md', 'b-2');
     h.setSnapshots([taskA, updatedB]);
     h.emit();
     second.resolve(okTask(updatedB));
-    await flushMicrotasks();
+    await flushPromiseJobsUntil(() => timedBlock(h.el, 'b.md') !== blockB);
     expect(activeDocument.activeElement).toBe(timedBlock(h.el, 'b.md'));
   });
 

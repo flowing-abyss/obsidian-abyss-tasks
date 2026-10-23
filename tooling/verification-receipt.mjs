@@ -2,8 +2,12 @@
 import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import {
+  closeSync,
+  constants,
+  fstatSync,
   lstatSync,
   mkdirSync,
+  openSync,
   readFileSync,
   readdirSync,
   readlinkSync,
@@ -89,6 +93,45 @@ function sourceMode(stat) {
   return stat.mode & 0o111 ? '100755' : '100644';
 }
 
+/** @param {import('node:fs').Stats} before @param {import('node:fs').Stats} after @returns {boolean} */
+function sameFile(before, after) {
+  return (
+    after.isFile() &&
+    before.dev === after.dev &&
+    before.ino === after.ino &&
+    before.mode === after.mode &&
+    before.size === after.size &&
+    before.mtimeMs === after.mtimeMs &&
+    before.ctimeMs === after.ctimeMs
+  );
+}
+
+/** @param {string} file @param {import('node:fs').Stats} checked @returns {Buffer} */
+function readRegularFile(file, checked) {
+  if (![constants.O_NOFOLLOW, constants.O_NONBLOCK].every(Number.isInteger))
+    throw new Error('Safe file-open flags are unavailable for local verification reuse.');
+  const descriptor = openSync(
+    file,
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+  );
+  try {
+    if (!sameFile(checked, fstatSync(descriptor)))
+      throw new Error('Verification input changed before reading.');
+    const contents = readFileSync(descriptor);
+    if (!sameFile(checked, fstatSync(descriptor)))
+      throw new Error('Verification input changed while reading.');
+    return contents;
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+/** @param {string} executable @returns {{device: number, inode: number, content: string}} */
+function executableIdentity(executable) {
+  const stat = lstatSync(executable);
+  return { device: stat.dev, inode: stat.ino, content: digest(readRegularFile(executable, stat)) };
+}
+
 /** @param {string} left @param {string} right @returns {number} */
 function compare(left, right) {
   return left.localeCompare(right, 'en');
@@ -113,11 +156,14 @@ function source(context) {
     if (stat === undefined) continue;
     if (!stat.isFile() && !stat.isSymbolicLink()) throw new Error('Unsupported source entry.');
     const mode = sourceMode(stat);
-    const bytes = stat.isSymbolicLink() ? Buffer.from(readlinkSync(file)) : readFileSync(file);
+    const bytes = stat.isSymbolicLink()
+      ? Buffer.from(readlinkSync(file))
+      : readRegularFile(file, stat);
     hash.update(JSON.stringify([name, mode, bytes.length])).update(bytes);
     if (stat.isSymbolicLink()) {
-      requireContained(root, realpathSync(file));
-      hash.update(readFileSync(file));
+      const target = realpathSync(file);
+      requireContained(root, target);
+      hash.update(readRegularFile(target, lstatSync(target)));
     }
     const object = createHash(algorithm)
       .update(`blob ${bytes.length}\0`)
@@ -163,7 +209,7 @@ function installedDependencies(context) {
       } else if (stat.isDirectory()) {
         visit(file, `${local}/`);
       } else if (stat.isFile()) {
-        hash.update(digest(readFileSync(file)));
+        hash.update(digest(readRegularFile(file, stat)));
       } else throw new Error('Unsupported installed dependency entry.');
     }
   }
@@ -232,7 +278,7 @@ function fingerprint(context) {
     versions: process.versions,
     platform: process.platform,
     architecture: process.arch,
-    git: realpathSync(context.git),
+    git: executableIdentity(context.git),
     gitVersion: output(context, context.git, ['--version']).trim(),
     pnpm: realpathSync(context.pnpm),
     managerVersion: output(context, context.pnpm, ['--version']).trim(),

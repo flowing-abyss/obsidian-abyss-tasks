@@ -16,7 +16,9 @@ const [
   { execFileSync, spawn, spawnSync },
   {
     chmodSync,
+    copyFileSync,
     existsSync,
+    linkSync,
     mkdirSync,
     mkdtempSync,
     readFileSync,
@@ -585,6 +587,48 @@ describe('full verification reuse', () => {
   );
 
   it(
+    'recognizes Git hardlinks while rejecting separate copies of the executable',
+    () => {
+      commit({ 'src/main.ts': 'changed\n' });
+      const execDirectory = path.join(directory, 'git-core');
+      mkdirSync(execDirectory);
+      const originalGit = execFileSync('/bin/sh', ['-c', 'command -v git'], {
+        env: cleanEnvironment,
+        encoding: 'utf8',
+      }).trim();
+      const wrapper = path.join(directory, 'bin/git');
+      const alias = path.join(execDirectory, 'git');
+      writeFileSync(
+        wrapper,
+        `#!/bin/sh
+if [ "$*" = '--exec-path' ]; then printf '%s\\n' "$FIXTURE_GIT_EXEC_PATH"; exit 0; fi
+exec "$FIXTURE_REAL_GIT" "$@"
+`,
+        { mode: 0o755 },
+      );
+      linkSync(wrapper, alias);
+      const originalPath = `${path.join(directory, 'bin')}${path.delimiter}${cleanEnvironment['PATH'] ?? ''}`;
+      const env = { FIXTURE_REAL_GIT: originalGit, FIXTURE_GIT_EXEC_PATH: execDirectory };
+      verified({ env: { ...env, PATH: originalPath, GIT_EXEC_PATH: undefined } });
+      const hook = {
+        env: {
+          ...env,
+          PATH: `${execDirectory}${path.delimiter}${originalPath}`,
+          GIT_EXEC_PATH: execDirectory,
+        },
+      };
+      expect(push(hook).status).toBe(0);
+      expect(commands()).toEqual(['run verify:checks', 'run audit:dependencies']);
+
+      rmSync(alias);
+      copyFileSync(wrapper, alias);
+      expect(push(hook).status).toBe(0);
+      expect(commands()).toEqual(['run verify:checks', 'run audit:dependencies', 'run verify']);
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
+
+  it(
     'keeps custom Git execution paths in the environment fingerprint',
     () => {
       commit({ 'src/main.ts': 'changed\n' });
@@ -662,6 +706,80 @@ describe('full verification reuse', () => {
       writeFiles({ 'node_modules/missing.js': 'new dependency contents\n' });
       expect(push().status).toBe(0);
       expect(commands()).toEqual(['run verify:checks', 'run audit:dependencies', 'run verify']);
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
+
+  it.each([
+    ['node_modules/example/index.js', 'symlink'],
+    ['node_modules/example/index.js', 'regular file'],
+    ['src/main.ts', 'symlink'],
+    ['src/main.ts', 'regular file'],
+  ])(
+    'rejects a %s replacement with a %s while collecting verification inputs',
+    (file, kind) => {
+      commit({ 'src/main.ts': 'committed\n' });
+      const replacement = path.join(directory, 'replacement.js');
+      const original = path.join(directory, 'original.js');
+      const marker = path.join(directory, 'replacement-read');
+      const preload = path.join(directory, 'replace-after-stat.cjs');
+      writeFileSync(replacement, 'replacement contents\n');
+      writeFileSync(
+        preload,
+        `const fs = require('node:fs');
+const path = require('node:path');
+const target = path.join(fs.realpathSync(process.cwd()), process.env.RACE_FILE);
+const lstat = fs.lstatSync;
+const open = fs.openSync;
+const close = fs.closeSync;
+const read = fs.readFileSync;
+const targetDescriptors = new Set();
+let changed = false;
+fs.lstatSync = (file, ...args) => {
+  const stat = lstat(file, ...args);
+  if (!changed && file === target) {
+    changed = true;
+    fs.renameSync(file, process.env.RACE_ORIGINAL);
+    if (process.env.RACE_KIND === 'symlink') fs.symlinkSync(process.env.RACE_REPLACEMENT, file);
+    else fs.copyFileSync(process.env.RACE_REPLACEMENT, file);
+  }
+  return stat;
+};
+fs.openSync = (file, ...args) => {
+  const descriptor = open(file, ...args);
+  if (file === target) targetDescriptors.add(descriptor);
+  return descriptor;
+};
+fs.closeSync = (descriptor) => {
+  targetDescriptors.delete(descriptor);
+  return close(descriptor);
+};
+fs.readFileSync = (file, ...args) => {
+  if (changed && (file === target || targetDescriptors.has(file))) {
+    fs.writeFileSync(process.env.RACE_MARKER, 'read replacement');
+  }
+  return read(file, ...args);
+};
+require('node:module').syncBuiltinESMExports();
+`,
+      );
+      const result = localInvocation({
+        args: ['--full'],
+        env: {
+          NODE_OPTIONS: `--require=${JSON.stringify(preload)}`,
+          RACE_FILE: file,
+          RACE_KIND: kind,
+          RACE_REPLACEMENT: replacement,
+          RACE_ORIGINAL: original,
+          RACE_MARKER: marker,
+        },
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain('no reusable local receipt');
+      expect(existsSync(original)).toBe(true);
+      expect(existsSync(marker)).toBe(false);
+      expect(push().status).toBe(0);
+      expect(commands()).toEqual(['run verify:checks', 'run verify']);
     },
     CHILD_PROCESS_TIMEOUT_MS,
   );

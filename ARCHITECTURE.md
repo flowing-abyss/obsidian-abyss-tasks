@@ -820,8 +820,9 @@ checkout's Git directory when source, tests, configuration, installed dependenci
 environment stayed unchanged during the run. A branch pre-push can reuse it for 24 hours only when
 the actual files match the pushed commit and the built artifacts still match. It refreshes the
 dependency audit and rechecks the receipt before accepting the push. A later full run invalidates
-earlier success, including on failure. Missing or uncertain evidence uses the full gate; CI, tag
-pushes, and release preparation never consume local receipts.
+earlier success, including on failure. Missing or uncertain evidence uses the full gate, as do
+platforms without the file-open flags needed to reject symlink replacements. CI, tag pushes, and
+release preparation never consume local receipts.
 [`esbuild.config.mjs`](esbuild.config.mjs) embeds runtime dependency license notices in the bundle.
 
 Native performance evaluation is an opt-in development workflow described in
