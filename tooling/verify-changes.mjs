@@ -28,25 +28,66 @@ const cwd = process.cwd();
 /** @type {Map<string, string>} */
 const executables = new Map();
 
+/** @param {string} candidate @param {string} directory @returns {boolean} */
+function ownsGitHelperDirectory(candidate, directory) {
+  try {
+    const result = spawnSync(candidate, ['--exec-path'], {
+      cwd,
+      env: { ...process.env, GIT_EXEC_PATH: undefined },
+      encoding: 'utf8',
+      timeout: 10_000,
+    });
+    return result.status === 0 && result.stdout.trim() === directory;
+  } catch {
+    return false;
+  }
+}
+
+/** @param {string} directory @param {string} command @returns {string | undefined} */
+function executableCandidate(directory, command) {
+  if (!isAbsolute(directory)) return undefined;
+  try {
+    const candidate = realpathSync(join(directory, command));
+    const fromCheckout = relative(cwd, candidate);
+    if (!fromCheckout.startsWith(`..${sep}`) && !isAbsolute(fromCheckout)) return undefined;
+    accessSync(candidate, constants.X_OK);
+    return statSync(candidate).isFile() ? candidate : undefined;
+  } catch {
+    // Missing or inaccessible candidates are not executable tools.
+    return undefined;
+  }
+}
+
 /** Resolve once, ignoring relative/checkout PATH entries that could shadow developer tools.
  * @param {string} command @returns {string}
  */
 function executable(command) {
   const cached = executables.get(command);
   if (cached !== undefined) return cached;
+  const helperDirectory = command === 'git' ? process.env['GIT_EXEC_PATH'] : undefined;
+  /** @type {string | undefined} */
+  let helper;
   for (const directory of (process.env['PATH'] ?? '').split(delimiter)) {
-    if (!isAbsolute(directory)) continue;
-    try {
-      const candidate = realpathSync(join(directory, command));
-      const fromCheckout = relative(cwd, candidate);
-      if (!fromCheckout.startsWith(`..${sep}`) && !isAbsolute(fromCheckout)) continue;
-      accessSync(candidate, constants.X_OK);
-      if (!statSync(candidate).isFile()) continue;
-      executables.set(command, candidate);
-      return candidate;
-    } catch {
-      // Missing or inaccessible candidates are not executable tools.
+    const candidate = executableCandidate(directory, command);
+    if (candidate === undefined) continue;
+    if (directory === helperDirectory) {
+      helper ??= candidate;
+      continue;
     }
+    // Git prepends its internal executables to hook PATH. Distribution packages may
+    // install a separate copy there, so retain the primary Git that owns that directory.
+    const selected =
+      helper !== undefined &&
+      helperDirectory !== undefined &&
+      !ownsGitHelperDirectory(candidate, helperDirectory)
+        ? helper
+        : candidate;
+    executables.set(command, selected);
+    return selected;
+  }
+  if (helper !== undefined) {
+    executables.set(command, helper);
+    return helper;
   }
   throw new Error(`The ${command} executable is unavailable outside the checkout.`);
 }

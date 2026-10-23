@@ -586,9 +586,9 @@ describe('full verification reuse', () => {
     CHILD_PROCESS_TIMEOUT_MS,
   );
 
-  it(
-    'recognizes Git hardlinks while rejecting separate copies of the executable',
-    () => {
+  it.each(['hardlink', 'copy'])(
+    'ignores a Git helper %s while detecting replacement of the primary executable',
+    (kind) => {
       commit({ 'src/main.ts': 'changed\n' });
       const execDirectory = path.join(directory, 'git-core');
       mkdirSync(execDirectory);
@@ -606,7 +606,8 @@ exec "$FIXTURE_REAL_GIT" "$@"
 `,
         { mode: 0o755 },
       );
-      linkSync(wrapper, alias);
+      if (kind === 'hardlink') linkSync(wrapper, alias);
+      else copyFileSync(wrapper, alias);
       const originalPath = `${path.join(directory, 'bin')}${path.delimiter}${cleanEnvironment['PATH'] ?? ''}`;
       const env = { FIXTURE_REAL_GIT: originalGit, FIXTURE_GIT_EXEC_PATH: execDirectory };
       verified({ env: { ...env, PATH: originalPath, GIT_EXEC_PATH: undefined } });
@@ -620,10 +621,44 @@ exec "$FIXTURE_REAL_GIT" "$@"
       expect(push(hook).status).toBe(0);
       expect(commands()).toEqual(['run verify:checks', 'run audit:dependencies']);
 
-      rmSync(alias);
-      copyFileSync(wrapper, alias);
+      rmSync(wrapper);
+      copyFileSync(alias, wrapper);
       expect(push(hook).status).toBe(0);
       expect(commands()).toEqual(['run verify:checks', 'run audit:dependencies', 'run verify']);
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
+
+  it.each(['mismatched default', 'query failure', 'no outside candidate'])(
+    'keeps the original Git candidate with %s',
+    (kind) => {
+      const custom = path.join(directory, 'custom-git');
+      mkdirSync(custom);
+      const realGit = execFileSync('/bin/sh', ['-c', 'command -v git'], {
+        env: cleanEnvironment,
+        encoding: 'utf8',
+      }).trim();
+      writeFileSync(path.join(custom, 'git'), '#!/bin/sh\nexec "$FIXTURE_REAL_GIT" "$@"\n', {
+        mode: 0o755,
+      });
+      if (kind !== 'no outside candidate') {
+        writeFileSync(
+          path.join(directory, 'bin/git'),
+          kind === 'query failure'
+            ? '#!/bin/sh\nexit 73\n'
+            : '#!/bin/sh\nif [ "$*" = --exec-path ]; then printf /different/helpers; exit 0; fi\nexit 73\n',
+          { mode: 0o755 },
+        );
+      }
+      const result = localInvocation({
+        args: ['--plan'],
+        env: {
+          FIXTURE_REAL_GIT: realGit,
+          GIT_EXEC_PATH: custom,
+          PATH: `${custom}${path.delimiter}${path.join(directory, 'bin')}`,
+        },
+      });
+      expect(result.status, result.stderr).toBe(0);
     },
     CHILD_PROCESS_TIMEOUT_MS,
   );
