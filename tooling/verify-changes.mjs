@@ -12,6 +12,11 @@ import {
 import { delimiter, isAbsolute, join, relative, sep } from 'node:path';
 import process from 'node:process';
 import { isDeepStrictEqual } from 'node:util';
+import {
+  beginVerification,
+  canReuseVerification,
+  finishVerification,
+} from './verification-receipt.mjs';
 
 /** @typedef {{mode: 'light' | 'full', reason: string}} Decision */
 /** @typedef {{base: string, head?: string}} Range */
@@ -286,24 +291,27 @@ function strongest(decisions) {
   );
 }
 
-/** @returns {Decision} */
+/** @returns {Decision & {branchesOnly?: boolean}} */
 function prePushDecision() {
   const lines = readFileSync(0, 'utf8').trim().split('\n').filter(Boolean);
   if (lines.length === 0) return full('No pre-push range was provided.');
   const current = commit('HEAD');
   /** @type {Decision[]} */
   const decisions = [];
+  let branchesOnly = true;
   for (const line of lines) {
-    const [localRef, localObject, , remoteObject] = line.split(/\s+/u);
+    const [localRef, localObject, remoteRef, remoteObject] = line.split(/\s+/u);
     if (
       localRef === undefined ||
       localObject === undefined ||
+      remoteRef === undefined ||
       remoteObject === undefined ||
       !objectId.test(localObject) ||
       !objectId.test(remoteObject)
     ) {
       throw new Error('Cannot verify malformed pre-push ref updates.');
     }
+    branchesOnly &&= !localRef.startsWith('refs/tags/') && remoteRef.startsWith('refs/heads/');
     if (/^0+$/u.test(localObject)) continue;
     if (commit(localObject) !== current) {
       throw new Error(
@@ -312,7 +320,7 @@ function prePushDecision() {
     }
     decisions.push(pushedRange(localRef, remoteObject, current));
   }
-  return strongest(decisions);
+  return { ...strongest(decisions), branchesOnly };
 }
 
 /** @param {string} ref @param {string} remote @param {string} head @returns {Decision} */
@@ -345,20 +353,53 @@ function commandsFor(decision, release) {
   return commands;
 }
 
+/** @param {string[]} args @param {{cwd: string, git: string, pnpm: string}} context */
+function verifyFull(args, context) {
+  if (args.length !== 1) throw new Error('--full cannot be combined with other options.');
+  const started = beginVerification(context);
+  const result = spawnSync(context.pnpm, ['run', 'verify:checks'], {
+    cwd,
+    env: process.env,
+    stdio: 'inherit',
+  });
+  if (result.status !== 0) {
+    process.exitCode = result.status ?? 1;
+    return;
+  }
+  process.stdout.write(
+    finishVerification(context, started)
+      ? 'Full verification recorded for unchanged local inputs.\n'
+      : 'Full verification passed; no reusable local receipt was recorded.\n',
+  );
+}
+
 function main() {
   const args = process.argv.slice(2).filter((arg) => arg !== '--');
-  if (args.some((arg) => !['--plan', '--pre-push', '--release'].includes(arg))) {
-    throw new Error('Supported verification options are --plan, --pre-push and --release.');
+  if (args.some((arg) => !['--plan', '--pre-push', '--release', '--full'].includes(arg))) {
+    throw new Error('Supported verification options are --plan, --pre-push, --release and --full.');
   }
+  const context = { cwd, git: executable('git'), pnpm: executable('pnpm') };
+  if (args.includes('--full')) return verifyFull(args, context);
   const release = args.includes('--release') || process.env['GITHUB_REF_TYPE'] === 'tag';
   const decision = args.includes('--pre-push') ? prePushDecision() : contextDecision(release);
   const selected = strongest([decision, inspect({ base: commit('HEAD') })]);
-  const commands = commandsFor(selected, release);
+  const reused =
+    args.includes('--pre-push') &&
+    !release &&
+    'branchesOnly' in decision &&
+    decision.branchesOnly === true &&
+    selected.mode === 'full' &&
+    canReuseVerification(context);
+  const commands = reused ? [['run', 'audit:dependencies']] : commandsFor(selected, release);
   if (args.includes('--plan')) {
     process.stdout.write(`${JSON.stringify({ ...selected, commands })}\n`);
     return;
   }
   process.stdout.write(`Verification ${selected.mode}: ${selected.reason}\n`);
+  if (reused)
+    process.stdout.write(
+      'Reusing successful full verification; refreshing the dependency audit.\n',
+    );
   const githubOutput = process.env['GITHUB_OUTPUT'];
   if (githubOutput !== undefined) appendFileSync(githubOutput, `mode=${selected.mode}\n`);
   for (const command of commands) {
@@ -372,6 +413,11 @@ function main() {
       process.exitCode = result.status ?? 1;
       return;
     }
+  }
+  if (reused && !canReuseVerification(context)) {
+    throw new Error(
+      'Verification inputs changed during pre-push. Run pnpm verify before retrying.',
+    );
   }
 }
 

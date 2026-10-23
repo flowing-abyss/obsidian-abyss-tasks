@@ -220,7 +220,6 @@ describe('buildProjectTableModel', () => {
     const ownerModel = model([activeProject], table({ groupBy: 'property:owners' }), '', {
       'property:owners': {
         type: 'list',
-        presetsEnabled: true,
         presets: [
           { value: 'raw-team', displayName: 'Platform', color: '#123456', display: 'badge' },
         ],

@@ -2453,7 +2453,6 @@ describe('ProjectsTableView', () => {
     });
     config.projects.propertyDefinitions['property:Budget'] = {
       type: 'number',
-      presetsEnabled: true,
       presets: [{ value: 42, displayName: 'Estimate', color: '#123456', display: 'badge' }],
     };
     const item = project({ frontmatter: { Budget: 42 } });
@@ -2507,17 +2506,14 @@ describe('ProjectsTableView', () => {
     );
     config.projects.propertyDefinitions['property:Priority'] = {
       type: 'text',
-      presetsEnabled: true,
       presets: [{ value: 'QA-only priority', displayName: 'QA priority option', display: 'badge' }],
     };
     config.projects.propertyDefinitions['property:Owners'] = {
       type: 'list',
-      presetsEnabled: true,
       presets: [{ value: 'owner-id', displayName: 'Owner alias', display: 'text' }],
     };
     config.projects.propertyDefinitions['property:Lead'] = {
       type: 'text',
-      presetsEnabled: true,
       presets: [
         {
           value: '[[People/Owner]]',
@@ -2674,7 +2670,6 @@ describe('ProjectsTableView', () => {
     config.projects.table.columns.push({ id: 'property:Tags', visible: true });
     config.projects.propertyDefinitions['property:Tags'] = {
       type: 'tags',
-      presetsEnabled: true,
       presets: [{ value: 'qa', displayName: '#Quality', color: '#123456', display: 'dot' }],
     };
     const { host } = mount([project({ frontmatter: { Tags: ['qa'] } })], {
@@ -3570,7 +3565,6 @@ describe('ProjectsTableView', () => {
     config.projects.table.columns.push({ id: 'property:Tags', visible: true });
     config.projects.propertyDefinitions['property:Priority'] = {
       type: 'text',
-      presetsEnabled: true,
       presets: [{ value: 'high', displayName: 'High' }],
     };
     config.projects.propertyDefinitions['property:Tags'] = { type: 'tags' };
@@ -3619,7 +3613,6 @@ describe('ProjectsTableView', () => {
     await flushMicrotasks();
     expect(config.projects.propertyDefinitions['property:Priority']).toEqual({
       type: 'number',
-      presetsEnabled: true,
       presets: [{ value: 'high', displayName: 'High' }],
     });
     expect(saveStatic).toHaveBeenCalledOnce();

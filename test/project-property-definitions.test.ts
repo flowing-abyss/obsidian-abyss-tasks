@@ -54,11 +54,12 @@ describe('project property definitions', () => {
 
   it('changes one uniquely matched definition while preserving spelling and preset data', () => {
     const projects = buildDefaultProjectsSettings();
-    projects.propertyDefinitions['property:Priority'] = {
-      type: 'text',
+    const legacyDefinition = {
+      type: 'text' as const,
       presetsEnabled: true,
       presets: [{ value: 'high', displayName: 'High' }],
     };
+    projects.propertyDefinitions['property:Priority'] = legacyDefinition;
 
     expect(setProjectPropertyDefinitionType(projects, 'property:priority', 'number')).toBe(true);
     expect(projects.propertyDefinitions).toEqual({
@@ -159,7 +160,6 @@ describe('project property definitions', () => {
     projects.propertyDefinitions = {
       'property:Effort': {
         type: 'text',
-        presetsEnabled: true,
         presets: [{ value: 'high', displayName: 'High effort' }],
       },
     };

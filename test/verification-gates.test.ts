@@ -14,7 +14,7 @@ const loadNodeTools = async () => {
 };
 const [
   { spawnSync },
-  { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync },
+  { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync },
   { tmpdir },
   path,
 ] = await loadNodeTools();
@@ -30,6 +30,14 @@ function runGate(
   failCommand?: string,
 ): { status: number | null; commands: string[] } {
   const fixtureDirectory = mkdtempSync(path.join(tmpdir(), 'abyss-verification-gate-'));
+  const repository = path.join(fixtureDirectory, 'repo');
+  mkdirSync(path.join(repository, 'tooling'), { recursive: true });
+  for (const file of ['verify-changes.mjs', 'verification-receipt.mjs']) {
+    writeFileSync(
+      path.join(repository, 'tooling', file),
+      readFileSync(path.join(repositoryRoot, 'tooling', file)),
+    );
+  }
   const commandLog = path.join(fixtureDirectory, 'commands.log');
   const pnpmPath = path.join(fixtureDirectory, 'pnpm');
   // A POSIX shell stand-in for pnpm: the gate spawns it once per stage, and a shell starts in a
@@ -37,6 +45,7 @@ function runGate(
   writeFileSync(
     pnpmPath,
     `#!/bin/sh
+if [ "$1" = run ] && [ "$2" = verify:checks ]; then exec /bin/sh -c "$VERIFY_CHECKS_SCRIPT"; fi
 command="$1"
 if [ "$command" = 'release:artifacts' ]; then printf fresh > fresh-artifact; fi
 if [ "$command" = 'lint:css:artifact' ] && [ ! -e fresh-artifact ]; then exit 2; fi
@@ -50,13 +59,14 @@ exit 0
   const baseEnv = {
     ...process.env,
     COMMAND_LOG: commandLog,
+    VERIFY_CHECKS_SCRIPT: scripts['verify:checks'] ?? '',
     PATH: `${fixtureDirectory}${path.delimiter}${process.env['PATH'] ?? ''}`,
   };
   const env = failCommand === undefined ? baseEnv : { ...baseEnv, FAIL_COMMAND: failCommand };
 
   try {
     const result = spawnSync(script, {
-      cwd: fixtureDirectory,
+      cwd: repository,
       encoding: 'utf8',
       env,
       shell: true,

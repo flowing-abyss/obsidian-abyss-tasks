@@ -808,7 +808,6 @@ describe('renderProjectTableSettings', () => {
     projects.table.columns.push({ id: 'property:Budget', visible: true });
     projects.propertyDefinitions['property:Budget'] = {
       type: 'number',
-      presetsEnabled: false,
       presets: [],
     };
     const saveStatic = vi.fn().mockResolvedValue(undefined);

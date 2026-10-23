@@ -306,7 +306,7 @@ describe('production JavaScript artifact', () => {
       readFileSync(path.join(root, 'pnpm-workspace.yaml'), 'utf8'),
     ) as { minimumReleaseAge: number; minimumReleaseAgeExclude: readonly string[] };
     expect(policy.minimumReleaseAge).toBe(1440);
-    expect(policy.minimumReleaseAgeExclude).toEqual(['obsidian-test-mocks@7.2.1']);
+    expect(policy.minimumReleaseAgeExclude).toEqual([]);
   });
 
   it('embeds a self-contained browser worker and executes its minified ready/add/query protocol', async () => {

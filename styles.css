@@ -103,6 +103,14 @@
   font-family: var(--font-interface, var(--font-interface-theme));
 }
 
+.abyss-long-press {
+  /* Safari needs this prefix: https://developer.mozilla.org/en-US/docs/Web/CSS/user-select */
+  /* stylelint-disable-next-line property-no-vendor-prefix -- Preserve Safari text-selection behavior. */
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
+}
+
 .abyss-creation-feedback {
   position: absolute;
   z-index: var(--layer-popover, 30);

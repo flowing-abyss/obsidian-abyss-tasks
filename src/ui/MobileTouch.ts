@@ -36,11 +36,7 @@ export function attachLongPress(
   el.addEventListener('touchcancel', onCancel);
   el.addEventListener('contextmenu', onContext);
 
-  el.setCssStyles({
-    userSelect: 'none',
-    webkitUserSelect: 'none',
-    touchAction: 'manipulation',
-  });
+  el.addClass('abyss-long-press');
 
   return () => {
     if (timer !== null) window.clearTimeout(timer);

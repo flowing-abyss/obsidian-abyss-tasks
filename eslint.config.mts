@@ -377,6 +377,7 @@ export default defineConfig(
       'tooling/css-policy.mjs',
       'tooling/css-contracts.mjs',
       'tooling/verify-changes.mjs',
+      'tooling/verification-receipt.mjs',
       'tooling/release-automation.mjs',
       'tooling/regex-audit.mjs',
       'tooling/regex-audit-process.mjs',

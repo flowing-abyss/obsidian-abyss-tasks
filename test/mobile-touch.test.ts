@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { attachLongPress } from '../src/ui/MobileTouch';
-import { freshContainer } from './helpers';
+import {
+  cssDeclarationValue,
+  cssDeclarationsFor,
+  freshContainer,
+  loadPluginStyles,
+} from './helpers';
+
+const css = await loadPluginStyles();
 
 describe('attachLongPress', () => {
   beforeEach(() => {
@@ -84,13 +91,14 @@ describe('attachLongPress', () => {
     expect(preventDefault).toHaveBeenCalled();
   });
 
-  it('sets userSelect, webkitUserSelect, touchAction on the element', () => {
+  it('disables text selection and native double-tap gestures', () => {
     const el = freshContainer();
     attachLongPress(el, vi.fn(), 500);
-    expect(el.style.userSelect).toBe('none');
-
-    expect(el.style.getPropertyValue('-webkit-user-select')).toBe('none');
-    expect(el.style.touchAction).toBe('manipulation');
+    expect(el.matches('.abyss-long-press')).toBe(true);
+    const declarations = cssDeclarationsFor(css, '.abyss-long-press');
+    expect(cssDeclarationValue(declarations, 'user-select')).toBe('none');
+    expect(cssDeclarationValue(declarations, '-webkit-user-select')).toBe('none');
+    expect(cssDeclarationValue(declarations, 'touch-action')).toBe('manipulation');
   });
 
   it('passes an empty string to onLongPress when dataset.taskText is absent', () => {

@@ -814,6 +814,14 @@ use [`tooling/verify-changes.mjs`](tooling/verify-changes.mjs) through `pnpm run
 allowed documentation and semantic version-only metadata changes take the light route; behavior,
 tooling, and uncertain history require full verification. The full gate checks source CSS and fresh
 built artifact CSS. Release preparation also requires fresh artifacts, even for metadata-only changes.
+The full command always runs the complete `verify:checks` chain. After success,
+[`verification-receipt.mjs`](tooling/verification-receipt.mjs) can record a local receipt in the
+checkout's Git directory when source, tests, configuration, installed dependencies, and execution
+environment stayed unchanged during the run. A branch pre-push can reuse it for 24 hours only when
+the actual files match the pushed commit and the built artifacts still match. It refreshes the
+dependency audit and rechecks the receipt before accepting the push. A later full run invalidates
+earlier success, including on failure. Missing or uncertain evidence uses the full gate; CI, tag
+pushes, and release preparation never consume local receipts.
 [`esbuild.config.mjs`](esbuild.config.mjs) embeds runtime dependency license notices in the bundle.
 
 Native performance evaluation is an opt-in development workflow described in
