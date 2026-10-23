@@ -31,6 +31,7 @@ const bookkeeping = new Set([
   'HUSKY',
   'HUSKY_GIT_PARAMS',
   'GIT_PREFIX',
+  'CODEX_TOOL_CALL_ID',
   'npm_command',
   'npm_config_argv',
 ]);

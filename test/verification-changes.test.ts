@@ -521,6 +521,17 @@ describe('full verification reuse', () => {
   );
 
   it(
+    'ignores the agent tool call identifier between verification and push',
+    () => {
+      commit({ 'src/main.ts': 'changed\n' });
+      verified({ env: { CODEX_TOOL_CALL_ID: 'verification-call' } });
+      expect(push({ env: { CODEX_TOOL_CALL_ID: 'push-call' } }).status).toBe(0);
+      expect(commands()).toEqual(['run verify:checks', 'run audit:dependencies']);
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
+
+  it(
     'includes effective user and global pnpm configuration',
     () => {
       commit({ 'src/main.ts': 'changed\n' });
