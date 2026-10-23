@@ -22,6 +22,7 @@ const [
     mkdirSync,
     mkdtempSync,
     readFileSync,
+    renameSync,
     rmSync,
     statSync,
     symlinkSync,
@@ -621,8 +622,12 @@ exec "$FIXTURE_REAL_GIT" "$@"
       expect(push(hook).status).toBe(0);
       expect(commands()).toEqual(['run verify:checks', 'run audit:dependencies']);
 
-      rmSync(wrapper);
-      copyFileSync(alias, wrapper);
+      // Keep the original inode alive while allocating its replacement.
+      const replacement = path.join(directory, 'bin/git-replacement');
+      copyFileSync(alias, replacement);
+      expect(readFileSync(replacement)).toEqual(readFileSync(wrapper));
+      expect(statSync(replacement).ino).not.toBe(statSync(wrapper).ino);
+      renameSync(replacement, wrapper);
       expect(push(hook).status).toBe(0);
       expect(commands()).toEqual(['run verify:checks', 'run audit:dependencies', 'run verify']);
     },
