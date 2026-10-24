@@ -1,6 +1,6 @@
 {
   "name": "obsidian-abyss-tasks",
-  "version": "2.2.2",
+  "version": "2.2.3",
   "private": true,
   "description": "A task management interface for Markdown tasks.",
   "main": "main.js",
