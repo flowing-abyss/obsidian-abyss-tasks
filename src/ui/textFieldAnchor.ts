@@ -102,14 +102,35 @@ function insideField(point: DOMRect, field: DOMRect): boolean {
   );
 }
 
-export function textFieldViewport(input: HTMLElement): DOMRect {
+/** Optional owned scroll containers also clip hosts whose keyboard leaves VisualViewport intact. */
+export function textFieldViewport(
+  input: HTMLElement,
+  containers?: readonly HTMLElement[],
+): DOMRect {
   const win = input.ownerDocument.defaultView;
   if (win === null) return input.getBoundingClientRect();
   const viewport = win.visualViewport;
-  return new win.DOMRect(
+  const visible = new win.DOMRect(
     viewport?.offsetLeft ?? 0,
     viewport?.offsetTop ?? 0,
     viewport?.width ?? win.innerWidth,
     viewport?.height ?? win.innerHeight,
   );
+  return clipToContainers(visible, containers);
+}
+
+function clipToContainers(visible: DOMRect, containers: readonly HTMLElement[] = []): DOMRect {
+  let { left, top, right, bottom } = visible;
+  for (const container of containers) {
+    const rect = container.getBoundingClientRect();
+    left = Math.max(left, rect.left);
+    top = Math.max(top, rect.top);
+    right = Math.min(right, rect.right);
+    bottom = Math.min(bottom, rect.bottom);
+  }
+  visible.x = left;
+  visible.y = top;
+  visible.width = Math.max(0, right - left);
+  visible.height = Math.max(0, bottom - top);
+  return visible;
 }

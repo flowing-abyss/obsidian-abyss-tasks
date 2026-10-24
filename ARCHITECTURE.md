@@ -396,6 +396,14 @@ inspector's guarded Escape scope; nested editors and IME keep priority.
 Native selection restoration is disabled so explicit close restores only a connected opener when
 focus still belongs to the modal. Programmatic replacement and deletion do not restore focus.
 
+RightPanel owns a mobile field-visibility subscription for both the sidebar and native TaskModal.
+It observes the owning window and inspector scroll containers, then minimally scrolls the active
+editor into their intersection with the visual viewport. Oversized editors follow the caret.
+Obsidian still owns the keyboard inset; the subscription never subtracts it again, changes focus,
+or submits a draft. Disposal and window migration retire observers, listeners, and queued frames.
+Inspector link suggestions use the same mobile scroll-container bounds and observe their size,
+so the suggestion list fits above the keyboard even when VisualViewport does not resize.
+
 Centre surfaces reuse `TaskCommands`, `TaskMenus`, `CaptureSessions`, `ListViewControls`, and
 [`TaskCardRenderer`](src/panels/center/TaskCardRenderer.ts). Inspector planning, dependency, and
 section owners render and invoke retained callbacks; RightPanel keeps submission and recovery

@@ -9417,6 +9417,16 @@ body.is-phone .abyss-layout > :is(.abyss-rail, .abyss-left, .abyss-center-shell,
   padding-block-end: var(--abyss-shell-bottom-inset);
 }
 
+/* Leave room to reveal the last editor above the mobile keyboard. The host owns its inset. */
+body.is-mobile .abyss-right {
+  scroll-padding-block: var(--size-4-4, 1rem);
+  padding-block-end: var(--size-4-4, 1rem);
+}
+
+body.is-phone .abyss-layout > .abyss-right {
+  padding-block-end: max(var(--abyss-shell-bottom-inset), var(--size-4-4, 1rem));
+}
+
 /* Seat global results above Obsidian's floating navigation in either phone orientation. */
 body.is-phone .abyss-creation-feedback {
   inset-block-end: calc(

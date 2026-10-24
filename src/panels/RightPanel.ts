@@ -5,6 +5,7 @@ import type { TaskSearchApi } from '../tasks';
 import type { LocalSearchScopeHost } from '../ui/localSearchKeys';
 import type { TaskDependencySearchProvider } from '../ui/TaskDependencySearchProvider';
 import { InspectorDependencies } from './right/InspectorDependencies';
+import { mountInspectorFieldVisibility } from './right/inspectorFieldVisibility';
 import { InspectorPlanningSurfaces } from './right/InspectorPlanningSurfaces';
 import { InspectorSections } from './right/InspectorSections';
 import type {
@@ -294,6 +295,7 @@ export class RightPanel {
   private readonly completionConfirmationAbortController_abyssPrivate = new AbortController();
   private el_abyssPrivate!: HTMLElement;
   private mounted_abyssPrivate = false;
+  private stopFieldVisibility_abyssPrivate: (() => void) | undefined;
   private listActivation_abyssPrivate = new AbortController();
   private pendingPlanningRender_abyssPrivate = false;
   private pendingPlanningMetadata_abyssPrivate = false;
@@ -566,6 +568,7 @@ export class RightPanel {
   mount(container: HTMLElement): void {
     this.el_abyssPrivate = container;
     this.mounted_abyssPrivate = true;
+    this.stopFieldVisibility_abyssPrivate = mountInspectorFieldVisibility(container);
     this.mountTimeBadge_abyssPrivate(container);
     this.dependencies_abyssPrivate.updateDisclosureSelection(
       this.state_abyssPrivate.get('taskStack'),
@@ -691,6 +694,8 @@ export class RightPanel {
   }
 
   onWindowMigrated(): void {
+    this.stopFieldVisibility_abyssPrivate?.();
+    this.stopFieldVisibility_abyssPrivate = mountInspectorFieldVisibility(this.el_abyssPrivate);
     this.listActivation_abyssPrivate.abort();
     const draft = this.captureDraftState();
     this.dependencies_abyssPrivate.cancelSearch();
@@ -706,6 +711,8 @@ export class RightPanel {
   }
 
   destroy(): void {
+    this.stopFieldVisibility_abyssPrivate?.();
+    this.stopFieldVisibility_abyssPrivate = undefined;
     this.listActivation_abyssPrivate.abort();
     this.retireTaskOwners_abyssPrivate();
     this.invalidateDeferredPlanningRender_abyssPrivate();

@@ -1,4 +1,4 @@
-import { Component, type App } from 'obsidian';
+import { Component, Platform, type App } from 'obsidian';
 import type { AppState } from '../../app/AppState';
 import type { LinkToken } from '../../markdown/links';
 import type { StatusRegistry } from '../../status/StatusRegistry';
@@ -33,6 +33,7 @@ import {
 } from '../../ui/taskNodeText';
 import { rootTaskRef, taskNodeRef } from '../../ui/taskSelection';
 import { WikiLinkSuggest } from '../../ui/WikiLinkSuggest';
+import { inspectorScrollContainers } from './inspectorFieldVisibility';
 import { renderRowRemove } from './inspectorRowRemove';
 import type { InspectorTaskOwner, TaskLike } from './inspectorTypes';
 
@@ -374,6 +375,7 @@ export class InspectorSections {
     const links = new WikiLinkSuggest({
       app: this.#app,
       input,
+      viewportContainers: Platform.isMobile ? inspectorScrollContainers(this.#host.root()) : [],
       interactionOwnership: this.#interactionOwnership,
       sourcePath: () => {
         const current = owner.current;

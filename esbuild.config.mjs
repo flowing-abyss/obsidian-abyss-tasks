@@ -65,6 +65,9 @@ import process from 'process';
 // Calendar pointer publication, serialized editing and focus retention: main 2,145,556 bytes.
 // No dependencies added; the minimal containing main limit is 2,146,304 bytes (2096 KiB).
 // CSS remains within 197,632 bytes. Both artifact checks remain enforced.
+// Mobile inspector visibility and keyboard-bounded link suggestions: main 2,150,070 ->
+// 2,152,652 bytes (+2,582); no dependencies added. The minimal containing KiB limit is
+// 2,153,472 bytes (2103 KiB). CSS and artifact enforcement remain unchanged.
 const { mainJsBudgetBytes: MAIN_JS_BUDGET_BYTES } = JSON.parse(
   readFileSync('package.json', 'utf8'),
 ).release;

@@ -10,6 +10,7 @@ export interface WikiLinkSuggestOptions {
   readonly app: App;
   readonly input: HTMLInputElement | HTMLTextAreaElement;
   readonly sourcePath: () => string | undefined;
+  readonly viewportContainers?: readonly HTMLElement[];
   readonly interactionOwnership?: InteractionOwnershipPort;
   readonly registerSurface?: (surface: HTMLElement) => () => void;
 }
@@ -230,7 +231,7 @@ export class WikiLinkSuggest {
       appearance: 'suggestion',
       attr: { id: listId, role: 'listbox', 'aria-label': 'Note links' },
       getAnchorRect: () => textFieldAnchor(input, draft.range.from),
-      getBoundaryRect: () => textFieldViewport(input),
+      getBoundaryRect: () => textFieldViewport(input, this.#options.viewportContainers),
       viewportPositioned: true,
       retainAnchorFocus: true,
       handleEscape: false,
@@ -290,12 +291,18 @@ export class WikiLinkSuggest {
     input.setAttribute('aria-controls', listId);
     this.#highlight();
     popup.reposition();
-    const win = input.ownerDocument.defaultView;
+    this.#observeViewport(popup);
+  }
+
+  #observeViewport(popup: AnchoredPopover): void {
+    const win = this.#options.input.ownerDocument.defaultView;
     if (win !== null && typeof win.ResizeObserver === 'function') {
       this.#resizeObserver = new win.ResizeObserver(() => {
         if (this.#popover === popup) popup.reposition();
       });
       this.#resizeObserver.observe(popup.element);
+      for (const container of this.#options.viewportContainers ?? [])
+        this.#resizeObserver.observe(container);
     }
   }
 
