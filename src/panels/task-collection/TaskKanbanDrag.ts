@@ -5,10 +5,12 @@ import type { TaskNodeSnapshot } from '../../tasks';
 import { isRealmHTMLElement } from '../../ui/domRealm';
 import { runAsyncAction } from '../../ui/runAsyncAction';
 
+type CapturedDrop = (status: TaskStatusDef, accept: () => boolean) => Promise<void>;
 interface Options {
   readonly host: HTMLElement;
   readonly state: AppState;
   statuses(): readonly TaskStatusDef[];
+  capture?(task: TaskNodeSnapshot): CapturedDrop | undefined;
   drop(task: TaskNodeSnapshot, status: TaskStatusDef, accept: () => boolean): Promise<void>;
 }
 /** Whole-column status destination. AppState remains the only native task payload authority. */
@@ -20,6 +22,7 @@ export class TaskKanbanDrag {
   #point: { x: number; y: number } | undefined;
   #frame: number | undefined;
   #accepted = false;
+  #captured: CapturedDrop | undefined;
   #commit: object | undefined;
   readonly #off: () => void;
   constructor(readonly options: Options) {
@@ -27,12 +30,14 @@ export class TaskKanbanDrag {
       this.#clearPreview();
       if (payload !== null) this.#commit = undefined;
       this.#payload = payload;
+      this.#captured = payload === null ? undefined : options.capture?.(payload.task);
       this.#statuses = options.statuses().map((status) => ({ ...status }));
       this.#accepted = false;
     });
     options.host.addEventListener('dragover', this.#over, true);
     options.host.addEventListener('dragleave', this.#leave, true);
     options.host.addEventListener('drop', this.#drop, true);
+    options.host.addEventListener('contextmenu', this.#contextMenu, true);
     this.refresh();
   }
   refresh(): void {
@@ -94,6 +99,12 @@ export class TaskKanbanDrag {
     this.#point = { x: event.clientX, y: event.clientY };
     this.#schedule();
   };
+  readonly #contextMenu = (event: MouseEvent): void => {
+    if (this.#payload === null) return;
+    // Android follows native dragstart with contextmenu on the long-pressed card.
+    event.preventDefault();
+    event.stopPropagation();
+  };
   readonly #leave = (event: DragEvent): void => {
     const next = event.relatedTarget;
     if (next !== null && 'nodeType' in next && this.options.host.contains(next as Node)) return;
@@ -108,9 +119,16 @@ export class TaskKanbanDrag {
     this.#clearPreview();
     if (target === undefined) return;
     this.#accepted = true;
-    runAsyncAction(this.#submit(payload, target.status), 'Could not move task to status column');
+    runAsyncAction(
+      this.#submit(payload, target.status, this.#captured),
+      'Could not move task to status column',
+    );
   };
-  async #submit(payload: TaskNodeDragPayload, status: TaskStatusDef): Promise<void> {
+  async #submit(
+    payload: TaskNodeDragPayload,
+    status: TaskStatusDef,
+    captured: CapturedDrop | undefined,
+  ): Promise<void> {
     const token = {};
     this.#commit = token;
     const accept = (): boolean => {
@@ -124,7 +142,8 @@ export class TaskKanbanDrag {
       );
     };
     try {
-      if (payload.task.node.statusSymbol !== status.symbol)
+      if (captured !== undefined) await captured(status, accept);
+      else if (payload.task.node.statusSymbol !== status.symbol)
         await this.options.drop(payload.task, status, accept);
     } catch (error) {
       new Notice('Could not change task status. Try again.');
@@ -187,5 +206,6 @@ export class TaskKanbanDrag {
     this.options.host.removeEventListener('dragover', this.#over, true);
     this.options.host.removeEventListener('dragleave', this.#leave, true);
     this.options.host.removeEventListener('drop', this.#drop, true);
+    this.options.host.removeEventListener('contextmenu', this.#contextMenu, true);
   }
 }

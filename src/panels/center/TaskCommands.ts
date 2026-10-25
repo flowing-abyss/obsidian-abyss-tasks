@@ -14,6 +14,7 @@ import type {
   TaskNodeRef,
   TaskNodeSnapshot,
   TaskOccurrenceCompletion,
+  TaskOccurrenceResult,
   TaskPatch,
   TaskPriority,
   TaskQueryApi,
@@ -386,7 +387,7 @@ export class TaskCommands {
       tasks,
       'patch',
       (task) => commandPatch(task, { due: { type: 'set', value } }),
-      onResult,
+      { onResult },
     );
   }
 
@@ -400,7 +401,7 @@ export class TaskCommands {
       tasks,
       'patch',
       (task) => commandPatch(task, { due: clear ? { type: 'clear' } : { type: 'set', value } }),
-      onResult,
+      { onResult },
     );
   }
 
@@ -417,7 +418,7 @@ export class TaskCommands {
         commandPatch(task, {
           tags: { ...(add.length > 0 && { add }), ...(remove.length > 0 && { remove }) },
         }),
-      onResult,
+      { onResult },
     );
   }
 
@@ -453,45 +454,92 @@ export class TaskCommands {
   setTaskStatusInColumn(
     task: TaskCommandSubject,
     status: TaskStatusDef,
-    options: { readonly completion: TaskOccurrenceCompletion; readonly accept: () => boolean },
+    options: {
+      readonly completion: TaskOccurrenceCompletion;
+      readonly accept: () => boolean;
+      readonly onChanged?: (destination: TaskOccurrenceResult) => void;
+    },
   ): Promise<void> {
     return this.#status(task, status.symbol, {
       completion: options.completion,
-      accept: () => {
-        const current = this.#statusRegistry.bySymbol(status.symbol);
-        return (
-          options.accept() &&
-          current?.id === status.id &&
-          current.type === status.type &&
-          this.#tasks?.queries.resolve(rootTaskRef(commandNode(task))).type === 'exact'
-        );
-      },
+      ...(options.onChanged === undefined ? {} : { onChanged: options.onChanged }),
+      accept: () =>
+        this.#acceptColumn(status, options.accept) &&
+        this.#tasks?.queries.resolve(rootTaskRef(commandNode(task))).type === 'exact',
     });
   }
 
   async #status(
     task: TaskCommandSubject,
     symbol: string | undefined,
-    options: { readonly completion: TaskOccurrenceCompletion; readonly accept?: () => boolean },
+    options: {
+      readonly completion: TaskOccurrenceCompletion;
+      readonly accept?: () => boolean;
+      readonly onChanged?: (destination: TaskOccurrenceResult) => void;
+    },
   ): Promise<void> {
     if (options.completion.kind !== 'allowed' || options.accept?.() === false) return;
     const target = commandTarget(task);
     if (target === undefined) return;
+    const source = options.onChanged === undefined ? undefined : this.#projection(task);
     await requestTaskStatusChange(
       commandNode(task),
       symbol,
       this.#statusRegistry,
       async () => {
         if (options.accept?.() === false) return;
-        await this.#submit(
+        const command: TaskCommand =
           symbol === undefined
             ? { type: 'toggle-completion', target }
-            : { type: 'set-status', target, symbol },
-          task,
-        );
+            : { type: 'set-status', target, symbol };
+        const result = await this.#submit(command, task);
+        const destination =
+          source === undefined || result === undefined
+            ? undefined
+            : this.#statusDestination(source, command, result);
+        if (destination !== undefined) options.onChanged?.(destination);
       },
       this.#interactionOwnership,
       this.#completionConfirmationAbortController.signal,
+    );
+  }
+
+  #statusDestination(
+    source: TaskNodeSnapshot,
+    command: Extract<TaskCommand, { type: 'set-status' | 'toggle-completion' }>,
+    result: TaskCommandResult,
+  ): TaskOccurrenceResult | undefined {
+    if (result.type !== 'ok' || !result.changed) return undefined;
+    if (result.outcome.type === 'recurrence') return result.outcome.completed;
+    if (result.outcome.type !== 'task') return undefined;
+    const root = result.outcome.task;
+    const node =
+      source.target.type === 'task'
+        ? root
+        : proveOwnedTaskSelection(root, [source.root], command)?.nodeSuccessor(source.target);
+    return node === undefined ? undefined : { root, target: taskNodeRef(node) };
+  }
+
+  #acceptColumn(status: TaskStatusDef, accept: () => boolean): boolean {
+    const current = this.#statusRegistry.bySymbol(status.symbol);
+    return accept() && current?.id === status.id && current.type === status.type;
+  }
+
+  async setBulkTaskStatusInColumn(
+    selected: readonly TaskSelectedNode[],
+    status: TaskStatusDef,
+    accept: () => boolean,
+  ): Promise<void> {
+    await this.#batch(
+      selected
+        .filter((entry) => entry.task.node.statusSymbol !== status.symbol)
+        .map((entry) => entry.task),
+      'status',
+      (task) =>
+        this.#acceptColumn(status, accept)
+          ? { type: 'set-status', target: task.target, symbol: status.symbol }
+          : undefined,
+      { accept: () => this.#acceptColumn(status, accept) },
     );
   }
 
@@ -717,7 +765,10 @@ export class TaskCommands {
     subjects: readonly T[],
     kind: TaskNodeBatchKind,
     build: (task: TaskNodeSnapshot) => TaskCommand | undefined,
-    onResult?: (task: T, result: TaskCommandResult) => void,
+    options: {
+      readonly onResult?: ((task: T, result: TaskCommandResult) => void) | undefined;
+      readonly accept?: () => boolean;
+    } = {},
   ): Promise<boolean> {
     const pending = this.#batchEntries(subjects, kind);
     if (pending === undefined) return false;
@@ -727,11 +778,16 @@ export class TaskCommands {
       if (command === undefined) break;
       this.#captureOwnedSelection(pending.map((item) => item.task));
       let effective = command;
-      const result = await this.#submitBatchCommand(entry.task, command, (prepared) => {
-        effective = prepared;
-      });
+      const result = await this.#submitBatchCommand(
+        entry.task,
+        command,
+        (prepared) => {
+          effective = prepared;
+        },
+        options.accept,
+      );
       if (result === undefined) break;
-      onResult?.(entry.original, result);
+      options.onResult?.(entry.original, result);
       if (result.type !== 'ok') break;
       changed ||= result.changed;
       if (!this.#refreshPending(pending.slice(index + 1), entry.task, effective, result)) break;
@@ -743,6 +799,7 @@ export class TaskCommands {
     task: TaskNodeSnapshot,
     command: TaskCommand,
     onPreparedPatch: (command: Extract<TaskCommand, { type: 'patch' }>) => void,
+    accept?: () => boolean,
   ): Promise<TaskCommandResult | undefined> {
     if (command.type !== 'set-status' && command.type !== 'toggle-completion')
       return this.#submit(command, task, onPreparedPatch);
@@ -752,6 +809,7 @@ export class TaskCommands {
       command.type === 'set-status' ? command.symbol : undefined,
       this.#statusRegistry,
       async () => {
+        if (accept?.() === false) return;
         const result = await this.#submit(command);
         if (result !== undefined) settled.result = result;
       },

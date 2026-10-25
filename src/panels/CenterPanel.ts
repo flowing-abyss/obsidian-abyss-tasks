@@ -5,7 +5,7 @@ import { createBrowserTaskScheduler } from '../browserTaskScheduler';
 import { moment } from '../obsidianMoment';
 import type { ProjectManager } from '../projects/ProjectManager';
 import type { ProjectStore } from '../projects/ProjectStore';
-import type { CalendarSettings } from '../settings/types';
+import type { CalendarSettings, TaskStatusDef } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import {
   isTagNavigationArchived,
@@ -47,6 +47,7 @@ import {
   type TaskNodeRef,
   type TaskNodeSnapshot,
   type TaskOccurrenceCompletion,
+  type TaskOccurrenceResult,
   type TaskQueryApi,
   type TaskRef,
   type TaskSearchAddress,
@@ -202,6 +203,14 @@ interface CreationRowAttempt extends CreationAttempt {
   readonly key: string;
 }
 
+interface TaskDropReveal {
+  readonly destination: TaskOccurrenceResult;
+  readonly surface: TaskKanbanSurface<SurfaceTask>;
+  readonly intent: number;
+  readonly controller: AbortController;
+  revealing: boolean;
+}
+
 interface ListActivation extends TaskListNavigationRequest {
   readonly source: { generation?: number; observed?: TaskSearchState };
   readonly cancel: () => void;
@@ -337,6 +346,8 @@ export class CenterPanel {
   private md_abyssPrivate = new Component();
   private cancelListActivation_abyssPrivate: (() => void) | undefined;
   private revealId_abyssPrivate = 0;
+  private taskDropReveal_abyssPrivate: TaskDropReveal | undefined;
+  private cancelTaskDropPulse_abyssPrivate: (() => void) | undefined;
   private creationInclusion_abyssPrivate: CreationInclusion | undefined;
   private readonly taskSearch_abyssPrivate: TaskSearch;
   private readonly statusPublication_abyssPrivate = new TaskListStatusPublication(
@@ -1222,6 +1233,7 @@ export class CenterPanel {
     );
     this.updateSelectionVisuals_abyssPrivate();
     this.creationInclusion_abyssPrivate?.publish();
+    this.refreshTaskDropReveal_abyssPrivate();
     return compact.rows.settleMounted(options.identity.signal);
   }
 
@@ -1330,6 +1342,7 @@ export class CenterPanel {
       host: options.host,
       state: this.state_abyssPrivate,
       statuses: () => this.statusRegistry_abyssPrivate.all(),
+      capture: (task) => this.captureKanbanSelection_abyssPrivate(task, surface),
       drop: (task, status, accept) => {
         const rows = surface.rows;
         const key = rows.firstOccurrenceOf(
@@ -1340,6 +1353,9 @@ export class CenterPanel {
         return this.statusPublication_abyssPrivate.run(task.node, (current) =>
           this.taskCommands_abyssPrivate.setTaskStatusInColumn(current, status, {
             completion: completion ?? { kind: 'allowed' },
+            onChanged: (destination) => {
+              this.queueTaskDropReveal_abyssPrivate(destination, surface);
+            },
             accept: () =>
               accept() &&
               this.taskSurface_abyssPrivate?.surface === surface &&
@@ -1349,6 +1365,135 @@ export class CenterPanel {
       },
     });
     return surface;
+  }
+
+  private captureKanbanSelection_abyssPrivate(
+    task: TaskNodeSnapshot,
+    surface: TaskKanbanSurface<SurfaceTask>,
+  ): ((status: TaskStatusDef, accept: () => boolean) => Promise<void>) | undefined {
+    const key = surface.rows.firstOccurrenceOf(
+      `${task.root.source.filePath}:${taskNodeSourceLine(task.target)}`,
+    );
+    if (
+      key === undefined ||
+      !this.rowSelection_abyssPrivate.has(key) ||
+      this.rowSelection_abyssPrivate.size < 2
+    )
+      return undefined;
+    const targets = this.taskMenuTargets_abyssPrivate();
+    return async (status, accept) => {
+      if (!accept()) return;
+      const selected = await targets.resolve(targets.signal);
+      await this.taskCommands_abyssPrivate.setBulkTaskStatusInColumn(
+        selected,
+        status,
+        () =>
+          accept() &&
+          this.taskSurface_abyssPrivate?.surface === surface &&
+          this.isTaskKanban_abyssPrivate(),
+      );
+    };
+  }
+
+  private queueTaskDropReveal_abyssPrivate(
+    destination: TaskOccurrenceResult,
+    surface: TaskKanbanSurface<SurfaceTask>,
+  ): void {
+    this.taskDropReveal_abyssPrivate?.controller.abort();
+    this.cancelTaskDropPulse_abyssPrivate?.();
+    this.taskDropReveal_abyssPrivate = {
+      destination,
+      surface,
+      intent: this.state_abyssPrivate.taskSelectionIntentGeneration,
+      controller: new AbortController(),
+      revealing: false,
+    };
+    this.refreshTaskDropReveal_abyssPrivate();
+  }
+
+  private refreshTaskDropReveal_abyssPrivate(): void {
+    const pending = this.taskDropReveal_abyssPrivate;
+    const retained = this.taskSurface_abyssPrivate;
+    if (pending === undefined || retained === null || pending.revealing) return;
+    const current = (): boolean => this.taskDropCurrent_abyssPrivate(pending);
+    if (!current()) {
+      pending.controller.abort();
+      this.taskDropReveal_abyssPrivate = undefined;
+      return;
+    }
+    const key = retained.surface.rows.firstOccurrenceOf(
+      `${pending.destination.root.source.filePath}:${taskNodeSourceLine(pending.destination.target)}`,
+    );
+    if (key === undefined) return;
+    if (!this.taskDropRowCurrent_abyssPrivate(retained, key, pending)) return;
+    pending.revealing = true;
+    runAsyncAction(
+      this.prepareTaskReveal_abyssPrivate(
+        retained,
+        key,
+        {
+          signal: pending.controller.signal,
+          isCurrent: current,
+        },
+        { expectedRef: pending.destination.root.ref },
+      )
+        .then((ready) => {
+          if (ready === undefined || !current()) return;
+          this.pulseTaskDrop_abyssPrivate(ready.card);
+        })
+        .finally(() => {
+          if (this.taskDropReveal_abyssPrivate === pending)
+            this.taskDropReveal_abyssPrivate = undefined;
+          pending.controller.abort();
+        }),
+      'Could not reveal moved task',
+    );
+  }
+
+  private taskDropCurrent_abyssPrivate(pending: TaskDropReveal): boolean {
+    return (
+      this.taskDropReveal_abyssPrivate === pending &&
+      !pending.controller.signal.aborted &&
+      this.taskSurface_abyssPrivate?.surface === pending.surface &&
+      this.state_abyssPrivate.taskSelectionIntentGeneration === pending.intent &&
+      this.queries_abyssPrivate.resolve(pending.destination.root.ref).type === 'exact'
+    );
+  }
+
+  private taskDropRowCurrent_abyssPrivate(
+    retained: TaskSurfaceState,
+    key: string,
+    pending: TaskDropReveal,
+  ): boolean {
+    const row = retained.surface.rows.task(key);
+    if (row === undefined) return false;
+    return 'root' in row
+      ? this.sameCardRef_abyssPrivate(row.root.ref, pending.destination.root.ref)
+      : this.tasks_abyssPrivate?.queries.matchesSearchAddress(
+          row.address,
+          pending.destination.target,
+          retained.search?.identity.generation ?? -1,
+        ) === true;
+  }
+
+  private clearTaskDropReveal_abyssPrivate(): void {
+    this.taskDropReveal_abyssPrivate?.controller.abort();
+    this.taskDropReveal_abyssPrivate = undefined;
+    this.cancelTaskDropPulse_abyssPrivate?.();
+  }
+
+  private pulseTaskDrop_abyssPrivate(card: HTMLElement): void {
+    this.cancelTaskDropPulse_abyssPrivate?.();
+    const owner = card.ownerDocument.defaultView;
+    if (owner === null) return;
+    card.addClass('is-search-revealed');
+    const clear = (): void => {
+      owner.clearTimeout(timer);
+      card.removeClass('is-search-revealed');
+      this.cancelTaskDropPulse_abyssPrivate = undefined;
+    };
+    const timer = owner.setTimeout(clear, 1600);
+    this.cancelTaskDropPulse_abyssPrivate = clear;
   }
 
   private taskViewportKey_abyssPrivate(): string | undefined {
@@ -3104,6 +3249,7 @@ export class CenterPanel {
       },
       options.failure ?? 'report',
     );
+    this.refreshTaskDropReveal_abyssPrivate();
   }
 
   private selectionCandidates_abyssPrivate<T>(rows: TaskListRows<T>): Map<string, T> {
@@ -3425,6 +3571,7 @@ export class CenterPanel {
   }
 
   private destroyTaskSurface_abyssPrivate(): void {
+    this.clearTaskDropReveal_abyssPrivate();
     this.taskKanbanDrag_abyssPrivate?.destroy();
     this.taskKanbanDrag_abyssPrivate = undefined;
     this.clearCreationInclusion_abyssPrivate();

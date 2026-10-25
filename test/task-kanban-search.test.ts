@@ -135,3 +135,45 @@ it.each(['list', 'kanban'] as const)(
     }
   },
 );
+
+it.each([false, true])(
+  'moves the captured selection (%s) to a column and only reveals single drops',
+  async (bulk) => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.listViewStates = { inbox: { ...getListViewDefaults('inbox'), view: 'kanban' } };
+    const h = await mountCanonicalSearchUi(
+      { 'tasks.md': '- [ ] one\n- [ ] two\n- [ ] three' },
+      settings,
+      'tasks',
+    );
+    try {
+      await h.completed();
+      const cards = [...h.root.querySelectorAll<HTMLElement>('.abyss-task-card')];
+      if (bulk)
+        for (const card of cards.slice(0, 2))
+          card.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+      const first = expectDefined(h.index.listNodes({ filePath: 'tasks.md' })[0]);
+      h.state.set('draggingTaskNode', { source: 'center-card', task: first });
+      const status = expectDefined(settings.taskStatuses.find((s) => s.symbol === '/'));
+      const column = expectDefined(
+        h.root.querySelector<HTMLElement>(`[data-column-key="status:${status.id}"]`),
+      );
+      column.dispatchEvent(new MouseEvent('drop', { bubbles: true, cancelable: true }));
+      await vi.waitFor(() => {
+        expect(h.index.listNodes({ filePath: 'tasks.md' }).map((t) => t.node.statusSymbol)).toEqual(
+          bulk ? ['/', '/', ' '] : ['/', ' ', ' '],
+        );
+      });
+      await h.completed();
+      if (bulk) expect(h.root.querySelector('.abyss-task-card.is-search-revealed')).toBeNull();
+      else
+        await vi.waitFor(() => {
+          expect(
+            column.querySelector('.abyss-task-card.is-search-revealed')?.textContent,
+          ).toContain('one');
+        });
+    } finally {
+      h.dispose();
+    }
+  },
+);

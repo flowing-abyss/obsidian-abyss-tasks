@@ -1,3 +1,5 @@
+// Kanban shared grouping and guarded single/bulk drops: measured main 2180929 bytes;
+// minimal containing KiB budget 2181120 bytes. No new dependencies.
 import esbuild from 'esbuild';
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { builtinModules, createRequire } from 'node:module';

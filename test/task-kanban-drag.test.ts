@@ -77,3 +77,21 @@ it('leaves tag and project drags to their existing handlers', () => {
   expect(over.defaultPrevented).toBe(false);
   expect(h.drop).not.toHaveBeenCalled();
 });
+
+it('keeps Android native long-press context menus from interrupting a live drag', () => {
+  const h = harness();
+  const menu = vi.fn();
+  h.column.addEventListener('contextmenu', menu);
+  h.start();
+  const duringDrag = event('contextmenu');
+  h.column.dispatchEvent(duringDrag);
+  expect(duringDrag.defaultPrevented).toBe(true);
+  expect(menu).not.toHaveBeenCalled();
+  h.column.dispatchEvent(event('drop'));
+  expect(h.drop).toHaveBeenCalledTimes(1);
+  h.state.set('draggingTaskNode', null);
+  const ordinary = event('contextmenu');
+  h.column.dispatchEvent(ordinary);
+  expect(ordinary.defaultPrevented).toBe(false);
+  expect(menu).toHaveBeenCalledTimes(1);
+});

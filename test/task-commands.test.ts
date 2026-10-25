@@ -16,6 +16,7 @@ import {
   type TaskCommand,
   type TaskCommandResult,
   type TaskNodeSnapshot,
+  type TaskOccurrenceResult,
   type TaskSnapshot,
 } from '../src/tasks';
 import { TaskApplicationService } from '../src/tasks/application/TaskApplicationService';
@@ -923,4 +924,78 @@ it('clears selection and continues bulk deletion after cleanup warnings', async 
   expect(f.state.get('taskStack')).toEqual([]);
   expect(f.selection.size).toBe(0);
   f.commands.dispose();
+});
+
+it.each([
+  '- [ ] Parent\n  - [ ] Child\n',
+  '- [ ] Parent\n  - [ ] Child 🔁 every day 📅 2026-10-03\n',
+])('reports the completed exact node for single column feedback: %s', async (source) => {
+  const h = await realCommands(source);
+  const moved = vi.fn<(destination: TaskOccurrenceResult) => void>();
+  const status = expectDefined(DEFAULT_SETTINGS.taskStatuses.find((s) => s.symbol === 'x'));
+  try {
+    await h.commands.setTaskStatusInColumn(expectDefined(h.nodes[1]), status, {
+      completion: { kind: 'allowed' },
+      accept: () => true,
+      onChanged: moved,
+    });
+    expect(moved).toHaveBeenCalledTimes(1);
+    const destination = moved.mock.calls[0]?.[0];
+    expect(
+      destination?.root.subtasks.find((n) =>
+        sameTaskNodeRef({ type: 'subtask', ref: n.ref }, destination.target),
+      )?.statusSymbol,
+    ).toBe('x');
+    expect(destination?.target.type).toBe('subtask');
+    if (destination?.target.type === 'subtask')
+      expect(destination.target.ref.originalBlock).toContain('[x] Child');
+  } finally {
+    h.commands.dispose();
+    h.index.destroy();
+  }
+});
+it('moves a captured batch through recurrence relocation and stops when column acceptance is revoked', async () => {
+  const h = await realCommands(
+    '- [ ] First 🔁 every day 📅 2026-10-03\n- [ ] Second\n- [ ] Third\n',
+  );
+  const all = h.index
+    .listNodes({ filePath: 'source.md' })
+    .map((task) => ({ task, completion: { kind: 'allowed' as const } }));
+  const status = expectDefined(DEFAULT_SETTINGS.taskStatuses.find((s) => s.symbol === 'x'));
+  let accepted = true;
+  const execute = h.service.execute.bind(h.service);
+  let calls = 0;
+  vi.spyOn(h.service, 'execute').mockImplementation(async (command, options) => {
+    const result = await execute(command, options);
+    if (++calls === 2) accepted = false;
+    return result;
+  });
+  try {
+    await h.commands.setBulkTaskStatusInColumn(all, status, () => accepted);
+    expect(calls).toBe(2);
+    const content = await h.read('source.md');
+    expect(content).toContain('- [x] First');
+    expect(content).toContain('- [x] Second');
+    expect(content).toContain('- [ ] Third');
+  } finally {
+    h.commands.dispose();
+    h.index.destroy();
+  }
+});
+it('does not submit a bulk column change after its status definition changes', async () => {
+  const h = await realCommands('- [ ] First\n- [ ] Second\n');
+  const status = expectDefined(DEFAULT_SETTINGS.taskStatuses.find((s) => s.symbol === '/'));
+  try {
+    await h.commands.setBulkTaskStatusInColumn(
+      h.index
+        .listNodes({ filePath: 'source.md' })
+        .map((task) => ({ task, completion: { kind: 'allowed' as const } })),
+      { ...status, id: 'different' },
+      () => true,
+    );
+    expect(await h.read('source.md')).toBe('- [ ] First\n- [ ] Second\n');
+  } finally {
+    h.commands.dispose();
+    h.index.destroy();
+  }
 });
