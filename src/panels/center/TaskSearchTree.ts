@@ -32,6 +32,7 @@ export function isTaskSearchSemanticEvidence(
   );
 }
 export interface TaskSearchTreeRenderOptions {
+  readonly fullDescription?: boolean;
   readonly app: App;
   readonly root: TaskSnapshot;
   readonly base: TaskSelectionNode;
@@ -375,6 +376,18 @@ function prepareComments(
     }
   return ordered;
 }
+function descriptionContinues(source: string): boolean {
+  return source
+    .split('\n')
+    .slice(1)
+    .some((line) => line.trim().length > 0);
+}
+function descriptionMode(record: EntryRecord, matched: boolean): 'hidden' | 'preview' | 'full' {
+  if (matched) return 'full';
+  if (record.tree !== record.options.search.context.tree || record.options.search.mode !== 'filter')
+    return 'hidden';
+  return record.options.fullDescription === true ? 'full' : 'preview';
+}
 function descriptionPresentation(record: EntryRecord): {
   markdown: string;
   preview: boolean;
@@ -385,20 +398,13 @@ function descriptionPresentation(record: EntryRecord): {
     (evidence) =>
       evidence.provenance.type === 'field' && evidence.provenance.field === 'description',
   );
-  const preview =
-    record.tree === record.options.search.context.tree &&
-    record.options.search.mode === 'filter' &&
-    !matched;
+  const mode = descriptionMode(record, matched);
+  const preview = mode === 'preview';
   const source = record.node.description ?? '';
   let markdown = '';
-  if (matched) markdown = source;
+  if (mode === 'full') markdown = source;
   else if (preview) markdown = source.split('\n')[0] ?? '';
-  const continuation =
-    preview &&
-    source
-      .split('\n')
-      .slice(1)
-      .some((line) => line.trim().length > 0);
+  const continuation = preview && descriptionContinues(source);
   return { markdown, preview, continuation, show: markdown !== '' || continuation };
 }
 function prepareDescriptionField(
@@ -407,6 +413,9 @@ function prepareDescriptionField(
   presentation: ReturnType<typeof descriptionPresentation>,
 ): FieldRecord | undefined {
   const { show, markdown, preview, continuation } = presentation;
+  const full =
+    record.options.fullDescription === true && record.tree === record.options.search.context.tree;
+  const kind = preview ? 'preview' : 'excerpt';
   if (!show) {
     if (record.description !== undefined) {
       record.description.desired = false;
@@ -432,7 +441,7 @@ function prepareDescriptionField(
         record,
         markdown,
         { type: 'description', target: record.target },
-        { kind: preview ? 'preview' : 'excerpt', continuation },
+        { kind: full ? 'complete' : kind, continuation },
       ),
     ),
   );

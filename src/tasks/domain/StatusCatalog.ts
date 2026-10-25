@@ -37,6 +37,13 @@ export class StatusCatalog {
     return rule != null ? { ...rule } : undefined;
   }
 
+  matchesRule(expected: Pick<TaskStatusRule, 'id' | 'symbol' | 'type'>): boolean {
+    const rule = this.ruleForSymbol(expected.symbol);
+    return (
+      rule?.id === expected.id && rule.symbol === expected.symbol && rule.type === expected.type
+    );
+  }
+
   defaultForType(type: TaskStatusType): TaskStatusRule | undefined {
     const rule = this.rules.find(
       (candidate) => candidate.type === type && candidate.defaultForType,

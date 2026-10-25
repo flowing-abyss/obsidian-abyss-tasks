@@ -1017,7 +1017,7 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
     }
   });
 
-  it('renders the filter chips again in a kept header, right before the view-state button', async () => {
+  it('renders the filter chips again in a kept header, before the view switcher', async () => {
     const settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS)) as CalendarSettings;
     const state = new AppState();
     state.set('selectedList', 'today');
@@ -1063,7 +1063,7 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
       expect(labels()).toEqual(['#work', '#home']);
       const last = chips()[chips().length - 1];
       expect(last?.nextElementSibling).toBe(
-        container.querySelector('.abyss-center-controls > .abyss-view-state-btn'),
+        container.querySelector('.abyss-center-controls > .abyss-view-switcher'),
       );
     } finally {
       panel.destroy();

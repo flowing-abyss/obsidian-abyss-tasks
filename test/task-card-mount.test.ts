@@ -2306,3 +2306,21 @@ it('retires calendar activation and pending Markdown when its day is replaced', 
   expect(mount.element.isConnected).toBe(false);
   expect(document.body.textContent).not.toContain('Late');
 });
+
+it('renders the complete description when the collection requests more than a preview', async () => {
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, markdown, element) => {
+    element.setText(markdown);
+  });
+  const h = renderer();
+  const flags = { selected: false, showDelete: false, fullDescription: true };
+  const mount = h.subject.mount(
+    document.body,
+    task({ description: 'Summary\nDetails' }),
+    [],
+    flags,
+  );
+  await mount.settled;
+  expect(mount.element.querySelector('.abyss-task-desc')?.textContent).toContain('Details');
+  expect(mount.element.querySelector('.abyss-task-desc')?.textContent).not.toContain('…');
+  mount.destroy();
+});

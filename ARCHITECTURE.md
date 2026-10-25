@@ -349,8 +349,8 @@ inward reads never create Notices. Diagnostics omit query text, task content, pa
 exception causes. Hidden preparation failures remain quiet until an active surface needs feedback.
 
 [`TaskListStatusPublication`](src/panels/task-list/TaskListStatusPublication.ts) captures a list
-status press before an inspector blur can save. It pins the row and holds Search presentation intake
-through the native activation task, an opened status menu, and accepted asynchronous commands.
+status press or a Kanban card press before an inspector blur can save. It pins the row and holds Search presentation intake
+through the native activation task, an opened status menu, a native Kanban drag, and accepted asynchronous commands.
 Search and source queries remain live. Each publication must still resolve the captured root exactly
 or through a repository-proven authority transition, with surviving descendants checked by the
 existing exact selection/source continuity rules; external replacements, ambiguity, deletion,
@@ -466,7 +466,10 @@ column. `CenterPanel` retains source subscriptions, selection, commands, and sea
 the board only owns column geometry and mounts. It organizes compact rows before hydration,
 releases offscreen columns, and retains interaction pins. List and board scroll anchors remain
 session state, separately per task context. The shared card renderer and native write receipts
-remain authoritative in both layouts.
+remain authoritative in both layouts. `TaskKanbanDrag` consumes the existing
+AppState task payload and uses `TaskCommands` for whole-column status changes. A drop retains its
+captured definition and cancellation authority through confirmation; it never changes priority,
+source order, or task ranks. Tag/project transfers keep their existing destinations.
 
 CalendarMode owns the period anchor, transient selected day, view lifetime, and forecast presentation.
 Its mounted publication hold defers query patches during pointer presses and native drags, and through
@@ -658,7 +661,11 @@ initial-field preparation as execution. The Markdown preview adapter runs `creat
 and reads its canonical root metadata. It also retains policy-prefixed source planning before the
 initial patch, separately from final planning. Preview does not prepare or validate destinations,
 read the clock again, or write; execution retains its destination and current-source checks.
-Unavailable sessions and absent preview ports return explicit capability outcomes.
+Unavailable sessions and absent preview ports return explicit capability outcomes. Kanban capture adds
+an optional create-only status (id, symbol, semantic type). Both application preparation and the
+canonical Markdown codec revalidate that definition, then apply its normal status/date edit while
+building the one new root block. Capture defaults, destination, and failed-draft ownership stay with
+`CaptureSessions` and the ordinary create session. No second status write or task metadata is added.
 
 The task domain's input inspection reads canonical carrier occurrences and atomic Markdown ranges
 in raw UTF-16 coordinates. It protects tags, known carriers (including malformed ones), links,

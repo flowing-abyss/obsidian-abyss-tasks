@@ -2,6 +2,7 @@ import { Notice, type App } from 'obsidian';
 import type { AppState } from '../../app/AppState';
 import type { LinkToken } from '../../markdown/links';
 import type { ProjectManager } from '../../projects/ProjectManager';
+import type { TaskStatusDef } from '../../settings/types';
 import type { StatusRegistry } from '../../status/StatusRegistry';
 import type {
   CalendarTaskSource,
@@ -438,7 +439,7 @@ export class TaskCommands {
     task: TaskCommandSubject,
     completion: TaskOccurrenceCompletion = { kind: 'allowed' },
   ): Promise<void> {
-    return this.#status(task, undefined, completion);
+    return this.#status(task, undefined, { completion });
   }
 
   setTaskStatus(
@@ -446,15 +447,34 @@ export class TaskCommands {
     symbol: string,
     completion: TaskOccurrenceCompletion = { kind: 'allowed' },
   ): Promise<void> {
-    return this.#status(task, symbol, completion);
+    return this.#status(task, symbol, { completion });
+  }
+
+  setTaskStatusInColumn(
+    task: TaskCommandSubject,
+    status: TaskStatusDef,
+    options: { readonly completion: TaskOccurrenceCompletion; readonly accept: () => boolean },
+  ): Promise<void> {
+    return this.#status(task, status.symbol, {
+      completion: options.completion,
+      accept: () => {
+        const current = this.#statusRegistry.bySymbol(status.symbol);
+        return (
+          options.accept() &&
+          current?.id === status.id &&
+          current.type === status.type &&
+          this.#tasks?.queries.resolve(rootTaskRef(commandNode(task))).type === 'exact'
+        );
+      },
+    });
   }
 
   async #status(
     task: TaskCommandSubject,
     symbol: string | undefined,
-    completion: TaskOccurrenceCompletion,
+    options: { readonly completion: TaskOccurrenceCompletion; readonly accept?: () => boolean },
   ): Promise<void> {
-    if (completion.kind !== 'allowed') return;
+    if (options.completion.kind !== 'allowed' || options.accept?.() === false) return;
     const target = commandTarget(task);
     if (target === undefined) return;
     await requestTaskStatusChange(
@@ -462,6 +482,7 @@ export class TaskCommands {
       symbol,
       this.#statusRegistry,
       async () => {
+        if (options.accept?.() === false) return;
         await this.#submit(
           symbol === undefined
             ? { type: 'toggle-completion', target }

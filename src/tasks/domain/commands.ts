@@ -17,6 +17,7 @@ import type {
   TaskPriority,
   TaskRef,
   TaskSnapshot,
+  TaskStatusRule,
   TaskTextTarget,
   TimeEntryRef,
 } from './types';
@@ -43,7 +44,9 @@ export interface TaskPatch {
 
 export type SubtaskPatch = TaskPatch;
 
-type TaskInitialFields = Omit<TaskPatch, 'markdownTitle'>;
+type TaskInitialFields = Omit<TaskPatch, 'markdownTitle'> & {
+  readonly status?: Pick<TaskStatusRule, 'id' | 'symbol' | 'type'>;
+};
 
 type TaskCreationDestination =
   | { readonly type: 'configured-default' }

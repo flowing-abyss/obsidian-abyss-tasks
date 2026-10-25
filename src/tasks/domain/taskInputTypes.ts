@@ -1,10 +1,12 @@
 import type { ClockReading } from './clock';
-import type { TaskPatch } from './commands';
+import type { TaskCommand } from './commands';
 import type { LocalDate, LocalTime, TaskPlanning, TaskPriority } from './types';
 import type { TaskIssue } from './validation';
 import { localTime } from './validation';
 
-export type TaskInputInitial = Omit<TaskPatch, 'markdownTitle'>;
+export type TaskInputInitial = NonNullable<
+  Extract<TaskCommand, { readonly type: 'create' }>['initial']
+>;
 export interface TaskInputRange {
   readonly from: number;
   readonly to: number;

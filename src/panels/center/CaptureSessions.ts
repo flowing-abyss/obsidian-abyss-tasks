@@ -1,7 +1,7 @@
 import type { App } from 'obsidian';
 import type { AppState } from '../../app/AppState';
 import { listSelectionToKey } from '../../app/listViewState';
-import type { CalendarSettings } from '../../settings/types';
+import type { CalendarSettings, TaskStatusDef } from '../../settings/types';
 import type {
   LocalDate,
   TaskApplicationApi,
@@ -40,7 +40,14 @@ export type BarCapturePlacement =
   | { readonly type: 'list'; readonly selectionKey: string }
   | { readonly type: 'project'; readonly path: string };
 
-export type PanelCapturePlacement = BarCapturePlacement | CalendarCapturePlacement;
+export type PanelCapturePlacement =
+  | BarCapturePlacement
+  | CalendarCapturePlacement
+  | {
+      readonly type: 'kanban';
+      readonly selectionKey: string;
+      readonly status: Pick<TaskStatusDef, 'id' | 'symbol' | 'type'>;
+    };
 
 interface PanelCaptureSession {
   readonly requestId: number;
@@ -123,6 +130,19 @@ export class CaptureSessions {
       active.returnFocus = trigger;
       this.#mountCaptureSurface(active, host);
     }
+  }
+
+  openKanbanCapture(status: TaskStatusDef, trigger: HTMLElement): void {
+    const selection = this.#state.get('selectedList');
+    this.openCapture(
+      {
+        type: 'kanban',
+        selectionKey: listSelectionToKey(selection),
+        status: { id: status.id, symbol: status.symbol, type: status.type },
+      },
+      { type: 'list', selection },
+      trigger,
+    );
   }
 
   openDateCapture(date: LocalDate): void {
@@ -212,6 +232,14 @@ export class CaptureSessions {
       if (host != null) this.#mountCaptureSurface(active, host);
       return;
     }
+    if (placement.type === 'kanban') {
+      const column = [
+        ...this.#root().querySelectorAll<HTMLElement>('.abyss-task-kanban-column'),
+      ].find((el) => el.dataset['columnKey'] === `status:${placement.status.id}`);
+      const host = column?.querySelector<HTMLElement>('.abyss-task-kanban-capture');
+      if (host != null) this.#mountCaptureSurface(active, host);
+      return;
+    }
     const host = [...this.#root().querySelectorAll<HTMLElement>('[data-abyss-capture-host]')].find(
       (candidate) =>
         placement.type === 'project'
@@ -227,6 +255,8 @@ export class CaptureSessions {
     target: CaptureTarget,
     placement: PanelCapturePlacement,
   ): CaptureTarget {
+    if (placement.type === 'kanban')
+      return { ...target, initial: { ...target.initial, status: placement.status } };
     if (!isCalendarCapturePlacement(placement)) return target;
     return captureTargetForCalendarPlacement(target, placement);
   }
@@ -249,10 +279,7 @@ export class CaptureSessions {
       ...(feedbackHost !== undefined && { feedbackHost }),
       onEscape,
     };
-    const presentation =
-      active.placement.type === 'list' || active.placement.type === 'project'
-        ? 'inline'
-        : 'default';
+    const presentation = !isCalendarCapturePlacement(active.placement) ? 'inline' : 'default';
     const surface = new CaptureSurface(host, active.controller, { ...options, presentation });
     this.#applyCaptureInputClass(surface, active.placement);
     active.revealIntent?.mount(surface.input);
@@ -438,6 +465,8 @@ export class CaptureSessions {
 
   #capturePlacementKey(placement: PanelCapturePlacement): string {
     switch (placement.type) {
+      case 'kanban':
+        return `kanban:${placement.selectionKey}:${placement.status.id}:${placement.status.symbol}`;
       case 'project':
         return `project:${placement.path}`;
       case 'calendar-timed':
@@ -453,11 +482,20 @@ export class CaptureSessions {
     }
   }
 
+  #captureLayoutCurrent(placement: PanelCapturePlacement): boolean {
+    return placement.type !== 'kanban' || this.#state.get('centerListViewState').view === 'kanban';
+  }
+
   cancelStaleListCapture(): void {
     const placement = this.#activeCapture?.placement ?? this.#resolvingCapture?.placement;
-    if (placement?.type !== 'list') return;
+    if (placement === undefined) return;
+    if (placement.type !== 'list' && placement.type !== 'kanban') return;
     const currentSelectionKey = listSelectionToKey(this.#state.get('selectedList'));
-    if (this.#state.get('mode') !== 'tasks' || placement.selectionKey !== currentSelectionKey) {
+    if (
+      this.#state.get('mode') !== 'tasks' ||
+      placement.selectionKey !== currentSelectionKey ||
+      !this.#captureLayoutCurrent(placement)
+    ) {
       this.cancelActiveCapture();
     }
   }

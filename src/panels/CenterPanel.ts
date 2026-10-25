@@ -130,6 +130,7 @@ import { StatisticsMode } from './statistics/StatisticsMode';
 import type { StatisticsNavigationPort } from './statistics/StatisticsNavigation';
 import { TanStackStatisticsChart } from './statistics/TanStackStatisticsChart';
 import type { TaskCollectionSurface } from './task-collection/TaskCollectionSurface';
+import { TaskKanbanDrag } from './task-collection/TaskKanbanDrag';
 import {
   TaskKanbanSurface,
   type TaskKanbanScrollPosition,
@@ -313,6 +314,7 @@ export class CenterPanel {
   private readonly mountedSnapshots_abyssPrivate = new Map<string, TaskNodeSnapshot>();
   private keyboardTarget_abyssPrivate: AbortController | undefined;
   private taskSurface_abyssPrivate: TaskSurfaceState | null = null;
+  private taskKanbanDrag_abyssPrivate: TaskKanbanDrag | undefined;
   private readonly taskScroll_abyssPrivate = new Map<string, TaskCollectionScroll>();
   private outgoingLinks_abyssPrivate: TaskLinkValues = new Map();
   private refocusSearch_abyssPrivate = false;
@@ -1302,6 +1304,9 @@ export class CenterPanel {
       return surface;
     }
     const surface = new TaskKanbanSurface(options, {
+      createTask: (status, _host, trigger) => {
+        this.captureSessions_abyssPrivate.openKanbanCapture(status, trigger);
+      },
       toggleColumn: (key) => {
         const current = normalizeTaskKanbanSettings(
           this.state_abyssPrivate.get('centerListViewState').kanban,
@@ -1314,6 +1319,28 @@ export class CenterPanel {
       },
     });
     if (saved?.type === 'kanban') surface.restoreScroll(saved.value);
+    this.taskKanbanDrag_abyssPrivate = new TaskKanbanDrag({
+      host: options.host,
+      state: this.state_abyssPrivate,
+      statuses: () => this.statusRegistry_abyssPrivate.all(),
+      drop: (task, status, accept) => {
+        const rows = surface.rows;
+        const key = rows.firstOccurrenceOf(
+          `${task.root.source.filePath}:${taskNodeSourceLine(task.target)}`,
+        );
+        const row = key === undefined ? undefined : rows.rowAt(rows.rowIndexOf(key));
+        const completion = row?.kind === 'task' ? row.presentation?.completion : undefined;
+        return this.statusPublication_abyssPrivate.run(task.node, (current) =>
+          this.taskCommands_abyssPrivate.setTaskStatusInColumn(current, status, {
+            completion: completion ?? { kind: 'allowed' },
+            accept: () =>
+              accept() &&
+              this.taskSurface_abyssPrivate?.surface === surface &&
+              this.isTaskKanban_abyssPrivate(),
+          }),
+        );
+      },
+    });
     return surface;
   }
 
@@ -1327,6 +1354,7 @@ export class CenterPanel {
     rows: TaskListRows<T>,
   ): TaskListRows<T> {
     const surface = this.taskSurface_abyssPrivate?.surface;
+    this.taskKanbanDrag_abyssPrivate?.refresh();
     if (!(surface instanceof TaskKanbanSurface)) return rows;
     const settings = normalizeTaskKanbanSettings(
       this.state_abyssPrivate.get('centerListViewState').kanban,
@@ -2207,6 +2235,7 @@ export class CenterPanel {
     }
     const renderKeys = ['selectedList', 'centerListViewState', 'centerFilter', 'mode'];
     if (renderKeys.some((key) => changed.has(key))) {
+      this.captureSessions_abyssPrivate.cancelStaleListCapture();
       this.menuIntent_abyssPrivate.abort();
       this.cancelCreationAttempts_abyssPrivate();
       this.captureContextRevision_abyssPrivate++;
@@ -2852,7 +2881,7 @@ export class CenterPanel {
     for (const chip of shell.filterChips) chip.remove();
     shell.filterChips = this.listViewControls_abyssPrivate.renderPropertyChips(
       shell.controls,
-      shell.viewButton,
+      shell.viewSwitcher.element,
     );
     const viewState = this.state_abyssPrivate.get('centerListViewState');
     shell.viewSwitcher.update(viewState.view ?? 'list');
@@ -3271,8 +3300,12 @@ export class CenterPanel {
     occurrence?: TaskOccurrencePresentation,
   ): Parameters<TaskCardMount['update']>[2] {
     const options = this.taskSurface_abyssPrivate?.options;
+    const lines = normalizeTaskKanbanSettings(
+      this.state_abyssPrivate.get('centerListViewState').kanban,
+    ).descriptionLines;
     return {
       projection: task,
+      fullDescription: this.isTaskKanban_abyssPrivate() && (lines === 2 || lines === 'full'),
       ...(occurrence === undefined ? {} : { occurrence }),
       selected:
         taskStackRowKey(this.state_abyssPrivate.get('taskStack')) ===
@@ -3351,6 +3384,8 @@ export class CenterPanel {
   }
 
   private destroyTaskSurface_abyssPrivate(): void {
+    this.taskKanbanDrag_abyssPrivate?.destroy();
+    this.taskKanbanDrag_abyssPrivate = undefined;
     this.clearCreationInclusion_abyssPrivate();
     this.cancelCreationAttempts_abyssPrivate();
     this.menuIntent_abyssPrivate.abort();
@@ -3523,6 +3558,19 @@ export class CenterPanel {
     this.state_abyssPrivate.set('taskStack', [projection.root, ...projection.path]);
   }
 
+  private pinTaskDrag_abyssPrivate(
+    card: HTMLElement,
+    task: TaskSnapshot,
+  ): (() => void) | undefined {
+    if (this.isTaskKanban_abyssPrivate()) return this.statusPublication_abyssPrivate.drag(card);
+    const key = this.eventTaskCardKey_abyssPrivate(card);
+    return key === undefined
+      ? undefined
+      : this.pinTaskInteraction_abyssPrivate(key, task.ref, () =>
+          this.endTaskDrag_abyssPrivate?.(),
+        );
+  }
+
   private mountTaskCardDrag_abyssPrivate(
     card: HTMLElement,
     currentTask: () => TaskSnapshot,
@@ -3530,6 +3578,14 @@ export class CenterPanel {
     currentProjection = () => rootTaskNodeSnapshot(currentTask()),
   ): void {
     if (isForecastCalendarTask(currentTask())) return;
+    const rowKey = this.isTaskKanban_abyssPrivate()
+      ? this.eventTaskCardKey_abyssPrivate(card)
+      : undefined;
+    if (rowKey !== undefined)
+      this.statusPublication_abyssPrivate.captureDrag(card, {
+        key: rowKey,
+        current: currentProjection,
+      });
     card.setAttribute('draggable', 'true');
     component.register(() => {
       if (card.hasClass('abyss-dragging')) this.endTaskDrag_abyssPrivate?.();
@@ -3537,13 +3593,7 @@ export class CenterPanel {
     component.registerDomEvent(card, 'dragstart', () => {
       const task = currentTask();
       this.endTaskDrag_abyssPrivate?.();
-      const key = this.eventTaskCardKey_abyssPrivate(card);
-      const releasePin =
-        key === undefined
-          ? undefined
-          : this.pinTaskInteraction_abyssPrivate(key, task.ref, () =>
-              this.endTaskDrag_abyssPrivate?.(),
-            );
+      const releasePin = this.pinTaskDrag_abyssPrivate(card, task);
       card.classList.add('abyss-dragging');
       this.endTaskDrag_abyssPrivate = startTaskNodeDrag(this.state_abyssPrivate, this.el, card, {
         payload: {

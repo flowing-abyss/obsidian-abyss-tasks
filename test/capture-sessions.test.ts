@@ -103,6 +103,61 @@ describe('capture session cancellation', () => {
   });
 });
 
+describe('Kanban capture', () => {
+  it('creates in the chosen column through the existing capture session and preserves a failed draft', async () => {
+    const state = new AppState();
+    state.set('mode', 'tasks');
+    const execute = vi.fn<TaskCreateSession['execute']>().mockResolvedValue({
+      type: 'invalid',
+      issues: [{ code: 'invalid-status', field: 'status' }],
+    });
+    const application: TaskApplicationApi & TaskCaptureApplicationApi = {
+      queries: taskQueryApi(),
+      execute: vi.fn(),
+      planCreate: async () => ({
+        type: 'ready',
+        destination: { filePath: 'tasks.md', insertion: { type: 'append' } },
+        preview: () => ({ type: 'unavailable', cause: 'preview-capability' }),
+        execute,
+      }),
+    };
+    const root = activeDocument.body.createDiv();
+    const column = root.createDiv({ cls: 'abyss-task-kanban-column' });
+    column.dataset['columnKey'] = 'status:doing';
+    const host = column.createDiv({ cls: 'abyss-task-kanban-capture' });
+    const trigger = column.createEl('button');
+    const captures = new CaptureSessions({
+      state,
+      settings: DEFAULT_SETTINGS,
+      application,
+      listNodes: () => [],
+      onCreationResult: () => {},
+      root: () => root,
+    });
+    try {
+      captures.openKanbanCapture(
+        { id: 'doing', symbol: '/', name: 'Doing', type: 'in-progress', icon: '', core: false },
+        trigger,
+      );
+      await flushMicrotasks();
+      const input = expectDefined(host.querySelector<HTMLTextAreaElement>('.abyss-capture-input'));
+      input.value = 'Board draft';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await flushMicrotasks();
+      expect(execute.mock.calls[0]?.[0].initial?.status).toEqual({
+        id: 'doing',
+        symbol: '/',
+        type: 'in-progress',
+      });
+      expect(input.value).toBe('Board draft');
+      expect(input.isConnected).toBe(true);
+    } finally {
+      captures.cancelActiveCapture();
+    }
+  });
+});
+
 describe('retained capture hosts', () => {
   it('retains the input, selection and composition with one trigger across refresh', async () => {
     const state = new AppState();

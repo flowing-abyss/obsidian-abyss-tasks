@@ -79,6 +79,31 @@ function applyInitialPatch(
   return undefined;
 }
 
+function applyInitialStatus(
+  codec: TaskMarkdownCodec,
+  sourceLines: string[],
+  draft: TaskDraft,
+): CreateMetadataFailure | undefined {
+  const status = draft.initial?.status;
+  if (status === undefined) return undefined;
+  if (!codec.matchesStatusRule(status))
+    return invalidTaskResult([{ code: 'invalid-status', field: 'status' }]);
+  const owner = sourceLines[0];
+  if (owner === undefined) return invalidTaskSyntax();
+  const result = applyTaskCommand(codec, owner, {
+    type: 'set-status',
+    target: { type: 'task', ref: DRAFT_REF },
+    symbol: status.symbol,
+    ...(draft.today === undefined ? {} : { stamp: draft.today }),
+    ...(draft.addCompletionDate === undefined
+      ? {}
+      : { addCompletionDate: draft.addCompletionDate }),
+  });
+  if (result.type === 'invalid') return result;
+  sourceLines[0] = result.content;
+  return undefined;
+}
+
 /** A read-only context root shares creation metadata stages without authorizing a task title. */
 export function readTaskCreateContext(
   codec: TaskMarkdownCodec,
@@ -92,6 +117,8 @@ export function readTaskCreateContext(
   if (issues.length > 0) return invalidTaskResult(issues);
   const patch = applyInitialPatch(codec, sourceLines, draft.initial);
   if (patch !== undefined) return patch;
+  const status = applyInitialStatus(codec, sourceLines, draft);
+  if (status !== undefined) return status;
   const normalized = normalizeSourceLines(codec, sourceLines);
   return normalized ?? { type: 'context', content: sourceLines.join('\n') };
 }
@@ -135,6 +162,8 @@ export function createTaskBlock(
   if (validation !== undefined) return validation;
   const patch = applyInitialPatch(codec, sourceLines, draft.initial);
   if (patch !== undefined) return patch;
+  const status = applyInitialStatus(codec, sourceLines, draft);
+  if (status !== undefined) return status;
   const normalized = normalizeSourceLines(codec, sourceLines);
   if (normalized !== undefined) return normalized;
   const updated = sourceLines.join('\n');

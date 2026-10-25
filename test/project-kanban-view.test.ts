@@ -598,12 +598,12 @@ describe('project Kanban overview', () => {
     ).toBe('true');
   });
 
-  it('switches after Sort & group, retains the table node, and keeps independent searches', () => {
+  it('switches before Sort & group, retains the table node, and keeps independent searches', () => {
     const { host } = mountView();
     const controls = expectDefined(host.querySelector('.abyss-project-table-controls'));
     expect(Array.from(controls.children).map((child) => child.getAttribute('aria-label'))).toEqual([
-      'Sort & group options',
       'Project view',
+      'Sort & group options',
       'Filter projects',
     ]);
     const switcher = expectDefined(

@@ -194,8 +194,8 @@ const TABLET_PADDING_ROWS: ReadonlyArray<readonly [declared: string, raised: str
   ['.abyss-cal-nav-btn', 'body.is-tablet button.abyss-cal-nav-btn'],
   ['.abyss-cal-nav-today', 'body.is-tablet button.abyss-cal-nav-today'],
   [
-    ':is(button.abyss-cal-view-btn, button.abyss-project-overview-mode)',
-    'body.is-tablet :is(button.abyss-cal-view-btn, button.abyss-project-overview-mode)',
+    ':is(button.abyss-cal-view-btn, button.abyss-view-mode)',
+    'body.is-tablet :is(button.abyss-cal-view-btn, button.abyss-view-mode)',
   ],
   [
     '.abyss-month-picker button.abyss-month-picker-btn',
@@ -262,8 +262,8 @@ const TABLET_PADDING_ROWS: ReadonlyArray<readonly [declared: string, raised: str
     'body.is-tablet .abyss-project-table-controls button.abyss-view-state-btn',
   ],
   [
-    '.abyss-projects-table button.abyss-project-overview-mode',
-    'body.is-tablet .abyss-projects-table button.abyss-project-overview-mode',
+    '.abyss-center-controls button.abyss-view-mode',
+    'body.is-tablet .abyss-center-controls button.abyss-view-mode',
   ],
   [
     '.abyss-projects-table button.abyss-project-table-column-button',

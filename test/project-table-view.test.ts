@@ -7586,9 +7586,12 @@ vi.mock('obsidian', async () => ({
   setTooltip: vi.fn(),
 }));
 
-it('keeps project view switching before shared view options and search', () => {
+it('keeps project filters before view switching, shared view options and search', () => {
   const { host } = mount([project({})]);
   const controls = expectDefined(host.querySelector('.abyss-project-table-controls'));
+  expect(controls.previousElementSibling?.classList.contains('abyss-project-status-filters')).toBe(
+    true,
+  );
   const order = [...controls.children].map((el) => el.className);
   expect(
     order.findIndex((value) => value.includes('abyss-project-overview-switcher')),

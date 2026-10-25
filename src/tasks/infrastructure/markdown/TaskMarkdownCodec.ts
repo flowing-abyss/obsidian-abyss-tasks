@@ -1142,6 +1142,10 @@ export class TaskMarkdownCodec {
     return this.statusCatalog.statusForSymbol(symbol);
   }
 
+  matchesStatusRule(expected: Pick<TaskStatusRule, 'id' | 'symbol' | 'type'>): boolean {
+    return this.statusCatalog.matchesRule(expected);
+  }
+
   applyRecurrenceIterationLineEdit(
     original: string,
     edit: RecurrenceTaskLineEdit,

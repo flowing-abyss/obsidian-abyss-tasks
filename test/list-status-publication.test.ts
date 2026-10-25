@@ -13,7 +13,7 @@ import { searchUiCompleted } from './support/taskSearchUiHarness';
 
 useRealMoment();
 
-async function mountList(markdown = '- [ ] needle') {
+async function mountList(markdown = '- [ ] needle', kanban = false) {
   const settings = structuredClone(DEFAULT_SETTINGS);
   const h = await createCanonicalSearchHarness({ 'tasks.md': markdown }, settings);
   const leaf = new (WorkspaceLeaf as unknown as { new (app: App): WorkspaceLeaf })(h.app);
@@ -44,6 +44,10 @@ async function mountList(markdown = '- [ ] needle') {
   state.set('centerFilter', 'needle');
   const root = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-center'));
   await searchUiCompleted(root);
+  if (kanban) {
+    expectDefined(root.querySelector<HTMLButtonElement>('[aria-label="Kanban view"]')).click();
+    await searchUiCompleted(root);
+  }
   return {
     ...h,
     view,
@@ -820,3 +824,104 @@ it.each(['cancel', 'window', 'query', 'navigation', 'mode', 'dispose'] as const)
     }
   },
 );
+
+it('keeps a Kanban drag source through inspector blur and applies only its proved successor', async () => {
+  const h = await mountList('- [ ] needle ⏫', true);
+  try {
+    await dirtyEditor(h);
+    const card = expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card'));
+    const execute = vi.spyOn(h.tasks, 'execute');
+    card.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }));
+    card.focus();
+    await settledSave(h);
+    expect(card.isConnected).toBe(true);
+    card.dispatchEvent(new MouseEvent('dragstart', { bubbles: true }));
+    const doing = expectDefined(h.statusRegistry.bySymbol('/'));
+    const column = expectDefined(
+      [...h.root.querySelectorAll<HTMLElement>('.abyss-task-kanban-column')].find(
+        (el) => el.dataset['columnKey'] === `status:${doing.id}`,
+      ),
+    );
+    column.dispatchEvent(new MouseEvent('drop', { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => {
+      expect(h.index.list()[0]?.statusSymbol).toBe('/');
+    });
+    expect(await h.read()).toContain('- [/] needle edited ⏫');
+    expect(execute.mock.calls.filter(([command]) => command.type === 'set-status')).toHaveLength(1);
+    expect(h.state.get('draggingTaskNode')).toBeNull();
+  } finally {
+    await h.close();
+  }
+});
+
+it('cancels a Kanban drag when the source is externally replaced', async () => {
+  const h = await mountList('- [ ] needle', true);
+  try {
+    const card = expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card'));
+    card.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    card.dispatchEvent(new MouseEvent('dragstart', { bubbles: true }));
+    expect(h.state.get('draggingTaskNode')).not.toBeNull();
+    const file = expectDefined(h.app.vault.getFileByPath('tasks.md'));
+    await h.app.vault.modify(file, '- [ ] needle external');
+    h.index.installCommittedContent(file.path, '- [ ] needle external');
+    await h.search.prepare(new AbortController().signal);
+    await searchUiCompleted(h.root);
+    expect(h.state.get('draggingTaskNode')).toBeNull();
+    expect(await h.read()).toBe('- [ ] needle external');
+  } finally {
+    await h.close();
+  }
+});
+
+it('completes a recurring Kanban task through the ordinary recurrence transaction', async () => {
+  const h = await mountList('- [ ] needle 🔁 every day 📅 2026-10-25', true);
+  try {
+    const card = expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card'));
+    card.dispatchEvent(new MouseEvent('dragstart', { bubbles: true }));
+    const done = h.statusRegistry.defaultDone();
+    const column = expectDefined(
+      [...h.root.querySelectorAll<HTMLElement>('.abyss-task-kanban-column')].find(
+        (el) => el.dataset['columnKey'] === `status:${done.id}`,
+      ),
+    );
+    column.dispatchEvent(new MouseEvent('drop', { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => {
+      expect(h.index.list()).toHaveLength(2);
+    });
+    expect(
+      h.index
+        .list()
+        .map((task) => task.status)
+        .sort((a, b) => a.localeCompare(b)),
+    ).toEqual(['done', 'open']);
+    expect(await h.read()).toContain('📅 2026-10-26');
+  } finally {
+    await h.close();
+  }
+});
+
+it('revokes a pending Kanban completion confirmation when its window loses focus', async () => {
+  const h = await mountList('- [ ] needle 🔁 tomorrow 🏁 delete', true);
+  try {
+    const execute = vi.spyOn(h.tasks, 'execute');
+    const card = expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card'));
+    card.dispatchEvent(new MouseEvent('dragstart', { bubbles: true }));
+    const done = h.statusRegistry.defaultDone();
+    const column = expectDefined(
+      [...h.root.querySelectorAll<HTMLElement>('.abyss-task-kanban-column')].find(
+        (el) => el.dataset['columnKey'] === `status:${done.id}`,
+      ),
+    );
+    column.dispatchEvent(new MouseEvent('drop', { bubbles: true, cancelable: true }));
+    const confirm = expectDefined(
+      document.querySelector<HTMLButtonElement>('.abyss-recurrence-delete-confirm-button'),
+    );
+    window.dispatchEvent(new Event('blur'));
+    confirm.click();
+    await flushMicrotasks();
+    expect(execute.mock.calls.filter(([command]) => command.type === 'set-status')).toHaveLength(0);
+    expect(await h.read()).toBe('- [ ] needle 🔁 tomorrow 🏁 delete');
+  } finally {
+    await h.close();
+  }
+});

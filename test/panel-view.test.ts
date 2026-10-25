@@ -3676,7 +3676,7 @@ describe('PanelView', () => {
       expect(internals.state_abyssPrivate.get('projectsPanel')).toEqual({ view: 'table' });
     });
 
-    it('places the filter chips right before the view-state button, in filter order, and again after one is removed', async () => {
+    it('places the filter chips before the view switcher, in filter order, and again after one is removed', async () => {
       const internals = view as unknown as {
         state_abyssPrivate: AppState;
         panelNavigation_abyssPrivate: PanelNavigator;
@@ -3699,26 +3699,26 @@ describe('PanelView', () => {
         );
       const chips = (): HTMLElement[] =>
         Array.from(controls().querySelectorAll<HTMLElement>(':scope > .abyss-filter-chip'));
-      // The chips run in filter order straight into the view-state button.
-      const expectChipsBeforeViewButton = (labels: readonly string[]): void => {
+      // The chips run in filter order straight into the view switcher.
+      const expectChipsBeforeSwitcher = (labels: readonly string[]): void => {
         const found = chips();
         expect(
           found.map((chip) => chip.querySelector('.abyss-filter-chip-label')?.textContent),
         ).toEqual(labels);
         for (const [index, chip] of found.entries()) {
           expect(chip.nextElementSibling).toBe(
-            found[index + 1] ?? controls().querySelector(':scope > .abyss-view-state-btn'),
+            found[index + 1] ?? controls().querySelector(':scope > .abyss-view-switcher'),
           );
         }
       };
 
-      expectChipsBeforeViewButton(['📄 Source', '#work']);
+      expectChipsBeforeSwitcher(['📄 Source', '#work']);
       expectDefined(
         expectDefined(chips()[0]).querySelector<HTMLButtonElement>('.abyss-filter-chip-x'),
       ).click();
       await flushMicrotasks();
 
-      expectChipsBeforeViewButton(['#work']);
+      expectChipsBeforeSwitcher(['#work']);
       expect(view.contentEl.querySelector('.abyss-task-filter-chips')).toBeNull();
     });
 

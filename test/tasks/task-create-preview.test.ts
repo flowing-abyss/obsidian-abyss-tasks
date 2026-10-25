@@ -83,10 +83,62 @@ async function harness(
   );
   const readCanonicalRoot = (content: string) =>
     expectDefined(codec.parseLine(content.split('\n')[0] ?? '', { filePath: 'tasks.md', line: 0 }));
-  return { service, behavior, repositoryWrites, readCanonicalRoot, prepare, validate, plan, clock };
+  return {
+    service,
+    catalog,
+    behavior,
+    repositoryWrites,
+    readCanonicalRoot,
+    prepare,
+    validate,
+    plan,
+    clock,
+  };
 }
 
 describe('retained canonical create preview', () => {
+  it.each(['/', 'x', '-'])(
+    'creates the selected status %s in one write with context metadata',
+    async (symbol) => {
+      const h = await harness();
+      const status = expectDefined(h.catalog.ruleForSymbol(symbol));
+      const session = await h.service.planCreate({ type: 'configured-default' });
+      const request = {
+        markdownBody: 'Board task',
+        initial: {
+          status,
+          tags: { add: ['#work'] },
+          due: { type: 'set' as const, value: localDate('2026-10-25') },
+        },
+      };
+      expect(session.previewContext?.(request).type).toBe('ready');
+      expect(session.preview(request).type).toBe('valid');
+      expect((await session.execute(request)).type).toBe('ok');
+      expect(h.repositoryWrites).toHaveLength(1);
+      const saved = expectDefined(h.repositoryWrites[0]);
+      expect(saved).toContain(`- [${symbol}] Board task`);
+      expect(saved).toContain('#work');
+      expect(saved).toContain('📅 2026-10-25');
+      if (symbol === 'x') expect(saved).toContain('✅ 2026-10-13');
+      if (symbol === '-') expect(saved).toContain('❌ 2026-10-13');
+    },
+  );
+
+  it('rejects a replaced or malformed captured status without writing', async () => {
+    const h = await harness();
+    const status = expectDefined(h.catalog.ruleForSymbol('/'));
+    const session = await h.service.planCreate({ type: 'configured-default' });
+    h.catalog.replace(
+      h.catalog.all().map((rule) => (rule.symbol === '/' ? { ...rule, id: 'replacement' } : rule)),
+    );
+    for (const candidate of [status, { ...status, symbol: 'invalid' }]) {
+      const request = { markdownBody: 'Board task', initial: { status: candidate } };
+      expect(session.preview(request).type).toBe('invalid');
+      expect((await session.execute(request)).type).toBe('invalid');
+    }
+    expect(h.repositoryWrites).toEqual([]);
+  });
+
   it('uses selected tags instead of fallback tags in context, preview and saved Markdown', async () => {
     const h = await harness({ prefix: '#task/one-off' });
     const session = await h.service.planCreate({ type: 'configured-default' });

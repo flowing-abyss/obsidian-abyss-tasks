@@ -222,11 +222,11 @@ describe('CenterPanel task metadata styles', () => {
       '.abyss-cal-nav-month',
       '.abyss-cal-nav-year',
       '.abyss-cal-view-switcher',
-      '.abyss-project-overview-switcher',
+      '.abyss-view-switcher',
       'button.abyss-cal-view-btn',
-      'button.abyss-project-overview-mode',
+      'button.abyss-view-mode',
       '.abyss-project-table-controls .abyss-view-state-btn',
-      '.abyss-projects-table button.abyss-project-overview-mode',
+      '.abyss-center-controls button.abyss-view-mode',
     ]) {
       expect(declarationsFor(selector), selector).toContain(token);
     }
@@ -234,7 +234,7 @@ describe('CenterPanel task metadata styles', () => {
       '.abyss-center-search',
       '.abyss-project-table-controls .abyss-center-search',
       '.abyss-project-table-controls .abyss-view-state-btn',
-      '.abyss-projects-table button.abyss-project-overview-mode',
+      '.abyss-center-controls button.abyss-view-mode',
       '.abyss-cal-nav-btn',
       'button.abyss-compact-pane-button',
     ]) {

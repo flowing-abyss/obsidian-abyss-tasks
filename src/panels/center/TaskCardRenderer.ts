@@ -98,6 +98,7 @@ export interface TaskCardInteractionContext {
   readonly onActivate?: ((task: TaskSnapshot) => void) | undefined;
 }
 interface TaskCardFlags {
+  readonly fullDescription?: boolean;
   readonly calendar?: CalendarCardPolicy;
   readonly projection?: TaskNodeSnapshot | undefined;
   readonly occurrence?: TaskOccurrencePresentation;
@@ -204,7 +205,7 @@ function trackingRootAddress(ref: TaskRef): string {
 
 function cardNode(
   task: TaskSnapshot,
-  flags?: Pick<TaskCardFlags, 'projection'>,
+  flags?: Pick<TaskCardFlags, 'projection' | 'fullDescription'>,
 ): TaskSelectionNode {
   return flags?.projection?.node ?? task;
 }
@@ -232,13 +233,18 @@ function cardDates(
   const occupied = taskOccupiedDates(planning);
   return { date, interval: occupied.kind === 'interval' ? occupied : undefined };
 }
-function cardDescription(task: TaskSnapshot, flags?: Pick<TaskCardFlags, 'projection'>): string {
-  return (cardNode(task, flags).description ?? '').split('\n')[0] ?? '';
+function cardDescription(
+  task: TaskSnapshot,
+  flags?: Pick<TaskCardFlags, 'projection' | 'fullDescription'>,
+): string {
+  const source = cardNode(task, flags).description ?? '';
+  return flags?.fullDescription === true ? source : (source.split('\n')[0] ?? '');
 }
 function cardDescriptionContinues(
   task: TaskSnapshot,
-  flags?: Pick<TaskCardFlags, 'projection'>,
+  flags?: Pick<TaskCardFlags, 'projection' | 'fullDescription'>,
 ): boolean {
+  if (flags?.fullDescription === true) return false;
   return (cardNode(task, flags).description ?? '')
     .split('\n')
     .slice(1)
@@ -556,7 +562,7 @@ export class TaskCardRenderer {
         presentation: kind,
       },
       decoration: {
-        kind: kind === 'title' ? 'complete' : 'preview',
+        kind: kind === 'title' || current.flags.fullDescription === true ? 'complete' : 'preview',
         continuation:
           kind === 'description' && cardDescriptionContinues(current.task, current.flags),
         ...(highlight === undefined ? {} : { query: highlight.query, segment: highlight.segment }),
@@ -1111,6 +1117,7 @@ export class TaskCardRenderer {
       app: this.#app,
       root,
       base: owner?.currentProjection().node ?? root,
+      fullDescription: owner?.flags?.fullDescription === true,
       search,
       textOptions: this.#textLifetime(owner),
       track: (render) => {

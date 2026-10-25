@@ -438,6 +438,7 @@ describe('TaskApplicationService planning commands', () => {
         markdownBody: 'Plan `#code` new root #work',
         today: localDate('2026-07-14'),
         addCreatedDate: true,
+        addCompletionDate: true,
       },
     );
   });

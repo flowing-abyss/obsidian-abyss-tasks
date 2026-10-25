@@ -160,6 +160,7 @@ export interface TaskDraft {
   readonly initial?: NonNullable<Extract<TaskCommand, { readonly type: 'create' }>['initial']>;
   readonly today?: LocalDate;
   readonly addCreatedDate?: boolean;
+  readonly addCompletionDate?: boolean;
 }
 
 export interface RecurrenceCompletionRequest {

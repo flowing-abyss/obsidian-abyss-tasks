@@ -78,14 +78,14 @@ export class ListViewControls {
     this.#options.state.set('centerListViewState', viewState);
   }
 
-  /** Renders one chip per filter right before the view-state button and returns them in order. */
-  renderPropertyChips(controls: HTMLElement, viewButton: HTMLElement): HTMLElement[] {
+  /** Renders each filter before the supplied toolbar anchor and returns the chips in order. */
+  renderPropertyChips(controls: HTMLElement, anchor: HTMLElement): HTMLElement[] {
     const vs = this.#read();
     const chips: HTMLElement[] = [];
     for (const [i, f] of vs.filters.entries()) {
       const label = this.#filterChipLabel(f);
       const chip = controls.createSpan({ cls: 'abyss-filter-chip' });
-      viewButton.before(chip);
+      anchor.before(chip);
       chip.createSpan({ cls: 'abyss-filter-chip-label', text: label });
       const x = chip.createEl('button', { cls: 'abyss-filter-chip-x', text: '×' });
       const idx = i;

@@ -436,7 +436,7 @@ function captureClock(
 
 type PreparedCreateInitial =
   | { readonly type: 'valid'; readonly initial?: CreateTaskCommandInitial }
-  | { readonly type: 'invalid' };
+  | { readonly type: 'invalid'; readonly field: 'tags' | 'status' };
 
 function hasInvalidCreateTitle(markdownBody: string): boolean {
   return (
@@ -448,12 +448,17 @@ function hasInvalidCreateTitle(markdownBody: string): boolean {
 function prepareCreateInitial(
   request: TaskCreateRequest,
   settings: TaskBehaviorSettings,
+  catalog: StatusCatalog,
 ): PreparedCreateInitial {
   const source = request.initial;
   if (source === undefined) return { type: 'valid' };
+  if (source.status !== undefined && !catalog.matchesRule(source.status))
+    return { type: 'invalid', field: 'status' };
   if (source.tags === undefined) return { type: 'valid', initial: source };
   const tags = normalizeTagChange(source.tags, settings);
-  return tags === undefined ? { type: 'invalid' } : { type: 'valid', initial: { ...source, tags } };
+  return tags === undefined
+    ? { type: 'invalid', field: 'tags' }
+    : { type: 'valid', initial: { ...source, tags } };
 }
 
 function preparedCreateDraft(
@@ -1084,15 +1089,20 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     if (resolution?.type !== 'resolved') {
       return destinationUnavailableResult();
     }
-    const preparedInitial = prepareCreateInitial(request, settings);
+    const preparedInitial = prepareCreateInitial(
+      request,
+      settings,
+      this.statusCatalog_abyssPrivate,
+    );
     if (preparedInitial.type === 'invalid') {
-      return invalidTaskTarget('tags');
+      return invalidTaskTarget(preparedInitial.field);
     }
     const draft = preparedCreateDraft(request, preparedInitial, settings);
     const result = await this.repository_abyssPrivate.create(resolution.destination, {
       ...draft,
       today: reading.localDate,
       addCreatedDate: settings.taskLifecycle.addCreatedDate,
+      addCompletionDate: settings.taskLifecycle.addCompletionDate,
     });
     if (result.type !== 'committed') return this.terminalRepositoryResult_abyssPrivate(result);
     if (result.outcome.type === 'task') this.remember_abyssPrivate(result.outcome.task);
@@ -1195,12 +1205,13 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     if (hasInvalidCreateTitle(request.markdownBody)) {
       return { type: 'invalid', issues: [{ code: 'invalid-title', field: 'title' }] };
     }
-    const prepared = prepareCreateInitial(request, settings);
-    if (prepared.type === 'invalid') return invalidTaskTarget('tags');
+    const prepared = prepareCreateInitial(request, settings, this.statusCatalog_abyssPrivate);
+    if (prepared.type === 'invalid') return invalidTaskTarget(prepared.field);
     const preview = port.preview({
       ...preparedCreateDraft(request, prepared, settings),
       today: reading.localDate,
       addCreatedDate: settings.taskLifecycle.addCreatedDate,
+      addCompletionDate: settings.taskLifecycle.addCompletionDate,
     });
     return preview.type === 'valid'
       ? { ...preview, inbox: createInboxPreview(preview.metadata.tags, settings) }
@@ -1215,9 +1226,13 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     const port = this.previewPort_abyssPrivate;
     if (port?.previewContext === undefined)
       return { type: 'unavailable', cause: 'preview-capability' };
-    const prepared = prepareCreateInitial(request, settings);
-    if (prepared.type === 'invalid') return invalidTaskTarget('tags');
-    const context = port.previewContext(preparedCreateDraft(request, prepared, settings));
+    const prepared = prepareCreateInitial(request, settings, this.statusCatalog_abyssPrivate);
+    if (prepared.type === 'invalid') return invalidTaskTarget(prepared.field);
+    const context = port.previewContext({
+      ...preparedCreateDraft(request, prepared, settings),
+      today: reading.localDate,
+      addCompletionDate: settings.taskLifecycle.addCompletionDate,
+    });
     return context.type === 'ready'
       ? {
           ...context,

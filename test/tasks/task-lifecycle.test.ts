@@ -845,6 +845,7 @@ describe('TaskApplicationService lifecycle routing', () => {
       ...draft,
       today: localDate('2026-07-14'),
       addCreatedDate: true,
+      addCompletionDate: true,
     });
     expect(edit).not.toHaveBeenCalled();
   });
@@ -897,6 +898,7 @@ describe('TaskApplicationService lifecycle routing', () => {
       markdownBody: 'explicit',
       today: localDate('2026-07-14'),
       addCreatedDate: true,
+      addCompletionDate: true,
     });
 
     create.mockClear();
@@ -916,6 +918,7 @@ describe('TaskApplicationService lifecycle routing', () => {
       markdownBody: 'prepared',
       today: localDate('2026-07-14'),
       addCreatedDate: true,
+      addCompletionDate: true,
     });
 
     await expect(
@@ -1020,6 +1023,7 @@ describe('TaskApplicationService lifecycle routing', () => {
       initial: { tags: { add: ['#work'], remove: ['#later'] } },
       today: localDate('2026-07-14'),
       addCreatedDate: true,
+      addCompletionDate: true,
     });
 
     create.mockClear();
@@ -1149,11 +1153,13 @@ describe('TaskApplicationService lifecycle routing', () => {
       initial: { tags: { add: ['#work'], remove: ['#inbox'] } },
       today: localDate('2026-07-14'),
       addCreatedDate: true,
+      addCompletionDate: true,
     });
     expect(create).toHaveBeenNthCalledWith(2, appendDestination, {
       markdownBody: 'Plan #inbox second planned task',
       today: localDate('2026-07-14'),
       addCreatedDate: true,
+      addCompletionDate: true,
     });
     expect(clock).toHaveBeenCalledOnce();
     expect(behavior).toHaveBeenCalledOnce();

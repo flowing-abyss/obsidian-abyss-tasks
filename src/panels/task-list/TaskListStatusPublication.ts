@@ -1,5 +1,11 @@
 import type { Component } from 'obsidian';
-import { sameTaskNodeRef, type TaskQueryApi, type TaskRef, type TaskSnapshot } from '../../tasks';
+import {
+  sameTaskNodeRef,
+  type TaskNodeSnapshot,
+  type TaskQueryApi,
+  type TaskRef,
+  type TaskSnapshot,
+} from '../../tasks';
 import type { OwnedTaskSelectionProof } from '../../ui/ownedTaskSelection';
 import {
   rebuildTaskSelection,
@@ -62,6 +68,10 @@ export class TaskListStatusPublication {
   #disposed = false;
   readonly #targets = new WeakMap<HTMLElement, () => TaskSelectionNode | undefined>();
   readonly #operations = new Map<object, InspectorOperation>();
+  readonly #drags = new WeakMap<
+    HTMLElement,
+    { readonly key: string; readonly current: () => TaskNodeSnapshot }
+  >();
   constructor(
     private readonly queries: Pick<TaskQueryApi, 'resolve'>,
     private readonly hold: (accept: () => boolean, cancel: () => void) => (() => void) | undefined,
@@ -70,6 +80,32 @@ export class TaskListStatusPublication {
 
   capture(marker: HTMLElement, current: () => TaskSelectionNode | undefined): void {
     this.#targets.set(marker, current);
+  }
+
+  captureDrag(
+    card: HTMLElement,
+    source: { readonly key: string; readonly current: () => TaskNodeSnapshot },
+  ): void {
+    this.#drags.set(card, source);
+  }
+  drag(card: HTMLElement): () => void {
+    const source = this.#drags.get(card);
+    if (source === undefined) return () => {};
+    if (this.#active?.marker !== card) {
+      const task = source.current();
+      this.#start(card, source.key, task.root, task.node);
+    }
+    const active = this.#active;
+    if (active?.marker !== card) return () => {};
+    active.pending++;
+    active.pressed = false;
+    let live = true;
+    return () => {
+      if (!live) return;
+      live = false;
+      active.pending--;
+      this.#releaseLater(active);
+    };
   }
 
   mutation(event: RightPanelMutationLifecycle): void {
@@ -147,7 +183,11 @@ export class TaskListStatusPublication {
     const press = (event: MouseEvent): void => {
       if (event.button !== 0 && event.button !== 2) return;
       const marker = pressedStatusMarker(event.target);
-      if (marker === null || !card.contains(marker)) return;
+      if (marker === null) {
+        this.#pressDrag(card, event);
+        return;
+      }
+      if (!card.contains(marker)) return;
       if (this.#active?.marker === marker) return;
       const node = this.#targets.get(marker)?.();
       if (node !== undefined) this.#start(marker, key, currentRoot(), node);
@@ -159,6 +199,22 @@ export class TaskListStatusPublication {
       card.removeEventListener('mousedown', press, true);
       if (this.#active !== undefined && card.contains(this.#active.marker)) this.#cancel();
     });
+  }
+
+  #pressDrag(card: HTMLElement, event: MouseEvent): void {
+    const source = this.#drags.get(card);
+    const target = event.target;
+    if (source === undefined || event.button !== 0 || this.#active?.marker === card) return;
+    if (
+      target !== null &&
+      'closest' in target &&
+      (target as Element).closest(
+        'button, input, textarea, a, [contenteditable="true"], .abyss-subtask-row, .abyss-task-tag',
+      ) !== null
+    )
+      return;
+    const task = source.current();
+    this.#start(card, source.key, task.root, task.node);
   }
 
   #start(marker: HTMLElement, key: string, root: TaskSnapshot, node: TaskSelectionNode): void {
