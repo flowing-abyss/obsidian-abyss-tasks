@@ -836,6 +836,8 @@ it('keeps a Kanban drag source through inspector blur and applies only its prove
     await settledSave(h);
     expect(card.isConnected).toBe(true);
     card.dispatchEvent(new MouseEvent('dragstart', { bubbles: true }));
+    // Native drag handoff suppresses the pointer stream without cancelling the drag.
+    card.dispatchEvent(new Event('pointercancel', { bubbles: true }));
     const doing = expectDefined(h.statusRegistry.bySymbol('/'));
     const column = expectDefined(
       [...h.root.querySelectorAll<HTMLElement>('.abyss-task-kanban-column')].find(

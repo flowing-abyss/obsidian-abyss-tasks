@@ -429,7 +429,7 @@ describe('bound occurrence selection', () => {
     expect(selection.size).toBe(0);
   });
 
-  it('moves only the proved physical key while preserving date and group identity', () => {
+  it.each([false, true])('keeps exact date occurrence identity when regroup is %s', (regroup) => {
     const day = localDate('2026-10-08');
     const makeRows = (key: string, date = day, groupKey = 'group:date:today') =>
       indexedRows([
@@ -463,6 +463,7 @@ describe('bound occurrence selection', () => {
     ]);
     selection.bind(makeRows('successor', localDate('2026-10-09')), {
       physicalKeys: new Map([['successor', 'successor']]),
+      regroup,
     });
     expect(selection.size).toBe(0);
   });

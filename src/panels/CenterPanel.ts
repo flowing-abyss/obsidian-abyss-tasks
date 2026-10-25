@@ -300,6 +300,8 @@ export class CenterPanel {
   /** The list's multi-selection, anchor, and keyboard focus, kept across renders and modes. */
   private readonly rowSelection_abyssPrivate = new TaskRowSelection();
   private selectionRows_abyssPrivate: TaskListRows<SurfaceTask> = NO_TASK_LIST_ROWS;
+  private selectionGeneration_abyssPrivate: number | undefined;
+  private selectionKanban_abyssPrivate = false;
   private readonly taskCommands_abyssPrivate: TaskCommands;
   private readonly taskMenus_abyssPrivate: TaskMenus;
   private lastAnnouncedSelectionCount_abyssPrivate = 0;
@@ -1230,12 +1232,17 @@ export class CenterPanel {
     const physicalKeys = new Map<string, string>();
     const candidates = this.selectionCandidates_abyssPrivate(this.selectionRows_abyssPrivate);
     for (const [key, before] of candidates) {
-      if (!('address' in before)) continue;
       const occurrence = next.firstOccurrenceOf(key);
       const after = occurrence === undefined ? undefined : next.task(occurrence);
       if (
         after !== undefined &&
-        taskSearchAddressKey(before.address) === taskSearchAddressKey(after.address)
+        ('address' in before
+          ? taskSearchAddressKey(before.address) === taskSearchAddressKey(after.address)
+          : this.tasks_abyssPrivate?.queries.matchesSearchAddress(
+              after.address,
+              before.target,
+              generation,
+            ) === true)
       )
         physicalKeys.set(key, key);
     }
@@ -1271,12 +1278,12 @@ export class CenterPanel {
           },
           (owned) => {
             for (const [before, after] of owned) physicalKeys.set(before, after);
-            this.rowSelection_abyssPrivate.bind(next, { physicalKeys });
+            this.bindSelectionRows_abyssPrivate(next, physicalKeys);
           },
         );
       },
     );
-    this.selectionRows_abyssPrivate = next;
+    this.selectionGeneration_abyssPrivate = generation;
   }
 
   private isTaskKanban_abyssPrivate(): boolean {
@@ -2624,6 +2631,8 @@ export class CenterPanel {
     this.rowSelection_abyssPrivate.clear();
     this.rowSelection_abyssPrivate.bind(NO_TASK_LIST_ROWS);
     this.selectionRows_abyssPrivate = NO_TASK_LIST_ROWS;
+    this.selectionGeneration_abyssPrivate = undefined;
+    this.selectionKanban_abyssPrivate = false;
     this.cancelListActivation_abyssPrivate?.();
   }
 
@@ -3115,11 +3124,44 @@ export class CenterPanel {
     return candidates;
   }
 
-  private snapshotSelectionSuccessor_abyssPrivate(
+  private bindSelectionRows_abyssPrivate(
+    rows: TaskListRows<SurfaceTask>,
+    physicalKeys: ReadonlyMap<string, string>,
+  ): void {
+    const kanban = this.isTaskKanban_abyssPrivate();
+    this.rowSelection_abyssPrivate.bind(rows, {
+      physicalKeys,
+      regroup: this.selectionKanban_abyssPrivate !== kanban,
+    });
+    this.selectionRows_abyssPrivate = rows;
+    this.selectionKanban_abyssPrivate = kanban;
+  }
+
+  private snapshotKeyForCompactSelection_abyssPrivate(
     key: string,
-    before: TaskNodeSnapshot,
+    before: TaskSearchOccurrence,
     rows: TaskListRows<TaskNodeSnapshot>,
   ): string | undefined {
+    const occurrence = rows.firstOccurrenceOf(key);
+    const after = occurrence === undefined ? undefined : rows.task(occurrence);
+    return after !== undefined &&
+      this.selectionGeneration_abyssPrivate !== undefined &&
+      this.tasks_abyssPrivate?.queries.matchesSearchAddress(
+        before.address,
+        after.target,
+        this.selectionGeneration_abyssPrivate,
+      ) === true
+      ? key
+      : undefined;
+  }
+
+  private snapshotSelectionSuccessor_abyssPrivate(
+    key: string,
+    before: SurfaceTask,
+    rows: TaskListRows<TaskNodeSnapshot>,
+  ): string | undefined {
+    if ('address' in before)
+      return this.snapshotKeyForCompactSelection_abyssPrivate(key, before, rows);
     const resolution = this.queries_abyssPrivate.resolve(before.root.ref);
     if (resolution.type !== 'exact' && resolution.type !== 'rebased') return undefined;
     const current = resolution.type === 'exact' ? resolution.task : resolution.current;
@@ -3140,7 +3182,6 @@ export class CenterPanel {
     const previous = this.selectionRows_abyssPrivate;
     const physicalKeys = new Map<string, string>();
     for (const [key, before] of this.selectionCandidates_abyssPrivate(previous)) {
-      if (!('root' in before)) continue;
       const nextKey = this.snapshotSelectionSuccessor_abyssPrivate(key, before, rows);
       if (nextKey !== undefined) physicalKeys.set(key, nextKey);
     }
@@ -3165,12 +3206,12 @@ export class CenterPanel {
           },
           (owned) => {
             for (const [before, after] of owned) physicalKeys.set(before, after);
-            this.rowSelection_abyssPrivate.bind(rows, { physicalKeys });
+            this.bindSelectionRows_abyssPrivate(rows, physicalKeys);
           },
         );
       },
     );
-    this.selectionRows_abyssPrivate = rows;
+    this.selectionGeneration_abyssPrivate = undefined;
   }
 
   private mountTaskRow_abyssPrivate(

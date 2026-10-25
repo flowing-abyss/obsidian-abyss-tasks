@@ -47,6 +47,7 @@ interface StatusActivation {
   releasePublication?: (() => void) | undefined;
   timer?: number | undefined;
   pressed: boolean;
+  dragging: boolean;
   pending: number;
 }
 function sameRef(a: TaskRef, b: TaskRef): boolean {
@@ -98,11 +99,13 @@ export class TaskListStatusPublication {
     const active = this.#active;
     if (active?.marker !== card) return () => {};
     active.pending++;
+    active.dragging = true;
     active.pressed = false;
     let live = true;
     return () => {
       if (!live) return;
       live = false;
+      active.dragging = false;
       active.pending--;
       this.#releaseLater(active);
     };
@@ -234,6 +237,7 @@ export class TaskListStatusPublication {
       cleanup: [],
       menus: new Set(),
       pressed: true,
+      dragging: false,
       pending: 0,
     };
     for (const operation of this.#operations.values())
@@ -265,14 +269,18 @@ export class TaskListStatusPublication {
     const cancel = (): void => {
       this.#cancel(active);
     };
+    const pointerCancel = (): void => {
+      // Native dragstart suppresses its pointer stream; dragend owns that lease now.
+      if (!active.dragging) cancel();
+    };
     owner.addEventListener('mouseup', up, true);
     owner.addEventListener('pointerup', up, true);
-    owner.addEventListener('pointercancel', cancel, true);
+    owner.addEventListener('pointercancel', pointerCancel, true);
     owner.addEventListener('blur', cancel);
     active.cleanup.push(() => {
       owner.removeEventListener('mouseup', up, true);
       owner.removeEventListener('pointerup', up, true);
-      owner.removeEventListener('pointercancel', cancel, true);
+      owner.removeEventListener('pointercancel', pointerCancel, true);
       owner.removeEventListener('blur', cancel);
     });
   }

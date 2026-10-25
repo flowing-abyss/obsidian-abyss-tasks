@@ -13,6 +13,8 @@ export interface TaskRowOrigin {
 export interface TaskSelectionRebase {
   /** Only identity transitions proved by the owning source reconciliation. */
   readonly physicalKeys: ReadonlyMap<string, string>;
+  /** A display-mode change may place a proved node in a different non-date group. */
+  readonly regroup?: boolean;
 }
 function listed(key: string | null | undefined, order: TaskListOrder): key is string {
   return key != null && key !== '' && order.indexOf(key) !== -1;
@@ -40,6 +42,7 @@ export class TaskRowSelection {
       return;
     }
     const ranges = this.ranges();
+    const regroup = proof?.regroup === true;
     const remap = (range: TaskOccurrenceRange): TaskOccurrenceRange[] => {
       const before = previous.firstOccurrenceOf(range.taskKey);
       const after = rows.firstOccurrenceOf(range.taskKey);
@@ -49,7 +52,14 @@ export class TaskRowSelection {
         Object.is(previous.task(before), rows.task(after));
       const taskKey =
         proof?.physicalKeys.get(range.taskKey) ?? (unchanged ? range.taskKey : undefined);
-      return taskKey === undefined ? [] : [{ ...range, taskKey }];
+      if (taskKey === undefined) return [];
+      if (regroup && range.kind === 'group') {
+        const target = rows.firstOccurrenceOf(taskKey);
+        return target === undefined
+          ? []
+          : [...rows.captureSelection({ spans: [], include: [target], exclude: [] })];
+      }
+      return [{ ...range, taskKey }];
     };
     const lead = (key: string | null): readonly TaskOccurrenceRange[] =>
       key === null
