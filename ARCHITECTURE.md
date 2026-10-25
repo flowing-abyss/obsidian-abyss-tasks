@@ -783,7 +783,7 @@ suspend and runtime uses temporary defaults, while static saves preserve guarded
 Older schema-1 binaries suspend writes to schema 2; re-upgrading restores those views.
 
 `ViewModeSwitcher` supplies the icon controls for Tasks and the Projects overview. Both put the
-switcher before the existing `ViewOptionsPopover` sort/group menu and local search. Task Kanban
+active filters before the switcher, then the existing `ViewOptionsPopover` sort/group menu and local search. Task Kanban
 options use the same popover rows as Projects; List options keep their existing behavior.
 
 Task collection preferences extend each saved `ListViewState` with an optional display mode and

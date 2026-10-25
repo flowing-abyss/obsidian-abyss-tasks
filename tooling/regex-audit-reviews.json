@@ -360,7 +360,7 @@
       "raw": "const MD_LINK_RE = /\\[([^[\\]]+)\\]\\(([^)]+)\\)/gu;",
       "unproven": false
     },
-    "sourceHash": "ecc69ca3a323567254552a82f9f5e652af52e308974355c12c7e757a18824df1",
+    "sourceHash": "945bd9a14f9d10a77a13599d2fee34f16ec90fc5b3ee49e2d84b2b90190f12f7",
     "guards": {
       "test/regex-audit.test.ts": "b1098267c45ec137359868d9e18ffe94429716f059bdc4cd7903f7c9fa9f8938",
       "src/tasks/domain/taskLineSourceModel.ts": "0931ca69e8606a7ba79fc4b09e2adfe1a534d9d491b000eda1591e745fb63e44",
@@ -385,7 +385,7 @@
       }
     },
     "disposition": "context-protected",
-    "reason": "Private collapseMarkdownLinks bounds MD_LINK_RE to the prefix ending at the last literal closing parenthesis, appending the untouched suffix. The public codec reaches it after the canonical source model. With no closer the regex receives an empty string, and bracket labels exclude competing nested openers. Direct codec output and actual-module CPU evidence cover the malformed-link family; no blanket parser safety is asserted. The killable public probe independently fingerprints its actual bounded process owner.",
+    "reason": "Private collapseMarkdownLinks bounds MD_LINK_RE to the prefix ending at the last literal closing parenthesis, appending the untouched suffix. The public codec reaches it after the canonical source model. With no closer the regex receives an empty string, and bracket labels exclude competing nested openers. Direct codec output and actual-module CPU evidence cover the malformed-link family; no blanket parser safety is asserted. The killable public probe independently fingerprints its actual bounded process owner. The Kanban change adds only matchesStatusRule; the regex, its bounded input, and link call sites are unchanged.",
     "tests": {
       "accepting": [
         "test/regex-audit.test.ts > accepts closed Markdown links through all audited public paths"

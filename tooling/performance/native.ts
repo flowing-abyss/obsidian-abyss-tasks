@@ -21,6 +21,7 @@ import {
   queryScenarios,
   searchEditScenario,
   statisticsScenarios,
+  taskBoardScenarios,
   type Measure,
 } from './native-scenarios.ts';
 import type { Host, NativeBridge, NativeOptions } from './native-types.ts';
@@ -107,6 +108,17 @@ async function completeCalendarSample(context: MeasurementContext, sample: Sampl
   }
 }
 
+async function captureTaskBoard(context: MeasurementContext, id: string): Promise<void> {
+  if (!context.diagnostic || id !== 'ui.tasks.kanban') return;
+  const board = element('.abyss-task-kanban');
+  context.bridge.save('task-kanban-dom.json', {
+    mounted: board.querySelectorAll('.abyss-task-card').length,
+    html: board.outerHTML,
+    viewport: context.viewport,
+  });
+  await context.cdp?.screenshot('task-kanban');
+}
+
 export function createMeasure(context: MeasurementContext): Measure {
   const { bridge, iteration, diagnostic, samples, pending } = context;
   const observation = new NativeObservation();
@@ -138,6 +150,7 @@ export function createMeasure(context: MeasurementContext): Measure {
       );
       assertViewport(context.viewport);
       await completeCalendarSample(context, sample);
+      await captureTaskBoard(context, id);
       samples.push(sample);
       bridge.save(diagnostic ? 'diagnostic-samples.json' : `iteration-${iteration}.json`, samples);
       bridge.save('progress.json', {
@@ -238,6 +251,7 @@ async function suite(
   await cdp?.memory('search-ready');
   await panelScenarios(host, measure);
   await calendarScenarios(measure);
+  await taskBoardScenarios(host, measure);
   await projectScenarios(measure);
   await statisticsScenarios(host, measure);
   await cdp?.memory('analysis-ready');

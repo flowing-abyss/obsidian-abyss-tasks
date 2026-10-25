@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import process from 'process';
 
 // Tasks Kanban reuses task viewports/cards and adds guarded status capture/drop adapters.
-// Measured main: 2,152,652 -> 2,177,154 bytes (+24,502); shipped CSS: 197,384 ->
+// Measured main: 2,152,652 -> 2,177,160 bytes (+24,508); shipped CSS: 197,384 ->
 // 199,126 bytes (+1,742). Use the minimal containing KiB budgets; no dependencies added.
 // Shared with release-check.mjs, which re-checks the same threshold against an
 // already-built main.js — both read this key so the two checks can't drift apart.

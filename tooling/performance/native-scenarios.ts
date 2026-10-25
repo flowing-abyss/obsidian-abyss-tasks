@@ -1,4 +1,5 @@
 import type { TFile } from 'obsidian';
+import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
 import {
   sameTaskNodeRef,
   type TaskCommand,
@@ -15,6 +16,7 @@ import {
   frames,
   plugin,
   scrollRange,
+  taskBoardEvidence,
   waitFor,
 } from './native-helpers.ts';
 import type { Host, NativeOptions } from './native-types.ts';
@@ -449,6 +451,49 @@ export async function calendarScenarios(measure: Measure): Promise<void> {
       return { view: id, visibleDates: evidence.dates.join(',') };
     });
   }
+}
+
+export async function taskBoardScenarios(host: Host, measure: Measure): Promise<void> {
+  const expected = new Map(
+    DEFAULT_SETTINGS.taskStatuses.map((status) => [`status:${status.id}`, 0]),
+  );
+  const keys = new Map(
+    DEFAULT_SETTINGS.taskStatuses.map((status) => [status.symbol, `status:${status.id}`]),
+  );
+  for (const task of plugin(host).queries.listNodes()) {
+    const key = keys.get(task.node.statusSymbol);
+    if (key === undefined) throw new Error('Task board fixture contains an unknown status');
+    expected.set(key, (expected.get(key) ?? 0) + 1);
+  }
+  await click('.abyss-rail-btn[aria-label="Tasks"]');
+  const group = [...document.querySelectorAll<HTMLElement>('.abyss-tag-group-header')].find(
+    (node) => node.querySelector('.abyss-left-label')?.textContent.toLowerCase() === 'profile',
+  );
+  if (group === undefined) throw new Error('Profile task group missing');
+  group.click();
+  await click('.abyss-task-collection-switcher [aria-label="List view"]');
+  // An unsearched List uses the ordinary collection path, without a Search receipt.
+  await waitFor(
+    () => document.querySelector('.abyss-center .abyss-task-card'),
+    'task list preparation',
+  );
+  await frames();
+  await measure('ui.tasks.kanban', async () => {
+    await click('.abyss-task-collection-switcher [aria-label="Kanban view"]');
+    await searchReady();
+    const { tasks, columns } = taskBoardEvidence(element('.abyss-task-kanban'), expected);
+    return { tasks, columns };
+  });
+  await measure('ui.tasks.kanban-scroll', async () => {
+    const board = element('.abyss-task-kanban');
+    const scroller = [
+      ...board.querySelectorAll<HTMLElement>('.abyss-task-kanban-column-body'),
+    ].find((node) => node.scrollHeight > node.clientHeight + 100 && node.clientHeight > 0);
+    if (scroller === undefined) throw new Error('Populated task board scroll column missing');
+    for (const fraction of [0.5, 1, 0]) await scrollRange(scroller, fraction);
+    const { tasks, columns } = taskBoardEvidence(board, expected);
+    return { tasks, columns, scrolls: 3 };
+  });
 }
 
 export async function projectScenarios(measure: Measure): Promise<void> {

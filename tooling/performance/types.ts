@@ -85,6 +85,8 @@ const SCENARIOS = [
   'ui.calendar.day',
   'ui.calendar.week',
   'ui.calendar.month',
+  'ui.tasks.kanban',
+  'ui.tasks.kanban-scroll',
   'ui.projects.table',
   'ui.projects.kanban',
   'ui.projects.timeline',

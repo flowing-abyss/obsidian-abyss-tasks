@@ -83,6 +83,31 @@ export async function scrollRange(scroller: HTMLElement, fraction: number): Prom
   await waitFor(() => readyRange(scroller) === applied, 'stable scroll range');
 }
 
+/** Refuse empty, partial, or unvirtualized board work as a successful timing sample. */
+export function taskBoardEvidence(
+  root: HTMLElement,
+  expected: ReadonlyMap<string, number>,
+): { tasks: number; columns: number; mounted: number } {
+  const columns = [...root.querySelectorAll<HTMLElement>('.abyss-task-kanban-column')];
+  if (columns.length !== expected.size) throw new Error('Task board column population mismatch');
+  let tasks = 0;
+  for (const column of columns) {
+    const count = Number(column.querySelector('.abyss-task-kanban-column-count')?.textContent);
+    if (count !== expected.get(column.dataset['columnKey'] ?? ''))
+      throw new Error('Task board status population mismatch');
+    tasks += count;
+    // The corpus has thousands of nodes; even oversized overscan must stay bounded.
+    if (column.querySelectorAll('.abyss-task-card').length > 80)
+      throw new Error('Task board column mounts are not bounded');
+  }
+  if (readyRange(root) === undefined) throw new Error('Task board has no complete populated cards');
+  return {
+    tasks,
+    columns: columns.length,
+    mounted: root.querySelectorAll('.abyss-task-card').length,
+  };
+}
+
 export async function indexed(host: Host): Promise<void> {
   // This is the concrete TaskIndex behind the existing public query port. Keep the
   // tooling adapter explicit; no product API or private mangled name is introduced.
