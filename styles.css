@@ -3460,12 +3460,12 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
     color 0.1s;
 }
 
-:is(.abyss-cal-nav-today, .abyss-cal-view-btn, .abyss-project-overview-mode):hover {
+:is(.abyss-cal-nav-today, .abyss-cal-view-btn, .abyss-view-mode):hover {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
 }
 
-:is(.abyss-cal-view-switcher, .abyss-project-overview-switcher) {
+:is(.abyss-cal-view-switcher, .abyss-view-switcher) {
   display: flex;
   box-sizing: border-box;
   block-size: var(--abyss-toolbar-control-size);
@@ -3475,7 +3475,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   padding: var(--size-2-1);
 }
 
-:is(button.abyss-cal-view-btn, button.abyss-project-overview-mode) {
+:is(button.abyss-cal-view-btn, button.abyss-view-mode) {
   padding: 0 10px;
   block-size: calc(var(--abyss-toolbar-control-size) - 2 * var(--size-2-1));
   border-radius: 6px;
@@ -3489,7 +3489,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
     color 0.1s;
 }
 
-:is(.abyss-cal-view-btn, .abyss-project-overview-mode).is-active {
+:is(.abyss-cal-view-btn, .abyss-view-mode).is-active {
   background: var(--interactive-accent);
   color: var(--text-on-accent);
   font-weight: 500;
@@ -6351,14 +6351,13 @@ body.abyss-modal-open .popover.hover-popover {
   color: var(--text-muted);
 }
 
-.abyss-projects-table button.abyss-project-overview-mode {
+.abyss-center-controls button.abyss-view-mode {
   inline-size: calc(var(--abyss-toolbar-control-size) - 2 * var(--size-2-1));
   min-width: 0;
   padding: 0;
 }
 
-.abyss-project-table-controls
-  :is(.abyss-view-state-btn, .abyss-project-overview-mode):focus-visible {
+.abyss-project-table-controls :is(.abyss-view-state-btn, .abyss-view-mode):focus-visible {
   outline: 2px solid var(--interactive-accent);
   outline-offset: 2px;
 }
@@ -9329,7 +9328,7 @@ body.is-phone
 
 body.is-phone
   :is(.abyss-center-header, .abyss-projects-toolbar)
-  :is(.abyss-view-state-btn, .abyss-compact-pane-button, .abyss-project-overview-mode)
+  :is(.abyss-view-state-btn, .abyss-compact-pane-button, .abyss-view-mode)
   .svg-icon {
   inline-size: 18px;
   block-size: 18px;
@@ -9486,7 +9485,7 @@ body.is-tablet button.abyss-cal-nav-today {
   padding: 0 10px;
 }
 
-body.is-tablet :is(button.abyss-cal-view-btn, button.abyss-project-overview-mode) {
+body.is-tablet :is(button.abyss-cal-view-btn, button.abyss-view-mode) {
   padding: 0 10px;
 }
 
@@ -9594,7 +9593,7 @@ body.is-tablet .abyss-project-table-controls button.abyss-view-state-btn {
   padding: 0;
 }
 
-body.is-tablet .abyss-projects-table button.abyss-project-overview-mode {
+body.is-tablet .abyss-center-controls button.abyss-view-mode {
   padding: 0;
 }
 

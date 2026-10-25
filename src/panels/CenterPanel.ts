@@ -51,6 +51,7 @@ import {
 } from '../tasks';
 import { showDatePickerPopover } from '../ui/DatePickerPopover';
 import { TaskModal } from '../ui/TaskModal';
+import { ViewModeSwitcher } from '../ui/ViewModeSwitcher';
 import type {
   CreationRevealAuthority,
   CreationRevealRequest,
@@ -304,6 +305,7 @@ export class CenterPanel {
     readonly title: HTMLElement;
     readonly controls: HTMLElement;
     filterChips: HTMLElement[];
+    readonly viewSwitcher: ViewModeSwitcher<'list' | 'kanban'>;
     readonly viewButton: HTMLButtonElement;
     readonly filterInput: HTMLInputElement;
     readonly scroll: HTMLElement;
@@ -2717,6 +2719,20 @@ export class CenterPanel {
     const header = this.el.createDiv({ cls: 'abyss-center-header' });
     const title = header.createEl('h2', { cls: 'abyss-center-title' });
     const controls = header.createDiv({ cls: 'abyss-center-controls' });
+    const viewSwitcher = new ViewModeSwitcher<'list' | 'kanban'>(
+      controls,
+      'Task view',
+      [
+        { value: 'list', label: 'List view', icon: 'list' },
+        { value: 'kanban', label: 'Kanban view', icon: 'columns-3' },
+      ],
+      {
+        onSelect: (view) => {
+          this.listViewControls_abyssPrivate.setView(view);
+        },
+        family: 'abyss-task-collection',
+      },
+    );
     const viewButton = this.listViewControls_abyssPrivate.renderViewStateButton(controls);
     const filterInput = this.renderTaskFilterInput_abyssPrivate(controls);
     this.onRenderTaskHeaderActions_abyssPrivate?.(header, title, controls);
@@ -2728,6 +2744,7 @@ export class CenterPanel {
       title,
       controls,
       filterChips: [],
+      viewSwitcher,
       viewButton,
       filterInput,
       scroll,
@@ -2747,6 +2764,7 @@ export class CenterPanel {
       shell.viewButton,
     );
     const viewState = this.state_abyssPrivate.get('centerListViewState');
+    shell.viewSwitcher.update(viewState.view ?? 'list');
     shell.viewButton.toggleClass(
       'abyss-view-state-btn--active',
       isListViewOptionsCustomized(viewState, this.listViewControls_abyssPrivate.activeListKey()),

@@ -768,6 +768,10 @@ recapturing stale keys. Corrupt, unreadable, or future-version state stays untou
 suspend and runtime uses temporary defaults, while static saves preserve guarded legacy fields.
 Older schema-1 binaries suspend writes to schema 2; re-upgrading restores those views.
 
+`ViewModeSwitcher` supplies the icon controls for Tasks and the Projects overview. Both put the
+switcher before the existing `ViewOptionsPopover` sort/group menu and local search. Task Kanban
+options use the same popover rows as Projects; List options keep their existing behavior.
+
 Task collection preferences extend each saved `ListViewState` with an optional display mode and
 independent Kanban settings. Existing List grouping, sorting and status visibility remain intact;
 explicit property filters are shared. Kanban derives its effective selector state and status-column

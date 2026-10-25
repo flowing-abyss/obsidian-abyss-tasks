@@ -23,6 +23,7 @@ import type { StatusGroup } from '../../projects/status';
 import { moveProjectColumn, setProjectColumnVisibility } from '../../settings/projectTableSettings';
 import type { LocalSearchFocusTarget } from '../../ui/localSearchKeys';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
+import { ViewModeSwitcher } from '../../ui/ViewModeSwitcher';
 import {
   openViewOptionsPopover,
   type ViewOption,
@@ -122,7 +123,7 @@ export class ProjectsTableToolbar {
   readonly searchInput: HTMLInputElement;
   private readonly badges_abyssPrivate: HTMLElement;
   private readonly viewButton_abyssPrivate: HTMLButtonElement;
-  private readonly modeButtons_abyssPrivate = new Map<ProjectOverviewMode, HTMLButtonElement>();
+  private readonly modeSwitcher_abyssPrivate: ViewModeSwitcher<ProjectOverviewMode>;
   private readonly statusButtons_abyssPrivate = new Map<string, HTMLButtonElement>();
   private popoverCleanup_abyssPrivate: (() => void) | undefined;
 
@@ -147,25 +148,22 @@ export class ProjectsTableToolbar {
     this.viewButton_abyssPrivate.addEventListener('click', () => {
       this.togglePopover_abyssPrivate();
     });
-    const modeSwitcher = controls.createDiv({
-      cls: 'abyss-project-overview-switcher',
-      attr: { role: 'group', 'aria-label': 'Project view' },
-    });
-    for (const [mode, label, icon] of [
-      ['table', 'Table view', 'table-2'],
-      ['kanban', 'Kanban view', 'columns-3'],
-      ['timeline', 'Timeline view', 'gantt-chart'],
-    ] as const) {
-      const button = modeSwitcher.createEl('button', {
-        cls: `abyss-project-overview-mode abyss-project-overview-mode--${mode}`,
-        attr: { type: 'button', 'aria-label': label, 'aria-pressed': 'false' },
-      });
-      setIcon(button, icon);
-      button.addEventListener('click', () => {
-        options_abyssPrivate.onOverviewMode(mode);
-      });
-      this.modeButtons_abyssPrivate.set(mode, button);
-    }
+    this.modeSwitcher_abyssPrivate = new ViewModeSwitcher(
+      controls,
+      'Project view',
+      [
+        { value: 'table', label: 'Table view', icon: 'table-2' },
+        { value: 'kanban', label: 'Kanban view', icon: 'columns-3' },
+        { value: 'timeline', label: 'Timeline view', icon: 'gantt-chart' },
+      ],
+      {
+        onSelect: (mode) => {
+          options_abyssPrivate.onOverviewMode(mode);
+        },
+        family: 'abyss-project-overview',
+      },
+    );
+    this.viewButton_abyssPrivate.before(this.modeSwitcher_abyssPrivate.element);
     this.searchInput = controls.createEl('input', {
       cls: 'abyss-center-search',
       attr: { type: 'text', placeholder: 'Filter…', 'aria-label': 'Filter projects' },
@@ -264,11 +262,7 @@ export class ProjectsTableToolbar {
 
   private sync(): void {
     const mode = this.options_abyssPrivate.mode();
-    for (const [candidate, button] of this.modeButtons_abyssPrivate) {
-      const active = candidate === mode;
-      button.toggleClass('is-active', active);
-      button.setAttribute('aria-pressed', String(active));
-    }
+    this.modeSwitcher_abyssPrivate.update(mode);
     this.viewButton_abyssPrivate.classList.toggle(
       'abyss-view-state-btn--active',
       this.isCustomized_abyssPrivate(),

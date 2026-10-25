@@ -7585,3 +7585,15 @@ vi.mock('obsidian', async () => ({
   ...(await import('obsidian-test-mocks/obsidian')),
   setTooltip: vi.fn(),
 }));
+
+it('keeps project view switching before shared view options and search', () => {
+  const { host } = mount([project({})]);
+  const controls = expectDefined(host.querySelector('.abyss-project-table-controls'));
+  const order = [...controls.children].map((el) => el.className);
+  expect(
+    order.findIndex((value) => value.includes('abyss-project-overview-switcher')),
+  ).toBeLessThan(order.findIndex((value) => value.includes('abyss-view-state-btn')));
+  expect(order.findIndex((value) => value.includes('abyss-view-state-btn'))).toBeLessThan(
+    order.findIndex((value) => value.includes('abyss-center-search')),
+  );
+});

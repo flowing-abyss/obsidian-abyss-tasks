@@ -16,6 +16,12 @@ import { upsertTagFilter } from '../../settings/tagFilters';
 import type { CalendarSettings, ListViewState, PropertyFilter } from '../../settings/types';
 import type { StatusRegistry } from '../../status/StatusRegistry';
 import { ACTIVE_STATUS_GROUPS, ALL_STATUS_GROUPS, TYPE_LABELS } from '../../status/statusConstants';
+import {
+  defaultTaskKanbanSettings,
+  normalizeTaskKanbanSettings,
+  taskCollectionListState,
+  type TaskKanbanSettings,
+} from '../../task-lists/taskKanbanSettings';
 import type { TaskStatusType } from '../../tasks';
 import {
   openViewOptionsPopover,
@@ -24,6 +30,7 @@ import {
 } from '../../ui/ViewOptionsPopover';
 import type { InteractionOwnershipPort } from '../../ui/interactionOwnership';
 import { runAsyncAction } from '../../ui/runAsyncAction';
+import { taskKanbanOptionsRows } from '../task-collection/TaskKanbanOptions';
 
 interface ListViewControlsHost {
   root(): HTMLElement;
@@ -155,6 +162,40 @@ export class ListViewControls {
     this.#options.state.set('centerListViewState', next);
   }
 
+  setView(view: 'list' | 'kanban'): void {
+    const current = this.#read();
+    if ((current.view ?? 'list') === view) return;
+    this.closeViewStatePopover();
+    this.#updateViewState({ ...current, view });
+  }
+
+  updateKanban(patch: Partial<TaskKanbanSettings>): void {
+    const current = this.#read();
+    this.#updateViewState({
+      ...current,
+      kanban: { ...normalizeTaskKanbanSettings(current.kanban), ...patch },
+    });
+  }
+
+  #organization(): ListViewState {
+    return taskCollectionListState(this.#read());
+  }
+
+  #setSort(sortBy: ListViewState['sortBy']): void {
+    if (this.#read().view === 'kanban') this.updateKanban({ sortBy });
+    else this.#updateViewState({ ...this.#read(), sortBy });
+  }
+
+  #reset(): void {
+    const current = this.#read();
+    if (current.view === 'kanban') {
+      this.#updateViewState({ ...current, filters: [], kanban: defaultTaskKanbanSettings() });
+    } else {
+      this.#options.statePort?.setRelevance(true);
+      this.#updateViewState({ ...current, ...this.#defaults() });
+    }
+  }
+
   activeListKey(): string {
     return listSelectionToKey(this.#options.state.get('selectedList'));
   }
@@ -207,19 +248,31 @@ export class ListViewControls {
       return;
     }
 
-    const defaults = this.#defaults();
+    const defaults =
+      this.#read().view === 'kanban'
+        ? { ...this.#defaults(), sortBy: defaultTaskKanbanSettings().sortBy }
+        : this.#defaults();
     const close = openViewOptionsPopover({
       host: this.#options.host.root(),
       anchor,
-      rows: [
-        this.#groupByRowSpec(defaults),
-        this.#sortByRowSpec(defaults),
-        this.#statusGroupsRowSpec(),
-      ],
+      rows:
+        this.#read().view === 'kanban'
+          ? taskKanbanOptionsRows({
+              read: () => normalizeTaskKanbanSettings(this.#read().kanban),
+              update: (patch) => {
+                this.updateKanban(patch);
+              },
+              statuses: () => this.#options.statusRegistry.all(),
+              sort: this.#sortByRowSpec(defaults),
+            })
+          : [
+              this.#groupByRowSpec(defaults),
+              this.#sortByRowSpec(defaults),
+              this.#statusGroupsRowSpec(),
+            ],
       showReset: () => this.#customized(true),
       onReset: () => {
-        this.#options.statePort?.setRelevance(true);
-        this.#updateViewState(this.#defaults());
+        this.#reset();
       },
       interactionOwnership: this.#options.interactionOwnership,
       onClose: () => {
@@ -283,18 +336,20 @@ export class ListViewControls {
       label: 'Sort by',
       displayValue: () => {
         if (this.#options.statePort?.relevance() === true) return 'Relevance';
-        const { sortBy } = this.#read();
+        const { sortBy } = this.#organization();
         return `${this.#capitalize(sortBy.field)} ${sortBy.dir === 'asc' ? '↑' : '↓'}`;
       },
       activeValue: () =>
-        this.#options.statePort?.relevance() === true ? 'relevance' : this.#read().sortBy.field,
+        this.#options.statePort?.relevance() === true
+          ? 'relevance'
+          : this.#organization().sortBy.field,
       options: [
         ...(this.#options.statePort?.canUseRelevance() === true
           ? [{ label: 'Relevance', value: 'relevance' }]
           : []),
         ...fields.map((field) => ({
           label: () => {
-            const { sortBy } = this.#read();
+            const { sortBy } = this.#organization();
             const arrow = sortBy.dir === 'asc' ? '↑' : '↓';
             return `${this.#capitalize(field)} ${sortBy.field === field ? arrow : ''}`.trim();
           },
@@ -309,14 +364,14 @@ export class ListViewControls {
           return;
         }
         this.#options.statePort?.setRelevance(false);
-        const viewState = this.#read();
+        const viewState = this.#organization();
         const field = value as ListViewState['sortBy']['field'];
         // Tracked time is asked for to find where the time went, so it opens on the busiest task;
         // every other field opens ascending. Choosing the field again flips it either way.
         const opening = field === 'tracked' ? 'desc' : 'asc';
         const flipped = viewState.sortBy.dir === 'asc' ? 'desc' : 'asc';
         const dir = viewState.sortBy.field === field ? flipped : opening;
-        this.#updateViewState({ ...viewState, sortBy: { field, dir } });
+        this.#setSort({ field, dir });
       },
     };
   }
