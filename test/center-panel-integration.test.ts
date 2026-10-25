@@ -1026,7 +1026,9 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
     activeDocument.body.append(container);
     const chips = (): HTMLElement[] =>
       Array.from(
-        container.querySelectorAll<HTMLElement>('.abyss-center-controls > .abyss-filter-chip'),
+        container.querySelectorAll<HTMLElement>(
+          '.abyss-task-collection-filters > .abyss-filter-chip',
+        ),
       );
     const labels = (): Array<string | null | undefined> =>
       chips().map((chip) => chip.querySelector('.abyss-filter-chip-label')?.textContent);
@@ -1061,8 +1063,7 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
 
       expect(container.querySelector('.abyss-center-header')).toBe(header);
       expect(labels()).toEqual(['#work', '#home']);
-      const last = chips()[chips().length - 1];
-      expect(last?.nextElementSibling).toBe(
+      expect(container.querySelector('.abyss-task-collection-filters')?.nextElementSibling).toBe(
         container.querySelector('.abyss-center-controls > .abyss-view-switcher'),
       );
     } finally {
@@ -8918,7 +8919,9 @@ it('switches Tasks between List and status Kanban with independent priority orde
       ),
     ).toEqual(['High', 'Low', 'Finished']);
     const controls = expectDefined(el.querySelector('.abyss-center-controls'));
-    expect(controls.firstElementChild?.classList.contains('abyss-view-switcher')).toBe(true);
+    expect(controls.querySelector('.abyss-task-collection-filters')?.nextElementSibling).toBe(
+      controls.querySelector('.abyss-view-switcher'),
+    );
     expectDefined(el.querySelector<HTMLButtonElement>('[aria-label="List view"]')).click();
     expect(el.querySelector('.abyss-task-kanban')).toBeNull();
     expect(el.textContent).not.toContain('Finished');

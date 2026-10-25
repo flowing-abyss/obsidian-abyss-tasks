@@ -34,6 +34,7 @@ interface KanbanActions {
   createTask?(status: TaskStatusDef, host: HTMLElement, trigger: HTMLElement): void;
 }
 interface NativeObserver {
+  left: number;
   readonly observer: TaskListNativeWriteObserver;
   readonly invalidated: () => void;
   readonly releases: Map<string, () => void>;
@@ -267,13 +268,18 @@ export class TaskKanbanSurface<T> implements TaskCollectionSurface<T> {
       this.#visibility();
     });
   };
+  readonly #scroll = (): void => {
+    for (const token of this.#nativeObservers)
+      if (token.left !== this.options.host.scrollLeft) token.invalidated();
+    this.#schedule();
+  };
   #bind(): void {
     const owner = this.options.host.ownerDocument.defaultView;
     if (owner === this.#owner) return;
     this.#unbind();
     this.#owner = owner;
     if (owner === null) return;
-    this.options.host.addEventListener('scroll', this.#schedule, { passive: true });
+    this.options.host.addEventListener('scroll', this.#scroll, { passive: true });
     owner.addEventListener('resize', this.#schedule);
     this.#resize = new owner.ResizeObserver(this.#schedule);
     this.#resize.observe(this.options.host);
@@ -283,7 +289,7 @@ export class TaskKanbanSurface<T> implements TaskCollectionSurface<T> {
     this.#frame = undefined;
     this.#resize?.disconnect();
     this.#resize = undefined;
-    this.options.host.removeEventListener('scroll', this.#schedule);
+    this.options.host.removeEventListener('scroll', this.#scroll);
     this.#owner?.removeEventListener('resize', this.#schedule);
     this.#owner = null;
   }
@@ -318,15 +324,30 @@ export class TaskKanbanSurface<T> implements TaskCollectionSurface<T> {
     if (column === undefined || this.#destroyed) return undefined;
     this.#expanded.add(column.model.key);
     this.#updateHeader(column);
-    const viewport = this.options.host.getBoundingClientRect();
-    const target = column.element.getBoundingClientRect();
-    if (target.left < viewport.left) this.options.host.scrollLeft += target.left - viewport.left;
-    else if (target.right > viewport.right)
-      this.options.host.scrollLeft += target.right - viewport.right;
+    if (!this.#revealColumn(column)) return undefined;
     this.#activate(column, true);
     return options === undefined
       ? column.viewport.reveal(key)
       : column.viewport.reveal(key, options);
+  }
+  #revealColumn(column: Column<T>): boolean {
+    const host = this.options.host;
+    for (const token of this.#nativeObservers) {
+      if (token.left !== host.scrollLeft) {
+        token.invalidated();
+        return false;
+      }
+      if (!token.observer.beforeWrite(this.options.scroll.scrollTop)) return false;
+    }
+    const viewport = host.getBoundingClientRect();
+    const target = column.element.getBoundingClientRect();
+    if (target.left < viewport.left) host.scrollLeft += target.left - viewport.left;
+    else if (target.right > viewport.right) host.scrollLeft += target.right - viewport.right;
+    for (const token of this.#nativeObservers) {
+      token.left = host.scrollLeft;
+      token.observer.afterWrite(this.options.scroll.scrollTop);
+    }
+    return true;
   }
   pin(key: string, invalidated?: () => void, observer?: TaskListNativeWriteObserver): () => void {
     const column = this.#owners.get(key);
@@ -343,13 +364,39 @@ export class TaskKanbanSurface<T> implements TaskCollectionSurface<T> {
     };
   }
   #observeColumn(token: NativeObserver, column: Column<T>): void {
-    token.releases.set(
-      column.model.key,
-      column.viewport.observeNativeWrites(token.observer, token.invalidated),
+    let expected = column.body.scrollTop;
+    const check = (): void => {
+      if (column.body.scrollTop !== expected) token.invalidated();
+    };
+    const release = column.viewport.observeNativeWrites(
+      {
+        beforeWrite: (top) => {
+          if (top !== expected) {
+            token.invalidated();
+            return false;
+          }
+          return token.observer.beforeWrite(this.options.scroll.scrollTop);
+        },
+        afterWrite: (top) => {
+          expected = top;
+          token.observer.afterWrite(this.options.scroll.scrollTop);
+        },
+      },
+      token.invalidated,
     );
+    column.body.addEventListener('scroll', check, { passive: true });
+    token.releases.set(column.model.key, () => {
+      release();
+      column.body.removeEventListener('scroll', check);
+    });
   }
   observeNativeWrites(observer: TaskListNativeWriteObserver, invalidated: () => void): () => void {
-    const token: NativeObserver = { observer, invalidated, releases: new Map() };
+    const token: NativeObserver = {
+      observer,
+      invalidated,
+      releases: new Map(),
+      left: this.options.host.scrollLeft,
+    };
     this.#nativeObservers.add(token);
     for (const column of this.#columns.values()) this.#observeColumn(token, column);
     return () => {

@@ -1,3 +1,5 @@
+// Independent Kanban scroll receipts: main 2181762 bytes; 2182144-byte limit.
+// Narrow task toolbar adds 579 shipped CSS bytes (199,705 total); 196 KiB contains it.
 // Kanban shared grouping and guarded single/bulk drops: measured main 2180929 bytes;
 // minimal containing KiB budget 2181120 bytes. No new dependencies.
 import esbuild from 'esbuild';

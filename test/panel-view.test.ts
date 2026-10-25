@@ -3698,18 +3698,23 @@ describe('PanelView', () => {
           view.contentEl.querySelector<HTMLElement>('.abyss-center .abyss-center-controls'),
         );
       const chips = (): HTMLElement[] =>
-        Array.from(controls().querySelectorAll<HTMLElement>(':scope > .abyss-filter-chip'));
-      // The chips run in filter order straight into the view switcher.
+        Array.from(
+          controls().querySelectorAll<HTMLElement>(
+            '.abyss-task-collection-filters > .abyss-filter-chip',
+          ),
+        );
+      // Filters retain their order in the group preceding the view switcher.
       const expectChipsBeforeSwitcher = (labels: readonly string[]): void => {
         const found = chips();
         expect(
           found.map((chip) => chip.querySelector('.abyss-filter-chip-label')?.textContent),
         ).toEqual(labels);
         for (const [index, chip] of found.entries()) {
-          expect(chip.nextElementSibling).toBe(
-            found[index + 1] ?? controls().querySelector(':scope > .abyss-view-switcher'),
-          );
+          expect(chip.nextElementSibling).toBe(found[index + 1] ?? null);
         }
+        expect(controls().querySelector('.abyss-task-collection-filters')?.nextElementSibling).toBe(
+          controls().querySelector(':scope > .abyss-view-switcher'),
+        );
       };
 
       expectChipsBeforeSwitcher(['📄 Source', '#work']);

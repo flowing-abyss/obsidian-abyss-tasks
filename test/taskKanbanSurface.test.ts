@@ -126,6 +126,58 @@ describe('virtual task Kanban', () => {
     expect(card?.dataset['rowKey']).toBe('n:1998');
     expect(h.mounted.size).toBeLessThan(100);
   });
+  it('keeps independent column scroll receipts in the outer surface coordinate system', () => {
+    const h = harness();
+    let expected = h.host.scrollTop;
+    let accepted = true;
+    const invalidated = vi.fn();
+    const release = h.surface.observeNativeWrites(
+      {
+        beforeWrite: (top) => {
+          accepted &&= top === expected;
+          return accepted;
+        },
+        afterWrite: (top) => {
+          expected = top;
+        },
+      },
+      invalidated,
+    );
+    expect(h.surface.reveal('n:1998')?.dataset['rowKey']).toBe('n:1998');
+    expect(h.surface.reveal('n:1999')?.dataset['rowKey']).toBe('n:1999');
+    expect(accepted).toBe(true);
+    expect(expected).toBe(h.host.scrollTop);
+    const body = expectDefined(h.host.querySelector<HTMLElement>('.abyss-task-kanban-column-body'));
+    body.dispatchEvent(new Event('scroll'));
+    expect(invalidated).not.toHaveBeenCalled();
+    body.scrollTop -= 100;
+    body.dispatchEvent(new Event('scroll'));
+    expect(invalidated).toHaveBeenCalledTimes(1);
+    release();
+  });
+
+  it('distinguishes owned horizontal reveal from a later manual board scroll', () => {
+    const h = harness();
+    const column = expectDefined(
+      h.host.querySelectorAll<HTMLElement>('.abyss-task-kanban-column')[1],
+    );
+    vi.spyOn(h.host, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 600, 900));
+    vi.spyOn(column, 'getBoundingClientRect').mockReturnValue(new DOMRect(800, 0, 272, 900));
+    const invalidated = vi.fn();
+    const release = h.surface.observeNativeWrites(
+      { beforeWrite: () => true, afterWrite: () => {} },
+      invalidated,
+    );
+    h.surface.reveal('n:1999');
+    expect(h.host.scrollLeft).toBeGreaterThan(0);
+    h.host.dispatchEvent(new Event('scroll'));
+    expect(invalidated).not.toHaveBeenCalled();
+    h.host.scrollLeft += 50;
+    h.host.dispatchEvent(new Event('scroll'));
+    expect(invalidated).toHaveBeenCalledTimes(1);
+    release();
+  });
+
   it('keeps the source pinned while the column scrolls, then releases all mounts on disposal', () => {
     const h = harness();
     const release = h.surface.pin('n:0');

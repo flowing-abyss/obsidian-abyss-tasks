@@ -11143,3 +11143,40 @@ button.abyss-calendar-date[aria-pressed='true'] {
 .abyss-task-kanban-capture:empty {
   display: none;
 }
+
+.abyss-task-collection-filters {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-3);
+}
+
+.abyss-task-collection-filters:empty {
+  display: none;
+}
+
+@container abyss-panel-layout (max-width: 26rem) {
+  .abyss-layout--tasks .abyss-center-title {
+    display: none;
+  }
+
+  .abyss-layout--tasks .abyss-center-search {
+    flex: 1 1 4rem;
+    min-inline-size: 0;
+  }
+
+  .abyss-task-collection-filters:not(:empty) {
+    order: 1;
+    flex: 0 0 100%;
+    flex-wrap: wrap;
+  }
+
+  .abyss-task-collection-filters .abyss-filter-chip {
+    max-inline-size: 100%;
+    box-sizing: border-box;
+  }
+
+  .abyss-task-collection-filters .abyss-filter-chip-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}

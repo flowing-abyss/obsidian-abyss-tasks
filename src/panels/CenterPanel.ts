@@ -338,6 +338,7 @@ export class CenterPanel {
     readonly viewSwitcher: ViewModeSwitcher<'list' | 'kanban'>;
     readonly viewButton: HTMLButtonElement;
     readonly filterInput: HTMLInputElement;
+    readonly filterChipsHost: HTMLElement;
     readonly scroll: HTMLElement;
     readonly addBar: HTMLElement;
   } | null = null;
@@ -2993,6 +2994,7 @@ export class CenterPanel {
     const header = this.el.createDiv({ cls: 'abyss-center-header' });
     const title = header.createEl('h2', { cls: 'abyss-center-title' });
     const controls = header.createDiv({ cls: 'abyss-center-controls' });
+    const filterChipsHost = controls.createDiv({ cls: 'abyss-task-collection-filters' });
     const viewSwitcher = new ViewModeSwitcher<'list' | 'kanban'>(
       controls,
       'Task view',
@@ -3021,6 +3023,7 @@ export class CenterPanel {
       viewSwitcher,
       viewButton,
       filterInput,
+      filterChipsHost,
       scroll,
       addBar,
     };
@@ -3034,8 +3037,7 @@ export class CenterPanel {
     shell.title.setText(this.getTitle_abyssPrivate());
     for (const chip of shell.filterChips) chip.remove();
     shell.filterChips = this.listViewControls_abyssPrivate.renderPropertyChips(
-      shell.controls,
-      shell.viewSwitcher.element,
+      shell.filterChipsHost,
     );
     const viewState = this.state_abyssPrivate.get('centerListViewState');
     shell.viewSwitcher.update(viewState.view ?? 'list');
