@@ -250,7 +250,11 @@ export class ListViewControls {
 
     const defaults =
       this.#read().view === 'kanban'
-        ? { ...this.#defaults(), sortBy: defaultTaskKanbanSettings().sortBy }
+        ? {
+            ...this.#defaults(),
+            groupBy: 'none' as const,
+            sortBy: defaultTaskKanbanSettings().sortBy,
+          }
         : this.#defaults();
     const close = openViewOptionsPopover({
       host: this.#options.host.root(),
@@ -262,7 +266,9 @@ export class ListViewControls {
               update: (patch) => {
                 this.updateKanban(patch);
               },
-              statuses: () => this.#options.statusRegistry.all(),
+              statuses: () =>
+                this.#options.statusRegistry.grouped().flatMap((group) => group.statuses),
+              group: this.#groupByRowSpec(defaults),
               sort: this.#sortByRowSpec(defaults),
             })
           : [
@@ -299,22 +305,24 @@ export class ListViewControls {
       icon: 'layout-list',
       label: 'Group by',
       displayValue: () => {
-        const groupBy = this.#read().groupBy;
+        const groupBy = this.#organization().groupBy;
         return labels[groupBy] ?? groupBy;
       },
-      activeValue: () => this.#read().groupBy,
-      options: Object.entries(labels).map(([value, label]) => ({
-        label,
-        value,
-        isDefault: value === defaults.groupBy,
-        ...this.#noteDescription(value),
-      })),
+      activeValue: () => this.#organization().groupBy,
+      options: Object.entries(labels)
+        .filter(([value]) => this.#read().view !== 'kanban' || value !== 'status')
+        .map(([value, label]) => ({
+          label,
+          value,
+          isDefault: value === defaults.groupBy,
+          ...this.#noteDescription(value),
+        })),
       onSelect: (value) => {
-        const viewState = this.#read();
-        this.#updateViewState({
-          ...viewState,
-          groupBy: value as ListViewState['groupBy'],
-        });
+        if (this.#read().view === 'kanban') {
+          this.updateKanban({ groupBy: value as TaskKanbanSettings['groupBy'] });
+        } else {
+          this.#updateViewState({ ...this.#read(), groupBy: value as ListViewState['groupBy'] });
+        }
       },
     };
   }

@@ -226,7 +226,10 @@ function* outermostRecords(
 }
 function dailyOrganization(input: TaskSearchOrganizationInput): boolean {
   return (
-    input.scope === 'nodes' && input.selection === 'upcoming' && input.view.list.groupBy === 'date'
+    input.scope === 'nodes' &&
+    input.selection === 'upcoming' &&
+    input.view.list.groupBy === 'date' &&
+    input.view.list.view !== 'kanban'
   );
 }
 function* ownedRecords(

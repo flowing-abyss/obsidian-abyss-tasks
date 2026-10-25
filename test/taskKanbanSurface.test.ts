@@ -101,6 +101,14 @@ function harness(count = 2000) {
   };
 }
 describe('virtual task Kanban', () => {
+  it('labels columns without Obsidian hover tooltips', () => {
+    const h = harness(2);
+    const column = expectDefined(h.host.querySelector<HTMLElement>('.abyss-task-kanban-column'));
+    expect(column.hasAttribute('aria-label')).toBe(false);
+    const id = expectDefined(column.getAttribute('aria-labelledby') ?? undefined);
+    expect(document.getElementById(id)?.textContent).toBe('To do');
+  });
+
   it('keeps an active column editor attached during publication', () => {
     const h = harness();
     const capture = expectDefined(h.host.querySelector<HTMLElement>('.abyss-task-kanban-capture'));

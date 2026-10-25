@@ -8,6 +8,7 @@ import {
   taskCollectionListState,
 } from '../src/task-lists/taskKanbanSettings';
 import type { TaskPriority } from '../src/tasks';
+import { expectDefined } from './helpers';
 
 interface Value {
   readonly statusSymbol: string;
@@ -73,7 +74,13 @@ describe('task Kanban organization', () => {
       },
     };
     const model = buildTaskKanbanModel(
-      indexedRows([row('two', '/', 'D'), first, row('three', '/', 'A')]),
+      indexedRows([
+        { kind: 'group', key: 'priority:A', label: 'Highest', count: 2, first: true },
+        first,
+        row('three', '/', 'A'),
+        { kind: 'group', key: 'priority:D', label: 'Normal', count: 1, first: false },
+        row('two', '/', 'D'),
+      ]),
       statuses,
       { ...defaultTaskKanbanSettings(), groupBy: 'priority' },
       (v) => v,
@@ -103,10 +110,68 @@ describe('task Kanban organization', () => {
       sortBy: { field: 'bad', dir: 'wrong' },
       hiddenStatuses: ['doing', 8, 'doing'],
       descriptionLines: 99,
-      groupBy: 'tag',
+      groupBy: 'status',
     });
     expect(value).toEqual({ ...defaultTaskKanbanSettings(), hiddenStatuses: ['doing'] });
     value.hiddenStatuses.push('done');
     expect(defaultTaskKanbanSettings().hiddenStatuses).toEqual([]);
   });
+});
+
+it.each(['none', 'date', 'priority', 'tag', 'source-note', 'outgoing-link'] as const)(
+  'uses the existing List organizer for %s grouping without changing saved List state',
+  (groupBy) => {
+    const view: ListViewState = {
+      filters: [],
+      groupBy: 'status',
+      sortBy: { field: 'title', dir: 'asc' },
+      view: 'kanban',
+      kanban: { ...defaultTaskKanbanSettings(), groupBy },
+    };
+    expect(taskCollectionListState(view).groupBy).toBe(groupBy);
+    expect(normalizeTaskKanbanSettings(view.kanban).groupBy).toBe(groupBy);
+    expect(view.groupBy).toBe('status');
+  },
+);
+it('partitions existing group headers and counts without losing source-note navigation or exact rows', () => {
+  const first = { ...row('one', ' '), groupKey: 'source:work.md' };
+  const model = buildTaskKanbanModel(
+    indexedRows([
+      {
+        kind: 'group',
+        key: 'source:work.md',
+        label: 'Work',
+        sourcePath: 'work.md',
+        count: 3,
+        first: true,
+      },
+      first,
+      { ...row('two', '/'), groupKey: 'source:work.md' },
+      { ...first, key: 'duplicate' },
+      {
+        kind: 'group',
+        key: 'source:other.md',
+        label: 'Other',
+        sourcePath: 'other.md',
+        count: 1,
+        first: false,
+      },
+      { ...row('three', ' '), groupKey: 'source:other.md' },
+    ]),
+    statuses,
+    { ...defaultTaskKanbanSettings(), groupBy: 'source-note' },
+    (v) => v,
+  );
+  expect(
+    [...expectDefined(model.columns[0]).rows.slice(0, 20)].map((r) =>
+      r.kind === 'group' ? [r.label, r.count, r.sourcePath] : r.key,
+    ),
+  ).toEqual([['Work', 1, 'work.md'], 'one', ['Other', 1, 'other.md'], 'three']);
+  expect(expectDefined(model.columns[1]).rows.rowAt(0)).toMatchObject({
+    label: 'Work',
+    count: 1,
+    first: true,
+  });
+  expect(expectDefined(model.columns[2]).rows.rowCount).toBe(0);
+  expect(model.rows.rowAt(1)).toBe(first);
 });

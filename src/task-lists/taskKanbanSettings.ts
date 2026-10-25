@@ -1,7 +1,7 @@
 import type { ListViewState } from '../settings/types';
 
 export interface TaskKanbanSettings {
-  groupBy: 'none' | 'priority';
+  groupBy: Exclude<ListViewState['groupBy'], 'status'>;
   sortBy: ListViewState['sortBy'];
   hiddenStatuses: string[];
   collapsedColumns: string[];
@@ -10,6 +10,14 @@ export interface TaskKanbanSettings {
   showMetadata: boolean;
 }
 
+const groupFields: ReadonlyArray<TaskKanbanSettings['groupBy']> = [
+  'none',
+  'date',
+  'priority',
+  'tag',
+  'source-note',
+  'outgoing-link',
+];
 const sortFields: ReadonlyArray<ListViewState['sortBy']['field']> = [
   'date',
   'priority',
@@ -46,7 +54,9 @@ export function normalizeTaskKanbanSettings(value: unknown): TaskKanbanSettings 
   const sort = record(raw['sortBy']);
   const description = raw['descriptionLines'];
   return {
-    groupBy: raw['groupBy'] === 'priority' ? 'priority' : 'none',
+    groupBy: groupFields.includes(raw['groupBy'] as TaskKanbanSettings['groupBy'])
+      ? (raw['groupBy'] as TaskKanbanSettings['groupBy'])
+      : 'none',
     sortBy: {
       field: sortFields.includes(sort['field'] as ListViewState['sortBy']['field'])
         ? (sort['field'] as ListViewState['sortBy']['field'])
@@ -84,7 +94,7 @@ export function isMalformedTaskKanbanSettings(value: unknown): boolean {
 export function taskCollectionListState(view: ListViewState): ListViewState {
   if (view.view !== 'kanban') return view;
   const board = normalizeTaskKanbanSettings(view.kanban);
-  const result = { ...view, groupBy: 'none' as const, sortBy: board.sortBy };
+  const result = { ...view, groupBy: board.groupBy, sortBy: board.sortBy };
   delete result.statusGroups;
   return result;
 }

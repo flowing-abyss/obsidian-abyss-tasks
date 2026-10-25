@@ -1,10 +1,10 @@
 import {
   indexedRows,
+  type TaskListGroupRow,
   type TaskListRow,
   type TaskListRows,
   type TaskListTaskRow,
 } from '../panels/task-list/taskListRows';
-import { PRIORITY_LEVELS } from '../priority';
 import type { TaskStatusDef } from '../settings/types';
 import type { TaskPriority } from '../tasks';
 import type { TaskKanbanSettings } from './taskKanbanSettings';
@@ -23,58 +23,64 @@ export interface TaskKanbanMetadata {
   readonly statusSymbol: string;
   readonly priority: TaskPriority;
 }
+interface GroupedTask<T> {
+  readonly row: TaskListTaskRow<T>;
+  readonly group: TaskListGroupRow | undefined;
+}
 function columnRows<T>(
   key: string,
-  tasks: ReadonlyArray<TaskListTaskRow<T>>,
+  tasks: ReadonlyArray<GroupedTask<T>>,
   settings: TaskKanbanSettings,
-  metadata: (task: T) => TaskKanbanMetadata,
 ): TaskListRows<T> {
-  if (settings.groupBy === 'none') return indexedRows(tasks);
-  const groups = new Map<TaskPriority, Array<TaskListTaskRow<T>>>();
-  for (const row of tasks) {
-    const priority = metadata(row.task).priority;
-    const group = groups.get(priority) ?? [];
-    group.push(row);
-    groups.set(priority, group);
-  }
+  if (settings.groupBy === 'none') return indexedRows(tasks.map((entry) => entry.row));
   const rows: Array<TaskListRow<T>> = [];
-  for (const level of PRIORITY_LEVELS) {
-    const group = groups.get(level.value);
-    if (group === undefined) continue;
-    rows.push(
-      {
-        kind: 'group',
-        key: `kanban-group:${key}:${level.value}`,
-        label: level.value === 'D' ? 'Normal' : level.label,
-        count: group.length,
-        first: rows.length === 0,
-      },
-      ...group,
-    );
+  let headerIndex = -1;
+  let currentGroup: TaskListGroupRow | undefined;
+  for (const { row, group } of tasks) {
+    if (group !== undefined && group !== currentGroup) {
+      currentGroup = group;
+      headerIndex = rows.length;
+      rows.push({
+        ...group,
+        key: `kanban-group:${key}:${group.key}`,
+        count: 0,
+        first: headerIndex === 0,
+      });
+    }
+    const header = rows[headerIndex];
+    if (header?.kind === 'group') rows[headerIndex] = { ...header, count: header.count + 1 };
+    rows.push(row);
   }
   return indexedRows(rows);
+}
+function* groupedTasks<T>(rows: TaskListRows<T>): Iterable<GroupedTask<T>> {
+  let group: TaskListGroupRow | undefined;
+  const seen = new Set<string>();
+  for (const row of rows.slice(0, rows.rowCount)) {
+    if (row.kind === 'group') group = row;
+    else if (!seen.has(row.taskKey)) {
+      seen.add(row.taskKey);
+      yield { row, group };
+    }
+  }
 }
 function columnBuckets<T>(
   rows: TaskListRows<T>,
   statuses: readonly TaskStatusDef[],
   hidden: ReadonlySet<string>,
   metadata: (task: T) => TaskKanbanMetadata,
-): { buckets: Map<string, Array<TaskListTaskRow<T>>>; unknown: Map<string, string> } {
+): { buckets: Map<string, Array<GroupedTask<T>>>; unknown: Map<string, string> } {
   const catalog = new Map(statuses.map((status) => [status.symbol, status]));
-  const buckets = new Map<string, Array<TaskListTaskRow<T>>>();
+  const buckets = new Map<string, Array<GroupedTask<T>>>();
   const unknown = new Map<string, string>();
-  const seen = new Set<string>();
-
-  for (const row of rows.slice(0, rows.rowCount)) {
-    if (row.kind !== 'task' || seen.has(row.taskKey)) continue;
-    seen.add(row.taskKey);
+  for (const { row, group } of groupedTasks(rows)) {
     const symbol = metadata(row.task).statusSymbol;
     const status = catalog.get(symbol);
     if (status !== undefined && hidden.has(status.id)) continue;
     const key = status === undefined ? `unknown:${symbol}` : `status:${status.id}`;
     if (status === undefined) unknown.set(key, symbol);
     const bucket = buckets.get(key) ?? [];
-    bucket.push(row);
+    bucket.push({ row, group });
     buckets.set(key, bucket);
   }
   return { buckets, unknown };
@@ -97,14 +103,14 @@ export function buildTaskKanbanModel<T>(
         key,
         label: status.name,
         status,
-        rows: columnRows(key, buckets.get(key) ?? [], settings, metadata),
+        rows: columnRows(key, buckets.get(key) ?? [], settings),
       };
     });
   for (const [key, symbol] of unknown) {
     columns.push({
       key,
       label: `Unknown [${symbol}]`,
-      rows: columnRows(key, buckets.get(key) ?? [], settings, metadata),
+      rows: columnRows(key, buckets.get(key) ?? [], settings),
     });
   }
   return {

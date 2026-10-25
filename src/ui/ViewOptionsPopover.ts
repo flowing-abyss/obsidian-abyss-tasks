@@ -38,6 +38,7 @@ export interface ViewOptionsSingleRow extends ViewOptionsRowBase {
 
 export interface ViewOptionsMultiRow extends ViewOptionsRowBase {
   readonly kind: 'multi';
+  readonly preserveOrder?: boolean;
   readonly selected: readonly string[] | (() => readonly string[]);
   readonly options: readonly ViewOption[];
   readonly presets?: ReadonlyArray<{
@@ -354,7 +355,10 @@ function syncMultiOptions(
   const rank = new Map(selected.map((value, index) => [value, index]));
   const focused = host.ownerDocument.activeElement;
   const scrollPositions = captureScrollPositions(host);
-  const ordered = [...rows].sort((left, right) => compareMultiOptions(left, right, rank, rows));
+  const ordered =
+    spec.preserveOrder === true
+      ? rows
+      : [...rows].sort((left, right) => compareMultiOptions(left, right, rank, rows));
   reconcileMultiOptionOrder(host, ordered);
   for (const rendered of rows) {
     syncMultiOption(rendered, rank.has(rendered.option.value));

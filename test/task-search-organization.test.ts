@@ -850,3 +850,14 @@ it('counts an interval owner once while retaining its daily occurrences', async 
     'tree.md:0',
   ]);
 });
+
+it('keeps one dated card per task in Upcoming Kanban instead of expanding daily occurrences', async () => {
+  const input = await filteredTreeInput('- [ ] Parent #keep 🛫 2026-10-04 📅 2026-10-30');
+  const result = organizeTaskSearch({
+    ...input,
+    selection: 'upcoming',
+    view: { ...input.view, list: { ...input.view.list, view: 'kanban', groupBy: 'date' } },
+  });
+  expect(result.rows.taskCount).toBe(1);
+  expect(result.rows.rowCount).toBe(2);
+});

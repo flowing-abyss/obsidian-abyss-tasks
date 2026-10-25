@@ -1368,7 +1368,7 @@ export class CenterPanel {
     );
     const model = buildTaskKanbanModel(
       rows,
-      this.statusRegistry_abyssPrivate.all(),
+      this.statusRegistry_abyssPrivate.grouped().flatMap((group) => group.statuses),
       settings,
       (task) => ('root' in task ? task.node : task.menu),
     );

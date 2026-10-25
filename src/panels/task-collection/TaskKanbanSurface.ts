@@ -143,6 +143,8 @@ export class TaskKanbanSurface<T> implements TaskCollectionSurface<T> {
       attr: { 'aria-hidden': 'true' },
     });
     const label = header.createSpan({ cls: 'abyss-task-kanban-column-label' });
+    label.id = `abyss-kanban-column-${crypto.randomUUID()}`;
+    element.setAttribute('aria-labelledby', label.id);
     const count = header.createSpan({ cls: 'abyss-task-kanban-column-count' });
     const create = header.createEl('button', {
       cls: 'clickable-icon abyss-task-kanban-column-create',
@@ -211,7 +213,6 @@ export class TaskKanbanSurface<T> implements TaskCollectionSurface<T> {
       setIcon(column.marker, model.status.icon);
     const collapsed = this.#collapsed(column);
     column.element.toggleClass('is-collapsed', collapsed);
-    column.element.setAttribute('aria-label', model.label);
     column.toggle.setAttribute('aria-label', `${collapsed ? 'Expand' : 'Collapse'} ${model.label}`);
     column.toggle.setAttribute('aria-expanded', String(!collapsed));
     setIcon(column.toggle, collapsed ? 'chevron-right' : 'chevron-left');

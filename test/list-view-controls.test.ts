@@ -4,7 +4,7 @@ import { ListViewControls } from '../src/panels/center/ListViewControls';
 import { DEFAULT_SETTINGS, getListViewDefaults } from '../src/settings/defaults';
 import type { ListViewState } from '../src/settings/types';
 import { noInteractionOwnership } from '../src/ui/interactionOwnership';
-import { deferred, makeStubStore } from './helpers';
+import { deferred, expectDefined, makeStubStore } from './helpers';
 
 describe('list view persistence ordering', () => {
   it('updates the settings entry, starts one save, then notifies state without waiting for persistence', async () => {
@@ -298,4 +298,67 @@ describe('Kanban view controls', () => {
       root.remove();
     }
   });
+});
+
+it('keeps Kanban status visibility in settings order and offers the same grouping fields as List except status', async () => {
+  const state = new AppState();
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  const registry = makeStubStore([]).statusRegistry;
+  registry.replace([
+    ...registry.all(),
+    { id: 'important', name: 'Important', symbol: '!', type: 'todo', icon: '', core: false },
+  ]);
+  const root = document.body.createDiv();
+  const controls = new ListViewControls({
+    state,
+    settings,
+    saveViewState: async () => {},
+    statusRegistry: registry,
+    interactionOwnership: noInteractionOwnership,
+    host: { root: () => root, formatDate: (v) => v },
+  });
+  try {
+    controls.setView('kanban');
+    controls.renderViewStateButton(root).click();
+    const row = (label: string) =>
+      expectDefined(
+        [...root.querySelectorAll<HTMLElement>('.abyss-view-state-row')].find(
+          (el) => el.querySelector('.abyss-view-state-row-label')?.textContent === label,
+        ),
+      );
+    const labels = (el: HTMLElement) =>
+      [...el.querySelectorAll('.abyss-view-state-option-label')].map((x) => x.textContent);
+    const groups = row('Group by');
+    expectDefined(groups.querySelector<HTMLButtonElement>('.abyss-view-state-row-main')).click();
+    expect(labels(groups)).toEqual([
+      'None',
+      'Date',
+      'Priority',
+      'Tag',
+      'Source note',
+      'Outgoing link',
+    ]);
+    const show = row('Show');
+    expectDefined(show.querySelector<HTMLButtonElement>('.abyss-view-state-row-main')).click();
+    const ordered = registry
+      .grouped()
+      .flatMap((g) => g.statuses)
+      .map((s) => s.name);
+    expect(labels(show).slice(1)).toEqual(ordered);
+    const first = expectDefined(
+      [...show.querySelectorAll<HTMLButtonElement>('.abyss-view-state-option')].find(
+        (b) => b.querySelector('.abyss-view-state-option-label')?.textContent === ordered[0],
+      ),
+    );
+    first.click();
+    await Promise.resolve();
+    expect(labels(show).slice(1)).toEqual(ordered);
+    expect(first.getAttribute('aria-pressed')).toBe('false');
+    first.click();
+    await Promise.resolve();
+    expect(labels(show).slice(1)).toEqual(ordered);
+  } finally {
+    controls.closeViewStatePopover();
+    root.remove();
+  }
 });

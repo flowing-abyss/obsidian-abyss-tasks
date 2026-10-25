@@ -7,10 +7,12 @@ interface TaskKanbanOptionsContext {
   update(patch: Partial<TaskKanbanSettings>): void;
   statuses(): readonly TaskStatusDef[];
   readonly sort: ViewOptionsRow;
+  readonly group: ViewOptionsRow;
 }
 function statusRow(context: TaskKanbanOptionsContext): ViewOptionsRow {
   return {
     kind: 'multi',
+    preserveOrder: true,
     icon: 'eye',
     label: 'Show',
     displayValue: () => (context.read().hiddenStatuses.length === 0 ? 'All statuses' : 'Custom'),
@@ -70,20 +72,7 @@ function descriptionRow(context: TaskKanbanOptionsContext): ViewOptionsRow {
 }
 export function taskKanbanOptionsRows(context: TaskKanbanOptionsContext): ViewOptionsRow[] {
   return [
-    {
-      kind: 'single',
-      icon: 'layout-list',
-      label: 'Group by',
-      displayValue: () => (context.read().groupBy === 'priority' ? 'Priority' : 'None'),
-      activeValue: () => context.read().groupBy,
-      options: [
-        { value: 'none', label: 'None', isDefault: true },
-        { value: 'priority', label: 'Priority' },
-      ],
-      onSelect: (value) => {
-        context.update({ groupBy: value === 'priority' ? 'priority' : 'none' });
-      },
-    },
+    context.group,
     context.sort,
     statusRow(context),
     {

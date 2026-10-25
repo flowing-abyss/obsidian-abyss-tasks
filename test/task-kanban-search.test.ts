@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import type { TaskRowSelection } from '../src/panels/task-list/taskRowSelection';
 import { DEFAULT_SETTINGS, getListViewDefaults } from '../src/settings/defaults';
+import { StatusRegistry } from '../src/status/StatusRegistry';
 import { expectDefined, useRealMoment } from './helpers';
 import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
 
@@ -9,6 +10,14 @@ afterEach(() => vi.restoreAllMocks());
 
 it('keeps compact search membership and exact descendant cards across layout changes', async () => {
   const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.taskStatuses.push({
+    id: 'important',
+    symbol: '!',
+    name: 'Important',
+    type: 'todo',
+    icon: '',
+    core: false,
+  });
   settings.listViewStates = { inbox: { ...getListViewDefaults('inbox'), view: 'kanban' } };
   const h = await mountCanonicalSearchUi(
     { 'tasks.md': '- [ ] parent\n  - [/] needle child\n- [x] needle done\n- [ ] unrelated' },
@@ -19,6 +28,16 @@ it('keeps compact search membership and exact descendant cards across layout cha
     await h.completed();
     expect(h.root.querySelectorAll('.abyss-task-kanban-column')).toHaveLength(
       settings.taskStatuses.length,
+    );
+    expect(
+      [...h.root.querySelectorAll<HTMLElement>('.abyss-task-kanban-column')].map(
+        (el) => el.dataset['columnKey'],
+      ),
+    ).toEqual(
+      new StatusRegistry(settings.taskStatuses)
+        .grouped()
+        .flatMap((g) => g.statuses)
+        .map((s) => `status:${s.id}`),
     );
     h.query('needle');
     await h.completed();
