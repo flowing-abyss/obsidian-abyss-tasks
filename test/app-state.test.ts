@@ -1127,7 +1127,7 @@ it.each([
   {
     key: 'selectedList',
     apply: (s: AppState) => {
-      s.set('selectedList', 'all');
+      s.set('selectedList', 'inbox');
     },
   },
   {
