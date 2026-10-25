@@ -22,6 +22,7 @@ export interface CompactPaneAccessElements {
 
 interface CompactPaneAccessOptions {
   readonly mode: () => AppStateData['mode'];
+  readonly projectDashboard?: () => boolean;
   readonly hasSelectedTask: () => boolean;
   readonly captureState: () => Pick<QuickCaptureCoordinator, 'phase' | 'isSubmitting'> | undefined;
   readonly allowsPaneInteraction: () => boolean;
@@ -65,6 +66,7 @@ export class CompactPaneAccess {
   #compactPaneElements: CompactPaneAccessElements | undefined;
   #compactPaneCleanup: (() => void) | undefined;
   #compactPaneRefresh: (() => void) | undefined;
+  #compactHeaderRefresh: (() => void) | undefined;
   #compactHeaderResizeObserver: ResizeObserver | undefined = undefined;
   #compactPaneOpen: CompactPane | null = null;
   #compactPaneOpenReason: CompactPaneOpenReason | undefined;
@@ -120,6 +122,7 @@ export class CompactPaneAccess {
     this.#compactHeaderResizeObserver?.disconnect();
     this.#compactHeaderResizeObserver = undefined;
     this.#compactPaneRefresh = undefined;
+    this.#compactHeaderRefresh = undefined;
     this.close(false);
     this.#compactPaneElements?.leftButton.removeClass('is-compact-available');
     this.#compactPaneElements?.rightButton.removeClass('is-compact-available');
@@ -185,7 +188,12 @@ export class CompactPaneAccess {
     this.#compactHeaderResizeObserver?.disconnect();
     const ownerWindow = header.ownerDocument.defaultView;
     const update = (): void => {
-      const height = header.getBoundingClientRect().height;
+      const bounds = header.getBoundingClientRect();
+      const layout = this.#compactPaneElements?.layout;
+      const height = Math.max(
+        bounds.height,
+        bounds.bottom - (layout?.getBoundingClientRect().top ?? bounds.top),
+      );
       if (Number.isFinite(height) && height > 0) {
         this.#compactPaneElements?.layout.style.setProperty(
           '--abyss-compact-overlay-top',
@@ -199,6 +207,7 @@ export class CompactPaneAccess {
       this.#compactHeaderResizeObserver = new candidate(update);
       this.#compactHeaderResizeObserver.observe(header);
     }
+    this.#compactHeaderRefresh = update;
     update();
   }
 
@@ -275,11 +284,7 @@ export class CompactPaneAccess {
 
   open(pane: CompactPane, moveFocus: boolean, reason: CompactPaneOpenReason = 'automatic'): void {
     const elements = this.#compactPaneElements;
-    if (
-      elements == null ||
-      !this.#isCompactPaneCollapsed(pane) ||
-      (this.#options.mode() !== 'tasks' && this.#options.mode() !== 'statistics')
-    ) {
+    if (elements == null || !this.#isCompactPaneCollapsed(pane) || !this.#allowsPane(pane)) {
       return;
     }
     const quickCapture = this.#options.captureState();
@@ -287,6 +292,7 @@ export class CompactPaneAccess {
       if (quickCapture.isSubmitting) this.#pendingCompactPane = { pane, moveFocus, reason };
       return;
     }
+    this.#compactHeaderRefresh?.();
     this.#showCompactPane(elements, pane, moveFocus, reason);
   }
 
@@ -371,7 +377,7 @@ export class CompactPaneAccess {
     }
     this.#compactPaneElements?.leftButton.toggleClass(
       'is-compact-available',
-      this.#compactLeftCollapsed,
+      this.#compactLeftCollapsed && !this.#projectDashboard(),
     );
     this.#compactPaneElements?.rightButton.toggleClass(
       'is-compact-available',
@@ -405,15 +411,27 @@ export class CompactPaneAccess {
     if (
       !wasRightCollapsed &&
       this.#compactRightCollapsed &&
-      this.#options.mode() === 'tasks' &&
+      (this.#options.mode() === 'tasks' || this.#projectDashboard()) &&
       this.#options.hasSelectedTask()
     ) {
       this.open('right', false);
     }
   }
 
+  #projectDashboard(): boolean {
+    return this.#options.mode() === 'projects' && this.#options.projectDashboard?.() === true;
+  }
+
+  #allowsPane(pane: CompactPane): boolean {
+    const mode = this.#options.mode();
+    return (
+      mode === 'tasks' || mode === 'statistics' || (pane === 'right' && this.#projectDashboard())
+    );
+  }
+
   #isCompactPaneCollapsed(pane: CompactPane): boolean {
-    if (this.#options.mode() === 'statistics' && pane === 'right') return true;
+    if ((this.#options.mode() === 'statistics' || this.#projectDashboard()) && pane === 'right')
+      return true;
     return pane === 'left' ? this.#compactLeftCollapsed : this.#compactRightCollapsed;
   }
 }

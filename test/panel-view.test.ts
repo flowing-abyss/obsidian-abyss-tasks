@@ -4216,7 +4216,11 @@ describe('PanelView', () => {
           cancelable: true,
         });
         center.dispatchEvent(dashboardFind);
-        expect(dashboardFind.defaultPrevented).toBe(false);
+        expect(dashboardFind.defaultPrevented).toBe(true);
+        expect(document.activeElement).toBe(
+          view.contentEl.querySelector('.abyss-project-tasks .abyss-center-search'),
+        );
+        expect(input.value).toBe('Alxha');
         state.set('projectsPanel', { view: 'table' });
         state.set('mode', 'calendar');
         const calendarFind = new KeyboardEvent('keydown', {
@@ -6488,3 +6492,45 @@ describe('PanelView local day boundary', () => {
     },
   );
 });
+
+it.each([390, 1200])(
+  'opens the shared inspector for dashboard tasks at width %i and closes it on overview',
+  async (width) => {
+    const panel = await openRemovalPanel({
+      ...projectFiles(),
+      'Projects/P.md': `${PROJECT_NOTE}\n- [ ] Project child\n`,
+    });
+    try {
+      const { right, details } = compactLayout(panel, width);
+      panel.state.set('mode', 'projects');
+      panel.state.set('projectsPanel', { view: 'dashboard', path: 'Projects/P.md' });
+      expect(
+        panel.view.contentEl.querySelector('.abyss-project-dashboard-title')?.textContent,
+      ).toBe('P');
+      const header = expectDefined(
+        panel.view.contentEl.querySelector<HTMLElement>(
+          '.abyss-project-tasks .abyss-center-header',
+        ),
+      );
+      setGeometry(header, rect(0, 110, width, 40));
+      panel.select('Project child');
+      expect(
+        right
+          .closest<HTMLElement>('.abyss-layout')
+          ?.style.getPropertyValue('--abyss-compact-overlay-top'),
+      ).toBe('150px');
+      expect(right.classList.contains('is-compact-open')).toBe(true);
+      expect(details.getAttribute('aria-expanded')).toBe('true');
+      expect(details.closest('.abyss-project-tasks')).not.toBeNull();
+      details.click();
+      expect(right.classList.contains('is-compact-open')).toBe(false);
+      panel.select('Project child');
+      expect(right.classList.contains('is-compact-open')).toBe(true);
+      panel.state.set('projectsPanel', { view: 'table' });
+      expect(right.classList.contains('is-compact-open')).toBe(false);
+      expect(panel.view.contentEl.querySelector('.abyss-layout--project-dashboard')).toBeNull();
+    } finally {
+      await panel.close();
+    }
+  },
+);

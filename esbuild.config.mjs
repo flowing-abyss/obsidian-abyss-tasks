@@ -1,3 +1,5 @@
+// Shared dashboard task inspector: measured main 2,204,274 bytes, CSS 201,590 bytes.
+// Minimal containing main limit: 2153 KiB; the 197 KiB CSS limit is unchanged.
 // Tasks Timeline adds shared calendar gestures, virtual rows and date controls: measured
 // main 2,202,637 bytes, CSS 201,014 bytes. Minimal containing limits: 2152 / 197 KiB.
 // Independent Kanban scroll receipts: main 2181762 bytes; 2182144-byte limit.

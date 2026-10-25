@@ -267,6 +267,7 @@ export class PanelView extends ItemView {
     this.projectManager_abyssPrivate = projectManager;
     this.compactPaneAccess_abyssPrivate = new CompactPaneAccess({
       mode: () => this.state_abyssPrivate.get('mode'),
+      projectDashboard: () => this.state_abyssPrivate.get('projectsPanel').view === 'dashboard',
       hasSelectedTask: () => this.state_abyssPrivate.get('taskStack').length > 0,
       captureState: () => this.quickCapture_abyssPrivate,
       allowsPaneInteraction: () =>
@@ -1069,11 +1070,28 @@ export class PanelView extends ItemView {
   }
 
   private subscribeToState_abyssPrivate(layout: HTMLElement): void {
-    this.modeUnsub_abyssPrivate = this.state_abyssPrivate.on('mode', (mode) => {
+    const syncDashboard = (): void => {
+      layout.toggleClass(
+        'abyss-layout--project-dashboard',
+        this.state_abyssPrivate.get('mode') === 'projects' &&
+          this.state_abyssPrivate.get('projectsPanel').view === 'dashboard',
+      );
+    };
+    const offMode = this.state_abyssPrivate.on('mode', (mode) => {
       layout.className = `abyss-layout abyss-layout--${mode}`;
+      syncDashboard();
       this.compactPaneAccess_abyssPrivate.modeChanged(mode);
       this.refreshHostHeader_abyssPrivate();
     });
+    const offProject = this.state_abyssPrivate.on('projectsPanel', () => {
+      syncDashboard();
+      this.compactPaneAccess_abyssPrivate.modeChanged(this.state_abyssPrivate.get('mode'));
+    });
+    this.modeUnsub_abyssPrivate = () => {
+      offMode();
+      offProject();
+    };
+    syncDashboard();
     const offStack = this.state_abyssPrivate.on('taskStack', (stack) => {
       this.handleTaskStackChange_abyssPrivate(stack);
     });

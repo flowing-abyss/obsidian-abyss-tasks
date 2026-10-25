@@ -491,7 +491,9 @@ search and capture. View preferences share the existing `project:<path>` entry w
 opened from Tasks. Dashboard text queries remain session state per path, independent of Tasks'
 selection and query. Returning to Tasks reads saved preferences without overwriting them with its
 inactive state. List rows use the outer dashboard scroll; Kanban and Timeline use a bounded inner
-viewport. Leaving a dashboard releases its task interactions, search, capture and selection.
+viewport. `CompactPaneAccess` opens the shared task inspector as an overlay on dashboard selection,
+anchored below the task toolbar; the overview keeps it hidden. Leaving a dashboard releases its
+task interactions, search, capture and selection.
 
 CalendarMode owns the period anchor, transient selected day, view lifetime, and forecast presentation.
 Its mounted publication hold defers query patches during pointer presses and native drags, and through

@@ -205,7 +205,7 @@
 .abyss-layout--search .abyss-left,
 .abyss-layout--search .abyss-right,
 .abyss-layout--projects .abyss-left,
-.abyss-layout--projects .abyss-right {
+.abyss-layout--projects:not(.abyss-layout--project-dashboard) .abyss-right {
   display: none;
 }
 
@@ -245,18 +245,18 @@
     box-shadow: none;
   }
 
-  .abyss-layout--tasks .abyss-center-header {
+  :is(.abyss-layout--tasks, .abyss-layout--project-dashboard) .abyss-center-header {
     flex-wrap: wrap;
   }
 
-  .abyss-layout--tasks .abyss-center-controls {
+  :is(.abyss-layout--tasks, .abyss-layout--project-dashboard) .abyss-center-controls {
     flex: 1 1 auto;
     flex-wrap: wrap;
     min-inline-size: 0;
     justify-content: flex-end;
   }
 
-  .abyss-layout--tasks .abyss-center-search {
+  :is(.abyss-layout--tasks, .abyss-layout--project-dashboard) .abyss-center-search {
     flex: 1 1 6rem;
     min-inline-size: 0;
     width: auto;
@@ -10302,11 +10302,12 @@ body.is-tablet .abyss-tracked-row button.abyss-tracked-row-open {
 }
 
 /* Analysis shares the native left navigation; the task inspector is an explicit overlay. */
-.abyss-layout--statistics > .abyss-right:not(.is-compact-open) {
+:is(.abyss-layout--statistics, .abyss-layout--project-dashboard)
+  > .abyss-right:not(.is-compact-open) {
   display: none;
 }
 
-.abyss-layout--statistics > .abyss-right.is-compact-open {
+:is(.abyss-layout--statistics, .abyss-layout--project-dashboard) > .abyss-right.is-compact-open {
   position: absolute;
   z-index: calc(var(--layer-popover, 30) - 1);
   inset-block: var(--abyss-compact-overlay-top, var(--abyss-center-toolbar-height)) 0;
@@ -10314,7 +10315,8 @@ body.is-tablet .abyss-tracked-row button.abyss-tracked-row-open {
   inline-size: min(20rem, calc(100cqi - 48px));
 }
 
-.abyss-layout--statistics button.abyss-compact-pane-button.is-compact-available {
+:is(.abyss-layout--statistics, .abyss-layout--project-dashboard)
+  button.abyss-compact-pane-button.is-compact-available {
   display: inline-flex;
 }
 
@@ -11160,11 +11162,11 @@ button.abyss-calendar-date[aria-pressed='true'] {
 }
 
 @container abyss-panel-layout (max-width: 26rem) {
-  .abyss-layout--tasks .abyss-center-title {
+  :is(.abyss-layout--tasks, .abyss-layout--project-dashboard) .abyss-center-title {
     display: none;
   }
 
-  .abyss-layout--tasks .abyss-center-search {
+  :is(.abyss-layout--tasks, .abyss-layout--project-dashboard) .abyss-center-search {
     flex: 1 1 4rem;
     min-inline-size: 0;
   }
