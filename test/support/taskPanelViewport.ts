@@ -118,7 +118,8 @@ export function taskListRect(element: HTMLElement): DOMRect | undefined {
   if (scroll === null) return;
   if (element === scroll) return geometryRect(0, scroll.clientWidth, scroll.clientHeight);
   if (host?.classList.contains('abyss-task-list-surface') !== true) return;
-  const origin = scroll.clientTop - scroll.scrollTop;
+  const axisHeight = timelineInset(host, scroll);
+  const origin = scroll.clientTop + axisHeight - scroll.scrollTop;
   if (element === host) {
     const padding = hostPadding(host);
     const height =
@@ -135,8 +136,17 @@ export function taskListRect(element: HTMLElement): DOMRect | undefined {
   top += pixels(element.style.getPropertyValue('--abyss-virtual-row-offset'));
   return geometryRect(top, host.clientWidth, rowHeight(element));
 }
+function timelineInset(host: HTMLElement, scroll: HTMLElement): number {
+  if (!host.classList.contains('abyss-task-timeline-rows')) return 0;
+  return (
+    scroll.querySelector<HTMLElement>('.abyss-project-timeline-axis')?.getBoundingClientRect()
+      .height ?? 0
+  );
+}
 function taskListHost(element: HTMLElement): HTMLElement | null {
   if (element.classList.contains('abyss-task-list-surface')) return element;
+  const timelineRow = element.closest<HTMLElement>('.abyss-task-timeline-row');
+  if (timelineRow !== null) return timelineRow.parentElement?.parentElement ?? null;
   const parent = element.parentElement;
   return parent?.classList.contains('abyss-virtual-row-frame') === true
     ? parent.parentElement

@@ -29,6 +29,8 @@ export interface TaskListPresentation<T = TaskSnapshot> {
   measurementRevision(row: TaskListRow<T>): string;
 }
 export interface TaskListSurfaceOptions<T = TaskSnapshot> {
+  /** Sticky content excluded from the usable vertical viewport. */
+  readonly viewportInset?: () => number;
   readonly host: HTMLElement;
   readonly scroll: HTMLElement;
   mount(host: HTMLElement, row: TaskListRow<T>): TaskRowMount<T>;
@@ -334,19 +336,23 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     );
   }
   #height(): number {
-    return this.#options.scroll.clientHeight;
+    return Math.max(0, this.#options.scroll.clientHeight - this.#inset());
+  }
+  #inset(): number {
+    return Math.max(0, this.#options.viewportInset?.() ?? 0);
   }
   #origin(): number {
     const { host, scroll } = this.#options;
     const padding = this.#margin(host.ownerDocument.defaultView?.getComputedStyle(host).paddingTop);
-    if (host === scroll) return padding;
+    if (host === scroll) return padding - this.#inset();
     return (
       host.getBoundingClientRect().top +
       host.clientTop +
       padding -
       scroll.getBoundingClientRect().top -
       scroll.clientTop +
-      scroll.scrollTop
+      scroll.scrollTop -
+      this.#inset()
     );
   }
   #top(): number {
@@ -792,7 +798,10 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
   }
   #intersects(key: string | undefined): boolean {
     const rect = key === undefined ? undefined : this.element(key)?.getBoundingClientRect();
-    const top = this.#options.scroll.getBoundingClientRect().top + this.#options.scroll.clientTop;
+    const top =
+      this.#options.scroll.getBoundingClientRect().top +
+      this.#options.scroll.clientTop +
+      this.#inset();
     return rect !== undefined && rect.bottom > top && rect.top < top + this.#height();
   }
   #reconcile(update: boolean, target?: TaskListScroll): boolean {
@@ -927,7 +936,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     const rect = element.getBoundingClientRect();
     if (!current()) return 0;
     const scroll = this.#options.scroll;
-    const viewportTop = scroll.getBoundingClientRect().top + scroll.clientTop;
+    const viewportTop = scroll.getBoundingClientRect().top + scroll.clientTop + this.#inset();
     const displacement =
       top === undefined
         ? 0

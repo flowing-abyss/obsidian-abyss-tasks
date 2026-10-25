@@ -22,15 +22,22 @@ import {
   normalizeTaskKanbanSettings,
   type TaskKanbanSettings,
 } from '../../task-lists/taskKanbanSettings';
+import {
+  defaultTaskTimelineSettings,
+  normalizeTaskTimelineSettings,
+  type TaskTimelineSettings,
+} from '../../task-lists/taskTimelineSettings';
 import type { TaskStatusType } from '../../tasks';
 import {
   openViewOptionsPopover,
   type ViewOptionsMultiRow,
+  type ViewOptionsRow,
   type ViewOptionsSingleRow,
 } from '../../ui/ViewOptionsPopover';
 import type { InteractionOwnershipPort } from '../../ui/interactionOwnership';
 import { runAsyncAction } from '../../ui/runAsyncAction';
 import { taskKanbanOptionsRows } from '../task-collection/TaskKanbanOptions';
+import { taskTimelineOptionsRows } from '../task-collection/TaskTimelineOptions';
 
 interface ListViewControlsHost {
   root(): HTMLElement;
@@ -177,18 +184,29 @@ export class ListViewControls {
     });
   }
 
+  updateTimeline(patch: Partial<TaskTimelineSettings>): void {
+    const current = this.#read();
+    this.#updateViewState({
+      ...current,
+      timeline: { ...normalizeTaskTimelineSettings(current.timeline), ...patch },
+    });
+  }
+
   #organization(): ListViewState {
     return taskCollectionListState(this.#read());
   }
 
   #setSort(sortBy: ListViewState['sortBy']): void {
-    if (this.#read().view === 'kanban') this.updateKanban({ sortBy });
+    if (this.#read().view === 'timeline') this.updateTimeline({ sortBy });
+    else if (this.#read().view === 'kanban') this.updateKanban({ sortBy });
     else this.#updateViewState({ ...this.#read(), sortBy });
   }
 
   #reset(): void {
     const current = this.#read();
-    if (current.view === 'kanban') {
+    if (current.view === 'timeline') {
+      this.#updateViewState({ ...current, filters: [], timeline: defaultTaskTimelineSettings() });
+    } else if (current.view === 'kanban') {
       this.#updateViewState({ ...current, filters: [], kanban: defaultTaskKanbanSettings() });
     } else {
       this.#options.statePort?.setRelevance(true);
@@ -242,40 +260,50 @@ export class ListViewControls {
     return btn;
   }
 
+  #layoutDefaults(): ListViewState {
+    const view = this.#read().view;
+    if (view === 'kanban')
+      return { ...this.#defaults(), groupBy: 'none', sortBy: defaultTaskKanbanSettings().sortBy };
+    if (view === 'timeline')
+      return { ...this.#defaults(), groupBy: 'none', sortBy: defaultTaskTimelineSettings().sortBy };
+    return this.#defaults();
+  }
+  #layoutRows(defaults: ListViewState): ViewOptionsRow[] {
+    const common = {
+      statuses: () => this.#options.statusRegistry.grouped().flatMap((group) => group.statuses),
+      group: this.#groupByRowSpec(defaults),
+      sort: this.#sortByRowSpec(defaults),
+    };
+    if (this.#read().view === 'kanban')
+      return taskKanbanOptionsRows({
+        ...common,
+        read: () => normalizeTaskKanbanSettings(this.#read().kanban),
+        update: (patch) => {
+          this.updateKanban(patch);
+        },
+      });
+    if (this.#read().view === 'timeline')
+      return taskTimelineOptionsRows({
+        ...common,
+        read: () => normalizeTaskTimelineSettings(this.#read().timeline),
+        update: (patch) => {
+          this.updateTimeline(patch);
+        },
+      });
+    return [common.group, common.sort, this.#statusGroupsRowSpec()];
+  }
+
   #showViewStatePopover(anchor: HTMLElement): void {
     if (this.#viewStatePopoverCleanup != null) {
       this.#viewStatePopoverCleanup(true);
       return;
     }
 
-    const defaults =
-      this.#read().view === 'kanban'
-        ? {
-            ...this.#defaults(),
-            groupBy: 'none' as const,
-            sortBy: defaultTaskKanbanSettings().sortBy,
-          }
-        : this.#defaults();
+    const defaults = this.#layoutDefaults();
     const close = openViewOptionsPopover({
       host: this.#options.host.root(),
       anchor,
-      rows:
-        this.#read().view === 'kanban'
-          ? taskKanbanOptionsRows({
-              read: () => normalizeTaskKanbanSettings(this.#read().kanban),
-              update: (patch) => {
-                this.updateKanban(patch);
-              },
-              statuses: () =>
-                this.#options.statusRegistry.grouped().flatMap((group) => group.statuses),
-              group: this.#groupByRowSpec(defaults),
-              sort: this.#sortByRowSpec(defaults),
-            })
-          : [
-              this.#groupByRowSpec(defaults),
-              this.#sortByRowSpec(defaults),
-              this.#statusGroupsRowSpec(),
-            ],
+      rows: this.#layoutRows(defaults),
       showReset: () => this.#customized(true),
       onReset: () => {
         this.#reset();
@@ -318,7 +346,9 @@ export class ListViewControls {
           ...this.#noteDescription(value),
         })),
       onSelect: (value) => {
-        if (this.#read().view === 'kanban') {
+        if (this.#read().view === 'timeline') {
+          this.updateTimeline({ groupBy: value as TaskTimelineSettings['groupBy'] });
+        } else if (this.#read().view === 'kanban') {
           this.updateKanban({ groupBy: value as TaskKanbanSettings['groupBy'] });
         } else {
           this.#updateViewState({ ...this.#read(), groupBy: value as ListViewState['groupBy'] });

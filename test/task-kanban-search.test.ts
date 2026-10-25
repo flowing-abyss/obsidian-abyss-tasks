@@ -67,6 +67,8 @@ it.each([
   ['kanban', 'none'],
   ['list', 'priority'],
   ['kanban', 'priority'],
+  ['timeline', 'none'],
+  ['timeline', 'priority'],
 ] as const)(
   'preserves selection, anchor and focus from unsearched %s with %s List grouping through a layout round trip',
   async (view, groupBy) => {
@@ -78,7 +80,7 @@ it.each([
       'tasks',
     );
     try {
-      if (view === 'kanban') await h.completed();
+      if (view !== 'list') await h.completed();
       const cards = [...h.root.querySelectorAll<HTMLElement>('.abyss-task-card')];
       expect(cards).toHaveLength(2);
       for (const card of cards)
@@ -87,11 +89,11 @@ it.each([
       const anchor = selection.anchor;
       const focus = selection.focus;
       expect(selection.size).toBe(2);
-      for (const next of view === 'list' ? ['Kanban', 'List'] : ['List', 'Kanban']) {
+      for (const next of ['Timeline', 'Kanban', 'List', 'Timeline']) {
         expectDefined(
           h.root.querySelector<HTMLButtonElement>(`[aria-label="${next} view"]`),
         ).click();
-        if (next === 'Kanban') await h.completed();
+        if (next !== 'List') await h.completed();
         expect(selection.size).toBe(2);
         expect(selection.anchor).toBe(anchor);
         expect(selection.focus).toBe(focus);
@@ -103,7 +105,7 @@ it.each([
   },
 );
 
-it.each(['list', 'kanban'] as const)(
+it.each(['list', 'kanban', 'timeline'] as const)(
   'does not transfer %s selection to an externally replaced task on a layout switch',
   async (view) => {
     const settings = structuredClone(DEFAULT_SETTINGS);
@@ -114,7 +116,7 @@ it.each(['list', 'kanban'] as const)(
       'tasks',
     );
     try {
-      if (view === 'kanban') await h.completed();
+      if (view !== 'list') await h.completed();
       for (const card of h.root.querySelectorAll<HTMLElement>('.abyss-task-card'))
         card.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
       expect(selectedRows(h).size).toBe(2);
@@ -122,7 +124,7 @@ it.each(['list', 'kanban'] as const)(
       await h.app.vault.modify(file, '- [ ] replacement');
       h.index.installCommittedContent(file.path, '- [ ] replacement');
       await h.search.prepare(new AbortController().signal);
-      if (view === 'kanban') await h.completed();
+      if (view !== 'list') await h.completed();
       const next = view === 'list' ? 'Kanban' : 'List';
       expectDefined(h.root.querySelector<HTMLButtonElement>(`[aria-label="${next} view"]`)).click();
       if (next === 'Kanban') await h.completed();

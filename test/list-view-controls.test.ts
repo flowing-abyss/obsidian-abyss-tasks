@@ -231,73 +231,94 @@ describe('mounted tag polarity chips', () => {
   });
 });
 
-describe('Kanban view controls', () => {
-  it('edits board priority groups, sorting and visibility without changing saved List organization', () => {
-    const state = new AppState();
-    const settings = structuredClone(DEFAULT_SETTINGS);
-    const root = document.body.createDiv();
-    const controls = new ListViewControls({
-      state,
-      settings,
-      saveViewState: async () => {},
-      statusRegistry: makeStubStore([]).statusRegistry,
-      interactionOwnership: noInteractionOwnership,
-      host: { root: () => root, formatDate: (v) => v },
-    });
-    const list: ListViewState = {
-      groupBy: 'date',
-      sortBy: { field: 'title', dir: 'desc' },
-      statusGroups: ['todo'],
-      filters: [{ type: 'tag', value: '#work' }],
-    };
-    state.set('centerListViewState', list);
-    controls.setView('kanban');
-    const options = controls.renderViewStateButton(root);
-    options.click();
-    const row = (label: string): HTMLElement => {
-      const value = [...root.querySelectorAll<HTMLElement>('.abyss-view-state-row')].find(
-        (el) => el.querySelector('.abyss-view-state-row-label')?.textContent === label,
-      );
-      if (value === undefined) throw new Error(`Missing row ${label}`);
-      return value;
-    };
-    const choose = (label: string, option: string): void => {
-      const section = row(label);
-      section.querySelector<HTMLButtonElement>('.abyss-view-state-row-main')?.click();
-      const button = [
-        ...section.querySelectorAll<HTMLButtonElement>('.abyss-view-state-option'),
-      ].find((el) => el.querySelector('.abyss-view-state-option-label')?.textContent === option);
-      if (button === undefined) throw new Error(`Missing option ${option}`);
-      button.click();
-    };
-    try {
-      choose('Group by', 'Priority');
-      choose('Sort by', 'Priority ↑');
-      expect(state.get('centerListViewState')).toMatchObject({
-        ...list,
-        view: 'kanban',
-        kanban: { groupBy: 'priority', sortBy: { field: 'priority', dir: 'desc' } },
+describe('task collection view controls', () => {
+  it.each(['kanban', 'timeline'] as const)(
+    'edits %s organization and visibility without changing saved List preferences',
+    (view) => {
+      const state = new AppState();
+      const settings = structuredClone(DEFAULT_SETTINGS);
+      const root = document.body.createDiv();
+      const controls = new ListViewControls({
+        state,
+        settings,
+        saveViewState: async () => {},
+        statusRegistry: makeStubStore([]).statusRegistry,
+        interactionOwnership: noInteractionOwnership,
+        host: { root: () => root, formatDate: (v) => v },
       });
-      choose('Show', 'Done');
-      expect(state.get('centerListViewState').kanban?.hiddenStatuses.length).toBe(1);
-      controls.closeViewStatePopover();
-      controls.setView('list');
-      expect(state.get('centerListViewState')).toMatchObject({ ...list, view: 'list' });
-      controls.setView('kanban');
-      options.click();
-      root.querySelector<HTMLButtonElement>('.abyss-view-state-reset-btn')?.click();
-      expect(state.get('centerListViewState')).toMatchObject({
-        view: 'kanban',
-        sortBy: list.sortBy,
+      const list: ListViewState = {
         groupBy: 'date',
-        filters: [],
-        kanban: { groupBy: 'none', hiddenStatuses: [], sortBy: { field: 'priority', dir: 'asc' } },
-      });
-    } finally {
-      controls.closeViewStatePopover();
-      root.remove();
-    }
-  });
+        sortBy: { field: 'title', dir: 'desc' },
+        statusGroups: ['todo'],
+        filters: [{ type: 'tag', value: '#work' }],
+      };
+      state.set('centerListViewState', list);
+      controls.setView(view);
+      const options = controls.renderViewStateButton(root);
+      options.click();
+      const row = (label: string): HTMLElement => {
+        const value = [...root.querySelectorAll<HTMLElement>('.abyss-view-state-row')].find(
+          (el) => el.querySelector('.abyss-view-state-row-label')?.textContent === label,
+        );
+        if (value === undefined) throw new Error(`Missing row ${label}`);
+        return value;
+      };
+      const choose = (label: string, option: string): void => {
+        const section = row(label);
+        const main = section.querySelector<HTMLButtonElement>('.abyss-view-state-row-main');
+        if (main?.getAttribute('aria-expanded') !== 'true') main?.click();
+        const button = [
+          ...section.querySelectorAll<HTMLButtonElement>('.abyss-view-state-option'),
+        ].find((el) => el.querySelector('.abyss-view-state-option-label')?.textContent === option);
+        if (button === undefined) throw new Error(`Missing option ${option}`);
+        button.click();
+      };
+      try {
+        choose('Group by', 'Priority');
+        choose('Sort by', view === 'timeline' ? 'Priority' : 'Priority ↑');
+        expect(state.get('centerListViewState')).toMatchObject({
+          ...list,
+          view,
+          [view]: {
+            groupBy: 'priority',
+            sortBy: { field: 'priority', dir: view === 'timeline' ? 'asc' : 'desc' },
+          },
+        });
+        if (view === 'timeline') {
+          choose('Scale', 'Week');
+          choose('Scheduled', 'Hidden');
+          choose('Undated tasks', 'Hidden');
+          expect(state.get('centerListViewState').timeline).toMatchObject({
+            scale: 'week',
+            showScheduled: false,
+            showUnscheduled: false,
+          });
+        }
+        choose('Show', 'Done');
+        expect(state.get('centerListViewState')[view]?.hiddenStatuses.length).toBe(1);
+        controls.closeViewStatePopover();
+        controls.setView('list');
+        expect(state.get('centerListViewState')).toMatchObject({ ...list, view: 'list' });
+        controls.setView(view);
+        options.click();
+        root.querySelector<HTMLButtonElement>('.abyss-view-state-reset-btn')?.click();
+        expect(state.get('centerListViewState')).toMatchObject({
+          view,
+          sortBy: list.sortBy,
+          groupBy: 'date',
+          filters: [],
+          [view]: {
+            groupBy: 'none',
+            hiddenStatuses: [],
+            sortBy: { field: view === 'kanban' ? 'priority' : 'date', dir: 'asc' },
+          },
+        });
+      } finally {
+        controls.closeViewStatePopover();
+        root.remove();
+      }
+    },
+  );
 });
 
 it('keeps Kanban status visibility in settings order and offers the same grouping fields as List except status', async () => {

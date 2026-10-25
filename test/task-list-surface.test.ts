@@ -36,7 +36,7 @@ function rows(count: number) {
     { by: 'none' },
   );
 }
-function harness(clampWrites = false, sameHost = false, clampExtent = false) {
+function harness(clampWrites = false, sameHost = false, clampExtent = false, viewportInset = 0) {
   const scroll = freshContainer();
   document.body.append(scroll);
   Object.defineProperty(document, 'fonts', { value: new EventTarget(), configurable: true });
@@ -175,6 +175,7 @@ function harness(clampWrites = false, sameHost = false, clampExtent = false) {
   const reportFailure = vi.fn();
   const mountedChanged = vi.fn();
   const surface = new TaskListSurface({
+    viewportInset: () => viewportInset,
     host,
     scroll,
     mount,
@@ -3475,3 +3476,16 @@ it.each(['reveal', 'pin'] as const)(
     expect(h.surface.mountedKeys()).toEqual([]);
   },
 );
+
+it('reveals a row below a sticky Timeline axis instead of underneath it', () => {
+  const h = harness(false, false, false, 80);
+  h.origin(80);
+  const source = rows(100);
+  h.surface.update(source, presentation);
+  h.scrollTo(2000);
+  h.frame();
+  const element = h.surface.reveal(expectDefined(source.taskKeyAt(0)));
+  expect(element?.getBoundingClientRect().top).toBe(80);
+  h.surface.destroy();
+  h.scroll.remove();
+});

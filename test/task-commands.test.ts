@@ -999,3 +999,54 @@ it('does not submit a bulk column change after its status definition changes', a
     h.index.destroy();
   }
 });
+
+it('writes Timeline endpoints together on the exact child and preserves all unrelated source', async () => {
+  const source =
+    '- [ ] Parent\n  - [ ] Child 🔁 every day 🛫 2026-10-03 ⏳ 2026-10-04 📅 2026-10-05 ⏰ 09:30 #keep\n  - comment\n';
+  const h = await realCommands(source);
+  const execute = vi.spyOn(h.service, 'execute');
+  try {
+    expect(
+      await h.commands.setTaskPlanningDates(
+        expectDefined(h.nodes[1]),
+        {
+          start: { type: 'set', value: localDate('2026-10-06') },
+          due: { type: 'set', value: localDate('2026-10-08') },
+        },
+        () => true,
+      ),
+    ).toBe(true);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(await h.read('source.md')).toBe(
+      source.replace('🛫 2026-10-03', '🛫 2026-10-06').replace('📅 2026-10-05', '📅 2026-10-08'),
+    );
+  } finally {
+    h.commands.dispose();
+    h.index.destroy();
+  }
+});
+it('rejects a retired Timeline gesture and an externally changed source', async () => {
+  const h = await realCommands('- [ ] Original 🛫 2026-10-03\n');
+  try {
+    const root = expectDefined(h.nodes[0]);
+    expect(
+      await h.commands.setTaskPlanningDates(
+        root,
+        { start: { type: 'set', value: localDate('2026-10-06') } },
+        () => false,
+      ),
+    ).toBe(false);
+    await h.app.vault.modify(h.file('source.md'), '- [ ] External 🛫 2026-10-03\n');
+    expect(
+      await h.commands.setTaskPlanningDates(
+        root,
+        { start: { type: 'set', value: localDate('2026-10-06') } },
+        () => true,
+      ),
+    ).toBe(false);
+    expect(await h.read('source.md')).toBe('- [ ] External 🛫 2026-10-03\n');
+  } finally {
+    h.commands.dispose();
+    h.index.destroy();
+  }
+});

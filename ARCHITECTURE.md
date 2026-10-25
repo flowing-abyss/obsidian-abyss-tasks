@@ -476,6 +476,15 @@ after the receiving publication is ready; bulk drops retain column feedback with
 Android native drag context menus are suppressed only while that payload is active.
 Tag/project transfers keep their existing destinations.
 
+Tasks Timeline uses `TaskTimelineSurface` around that same row surface and card renderer. The
+sticky calendar axis contributes a viewport inset, so virtual rows and exact reveals remain below
+the header. `taskTimelineModel` maps Start/Due to an inclusive range and Scheduled to a separate
+marker; malformed ranges retain their authored values. Shared Projects axis, navigation, geometry
+and pointer interaction drive the compact calendar. The task adapter captures canonical node
+references and submits one date patch through `TaskCommands`, rechecking the source and view
+lifetime before writing. Missing endpoints remain missing when moved. Summary selection, search
+hydration and command receipts stay with `CenterPanel`; timeline anchors remain session state.
+
 CalendarMode owns the period anchor, transient selected day, view lifetime, and forecast presentation.
 Its mounted publication hold defers query patches during pointer presses and native drags, and through
 the full-grid pointer and status callbacks and menu leases that CalendarMode wraps. It reads the newest

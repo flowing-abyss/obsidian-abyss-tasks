@@ -2,6 +2,15 @@ import type { TaskStatusDef } from '../../settings/types';
 import type { TaskKanbanSettings } from '../../task-lists/taskKanbanSettings';
 import type { ViewOptionsRow } from '../../ui/ViewOptionsPopover';
 
+type TaskCardOptionsSettings = Pick<
+  TaskKanbanSettings,
+  'hiddenStatuses' | 'descriptionLines' | 'showMetadata'
+>;
+interface TaskCardOptionsContext {
+  read(): TaskCardOptionsSettings;
+  update(patch: Partial<TaskCardOptionsSettings>): void;
+  statuses(): readonly TaskStatusDef[];
+}
 interface TaskKanbanOptionsContext {
   read(): TaskKanbanSettings;
   update(patch: Partial<TaskKanbanSettings>): void;
@@ -9,7 +18,7 @@ interface TaskKanbanOptionsContext {
   readonly sort: ViewOptionsRow;
   readonly group: ViewOptionsRow;
 }
-function statusRow(context: TaskKanbanOptionsContext): ViewOptionsRow {
+export function taskStatusOptionsRow(context: TaskCardOptionsContext): ViewOptionsRow {
   return {
     kind: 'multi',
     preserveOrder: true,
@@ -41,7 +50,7 @@ function statusRow(context: TaskKanbanOptionsContext): ViewOptionsRow {
     ],
   };
 }
-function descriptionRow(context: TaskKanbanOptionsContext): ViewOptionsRow {
+export function taskDescriptionOptionsRow(context: TaskCardOptionsContext): ViewOptionsRow {
   const labels: Record<string, string> = {
     '0': 'Hidden',
     '1': '1 line',
@@ -74,7 +83,7 @@ export function taskKanbanOptionsRows(context: TaskKanbanOptionsContext): ViewOp
   return [
     context.group,
     context.sort,
-    statusRow(context),
+    taskStatusOptionsRow(context),
     {
       kind: 'single',
       icon: 'columns-3',
@@ -89,20 +98,24 @@ export function taskKanbanOptionsRows(context: TaskKanbanOptionsContext): ViewOp
         context.update({ emptyColumns: value === 'expanded' ? 'expanded' : 'compact' });
       },
     },
-    descriptionRow(context),
-    {
-      kind: 'single',
-      icon: 'list',
-      label: 'Task metadata',
-      displayValue: () => (context.read().showMetadata ? 'Show' : 'Hidden'),
-      activeValue: () => (context.read().showMetadata ? 'show' : 'hide'),
-      options: [
-        { value: 'show', label: 'Show', isDefault: true },
-        { value: 'hide', label: 'Hidden' },
-      ],
-      onSelect: (value) => {
-        context.update({ showMetadata: value === 'show' });
-      },
-    },
+    taskDescriptionOptionsRow(context),
+    taskMetadataOptionsRow(context),
   ];
+}
+
+export function taskMetadataOptionsRow(context: TaskCardOptionsContext): ViewOptionsRow {
+  return {
+    kind: 'single',
+    icon: 'list',
+    label: 'Task metadata',
+    displayValue: () => (context.read().showMetadata ? 'Show' : 'Hidden'),
+    activeValue: () => (context.read().showMetadata ? 'show' : 'hide'),
+    options: [
+      { value: 'show', label: 'Show', isDefault: true },
+      { value: 'hide', label: 'Hidden' },
+    ],
+    onSelect: (value) => {
+      context.update({ showMetadata: value === 'show' });
+    },
+  };
 }

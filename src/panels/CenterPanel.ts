@@ -24,6 +24,8 @@ import type {
   TaskSearchOccurrence,
   TaskSearchOrganization,
 } from '../task-lists/taskSearchOrganization';
+import { buildTaskTimelineRows } from '../task-lists/taskTimelineRows';
+import { normalizeTaskTimelineSettings } from '../task-lists/taskTimelineSettings';
 import type { TaskStatisticsSource } from '../tasks';
 import {
   localDate,
@@ -134,6 +136,10 @@ import {
   TaskKanbanSurface,
   type TaskKanbanScrollPosition,
 } from './task-collection/TaskKanbanSurface';
+import {
+  TaskTimelineSurface,
+  type TaskTimelineScrollPosition,
+} from './task-collection/TaskTimelineSurface';
 import { TaskListStatusPublication } from './task-list/TaskListStatusPublication';
 import type { TaskListScrollPosition, TaskListSurfaceOptions } from './task-list/TaskListSurface';
 import { TaskListSurface, type TaskRowMount } from './task-list/TaskListSurface';
@@ -166,9 +172,11 @@ interface TaskRowOptions {
   readonly failure?: 'report' | 'throw';
 }
 
+type TaskCollectionView = 'list' | 'kanban' | 'timeline';
 type TaskCollectionScroll =
   | { readonly type: 'list'; readonly value: TaskListScrollPosition }
-  | { readonly type: 'kanban'; readonly value: TaskKanbanScrollPosition };
+  | { readonly type: 'kanban'; readonly value: TaskKanbanScrollPosition }
+  | { readonly type: 'timeline'; readonly value: TaskTimelineScrollPosition };
 
 interface TaskSurfaceState {
   readonly viewKey?: string | undefined;
@@ -308,7 +316,7 @@ export class CenterPanel {
   private readonly rowSelection_abyssPrivate = new TaskRowSelection();
   private selectionRows_abyssPrivate: TaskListRows<SurfaceTask> = NO_TASK_LIST_ROWS;
   private selectionGeneration_abyssPrivate: number | undefined;
-  private selectionKanban_abyssPrivate = false;
+  private selectionView_abyssPrivate: TaskCollectionView = 'list';
   private readonly taskCommands_abyssPrivate: TaskCommands;
   private readonly taskMenus_abyssPrivate: TaskMenus;
   private lastAnnouncedSelectionCount_abyssPrivate = 0;
@@ -878,6 +886,9 @@ export class CenterPanel {
       )
         return undefined;
       return await this.settleTaskDestination_abyssPrivate(retained, key, task, lifetime);
+    } catch (error) {
+      if (!current()) return undefined;
+      throw error;
     } finally {
       lifetime.cancel();
     }
@@ -1304,11 +1315,49 @@ export class CenterPanel {
     );
   }
 
+  private taskCollectionView_abyssPrivate(): TaskCollectionView {
+    return this.state_abyssPrivate.get('mode') === 'tasks'
+      ? (this.state_abyssPrivate.get('centerListViewState').view ?? 'list')
+      : 'list';
+  }
   private taskSurfaceMatchesView_abyssPrivate(): boolean {
-    return (
-      this.taskSurface_abyssPrivate?.surface instanceof TaskKanbanSurface ===
-      this.isTaskKanban_abyssPrivate()
-    );
+    const surface = this.taskSurface_abyssPrivate?.surface;
+    const view = this.taskCollectionView_abyssPrivate();
+    if (view === 'timeline') return surface instanceof TaskTimelineSurface;
+    if (view === 'kanban') return surface instanceof TaskKanbanSurface;
+    return surface instanceof TaskListSurface;
+  }
+  private timelineSnapshot_abyssPrivate(key: string): TaskNodeSnapshot | undefined {
+    const value = this.taskSurface_abyssPrivate?.surface.rows.task(key);
+    if (value === undefined) return undefined;
+    return 'root' in value ? value : this.mountedSnapshots_abyssPrivate.get(key);
+  }
+  private createTaskTimelineSurface_abyssPrivate(
+    options: TaskListSurfaceOptions<SurfaceTask>,
+  ): TaskTimelineSurface<SurfaceTask> {
+    return new TaskTimelineSurface(options, {
+      settings: () =>
+        normalizeTaskTimelineSettings(this.state_abyssPrivate.get('centerListViewState').timeline),
+      now: () => new Date(),
+      planning: (value) => ('root' in value ? value.node.planning : value.menu.planning),
+      snapshot: (key) => this.timelineSnapshot_abyssPrivate(key),
+      commit: (task, patch, accept) =>
+        this.taskCommands_abyssPrivate.setTaskPlanningDates(task, patch, accept),
+      select: (_key, focus) => {
+        focus.focus({ preventScroll: true });
+      },
+      inspect: (key) => {
+        const task = this.timelineSnapshot_abyssPrivate(key);
+        if (task !== undefined) this.openTaskDetails_abyssPrivate(task);
+      },
+      openDates: (key, anchor) => {
+        const task = this.timelineSnapshot_abyssPrivate(key);
+        if (task !== undefined) this.openTaskDatePicker_abyssPrivate(anchor, [task]);
+      },
+      changeScale: (scale) => {
+        this.listViewControls_abyssPrivate.updateTimeline({ scale });
+      },
+    });
   }
 
   private createTaskCollectionSurface_abyssPrivate(
@@ -1316,6 +1365,11 @@ export class CenterPanel {
   ): TaskCollectionSurface<SurfaceTask> {
     const key = this.taskViewportKey_abyssPrivate();
     const saved = key === undefined ? undefined : this.taskScroll_abyssPrivate.get(key);
+    if (this.taskCollectionView_abyssPrivate() === 'timeline') {
+      const surface = this.createTaskTimelineSurface_abyssPrivate(options);
+      if (saved?.type === 'timeline') surface.restoreScroll(saved.value);
+      return surface;
+    }
     if (!this.isTaskKanban_abyssPrivate()) {
       const surface = new TaskListSurface(options);
       if (saved?.type === 'list') surface.restoreScroll(saved.value);
@@ -1497,7 +1551,7 @@ export class CenterPanel {
 
   private taskViewportKey_abyssPrivate(): string | undefined {
     if (this.state_abyssPrivate.get('mode') !== 'tasks') return undefined;
-    const mode = this.isTaskKanban_abyssPrivate() ? 'kanban' : 'list';
+    const mode = this.taskCollectionView_abyssPrivate();
     return `${this.listViewControls_abyssPrivate.activeListKey()}:${mode}`;
   }
 
@@ -1506,6 +1560,13 @@ export class CenterPanel {
   ): TaskListRows<T> {
     const surface = this.taskSurface_abyssPrivate?.surface;
     this.taskKanbanDrag_abyssPrivate?.refresh();
+    if (surface instanceof TaskTimelineSurface)
+      return buildTaskTimelineRows(
+        rows,
+        normalizeTaskTimelineSettings(this.state_abyssPrivate.get('centerListViewState').timeline),
+        this.statusRegistry_abyssPrivate.all(),
+        (task) => ('root' in task ? task.node : task.menu),
+      );
     if (!(surface instanceof TaskKanbanSurface)) return rows;
     const settings = normalizeTaskKanbanSettings(
       this.state_abyssPrivate.get('centerListViewState').kanban,
@@ -2776,7 +2837,7 @@ export class CenterPanel {
     this.rowSelection_abyssPrivate.bind(NO_TASK_LIST_ROWS);
     this.selectionRows_abyssPrivate = NO_TASK_LIST_ROWS;
     this.selectionGeneration_abyssPrivate = undefined;
-    this.selectionKanban_abyssPrivate = false;
+    this.selectionView_abyssPrivate = 'list';
     this.cancelListActivation_abyssPrivate?.();
   }
 
@@ -2947,7 +3008,8 @@ export class CenterPanel {
   private hasCompactTasks_abyssPrivate(): boolean {
     return (
       this.state_abyssPrivate.get('mode') === 'tasks' &&
-      ((this.isTaskKanban_abyssPrivate() && this.searchApi_abyssPrivate !== undefined) ||
+      ((this.taskCollectionView_abyssPrivate() !== 'list' &&
+        this.searchApi_abyssPrivate !== undefined) ||
         this.state_abyssPrivate.get('centerFilter').length > 0 ||
         this.taskSearchReveal_abyssPrivate.current() !== undefined ||
         this.creationInclusion_abyssPrivate !== undefined ||
@@ -2999,6 +3061,7 @@ export class CenterPanel {
       [
         { value: 'list', label: 'List view', icon: 'list' },
         { value: 'kanban', label: 'Kanban view', icon: 'columns-3' },
+        { value: 'timeline', label: 'Timeline view', icon: 'gantt-chart' },
       ],
       {
         onSelect: (view) => {
@@ -3274,13 +3337,13 @@ export class CenterPanel {
     rows: TaskListRows<SurfaceTask>,
     physicalKeys: ReadonlyMap<string, string>,
   ): void {
-    const kanban = this.isTaskKanban_abyssPrivate();
+    const view = this.taskCollectionView_abyssPrivate();
     this.rowSelection_abyssPrivate.bind(rows, {
       physicalKeys,
-      regroup: this.selectionKanban_abyssPrivate !== kanban,
+      regroup: this.selectionView_abyssPrivate !== view,
     });
     this.selectionRows_abyssPrivate = rows;
-    this.selectionKanban_abyssPrivate = kanban;
+    this.selectionView_abyssPrivate = view;
   }
 
   private snapshotKeyForCompactSelection_abyssPrivate(
@@ -3487,12 +3550,15 @@ export class CenterPanel {
     occurrence?: TaskOccurrencePresentation,
   ): Parameters<TaskCardMount['update']>[2] {
     const options = this.taskSurface_abyssPrivate?.options;
-    const lines = normalizeTaskKanbanSettings(
-      this.state_abyssPrivate.get('centerListViewState').kanban,
-    ).descriptionLines;
+    const view = this.state_abyssPrivate.get('centerListViewState');
+    const lines =
+      this.taskCollectionView_abyssPrivate() === 'timeline'
+        ? normalizeTaskTimelineSettings(view.timeline).descriptionLines
+        : normalizeTaskKanbanSettings(view.kanban).descriptionLines;
     return {
       projection: task,
-      fullDescription: this.isTaskKanban_abyssPrivate() && (lines === 2 || lines === 'full'),
+      fullDescription:
+        this.taskCollectionView_abyssPrivate() !== 'list' && (lines === 2 || lines === 'full'),
       ...(occurrence === undefined ? {} : { occurrence }),
       selected:
         taskStackRowKey(this.state_abyssPrivate.get('taskStack')) ===
@@ -3578,11 +3644,26 @@ export class CenterPanel {
     this.cancelCreationAttempts_abyssPrivate();
     this.menuIntent_abyssPrivate.abort();
     const retained = this.taskSurface_abyssPrivate;
+    this.saveTaskViewport_abyssPrivate(retained);
+    this.taskSurface_abyssPrivate = null;
+    retained?.search?.rows.dispose();
+    retained?.surface.destroy();
+    this.mountedSnapshots_abyssPrivate.clear();
+    this.compactPresentation_abyssPrivate = undefined;
+    this.keyboardTarget_abyssPrivate?.abort();
+    this.mountedRows_abyssPrivate = NO_MOUNTED_TASK_LIST_ROWS;
+  }
+  private saveTaskViewport_abyssPrivate(retained: TaskSurfaceState | null): void {
     if (retained?.viewKey !== undefined) {
       const surface = retained.surface;
       if (surface instanceof TaskKanbanSurface)
         this.taskScroll_abyssPrivate.set(retained.viewKey, {
           type: 'kanban',
+          value: surface.captureScroll(),
+        });
+      else if (surface instanceof TaskTimelineSurface)
+        this.taskScroll_abyssPrivate.set(retained.viewKey, {
+          type: 'timeline',
           value: surface.captureScroll(),
         });
       else if (surface instanceof TaskListSurface)
@@ -3591,13 +3672,6 @@ export class CenterPanel {
           value: surface.captureScroll(),
         });
     }
-    this.taskSurface_abyssPrivate = null;
-    retained?.search?.rows.dispose();
-    retained?.surface.destroy();
-    this.mountedSnapshots_abyssPrivate.clear();
-    this.compactPresentation_abyssPrivate = undefined;
-    this.keyboardTarget_abyssPrivate?.abort();
-    this.mountedRows_abyssPrivate = NO_MOUNTED_TASK_LIST_ROWS;
   }
 
   private reportTaskRenderFailure_abyssPrivate(error: unknown): void {

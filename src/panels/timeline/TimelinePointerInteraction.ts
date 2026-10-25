@@ -37,6 +37,7 @@ export interface TimelinePointerInteractionContext<Source extends TimelineRangeS
   ) => Promise<{ readonly changed: boolean; readonly failure?: unknown }>;
   readonly reportRangeFailure: (failure: unknown) => void;
   readonly clickTrack?: (occurrenceId: string) => void;
+  readonly clickRange?: (occurrenceId: string) => void;
   readonly root: HTMLElement;
   readonly scroll: HTMLElement;
   readonly window: () => ProjectTimelineWindow;
@@ -472,6 +473,7 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
     if (this.destroyed_abyssPrivate || event.button !== 0 || !event.isPrimary) return;
     const target = this.target_abyssPrivate(event);
     if (target === undefined) return;
+    this.suppressClickOccurrence_abyssPrivate = undefined;
     const startDay = this.dayAtClientX_abyssPrivate(target.track, event.clientX);
     if (startDay === undefined) return;
     const captured = this.context_abyssPrivate.captureRangeSource(target.occurrenceId);
@@ -537,15 +539,7 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
     const active = this.active_abyssPrivate;
     if (active?.pointerId !== event.pointerId) return;
     active.released = true;
-    if (
-      !active.moved &&
-      active.target.part === 'track' &&
-      this.context_abyssPrivate.clickTrack !== undefined
-    ) {
-      this.cancelGesture_abyssPrivate(true);
-      this.context_abyssPrivate.clickTrack(active.target.occurrenceId);
-      return;
-    }
+    if (this.activatePress_abyssPrivate(active)) return;
     const submission = this.pointerSubmission_abyssPrivate(active);
     if (submission === undefined) {
       this.cancelGesture_abyssPrivate(true);
@@ -568,6 +562,19 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
       },
     );
   };
+
+  private activatePress_abyssPrivate(active: ActivePointerGesture<Source>): boolean {
+    if (active.moved) return false;
+    const { part, occurrenceId } = active.target;
+    let activate: ((occurrenceId: string) => void) | undefined;
+    if (part === 'track') activate = this.context_abyssPrivate.clickTrack;
+    else if (part === 'bar') activate = this.context_abyssPrivate.clickRange;
+    if (activate === undefined) return false;
+    this.cancelGesture_abyssPrivate(true);
+    this.suppressClickOccurrence_abyssPrivate = occurrenceId;
+    activate(occurrenceId);
+    return true;
+  }
 
   private pointerSubmission_abyssPrivate(active: ActivePointerGesture<Source>):
     | {

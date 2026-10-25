@@ -378,6 +378,19 @@ export class TaskCommands {
     return result.type === 'ok' && result.changed;
   }
 
+  async setTaskPlanningDates(
+    task: TaskCommandSubject,
+    patch: Pick<TaskPatch, 'start' | 'due' | 'scheduled'>,
+    accept: () => boolean,
+  ): Promise<boolean> {
+    if (!accept() || this.#tasks === undefined || Object.keys(patch).length === 0) return false;
+    const command = commandPatch(task, patch);
+    if (command === undefined) return false;
+    const result = await this.#executeSelectionCommand(command, task);
+    presentTaskCommandResult(result);
+    return result.type === 'ok' && result.changed;
+  }
+
   async applyDueInOrder<T extends TaskCommandSubject>(
     tasks: readonly T[],
     value: LocalDate,
