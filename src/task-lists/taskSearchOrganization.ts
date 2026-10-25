@@ -229,7 +229,7 @@ function dailyOrganization(input: TaskSearchOrganizationInput): boolean {
     input.scope === 'nodes' &&
     input.selection === 'upcoming' &&
     input.view.list.groupBy === 'date' &&
-    input.view.list.view !== 'kanban'
+    (input.view.list.view === undefined || input.view.list.view === 'list')
   );
 }
 function* ownedRecords(

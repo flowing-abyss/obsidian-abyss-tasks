@@ -16,6 +16,10 @@ import {
   isMalformedTaskKanbanSettings,
   normalizeTaskKanbanSettings,
 } from '../task-lists/taskKanbanSettings';
+import {
+  isMalformedTaskTimelineSettings,
+  normalizeTaskTimelineSettings,
+} from '../task-lists/taskTimelineSettings';
 import type { TaskStatusType } from '../tasks/domain/types';
 import { getListViewDefaults } from './defaults';
 import { migrateSettings } from './migration';
@@ -116,9 +120,14 @@ function migratedStatusGroups(show: unknown): ListViewState['statusGroups'] {
 
 function normalizeTaskCollectionPreferences(
   value: Record<string, unknown>,
-): Pick<ListViewState, 'view' | 'kanban'> {
+): Pick<ListViewState, 'view' | 'kanban' | 'timeline'> {
   return {
-    ...(value['view'] === 'list' || value['view'] === 'kanban' ? { view: value['view'] } : {}),
+    ...(value['view'] === 'list' || value['view'] === 'kanban' || value['view'] === 'timeline'
+      ? { view: value['view'] }
+      : {}),
+    ...(value['timeline'] === undefined
+      ? {}
+      : { timeline: normalizeTaskTimelineSettings(value['timeline']) }),
     ...(value['kanban'] === undefined
       ? {}
       : { kanban: normalizeTaskKanbanSettings(value['kanban']) }),
@@ -197,6 +206,13 @@ function isMalformedListViewState(value: Record<string, unknown>): boolean {
   );
 }
 
+function malformedTaskCollectionPreferences(entry: Record<string, unknown>): boolean {
+  return (
+    isMalformedTaskKanbanSettings(entry['kanban']) ||
+    isMalformedTaskTimelineSettings(entry['timeline'])
+  );
+}
+
 function decodeListViewStates(value: unknown): {
   readonly states: Record<string, ListViewState> | undefined;
   readonly malformed: Record<string, unknown> | undefined;
@@ -211,7 +227,7 @@ function decodeListViewStates(value: unknown): {
     }
     if (
       states[key] === undefined ||
-      (isRecord(entry) && isMalformedTaskKanbanSettings(entry['kanban']))
+      (isRecord(entry) && malformedTaskCollectionPreferences(entry))
     ) {
       malformed[key] = detached(entry);
     }
@@ -516,15 +532,18 @@ function mergeTaskCollectionPreferences(
   value: ListViewState,
 ): void {
   if (value.view !== undefined) entry['view'] = value.view;
-  else if (entry['view'] === 'list' || entry['view'] === 'kanban') delete entry['view'];
-  if (value.kanban !== undefined) {
-    const board = isRecord(entry['kanban']) ? detached(entry['kanban']) : {};
-    entry['kanban'] = {
-      ...board,
-      ...detached(value.kanban),
+  else if (entry['view'] === 'list' || entry['view'] === 'kanban' || entry['view'] === 'timeline')
+    delete entry['view'];
+  for (const layout of ['kanban', 'timeline'] as const) {
+    const current = value[layout];
+    if (current === undefined) continue;
+    const previous = isRecord(entry[layout]) ? detached(entry[layout]) : {};
+    entry[layout] = {
+      ...previous,
+      ...detached(current),
       sortBy: {
-        ...(isRecord(board['sortBy']) ? board['sortBy'] : {}),
-        ...detached(value.kanban.sortBy),
+        ...(isRecord(previous['sortBy']) ? previous['sortBy'] : {}),
+        ...detached(current.sortBy),
       },
     };
   }

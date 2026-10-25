@@ -15,11 +15,9 @@ import {
 } from '../tags/effectiveTagGroups';
 import { tagColorForGroups } from '../tags/tagColor';
 import { selectTaskNodes } from '../task-lists/TaskListSelector';
+import { taskCollectionListState } from '../task-lists/taskCollectionSettings';
 import { buildTaskKanbanModel } from '../task-lists/taskKanbanModel';
-import {
-  normalizeTaskKanbanSettings,
-  taskCollectionListState,
-} from '../task-lists/taskKanbanSettings';
+import { normalizeTaskKanbanSettings } from '../task-lists/taskKanbanSettings';
 import { outgoingTaskLinkValues, type TaskLinkValues } from '../task-lists/taskLinkValues';
 import type { TaskOccurrencePresentation } from '../task-lists/taskOccurrencePresentation';
 import type {
@@ -335,7 +333,7 @@ export class CenterPanel {
     readonly title: HTMLElement;
     readonly controls: HTMLElement;
     filterChips: HTMLElement[];
-    readonly viewSwitcher: ViewModeSwitcher<'list' | 'kanban'>;
+    readonly viewSwitcher: ViewModeSwitcher<'list' | 'kanban' | 'timeline'>;
     readonly viewButton: HTMLButtonElement;
     readonly filterInput: HTMLInputElement;
     readonly filterChipsHost: HTMLElement;
@@ -2995,7 +2993,7 @@ export class CenterPanel {
     const title = header.createEl('h2', { cls: 'abyss-center-title' });
     const controls = header.createDiv({ cls: 'abyss-center-controls' });
     const filterChipsHost = controls.createDiv({ cls: 'abyss-task-collection-filters' });
-    const viewSwitcher = new ViewModeSwitcher<'list' | 'kanban'>(
+    const viewSwitcher = new ViewModeSwitcher<'list' | 'kanban' | 'timeline'>(
       controls,
       'Task view',
       [

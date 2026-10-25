@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { indexedRows, type TaskListTaskRow } from '../src/panels/task-list/taskListRows';
 import type { ListViewState, TaskStatusDef } from '../src/settings/types';
+import { taskCollectionListState } from '../src/task-lists/taskCollectionSettings';
 import { buildTaskKanbanModel } from '../src/task-lists/taskKanbanModel';
 import {
   defaultTaskKanbanSettings,
   normalizeTaskKanbanSettings,
-  taskCollectionListState,
 } from '../src/task-lists/taskKanbanSettings';
 import type { TaskPriority } from '../src/tasks';
 import { expectDefined } from './helpers';

@@ -727,6 +727,10 @@ change rank after success; filtering does not delete hidden ranks. Timeline uses
 plan for preview and persistence and validates both endpoints together. All project surfaces reuse
 bounded row geometry, pin active editors/gestures, and retire native work on hide or migration.
 Drafts and submitted receipts keep their controller ownership through those transitions.
+`TimelinePointerInteraction` owns shared pointer capture, preview, cancellation, edge scrolling and
+row pins. Its caller supplies immutable source evidence, equality, planning and command receipts;
+the Projects adapter retains frontmatter binding and write authority. `timelinePresentation` shares
+calendar navigation, scale controls, axis cells and grid rendering without acquiring write authority.
 
 Project creation shares NoteTemplateService and retains the owned path and failed phase for recovery.
 Retries must not silently create a second note. Status-definition renames serialize metadata edits
@@ -792,11 +796,12 @@ active filters before the switcher, then the existing `ViewOptionsPopover` sort/
 options use the same popover rows as Projects; List options keep their existing behavior.
 
 Task collection preferences extend each saved `ListViewState` with an optional display mode and
-independent Kanban settings. Existing List grouping, sorting and status visibility remain intact;
+independent Kanban and Timeline settings. Existing List grouping, sorting and status visibility remain intact;
 explicit property filters are shared. Kanban derives its effective selector state and status-column
-order from `taskKanbanSettings` and `taskKanbanModel`, without task ranks or source writes. The
-serializer normalizes malformed board preferences independently, retains their recovery source,
-and preserves unknown nested board and sort extensions.
+order from `taskKanbanSettings` and `taskKanbanModel`, without task ranks or source writes.
+`taskCollectionSettings` projects each layout’s organization while preserving List preferences.
+The serializer normalizes malformed layout preferences independently, retains their recovery source,
+and preserves unknown nested layout and sort extensions.
 
 Ordinary saves preserve unknown static and nested view extensions. Detached writes queue in order;
 a rejected write does not block later operations. [`ViewStatePathOwner`](src/settings/ViewStatePathOwner.ts)

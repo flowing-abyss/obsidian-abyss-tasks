@@ -6,6 +6,7 @@ import type {
 } from '../projects/projectPropertyDefinitions';
 import type { ProjectTimelineSettings } from '../projects/projectTimelineSettings';
 import type { TaskKanbanSettings } from '../task-lists/taskKanbanSettings';
+import type { TaskTimelineSettings } from '../task-lists/taskTimelineSettings';
 import type { TaskPriority, TaskStatusType } from '../tasks/domain/types';
 import type { ShortcutSettings } from './shortcuts';
 
@@ -149,7 +150,8 @@ export type PropertyFilter =
 export type TagPropertyFilter = Extract<PropertyFilter, { type: 'tag' | 'tag-exclude' }>;
 
 export interface ListViewState {
-  view?: 'list' | 'kanban';
+  view?: 'list' | 'kanban' | 'timeline';
+  timeline?: TaskTimelineSettings;
   kanban?: TaskKanbanSettings;
   groupBy: 'none' | 'date' | 'priority' | 'tag' | 'status' | 'source-note' | 'outgoing-link';
   sortBy: {

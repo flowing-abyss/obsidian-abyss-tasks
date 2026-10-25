@@ -16,7 +16,6 @@ import type { ProjectTableGroup } from '../../projects/projectTableModel';
 import {
   projectTimelineAxisLayout,
   projectTimelineTrackWidth,
-  type ProjectTimelineAxisCell,
   type ProjectTimelineAxisLayout,
 } from '../../projects/projectTimelineAxis';
 import {
@@ -38,6 +37,11 @@ import {
   type ProjectTimelineSettings,
 } from '../../projects/projectTimelineSettings';
 import type { Project } from '../../projects/types';
+import {
+  createTimelineNavigation,
+  patchTimelineAxisCells,
+  patchTimelineGrid,
+} from '../timeline/timelinePresentation';
 import { projectCardFields } from './projectCardFields';
 import {
   NO_PROJECT_OVERVIEW_CELLS,
@@ -146,14 +150,6 @@ interface TimelineAxisGeometry {
   readonly trackWidth: number;
   readonly viewportWidth: number;
 }
-
-const TIMELINE_SCALES = [
-  ['day', 'Day'],
-  ['week', 'Week'],
-  ['month', 'Month'],
-  ['quarter', 'Quarter'],
-  ['year', 'Year'],
-] as const;
 
 interface TimelineFocusIdentity {
   readonly projectPath: string;
@@ -428,45 +424,33 @@ export class ProjectsTimelineView<
   }
 
   private createNavigation_abyssPrivate(): void {
-    const navigation = this.axisSummary_abyssPrivate.createDiv({
-      cls: 'abyss-project-timeline-navigation',
-    });
-    const rangeNavigation = navigation.createDiv({
-      cls: 'abyss-project-timeline-range-navigation',
-    });
-    this.addNavigationButton_abyssPrivate(rangeNavigation, 'Previous range', 'chevron-left', () => {
-      this.context_abyssPrivate.requestNavigation(() => {
-        this.moveAnchor_abyssPrivate(-1);
-      });
-    });
-    const todayButton = this.addTextButton_abyssPrivate(rangeNavigation, 'Today', () => {
-      this.context_abyssPrivate.requestNavigation(() => {
-        const today = new Date((this.context_abyssPrivate.now ?? (() => new Date()))());
-        this.anchor_abyssPrivate = today;
-        this.fittedWindow_abyssPrivate = undefined;
-        this.scaleContextOrdinal_abyssPrivate = dayOrdinal(localDay(today));
-        this.render_abyssPrivate(true);
-      });
-    });
-    todayButton.addClass('abyss-cal-nav-today');
-    this.addNavigationButton_abyssPrivate(rangeNavigation, 'Next range', 'chevron-right', () => {
-      this.context_abyssPrivate.requestNavigation(() => {
-        this.moveAnchor_abyssPrivate(1);
-      });
-    });
-    const scaleControl = navigation.createDiv({
-      cls: 'abyss-project-timeline-scale-control abyss-cal-view-switcher',
-      attr: { role: 'group', 'aria-label': 'Timeline scale' },
-    });
-    for (const [scale, label] of TIMELINE_SCALES) {
-      const button = this.addTextButton_abyssPrivate(scaleControl, label, () => {
+    const buttons = createTimelineNavigation(this.axisSummary_abyssPrivate, {
+      previous: () => {
+        this.context_abyssPrivate.requestNavigation(() => {
+          this.moveAnchor_abyssPrivate(-1);
+        });
+      },
+      next: () => {
+        this.context_abyssPrivate.requestNavigation(() => {
+          this.moveAnchor_abyssPrivate(1);
+        });
+      },
+      today: () => {
+        this.context_abyssPrivate.requestNavigation(() => {
+          const today = new Date((this.context_abyssPrivate.now ?? (() => new Date()))());
+          this.anchor_abyssPrivate = today;
+          this.fittedWindow_abyssPrivate = undefined;
+          this.scaleContextOrdinal_abyssPrivate = dayOrdinal(localDay(today));
+          this.render_abyssPrivate(true);
+        });
+      },
+      scale: (scale) => {
         void this.context_abyssPrivate.requestScaleChange(scale).catch((error: unknown) => {
           console.error('[abyss-tasks] Could not change project Timeline scale', error);
         });
-      });
-      button.addClass('abyss-cal-view-btn');
-      this.scaleButtons_abyssPrivate.set(scale, button);
-    }
+      },
+    });
+    for (const [scale, button] of buttons) this.scaleButtons_abyssPrivate.set(scale, button);
   }
 
   mount(projects: readonly Project[], search: string): void {
@@ -621,30 +605,6 @@ export class ProjectsTimelineView<
     this.search_abyssPrivate = search;
     this.handleScaleTransition_abyssPrivate();
     return this.render_abyssPrivate(false);
-  }
-
-  private addNavigationButton_abyssPrivate(
-    host: HTMLElement,
-    label: string,
-    icon: string,
-    action: () => void,
-  ): void {
-    const button = host.createEl('button', {
-      cls: 'clickable-icon abyss-cal-nav-btn',
-      attr: { type: 'button', 'aria-label': label },
-    });
-    setIcon(button, icon);
-    button.addEventListener('click', action);
-  }
-
-  private addTextButton_abyssPrivate(
-    host: HTMLElement,
-    label: string,
-    action: () => void,
-  ): HTMLButtonElement {
-    const button = host.createEl('button', { text: label, attr: { type: 'button' } });
-    button.addEventListener('click', action);
-    return button;
   }
 
   private syncScaleButtons_abyssPrivate(): void {
@@ -971,13 +931,13 @@ export class ProjectsTimelineView<
       todayDay: today,
     });
     this.axisRange_abyssPrivate.setText(`${window.startDay} – ${window.endDay}`);
-    this.patchAxisCells_abyssPrivate(
+    patchTimelineAxisCells(
       this.axisHierarchy_abyssPrivate,
       this.axisLayout_abyssPrivate.hierarchyCells,
       'abyss-project-timeline-axis-hierarchy-cell',
       true,
     );
-    this.patchAxisCells_abyssPrivate(
+    patchTimelineAxisCells(
       this.axisCells_abyssPrivate,
       this.axisLayout_abyssPrivate.cells,
       `abyss-project-timeline-axis-cell${window.scale === 'day' ? ' is-day' : ''}`,
@@ -991,42 +951,10 @@ export class ProjectsTimelineView<
     this.addTodayMarker_abyssPrivate(this.axisDates_abyssPrivate, window);
   }
 
-  private patchAxisCells_abyssPrivate(
-    host: HTMLElement,
-    cells: readonly ProjectTimelineAxisCell[],
-    className: string,
-    clampLabel: boolean,
-  ): void {
-    host.empty();
-    for (const cell of cells) {
-      const element = host.createSpan({ cls: className });
-      element.dataset['startDay'] = cell.startDay;
-      element.dataset['endDay'] = cell.endDay;
-      element.style.left = `${String(cell.leftPercent)}%`;
-      element.style.width = `${String(cell.rightPercent - cell.leftPercent)}%`;
-      element.toggleClass('is-today', cell.isToday);
-      const labelHost = clampLabel
-        ? element.createSpan({ cls: 'abyss-project-timeline-axis-hierarchy-label' })
-        : element;
-      if (clampLabel) {
-        const cellWidth = Math.max(Number.EPSILON, cell.rightPercent - cell.leftPercent);
-        labelHost.style.left = `${String(
-          ((cell.labelPercent - cell.leftPercent) / cellWidth) * 100,
-        )}%`;
-      }
-      labelHost.createSpan({ cls: 'abyss-project-timeline-axis-label', text: cell.label });
-      if (cell.secondaryLabel !== undefined) {
-        labelHost.createSpan({
-          cls: 'abyss-project-timeline-axis-secondary-label',
-          text: cell.secondaryLabel,
-        });
-      }
-    }
-  }
-
   private patchVisibleCalendar_abyssPrivate(window: ProjectTimelineWindow): void {
     this.patchAxis_abyssPrivate(window);
-    for (const row of this.rows_abyssPrivate.values()) this.patchGrid_abyssPrivate(row.grid);
+    for (const row of this.rows_abyssPrivate.values())
+      patchTimelineGrid(row.grid, this.axisLayout_abyssPrivate);
   }
 
   private addTodayMarker_abyssPrivate(host: HTMLElement, window: ProjectTimelineWindow): void {
@@ -1478,7 +1406,7 @@ export class ProjectsTimelineView<
       marker.remove();
     }
     this.addTodayMarker_abyssPrivate(row.track, window);
-    this.patchGrid_abyssPrivate(row.grid);
+    patchTimelineGrid(row.grid, this.axisLayout_abyssPrivate);
     this.patchRangeEditability_abyssPrivate(row);
     const geometry = projectTimelineBarGeometry(range, window);
     if (geometry === undefined) {
@@ -1530,21 +1458,6 @@ export class ProjectsTimelineView<
     row.endHandle.hidden = !(
       range.kind === 'open-end' || endpointVisible(rangeEndpoint(range, 'end'), window)
     );
-  }
-
-  private patchGrid_abyssPrivate(grid: HTMLElement): void {
-    const boundaries = this.axisLayout_abyssPrivate.gridBoundaries;
-    while (grid.children.length > boundaries.length) grid.lastElementChild?.remove();
-    while (grid.children.length < boundaries.length) {
-      grid.createSpan({ cls: 'abyss-project-timeline-gridline' });
-    }
-    for (const [index, boundary] of boundaries.entries()) {
-      const line = grid.children.item(index);
-      if (!(line instanceof HTMLElement)) continue;
-      line.dataset['day'] = boundary.day;
-      line.className = `abyss-project-timeline-gridline is-${boundary.weight}`;
-      line.style.left = `${String(boundary.leftPercent)}%`;
-    }
   }
 
   private renderMissingRange_abyssPrivate(

@@ -2513,3 +2513,82 @@ describe('Tasks Kanban saved view compatibility', () => {
     });
   });
 });
+
+describe('Tasks Timeline saved view compatibility', () => {
+  it('round-trips independent Timeline preferences and unknown nested extensions through the real coordinator', async () => {
+    const port = memoryPort(
+      markedStatic(),
+      stateEnvelope({
+        listViewStates: {
+          'project:Alpha.md': {
+            groupBy: 'tag',
+            sortBy: { field: 'title', dir: 'desc' },
+            filters: [],
+            view: 'timeline',
+            timeline: {
+              groupBy: 'status',
+              scale: 'week',
+              showScheduled: false,
+              sortBy: { field: 'date', dir: 'asc', futureSort: 7 },
+              futureTimeline: { keep: true },
+            },
+          },
+        },
+      }),
+    );
+    const coordinator = new SettingsPersistenceCoordinator(port);
+    const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    expect(settings.listViewStates?.['project:Alpha.md']).toMatchObject({
+      view: 'timeline',
+      groupBy: 'tag',
+      sortBy: { field: 'title', dir: 'desc' },
+      timeline: {
+        groupBy: 'status',
+        scale: 'week',
+        showScheduled: false,
+        sortBy: { field: 'date', dir: 'asc' },
+      },
+    });
+    await coordinator.saveViewState(settings);
+    expect(JSON.parse(port.stateText ?? '{}')).toMatchObject({
+      views: {
+        listViewStates: {
+          'project:Alpha.md': {
+            timeline: { futureTimeline: { keep: true }, sortBy: { futureSort: 7 } },
+          },
+        },
+      },
+    });
+    expect(port.staticData).not.toHaveProperty('listViewStates');
+  });
+  it('recovers malformed Timeline values and retains the original for recovery', async () => {
+    const port = memoryPort(
+      markedStatic(),
+      stateEnvelope({
+        listViewStates: {
+          today: {
+            groupBy: 'none',
+            sortBy: { field: 'title', dir: 'desc' },
+            filters: [],
+            view: 'timeline',
+            timeline: { scale: 'unknown', showScheduled: 42 },
+          },
+        },
+      }),
+    );
+    const coordinator = new SettingsPersistenceCoordinator(port);
+    const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    expect(settings.listViewStates?.['today']).toMatchObject({
+      view: 'timeline',
+      timeline: { scale: 'month', showScheduled: true },
+    });
+    await coordinator.saveViewState(settings);
+    expect(JSON.parse(port.stateText ?? '{}')).toMatchObject({
+      recovery: {
+        malformedViews: {
+          listViewStates: { today: { timeline: { scale: 'unknown', showScheduled: 42 } } },
+        },
+      },
+    });
+  });
+});

@@ -611,7 +611,7 @@ it('keeps compact range geometry CSS-owned without allowing forced bar overrides
 it('discovers the range coordinate from its real source owner', async () => {
   const { default: ts } = await import('typescript');
   const source = ts.sys.readFile(
-    ts.sys.resolvePath('src/panels/projects/projectTimelineInteraction.ts'),
+    ts.sys.resolvePath('src/panels/timeline/TimelinePointerInteraction.ts'),
   );
   if (source === undefined) throw new Error('Missing Timeline interaction owner');
   const runtime = discoverRuntimeVariables(source);

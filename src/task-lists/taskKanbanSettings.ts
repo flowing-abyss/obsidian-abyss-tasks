@@ -49,7 +49,10 @@ export function defaultTaskKanbanSettings(): TaskKanbanSettings {
     showMetadata: true,
   };
 }
-export function normalizeTaskKanbanSettings(value: unknown): TaskKanbanSettings {
+export function normalizeTaskKanbanSettings(
+  value: unknown,
+  sortFallback: ListViewState['sortBy']['field'] = 'priority',
+): TaskKanbanSettings {
   const raw = record(value);
   const sort = record(raw['sortBy']);
   const description = raw['descriptionLines'];
@@ -60,7 +63,7 @@ export function normalizeTaskKanbanSettings(value: unknown): TaskKanbanSettings 
     sortBy: {
       field: sortFields.includes(sort['field'] as ListViewState['sortBy']['field'])
         ? (sort['field'] as ListViewState['sortBy']['field'])
-        : 'priority',
+        : sortFallback,
       dir: sort['dir'] === 'desc' ? 'desc' : 'asc',
     },
     hiddenStatuses: strings(raw['hiddenStatuses']),
@@ -89,14 +92,6 @@ export function isMalformedTaskKanbanSettings(value: unknown): boolean {
     }
     return JSON.stringify(actual) !== JSON.stringify(expected);
   });
-}
-/** Layout organization is derived; switching never overwrites the saved List preferences. */
-export function taskCollectionListState(view: ListViewState): ListViewState {
-  if (view.view !== 'kanban') return view;
-  const board = normalizeTaskKanbanSettings(view.kanban);
-  const result = { ...view, groupBy: board.groupBy, sortBy: board.sortBy };
-  delete result.statusGroups;
-  return result;
 }
 export function taskKanbanCustomized(view: ListViewState): boolean {
   return (

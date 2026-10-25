@@ -16,10 +16,10 @@ import { upsertTagFilter } from '../../settings/tagFilters';
 import type { CalendarSettings, ListViewState, PropertyFilter } from '../../settings/types';
 import type { StatusRegistry } from '../../status/StatusRegistry';
 import { ACTIVE_STATUS_GROUPS, ALL_STATUS_GROUPS, TYPE_LABELS } from '../../status/statusConstants';
+import { taskCollectionListState } from '../../task-lists/taskCollectionSettings';
 import {
   defaultTaskKanbanSettings,
   normalizeTaskKanbanSettings,
-  taskCollectionListState,
   type TaskKanbanSettings,
 } from '../../task-lists/taskKanbanSettings';
 import type { TaskStatusType } from '../../tasks';
@@ -162,7 +162,7 @@ export class ListViewControls {
     this.#options.state.set('centerListViewState', next);
   }
 
-  setView(view: 'list' | 'kanban'): void {
+  setView(view: 'list' | 'kanban' | 'timeline'): void {
     const current = this.#read();
     if ((current.view ?? 'list') === view) return;
     this.closeViewStatePopover();
