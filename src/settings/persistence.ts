@@ -12,6 +12,10 @@ import {
   normalizeProjectTimelineSettings,
 } from '../projects/projectTimelineSettings';
 import { ACTIVE_STATUS_GROUPS, TYPE_ORDER } from '../status/statusConstants';
+import {
+  isMalformedTaskKanbanSettings,
+  normalizeTaskKanbanSettings,
+} from '../task-lists/taskKanbanSettings';
 import type { TaskStatusType } from '../tasks/domain/types';
 import { getListViewDefaults } from './defaults';
 import { migrateSettings } from './migration';
@@ -110,6 +114,17 @@ function migratedStatusGroups(show: unknown): ListViewState['statusGroups'] {
   return undefined;
 }
 
+function normalizeTaskCollectionPreferences(
+  value: Record<string, unknown>,
+): Pick<ListViewState, 'view' | 'kanban'> {
+  return {
+    ...(value['view'] === 'list' || value['view'] === 'kanban' ? { view: value['view'] } : {}),
+    ...(value['kanban'] === undefined
+      ? {}
+      : { kanban: normalizeTaskKanbanSettings(value['kanban']) }),
+  };
+}
+
 function normalizeListViewState(value: Record<string, unknown>, key: string): ListViewState {
   const defaults = getListViewDefaults(key);
   const sortBy = isRecord(value['sortBy']) ? value['sortBy'] : {};
@@ -127,6 +142,7 @@ function normalizeListViewState(value: Record<string, unknown>, key: string): Li
       )
     : migratedStatusGroups(value['show']);
   return {
+    ...normalizeTaskCollectionPreferences(value),
     groupBy,
     sortBy: { field, dir },
     filters: Array.isArray(value['filters'])
@@ -192,7 +208,11 @@ function decodeListViewStates(value: unknown): {
   for (const [key, entry] of Object.entries(value)) {
     if (isRecord(entry) && !isMalformedListViewState(entry)) {
       states[key] = normalizeListViewState(entry, key);
-    } else {
+    }
+    if (
+      states[key] === undefined ||
+      (isRecord(entry) && isMalformedTaskKanbanSettings(entry['kanban']))
+    ) {
       malformed[key] = detached(entry);
     }
   }
@@ -491,6 +511,25 @@ function composeSettings(
   return { settings, notices };
 }
 
+function mergeTaskCollectionPreferences(
+  entry: Record<string, unknown>,
+  value: ListViewState,
+): void {
+  if (value.view !== undefined) entry['view'] = value.view;
+  else if (entry['view'] === 'list' || entry['view'] === 'kanban') delete entry['view'];
+  if (value.kanban !== undefined) {
+    const board = isRecord(entry['kanban']) ? detached(entry['kanban']) : {};
+    entry['kanban'] = {
+      ...board,
+      ...detached(value.kanban),
+      sortBy: {
+        ...(isRecord(board['sortBy']) ? board['sortBy'] : {}),
+        ...detached(value.kanban.sortBy),
+      },
+    };
+  }
+}
+
 function mergeListViewStates(
   raw: unknown,
   current: CalendarSettings['listViewStates'],
@@ -501,6 +540,7 @@ function mergeListViewStates(
   for (const [key, value] of Object.entries(current)) {
     const entry = isRecord(base[key]) ? detached(base[key]) : {};
     delete entry['show'];
+    mergeTaskCollectionPreferences(entry, value);
     entry['groupBy'] = value.groupBy;
     entry['sortBy'] = {
       ...(isRecord(entry['sortBy']) ? detached(entry['sortBy']) : {}),

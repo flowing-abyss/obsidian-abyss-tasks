@@ -480,6 +480,8 @@ export default defineConfig(
       'src/collectionSteps.ts',
       'src/task-lists/TaskListSelector.ts',
       'src/task-lists/taskNodeMembership.ts',
+      'src/task-lists/taskKanbanSettings.ts',
+      'src/task-lists/taskKanbanModel.ts',
       'src/tasks/domain/taskOccupiedDates.ts',
       'src/tags/effectiveTagGroups.ts',
       'src/task-lists/todayTaskCategory.ts',

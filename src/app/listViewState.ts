@@ -2,6 +2,7 @@ import { tagComparisonKey } from '../markdown/tagSyntax';
 import { getListViewDefaults } from '../settings/defaults';
 import type { ListViewState } from '../settings/types';
 import { ALL_STATUS_GROUPS } from '../status/statusConstants';
+import { taskKanbanCustomized } from '../task-lists/taskKanbanSettings';
 import type { TaskStatusType } from '../tasks/domain/types';
 import type { ListSelection } from './AppState';
 
@@ -91,11 +92,12 @@ export function statusGroupsEqual(
  * has any saved customization", filters included.
  */
 export function isListViewCustomized(vs: ListViewState, listKey: string): boolean {
-  return isListViewOptionsCustomized(vs, listKey) || vs.filters.length > 0;
+  return vs.view === 'kanban' || isListViewOptionsCustomized(vs, listKey) || vs.filters.length > 0;
 }
 
 /** Sort & group indicator excludes property filters, which have their own chips. */
 export function isListViewOptionsCustomized(vs: ListViewState, listKey: string): boolean {
+  if (vs.view === 'kanban') return taskKanbanCustomized(vs);
   const defaults = getListViewDefaults(listKey);
   return (
     vs.groupBy !== defaults.groupBy ||

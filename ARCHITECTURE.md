@@ -768,6 +768,13 @@ recapturing stale keys. Corrupt, unreadable, or future-version state stays untou
 suspend and runtime uses temporary defaults, while static saves preserve guarded legacy fields.
 Older schema-1 binaries suspend writes to schema 2; re-upgrading restores those views.
 
+Task collection preferences extend each saved `ListViewState` with an optional display mode and
+independent Kanban settings. Existing List grouping, sorting and status visibility remain intact;
+explicit property filters are shared. Kanban derives its effective selector state and status-column
+order from `taskKanbanSettings` and `taskKanbanModel`, without task ranks or source writes. The
+serializer normalizes malformed board preferences independently, retains their recovery source,
+and preserves unknown nested board and sort extensions.
+
 Ordinary saves preserve unknown static and nested view extensions. Detached writes queue in order;
 a rejected write does not block later operations. [`ViewStatePathOwner`](src/settings/ViewStatePathOwner.ts)
 updates saved note paths for rename/delete, while PanelNavigator updates session navigation.

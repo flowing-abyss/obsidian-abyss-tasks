@@ -2441,3 +2441,75 @@ describe('smart Q static setting', () => {
     },
   );
 });
+
+describe('Tasks Kanban saved view compatibility', () => {
+  it('keeps Kanban view preferences out of static settings and preserves unknown nested extensions', async () => {
+    const port = memoryPort(
+      markedStatic(),
+      stateEnvelope({
+        listViewStates: {
+          today: {
+            groupBy: 'date',
+            sortBy: { field: 'title', dir: 'desc' },
+            filters: [],
+            statusGroups: ['todo'],
+            view: 'kanban',
+            kanban: {
+              groupBy: 'priority',
+              sortBy: { field: 'priority', dir: 'asc', futureSort: 7 },
+              futureBoard: { keep: true },
+            },
+          },
+        },
+      }),
+    );
+    const coordinator = new SettingsPersistenceCoordinator(port);
+    const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    expect(settings.listViewStates?.['today']).toMatchObject({
+      view: 'kanban',
+      groupBy: 'date',
+      sortBy: { field: 'title', dir: 'desc' },
+      kanban: { groupBy: 'priority', sortBy: { field: 'priority', dir: 'asc' } },
+    });
+    await coordinator.saveViewState(settings);
+    expect(JSON.parse(port.stateText ?? '{}')).toMatchObject({
+      views: {
+        listViewStates: {
+          today: { kanban: { futureBoard: { keep: true }, sortBy: { futureSort: 7 } } },
+        },
+      },
+    });
+    expect(port.staticData).not.toHaveProperty('listViewStates');
+  });
+  it('recovers malformed board values while keeping valid List preferences and the original for recovery', async () => {
+    const port = memoryPort(
+      markedStatic(),
+      stateEnvelope({
+        listViewStates: {
+          today: {
+            groupBy: 'priority',
+            sortBy: { field: 'title', dir: 'desc' },
+            filters: [],
+            view: 'kanban',
+            kanban: { sortBy: 42, descriptionLines: 99 },
+          },
+        },
+      }),
+    );
+    const coordinator = new SettingsPersistenceCoordinator(port);
+    const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    expect(settings.listViewStates?.['today']).toMatchObject({
+      groupBy: 'priority',
+      sortBy: { field: 'title', dir: 'desc' },
+      kanban: { sortBy: { field: 'priority', dir: 'asc' }, descriptionLines: 1 },
+    });
+    await coordinator.saveViewState(settings);
+    expect(JSON.parse(port.stateText ?? '{}')).toMatchObject({
+      recovery: {
+        malformedViews: {
+          listViewStates: { today: { kanban: { sortBy: 42, descriptionLines: 99 } } },
+        },
+      },
+    });
+  });
+});
