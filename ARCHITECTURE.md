@@ -473,6 +473,8 @@ source order, or task ranks. A selected-card drag captures the existing exact me
 uses the sequential task batch command, including guarded advancement after earlier writes.
 A successful single drop reveals the committed node (the completed occurrence for recurrence)
 after the receiving publication is ready; bulk drops retain column feedback without per-task reveal.
+AppState retires task drags before publishing navigation, project, or task-view context changes,
+so native-source and destination cleanup cannot write state during notification delivery.
 Android native drag context menus are suppressed only while that payload is active.
 Tag/project transfers keep their existing destinations.
 

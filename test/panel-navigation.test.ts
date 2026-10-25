@@ -488,15 +488,20 @@ describe('PanelNavigator', () => {
     expect(save).not.toHaveBeenCalled();
   });
 
-  it('moves a renamed selected project with its filters to the new key and saves once', () => {
+  it('keeps newer saved dashboard preferences when rebasing an inactive Tasks project', () => {
     const before = 'Projects/Before.md';
     const after = 'Projects/After.md';
     const onScreen: ListViewState = {
       ...listState('priority'),
       filters: [{ type: 'file', filePath: before }],
     };
+    const saved: ListViewState = {
+      ...listState('date'),
+      view: 'timeline',
+      filters: [{ type: 'file', filePath: after }],
+    };
     const calendarSettings = settings({
-      listViewStates: { [`project:${after}`]: listState('date') },
+      listViewStates: { [`project:${after}`]: saved },
     });
     const { state, navigator, save } = harness({
       mode: 'projects',
@@ -511,7 +516,8 @@ describe('PanelNavigator', () => {
 
     const moved = state.get('centerListViewState');
     expect(moved.filters).toEqual([{ type: 'file', filePath: after }]);
-    expect(moved.groupBy).toBe('priority');
+    expect(moved).toBe(saved);
+    expect(moved.view).toBe('timeline');
     expect(state.get('selectedList')).toEqual({ type: 'project', path: after });
     expect(state.get('mode')).toBe('projects');
     expect(calendarSettings.listViewStates?.[`project:${after}`]).toBe(moved);

@@ -66,6 +66,15 @@ export interface AppStateData {
   projectsPanel: ProjectsPanelState;
 }
 
+const TASK_DRAG_CONTEXT_KEYS: ReadonlySet<keyof AppStateData> = new Set([
+  'taskStack',
+  'mode',
+  'projectsPanel',
+  'selectedList',
+  'centerListViewState',
+  'centerFilter',
+]);
+
 type Listener<T> = (value: T, prev: T) => void;
 type CommitListener = (changed: ReadonlySet<keyof AppStateData>) => void;
 type SelectionBegunListener = (stack: readonly TaskSelectionNode[]) => void;
@@ -333,7 +342,7 @@ export class AppState {
     const prev = this.data[key];
     if (prev === value) return;
     if (this.delivering) throw new AppStateReentrantMutationError(key);
-    if ((key === 'taskStack' || key === 'mode') && this.data.draggingTaskNode !== null) {
+    if (TASK_DRAG_CONTEXT_KEYS.has(key) && this.data.draggingTaskNode !== null) {
       this.batch(() => {
         this.setValue('draggingTaskNode', null);
         this.setValue(key, value, beginsSelection);

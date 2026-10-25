@@ -1116,3 +1116,50 @@ it('preserves an active task-node drag and emits no commit for the same mode', (
   expect(commits).not.toHaveBeenCalled();
   expect(listener).not.toHaveBeenCalled();
 });
+
+it.each([
+  {
+    key: 'projectsPanel',
+    apply: (s: AppState) => {
+      s.set('projectsPanel', { view: 'dashboard', path: 'Project.md' });
+    },
+  },
+  {
+    key: 'selectedList',
+    apply: (s: AppState) => {
+      s.set('selectedList', 'all');
+    },
+  },
+  {
+    key: 'centerListViewState',
+    apply: (s: AppState) => {
+      s.set('centerListViewState', { ...s.get('centerListViewState'), view: 'kanban' });
+    },
+  },
+  {
+    key: 'centerFilter',
+    apply: (s: AppState) => {
+      s.set('centerFilter', 'changed');
+    },
+  },
+] as const)(
+  'retires task drag before $key subscribers and keeps notification mutation forbidden',
+  ({ key, apply }) => {
+    const state = new AppState();
+    const payload = { source: 'center-card' as const, task: inspectorLocation('Dragging') };
+    state.set('draggingTaskNode', payload);
+    const events: string[] = [];
+    state.on('draggingTaskNode', () => {
+      events.push('drag');
+    });
+    state.on(key, () => {
+      events.push(key);
+      expect(state.get('draggingTaskNode')).toBeNull();
+      expect(() => {
+        state.set('draggingTaskNode', payload);
+      }).toThrow('during notification delivery');
+    });
+    apply(state);
+    expect(events).toEqual(['drag', key]);
+  },
+);

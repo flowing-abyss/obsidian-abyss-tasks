@@ -1,3 +1,5 @@
+// Guarded context/rename transitions and deferred inspector geometry: main 2,204,758 bytes.
+// Minimal containing main limit: 2154 KiB; shipped CSS remains 201,590 bytes / 197 KiB.
 // Shared dashboard task inspector: measured main 2,204,274 bytes, CSS 201,590 bytes.
 // Minimal containing main limit: 2153 KiB; the 197 KiB CSS limit is unchanged.
 // Tasks Timeline adds shared calendar gestures, virtual rows and date controls: measured

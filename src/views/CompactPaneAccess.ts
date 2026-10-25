@@ -67,6 +67,7 @@ export class CompactPaneAccess {
   #compactPaneCleanup: (() => void) | undefined;
   #compactPaneRefresh: (() => void) | undefined;
   #compactHeaderRefresh: (() => void) | undefined;
+  #compactHeaderFrame: { owner: Window; id: number } | undefined;
   #compactHeaderResizeObserver: ResizeObserver | undefined = undefined;
   #compactPaneOpen: CompactPane | null = null;
   #compactPaneOpenReason: CompactPaneOpenReason | undefined;
@@ -119,6 +120,7 @@ export class CompactPaneAccess {
   reset(): void {
     this.#compactPaneCleanup?.();
     this.#compactPaneCleanup = undefined;
+    this.#cancelHeaderFrame();
     this.#compactHeaderResizeObserver?.disconnect();
     this.#compactHeaderResizeObserver = undefined;
     this.#compactPaneRefresh = undefined;
@@ -185,6 +187,7 @@ export class CompactPaneAccess {
   }
 
   #observeCompactHeader(header: HTMLElement): void {
+    this.#cancelHeaderFrame();
     this.#compactHeaderResizeObserver?.disconnect();
     const ownerWindow = header.ownerDocument.defaultView;
     const update = (): void => {
@@ -203,12 +206,29 @@ export class CompactPaneAccess {
     };
     const candidate: unknown =
       ownerWindow == null ? undefined : Reflect.get(ownerWindow, 'ResizeObserver');
-    if (isResizeObserverConstructor(candidate)) {
-      this.#compactHeaderResizeObserver = new candidate(update);
+    if (ownerWindow !== null && isResizeObserverConstructor(candidate)) {
+      this.#compactHeaderResizeObserver = new candidate(() => {
+        this.#scheduleHeaderUpdate(ownerWindow, update);
+      });
       this.#compactHeaderResizeObserver.observe(header);
     }
     this.#compactHeaderRefresh = update;
     update();
+  }
+
+  #scheduleHeaderUpdate(owner: Window, update: () => void): void {
+    if (this.#compactHeaderFrame !== undefined) return;
+    const id = owner.requestAnimationFrame(() => {
+      this.#compactHeaderFrame = undefined;
+      update();
+    });
+    this.#compactHeaderFrame = { owner, id };
+  }
+
+  #cancelHeaderFrame(): void {
+    const frame = this.#compactHeaderFrame;
+    if (frame !== undefined) frame.owner.cancelAnimationFrame(frame.id);
+    this.#compactHeaderFrame = undefined;
   }
 
   #createCompactResizeObserver(

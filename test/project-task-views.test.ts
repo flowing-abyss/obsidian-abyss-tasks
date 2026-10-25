@@ -255,3 +255,42 @@ it('returns to the same Tasks project with the saved dashboard view and a fresh 
     h.dispose();
   }
 });
+
+it.each(['overview', 'project', 'layout'] as const)(
+  'retires the native Kanban drag before navigating to %s',
+  async (destination) => {
+    const h = await mount();
+    try {
+      h.open('Projects/A.md');
+      await h.choose('Kanban');
+      if (destination === 'layout') {
+        h.panel['navigation_abyssPrivate'].openList({ type: 'project', path: 'Projects/A.md' });
+        await searchUiCompleted(h.root);
+      }
+      const board = expectDefined(h.root.querySelector('.abyss-task-kanban'));
+      expectDefined(board.querySelector('.abyss-task-card')).dispatchEvent(
+        new MouseEvent('dragstart', { bubbles: true }),
+      );
+      expect(h.state.get('draggingTaskNode')).not.toBeNull();
+      expect(() => {
+        if (destination === 'overview') h.state.set('projectsPanel', { view: 'table' });
+        else if (destination === 'project') h.open('Projects/B.md');
+        else
+          h.state.set('centerListViewState', {
+            ...h.state.get('centerListViewState'),
+            view: 'list',
+          });
+      }).not.toThrow();
+      expect(h.state.get('draggingTaskNode')).toBeNull();
+      if (destination !== 'layout') expect(board.isConnected).toBe(false);
+      expect(h.root.querySelector('.abyss-task-kanban')).toBeNull();
+      expect(
+        h.index.list({ filePath: 'Projects/A.md' }).find((t) => t.title === 'Alpha')?.statusSymbol,
+      ).toBe(' ');
+      if (destination === 'project')
+        expect(h.root.querySelector('.abyss-project-dashboard-title')?.textContent).toBe('B');
+    } finally {
+      h.dispose();
+    }
+  },
+);
