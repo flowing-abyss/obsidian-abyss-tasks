@@ -8885,3 +8885,46 @@ describe('shared central capture date labels', () => {
     }
   });
 });
+
+it('switches Tasks between List and status Kanban with independent priority order and all configured statuses', () => {
+  const state = new AppState();
+  state.set('selectedList', 'inbox');
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  const el = document.body.createDiv();
+  prepareTaskPanelViewport(el);
+  const panel = makeStaticPanel(
+    state,
+    [
+      task({ title: 'Low', priority: 'E', source: { filePath: 'n.md', line: 0 } }),
+      task({ title: 'High', priority: 'A', source: { filePath: 'n.md', line: 1 } }),
+      task({
+        title: 'Finished',
+        status: 'done',
+        statusSymbol: 'x',
+        source: { filePath: 'n.md', line: 2 },
+      }),
+    ],
+    settings,
+  );
+  try {
+    panel.mount(el);
+    expectDefined(el.querySelector<HTMLButtonElement>('[aria-label="Kanban view"]')).click();
+    expect(el.querySelectorAll('.abyss-task-kanban-column')).toHaveLength(
+      settings.taskStatuses.length,
+    );
+    expect(
+      [...el.querySelectorAll('.abyss-task-card .abyss-task-title')].map(
+        (node) => node.textContent,
+      ),
+    ).toEqual(['High', 'Low', 'Finished']);
+    const controls = expectDefined(el.querySelector('.abyss-center-controls'));
+    expect(controls.firstElementChild?.classList.contains('abyss-view-switcher')).toBe(true);
+    expectDefined(el.querySelector<HTMLButtonElement>('[aria-label="List view"]')).click();
+    expect(el.querySelector('.abyss-task-kanban')).toBeNull();
+    expect(el.textContent).not.toContain('Finished');
+    expect(state.get('centerListViewState').sortBy).toEqual({ field: 'date', dir: 'asc' });
+  } finally {
+    panel.destroy();
+    el.remove();
+  }
+});

@@ -145,6 +145,7 @@ function taskListHost(element: HTMLElement): HTMLElement | null {
 function taskListScroll(element: HTMLElement, host: HTMLElement | null): HTMLElement | null {
   if (host?.classList.contains('abyss-dep-search-results') === true) return host;
   return (
+    element.closest<HTMLElement>('.abyss-task-kanban-column-body') ??
     element.closest<HTMLElement>('.abyss-project-dashboard-session') ??
     element.closest<HTMLElement>('.abyss-center-scroll')
   );
@@ -206,6 +207,7 @@ function installTaskListGeometry(owner: Window & typeof window): void {
         host === null ||
         (!this.classList.contains('abyss-center-scroll') &&
           !this.classList.contains('abyss-project-dashboard-session') &&
+          !this.classList.contains('abyss-task-kanban-column-body') &&
           host !== this)
       ) {
         write.call(this, requested);

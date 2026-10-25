@@ -7459,7 +7459,7 @@ button.abyss-project-table-status-pill {
 }
 
 /* Project Kanban shares the table session, cell renderers, and toolbar. */
-.abyss-project-kanban {
+:is(.abyss-project-kanban, .abyss-task-kanban) {
   position: relative;
   display: flex;
   min-height: 0;
@@ -7467,13 +7467,13 @@ button.abyss-project-table-status-pill {
   background: var(--background-primary);
 }
 
-.abyss-project-kanban[hidden],
+:is(.abyss-project-kanban, .abyss-task-kanban)[hidden],
 .abyss-project-kanban-description[hidden],
 .abyss-project-kanban-progress[hidden] {
   display: none;
 }
 
-.abyss-project-kanban-scroll {
+:is(.abyss-project-kanban-scroll, .abyss-task-kanban-scroll) {
   display: flex;
   overflow-x: auto;
   width: 100%;
@@ -7486,7 +7486,7 @@ button.abyss-project-table-status-pill {
   scrollbar-gutter: stable;
 }
 
-.abyss-project-kanban-column {
+:is(.abyss-project-kanban-column, .abyss-task-kanban-column) {
   display: flex;
   width: 272px;
   min-width: 272px;
@@ -7498,13 +7498,13 @@ button.abyss-project-table-status-pill {
   background: var(--background-secondary);
 }
 
-.abyss-project-kanban-column:is(.is-collapsed, .is-compact-empty) {
+:is(.abyss-project-kanban-column, .abyss-task-kanban-column):is(.is-collapsed, .is-compact-empty) {
   width: 44px;
   min-width: 44px;
   flex-basis: 44px;
 }
 
-.abyss-project-kanban-column-header {
+:is(.abyss-project-kanban-column-header, .abyss-task-kanban-column-header) {
   position: sticky;
   z-index: 2;
   top: 0;
@@ -7518,7 +7518,7 @@ button.abyss-project-table-status-pill {
   background: var(--background-secondary);
 }
 
-.abyss-project-kanban-column-label {
+:is(.abyss-project-kanban-column-label, .abyss-task-kanban-column-label) {
   overflow: hidden;
   min-width: 0;
   flex: 1 1 auto;
@@ -7529,13 +7529,14 @@ button.abyss-project-table-status-pill {
   white-space: nowrap;
 }
 
-.abyss-project-kanban-column-count {
+:is(.abyss-project-kanban-column-count, .abyss-task-kanban-column-count) {
   color: var(--text-faint);
   font-size: var(--font-ui-smaller);
   font-variant-numeric: tabular-nums;
 }
 
-.abyss-projects-table button.abyss-project-kanban-column-toggle {
+:is(.abyss-projects-table, .abyss-task-kanban)
+  button:is(.abyss-project-kanban-column-toggle, .abyss-task-kanban-column-toggle) {
   width: 24px;
   height: 24px;
   flex: 0 0 auto;
@@ -7543,7 +7544,8 @@ button.abyss-project-table-status-pill {
   color: var(--text-muted);
 }
 
-.abyss-projects-table button.abyss-project-kanban-column-create {
+:is(.abyss-projects-table, .abyss-task-kanban)
+  button:is(.abyss-project-kanban-column-create, .abyss-task-kanban-column-create) {
   width: 24px;
   height: 24px;
   flex: 0 0 auto;
@@ -7551,12 +7553,13 @@ button.abyss-project-table-status-pill {
   color: var(--text-muted);
 }
 
-.abyss-projects-table button.abyss-project-kanban-column-create[hidden] {
+:is(.abyss-projects-table, .abyss-task-kanban)
+  button:is(.abyss-project-kanban-column-create, .abyss-task-kanban-column-create)[hidden] {
   display: none;
 }
 
-.abyss-project-kanban-column:is(.is-collapsed, .is-compact-empty)
-  .abyss-project-kanban-column-header {
+:is(.abyss-project-kanban-column, .abyss-task-kanban-column):is(.is-collapsed, .is-compact-empty)
+  :is(.abyss-project-kanban-column-header, .abyss-task-kanban-column-header) {
   height: 100%;
   min-height: 0;
   flex-direction: column;
@@ -7564,19 +7567,19 @@ button.abyss-project-table-status-pill {
   border-bottom: 0;
 }
 
-.abyss-project-kanban-column:is(.is-collapsed, .is-compact-empty)
-  .abyss-project-kanban-column-label {
+:is(.abyss-project-kanban-column, .abyss-task-kanban-column):is(.is-collapsed, .is-compact-empty)
+  :is(.abyss-project-kanban-column-label, .abyss-task-kanban-column-label) {
   flex: 1 1 auto;
   writing-mode: vertical-rl;
   text-overflow: clip;
 }
 
-.abyss-project-kanban-column:is(.is-collapsed, .is-compact-empty)
-  .abyss-project-kanban-column-body {
+:is(.abyss-project-kanban-column, .abyss-task-kanban-column):is(.is-collapsed, .is-compact-empty)
+  :is(.abyss-project-kanban-column-body, .abyss-task-kanban-column-body) {
   display: none;
 }
 
-.abyss-project-kanban-column-body {
+:is(.abyss-project-kanban-column-body, .abyss-task-kanban-column-body) {
   overflow-anchor: none;
   position: relative;
   overflow-y: auto;
@@ -7591,7 +7594,7 @@ button.abyss-project-table-status-pill {
   display: none;
 }
 
-.abyss-project-kanban-column.is-drop-target,
+:is(.abyss-project-kanban-column, .abyss-task-kanban-column).is-drop-target,
 .abyss-project-kanban-group.is-drop-target,
 .abyss-project-kanban-hover-group.is-drop-target {
   border-color: var(--interactive-accent);
@@ -11084,4 +11087,59 @@ button.abyss-calendar-date[aria-pressed='true'] {
   .abyss-cal-nav button:is(.abyss-cal-nav-month, .abyss-cal-nav-year) {
     padding-inline: var(--size-2-1);
   }
+}
+
+/* Tasks reuse the project board geometry and the ordinary task card content/actions. */
+.abyss-center-scroll.abyss-task-kanban {
+  overflow-y: hidden;
+  padding: var(--size-4-2);
+}
+
+.abyss-task-kanban .abyss-task-card {
+  margin: 0 0 var(--size-4-2);
+  padding: 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-primary);
+}
+
+.abyss-task-kanban-window {
+  container: abyss-task-list / inline-size;
+}
+
+.abyss-task-kanban .abyss-task-card-main-row {
+  min-width: 0;
+}
+
+.abyss-task-kanban .abyss-task-desc {
+  margin-top: var(--size-4-1);
+  white-space: normal;
+}
+
+.abyss-task-kanban[data-description-lines='0'] .abyss-task-desc,
+.abyss-task-kanban--hide-metadata .abyss-task-meta-right {
+  display: none;
+}
+
+.abyss-task-kanban:is([data-description-lines='1'], [data-description-lines='2']) .abyss-task-desc {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+}
+
+.abyss-task-kanban[data-description-lines='2'] .abyss-task-desc {
+  -webkit-line-clamp: 2;
+}
+
+.abyss-task-kanban .abyss-group-header {
+  padding: var(--size-4-2) 0;
+}
+
+.abyss-task-kanban-column-header > .abyss-status-marker {
+  pointer-events: none;
+}
+
+.abyss-task-kanban-capture:empty {
+  display: none;
 }

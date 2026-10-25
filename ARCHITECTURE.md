@@ -461,6 +461,13 @@ Explicit source/reveal anchors and native scroll ownership keep priority. Replac
 changes, and disposal revoke stale measurement authority. Extent transactions preserve native scroll
 range through intermediate DOM changes while permitting a real final shrink.
 
+Tasks Kanban uses `TaskKanbanSurface` over the same row surface, one viewport per visible status
+column. `CenterPanel` retains source subscriptions, selection, commands, and search hydration;
+the board only owns column geometry and mounts. It organizes compact rows before hydration,
+releases offscreen columns, and retains interaction pins. List and board scroll anchors remain
+session state, separately per task context. The shared card renderer and native write receipts
+remain authoritative in both layouts.
+
 CalendarMode owns the period anchor, transient selected day, view lifetime, and forecast presentation.
 Its mounted publication hold defers query patches during pointer presses and native drags, and through
 the full-grid pointer and status callbacks and menu leases that CalendarMode wraps. It reads the newest

@@ -59,12 +59,14 @@ interface RevealPlacement {
   readonly current: () => boolean;
 }
 
-interface TaskListScroll {
+export interface TaskListScrollPosition {
+  readonly top: number;
+  readonly anchor: RowAnchor | undefined;
+}
+interface TaskListScroll extends TaskListScrollPosition {
   readonly clampToExtent?: boolean;
   readonly revealKey?: string;
   readonly onPending?: () => void;
-  readonly top: number;
-  readonly anchor: RowAnchor | undefined;
 }
 
 /** Native lifetime and keyed mounts over the shared, pure row geometry. */
@@ -116,6 +118,12 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
 
   get rows(): TaskListRows<T> {
     return this.#rows;
+  }
+  captureScroll(): TaskListScrollPosition {
+    return this.#pendingScroll ?? this.#updateScroll(this.#failed, true);
+  }
+  restoreScroll(position: TaskListScrollPosition): void {
+    this.#pendingScroll = position;
   }
   element(key: string): HTMLElement | undefined {
     return this.#mounts.get(key)?.element;
@@ -268,10 +276,18 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     };
   }
 
-  suspend(): void {
+  suspend(releaseMounts = false): void {
     this.#suspended = true;
     this.#listen(false);
     this.#unbind();
+    if (!releaseMounts) return;
+    this.#guard(() => {
+      for (const [key, mount] of this.#mounts) {
+        if (!this.#pins.has(key)) this.#evict(key, mount);
+      }
+      this.#ordered = this.#ordered.filter((key) => this.#mounts.has(key));
+      this.#options.mountedChanged();
+    });
   }
   resume(): void {
     if (this.#destroyed) return;
@@ -361,6 +377,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     return next.logicalTop;
   }
   #updateScroll(recovering: boolean, preserveAnchor: boolean): TaskListScroll {
+    if (this.#pendingScroll !== undefined) return this.#pendingScroll;
     const top = recovering ? this.#recoveryTop() : this.#top();
     const anchor =
       !recovering && preserveAnchor ? this.#viewport.captureAnchor(Math.max(0, top)) : undefined;
