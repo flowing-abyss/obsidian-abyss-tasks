@@ -485,6 +485,14 @@ references and submits one date patch through `TaskCommands`, rechecking the sou
 lifetime before writing. Missing endpoints remain missing when moved. Summary selection, search
 hydration and command receipts stay with `CenterPanel`; timeline anchors remain session state.
 
+The project dashboard embeds this same task shell and all three surfaces. `ProjectsPanel` owns the
+page and project details; `CenterPanel` supplies the note-scoped task context to existing controls,
+search and capture. View preferences share the existing `project:<path>` entry with the same project
+opened from Tasks. Dashboard text queries remain session state per path, independent of Tasks'
+selection and query. Returning to Tasks reads saved preferences without overwriting them with its
+inactive state. List rows use the outer dashboard scroll; Kanban and Timeline use a bounded inner
+viewport. Leaving a dashboard releases its task interactions, search, capture and selection.
+
 CalendarMode owns the period anchor, transient selected day, view lifetime, and forecast presentation.
 Its mounted publication hold defers query patches during pointer presses and native drags, and through
 the full-grid pointer and status callbacks and menu leases that CalendarMode wraps. It reads the newest

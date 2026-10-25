@@ -154,6 +154,7 @@ export class ProjectsPanel {
     this.tableView_abyssPrivate = null;
     this.tableHost_abyssPrivate?.remove();
     this.tableHost_abyssPrivate = null;
+    if (this.dashboardHost_abyssPrivate !== null) this.unmountTasks_abyssPrivate();
     this.dashboardHost_abyssPrivate?.remove();
     this.dashboardHost_abyssPrivate = null;
     this.el_abyssPrivate?.empty();

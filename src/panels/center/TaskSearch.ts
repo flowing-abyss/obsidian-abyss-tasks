@@ -76,6 +76,8 @@ interface TaskSearchHost {
   renderControls(host: HTMLElement): void;
 }
 export interface TaskSearchOptions {
+  readonly selection?: () => ListSelection;
+  readonly filterQuery?: () => string;
   readonly organizationScheduler?:
     ((owner: Window) => Pick<BrowserTaskScheduler, 'now' | 'yield'>) | undefined;
   readonly state: AppState;
@@ -244,7 +246,7 @@ export class TaskSearch {
     this.#attach(root);
     const browse =
       query.trim() === '' &&
-      this.#options.state.get('selectedList') === 'upcoming' &&
+      this.#selection() === 'upcoming' &&
       this.#options.view().list.groupBy === 'date';
     this.#schedule(query, browse ? 0 : 60);
   }
@@ -360,7 +362,11 @@ export class TaskSearch {
     );
   }
   #currentQuery(): string {
-    return this.#options.state.get(this.#filter ? 'centerFilter' : 'searchQuery');
+    if (!this.#filter) return this.#options.state.get('searchQuery');
+    return this.#options.filterQuery?.() ?? this.#options.state.get('centerFilter');
+  }
+  #selection(): ListSelection {
+    return this.#options.selection?.() ?? this.#options.state.get('selectedList');
   }
   #live(): boolean {
     return (
@@ -499,7 +505,7 @@ export class TaskSearch {
     if (error !== undefined) throw error;
   }
   #organizationScope(): 'nodes' | 'roots' {
-    const selection = this.#options.state.get('selectedList');
+    const selection = this.#selection();
     return this.#filter && !(typeof selection === 'object' && selection.type === 'project')
       ? 'nodes'
       : 'roots';
@@ -508,7 +514,7 @@ export class TaskSearch {
     const { settings } = this.#options;
     const captured = structuredClone({
       scope: this.#organizationScope(),
-      selection: this.#filter ? this.#options.state.get('selectedList') : null,
+      selection: this.#filter ? this.#selection() : null,
       view: this.#options.view(),
       settings: {
         inbox: settings.inbox,
@@ -648,7 +654,7 @@ export class TaskSearch {
     collection: SearchCollection,
   ): Parameters<TaskReadProjectionApi['organization']>[0] {
     const inclusion = this.#inclusion();
-    const selection = this.#options.state.get('selectedList');
+    const selection = this.#selection();
     const request: Parameters<TaskReadProjectionApi['organization']>[0] = {
       expectedGeneration: generation,
       // Membership keeps its captured root scope; only the exact reveal may admit a child.

@@ -1,6 +1,8 @@
 import { MarkdownRenderer } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { buildTaskNodeListRows } from '../src/panels/task-list/taskListRows';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
+import { rootTaskNodeSnapshot } from '../src/tasks';
 import { deferred, expectDefined, flushMicrotasks, task, useRealMoment } from './helpers';
 import { ownedWait, ownTestCleanup } from './support/ownedTestLifetime';
 import { finiteOccurrences } from './support/taskOrganizationRows';
@@ -255,7 +257,12 @@ describe('Search supplied result viewport', () => {
       task({ title: `row ${249 - i}`, source: { filePath: 'subset.md', line: 249 - i } }),
     );
     const calls = h.list.mock.calls.length;
-    h.panel['renderFlat_abyssPrivate'](h.results, supplied, [], { onCard: () => undefined });
+    h.panel['mountTaskRows_abyssPrivate'](
+      h.results,
+      buildTaskNodeListRows(supplied.map(rootTaskNodeSnapshot), { by: 'none' }),
+      [],
+      { onCard: () => undefined },
+    );
     const logical = h.panel['mountedRows_abyssPrivate'].rows;
     expect(taskKeys(logical)).toHaveLength(50);
     expect(
@@ -393,12 +400,17 @@ describe('Search supplied result viewport', () => {
     const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
     const error = new Error('binding failed');
     expect(() => {
-      h.panel['renderFlat_abyssPrivate'](h.results, [task()], [], {
-        onCard: () => {
-          throw error;
+      h.panel['mountTaskRows_abyssPrivate'](
+        h.results,
+        buildTaskNodeListRows([rootTaskNodeSnapshot(task())], { by: 'none' }),
+        [],
+        {
+          onCard: () => {
+            throw error;
+          },
+          failure: 'throw',
         },
-        failure: 'throw',
-      });
+      );
     }).toThrow(error);
     expect(h.results.querySelectorAll('.abyss-task-card')).toHaveLength(0);
     expect(diagnostic).not.toHaveBeenCalled();
@@ -537,7 +549,11 @@ it('preserves the full supplied native order and far-window adoption independent
   const h = await harness();
   await h.completed();
   const supplied = h.index.list();
-  h.panel['renderFlat_abyssPrivate'](h.results, [...supplied]);
+  h.panel['mountTaskRows_abyssPrivate'](
+    h.results,
+    buildTaskNodeListRows(supplied.map(rootTaskNodeSnapshot), { by: 'none' }),
+    [],
+  );
   const surface = expectDefined(h.panel['taskSurface_abyssPrivate']).surface;
   expect(taskKeys(surface.rows)).toHaveLength(1200);
   expect(

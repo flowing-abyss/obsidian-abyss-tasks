@@ -156,6 +156,7 @@ function taskListScroll(element: HTMLElement, host: HTMLElement | null): HTMLEle
   if (host?.classList.contains('abyss-dep-search-results') === true) return host;
   return (
     element.closest<HTMLElement>('.abyss-task-kanban-column-body') ??
+    element.closest<HTMLElement>('.abyss-task-timeline') ??
     element.closest<HTMLElement>('.abyss-project-dashboard-session') ??
     element.closest<HTMLElement>('.abyss-center-scroll')
   );

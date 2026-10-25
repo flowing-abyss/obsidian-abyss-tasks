@@ -2,10 +2,12 @@ import { Component, MarkdownRenderer, Menu } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { CenterPanel } from '../src/panels/CenterPanel';
+import { buildTaskNodeListRows } from '../src/panels/task-list/taskListRows';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
 import { TagManager } from '../src/tags/TagManager';
 import {
+  rootTaskNodeSnapshot,
   taskNodeAddress,
   type TaskApplicationApi,
   type TaskCommandResult,
@@ -168,6 +170,7 @@ function attach(el: HTMLElement): void {
 
 /** Renders a project's task list into the panel through the entry a project dashboard calls. */
 function renderDashboardList(panel: CenterPanel, el: HTMLElement, path: string): HTMLElement {
+  panel['state_abyssPrivate'].set('projectsPanel', { view: 'dashboard', path });
   const host = el.createDiv({ cls: 'abyss-project-tasks' });
   (
     panel as unknown as { renderProjectTasks_abyssPrivate(host: HTMLElement, path: string): void }
@@ -851,7 +854,7 @@ describe('CenterPanel multi-selection', () => {
     }
   });
 
-  it('opens a clicked dashboard card without focusing or scrolling it', () => {
+  it('opens and focuses a dashboard card without changing scroll, like Tasks', () => {
     const { el, state, panel } = makeCenter([t1, t2, t3]);
     attach(el);
     state.set('mode', 'projects');
@@ -864,7 +867,7 @@ describe('CenterPanel multi-selection', () => {
     expect(state.get('taskStack')).toEqual([t2]);
     expect(card.classList.contains('is-selected')).toBe(true);
     expect(methodOf(card, 'scrollIntoView')).not.toHaveBeenCalled();
-    expect(activeDocument.activeElement).not.toBe(card);
+    expect(activeDocument.activeElement).toBe(card);
     el.remove();
   });
 
@@ -961,7 +964,7 @@ describe('CenterPanel multi-selection', () => {
       );
       h.state.set('mode', 'projects');
       const dashboard = renderDashboardList(h.panel, h.root, 'a.md');
-      expect(dashboard.querySelector('.abyss-center-empty')?.textContent).toBe('No tasks yet');
+      expect(dashboard.querySelector('.abyss-center-empty')?.textContent).toBe('No tasks');
     } finally {
       h.dispose();
     }
@@ -1458,9 +1461,10 @@ it.each(['tasks', 'dashboard', 'search'] as const)(
         state.set('mode', 'search');
         // Exercise the native supplied-row renderer at both full scales. Canonical Search
         // retrieval/completion is covered separately; Task1 still allocates 50-root pages.
-        panel['renderFlat_abyssPrivate'](
+        panel['mountTaskRows_abyssPrivate'](
           expectDefined(el.querySelector<HTMLElement>('.abyss-center-scroll')),
-          tasks,
+          buildTaskNodeListRows(tasks.map(rootTaskNodeSnapshot), { by: 'none' }),
+          [],
         );
       }
       const surface = expectDefined(panel['taskSurface_abyssPrivate']).surface;
@@ -1760,7 +1764,6 @@ it.each(['search', 'projects', 'calendar'] as const)(
     const anchor = selected.anchor;
     state.set('searchQuery', 'Task');
     state.set('mode', mode);
-    if (mode === 'projects') renderDashboardList(panel, el, 'tasks.md');
     const stack = state.get('taskStack');
     expect(key(el, 'a', { ctrlKey: true }).defaultPrevented).toBe(false);
     // Search's preexisting page transition clears Tasks range selection at this checkpoint.

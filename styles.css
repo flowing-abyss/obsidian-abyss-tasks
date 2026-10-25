@@ -8960,6 +8960,11 @@ button.abyss-project-table-status-pill {
   padding-top: var(--size-4-2);
 }
 
+.abyss-project-tasks-scroll:is(.abyss-task-kanban, .abyss-task-timeline) {
+  height: clamp(18rem, 60vh, 44rem);
+  overflow: auto;
+}
+
 /* ── Settings: collapsible drag-to-reorder cards (statuses + tag groups) ────── */
 
 /* Cards share the filled-row look of native setting items for a consistent feel;

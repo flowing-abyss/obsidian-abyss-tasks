@@ -1,5 +1,5 @@
 import { setIcon } from 'obsidian';
-import type { AppState } from '../../app/AppState';
+import type { AppState, ListSelection } from '../../app/AppState';
 import {
   isListViewCustomized,
   isListViewOptionsCustomized,
@@ -55,6 +55,13 @@ export interface ListViewControlsStatePort {
 interface ListViewControlsOptions {
   readonly state: AppState;
   readonly statePort?: ListViewControlsStatePort;
+  readonly listContext?: () =>
+    | {
+        readonly selection: ListSelection;
+        readonly view: ListViewState;
+        changed(): void;
+      }
+    | undefined;
   readonly settings: CalendarSettings;
   readonly statusRegistry: StatusRegistry;
   readonly interactionOwnership: InteractionOwnershipPort;
@@ -75,11 +82,16 @@ export class ListViewControls {
   }
 
   #read(): ListViewState {
-    return this.#options.statePort?.read() ?? this.#options.state.get('centerListViewState');
+    return (
+      this.#options.statePort?.read() ??
+      this.#options.listContext?.()?.view ??
+      this.#options.state.get('centerListViewState')
+    );
   }
 
   initializeListViewState(): void {
-    if (this.#options.statePort !== undefined) return;
+    if (this.#options.statePort !== undefined || this.#options.listContext?.() !== undefined)
+      return;
     const key = this.#savedStateKey();
     const viewState = this.#options.settings.listViewStates?.[key] ?? getListViewDefaults(key);
     this.#options.state.set('centerListViewState', viewState);
@@ -166,7 +178,9 @@ export class ListViewControls {
     this.#options.settings.listViewStates ??= {};
     this.#options.settings.listViewStates[this.#savedStateKey()] = next;
     runAsyncAction(this.#options.saveViewState(), 'Could not save list view state');
-    this.#options.state.set('centerListViewState', next);
+    const context = this.#options.listContext?.();
+    if (context === undefined) this.#options.state.set('centerListViewState', next);
+    else context.changed();
   }
 
   setView(view: 'list' | 'kanban' | 'timeline'): void {
@@ -215,13 +229,16 @@ export class ListViewControls {
   }
 
   activeListKey(): string {
-    return listSelectionToKey(this.#options.state.get('selectedList'));
+    return listSelectionToKey(this.#selection());
+  }
+  #selection(): ListSelection {
+    return this.#options.listContext?.()?.selection ?? this.#options.state.get('selectedList');
   }
 
   #savedStateKey(): string {
     if (this.#options.statePort !== undefined) return 'all';
     return resolveListViewStateKey(
-      this.#options.state.get('selectedList'),
+      this.#selection(),
       this.#options.settings.listViewStates,
       new Set(this.#options.settings.tagGroups.map((g) => g.id)),
     );

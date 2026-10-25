@@ -63,7 +63,7 @@ export class PanelNavigator implements PanelNavigationActions {
       if (transition?.canCommit() === false) return;
       this.state.batch(() => {
         if (transition === undefined) this.center.clearTaskSearchReveal?.();
-        this.persistListState(this.lastTasksList);
+        if (this.state.get('mode') === 'tasks') this.persistListState(this.lastTasksList);
         this.lastTasksList = selection;
         const next = this.listState(selection);
         transition?.commit();

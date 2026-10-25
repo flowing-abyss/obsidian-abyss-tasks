@@ -1,5 +1,5 @@
 import type { App } from 'obsidian';
-import type { AppState } from '../../app/AppState';
+import type { AppState, ListSelection } from '../../app/AppState';
 import { listSelectionToKey } from '../../app/listViewState';
 import type { CalendarSettings, TaskStatusDef } from '../../settings/types';
 import type {
@@ -63,6 +63,11 @@ interface PanelCaptureSession {
 }
 
 interface CaptureSessionsOptions {
+  readonly collection?: {
+    selection(): ListSelection;
+    kanban(): boolean;
+    active(): boolean;
+  };
   readonly app?: App;
   readonly state: AppState;
   readonly settings: CalendarSettings;
@@ -89,6 +94,7 @@ export class CaptureSessions {
   #calendarPointerTarget: HTMLElement | null = null;
   #releaseCapturePointerIntent: (() => void) | undefined;
   readonly #state: AppState;
+  readonly #collection: CaptureSessionsOptions['collection'];
   readonly #root: () => HTMLElement;
   readonly #captureReveal: CaptureSessionsOptions['captureReveal'];
   readonly #onCreationResult: CaptureSessionsOptions['onCreationResult'];
@@ -96,6 +102,7 @@ export class CaptureSessions {
   constructor(options: CaptureSessionsOptions) {
     this.#app = options.app;
     this.#state = options.state;
+    this.#collection = options.collection;
     this.#root = options.root;
     this.#onCreationResult = options.onCreationResult;
     this.#captureReveal = options.captureReveal;
@@ -133,7 +140,7 @@ export class CaptureSessions {
   }
 
   openKanbanCapture(status: TaskStatusDef, trigger: HTMLElement): void {
-    const selection = this.#state.get('selectedList');
+    const selection = this.#selection();
     this.openCapture(
       {
         type: 'kanban',
@@ -146,7 +153,7 @@ export class CaptureSessions {
   }
 
   openDateCapture(date: LocalDate): void {
-    if (this.#state.get('mode') !== 'tasks') return;
+    if (!this.#collectionActive()) return;
     const active = this.#activeCapture;
     if (
       active !== null &&
@@ -157,7 +164,7 @@ export class CaptureSessions {
       if (active.surface !== undefined) this.#focusNewCaptureSurface(active, active.surface);
       return;
     }
-    const selection = this.#state.get('selectedList');
+    const selection = this.#selection();
     this.openCapture(
       { type: 'list', selectionKey: listSelectionToKey(selection) },
       { type: 'list', selection, date },
@@ -483,16 +490,25 @@ export class CaptureSessions {
   }
 
   #captureLayoutCurrent(placement: PanelCapturePlacement): boolean {
-    return placement.type !== 'kanban' || this.#state.get('centerListViewState').view === 'kanban';
+    return (
+      placement.type !== 'kanban' ||
+      (this.#collection?.kanban() ?? this.#state.get('centerListViewState').view === 'kanban')
+    );
+  }
+  #selection(): ListSelection {
+    return this.#collection?.selection() ?? this.#state.get('selectedList');
+  }
+  #collectionActive(): boolean {
+    return this.#collection?.active() ?? this.#state.get('mode') === 'tasks';
   }
 
   cancelStaleListCapture(): void {
     const placement = this.#activeCapture?.placement ?? this.#resolvingCapture?.placement;
     if (placement === undefined) return;
     if (placement.type !== 'list' && placement.type !== 'kanban') return;
-    const currentSelectionKey = listSelectionToKey(this.#state.get('selectedList'));
+    const currentSelectionKey = listSelectionToKey(this.#selection());
     if (
-      this.#state.get('mode') !== 'tasks' ||
+      !this.#collectionActive() ||
       placement.selectionKey !== currentSelectionKey ||
       !this.#captureLayoutCurrent(placement)
     ) {
