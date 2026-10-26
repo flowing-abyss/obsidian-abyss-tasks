@@ -27,6 +27,13 @@ it('switches Tasks to Timeline with shared search, exact descendant cards and in
     expect(titles).toContain('needle child');
     expect(titles).toContain('needle done');
     expect(titles).not.toContain('unrelated');
+    const done = expectDefined(
+      [...h.root.querySelectorAll<HTMLElement>('.abyss-task-timeline-row')].find((row) =>
+        row.textContent.includes('needle done'),
+      ),
+    );
+    expect(done.classList.contains('is-done')).toBe(true);
+    expect(h.root.querySelectorAll('.abyss-task-timeline-row.is-done')).toHaveLength(1);
     expect(
       h.root.querySelectorAll(
         '.abyss-task-timeline-scheduled-track:not([hidden]) .abyss-project-timeline-bar',

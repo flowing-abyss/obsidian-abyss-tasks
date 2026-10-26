@@ -183,7 +183,11 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
       this.#ownedWrite = undefined;
       this.#rows = rows;
       this.#presentation = presentation;
+      // A surviving holder keeps its visible extent while its new exact source hydrates.
+      // Only mounted rows are retained; layout invalidation still drops these measurements.
+      const retained = recovering ? [] : this.#mountedExtents();
       this.#replace();
+      this.#viewport.measure(retained, 0);
       this.#invalidatePins(
         [...this.#pins.keys()].filter((key) => this.#viewport.rowBounds(key) === undefined),
       );
@@ -520,6 +524,14 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     owned.expectedNativeTop = actual;
     this.#acceptedNativeTop = actual;
     this.#logicalTop = placement.logicalTop;
+  }
+  #mountedExtents(): RowMeasurement[] {
+    const retained: RowMeasurement[] = [];
+    for (const key of this.#mounts.keys()) {
+      const bounds = this.#viewport.rowBounds(key);
+      if (bounds !== undefined) retained.push({ key, height: bounds.bottom - bounds.top });
+    }
+    return retained;
   }
   #replace(): void {
     const presentation = this.#presentation;

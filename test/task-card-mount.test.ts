@@ -2351,3 +2351,56 @@ it('omits only the current project source note and refreshes retained cards on c
   mount.destroy();
   h.hostComponent.unload();
 });
+
+it('retires exact-source controls while retaining the card and title during publication', async () => {
+  const h = renderer();
+  const original = task({ title: 'Original' });
+  const flags = { selected: false, showDelete: false, interactionRevision: 'old exact source' };
+  const mount = h.subject.mount(document.body, original, [], flags);
+  await mount.settled;
+  const holder = mount.element;
+  const title = expectDefined(holder.querySelector('.abyss-task-title'));
+  const marker = expectDefined(holder.querySelector<HTMLElement>('[role=checkbox]'));
+  const next = task({
+    title: 'Original',
+    ref: { revision: 'next exact source' },
+    planning: { due: localDate('2026-10-29') },
+  });
+  const nextFlags = { ...flags, interactionRevision: 'next exact source' };
+  mount.update(next, [], nextFlags);
+  expect(mount.element).toBe(holder);
+  expect(holder.querySelector('.abyss-task-title')).toBe(title);
+  expect(marker.isConnected).toBe(false);
+  expect(h.unbound).toHaveBeenCalledTimes(1);
+  marker.click();
+  expect(h.toggleTask).not.toHaveBeenCalled();
+  expectDefined(holder.querySelector<HTMLElement>('[role=checkbox]')).click();
+  expect(h.toggleTask).toHaveBeenCalledWith(next, undefined);
+  mount.update(next, [], { ...nextFlags, selected: true });
+  expect(h.unbound).toHaveBeenCalledTimes(1);
+  mount.destroy();
+  expect(h.unbound).toHaveBeenCalledTimes(2);
+});
+
+it.each([false, true])(
+  'replaces the current status wrapper after blocked=%s changes and compact source revocation',
+  (blocked) => {
+    const h = renderer();
+    const projection = { blockedBy: [], blocks: [], activeBlockedByCount: 1, activeBlocksCount: 0 };
+    h.dependenciesFor.mockReturnValue(blocked ? projection : undefined);
+    const original = task();
+    const flags = { selected: false, showDelete: false, interactionRevision: 'first' };
+    const mount = h.subject.mount(document.body, original, [], flags);
+    h.dependenciesFor.mockReturnValue(blocked ? undefined : projection);
+    mount.update(original, [], flags);
+    const old = expectDefined(mount.element.querySelector<HTMLElement>('[role=checkbox]'));
+    mount.update(task({ ref: { revision: 'changed' } }), [], {
+      ...flags,
+      interactionRevision: 'second',
+    });
+    expect(old.isConnected).toBe(false);
+    expect(mount.element.querySelectorAll('[role=checkbox]')).toHaveLength(1);
+    expect(mount.element.querySelectorAll('.abyss-status-marker')).toHaveLength(1);
+    mount.destroy();
+  },
+);

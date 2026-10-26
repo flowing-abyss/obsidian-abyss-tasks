@@ -37,7 +37,11 @@ export interface TaskSearchRowsOptions {
     task: TaskNodeSnapshot,
     occurrence: TaskSearchOccurrence,
   ): TaskCardMount;
-  updateCard(card: TaskCardMount, task: TaskNodeSnapshot, occurrence: TaskSearchOccurrence): void;
+  updateCard(
+    card: TaskCardMount,
+    task: TaskNodeSnapshot,
+    occurrence: TaskSearchOccurrence,
+  ): TaskCardMount | void;
   refreshMeasurements(): void;
   reportFailure(error: unknown): void;
 }
@@ -123,18 +127,18 @@ export class TaskSearchRows {
       delete root.failure;
     }
     // A surviving exact address keeps its root across unrelated G after dependency readiness.
-    for (const row of this.#mounted.values()) {
-      const next = this.#rows.task(row.occurrence.key);
-      if (
-        next === undefined ||
-        taskSearchAddressKey(next.address) !== taskSearchAddressKey(row.occurrence.address)
-      )
-        this.#retire(row);
-      else {
-        row.occurrence = next;
-        row.dirty = true;
-        if (semanticsChanged) delete row.receipt;
-      }
+    for (const row of this.#mounted.values()) this.#reconcileRow(row, semanticsChanged);
+  }
+
+  #reconcileRow(row: MountedRow, semanticsChanged: boolean): void {
+    const next = this.#rows.task(row.occurrence.key);
+    if (next === undefined) this.#retire(row);
+    else if (taskSearchAddressKey(next.address) !== taskSearchAddressKey(row.occurrence.address))
+      this.#replaceSource(row, next);
+    else {
+      row.occurrence = next;
+      row.dirty = true;
+      if (semanticsChanged) delete row.receipt;
     }
   }
 
@@ -172,16 +176,7 @@ export class TaskSearchRows {
           taskSearchAddressKey(mounted.occurrence.address) !==
             taskSearchAddressKey(next.task.address)
         ) {
-          mounted.card?.destroy();
-          mounted.card = undefined;
-          if (mounted.leased) this.#release(mounted.root);
-          mounted.root = this.#acquire(next.task);
-          mounted.leased = true;
-          delete mounted.failure;
-          // Card destruction detaches; the surface retains and places the same holder.
-          element.empty();
-          element.inert = true;
-          element.setAttribute('aria-busy', 'true');
+          this.#replaceSource(mounted, next.task);
         }
         mounted.dirty = true;
         mounted.occurrence = next.task;
@@ -196,6 +191,20 @@ export class TaskSearchRows {
         element.remove();
       },
     };
+  }
+
+  /** Retain only inert ink while reacquiring exact evidence for a surviving row. */
+  #replaceSource(row: MountedRow, occurrence: TaskSearchOccurrence): void {
+    if (row.leased) this.#release(row.root);
+    row.root = this.#acquire(occurrence);
+    row.leased = true;
+    row.occurrence = occurrence;
+    row.dirty = true;
+    delete row.failure;
+    delete row.receipt;
+    delete row.readyReceipt;
+    row.element.inert = true;
+    row.element.setAttribute('aria-busy', 'true');
   }
 
   get receiptRevision(): number {
@@ -659,6 +668,11 @@ export class TaskSearchRows {
     return false;
   }
 
+  #paintCard(row: MountedRow, task: TaskNodeSnapshot): TaskCardMount {
+    if (row.card === undefined) return this.#options.mountCard(row.element, task, row.occurrence);
+    return this.#options.updateCard(row.card, task, row.occurrence) ?? row.card;
+  }
+
   #paint(): void {
     let refresh = false;
     for (const row of this.#mounted.values()) {
@@ -667,18 +681,7 @@ export class TaskSearchRows {
         continue;
       row.dirty = false;
       try {
-        if (row.card === undefined)
-          row.card = this.#options.mountCard(
-            row.element,
-            nodeAtSearchAddress(task, row.occurrence.address),
-            row.occurrence,
-          );
-        else
-          this.#options.updateCard(
-            row.card,
-            nodeAtSearchAddress(task, row.occurrence.address),
-            row.occurrence,
-          );
+        row.card = this.#paintCard(row, nodeAtSearchAddress(task, row.occurrence.address));
         row.element.inert = false;
         row.element.removeAttribute('aria-busy');
         refresh = this.#observeReceipt(row, row.card.settled) || refresh;

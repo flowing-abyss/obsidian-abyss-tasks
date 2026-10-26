@@ -459,7 +459,14 @@ retain focused editors and active interactions, and invalidation ends those inte
 eviction. Date-grouped Upcoming uses [`taskDailyRows`](src/panels/task-list/taskDailyRows.ts) and
 bounded native scroll geometry without materializing every day. Full order remains available to
 selection and navigation regardless of the mounted window. Pending rows reserve their modeled
-extent until current render receipts authorize measurement. The surface batches accepted geometry
+extent until current render receipts authorize measurement. On a surviving row's source update,
+`TaskSearchRows` keeps its prior card inert while acquiring the new exact root, invalidates old
+receipts, and updates or replaces the card only after hydration. Compact cards pass their exact
+acquisition key as an interaction revision: the renderer retires the old status control and interaction
+Component before rebinding, while keeping text mounted. Canonical retained cards keep their existing
+focus lifetime. The viewport retains that mounted
+row's previous extent until its new render is measurable; layout changes still invalidate geometry.
+The surface batches accepted geometry
 before paint and preserves settled visible rows through asynchronous rendering and window refills.
 Explicit source/reveal anchors and native scroll ownership keep priority. Replacement, document
 changes, and disposal revoke stale measurement authority. Extent transactions preserve native scroll
@@ -497,7 +504,10 @@ search and capture. View preferences share the existing `project:<path>` entry w
 opened from Tasks. Dashboard text queries remain session state per path, independent of Tasks'
 selection and query. Returning to Tasks reads saved preferences without overwriting them with its
 inactive state. Each layout uses the shared inner task viewport; the dashboard keeps its compact project
-context in the task toolbar and its Add task footer outside scrolling content. `CompactPaneAccess` opens the shared task inspector as an overlay on dashboard selection,
+context in the task toolbar and its Add task footer outside scrolling content. On phones, PanelView
+names the native header after the project and forwards its accessible title action to the dashboard's
+guarded note action. Back and view controls sit above the retained progress/date/property group;
+desktop keeps the inline project title. `CompactPaneAccess` opens the shared task inspector as an overlay on dashboard selection,
 anchored below the task toolbar; the overview keeps it hidden. The task Timeline owns the shared axis
 and a contextual overlay slot. `ProjectDashboardTimeline` adds distinct Start/End handles to that
 axis and passive vertical boundaries to mounted task tracks, independently of task filtering and

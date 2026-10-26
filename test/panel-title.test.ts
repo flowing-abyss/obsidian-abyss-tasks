@@ -54,3 +54,11 @@ it('names Statistics without reading a task list', () => {
   expect(panelTitle('statistics', list)).toBe('Analysis');
   expect(list).not.toHaveBeenCalled();
 });
+
+it('uses the project name only while the Projects dashboard is open', () => {
+  const list = vi.fn(() => 'Inbox');
+  expect(panelTitle('projects', list, 'Projects/Launch.MD')).toBe('Launch');
+  expect(panelTitle('projects', list)).toBe('Projects');
+  expect(panelTitle('tasks', list, 'Projects/Launch.MD')).toBe('Inbox');
+  expect(list).toHaveBeenCalledTimes(1);
+});

@@ -3978,6 +3978,24 @@ describe('PanelView', () => {
         state.set('mode', 'projects');
         expect(view.getDisplayText()).toBe('Projects');
         expect(titleEl.textContent).toBe('Projects');
+        state.set('projectsPanel', { view: 'dashboard', path: 'Projects/Launch.md' });
+        expect(view.getDisplayText()).toBe('Launch');
+        expect(titleEl.textContent).toBe('Launch');
+        expect(titleEl.getAttribute('role')).toBe('button');
+        const titleAction = view.contentEl.createEl('button', {
+          cls: 'abyss-project-dashboard-title',
+        });
+        const activate = vi.fn();
+        titleAction.addEventListener('click', activate);
+        titleEl.click();
+        titleEl.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        expect(activate).toHaveBeenCalledTimes(2);
+        state.set('projectsPanel', { view: 'table' });
+        expect(titleEl.textContent).toBe('Projects');
+        expect(titleEl.hasAttribute('role')).toBe(false);
+        expect(titleEl.hasAttribute('tabindex')).toBe(false);
+        titleEl.click();
+        expect(activate).toHaveBeenCalledTimes(2);
         state.set('mode', 'tasks');
         state.set('selectedList', { type: 'project', path: 'Projects/Launch.md' });
         expect(titleEl.textContent).toBe('Launch');

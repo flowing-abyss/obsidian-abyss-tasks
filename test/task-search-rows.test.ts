@@ -130,9 +130,9 @@ async function rowsHarness(
     projections,
     failure,
     publication: () => expectDefined(publication),
-    replace(next: TaskSearchRowsIdentity) {
+    replace(next: TaskSearchRowsIdentity, nextOrganization = organization) {
       identity = next;
-      return owner.set({ ...organization, generation: next.generation }, 'none', next);
+      return owner.set({ ...nextOrganization, generation: next.generation }, 'none', next);
     },
     dispose() {
       unsubscribe();
@@ -1087,3 +1087,118 @@ it('removes actionable cards on live dependency failure and retries the same exa
     h.dispose();
   }
 });
+
+it.each(['ready', 'hydrate-error', 'render-error'] as const)(
+  'retains inert card ink until exact replacement hydration settles: %s',
+  async (outcome) => {
+    const destroyed = vi.fn();
+    const updated = vi.fn();
+    const oldReceipt = deferred<TaskRenderOutcome>();
+    const newReceipt = deferred<TaskRenderOutcome>();
+    const error = new Error('replacement failed');
+    let receipt = oldReceipt.promise;
+    const h = await rowsHarness(1, {
+      mountCard: (element, task) => {
+        element.setText(task.node.title);
+        return {
+          element,
+          get settled() {
+            return receipt;
+          },
+          accepts: () => true,
+          update: () => {},
+          destroy: () => {
+            destroyed();
+            element.remove();
+          },
+        };
+      },
+      updateCard: (card, task) => {
+        updated(task);
+        receipt = newReceipt.promise;
+        card.element.setText(task.node.title);
+      },
+    });
+    const row = expectDefined(h.rows.rowAt(0));
+    const mount = h.owner.mount(h.host, row);
+    await vi.waitFor(() => {
+      expect(mount.element.textContent).toBe('Root 0');
+    });
+    const original = mount.element;
+    const hold = deferred<void>();
+    const read = h.index.resolveSearchHits.bind(h.index);
+    vi.spyOn(h.index, 'resolveSearchHits').mockImplementation(async (hits, signal) => {
+      await hold.promise;
+      if (outcome === 'hydrate-error') throw error;
+      return read(hits, signal);
+    });
+    try {
+      h.index.installCommittedContent('many.md', '- [ ] Updated root 📅 2026-10-29');
+      const subscription = h.source.subscribe(() => {});
+      subscription.unsubscribe();
+      const next = {
+        ...h.identity,
+        request: 2,
+        generation: subscription.state.generation,
+        signal: new AbortController().signal,
+      };
+      const records = [];
+      for await (const batch of h.index.organization(
+        { expectedGeneration: next.generation },
+        next.signal,
+      ))
+        records.push(...batch.items);
+      const first = expectDefined(finiteOccurrences(h.organization)[0]);
+      const record = expectDefined(records[0]);
+      const nextOccurrence = { ...first, address: record.address };
+      const nextRows = h.replace(next, {
+        ...h.organization,
+        rows: occurrenceRows([nextOccurrence]),
+      });
+      mount.update(expectDefined(nextRows.rowAt(0)));
+      expect(original.isConnected).toBe(true);
+      expect(original.textContent).toBe('Root 0');
+      expect(original.inert).toBe(true);
+      expect(original.getAttribute('aria-busy')).toBe('true');
+      expect(destroyed).not.toHaveBeenCalled();
+      oldReceipt.resolve({ type: 'ready' });
+      await flushMicrotasks();
+      expect(mount.measurementReady?.()).toBe(false);
+      expect(original.inert).toBe(true);
+      hold.resolve();
+      const pending = h.owner.settleRow(row.key, next.signal);
+      if (outcome === 'hydrate-error') {
+        expect(await pending).toEqual({ type: 'failed', error });
+        expect(updated).not.toHaveBeenCalled();
+        expect(original.inert).toBe(true);
+        expect(original.textContent).toBe('');
+        expect(h.failure).toHaveBeenCalledWith(error);
+        return;
+      }
+      await vi.waitFor(() => {
+        expect(updated).toHaveBeenCalledTimes(1);
+      });
+      expect(mount.measurementReady?.()).toBe(false);
+      newReceipt.resolve(
+        outcome === 'render-error' ? { type: 'failed', error } : { type: 'ready' },
+      );
+      if (outcome === 'render-error') {
+        expect(await pending).toEqual({ type: 'failed', error });
+        expect(original.isConnected).toBe(false);
+        expect(h.failure).toHaveBeenCalledWith(error);
+        return;
+      }
+      expect(await pending).toEqual({ type: 'ready' });
+      expect(mount.measurementReady?.()).toBe(true);
+      expect(original.textContent).toBe('Updated root');
+      expect(original.inert).toBe(false);
+      expect(original.getAttribute('aria-busy')).toBeNull();
+    } finally {
+      hold.resolve();
+      oldReceipt.resolve({ type: 'ready' });
+      newReceipt.resolve({ type: 'ready' });
+      mount.destroy();
+      h.dispose();
+    }
+  },
+);

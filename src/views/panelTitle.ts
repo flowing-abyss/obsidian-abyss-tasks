@@ -44,17 +44,16 @@ export function listSelectionTitle(
 }
 
 /**
- * The panel title for one mode. Only the tasks mode shows the list's name, so it is read lazily
- * from the panel that already knows it.
+ * The phone title follows the open list or project; the overview keeps its mode name.
  */
-export function panelTitle(mode: ViewMode, listTitle: () => string): string {
+export function panelTitle(mode: ViewMode, listTitle: () => string, projectPath?: string): string {
   switch (mode) {
     case 'tasks':
       return listTitle();
     case 'calendar':
       return 'Calendar';
     case 'projects':
-      return 'Projects';
+      return projectPath === undefined ? 'Projects' : noteNameOfPath(projectPath);
     case 'statistics':
       return 'Analysis';
     case 'search':

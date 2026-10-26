@@ -91,6 +91,8 @@ import process from 'process';
 // Retained dashboard editors, timeline release ownership, and measured shell inset: main 2,224,581
 // bytes, no new dependencies. The minimal containing KiB limit is 2,225,152 (2173 KiB).
 // CSS remains within its existing limit; both artifact checks stay enforced.
+// Retained exact-source rows and the phone project toolbar use the minimal containing
+// limits 2176 / 204 KiB. No dependencies added; artifact checks remain enforced.
 const { mainJsBudgetBytes: MAIN_JS_BUDGET_BYTES } = JSON.parse(
   readFileSync('package.json', 'utf8'),
 ).release;

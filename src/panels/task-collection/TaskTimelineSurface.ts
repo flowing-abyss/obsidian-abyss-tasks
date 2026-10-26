@@ -62,6 +62,7 @@ interface TaskTimelineActions<T> {
   settings(): TaskTimelineSettings;
   now(): Date;
   planning(task: T): TaskPlanning;
+  completed?(task: T): boolean;
   snapshot(key: string): TaskNodeSnapshot | undefined;
   commit(task: TaskNodeSnapshot, patch: TaskPatch, accept: () => boolean): Promise<boolean>;
   select(key: string, element: HTMLElement): void;
@@ -542,6 +543,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
     });
   }
   #patch(mount: TimelineMount<T>): void {
+    mount.element.toggleClass('is-done', this.actions.completed?.(mount.row.task) ?? false);
     const dates = taskTimelineDates(this.actions.planning(mount.row.task));
     patchTimelineGrid(mount.grid, this.#axisLayout);
     patchTimelineToday(mount.track, this.#window(), this.actions.now());

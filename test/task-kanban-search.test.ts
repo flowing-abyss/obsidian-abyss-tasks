@@ -179,3 +179,26 @@ it.each([false, true])(
     }
   },
 );
+
+it.each(['list', 'kanban', 'timeline'] as const)(
+  'keeps the selected %s card text width independent of a delete action',
+  async (view) => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.listViewStates = { inbox: { ...getListViewDefaults('inbox'), view } };
+    const h = await mountCanonicalSearchUi({ 'tasks.md': '- [ ] one' }, settings, 'tasks');
+    try {
+      if (view !== 'list') await h.completed();
+      expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card')).click();
+      await Promise.resolve();
+      expect(h.state.get('taskStack')).toHaveLength(1);
+      expect(h.root.querySelectorAll('.abyss-task-delete-btn')).toHaveLength(
+        view === 'list' ? 1 : 0,
+      );
+      expect(h.root.querySelectorAll('.abyss-task-card-main-row--has-delete')).toHaveLength(
+        view === 'list' ? 1 : 0,
+      );
+    } finally {
+      h.dispose();
+    }
+  },
+);

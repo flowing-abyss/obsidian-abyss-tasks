@@ -1398,6 +1398,7 @@ export class CenterPanel {
         normalizeTaskTimelineSettings(this.taskCollectionState_abyssPrivate().timeline),
       now: () => new Date(),
       planning: (value) => ('root' in value ? value.node.planning : value.menu.planning),
+      completed: (value) => ('root' in value ? value.node.status : value.menu.status) === 'done',
       snapshot: (key) => this.timelineSnapshot_abyssPrivate(key),
       commit: (task, patch, accept) =>
         this.taskCommands_abyssPrivate.setTaskPlanningDates(task, patch, accept),
@@ -1664,15 +1665,8 @@ export class CenterPanel {
         this.taskSurface_abyssPrivate.options.isCurrent?.() !== false,
       mountCard: (element, task, occurrence) =>
         this.mountCompactCard_abyssPrivate(element, task, occurrence),
-      updateCard: (card, task, occurrence) => {
-        this.mountedSnapshots_abyssPrivate.set(occurrence.key, task);
-        card.update(
-          task.root,
-          this.taskSurface_abyssPrivate?.tagGroups ?? [],
-          this.compactCardOptions_abyssPrivate(task, occurrence),
-        );
-        this.observeTaskCardReceipt_abyssPrivate(card);
-      },
+      updateCard: (card, task, occurrence) =>
+        this.updateCompactCard_abyssPrivate(card, task, occurrence),
       refreshMeasurements: () => this.taskSurface_abyssPrivate?.surface.refreshMeasurements(),
       reportFailure: (error) => {
         this.reportTaskRenderFailure_abyssPrivate(error);
@@ -1732,6 +1726,7 @@ export class CenterPanel {
     const options = this.compactPresentation_abyssPrivate;
     return {
       ...this.taskCardOptions_abyssPrivate(task, occurrence.key),
+      interactionRevision: taskSearchAddressKey(occurrence.address),
       projection: task,
       occurrence: occurrence.presentation,
       selected: taskStackRowKey(this.state_abyssPrivate.get('taskStack')) === occurrence.taskKey,
@@ -1758,6 +1753,28 @@ export class CenterPanel {
     this.observeTaskCardReceipt_abyssPrivate(card);
     return card;
   }
+  private updateCompactCard_abyssPrivate(
+    card: TaskCardMount,
+    task: TaskNodeSnapshot,
+    occurrence: TaskSearchOccurrence,
+  ): TaskCardMount {
+    this.mountedSnapshots_abyssPrivate.set(occurrence.key, task);
+    const flags = this.compactCardOptions_abyssPrivate(task, occurrence);
+    if (!card.accepts(task.root, flags)) {
+      const element = card.element;
+      const parent = element.parentElement;
+      const next = element.nextSibling;
+      card.destroy();
+      element.empty();
+      const replacement = this.mountCompactCard_abyssPrivate(element, task, occurrence);
+      parent?.insertBefore(element, next);
+      return replacement;
+    }
+    card.update(task.root, this.taskSurface_abyssPrivate?.tagGroups ?? [], flags);
+    this.observeTaskCardReceipt_abyssPrivate(card);
+    return card;
+  }
+
   private mountedProjection_abyssPrivate(key: string): TaskNodeSnapshot | undefined {
     if (this.taskSurface_abyssPrivate?.search !== undefined)
       return this.mountedSnapshots_abyssPrivate.get(key);
@@ -1782,6 +1799,7 @@ export class CenterPanel {
       );
     };
     this.invalidateCompactReturn_abyssPrivate(same);
+    this.invalidateCompactDrag_abyssPrivate(previous, same);
     for (const record of [...this.taskInteractionPins_abyssPrivate])
       if (!same(record.key)) {
         this.taskInteractionPins_abyssPrivate.delete(record);
@@ -1793,6 +1811,18 @@ export class CenterPanel {
       active.blur();
       this.wholeCardFocus_abyssPrivate = null;
     }
+  }
+
+  private invalidateCompactDrag_abyssPrivate(
+    previous: TaskListRows<TaskSearchOccurrence>,
+    same: (key: string) => boolean,
+  ): void {
+    const payload = this.state_abyssPrivate.get('draggingTaskNode');
+    if (payload?.source !== 'center-card') return;
+    const key = previous.firstOccurrenceOf(
+      `${payload.task.root.source.filePath}:${taskNodeSourceLine(payload.task.target)}`,
+    );
+    if (key !== undefined && !same(key)) this.endTaskDrag_abyssPrivate?.();
   }
 
   private invalidateCompactReturn_abyssPrivate(same: (key: string) => boolean): void {
@@ -2480,7 +2510,10 @@ export class CenterPanel {
     const current = stack[stack.length - 1];
     const detailKey = this.detailOccurrenceKey_abyssPrivate();
     const deletable =
-      root !== undefined && 'source' in root && this.rowSelection_abyssPrivate.size === 0
+      root !== undefined &&
+      'source' in root &&
+      this.rowSelection_abyssPrivate.size === 0 &&
+      (!this.isTaskCollection_abyssPrivate() || this.taskCollectionView_abyssPrivate() === 'list')
         ? current
         : undefined;
     for (const [key, card] of this.mountedRows_abyssPrivate.cards()) {

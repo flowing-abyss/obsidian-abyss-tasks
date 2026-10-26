@@ -97,6 +97,39 @@ describe('renderProjectDashboard', () => {
     expect(state.get('projectsPanel')).toEqual({ view: 'table' });
   });
 
+  it('places Back and controls above a retained metadata group for the phone layout', () => {
+    const el = freshContainer();
+    const state = new AppState();
+    const project = proj({});
+    state.set('projectsPanel', { view: 'dashboard', path: project.path });
+    const renderTasks = (host: HTMLElement): void => {
+      if (host.querySelector('.abyss-center-header') !== null) return;
+      const toolbar = host.createDiv({ cls: 'abyss-center-header' });
+      const controls = toolbar.createDiv({ cls: 'abyss-center-controls' });
+      controls.createDiv({ cls: 'abyss-task-collection-filters' });
+    };
+    renderProjectDashboard(el, project, {
+      state,
+      settings: DEFAULT_SETTINGS,
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+      renderTasks,
+    });
+    const toolbar = expectDefined(el.querySelector('.abyss-center-header'));
+    const back = expectDefined(el.querySelector('.abyss-project-back'));
+    const stats = expectDefined(el.querySelector('.abyss-project-dashboard-stats'));
+    expect(back.parentElement).toBe(toolbar);
+    expect(stats.parentElement?.classList.contains('abyss-project-dashboard-metadata')).toBe(true);
+    const progress = expectDefined(stats.querySelector('.abyss-progress'));
+    expect(progress).not.toBeNull();
+    expect(
+      el
+        .querySelector('.abyss-status-pill')
+        ?.previousElementSibling?.classList.contains('abyss-task-collection-filters'),
+    ).toBe(true);
+    disposeProjectDashboard(el);
+  });
+
   it('shows "not found" when the project is missing', () => {
     const el = freshContainer();
     renderProjectDashboard(el, undefined, {

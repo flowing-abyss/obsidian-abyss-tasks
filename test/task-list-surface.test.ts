@@ -3489,3 +3489,33 @@ it('reveals a row below a sticky Timeline axis instead of underneath it', () => 
   h.surface.destroy();
   h.scroll.remove();
 });
+
+it('keeps the mounted row extent during source rehydration until its next measurement is ready', () => {
+  const h = pendingHarness();
+  const initial = rows(20);
+  h.surface.update(initial, { ...presentation, estimate: () => 64 });
+  h.actual.set('n.md:0', 118);
+  h.settle();
+  const first = expectDefined(h.surface.element('n.md:0'));
+  const second = expectDefined(h.surface.element('n.md:1'));
+  const y = second.getBoundingClientRect().top;
+  h.ready.delete('n.md:0');
+  h.surface.update(initial, {
+    ...presentation,
+    measurementRevision: () => 'changed source',
+    estimate: () => 64,
+  });
+  expect(first.isConnected).toBe(true);
+  expect(second.getBoundingClientRect().top).toBe(y);
+  expect(first.parentElement?.style.getPropertyValue('--abyss-virtual-row-height')).toBe('118px');
+  h.actual.set('n.md:0', 136);
+  h.resolve('n.md:0');
+  h.surface.refreshMeasurements();
+  h.frame();
+  expect(first.getBoundingClientRect().height).toBe(136);
+  // Measurement preserves the settled sibling as the visible anchor.
+  expect(second.getBoundingClientRect().top).toBe(y);
+  expect(h.scroll.scrollTop).toBe(18);
+  expect(first.parentElement?.classList.contains('abyss-virtual-row-frame-clipped')).toBe(false);
+  h.surface.destroy();
+});

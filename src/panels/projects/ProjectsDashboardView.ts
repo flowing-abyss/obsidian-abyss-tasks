@@ -11,6 +11,7 @@ import type { ProjectsDashboardContext } from './viewContext';
 interface DashboardState {
   project: Project;
   header: HTMLElement;
+  back: HTMLElement;
   pill: HTMLElement;
   properties?: ProjectDashboardProperties;
   disposeMenu: () => void;
@@ -68,7 +69,8 @@ export function refreshProjectDashboard(
 
 function attachDashboardHeader(taskHost: HTMLElement, current: DashboardState): void {
   const toolbar = taskHost.querySelector<HTMLElement>('.abyss-center-header');
-  if (toolbar !== null && current.header.parentElement !== toolbar) toolbar.prepend(current.header);
+  if (toolbar !== null && current.header.parentElement !== toolbar)
+    toolbar.prepend(current.back, current.header);
   const filters = toolbar?.querySelector('.abyss-task-collection-filters');
   if (filters !== undefined && filters !== null && filters.nextElementSibling !== current.pill)
     filters.after(current.pill);
@@ -99,17 +101,17 @@ export function renderProjectDashboard(
     return;
   }
 
-  renderProjectDetails(container, header, project, ctx);
+  renderProjectDetails(container, { header, back }, project, ctx);
 }
 
 function renderProjectDetails(
   container: HTMLElement,
-  header: HTMLElement,
+  { header, back }: Pick<DashboardState, 'header' | 'back'>,
   project: Project,
   ctx: ProjectsDashboardContext,
 ): void {
   const pill = header.createEl('button', { cls: 'abyss-status-pill' });
-  const current: DashboardState = { project, header, pill, disposeMenu: () => {} };
+  const current: DashboardState = { project, header, back, pill, disposeMenu: () => {} };
   dashboardProjects.set(container, current);
   const title = header.createEl('button', {
     cls: 'abyss-project-dashboard-title',
@@ -120,7 +122,8 @@ function renderProjectDetails(
       ctx.openNote(current.project.path);
     });
   });
-  const stats = header.createDiv({ cls: 'abyss-project-dashboard-stats' });
+  const metadata = header.createDiv({ cls: 'abyss-project-dashboard-metadata' });
+  const stats = metadata.createDiv({ cls: 'abyss-project-dashboard-stats' });
   renderProgressBar(stats, project.stats);
   patchProjectDashboardStatus(
     pill,
@@ -130,7 +133,7 @@ function renderProjectDetails(
   current.disposeMenu = bindStatusMenu(pill, current, ctx);
   current.properties = new ProjectDashboardProperties(
     container,
-    header,
+    metadata,
     () => current.project,
     ctx,
   );

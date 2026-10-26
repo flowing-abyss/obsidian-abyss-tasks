@@ -856,24 +856,38 @@ it('keeps a Kanban drag source through inspector blur and applies only its prove
   }
 });
 
-it('cancels a Kanban drag when the source is externally replaced', async () => {
-  const h = await mountList('- [ ] needle', true);
-  try {
-    const card = expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card'));
-    card.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-    card.dispatchEvent(new MouseEvent('dragstart', { bubbles: true }));
-    expect(h.state.get('draggingTaskNode')).not.toBeNull();
-    const file = expectDefined(h.app.vault.getFileByPath('tasks.md'));
-    await h.app.vault.modify(file, '- [ ] needle external');
-    h.index.installCommittedContent(file.path, '- [ ] needle external');
-    await h.search.prepare(new AbortController().signal);
-    await searchUiCompleted(h.root);
-    expect(h.state.get('draggingTaskNode')).toBeNull();
-    expect(await h.read()).toBe('- [ ] needle external');
-  } finally {
-    await h.close();
-  }
-});
+it.each([false, true])(
+  'cancels a Kanban drag before replacement hydration held=%s',
+  async (held) => {
+    const h = await mountList('- [ ] needle', true);
+    const hydration = deferred<void>();
+    if (!held) hydration.resolve();
+    try {
+      const card = expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card'));
+      card.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      card.dispatchEvent(new MouseEvent('dragstart', { bubbles: true }));
+      expect(h.state.get('draggingTaskNode')).not.toBeNull();
+      const resolve = h.index.resolveSearchHits.bind(h.index);
+      vi.spyOn(h.index, 'resolveSearchHits').mockImplementation(async (hits, signal) => {
+        await hydration.promise;
+        return resolve(hits, signal);
+      });
+      const file = expectDefined(h.app.vault.getFileByPath('tasks.md'));
+      await h.app.vault.modify(file, '- [ ] needle external');
+      h.index.installCommittedContent(file.path, '- [ ] needle external');
+      await h.search.prepare(new AbortController().signal);
+      await vi.waitFor(() => {
+        expect(h.state.get('draggingTaskNode')).toBeNull();
+      });
+      hydration.resolve();
+      await searchUiCompleted(h.root);
+      expect(await h.read()).toBe('- [ ] needle external');
+    } finally {
+      hydration.resolve();
+      await h.close();
+    }
+  },
+);
 
 it('completes a recurring Kanban task through the ordinary recurrence transaction', async () => {
   const h = await mountList('- [ ] needle 🔁 every day 📅 2026-10-25', true);

@@ -8907,6 +8907,18 @@ button.abyss-project-table-status-pill {
   color: var(--text-normal);
 }
 
+.abyss-project-dashboard-metadata {
+  display: flex;
+  flex: 0 0 auto;
+  min-width: 0;
+  align-items: center;
+  gap: var(--size-4-2);
+}
+
+.abyss-project-host-title {
+  cursor: pointer;
+}
+
 .abyss-project-dashboard-header {
   display: flex;
   flex: 1 1 auto;
@@ -9022,7 +9034,7 @@ button.abyss-project-dashboard-property {
 }
 
 @container abyss-panel-layout (max-width: 70rem) {
-  .abyss-project-dashboard-header > .abyss-project-dashboard-dates {
+  .abyss-project-dashboard-metadata > .abyss-project-dashboard-dates {
     display: none;
   }
 }
@@ -9033,7 +9045,7 @@ button.abyss-project-dashboard-property {
   }
 
   .abyss-project-dashboard-header {
-    flex-basis: 100%;
+    flex-basis: calc(100% - var(--abyss-toolbar-control-size) - var(--size-4-2));
   }
 
   button.abyss-project-dashboard-title {
@@ -9459,6 +9471,74 @@ body.is-phone
    plugin heading would only repeat it. The header keeps one control row. */
 body.is-phone .abyss-panel-view .abyss-center-title {
   display: none;
+}
+
+/* The native header names the project; keep controls first and metadata underneath. */
+body.is-phone .abyss-project-tasks > .abyss-center-header {
+  flex-wrap: wrap;
+  gap: var(--size-4-1);
+}
+
+body.is-phone .abyss-project-tasks .abyss-center-controls {
+  order: 1;
+  flex: 1 1 0;
+  gap: var(--size-4-1);
+}
+
+body.is-phone .abyss-project-tasks .abyss-center-search {
+  flex: 1 1 var(--size-4-8);
+  min-inline-size: 0;
+  width: auto;
+}
+
+body.is-phone .abyss-project-dashboard-header {
+  order: 2;
+  flex-basis: 100%;
+}
+
+body.is-phone button.abyss-project-dashboard-title {
+  display: none;
+}
+
+body.is-phone .abyss-project-dashboard-metadata {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--size-4-1);
+}
+
+body.is-phone .abyss-project-dashboard-metadata > .abyss-project-dashboard-dates {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+body.is-phone .abyss-project-dashboard-details {
+  margin-inline-start: auto;
+}
+
+body.is-phone .abyss-project-tasks :is(button.abyss-project-back, button.abyss-status-pill) {
+  box-sizing: border-box;
+  block-size: var(--abyss-toolbar-control-size);
+  min-block-size: 0;
+  padding-block: 0;
+  border-radius: var(--radius-m);
+  font-size: var(--font-ui-small);
+}
+
+body.is-phone .abyss-project-tasks button.abyss-project-back {
+  inline-size: var(--abyss-toolbar-control-size);
+  justify-content: center;
+  padding-inline: 0;
+}
+
+body.is-phone .abyss-project-tasks button.abyss-status-pill {
+  max-inline-size: 6rem;
+  padding-inline: var(--size-2-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 body.is-phone .abyss-project-table-controls .abyss-center-search {
@@ -11303,6 +11383,10 @@ button.abyss-calendar-date[aria-pressed='true'] {
 
 .abyss-task-timeline {
   display: block;
+}
+
+.abyss-task-timeline-row.is-done {
+  --abyss-project-status-color: var(--text-muted);
 }
 
 .abyss-task-timeline-rows {

@@ -198,6 +198,7 @@ export class PanelView extends ItemView {
   private listUnsub_abyssPrivate: (() => void) | undefined;
   /** The phone view header text; Obsidian reads it before onOpen and on every layout save. */
   private hostTitle_abyssPrivate = PANEL_DISPLAY_TEXT;
+  private hostTitleActionCleanup_abyssPrivate: (() => void) | undefined = undefined;
   private keyboardCleanup_abyssPrivate: (() => void) | undefined = undefined;
   private statusBarCleanup_abyssPrivate: (() => void) | undefined;
   private selectedListRenameUnsub_abyssPrivate: (() => void) | undefined;
@@ -286,7 +287,12 @@ export class PanelView extends ItemView {
 
   /** The center panel already names the list it renders; the phone header shows the same name. */
   private panelTitle_abyssPrivate(): string {
-    return panelTitle(this.state_abyssPrivate.get('mode'), () => this.center_abyssPrivate.title());
+    const project = this.state_abyssPrivate.get('projectsPanel');
+    return panelTitle(
+      this.state_abyssPrivate.get('mode'),
+      () => this.center_abyssPrivate.title(),
+      project.view === 'dashboard' ? project.path : undefined,
+    );
   }
 
   /**
@@ -304,6 +310,45 @@ export class PanelView extends ItemView {
     if (realm === null) return;
     const titleEl = headerTitleElement(this, realm);
     if (titleEl !== undefined && titleEl.textContent !== title) titleEl.setText(title);
+    this.bindHostProjectTitle_abyssPrivate(titleEl);
+  }
+
+  private bindHostProjectTitle_abyssPrivate(title: HTMLElement | undefined): void {
+    this.hostTitleActionCleanup_abyssPrivate?.();
+    this.hostTitleActionCleanup_abyssPrivate = undefined;
+    if (
+      title === undefined ||
+      this.state_abyssPrivate.get('mode') !== 'projects' ||
+      this.state_abyssPrivate.get('projectsPanel').view !== 'dashboard'
+    )
+      return;
+    const attributes = new Map(
+      ['role', 'tabindex', 'aria-label'].map((key) => [key, title.getAttribute(key)]),
+    );
+    title.addClass('abyss-project-host-title');
+    title.setAttribute('role', 'button');
+    title.tabIndex = 0;
+    title.setAttribute('aria-label', `Open ${this.hostTitle_abyssPrivate} in new tab`);
+    // Keep the dashboard's draft guard and note-opening command as the single action owner.
+    const activate = (): void => {
+      this.contentEl.querySelector<HTMLButtonElement>('.abyss-project-dashboard-title')?.click();
+    };
+    const keydown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      activate();
+    };
+    title.addEventListener('click', activate);
+    title.addEventListener('keydown', keydown);
+    this.hostTitleActionCleanup_abyssPrivate = () => {
+      title.removeEventListener('click', activate);
+      title.removeEventListener('keydown', keydown);
+      title.removeClass('abyss-project-host-title');
+      for (const [key, value] of attributes) {
+        if (value === null) title.removeAttribute(key);
+        else title.setAttribute(key, value);
+      }
+    };
   }
   override getIcon(): string {
     return 'calendar-days';
@@ -1013,6 +1058,7 @@ export class PanelView extends ItemView {
       this.quickCapture_abyssPrivate?.onWindowMigrated();
       this.center_abyssPrivate.onWindowMigrated();
       this.right_abyssPrivate.onWindowMigrated();
+      this.refreshHostHeader_abyssPrivate();
       this.cancelSearchPresentation_abyssPrivate?.();
       this.checkSearchOpportunity_abyssPrivate();
     });
@@ -1091,6 +1137,7 @@ export class PanelView extends ItemView {
       this.refreshHostHeader_abyssPrivate();
     });
     const offProject = this.state_abyssPrivate.on('projectsPanel', () => {
+      this.refreshHostHeader_abyssPrivate();
       syncDashboard();
       this.compactPaneAccess_abyssPrivate.modeChanged(this.state_abyssPrivate.get('mode'));
     });
@@ -1204,6 +1251,8 @@ export class PanelView extends ItemView {
   }
 
   private destroyInteractionControllers_abyssPrivate(): void {
+    this.hostTitleActionCleanup_abyssPrivate?.();
+    this.hostTitleActionCleanup_abyssPrivate = undefined;
     this.shortcutMigrationCleanup_abyssPrivate?.();
     this.shortcutMigrationCleanup_abyssPrivate = undefined;
     this.shortcutRouter_abyssPrivate?.destroy();

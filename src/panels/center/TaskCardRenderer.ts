@@ -98,6 +98,8 @@ export interface TaskCardInteractionContext {
   readonly onActivate?: ((task: TaskSnapshot) => void) | undefined;
 }
 interface TaskCardFlags {
+  /** Compact rows retire source-owned controls when their exact acquisition changes. */
+  readonly interactionRevision?: string;
   readonly fullDescription?: boolean;
   readonly calendar?: CalendarCardPolicy;
   readonly projection?: TaskNodeSnapshot | undefined;
@@ -140,6 +142,7 @@ interface CardContentContext {
   readonly flags?: TaskCardFlags;
   readonly component: Component;
   readonly currentTask: () => TaskSnapshot;
+  readonly interactionRevision?: () => string | undefined;
   readonly currentProjection: () => TaskNodeSnapshot;
   readonly currentOccurrence: () => TaskOccurrencePresentation | undefined;
   readonly currentCalendar: () => CalendarCardPolicy | undefined;
@@ -366,6 +369,7 @@ export class TaskCardRenderer {
     const context: CardContentContext = {
       component: markdown,
       currentTask: () => current.task,
+      interactionRevision: () => current.flags.interactionRevision,
       currentProjection: () => current.flags.projection ?? rootTaskNodeSnapshot(current.task),
       currentOccurrence: () => current.flags.occurrence,
       currentCalendar: () => current.flags.calendar,
@@ -387,10 +391,11 @@ export class TaskCardRenderer {
       markdown.unload();
       card.remove();
     };
+    const updateInteractions = this.#retainedInteractions(card, context, () => current);
     try {
       content = this.#mountContents(card, context);
       content.update(current);
-      this.#mountInteractions(card, task, context, () => current);
+      updateInteractions();
     } catch (error) {
       destroy();
       throw error;
@@ -408,6 +413,7 @@ export class TaskCardRenderer {
         current = { task, tagGroups, flags: search === undefined ? flags : { ...flags, search } };
         failed = false;
         try {
+          updateInteractions();
           content.update(current);
         } catch (error) {
           destroy();
@@ -415,6 +421,28 @@ export class TaskCardRenderer {
         }
       },
       destroy,
+    };
+  }
+
+  #retainedInteractions(
+    card: HTMLElement,
+    context: CardContentContext,
+    current: () => CardState,
+  ): () => void {
+    let revision: string | undefined;
+    let owner: Component | undefined;
+    return () => {
+      const next = current().flags.interactionRevision;
+      if (owner !== undefined && revision === next) return;
+      revision = next;
+      if (owner !== undefined) context.component.removeChild(owner);
+      owner = context.component.addChild(new Component());
+      this.#mountInteractions(
+        card,
+        context.currentTask(),
+        { ...context, component: owner },
+        current,
+      );
     };
   }
 
@@ -461,7 +489,7 @@ export class TaskCardRenderer {
 
   #mountContents(card: HTMLElement, context: CardContentContext): CardContents {
     const mainRow = card.createDiv({ cls: 'abyss-task-card-main-row' });
-    this.#renderStatus(mainRow, context.currentTask(), context);
+    const status = this.#retainedStatus(mainRow, context);
     const body = mainRow.createDiv({ cls: 'abyss-task-body' });
     const titleRow = body.createDiv({ cls: 'abyss-task-title-row' });
     const title = titleRow.createSpan({ cls: 'abyss-task-title' });
@@ -475,6 +503,7 @@ export class TaskCardRenderer {
         return text.settled;
       },
       update: (current) => {
+        status();
         header(current);
         text.update(current);
         this.syncDeleteButton(
@@ -843,6 +872,24 @@ export class TaskCardRenderer {
     return card;
   }
 
+  #retainedStatus(mainRow: HTMLElement, context: CardContentContext): () => void {
+    let source: { readonly revision: string | undefined } | undefined;
+    let marker: HTMLElement | undefined;
+    return () => {
+      const revision = context.interactionRevision?.();
+      if (source !== undefined && source.revision === revision) return;
+      const next = { revision };
+      source = next;
+      (marker?.closest('.abyss-status-control') ?? marker)?.remove();
+      marker = this.#renderStatus(mainRow, context.currentTask(), {
+        ...context,
+        isCurrent: () => context.isCurrent() && source === next,
+      });
+      const control = marker?.closest<HTMLElement>('.abyss-status-control') ?? marker;
+      if (control !== undefined) mainRow.prepend(control);
+    };
+  }
+
   #renderStatus(
     mainRow: HTMLElement,
     task: TaskSnapshot,
@@ -850,7 +897,7 @@ export class TaskCardRenderer {
       CardContentContext,
       'currentProjection' | 'currentOccurrence' | 'currentCalendar' | 'isCurrent'
     >,
-  ): void {
+  ): HTMLElement | undefined {
     if (current?.currentCalendar()?.kind === 'forecast') return;
     const projection = this.#host.dependenciesFor(task);
     const marker = renderStatusMarker(mainRow, {
@@ -875,6 +922,7 @@ export class TaskCardRenderer {
       },
     });
     this.#host.captureStatusTarget?.(marker, () => current?.currentProjection().node ?? task);
+    return marker;
   }
 
   #renderBody(mainRow: HTMLElement, task: TaskSnapshot, flags?: TaskCardFlags): HTMLElement {
