@@ -177,19 +177,19 @@ describe('selectTaskList', () => {
     ]);
   });
 
-  it('keeps Today membership date-only and respects requested completed statuses', () => {
+  it('uses completion dates for Today while respecting requested completed statuses', () => {
     const candidates = [
       task({
         title: 'completed due today',
         source: { line: 0 },
         status: 'done',
-        planning: { due: '2026-10-03' },
+        planning: { due: '2026-10-03', completion: '2026-10-03' },
       }),
       task({
         title: 'completed overlap',
         source: { line: 1 },
         status: 'done',
-        planning: { due: '2026-10-02', scheduled: '2026-10-03' },
+        planning: { due: '2026-10-02', scheduled: '2026-10-03', completion: '2026-10-03' },
       }),
       task({ title: 'open due today', source: { line: 2 }, planning: { due: '2026-10-03' } }),
       task({
@@ -219,7 +219,7 @@ describe('selectTaskList', () => {
         today: localDate('2026-10-03'),
         nowMs: Date.parse('2026-10-03T12:00:00Z'),
       }).map((candidate) => candidate.title),
-    ).toEqual(['completed due today', 'completed overlap', 'scheduled today before future due']);
+    ).toEqual(['completed due today', 'completed overlap']);
   });
 
   it('matches a normalized legacy Inbox tag setting', () => {

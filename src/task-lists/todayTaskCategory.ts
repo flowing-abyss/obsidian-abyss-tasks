@@ -1,16 +1,25 @@
-import { localDate, taskTodayOccurrence, type TaskSnapshot } from '../tasks';
+import { localDate, taskTodayOccurrence, type LocalDate, type TaskSnapshot } from '../tasks';
 
-export function todayTaskCategory(
-  task: Pick<TaskSnapshot, 'planning'>,
-  today: string,
-): 'today' | 'overdue' | undefined {
-  return taskTodayOccurrence(task.planning, localDate(today))?.category;
+type TodayTask = Pick<TaskSnapshot, 'planning' | 'status'>;
+
+export function todayTaskOccurrence(
+  task: TodayTask,
+  today: LocalDate,
+): ReturnType<typeof taskTodayOccurrence> {
+  if (task.status === 'done' || task.status === 'cancelled') {
+    const date = task.status === 'done' ? task.planning.completion : task.planning.cancelled;
+    return date === today
+      ? { category: 'today', displayDate: today, completion: { kind: 'allowed' } }
+      : undefined;
+  }
+  return taskTodayOccurrence(task.planning, today);
 }
 
-export function taskListDate(
-  task: Pick<TaskSnapshot, 'planning'>,
-  todayListDate?: string,
-): string | undefined {
+export function todayTaskCategory(task: TodayTask, today: string): 'today' | 'overdue' | undefined {
+  return todayTaskOccurrence(task, localDate(today))?.category;
+}
+
+export function taskListDate(task: TodayTask, todayListDate?: string): string | undefined {
   if (todayListDate !== undefined && todayTaskCategory(task, todayListDate) === 'today') {
     return todayListDate;
   }

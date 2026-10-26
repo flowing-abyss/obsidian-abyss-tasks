@@ -12,13 +12,7 @@ import {
 import { withTaskRevealRows } from '../panels/task-list/taskRevealRows';
 import { StatusRegistry } from '../status/StatusRegistry';
 import type { LocalDate, TaskOrganizationRecord, TaskSearchAddress, TaskSearchHit } from '../tasks';
-import {
-  TaskSearchError,
-  shiftLocalDate,
-  taskSearchAddressKey,
-  taskTodayOccurrence,
-  totalMs,
-} from '../tasks';
+import { TaskSearchError, shiftLocalDate, taskSearchAddressKey, totalMs } from '../tasks';
 import {
   groupTasksByDateSteps,
   groupTasksByOutgoingLinkSteps,
@@ -36,6 +30,7 @@ import {
   type TaskOrganizationSettings,
 } from './TaskListSelector';
 import type { TaskOccurrencePresentation } from './taskOccurrencePresentation';
+import { todayTaskOccurrence } from './todayTaskCategory';
 export type TaskSearchMenuSummary = Pick<
   TaskOrganizationRecord,
   'status' | 'statusSymbol' | 'priority' | 'planning' | 'tags'
@@ -294,7 +289,7 @@ function presentation(
   const interval = authoredInterval(record);
   const today =
     input.scope === 'nodes' && input.selection === 'today'
-      ? taskTodayOccurrence(record.planning, input.today)
+      ? todayTaskOccurrence(record, input.today)
       : undefined;
   return {
     kind: today === undefined ? 'node' : 'today',

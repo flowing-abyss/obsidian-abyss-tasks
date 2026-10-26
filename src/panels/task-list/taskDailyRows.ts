@@ -5,6 +5,7 @@ import {
   localDate,
   shiftLocalDate,
   taskOccupiedDates,
+  taskOccurrenceCompletion,
   type LocalDate,
   type TaskOrganizationRecord,
 } from '../../tasks';
@@ -235,6 +236,10 @@ class DailyRows implements TaskListRows<TaskSearchOccurrence> {
   #occurrence(record: TaskOrganizationRecord, day: number): TaskSearchOccurrence {
     const date = dateAt(day),
       occupied = taskOccupiedDates(record.planning);
+    const interval =
+      occupied.kind === 'interval' && occupied.start <= date && date <= occupied.due
+        ? occupied
+        : undefined;
     return {
       ...this.input.occurrence(record, date),
       key: rowKey(day, physicalKey(record)),
@@ -242,13 +247,15 @@ class DailyRows implements TaskListRows<TaskSearchOccurrence> {
       presentation: {
         kind: 'daily',
         displayDate: date,
-        ...(occupied.kind === 'interval'
-          ? { interval: { start: occupied.start, due: occupied.due } }
-          : { dateRoles: occupied.points.find((p) => p.date === date)?.roles ?? [] }),
-        completion:
-          occupied.kind === 'interval' && date < occupied.due
-            ? { kind: 'continuation', due: occupied.due }
-            : { kind: 'allowed' },
+        ...(interval !== undefined
+          ? { interval: { start: interval.start, due: interval.due } }
+          : {
+              dateRoles:
+                occupied.kind === 'points'
+                  ? (occupied.points.find((p) => p.date === date)?.roles ?? [])
+                  : ['scheduled'],
+            }),
+        completion: taskOccurrenceCompletion(record.planning, date),
       },
     };
   }
@@ -464,11 +471,9 @@ class DailyRows implements TaskListRows<TaskSearchOccurrence> {
     task: TaskSearchOccurrence,
     range: Extract<TaskOccurrenceRange, { kind: 'dates' }>,
   ): void {
-    const due = task.presentation.interval?.due;
+    const first = taskOccurrenceCompletion(task.menu.planning, range.from);
     const completion =
-      due === undefined || (range.from <= due && due <= range.to)
-        ? { kind: 'allowed' as const }
-        : task.presentation.completion;
+      first.kind === 'allowed' ? first : taskOccurrenceCompletion(task.menu.planning, range.to);
     const prior = nodes.get(range.taskKey);
     if (prior === undefined) nodes.set(range.taskKey, { taskKey: range.taskKey, task, completion });
     else if (completion.kind === 'allowed') nodes.set(range.taskKey, { ...prior, completion });
@@ -560,6 +565,18 @@ export function taskDailyRowsAudit(
       }
     : undefined;
 }
+function dailyDateRanges(record: TaskOrganizationRecord): Array<{ from: number; to: number }> {
+  const occupied = taskOccupiedDates(record.planning);
+  if (occupied.kind === 'points')
+    return occupied.points.map((p) => ({ from: ordinal(p.date), to: ordinal(p.date) }));
+  const ranges = [{ from: ordinal(occupied.start), to: ordinal(occupied.due) }];
+  const scheduled = record.planning.scheduled;
+  if (scheduled !== undefined && (scheduled < occupied.start || scheduled > occupied.due)) {
+    const day = ordinal(scheduled);
+    ranges.push({ from: day, to: day });
+  }
+  return ranges;
+}
 function* dailyDescriptors(
   input: TaskDailyRowsInput,
 ): CollectionSteps<{ descriptors: Descriptor[]; events: Array<{ day: number; delta: number }> }> {
@@ -567,12 +584,7 @@ function* dailyDescriptors(
     events: Array<{ day: number; delta: number }> = [];
   const tomorrow = ordinal(input.today) + 1;
   for (const record of input.records) {
-    const occupied = taskOccupiedDates(record.planning);
-    const ranges =
-      occupied.kind === 'interval'
-        ? [{ from: ordinal(occupied.start), to: ordinal(occupied.due) }]
-        : occupied.points.map((p) => ({ from: ordinal(p.date), to: ordinal(p.date) }));
-    for (const range of ranges) {
+    for (const range of dailyDateRanges(record)) {
       const from = Math.max(tomorrow, range.from),
         to = range.to;
       if (from <= to) {

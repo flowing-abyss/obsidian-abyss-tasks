@@ -29,12 +29,20 @@ describe('todayTaskCategory', () => {
     },
   );
 
-  it('classifies completed tasks without filtering status', () => {
-    expect(
-      todayTaskCategory(task({ status: 'done', planning: { due: '2026-10-03' } }), today),
-    ).toBe('today');
-    expect(
-      todayTaskCategory(task({ status: 'cancelled', planning: { due: '2026-10-02' } }), today),
-    ).toBe('overdue');
+  it.each([
+    ['done', { completion: '2026-10-03' }, 'today'],
+    ['done', { completion: '2026-10-03', due: '2026-09-01' }, 'today'],
+    ['done', { completion: '2026-10-03', due: '2026-10-05' }, 'today'],
+    ['done', { completion: '2026-10-02', due: '2026-10-03' }, undefined],
+    ['done', { due: '2026-10-03' }, undefined],
+    ['done', { completion: '2026-10-04', due: '2026-10-02' }, undefined],
+    ['cancelled', { cancelled: '2026-10-03' }, 'today'],
+    ['cancelled', { cancelled: '2026-10-02', due: '2026-10-03' }, undefined],
+    ['cancelled', { due: '2026-10-02', completion: '2026-10-03' }, undefined],
+    ['open', { completion: '2026-10-03' }, undefined],
+  ] satisfies ReadonlyArray<
+    [NonNullable<TaskFixtureInput['status']>, TaskFixtureInput['planning'], 'today' | undefined]
+  >)('uses %s lifecycle dates %j for Today: %s', (status, planning, expected) => {
+    expect(todayTaskCategory(task({ status, planning }), today)).toBe(expected);
   });
 });

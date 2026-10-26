@@ -28,6 +28,7 @@ import type {
 } from '../task-lists/taskSearchOrganization';
 import { buildTaskTimelineRows } from '../task-lists/taskTimelineRows';
 import { normalizeTaskTimelineSettings } from '../task-lists/taskTimelineSettings';
+import { todayTaskOccurrence } from '../task-lists/todayTaskCategory';
 import type { TaskStatisticsSource } from '../tasks';
 import {
   localDate,
@@ -37,7 +38,6 @@ import {
   taskReconciliationKey,
   taskSearchAddressKey,
   TaskSearchError,
-  taskTodayOccurrence,
   taskTreeNodes,
   type CommentTimeContextProvider,
   type LocalDate,
@@ -2611,24 +2611,34 @@ export class CenterPanel {
     return this.isTaskListKeyboardTarget_abyssPrivate(event.target);
   }
 
+  private isTaskSelectAllEvent_abyssPrivate(event: KeyboardEvent): boolean {
+    return (
+      !event.defaultPrevented &&
+      event.key.toLowerCase() === 'a' &&
+      event.ctrlKey !== event.metaKey &&
+      !event.altKey &&
+      !event.shiftKey &&
+      this.isTaskListKeyboardTarget_abyssPrivate(event.target)
+    );
+  }
+
   private selectAllTaskRows_abyssPrivate(event: KeyboardEvent): boolean {
-    if (
-      event.defaultPrevented ||
-      event.key.toLowerCase() !== 'a' ||
-      event.ctrlKey === event.metaKey ||
-      event.altKey ||
-      event.shiftKey ||
-      !this.isTaskListKeyboardTarget_abyssPrivate(event.target)
-    )
-      return false;
+    if (!this.isTaskSelectAllEvent_abyssPrivate(event)) return false;
     const order = this.listOrder_abyssPrivate();
     if (order.taskCount === 0) return false;
-    event.preventDefault();
-    event.stopPropagation();
-    this.rowSelection_abyssPrivate.selectAll(order, {
+    const origin = {
       target: this.eventTaskCardKey_abyssPrivate(event.target),
       detail: this.detailOccurrenceKey_abyssPrivate(),
-    });
+    };
+    const surface = this.taskSurface_abyssPrivate?.surface;
+    const span =
+      surface instanceof TaskKanbanSurface
+        ? surface.selectionSpan(event.target, this.rowSelection_abyssPrivate.focus ?? origin.detail)
+        : undefined;
+    if (surface instanceof TaskKanbanSurface && span === undefined) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    this.rowSelection_abyssPrivate.selectAll(order, origin, span);
     this.taskCommands_abyssPrivate.retireSelectionEvidence();
     this.updateSelectionVisuals_abyssPrivate();
     return true;
@@ -3343,7 +3353,7 @@ export class CenterPanel {
       ? indexedRows(
           Array.from(grouped.slice(0, grouped.rowCount), (row) => {
             if (row.kind === 'group') return row;
-            const occurrence = taskTodayOccurrence(row.task.node.planning, today);
+            const occurrence = todayTaskOccurrence(row.task.node, today);
             return occurrence === undefined
               ? row
               : {

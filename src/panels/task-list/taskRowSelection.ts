@@ -158,10 +158,19 @@ export class TaskRowSelection {
       to = order.indexOf(key);
     if (from >= 0 && to >= 0) this.#spans = [{ from: Math.min(from, to), to: Math.max(from, to) }];
   }
-  selectAll(order: TaskListOrder, origin: TaskRowOrigin): void {
+  selectAll(
+    order: TaskListOrder,
+    origin: TaskRowOrigin,
+    span: TaskOrderSpan = { from: 0, to: order.taskCount - 1 },
+  ): void {
     if (!this.#accepts(order)) return;
-    const focus = [this.#focus, origin.target, origin.detail, order.taskKeyAt(0)].find(
-      (candidate): candidate is string => listed(candidate, order),
+    const inside = (key: string | null | undefined): key is string => {
+      if (!listed(key, order)) return false;
+      const index = order.indexOf(key);
+      return span.from <= index && index <= span.to;
+    };
+    const focus = [this.#focus, origin.target, origin.detail, order.taskKeyAt(span.from)].find(
+      inside,
     );
     if (focus === undefined) {
       this.clear();
@@ -169,8 +178,8 @@ export class TaskRowSelection {
     }
     this.#resetMembership();
     this.#order = order;
-    this.#spans = [{ from: 0, to: order.taskCount - 1 }];
-    if (!listed(this.#anchor, order)) this.#anchor = focus;
+    this.#spans = [span];
+    if (!inside(this.#anchor)) this.#anchor = focus;
     this.#focus = focus;
   }
   #accepts(order: TaskListOrder): boolean {

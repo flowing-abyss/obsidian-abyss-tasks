@@ -11,7 +11,7 @@ import { expectDefined } from '../helpers';
 import { createCanonicalSearchHarness } from '../support/taskSearchHarness';
 
 describe('occupied task dates', () => {
-  it('owns today once, expires once, and ignores scheduled dates outside valid ranges', () => {
+  it('preserves interval geometry while admitting independent future scheduled work', () => {
     const planning = {
       start: localDate('2026-10-07'),
       due: localDate('2026-10-09'),
@@ -32,11 +32,28 @@ describe('occupied task dates', () => {
       displayDate: '2026-10-09',
       completion: { kind: 'allowed' },
     });
-    expect(taskHasFutureDate(planning, localDate('2026-10-09'))).toBe(false);
+    expect(taskHasFutureDate(planning, localDate('2026-10-10'))).toBe(true);
     expect(taskTodayOccurrence(planning, localDate('2026-10-06'))).toBeUndefined();
     expect(taskOccurrenceCompletion(planning)).toEqual({ kind: 'allowed' });
     expect(taskOccurrenceCompletion(planning, localDate('2026-10-09'))).toEqual({
       kind: 'allowed',
+    });
+  });
+  it('admits a scheduled day before a future interval without extending its geometry', () => {
+    const planning = {
+      start: localDate('2026-10-10'),
+      due: localDate('2026-10-12'),
+      scheduled: localDate('2026-10-08'),
+    };
+    expect(taskTodayOccurrence(planning, localDate('2026-10-08'))).toEqual({
+      category: 'today',
+      displayDate: '2026-10-08',
+      completion: { kind: 'allowed' },
+    });
+    expect(taskOccupiedDates(planning)).toEqual({
+      kind: 'interval',
+      start: '2026-10-10',
+      due: '2026-10-12',
     });
   });
   it('keeps inverted distinct roles without repairing dates', () => {

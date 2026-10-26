@@ -568,7 +568,7 @@ it('organizes exact sibling addresses and reveals a filtered nested parent witho
   }
 });
 
-it('filters canonical occupied dates with own-node AND clauses in hydrated and cooperative organization', async () => {
+it('filters intervals and independent scheduled dates with own-node AND clauses in hydrated and cooperative organization', async () => {
   const h = await createCanonicalSearchHarness(
     {
       'dates.md': [
@@ -606,7 +606,7 @@ it('filters canonical occupied dates with own-node AND clauses in hydrated and c
       ),
     ).toEqual([0, 4, 2, 1]);
     for (const [value, expected] of [
-      ['2026-10-08', []], // scheduled outside the valid interval is not occupied
+      ['2026-10-08', [2]], // independent scheduled date outside the valid interval
       ['2026-10-09', [0, 2]], // start endpoints, excluding parent and sibling decoys
       ['2026-10-10', [0, 4, 2]], // interior and scheduled point
       ['2026-10-11', [0, 2]], // due endpoint and gap between fallback points

@@ -71,6 +71,7 @@ function matchesDate(task: TaskListValue, value: string): boolean {
   } catch {
     return false;
   }
+  if (task.planning.scheduled === date) return true;
   const occupied = taskOccupiedDates(task.planning);
   return occupied.kind === 'interval'
     ? occupied.start <= date && date <= occupied.due

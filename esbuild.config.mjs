@@ -99,6 +99,8 @@ import process from 'process';
 // Dashboard spacing and explicit footer visibility add 570 main bytes (2,234,303 -> 2,234,873)
 // and 292 CSS bytes (209,912 -> 210,204). Minimal containing limits: 2183 / 206 KiB.
 // No dependencies added; both artifact checks remain enforced.
+// Status-aware temporal lists and column-scoped selection: 2,234,873 -> 2,235,886 bytes (+1013).
+// The minimal containing main limit is 2184 KiB; CSS stays within 206 KiB. No dependencies added.
 const { mainJsBudgetBytes: MAIN_JS_BUDGET_BYTES } = JSON.parse(
   readFileSync('package.json', 'utf8'),
 ).release;

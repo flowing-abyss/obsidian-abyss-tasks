@@ -288,6 +288,29 @@ describe('TaskRowSelection with an empty order', () => {
 });
 
 describe('TaskRowSelection select-all', () => {
+  it('restricts a bound selection to a column span without moving its valid focus', () => {
+    const rows = indexedRows(
+      ['a', 'b', 'c', 'd', 'e'].map((key) => ({
+        kind: 'task' as const,
+        key,
+        taskKey: key,
+        task: key,
+      })),
+    );
+    const selection = new TaskRowSelection();
+    selection.bind(rows);
+    selection.collapseTo('c');
+    selection.selectAll(rows, {}, { from: 1, to: 3 });
+    expect(snapshot(selection, rows)).toEqual({
+      selected: ['b', 'c', 'd'],
+      anchor: 'c',
+      focus: 'c',
+    });
+    selection.selectAll(rows, { target: 'e' }, { from: 4, to: 4 });
+    expect(snapshot(selection, rows)).toEqual({ selected: ['e'], anchor: 'e', focus: 'e' });
+    selection.selectAll(rows, {}, { from: 0, to: -1 });
+    expect(snapshot(selection, rows)).toEqual({ selected: [], anchor: null, focus: null });
+  });
   it('selects the complete ordered projection while preserving a valid range lead', () => {
     const selection = new TaskRowSelection();
     selection.collapseTo('b');

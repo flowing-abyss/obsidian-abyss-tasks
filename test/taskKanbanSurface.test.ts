@@ -101,6 +101,19 @@ function harness(count = 2000) {
   };
 }
 describe('virtual task Kanban', () => {
+  it('returns complete board-relative column bounds even for unmounted tasks', () => {
+    const h = harness(200);
+    expect(h.mounted.size).toBeLessThan(100);
+    expect(h.surface.selectionSpan(h.host, 'n:199')).toEqual({ from: 100, to: 199 });
+    const todo = expectDefined(
+      h.host.querySelector<HTMLElement>('[data-column-key="status:todo"]'),
+    );
+    expect(h.surface.selectionSpan(todo, 'n:199')).toEqual({ from: 0, to: 99 });
+    const done = expectDefined(
+      h.host.querySelector<HTMLElement>('[data-column-key="status:done"]'),
+    );
+    expect(h.surface.selectionSpan(done, 'n:199')).toEqual({ from: 0, to: -1 });
+  });
   it('labels columns without Obsidian hover tooltips', () => {
     const h = harness(2);
     const column = expectDefined(h.host.querySelector<HTMLElement>('.abyss-task-kanban-column'));

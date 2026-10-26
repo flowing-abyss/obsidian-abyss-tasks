@@ -11390,6 +11390,12 @@ button.abyss-calendar-date[aria-pressed='true'] {
   background: var(--background-primary);
 }
 
+.abyss-task-kanban .abyss-task-card:is(.is-selected, .abyss-multi-selected, :focus-visible) {
+  border-color: var(--interactive-accent);
+  box-shadow: inset 0 0 0 1px var(--interactive-accent);
+  background: var(--background-modifier-active-hover);
+}
+
 .abyss-task-kanban-window {
   container: abyss-task-list / inline-size;
 }

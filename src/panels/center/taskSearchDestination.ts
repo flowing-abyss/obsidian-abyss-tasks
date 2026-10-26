@@ -1,8 +1,14 @@
 import type { ListSelection } from '../../app/AppState';
 import { sameTag } from '../../markdown/tagSyntax';
 import type { CalendarSettings } from '../../settings/types';
+import { isActiveTaskNode } from '../../task-lists/taskNodeMembership';
 import { todayTaskCategory } from '../../task-lists/todayTaskCategory';
-import type { LocalDate, SubtaskSnapshot, TaskSnapshot } from '../../tasks';
+import {
+  taskHasFutureDate,
+  type LocalDate,
+  type SubtaskSnapshot,
+  type TaskSnapshot,
+} from '../../tasks';
 
 export interface TaskSearchDestinationInput {
   readonly root: TaskSnapshot;
@@ -20,8 +26,7 @@ function hasTreeTag(node: TaskSnapshot | SubtaskSnapshot, tag: string): boolean 
 export function taskSearchDestination(input: TaskSearchDestinationInput): ListSelection {
   const { root, today, projectPaths, configuredTags } = input;
   let selection: ListSelection = 'inbox';
-  const date = root.planning.due ?? root.planning.scheduled;
-  if (date !== undefined && date > today) selection = 'upcoming';
+  if (isActiveTaskNode(root) && taskHasFutureDate(root.planning, today)) selection = 'upcoming';
   if (todayTaskCategory(root, today) !== undefined) selection = 'today';
   const tag = configuredTags.find((value) => hasTreeTag(root, value));
   if (tag !== undefined) selection = { type: 'tag', tag };

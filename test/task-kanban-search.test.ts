@@ -62,6 +62,64 @@ function selectedRows(h: Awaited<ReturnType<typeof mountCanonicalSearchUi>>): Ta
     .rowSelection_abyssPrivate;
 }
 
+it.each(['metaKey', 'ctrlKey'] as const)(
+  'selects only the current filtered Kanban column with %s+A',
+  async (modifier) => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.listViewStates = { inbox: { ...getListViewDefaults('inbox'), view: 'kanban' } };
+    const h = await mountCanonicalSearchUi(
+      {
+        'tasks.md': [
+          '- [ ] needle todo',
+          '- [ ] hidden todo',
+          ...Array.from({ length: 120 }, (_, index) => `- [/] needle doing ${index}`),
+          '- [x] needle done',
+        ].join('\n'),
+      },
+      settings,
+      'tasks',
+    );
+    try {
+      h.query('needle');
+      await h.completed();
+      const column = expectDefined(
+        h.root.querySelector<HTMLElement>('[data-column-key="status:status-2"]'),
+      );
+      const card = expectDefined(column.querySelector<HTMLElement>('.abyss-task-card'));
+      card.click();
+      await vi.waitFor(() => {
+        expect(card.classList.contains('is-selected')).toBe(true);
+      });
+      const key = card.dataset['rowKey'];
+      const select = (target: HTMLElement) => {
+        const event = new KeyboardEvent('keydown', {
+          key: 'a',
+          [modifier]: true,
+          bubbles: true,
+          cancelable: true,
+        });
+        target.dispatchEvent(event);
+        return event.defaultPrevented;
+      };
+      expect(select(card)).toBe(true);
+      expect(selectedRows(h).size).toBe(120);
+      expect(selectedRows(h).focus).toBe(key);
+      expect(h.root.querySelectorAll('.abyss-multi-selected').length).toBeLessThan(120);
+      const todo = expectDefined(
+        h.root.querySelector<HTMLElement>('[data-column-key="status:status-1"] .abyss-task-card'),
+      );
+      expect(select(todo)).toBe(true);
+      expect(selectedRows(h).size).toBe(1);
+      expect(todo.classList.contains('abyss-multi-selected')).toBe(true);
+      const input = expectDefined(h.root.querySelector<HTMLInputElement>('.abyss-center-search'));
+      expect(select(input)).toBe(false);
+      expect(selectedRows(h).size).toBe(1);
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
 it.each([
   ['list', 'none'],
   ['kanban', 'none'],

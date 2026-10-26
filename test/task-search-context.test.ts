@@ -37,6 +37,11 @@ it.each([
   ['- [ ] overdue 📅 2026-10-03', 'today'],
   ['- [ ] scheduled ⏳ 2026-10-04 📅 2026-10-10', 'today'],
   ['- [ ] future 📅 2026-10-10', 'upcoming'],
+  ['- [ ] future start 🛫 2026-10-10', 'upcoming'],
+  ['- [ ] scheduled before start 🛫 2026-10-10 📅 2026-10-11 ⏳ 2026-10-04', 'today'],
+  ['- [x] finished early 📅 2026-10-10 ✅ 2026-10-03', 'inbox'],
+  ['- [-] cancelled future 📅 2026-10-10 ❌ 2026-10-03', 'inbox'],
+  ['- [x] completed today ✅ 2026-10-04', 'today'],
   ['- [x] tagged #hidden', 'inbox'],
 ])('uses ordinary date policy without assuming fallback membership: %s', async (markdown, want) => {
   const settings = structuredClone(DEFAULT_SETTINGS);

@@ -14,13 +14,13 @@ import {
   normalizeTaskTagInput,
   taskHasFutureDate,
   taskNodeSourceLine,
-  taskTodayOccurrence,
   type LocalDate,
   type TaskNodeSnapshot,
   type TaskPlanning,
   type TaskStatus,
 } from '../tasks';
 import type { TaskOrganizationSettings } from './TaskListSelector';
+import { todayTaskOccurrence } from './todayTaskCategory';
 
 export interface TaskMembershipValue {
   readonly depth: number;
@@ -223,8 +223,9 @@ function* selected(
   const { selection, settings, today } = input;
   if (selection === 'inbox')
     return yield* selectedInbox(task, settings, context.inboxTag, cooperative);
-  if (selection === 'today') return taskTodayOccurrence(task.planning, today) !== undefined;
-  if (selection === 'upcoming') return taskHasFutureDate(task.planning, today);
+  if (selection === 'today') return todayTaskOccurrence(task, today) !== undefined;
+  if (selection === 'upcoming')
+    return isActiveTaskNode(task) && taskHasFutureDate(task.planning, today);
   if (selection === null || typeof selection === 'string') return task.depth === 0;
   return yield* selectedObject(task, { ...context, selection }, cooperative);
 }

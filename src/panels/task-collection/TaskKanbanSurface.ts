@@ -5,6 +5,7 @@ import {
   defaultTaskKanbanSettings,
   type TaskKanbanSettings,
 } from '../../task-lists/taskKanbanSettings';
+import { isRealmHTMLElement } from '../../ui/domRealm';
 import { indexedRows, type TaskListRows } from '../task-list/taskListRows';
 import {
   TaskListSurface,
@@ -13,6 +14,7 @@ import {
   type TaskListScrollPosition,
   type TaskListSurfaceOptions,
 } from '../task-list/TaskListSurface';
+import type { TaskOrderSpan } from '../task-list/taskOccurrenceSelection';
 import type { TaskCollectionSurface } from './TaskCollectionSurface';
 
 interface Column<T> {
@@ -66,6 +68,23 @@ export class TaskKanbanSurface<T> implements TaskCollectionSurface<T> {
   }
   get rows(): TaskListRows<T> {
     return this.#model.rows;
+  }
+  selectionSpan(target: EventTarget | null, fallback?: string): TaskOrderSpan | undefined {
+    const element = isRealmHTMLElement(target)
+      ? target.closest<HTMLElement>('.abyss-task-kanban-column')
+      : null;
+    const key = element?.dataset['columnKey'];
+    const column =
+      (key === undefined ? undefined : this.#columns.get(key)) ??
+      (fallback === undefined ? undefined : this.#owners.get(fallback)) ??
+      [...this.#columns.values()].find((candidate) => candidate.active);
+    if (column === undefined) return undefined;
+    const rows = column.model.rows;
+    const first = rows.taskKeyAt(0),
+      last = rows.taskKeyAt(rows.taskCount - 1);
+    return first === undefined || last === undefined
+      ? { from: 0, to: -1 }
+      : { from: this.rows.indexOf(first), to: this.rows.indexOf(last) };
   }
   captureScroll(): TaskKanbanScrollPosition {
     return {

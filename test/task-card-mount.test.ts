@@ -1499,6 +1499,37 @@ it.each([undefined, { kind: 'node' as const, completion: { kind: 'allowed' as co
   },
 );
 
+it.each(['2026-10-06', '2026-10-12'])(
+  'renders an independent Scheduled occurrence on %s instead of the authored interval',
+  (scheduled) => {
+    const h = renderer();
+    h.state.set('selectedList', 'upcoming');
+    const original = task({
+      planning: { start: '2026-10-07', due: '2026-10-09', scheduled },
+    });
+    const mount = h.subject.mount(document.body, original, [], {
+      selected: false,
+      showDelete: false,
+      occurrence: {
+        kind: 'daily',
+        displayDate: localDate(scheduled),
+        dateRoles: ['scheduled'],
+        completion: { kind: 'allowed' },
+      },
+    });
+    expect(mount.element.querySelector('.abyss-task-date')?.textContent).toBe(scheduled);
+    expectDefined(mount.element.querySelector<HTMLElement>('.abyss-task-date-part')).click();
+    expect(h.listControls.addPropertyFilter).toHaveBeenCalledWith({
+      type: 'date',
+      value: scheduled,
+    });
+    expect(mount.element.querySelector('.abyss-status-marker--continuation')).toBeNull();
+    expectDefined(mount.element.querySelector<HTMLElement>('[role=checkbox]')).click();
+    expect(h.toggleTask).toHaveBeenCalledExactlyOnceWith(original, { kind: 'allowed' });
+    mount.destroy();
+  },
+);
+
 it('renders the contributed point date for an inverted range without an interval glyph', () => {
   const h = renderer();
   h.state.set('selectedList', 'upcoming');

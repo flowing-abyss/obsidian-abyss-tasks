@@ -516,12 +516,33 @@ it.each([
 );
 
 it.each([
-  ['w', 'in-progress', 'Waiting', 'click'],
-  ['x', 'done', 'Done', 'Enter'],
-  ['-', 'cancelled', 'Cancelled', ' '],
+  {
+    symbol: 'w',
+    type: 'in-progress',
+    name: 'Waiting',
+    activation: 'click',
+    lifecycle: '',
+    count: 3,
+  },
+  {
+    symbol: 'x',
+    type: 'done',
+    name: 'Done',
+    activation: 'Enter',
+    lifecycle: ' ✅ 2026-10-06',
+    count: 1,
+  },
+  {
+    symbol: '-',
+    type: 'cancelled',
+    name: 'Cancelled',
+    activation: ' ',
+    lifecycle: ' ❌ 2026-10-06',
+    count: 1,
+  },
 ] as const)(
-  'keeps configured %s status on every daily child card and toggles only its terminal row',
-  async (symbol, type, name, activation) => {
+  'keeps configured $symbol child status and completion rules across temporal lists',
+  async ({ symbol, type, name, activation, lifecycle, count }) => {
     vi.useRealTimers();
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date(2026, 9, 6, 12));
@@ -536,7 +557,9 @@ it.each([
       core: false,
     });
     const h = await mountCanonicalSearchUi(
-      { 'source.md': `- [ ] Parent\n  - [${symbol}] Child 🛫 2026-10-07 📅 2026-10-09 ⏫\n` },
+      {
+        'source.md': `- [ ] Parent\n  - [${symbol}] Child 🛫 2026-10-07 📅 2026-10-09 ⏫${lifecycle}\n`,
+      },
       settings,
       'tasks',
     );
@@ -549,8 +572,14 @@ it.each([
         statusGroups: ['todo', 'in-progress', 'done', 'cancelled'],
       });
       await h.completed();
+      if (count === 1) {
+        expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(0);
+        h.state.set('selectedList', 'today');
+        h.query('Child');
+        await h.completed();
+      }
       const cards = [...h.root.querySelectorAll<HTMLElement>('.abyss-task-card')];
-      expect(cards).toHaveLength(3);
+      expect(cards).toHaveLength(count);
       const icons: string[] = [];
       const dates: string[] = [];
       for (const card of cards) {
@@ -567,7 +596,7 @@ it.each([
       if (symbol === 'w') expect(icons[0]).toContain('<svg');
       expect(new Set(dates).size).toBe(1);
       expect(dates[0]).toContain('–');
-      for (const card of cards.slice(0, 2)) {
+      for (const card of cards.slice(0, -1)) {
         const control = expectDefined(card.querySelector<HTMLElement>('[role=checkbox]'));
         control.click();
         for (const key of [' ', 'Enter'])
@@ -577,7 +606,9 @@ it.each([
       const target = expectDefined(
         h.index.listNodes().find(({ node }) => node.title === 'Child'),
       ).target;
-      const control = expectDefined(cards[2]?.querySelector<HTMLElement>('[role=checkbox]'));
+      const control = expectDefined(
+        cards[cards.length - 1]?.querySelector<HTMLElement>('[role=checkbox]'),
+      );
       if (activation === 'click') control.click();
       else control.dispatchEvent(new KeyboardEvent('keydown', { key: activation, bubbles: true }));
       await vi.waitFor(() => {

@@ -63,14 +63,16 @@ export function taskTodayOccurrence(
     };
   if (planning.due !== undefined && planning.due < today)
     return { category: 'overdue', displayDate: planning.due, completion: { kind: 'allowed' } };
-  if (occupied.kind === 'points' && occupied.points.some(({ date }) => date === today))
+  if (
+    planning.scheduled === today ||
+    (occupied.kind === 'points' && occupied.points.some(({ date }) => date === today))
+  )
     return { category: 'today', displayDate: today, completion: { kind: 'allowed' } };
   return undefined;
 }
 
 export function taskHasFutureDate(planning: TaskPlanning, today: LocalDate): boolean {
-  const occupied = taskOccupiedDates(planning);
-  return occupied.kind === 'interval'
-    ? occupied.due > today
-    : occupied.points.some(({ date }) => date > today);
+  return [planning.start, planning.scheduled, planning.due].some(
+    (date) => date !== undefined && date > today,
+  );
 }

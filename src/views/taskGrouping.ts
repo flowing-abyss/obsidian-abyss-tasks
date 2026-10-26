@@ -90,7 +90,7 @@ export function sortTasksByField(
  */
 export type TaskGroupValue = Pick<
   TaskSnapshot,
-  'priority' | 'statusSymbol' | 'tags' | 'planning'
+  'priority' | 'status' | 'statusSymbol' | 'tags' | 'planning'
 > & { readonly source: Pick<TaskSnapshot['source'], 'filePath' | 'line'> };
 export interface TaskGroup<T extends TaskGroupValue = TaskSnapshot> {
   readonly key: string;

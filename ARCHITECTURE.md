@@ -242,11 +242,12 @@ Obsidian owns the mobile keyboard inset.
 
 [`taskNodeMembership`](src/task-lists/taskNodeMembership.ts) supplies shared membership. Lists and
 tags can include roots and descendants by their own metadata; untagged Inbox admits roots only.
-Project collections and Global Search retain roots. Sidebar counts deduplicate active physical nodes
+Project collections and Global Search retain roots. Temporal lists apply status and lifecycle dates;
+Scheduled contributes independently of Start/Due. Sidebar counts deduplicate active physical nodes
 independently of saved center filters.
 
 [`taskOccupiedDates`](src/tasks/domain/taskOccupiedDates.ts) describes inclusive Start/Due ranges
-or distinct authored points for Today, Upcoming, and Calendar. Occurrence completion capability is
+or distinct authored points for calendar geometry. Occurrence completion capability is
 separate from the physical node. Grouping may display that node more than once: logical keys identify
 rows, while commands identify source nodes. Selection and keyboard ranges follow complete logical
 order; counts and bulk writes deduplicate physical targets. Selection survives only exact identity

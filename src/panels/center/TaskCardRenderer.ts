@@ -233,6 +233,7 @@ function cardDates(
 } {
   const date = occurrence?.displayDate ?? planning.due ?? planning.scheduled ?? planning.start;
   if (occurrence?.interval !== undefined) return { date, interval: occurrence.interval };
+  if (occurrence?.dateRoles !== undefined) return { date, interval: undefined };
   const occupied = taskOccupiedDates(planning);
   return { date, interval: occupied.kind === 'interval' ? occupied : undefined };
 }

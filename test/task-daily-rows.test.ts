@@ -166,16 +166,16 @@ describe('complete Upcoming daily organization', () => {
   });
 });
 
-it('keeps point holes, ignores scheduled outside valid ranges and orders tied times by creation then source', async () => {
+it('keeps point holes and independent scheduled days, ordering tied times by creation then source', async () => {
   const h = await dailyFixture(
     '- [ ] later due 🛫 2026-10-08 📅 2026-10-11 ⏰ 09:00 ➕ 2026-01-01\n- [ ] earlier due 🛫 2026-10-08 📅 2026-10-09 ⏰ 09:00 ➕ 2026-02-01\n- [ ] inverted 🛫 2026-10-12 📅 2026-10-07 ⏳ 2026-10-12\n- [ ] same 🛫 2026-10-08 📅 2026-10-08 ⏳ 2026-10-30\n- [ ] start 🛫 2026-10-15',
   );
   try {
     const rows = h.rows();
     const headers = [...rows.slice(0, rows.rowCount)].filter((r) => r.kind === 'group');
-    expect(headers).toHaveLength(7);
+    expect(headers).toHaveLength(8);
     const dates = headers.map((r) => r.key);
-    expect(dates.some((key) => key.includes('2026-10-30'))).toBe(false);
+    expect(dates.some((key) => key.includes('2026-10-30'))).toBe(true);
     const day = [...rows.slice(0, rows.rowCount)].filter(
       (r) => r.kind === 'task' && String(r.presentation?.displayDate) === '2026-10-08',
     );
@@ -206,6 +206,33 @@ it('keeps point holes, ignores scheduled outside valid ranges and orders tied ti
   }
 });
 
+it.each(['2026-10-07', '2026-10-09', '2026-10-12'])(
+  'includes Scheduled %s once, with completion tied to the actual occurrence',
+  async (scheduled) => {
+    const h = await dailyFixture(`- [ ] Planned 🛫 2026-10-08 📅 2026-10-10 ⏳ ${scheduled}`);
+    try {
+      const rows = h.rows();
+      const inside = scheduled === '2026-10-09';
+      expect(rows.taskCount).toBe(inside ? 3 : 4);
+      const date = localDate(scheduled);
+      const matches = [...rows.slice(0, rows.rowCount)].filter(
+        (r) => r.kind === 'task' && r.presentation?.displayDate === date,
+      );
+      expect(matches).toHaveLength(1);
+      const row = expectDefined(matches[0]);
+      expect(row.kind === 'task' ? row.presentation?.completion : undefined).toEqual(
+        inside ? { kind: 'continuation', due: '2026-10-10' } : { kind: 'allowed' },
+      );
+      if (!inside)
+        expect(row.kind === 'task' ? row.presentation?.dateRoles : undefined).toEqual([
+          'scheduled',
+        ]);
+    } finally {
+      h.close();
+    }
+  },
+);
+
 it.each(['title', 'priority'] as const)(
   'keeps date groups ascending for descending %s sort',
   async (field) => {
@@ -226,6 +253,35 @@ it.each(['title', 'priority'] as const)(
       expect(rows.task(expectDefined(rows.taskKeyAt(5)))?.presentation.displayDate).toBe(
         '2026-10-09',
       );
+    } finally {
+      h.close();
+    }
+  },
+);
+
+it.each(['asc', 'desc'] as const)(
+  'allows bulk completion when adjacent Scheduled and Start rows are selected (%s)',
+  async (dir) => {
+    const h = await dailyFixture('- [ ] Planned ⏳ 2026-10-07 🛫 2026-10-08 📅 2026-10-10');
+    try {
+      const rows = drainCollectionSteps(
+        organizeTaskSearch({
+          ...h.input,
+          view: {
+            ...h.input.view,
+            list: { ...h.input.view.list, sortBy: { field: 'date', dir } },
+          },
+        }),
+      ).rows;
+      const ranges = rows.captureSelection({
+        spans: [dir === 'asc' ? { from: 0, to: 1 } : { from: 2, to: 3 }],
+        include: [],
+        exclude: [],
+      });
+      expect(ranges).toHaveLength(1);
+      expect(rows.selectedCount(ranges)).toBe(2);
+      expect(rows.selectedNodes(ranges)).toHaveLength(1);
+      expect(rows.selectedNodes(ranges)[0]?.completion).toEqual({ kind: 'allowed' });
     } finally {
       h.close();
     }

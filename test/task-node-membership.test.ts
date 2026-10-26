@@ -20,6 +20,91 @@ const markdown =
   '- [ ] Parent #one-off\n  - [/] Child #INBOX 🛫 2026-10-07 📅 2026-10-09\n    - [ ] Deep untagged\n    - [ ] Deep tagged #inbox\n  - [x] Done #inbox\n- [ ] Both #inbox\n  - [ ] Both child #inbox\n- [ ] Untagged\n- [ ] Work #work\n  - [ ] Nested #work/deep';
 
 describe('own-node destination membership', () => {
+  it('keeps active overdue in Today and excludes finished work from Upcoming by own lifecycle dates', async () => {
+    const customSettings = structuredClone(settings);
+    customSettings.taskStatuses.push({
+      id: 'approved',
+      symbol: 'v',
+      name: 'Approved',
+      type: 'done',
+      icon: '',
+      core: false,
+    });
+    const h = await createCanonicalSearchHarness(
+      {
+        'dates.md': [
+          '- [ ] Overdue 📅 2026-09-01',
+          '- [/] Ongoing 🛫 2026-10-07 📅 2026-10-10',
+          '- [ ] Scheduled today ⏳ 2026-10-08',
+          '- [ ] Starts today 🛫 2026-10-08',
+          '- [ ] Tomorrow 📅 2026-10-09',
+          '- [ ] Scheduled future ⏳ 2026-10-10',
+          '- [ ] Starts future 🛫 2026-10-11',
+          '- [ ] Undated',
+          '- [ ] Created today ➕ 2026-10-08',
+          '- [ ] Old scheduled ⏳ 2026-10-07',
+          '- [x] Done today ✅ 2026-10-08',
+          '- [x] Done today old due 📅 2026-09-01 ✅ 2026-10-08',
+          '- [x] Done today future due 📅 2026-10-11 ✅ 2026-10-08',
+          '- [x] Old done due today 📅 2026-10-08 ✅ 2026-10-07',
+          '- [x] Old done overdue 📅 2026-09-01 ✅ 2026-10-07',
+          '- [x] Old done future 📅 2026-10-09 ✅ 2026-10-07',
+          '- [x] Missing completion 📅 2026-10-08',
+          '- [x] Future completion 📅 2026-10-08 ✅ 2026-10-09',
+          '- [-] Cancelled today ❌ 2026-10-08',
+          '- [-] Old cancelled 📅 2026-10-08 ❌ 2026-10-07',
+          '- [-] Cancelled future 📅 2026-10-09 ❌ 2026-10-07',
+          '- [v] Custom done ✅ 2026-10-08',
+          '- [v] Custom old 📅 2026-10-08 ✅ 2026-10-07',
+          '- [ ] Parent',
+          '  - [x] Child done ✅ 2026-10-08',
+          '  - [x] Child old 📅 2026-10-08 ✅ 2026-10-07',
+          '  - [ ] Child overdue 📅 2026-10-07',
+          '  - [ ] Child future 🛫 2026-10-09',
+        ].join('\n'),
+      },
+      customSettings,
+    );
+    try {
+      const tasks = h.index.listNodes();
+      const select = (selection: 'today' | 'upcoming') =>
+        selectTaskNodes({
+          tasks,
+          selection,
+          settings: customSettings,
+          today,
+          nowMs: 0,
+          viewState: {
+            ...getListViewDefaults(selection),
+            statusGroups: [],
+            groupBy: 'none',
+            sortBy: { field: 'title', dir: 'asc' },
+          },
+        }).map(({ node }) => node.title);
+      expect(select('today')).toEqual([
+        'Cancelled today',
+        'Child done',
+        'Child overdue',
+        'Custom done',
+        'Done today',
+        'Done today future due',
+        'Done today old due',
+        'Ongoing',
+        'Overdue',
+        'Scheduled today',
+        'Starts today',
+      ]);
+      expect(select('upcoming')).toEqual([
+        'Child future',
+        'Ongoing',
+        'Scheduled future',
+        'Starts future',
+        'Tomorrow',
+      ]);
+    } finally {
+      h.close();
+    }
+  });
   it.each(['Parent', 'Deep tagged'])(
     'reads only membership fields from %s without enumerating the node',
     async (title) => {
