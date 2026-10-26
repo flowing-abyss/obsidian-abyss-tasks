@@ -182,6 +182,7 @@ export class ProjectDashboardProperties {
       return;
     }
     this.#plus.setAttribute('aria-expanded', 'true');
+    let resizeObserver: ResizeObserver | undefined;
     this.#popover = openAnchoredPopover({
       owner: this.owner,
       boundary: this.owner,
@@ -189,14 +190,24 @@ export class ProjectDashboardProperties {
       preferred: 'below-start',
       cls: 'abyss-project-dashboard-properties',
       onClose: (restoreFocus) => {
+        resizeObserver?.disconnect();
         this.#releaseRows();
         this.#popover = undefined;
         if (restoreFocus && !this.#destroyed) this.#plus.focus();
         this.#plus.setAttribute('aria-expanded', 'false');
       },
     });
-    this.#renderProperties(this.#popover.element);
-    this.#popover.reposition();
+    const popover = this.#popover;
+    this.#renderProperties(popover.element);
+    popover.reposition();
+    const ResizeObserverClass = this.owner.ownerDocument.defaultView?.ResizeObserver;
+    if (typeof ResizeObserverClass === 'function') {
+      resizeObserver = new ResizeObserverClass(() => {
+        popover.reposition();
+      });
+      resizeObserver.observe(popover.element);
+      resizeObserver.observe(this.owner);
+    }
   }
   #releaseRows(): void {
     const rows = [...this.#rows.values()];

@@ -9068,13 +9068,43 @@ button.abyss-project-dashboard-date {
   display: grid;
   align-items: center;
   grid-template-columns: minmax(5rem, 1fr) minmax(0, 2fr);
-  gap: var(--size-4-2);
+  gap: var(--size-4-4);
   padding-block: var(--size-2-1);
   overflow-wrap: anywhere;
 }
 
+@supports (grid-template-columns: subgrid) {
+  .abyss-project-dashboard-properties {
+    display: grid;
+    grid-template-columns: minmax(0, max-content) minmax(0, max-content);
+    gap: 0 var(--size-4-4);
+    width: max-content;
+    min-width: 0;
+    max-width: min(32rem, var(--abyss-pop-width, 80cqi));
+  }
+
+  .abyss-project-dashboard-properties > * {
+    grid-column: 1 / -1;
+  }
+
+  .abyss-project-dashboard-property {
+    grid-template-columns: subgrid;
+  }
+}
+
 .abyss-project-dashboard-properties .abyss-project-description {
   margin: 0;
+}
+
+.abyss-project-dashboard-properties .abyss-project-dashboard-property .abyss-project-table-values {
+  flex-wrap: wrap;
+}
+
+.abyss-project-dashboard-properties
+  .abyss-project-dashboard-property
+  .abyss-project-table-values
+  > * {
+  flex-shrink: 1;
 }
 
 body.is-mobile .abyss-project-dashboard-property {

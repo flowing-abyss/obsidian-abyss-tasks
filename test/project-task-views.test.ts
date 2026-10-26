@@ -245,6 +245,67 @@ it('refreshes configured dashboard properties without changing note metadata or 
     h.dispose();
   }
 });
+it('keeps growing property menus inside their owner and releases sizing when closed', async () => {
+  const h = await mount();
+  const observers: RecordingResizeObserver[] = [];
+  class RecordingResizeObserver {
+    readonly targets = new Set<Element>();
+    readonly disconnect = vi.fn(() => {
+      this.targets.clear();
+    });
+    constructor(readonly notify: () => void) {
+      observers.push(this);
+    }
+    observe(target: Element): void {
+      this.targets.add(target);
+    }
+  }
+  vi.stubGlobal('ResizeObserver', RecordingResizeObserver);
+  try {
+    h.open('Projects/A.md');
+    const plus = expectDefined(
+      h.root.querySelector<HTMLElement>('[aria-label="Project properties"]'),
+    );
+    plus.click();
+    const menu = expectDefined(
+      h.root.querySelector<HTMLElement>('.abyss-project-dashboard-properties'),
+    );
+    const owner = expectDefined(menu.parentElement);
+    let width = 180;
+    vi.spyOn(owner, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 400, 600));
+    vi.spyOn(plus, 'getBoundingClientRect').mockReturnValue(new DOMRect(340, 40, 24, 24));
+    const measure = vi
+      .spyOn(menu, 'getBoundingClientRect')
+      .mockImplementation(() => new DOMRect(0, 0, width, 200));
+    window.dispatchEvent(new Event('resize'));
+    expect(menu.style.getPropertyValue('--abyss-pop-left')).toBe('212px');
+    const observer = expectDefined(observers.find((candidate) => candidate.targets.has(menu)));
+    const label = expectDefined(menu.querySelector<HTMLElement>('button'));
+    label.focus();
+    width = 320;
+    observer.notify();
+    expect(menu.style.getPropertyValue('--abyss-pop-left')).toBe('72px');
+    expect(document.activeElement).toBe(label);
+    width = 180;
+    observer.notify();
+    expect(menu.style.getPropertyValue('--abyss-pop-left')).toBe('212px');
+    plus.click();
+    expect(observer.disconnect).toHaveBeenCalledOnce();
+    measure.mockClear();
+    observer.notify();
+    expect(measure).not.toHaveBeenCalled();
+    plus.click();
+    const reopened = expectDefined(
+      h.root.querySelector<HTMLElement>('.abyss-project-dashboard-properties'),
+    );
+    const next = expectDefined(observers.find((candidate) => candidate.targets.has(reopened)));
+    h.state.set('mode', 'calendar');
+    expect(next.disconnect).toHaveBeenCalledOnce();
+  } finally {
+    h.dispose();
+    vi.unstubAllGlobals();
+  }
+});
 it.each([
   { property: 'approved', renamed: 'Approved', control: 'input', expected: 'Approved: true' },
   {
