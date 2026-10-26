@@ -329,7 +329,8 @@ Dashboard properties reuse [`projectTableCells`](src/panels/projects/projectTabl
 and `ProjectCellEditor`. `createFieldEditorSession` captures effective type and exact source state,
 then submits through the overview's queue, history, and receipts. This also owns inline checkbox and
 list changes. The dashboard owns finite Markdown, popover, and editor resources and retains active
-anchors and focus on refresh. Configured empty properties stay available for editing.
+anchors and focus on refresh. Its floating field editor belongs to the properties menu's focus
+scope; value changes keep both surfaces open. Configured empty properties stay available for editing.
 
 `ProjectDashboardTimeline` adds project Start/End boundaries to the task axis without a project row.
 Its edits share overview endpoint guards, mutation ordering, receipt projection, and history through

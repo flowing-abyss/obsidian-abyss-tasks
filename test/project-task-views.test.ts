@@ -205,8 +205,182 @@ it('shows only configured dashboard properties with table values and guarded edi
     await vi.waitFor(async () => {
       expect(await h.app.vault.read(file)).toContain('budget: 120000');
     });
-    plus.click();
     expect(property('budget').textContent).toContain('120000');
+  } finally {
+    h.dispose();
+  }
+});
+it('retains the properties menu and focused picker through repeated saves and layered Escape', async () => {
+  const h = await mount('---\npriority: high\nbudget: 12\n---\n', (settings) => {
+    settings.projects.propertyDefinitions = {
+      'property:priority': { type: 'text', presets: [{ value: 'high' }, { value: 'low' }] },
+      'property:budget': { type: 'number' },
+    };
+  });
+  try {
+    h.open('Projects/A.md');
+    const plus = expectDefined(
+      h.root.querySelector<HTMLElement>('[aria-label="Project properties"]'),
+    );
+    plus.click();
+    const menu = expectDefined(h.root.querySelector('.abyss-project-dashboard-properties'));
+    const label = () =>
+      expectDefined(h.root.querySelector<HTMLElement>('[aria-label="Edit priority"]'));
+    label().click();
+    const editor = expectDefined(h.root.querySelector('.abyss-project-dashboard-editor'));
+    const search = expectDefined(editor.querySelector<HTMLInputElement>('input'));
+    expect(menu.isConnected).toBe(true);
+    const file = expectDefined(h.app.vault.getFileByPath('Projects/A.md'));
+    for (const [value, expected] of [
+      ['low', 'low'],
+      ['low', undefined],
+      ['high', 'high'],
+    ] as const) {
+      const option = expectDefined(editor.querySelector<HTMLElement>(`[data-value="${value}"]`));
+      option.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      option.focus();
+      expect(document.activeElement).toBe(option);
+      option.click();
+      await vi.waitFor(() => {
+        expect(h.app.metadataCache.getFileCache(file)?.frontmatter?.['priority']).toBe(expected);
+      });
+      expect(menu.isConnected).toBe(true);
+      expect(editor.isConnected).toBe(true);
+      expect(document.activeElement).toBe(search);
+    }
+    search.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await vi.waitFor(() => {
+      expect(editor.isConnected).toBe(false);
+    });
+    expect(menu.isConnected).toBe(true);
+    expect(document.activeElement).toBe(label());
+    label().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(menu.isConnected).toBe(false);
+    expect(document.activeElement).toBe(plus);
+  } finally {
+    h.dispose();
+  }
+});
+it('settles a property draft before switching fields and keeps the properties menu open', async () => {
+  const h = await mount('---\nowner: Team\n---\n', (settings) => {
+    settings.projects.propertyDefinitions = {
+      'property:budget': { type: 'number' },
+      'property:owner': { type: 'text' },
+    };
+  });
+  try {
+    h.open('Projects/A.md');
+    expectDefined(h.root.querySelector<HTMLElement>('[aria-label="Project properties"]')).click();
+    expectDefined(h.root.querySelector<HTMLElement>('[aria-label="Edit budget"]')).click();
+    const input = expectDefined(
+      h.root.querySelector<HTMLInputElement>('.abyss-project-editor-input'),
+    );
+    input.value = '24';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    const other = expectDefined(h.root.querySelector<HTMLElement>('[aria-label="Edit owner"]'));
+    other.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    other.focus();
+    other.click();
+    await vi.waitFor(() => {
+      expect(
+        h.root.querySelector('.abyss-project-dashboard-editor input')?.getAttribute('aria-label'),
+      ).toBe('Search owner');
+    });
+    const file = expectDefined(h.app.vault.getFileByPath('Projects/A.md'));
+    expect(await h.app.vault.read(file)).toContain('budget: 24');
+    expect(h.root.querySelector('.abyss-project-dashboard-properties')?.textContent).toContain(
+      '24',
+    );
+    expect(document.activeElement).toBe(
+      h.root.querySelector('.abyss-project-dashboard-editor input'),
+    );
+  } finally {
+    h.dispose();
+  }
+});
+it.each(['invalid', 'rejected'] as const)(
+  'retains the properties menu and anchor after an outside click with an %s save',
+  async (failure) => {
+    const h = await mount('', (settings) => {
+      settings.projects.propertyDefinitions = { 'property:budget': { type: 'number' } };
+    });
+    const outside = document.body.createEl('button');
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      h.open('Projects/A.md');
+      expectDefined(h.root.querySelector<HTMLElement>('[aria-label="Project properties"]')).click();
+      const menu = expectDefined(h.root.querySelector('.abyss-project-dashboard-properties'));
+      expectDefined(menu.querySelector<HTMLElement>('[aria-label="Edit budget"]')).click();
+      const input = expectDefined(
+        h.root.querySelector<HTMLInputElement>('.abyss-project-editor-input'),
+      );
+      const validity = { badInput: failure === 'invalid', valid: failure !== 'invalid' };
+      Object.defineProperty(input, 'validity', { get: () => validity });
+      const write =
+        failure === 'rejected'
+          ? vi.spyOn(h.app.vault, 'process').mockRejectedValue(new Error('write denied'))
+          : undefined;
+      input.value = '42';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      outside.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      outside.focus();
+      await vi.waitFor(() => {
+        expect(
+          expectDefined(h.root.querySelector('.abyss-project-editor-error')).textContent,
+        ).not.toBe('');
+      });
+      await flushMicrotasks();
+      expect(menu.isConnected).toBe(true);
+      expect(menu.querySelector('[aria-label="Edit budget"]')?.isConnected).toBe(true);
+      expect(input.isConnected).toBe(true);
+      validity.badInput = false;
+      validity.valid = true;
+      write?.mockRestore();
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await vi.waitFor(() => {
+        expect(menu.isConnected).toBe(false);
+      });
+      expect(input.isConnected).toBe(false);
+      expect(
+        await h.app.vault.read(expectDefined(h.app.vault.getFileByPath('Projects/A.md'))),
+      ).toContain('budget: 42');
+    } finally {
+      outside.remove();
+      h.dispose();
+    }
+  },
+);
+it('updates menu values while editing and preserves the first inline remove click after a picker save', async () => {
+  const h = await mount('---\nlabels: [one]\n---\n', (settings) => {
+    settings.projects.propertyDefinitions = {
+      'property:labels': { type: 'list', presets: [{ value: 'one' }, { value: 'two' }] },
+    };
+  });
+  try {
+    h.open('Projects/A.md');
+    expectDefined(h.root.querySelector<HTMLElement>('[aria-label="Project properties"]')).click();
+    const row = expectDefined(
+      h.root.querySelector<HTMLElement>('[data-project-field="property:labels"]'),
+    );
+    row.querySelector('button')?.click();
+    const editor = expectDefined(h.root.querySelector('.abyss-project-dashboard-editor'));
+    expectDefined(editor.querySelector<HTMLElement>('[data-value="two"]')).click();
+    await vi.waitFor(() => {
+      expect(row.querySelector('[aria-label="Remove two"]')).not.toBeNull();
+    });
+    expect(editor.isConnected).toBe(true);
+    const remove = expectDefined(row.querySelector<HTMLElement>('[aria-label="Remove one"]'));
+    remove.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    remove.focus();
+    remove.dispatchEvent(new MouseEvent('pointerup', { bubbles: true }));
+    remove.click();
+    const file = expectDefined(h.app.vault.getFileByPath('Projects/A.md'));
+    await vi.waitFor(() => {
+      expect(h.app.metadataCache.getFileCache(file)?.frontmatter?.['labels']).toEqual(['two']);
+    });
+    expect(await h.app.vault.read(file)).toContain('two');
+    expect(row.querySelector('[aria-label="Remove one"]')).toBeNull();
+    expect(row.isConnected).toBe(true);
   } finally {
     h.dispose();
   }
@@ -383,6 +557,56 @@ it.each(['synchronous', 'after close'] as const)(
     }
   },
 );
+
+it('isolates a property render failure without detaching an open editor anchor', async () => {
+  const render = vi
+    .spyOn(MarkdownRenderer, 'render')
+    .mockImplementation(async (_app, text, holder) => {
+      holder.setText(text);
+    });
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+  const h = await mount('---\nowner: "[[People/Owner]]"\npriority: high\n---\n', (settings) => {
+    settings.projects.propertyDefinitions = {
+      'property:owner': { type: 'text' },
+      'property:priority': { type: 'text', presets: [{ value: 'high' }, { value: 'low' }] },
+    };
+  });
+  try {
+    h.open('Projects/A.md');
+    expectDefined(h.root.querySelector<HTMLElement>('[aria-label="Project properties"]')).click();
+    const menu = expectDefined(h.root.querySelector('.abyss-project-dashboard-properties'));
+    expectDefined(menu.querySelector<HTMLElement>('[aria-label="Edit priority"]')).click();
+    const anchor = expectDefined(
+      menu.querySelector('[data-project-field="property:priority"] > div'),
+    );
+    const input = expectDefined(
+      h.root.querySelector<HTMLInputElement>('.abyss-project-value-picker-search'),
+    );
+    render.mockImplementation(() => {
+      throw new Error('renderer unavailable');
+    });
+    await h.app.fileManager.processFrontMatter(
+      expectDefined(h.app.vault.getFileByPath('Projects/A.md')),
+      (fm: Record<string, unknown>) => {
+        fm['owner'] = '[[People/Other]]';
+      },
+    );
+    await vi.waitFor(() => {
+      expect(log).toHaveBeenCalled();
+    });
+    expect(anchor.isConnected).toBe(true);
+    expect(input.isConnected).toBe(true);
+    expect(document.activeElement).toBe(input);
+    expect(menu.textContent).toContain('Close and reopen to retry');
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await vi.waitFor(() => {
+      expect(input.isConnected).toBe(false);
+    });
+    expect(menu.isConnected).toBe(true);
+  } finally {
+    h.dispose();
+  }
+});
 
 it('shares all three task views inside the actual project dashboard without leaking Tasks context', async () => {
   const h = await mount();

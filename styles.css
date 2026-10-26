@@ -7248,6 +7248,11 @@ button.abyss-project-table-status-pill {
   font: inherit;
 }
 
+.abyss-project-value-picker input.abyss-project-value-picker-search:focus {
+  border-color: var(--interactive-accent);
+  box-shadow: none;
+}
+
 .abyss-project-value-picker-results {
   flex-shrink: 1;
   overflow-y: auto;
@@ -7325,7 +7330,7 @@ button.abyss-project-table-status-pill {
   white-space: nowrap;
 }
 
-.abyss-projects-table button.abyss-project-value-picker-edit {
+.abyss-project-value-picker button.abyss-project-value-picker-edit {
   display: inline-flex;
   width: 22px;
   min-width: 22px;
@@ -7341,12 +7346,12 @@ button.abyss-project-table-status-pill {
   opacity: 0;
 }
 
-.abyss-projects-table button.abyss-project-value-picker-edit[hidden] {
+.abyss-project-value-picker button.abyss-project-value-picker-edit[hidden] {
   display: none;
 }
 
 .abyss-project-value-picker-option:hover .abyss-project-value-picker-edit,
-.abyss-projects-table button.abyss-project-value-picker-edit:focus-visible {
+.abyss-project-value-picker button.abyss-project-value-picker-edit:focus-visible {
   opacity: 1;
 }
 
@@ -7354,7 +7359,7 @@ button.abyss-project-table-status-pill {
   display: none;
 }
 
-.abyss-projects-table button.abyss-project-value-picker-action {
+.abyss-project-value-picker button.abyss-project-value-picker-action {
   display: flex;
   overflow: hidden;
   width: 100%;
@@ -7373,7 +7378,7 @@ button.abyss-project-table-status-pill {
   text-align: left;
 }
 
-.abyss-projects-table button.abyss-project-value-picker-action:hover {
+.abyss-project-value-picker button.abyss-project-value-picker-action:hover {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
 }
@@ -9139,6 +9144,12 @@ button.abyss-project-dashboard-property-label {
   box-shadow: var(--shadow-s, none);
 }
 
+.abyss-project-dashboard-editor.is-picker {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
 .abyss-project-dashboard-property > :first-child {
   color: var(--text-muted);
 }
@@ -9948,11 +9959,11 @@ body.is-tablet
   padding: 0;
 }
 
-body.is-tablet .abyss-projects-table button.abyss-project-value-picker-edit {
+body.is-tablet .abyss-project-value-picker button.abyss-project-value-picker-edit {
   padding: 0;
 }
 
-body.is-tablet .abyss-projects-table button.abyss-project-value-picker-action {
+body.is-tablet .abyss-project-value-picker button.abyss-project-value-picker-action {
   padding: 0 var(--size-2-3);
 }
 

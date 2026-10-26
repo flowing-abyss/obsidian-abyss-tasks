@@ -82,6 +82,7 @@ export class ProjectDashboardProperties {
   readonly #dateControls = new Map<string, DateControl>();
   readonly #plus: HTMLButtonElement;
   #popover: AnchoredPopover | undefined;
+  #editorHost: HTMLElement | undefined;
   readonly #rows = new Map<string, PropertyRow>();
   #editor: ProjectCellEditorHandle | undefined;
   #readOnly = false;
@@ -115,7 +116,11 @@ export class ProjectDashboardProperties {
   }
 
   refresh(): void {
-    if (this.#destroyed || this.#editor !== undefined) return;
+    if (this.#destroyed) return;
+    if (this.#editor === undefined) this.#refreshDates();
+    if (this.#popover !== undefined) this.#renderProperties(this.#popover.element);
+  }
+  #refreshDates(): void {
     const visible = new Set<string>();
     for (const field of this.#fields().filter(({ id }) => id === 'start' || id === 'end')) {
       if (metadataText(this.#value(field)) === '') continue;
@@ -128,7 +133,6 @@ export class ProjectDashboardProperties {
       control.button.remove();
       this.#dateControls.delete(id);
     }
-    if (this.#popover !== undefined) this.#renderProperties(this.#popover.element);
   }
 
   #patchDate(field: ProjectFieldCatalogItem): void {
@@ -173,22 +177,34 @@ export class ProjectDashboardProperties {
     );
   }
   #toggle(): void {
-    if (this.#editor !== undefined) {
-      this.#editor.cancel();
+    if (this.#popover !== undefined) {
+      this.finishBefore(() => {
+        this.#popover?.close(false);
+      });
       return;
     }
-    if (this.#popover !== undefined) {
-      this.#popover.close(false);
+    if (this.#editor !== undefined) {
+      this.finishBefore(() => {
+        this.#toggle();
+      });
       return;
     }
     this.#plus.setAttribute('aria-expanded', 'true');
     let resizeObserver: ResizeObserver | undefined;
+    const handleEscape = (): boolean => this.#editor === undefined;
     this.#popover = openAnchoredPopover({
       owner: this.owner,
       boundary: this.owner,
       anchor: this.#plus,
       preferred: 'below-start',
       cls: 'abyss-project-dashboard-properties',
+      ownsTarget: (target) => this.#editorHost?.contains(target) === true,
+      onDismiss: (close) => {
+        this.finishBefore(close);
+      },
+      get handleEscape() {
+        return handleEscape();
+      },
       onClose: (restoreFocus) => {
         resizeObserver?.disconnect();
         this.#releaseRows();
@@ -219,8 +235,10 @@ export class ProjectDashboardProperties {
     try {
       this.#renderFields(body);
     } catch (error) {
-      this.#releaseRows();
-      body.setText('Could not display project properties. Close and reopen to retry.');
+      if (this.#editor === undefined) {
+        this.#releaseRows();
+        body.setText('Could not display project properties. Close and reopen to retry.');
+      }
       this.#reportFailure('render project properties', undefined, error);
     }
     restorePropertyFocus(body, focus);
@@ -229,6 +247,11 @@ export class ProjectDashboardProperties {
     const project = this.project();
     const nowMs = Date.now();
     const fields = this.#fields();
+    if (this.#editor !== undefined) {
+      // Keep the editing anchor and menu structure until the captured editor settles.
+      this.#patchExistingRows(body, project, fields, nowMs);
+      return;
+    }
     const visible = new Set(fields.map(({ id }) => id));
     for (const [id, row] of this.#rows) {
       if (visible.has(id)) continue;
@@ -251,6 +274,16 @@ export class ProjectDashboardProperties {
       time.createSpan({ cls: 'abyss-project-time-value', text: tracked });
     }
   }
+  #patchExistingRows(
+    body: HTMLElement,
+    project: Project,
+    fields: readonly ProjectFieldCatalogItem[],
+    nowMs: number,
+  ): void {
+    for (const field of fields) {
+      if (this.#rows.has(field.id)) this.#patchRow(body, project, field, nowMs);
+    }
+  }
   #patchRow(
     body: HTMLElement,
     project: Project,
@@ -271,17 +304,24 @@ export class ProjectDashboardProperties {
       return previous.element;
     }
     previous?.component.unload();
-    const element = this.#createPropertyRow(body, field);
-    // Replace in place so siblings (including focused links) keep their native lifetime.
-    previous?.element.replaceWith(element);
+    const element = previous?.element ?? this.#createPropertyRow(body, field);
     const component = new Component();
     const row = { element, component, signature, session: data.session };
     this.#rows.set(field.id, row);
     component.load();
-    const value = element.createDiv({
-      cls: field.id === 'description' ? 'abyss-project-description' : '',
-    });
-    this.#renderValue(value, row, data);
+    const value =
+      element.querySelector<HTMLElement>(':scope > div') ??
+      element.createDiv({
+        cls: field.id === 'description' ? 'abyss-project-description' : '',
+      });
+    value.empty();
+    try {
+      this.#renderValue(value, row, data);
+    } catch (error) {
+      component.unload();
+      value.setText('Could not display value. Close and reopen to retry.');
+      this.#reportFailure('render project property', field, error);
+    }
     return element;
   }
   #propertyValueContext(
@@ -319,8 +359,11 @@ export class ProjectDashboardProperties {
       attr: { 'aria-label': `Edit ${field.label}` },
     });
     const open = (): void => {
-      this.#popover?.close(false);
-      this.#edit(field, this.#plus);
+      this.finishBefore(() => {
+        const current = this.#rows.get(field.id)?.element;
+        const configured = this.#fields().find((candidate) => candidate.id === field.id);
+        if (current !== undefined && configured !== undefined) this.#edit(configured, current);
+      });
     };
     edit.addEventListener('click', open);
     row.addEventListener('click', (event) => {
@@ -441,11 +484,14 @@ export class ProjectDashboardProperties {
     const host = this.owner.createDiv({
       cls: 'abyss-project-cell-editor-host abyss-project-dashboard-editor',
     });
+    this.#editorHost = host;
+    const inMenu = this.#popover?.element.contains(anchor) === true;
     host.toggleClass('is-expanded', field.id === 'description');
     let positionCleanup = (): void => {};
     const release = (): void => {
       positionCleanup();
       host.remove();
+      this.#editorHost = undefined;
       this.#editor = undefined;
       this.#releaseEditor = undefined;
     };
@@ -460,6 +506,7 @@ export class ProjectDashboardProperties {
       statuses: this.context.settings.projects.statuses,
       ...(field.property === undefined ? {} : { sourceField: field.property }),
       sourcePath: project.path,
+      closeOnChange: !inMenu,
       onClose: (_result, close) => {
         release();
         this.refresh();
@@ -467,32 +514,52 @@ export class ProjectDashboardProperties {
       },
       restoreFocus: () => {},
     });
-    const toolbar = this.owner.querySelector<HTMLElement>('.abyss-center-header');
-    positionCleanup = mountProjectCellEditorPosition({
-      ...(toolbar === null ? {} : { stickyHeader: toolbar }),
-      host,
-      anchor,
-      boundary: this.owner,
-      positioningContainer: this.owner,
-      preferredWidth: this.#editor.preferredWidth ?? host.getBoundingClientRect().width,
-    });
+    host.toggleClass('is-picker', this.#editor.preferredWidth !== undefined);
+    positionCleanup = this.#positionEditor(host, anchor, inMenu, this.#editor.preferredWidth);
     if (this.#readOnly) {
       this.#editor.element.tabIndex = -1;
       this.#editor.element.focus();
     } else this.#editor.focus();
   }
+  #positionEditor(
+    host: HTMLElement,
+    anchor: HTMLElement,
+    inMenu: boolean,
+    preferredWidth: number | undefined,
+  ): () => void {
+    const toolbar = this.owner.querySelector<HTMLElement>('.abyss-center-header');
+    return mountProjectCellEditorPosition({
+      ...(toolbar === null ? {} : { stickyHeader: toolbar }),
+      host,
+      anchor: inMenu ? (anchor.querySelector<HTMLElement>(':scope > div') ?? anchor) : anchor,
+      boundary: this.owner,
+      positioningContainer: this.owner,
+      preferredWidth: preferredWidth ?? host.getBoundingClientRect().width,
+      ...(inMenu ? { placement: 'below' as const } : {}),
+      layoutElements:
+        this.#popover === undefined
+          ? []
+          : [this.#popover.element, ...[...this.#rows.values()].map((row) => row.element)],
+    });
+  }
+  #focusAnchor(anchor: HTMLElement, fieldId: string): HTMLElement {
+    if (anchor === this.#plus) return this.#plus;
+    if (anchor.matches('.abyss-project-dashboard-property'))
+      return this.#rows.get(fieldId)?.element.querySelector<HTMLElement>('button') ?? this.#plus;
+    return (
+      this.#dates.querySelector<HTMLElement>(`[data-project-field="${fieldId}"]`) ?? this.#plus
+    );
+  }
   #restoreFocus(anchor: HTMLElement, fieldId: string, navigation: string): void {
     if (this.#destroyed || navigation === 'preserve-focus') return;
-    const current =
-      anchor === this.#plus
-        ? this.#plus
-        : (this.#dates.querySelector<HTMLElement>(`[data-project-field="${fieldId}"]`) ??
-          this.#plus);
+    const current = this.#focusAnchor(anchor, fieldId);
     let destination = current;
     if (navigation === 'tab-forward' || navigation === 'tab-backward') {
       const controls = [
         ...this.owner.querySelectorAll<HTMLElement>(
-          '.abyss-center-header button, .abyss-center-header input',
+          anchor.matches('.abyss-project-dashboard-property')
+            ? '.abyss-project-dashboard-properties button, .abyss-project-dashboard-properties input, .abyss-project-dashboard-properties a'
+            : '.abyss-center-header button, .abyss-center-header input',
         ),
       ].filter((element) => !element.matches(':disabled') && localSearchSurfaceIsVisible(element));
       const index = controls.indexOf(current);

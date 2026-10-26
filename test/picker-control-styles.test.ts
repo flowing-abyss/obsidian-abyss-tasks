@@ -290,12 +290,12 @@ const TABLET_PADDING_ROWS: ReadonlyArray<readonly [declared: string, raised: str
     'body.is-tablet :is(.abyss-projects-table, .abyss-project-dashboard-properties) button.abyss-project-table-value-remove',
   ],
   [
-    '.abyss-projects-table button.abyss-project-value-picker-edit',
-    'body.is-tablet .abyss-projects-table button.abyss-project-value-picker-edit',
+    '.abyss-project-value-picker button.abyss-project-value-picker-edit',
+    'body.is-tablet .abyss-project-value-picker button.abyss-project-value-picker-edit',
   ],
   [
-    '.abyss-projects-table button.abyss-project-value-picker-action',
-    'body.is-tablet .abyss-projects-table button.abyss-project-value-picker-action',
+    '.abyss-project-value-picker button.abyss-project-value-picker-action',
+    'body.is-tablet .abyss-project-value-picker button.abyss-project-value-picker-action',
   ],
   [
     '.abyss-projects-table button.abyss-projects-new',

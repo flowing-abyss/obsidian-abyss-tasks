@@ -367,6 +367,7 @@ class ProjectCellValuePicker implements ProjectCellValuePickerControl {
       cls: 'abyss-project-value-picker-option',
       attr: {
         role: 'option',
+        tabindex: '-1',
         'data-value': String(choice.value),
         'aria-label': String(choice.value),
       },

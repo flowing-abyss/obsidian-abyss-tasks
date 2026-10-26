@@ -36,6 +36,8 @@ export interface ProjectCellEditorOptions {
   readonly presets?: readonly ProjectPropertySuggestion[];
   readonly sourceField?: string;
   readonly sourcePath?: string;
+  /** Keep explicit value changes open in a retained property menu. Keyboard dismissal still closes. */
+  readonly closeOnChange?: boolean;
   readonly save: (value: unknown) => Promise<void>;
   readonly onClose: (
     result: ProjectCellEditorResult,
@@ -580,7 +582,10 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
         this.cancel();
       },
       commit: (close) => {
-        this.requestCommit_abyssPrivate(close, 'restore-current');
+        this.requestCommit_abyssPrivate(
+          close && options_abyssPrivate.closeOnChange !== false,
+          'restore-current',
+        );
       },
       invalid: (message) => {
         this.error_abyssPrivate.setText(message);

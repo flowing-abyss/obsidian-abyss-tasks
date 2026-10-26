@@ -12,6 +12,10 @@ export interface AnchoredPopoverOptions {
   readonly viewportPositioned?: boolean;
   readonly retainAnchorFocus?: boolean;
   readonly handleEscape?: boolean;
+  /** A separately positioned child surface that belongs to this popover. */
+  readonly ownsTarget?: (target: Node) => boolean;
+  /** Settle an owned editor before an outside interaction dismisses the surface. */
+  readonly onDismiss?: (close: () => void) => void;
   readonly preferred: AnchoredPlacementInput['preferred'];
   /** Classes beyond the shared `abyss-popover abyss-popover-anchored` pair. */
   readonly cls: string;
@@ -136,6 +140,14 @@ function close(state: PopoverState, restoreFocus?: boolean): void {
   state.options.onClose(focused);
 }
 
+function dismiss(state: PopoverState, restoreFocus: boolean): void {
+  if (state.options.onDismiss === undefined) close(state, restoreFocus);
+  else
+    state.options.onDismiss(() => {
+      close(state, restoreFocus);
+    });
+}
+
 function listen(state: PopoverState): () => void {
   const { element } = state;
   const ownerDocument = element.ownerDocument;
@@ -149,19 +161,20 @@ function listen(state: PopoverState): () => void {
       ownerWindow === null ||
       !(target instanceof ownerWindow.Node) ||
       element.contains(target) ||
-      state.options.anchor.contains(target)
+      state.options.anchor.contains(target) ||
+      state.options.ownsTarget?.(target) === true
     )
       return;
     // Focus the surface itself sent away is the surface's own doing rather than a reader leaving
     // it. A pointer press outside is a reader either way, so it is never held.
     if (event.type === 'focusin' && state.holdingFocus) return;
-    close(state, false);
+    dismiss(state, false);
   };
   const keydown = (event: KeyboardEvent): void => {
     if (event.key !== 'Escape' || state.options.handleEscape === false) return;
     event.preventDefault();
     event.stopPropagation();
-    close(state, true);
+    dismiss(state, true);
   };
   ownerDocument.addEventListener('pointerdown', outside, true);
   ownerDocument.addEventListener('focusin', outside, true);
@@ -206,7 +219,7 @@ export function openAnchoredPopover(options: AnchoredPopoverOptions): AnchoredPo
       dismiss: {
         element,
         close: () => {
-          close(state, true);
+          dismiss(state, true);
         },
       },
     }),

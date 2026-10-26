@@ -1,3 +1,5 @@
+import { anchoredPlacement } from '../../ui/anchoredPlacement';
+
 interface ProjectCellEditorPositionOptions {
   readonly anchor: HTMLElement;
   readonly host: HTMLElement;
@@ -7,6 +9,9 @@ interface ProjectCellEditorPositionOptions {
   readonly positioningContainer?: HTMLElement;
   readonly preferredWidth?: number;
   readonly onMove?: () => void;
+  readonly placement?: 'below';
+  /** Retained menu rows can move the anchor without changing the anchor's own size. */
+  readonly layoutElements?: readonly Element[];
 }
 
 function visibleBoundary(options: ProjectCellEditorPositionOptions): DOMRect {
@@ -67,8 +72,7 @@ function positionEditor(options: ProjectCellEditorPositionOptions): string | und
   const measuredHeight = measured > 0 ? measured : host.offsetHeight;
   const height = Math.min(measuredHeight, maxHeight);
   const left = clamp(anchorRect.left, boundary.left + edgeGap, boundary.right - edgeGap - width);
-  const avoidTop = options.avoid?.getBoundingClientRect().top;
-  const [top, side] = verticalPosition(anchorRect, boundary, height, avoidTop);
+  const [top, side] = editorVerticalPosition(options, anchorRect, boundary, { width, height });
   const positioningContainer = options.positioningContainer ?? anchor;
   const positioningRect = positioningContainer.getBoundingClientRect();
   host.style.left = `${left - positioningRect.left - positioningContainer.clientLeft + positioningContainer.scrollLeft}px`;
@@ -77,6 +81,47 @@ function positionEditor(options: ProjectCellEditorPositionOptions): string | und
   const input = host.querySelector<HTMLElement>('.abyss-project-editor-input');
   const inputRect = input?.getBoundingClientRect();
   return `${left}:${top}:${width}:${height}:${inputRect?.left}:${inputRect?.top}:${inputRect?.width}`;
+}
+
+function editorVerticalPosition(
+  options: ProjectCellEditorPositionOptions,
+  anchor: DOMRect,
+  boundary: DOMRect,
+  floating: { readonly width: number; readonly height: number },
+): readonly [number, string] {
+  if (options.placement !== 'below')
+    return verticalPosition(
+      anchor,
+      boundary,
+      floating.height,
+      options.avoid?.getBoundingClientRect().top,
+    );
+  const placed = anchoredPlacement({
+    anchor,
+    boundary,
+    floating,
+    gap: 4,
+    edgeGap: 8,
+    preferred: 'below-start',
+  });
+  return [placed.top, placed.side];
+}
+
+function observeEditorLayout(
+  resizeObserver: ResizeObserver | undefined,
+  options: ProjectCellEditorPositionOptions,
+): void {
+  for (const target of [
+    options.host,
+    options.anchor,
+    options.boundary,
+    options.stickyHeader,
+    options.avoid,
+    options.positioningContainer,
+    ...(options.layoutElements ?? []),
+  ]) {
+    if (target !== undefined) resizeObserver?.observe(target);
+  }
 }
 
 export function mountProjectCellEditorPosition(
@@ -96,16 +141,7 @@ export function mountProjectCellEditorPosition(
   const ResizeObserverClass = ownerWindow?.ResizeObserver;
   const resizeObserver =
     typeof ResizeObserverClass === 'function' ? new ResizeObserverClass(position) : undefined;
-  for (const target of [
-    options.host,
-    options.anchor,
-    options.boundary,
-    options.stickyHeader,
-    options.avoid,
-    options.positioningContainer,
-  ]) {
-    if (target !== undefined) resizeObserver?.observe(target);
-  }
+  observeEditorLayout(resizeObserver, options);
   const MutationObserverClass = ownerWindow?.MutationObserver;
   const mutationObserver =
     typeof MutationObserverClass === 'function' ? new MutationObserverClass(position) : undefined;
