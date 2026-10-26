@@ -308,7 +308,7 @@ describe('ProjectsPanel dispatch', () => {
     el.remove();
   });
 
-  it('preserves the task anchor and fractional offset when dashboard description height changes', () => {
+  it('keeps changed descriptions in the disclosure without moving the retained task viewport', () => {
     let project = proj({ frontmatter: { description: 'Short' } });
     const state = new AppState();
     state.set('projectsPanel', { view: 'dashboard', path: project.path });
@@ -319,26 +319,27 @@ describe('ProjectsPanel dispatch', () => {
     } as never;
     const panel = new ProjectsPanel(state, store, stubMgr, DEFAULT_SETTINGS, null as never, {
       projectProperties,
+      renderTasks: (host) => {
+        if (host.querySelector('.abyss-center-scroll') !== null) return;
+        host.createDiv({ cls: 'abyss-center-header' });
+        host.createDiv({ cls: 'abyss-center-scroll' });
+      },
     });
     const el = activeDocument.body.createDiv();
     panel.mount(el);
-    const dashboard = expectDefined(
-      el.querySelector<HTMLElement>('.abyss-project-dashboard-session'),
-    );
-    const tasks = expectDefined(dashboard.querySelector<HTMLElement>('.abyss-project-tasks'));
-    tasks.getBoundingClientRect = () =>
-      ({
-        top:
-          100 +
-          (dashboard.querySelector('.abyss-project-description')?.textContent.length ?? 0) * 10 -
-          dashboard.scrollTop,
-      }) as DOMRect;
-    dashboard.scrollTop = 612.25;
-    const before = tasks.getBoundingClientRect().top;
+    const scroll = expectDefined(el.querySelector<HTMLElement>('.abyss-center-scroll'));
+    scroll.scrollTop = 612.25;
     project = { ...project, frontmatter: { description: 'A much longer description' } };
     panel.refresh();
-    expect(tasks.getBoundingClientRect().top).toBe(before);
-    expect(dashboard.scrollTop).toBe(812.25);
+    expect(el.querySelector('.abyss-center-scroll')).toBe(scroll);
+    expect(scroll.scrollTop).toBe(612.25);
+    const details = expectDefined(
+      el.querySelector<HTMLDetailsElement>('.abyss-project-dashboard-details'),
+    );
+    expect(details.open).toBe(false);
+    expect(details.querySelector('.abyss-project-description')?.textContent).toBe(
+      'A much longer description',
+    );
     panel.destroy();
     el.remove();
   });

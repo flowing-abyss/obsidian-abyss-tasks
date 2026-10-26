@@ -1,14 +1,19 @@
 import { Menu, setIcon } from 'obsidian';
+import { findFrontmatterProperty } from '../../projects/projectFields';
 import { projectTrackedDisplayValue } from '../../projects/projectTableModel';
 import { projectStatusDisplayName } from '../../projects/status';
 import type { Project } from '../../projects/types';
-import type { ProjectStatus } from '../../settings/types';
+import type { ProjectsSettings, ProjectStatus } from '../../settings/types';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import { renderProgressBar } from './progressBar';
+import { formatProjectPrettyDate } from './projectDatePresentation';
 import { applyProjectStatusPresentation } from './projectStatusPresentation';
 import type { ProjectsDashboardContext } from './viewContext';
 
-const dashboardProjects = new WeakMap<HTMLElement, { project: Project }>();
+const dashboardProjects = new WeakMap<
+  HTMLElement,
+  { project: Project; header: HTMLElement; settings: ProjectsSettings }
+>();
 
 /** Refresh the same project's presentation without detaching its task or capture owner. */
 export function refreshProjectDashboard(
@@ -21,41 +26,84 @@ export function refreshProjectDashboard(
   const taskHost = container.querySelector<HTMLElement>('.abyss-project-tasks');
   if (project === undefined || current?.project.path !== project.path || taskHost === null)
     return false;
-  const taskTop = taskHost.getBoundingClientRect().top;
-  const hadTaskScroll = container.scrollTop > 0;
   current.project = project;
-  const title = container.querySelector('.abyss-project-dashboard-title');
+  const title = current.header.querySelector('.abyss-project-dashboard-title');
   if (title !== null) title.textContent = project.name;
-  refreshProjectDashboardStatus(container, project, statuses);
-  const stats = container.querySelector<HTMLElement>('.abyss-project-dashboard-stats');
+  refreshProjectDashboardStatus(current.header, project, statuses);
+  const stats = current.header.querySelector<HTMLElement>('.abyss-project-dashboard-stats');
   if (stats !== null) {
     stats.empty();
     renderProgressBar(stats, project.stats);
-    renderTrackedTime(stats, project);
   }
-  refreshProjectDescription(container, project, taskHost);
-  if (hadTaskScroll) {
-    const correction = taskHost.getBoundingClientRect().top - taskTop;
-    if (Math.abs(correction) > 0.01) container.scrollTop += correction;
-  }
+  refreshProjectMetadata(current.header, project, current.settings);
   renderTasks(taskHost, project.path);
+  attachDashboardHeader(taskHost, current.header);
   return true;
 }
 
-function refreshProjectDescription(
-  container: HTMLElement,
+function attachDashboardHeader(taskHost: HTMLElement, header: HTMLElement): void {
+  const toolbar = taskHost.querySelector<HTMLElement>('.abyss-center-header');
+  if (toolbar !== null && header.parentElement !== toolbar) toolbar.prepend(header);
+}
+
+function metadataText(value: unknown): string {
+  if (Array.isArray(value)) return value.map(metadataText).filter(Boolean).join(', ');
+  if (typeof value === 'string' || typeof value === 'number') return String(value);
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  return '';
+}
+
+function refreshProjectDates(
+  header: HTMLElement,
   project: Project,
-  taskHost: HTMLElement,
+  settings: ProjectsSettings,
 ): void {
-  const raw = project.frontmatter['description'];
-  const description = typeof raw === 'string' ? raw.trim() : '';
-  const previous = container.querySelector<HTMLElement>('.abyss-project-description');
-  if (description === '') previous?.remove();
-  else {
-    const element = previous ?? container.createDiv({ cls: 'abyss-project-description' });
-    element.textContent = description;
-    if (previous === null) container.insertBefore(element, taskHost);
+  const dates = header.querySelector<HTMLElement>('.abyss-project-dashboard-dates');
+  if (dates !== null) {
+    dates.empty();
+    for (const [label, key] of [
+      ['Start', settings.startProperty],
+      ['End', settings.endProperty],
+    ] as const) {
+      const raw = findFrontmatterProperty(project.frontmatter, key)?.value;
+      if (metadataText(raw) === '') continue;
+      const value =
+        formatProjectPrettyDate(
+          raw,
+          header.ownerDocument.defaultView?.navigator.language ?? 'en',
+        ) ?? metadataText(raw);
+      const chip = dates.createSpan({
+        cls: 'abyss-project-dashboard-date',
+        attr: { 'aria-label': `${label}: ${value}` },
+      });
+      setIcon(chip.createSpan(), label === 'Start' ? 'calendar-arrow-up' : 'calendar-check');
+      chip.createSpan({ text: value });
+    }
   }
+}
+
+function refreshProjectMetadata(
+  header: HTMLElement,
+  project: Project,
+  settings: ProjectsSettings,
+): void {
+  refreshProjectDates(header, project, settings);
+  const body = header.querySelector<HTMLElement>('.abyss-project-dashboard-properties');
+  if (body === null) return;
+  body.empty();
+  const description = metadataText(project.frontmatter['description']).trim();
+  if (description !== '') body.createDiv({ cls: 'abyss-project-description', text: description });
+  renderTrackedTime(body, project);
+  const excluded = new Set(['position', 'description', settings.statusProperty.toLowerCase()]);
+  for (const [key, raw] of Object.entries(project.frontmatter)) {
+    if (excluded.has(key.toLowerCase())) continue;
+    const value = metadataText(raw);
+    if (value === '') continue;
+    const row = body.createDiv({ cls: 'abyss-project-dashboard-property' });
+    row.createSpan({ text: key });
+    row.createSpan({ text: value });
+  }
+  if (body.childElementCount === 0) body.createDiv({ text: 'No additional properties' });
 }
 
 /** Detail view for a single project: header, stats, description, its tasks. */
@@ -66,9 +114,12 @@ export function renderProjectDashboard(
 ): void {
   container.addClass('abyss-projects-dashboard');
 
-  const back = container.createEl('button', { cls: 'abyss-project-back' });
+  const header = container.createDiv({ cls: 'abyss-project-dashboard-header' });
+  const back = header.createEl('button', {
+    cls: 'abyss-project-back',
+    attr: { 'aria-label': 'Back to projects' },
+  });
   setIcon(back, 'arrow-left');
-  back.createSpan({ text: 'Back to projects' });
   back.addEventListener('click', () => {
     ctx.state.set('projectsPanel', { view: 'table' });
   });
@@ -78,21 +129,24 @@ export function renderProjectDashboard(
     return;
   }
 
-  renderProjectDetails(container, project, ctx);
+  renderProjectDetails(container, header, project, ctx);
 }
 
 function renderProjectDetails(
   container: HTMLElement,
+  header: HTMLElement,
   project: Project,
   ctx: ProjectsDashboardContext,
 ): void {
-  const current = { project };
+  const current = { project, header, settings: ctx.settings.projects };
   dashboardProjects.set(container, current);
   const statuses = ctx.settings.projects.statuses;
   const status = projectStatus(project, statuses);
 
-  const header = container.createDiv({ cls: 'abyss-project-dashboard-header' });
   header.createEl('h2', { cls: 'abyss-project-dashboard-title', text: project.name });
+
+  const stats = header.createDiv({ cls: 'abyss-project-dashboard-stats' });
+  renderProgressBar(stats, project.stats);
 
   const pill = header.createEl('button', {
     cls: 'abyss-status-pill',
@@ -122,18 +176,25 @@ function renderProjectDetails(
     ctx.openNote(current.project.path);
   });
 
-  const stats = container.createDiv({ cls: 'abyss-project-dashboard-stats' });
-  renderProgressBar(stats, project.stats);
-  renderTrackedTime(stats, project);
-
-  const rawDesc = project.frontmatter['description'];
-  const desc = typeof rawDesc === 'string' ? rawDesc.trim() : '';
-  if (desc.length > 0) {
-    container.createDiv({ cls: 'abyss-project-description', text: desc });
-  }
-
+  header.createDiv({ cls: 'abyss-project-dashboard-dates' });
+  const details = header.createEl('details', { cls: 'abyss-project-dashboard-details' });
+  const summary = details.createEl('summary', { attr: { 'aria-label': 'Project properties' } });
+  setIcon(summary, 'info');
+  details.createDiv({ cls: 'abyss-project-dashboard-properties abyss-popover' });
+  details.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      details.open = false;
+      summary.focus();
+    }
+  });
+  details.addEventListener('focusout', (event) => {
+    if (event.relatedTarget instanceof Node && !details.contains(event.relatedTarget))
+      details.open = false;
+  });
+  refreshProjectMetadata(header, project, ctx.settings.projects);
   const taskHost = container.createDiv({ cls: 'abyss-project-tasks' });
   ctx.renderTasks(taskHost, project.path);
+  attachDashboardHeader(taskHost, header);
 }
 
 /** The note's tracked total, left out entirely while a project has recorded no time. */

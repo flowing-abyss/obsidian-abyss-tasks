@@ -294,3 +294,36 @@ it.each(['overview', 'project', 'layout'] as const)(
     }
   },
 );
+
+it('keeps project context beside the shared controls and styles completed task titles', async () => {
+  const h = await mount();
+  try {
+    h.settings.listViewStates = {
+      ...h.settings.listViewStates,
+      'project:Projects/A.md': {
+        ...getListViewDefaults('project:Projects/A.md'),
+        statusGroups: ['todo', 'in-progress', 'done', 'cancelled'],
+      },
+    };
+    h.open('Projects/A.md');
+    const header = expectDefined(h.root.querySelector('.abyss-center-header'));
+    expect(header.querySelector('.abyss-project-back')?.getAttribute('aria-label')).toBe(
+      'Back to projects',
+    );
+    expect(header.querySelector('.abyss-project-back')?.textContent).toBe('');
+    const title = expectDefined(header.querySelector('.abyss-project-dashboard-title'));
+    expect(header.querySelector('.abyss-progress-label')?.textContent).toBe('1/3');
+    expect(header.querySelector('.abyss-status-pill')).not.toBeNull();
+    expect(header.querySelector('[aria-label="Timeline view"]')).not.toBeNull();
+    const completed = expectDefined(
+      [...h.root.querySelectorAll('.abyss-task-title')].find((e) => e.textContent === 'Completed'),
+    );
+    expect(completed.classList.contains('is-done')).toBe(true);
+    await h.choose('Kanban');
+    expect(h.root.querySelector('.abyss-center-header')?.contains(title)).toBe(true);
+    await h.choose('Timeline');
+    expect(h.root.querySelector('.abyss-center-header')?.contains(title)).toBe(true);
+  } finally {
+    h.dispose();
+  }
+});

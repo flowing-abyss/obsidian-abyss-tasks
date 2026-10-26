@@ -492,8 +492,8 @@ page and project details; `CenterPanel` supplies the note-scoped task context to
 search and capture. View preferences share the existing `project:<path>` entry with the same project
 opened from Tasks. Dashboard text queries remain session state per path, independent of Tasks'
 selection and query. Returning to Tasks reads saved preferences without overwriting them with its
-inactive state. List rows use the outer dashboard scroll; Kanban and Timeline use a bounded inner
-viewport. `CompactPaneAccess` opens the shared task inspector as an overlay on dashboard selection,
+inactive state. Each layout uses the shared inner task viewport; the dashboard keeps its compact project
+context in the task toolbar and its Add task footer outside scrolling content. `CompactPaneAccess` opens the shared task inspector as an overlay on dashboard selection,
 anchored below the task toolbar; the overview keeps it hidden. Leaving a dashboard releases its
 task interactions, search, capture and selection.
 

@@ -77,9 +77,7 @@ export function prepareTaskPanelViewport(el: HTMLElement, clampWrites = false): 
 
 /** Capacity from the fixture's measured cards, native viewport and existing 170px overscan. */
 export function taskCardMountBound(root: HTMLElement, pins = 0): number {
-  const scroll = root.querySelector<HTMLElement>(
-    '.abyss-project-dashboard-session, .abyss-center-scroll',
-  );
+  const scroll = root.querySelector<HTMLElement>('.abyss-center-scroll');
   const heights = [...root.querySelectorAll<HTMLElement>('.abyss-task-card')].map(
     (card) => card.getBoundingClientRect().height,
   );
@@ -157,7 +155,6 @@ function taskListScroll(element: HTMLElement, host: HTMLElement | null): HTMLEle
   return (
     element.closest<HTMLElement>('.abyss-task-kanban-column-body') ??
     element.closest<HTMLElement>('.abyss-task-timeline') ??
-    element.closest<HTMLElement>('.abyss-project-dashboard-session') ??
     element.closest<HTMLElement>('.abyss-center-scroll')
   );
 }

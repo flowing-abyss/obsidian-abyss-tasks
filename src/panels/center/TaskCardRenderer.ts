@@ -759,6 +759,9 @@ export class TaskCardRenderer {
     task: TaskSelectionNode,
     occurrence?: TaskOccurrencePresentation,
   ): void {
+    const title = card.querySelector('.abyss-task-title');
+    title?.toggleClass('is-done', task.status === 'done');
+    title?.toggleClass('is-cancelled', task.status === 'cancelled');
     const marker = card.querySelector<HTMLElement>('.abyss-status-marker');
     const mainRow = card.querySelector<HTMLElement>('.abyss-task-card-main-row');
     if (marker === null || mainRow === null) return;

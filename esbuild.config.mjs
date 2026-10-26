@@ -1,3 +1,5 @@
+// Compact project toolbar and Kanban capture: shipped CSS 203,451 bytes; 199 KiB limit.
+// Task view refinements: measured main 2,206,787 bytes; containing limit 2156 KiB.
 // Guarded context/rename transitions and deferred inspector geometry: main 2,204,758 bytes.
 // Minimal containing main limit: 2154 KiB; shipped CSS remains 201,590 bytes / 197 KiB.
 // Shared dashboard task inspector: measured main 2,204,274 bytes, CSS 201,590 bytes.

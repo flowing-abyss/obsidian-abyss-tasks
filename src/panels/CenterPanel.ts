@@ -1605,9 +1605,7 @@ export class CenterPanel {
     return `${this.listViewControls_abyssPrivate.activeListKey()}:${mode}`;
   }
   private taskCollectionScrollElement_abyssPrivate(host: HTMLElement): HTMLElement {
-    return this.taskCollectionView_abyssPrivate() === 'list'
-      ? (host.closest<HTMLElement>('.abyss-project-dashboard-session') ?? host)
-      : host;
+    return host;
   }
 
   private prepareCollectionRows_abyssPrivate<T extends SurfaceTask>(

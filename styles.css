@@ -8858,11 +8858,10 @@ button.abyss-project-table-status-pill {
 
 /* Projects dashboard (single project) */
 .abyss-projects-dashboard {
-  padding: var(--size-4-3) var(--size-4-4);
-  overflow-y: auto;
+  padding: 0;
+  overflow: hidden;
 }
 
-/* TaskListSurface owns this viewport; its Add task sibling must not become a native anchor. */
 .abyss-project-dashboard-session {
   overflow-anchor: none;
 }
@@ -8879,7 +8878,7 @@ button.abyss-project-table-status-pill {
   color: var(--text-muted);
   cursor: pointer;
   padding: var(--size-4-1) var(--size-2-3);
-  margin-bottom: var(--size-4-2);
+  flex: 0 0 auto;
 }
 
 .abyss-project-back:hover {
@@ -8909,15 +8908,20 @@ button.abyss-project-table-status-pill {
 
 .abyss-project-dashboard-header {
   display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
   align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
+  gap: var(--size-4-2);
 }
 
 .abyss-project-dashboard-title {
   margin: 0;
-  flex: 1;
-  min-width: 0;
+  min-width: 4rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-ui-medium);
+  font-weight: var(--font-semibold);
 }
 
 .abyss-status-pill {
@@ -8926,9 +8930,94 @@ button.abyss-project-table-status-pill {
 
 .abyss-project-dashboard-stats {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
-  gap: var(--size-4-4);
-  margin: var(--size-4-3) 0;
+  font-size: var(--font-ui-smaller);
+}
+
+.abyss-project-dashboard-stats .abyss-progress {
+  width: 3rem;
+}
+
+.abyss-project-dashboard-dates,
+.abyss-project-dashboard-date {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-1);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  white-space: nowrap;
+}
+
+.abyss-project-dashboard-dates:empty {
+  display: none;
+}
+
+.abyss-project-dashboard-date svg {
+  width: var(--size-4-4);
+  height: var(--size-4-4);
+}
+
+.abyss-project-dashboard-details {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.abyss-project-dashboard-details > summary {
+  list-style: none;
+  display: flex;
+  padding: var(--size-4-1);
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-s);
+}
+
+.abyss-project-dashboard-details > summary:hover {
+  background: var(--background-modifier-hover);
+}
+
+.abyss-project-dashboard-properties {
+  position: absolute;
+  top: calc(100% + var(--size-4-2));
+  right: 0;
+  z-index: var(--layer-popover);
+  width: min(22rem, 80cqi);
+  max-height: 50vh;
+  overflow: auto;
+  padding: var(--size-4-3);
+  font-size: var(--font-ui-small);
+}
+
+.abyss-project-dashboard-property {
+  display: grid;
+  grid-template-columns: minmax(5rem, 1fr) minmax(0, 2fr);
+  gap: var(--size-4-3);
+  padding-block: var(--size-4-1);
+  overflow-wrap: anywhere;
+}
+
+.abyss-project-dashboard-property > :first-child {
+  color: var(--text-muted);
+}
+
+@container abyss-panel-layout (max-width: 70rem) {
+  .abyss-project-dashboard-header > .abyss-project-dashboard-dates {
+    display: none;
+  }
+}
+
+@container abyss-panel-layout (max-width: 48rem) {
+  .abyss-project-tasks > .abyss-center-header {
+    flex-wrap: wrap;
+  }
+
+  .abyss-project-dashboard-header {
+    flex-basis: 100%;
+  }
+
+  .abyss-project-dashboard-title {
+    flex: 1;
+  }
 }
 
 .abyss-project-time {
@@ -8956,12 +9045,15 @@ button.abyss-project-table-status-pill {
 }
 
 .abyss-project-tasks {
-  border-top: 1px solid var(--background-modifier-border);
-  padding-top: var(--size-4-2);
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
-.abyss-project-tasks-scroll:is(.abyss-task-kanban, .abyss-task-timeline) {
-  height: clamp(18rem, 60vh, 44rem);
+.abyss-project-tasks-scroll {
+  min-height: 0;
   overflow: auto;
 }
 
@@ -11261,4 +11353,22 @@ button.abyss-calendar-date[aria-pressed='true'] {
 
 .abyss-task-timeline[data-description-lines='2'] .abyss-task-desc {
   -webkit-line-clamp: 2;
+}
+
+/* Kanban capture has no footer to supply the shared inline input's height. */
+.abyss-task-kanban-capture {
+  --abyss-inline-capture-block-size: 2.75rem;
+
+  margin-block-end: var(--size-4-2);
+}
+
+.abyss-task-kanban-capture .abyss-capture-input {
+  border-radius: var(--radius-m);
+  padding-inline: var(--size-4-3);
+  font-size: var(--font-ui-medium);
+}
+
+.abyss-task-title:is(.is-done, .is-cancelled) {
+  text-decoration: line-through;
+  color: var(--text-muted);
 }
