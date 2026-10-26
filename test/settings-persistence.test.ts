@@ -22,9 +22,15 @@ import {
   type SettingsPersistencePort,
 } from '../src/settings/persistence';
 import { removeConfiguredProjectProperty } from '../src/settings/projectTableSettings';
+import {
+  removeProjectStatusViewState,
+  removeTaskStatusViewState,
+} from '../src/settings/statusViewState';
 import * as historicalTagViews from '../src/settings/tagViewState';
 import * as historicalStatuses from '../src/status/statusConstants';
 import { TagManager } from '../src/tags/TagManager';
+import { defaultTaskKanbanSettings } from '../src/task-lists/taskKanbanSettings';
+import { defaultTaskTimelineSettings } from '../src/task-lists/taskTimelineSettings';
 import { PanelNavigator } from '../src/views/panelNavigation';
 import {
   CALENDAR_SETTINGS_OWNERS,
@@ -106,6 +112,71 @@ function stateEnvelope(overrides: Record<string, unknown> = {}): Record<string, 
 }
 
 describe('SettingsPersistenceCoordinator migration', () => {
+  it('roundtrips deleted status references without resurrecting known keys or losing extensions', async () => {
+    const custom = {
+      id: 'status-1',
+      name: 'Review',
+      symbol: '?',
+      type: 'todo',
+      icon: '',
+      core: false,
+    };
+    const table = structuredClone(DEFAULT_SETTINGS.projects.table);
+    const kanban = buildDefaultProjectKanbanSettings(table);
+    kanban.hiddenStatuses = ['id:status-1'];
+    kanban.collapsedColumns = ['id:status-1'];
+    kanban.manualOrder = { 'id:status-1': ['Projects/A.md'], none: ['Projects/B.md'] };
+    const timeline = buildDefaultProjectTimelineSettings(table);
+    timeline.hiddenStatuses = ['id:status-1'];
+    const port = memoryPort(
+      markedStatic({ taskStatuses: [...DEFAULT_SETTINGS.taskStatuses, custom] }),
+      stateEnvelope({
+        futureView: { keep: true },
+        listViewStates: {
+          all: {
+            groupBy: 'none',
+            sortBy: { field: 'date', dir: 'asc' },
+            filters: [{ type: 'status', value: '?' }],
+            futureList: 'kept',
+            kanban: {
+              ...defaultTaskKanbanSettings(),
+              hiddenStatuses: ['status-1'],
+              collapsedColumns: ['status:status-1'],
+              futureBoard: true,
+            },
+            timeline: { ...defaultTaskTimelineSettings(), hiddenStatuses: ['status-1'] },
+          },
+        },
+        projects: { table, kanban, timeline, futureProject: 'kept' },
+      }),
+    );
+    const coordinator = new SettingsPersistenceCoordinator(port);
+    const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    removeTaskStatusViewState(settings, custom);
+    settings.taskStatuses = settings.taskStatuses.filter(({ id }) => id !== custom.id);
+    removeProjectStatusViewState(settings.projects, custom.id);
+    await coordinator.saveSettings(settings);
+    await coordinator.saveViewState(settings);
+    const loaded = await new SettingsPersistenceCoordinator(port).loadSettings(DEFAULT_SETTINGS);
+    expect(loaded.settings.listViewStates?.['all']).toMatchObject({
+      filters: [],
+      kanban: { hiddenStatuses: [], collapsedColumns: [] },
+      timeline: { hiddenStatuses: [] },
+    });
+    expect(loaded.settings.projects.kanban).toMatchObject({
+      hiddenStatuses: [],
+      collapsedColumns: [],
+      manualOrder: { none: ['Projects/B.md'] },
+    });
+    expect(loaded.settings.projects.kanban?.manualOrder['id:status-1']).toBeUndefined();
+    expect(JSON.parse(expectDefined(port.stateText))).toMatchObject({
+      views: {
+        futureView: { keep: true },
+        listViewStates: { all: { futureList: 'kept', kanban: { futureBoard: true } } },
+        projects: { futureProject: 'kept' },
+      },
+    });
+  });
   it('saves reordered pins as static settings and reloads their order without changing view state', async () => {
     const port = memoryPort(
       markedStatic({ pinnedTags: ['#one', '#two', '#three'], futureStatic: { keep: true } }),

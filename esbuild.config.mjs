@@ -93,6 +93,9 @@ import process from 'process';
 // CSS remains within its existing limit; both artifact checks stay enforced.
 // Retained exact-source rows and the phone project toolbar use the minimal containing
 // limits 2176 / 204 KiB. No dependencies added; artifact checks remain enforced.
+// Retained dashboard property cells and status lifecycle guards: 2,234,303 bytes, contained by
+// 2182 KiB. Compact controls/shared cell CSS remains within 205 KiB.
+// Uses existing renderers and dependencies; enforcement remains unchanged.
 const { mainJsBudgetBytes: MAIN_JS_BUDGET_BYTES } = JSON.parse(
   readFileSync('package.json', 'utf8'),
 ).release;

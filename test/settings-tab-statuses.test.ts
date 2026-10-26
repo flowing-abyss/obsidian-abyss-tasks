@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { CalendarSettingsTab } from '../src/settings/SettingsTab';
 import type { CalendarSettings } from '../src/settings/types';
+import { defaultTaskKanbanSettings } from '../src/task-lists/taskKanbanSettings';
+import { defaultTaskTimelineSettings } from '../src/task-lists/taskTimelineSettings';
 import * as searchPolicy from '../src/tasks';
 import { editSettingControl, expectDefined, methodOf, useRealMoment } from './helpers';
 
@@ -198,6 +200,50 @@ describe('CalendarSettingsTab — custom statuses section', () => {
     expectDefined(deleteBtn).click();
     await Promise.resolve();
     expect(plugin.settings.taskStatuses).toHaveLength(before - 1);
+  });
+
+  it('deleting a status cleans saved task views after saving the static definition', async () => {
+    const { tab, plugin, captured } = makeTab({ withCustomStatus: true });
+    const view = {
+      groupBy: 'none' as const,
+      sortBy: { field: 'date' as const, dir: 'asc' as const },
+      filters: [
+        { type: 'status' as const, value: '!' },
+        { type: 'status' as const, value: '?' },
+      ],
+      statusGroups: ['todo' as const],
+      kanban: {
+        ...defaultTaskKanbanSettings(),
+        hiddenStatuses: ['status-custom', 'other'],
+        collapsedColumns: ['status:status-custom', 'status:other'],
+      },
+      timeline: { ...defaultTaskTimelineSettings(), hiddenStatuses: ['status-custom'] },
+    };
+    plugin.settings.listViewStates = { inbox: view, 'project:A.md': structuredClone(view) };
+    const writes: string[] = [];
+    vi.mocked(methodOf(plugin, 'saveSettings')).mockImplementation(async () => {
+      writes.push('static');
+    });
+    vi.mocked(methodOf(plugin, 'saveViewState')).mockImplementation(async () => {
+      writes.push('view');
+    });
+    const body = openStatusesSection(tab);
+    const button = expectDefined(
+      captured.find((b) => body.contains(b) && b.textContent === 'Delete status'),
+    );
+    button.click();
+    button.click();
+    for (let i = 0; i < 6; i++) await Promise.resolve();
+    expect(writes).toEqual(['static', 'view']);
+    expect(plugin.settings.listViewStates['inbox']).toBe(view);
+    for (const saved of Object.values(plugin.settings.listViewStates)) {
+      expect(saved.filters).toEqual([{ type: 'status', value: '?' }]);
+      expect(saved.statusGroups).toEqual(['todo']);
+      expect(saved.kanban?.hiddenStatuses).toEqual(['other']);
+      expect(saved.kanban?.collapsedColumns).toEqual(['status:other']);
+      expect(saved.timeline?.hiddenStatuses).toEqual([]);
+    }
+    tab.hide();
   });
 
   it('validateStatusSymbol rejects an already-used symbol on edit', () => {

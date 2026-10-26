@@ -286,8 +286,8 @@ const TABLET_PADDING_ROWS: ReadonlyArray<readonly [declared: string, raised: str
     'body.is-tablet button.abyss-project-table-status-pill:is(.is-text, .is-dot)',
   ],
   [
-    '.abyss-projects-table button.abyss-project-table-value-remove',
-    'body.is-tablet .abyss-projects-table button.abyss-project-table-value-remove',
+    ':is(.abyss-projects-table, .abyss-project-dashboard-properties) button.abyss-project-table-value-remove',
+    'body.is-tablet :is(.abyss-projects-table, .abyss-project-dashboard-properties) button.abyss-project-table-value-remove',
   ],
   [
     '.abyss-projects-table button.abyss-project-value-picker-edit',
@@ -327,8 +327,12 @@ const TABLET_PADDING_ROWS: ReadonlyArray<readonly [declared: string, raised: str
     'body.is-tablet .abyss-view-state-popover button.abyss-view-state-option-action',
   ],
   ['.abyss-project-column-add', 'body.is-tablet button.abyss-project-column-add'],
-  ['.abyss-project-back', 'body.is-tablet button.abyss-project-back'],
+  ['button.abyss-project-back', 'body.is-tablet button.abyss-project-back'],
   ['.abyss-project-open-btn', 'body.is-tablet button.abyss-project-open-btn'],
+  [
+    'button.abyss-project-dashboard-property-label',
+    'body.is-tablet button.abyss-project-dashboard-property-label',
+  ],
   [
     '.abyss-status-icon-field button.abyss-status-icon-result',
     'body.is-tablet .abyss-status-icon-field button.abyss-status-icon-result',

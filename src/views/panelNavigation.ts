@@ -23,7 +23,7 @@ export interface PanelNavigationActions {
   ): void;
   openCalendar(): void;
   openCalendarView(view: CalViewType): void;
-  openProjects(): void;
+  openProjects(path?: string): void;
   openStatistics(): void;
   openSearch(): void;
   openQuickCapture(): void;
@@ -94,8 +94,10 @@ export class PanelNavigator implements PanelNavigationActions {
     this.openMode('statistics');
   }
 
-  openProjects(): void {
-    this.openMode('projects');
+  openProjects(path?: string): void {
+    this.openMode('projects', () => {
+      if (path !== undefined) this.state.set('projectsPanel', { view: 'dashboard', path });
+    });
   }
 
   openSearch(): void {

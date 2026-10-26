@@ -2471,6 +2471,28 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
     expect(state.get('mode')).toBe('tasks');
   });
 
+  it.each(['context menu', 'double click'] as const)(
+    'opens a project dashboard from %s',
+    (action) => {
+      const { el, state } = makeFull({
+        projects: [{ path: 'Projects/A.md', name: 'A' }],
+        settings: { projects: { ...structuredClone(DEFAULT_SETTINGS.projects), statuses: [] } },
+      });
+      if (action === 'context menu') {
+        const items = captureMenu();
+        openContextMenu(expectDefined(el.querySelector('.abyss-project-item')));
+        expectDefined(items.find((item) => item.title === 'Open project view')).click();
+      } else {
+        expectDefined(el.querySelector<HTMLElement>('.abyss-project-item')).click();
+        expectDefined(el.querySelector('.abyss-project-item')).dispatchEvent(
+          new MouseEvent('dblclick', { bubbles: true, detail: 2 }),
+        );
+      }
+      expect(state.get('mode')).toBe('projects');
+      expect(state.get('projectsPanel')).toEqual({ view: 'dashboard', path: 'Projects/A.md' });
+    },
+  );
+
   it('does not render the Projects section when there are no active projects', () => {
     const { el } = makeFull({ projects: [] });
     expect(el.querySelector('.abyss-left-section--projects')).toBeNull();

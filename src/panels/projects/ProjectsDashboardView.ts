@@ -15,6 +15,8 @@ interface DashboardState {
   pill: HTMLElement;
   properties?: ProjectDashboardProperties;
   disposeMenu: () => void;
+  closeMenu: () => void;
+  statusCatalog: string;
 }
 const dashboardProjects = new WeakMap<HTMLElement, DashboardState>();
 
@@ -53,6 +55,9 @@ export function refreshProjectDashboard(
   if (project === undefined || current?.project.path !== project.path || taskHost === null)
     return false;
   current.project = project;
+  const catalog = JSON.stringify(statuses);
+  if (current.statusCatalog !== catalog) current.closeMenu();
+  current.statusCatalog = catalog;
   const title = current.header.querySelector('.abyss-project-dashboard-title');
   if (title !== null) title.textContent = project.name;
   patchProjectDashboardStatus(current.pill, project, projectStatus(project, statuses));
@@ -86,7 +91,7 @@ export function renderProjectDashboard(
 
   const header = container.createDiv({ cls: 'abyss-project-dashboard-header' });
   const back = header.createEl('button', {
-    cls: 'abyss-project-back',
+    cls: 'clickable-icon abyss-project-back',
     attr: { 'aria-label': 'Back to projects' },
   });
   setIcon(back, 'arrow-left');
@@ -110,8 +115,27 @@ function renderProjectDetails(
   project: Project,
   ctx: ProjectsDashboardContext,
 ): void {
-  const pill = header.createEl('button', { cls: 'abyss-status-pill' });
-  const current: DashboardState = { project, header, back, pill, disposeMenu: () => {} };
+  const pill = header.createEl('button', {
+    cls: 'abyss-status-pill abyss-project-dashboard-status',
+    attr: { 'aria-haspopup': 'menu', 'aria-expanded': 'false' },
+  });
+  setIcon(
+    pill.createSpan({
+      cls: 'abyss-project-dashboard-status-icon',
+      attr: { 'aria-hidden': 'true' },
+    }),
+    'circle-dot',
+  );
+  pill.createSpan({ cls: 'abyss-project-dashboard-status-label' });
+  const current: DashboardState = {
+    project,
+    header,
+    back,
+    pill,
+    disposeMenu: () => {},
+    closeMenu: () => {},
+    statusCatalog: JSON.stringify(ctx.settings.projects.statuses),
+  };
   dashboardProjects.set(container, current);
   const title = header.createEl('button', {
     cls: 'abyss-project-dashboard-title',
@@ -149,6 +173,9 @@ function bindStatusMenu(
   ctx: ProjectsDashboardContext,
 ): () => void {
   let menu: Menu | undefined;
+  current.closeMenu = () => {
+    menu?.hide();
+  };
   let closingPress = false;
   let release = (): void => {};
   const bind = (): void => {
@@ -185,13 +212,26 @@ function bindStatusMenu(
     const next = new Menu();
     menu = next;
     pill.setAttribute('aria-expanded', 'true');
+    if (projectStatus(current.project, ctx.settings.projects.statuses) === undefined) {
+      next.addItem((item) =>
+        item.setTitle(`Current: ${current.project.rawStatus ?? 'No status'}`).setDisabled(true),
+      );
+      next.addSeparator();
+    }
     for (const status of ctx.settings.projects.statuses) {
+      const { id, name } = status;
       next.addItem((item) =>
         item
           .setTitle(projectStatusDisplayName(status))
           .setChecked(status.id === current.project.statusId)
           .onClick(() => {
-            ctx.onSetStatus(current.project.path, status.id);
+            if (
+              !ctx.settings.projects.statuses.some(
+                (candidate) => candidate.id === id && candidate.name === name,
+              )
+            )
+              return;
+            ctx.onSetStatus(current.project.path, id);
           }),
       );
     }
@@ -214,9 +254,10 @@ function patchProjectDashboardStatus(
   status: ProjectStatus | undefined,
 ): void {
   applyProjectStatusPresentation(pill, status);
-  pill.setText(
-    status === undefined ? (project.rawStatus ?? 'No status') : projectStatusDisplayName(status),
-  );
+  const name =
+    status === undefined ? (project.rawStatus ?? 'No status') : projectStatusDisplayName(status);
+  pill.querySelector('.abyss-project-dashboard-status-label')?.setText(name);
+  pill.setAttribute('aria-label', `Status: ${name}`);
 }
 
 function projectStatus(

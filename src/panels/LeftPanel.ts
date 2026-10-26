@@ -608,6 +608,9 @@ export class LeftPanel {
         e.preventDefault();
         this.showProjectMenu_abyssPrivate(e, project);
       });
+      row.addEventListener('dblclick', () => {
+        this.navigation_abyssPrivate.openProjects(project.path);
+      });
     }
 
     if (!this.showAllProjects_abyssPrivate && projects.length > PROJECTS_CAP) {
@@ -836,6 +839,14 @@ export class LeftPanel {
     project: ReturnType<ProjectStore['activeForLeftPanel']>[number],
   ): void {
     const menu = new Menu();
+    menu.addItem((item) =>
+      item
+        .setTitle('Open project view')
+        .setIcon('layout-dashboard')
+        .onClick(() => {
+          this.navigation_abyssPrivate.openProjects(project.path);
+        }),
+    );
     const statuses = this.settings_abyssPrivate.projects.statuses;
     if (statuses.length > 0 && this.projectManager_abyssPrivate != null) {
       menu.addItem((item) => {
@@ -843,12 +854,19 @@ export class LeftPanel {
         // setSubmenu is available at runtime but not in the public typings.
         const sub = (item as unknown as { setSubmenu: () => Menu }).setSubmenu();
         for (const s of statuses) {
+          const { id, name } = s;
           sub.addItem((si) =>
             si
               .setTitle(projectStatusDisplayName(s))
               .setChecked(s.id === project.statusId)
               .onClick(() => {
-                this.changeProjectStatus_abyssPrivate(project.path, s.id);
+                if (
+                  !this.settings_abyssPrivate.projects.statuses.some(
+                    (status) => status.id === id && status.name === name,
+                  )
+                )
+                  return;
+                this.changeProjectStatus_abyssPrivate(project.path, id);
               }),
           );
         }

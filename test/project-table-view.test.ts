@@ -5209,6 +5209,29 @@ describe('ProjectsTableView', () => {
     destroyMountedView(view);
   });
 
+  it('rejects a queued status filter after its definition was replaced', async () => {
+    const { host, view, config } = mount([project({})], {
+      saveProperty: vi.fn().mockRejectedValue(new ProjectEditValidationError('Fix draft.')),
+    });
+    const cell = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="end"]'),
+    );
+    cell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const input = expectDefined(cell.querySelector<HTMLInputElement>('input[type="date"]'));
+    input.value = '2026-12-24';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    expectDefined(
+      host.querySelector<HTMLButtonElement>(
+        `.abyss-project-status-filter[data-status-key="id:${active.id}"]`,
+      ),
+    ).click();
+    await flushMicrotasks();
+    expectDefined(config.projects.statuses.find(({ id }) => id === active.id)).name = 'Replacement';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(config.projects.table.hiddenStatuses).toEqual([]);
+    destroyMountedView(view);
+  });
+
   it('explains unavailable custom fields while retaining their value and curated editing', () => {
     const config = settings();
     config.projects.table.columns.push({

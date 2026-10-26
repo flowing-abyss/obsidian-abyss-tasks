@@ -73,6 +73,7 @@ export class ListViewControls {
   readonly #options: ListViewControlsOptions;
   readonly #chipKeys = new WeakMap<HTMLElement, string>();
   #viewStatePopoverCleanup: ((restoreFocus?: boolean) => void) | null = null;
+  #popoverStatuses = '';
 
   constructor(options: ListViewControlsOptions) {
     this.#options = options;
@@ -105,6 +106,11 @@ export class ListViewControls {
     previous: readonly HTMLElement[] = [],
     focusFallback?: HTMLElement,
   ): HTMLElement[] {
+    if (
+      this.#viewStatePopoverCleanup !== null &&
+      this.#popoverStatuses !== JSON.stringify(this.#options.statusRegistry.all())
+    )
+      this.closeViewStatePopover();
     const vs = this.#read();
     const focused = previous.findIndex((chip) =>
       chip.contains(controls.ownerDocument.activeElement),
@@ -360,10 +366,12 @@ export class ListViewControls {
       onClose: () => {
         if (this.#viewStatePopoverCleanup === close) {
           this.#viewStatePopoverCleanup = null;
+          this.#popoverStatuses = '';
         }
       },
     });
     this.#viewStatePopoverCleanup = close;
+    this.#popoverStatuses = JSON.stringify(this.#options.statusRegistry.all());
   }
 
   #groupByRowSpec(defaults: ListViewState): ViewOptionsSingleRow {

@@ -20,6 +20,7 @@ interface TaskKanbanOptionsContext {
   readonly group: ViewOptionsRow;
 }
 export function taskStatusOptionsRow(context: TaskCardOptionsContext): ViewOptionsRow {
+  const offered = new Map(context.statuses().map((status) => [status.id, { ...status }]));
   const inactive = (): string[] =>
     context
       .statuses()
@@ -51,6 +52,15 @@ export function taskStatusOptionsRow(context: TaskCardOptionsContext): ViewOptio
         .map((status) => status.id),
     options: context.statuses().map((status) => ({ value: status.id, label: status.name })),
     onToggle: (id) => {
+      const previous = offered.get(id);
+      const current = context.statuses().find((status) => status.id === id);
+      if (
+        previous === undefined ||
+        previous.name !== current?.name ||
+        previous.symbol !== current.symbol ||
+        previous.type !== current.type
+      )
+        return;
       const hidden = context.read().hiddenStatuses;
       context.update({
         hiddenStatuses: hidden.includes(id)

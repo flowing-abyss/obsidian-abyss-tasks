@@ -29,6 +29,7 @@ import { type CardListOptions, renderSettingsCard } from './settingsCard';
 import { captureSettingsRenderContext, restoreSettingsRenderContext } from './settingsRenderState';
 import { saveSettingsDraft } from './settingsSaveFailure';
 import { SettingsValueCommit } from './settingsValueCommit';
+import { removeProjectStatusViewState, removeTaskStatusViewState } from './statusViewState';
 import { type TaskStorageSettings, validateTaskStorageDraft } from './taskStorageSettings';
 import type { CalendarSettings, ProjectStatus } from './types';
 
@@ -120,8 +121,13 @@ export class CalendarSettingsTab extends PluginSettingTab {
           if (reordered) this.plugin_abyssPrivate.rebuildTaskStatusSemantics();
           return reordered;
         },
-        commitDraft: (action) => {
-          this.commitDraft_abyssPrivate(action, undefined, true);
+        commitDraft: (action, removed) => {
+          if (removed !== undefined)
+            removeTaskStatusViewState(this.plugin_abyssPrivate.settings, removed);
+          this.commitDraft_abyssPrivate(action, undefined, {
+            rebuildStatuses: true,
+            saveViews: removed !== undefined,
+          });
         },
         persistStatuses: () => this.persistStatuses_abyssPrivate(),
         setExpanded: (id, expanded) => {
@@ -201,17 +207,38 @@ export class CalendarSettingsTab extends PluginSettingTab {
   private commitDraft_abyssPrivate(
     action: string,
     focus?: () => HTMLElement | null,
-    rebuildStatuses = false,
+    options: {
+      readonly rebuildStatuses?: boolean;
+      readonly saveViews?: boolean;
+      readonly projectStatuses?: boolean;
+    } = {},
   ): void {
-    if (rebuildStatuses) this.plugin_abyssPrivate.rebuildTaskStatusSemantics();
+    if (options.rebuildStatuses === true) this.plugin_abyssPrivate.rebuildTaskStatusSemantics();
     this.render_abyssPrivate(focus);
+    const saveStatic = (): Promise<void> => {
+      if (options.rebuildStatuses === true) return this.persistStatuses_abyssPrivate();
+      if (options.projectStatuses === true) return this.persistProjectSettings_abyssPrivate();
+      return this.plugin_abyssPrivate.saveSettings();
+    };
     saveSettingsDraft({
       action,
-      save: () =>
-        rebuildStatuses
-          ? this.persistStatuses_abyssPrivate()
-          : this.plugin_abyssPrivate.saveSettings(),
+      save:
+        options.saveViews === true
+          ? async () => {
+              await saveStatic();
+              await this.plugin_abyssPrivate.saveViewState();
+            }
+          : saveStatic,
     });
+  }
+
+  private async persistProjectSettings_abyssPrivate(): Promise<void> {
+    try {
+      await this.plugin_abyssPrivate.saveSettings();
+    } catch (error) {
+      this.plugin_abyssPrivate.refreshProjectSettings();
+      throw error;
+    }
   }
 
   override display(): void {
@@ -1014,14 +1041,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
       catalog: this.projectProperties_abyssPrivate,
       // saveSettings() refreshes open panels after a durable write. A failed save keeps the change
       // in the session, so the panels are brought in line here.
-      saveStatic: async () => {
-        try {
-          await this.plugin_abyssPrivate.saveSettings();
-        } catch (error) {
-          this.plugin_abyssPrivate.refreshProjectSettings();
-          throw error;
-        }
-      },
+      saveStatic: () => this.persistProjectSettings_abyssPrivate(),
       saveViewState: async () => {
         try {
           await this.plugin_abyssPrivate.saveViewState();
@@ -1255,10 +1275,13 @@ export class CalendarSettingsTab extends PluginSettingTab {
         color: '#888888',
         onLeftPanel: false,
       });
-      this.commitDraft_abyssPrivate('add project status', () =>
-        this.containerEl.querySelector<HTMLInputElement>(
-          `[data-settings-item-id="${id}"] .abyss-project-value-raw`,
-        ),
+      this.commitDraft_abyssPrivate(
+        'add project status',
+        () =>
+          this.containerEl.querySelector<HTMLInputElement>(
+            `[data-settings-item-id="${id}"] .abyss-project-value-raw`,
+          ),
+        { projectStatuses: true },
       );
     });
 
@@ -1326,10 +1349,15 @@ export class CalendarSettingsTab extends PluginSettingTab {
     controls.remove.addEventListener('click', () => {
       const index = statuses.findIndex((candidate) => candidate.id === status.id);
       const removed = index < 0 ? undefined : statuses.splice(index, 1)[0];
-      if (removed?.id === projects.defaultStatusId) {
+      if (removed === undefined) return;
+      removeProjectStatusViewState(projects, removed.id);
+      if (removed.id === projects.defaultStatusId) {
         projects.defaultStatusId = statuses[0]?.id ?? '';
       }
-      this.commitDraft_abyssPrivate('delete project status');
+      this.commitDraft_abyssPrivate('delete project status', undefined, {
+        saveViews: true,
+        projectStatuses: true,
+      });
     });
   }
 

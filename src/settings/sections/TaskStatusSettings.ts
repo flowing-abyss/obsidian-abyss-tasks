@@ -69,7 +69,7 @@ interface TaskStatusSettingsHost {
     draggedId: string,
     targetId: string,
   ) => boolean;
-  readonly commitDraft: (action: string) => void;
+  readonly commitDraft: (action: string, removed?: TaskStatusDef) => void;
   readonly persistStatuses: () => Promise<void>;
   readonly setExpanded: (id: string, expanded: boolean) => void;
 }
@@ -479,7 +479,7 @@ export class TaskStatusSettings {
           const index = statuses.findIndex((status) => status.id === def.id);
           if (index >= 0) statuses.splice(index, 1);
           this.#options.host.setExpanded(def.id, false);
-          this.#options.host.commitDraft('delete task status');
+          this.#options.host.commitDraft('delete task status', def);
         }),
     );
   }

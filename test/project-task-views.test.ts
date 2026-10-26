@@ -1,17 +1,20 @@
+import { MarkdownRenderer } from 'obsidian';
 import { afterEach, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { CenterPanel } from '../src/panels/CenterPanel';
 import { ProjectManager } from '../src/projects/ProjectManager';
 import { ProjectStore } from '../src/projects/ProjectStore';
 import { DEFAULT_SETTINGS, getListViewDefaults } from '../src/settings/defaults';
-import { expectDefined, flushMicrotasks, useRealMoment } from './helpers';
+import type { CalendarSettings } from '../src/settings/types';
+import { deferred, expectDefined, flushMicrotasks, useRealMoment } from './helpers';
 import { prepareTaskPanelViewport } from './support/taskPanelViewport';
 import { createCanonicalSearchHarness } from './support/taskSearchHarness';
 import { searchUiCompleted } from './support/taskSearchUiHarness';
 useRealMoment();
 afterEach(() => vi.restoreAllMocks());
-async function mount(projectHeader = '') {
+async function mount(projectHeader = '', configure?: (settings: CalendarSettings) => void) {
   const settings = structuredClone(DEFAULT_SETTINGS);
+  configure?.(settings);
   settings.listViewStates = { inbox: { ...getListViewDefaults('inbox'), groupBy: 'priority' } };
   const h = await createCanonicalSearchHarness(
     {
@@ -73,6 +76,7 @@ async function mount(projectHeader = '') {
     panel,
     state,
     settings,
+    projects,
     open,
     choose,
     dispose: () => {
@@ -83,6 +87,160 @@ async function mount(projectHeader = '') {
     },
   };
 }
+it('uses table values and guarded edits for dashboard properties, including absent configured fields', async () => {
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _markdown, holder) => {
+    holder.createEl('a', {
+      cls: 'internal-link',
+      text: 'Alex',
+      attr: { href: '#', 'data-href': 'People/Owner' },
+    });
+  });
+  const h = await mount(
+    '---\nowner: "[[People/Owner|Alex]]"\nlabels: [design, review]\napproved: false\n---\n',
+    (settings) => {
+      settings.projects.propertyDefinitions = {
+        'property:owner': { type: 'text' },
+        'property:labels': {
+          type: 'list',
+          presets: [{ value: 'design', displayName: 'Design team', display: 'badge' }],
+        },
+        'property:approved': { type: 'checkbox' },
+        'property:budget': { type: 'number' },
+      };
+    },
+  );
+  try {
+    h.open('Projects/A.md');
+    const plus = expectDefined(
+      h.root.querySelector<HTMLElement>('[aria-label="Project properties"]'),
+    );
+    plus.click();
+    const property = (name: string) =>
+      expectDefined(
+        h.root.querySelector<HTMLElement>(
+          `.abyss-project-dashboard-properties [data-project-field="property:${name}"]`,
+        ),
+      );
+    await vi.waitFor(() => {
+      expect(property('owner').querySelector('a.internal-link')?.textContent).toBe('Alex');
+    });
+    const ownerLink = expectDefined(property('owner').querySelector<HTMLAnchorElement>('a'));
+    ownerLink.focus();
+    h.panel.refresh('projects');
+    await flushMicrotasks();
+    expect(document.activeElement).toBe(ownerLink);
+    expect(property('owner').querySelector('a')).toBe(ownerLink);
+    expect(property('labels').querySelector('.is-badge')?.textContent).toBe('Design team');
+    const input = expectDefined(
+      property('approved').querySelector<HTMLInputElement>('input[type="checkbox"]'),
+    );
+    input.focus();
+    input.click();
+    const file = expectDefined(h.app.vault.getFileByPath('Projects/A.md') ?? undefined);
+    await vi.waitFor(async () => {
+      expect(await h.app.vault.read(file)).toContain('approved: true');
+    });
+    expect(document.activeElement).toBe(property('approved').querySelector('input'));
+    expect(h.root.querySelector('.abyss-project-dashboard-editor')).toBeNull();
+    property('labels').querySelector<HTMLButtonElement>('[aria-label="Remove design"]')?.click();
+    await vi.waitFor(async () => {
+      expect(await h.app.vault.read(file)).not.toContain('design');
+    });
+    expect(h.root.querySelector('.abyss-project-dashboard-editor')).toBeNull();
+    property('budget').click();
+    const budget = expectDefined(
+      h.root.querySelector<HTMLInputElement>('.abyss-project-editor-input'),
+    );
+    budget.value = '120000';
+    budget.dispatchEvent(new Event('input', { bubbles: true }));
+    budget.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await vi.waitFor(async () => {
+      expect(await h.app.vault.read(file)).toContain('budget: 120000');
+    });
+    plus.click();
+    expect(property('budget').textContent).toContain('120000');
+  } finally {
+    h.dispose();
+  }
+});
+it.each([
+  { property: 'approved', renamed: 'Approved', control: 'input', expected: 'Approved: true' },
+  {
+    property: 'labels',
+    renamed: 'Labels',
+    control: '[aria-label="Remove design"]',
+    expected: 'Labels:\n  - review',
+  },
+])('refreshes the source authority of a retained $property control', async (scenario) => {
+  const h = await mount('---\napproved: false\nlabels: [design, review]\n---\n', (settings) => {
+    settings.projects.propertyDefinitions = {
+      'property:approved': { type: 'checkbox' },
+      'property:labels': { type: 'list' },
+    };
+  });
+  try {
+    h.open('Projects/A.md');
+    expectDefined(h.root.querySelector<HTMLElement>('[aria-label="Project properties"]')).click();
+    const selector = `[data-project-field="property:${scenario.property}"] ${scenario.control}`;
+    const before = expectDefined(h.root.querySelector<HTMLElement>(selector));
+    const file = expectDefined(h.app.vault.getFileByPath('Projects/A.md'));
+    await h.app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
+      frontmatter[scenario.renamed] = frontmatter[scenario.property];
+      delete frontmatter[scenario.property];
+    });
+    await vi.waitFor(() => {
+      expect(h.projects.get('Projects/A.md')?.frontmatter).toHaveProperty(scenario.renamed);
+    });
+    h.panel.refresh('projects');
+    const after = expectDefined(h.root.querySelector<HTMLElement>(selector));
+    expect(after).toBe(before);
+    after.click();
+    await vi.waitFor(async () => {
+      expect(await h.app.vault.read(file)).toContain(scenario.expected);
+    });
+  } finally {
+    h.dispose();
+  }
+});
+it.each(['synchronous', 'after close'] as const)(
+  'contains a property Markdown failure %s',
+  async (timing) => {
+    const pending = deferred<void>();
+    const error = new Error('renderer unavailable');
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(() => {
+      if (timing === 'synchronous') throw error;
+      return pending.promise.then(() => {
+        throw error;
+      });
+    });
+    const h = await mount('---\nowner: "[[People/Owner]]"\n---\n', (settings) => {
+      settings.projects.propertyDefinitions = { 'property:owner': { type: 'text' } };
+    });
+    try {
+      h.open('Projects/A.md');
+      const plus = expectDefined(
+        h.root.querySelector<HTMLElement>('[aria-label="Project properties"]'),
+      );
+      plus.click();
+      if (timing === 'synchronous') {
+        expect(h.root.querySelector('.abyss-project-dashboard-properties')?.textContent).toContain(
+          'Close and reopen to retry',
+        );
+        expect(log).toHaveBeenCalledOnce();
+      } else {
+        plus.click();
+        pending.resolve();
+        await flushMicrotasks();
+        expect(log).not.toHaveBeenCalled();
+        expect(h.root.querySelector('.abyss-project-dashboard-properties')).toBeNull();
+      }
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
 it('shares all three task views inside the actual project dashboard without leaking Tasks context', async () => {
   const h = await mount();
   try {

@@ -105,6 +105,36 @@ describe('center inspector selection', () => {
 });
 
 describe('PanelNavigator', () => {
+  it('opens a specific project atomically and preserves the outgoing Tasks view', () => {
+    const saved = settings();
+    const { state, navigator, save } = harness({ selection: 'inbox', settings: saved });
+    const view = listState('priority');
+    state.set('centerListViewState', view);
+    const observed: unknown[] = [];
+    state.onCommit(() => observed.push([state.get('mode'), state.get('projectsPanel')]));
+
+    navigator.openProjects('Projects/A.md');
+
+    expect(observed).toEqual([['projects', { view: 'dashboard', path: 'Projects/A.md' }]]);
+    expect(saved.listViewStates?.['inbox']).toEqual(view);
+    expect(save).toHaveBeenCalledTimes(1);
+    navigator.openTasks();
+    expect(state.get('selectedList')).toBe('inbox');
+    expect(state.get('centerListViewState')).toEqual(view);
+  });
+
+  it('waits for the current project editor before opening another dashboard', () => {
+    const { state, navigator, finishProjectTableEditorBefore } = harness({ mode: 'projects' });
+    let apply: (() => void) | undefined;
+    finishProjectTableEditorBefore.mockImplementation((next) => {
+      apply = next;
+    });
+    navigator.openProjects('Projects/B.md');
+    expect(state.get('projectsPanel')).toEqual({ view: 'table' });
+    expectDefined(apply)();
+    expect(state.get('projectsPanel')).toEqual({ view: 'dashboard', path: 'Projects/B.md' });
+  });
+
   it.each(['today', 'inbox'] as const)(
     'notifies an accepted %s destination after its complete state commit',
     (selection) => {

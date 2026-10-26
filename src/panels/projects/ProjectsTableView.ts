@@ -643,7 +643,18 @@ export class ProjectsTableView {
         });
       },
       onStatusToggle: (key) => {
+        const statusName = this.context_abyssPrivate.settings.projects.statuses.find(
+          ({ id }) => key === `id:${id}`,
+        )?.name;
         this.finishEditorBeforeAction(() => {
+          if (
+            key.startsWith('id:') &&
+            (statusName === undefined ||
+              !this.context_abyssPrivate.settings.projects.statuses.some(
+                ({ id, name }) => key === `id:${id}` && name === statusName,
+              ))
+          )
+            return;
           this.toggleStatus_abyssPrivate(key);
         });
       },

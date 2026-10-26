@@ -2,6 +2,8 @@ import type * as ObsidianModule from 'obsidian';
 import { App, Notice, Setting } from 'obsidian';
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest';
 import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProperties';
+import { buildDefaultProjectKanbanSettings } from '../src/projects/projectKanbanSettings';
+import { buildDefaultProjectTimelineSettings } from '../src/projects/projectTimelineSettings';
 import { buildDefaultProjectsSettings, DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { addProjectPropertyColumn } from '../src/settings/projectTableSettings';
 import { CalendarSettingsTab } from '../src/settings/SettingsTab';
@@ -2354,6 +2356,41 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     );
   });
 
+  it.each(['static', 'view'] as const)(
+    'retries project status deletion after a %s failure without restoring removed references',
+    async (phase) => {
+      vi.mocked(Notice).mockClear();
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      const { tab, plugin } = makeTab();
+      const removed = expectDefined(plugin.settings.projects.statuses[0]);
+      plugin.settings.projects.table.hiddenStatuses = [`id:${removed.id}`];
+      const failed = phase === 'static' ? plugin.saveSettings : plugin.saveViewState;
+      vi.mocked(failed).mockRejectedValueOnce(new Error('disk full')).mockResolvedValue(undefined);
+      const body = openSection(tab, 3);
+      expectDefined(
+        projectStatusRowNamed(body, removed.name).querySelector<HTMLButtonElement>(
+          '.abyss-project-value-remove',
+        ),
+      ).click();
+      await vi.waitFor(() => {
+        expect(Notice).toHaveBeenCalledOnce();
+      });
+      expect(plugin.settings.projects.table.hiddenStatuses).toEqual([]);
+      if (phase === 'static') {
+        expect(plugin.saveViewState).not.toHaveBeenCalled();
+        expect(plugin.refreshProjectSettings).toHaveBeenCalled();
+      }
+      const content = vi.mocked(Notice).mock.calls[0]?.[0] as DocumentFragment;
+      expectDefined(content.querySelector('button')).click();
+      await vi.waitFor(() => {
+        expect(plugin.saveViewState).toHaveBeenCalledTimes(phase === 'static' ? 1 : 2);
+      });
+      expect(plugin.settings.projects.statuses.some(({ id }) => id === removed.id)).toBe(false);
+      expect(plugin.settings.projects.table.hiddenStatuses).toEqual([]);
+      tab.hide();
+    },
+  );
+
   it('renders project-status add and delete drafts before persistence settles', async () => {
     const pending = deferred<void>();
     const { tab, plugin } = makeTab({}, { saveSettings: vi.fn(() => pending.promise) });
@@ -2417,7 +2454,9 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(Notice).toHaveBeenCalled();
-    expect(log).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => {
+      expect(log).toHaveBeenCalledTimes(2);
+    });
     expect(log).toHaveBeenNthCalledWith(1, '[abyss-tasks] Could not add task status', {
       cause: failure,
     });
@@ -2741,6 +2780,45 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
       ),
     ).click();
     expect(plugin.settings.projects.defaultStatusId).toBe(survivorId);
+  });
+
+  it('cleans only the deleted project status from every saved layout', async () => {
+    const { tab, plugin } = makeTab();
+    const projects = plugin.settings.projects;
+    const id = expectDefined(projects.statuses[0]).id;
+    const key = `id:${id}`;
+    const group = JSON.stringify(['status', key]);
+    projects.table.hiddenStatuses = [key, 'raw:inbox', 'none'];
+    projects.table.collapsedGroups = [group, JSON.stringify(['property:Owner', key])];
+    projects.kanban = {
+      ...buildDefaultProjectKanbanSettings(projects.table),
+      collapsedColumns: [key, 'none'],
+      manualOrder: { [key]: ['A.md'], none: ['B.md'] },
+    };
+    projects.timeline = buildDefaultProjectTimelineSettings(projects.table);
+    projects.timeline.collapsedGroups = [group, 'other'];
+    const writes: string[] = [];
+    vi.mocked(plugin.saveSettings).mockImplementation(async () => {
+      writes.push('static');
+    });
+    vi.mocked(plugin.saveViewState).mockImplementation(async () => {
+      writes.push('view');
+    });
+    const body = openSection(tab, 3);
+    expectDefined(
+      projectStatusRowNamed(body, 'inbox').querySelector<HTMLButtonElement>(
+        '.abyss-project-value-remove',
+      ),
+    ).click();
+    await flushMicrotasks();
+    expect(writes).toEqual(['static', 'view']);
+    for (const layout of [projects.table, projects.kanban, projects.timeline])
+      expect(layout.hiddenStatuses).toEqual(['raw:inbox', 'none']);
+    expect(projects.table.collapsedGroups).toEqual([JSON.stringify(['property:Owner', key])]);
+    expect(projects.timeline.collapsedGroups).toEqual(['other']);
+    expect(projects.kanban.collapsedColumns).toEqual(['none']);
+    expect(projects.kanban.manualOrder).toEqual({ none: ['B.md'] });
+    tab.hide();
   });
 });
 

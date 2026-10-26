@@ -7052,7 +7052,8 @@ button.abyss-project-table-status-pill {
   white-space: nowrap;
 }
 
-.abyss-projects-table button.abyss-project-table-value-remove {
+:is(.abyss-projects-table, .abyss-project-dashboard-properties)
+  button.abyss-project-table-value-remove {
   position: absolute;
   top: 50%;
   right: 0;
@@ -7077,14 +7078,18 @@ button.abyss-project-table-status-pill {
 
 .abyss-project-table-value:hover .abyss-project-table-value-remove,
 .abyss-project-table-value:focus-within .abyss-project-table-value-remove,
-.abyss-projects-table .abyss-project-table-tag-value:hover .abyss-project-table-value-remove,
-.abyss-projects-table
+:is(.abyss-projects-table, .abyss-project-dashboard-properties)
+  .abyss-project-table-tag-value:hover
+  .abyss-project-table-value-remove,
+:is(.abyss-projects-table, .abyss-project-dashboard-properties)
   .abyss-project-table-tag-value:focus-within
   .abyss-project-table-value-remove {
   opacity: 1;
 }
 
-.abyss-projects-table .abyss-project-table-tag-value .abyss-project-table-value-remove {
+:is(.abyss-projects-table, .abyss-project-dashboard-properties)
+  .abyss-project-table-tag-value
+  .abyss-project-table-value-remove {
   background: var(--tag-background, var(--background-secondary));
 }
 
@@ -8867,18 +8872,20 @@ button.abyss-project-table-status-pill {
   overflow-anchor: none;
 }
 
-.abyss-project-back {
+button.abyss-project-back {
   display: inline-flex;
-  align-self: flex-start;
-  width: fit-content;
+  align-self: center;
+  inline-size: calc(var(--size-4-6) + var(--size-4-1));
+  block-size: var(--size-4-6);
   align-items: center;
+  justify-content: center;
   gap: var(--size-2-3);
   background: transparent;
   border: none;
   box-shadow: none;
   color: var(--text-muted);
   cursor: pointer;
-  padding: var(--size-4-1) var(--size-2-3);
+  padding: 0;
   flex: 0 0 auto;
 }
 
@@ -8941,6 +8948,39 @@ button.abyss-project-dashboard-title {
   white-space: nowrap;
   font-size: var(--font-ui-medium);
   font-weight: var(--font-semibold);
+  line-height: var(--line-height-tight);
+}
+
+.abyss-project-dashboard-status-icon {
+  display: none;
+}
+
+@container abyss-panel-layout (max-width: 32rem) {
+  button.abyss-project-dashboard-status {
+    inline-size: var(--abyss-toolbar-control-size);
+    flex: 0 0 var(--abyss-toolbar-control-size);
+    padding-inline: 0;
+    justify-content: center;
+    border-color: transparent;
+    background: var(--background-modifier-border);
+    color: var(--text-muted);
+  }
+
+  .abyss-project-dashboard-status-label,
+  button.abyss-project-dashboard-status::before {
+    display: none;
+  }
+
+  .abyss-project-dashboard-status-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .abyss-project-dashboard-status-icon svg {
+    inline-size: var(--size-4-5);
+    block-size: var(--size-4-5);
+  }
 }
 
 .abyss-status-pill {
@@ -9002,7 +9042,7 @@ button.abyss-project-dashboard-date {
   font-size: var(--font-ui-small);
 }
 
-button.abyss-project-dashboard-property {
+.abyss-project-dashboard-property {
   width: 100%;
   height: auto;
   background: transparent;
@@ -9011,10 +9051,27 @@ button.abyss-project-dashboard-property {
   text-align: start;
   white-space: normal;
   display: grid;
+  align-items: center;
   grid-template-columns: minmax(5rem, 1fr) minmax(0, 2fr);
   gap: var(--size-4-3);
   padding-block: var(--size-4-1);
   overflow-wrap: anywhere;
+}
+
+button.abyss-project-dashboard-property-label {
+  justify-content: flex-start;
+  height: auto;
+  min-height: var(--size-4-6);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  text-align: start;
+  white-space: normal;
+}
+
+.abyss-project-dashboard-property > :last-child {
+  min-width: 0;
 }
 
 .abyss-project-dashboard-property:hover {
@@ -9489,6 +9546,7 @@ body.is-phone .abyss-project-tasks .abyss-center-search {
   flex: 1 1 var(--size-4-8);
   min-inline-size: 0;
   width: auto;
+  padding-inline: var(--size-4-1);
 }
 
 body.is-phone .abyss-project-dashboard-header {
@@ -9501,21 +9559,33 @@ body.is-phone button.abyss-project-dashboard-title {
 }
 
 body.is-phone .abyss-project-dashboard-metadata {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   flex: 1;
   min-width: 0;
   align-items: center;
-  flex-wrap: wrap;
   gap: var(--size-4-1);
+}
+
+body.is-phone .abyss-project-dashboard-stats,
+body.is-phone .abyss-project-dashboard-stats .abyss-progress-wrap {
+  min-width: 0;
+  width: 100%;
 }
 
 body.is-phone .abyss-project-dashboard-metadata > .abyss-project-dashboard-dates {
   display: flex;
-  flex-wrap: wrap;
+  min-width: 0;
+  flex-wrap: nowrap;
+  gap: var(--size-4-1);
+}
+
+body.is-phone button.abyss-project-dashboard-date {
+  padding-inline: 0;
 }
 
 body.is-phone .abyss-project-dashboard-details {
-  margin-inline-start: auto;
+  justify-self: end;
 }
 
 body.is-phone .abyss-project-tasks :is(button.abyss-project-back, button.abyss-status-pill) {
@@ -9531,6 +9601,7 @@ body.is-phone .abyss-project-tasks button.abyss-project-back {
   inline-size: var(--abyss-toolbar-control-size);
   justify-content: center;
   padding-inline: 0;
+  background: var(--background-modifier-border);
 }
 
 body.is-phone .abyss-project-tasks button.abyss-status-pill {
@@ -9818,7 +9889,9 @@ body.is-tablet button.abyss-project-table-status-pill:is(.is-text, .is-dot) {
   padding-inline: 0;
 }
 
-body.is-tablet .abyss-projects-table button.abyss-project-table-value-remove {
+body.is-tablet
+  :is(.abyss-projects-table, .abyss-project-dashboard-properties)
+  button.abyss-project-table-value-remove {
   padding: 0;
 }
 
@@ -9866,11 +9939,9 @@ body.is-tablet button.abyss-project-column-add {
   padding: 3px var(--size-4-2);
 }
 
-body.is-tablet button.abyss-project-back {
-  padding: var(--size-4-1) var(--size-2-3);
-}
-
-body.is-tablet button.abyss-project-open-btn {
+body.is-tablet button.abyss-project-back,
+body.is-tablet button.abyss-project-open-btn,
+body.is-tablet button.abyss-project-dashboard-property-label {
   padding: 0;
 }
 
@@ -11382,6 +11453,7 @@ button.abyss-calendar-date[aria-pressed='true'] {
 }
 
 .abyss-task-timeline {
+  padding-block-start: 0;
   display: block;
 }
 

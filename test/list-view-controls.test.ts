@@ -1,10 +1,72 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { ListViewControls } from '../src/panels/center/ListViewControls';
+import { taskStatusOptionsRow } from '../src/panels/task-collection/TaskKanbanOptions';
 import { DEFAULT_SETTINGS, getListViewDefaults } from '../src/settings/defaults';
 import type { ListViewState } from '../src/settings/types';
+import { defaultTaskKanbanSettings } from '../src/task-lists/taskKanbanSettings';
 import { noInteractionOwnership } from '../src/ui/interactionOwnership';
 import { deferred, expectDefined, makeStubStore } from './helpers';
+
+it.each(['kanban', 'timeline'] as const)(
+  'retires stale %s options when the status catalog changes',
+  (view) => {
+    const state = new AppState();
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const registry = makeStubStore([]).statusRegistry;
+    const root = document.body.createDiv();
+    const controls = new ListViewControls({
+      state,
+      settings,
+      statusRegistry: registry,
+      saveViewState: async () => {},
+      interactionOwnership: noInteractionOwnership,
+      host: { root: () => root, formatDate: (v) => v },
+    });
+    try {
+      controls.setView(view);
+      const button = controls.renderViewStateButton(root);
+      button.click();
+      expect(root.querySelector('.abyss-view-state-popover')).not.toBeNull();
+      registry.replace([
+        ...registry.all(),
+        { id: 'custom', name: 'Fresh status', symbol: '!', type: 'todo', icon: '', core: false },
+      ]);
+      controls.renderPropertyChips(root);
+      expect(root.querySelector('.abyss-view-state-popover')).toBeNull();
+      button.click();
+      expect(root.textContent).toContain('Fresh status');
+    } finally {
+      controls.closeViewStatePopover();
+      root.remove();
+    }
+  },
+);
+
+it.each(['removed', 'reused'] as const)(
+  'ignores a stale status toggle after its id was %s',
+  async (change) => {
+    const old = {
+      id: 'custom',
+      name: 'Old',
+      symbol: '!',
+      type: 'todo' as const,
+      icon: '',
+      core: false,
+    };
+    let statuses = [old];
+    const settings = defaultTaskKanbanSettings();
+    const row = taskStatusOptionsRow({
+      read: () => settings,
+      update: (patch) => Object.assign(settings, patch),
+      statuses: () => statuses,
+    });
+    statuses = change === 'removed' ? [] : [{ ...old, name: 'New', symbol: '?' }];
+    if (row.kind !== 'multi') throw Error('Expected visibility row');
+    await row.onToggle('custom');
+    expect(settings.hiddenStatuses).toEqual([]);
+  },
+);
 
 describe('list view persistence ordering', () => {
   it('updates the settings entry, starts one save, then notifies state without waiting for persistence', async () => {

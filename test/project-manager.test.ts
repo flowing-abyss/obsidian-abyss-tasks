@@ -93,6 +93,16 @@ async function readFm(app: unknown, path: string): Promise<Record<string, unknow
 }
 
 describe('ProjectManager.setStatus', () => {
+  it('rejects a queued status id whose meaning changed before the write', async () => {
+    const app = await createAppWithFiles({ 'P.md': '---\nstatus: active\n---\n' });
+    const settings = clone();
+    const status = expectDefined(settings.projects.statuses[0]);
+    const manager = new ProjectManager(app, settings, {} as never, {} as never);
+    const write = manager.setStatus('P.md', status.id);
+    status.name = 'Replacement';
+    await expect(write).rejects.toThrow(/status.*changed/iu);
+    expect((await readFm(app, 'P.md'))['status']).toBe('active');
+  });
   it('rejects missing project files and unknown statuses', async () => {
     const app = await createAppWithFiles({ 'P.md': '# Project\n' });
     const pm = new ProjectManager(app, clone(), {} as never, {} as never);

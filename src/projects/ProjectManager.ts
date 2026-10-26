@@ -852,20 +852,25 @@ export class ProjectManager {
     statusId: string,
     expectedStatus?: ExpectedProjectStatus,
   ): Promise<void> {
+    const targetName = this.settings.projects.statuses.find(({ id }) => id === statusId)?.name;
     await coordinateMetadataOperation(this.app, () =>
-      this.setStatusGuarded(path, statusId, expectedStatus),
+      this.setStatusGuarded(path, statusId, targetName, expectedStatus),
     );
   }
 
   private async setStatusGuarded(
     path: string,
     statusId: string,
+    targetName: string | undefined,
     expectedStatus?: ExpectedProjectStatus,
   ): Promise<void> {
     const statuses = this.settings.projects.statuses;
     const target = statuses.find((s) => s.id === statusId);
     if (target == null) {
       throw new ProjectEditValidationError(`Unknown project status: ${statusId}`);
+    }
+    if (targetName !== target.name) {
+      throw new ProjectEditValidationError('Project status changed in settings. Choose it again.');
     }
     const property = this.settings.projects.statusProperty.trim();
     if (property.length === 0) {

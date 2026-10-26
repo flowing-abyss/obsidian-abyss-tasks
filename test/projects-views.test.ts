@@ -79,6 +79,59 @@ describe('renderProgressBar', () => {
 });
 
 describe('renderProjectDashboard', () => {
+  it('retires an open status menu and rejects its captured choice after definition reuse', () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const el = freshContainer();
+    const project = proj({});
+    const onSetStatus = vi.fn();
+    const renderTasks = vi.fn();
+    const show = vi.spyOn(Menu.prototype, 'showAtMouseEvent');
+    const hide = vi.spyOn(Menu.prototype, 'hide');
+    renderProjectDashboard(el, project, {
+      state: new AppState(),
+      settings,
+      onSetStatus,
+      openNote: vi.fn(),
+      renderTasks,
+    });
+    expectDefined(el.querySelector<HTMLElement>('.abyss-status-pill')).click();
+    const menu = expectDefined(show.mock.instances[show.mock.instances.length - 1]) as {
+      menuItems__: Array<{ onClick__: (event: MouseEvent) => void }>;
+    };
+    const choose = expectDefined(menu.menuItems__[0]).onClick__;
+    expectDefined(settings.projects.statuses[0]).name = 'Replacement';
+    refreshProjectDashboard(el, project, renderTasks, settings.projects.statuses);
+    expect(hide).toHaveBeenCalled();
+    choose(new MouseEvent('click'));
+    expect(onSetStatus).not.toHaveBeenCalled();
+    disposeProjectDashboard(el);
+  });
+  it('keeps the current status accessible when its visual label is collapsed', () => {
+    const el = freshContainer();
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const project = proj({});
+    const renderTasks = vi.fn();
+    renderProjectDashboard(el, project, {
+      state: new AppState(),
+      settings,
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+      renderTasks,
+    });
+    const pill = expectDefined(el.querySelector<HTMLElement>('.abyss-status-pill'));
+    expect(pill.getAttribute('aria-label')).toBe('Status: inbox');
+    expect(pill.getAttribute('aria-haspopup')).toBe('menu');
+    refreshProjectDashboard(
+      el,
+      { ...project, statusId: null, rawStatus: 'Waiting for approval' },
+      renderTasks,
+      settings.projects.statuses,
+    );
+    expect(pill.getAttribute('aria-label')).toContain('Waiting for approval');
+    expect(pill.textContent).toBe('Waiting for approval');
+    disposeProjectDashboard(el);
+  });
+
   it('renders header + back button; back returns to table; renders tasks', () => {
     const state = new AppState();
     state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
