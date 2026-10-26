@@ -22,7 +22,7 @@ it('enrolls the measured desktop shell inset with its existing CSS consumer', as
   const name = '--abyss-shell-bottom-inset';
   expect(discoverRuntimeVariables(source ?? '').produced).toEqual([name]);
   expect(contracts.runtime.produced).toContain(name);
-  expect(css).toContain(`padding-block-end: var(${name}, 0px)`);
+  expect(css).toMatch(/padding-block-end:\s*var\(--abyss-shell-bottom-inset,\s*0(?:px)?\)/u);
 });
 
 it('enrolls only the exact time-grid clock and card geometry producers', async () => {

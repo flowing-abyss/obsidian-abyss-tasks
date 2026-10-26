@@ -48,6 +48,7 @@ export function mountPanelStatusBarInset(owner: HTMLElement, workspace?: Workspa
     };
     refresh = () => {
       if (!current()) return;
+      if (bar === null && document.querySelector('.status-bar') === null) return;
       frame ??= win.requestAnimationFrame(measure);
     };
     const observer =
