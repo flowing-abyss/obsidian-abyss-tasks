@@ -3,7 +3,7 @@ import type {
   ProjectTimelineWindow,
 } from '../../projects/projectTimelineModel';
 
-/** Owns a row in the shared sticky heading and decorations on mounted task tracks. */
+/** Decorates the shared date axis and mounted task tracks without adding a row. */
 export interface TimelineContextOverlay {
   range(): ProjectTimelineRange;
   update(window: ProjectTimelineWindow): void;

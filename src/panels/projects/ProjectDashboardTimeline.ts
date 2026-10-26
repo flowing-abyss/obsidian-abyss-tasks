@@ -63,7 +63,6 @@ export class ProjectDashboardTimeline implements TimelineContextOverlay {
     this.#identity = `project\u0000${context.project()?.path ?? ''}`;
     this.#root = host.createDiv({ cls: 'abyss-project-timeline-boundaries' });
     this.#root.dataset['occurrenceId'] = this.#identity;
-    this.#root.createDiv({ cls: 'abyss-project-timeline-axis-summary', text: 'Project dates' });
     this.#track = this.#root.createDiv({ cls: 'abyss-project-timeline-track' });
     this.#handles = { start: this.#createHandle('start'), end: this.#createHandle('end') };
     this.#track.addEventListener('keydown', this.#keydown);

@@ -340,9 +340,9 @@ list changes. The dashboard owns finite Markdown, popover, and editor resources 
 anchors and focus on refresh. Its floating field editor belongs to the properties menu's focus
 scope; value changes keep both surfaces open. Configured empty properties stay available for editing.
 
-`ProjectDashboardTimeline` owns a Project dates row in the shared sticky timeline heading, with
-separate Start/End bands aligned to the task date tracks. Calendar labels remain in their own row;
-the task viewport measures the complete heading as its inset.
+`ProjectDashboardTimeline` overlays Start/End handles on the shared sticky date axis and extends
+their lines through the task date tracks. It adds no row or vertical space; the task viewport
+measures the calendar axis as its inset. The axis height provides separate endpoint hit targets.
 Its edits share overview endpoint guards, mutation ordering, receipt projection, and history through
 ProjectManager. Project range changes never derive task dates or add task metadata.
 

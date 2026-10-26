@@ -859,7 +859,7 @@ it('edits the project interval in its task Timeline without changing task dates'
     await h.choose('Timeline');
     const boundaries = expectDefined(h.root.querySelector('.abyss-project-timeline-boundaries'));
     expect(
-      h.root.querySelector('.abyss-task-timeline-heading .abyss-project-timeline-row'),
+      h.root.querySelector('.abyss-project-timeline-axis .abyss-project-timeline-row'),
     ).toBeNull();
     const bar = expectDefined(boundaries.querySelector<HTMLElement>('[data-timeline-part="end"]'));
     expect(bar.hidden).toBe(false);

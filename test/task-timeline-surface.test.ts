@@ -480,14 +480,6 @@ it('keeps dashboard boundaries actionable when active-scale Today leaves the geo
     const end = expectDefined(
       h.host.querySelector<HTMLElement>('.abyss-project-boundary-handle.is-end'),
     );
-    const boundaries = expectDefined(end.closest('.abyss-project-timeline-boundaries'));
-    expect(boundaries.parentElement).toBe(h.host.querySelector('.abyss-task-timeline-heading'));
-    expect(boundaries.previousElementSibling).toBe(
-      h.host.querySelector('.abyss-project-timeline-axis'),
-    );
-    expect(boundaries.querySelector('.abyss-project-timeline-axis-summary')?.textContent).toBe(
-      'Project dates',
-    );
     end.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
     await flushMicrotasks();
     expect(apply).toHaveBeenCalledWith(

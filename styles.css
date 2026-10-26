@@ -7993,7 +7993,6 @@ button.abyss-project-table-status-pill {
 }
 
 .abyss-project-timeline-axis,
-.abyss-project-timeline-boundaries,
 .abyss-project-timeline-row {
   display: grid;
   width: max-content;
@@ -8481,7 +8480,6 @@ button.abyss-project-table-status-pill {
   }
 
   .abyss-project-timeline-axis,
-  .abyss-project-timeline-boundaries,
   .abyss-project-timeline-row {
     grid-template-columns:
       var(--abyss-project-timeline-summary-width)
@@ -11521,7 +11519,6 @@ button.abyss-calendar-date[aria-pressed='true'] {
 
 /* Sticky summaries need a containing block as wide as the moving date track. */
 .abyss-project-timeline-groups,
-.abyss-task-timeline-heading,
 .abyss-task-timeline-rows {
   width: max(
     100%,
@@ -11628,34 +11625,23 @@ button.abyss-calendar-date[aria-pressed='true'] {
   color: var(--text-muted);
 }
 
-.abyss-task-timeline-heading {
-  position: sticky;
-  top: 0;
-  z-index: 5;
-  background: var(--background-primary);
-}
-
-/* Separate Start/End bands keep labels and hit targets apart, including at viewport edges. */
-.abyss-project-timeline-boundaries {
-  position: relative;
-  min-block-size: max(48px, calc((1.2em + var(--size-4-2)) * 2));
-  border-bottom: 1px solid var(--background-modifier-border);
-  background: var(--background-secondary);
-  color: var(--text-muted);
-  font-size: var(--font-ui-smaller);
+.abyss-project-timeline-boundaries,
+.abyss-project-timeline-boundaries > .abyss-project-timeline-track {
+  position: absolute;
+  inset: 0;
+  min-height: 0;
   pointer-events: none;
 }
 
-.abyss-project-timeline-boundaries > .abyss-project-timeline-axis-summary {
-  align-items: center;
-  padding-inline: var(--size-4-2);
+.abyss-project-timeline-boundaries {
+  z-index: 2;
 }
 
 .abyss-project-timeline-boundaries > .abyss-project-timeline-track {
-  min-height: 0;
   overflow: visible;
 }
 
+/* Split the existing axis height so coincident endpoints retain separate hit targets. */
 .abyss-project-timeline-boundaries .abyss-project-boundary-handle {
   position: absolute;
   display: block;
@@ -11730,7 +11716,9 @@ button.abyss-calendar-date[aria-pressed='true'] {
 .abyss-project-boundary-label {
   position: absolute;
   z-index: 1;
-  top: var(--size-2-1);
+
+  /* Keep period labels readable; endpoint labels float below the axis without adding a row. */
+  top: calc(200% + var(--size-2-1));
   padding: var(--size-2-1) var(--size-2-2);
   border-radius: var(--radius-s);
   background: var(--background-primary);

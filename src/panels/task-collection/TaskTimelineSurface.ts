@@ -74,7 +74,7 @@ interface TaskTimelineActions<T> {
   openDates(key: string, anchor: HTMLElement): void;
   changeScale(scale: ProjectTimelineScale): void;
   mountContext?(
-    heading: HTMLElement,
+    axisDates: HTMLElement,
     layout: TimelineContextOverlayLayout,
   ): TimelineContextOverlay | undefined;
 }
@@ -116,7 +116,6 @@ const scheduledSuffix = '\u0000scheduled';
 export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
   readonly #viewport: TaskListSurface<T>;
   readonly #axis: HTMLElement;
-  readonly #heading: HTMLElement;
   readonly #contextOverlay: TimelineContextOverlay | undefined;
   readonly #summary: HTMLElement;
   readonly #dates: HTMLElement;
@@ -158,8 +157,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
       'abyss-project-timeline',
       'abyss-project-timeline-scroll',
     );
-    this.#heading = options.host.createDiv({ cls: 'abyss-task-timeline-heading' });
-    this.#axis = this.#heading.createDiv({ cls: 'abyss-project-timeline-axis' });
+    this.#axis = options.host.createDiv({ cls: 'abyss-project-timeline-axis' });
     this.#summary = this.#axis.createDiv({ cls: 'abyss-project-timeline-axis-summary' });
     this.#buttons = createTimelineNavigation(this.#summary, {
       scale: (scale) => {
@@ -181,7 +179,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
     this.#viewport = new TaskListSurface({
       ...options,
       host: this.#rowsHost,
-      viewportInset: () => this.#heading.getBoundingClientRect().height,
+      viewportInset: () => this.#axis.getBoundingClientRect().height,
       mount: (parent, row) => this.#mount(parent, row),
     });
     this.#interaction = new TimelinePointerInteraction({
@@ -215,7 +213,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
     this.#migrationCleanup = this.#watchViewport();
   }
   #mountContext(): TimelineContextOverlay | undefined {
-    return this.actions.mountContext?.(this.#heading, {
+    return this.actions.mountContext?.(this.#dates, {
       scroll: this.options.scroll,
       window: () => this.#window(),
       now: () => this.actions.now(),
@@ -356,7 +354,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
     this.options.scroll.removeEventListener('scroll', this.#scroll);
     this.#viewport.destroy();
     this.#contextOverlay?.destroy();
-    this.#heading.remove();
+    this.#axis.remove();
     this.#rowsHost.remove();
     this.options.host.removeClass(
       'abyss-task-timeline',
