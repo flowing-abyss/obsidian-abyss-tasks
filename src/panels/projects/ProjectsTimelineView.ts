@@ -291,6 +291,7 @@ export class ProjectsTimelineView<
   private usableWidth_abyssPrivate = 0;
   private lastLeft_abyssPrivate = 0;
   private calendarSignature_abyssPrivate = '';
+  private calendarDay_abyssPrivate = '';
   private renderedScale_abyssPrivate: ProjectTimelineSettings['scale'];
   private scaleContextOrdinal_abyssPrivate: number | undefined;
   private selectedPath_abyssPrivate: string | undefined;
@@ -654,11 +655,14 @@ export class ProjectsTimelineView<
       this.scroll.scrollLeft = position.left;
     this.lastLeft_abyssPrivate = this.scroll.scrollLeft;
     const window = this.currentWindow_abyssPrivate();
-    const signature = `${window.startDay}:${window.scale}:${this.lastLeft_abyssPrivate}:${usable}:${localDay((this.context_abyssPrivate.now ?? (() => new Date()))())}`;
+    const today = localDay((this.context_abyssPrivate.now ?? (() => new Date()))());
+    const dayChanged = today !== this.calendarDay_abyssPrivate;
+    this.calendarDay_abyssPrivate = today;
+    const signature = `${window.startDay}:${window.scale}:${this.lastLeft_abyssPrivate}:${usable}:${today}`;
     if (signature === this.calendarSignature_abyssPrivate) return;
     this.calendarSignature_abyssPrivate = signature;
     this.syncRangeStateOffset_abyssPrivate();
-    this.patchVisibleCalendar_abyssPrivate(window);
+    this.patchVisibleCalendar_abyssPrivate(window, dayChanged);
     for (const row of this.rows_abyssPrivate.values()) {
       if (changed) this.patchRange_abyssPrivate(row, row.range, window);
       else if (!this.rangeExposed_abyssPrivate(row.range))
@@ -844,10 +848,15 @@ export class ProjectsTimelineView<
     this.addTodayMarker_abyssPrivate(this.axisDates_abyssPrivate, window);
   }
 
-  private patchVisibleCalendar_abyssPrivate(window: ProjectTimelineWindow): void {
+  private patchVisibleCalendar_abyssPrivate(
+    window: ProjectTimelineWindow,
+    dayChanged = false,
+  ): void {
     this.patchAxis_abyssPrivate(window);
-    for (const row of this.rows_abyssPrivate.values())
+    for (const row of this.rows_abyssPrivate.values()) {
       patchTimelineGrid(row.grid, this.axisLayout_abyssPrivate);
+      if (dayChanged) this.addTodayMarker_abyssPrivate(row.track, window);
+    }
   }
 
   private addTodayMarker_abyssPrivate(host: HTMLElement, window: ProjectTimelineWindow): void {

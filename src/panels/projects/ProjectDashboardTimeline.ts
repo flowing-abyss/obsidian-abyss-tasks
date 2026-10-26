@@ -140,6 +140,7 @@ export class ProjectDashboardTimeline implements TimelineContextOverlay {
       window.dayCount,
       exposed.first,
       exposed.last,
+      range.kind === 'closed' ? undefined : localDay(this.context.now()),
     ]);
     if (signature !== this.#paintSignature || this.#interaction.pinnedOccurrences().length > 0) {
       this.#paintSignature = signature;

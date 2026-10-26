@@ -19,6 +19,7 @@ function pointer(type: string, clientX: number): Event {
 }
 function mount(frontmatter: Project['frontmatter'] = { start: '2026-10-02', end: '2026-10-04' }) {
   const host = document.body.createDiv();
+  let now = new Date(2026, 9, 1);
   let project: Project | undefined = {
     path: 'Projects/A.md',
     name: 'A',
@@ -46,7 +47,7 @@ function mount(frontmatter: Project['frontmatter'] = { start: '2026-10-02', end:
   const view = new ProjectDashboardTimeline(host, {
     scroll: host,
     window: () => window,
-    now: () => new Date(2026, 9, 1),
+    now: () => now,
     revealDay,
     project: () => project,
     fields: () => fields,
@@ -79,6 +80,9 @@ function mount(frontmatter: Project['frontmatter'] = { start: '2026-10-02', end:
     apply,
     window,
     revealDay,
+    nextDay: () => {
+      now = new Date(2026, 9, 2);
+    },
     change: (kind: string) => {
       if (kind === 'replace' && project !== undefined)
         project = { ...project, frontmatter: { ...frontmatter, end: '2026-10-10' } };
@@ -321,6 +325,28 @@ it.each(['finish', 'cancel', 'reject'] as const)(
       ).toBeCloseTo(17.8571428571, 6);
     } finally {
       release();
+      h.dispose();
+    }
+  },
+);
+
+it.each(['start', 'end'] as const)(
+  'advances an unset dashboard %s after midnight without a geometry or source change',
+  (endpoint) => {
+    const h = mount(endpoint === 'start' ? { end: '2026-10-04' } : { start: '2026-09-28' });
+    try {
+      h.view.update(h.window);
+      const handle = endpoint === 'start' ? h.start : h.bar;
+      expect(parseFloat(handle.style.left)).toBeCloseTo(100 / 28, 8);
+      h.nextDay();
+      h.view.update(h.window);
+      expect(parseFloat(handle.style.left)).toBeCloseTo(300 / 28, 8);
+      expect(h.host.querySelector(`[data-timeline-part="${endpoint}"]`)).toBe(handle);
+      expect(handle.getAttribute('aria-label')).toBe(
+        `${endpoint === 'start' ? 'Start' : 'End'}: Not set`,
+      );
+      expect(h.apply).not.toHaveBeenCalled();
+    } finally {
       h.dispose();
     }
   },

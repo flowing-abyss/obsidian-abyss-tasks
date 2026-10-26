@@ -1635,3 +1635,56 @@ it('gives a newer reveal priority over delayed Today in retained geometry', () =
   h.view.update(items, '');
   expect(logicalCenter(h.host, h.view)).toBeCloseTo(center, 8);
 });
+
+it('advances retained project row Today markers on a scroll-only midnight frame without rebuilding models or cards', () => {
+  const frames = controlledFrames();
+  let now = new Date(2026, 9, 26);
+  const modelInput = vi.fn(() => ({
+    segment: createSearchWordSegmenter(),
+    nowMs: Date.UTC(2026, 9, 26),
+    fields,
+    statuses: DEFAULT_SETTINGS.projects.statuses,
+  }));
+  const renderCell = vi.fn<ProjectsTimelineViewContext<Cell>['renderCell']>(
+    ({ host, project: item, field, occurrenceId, existing }) =>
+      existing ?? {
+        element: host,
+        identity: { projectPath: item.path, columnId: field.id, occurrenceId },
+        project: item,
+        field,
+      },
+  );
+  const items = [project('Projects/A.md', '2026-10-24', '2026-10-28')];
+  const h = mount(items, now, 'month', { now: () => now, modelInput, renderCell });
+  mockTimelineGeometry(h.host, h.view, {
+    summaryWidth: 180,
+    trackWidth: 32768,
+    viewportWidth: 900,
+  });
+  h.view.update(items, '');
+  frames.run();
+  const row = expectDefined(h.host.querySelector<HTMLElement>('.abyss-project-timeline-row'));
+  const marker = expectDefined(row.querySelector<HTMLElement>('.abyss-project-timeline-today'));
+  const cells = h.view.renderedCells().map((cell) => cell.element);
+  const oldLeft = marker.style.left;
+  modelInput.mockClear();
+  renderCell.mockClear();
+  now = new Date(2026, 9, 27);
+  h.view.scroll.scrollLeft += 37.25;
+  h.view.scroll.dispatchEvent(new Event('scroll'));
+  frames.run();
+  const header = expectDefined(
+    h.host.querySelector<HTMLElement>(
+      '.abyss-project-timeline-axis-dates > .abyss-project-timeline-today',
+    ),
+  );
+  expect(header.getAttribute('aria-label')).toBe('Today, 2026-10-27');
+  expect(marker.getAttribute('aria-label')).toBe('Today, 2026-10-27');
+  expect(marker.style.left).not.toBe(oldLeft);
+  expect(marker.style.left).toBe(header.style.left);
+  expect(h.host.querySelector('.abyss-project-timeline-row')).toBe(row);
+  expect(row.querySelector('.abyss-project-timeline-today')).toBe(marker);
+  expect(h.view.renderedCells().map((cell) => cell.element)).toEqual(cells);
+  expect(modelInput).not.toHaveBeenCalled();
+  expect(renderCell).not.toHaveBeenCalled();
+});
