@@ -207,7 +207,7 @@ function renderTrackedTime(stats: HTMLElement, project: Project): void {
 }
 
 /** Refreshes the dashboard's status presentation without replacing its retained content. */
-export function refreshProjectDashboardStatus(
+function refreshProjectDashboardStatus(
   container: HTMLElement,
   project: Project | undefined,
   statuses: readonly ProjectStatus[],
