@@ -205,6 +205,25 @@ describe('native Timeline scenarios', () => {
       h.root.remove();
     }
   });
+  it.each(['tasks', 'projects'] as const)(
+    'resets %s to Today through the active Month control when navigation has no Today button',
+    async (kind) => {
+      const h = timelineHarness(kind, true, 'long');
+      h.root.querySelector('.abyss-cal-nav-today')?.remove();
+      try {
+        if (kind === 'tasks') await scenarios.taskTimelineScenarios(h.host, h.measure);
+        else await scenarios.projectScenarios(h.measure);
+        expect(h.navigation).toEqual(['month', 'month']);
+        expect(h.positions).toEqual([16384, 16398, 16440, 16412]);
+        expect(h.samples[`ui.${kind}.timeline-scroll`]).toEqual({
+          ...(kind === 'tasks' ? { tasks: 6000 } : { projects: 100 }),
+          ...h.logicalFacts,
+        });
+      } finally {
+        h.root.remove();
+      }
+    },
+  );
   it('waits for a populated date axis and ready task rows before accepting open or scroll', async () => {
     const h = timelineHarness('tasks');
     h.date.remove();

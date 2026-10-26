@@ -637,12 +637,11 @@ async function prepareTimelineScroll(
     ),
   ].find((button) => button.textContent === 'Month');
   const today = scroller.querySelector<HTMLButtonElement>('.abyss-cal-nav-today');
-  if (month === undefined || today === null)
-    throw new Error('Timeline navigation controls missing');
+  if (month === undefined) throw new Error('Timeline navigation controls missing');
   month.click();
   await frames();
   await waitFor(() => month.getAttribute('aria-pressed') === 'true', 'Timeline Month scale');
-  today.click();
+  (today ?? month).click();
   await frames();
   await moveTimeline(scroller, rowSelector, startDay, false);
 }
