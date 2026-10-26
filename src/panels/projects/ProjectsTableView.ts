@@ -3845,14 +3845,21 @@ export class ProjectsTableView {
     );
   }
 
-  private projectedProjects_abyssPrivate(): readonly Project[] {
+  /** Dashboard ranges share the overview's receipts until verified source observations arrive. */
+  projectWithAppliedReceipts(project: Project): Project {
+    return this.projectedProjects_abyssPrivate([project])[0] ?? project;
+  }
+
+  private projectedProjects_abyssPrivate(
+    projects: readonly Project[] = this.projects_abyssPrivate,
+  ): readonly Project[] {
     const byPath = new Map<string, ProjectReceiptProjection[]>();
     for (const projection of this.receiptProjections_abyssPrivate.values()) {
       const projections = byPath.get(projection.receipt.path) ?? [];
       projections.push(projection);
       byPath.set(projection.receipt.path, projections);
     }
-    return this.projects_abyssPrivate.map((project) => {
+    return projects.map((project) => {
       const projections = byPath.get(project.path);
       if (projections === undefined) return project;
       const frontmatter = { ...project.frontmatter };

@@ -50,6 +50,7 @@ function mount(frontmatter: Project['frontmatter'] = { start: '2026-10-02', end:
     project: () => project,
     fields: () => fields,
     apply,
+    history: async () => ({ applied: [], failed: [] }),
   });
   view.update(window, { cells: [], hierarchyCells: [], gridBoundaries: [] });
   const track = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-track'));

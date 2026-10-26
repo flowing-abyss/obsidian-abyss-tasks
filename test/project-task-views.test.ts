@@ -360,3 +360,84 @@ it('edits the project interval in its task Timeline without changing task dates'
     h.dispose();
   }
 });
+
+it('accumulates dashboard project keyboard edits while native metadata echoes lag', async () => {
+  const h = await mount('---\nstart: 2026-10-20\nend: 2026-10-31\n---\n');
+  try {
+    h.open('Projects/A.md');
+    await h.choose('Timeline');
+    const bar = expectDefined(
+      h.root.querySelector<HTMLElement>(
+        '.abyss-project-dashboard-range .abyss-project-timeline-bar',
+      ),
+    );
+    const file = expectDefined(h.app.vault.getFileByPath('Projects/A.md'));
+    const readCache = h.app.metadataCache.getFileCache.bind(h.app.metadataCache);
+    const staleCache = structuredClone(readCache(file));
+    const cacheRead = vi
+      .spyOn(h.app.metadataCache, 'getFileCache')
+      .mockImplementation((f) => (f.path === file.path ? staleCache : readCache(f)));
+    bar.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowRight', shiftKey: true, bubbles: true }),
+    );
+    await vi.waitFor(async () => {
+      expect(await h.app.vault.read(file)).toContain('end: 2026-11-01');
+    });
+    expect(bar.getAttribute('aria-label')).toContain('2026-11-01');
+    bar.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowRight', shiftKey: true, bubbles: true }),
+    );
+    await vi.waitFor(async () => {
+      expect(await h.app.vault.read(file)).toContain('end: 2026-11-02');
+    });
+    cacheRead.mockRestore();
+    await h.app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
+      frontmatter['end'] = '2026-11-05';
+    });
+    await vi.waitFor(() => {
+      expect(bar.getAttribute('aria-label')).toContain('2026-11-05');
+    });
+  } finally {
+    h.dispose();
+  }
+});
+it('undoes a project date edit from the dashboard range itself', async () => {
+  const h = await mount('---\nstart: 2026-10-20\nend: 2026-10-31\n---\n');
+  try {
+    h.open('Projects/A.md');
+    await h.choose('Timeline');
+    const bar = expectDefined(
+      h.root.querySelector<HTMLElement>(
+        '.abyss-project-dashboard-range .abyss-project-timeline-bar',
+      ),
+    );
+    const file = expectDefined(h.app.vault.getFileByPath('Projects/A.md'));
+    bar.focus();
+    bar.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowRight', shiftKey: true, bubbles: true }),
+    );
+    await vi.waitFor(async () => {
+      expect(await h.app.vault.read(file)).toContain('end: 2026-11-01');
+    });
+    bar.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'z', metaKey: true, bubbles: true, cancelable: true }),
+    );
+    await vi.waitFor(async () => {
+      expect(await h.app.vault.read(file)).toContain('end: 2026-10-31');
+    });
+    bar.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'z',
+        metaKey: true,
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    await vi.waitFor(async () => {
+      expect(await h.app.vault.read(file)).toContain('end: 2026-11-01');
+    });
+  } finally {
+    h.dispose();
+  }
+});

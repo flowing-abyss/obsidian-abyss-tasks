@@ -498,7 +498,9 @@ anchored below the task toolbar; the overview keeps it hidden. The task Timeline
 and a contextual range slot. `ProjectDashboardTimeline` fills that slot with the project's own
 interval, independently of task filtering. It shares endpoint source capture, paired write guards,
 gesture planning and failure feedback with the overview; `ProjectsPanel` submits changes through
-ProjectManager and records receipts in the existing project edit history. No task dates or new
+ProjectManager using the overview session's mutation queue and receipt projections. Dashboard
+range Undo/Redo uses the same project edit history. Successful receipts update the range and
+header immediately; verified source observations reconcile them before later edits. No task dates or new
 metadata are derived from the project range. Leaving a dashboard releases its
 task interactions, search, capture and selection.
 

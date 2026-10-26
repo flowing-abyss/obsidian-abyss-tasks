@@ -233,6 +233,11 @@ export async function mountCanonicalSearchUi(
       if (this.hasClass('abyss-task-card')) height = 64;
       if (this.hasClass('abyss-group-header')) height = 32;
       if (this.hasClass('abyss-project-timeline-axis')) height = 64;
+      if (this.hasClass('abyss-task-timeline-heading'))
+        height = [...this.children].reduce(
+          (sum, child) => sum + child.getBoundingClientRect().height,
+          0,
+        );
       return {
         x: 0,
         y: 0,

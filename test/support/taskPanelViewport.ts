@@ -137,7 +137,7 @@ export function taskListRect(element: HTMLElement): DOMRect | undefined {
 function timelineInset(host: HTMLElement, scroll: HTMLElement): number {
   if (!host.classList.contains('abyss-task-timeline-rows')) return 0;
   return (
-    scroll.querySelector<HTMLElement>('.abyss-project-timeline-axis')?.getBoundingClientRect()
+    scroll.querySelector<HTMLElement>('.abyss-task-timeline-heading')?.getBoundingClientRect()
       .height ?? 0
   );
 }

@@ -7,9 +7,11 @@ import {
 import type { ProjectManager } from '../../projects/ProjectManager';
 import type { ProjectStore } from '../../projects/ProjectStore';
 import type { ProjectCreateRequest } from '../../projects/projectCreation';
+import { ProjectEditValidationError } from '../../projects/projectEditError';
 import { ProjectEditHistory } from '../../projects/projectEditHistory';
 import type { ProjectCellChange, ProjectEditResult } from '../../projects/projectEdits';
 import { buildProjectFieldCatalog } from '../../projects/projectFields';
+import type { Project } from '../../projects/types';
 import type { CalendarSettings } from '../../settings/types';
 import type { LocalSearchFocusTarget } from '../../ui/localSearchKeys';
 import { changeProjectStatus, openProjectNote } from '../../ui/projectActions';
@@ -102,6 +104,9 @@ export class ProjectsPanel {
       }),
       this.projectStore_abyssPrivate.onSourceObservation((observation) => {
         this.tableView_abyssPrivate?.observeProjectSource(observation);
+        const view = this.state_abyssPrivate.get('projectsPanel');
+        if (view.view === 'dashboard' && view.path === observation.path)
+          this.renderDashboard_abyssPrivate(view.path);
       }),
     );
     this.syncView_abyssPrivate(true);
@@ -139,7 +144,7 @@ export class ProjectsPanel {
         return this.state_abyssPrivate.get('mode') === 'projects' &&
           current.view === 'dashboard' &&
           current.path === path
-          ? this.projectStore_abyssPrivate.get(path)
+          ? this.dashboardProject_abyssPrivate(path)
           : undefined;
       },
       fields: () =>
@@ -147,14 +152,41 @@ export class ProjectsPanel {
           this.settings_abyssPrivate.projects,
           this.projectProperties_abyssPrivate.list(),
         ),
-      apply: async (changes) => {
-        const result = await this.applyProjectEdits_abyssPrivate(changes);
-        if (result.applied.length > 0) {
+      apply: (changes) =>
+        this.runDashboardMutation_abyssPrivate(async () => {
+          const result = await this.applyProjectEdits_abyssPrivate(changes);
           this.editHistory_abyssPrivate.record(result);
-          this.projectStore_abyssPrivate.refresh();
-        }
-        return result;
-      },
+          return result;
+        }),
+      history: (direction) =>
+        this.runDashboardMutation_abyssPrivate(() => this.editHistory_abyssPrivate[direction]()),
+    });
+  }
+
+  private dashboardProject_abyssPrivate(path: string): Project | undefined {
+    const project = this.projectStore_abyssPrivate.get(path);
+    return project === undefined
+      ? undefined
+      : (this.tableView_abyssPrivate?.projectWithAppliedReceipts(project) ?? project);
+  }
+
+  private runDashboardMutation_abyssPrivate(
+    mutation: () => Promise<ProjectEditResult>,
+  ): Promise<ProjectEditResult> {
+    const table = this.tableView_abyssPrivate;
+    if (table === null)
+      return Promise.reject(
+        new ProjectEditValidationError('The project session is no longer available.'),
+      );
+    return table.runTableSessionMutation(async () => {
+      const result = await mutation();
+      if (result.applied.length > 0 && this.tableView_abyssPrivate === table) {
+        table.publishAppliedReceipts(result.applied);
+        const view = this.state_abyssPrivate.get('projectsPanel');
+        if (view.view === 'dashboard') this.renderDashboard_abyssPrivate(view.path);
+        this.projectStore_abyssPrivate.refresh();
+      }
+      return result;
     });
   }
 
@@ -255,7 +287,7 @@ export class ProjectsPanel {
       this.dashboardPath_abyssPrivate === path &&
       refreshProjectDashboard(
         previous,
-        this.projectStore_abyssPrivate.get(path),
+        this.dashboardProject_abyssPrivate(path),
         this.renderTasks_abyssPrivate,
         this.settings_abyssPrivate.projects.statuses,
       )
@@ -269,7 +301,7 @@ export class ProjectsPanel {
     const host = el.createDiv({ cls: 'abyss-project-dashboard-session' });
     this.dashboardHost_abyssPrivate = host;
     this.dashboardPath_abyssPrivate = path;
-    renderProjectDashboard(host, this.projectStore_abyssPrivate.get(path), {
+    renderProjectDashboard(host, this.dashboardProject_abyssPrivate(path), {
       state: this.state_abyssPrivate,
       settings: this.settings_abyssPrivate,
       onSetStatus: (projectPath, statusId) => {

@@ -36,6 +36,7 @@ export interface ProjectDashboardTimelineContext extends TimelineContextRowLayou
   project(): Project | undefined;
   fields(): readonly ProjectFieldCatalogItem[];
   apply(changes: readonly ProjectCellChange[]): Promise<ProjectEditResult>;
+  history(direction: 'undo' | 'redo'): Promise<ProjectEditResult>;
 }
 
 /** One project range, sharing its task timeline's axis and the overview's guarded edit policy. */
@@ -155,10 +156,7 @@ export class ProjectDashboardTimeline implements TimelineContextRow {
     return captureProjectTimelineRange(project, this.context.fields(), this.#identity);
   }
   #commit(request: ProjectTimelineRangeEditRequest): Promise<ProjectEditResult> {
-    const revision = this.#revision;
-    const result = this.#queue.then(async () => {
-      if (revision !== this.#revision)
-        throw new ProjectEditValidationError('This project range edit was cancelled.');
+    return this.#enqueue(async () => {
       const captured = this.#capture();
       if (captured.kind === 'rejected') throw new ProjectEditValidationError(captured.reason);
       const current = captured.source;
@@ -182,6 +180,14 @@ export class ProjectDashboardTimeline implements TimelineContextRow {
       if (plan.kind === 'rejected') throw new ProjectEditValidationError(plan.reason);
       return this.context.apply(projectTimelineRangeChanges(source, plan));
     });
+  }
+  #enqueue(mutation: () => Promise<ProjectEditResult>): Promise<ProjectEditResult> {
+    const revision = this.#revision;
+    const result = this.#queue.then(() => {
+      if (revision !== this.#revision || this.#capture().kind === 'rejected')
+        throw new ProjectEditValidationError('This project range edit was cancelled.');
+      return mutation();
+    });
     // The initiating pointer/keyboard boundary reports rejection; the queue must remain usable.
     this.#queue = result.then(
       () => undefined,
@@ -189,8 +195,23 @@ export class ProjectDashboardTimeline implements TimelineContextRow {
     );
     return result;
   }
+  #historyKeydown(event: KeyboardEvent): void {
+    if (event.key.toLowerCase() !== 'z') return;
+    event.preventDefault();
+    event.stopPropagation();
+    void this.#enqueue(() => this.context.history(event.shiftKey ? 'redo' : 'undo')).then(
+      (result) => {
+        if (result.failed.length > 0) reportFailure(result);
+      },
+      reportFailure,
+    );
+  }
   readonly #keydown = (event: KeyboardEvent): void => {
-    if (event.isComposing || event.altKey || event.ctrlKey || event.metaKey) return;
+    if (event.isComposing || event.altKey) return;
+    if (event.ctrlKey || event.metaKey) {
+      this.#historyKeydown(event);
+      return;
+    }
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
     event.preventDefault();
     event.stopPropagation();
