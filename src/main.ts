@@ -385,7 +385,10 @@ export default class TaskCalendarPlugin extends Plugin {
     try {
       const loaded = await this.settingsPersistence.loadSettings(DEFAULT_SETTINGS);
       this.settings = loaded.settings;
-      this.viewStatePaths = new ViewStatePathOwner(this.settings, () => this.saveViewState());
+      this.viewStatePaths = new ViewStatePathOwner(
+        (change) => this.settingsPersistence.rebaseNotePath(this.settings, change),
+        () => this.saveViewState(),
+      );
       for (const message of loaded.notices) new Notice(message);
       if (loaded.issues.length > 0) {
         for (const issue of loaded.issues) {

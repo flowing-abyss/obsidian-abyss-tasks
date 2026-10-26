@@ -5,6 +5,7 @@ import { DEFAULT_SETTINGS, getListViewDefaults } from '../src/settings/defaults'
 import { ViewStateWritesSuspendedError } from '../src/settings/persistence';
 import type { CalendarSettings } from '../src/settings/types';
 import { ViewStatePathOwner } from '../src/settings/ViewStatePathOwner';
+import { rebaseSavedNotePath } from '../src/settings/viewStatePaths';
 import { createAppWithFiles } from './helpers';
 
 const FILES = {
@@ -36,7 +37,7 @@ async function ownerFor(
   save = vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
 ) {
   const app = await createAppWithFiles(FILES);
-  const owner = new ViewStatePathOwner(settings, save);
+  const owner = new ViewStatePathOwner((change) => rebaseSavedNotePath(settings, change), save);
   owner.listen(app.vault);
   return { app, owner, save };
 }

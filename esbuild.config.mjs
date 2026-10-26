@@ -101,6 +101,8 @@ import process from 'process';
 // No dependencies added; both artifact checks remain enforced.
 // Status-aware temporal lists and column-scoped selection: 2,234,873 -> 2,235,886 bytes (+1013).
 // The minimal containing main limit is 2184 KiB; CSS stays within 206 KiB. No dependencies added.
+// Scroll/admission guards and queued view-state rebasing: 2,237,982 -> 2,238,659 bytes (+677).
+// The minimal containing main limit is 2187 KiB; CSS and dependencies are unchanged.
 const { mainJsBudgetBytes: MAIN_JS_BUDGET_BYTES } = JSON.parse(
   readFileSync('package.json', 'utf8'),
 ).release;

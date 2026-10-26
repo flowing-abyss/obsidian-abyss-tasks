@@ -31,6 +31,7 @@ import type {
   SavedViewState,
   SavedViewStateRecovery,
 } from './types';
+import { rebaseProjectListKey, rebaseSavedNotePath, type NotePathChange } from './viewStatePaths';
 
 export const SAVED_VIEW_STATE_SCHEMA_VERSION = 2 as const;
 export const STATIC_SAVED_VIEW_STATE_MARKER = 'savedViewStateSchemaVersion' as const;
@@ -862,9 +863,11 @@ export class SettingsPersistenceCoordinator {
 
   saveViewState(settings: CalendarSettings): Promise<void> {
     if (this.stateWritesSuspended) return Promise.reject(new ViewStateWritesSuspendedError());
-    const rawBase = this.rawStateEnvelope;
-    const payload = createStateEnvelope(settings, rawBase, this.stateRecovery);
+    const payload = createStateEnvelope(settings, this.rawStateEnvelope, this.stateRecovery);
     const serialized = serialize(payload);
+    // Later snapshots merge against the latest queued intent, including deletions. Completion
+    // must never replace newer staged extensions; a failed write remains retryable from this draft.
+    this.rawStateEnvelope = payload;
     const upgradeStatic =
       this.guardedLegacyStatic === undefined ? undefined : createStaticDocument(settings);
     return this.enqueue(async () => {
@@ -875,7 +878,6 @@ export class SettingsPersistenceCoordinator {
           if (verified !== serialized)
             throw new Error('Could not verify saved view state upgrade.');
         }
-        if (this.rawStateEnvelope === rawBase) this.rawStateEnvelope = payload;
         this.lastStateSerialized = serialized;
       }
       if (upgradeStatic !== undefined) {
@@ -884,6 +886,16 @@ export class SettingsPersistenceCoordinator {
         this.guardedLegacyStatic = undefined;
       }
     });
+  }
+
+  rebaseNotePath(settings: CalendarSettings, change: NotePathChange): boolean {
+    const changed = rebaseSavedNotePath(settings, change);
+    const raw = detached(this.rawStateEnvelope);
+    const views = raw?.['views'];
+    const states = isRecord(views) ? views['listViewStates'] : undefined;
+    if (!isRecord(states) || !rebaseProjectListKey(states, change)) return changed;
+    this.rawStateEnvelope = raw;
+    return true;
   }
 
   checkTagRename(

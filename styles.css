@@ -8365,6 +8365,13 @@ button.abyss-project-table-status-pill {
   opacity: 0.75;
 }
 
+/* Let vertical touch gestures cancel date editing and scroll the task collection. */
+body.is-mobile
+  .abyss-task-timeline
+  :is(.abyss-project-timeline-track, .abyss-project-timeline-bar) {
+  touch-action: pan-y;
+}
+
 .abyss-project-timeline-handle {
   position: absolute;
   z-index: 2;

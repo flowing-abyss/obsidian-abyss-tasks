@@ -1,12 +1,6 @@
 import { TFile, type EventRef, type Vault } from 'obsidian';
 import { isViewStateWritesSuspended } from './persistence';
-import type { CalendarSettings } from './types';
-import {
-  noteDeleteChange,
-  noteRenameChange,
-  rebaseSavedNotePath,
-  type NotePathChange,
-} from './viewStatePaths';
+import { noteDeleteChange, noteRenameChange, type NotePathChange } from './viewStatePaths';
 
 const TRAILING_SAVE_MS = 150;
 
@@ -15,7 +9,7 @@ export class ViewStatePathOwner {
   private pendingSave: number | undefined;
 
   constructor(
-    private readonly settings: CalendarSettings,
+    private readonly apply: (change: NotePathChange) => boolean,
     private readonly save: () => Promise<void>,
   ) {}
 
@@ -37,7 +31,7 @@ export class ViewStatePathOwner {
 
   /** Applies one change and schedules one trailing save when anything changed. */
   noteChanged(change: NotePathChange): void {
-    if (!rebaseSavedNotePath(this.settings, change)) return;
+    if (!this.apply(change)) return;
     this.cancelPendingSave();
     this.pendingSave = window.setTimeout(() => {
       this.pendingSave = undefined;

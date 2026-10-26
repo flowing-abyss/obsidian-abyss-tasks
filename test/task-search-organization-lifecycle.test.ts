@@ -29,7 +29,9 @@ it('admits blank Upcoming at timer zero while debouncing nonblank filters and su
     expect(open).not.toHaveBeenCalled();
     projection.mockClear();
     h.state.set('centerFilter', 'Range');
-    await vi.advanceTimersByTimeAsync(59);
+    await vi.advanceTimersByTimeAsync(30);
+    h.panel.refresh();
+    await vi.advanceTimersByTimeAsync(29);
     expect(projection).not.toHaveBeenCalled();
     expect(open).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
@@ -58,6 +60,36 @@ it('admits blank Upcoming at timer zero while debouncing nonblank filters and su
     vi.restoreAllMocks();
   }
 });
+it.each(['kanban', 'timeline'] as const)(
+  'admits blank %s navigation and unchanged-query refresh without typing delay',
+  async (view) => {
+    const h = await mountCanonicalSearchUi(
+      { 'browse.md': '- [ ] Task 📅 2026-10-27' },
+      structuredClone(DEFAULT_SETTINGS),
+      'tasks',
+      () => ({ now: () => 0, yield: async () => {} }),
+    );
+    try {
+      await h.search.prepare(new AbortController().signal);
+      vi.useFakeTimers();
+      const projection = vi.spyOn(h.index, 'organization');
+      h.state.batch(() => {
+        h.state.set('selectedList', 'inbox');
+        h.state.set('centerListViewState', { ...getListViewDefaults('inbox'), view });
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(projection).toHaveBeenCalledTimes(1);
+      projection.mockClear();
+      h.panel.refresh();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(projection).toHaveBeenCalledTimes(1);
+    } finally {
+      h.dispose();
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    }
+  },
+);
 it.each(['destroy', 'navigate'] as const)(
   'cancels blank Upcoming before timer zero on %s',
   async (action) => {

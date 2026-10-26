@@ -111,6 +111,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
   #ownedWrite: { generation: number; writeId: number; expectedNativeTop: number } | undefined;
   #localInput = false;
   #inputTimer: number | undefined;
+  #lastScroll: { top: number; left: number } | undefined;
 
   constructor(options: TaskListSurfaceOptions<T>) {
     this.#options = options;
@@ -524,6 +525,8 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     owned.expectedNativeTop = actual;
     this.#acceptedNativeTop = actual;
     this.#logicalTop = placement.logicalTop;
+    // Native scroll feedback can coalesce with later input back to the previous event position.
+    this.#lastScroll = { top: actual, left: this.#options.scroll.scrollLeft };
   }
   #mountedExtents(): RowMeasurement[] {
     const retained: RowMeasurement[] = [];
@@ -631,6 +634,10 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     }
     this.#owner = owner;
     if (owner === null) return true;
+    this.#lastScroll = {
+      top: this.#options.scroll.scrollTop,
+      left: this.#options.scroll.scrollLeft,
+    };
     this.#width = -1;
     const generation = this.#nativeGeneration;
     const schedule = (): void => {
@@ -662,16 +669,33 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     if (key !== undefined && this.#parked.has(key)) this.reveal(key);
     else this.#schedule();
   };
+  readonly #scrolled = (): void => {
+    if (this.#destroyed || this.#suspended || this.#failed || this.#binding) return;
+    this.#guard(() => {
+      const sameOwner = this.#owner === this.#options.host.ownerDocument.defaultView;
+      if (!this.#bind()) return;
+      const scroll = this.#options.scroll;
+      const next = { top: scroll.scrollTop, left: scroll.scrollLeft };
+      const previous = this.#lastScroll;
+      this.#lastScroll = next;
+      // Horizontal Timeline motion cannot change the vertical range. Other pending work,
+      // including resize and hydration receipts, keeps its independently scheduled frame.
+      if (sameOwner && previous?.top === next.top && previous.left !== next.left) return;
+      // Read each vertical event before the frame so away-and-back input retains its intent.
+      this.#top();
+      this.#schedule();
+    });
+  };
   #listen(listen: boolean): void {
     const { host, scroll } = this.#options;
-    if (listen) host.addEventListener('focusin', this.#focusEntered);
-    else host.removeEventListener('focusin', this.#focusEntered);
-    for (const [element, event] of [
-      [scroll, 'scroll'],
-      [host, 'focusout'],
-    ] as const) {
-      if (listen) element.addEventListener(event, this.#schedule, { passive: true });
-      else element.removeEventListener(event, this.#schedule);
+    if (listen) {
+      host.addEventListener('focusin', this.#focusEntered);
+      host.addEventListener('focusout', this.#schedule);
+      scroll.addEventListener('scroll', this.#scrolled, { passive: true });
+    } else {
+      host.removeEventListener('focusin', this.#focusEntered);
+      host.removeEventListener('focusout', this.#schedule);
+      scroll.removeEventListener('scroll', this.#scrolled);
     }
   }
   #clearInput(): void {
@@ -710,13 +734,6 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
       }
       if (['PageUp', 'PageDown', ' '].includes(event.key)) local();
     };
-    const onScroll = (): void => {
-      if (!live() || this.#failed) return;
-      this.#guard(() => {
-        this.#top();
-        this.#schedule();
-      });
-    };
     const unload = (): void => {
       if (live()) this.suspend();
     };
@@ -724,7 +741,6 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
       scroll.addEventListener(event, local, { capture: true, passive: true });
     scroll.addEventListener('pointerdown', pointer, true);
     scroll.addEventListener('keydown', key, true);
-    scroll.addEventListener('scroll', onScroll, { passive: true });
     scroll.addEventListener('scrollend', clear);
     owner.addEventListener('blur', clear);
     owner.addEventListener('unload', unload);
@@ -733,7 +749,6 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
         scroll.removeEventListener(event, local, true);
       scroll.removeEventListener('pointerdown', pointer, true);
       scroll.removeEventListener('keydown', key, true);
-      scroll.removeEventListener('scroll', onScroll);
       scroll.removeEventListener('scrollend', clear);
       owner.removeEventListener('blur', clear);
       owner.removeEventListener('unload', unload);

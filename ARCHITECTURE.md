@@ -393,14 +393,16 @@ schema 2; re-upgrading restores those views.
 Each saved `ListViewState` can choose a layout and independent Kanban/Timeline organization. Explicit
 property filters are shared; effective layout settings preserve List preferences. Malformed layout
 preferences recover independently. Ordinary saves preserve unknown static and nested view extensions.
-Detached writes queue in order, and a rejected write does not block later operations.
+Detached writes queue in order. Their latest staged envelope supplies extensions for subsequent
+snapshots; completion cannot replace newer intent, and a rejected write does not block later operations.
 
 Deleting a status definition removes its exact saved visibility, collapse, rank, and task-filter
 references, while preserving unrelated state and authored note values. Static definitions are saved
 before cleaned view state. Retryable failures retain the current draft and offer retry; these separate file
 writes are not a transaction. Unknown raw project statuses remain independent values.
 
-[`ViewStatePathOwner`](src/settings/ViewStatePathOwner.ts) maintains saved note paths on rename/delete;
+[`ViewStatePathOwner`](src/settings/ViewStatePathOwner.ts) forwards note rename/delete events to the
+persistence coordinator, which rebases both runtime preferences and their retained raw extensions;
 PanelNavigator owns session navigation. [`tagViewState`](src/settings/tagViewState.ts) preserves raw
 view entries and unknown fields through tag rename and rejects conflicting destinations before vault
 writes. [`TagManager`](src/tags/TagManager.ts) owns tag configuration and global rename. Discovered

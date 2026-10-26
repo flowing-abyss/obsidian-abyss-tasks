@@ -10,8 +10,9 @@ import { buildDefaultProjectKanbanSettings } from '../src/projects/projectKanban
 import * as historicalTable from '../src/projects/projectTableSettings';
 import * as historicalTimeline from '../src/projects/projectTimelineSettings';
 import { buildDefaultProjectTimelineSettings } from '../src/projects/projectTimelineSettings';
+import { ViewStatePathOwner } from '../src/settings/ViewStatePathOwner';
 import * as historicalDefaults from '../src/settings/defaults';
-import { DEFAULT_SETTINGS } from '../src/settings/defaults';
+import { DEFAULT_SETTINGS, getListViewDefaults } from '../src/settings/defaults';
 import * as historicalMigration from '../src/settings/migration';
 import type * as PersistenceModule from '../src/settings/persistence';
 import {
@@ -27,6 +28,7 @@ import {
   removeTaskStatusViewState,
 } from '../src/settings/statusViewState';
 import * as historicalTagViews from '../src/settings/tagViewState';
+import { rebaseSavedNotePath } from '../src/settings/viewStatePaths';
 import * as historicalStatuses from '../src/status/statusConstants';
 import { TagManager } from '../src/tags/TagManager';
 import { defaultTaskKanbanSettings } from '../src/task-lists/taskKanbanSettings';
@@ -38,7 +40,7 @@ import {
 } from './architecture/settingsOwnership';
 import schema1Provenance from './fixtures/settings-persistence/06dee47-schema1-provenance.json';
 import priorSerializerFixture from './fixtures/settings-persistence/cc84b5d-property-definitions-roundtrip.json';
-import { createAppWithFiles, expectDefined } from './helpers';
+import { createAppWithFiles, deferred, expectDefined } from './helpers';
 import { TYPESCRIPT_PROGRAM_TIMEOUT_MS } from './support/timeouts';
 
 const loadHistoricalNodeTools = async () => {
@@ -2661,5 +2663,106 @@ describe('Tasks Timeline saved view compatibility', () => {
         },
       },
     });
+  });
+});
+
+describe('queued note view persistence', () => {
+  it.each([false, true])(
+    'does not revive deleted preferences when recreation is queued=%s',
+    async (queued) => {
+      const key = 'project:Projects/Reused.md';
+      const port = memoryPort(
+        markedStatic(),
+        stateEnvelope({
+          listViewStates: {
+            [key]: {
+              ...getListViewDefaults(key),
+              timeline: { ...defaultTaskTimelineSettings(), scale: 'year' },
+              futureList: 7,
+            },
+          },
+        }),
+      );
+      const coordinator = new SettingsPersistenceCoordinator(port);
+      const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+      const gate = deferred<void>();
+      const write = port.state.write;
+      port.state.write = async (path, text) => {
+        await gate.promise;
+        await write(path, text);
+      };
+      settings.sectionCollapse.tags = true;
+      const first = coordinator.saveViewState(settings);
+      expect(rebaseSavedNotePath(settings, { type: 'deleted', path: 'Projects/Reused.md' })).toBe(
+        true,
+      );
+      const deletion = coordinator.saveViewState(settings);
+      const recreate = () => {
+        expectDefined(settings.listViewStates)[key] = {
+          ...getListViewDefaults(key),
+          filters: [{ type: 'tag', value: '#fresh' }],
+        };
+        return coordinator.saveViewState(settings);
+      };
+      const pending = queued ? recreate() : undefined;
+      gate.resolve();
+      await Promise.all([first, deletion]);
+      if (pending === undefined) await recreate();
+      else await pending;
+      expect(savedTagViews(port)[key]).toEqual({
+        ...getListViewDefaults(key),
+        filters: [{ type: 'tag', value: '#fresh' }],
+      });
+      const reloaded = await new SettingsPersistenceCoordinator(port).loadSettings(
+        DEFAULT_SETTINGS,
+      );
+      expect(reloaded.settings.listViewStates?.[key]?.timeline).toBeUndefined();
+    },
+  );
+
+  it('moves source extensions instead of reviving stale destination settings on a vault rename', async () => {
+    const oldKey = 'project:Projects/Old.md',
+      newKey = 'project:Projects/New.md';
+    const port = memoryPort(
+      markedStatic(),
+      stateEnvelope({
+        listViewStates: {
+          [oldKey]: {
+            ...getListViewDefaults(oldKey),
+            futureList: { owner: 'old' },
+            sortBy: { field: 'title', dir: 'desc', futureSort: 7 },
+          },
+          [newKey]: {
+            ...getListViewDefaults(newKey),
+            timeline: { ...defaultTaskTimelineSettings(), scale: 'year' },
+            futureList: { owner: 'stale' },
+          },
+        },
+      }),
+    );
+    const coordinator = new SettingsPersistenceCoordinator(port);
+    const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    const app = await createAppWithFiles({ 'Projects/Old.md': '' });
+    const saved = deferred<void>();
+    const owner = new ViewStatePathOwner(
+      (change) => coordinator.rebaseNotePath(settings, change),
+      async () => {
+        await coordinator.saveViewState(settings);
+        saved.resolve();
+      },
+    );
+    owner.listen(app.vault);
+    await app.vault.rename(
+      expectDefined(app.vault.getFileByPath('Projects/Old.md')),
+      'Projects/New.md',
+    );
+    owner.flushPendingSave();
+    await saved.promise;
+    expect(savedTagViews(port)[oldKey]).toBeUndefined();
+    expect(savedTagViews(port)[newKey]).toMatchObject({
+      futureList: { owner: 'old' },
+      sortBy: { field: 'title', dir: 'desc', futureSort: 7 },
+    });
+    expect(savedTagViews(port)[newKey]).not.toHaveProperty('timeline');
   });
 });

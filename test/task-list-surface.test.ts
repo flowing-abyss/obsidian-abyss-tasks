@@ -3519,3 +3519,70 @@ it('keeps the mounted row extent during source rehydration until its next measur
   expect(first.parentElement?.classList.contains('abyss-virtual-row-frame-clipped')).toBe(false);
   h.surface.destroy();
 });
+
+it('keeps settled vertical rows untouched during horizontal-only scrolling', () => {
+  const h = harness();
+  h.surface.update(rows(100), presentation);
+  h.frame();
+  h.scrollTo(200);
+  h.frame();
+  const keys = h.surface.mountedKeys();
+  const cards = keys.map((key) => h.surface.element(key));
+  const measured = vi.fn();
+  h.onMeasure(measured);
+  h.mountedChanged.mockClear();
+  for (const left of [40, 80, 120]) {
+    h.scroll.scrollLeft = left;
+    h.scroll.dispatchEvent(new Event('scroll'));
+    h.frame();
+  }
+  expect(measured).not.toHaveBeenCalled();
+  expect(h.mountedChanged).not.toHaveBeenCalled();
+  expect(h.surface.mountedKeys()).toEqual(keys);
+  expect(keys.map((key) => h.surface.element(key))).toEqual(cards);
+  h.scrollTo(900);
+  h.frame();
+  expect(measured).toHaveBeenCalled();
+  expect(h.surface.mountedKeys()).not.toEqual(keys);
+  h.surface.destroy();
+});
+
+it('keeps pending geometry work when horizontal scrolling arrives', () => {
+  const h = harness();
+  h.surface.update(rows(100), presentation);
+  h.frame();
+  h.scrollTo(200);
+  h.frame();
+  const measured = vi.fn();
+  h.onMeasure(measured);
+  h.size(400, 300);
+  h.resize();
+  h.scroll.scrollLeft = 80;
+  h.scroll.dispatchEvent(new Event('scroll'));
+  h.frame();
+  expect(measured).toHaveBeenCalled();
+  expect(h.reportFailure).not.toHaveBeenCalled();
+  measured.mockClear();
+  h.scroll.dispatchEvent(new Event('scroll'));
+  h.frame();
+  expect(measured).toHaveBeenCalled();
+  h.surface.destroy();
+});
+
+it('accepts vertical input back to the last event position after a programmatic reveal', () => {
+  const h = harness();
+  const source = rows(100);
+  h.surface.update(source, presentation);
+  h.frame();
+  h.scrollTo(200);
+  h.frame();
+  const keys = h.surface.mountedKeys();
+  h.surface.reveal(expectDefined(taskKeys(source)[90]));
+  expect(h.scroll.scrollTop).toBeGreaterThan(200);
+  h.scroll.scrollLeft = 80;
+  h.scrollTo(200);
+  h.frame();
+  expect(h.surface.mountedKeys()).toEqual(keys);
+  expect(h.reportFailure).not.toHaveBeenCalled();
+  h.surface.destroy();
+});

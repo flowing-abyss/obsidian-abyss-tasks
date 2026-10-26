@@ -52,10 +52,20 @@ function rebaseKanbanRanks(settings: CalendarSettings, change: NotePathChange): 
 function rebaseListStates(settings: CalendarSettings, change: NotePathChange): boolean {
   const states = settings.listViewStates;
   if (states === undefined) return false;
-  if (change.type === 'deleted') return forgetListState(states, change.path);
-  const moved = moveProjectListState(states, change.oldPath, change.path);
+  const moved = rebaseProjectListKey(states, change);
+  if (change.type === 'deleted') return moved;
   const rewritten = renameSavedFileFilters(states, change.oldPath, change.path);
   return moved || rewritten;
+}
+
+/** Moves the complete keyed entry, including extensions not understood by this version. */
+export function rebaseProjectListKey(
+  states: Record<string, unknown>,
+  change: NotePathChange,
+): boolean {
+  return change.type === 'deleted'
+    ? forgetListState(states, change.path)
+    : moveProjectListState(states, change.oldPath, change.path);
 }
 
 function projectKey(path: string): string {
@@ -63,7 +73,7 @@ function projectKey(path: string): string {
 }
 
 /** A `file` filter that names the note stays: it is visible intent in another list. */
-function forgetListState(states: Record<string, ListViewState>, path: string): boolean {
+function forgetListState(states: Record<string, unknown>, path: string): boolean {
   const key = projectKey(path);
   if (!(key in states)) return false;
   delete states[key];
@@ -71,7 +81,7 @@ function forgetListState(states: Record<string, ListViewState>, path: string): b
 }
 
 function moveProjectListState(
-  states: Record<string, ListViewState>,
+  states: Record<string, unknown>,
   oldPath: string,
   newPath: string,
 ): boolean {

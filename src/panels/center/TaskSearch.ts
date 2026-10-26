@@ -182,8 +182,15 @@ export class TaskSearch {
       )
         return true;
     }
-    this.#schedule(this.#currentQuery());
+    this.#refreshQuery();
     return true;
+  }
+  #refreshQuery(): void {
+    const query = this.#currentQuery();
+    // The pending request captures the latest view when it starts. A view/source notification
+    // during typing must neither shorten nor restart the query's debounce window.
+    if (query === this.#query && this.#timer !== null) return;
+    this.#schedule(query, query === this.#query ? 0 : 60);
   }
   refreshFilter(root: HTMLElement, results: HTMLElement): boolean {
     if (!this.#filter || this.#root !== root || this.#results !== results) return false;
@@ -244,11 +251,7 @@ export class TaskSearch {
     this.#results = results;
     this.#filter = true;
     this.#attach(root);
-    const browse =
-      query.trim() === '' &&
-      this.#selection() === 'upcoming' &&
-      this.#options.view().list.groupBy === 'date';
-    this.#schedule(query, browse ? 0 : 60);
+    this.#schedule(query, query.trim() === '' ? 0 : 60);
   }
   #attach(root: HTMLElement): void {
     this.#owner = root.ownerDocument.defaultView;
