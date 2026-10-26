@@ -299,6 +299,13 @@
   padding-block-end: var(--abyss-shell-bottom-inset, 0);
 }
 
+/* The overview's left-aligned project action clears the desktop status bar. */
+body:not(.is-mobile)
+  .abyss-layout--projects:not(.abyss-layout--project-dashboard)
+  > .abyss-center-shell {
+  padding-block-end: 0;
+}
+
 /* A regular footer's centered action clears the floating status bar. Compact layouts and an
    open composer keep the measured space; phone navigation retains its own inset below. */
 @container abyss-panel-layout (min-width: 48rem) {
