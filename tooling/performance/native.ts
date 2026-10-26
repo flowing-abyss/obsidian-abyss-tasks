@@ -22,6 +22,7 @@ import {
   searchEditScenario,
   statisticsScenarios,
   taskBoardScenarios,
+  taskTimelineScenarios,
   type Measure,
 } from './native-scenarios.ts';
 import type { Host, NativeBridge, NativeOptions } from './native-types.ts';
@@ -119,6 +120,38 @@ async function captureTaskBoard(context: MeasurementContext, id: string): Promis
   await context.cdp?.screenshot('task-kanban');
 }
 
+async function captureTimeline(context: MeasurementContext, id: string): Promise<void> {
+  if (!context.diagnostic) return;
+  let kind: 'task' | 'project';
+  if (id === 'ui.tasks.timeline') kind = 'task';
+  else if (id === 'ui.projects.timeline') kind = 'project';
+  else return;
+  const root = element(`.abyss-center .abyss-${kind}-timeline`);
+  const scroll = root.matches('.abyss-project-timeline-scroll')
+    ? root
+    : root.querySelector<HTMLElement>('.abyss-project-timeline-scroll');
+  if (scroll === null) throw new Error('Timeline diagnostic scroll surface missing');
+  const rect = scroll.getBoundingClientRect();
+  context.bridge.save(`${kind}-timeline-dom.json`, {
+    mounted: root.querySelectorAll('.abyss-project-timeline-row').length,
+    html: root.outerHTML,
+    viewport: context.viewport,
+    scroll: {
+      left: scroll.scrollLeft,
+      top: scroll.scrollTop,
+      width: scroll.scrollWidth,
+      height: scroll.scrollHeight,
+      clientWidth: scroll.clientWidth,
+      clientHeight: scroll.clientHeight,
+      x: rect.x,
+      y: rect.y,
+      viewportWidth: rect.width,
+      viewportHeight: rect.height,
+    },
+  });
+  await context.cdp?.screenshot(`${kind}-timeline`);
+}
+
 export function createMeasure(context: MeasurementContext): Measure {
   const { bridge, iteration, diagnostic, samples, pending } = context;
   const observation = new NativeObservation();
@@ -151,6 +184,7 @@ export function createMeasure(context: MeasurementContext): Measure {
       assertViewport(context.viewport);
       await completeCalendarSample(context, sample);
       await captureTaskBoard(context, id);
+      await captureTimeline(context, id);
       samples.push(sample);
       bridge.save(diagnostic ? 'diagnostic-samples.json' : `iteration-${iteration}.json`, samples);
       bridge.save('progress.json', {
@@ -252,6 +286,7 @@ async function suite(
   await panelScenarios(host, measure);
   await calendarScenarios(measure);
   await taskBoardScenarios(host, measure);
+  await taskTimelineScenarios(host, measure);
   await projectScenarios(measure);
   await statisticsScenarios(host, measure);
   await cdp?.memory('analysis-ready');

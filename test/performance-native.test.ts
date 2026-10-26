@@ -894,6 +894,70 @@ describe('edit-to-search native scenario', () => {
 });
 
 describe('measurement preparation boundary', () => {
+  it.each([
+    ['ui.tasks.timeline', 'task-timeline', 'abyss-task-timeline'],
+    ['ui.projects.timeline', 'project-timeline', 'abyss-project-timeline'],
+  ])(
+    'captures %s DOM geometry and a screenshot only in the diagnostic pass',
+    async (id, name, cls) => {
+      const center = document.body.createDiv({ cls: 'abyss-center' });
+      const root = center.createDiv({ cls });
+      const scroll = cls === 'abyss-task-timeline' ? root : root.createDiv();
+      scroll.addClass('abyss-project-timeline-scroll');
+      scroll.createDiv({ cls: 'abyss-project-timeline-row', text: 'A ready row' });
+      const saved: Record<string, unknown> = {};
+      const screenshots: string[] = [];
+      const start = vi.spyOn(NativeObservation.prototype, 'start').mockImplementation(() => {});
+      const stop = vi.spyOn(NativeObservation.prototype, 'stop').mockImplementation(() => {});
+      const read = vi.spyOn(NativeObservation.prototype, 'read').mockReturnValue({
+        longTasks: 0,
+        longTaskMs: 0,
+        maxFrameGapMs: 0,
+        domNodes: 0,
+      });
+      try {
+        for (const diagnostic of [false, true]) {
+          const measure = native.createMeasure({
+            host: {} as Host,
+            cdp: {
+              screenshot: (label: string) => {
+                screenshots.push(label);
+                return Promise.resolve();
+              },
+            } as unknown as NativeCdp,
+            bridge: {
+              save: (file: string, value: unknown) => {
+                saved[file] = value;
+              },
+            } as unknown as NativeBridge,
+            iteration: 0,
+            diagnostic,
+            samples: [],
+            pending: new PendingWork(),
+            viewport: `${window.innerWidth}x${window.innerHeight}`,
+            isActive: () => true,
+          });
+          await measure(id, () => Promise.resolve({ view: 'timeline' }));
+          if (!diagnostic) {
+            expect(screenshots).toEqual([]);
+            expect(saved).not.toHaveProperty(`${name}-dom.json`);
+          }
+        }
+        expect(screenshots).toEqual([name]);
+        expect(saved[`${name}-dom.json`]).toMatchObject({
+          mounted: 1,
+          viewport: `${window.innerWidth}x${window.innerHeight}`,
+          html: root.outerHTML,
+          scroll: { left: 0, top: 0 },
+        });
+      } finally {
+        center.remove();
+        start.mockRestore();
+        stop.mockRestore();
+        read.mockRestore();
+      }
+    },
+  );
   it('keeps timed-out preparation tracked until it settles before restoration', async () => {
     vi.useFakeTimers();
     const pending = new PendingWork();
