@@ -102,6 +102,7 @@ function continuousTimeline(
     host: HTMLElement,
     layout: TimelineContextOverlayLayout,
   ) => TimelineContextOverlay,
+  rowCount = 1,
 ) {
   const host = document.body.createDiv({ cls: 'abyss-center-scroll' });
   prepareTaskPanelViewport(host);
@@ -158,7 +159,14 @@ function continuousTimeline(
     host.querySelector<HTMLElement>('.abyss-project-timeline-axis-summary'),
   );
   vi.spyOn(summary, 'getBoundingClientRect').mockReturnValue({ width: 180 } as DOMRect);
-  const rows = indexedRows([{ kind: 'task' as const, key: 'one', taskKey: 'one', task: planning }]);
+  const rows = indexedRows(
+    Array.from({ length: rowCount }, (_, index) => ({
+      kind: 'task' as const,
+      key: index === 0 ? 'one' : `row:${index}`,
+      taskKey: `task:${index}`,
+      task: planning,
+    })),
+  );
   function update() {
     surface.update(rows, {
       revision: 'one',
@@ -591,3 +599,35 @@ it.each(['commit', 'cancel'] as const)(
     }
   },
 );
+
+it('bounds native horizontal geometry reads as the mounted row count grows', () => {
+  function sample(count: number) {
+    const h = continuousTimeline(900, undefined, undefined, count);
+    let left = h.host.scrollLeft;
+    let reads = 0;
+    Object.defineProperty(h.host, 'scrollLeft', {
+      configurable: true,
+      get: () => {
+        reads++;
+        return left;
+      },
+      set: (value: number) => {
+        left = value;
+      },
+    });
+    try {
+      left += 37.25;
+      h.updates.mockClear();
+      h.host.dispatchEvent(new Event('scroll'));
+      h.flush();
+      expect(h.updates).not.toHaveBeenCalled();
+      return { reads, mounted: h.surface.mountedKeys().length };
+    } finally {
+      h.dispose();
+    }
+  }
+  const small = sample(1);
+  const large = sample(5000);
+  expect(large.mounted).toBeGreaterThan(small.mounted * 10);
+  expect(large.reads).toBeLessThanOrEqual(small.reads + 2);
+});

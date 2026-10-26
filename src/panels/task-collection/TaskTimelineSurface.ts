@@ -569,14 +569,18 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
     );
     this.#patchState(mount, dates);
   }
-  #patchState(mount: TimelineMount<T>, dates: ReturnType<typeof taskTimelineDates>): void {
+  #patchState(
+    mount: TimelineMount<T>,
+    dates: ReturnType<typeof taskTimelineDates>,
+    visibleStart = this.#visibleStart(),
+  ): void {
     const range =
       dates.range.kind === 'unscheduled' &&
       dates.scheduled !== undefined &&
       this.actions.settings().showScheduled
         ? { kind: 'open-end' as const, startDay: dates.scheduled }
         : dates.range;
-    mount.state.hidden = this.#rangeVisible(range);
+    mount.state.hidden = this.#rangeVisible(range, visibleStart);
     mount.state.disabled = range.kind === 'unscheduled';
     if (range.kind === 'malformed') {
       mount.state.className = 'abyss-project-timeline-state is-malformed';
@@ -589,7 +593,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
       return;
     }
     const anchor = bounds(range)[0];
-    const before = anchor !== undefined && ordinal(anchor) < this.#visibleStart();
+    const before = anchor !== undefined && ordinal(anchor) < visibleStart;
     mount.state.className = `abyss-project-timeline-state abyss-project-timeline-boundary-marker is-${before ? 'before' : 'after'}`;
     mount.state.setText(before ? '←' : '→');
   }
@@ -624,14 +628,13 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
       ordinal(this.#window().startDay) + this.options.scroll.scrollLeft / this.#geometry.dayWidth
     );
   }
-  #rangeVisible(range: ProjectTimelineRange): boolean {
+  #rangeVisible(range: ProjectTimelineRange, visibleStart = this.#visibleStart()): boolean {
     const values = bounds(range);
     if (values.length === 0) return false;
     const first = ordinal(values[0] as string),
       last = ordinal(values[values.length - 1] as string) + 1;
     return (
-      first < this.#visibleStart() + this.#usableWidth / this.#geometry.dayWidth &&
-      last > this.#visibleStart()
+      first < visibleStart + this.#usableWidth / this.#geometry.dayWidth && last > visibleStart
     );
   }
   #navigationChanged(): void {
@@ -720,7 +723,8 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
     patchTimelineToday(this.#dates, window, this.actions.now());
   }
   #patchMountedCalendar(changed: boolean, todayChanged: boolean): void {
-    const window = this.#window();
+    const window = this.#window(),
+      visibleStart = this.#visibleStart();
     for (const mount of this.#mounts.values()) {
       patchTimelineGrid(mount.grid, this.#axisLayout);
       if (changed || todayChanged) patchTimelineToday(mount.track, window, this.actions.now());
@@ -734,7 +738,11 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
             : { kind: 'open-end', startDay: dates.scheduled },
         );
       }
-      this.#patchState(mount, taskTimelineDates(this.actions.planning(mount.row.task)));
+      this.#patchState(
+        mount,
+        taskTimelineDates(this.actions.planning(mount.row.task)),
+        visibleStart,
+      );
     }
   }
   #bind(): void {
