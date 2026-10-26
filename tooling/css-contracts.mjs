@@ -37,6 +37,7 @@ const documented = {
   'About styling.md': ['--background-primary', '--background-secondary'],
   'Components/Checkbox.md': ['--checkbox-size'],
   'Window/Divider.md': ['--divider-color'],
+  'Window/Scrollbar.md': ['--scrollbar-thumb-bg', '--scrollbar-active-thumb-bg'],
   'Foundations/Typography.md': [
     '--font-medium',
     '--font-normal',

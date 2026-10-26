@@ -7910,7 +7910,7 @@ button.abyss-project-table-status-pill {
   display: none;
 }
 
-/* The absolute calendar tiers retain their own measured header height. */
+/* Scale segments fill the pinned header beside the two calendar tiers. */
 .abyss-project-timeline-navigation {
   display: flex;
   flex-direction: column;
@@ -7923,13 +7923,14 @@ button.abyss-project-table-status-pill {
   scrollbar-width: none;
   box-sizing: border-box;
   min-width: 0;
-  block-size: var(--abyss-toolbar-control-size);
+  block-size: auto;
+  flex: 1 1 auto;
   grid-template-columns:
     minmax(max-content, 1fr) minmax(max-content, 1.5fr) minmax(max-content, 1.3fr)
     minmax(max-content, 1.5fr) minmax(max-content, 1fr);
   gap: 0;
   padding: 0;
-  border-top: 1px solid var(--background-modifier-border);
+  border: 0;
   border-radius: 0;
   background: transparent;
 }
@@ -7973,6 +7974,27 @@ button.abyss-project-table-status-pill {
   flex: 1 1 auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
+  scrollbar-width: auto;
+  scrollbar-color: auto;
+}
+
+/* Height controls horizontal thickness; :horizontal is ignored during native size allocation.
+   Auto scrollbar properties above allow this rule under themes using standard properties.
+   https://webkit.org/blog/363/styling-scrollbars/ */
+.abyss-project-timeline-scroll::-webkit-scrollbar {
+  height: 0;
+}
+
+.abyss-project-timeline-scroll::-webkit-scrollbar-thumb {
+  border: var(--size-2-1) solid transparent;
+  border-radius: var(--radius-m);
+  background-color: var(--scrollbar-thumb-bg);
+  background-clip: padding-box;
+}
+
+.abyss-project-timeline-scroll::-webkit-scrollbar-thumb:hover,
+.abyss-project-timeline-scroll::-webkit-scrollbar-thumb:active {
+  background-color: var(--scrollbar-active-thumb-bg);
 }
 
 .abyss-project-timeline-axis,
