@@ -494,7 +494,12 @@ opened from Tasks. Dashboard text queries remain session state per path, indepen
 selection and query. Returning to Tasks reads saved preferences without overwriting them with its
 inactive state. Each layout uses the shared inner task viewport; the dashboard keeps its compact project
 context in the task toolbar and its Add task footer outside scrolling content. `CompactPaneAccess` opens the shared task inspector as an overlay on dashboard selection,
-anchored below the task toolbar; the overview keeps it hidden. Leaving a dashboard releases its
+anchored below the task toolbar; the overview keeps it hidden. The task Timeline owns the shared axis
+and a contextual range slot. `ProjectDashboardTimeline` fills that slot with the project's own
+interval, independently of task filtering. It shares endpoint source capture, paired write guards,
+gesture planning and failure feedback with the overview; `ProjectsPanel` submits changes through
+ProjectManager and records receipts in the existing project edit history. No task dates or new
+metadata are derived from the project range. Leaving a dashboard releases its
 task interactions, search, capture and selection.
 
 CalendarMode owns the period anchor, transient selected day, view lifetime, and forecast presentation.

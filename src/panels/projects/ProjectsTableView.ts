@@ -71,15 +71,7 @@ import {
   effectiveProjectTableDateDisplay,
   setProjectTableColumnDateDisplay,
 } from '../../projects/projectTableSettings';
-import {
-  PROJECT_TIMELINE_INVALID_RANGE_REASON,
-  projectTimelineRawEditEligibility,
-  type ProjectTimelineRawEndpoint,
-} from '../../projects/projectTimelineEdits';
-import {
-  planProjectTimelineEndpointEdit,
-  type ProjectTimelineEndpointEditPlan,
-} from '../../projects/projectTimelineEndpointEdits';
+import { planProjectTimelineEndpointEdit } from '../../projects/projectTimelineEndpointEdits';
 import {
   buildProjectTimelineModel,
   type ProjectTimelineRow,
@@ -166,14 +158,17 @@ import {
   type ProjectTableSelectableCell,
   type ProjectTableSelectionDirection,
 } from './projectTableSelection';
+import { reportProjectTimelineRangeFailure } from './projectTimelineFeedback';
 import {
   sameProjectTimelineRangeBinding,
   sameProjectTimelineRangeSource,
-  type FrozenProjectTimelineRangeSource,
-  type ProjectTimelineEndpointEvidence,
   type ProjectTimelineRangeCapture,
   type ProjectTimelineRangeEditRequest,
 } from './projectTimelineInteraction';
+import {
+  captureProjectTimelineRange,
+  projectTimelineRangeChanges,
+} from './projectTimelineRangeSource';
 
 function projectManualOrderStatusKey(project: Project): string {
   if (project.statusId !== null && project.statusId.length > 0) return `id:${project.statusId}`;
@@ -479,45 +474,6 @@ function projectCellEditorState(
     sourceKey: source?.key ?? ownedClear?.sourceKey,
     ownedClear,
   };
-}
-
-function expectProjectFieldProperty(field: ProjectField): string {
-  if (field.property === undefined || field.property.length === 0) {
-    throw new ProjectEditValidationError(`${field.label} has no configured source property.`);
-  }
-  return field.property;
-}
-
-function timelineDateField(
-  fields: readonly ProjectFieldCatalogItem[],
-  id: 'start' | 'end',
-): ProjectField | undefined {
-  const field = findProjectFieldById(fields, id);
-  if (field === undefined || !isAvailableProjectField(field)) return undefined;
-  if (field.type !== 'date' || field.property === undefined || field.property.length === 0) {
-    return undefined;
-  }
-  return field;
-}
-
-function sameTimelineProperty(left: ProjectField, right: ProjectField): boolean {
-  return sameProjectPropertyName(
-    expectProjectFieldProperty(left),
-    expectProjectFieldProperty(right),
-  );
-}
-
-function ambiguousTimelineSource(
-  project: Project,
-  fields: readonly ProjectField[],
-): ProjectField | undefined {
-  return fields.find((field) => {
-    const property = expectProjectFieldProperty(field);
-    return (
-      Object.keys(project.frontmatter).filter((key) => sameProjectPropertyName(key, property))
-        .length > 1
-    );
-  });
 }
 
 export class ProjectsTableView {
@@ -1840,21 +1796,6 @@ export class ProjectsTableView {
     new Notice(`Could not move project card: ${message}`);
   }
 
-  private captureTimelineEndpoint_abyssPrivate(
-    project: Project,
-    field: ProjectField,
-  ): ProjectTimelineEndpointEvidence {
-    const sourceProperty = expectProjectFieldProperty(field);
-    const source = findFrontmatterProperty(project.frontmatter, sourceProperty);
-    return {
-      field: { ...field },
-      sourceProperty,
-      sourceKey: source?.key ?? sourceProperty,
-      expectedExists: source !== undefined,
-      expectedValue: copyProjectedValue(source?.value),
-    };
-  }
-
   private visibleTimelineRow_abyssPrivate(occurrenceId: string): ProjectTimelineRow | undefined {
     if (
       !this.mounted_abyssPrivate ||
@@ -1873,92 +1814,9 @@ export class ProjectsTableView {
     occurrenceId: string,
   ): ProjectTimelineRangeCapture {
     const row = this.visibleTimelineRow_abyssPrivate(occurrenceId);
-    if (row === undefined) {
-      return { kind: 'rejected', reason: 'This project range is no longer visible.' };
-    }
-    if (row.range.kind === 'malformed') {
-      return { kind: 'rejected', reason: PROJECT_TIMELINE_INVALID_RANGE_REASON };
-    }
-    const start = timelineDateField(this.fields_abyssPrivate, 'start');
-    const end = timelineDateField(this.fields_abyssPrivate, 'end');
-    if (start === undefined || end === undefined || sameTimelineProperty(start, end)) {
-      return {
-        kind: 'rejected',
-        reason:
-          'Configure distinct available date properties for Start and End before Timeline editing.',
-      };
-    }
-    const ambiguous = ambiguousTimelineSource(row.project, [start, end]);
-    if (ambiguous !== undefined) {
-      return {
-        kind: 'rejected',
-        reason: `${ambiguous.label} has ambiguous source spelling. Repair the duplicate properties before Timeline editing.`,
-      };
-    }
-    const source: FrozenProjectTimelineRangeSource = {
-      occurrenceId,
-      path: row.project.path,
-      start: this.captureTimelineEndpoint_abyssPrivate(row.project, start),
-      end: this.captureTimelineEndpoint_abyssPrivate(row.project, end),
-      range: { ...row.range },
-    };
-    const eligibility = projectTimelineRawEditEligibility(
-      { exists: source.start.expectedExists, value: source.start.expectedValue },
-      { exists: source.end.expectedExists, value: source.end.expectedValue },
-    );
-    return eligibility.kind === 'eligible'
-      ? { kind: 'ready', source }
-      : { kind: 'rejected', reason: eligibility.reason };
-  }
-
-  private timelineChangesForPlan_abyssPrivate(
-    source: FrozenProjectTimelineRangeSource,
-    plan: Extract<ProjectTimelineEndpointEditPlan, { readonly kind: 'ready' }>,
-  ): readonly ProjectCellChange[] {
-    const endpoint = (
-      evidence: ProjectTimelineEndpointEvidence,
-      desired: ProjectTimelineRawEndpoint,
-    ): {
-      readonly changed: boolean;
-      readonly change: ProjectCellChange;
-    } => {
-      const desiredExists = desired.exists;
-      const desiredValue = desired.value;
-      const changed =
-        desiredExists !== evidence.expectedExists ||
-        !Object.is(desiredValue, evidence.expectedValue);
-      return {
-        changed,
-        change: {
-          path: source.path,
-          field: { ...evidence.field },
-          value: desiredValue,
-          expectedValue: copyProjectedValue(evidence.expectedValue),
-          expectedExists: evidence.expectedExists,
-          sourceProperty: evidence.sourceProperty,
-          sourceKey: evidence.sourceKey,
-        },
-      };
-    };
-    const start = endpoint(source.start, plan.start);
-    const end = endpoint(source.end, plan.end);
-    if (!start.changed && !end.changed) return [];
-    return [
-      start.changed
-        ? start.change
-        : {
-            ...start.change,
-            valueExists: source.start.expectedExists,
-            restoreSourceValue: true,
-          },
-      end.changed
-        ? end.change
-        : {
-            ...end.change,
-            valueExists: source.end.expectedExists,
-            restoreSourceValue: true,
-          },
-    ];
+    return row === undefined
+      ? { kind: 'rejected', reason: 'This project range is no longer visible.' }
+      : captureProjectTimelineRange(row.project, this.fields_abyssPrivate, occurrenceId);
   }
 
   private commitTimelineRangeEdit_abyssPrivate(
@@ -2000,7 +1858,7 @@ export class ProjectsTableView {
           request.intent,
         );
         if (plan.kind === 'rejected') throw new ProjectEditValidationError(plan.reason);
-        const changes = this.timelineChangesForPlan_abyssPrivate(current, plan);
+        const changes = projectTimelineRangeChanges(current, plan);
         if (changes.length === 0) return { applied: [], failed: [] };
         const result = await this.context_abyssPrivate.applyEdits(changes);
         if (result.applied.length > 0) {
@@ -2013,29 +1871,7 @@ export class ProjectsTableView {
   }
 
   private reportTimelineRangeFailure_abyssPrivate(failure: unknown): void {
-    const label = 'Could not update project Timeline dates';
-    if (
-      typeof failure === 'object' &&
-      failure !== null &&
-      'failed' in failure &&
-      Array.isArray((failure as ProjectEditResult).failed)
-    ) {
-      const result = failure as ProjectEditResult;
-      if (result.failed.length === 0) return;
-      const first = result.failed[0];
-      const detail = first === undefined ? '' : `: ${first.message}`;
-      const message = `${result.applied.length} updated; ${result.failed.length} failed${detail}`;
-      console.error(`[abyss-tasks] ${label}`, { result });
-      new Notice(`${label}: ${message}`);
-      return;
-    }
-    const message = failure instanceof Error ? failure.message : String(failure);
-    if (typeof failure === 'string' || isProjectEditValidationError(failure)) {
-      new Notice(message);
-      return;
-    }
-    console.error(`[abyss-tasks] ${label}`, { cause: failure });
-    new Notice(`${label}: ${message}`);
+    reportProjectTimelineRangeFailure(failure);
   }
 
   private boardTagsReliable_abyssPrivate(path: string, fieldId: string): boolean {

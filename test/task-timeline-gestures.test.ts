@@ -146,9 +146,27 @@ it.each(['range', 'scheduled'] as const)(
     }
   },
 );
+it('resizes Due through the visible shared end handle without moving Start', async () => {
+  const h = mount();
+  try {
+    const end = expectDefined(
+      h.bar.querySelector<HTMLElement>('.abyss-project-timeline-handle.is-end'),
+    );
+    expect(end.querySelector('.abyss-project-timeline-grip')).not.toBeNull();
+    await start(end, 150);
+    await finish(end, 190);
+    expect(h.commit.mock.calls[0]?.[1]).toEqual({ due: { type: 'set', value: '2026-10-30' } });
+  } finally {
+    h.dispose();
+  }
+});
 it('sets Due on a short track press and draws both dates in one patch on drag', async () => {
   const h = mount({});
   try {
+    const state = expectDefined(h.track.querySelector<HTMLButtonElement>('.is-unscheduled'));
+    expect(state.disabled).toBe(true);
+    state.click();
+    expect(h.openDates).not.toHaveBeenCalled();
     await start(h.track);
     h.track.dispatchEvent(pointer('pointerup', 130));
     await flushMicrotasks();

@@ -9,15 +9,14 @@ import type { ProjectStore } from '../../projects/ProjectStore';
 import type { ProjectCreateRequest } from '../../projects/projectCreation';
 import { ProjectEditHistory } from '../../projects/projectEditHistory';
 import type { ProjectCellChange, ProjectEditResult } from '../../projects/projectEdits';
+import { buildProjectFieldCatalog } from '../../projects/projectFields';
 import type { CalendarSettings } from '../../settings/types';
 import type { LocalSearchFocusTarget } from '../../ui/localSearchKeys';
 import { changeProjectStatus, openProjectNote } from '../../ui/projectActions';
 import { runAsyncAction } from '../../ui/runAsyncAction';
-import {
-  refreshProjectDashboard,
-  refreshProjectDashboardStatus,
-  renderProjectDashboard,
-} from './ProjectsDashboardView';
+import type { TimelineContextRow, TimelineContextRowLayout } from '../timeline/TimelineContextRow';
+import { ProjectDashboardTimeline } from './ProjectDashboardTimeline';
+import { refreshProjectDashboard, renderProjectDashboard } from './ProjectsDashboardView';
 import { ProjectsTableView } from './ProjectsTableView';
 
 export interface ProjectsPanelOptions {
@@ -122,12 +121,41 @@ export class ProjectsPanel {
     const dashboard = this.dashboardHost_abyssPrivate;
     const view = this.state_abyssPrivate.get('projectsPanel');
     if (dashboard !== null && view.view === 'dashboard') {
-      refreshProjectDashboardStatus(
-        dashboard,
-        this.projectStore_abyssPrivate.get(view.path),
-        this.settings_abyssPrivate.projects.statuses,
-      );
+      this.renderDashboard_abyssPrivate(view.path);
     }
+  }
+
+  mountDashboardTimeline(
+    host: HTMLElement,
+    layout: TimelineContextRowLayout,
+  ): TimelineContextRow | undefined {
+    const view = this.state_abyssPrivate.get('projectsPanel');
+    if (view.view !== 'dashboard') return undefined;
+    const path = view.path;
+    return new ProjectDashboardTimeline(host, {
+      ...layout,
+      project: () => {
+        const current = this.state_abyssPrivate.get('projectsPanel');
+        return this.state_abyssPrivate.get('mode') === 'projects' &&
+          current.view === 'dashboard' &&
+          current.path === path
+          ? this.projectStore_abyssPrivate.get(path)
+          : undefined;
+      },
+      fields: () =>
+        buildProjectFieldCatalog(
+          this.settings_abyssPrivate.projects,
+          this.projectProperties_abyssPrivate.list(),
+        ),
+      apply: async (changes) => {
+        const result = await this.applyProjectEdits_abyssPrivate(changes);
+        if (result.applied.length > 0) {
+          this.editHistory_abyssPrivate.record(result);
+          this.projectStore_abyssPrivate.refresh();
+        }
+        return result;
+      },
+    });
   }
 
   /** Runs an action after the project overview's active draft is committed or cancelled. */

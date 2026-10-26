@@ -8,6 +8,7 @@ import {
 import {
   findProjectFieldById,
   projectFieldValue,
+  type ProjectFieldCatalogItem,
   type ProjectTableSettings,
 } from './projectFields';
 import {
@@ -116,9 +117,12 @@ function projectedRange(
   return { kind: 'open-end', startDay };
 }
 
-function timelineRange(project: Project, input: ProjectTimelineModelInput): ProjectTimelineRange {
-  const startField = findProjectFieldById(input.fields, 'start');
-  const endField = findProjectFieldById(input.fields, 'end');
+export function projectTimelineRange(
+  project: Project,
+  fields: readonly ProjectFieldCatalogItem[],
+): ProjectTimelineRange {
+  const startField = findProjectFieldById(fields, 'start');
+  const endField = findProjectFieldById(fields, 'end');
   const start = startField === undefined ? undefined : projectFieldValue(project, startField);
   const end = endField === undefined ? undefined : projectFieldValue(project, endField);
   const startMissing = missingDate(start);
@@ -161,7 +165,7 @@ export function buildProjectTimelineModel(input: ProjectTimelineModelInput): Pro
         .map((project) => ({
           occurrenceId: `${group.key}\u0000${project.path}`,
           project,
-          range: timelineRange(project, input),
+          range: projectTimelineRange(project, input.fields),
         }))
         .filter(({ range }) => input.settings.showUnscheduled || range.kind !== 'unscheduled'),
     }))

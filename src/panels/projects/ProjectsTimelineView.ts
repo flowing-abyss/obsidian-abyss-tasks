@@ -39,8 +39,10 @@ import {
 import type { Project } from '../../projects/types';
 import {
   createTimelineNavigation,
+  createTimelineRangeHandle,
   patchTimelineAxisCells,
   patchTimelineGrid,
+  patchTimelineToday,
 } from '../timeline/timelinePresentation';
 import { projectCardFields } from './projectCardFields';
 import {
@@ -958,14 +960,7 @@ export class ProjectsTimelineView<
   }
 
   private addTodayMarker_abyssPrivate(host: HTMLElement, window: ProjectTimelineWindow): void {
-    const today = localDay((this.context_abyssPrivate.now ?? (() => new Date()))());
-    const offset = dayOrdinal(today) - dayOrdinal(window.startDay);
-    if (offset < 0 || offset >= window.dayCount) return;
-    const marker = host.createDiv({
-      cls: 'abyss-project-timeline-today',
-      attr: { 'aria-label': `Today, ${today}` },
-    });
-    marker.style.left = `${((offset + 0.5) / window.dayCount) * 100}%`;
+    patchTimelineToday(host, window, (this.context_abyssPrivate.now ?? (() => new Date()))());
   }
 
   private layoutSignatureForRows_abyssPrivate(): string {
@@ -1145,15 +1140,6 @@ export class ProjectsTimelineView<
     return { name, description, attributes };
   }
 
-  private createRangeHandle_abyssPrivate(bar: HTMLElement, endpoint: 'start' | 'end'): HTMLElement {
-    const handle = bar.createSpan({
-      cls: `abyss-project-timeline-handle is-${endpoint}`,
-      attr: { 'data-timeline-part': endpoint, 'aria-hidden': 'true' },
-    });
-    handle.createSpan({ cls: 'abyss-project-timeline-grip' });
-    return handle;
-  }
-
   private createRow_abyssPrivate(
     host: HTMLElement,
     item: ProjectTimelineRow,
@@ -1175,8 +1161,8 @@ export class ProjectsTimelineView<
       cls: 'abyss-project-timeline-bar',
       attr: { ...rangeTargetAttributes('bar'), ...accessibility.attributes },
     });
-    const startHandle = this.createRangeHandle_abyssPrivate(bar, 'start');
-    const endHandle = this.createRangeHandle_abyssPrivate(bar, 'end');
+    const startHandle = createTimelineRangeHandle(bar, 'start');
+    const endHandle = createTimelineRangeHandle(bar, 'end');
     const row: RenderedRow<TCell> = {
       markdown,
       cleanup: [],

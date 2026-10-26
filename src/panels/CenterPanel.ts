@@ -1386,6 +1386,10 @@ export class CenterPanel {
     options: TaskListSurfaceOptions<SurfaceTask>,
   ): TaskTimelineSurface<SurfaceTask> {
     return new TaskTimelineSurface(options, {
+      mountContext: (host, layout) =>
+        this.dashboardTaskPath_abyssPrivate() === undefined
+          ? undefined
+          : this.projectsPanel_abyssPrivate?.mountDashboardTimeline(host, layout),
       settings: () =>
         normalizeTaskTimelineSettings(this.taskCollectionState_abyssPrivate().timeline),
       now: () => new Date(),
@@ -2926,6 +2930,7 @@ export class CenterPanel {
       this.hasCompactTasks_abyssPrivate() &&
       this.taskSearch_abyssPrivate.refreshFilter(this.el, previous.scroll)
     ) {
+      this.taskSurface_abyssPrivate?.surface.refreshMeasurements();
       this.syncTaskHeader_abyssPrivate(previous);
       return;
     }

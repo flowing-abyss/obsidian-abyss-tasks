@@ -11372,3 +11372,39 @@ button.abyss-calendar-date[aria-pressed='true'] {
   text-decoration: line-through;
   color: var(--text-muted);
 }
+
+.abyss-task-timeline-heading {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  width: max(
+    100%,
+    calc(var(--abyss-project-timeline-summary-width) + var(--abyss-project-timeline-track-width))
+  );
+  background: var(--background-primary);
+}
+
+.abyss-project-dashboard-range > .abyss-project-timeline-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+  font-weight: var(--font-semibold);
+}
+
+.abyss-project-dashboard-range-icon {
+  display: flex;
+  color: var(--text-muted);
+}
+
+.abyss-project-dashboard-range-icon svg {
+  width: var(--size-4-4);
+  height: var(--size-4-4);
+}
+
+.abyss-project-dashboard-range > .abyss-project-timeline-track {
+  background: var(--background-primary-alt);
+}
+
+.abyss-task-timeline .abyss-project-timeline-state:disabled {
+  pointer-events: none;
+}

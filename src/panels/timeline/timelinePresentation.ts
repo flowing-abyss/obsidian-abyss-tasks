@@ -1,8 +1,10 @@
 import { setIcon } from 'obsidian';
+import { projectCalendarDayOrdinal } from '../../projects/projectDateValue';
 import type {
   ProjectTimelineAxisCell,
   ProjectTimelineAxisLayout,
 } from '../../projects/projectTimelineAxis';
+import type { ProjectTimelineWindow } from '../../projects/projectTimelineModel';
 import type { ProjectTimelineScale } from '../../projects/projectTimelineSettings';
 
 export const TIMELINE_SCALES = [
@@ -12,6 +14,18 @@ export const TIMELINE_SCALES = [
   ['quarter', 'Quarter'],
   ['year', 'Year'],
 ] as const;
+
+export function createTimelineRangeHandle(
+  bar: HTMLElement,
+  endpoint: 'start' | 'end',
+): HTMLElement {
+  const handle = bar.createSpan({
+    cls: `abyss-project-timeline-handle is-${endpoint}`,
+    attr: { 'data-timeline-part': endpoint, 'aria-hidden': 'true' },
+  });
+  handle.createSpan({ cls: 'abyss-project-timeline-grip' });
+  return handle;
+}
 
 export function patchTimelineAxisCells(
   host: HTMLElement,
@@ -107,4 +121,23 @@ export function createTimelineNavigation(
       return [scale, button];
     }),
   );
+}
+
+/** Header and row markers use the same civil-day position in every timeline. */
+export function patchTimelineToday(
+  host: HTMLElement,
+  window: ProjectTimelineWindow,
+  now: Date,
+): void {
+  host.querySelector(':scope > .abyss-project-timeline-today')?.remove();
+  const today = `${String(now.getFullYear()).padStart(4, '0')}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const offset =
+    (projectCalendarDayOrdinal(today) as number) -
+    (projectCalendarDayOrdinal(window.startDay) as number);
+  if (offset < 0 || offset >= window.dayCount) return;
+  const marker = host.createDiv({
+    cls: 'abyss-project-timeline-today',
+    attr: { 'aria-label': `Today, ${today}` },
+  });
+  marker.style.left = `${((offset + 0.5) / window.dayCount) * 100}%`;
 }

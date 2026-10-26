@@ -535,6 +535,7 @@ export default defineConfig(
       'src/panels/projects/projectTableViewport.ts',
       'src/panels/projects/projectKanbanRows.ts',
       'src/panels/projects/projectTimelineRowModel.ts',
+      'src/panels/projects/projectTimelineRangeSource.ts',
       'src/panels/virtualization/rowViewport.ts',
       'src/panels/virtualization/indexedRowGeometry.ts',
       'src/panels/virtualization/logicalScrollWindow.ts',

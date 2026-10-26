@@ -1,0 +1,173 @@
+import { afterEach, expect, it, vi } from 'vitest';
+import { ProjectDashboardTimeline } from '../src/panels/projects/ProjectDashboardTimeline';
+import { buildConfiguredProjectFieldCatalog } from '../src/projects/projectFields';
+import { projectTimelineWindow } from '../src/projects/projectTimelineModel';
+import type { Project } from '../src/projects/types';
+import { DEFAULT_SETTINGS } from '../src/settings/defaults';
+import { expectDefined, flushMicrotasks } from './helpers';
+afterEach(() => vi.restoreAllMocks());
+function pointer(type: string, clientX: number): Event {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperties(event, {
+    button: { value: 0 },
+    clientX: { value: clientX },
+    clientY: { value: 40 },
+    isPrimary: { value: true },
+    pointerId: { value: 1 },
+  });
+  return event;
+}
+function mount(frontmatter: Project['frontmatter'] = { start: '2026-10-02', end: '2026-10-04' }) {
+  const host = document.body.createDiv();
+  let project: Project | undefined = {
+    path: 'Projects/A.md',
+    name: 'A',
+    frontmatter,
+    statusId: null,
+    rawStatus: null,
+    tags: [],
+    stats: {
+      total: 0,
+      done: 0,
+      cancelled: 0,
+      inProgress: 0,
+      tracked: { closedMs: 0, openStartsMs: [] },
+    },
+  };
+  let fields = buildConfiguredProjectFieldCatalog(DEFAULT_SETTINGS.projects);
+  const apply = vi.fn(async () => ({ applied: [], failed: [] }));
+  const window = {
+    ...projectTimelineWindow(new Date(2026, 9, 1), 'day'),
+    startDay: '2026-10-01',
+    endDay: '2026-10-14',
+    dayCount: 14,
+  };
+  const view = new ProjectDashboardTimeline(host, {
+    scroll: host,
+    window: () => window,
+    now: () => new Date(2026, 9, 1),
+    revealDay: () => {},
+    project: () => project,
+    fields: () => fields,
+    apply,
+  });
+  view.update(window, { cells: [], hierarchyCells: [], gridBoundaries: [] });
+  const track = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-track'));
+  const bar = expectDefined(track.querySelector<HTMLElement>('.abyss-project-timeline-bar'));
+  vi.spyOn(track, 'getBoundingClientRect').mockReturnValue({
+    x: 100,
+    y: 0,
+    left: 100,
+    right: 380,
+    top: 0,
+    bottom: 70,
+    width: 280,
+    height: 70,
+    toJSON: () => ({}),
+  });
+  return {
+    host,
+    view,
+    track,
+    bar,
+    apply,
+    window,
+    change: (kind: string) => {
+      if (kind === 'replace' && project !== undefined)
+        project = { ...project, frontmatter: { ...frontmatter, end: '2026-10-10' } };
+      if (kind === 'rebind')
+        fields = fields.map((f) => (f.id === 'end' ? { ...f, property: 'deadline' } : f));
+      if (kind === 'duplicate' && project !== undefined)
+        project = { ...project, frontmatter: { ...frontmatter, End: '2026-10-04' } };
+      if (kind === 'remove') project = undefined;
+      if (kind === 'cancel') view.cancel();
+      if (kind === 'destroy') view.destroy();
+    },
+    dispose: () => {
+      view.destroy();
+      host.remove();
+    },
+  };
+}
+it('resizes the project End through the shared visible handle while guarding Start', async () => {
+  const h = mount();
+  try {
+    const end = expectDefined(
+      h.bar.querySelector<HTMLElement>('.abyss-project-timeline-handle.is-end'),
+    );
+    expect(end.querySelector('.abyss-project-timeline-grip')).not.toBeNull();
+    end.dispatchEvent(pointer('pointerdown', 170));
+    await flushMicrotasks();
+    end.dispatchEvent(pointer('pointermove', 190));
+    end.dispatchEvent(pointer('pointerup', 190));
+    await flushMicrotasks();
+    expect(h.apply).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ sourceProperty: 'end', value: '2026-10-05' }),
+        expect.objectContaining({
+          sourceProperty: 'start',
+          restoreSourceValue: true,
+          expectedValue: '2026-10-02',
+          value: '2026-10-02',
+        }),
+      ]),
+    );
+  } finally {
+    h.dispose();
+  }
+});
+it('draws an undated project interval with both endpoint guards', async () => {
+  const h = mount({});
+  try {
+    h.track.dispatchEvent(pointer('pointerdown', 130));
+    await flushMicrotasks();
+    h.track.dispatchEvent(pointer('pointermove', 170));
+    h.track.dispatchEvent(pointer('pointerup', 170));
+    await flushMicrotasks();
+    expect(h.apply).toHaveBeenCalledWith([
+      expect.objectContaining({
+        path: 'Projects/A.md',
+        sourceProperty: 'start',
+        expectedExists: false,
+        value: '2026-10-02',
+      }),
+      expect.objectContaining({
+        path: 'Projects/A.md',
+        sourceProperty: 'end',
+        expectedExists: false,
+        value: '2026-10-04',
+      }),
+    ]);
+  } finally {
+    h.dispose();
+  }
+});
+it.each(['replace', 'rebind', 'duplicate', 'remove', 'cancel', 'destroy'])(
+  'rejects a project drag after %s',
+  async (kind) => {
+    const h = mount();
+    try {
+      h.bar.dispatchEvent(pointer('pointerdown', 130));
+      await flushMicrotasks();
+      h.change(kind);
+      h.bar.dispatchEvent(pointer('pointermove', 170));
+      h.bar.dispatchEvent(pointer('pointerup', 170));
+      await flushMicrotasks();
+      expect(h.apply).not.toHaveBeenCalled();
+    } finally {
+      h.dispose();
+    }
+  },
+);
+it('does not revive a queued edit after its navigation context is cancelled and redrawn', async () => {
+  const h = mount();
+  try {
+    h.bar.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    h.view.cancel();
+    h.view.update(h.window, { cells: [], hierarchyCells: [], gridBoundaries: [] });
+    await flushMicrotasks();
+    expect(h.apply).not.toHaveBeenCalled();
+  } finally {
+    h.dispose();
+  }
+});

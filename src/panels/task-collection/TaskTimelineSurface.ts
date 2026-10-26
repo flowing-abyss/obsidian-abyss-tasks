@@ -35,6 +35,7 @@ import {
   type TaskListSurfaceOptions,
   type TaskRowMount,
 } from '../task-list/TaskListSurface';
+import type { TimelineContextRow, TimelineContextRowLayout } from '../timeline/TimelineContextRow';
 import {
   TimelinePointerInteraction,
   applyProjectTimelineBarGeometry,
@@ -42,8 +43,10 @@ import {
 } from '../timeline/TimelinePointerInteraction';
 import {
   createTimelineNavigation,
+  createTimelineRangeHandle,
   patchTimelineAxisCells,
   patchTimelineGrid,
+  patchTimelineToday,
 } from '../timeline/timelinePresentation';
 import type { TaskCollectionSurface } from './TaskCollectionSurface';
 
@@ -62,6 +65,10 @@ interface TaskTimelineActions<T> {
   inspect?(key: string): void;
   openDates(key: string, anchor: HTMLElement): void;
   changeScale(scale: ProjectTimelineScale): void;
+  mountContext?(
+    host: HTMLElement,
+    layout: TimelineContextRowLayout,
+  ): TimelineContextRow | undefined;
 }
 interface TimelineMount<T> {
   row: Extract<TaskListRow<T>, { kind: 'task' }>;
@@ -108,6 +115,8 @@ const scheduledSuffix = '\u0000scheduled';
 export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
   readonly #viewport: TaskListSurface<T>;
   readonly #axis: HTMLElement;
+  readonly #heading: HTMLElement;
+  readonly #contextRow: TimelineContextRow | undefined;
   readonly #summary: HTMLElement;
   readonly #dates: HTMLElement;
   readonly #hierarchy: HTMLElement;
@@ -141,7 +150,8 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
       'abyss-project-timeline',
       'abyss-project-timeline-scroll',
     );
-    this.#axis = options.host.createDiv({ cls: 'abyss-project-timeline-axis' });
+    this.#heading = options.host.createDiv({ cls: 'abyss-task-timeline-heading' });
+    this.#axis = this.#heading.createDiv({ cls: 'abyss-project-timeline-axis' });
     this.#summary = this.#axis.createDiv({ cls: 'abyss-project-timeline-axis-summary' });
     this.#buttons = createTimelineNavigation(this.#summary, {
       previous: () => {
@@ -169,15 +179,16 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
       cls: 'abyss-project-timeline-axis-cells',
       attr: { 'aria-hidden': 'true' },
     });
+    this.#contextRow = this.#mountContext();
     this.#rowsHost = options.host.createDiv({ cls: 'abyss-task-timeline-rows' });
     this.#viewport = new TaskListSurface({
       ...options,
       host: this.#rowsHost,
-      viewportInset: () => this.#axis.getBoundingClientRect().height,
+      viewportInset: () => this.#heading.getBoundingClientRect().height,
       mount: (parent, row) => this.#mount(parent, row),
     });
     this.#interaction = new TimelinePointerInteraction({
-      root: options.host,
+      root: this.#rowsHost,
       scroll: options.scroll,
       window: () => this.#window(),
       captureRangeSource: (identity) => this.#capture(identity),
@@ -206,6 +217,19 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
     });
     this.#centerDay = localDay(this.#anchor);
     this.#migrationCleanup = this.#watchViewport();
+  }
+  #mountContext(): TimelineContextRow | undefined {
+    return this.actions.mountContext?.(this.#heading, {
+      scroll: this.options.scroll,
+      window: () => this.#window(),
+      now: () => this.actions.now(),
+      revealDay: (day) => {
+        this.#anchor = date(day);
+        this.#fitted = undefined;
+        this.#centerDay = day;
+        this.#navigationChanged();
+      },
+    });
   }
   #watchViewport(): () => void {
     this.options.scroll.addEventListener('scroll', this.#schedule, { passive: true });
@@ -257,6 +281,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
     this.#bind();
     const settings = this.actions.settings();
     if (settings.scale !== this.#scale) {
+      this.#contextRow?.cancel();
       this.#scale = settings.scale;
       this.#fitted = this.#fit(rows);
       this.#interaction.cancelActive();
@@ -297,6 +322,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
   }
   suspend(releaseMounts = false): void {
     this.#suspended = true;
+    this.#contextRow?.cancel();
     this.#interaction.cancelActive();
     this.#cancelFrame();
     this.#viewport.suspend(releaseMounts);
@@ -319,7 +345,8 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
     this.#migrationCleanup();
     this.options.scroll.removeEventListener('scroll', this.#schedule);
     this.#viewport.destroy();
-    this.#axis.remove();
+    this.#contextRow?.destroy();
+    this.#heading.remove();
     this.#rowsHost.remove();
     this.options.host.removeClass(
       'abyss-task-timeline',
@@ -423,11 +450,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
       cls: 'abyss-project-timeline-bar',
       attr: { tabindex: '0', role: 'button', 'data-timeline-part': 'bar' },
     });
-    for (const endpoint of ['start', 'end'])
-      bar.createDiv({
-        cls: `abyss-project-timeline-range-handle is-${endpoint}`,
-        attr: { 'data-timeline-part': endpoint, 'aria-hidden': 'true' },
-      });
+    for (const endpoint of ['start', 'end'] as const) createTimelineRangeHandle(bar, endpoint);
     const state = track.createEl('button', {
       cls: 'abyss-project-timeline-state',
       attr: { type: 'button' },
@@ -516,7 +539,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
   #patch(mount: TimelineMount<T>): void {
     const dates = taskTimelineDates(this.actions.planning(mount.row.task));
     patchTimelineGrid(mount.grid, this.#axisLayout);
-    this.#todayMarker(mount.track, this.#window());
+    patchTimelineToday(mount.track, this.#window(), this.actions.now());
     this.#patchBar(mount.bar, dates.range);
     mount.bar.setAttribute('aria-label', this.#rangeLabel(dates.range));
     const scheduledRange: ProjectTimelineRange =
@@ -531,6 +554,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
   }
   #patchState(mount: TimelineMount<T>, dates: ReturnType<typeof taskTimelineDates>): void {
     mount.state.hidden = mount.bar.hidden !== true;
+    mount.state.disabled = dates.range.kind === 'unscheduled';
     if (dates.range.kind === 'malformed') {
       mount.state.className = 'abyss-project-timeline-state is-malformed';
       mount.state.setText(`Start ${String(dates.range.start)} · Due ${String(dates.range.end)}`);
@@ -584,6 +608,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
       : projectTimelineFitWindow(first, last, this.#scale);
   }
   *#dateValues(rows: TaskListRows<T>): Iterable<string> {
+    if (this.#contextRow !== undefined) yield* bounds(this.#contextRow.range());
     for (const row of rows.slice(0, rows.rowCount)) {
       if (row.kind !== 'task') continue;
       const dates = taskTimelineDates(this.actions.planning(row.task));
@@ -607,6 +632,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
     this.#navigationChanged();
   }
   #navigationChanged(): void {
+    this.#contextRow?.cancel();
     this.#interaction.cancelActive();
     this.#calendar();
     this.#viewport.refreshMeasurements();
@@ -667,19 +693,9 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
       button.setAttribute('aria-pressed', String(scale === this.#scale));
       button.toggleClass('is-active', scale === this.#scale);
     }
-    this.#todayMarker(this.#dates, window);
+    patchTimelineToday(this.#dates, window, this.actions.now());
+    this.#contextRow?.update(window, this.#axisLayout);
     for (const mount of this.#mounts.values()) this.#patch(mount);
-  }
-  #todayMarker(host: HTMLElement, window: ProjectTimelineWindow): void {
-    host.querySelector(':scope > .abyss-project-timeline-today')?.remove();
-    const today = localDay(this.actions.now());
-    const offset = ordinal(today) - ordinal(window.startDay);
-    if (offset < 0 || offset >= window.dayCount) return;
-    const marker = host.createDiv({
-      cls: 'abyss-project-timeline-today',
-      attr: { 'aria-label': `Today, ${today}` },
-    });
-    marker.style.left = `${((offset + 0.5) / window.dayCount) * 100}%`;
   }
   #bind(): void {
     const owner = this.options.host.ownerDocument.defaultView;

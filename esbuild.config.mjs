@@ -1,3 +1,5 @@
+// Project context row: shipped CSS 204,141 bytes; containing limit 200 KiB.
+// Shared project range adapter and endpoint guards: main 2,212,289 bytes; 2161 KiB limit.
 // Compact project toolbar and Kanban capture: shipped CSS 203,451 bytes; 199 KiB limit.
 // Task view refinements: measured main 2,206,787 bytes; containing limit 2156 KiB.
 // Guarded context/rename transitions and deferred inspector geometry: main 2,204,758 bytes.

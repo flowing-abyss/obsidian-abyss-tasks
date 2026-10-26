@@ -10,13 +10,12 @@ import { createCanonicalSearchHarness } from './support/taskSearchHarness';
 import { searchUiCompleted } from './support/taskSearchUiHarness';
 useRealMoment();
 afterEach(() => vi.restoreAllMocks());
-async function mount() {
+async function mount(projectHeader = '') {
   const settings = structuredClone(DEFAULT_SETTINGS);
   settings.listViewStates = { inbox: { ...getListViewDefaults('inbox'), groupBy: 'priority' } };
   const h = await createCanonicalSearchHarness(
     {
-      'Projects/A.md':
-        '- [ ] Alpha 🛫 2026-10-24 📅 2026-10-28\n  - [ ] Child\n- [/] Beta\n- [x] Completed',
+      'Projects/A.md': `${projectHeader}- [ ] Alpha 🛫 2026-10-24 📅 2026-10-28\n  - [ ] Child\n- [/] Beta\n- [x] Completed`,
       'Projects/B.md': '- [ ] Other project',
       'outside.md': '- [ ] Outside',
     },
@@ -323,6 +322,40 @@ it('keeps project context beside the shared controls and styles completed task t
     expect(h.root.querySelector('.abyss-center-header')?.contains(title)).toBe(true);
     await h.choose('Timeline');
     expect(h.root.querySelector('.abyss-center-header')?.contains(title)).toBe(true);
+  } finally {
+    h.dispose();
+  }
+});
+
+it('edits the project interval in its task Timeline without changing task dates', async () => {
+  const h = await mount('---\nstart: 2026-10-20\nend: 2026-10-31\nowner: Team\n---\n');
+  try {
+    h.open('Projects/A.md');
+    await h.choose('Timeline');
+    const projectRow = expectDefined(h.root.querySelector('.abyss-project-dashboard-range'));
+    const bar = expectDefined(projectRow.querySelector<HTMLElement>('.abyss-project-timeline-bar'));
+    expect(bar.hidden).toBe(false);
+    expect(bar.getAttribute('aria-label')).toContain('2026-10-20');
+    const file = expectDefined(h.app.vault.getFileByPath('Projects/A.md'));
+    bar.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowRight', shiftKey: true, bubbles: true }),
+    );
+    await vi.waitFor(async () => {
+      expect(await h.app.vault.read(file)).toContain('end: 2026-11-01');
+    });
+    await vi.waitFor(() => {
+      expect(bar.getAttribute('aria-label')).toContain('2026-11-01');
+    });
+    const content = await h.app.vault.read(file);
+    expect(content).toContain('start: 2026-10-20');
+    expect(content).toContain('owner: Team');
+    expect(content).toContain('Alpha 🛫 2026-10-24 📅 2026-10-28');
+    const input = expectDefined(h.root.querySelector<HTMLInputElement>('.abyss-center-search'));
+    input.value = 'No matching task';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await searchUiCompleted(h.root);
+    expect(h.root.querySelector('.abyss-project-dashboard-range')).not.toBeNull();
+    expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(0);
   } finally {
     h.dispose();
   }
