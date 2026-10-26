@@ -1,6 +1,7 @@
 [mcp_servers.mobile-mcp]
 command = "pnpm"
 args = ["dlx", "@mobilenext/mobile-mcp@latest"]
+enabled = false
 
 [mcp_servers.context7]
 url = "https://mcp.context7.com/mcp"
