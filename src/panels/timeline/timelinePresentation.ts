@@ -43,7 +43,7 @@ export function patchTimelineAxisCells(
   for (const cell of cells) {
     let element = retained.get(cell.startDay);
     if (element === undefined) {
-      element = host.createSpan({ cls: className });
+      element = host.createSpan();
       element.dataset['startDay'] = cell.startDay;
     }
     element.dataset['endDay'] = cell.endDay;
@@ -52,6 +52,7 @@ export function patchTimelineAxisCells(
     cursor = element.nextElementSibling;
     setPercent(element, 'left', cell.leftPercent);
     setPercent(element, 'width', cell.rightPercent - cell.leftPercent);
+    element.className = className;
     element.toggleClass('is-today', cell.isToday);
     const labelHost = clampLabel
       ? (element.querySelector<HTMLElement>(

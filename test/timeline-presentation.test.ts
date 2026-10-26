@@ -50,6 +50,35 @@ describe('retained Timeline presentation', () => {
     },
   );
 
+  it('reconciles Day and Week classes on a retained Monday while preserving Today', () => {
+    const host = createDiv();
+    const visible = {
+      visibleStartDay: '2024-02-26',
+      visibleEndDay: '2024-02-26',
+      todayDay: '2024-02-26',
+    };
+    const dayWindow = projectTimelineWindowForRange('2024-02-26', '2024-03-03', 'day');
+    const weekWindow = projectTimelineWindowForRange('2024-02-26', '2024-03-03', 'week');
+    const dayCells = projectTimelineAxisLayout(dayWindow, visible).cells;
+    const weekCells = projectTimelineAxisLayout(weekWindow, visible).cells;
+    patchTimelineAxisCells(host, dayCells, 'abyss-project-timeline-axis-cell is-day', false);
+    const monday = host.firstElementChild;
+    expect(monday?.classList.contains('is-day')).toBe(true);
+    expect(monday?.classList.contains('is-today')).toBe(true);
+    patchTimelineAxisCells(host, weekCells, 'abyss-project-timeline-axis-cell', false);
+    expect(host.firstElementChild).toBe(monday);
+    expect(monday?.classList.contains('is-day')).toBe(false);
+    expect(monday?.classList.contains('is-today')).toBe(true);
+    expect(monday?.querySelector('.abyss-project-timeline-axis-secondary-label')).toBeNull();
+    patchTimelineAxisCells(host, dayCells, 'abyss-project-timeline-axis-cell is-day', false);
+    expect(host.firstElementChild).toBe(monday);
+    expect(monday?.classList.contains('is-day')).toBe(true);
+    expect(monday?.classList.contains('is-today')).toBe(true);
+    expect(monday?.querySelector('.abyss-project-timeline-axis-secondary-label')?.textContent).toBe(
+      '26',
+    );
+  });
+
   it('retains a calendar interval when the physical window clips its end differently', () => {
     const host = createDiv();
     const firstWindow = projectTimelineWindowForRange('2024-02-01', '2024-03-03', 'week');
