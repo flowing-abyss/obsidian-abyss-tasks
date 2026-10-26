@@ -2593,9 +2593,13 @@ describe('CenterPanel source note chip', () => {
   function makeSourcePanel(
     tasks: TaskSnapshot[],
     settingsOverrides: Partial<typeof DEFAULT_SETTINGS> = {},
+    projectScope = false,
   ): CenterPanel {
     const state = new AppState();
-    state.set('selectedList', { type: 'project', path: tasks[0]?.source.filePath ?? 'a.md' });
+    state.set(
+      'selectedList',
+      projectScope ? { type: 'project', path: tasks[0]?.source.filePath ?? 'a.md' } : 'today',
+    );
     state.set('searchQuery', tasks[0]?.title ?? '');
     const panel = makeStaticPanel(state, tasks, {
       ...DEFAULT_SETTINGS,
@@ -2604,6 +2608,18 @@ describe('CenterPanel source note chip', () => {
     panel.mount(freshContainer());
     return panel;
   }
+
+  it('hides the redundant source in project context even when source display is always', () => {
+    const t = task({
+      title: 'project task',
+      planning: { due: '2026-06-25' },
+      source: { filePath: 'Projects/alpha.md' },
+    });
+    const panel = makeSourcePanel([t], { sourceNoteDisplay: 'always' }, true);
+    expect(panel['el'].querySelector('.abyss-task-title')?.textContent).toContain('project task');
+    expect(panel['el'].querySelector('.abyss-task-source-note')).toBeNull();
+    panel.destroy();
+  });
 
   it('sourceNoteDisplay always → chip shown for daily note task', () => {
     const t = task({
