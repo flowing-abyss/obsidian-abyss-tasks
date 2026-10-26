@@ -232,6 +232,7 @@ it('centers Today, keeps a fractional zoom center, and centers active scales wit
     expect(h.todayX()).toBeCloseTo(540, 1);
     h.host.scrollLeft += 153.375;
     const center = h.surface.captureScroll().center;
+    if (center === 'today') throw new Error('Expected a measured timeline center');
     h.button('Day').click();
     expect(h.surface.captureScroll().center).toBeCloseTo(center, 9);
     h.button('Day').click();
@@ -273,6 +274,27 @@ it('retains pending Today until nonzero measurement and yields to a newer reveal
   }
 });
 
+it.each(['initial', 'active', 'restored'] as const)(
+  'resolves deferred Today after midnight (%s)',
+  (entry) => {
+    const h = continuousTimeline(entry === 'active' ? 900 : 0);
+    try {
+      if (entry === 'active') {
+        h.resize(0);
+        h.button('Month').click();
+      }
+      const saved = h.surface.captureScroll();
+      h.nextDay();
+      if (entry === 'restored') h.surface.restoreScroll(saved);
+      h.resize(900);
+      expect(h.surface.captureScroll().center).toBe(20753.5);
+      expect(h.todayX()).toBeCloseTo(540, 1);
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
 it('rebases repeatedly in both directions with continuous coordinates and retained card DOM', () => {
   const h = continuousTimeline();
   try {
@@ -294,6 +316,7 @@ it('rebases repeatedly in both directions with continuous coordinates and retain
     }
     expect(h.updates).not.toHaveBeenCalled();
     const saved = h.surface.captureScroll();
+    if (saved.center === 'today') throw new Error('Expected a measured timeline center');
     h.surface.suspend();
     h.surface.resume();
     h.flush();
@@ -341,6 +364,7 @@ it('preserves logical focus while moving the retained surface to another owning 
     h.host.scrollLeft += 123.375;
     h.host.dispatchEvent(new Event('scroll'));
     const center = h.surface.captureScroll().center;
+    if (center === 'today') throw new Error('Expected a measured timeline center');
     target.doc.body.append(h.host);
     migration.notify(h.host);
     h.surface.resume();
@@ -412,6 +436,8 @@ it('lets newer horizontal user motion supersede pending initial Today', () => {
     h.host.dispatchEvent(new Event('scroll'));
     h.flush();
     const center = h.surface.captureScroll().center;
+    if (center === 'today') throw new Error('Expected a measured timeline center');
+    h.nextDay();
     h.resize(900);
     expect(h.surface.captureScroll().center).toBeCloseTo(center, 9);
     expect(center).not.toBe((projectCalendarDayOrdinal('2026-10-26') as number) + 0.5);
@@ -454,6 +480,14 @@ it('keeps dashboard boundaries actionable when active-scale Today leaves the geo
     const end = expectDefined(
       h.host.querySelector<HTMLElement>('.abyss-project-boundary-handle.is-end'),
     );
+    const boundaries = expectDefined(end.closest('.abyss-project-timeline-boundaries'));
+    expect(boundaries.parentElement).toBe(h.host.querySelector('.abyss-task-timeline-heading'));
+    expect(boundaries.previousElementSibling).toBe(
+      h.host.querySelector('.abyss-project-timeline-axis'),
+    );
+    expect(boundaries.querySelector('.abyss-project-timeline-axis-summary')?.textContent).toBe(
+      'Project dates',
+    );
     end.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
     await flushMicrotasks();
     expect(apply).toHaveBeenCalledWith(
@@ -472,6 +506,7 @@ it('lets a reveal supersede delayed Today even when its date is exposed in retai
   try {
     h.surface.reveal('one');
     const center = h.surface.captureScroll().center;
+    if (center === 'today') throw new Error('Expected a measured timeline center');
     h.resize(0);
     h.surface.focusToday();
     h.surface.reveal('one');

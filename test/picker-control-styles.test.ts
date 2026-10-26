@@ -305,10 +305,9 @@ const TABLET_PADDING_ROWS: ReadonlyArray<readonly [declared: string, raised: str
     '.abyss-projects-table button.abyss-project-kanban-group-header',
     'body.is-tablet .abyss-projects-table button.abyss-project-kanban-group-header',
   ],
-  ['.abyss-project-timeline-axis button', 'body.is-tablet .abyss-project-timeline-axis button'],
   [
-    '.abyss-project-timeline-axis .abyss-cal-nav-today',
-    'body.is-tablet .abyss-project-timeline-axis button.abyss-cal-nav-today',
+    '.abyss-project-timeline-scale-control button',
+    'body.is-tablet .abyss-project-timeline-scale-control button',
   ],
   [
     '.abyss-project-timeline-group-header',

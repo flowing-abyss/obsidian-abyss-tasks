@@ -74,7 +74,7 @@ interface TaskTimelineActions<T> {
   openDates(key: string, anchor: HTMLElement): void;
   changeScale(scale: ProjectTimelineScale): void;
   mountContext?(
-    host: HTMLElement,
+    heading: HTMLElement,
     layout: TimelineContextOverlayLayout,
   ): TimelineContextOverlay | undefined;
 }
@@ -91,8 +91,7 @@ interface TimelineMount<T> {
 }
 export interface TaskTimelineScrollPosition {
   readonly rows: TaskListScrollPosition;
-  readonly left: number;
-  readonly center: number;
+  readonly center: number | 'today';
   readonly viewport: TimelineViewport;
   readonly usableWidth: number;
 }
@@ -139,7 +138,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
   #todayDay = '';
   #scale: ProjectTimelineScale;
   #axisLayout: ProjectTimelineAxisLayout = { cells: [], hierarchyCells: [], gridBoundaries: [] };
-  #center: number | undefined;
+  #pendingCenter: number | 'today' | undefined;
   #destroyed = false;
   #suspended = false;
 
@@ -148,8 +147,12 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
     readonly actions: TaskTimelineActions<T>,
   ) {
     this.#scale = actions.settings().scale;
-    this.#center = ordinal(localDay(actions.now())) + 0.5;
-    this.#geometry = timelineViewportAt(this.#center, this.#scale, 1).viewport;
+    this.#pendingCenter = 'today';
+    this.#geometry = timelineViewportAt(
+      ordinal(localDay(actions.now())) + 0.5,
+      this.#scale,
+      1,
+    ).viewport;
     options.host.addClass(
       'abyss-task-timeline',
       'abyss-project-timeline',
@@ -212,12 +215,12 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
     this.#migrationCleanup = this.#watchViewport();
   }
   #mountContext(): TimelineContextOverlay | undefined {
-    return this.actions.mountContext?.(this.#dates, {
+    return this.actions.mountContext?.(this.#heading, {
       scroll: this.options.scroll,
       window: () => this.#window(),
       now: () => this.actions.now(),
       revealDay: (day) => {
-        this.#center = ordinal(day) + 0.5;
+        this.#pendingCenter = ordinal(day) + 0.5;
         this.#navigationChanged();
       },
     });
@@ -235,9 +238,8 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
   captureScroll(): TaskTimelineScrollPosition {
     return {
       rows: this.#viewport.captureScroll(),
-      left: this.options.scroll.scrollLeft,
       center:
-        this.#center ??
+        this.#pendingCenter ??
         timelineViewportCenter(this.#geometry, this.options.scroll.scrollLeft, this.#usableWidth),
       viewport: this.#geometry,
       usableWidth: this.#usableWidth,
@@ -246,7 +248,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
   restoreScroll(position: TaskTimelineScrollPosition): void {
     this.#geometry = position.viewport;
     this.#usableWidth = position.usableWidth;
-    this.#center = position.center;
+    this.#pendingCenter = position.center;
     this.#viewport.restoreScroll(position.rows);
   }
   element(key: string): HTMLElement | undefined {
@@ -275,7 +277,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
     const settings = this.actions.settings();
     if (settings.scale !== this.#scale) {
       this.#contextOverlay?.cancel();
-      this.#center ??= timelineViewportCenter(
+      this.#pendingCenter ??= timelineViewportCenter(
         this.#geometry,
         this.options.scroll.scrollLeft,
         this.#usableWidth,
@@ -310,8 +312,8 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
         ? { kind: 'open-end' as const, startDay: dates.scheduled }
         : dates.range;
     const first = bounds(range)[0];
-    if (first !== undefined && (this.#center !== undefined || !this.#rangeVisible(range))) {
-      this.#center = ordinal(first) + 0.5;
+    if (first !== undefined && (this.#pendingCenter !== undefined || !this.#rangeVisible(range))) {
+      this.#pendingCenter = ordinal(first) + 0.5;
       this.#navigationChanged();
     }
   }
@@ -612,7 +614,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
     const dates = taskTimelineDates(this.actions.planning(mount.row.task));
     const first = bounds(dates.range)[0] ?? dates.scheduled;
     if (first !== undefined && dates.range.kind !== 'malformed') {
-      this.#center = ordinal(first) + 0.5;
+      this.#pendingCenter = ordinal(first) + 0.5;
       this.#navigationChanged();
     } else this.actions.openDates(mount.row.key, mount.state);
   }
@@ -620,7 +622,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
     return this.#geometry.window;
   }
   focusToday(): void {
-    this.#center = ordinal(localDay(this.actions.now())) + 0.5;
+    this.#pendingCenter = 'today';
     this.#navigationChanged();
   }
   #visibleStart(): number {
@@ -645,11 +647,17 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
   }
   #position(usable: number): TimelineViewportPosition {
     if (usable <= 0) return { viewport: this.#geometry, left: this.options.scroll.scrollLeft };
-    if (usable > 0 && (this.#center !== undefined || usable !== this.#usableWidth)) {
+    if (usable > 0 && (this.#pendingCenter !== undefined || usable !== this.#usableWidth)) {
       const center =
-        this.#center ??
-        timelineViewportCenter(this.#geometry, this.options.scroll.scrollLeft, this.#usableWidth);
-      this.#center = undefined;
+        this.#pendingCenter === 'today'
+          ? ordinal(localDay(this.actions.now())) + 0.5
+          : (this.#pendingCenter ??
+            timelineViewportCenter(
+              this.#geometry,
+              this.options.scroll.scrollLeft,
+              this.#usableWidth,
+            ));
+      this.#pendingCenter = undefined;
       return timelineViewportAt(center, this.#scale, usable);
     }
     return rebaseTimelineViewport(this.#geometry, this.options.scroll.scrollLeft, usable);
@@ -707,13 +715,11 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
       this.#hierarchy,
       this.#axisLayout.hierarchyCells,
       'abyss-project-timeline-axis-hierarchy-cell',
-      true,
     );
     patchTimelineAxisCells(
       this.#cells,
       this.#axisLayout.cells,
       `abyss-project-timeline-axis-cell${this.#scale === 'day' ? ' is-day' : ''}`,
-      false,
     );
     for (const [scale, button] of this.#buttons) {
       button.setAttribute('aria-pressed', String(scale === this.#scale));
@@ -759,7 +765,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
     this.#resize.observe(this.#summary);
   }
   readonly #scroll = (): void => {
-    if (this.options.scroll.scrollLeft !== this.#lastLeft) this.#center = undefined;
+    if (this.options.scroll.scrollLeft !== this.#lastLeft) this.#pendingCenter = undefined;
     this.#schedule();
   };
   readonly #schedule = (): void => {

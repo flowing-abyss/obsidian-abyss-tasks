@@ -338,7 +338,9 @@ then submits through the overview's queue, history, and receipts. This also owns
 list changes. The dashboard owns finite Markdown, popover, and editor resources and retains active
 anchors and focus on refresh. Configured empty properties stay available for editing.
 
-`ProjectDashboardTimeline` adds project Start/End boundaries to the task axis without a project row.
+`ProjectDashboardTimeline` owns a Project dates row in the shared sticky timeline heading, with
+separate Start/End bands aligned to the task date tracks. Calendar labels remain in their own row;
+the task viewport measures the complete heading as its inset.
 Its edits share overview endpoint guards, mutation ordering, receipt projection, and history through
 ProjectManager. Project range changes never derive task dates or add task metadata.
 

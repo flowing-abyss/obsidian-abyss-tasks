@@ -12,7 +12,6 @@ import {
 import type { ProjectTableSelectableCell } from '../src/panels/projects/projectTableSelection';
 import { projectTimelineOptionsRows } from '../src/panels/projects/ProjectTimelineOptions';
 import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProperties';
-import { projectCalendarDayOrdinal } from '../src/projects/projectDateValue';
 import { ProjectEditValidationError } from '../src/projects/projectEditError';
 import { ProjectEditHistory } from '../src/projects/projectEditHistory';
 import {
@@ -44,6 +43,7 @@ import {
   objectMatching,
 } from './helpers';
 import { useProjectTableViewport } from './support/projectTableViewport';
+import { projectTimelineLogicalCenter } from './support/projectTimelineGeometry';
 import { projectNativeBindings, projectWindowMigration } from './support/projectWindowMigration';
 import { taskViewportOwner } from './support/taskViewportOwner';
 
@@ -828,22 +828,7 @@ describe('project Kanban overview', () => {
     const scroll = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-scroll'));
     Object.defineProperty(scroll, 'clientWidth', { configurable: true, value: 900 });
     view.update([item]);
-    const center = () => {
-      const [first, last] = expectDefined(
-        host.querySelector('.abyss-project-timeline-axis-range')?.textContent,
-      ).split(' – ') as [string, string];
-      const count =
-        (projectCalendarDayOrdinal(last) as number) -
-        (projectCalendarDayOrdinal(first) as number) +
-        1;
-      const width = Number(
-        expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-axis-dates'))
-          .dataset['trackWidth'],
-      );
-      return (
-        (projectCalendarDayOrdinal(first) as number) + (scroll.scrollLeft + 450) / (width / count)
-      );
-    };
+    const center = () => projectTimelineLogicalCenter(scroll);
     const today = center();
     scroll.scrollLeft += 123.25;
     const remote = center();

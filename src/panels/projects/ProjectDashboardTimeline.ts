@@ -40,7 +40,7 @@ export interface ProjectDashboardTimelineContext extends TimelineContextOverlayL
   history(direction: 'undo' | 'redo'): Promise<ProjectEditResult>;
 }
 
-/** Project bounds share the task axis and guarded project commands, without occupying a row. */
+/** Project bounds share the task calendar and guarded project commands. */
 export class ProjectDashboardTimeline implements TimelineContextOverlay {
   readonly #root: HTMLElement;
   readonly #track: HTMLElement;
@@ -63,6 +63,7 @@ export class ProjectDashboardTimeline implements TimelineContextOverlay {
     this.#identity = `project\u0000${context.project()?.path ?? ''}`;
     this.#root = host.createDiv({ cls: 'abyss-project-timeline-boundaries' });
     this.#root.dataset['occurrenceId'] = this.#identity;
+    this.#root.createDiv({ cls: 'abyss-project-timeline-axis-summary', text: 'Project dates' });
     this.#track = this.#root.createDiv({ cls: 'abyss-project-timeline-track' });
     this.#handles = { start: this.#createHandle('start'), end: this.#createHandle('end') };
     this.#track.addEventListener('keydown', this.#keydown);

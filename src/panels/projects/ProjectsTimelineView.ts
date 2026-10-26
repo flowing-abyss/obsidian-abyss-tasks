@@ -147,7 +147,7 @@ interface RenderedRow<TCell extends ProjectTimelineCellContext> {
 
 interface TimelineScrollPosition {
   readonly top: number;
-  readonly center: number;
+  readonly center: number | 'today';
 }
 
 interface TimelineFocusIdentity {
@@ -293,7 +293,7 @@ export class ProjectsTimelineView<
   private calendarSignature_abyssPrivate = '';
   private calendarDay_abyssPrivate = '';
   private renderedScale_abyssPrivate: ProjectTimelineSettings['scale'];
-  private scaleContextOrdinal_abyssPrivate: number | undefined;
+  private pendingCenter_abyssPrivate: number | 'today' | undefined;
   private selectedPath_abyssPrivate: string | undefined;
   private editingMarks_abyssPrivate: HTMLElement[] = [];
   private hiddenScrollPosition_abyssPrivate: TimelineScrollPosition | undefined;
@@ -313,10 +313,9 @@ export class ProjectsTimelineView<
     private readonly context_abyssPrivate: ProjectsTimelineViewContext<TCell>,
   ) {
     this.renderedScale_abyssPrivate = context_abyssPrivate.settings().scale;
-    this.scaleContextOrdinal_abyssPrivate =
-      dayOrdinal(localDay((context_abyssPrivate.now ?? (() => new Date()))())) + 0.5;
+    this.pendingCenter_abyssPrivate = 'today';
     this.viewport_abyssPrivate = timelineViewportAt(
-      this.scaleContextOrdinal_abyssPrivate,
+      dayOrdinal(localDay((context_abyssPrivate.now ?? (() => new Date()))())) + 0.5,
       this.renderedScale_abyssPrivate,
       1,
     ).viewport;
@@ -532,7 +531,7 @@ export class ProjectsTimelineView<
     this.hiddenScrollPosition_abyssPrivate = {
       top: this.scroll.scrollTop,
       center:
-        this.scaleContextOrdinal_abyssPrivate ??
+        this.pendingCenter_abyssPrivate ??
         timelineViewportCenter(
           this.viewport_abyssPrivate,
           this.scroll.scrollLeft,
@@ -542,7 +541,7 @@ export class ProjectsTimelineView<
   }
 
   prepareScaleChange(): void {
-    this.scaleContextOrdinal_abyssPrivate ??= timelineViewportCenter(
+    this.pendingCenter_abyssPrivate ??= timelineViewportCenter(
       this.viewport_abyssPrivate,
       this.scroll.scrollLeft,
       this.usableWidth_abyssPrivate,
@@ -552,8 +551,7 @@ export class ProjectsTimelineView<
   focusToday(): void {
     this.interaction_abyssPrivate.cancelActive();
     this.hiddenScrollPosition_abyssPrivate = undefined;
-    this.scaleContextOrdinal_abyssPrivate =
-      dayOrdinal(localDay((this.context_abyssPrivate.now ?? (() => new Date()))())) + 0.5;
+    this.pendingCenter_abyssPrivate = 'today';
     this.refreshCalendar_abyssPrivate();
   }
 
@@ -565,12 +563,12 @@ export class ProjectsTimelineView<
     const row = located?.row;
     if (row === undefined) return;
     if (
-      this.scaleContextOrdinal_abyssPrivate !== undefined ||
+      this.pendingCenter_abyssPrivate !== undefined ||
       !this.rangeExposed_abyssPrivate(row.range)
     ) {
       const anchor = rangeAnchor(row.range);
       if (anchor !== undefined) {
-        this.scaleContextOrdinal_abyssPrivate = dayOrdinal(anchor) + 0.5;
+        this.pendingCenter_abyssPrivate = dayOrdinal(anchor) + 0.5;
         this.interaction_abyssPrivate.cancelActive();
         this.refreshCalendar_abyssPrivate();
       }
@@ -628,17 +626,18 @@ export class ProjectsTimelineView<
     if (usable <= 0) return { viewport: this.viewport_abyssPrivate, left: this.scroll.scrollLeft };
     if (
       usable > 0 &&
-      (this.scaleContextOrdinal_abyssPrivate !== undefined ||
-        usable !== this.usableWidth_abyssPrivate)
+      (this.pendingCenter_abyssPrivate !== undefined || usable !== this.usableWidth_abyssPrivate)
     ) {
       const center =
-        this.scaleContextOrdinal_abyssPrivate ??
-        timelineViewportCenter(
-          this.viewport_abyssPrivate,
-          this.scroll.scrollLeft,
-          this.usableWidth_abyssPrivate,
-        );
-      this.scaleContextOrdinal_abyssPrivate = undefined;
+        this.pendingCenter_abyssPrivate === 'today'
+          ? dayOrdinal(localDay((this.context_abyssPrivate.now ?? (() => new Date()))())) + 0.5
+          : (this.pendingCenter_abyssPrivate ??
+            timelineViewportCenter(
+              this.viewport_abyssPrivate,
+              this.scroll.scrollLeft,
+              this.usableWidth_abyssPrivate,
+            ));
+      this.pendingCenter_abyssPrivate = undefined;
       return timelineViewportAt(center, this.renderedScale_abyssPrivate, usable);
     }
     return rebaseTimelineViewport(this.viewport_abyssPrivate, this.scroll.scrollLeft, usable);
@@ -674,7 +673,7 @@ export class ProjectsTimelineView<
 
   private readonly scrollChanged_abyssPrivate = (): void => {
     if (this.scroll.scrollLeft !== this.lastLeft_abyssPrivate)
-      this.scaleContextOrdinal_abyssPrivate = undefined;
+      this.pendingCenter_abyssPrivate = undefined;
     this.syncRangeStateOffset_abyssPrivate();
   };
 
@@ -687,7 +686,7 @@ export class ProjectsTimelineView<
       : undefined;
     if (hiddenPosition !== undefined) {
       this.scroll.scrollTop = hiddenPosition.top;
-      this.scaleContextOrdinal_abyssPrivate ??= hiddenPosition.center;
+      this.pendingCenter_abyssPrivate ??= hiddenPosition.center;
     }
     if (hiddenPosition !== undefined) this.hiddenScrollPosition_abyssPrivate = undefined;
     const input = this.context_abyssPrivate.modelInput();
@@ -827,23 +826,22 @@ export class ProjectsTimelineView<
 
   private patchAxis_abyssPrivate(window: ProjectTimelineWindow): void {
     const today = localDay((this.context_abyssPrivate.now ?? (() => new Date()))());
+    const visible = this.visibleAxisSlice_abyssPrivate(window);
     this.axisLayout_abyssPrivate = projectTimelineAxisLayout(window, {
-      ...this.visibleAxisSlice_abyssPrivate(window),
+      ...visible,
       overscanCells: 1,
       todayDay: today,
     });
-    this.axisRange_abyssPrivate.setText(`${window.startDay} – ${window.endDay}`);
+    this.axisRange_abyssPrivate.setText(`${visible.visibleStartDay} – ${visible.visibleEndDay}`);
     patchTimelineAxisCells(
       this.axisHierarchy_abyssPrivate,
       this.axisLayout_abyssPrivate.hierarchyCells,
       'abyss-project-timeline-axis-hierarchy-cell',
-      true,
     );
     patchTimelineAxisCells(
       this.axisCells_abyssPrivate,
       this.axisLayout_abyssPrivate.cells,
       `abyss-project-timeline-axis-cell${window.scale === 'day' ? ' is-day' : ''}`,
-      false,
     );
     this.addTodayMarker_abyssPrivate(this.axisDates_abyssPrivate, window);
   }

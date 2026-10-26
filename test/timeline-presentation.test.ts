@@ -5,9 +5,9 @@ import {
   patchTimelineToday,
 } from '../src/panels/timeline/timelinePresentation';
 import { projectTimelineAxisLayout } from '../src/projects/projectTimelineAxis';
-import { projectTimelineWindowForRange } from '../src/projects/projectTimelineModel';
+import { timelineWindow } from './support/timelineWindow';
 
-const window = projectTimelineWindowForRange('2024-01-01', '2024-12-31', 'day');
+const window = timelineWindow('2024-01-01', '2024-12-31', 'day');
 function slice(start: string, end: string) {
   return projectTimelineAxisLayout(window, {
     visibleStartDay: start,
@@ -22,23 +22,13 @@ describe('retained Timeline presentation', () => {
     (hierarchy) => {
       const host = createDiv();
       const initial = slice('2024-02-25', '2024-03-02');
-      patchTimelineAxisCells(
-        host,
-        hierarchy ? initial.hierarchyCells : initial.cells,
-        'axis-cell',
-        hierarchy,
-      );
+      patchTimelineAxisCells(host, hierarchy ? initial.hierarchyCells : initial.cells, 'axis-cell');
       const retained = host.querySelector('[data-end-day="2024-03-02"]') ?? host.lastElementChild;
       expect(retained).not.toBeNull();
       const label = retained?.querySelector('.abyss-project-timeline-axis-label');
       const removed = host.firstElementChild;
       const next = slice('2024-03-01', '2024-03-08');
-      patchTimelineAxisCells(
-        host,
-        hierarchy ? next.hierarchyCells : next.cells,
-        'axis-cell',
-        hierarchy,
-      );
+      patchTimelineAxisCells(host, hierarchy ? next.hierarchyCells : next.cells, 'axis-cell');
       expect(retained?.parentElement).toBe(host);
       expect(retained?.querySelector('.abyss-project-timeline-axis-label')).toBe(label);
       expect(removed?.parentElement).toBeNull();
@@ -58,20 +48,20 @@ describe('retained Timeline presentation', () => {
       visibleEndDay: '2024-02-26',
       todayDay: '2024-02-26',
     };
-    const dayWindow = projectTimelineWindowForRange('2024-02-26', '2024-03-03', 'day');
-    const weekWindow = projectTimelineWindowForRange('2024-02-26', '2024-03-03', 'week');
+    const dayWindow = timelineWindow('2024-02-26', '2024-03-03', 'day');
+    const weekWindow = timelineWindow('2024-02-26', '2024-03-03', 'week');
     const dayCells = projectTimelineAxisLayout(dayWindow, visible).cells;
     const weekCells = projectTimelineAxisLayout(weekWindow, visible).cells;
-    patchTimelineAxisCells(host, dayCells, 'abyss-project-timeline-axis-cell is-day', false);
+    patchTimelineAxisCells(host, dayCells, 'abyss-project-timeline-axis-cell is-day');
     const monday = host.firstElementChild;
     expect(monday?.classList.contains('is-day')).toBe(true);
     expect(monday?.classList.contains('is-today')).toBe(true);
-    patchTimelineAxisCells(host, weekCells, 'abyss-project-timeline-axis-cell', false);
+    patchTimelineAxisCells(host, weekCells, 'abyss-project-timeline-axis-cell');
     expect(host.firstElementChild).toBe(monday);
     expect(monday?.classList.contains('is-day')).toBe(false);
     expect(monday?.classList.contains('is-today')).toBe(true);
     expect(monday?.querySelector('.abyss-project-timeline-axis-secondary-label')).toBeNull();
-    patchTimelineAxisCells(host, dayCells, 'abyss-project-timeline-axis-cell is-day', false);
+    patchTimelineAxisCells(host, dayCells, 'abyss-project-timeline-axis-cell is-day');
     expect(host.firstElementChild).toBe(monday);
     expect(monday?.classList.contains('is-day')).toBe(true);
     expect(monday?.classList.contains('is-today')).toBe(true);
@@ -82,30 +72,55 @@ describe('retained Timeline presentation', () => {
 
   it('retains a calendar interval when the physical window clips its end differently', () => {
     const host = createDiv();
-    const firstWindow = projectTimelineWindowForRange('2024-02-01', '2024-03-03', 'week');
-    const nextWindow = projectTimelineWindowForRange('2024-02-01', '2024-03-02', 'week');
+    const firstWindow = timelineWindow('2024-02-01', '2024-03-03', 'week');
+    const nextWindow = timelineWindow('2024-02-01', '2024-03-02', 'week');
     const visible = { visibleStartDay: '2024-02-26', visibleEndDay: '2024-03-03' };
     patchTimelineAxisCells(
       host,
       projectTimelineAxisLayout(firstWindow, visible).cells,
       'axis-cell',
-      false,
     );
     const interval = host.firstElementChild;
-    patchTimelineAxisCells(
-      host,
-      projectTimelineAxisLayout(nextWindow, visible).cells,
-      'axis-cell',
-      false,
-    );
+    patchTimelineAxisCells(host, projectTimelineAxisLayout(nextWindow, visible).cells, 'axis-cell');
     expect(host.firstElementChild).toBe(interval);
     expect(interval?.getAttribute('data-end-day')).toBe('2024-03-02');
+  });
+
+  it('keeps one retained label through Day and clamped Week transitions', () => {
+    const host = createDiv();
+    const dayWindow = timelineWindow('2024-02-26', '2024-03-03', 'day');
+    const weekWindow = { ...dayWindow, scale: 'week' as const };
+    const visible = {
+      visibleStartDay: '2024-02-26',
+      visibleEndDay: '2024-02-26',
+      visibleStartPercent: 5,
+    };
+    patchTimelineAxisCells(
+      host,
+      projectTimelineAxisLayout(dayWindow, visible).cells,
+      'axis-cell is-day',
+    );
+    const cell = host.firstElementChild;
+    const label = cell?.querySelector('.abyss-project-timeline-axis-label');
+    patchTimelineAxisCells(host, projectTimelineAxisLayout(weekWindow, visible).cells, 'axis-cell');
+    expect(host.firstElementChild).toBe(cell);
+    expect(cell?.querySelector('.abyss-project-timeline-axis-label')).toBe(label);
+    expect((label?.parentElement as HTMLElement).style.left).toBe('5%');
+    patchTimelineAxisCells(
+      host,
+      projectTimelineAxisLayout(dayWindow, visible).cells,
+      'axis-cell is-day',
+    );
+    expect(cell?.querySelectorAll('.abyss-project-timeline-axis-label')).toHaveLength(1);
+    expect(cell?.querySelector('.abyss-project-timeline-axis-label')).toBe(label);
+    expect((label?.parentElement as HTMLElement).style.left).toBe('0%');
+    expect(cell?.textContent).toBe('Mon26');
   });
 
   it('updates retained labels, geometry, Today state and secondary labels without replacing cells', () => {
     const host = createDiv();
     const cells = slice('2024-02-29', '2024-02-29').cells;
-    patchTimelineAxisCells(host, cells, 'axis-cell', false);
+    patchTimelineAxisCells(host, cells, 'axis-cell');
     const element = host.firstElementChild;
     const label = element?.firstElementChild;
     patchTimelineAxisCells(
@@ -122,7 +137,6 @@ describe('retained Timeline presentation', () => {
         return updated;
       }),
       'axis-cell',
-      false,
     );
     expect(host.firstElementChild).toBe(element);
     expect(element?.firstElementChild).toBe(label);
@@ -130,7 +144,7 @@ describe('retained Timeline presentation', () => {
     expect((element as HTMLElement).style.left).toBe('10%');
     expect((element as HTMLElement).style.width).toBe('10%');
     expect(element?.classList.contains('is-today')).toBe(false);
-    patchTimelineAxisCells(host, cells, 'axis-cell', false);
+    patchTimelineAxisCells(host, cells, 'axis-cell');
     expect(element?.textContent).toBe('Thu29');
   });
 
@@ -141,10 +155,10 @@ describe('retained Timeline presentation', () => {
         `2024-03-${String(day).padStart(2, '0')}`,
         `2024-03-${String(day + 6).padStart(2, '0')}`,
       );
-      patchTimelineAxisCells(host, layout.cells, 'axis-cell', false);
+      patchTimelineAxisCells(host, layout.cells, 'axis-cell');
       expect(host.children).toHaveLength(7);
     }
-    patchTimelineAxisCells(host, [], 'axis-cell', false);
+    patchTimelineAxisCells(host, [], 'axis-cell');
     expect(host.children).toHaveLength(0);
   });
 
@@ -152,7 +166,7 @@ describe('retained Timeline presentation', () => {
     const host = createDiv();
     patchTimelineToday(host, window, new Date(2024, 1, 29));
     const marker = host.firstElementChild;
-    const narrower = projectTimelineWindowForRange('2024-02-01', '2024-03-31', 'day');
+    const narrower = timelineWindow('2024-02-01', '2024-03-31', 'day');
     patchTimelineToday(host, narrower, new Date(2024, 2, 1));
     expect(host.firstElementChild).toBe(marker);
     expect(marker?.getAttribute('aria-label')).toBe('Today, 2024-03-01');

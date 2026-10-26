@@ -1,10 +1,10 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { ProjectDashboardTimeline } from '../src/panels/projects/ProjectDashboardTimeline';
 import { buildConfiguredProjectFieldCatalog } from '../src/projects/projectFields';
-import { projectTimelineWindow } from '../src/projects/projectTimelineModel';
 import type { Project } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { expectDefined, flushMicrotasks } from './helpers';
+import { timelineWindow } from './support/timelineWindow';
 afterEach(() => vi.restoreAllMocks());
 function pointer(type: string, clientX: number): Event {
   const event = new Event(type, { bubbles: true, cancelable: true });
@@ -37,12 +37,7 @@ function mount(frontmatter: Project['frontmatter'] = { start: '2026-10-02', end:
   };
   let fields = buildConfiguredProjectFieldCatalog(DEFAULT_SETTINGS.projects);
   const apply = vi.fn(async () => ({ applied: [], failed: [] }));
-  const window = {
-    ...projectTimelineWindow(new Date(2026, 9, 1), 'day'),
-    startDay: '2026-10-01',
-    endDay: '2026-10-14',
-    dayCount: 14,
-  };
+  const window = timelineWindow('2026-10-01', '2026-10-14');
   const revealDay = vi.fn();
   const view = new ProjectDashboardTimeline(host, {
     scroll: host,
@@ -266,6 +261,34 @@ it('keeps a project boundary in the exposed viewport and reveals its day even in
     h.dispose();
   }
 });
+
+it.each([
+  { start: '2026-09-29', end: '2026-09-30', arrow: '←' },
+  { start: '2026-10-10', end: '2026-10-12', arrow: '→' },
+])(
+  'keeps both out-of-view boundary actions at their date edge ($arrow)',
+  ({ start, end, arrow }) => {
+    const h = mount({ start, end });
+    try {
+      Object.defineProperty(h.host, 'clientWidth', { configurable: true, value: 210 });
+      vi.spyOn(h.host, 'getBoundingClientRect').mockReturnValue({ left: 0, width: 210 } as DOMRect);
+      h.view.update(h.window);
+      const edge = arrow === '←' ? 0 : (110 / 280) * 100;
+      expect(parseFloat(h.start.style.left)).toBeCloseTo(edge, 6);
+      expect(parseFloat(h.bar.style.left)).toBeCloseTo(edge, 6);
+      expect(h.start.classList.contains('is-offscreen')).toBe(true);
+      expect(h.bar.classList.contains('is-offscreen')).toBe(true);
+      expect(h.start.textContent).toBe(`Start ${arrow}`);
+      expect(h.bar.textContent).toBe(`End ${arrow}`);
+      h.start.click();
+      h.bar.click();
+      expect(h.revealDay.mock.calls).toEqual([[start], [end]]);
+      expect(h.apply).not.toHaveBeenCalled();
+    } finally {
+      h.dispose();
+    }
+  },
+);
 
 it.each(['finish', 'cancel', 'reject'] as const)(
   'keeps dashboard boundary previews through several window moves until %s',

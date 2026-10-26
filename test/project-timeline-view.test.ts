@@ -15,6 +15,7 @@ import type { Project } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { createSearchWordSegmenter } from '../src/tasks/infrastructure/search/searchWordSegmenter';
 import { expectDefined, flushMicrotasks, freshContainer, loadPluginStyles } from './helpers';
+import { projectTimelineLogicalCenter } from './support/projectTimelineGeometry';
 
 interface Cell extends ProjectTimelineCellContext {
   project: Project;
@@ -200,27 +201,6 @@ function mockTimelineGeometry(
   });
 }
 
-function logicalCenter(host: HTMLElement, view: ProjectsTimelineView<Cell>): number {
-  const first = (host.querySelector('.abyss-project-timeline-axis-range')?.textContent ?? '').split(
-    ' – ',
-  )[0] as string;
-  const [start, end] = (
-    host.querySelector('.abyss-project-timeline-axis-range')?.textContent ?? ''
-  ).split(' – ') as [string, string];
-  const count =
-    (projectCalendarDayOrdinal(end) as number) - (projectCalendarDayOrdinal(start) as number) + 1;
-  const track = Number(
-    host.querySelector<HTMLElement>('.abyss-project-timeline-axis-dates')?.dataset['trackWidth'],
-  );
-  const summary =
-    host.querySelector<HTMLElement>('.abyss-project-timeline-axis-summary')?.getBoundingClientRect()
-      .width ?? 0;
-  return (
-    (projectCalendarDayOrdinal(first) as number) +
-    (view.scroll.scrollLeft + (view.scroll.clientWidth - summary) / 2) / (track / count)
-  );
-}
-
 describe('ProjectsTimelineView', () => {
   it('reads current saved collapse after filtering and grouping switches', async () => {
     const item = project('Projects/A.md', '2026-09-01');
@@ -394,13 +374,13 @@ describe('ProjectsTimelineView', () => {
     start.focus();
     scroll.scrollLeft = 180;
     scroll.scrollTop = 44;
-    const center = logicalCenter(host, view);
+    const center = projectTimelineLogicalCenter(view.scroll);
 
     view.update([{ ...item, stats: { ...item.stats, done: 3 } }], '');
 
     expect(host.querySelector('[data-project-path="Projects/A.md"]')).toBe(row);
     expect(activeDocument.activeElement).toBe(start);
-    expect(logicalCenter(host, view)).toBeCloseTo(center, 8);
+    expect(projectTimelineLogicalCenter(view.scroll)).toBeCloseTo(center, 8);
     expect(scroll.scrollTop).toBe(44);
   });
 
@@ -746,15 +726,10 @@ describe('ProjectsTimelineView', () => {
         '.abyss-project-timeline-axis-cell.is-today[data-start-day="2024-02-29"]',
       ),
     );
+    expect(todayCell.querySelector('.abyss-project-timeline-axis-label')?.textContent).toBe('Thu');
     expect(
-      Array.from(todayCell.children, ({ className, textContent }) => ({
-        className,
-        text: textContent,
-      })),
-    ).toEqual([
-      { className: 'abyss-project-timeline-axis-label', text: 'Thu' },
-      { className: 'abyss-project-timeline-axis-secondary-label', text: '29' },
-    ]);
+      todayCell.querySelector('.abyss-project-timeline-axis-secondary-label')?.textContent,
+    ).toBe('29');
     expect(todayCell.classList).toContain('is-day');
     expect(
       host
@@ -819,7 +794,7 @@ describe('ProjectsTimelineView', () => {
       host.querySelector<HTMLElement>('.abyss-project-timeline-axis-hierarchy-cell'),
     );
     const label = expectDefined(
-      hierarchy.querySelector<HTMLElement>('.abyss-project-timeline-axis-hierarchy-label'),
+      hierarchy.querySelector<HTMLElement>('.abyss-project-timeline-axis-label-content'),
     );
     const hierarchyLeft = Number.parseFloat(hierarchy.style.left);
     const hierarchyWidth = Number.parseFloat(hierarchy.style.width);
@@ -1498,6 +1473,19 @@ it('does not publish a native window while destroying an explicit editor pin', (
   expect(published).not.toHaveBeenCalled();
 });
 
+it('describes the exposed dates instead of the physical calendar buffer', () => {
+  const { host, view } = mount([], new Date(2026, 8, 13), 'day');
+  mockTimelineGeometry(host, view, { summaryWidth: 180, trackWidth: 32768, viewportWidth: 308 });
+  view.update([], '');
+  const description = expectDefined(
+    host.ownerDocument.getElementById(expectDefined(view.scroll.getAttribute('aria-describedby'))),
+  );
+  expect(description.textContent).toBe('2026-09-11 – 2026-09-15');
+  view.scroll.scrollLeft += 32;
+  view.update([], '');
+  expect(description.textContent).toBe('2026-09-12 – 2026-09-16');
+});
+
 it('centers Today on first measurement and repeated active scale without persisting or rerendering cards', () => {
   const renderCell = vi.fn<ProjectsTimelineViewContext<Cell>['renderCell']>();
   const requestScaleChange = vi.fn().mockResolvedValue(true);
@@ -1549,21 +1537,21 @@ it('preserves a fractional center across every different scale and leaves cards 
   });
   h.view.update(items, '');
   h.view.scroll.scrollLeft += 333.625;
-  let center = logicalCenter(h.host, h.view);
+  let center = projectTimelineLogicalCenter(h.view.scroll);
   for (const label of ['Day', 'Week', 'Quarter', 'Year', 'Month']) {
     expectDefined(
       [...h.host.querySelectorAll('button')].find((button) => button.textContent === label),
     ).click();
-    expect(logicalCenter(h.host, h.view)).toBeCloseTo(center, 8);
+    expect(projectTimelineLogicalCenter(h.view.scroll)).toBeCloseTo(center, 8);
   }
   const row = h.host.querySelector('.abyss-project-timeline-row');
   renderCell.mockClear();
   for (const left of [110.125, 32000.625, 85.375]) {
     h.view.scroll.scrollLeft = left;
-    center = logicalCenter(h.host, h.view);
+    center = projectTimelineLogicalCenter(h.view.scroll);
     h.view.scroll.dispatchEvent(new Event('scroll'));
     frames.run();
-    expect(logicalCenter(h.host, h.view)).toBeCloseTo(center, 8);
+    expect(projectTimelineLogicalCenter(h.view.scroll)).toBeCloseTo(center, 8);
     expect(h.host.querySelector('.abyss-project-timeline-row')).toBe(row);
   }
   expect(renderCell).not.toHaveBeenCalled();
@@ -1593,7 +1581,7 @@ it('reveals a project inside the physical buffer but beyond the exposed viewport
   expect(marker.hidden).toBe(false);
   h.view.revealProject('Projects/B.md');
   expect(marker.hidden).toBe(true);
-  expect(logicalCenter(h.host, h.view)).toBe(
+  expect(projectTimelineLogicalCenter(h.view.scroll)).toBe(
     (projectCalendarDayOrdinal('2027-04-08') as number) + 0.5,
   );
   expect(h.host.querySelector('[data-project-path="Projects/A.md"]')).toBe(row);
@@ -1611,9 +1599,34 @@ it.each([false, true])(
       viewportWidth: 900,
     });
     h.view.update(items, '');
-    expect(logicalCenter(h.host, h.view)).toBe(
+    expect(projectTimelineLogicalCenter(h.view.scroll)).toBe(
       (projectCalendarDayOrdinal(reveal ? '2032-04-08' : '2026-09-13') as number) + 0.5,
     );
+  },
+);
+
+it.each(['initial', 'active', 'hidden'] as const)(
+  'resolves deferred Today after midnight (%s)',
+  (entry) => {
+    let now = new Date(2026, 9, 26, 23, 59);
+    const h = mount([], now, 'month', {
+      viewportWidth: entry === 'active' ? 900 : 0,
+      now: () => now,
+    });
+    if (entry === 'active') {
+      Object.defineProperty(h.view.scroll, 'clientWidth', { configurable: true, value: 0 });
+      h.view.focusToday();
+    }
+    if (entry === 'hidden') h.view.captureViewportBeforeHide();
+    now = new Date(2026, 9, 27, 0, 1);
+    h.view.update([], '');
+    mockTimelineGeometry(h.host, h.view, {
+      summaryWidth: 180,
+      trackWidth: 32768,
+      viewportWidth: 900,
+    });
+    h.view.update([], '');
+    expect(projectTimelineLogicalCenter(h.view.scroll)).toBe(20753.5);
   },
 );
 
@@ -1627,13 +1640,13 @@ it('gives a newer reveal priority over delayed Today in retained geometry', () =
   });
   h.view.update(items, '');
   h.view.revealProject('Projects/Remote.md');
-  const center = logicalCenter(h.host, h.view);
+  const center = projectTimelineLogicalCenter(h.view.scroll);
   Object.defineProperty(h.view.scroll, 'clientWidth', { configurable: true, value: 0 });
   h.view.focusToday();
   h.view.revealProject('Projects/Remote.md');
   Object.defineProperty(h.view.scroll, 'clientWidth', { configurable: true, value: 900 });
   h.view.update(items, '');
-  expect(logicalCenter(h.host, h.view)).toBeCloseTo(center, 8);
+  expect(projectTimelineLogicalCenter(h.view.scroll)).toBeCloseTo(center, 8);
 });
 
 it('advances retained project row Today markers on a scroll-only midnight frame without rebuilding models or cards', () => {

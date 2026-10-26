@@ -238,9 +238,10 @@ function buildCell(
     ...labels,
     leftPercent,
     rightPercent,
-    labelPercent: hierarchy
-      ? Math.max(leftPercent, Math.min(rightPercent, bounds.visibleStartPercent))
-      : leftPercent,
+    labelPercent:
+      hierarchy || scale !== 'day'
+        ? Math.max(leftPercent, Math.min(rightPercent, bounds.visibleStartPercent))
+        : leftPercent,
     isToday:
       bounds.todayOrdinal !== undefined &&
       bounds.todayOrdinal >= startOrdinal &&

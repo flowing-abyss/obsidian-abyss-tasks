@@ -30,7 +30,6 @@ export function patchTimelineAxisCells(
   host: HTMLElement,
   cells: readonly ProjectTimelineAxisCell[],
   className: string,
-  clampLabel: boolean,
 ): void {
   const retained = new Map(
     Array.from(host.querySelectorAll<HTMLElement>(':scope > span'), (element) => [
@@ -53,15 +52,11 @@ export function patchTimelineAxisCells(
     setPercent(element, 'width', cell.rightPercent - cell.leftPercent);
     element.className = className;
     element.toggleClass('is-today', cell.isToday);
-    const labelHost = clampLabel
-      ? (element.querySelector<HTMLElement>(
-          ':scope > .abyss-project-timeline-axis-hierarchy-label',
-        ) ?? element.createSpan({ cls: 'abyss-project-timeline-axis-hierarchy-label' }))
-      : element;
-    if (clampLabel) {
-      const cellWidth = Math.max(Number.EPSILON, cell.rightPercent - cell.leftPercent);
-      setPercent(labelHost, 'left', ((cell.labelPercent - cell.leftPercent) / cellWidth) * 100);
-    }
+    const labelHost =
+      element.querySelector<HTMLElement>(':scope > .abyss-project-timeline-axis-label-content') ??
+      element.createSpan({ cls: 'abyss-project-timeline-axis-label-content' });
+    const cellWidth = Math.max(Number.EPSILON, cell.rightPercent - cell.leftPercent);
+    setPercent(labelHost, 'left', ((cell.labelPercent - cell.leftPercent) / cellWidth) * 100);
     patchAxisLabel(labelHost, 'abyss-project-timeline-axis-label', cell.label);
     patchAxisLabel(labelHost, 'abyss-project-timeline-axis-secondary-label', cell.secondaryLabel);
   }
