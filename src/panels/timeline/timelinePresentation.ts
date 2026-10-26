@@ -33,31 +33,54 @@ export function patchTimelineAxisCells(
   className: string,
   clampLabel: boolean,
 ): void {
-  host.empty();
+  const retained = new Map(
+    Array.from(host.querySelectorAll<HTMLElement>(':scope > span'), (element) => [
+      element.dataset['startDay'],
+      element,
+    ]),
+  );
+  let cursor = host.firstElementChild;
   for (const cell of cells) {
-    const element = host.createSpan({ cls: className });
-    element.dataset['startDay'] = cell.startDay;
+    let element = retained.get(cell.startDay);
+    if (element === undefined) {
+      element = host.createSpan({ cls: className });
+      element.dataset['startDay'] = cell.startDay;
+    }
     element.dataset['endDay'] = cell.endDay;
-    element.style.left = `${String(cell.leftPercent)}%`;
-    element.style.width = `${String(cell.rightPercent - cell.leftPercent)}%`;
+    retained.delete(cell.startDay);
+    if (element !== cursor) host.insertBefore(element, cursor);
+    cursor = element.nextElementSibling;
+    setPercent(element, 'left', cell.leftPercent);
+    setPercent(element, 'width', cell.rightPercent - cell.leftPercent);
     element.toggleClass('is-today', cell.isToday);
     const labelHost = clampLabel
-      ? element.createSpan({ cls: 'abyss-project-timeline-axis-hierarchy-label' })
+      ? (element.querySelector<HTMLElement>(
+          ':scope > .abyss-project-timeline-axis-hierarchy-label',
+        ) ?? element.createSpan({ cls: 'abyss-project-timeline-axis-hierarchy-label' }))
       : element;
     if (clampLabel) {
       const cellWidth = Math.max(Number.EPSILON, cell.rightPercent - cell.leftPercent);
-      labelHost.style.left = `${String(
-        ((cell.labelPercent - cell.leftPercent) / cellWidth) * 100,
-      )}%`;
+      setPercent(labelHost, 'left', ((cell.labelPercent - cell.leftPercent) / cellWidth) * 100);
     }
-    labelHost.createSpan({ cls: 'abyss-project-timeline-axis-label', text: cell.label });
-    if (cell.secondaryLabel !== undefined) {
-      labelHost.createSpan({
-        cls: 'abyss-project-timeline-axis-secondary-label',
-        text: cell.secondaryLabel,
-      });
-    }
+    patchAxisLabel(labelHost, 'abyss-project-timeline-axis-label', cell.label);
+    patchAxisLabel(labelHost, 'abyss-project-timeline-axis-secondary-label', cell.secondaryLabel);
   }
+  for (const element of retained.values()) element.remove();
+}
+
+function setPercent(element: HTMLElement, property: 'left' | 'width', value: number): void {
+  const percent = `${value}%`;
+  if (element.style[property] !== percent) element.style[property] = percent;
+}
+
+function patchAxisLabel(host: HTMLElement, className: string, text: string | undefined): void {
+  const existing = host.querySelector<HTMLElement>(`:scope > .${className}`);
+  if (text === undefined) {
+    existing?.remove();
+    return;
+  }
+  const label = existing ?? host.createSpan({ cls: className });
+  if (label.textContent !== text) label.textContent = text;
 }
 
 export function patchTimelineGrid(grid: HTMLElement, layout: ProjectTimelineAxisLayout): void {
@@ -129,15 +152,17 @@ export function patchTimelineToday(
   window: ProjectTimelineWindow,
   now: Date,
 ): void {
-  host.querySelector(':scope > .abyss-project-timeline-today')?.remove();
+  const existing = host.querySelector<HTMLElement>(':scope > .abyss-project-timeline-today');
   const today = `${String(now.getFullYear()).padStart(4, '0')}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const offset =
     (projectCalendarDayOrdinal(today) as number) -
     (projectCalendarDayOrdinal(window.startDay) as number);
-  if (offset < 0 || offset >= window.dayCount) return;
-  const marker = host.createDiv({
-    cls: 'abyss-project-timeline-today',
-    attr: { 'aria-label': `Today, ${today}` },
-  });
-  marker.style.left = `${((offset + 0.5) / window.dayCount) * 100}%`;
+  if (offset < 0 || offset >= window.dayCount) {
+    existing?.remove();
+    return;
+  }
+  const marker = existing ?? host.createDiv({ cls: 'abyss-project-timeline-today' });
+  const label = `Today, ${today}`;
+  if (marker.getAttribute('aria-label') !== label) marker.setAttribute('aria-label', label);
+  setPercent(marker, 'left', ((offset + 0.5) / window.dayCount) * 100);
 }
