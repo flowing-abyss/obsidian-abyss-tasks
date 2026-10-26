@@ -1,6 +1,5 @@
 import {
   parseProjectDate,
-  projectCalendarDayFromOrdinal,
   projectCalendarDayFromParsed,
   projectCalendarDayOrdinal,
   type ParsedProjectDate,
@@ -61,21 +60,8 @@ export interface ProjectTimelineBarGeometry {
   readonly widthPercent: number;
 }
 
-const DAY_MS = 86_400_000;
-
 function dayOrdinal(day: string): number {
   return projectCalendarDayOrdinal(day) as number;
-}
-
-function dayString(ordinal: number): string {
-  return projectCalendarDayFromOrdinal(ordinal) as string;
-}
-
-function localDay(date: Date): string {
-  const year = String(date.getFullYear()).padStart(4, '0');
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
 }
 
 function missingDate(value: unknown): boolean {
@@ -178,87 +164,6 @@ export function buildProjectTimelineModel(input: ProjectTimelineModelInput): Pro
     uniqueVisibleCount: visiblePaths.size,
     availableStatusGroups: shared.availableStatusGroups,
   };
-}
-
-const FIXED_WINDOW_SPECS = {
-  day: { weekOffset: 0, dayCount: 14 },
-  week: { weekOffset: -35, dayCount: 84 },
-} as const;
-
-export function projectTimelineWindow(
-  anchor: Date,
-  scale: ProjectTimelineScale,
-): ProjectTimelineWindow {
-  const anchorOrdinal = dayOrdinal(localDay(anchor));
-  const anchorValue = new Date(anchorOrdinal * DAY_MS);
-  const year = anchorValue.getUTCFullYear();
-  let first: number;
-  let last: number;
-  if (scale === 'day' || scale === 'week') {
-    const weekStart = anchorOrdinal - ((anchorValue.getUTCDay() + 6) % 7);
-    const spec = FIXED_WINDOW_SPECS[scale];
-    first = weekStart + spec.weekOffset;
-    last = first + spec.dayCount - 1;
-  } else {
-    const before = scale === 'month' ? 0 : 1;
-    const after = scale === 'year' ? 2 : before;
-    first = dayOrdinal(`${String(year - before).padStart(4, '0')}-01-01`);
-    last = dayOrdinal(`${String(year + after).padStart(4, '0')}-12-31`);
-  }
-  return projectTimelineWindowForRange(dayString(first), dayString(last), scale);
-}
-
-/** Builds an inclusive range window for scale-aware calendar geometry. */
-export function projectTimelineWindowForRange(
-  startDay: string,
-  endDay: string,
-  scale: ProjectTimelineScale = 'day',
-): ProjectTimelineWindow {
-  const first = dayOrdinal(startDay);
-  const last = Math.max(first, dayOrdinal(endDay));
-  const dayCount = last - first + 1;
-  return {
-    startDay: dayString(first),
-    endDay: dayString(last),
-    dayCount,
-    scale,
-  };
-}
-
-/** Fits literal project bounds outward to complete units for the selected scale. */
-export function projectTimelineFitWindow(
-  startDay: string,
-  endDay: string,
-  scale: ProjectTimelineScale,
-): ProjectTimelineWindow {
-  let first = dayOrdinal(startDay);
-  let last = Math.max(first, dayOrdinal(endDay));
-  if (scale === 'week') {
-    const firstWeekday = (new Date(first * DAY_MS).getUTCDay() + 6) % 7;
-    const lastWeekday = (new Date(last * DAY_MS).getUTCDay() + 6) % 7;
-    first -= firstWeekday;
-    last += 6 - lastWeekday;
-  } else if (scale !== 'day') {
-    const firstValue = new Date(first * DAY_MS);
-    const lastValue = new Date(last * DAY_MS);
-    if (scale === 'month') {
-      firstValue.setUTCDate(1);
-      lastValue.setUTCFullYear(lastValue.getUTCFullYear(), lastValue.getUTCMonth() + 1, 0);
-    } else if (scale === 'quarter') {
-      const firstQuarter = Math.floor(firstValue.getUTCMonth() / 3) * 3;
-      const lastQuarter = Math.floor(lastValue.getUTCMonth() / 3) * 3;
-      firstValue.setUTCFullYear(firstValue.getUTCFullYear(), firstQuarter, 1);
-      lastValue.setUTCFullYear(lastValue.getUTCFullYear(), lastQuarter + 3, 0);
-    } else {
-      const firstYear = firstValue.getUTCFullYear();
-      const lastYear = Math.max(firstYear + 2, lastValue.getUTCFullYear());
-      firstValue.setUTCFullYear(firstYear - 1, 0, 1);
-      lastValue.setUTCFullYear(lastYear, 12, 0);
-    }
-    first = Math.floor(firstValue.getTime() / DAY_MS);
-    last = Math.floor(lastValue.getTime() / DAY_MS);
-  }
-  return projectTimelineWindowForRange(dayString(first), dayString(last), scale);
 }
 
 export function projectTimelineBarGeometry(

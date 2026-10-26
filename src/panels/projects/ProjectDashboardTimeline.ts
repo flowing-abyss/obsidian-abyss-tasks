@@ -40,7 +40,7 @@ export interface ProjectDashboardTimelineContext extends TimelineContextOverlayL
   history(direction: 'undo' | 'redo'): Promise<ProjectEditResult>;
 }
 
-/** Project bounds share the task axis and guarded project commands, without occupying a row. */
+/** Project bounds share the task calendar and guarded project commands. */
 export class ProjectDashboardTimeline implements TimelineContextOverlay {
   readonly #root: HTMLElement;
   readonly #track: HTMLElement;
@@ -53,6 +53,7 @@ export class ProjectDashboardTimeline implements TimelineContextOverlay {
   #suspended = false;
   #revision = 0;
   #displayedRange: ProjectTimelineRange | undefined;
+  #paintSignature = '';
   #queue: Promise<unknown> = Promise.resolve();
 
   constructor(
@@ -62,6 +63,7 @@ export class ProjectDashboardTimeline implements TimelineContextOverlay {
     this.#identity = `project\u0000${context.project()?.path ?? ''}`;
     this.#root = host.createDiv({ cls: 'abyss-project-timeline-boundaries' });
     this.#root.dataset['occurrenceId'] = this.#identity;
+    this.#root.createDiv({ cls: 'abyss-project-timeline-axis-summary', text: 'Project dates' });
     this.#track = this.#root.createDiv({ cls: 'abyss-project-timeline-track' });
     this.#handles = { start: this.#createHandle('start'), end: this.#createHandle('end') };
     this.#track.addEventListener('keydown', this.#keydown);
@@ -107,7 +109,8 @@ export class ProjectDashboardTimeline implements TimelineContextOverlay {
     const day = boundaryDay(source.range, endpoint);
     if (day !== undefined) {
       const percent = boundaryPercent(day, this.context.window());
-      if (percent < 0 || percent > 100) this.context.revealDay(day);
+      const { first, last } = this.#exposed();
+      if (percent < first || percent > last) this.context.revealDay(day);
       return;
     }
     void this.#commit({
@@ -127,10 +130,23 @@ export class ProjectDashboardTimeline implements TimelineContextOverlay {
       ? { kind: 'unscheduled' }
       : projectTimelineRange(project, this.context.fields());
   }
-  update(_window: ProjectTimelineWindow): void {
+  update(window: ProjectTimelineWindow): void {
     if (this.#destroyed) return;
     this.#suspended = false;
-    this.#paint(this.range());
+    const range = this.range(),
+      exposed = this.#exposed();
+    const signature = JSON.stringify([
+      range,
+      window.startDay,
+      window.dayCount,
+      exposed.first,
+      exposed.last,
+      range.kind === 'closed' ? undefined : localDay(this.context.now()),
+    ]);
+    if (signature !== this.#paintSignature || this.#interaction.pinnedOccurrences().length > 0) {
+      this.#paintSignature = signature;
+      this.#paint(range);
+    }
     this.#interaction.reconcileAfterRender();
   }
   mountTrack(track: HTMLElement): () => void {
@@ -163,15 +179,28 @@ export class ProjectDashboardTimeline implements TimelineContextOverlay {
     const handle = this.#handles[endpoint];
     const day = boundaryDay(range, endpoint);
     const percent = boundaryPercent(day ?? localDay(this.context.now()), this.context.window());
+    const { first, last } = this.#exposed();
+    const exposedPercent = ((percent - first) / Math.max(Number.EPSILON, last - first)) * 100;
     handle.toggleClass('is-missing', day === undefined);
-    handle.toggleClass('is-offscreen', percent < 0 || percent > 100);
-    handle.toggleClass('is-near-start', percent < 5);
-    handle.toggleClass('is-near-end', percent > 95);
-    handle.style.left = `${Math.max(0, Math.min(100, percent))}%`;
+    handle.toggleClass('is-offscreen', percent < first || percent > last);
+    handle.toggleClass('is-near-start', exposedPercent < 5);
+    handle.toggleClass('is-near-end', exposedPercent > 95);
+    handle.style.left = `${Math.max(first, Math.min(last, percent))}%`;
     const label = endpoint === 'start' ? 'Start' : 'End';
     handle.setAttribute('aria-label', `${label}: ${day ?? 'Not set'}`);
     handle.disabled = range.kind === 'malformed';
-    handle.firstElementChild?.setText(`${label}${boundaryLabelSuffix(day, percent)}`);
+    handle.firstElementChild?.setText(`${label}${boundaryLabelSuffix(day, exposedPercent)}`);
+  }
+  #exposed(): { readonly first: number; readonly last: number } {
+    const track = this.#track.getBoundingClientRect();
+    const scroll = this.context.scroll;
+    const summary = track.left - scroll.getBoundingClientRect().left + scroll.scrollLeft;
+    const usable = scroll.clientWidth - summary;
+    if (track.width <= 0 || usable <= 0) return { first: 0, last: 100 };
+    return {
+      first: Math.max(0, (scroll.scrollLeft / track.width) * 100),
+      last: Math.min(100, ((scroll.scrollLeft + usable) / track.width) * 100),
+    };
   }
   #paintLines(lines: Record<Endpoint, HTMLElement>, range: ProjectTimelineRange): void {
     for (const endpoint of ['start', 'end'] as const) {

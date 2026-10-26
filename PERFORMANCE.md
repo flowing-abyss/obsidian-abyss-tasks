@@ -74,7 +74,9 @@ those notes belongs to comparison identity. This is not an empty-host benchmark.
 | `ui.inspector.link-input`                        | Open the title editor, type five progressive wiki-link prefixes, await nonempty results with highlights matching each query, then cancel the draft.                                                                                                                                    |
 | `ui.calendar.day/week/month`                     | Enter Calendar and switch views, checking the active view, complete visible date range, and populated cards or compact agenda. Day includes entering Calendar.                                                                                                                         |
 | `ui.tasks.kanban/kanban-scroll`                  | Open the complete Profile collection (6,000 nodes, or 6,999 for wide-tree) in Tasks Kanban, assert every configured status count and ready bounded card mounts, then visit three changed/hydrated ranges in a populated column. Collection selection and List preparation are untimed. |
+| `ui.tasks.timeline/timeline-scroll`              | Open the same complete Profile collection in Tasks Timeline. Await its applied collection count, ready bounded task rows, and populated date axis; then visit the three logical dates below. Collection selection and List preparation are untimed.                                    |
 | `ui.projects.table/kanban/timeline`              | Enter Projects and render its three views. Table includes entering Projects.                                                                                                                                                                                                           |
+| `ui.projects.timeline-scroll`                    | Visit the same three logical dates in Projects Timeline with ready bounded rows and a populated date axis.                                                                                                                                                                             |
 | `statistics.acquire`                             | Subscribe to retained Statistics data, await settlement, reject projection issues.                                                                                                                                                                                                     |
 | `ui.analysis.*`                                  | Rhythm, completion, deadlines, cohorts, allocation, timeline, sessions, patterns, movement, aging, dependencies. Await nonbusy content and rendering opportunities.                                                                                                                    |
 | `search.edit-to-query`                           | After one untimed Project-000 title edit and Worker publication, append one inbox task and await its exact canonical acceptance, newer Worker publication, sole node-scoped query hit, current hydration, and cursor release.                                                          |
@@ -83,6 +85,19 @@ those notes belongs to comparison identity. This is not an empty-host benchmark.
 | `index.wide-child-edit` (wide-tree only)         | Edit only the final wide child's title through the vault API; await that descendant with matching ancestry and exact root/node counts.                                                                                                                                                 |
 | `index.metadata-only` (wide-tree only)           | Change Project-000's frontmatter budget, await accepted task metadata and a newer settled Statistics source, and verify task bytes/population stay unchanged.                                                                                                                          |
 | `panel.close`                                    | Detach the panel. The shared Search Worker may remain alive until plugin unload.                                                                                                                                                                                                       |
+
+Both Timeline scroll scenarios use Month scale. Untimed preparation selects Month and Today,
+then aligns January 1 of the host's current year with the exposed date viewport's left edge.
+The timed requests align January 8, January 29, and January 15 with that same edge. Each request
+must change the native offset, reach the requested logical date within one CSS pixel, and finish
+with populated dates and ready bounded rows. The mapping comes from the current date cell's
+date bounds, percentage position, and measured track geometry, and is read again after scrolling.
+A view that cannot expose a target at the current width fails the run. This finite workload runs
+on both the existing and candidate views; long-range stress belongs to separate correctness checks.
+Comparison facts contain the logical collection population, Timeline layout, Month scale, starting
+date, three target dates, and successful scroll count. Mounted row counts, pixel offsets, and scroll
+geometry stay out of completed-work facts.
+The diagnostic pass saves a screenshot and DOM with scroll geometry when each Timeline opens.
 
 Wide index scenarios run before `search.edit-to-query`, while task population still matches the
 generated fixture. Both full rosters then run `search.edit-to-query` immediately before

@@ -22,6 +22,7 @@ import {
   freshContainer,
   objectMatching,
 } from './helpers';
+import { projectTimelineLogicalCenter } from './support/projectTimelineGeometry';
 import { VIRTUAL_SURFACE_AUDIT_TIMEOUT_MS } from './support/timeouts';
 import { runVirtualSurfaceAuditCycles } from './support/virtualSurfaceAudit';
 import { recordVirtualSurfaceResources } from './support/virtualSurfaceResources';
@@ -485,7 +486,16 @@ describe.each(cases)('project overview surface contract: $mode', (testCase) => {
 
   it('retains a captured scroll through detached updates until connected render', () => {
     const { view, projects: listed, surface } = mountSurface(testCase);
-    surface.scroll.scrollLeft = 180;
+    if (testCase.mode === 'Timeline') {
+      Object.defineProperty(surface.scroll, 'clientWidth', { configurable: true, value: 900 });
+      view.update(listed);
+    }
+    surface.scroll.scrollLeft += 180;
+    const horizontal = () =>
+      testCase.mode === 'Timeline'
+        ? projectTimelineLogicalCenter(surface.scroll)
+        : surface.scroll.scrollLeft;
+    const left = horizontal();
     surface.scroll.scrollTop = 44;
     surface.captureViewportBeforeHide();
     surface.scroll.scrollLeft = 0;
@@ -502,8 +512,9 @@ describe.each(cases)('project overview surface contract: $mode', (testCase) => {
     }
     view.update(listed);
 
-    expect([surface.scroll.scrollLeft, surface.scroll.scrollTop]).toEqual(
-      testCase.restoresScrollAfterHide ? [180, testCase.mode === 'Kanban' ? 0 : 44] : [0, 0],
+    expect(horizontal()).toBeCloseTo(testCase.restoresScrollAfterHide ? left : 0, 8);
+    expect(surface.scroll.scrollTop).toBe(
+      testCase.restoresScrollAfterHide && testCase.mode !== 'Kanban' ? 44 : 0,
     );
   });
 

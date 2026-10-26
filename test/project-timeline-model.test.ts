@@ -7,12 +7,11 @@ import { buildDefaultProjectTableSettings } from '../src/projects/projectTableSe
 import {
   buildProjectTimelineModel,
   projectTimelineBarGeometry,
-  projectTimelineFitWindow,
-  projectTimelineWindow,
 } from '../src/projects/projectTimelineModel';
 import { buildDefaultProjectTimelineSettings } from '../src/projects/projectTimelineSettings';
 import type { Project } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
+import { timelineWindow } from './support/timelineWindow';
 
 const fields: ProjectFieldCatalogItem[] = [
   { id: 'name', label: 'Project', type: 'name' },
@@ -108,64 +107,17 @@ describe('project Timeline model', () => {
   });
 
   it('uses inclusive calendar days across leap days and DST-sized local intervals', () => {
-    const window = projectTimelineWindow(new Date(2024, 1, 29), 'day');
+    const window = timelineWindow('2024-02-26', '2024-03-10');
     const geometry = projectTimelineBarGeometry(
       { kind: 'closed', startDay: '2024-02-29', endDay: '2024-03-02' },
       window,
     );
 
-    expect(window.startDay).toBe('2024-02-26');
-    expect(window.endDay).toBe('2024-03-10');
-    expect(window.dayCount).toBe(14);
     expect(geometry).toEqual({ leftPercent: 21.428571428571427, widthPercent: 21.428571428571427 });
   });
 
-  it('fits a leap-day project to the complete February calendar unit', () => {
-    expect(projectTimelineFitWindow('2024-02-29', '2024-02-29', 'month')).toMatchObject({
-      startDay: '2024-02-01',
-      endDay: '2024-02-29',
-      dayCount: 29,
-      scale: 'month',
-    });
-  });
-
-  it('fits a cross-year project outward to complete Monday-through-Sunday weeks', () => {
-    expect(projectTimelineFitWindow('2026-12-31', '2027-01-01', 'week')).toMatchObject({
-      startDay: '2026-12-28',
-      endDay: '2027-01-03',
-      dayCount: 7,
-      scale: 'week',
-    });
-  });
-
-  it('fits a Year window to four complete calendar years around a leap-year project', () => {
-    expect(projectTimelineFitWindow('2024-02-29', '2024-02-29', 'year')).toMatchObject({
-      startDay: '2023-01-01',
-      endDay: '2026-12-31',
-      dayCount: 1461,
-      scale: 'year',
-    });
-  });
-
-  it('extends a fitted Year window through a distant final project', () => {
-    expect(projectTimelineFitWindow('2024-06-15', '2032-10-20', 'year')).toMatchObject({
-      startDay: '2023-01-01',
-      endDay: '2032-12-31',
-      scale: 'year',
-    });
-  });
-
-  it('preserves padded years below 100 in a fitted Year window', () => {
-    expect(projectTimelineFitWindow('0099-12-31', '0100-01-01', 'year')).toMatchObject({
-      startDay: '0098-01-01',
-      endDay: '0101-12-31',
-      dayCount: 1460,
-      scale: 'year',
-    });
-  });
-
   it('renders open ranges as one-day anchored points', () => {
-    const window = projectTimelineWindow(new Date(2026, 8, 13), 'day');
+    const window = timelineWindow('2026-09-07', '2026-09-20');
 
     expect(
       projectTimelineBarGeometry({ kind: 'open-end', startDay: '2026-09-13' }, window),
@@ -174,36 +126,6 @@ describe('project Timeline model', () => {
       projectTimelineBarGeometry({ kind: 'open-start', endDay: '2026-09-13' }, window),
     ).toEqual({ leftPercent: 42.857142857142854, widthPercent: 7.142857142857142 });
   });
-
-  it.each([
-    {
-      scale: 'day',
-      window: { startDay: '2028-06-05', endDay: '2028-06-18', dayCount: 14 },
-    },
-    {
-      scale: 'week',
-      window: { startDay: '2028-05-01', endDay: '2028-07-23', dayCount: 84 },
-    },
-    {
-      scale: 'month',
-      window: { startDay: '2028-01-01', endDay: '2028-12-31', dayCount: 366 },
-    },
-    {
-      scale: 'quarter',
-      window: { startDay: '2027-01-01', endDay: '2029-12-31', dayCount: 1096 },
-    },
-    {
-      scale: 'year',
-      window: { startDay: '2027-01-01', endDay: '2030-12-31', dayCount: 1461 },
-    },
-  ] as const)(
-    'uses a useful $scale viewport with readable major labels',
-    ({ scale, window: expected }) => {
-      const window = projectTimelineWindow(new Date(2028, 5, 10), scale);
-
-      expect(window).toMatchObject({ ...expected, scale });
-    },
-  );
 
   it('marks reversed same-day local and offset datetimes malformed before day projection', () => {
     const model = buildProjectTimelineModel(
@@ -236,17 +158,8 @@ describe('project Timeline model', () => {
     });
   });
 
-  it('keeps projected year edges and a week crossing year 10000 round-trippable', () => {
-    const anchor = new Date(0);
-    anchor.setFullYear(9999, 11, 31);
-    anchor.setHours(12, 0, 0, 0);
-    const window = projectTimelineWindow(anchor, 'week');
-
-    expect(window).toMatchObject({
-      startDay: '9999-11-22',
-      endDay: '10000-02-13',
-      dayCount: 84,
-    });
+  it('projects bars across year 10000 and accepts timezone projections below year 100', () => {
+    const window = timelineWindow('9999-11-22', '10000-02-13', 'week');
     expect(
       projectTimelineBarGeometry(
         { kind: 'closed', startDay: '9999-12-31', endDay: '10000-01-01' },
@@ -290,14 +203,9 @@ describe('project Timeline model', () => {
       visibleDays: 2,
     },
   ] as const)(
-    'preserves projected years below 100 for the $scale window',
+    'projects bars in explicit $scale windows crossing year 100',
     ({ scale, startDay, endDay, dayCount, dayOffset, visibleDays }) => {
-      const anchor = new Date(0);
-      anchor.setFullYear(99, 11, 31);
-      anchor.setHours(12, 0, 0, 0);
-      const window = projectTimelineWindow(anchor, scale);
-
-      expect(window).toMatchObject({ startDay, endDay, dayCount });
+      const window = timelineWindow(startDay, endDay, scale);
       expect(
         projectTimelineBarGeometry(
           { kind: 'closed', startDay: '0099-12-31', endDay: '0100-01-01' },

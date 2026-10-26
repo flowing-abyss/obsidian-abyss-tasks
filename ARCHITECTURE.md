@@ -269,7 +269,13 @@ Timeline maps Start/Due to a range and Scheduled to a separate marker; malformed
 authored values. Shared project axis, navigation, geometry, and pointer components drive the view.
 The task adapter captures canonical references and submits one guarded date patch through
 `TaskCommands`. Moving an open range preserves absent endpoints. CenterPanel retains queries,
-selection, hydration, and receipts; layout scroll anchors remain session state.
+selection, hydration, and receipts; layout scroll anchors remain session state. Timeline owners
+retain the shared [`projectTimelineViewport`](src/projects/projectTimelineViewport.ts) geometry and
+logical center through refresh, resize, and window migration. Their existing frame owners rebase
+the bounded physical track, patch calendar layers, and compensate native horizontal scroll together;
+scrolling does not rebuild task cards or project models. Axis slices retain overlapping date cells.
+Explicit Timeline entry and the active scale button center Today; other scales preserve the fractional
+center. Pending initial focus waits for usable geometry and yields to later reveals or user scrolling.
 
 The project dashboard embeds this same task shell. ProjectsPanel owns project details, while
 CenterPanel supplies the note-scoped task context. Preferences share `project:<path>` with Tasks'
@@ -322,8 +328,10 @@ Project Kanban ranks are saved view state. Drops validate group meaning, write m
 rank only after success; filtering preserves hidden ranks. Timeline preview and persistence share
 one endpoint plan and validate both endpoints together. Surfaces use bounded geometry and pin active
 editors/gestures. Shared `TimelinePointerInteraction` owns native gesture lifetime;
-`timelinePresentation` shares axis/navigation rendering. Adapters retain their own source and write
-authority.
+`timelinePresentation` shares axis/scale-button rendering. Active and submitted pointer previews
+retain calendar ranges and reproject into the current window on rebases, cancellation, or failed
+writes. Row and dashboard boundary affordances use the exposed date viewport independently of the
+larger physical buffer. Adapters retain their own source and write authority.
 
 Dashboard properties reuse [`projectTableCells`](src/panels/projects/projectTableCells.ts), presets,
 and `ProjectCellEditor`. `createFieldEditorSession` captures effective type and exact source state,
@@ -332,7 +340,9 @@ list changes. The dashboard owns finite Markdown, popover, and editor resources 
 anchors and focus on refresh. Its floating field editor belongs to the properties menu's focus
 scope; value changes keep both surfaces open. Configured empty properties stay available for editing.
 
-`ProjectDashboardTimeline` adds project Start/End boundaries to the task axis without a project row.
+`ProjectDashboardTimeline` owns a Project dates row in the shared sticky timeline heading, with
+separate Start/End bands aligned to the task date tracks. Calendar labels remain in their own row;
+the task viewport measures the complete heading as its inset.
 Its edits share overview endpoint guards, mutation ordering, receipt projection, and history through
 ProjectManager. Project range changes never derive task dates or add task metadata.
 

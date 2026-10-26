@@ -528,6 +528,7 @@ export default defineConfig(
       'src/task-lists/taskCollectionSettings.ts',
       'src/projects/projectTimelineModel.ts',
       'src/projects/projectTimelineAxis.ts',
+      'src/projects/projectTimelineViewport.ts',
       'src/projects/projectTimelineEdits.ts',
       'src/projects/projectTimelineEndpointEdits.ts',
       'src/panels/projects/projectOverviewCells.ts',

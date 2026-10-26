@@ -7922,19 +7922,11 @@ button.abyss-project-table-status-pill {
   display: none;
 }
 
-/* Keep both navigation rows in the axis's measured height, including the scale divider. */
+/* Scale segments fill the pinned header beside the two calendar tiers. */
 .abyss-project-timeline-navigation {
   display: flex;
   flex-direction: column;
   width: 100%;
-}
-
-.abyss-project-timeline-range-navigation {
-  display: grid;
-  grid-template-columns: var(--abyss-toolbar-control-size) minmax(0, 1fr) var(
-      --abyss-toolbar-control-size
-    );
-  block-size: var(--abyss-toolbar-control-size);
 }
 
 .abyss-project-timeline-scale-control {
@@ -7943,38 +7935,21 @@ button.abyss-project-table-status-pill {
   scrollbar-width: none;
   box-sizing: border-box;
   min-width: 0;
-  block-size: var(--abyss-toolbar-control-size);
-  grid-template-columns:
-    minmax(max-content, 1fr) minmax(max-content, 1.5fr) minmax(max-content, 1.3fr)
-    minmax(max-content, 1.5fr) minmax(max-content, 1fr);
+  block-size: auto;
+  flex: 1 1 auto;
+  grid-template-columns: repeat(5, minmax(max-content, 1fr));
   gap: 0;
   padding: 0;
-  border-top: 1px solid var(--background-modifier-border);
+  border: 0;
   border-radius: 0;
   background: transparent;
 }
 
-.abyss-project-timeline-navigation button {
-  block-size: 100%;
-  min-block-size: 0;
-  white-space: nowrap;
-}
-
-.abyss-project-timeline-range-navigation button {
-  inline-size: 100%;
-  min-inline-size: 0;
-}
-
-.abyss-project-timeline-axis .svg-icon {
-  width: 16px;
-  height: 16px;
-}
-
-.abyss-project-timeline-axis button {
+.abyss-project-timeline-scale-control button {
   min-width: 28px;
-  min-height: 28px;
-  height: 100%;
-  padding: 0;
+  min-block-size: 28px;
+  block-size: 100%;
+  padding: 0 var(--size-2-1);
   border-radius: 0;
   background: transparent;
   box-shadow: none;
@@ -7982,24 +7957,43 @@ button.abyss-project-table-status-pill {
   line-height: 1.2;
 }
 
-.abyss-project-timeline-axis .abyss-cal-nav-today {
-  padding: 0 var(--size-2-3);
-}
-
-.abyss-project-timeline-axis button + button {
+.abyss-project-timeline-scale-control button + button {
   border-left: 1px solid var(--background-modifier-border);
 }
 
 .abyss-project-timeline-scroll {
   overflow: auto;
+  overflow-anchor: none;
   min-width: 0;
   min-height: 0;
   flex: 1 1 auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
+  scrollbar-width: auto;
+  scrollbar-color: auto;
+}
+
+/* Height controls horizontal thickness; :horizontal is ignored during native size allocation.
+   Auto scrollbar properties above allow this rule under themes using standard properties.
+   https://webkit.org/blog/363/styling-scrollbars/ */
+.abyss-project-timeline-scroll::-webkit-scrollbar {
+  height: 0;
+}
+
+.abyss-project-timeline-scroll::-webkit-scrollbar-thumb {
+  border: var(--size-2-1) solid transparent;
+  border-radius: var(--radius-m);
+  background-color: var(--scrollbar-thumb-bg);
+  background-clip: padding-box;
+}
+
+.abyss-project-timeline-scroll::-webkit-scrollbar-thumb:hover,
+.abyss-project-timeline-scroll::-webkit-scrollbar-thumb:active {
+  background-color: var(--scrollbar-active-thumb-bg);
 }
 
 .abyss-project-timeline-axis,
+.abyss-project-timeline-boundaries,
 .abyss-project-timeline-row {
   display: grid;
   width: max-content;
@@ -8045,19 +8039,25 @@ button.abyss-project-table-status-pill {
 
 .abyss-project-timeline-axis-hierarchy,
 .abyss-project-timeline-axis-cells {
-  position: absolute;
-  right: 0;
-  left: 0;
+  position: relative;
+  min-width: 0;
+}
+
+.abyss-project-timeline-axis-dates {
+  display: grid;
+  grid-template-rows: min-content 1fr;
 }
 
 .abyss-project-timeline-axis-hierarchy {
-  top: 0;
-  height: 20px;
+  min-block-size: max(20px, 1.3em);
 }
 
 .abyss-project-timeline-axis-cells {
-  top: 20px;
-  bottom: 0;
+  /* Day stacks the weekday and date with 1.05 line height and 1px block padding. */
+  min-block-size: max(
+    var(--abyss-toolbar-control-size),
+    calc((var(--font-ui-smaller) + var(--font-ui-small)) * 1.05 + 2px)
+  );
 }
 
 .abyss-project-timeline-axis-cell,
@@ -8069,7 +8069,6 @@ button.abyss-project-table-status-pill {
   height: 100%;
   align-items: center;
   gap: var(--size-4-1);
-  padding: 0 5px;
   border-left: 1px solid var(--background-modifier-border);
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
@@ -8077,13 +8076,13 @@ button.abyss-project-table-status-pill {
 }
 
 .abyss-project-timeline-axis-hierarchy-cell {
-  padding: 0;
   background: color-mix(in srgb, var(--background-secondary) 88%, var(--background-primary));
   font-weight: var(--font-medium);
 }
 
-.abyss-project-timeline-axis-hierarchy-label {
+.abyss-project-timeline-axis-label-content {
   position: absolute;
+  box-sizing: border-box;
   right: 0;
   display: flex;
   overflow: hidden;
@@ -8098,7 +8097,7 @@ button.abyss-project-table-status-pill {
   font-weight: var(--font-normal);
 }
 
-.abyss-project-timeline-axis-cell.is-day {
+.abyss-project-timeline-axis-cell.is-day .abyss-project-timeline-axis-label-content {
   flex-direction: column;
   justify-content: center;
   gap: 0;
@@ -8482,6 +8481,7 @@ button.abyss-project-table-status-pill {
   }
 
   .abyss-project-timeline-axis,
+  .abyss-project-timeline-boundaries,
   .abyss-project-timeline-row {
     grid-template-columns:
       var(--abyss-project-timeline-summary-width)
@@ -9692,14 +9692,6 @@ body.is-phone .abyss-projects-table button.abyss-project-status-filter {
   padding-block: 0;
 }
 
-body.is-phone .abyss-project-timeline-navigation {
-  --abyss-toolbar-control-size: 36px;
-}
-
-body.is-phone .abyss-project-timeline-scale-control button {
-  padding-inline: var(--size-2-1);
-}
-
 body.is-phone :is(.abyss-project-table-footer, .abyss-projects-table button.abyss-projects-new) {
   box-sizing: border-box;
   block-size: var(--abyss-inline-capture-block-size);
@@ -9975,12 +9967,8 @@ body.is-tablet .abyss-projects-table button.abyss-project-kanban-group-header {
   padding: var(--size-2-1) var(--size-4-1);
 }
 
-body.is-tablet .abyss-project-timeline-axis button {
-  padding: 0;
-}
-
-body.is-tablet .abyss-project-timeline-axis button.abyss-cal-nav-today {
-  padding: 0 var(--size-2-3);
+body.is-tablet .abyss-project-timeline-scale-control button {
+  padding: 0 var(--size-2-1);
 }
 
 body.is-tablet button.abyss-project-timeline-group-header {
@@ -11531,6 +11519,9 @@ button.abyss-calendar-date[aria-pressed='true'] {
   --abyss-project-status-color: var(--text-muted);
 }
 
+/* Sticky summaries need a containing block as wide as the moving date track. */
+.abyss-project-timeline-groups,
+.abyss-task-timeline-heading,
 .abyss-task-timeline-rows {
   width: max(
     100%,
@@ -11641,27 +11632,27 @@ button.abyss-calendar-date[aria-pressed='true'] {
   position: sticky;
   top: 0;
   z-index: 5;
-  width: max(
-    100%,
-    calc(var(--abyss-project-timeline-summary-width) + var(--abyss-project-timeline-track-width))
-  );
   background: var(--background-primary);
 }
 
-/* Project date boundaries occupy the existing axis and never intercept task gestures. */
-.abyss-project-timeline-boundaries,
-.abyss-project-timeline-boundaries > .abyss-project-timeline-track {
-  position: absolute;
-  inset: 0;
-  min-height: 0;
+/* Separate Start/End bands keep labels and hit targets apart, including at viewport edges. */
+.abyss-project-timeline-boundaries {
+  position: relative;
+  min-block-size: max(48px, calc((1.2em + var(--size-4-2)) * 2));
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
   pointer-events: none;
 }
 
-.abyss-project-timeline-boundaries {
-  z-index: 2;
+.abyss-project-timeline-boundaries > .abyss-project-timeline-axis-summary {
+  align-items: center;
+  padding-inline: var(--size-4-2);
 }
 
 .abyss-project-timeline-boundaries > .abyss-project-timeline-track {
+  min-height: 0;
   overflow: visible;
 }
 
@@ -11670,8 +11661,8 @@ button.abyss-calendar-date[aria-pressed='true'] {
   display: block;
   appearance: none;
   top: 0;
-  width: 24px;
-  height: 100%;
+  width: var(--size-4-6);
+  height: 50%;
   min-height: 0;
   padding: 0;
   border: 0;
@@ -11694,7 +11685,12 @@ button.abyss-calendar-date[aria-pressed='true'] {
 }
 
 .abyss-project-boundary-handle.is-start {
-  transform: translateX(-100%);
+  /* A margin keeps both labels in the same paint layer above both boundary lines. */
+  margin-left: calc(-1 * var(--size-4-6));
+}
+
+.abyss-project-boundary-handle.is-end {
+  top: 50%;
 }
 
 .abyss-project-boundary-handle::before,
@@ -11708,6 +11704,7 @@ button.abyss-calendar-date[aria-pressed='true'] {
 }
 
 .abyss-project-boundary-handle::before {
+  bottom: -100%;
   content: '';
 }
 
@@ -11716,6 +11713,8 @@ button.abyss-calendar-date[aria-pressed='true'] {
 }
 
 .abyss-project-boundary-handle.is-end::before {
+  top: -100%;
+  bottom: 0;
   left: 0;
   border-inline-start-style: dashed;
 }
@@ -11730,6 +11729,7 @@ button.abyss-calendar-date[aria-pressed='true'] {
 
 .abyss-project-boundary-label {
   position: absolute;
+  z-index: 1;
   top: var(--size-2-1);
   padding: var(--size-2-1) var(--size-2-2);
   border-radius: var(--radius-s);
@@ -11748,12 +11748,12 @@ button.abyss-calendar-date[aria-pressed='true'] {
   left: 0;
 }
 
-.abyss-project-boundary-handle.is-near-start .abyss-project-boundary-label {
+.abyss-project-boundary-handle.is-start.is-near-start .abyss-project-boundary-label {
   left: 100%;
   right: auto;
 }
 
-.abyss-project-boundary-handle.is-near-end .abyss-project-boundary-label {
+.abyss-project-boundary-handle.is-end.is-near-end .abyss-project-boundary-label {
   left: auto;
   right: 100%;
 }

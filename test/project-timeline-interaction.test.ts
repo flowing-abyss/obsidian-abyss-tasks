@@ -124,6 +124,9 @@ function mount(
   });
   vi.spyOn(track, 'getBoundingClientRect').mockReturnValue(geometry(10, 100));
   vi.spyOn(scroll, 'getBoundingClientRect').mockReturnValue(geometry(0, 120));
+  const initialGeometry = projectTimelineBarGeometry(range, window);
+  bar.hidden = initialGeometry === undefined;
+  if (initialGeometry !== undefined) applyProjectTimelineBarGeometry(bar, range, initialGeometry);
   let captured = source(range);
   const commitRangeEdit = vi.fn().mockResolvedValue({ applied: [], failed: [] });
   const reportRangeFailure = vi.fn();
@@ -540,8 +543,8 @@ describe('ProjectTimelinePointerInteraction', () => {
     held.resolve({ applied: [], failed: [{ path: 'Projects/A.md', message: 'Conflict' }] });
     await flushMicrotasks();
 
-    expect(rangeLeft(mounted.bar)).toBe('');
-    expect(mounted.bar.style.width).toBe('');
+    expect(rangeLeft(mounted.bar)).toBe('10%');
+    expect(mounted.bar.style.width).toBe('30%');
     expect(mounted.bar.classList).not.toContain('is-previewing');
     expect(mounted.reportRangeFailure).toHaveBeenCalledOnce();
   });
@@ -1049,7 +1052,7 @@ describe('ProjectTimelinePointerInteraction', () => {
     mounted.track.dispatchEvent(pointerEvent(type, 45));
 
     expect(mounted.bar.classList).not.toContain('is-previewing');
-    expect(rangeLeft(mounted.bar)).toBe('');
+    expect(rangeLeft(mounted.bar)).toBe('10%');
     expect(mounted.commitRangeEdit).not.toHaveBeenCalled();
     mounted.interaction.destroy();
   });
@@ -1131,3 +1134,73 @@ it.each([true, false])(
     owner.destroy();
   },
 );
+
+it('reprojects cancellation after several window moves instead of restoring stale percentages', async () => {
+  const window = { ...defaultWindow };
+  const h = mount(source().range, window);
+  try {
+    const initial = projectTimelineBarGeometry(source().range, window);
+    applyProjectTimelineBarGeometry(h.bar, source().range, expectDefined(initial));
+    h.bar.dispatchEvent(pointerEvent('pointerdown', 25));
+    await flushMicrotasks();
+    h.bar.dispatchEvent(pointerEvent('pointermove', 45));
+    for (const [startDay, endDay, left] of [
+      ['2026-08-30', '2026-09-08', -10],
+      ['2026-09-02', '2026-09-11', 20],
+    ] as const) {
+      Object.assign(window, { startDay, endDay });
+      vi.spyOn(h.track, 'getBoundingClientRect').mockReturnValue(geometry(left, 100));
+      h.interaction.reconcileAfterRender();
+    }
+    h.interaction.cancelActive();
+    expect(rangeLeft(h.bar)).toBe('0%');
+    expect(h.bar.style.width).toBe('30%');
+    expect(h.bar.classList.contains('is-previewing')).toBe(false);
+    expect(h.commitRangeEdit).not.toHaveBeenCalled();
+  } finally {
+    h.interaction.destroy();
+    h.root.remove();
+  }
+});
+
+it('keeps a hovered calendar position under the pointer when its window rebases', () => {
+  const window = { ...defaultWindow };
+  const h = mount(source().range, window);
+  try {
+    h.track.dispatchEvent(pointerEvent('pointermove', 25));
+    expect(cursorLeftPercent(h.root)).toBe(15);
+    Object.assign(window, { startDay: '2026-08-30', endDay: '2026-09-08' });
+    vi.spyOn(h.track, 'getBoundingClientRect').mockReturnValue(geometry(-10, 100));
+    h.interaction.reconcileAfterRender();
+    expect(cursorLeftPercent(h.root)).toBe(35);
+  } finally {
+    h.interaction.destroy();
+    h.root.remove();
+  }
+});
+
+it('restores the canonical range in current geometry when a pending write rejects after rebasing', async () => {
+  const window = { ...defaultWindow };
+  const h = mount(source().range, window);
+  const held = deferredResult();
+  h.commitRangeEdit.mockReturnValueOnce(held.promise);
+  try {
+    h.bar.dispatchEvent(pointerEvent('pointerdown', 25));
+    await flushMicrotasks();
+    h.bar.dispatchEvent(pointerEvent('pointermove', 45));
+    h.bar.dispatchEvent(pointerEvent('pointerup', 45));
+    Object.assign(window, { startDay: '2026-09-02', endDay: '2026-09-11' });
+    vi.spyOn(h.track, 'getBoundingClientRect').mockReturnValue(geometry(20, 100));
+    h.interaction.reconcileAfterRender();
+    expect(h.bar.classList.contains('is-previewing')).toBe(true);
+    held.reject(new Error('Write rejected'));
+    await flushMicrotasks();
+    expect(rangeLeft(h.bar)).toBe('0%');
+    expect(h.bar.style.width).toBe('30%');
+    expect(h.bar.classList.contains('is-previewing')).toBe(false);
+    expect(h.reportRangeFailure).toHaveBeenCalledTimes(1);
+  } finally {
+    h.interaction.destroy();
+    h.root.remove();
+  }
+});

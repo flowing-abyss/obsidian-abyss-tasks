@@ -453,18 +453,7 @@ export async function calendarScenarios(measure: Measure): Promise<void> {
   }
 }
 
-export async function taskBoardScenarios(host: Host, measure: Measure): Promise<void> {
-  const expected = new Map(
-    DEFAULT_SETTINGS.taskStatuses.map((status) => [`status:${status.id}`, 0]),
-  );
-  const keys = new Map(
-    DEFAULT_SETTINGS.taskStatuses.map((status) => [status.symbol, `status:${status.id}`]),
-  );
-  for (const task of plugin(host).queries.listNodes()) {
-    const key = keys.get(task.node.statusSymbol);
-    if (key === undefined) throw new Error('Task board fixture contains an unknown status');
-    expected.set(key, (expected.get(key) ?? 0) + 1);
-  }
+async function prepareProfileTasks(): Promise<void> {
   await click('.abyss-rail-btn[aria-label="Tasks"]');
   const group = [...document.querySelectorAll<HTMLElement>('.abyss-tag-group-header')].find(
     (node) => node.querySelector('.abyss-left-label')?.textContent.toLowerCase() === 'profile',
@@ -478,6 +467,21 @@ export async function taskBoardScenarios(host: Host, measure: Measure): Promise<
     'task list preparation',
   );
   await frames();
+}
+
+export async function taskBoardScenarios(host: Host, measure: Measure): Promise<void> {
+  const expected = new Map(
+    DEFAULT_SETTINGS.taskStatuses.map((status) => [`status:${status.id}`, 0]),
+  );
+  const keys = new Map(
+    DEFAULT_SETTINGS.taskStatuses.map((status) => [status.symbol, `status:${status.id}`]),
+  );
+  for (const task of plugin(host).queries.listNodes()) {
+    const key = keys.get(task.node.statusSymbol);
+    if (key === undefined) throw new Error('Task board fixture contains an unknown status');
+    expected.set(key, (expected.get(key) ?? 0) + 1);
+  }
+  await prepareProfileTasks();
   await measure('ui.tasks.kanban', async () => {
     await click('.abyss-task-collection-switcher [aria-label="Kanban view"]');
     await searchReady();
@@ -496,6 +500,198 @@ export async function taskBoardScenarios(host: Host, measure: Measure): Promise<
   });
 }
 
+function timelineReady(scroller: HTMLElement, rowSelector: string): boolean {
+  const rows = [...scroller.querySelectorAll<HTMLElement>(rowSelector)];
+  if (rows.length > 80) throw new Error('Timeline row mounts are not bounded');
+  const rect = scroller.getBoundingClientRect();
+  const dates = [
+    ...scroller.querySelectorAll<HTMLElement>('.abyss-project-timeline-axis [data-start-day]'),
+  ];
+  return (
+    rect.width > 0 &&
+    rect.height > 0 &&
+    scroller.clientWidth > 0 &&
+    scroller.clientHeight > 0 &&
+    rows.length > 0 &&
+    rows.every(
+      (row) =>
+        !row.inert &&
+        row.getAttribute('aria-busy') !== 'true' &&
+        row.querySelector('[inert], [aria-busy="true"]') === null &&
+        row.textContent.trim() !== '' &&
+        (!row.matches('.abyss-task-timeline-row') ||
+          (row.querySelector('.abyss-task-card')?.textContent.trim() ?? '') !== ''),
+    ) &&
+    dates.length > 0 &&
+    dates.every((cell) => cell.textContent.trim() !== '')
+  );
+}
+
+function timelineOrdinal(day: string): number {
+  const ordinal = Date.parse(`${day}T00:00:00Z`) / 86400000;
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(day) || !Number.isInteger(ordinal))
+    throw new Error('Timeline axis date is invalid');
+  return ordinal;
+}
+
+function timelinePercent(value: string): number {
+  const percent = Number.parseFloat(value);
+  if (!value.endsWith('%') || !Number.isFinite(percent))
+    throw new Error('Timeline axis percentage is invalid');
+  return percent;
+}
+
+function timelineAxisWindow(cell: HTMLElement): { start: number; days: number } {
+  const first = timelineOrdinal(cell.dataset['startDay'] ?? '');
+  const last = timelineOrdinal(cell.dataset['endDay'] ?? '');
+  const width = timelinePercent(cell.style.width);
+  const left = timelinePercent(cell.style.left);
+  if (last < first || width <= 0) throw new Error('Timeline axis interval is invalid');
+  const days = Math.round((last - first + 1) / (width / 100));
+  if (days < 1) throw new Error('Timeline axis window is invalid');
+  return { start: first - Math.round((left / 100) * days), days };
+}
+
+function timelineGeometry(scroller: HTMLElement): {
+  windowStart: number;
+  dayWidth: number;
+  trackStart: number;
+  summaryEdge: number;
+} {
+  const cell = scroller.querySelector<HTMLElement>(
+    '.abyss-project-timeline-axis-cells [data-start-day][data-end-day]',
+  );
+  const track = scroller.querySelector<HTMLElement>('.abyss-project-timeline-axis-dates');
+  const summary = scroller.querySelector<HTMLElement>('.abyss-project-timeline-axis-summary');
+  if (cell === null || track === null || summary === null)
+    throw new Error('Timeline axis geometry missing');
+  const window = timelineAxisWindow(cell);
+  const trackBounds = track.getBoundingClientRect();
+  if (trackBounds.width <= 0) throw new Error('Timeline date track width is invalid');
+  const origin = scroller.getBoundingClientRect().left + scroller.clientLeft;
+  return {
+    windowStart: window.start,
+    dayWidth: trackBounds.width / window.days,
+    trackStart: trackBounds.left - origin + scroller.scrollLeft,
+    summaryEdge: summary.getBoundingClientRect().right - origin,
+  };
+}
+
+function timelineLogicalLeft(scroller: HTMLElement): { ordinal: number; dayWidth: number } {
+  const geometry = timelineGeometry(scroller);
+  return {
+    ordinal:
+      geometry.windowStart +
+      (scroller.scrollLeft + geometry.summaryEdge - geometry.trackStart) / geometry.dayWidth,
+    dayWidth: geometry.dayWidth,
+  };
+}
+
+async function moveTimeline(
+  scroller: HTMLElement,
+  rowSelector: string,
+  targetDay: string,
+  requireMovement: boolean,
+): Promise<void> {
+  await waitFor(() => timelineReady(scroller, rowSelector), 'ready Timeline rows and dates');
+  const maximum = scroller.scrollWidth - scroller.clientWidth;
+  if (maximum <= 0) throw new Error('Timeline has no horizontal range');
+  const geometry = timelineGeometry(scroller);
+  const target = timelineOrdinal(targetDay);
+  const previous = scroller.scrollLeft;
+  const requested =
+    geometry.trackStart -
+    geometry.summaryEdge +
+    (target - geometry.windowStart) * geometry.dayWidth;
+  if (requested < -1 || requested > maximum + 1)
+    throw new Error(`Timeline cannot expose logical target ${targetDay}`);
+  if (requireMovement && Math.abs(requested - previous) < 0.5)
+    throw new Error('Timeline logical target did not change');
+  scroller.scrollLeft = requested;
+  await frames();
+  if (requireMovement && Math.abs(scroller.scrollLeft - previous) < 0.5)
+    throw new Error('Timeline native offset did not change');
+  await waitFor(() => {
+    if (!timelineReady(scroller, rowSelector)) return false;
+    const current = timelineLogicalLeft(scroller);
+    return Math.abs(current.ordinal - target) * current.dayWidth <= 1;
+  }, 'timeline logical target and ready rows');
+}
+
+function timelineWorkload(): { startDay: string; targetDays: string[] } {
+  const year = new Date().getFullYear();
+  return {
+    startDay: `${year}-01-01`,
+    targetDays: [`${year}-01-08`, `${year}-01-29`, `${year}-01-15`],
+  };
+}
+
+async function prepareTimelineScroll(
+  scroller: HTMLElement,
+  rowSelector: string,
+  startDay: string,
+): Promise<void> {
+  const month = [
+    ...scroller.querySelectorAll<HTMLButtonElement>(
+      '.abyss-project-timeline-scale-control .abyss-cal-view-btn',
+    ),
+  ].find((button) => button.textContent === 'Month');
+  const today = scroller.querySelector<HTMLButtonElement>('.abyss-cal-nav-today');
+  if (month === undefined) throw new Error('Timeline navigation controls missing');
+  month.click();
+  await frames();
+  await waitFor(() => month.getAttribute('aria-pressed') === 'true', 'Timeline Month scale');
+  (today ?? month).click();
+  await frames();
+  await moveTimeline(scroller, rowSelector, startDay, false);
+}
+
+async function timelineScrolls(
+  scroller: HTMLElement,
+  rowSelector: string,
+  workload: ReturnType<typeof timelineWorkload>,
+): Promise<Sample['facts']> {
+  const initial = timelineLogicalLeft(scroller);
+  if (Math.abs(initial.ordinal - timelineOrdinal(workload.startDay)) * initial.dayWidth > 1)
+    throw new Error('Timeline starting logical date changed');
+  for (const day of workload.targetDays) {
+    await moveTimeline(scroller, rowSelector, day, true);
+  }
+  return {
+    scrolls: 3,
+    view: 'timeline',
+    scale: 'month',
+    startDay: workload.startDay,
+    targetDays: workload.targetDays.join(','),
+  };
+}
+
+export async function taskTimelineScenarios(host: Host, measure: Measure): Promise<void> {
+  const tasks = plugin(host).queries.listNodes().length;
+  if (tasks === 0) throw new Error('Profile task Timeline population missing');
+  await prepareProfileTasks();
+  await measure('ui.tasks.timeline', async () => {
+    await click('.abyss-task-collection-switcher [aria-label="Timeline view"]');
+    await searchReady(tasks);
+    await waitFor(() => {
+      const scroller = document.querySelector<HTMLElement>('.abyss-center .abyss-task-timeline');
+      return scroller !== null && timelineReady(scroller, '.abyss-task-timeline-row');
+    }, 'ready task Timeline rows and dates');
+    return { tasks, view: 'timeline' };
+  });
+  const scroller = element('.abyss-center .abyss-task-timeline');
+  const workload = timelineWorkload();
+  await measure(
+    'ui.tasks.timeline-scroll',
+    async () => {
+      const facts = await timelineScrolls(scroller, '.abyss-task-timeline-row', workload);
+      await searchReady(tasks);
+      return { tasks, ...facts };
+    },
+    () => prepareTimelineScroll(scroller, '.abyss-task-timeline-row', workload.startDay),
+  );
+}
+
 export async function projectScenarios(measure: Measure): Promise<void> {
   for (const [id, label, selector] of [
     ['table', 'Table view', '.abyss-project-table-row'],
@@ -507,9 +703,24 @@ export async function projectScenarios(measure: Measure): Promise<void> {
       await click(`.abyss-project-overview-switcher [aria-label="${label}"]`);
       await waitFor(() => document.querySelector(selector), `project ${id} rows`);
       await frames();
+      if (id === 'timeline')
+        await waitFor(
+          () => timelineReady(element('.abyss-center .abyss-project-timeline-scroll'), selector),
+          'ready project Timeline rows and dates',
+        );
       return { projects: 100, view: id };
     });
   }
+  const scroller = element('.abyss-center .abyss-project-timeline-scroll');
+  const workload = timelineWorkload();
+  await measure(
+    'ui.projects.timeline-scroll',
+    async () => ({
+      projects: 100,
+      ...(await timelineScrolls(scroller, '.abyss-project-timeline-row', workload)),
+    }),
+    () => prepareTimelineScroll(scroller, '.abyss-project-timeline-row', workload.startDay),
+  );
 }
 
 export async function statisticsScenarios(host: Host, measure: Measure): Promise<void> {

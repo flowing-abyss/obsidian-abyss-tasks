@@ -7,9 +7,8 @@ import {
 import {
   PROJECT_TIMELINE_MAX_TRACK_WIDTH,
   projectTimelineAxisLayout,
-  projectTimelineTrackWidth,
 } from '../src/projects/projectTimelineAxis';
-import { projectTimelineWindowForRange } from '../src/projects/projectTimelineModel';
+import { timelineWindow } from './support/timelineWindow';
 
 function ordinal(day: string): number {
   return projectCalendarDayOrdinal(day) as number;
@@ -17,7 +16,7 @@ function ordinal(day: string): number {
 
 describe('project Timeline calendar axis', () => {
   it('keeps consecutive day cells contiguous across a month boundary', () => {
-    const window = projectTimelineWindowForRange('2024-01-31', '2024-02-01', 'day');
+    const window = timelineWindow('2024-01-31', '2024-02-01', 'day');
 
     const layout = projectTimelineAxisLayout(window, {
       visibleStartDay: '2024-01-31',
@@ -54,7 +53,7 @@ describe('project Timeline calendar axis', () => {
   });
 
   it('includes leap day with exact ordinal boundaries', () => {
-    const window = projectTimelineWindowForRange('2024-02-28', '2024-03-01', 'day');
+    const window = timelineWindow('2024-02-28', '2024-03-01', 'day');
 
     const layout = projectTimelineAxisLayout(window, {
       visibleStartDay: '2024-02-28',
@@ -78,8 +77,23 @@ describe('project Timeline calendar axis', () => {
     });
   });
 
+  it.each(['week', 'month', 'quarter', 'year'] as const)(
+    'keeps a partially visible %s label at the fractional viewport edge',
+    (scale) => {
+      const window = timelineWindow('2026-09-01', '2026-11-30', scale);
+      const layout = projectTimelineAxisLayout(window, {
+        visibleStartDay: '2026-10-16',
+        visibleEndDay: '2026-10-27',
+        visibleStartPercent: 50,
+      });
+      expect(layout.cells[0]?.labelPercent).toBe(50);
+      expect(layout.cells[0]?.leftPercent).toBeLessThan(50);
+      expect(layout.cells[0]?.rightPercent).toBeGreaterThan(50);
+    },
+  );
+
   it('labels ISO weeks across the 2020 to 2021 transition', () => {
-    const window = projectTimelineWindowForRange('2020-12-28', '2021-01-10', 'week');
+    const window = timelineWindow('2020-12-28', '2021-01-10', 'week');
 
     const layout = projectTimelineAxisLayout(window, {
       visibleStartDay: window.startDay,
@@ -100,7 +114,7 @@ describe('project Timeline calendar axis', () => {
   });
 
   it('groups Day cells under ISO weeks across the 2020 to 2021 transition', () => {
-    const window = projectTimelineWindowForRange('2020-12-28', '2021-01-10', 'day');
+    const window = timelineWindow('2020-12-28', '2021-01-10', 'day');
 
     const layout = projectTimelineAxisLayout(window, {
       visibleStartDay: window.startDay,
@@ -188,7 +202,7 @@ describe('project Timeline calendar axis', () => {
   ] as const)(
     'builds bounded $scale cells and their calendar hierarchy',
     ({ scale, startDay, endDay, labels, hierarchy }) => {
-      const window = projectTimelineWindowForRange(startDay, endDay, scale);
+      const window = timelineWindow(startDay, endDay, scale);
 
       const layout = projectTimelineAxisLayout(window, {
         visibleStartDay: startDay,
@@ -205,7 +219,7 @@ describe('project Timeline calendar axis', () => {
   );
 
   it('renders four Year calendar years as aligned quarter cells with current context', () => {
-    const window = projectTimelineWindowForRange('2023-01-01', '2026-12-31', 'year');
+    const window = timelineWindow('2023-01-01', '2026-12-31', 'year');
 
     const layout = projectTimelineAxisLayout(window, {
       visibleStartDay: window.startDay,
@@ -266,7 +280,7 @@ describe('project Timeline calendar axis', () => {
   });
 
   it('bounds a Year viewport slice by quarter cells and its parent year', () => {
-    const window = projectTimelineWindowForRange('0100-01-01', '9999-12-31', 'year');
+    const window = timelineWindow('0100-01-01', '9999-12-31', 'year');
 
     const layout = projectTimelineAxisLayout(window, {
       visibleStartDay: '2024-05-15',
@@ -287,7 +301,7 @@ describe('project Timeline calendar axis', () => {
   });
 
   it('keeps a multi-year Day layout viewport-bounded and caps pathological physical width', () => {
-    const window = projectTimelineWindowForRange('0100-01-01', '9999-12-31', 'day');
+    const window = timelineWindow('0100-01-01', '9999-12-31', 'day');
 
     const layout = projectTimelineAxisLayout(window, {
       visibleStartDay: '2024-02-01',
@@ -299,13 +313,11 @@ describe('project Timeline calendar axis', () => {
     expect(layout.cells[0]?.startDay).toBe('2024-01-31');
     expect(layout.cells[layout.cells.length - 1]?.endDay).toBe('2024-03-01');
     expect(layout.gridBoundaries.length).toBeLessThanOrEqual(33);
-    expect(projectTimelineTrackWidth(window, 700)).toBe(PROJECT_TIMELINE_MAX_TRACK_WIDTH);
-    expect(Number.isFinite(projectTimelineTrackWidth(window, 700))).toBe(true);
   });
 
   it('covers the pixel-derived visible tail when capped density exposes more than 512 days', () => {
-    const window = projectTimelineWindowForRange('0100-01-01', '9999-12-31', 'day');
-    const trackWidth = projectTimelineTrackWidth(window, 2_560);
+    const window = timelineWindow('0100-01-01', '9999-12-31', 'day');
+    const trackWidth = PROJECT_TIMELINE_MAX_TRACK_WIDTH;
     const visibleStartOrdinal = ordinal('2024-01-01');
     const visibleDayCount = Math.ceil((2_560 / trackWidth) * window.dayCount);
     const visibleEndOrdinal = visibleStartOrdinal + visibleDayCount - 1;
@@ -325,7 +337,7 @@ describe('project Timeline calendar axis', () => {
   });
 
   it('keeps hierarchy boundaries exact while clamping its label to the visible fraction', () => {
-    const window = projectTimelineWindowForRange('2024-09-01', '2024-09-30', 'day');
+    const window = timelineWindow('2024-09-01', '2024-09-30', 'day');
 
     const layout = projectTimelineAxisLayout(window, {
       visibleStartDay: '2024-09-08',
@@ -341,23 +353,5 @@ describe('project Timeline calendar axis', () => {
       rightPercent: (15 / 30) * 100,
       labelPercent: 27.5,
     });
-  });
-
-  it('honors each scale density and expands short ranges to the visible track', () => {
-    const day = projectTimelineWindowForRange('2024-01-01', '2024-01-14', 'day');
-    const week = projectTimelineWindowForRange('2024-01-01', '2024-03-24', 'week');
-    const month = projectTimelineWindowForRange('2024-01-01', '2024-12-31', 'month');
-    const quarter = projectTimelineWindowForRange('2024-01-01', '2024-12-31', 'quarter');
-    const year = projectTimelineWindowForRange('2024-01-01', '2024-12-31', 'year');
-    const fourYears = projectTimelineWindowForRange('2023-01-01', '2026-12-31', 'year');
-
-    expect(projectTimelineTrackWidth(day, 0)).toBe(14 * 32);
-    expect(projectTimelineTrackWidth(day, 700)).toBe(700);
-    expect(projectTimelineTrackWidth(week, 0)).toBe(84 * 12);
-    expect(projectTimelineTrackWidth(month, 0)).toBeGreaterThanOrEqual(12 * 120);
-    expect(projectTimelineTrackWidth(quarter, 0)).toBeGreaterThanOrEqual(4 * 144);
-    expect(projectTimelineTrackWidth(year, 0)).toBeGreaterThanOrEqual(200);
-    expect(projectTimelineTrackWidth(fourYears, 0)).toBeGreaterThanOrEqual(4 * 200);
-    expect(projectTimelineTrackWidth(day, 900)).toBe(900);
   });
 });

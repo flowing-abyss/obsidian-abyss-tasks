@@ -889,6 +889,7 @@ export class ProjectsTableView {
         this.timelineInteractionRevision_abyssPrivate++;
       }
       this.overviewMode_abyssPrivate = mode;
+      if (mode === 'timeline') this.timelineView_abyssPrivate?.focusToday();
       this.context_abyssPrivate.settings.projects.overviewView = mode;
       this.toolbar_abyssPrivate.setSearchValue(this.sessions_abyssPrivate[mode].search);
       this.persistAndRender_abyssPrivate();
@@ -1205,6 +1206,12 @@ export class ProjectsTableView {
   private requestTimelineScaleChange_abyssPrivate(
     scale: ProjectTimelineSettings['scale'],
   ): Promise<boolean> {
+    if (scale === this.ensureTimelineSettings_abyssPrivate().scale) {
+      return this.requestFinishActiveEditor().then((finished) => {
+        if (finished) this.timelineView_abyssPrivate?.focusToday();
+        return finished;
+      });
+    }
     return this.requestViewChange_abyssPrivate(() => {
       this.timelineView_abyssPrivate?.prepareScaleChange();
       this.ensureTimelineSettings_abyssPrivate().scale = scale;

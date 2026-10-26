@@ -3,7 +3,7 @@ import type {
   ProjectTimelineWindow,
 } from '../../projects/projectTimelineModel';
 
-/** Contextual date boundaries decorate the existing axis and mounted task tracks. */
+/** Owns a row in the shared sticky heading and decorations on mounted task tracks. */
 export interface TimelineContextOverlay {
   range(): ProjectTimelineRange;
   update(window: ProjectTimelineWindow): void;

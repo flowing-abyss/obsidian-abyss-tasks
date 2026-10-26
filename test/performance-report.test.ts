@@ -149,6 +149,50 @@ describe('native performance statistics', () => {
       expect(comparison.reasons).toContain('Different completed work: search.edit-to-query');
     }
   });
+  it.each(['standard', 'wide-tree'] as const)(
+    'requires each Timeline scenario exactly once in a valid full %s run',
+    (kind) => {
+      const roster = scenarioIds(kind, false);
+      const required = [
+        'ui.tasks.timeline',
+        'ui.tasks.timeline-scroll',
+        'ui.projects.timeline-scroll',
+      ];
+      for (const id of required) {
+        expect(roster.filter((scenario) => scenario === id)).toEqual([id]);
+      }
+      const complete = run([100], {
+        identity: { fixtureKind: kind, startupOnly: false },
+        expectedScenarios: roster,
+        samples: roster.map((scenario) => ({
+          scenario,
+          iteration: 0,
+          durationMs: 100,
+          longTasks: 0,
+          longTaskMs: 0,
+          maxFrameGapMs: 0,
+          domNodes: 10,
+          facts: {},
+        })),
+      });
+      expect(parseRun(JSON.stringify(complete))).toEqual(complete);
+      expect(compareRuns(complete, complete).compatible).toBe(true);
+      for (const id of required) {
+        const missing = {
+          ...complete,
+          samples: complete.samples.filter((sample) => sample.scenario !== id),
+        };
+        expect(compareRuns(complete, missing).compatible).toBe(false);
+        const omitted = {
+          ...missing,
+          expectedScenarios: roster.filter((scenario) => scenario !== id),
+        };
+        expect(() => parseRun(JSON.stringify(omitted))).toThrow('fixture scenario');
+        expect(compareRuns(complete, omitted).compatible).toBe(false);
+      }
+      expect(scenarioIds(kind, true)).toEqual(['startup.index']);
+    },
+  );
   it('validates saved results and escapes report labels', () => {
     const saved = run([12, 15], { id: 'test|<script>' });
     expect(parseRun(JSON.stringify(saved))).toEqual(saved);
