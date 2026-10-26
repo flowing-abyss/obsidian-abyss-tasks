@@ -48,6 +48,7 @@ export function mountGroupHeader<T = TaskSnapshot>(
   const update = (next: TaskListRow<T>): void => {
     if (!live || next.kind !== 'group') return;
     current = next;
+    if (element.dataset['rowKey'] !== next.key) element.dataset['rowKey'] = next.key;
     label.textContent = next.dateGroup === undefined ? `${next.label}  ${next.count}` : next.label;
     element.toggleClass('abyss-group-header--first', next.first);
     if (next.sourcePath === undefined) element.removeAttribute('aria-label');

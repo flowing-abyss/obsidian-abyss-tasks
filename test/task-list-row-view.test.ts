@@ -228,16 +228,19 @@ it('retains focused date actions across updates, uses current date and retires d
     dateGroup: { date: localDate('2026-10-08') },
   } as const;
   const mount = mountGroupHeader(host, row, (date) => dates.push(date));
+  expect(mount.element.dataset['rowKey']).toBe('opaque');
   const button = mount.element.querySelector('button');
   expect(button).not.toBeNull();
   button?.focus();
   mount.update({
     ...row,
+    key: 'next-day',
     label: 'Another day',
     first: false,
     dateGroup: { date: localDate('2026-10-09') },
   });
   expect(activeDocument.activeElement).toBe(button);
+  expect(mount.element.dataset['rowKey']).toBe('next-day');
   expect(mount.element.querySelector('button')).toBe(button);
   button?.click();
   expect(dates).toEqual(['2026-10-09']);
@@ -247,6 +250,7 @@ it('retains focused date actions across updates, uses current date and retires d
   button?.click();
   expect(dates).toHaveLength(1);
   mount.update(row);
+  expect(mount.element.dataset['rowKey']).toBe('opaque');
   const retired = mount.element.querySelector('button');
   mount.destroy();
   retired?.click();
