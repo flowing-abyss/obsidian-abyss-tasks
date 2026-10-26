@@ -326,7 +326,7 @@ export class ProjectsTableToolbar {
       anchor,
       rows,
       showReset: () =>
-        this.options_abyssPrivate.mode() !== 'table' || this.isCustomized_abyssPrivate(),
+        this.options_abyssPrivate.mode() === 'kanban' || this.isCustomized_abyssPrivate(),
       onReset: this.options_abyssPrivate.onReset,
       onClose: () => {
         if (this.popoverCleanup_abyssPrivate === close) {

@@ -7,6 +7,14 @@ import {
 } from '../src/app/listViewState';
 import { getListViewDefaults } from '../src/settings/defaults';
 import type { ListViewState } from '../src/settings/types';
+import {
+  defaultTaskKanbanSettings,
+  normalizeTaskKanbanSettings,
+} from '../src/task-lists/taskKanbanSettings';
+import {
+  defaultTaskTimelineSettings,
+  normalizeTaskTimelineSettings,
+} from '../src/task-lists/taskTimelineSettings';
 
 const base = (key: string): ListViewState => getListViewDefaults(key);
 
@@ -17,6 +25,45 @@ function withoutStatusGroups(state: ListViewState): ListViewState {
 }
 
 describe('isListViewOptionsCustomized', () => {
+  it.each(['kanban', 'timeline'] as const)(
+    'treats default and normalized %s options as unchanged while retaining the saved-layout indicator',
+    (view) => {
+      const defaults =
+        view === 'kanban' ? defaultTaskKanbanSettings() : defaultTaskTimelineSettings();
+      const normalized =
+        view === 'kanban'
+          ? normalizeTaskKanbanSettings(defaults)
+          : normalizeTaskTimelineSettings(defaults);
+      for (const options of [undefined, defaults, normalized]) {
+        const state = {
+          ...base('today'),
+          view,
+          ...(options === undefined ? {} : { [view]: options }),
+        };
+        expect(isListViewOptionsCustomized(state, 'today')).toBe(false);
+        expect(isListViewCustomized(state, 'today')).toBe(true);
+      }
+    },
+  );
+
+  it.each([
+    { groupBy: 'priority' },
+    { sortBy: { field: 'date', dir: 'desc' } },
+    { hiddenStatuses: ['done'] },
+    { scale: 'week' },
+    { descriptionLines: 2 },
+    { showMetadata: false },
+    { showScheduled: false },
+    { showUnscheduled: false },
+  ])('detects a changed Timeline option: %j', (patch) => {
+    expect(
+      isListViewOptionsCustomized(
+        { ...base('today'), view: 'timeline', timeline: normalizeTaskTimelineSettings(patch) },
+        'today',
+      ),
+    ).toBe(true);
+  });
+
   it.each(['tag', 'tag-exclude'] as const)(
     'ignores %s filters while retaining broader customization',
     (type) => {

@@ -200,12 +200,18 @@ it('rejects oversized property queries before evaluating candidate exclusions, i
   expect(exclude).not.toHaveBeenCalled();
 });
 
-it('keeps exclusion changes in the Search controls session without static or view writes', () => {
+it('keeps exclusions and reset in the Search session without static or view writes', () => {
   const settings = structuredClone(DEFAULT_SETTINGS);
   const before = structuredClone(settings);
   const state = new AppState();
   state.set('mode', 'search');
-  let list: ListViewState = { groupBy: 'none', sortBy: { field: 'date', dir: 'asc' }, filters: [] };
+  let list: ListViewState = {
+    groupBy: 'priority',
+    sortBy: { field: 'title', dir: 'desc' },
+    filters: [],
+    statusGroups: ['done'],
+  };
+  let relevance = false;
   const saveStatic = vi.fn(async () => {}),
     write = vi.fn(async () => {});
   const coordinator = new SettingsPersistenceCoordinator({
@@ -225,8 +231,10 @@ it('keeps exclusion changes in the Search controls session without static or vie
       write: (next) => {
         list = next;
       },
-      relevance: () => true,
-      setRelevance: () => {},
+      relevance: () => relevance,
+      setRelevance: (next) => {
+        relevance = next;
+      },
       canUseRelevance: () => true,
     },
   });
@@ -236,6 +244,15 @@ it('keeps exclusion changes in the Search controls session without static or vie
     { type: 'tag', value: '#work' },
     { type: 'tag-exclude', value: '#private' },
   ]);
+  controls.renderViewStateButton(document.body).click();
+  expectDefined(document.querySelector<HTMLButtonElement>('.abyss-view-state-reset-btn')).click();
+  expect(list).toEqual({ groupBy: 'none', sortBy: { field: 'date', dir: 'asc' }, filters: [] });
+  expect(relevance).toBe(true);
+  const options = controls.renderViewStateButton(document.body);
+  expect(options.classList.contains('abyss-view-state-btn--active')).toBe(false);
+  options.click();
+  expect(document.querySelector('.abyss-view-state-reset-btn')).toBeNull();
+  controls.closeViewStatePopover();
   expect(settings).toEqual(before);
   expect(saveStatic).not.toHaveBeenCalled();
   expect(write).not.toHaveBeenCalled();

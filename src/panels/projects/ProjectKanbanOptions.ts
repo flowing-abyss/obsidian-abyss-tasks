@@ -5,6 +5,7 @@ import {
 } from '../../projects/projectFields';
 import {
   buildDefaultProjectKanbanSettings,
+  normalizeProjectKanbanSettings,
   type ProjectKanbanSettings,
 } from '../../projects/projectKanbanSettings';
 import { sameProjectPropertyName } from '../../projects/projectPropertyNames';
@@ -253,8 +254,14 @@ export function isProjectKanbanCustomized(
   settings: ProjectKanbanSettings,
   tableSettings: Parameters<typeof buildDefaultProjectKanbanSettings>[0],
 ): boolean {
-  const preferences = projectKanbanPreferences(settings);
-  const defaults = projectKanbanPreferences(buildDefaultProjectKanbanSettings(tableSettings));
+  const preferences = normalizeProjectKanbanSettings(
+    projectKanbanPreferences(settings),
+    tableSettings,
+  );
+  const defaults = normalizeProjectKanbanSettings(
+    projectKanbanPreferences(buildDefaultProjectKanbanSettings(tableSettings)),
+    tableSettings,
+  );
   return JSON.stringify(preferences) !== JSON.stringify(defaults);
 }
 

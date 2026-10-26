@@ -7,6 +7,7 @@ import {
 import { sameProjectPropertyName } from '../../projects/projectPropertyNames';
 import {
   buildDefaultProjectTimelineSettings,
+  normalizeProjectTimelineSettings,
   projectTimelineDescriptionLines,
   projectTimelineFields,
   type ProjectTimelineSettings,
@@ -294,5 +295,19 @@ export function isProjectTimelineCustomized(
   settings: ProjectTimelineSettings,
   table: ProjectTableSettings,
 ): boolean {
-  return JSON.stringify(settings) !== JSON.stringify(buildDefaultProjectTimelineSettings(table));
+  const preferences = normalizeProjectTimelineSettings(
+    {
+      ...settings,
+      fields: projectTimelineFields(settings),
+      showEmptyFields: settings.showEmptyFields ?? true,
+      descriptionLines: projectTimelineDescriptionLines(settings),
+    },
+    table,
+  );
+  return (
+    JSON.stringify(preferences) !==
+    JSON.stringify(
+      normalizeProjectTimelineSettings(buildDefaultProjectTimelineSettings(table), table),
+    )
+  );
 }

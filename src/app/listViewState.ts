@@ -82,15 +82,10 @@ export function statusGroupsEqual(
 }
 
 /**
- * True when a container's view state differs from its defaults in any way that
- * warrants the left-panel "customized" dot: group/sort changed, the "Show"
- * status filter differs, OR any active property filter. The text search box is
- * global and not represented here.
- *
- * NB: this deliberately includes property filters, so it is broader than the
- * ↑↓ button's own dot predicate (which covers only group/sort/show). It matches
- * the "Reset to defaults" predicate — the left-panel dot means "this container
- * has any saved customization", filters included.
+ * The sidebar marks saved layouts, active-view options, and property filters.
+ * The options menu resets only its active preferences and filters; choosing
+ * Kanban or Timeline alone is not a reason to offer that reset. Text search is
+ * global and is not represented here.
  */
 export function isListViewCustomized(vs: ListViewState, listKey: string): boolean {
   return (

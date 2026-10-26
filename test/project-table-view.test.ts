@@ -4616,6 +4616,12 @@ describe('ProjectsTableView', () => {
     ).click();
     await flushMicrotasks();
     expect(config.projects.timeline.collapsedGroups).toEqual([]);
+    const timelineOptions = expectDefined(
+      next.host.querySelector<HTMLButtonElement>('.abyss-view-state-btn'),
+    );
+    expect(timelineOptions.classList.contains('abyss-view-state-btn--active')).toBe(false);
+    timelineOptions.click();
+    expect(next.host.querySelector('.abyss-view-state-reset-btn')).toBeNull();
     expect(config.projects.table.collapsedGroups).toEqual(['table-survives']);
   });
 

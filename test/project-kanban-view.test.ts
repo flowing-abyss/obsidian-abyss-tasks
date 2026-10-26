@@ -10,7 +10,10 @@ import {
   parseProjectTableTsv,
 } from '../src/panels/projects/projectTableClipboard';
 import type { ProjectTableSelectableCell } from '../src/panels/projects/projectTableSelection';
-import { projectTimelineOptionsRows } from '../src/panels/projects/ProjectTimelineOptions';
+import {
+  isProjectTimelineCustomized,
+  projectTimelineOptionsRows,
+} from '../src/panels/projects/ProjectTimelineOptions';
 import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProperties';
 import { ProjectEditValidationError } from '../src/projects/projectEditError';
 import { ProjectEditHistory } from '../src/projects/projectEditHistory';
@@ -555,6 +558,37 @@ describe('project Kanban overview', () => {
 
     expect(isProjectKanbanCustomized(ranked, table)).toBe(false);
     expect(isProjectKanbanCustomized({ ...ranked, descriptionLines: 2 }, table)).toBe(true);
+  });
+
+  it('recognizes normalized Kanban defaults with inherited column presentation', () => {
+    const table = structuredClone(DEFAULT_SETTINGS.projects.table);
+    table.columns = [{ id: 'start', label: 'Begins', width: 150, visible: true }];
+    const defaults = buildDefaultProjectKanbanSettings(table);
+    const normalized = normalizeProjectKanbanSettings(defaults, table);
+    expect(normalized).toEqual(defaults);
+    expect(isProjectKanbanCustomized(normalized, table)).toBe(false);
+  });
+
+  it('recognizes Timeline defaults regardless of serialized key order', () => {
+    const table = structuredClone(DEFAULT_SETTINGS.projects.table);
+    const { scale, ...otherDefaults } = buildDefaultProjectTimelineSettings(table);
+    const reordered = { scale, ...otherDefaults };
+    expect(isProjectTimelineCustomized(reordered, table)).toBe(false);
+    expect(isProjectTimelineCustomized({ ...reordered, scale: 'week' }, table)).toBe(true);
+  });
+
+  it('recognizes effective legacy Timeline defaults without adding persisted fields', () => {
+    const table = structuredClone(DEFAULT_SETTINGS.projects.table);
+    const legacy = buildDefaultProjectTimelineSettings(table);
+    delete legacy.fields;
+    delete legacy.showEmptyFields;
+    delete legacy.descriptionLines;
+    const before = structuredClone(legacy);
+    expect(isProjectTimelineCustomized(legacy, table)).toBe(false);
+    expect(isProjectTimelineCustomized({ ...legacy, fields: [] }, table)).toBe(true);
+    expect(isProjectTimelineCustomized({ ...legacy, showEmptyFields: false }, table)).toBe(true);
+    expect(isProjectTimelineCustomized({ ...legacy, descriptionLines: 1 }, table)).toBe(true);
+    expect(legacy).toEqual(before);
   });
 
   it('keeps three root rows and closes nested siblings without closing their parent', () => {

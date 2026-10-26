@@ -423,6 +423,10 @@ describe('task collection view controls', () => {
             sortBy: { field: view === 'kanban' ? 'priority' : 'date', dir: 'asc' },
           },
         });
+        const resetOptions = controls.renderViewStateButton(root);
+        expect(resetOptions.classList.contains('abyss-view-state-btn--active')).toBe(false);
+        resetOptions.click();
+        expect(root.querySelector('.abyss-view-state-reset-btn')).toBeNull();
       } finally {
         controls.closeViewStatePopover();
         root.remove();

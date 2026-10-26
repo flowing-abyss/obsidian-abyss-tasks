@@ -66,6 +66,6 @@ export function isMalformedTaskTimelineSettings(value: unknown): boolean {
 export function taskTimelineCustomized(view: ListViewState): boolean {
   return (
     JSON.stringify(normalizeTaskTimelineSettings(view.timeline)) !==
-    JSON.stringify(defaultTaskTimelineSettings())
+    JSON.stringify(normalizeTaskTimelineSettings(defaultTaskTimelineSettings()))
   );
 }

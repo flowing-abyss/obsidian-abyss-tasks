@@ -1,7 +1,6 @@
 import { setIcon } from 'obsidian';
 import type { AppState, ListSelection } from '../../app/AppState';
 import {
-  isListViewCustomized,
   isListViewOptionsCustomized,
   listSelectionToKey,
   normalizeStatusGroups,
@@ -261,7 +260,10 @@ export class ListViewControls {
       this.#updateViewState({ ...current, filters: [], kanban: defaultTaskKanbanSettings() });
     } else {
       this.#options.statePort?.setRelevance(true);
-      this.#updateViewState({ ...current, ...this.#defaults() });
+      const defaults = this.#defaults();
+      const next = { ...current, ...defaults };
+      if (defaults.statusGroups === undefined) delete next.statusGroups;
+      this.#updateViewState(next);
     }
   }
 
@@ -295,9 +297,10 @@ export class ListViewControls {
         normalizeStatusGroups(view.statusGroups) !== undefined ||
         (includeFilters && view.filters.length > 0)
       );
-    return includeFilters
-      ? isListViewCustomized(view, this.#savedStateKey())
-      : isListViewOptionsCustomized(view, this.#savedStateKey());
+    return (
+      isListViewOptionsCustomized(view, this.#savedStateKey()) ||
+      (includeFilters && view.filters.length > 0)
+    );
   }
 
   renderViewStateButton(container: HTMLElement): HTMLButtonElement {

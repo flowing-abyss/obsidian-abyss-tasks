@@ -96,6 +96,6 @@ export function isMalformedTaskKanbanSettings(value: unknown): boolean {
 export function taskKanbanCustomized(view: ListViewState): boolean {
   return (
     JSON.stringify(normalizeTaskKanbanSettings(view.kanban)) !==
-    JSON.stringify(defaultTaskKanbanSettings())
+    JSON.stringify(normalizeTaskKanbanSettings(defaultTaskKanbanSettings()))
   );
 }
