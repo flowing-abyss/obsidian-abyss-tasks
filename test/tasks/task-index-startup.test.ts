@@ -105,9 +105,10 @@ function file(app: Awaited<ReturnType<typeof createAppWithFiles>>, path: string)
 
 describe('cooperative initial file acceptance', () => {
   it('keeps reads concurrent while yielding before all files are installed and publishes readiness once', async () => {
+    vi.spyOn(performance, 'now').mockReturnValue(0);
     const state = await startup();
     expect(state.reads).toHaveBeenCalledTimes(50);
-    expect(state.index.list().length).toBeLessThan(50);
+    expect(state.index.list()).toHaveLength(8);
     expect(state.events).toEqual([]);
     expect(state.index.searchSource().subscribe(() => {}).state.type).not.toBe('ready');
     state.gate.release();
@@ -115,6 +116,15 @@ describe('cooperative initial file acceptance', () => {
     expect(state.index.list()).toHaveLength(50);
     expect(state.index.listNodes()).toHaveLength(100);
     expect(state.events).toEqual([{ type: 'initialized' }]);
+  });
+
+  it('yields after the time budget is spent before reaching the file limit', async () => {
+    vi.spyOn(performance, 'now').mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValue(6);
+    const { index, gate, initializing } = await startup();
+    expect(index.list()).toHaveLength(1);
+    gate.release();
+    await initializing;
+    expect(index.list()).toHaveLength(50);
   });
 
   it.each(['metadata', 'commit', 'rename', 'delete', 'recreate'] as const)(
@@ -281,12 +291,19 @@ describe('cooperative initial file acceptance', () => {
 
   it('propagates scheduling failure without clearing accepted source and recovers on retry', async () => {
     const { index, gate, initializing } = await startup();
+    index.subscribeStatistics(() => {});
     index.installCommittedContent('accepted.md', '- [ ] retained');
     gate.fail(new Error('Cannot schedule'));
     await expect(initializing).rejects.toThrow('Cannot schedule');
     expect(index.list({ filePath: 'accepted.md' })[0]?.title).toBe('retained');
     expect(index.searchSource().subscribe(() => {}).state.type).toBe('failed');
-    expect(index.readStatistics().issues).toEqual([]);
+    await index.whenStatisticsSettled();
+    const statistics = index.readStatistics();
+    expect(index.isStatisticsCurrent(statistics)).toBe(true);
+    expect(statistics.files.find((source) => source.path === 'accepted.md')?.roots[0]?.title).toBe(
+      'retained',
+    );
+    expect(statistics.issues).toEqual([]);
     await index.initialize();
     expect(index.list()).toHaveLength(50);
     expect(index.searchSource().subscribe(() => {}).state.type).toBe('ready');
@@ -294,6 +311,10 @@ describe('cooperative initial file acceptance', () => {
 
   it('ignores a late read failure from a failed attempt after a successful retry', async () => {
     const { app, index, gate, initializing } = await startup();
+    const issuePaths: string[] = [];
+    index.subscribeStatistics(() => {
+      issuePaths.push(...index.readStatistics().issues.map((issue) => issue.path));
+    });
     const late = deferred<void>();
     const started = deferred<void>();
     const read = app.vault.cachedRead.bind(app.vault);
@@ -320,6 +341,13 @@ describe('cooperative initial file acceptance', () => {
     await retry;
     expect(index.list({ filePath: 'late.md' })[0]?.title).toBe('latest');
     expect(index.list()).toHaveLength(51);
-    expect(index.readStatistics().issues).toEqual([]);
+    await index.whenStatisticsSettled();
+    const statistics = index.readStatistics();
+    expect(index.isStatisticsCurrent(statistics)).toBe(true);
+    expect(statistics.files.find((source) => source.path === 'late.md')?.roots[0]?.title).toBe(
+      'latest',
+    );
+    expect(statistics.issues).toEqual([]);
+    expect(issuePaths).toEqual([]);
   });
 });
