@@ -26,7 +26,7 @@ function withoutStatusGroups(state: ListViewState): ListViewState {
 
 describe('isListViewOptionsCustomized', () => {
   it.each(['kanban', 'timeline'] as const)(
-    'treats default and normalized %s options as unchanged while retaining the saved-layout indicator',
+    'treats default and normalized %s options as unchanged in both indicators',
     (view) => {
       const defaults =
         view === 'kanban' ? defaultTaskKanbanSettings() : defaultTaskTimelineSettings();
@@ -41,8 +41,25 @@ describe('isListViewOptionsCustomized', () => {
           ...(options === undefined ? {} : { [view]: options }),
         };
         expect(isListViewOptionsCustomized(state, 'today')).toBe(false);
-        expect(isListViewCustomized(state, 'today')).toBe(true);
+        expect(isListViewCustomized(state, 'today')).toBe(false);
       }
+    },
+  );
+
+  it.each(['kanban', 'timeline'] as const)(
+    'ignores inactive List preferences in %s but still marks property filters',
+    (view) => {
+      const state: ListViewState = {
+        ...base('today'),
+        view,
+        groupBy: 'priority',
+        sortBy: { field: 'title', dir: 'desc' },
+        statusGroups: ['done'],
+      };
+      expect(isListViewCustomized(state, 'today')).toBe(false);
+      expect(
+        isListViewCustomized({ ...state, filters: [{ type: 'tag', value: '#work' }] }, 'today'),
+      ).toBe(true);
     },
   );
 

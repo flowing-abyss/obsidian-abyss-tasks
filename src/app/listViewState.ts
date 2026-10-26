@@ -82,18 +82,12 @@ export function statusGroupsEqual(
 }
 
 /**
- * The sidebar marks saved layouts, active-view options, and property filters.
- * The options menu resets only its active preferences and filters; choosing
- * Kanban or Timeline alone is not a reason to offer that reset. Text search is
- * global and is not represented here.
+ * The sidebar marks active-view options and property filters, matching the reset
+ * scope. The chosen layout and inactive-view preferences do not count. Text
+ * search is global and is not represented here.
  */
 export function isListViewCustomized(vs: ListViewState, listKey: string): boolean {
-  return (
-    vs.view === 'timeline' ||
-    vs.view === 'kanban' ||
-    isListViewOptionsCustomized(vs, listKey) ||
-    vs.filters.length > 0
-  );
+  return isListViewOptionsCustomized(vs, listKey) || vs.filters.length > 0;
 }
 
 /** Sort & group indicator excludes property filters, which have their own chips. */

@@ -3,6 +3,7 @@ import { Menu, Notice, type MenuItem } from 'obsidian';
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { LeftPanel } from '../src/panels/LeftPanel';
+import { ListViewControls } from '../src/panels/center/ListViewControls';
 import type { StatisticsNavigationPort } from '../src/panels/statistics/StatisticsNavigation';
 import { ProjectCreationError, type ProjectCreateOptions } from '../src/projects/projectCreation';
 import { ProjectEditValidationError } from '../src/projects/projectEditError';
@@ -15,9 +16,12 @@ import { TagManager } from '../src/tags/TagManager';
 import { discoveredPrefixGroupId, discoveredTagGroupId } from '../src/tags/effectiveTagGroups';
 import * as taskTagCatalog from '../src/tags/taskTagCatalog';
 import { selectTaskNodes } from '../src/task-lists/TaskListSelector';
+import { defaultTaskKanbanSettings } from '../src/task-lists/taskKanbanSettings';
+import { defaultTaskTimelineSettings } from '../src/task-lists/taskTimelineSettings';
 import type { TaskApplicationApi, TaskSnapshot } from '../src/tasks';
 import { localDate } from '../src/tasks';
 import { TagGroupAppearanceModal } from '../src/ui/TagGroupAppearanceModal';
+import { noInteractionOwnership } from '../src/ui/interactionOwnership';
 import {
   createAppWithFiles,
   dispatchImeKey,
@@ -3419,6 +3423,64 @@ describe('configured promoted group customization identity', () => {
     expect(present.merged.listViewStates?.[aliasKey]).toEqual(custom);
     present.panel.destroy();
   });
+});
+
+describe.each(['today', 'upcoming'] as const)('%s customization indicator', (selection) => {
+  it.each(['list', 'kanban', 'timeline'] as const)(
+    'clears immediately after resetting %s options without remounting the sidebar',
+    (view) => {
+      const other = selection === 'today' ? 'upcoming' : 'today';
+      const saved = {
+        ...getListViewDefaults(selection),
+        view,
+        groupBy: 'priority' as const,
+        sortBy: { field: 'title' as const, dir: 'desc' as const },
+        filters: [{ type: 'tag' as const, value: '#work' }],
+        kanban: { ...defaultTaskKanbanSettings(), descriptionLines: 2 as const },
+        timeline: { ...defaultTaskTimelineSettings(), scale: 'week' as const },
+      };
+      const h = makePanel([], {
+        listViewStates: { [selection]: saved, [other]: { ...saved } },
+      });
+      h.state.set('selectedList', selection);
+      const controlsRoot = freshContainer();
+      const controls = new ListViewControls({
+        state: h.state,
+        settings: h.merged,
+        statusRegistry: makeStubStore([]).statusRegistry,
+        saveViewState: h.save,
+        interactionOwnership: noInteractionOwnership,
+        host: { root: () => controlsRoot, formatDate: (value) => value },
+      });
+      const hasDot = (label: string): boolean => {
+        const row = expectDefined(
+          [...h.el.querySelectorAll('.abyss-left-item')].find(
+            (item) => item.querySelector('.abyss-left-label')?.textContent.toLowerCase() === label,
+          ),
+        );
+        return row.querySelector('.abyss-left-custom-dot') !== null;
+      };
+      try {
+        controls.initializeListViewState();
+        expect(hasDot(selection)).toBe(true);
+        expect(hasDot(other)).toBe(true);
+        controls.renderViewStateButton(controlsRoot).click();
+        expectDefined(
+          controlsRoot.querySelector<HTMLButtonElement>('.abyss-view-state-reset-btn'),
+        ).click();
+        expect(hasDot(selection)).toBe(false);
+        expect(hasDot(other)).toBe(true);
+        expect(h.state.get('centerListViewState').view).toBe(view);
+        expect(h.merged.listViewStates?.[other]).toEqual(saved);
+        controls.renderViewStateButton(controlsRoot).click();
+        expect(controlsRoot.querySelector('.abyss-view-state-reset-btn')).toBeNull();
+      } finally {
+        controls.closeViewStatePopover();
+        controlsRoot.remove();
+        h.panel.destroy();
+      }
+    },
+  );
 });
 
 it('keeps a case-alias discovered prefix selection visibly active', () => {
