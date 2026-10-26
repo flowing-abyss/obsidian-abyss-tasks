@@ -2,7 +2,7 @@ import { Component, Notice, setIcon } from 'obsidian';
 import { moment } from '../../obsidianMoment';
 import { isProjectEditValidationError } from '../../projects/projectEditError';
 import {
-  buildProjectFieldCatalog,
+  buildConfiguredProjectFieldCatalog,
   findFrontmatterProperty,
   type ProjectDateDisplay,
   type ProjectFieldCatalogItem,
@@ -152,18 +152,8 @@ export class ProjectDashboardProperties {
   }
 
   #fields(): ProjectFieldCatalogItem[] {
-    const properties = [
-      ...(this.context.editor?.catalog.list() ?? []),
-      ...Object.keys(this.project().frontmatter).map((name) => ({ name, type: null })),
-    ];
-    return buildProjectFieldCatalog(this.context.settings.projects, properties).filter(
-      (field) =>
-        field.property !== undefined &&
-        field.id !== 'status' &&
-        field.property !== 'position' &&
-        (!field.id.startsWith('property:') ||
-          field.type !== null ||
-          findFrontmatterProperty(this.project().frontmatter, field.property) !== undefined),
+    return buildConfiguredProjectFieldCatalog(this.context.settings.projects).filter(
+      (field) => field.property !== undefined && field.id !== 'status',
     );
   }
   #value(field: ProjectFieldCatalogItem): unknown {

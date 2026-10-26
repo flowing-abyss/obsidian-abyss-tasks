@@ -121,7 +121,7 @@ it('publishes footer visibility across dashboard capture, view changes and navig
   }
   expect(visible()).toBe(false);
 });
-it('uses table values and guarded edits for dashboard properties, including absent configured fields', async () => {
+it('shows only configured dashboard properties with table values and guarded edits, including absent fields', async () => {
   vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _markdown, holder) => {
     holder.createEl('a', {
       cls: 'internal-link',
@@ -130,7 +130,7 @@ it('uses table values and guarded edits for dashboard properties, including abse
     });
   });
   const h = await mount(
-    '---\nowner: "[[People/Owner|Alex]]"\nlabels: [design, review]\napproved: false\n---\n',
+    '---\nowner: "[[People/Owner|Alex]]"\nlabels: [design, review]\napproved: false\naliases: [Other]\nicon: star\ncreated: 2026-10-01\nstale: Saved column\n---\n',
     (settings) => {
       settings.projects.propertyDefinitions = {
         'property:owner': { type: 'text' },
@@ -141,6 +141,7 @@ it('uses table values and guarded edits for dashboard properties, including abse
         'property:approved': { type: 'checkbox' },
         'property:budget': { type: 'number' },
       };
+      settings.projects.table.columns.push({ id: 'property:stale', visible: true });
     },
   );
   try {
@@ -149,6 +150,19 @@ it('uses table values and guarded edits for dashboard properties, including abse
       h.root.querySelector<HTMLElement>('[aria-label="Project properties"]'),
     );
     plus.click();
+    expect(
+      [...h.root.querySelectorAll<HTMLElement>('.abyss-project-dashboard-property')].map(
+        (row) => row.dataset['projectField'],
+      ),
+    ).toEqual([
+      'start',
+      'end',
+      'description',
+      'property:owner',
+      'property:labels',
+      'property:approved',
+      'property:budget',
+    ]);
     const property = (name: string) =>
       expectDefined(
         h.root.querySelector<HTMLElement>(
@@ -193,6 +207,40 @@ it('uses table values and guarded edits for dashboard properties, including abse
     });
     plus.click();
     expect(property('budget').textContent).toContain('120000');
+  } finally {
+    h.dispose();
+  }
+});
+it('refreshes configured dashboard properties without changing note metadata or following stale columns', async () => {
+  const h = await mount(
+    '---\nowner: Team\nstart: 2026-10-20\nend: 2026-10-31\n---\n',
+    (settings) => {
+      settings.projects.propertyDefinitions = { 'property:owner': { type: 'text' } };
+      settings.projects.table.columns.push({ id: 'property:owner', visible: true });
+    },
+  );
+  try {
+    const file = expectDefined(h.app.vault.getFileByPath('Projects/A.md'));
+    const original = await h.app.vault.read(file);
+    h.open('Projects/A.md');
+    expectDefined(h.root.querySelector<HTMLElement>('[aria-label="Project properties"]')).click();
+    const popover = expectDefined(h.root.querySelector('.abyss-project-dashboard-properties'));
+    const fields = () =>
+      [...popover.querySelectorAll<HTMLElement>('.abyss-project-dashboard-property')].map(
+        (row) => row.dataset['projectField'],
+      );
+    expect(fields()).toEqual(['start', 'end', 'description', 'property:owner']);
+    h.settings.projects.propertyDefinitions['property:budget'] = { type: 'number' };
+    h.panel.refresh('projects');
+    expect(fields()).toEqual(['start', 'end', 'description', 'property:owner', 'property:budget']);
+    delete h.settings.projects.propertyDefinitions['property:owner'];
+    h.settings.projects.startProperty = '';
+    h.settings.projects.endProperty = '';
+    h.panel.refresh('projects');
+    expect(h.root.querySelector('.abyss-project-dashboard-properties')).toBe(popover);
+    expect(fields()).toEqual(['description', 'property:budget']);
+    expect(h.root.querySelector('.abyss-project-dashboard-dates')?.childElementCount).toBe(0);
+    expect(await h.app.vault.read(file)).toBe(original);
   } finally {
     h.dispose();
   }
@@ -754,9 +802,11 @@ it.each([false, true])(
   },
 );
 it.each(['Escape', 'Back'] as const)(
-  'keeps an unconfigured property dismissible via %s without blocking navigation',
+  'keeps a configured property with an ambiguous source dismissible via %s without blocking navigation',
   async (action) => {
-    const h = await mount('---\nowner: Team\n---\n');
+    const h = await mount('---\nowner: Team\nOwner: Other team\n---\n', (settings) => {
+      settings.projects.propertyDefinitions = { 'property:owner': { type: 'text' } };
+    });
     try {
       h.open('Projects/A.md');
       expectDefined(h.root.querySelector<HTMLElement>('[aria-label="Project properties"]')).click();
