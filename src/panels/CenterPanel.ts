@@ -261,6 +261,7 @@ interface CenterPanelOptions {
       ) => void)
     | undefined;
   readonly onTaskRowsSettled?: ((root: HTMLElement) => void) | undefined;
+  readonly onTaskFooterVisibilityChange?: ((visible: boolean) => void) | undefined;
   readonly onRenderComplete?: ((root: HTMLElement) => void) | undefined;
   readonly interactionOwnership?: InteractionOwnershipPort | undefined;
   readonly navigation?: PanelNavigationActions | undefined;
@@ -281,6 +282,7 @@ export class CenterPanel {
   private readonly creationAttempts_abyssPrivate = new Set<() => void>();
   private taskRowsSettledQueued_abyssPrivate = false;
   private onTaskRowsSettled_abyssPrivate: ((root: HTMLElement) => void) | undefined;
+  private onTaskFooterVisibilityChange_abyssPrivate: ((visible: boolean) => void) | undefined;
   private taskDateFocusContinuityKey_abyssPrivate: string | null = null;
   private taskDateFocusRefs_abyssPrivate: TaskRef[] = [];
   private pendingTaskDateFocus_abyssPrivate: {
@@ -1871,6 +1873,7 @@ export class CenterPanel {
         this.onCreationResult_abyssPrivate(result, description, revealAuthority);
       },
       root: () => this.el,
+      onFooterVisibilityChange: this.onTaskFooterVisibilityChange_abyssPrivate,
     });
   }
 
@@ -1880,6 +1883,7 @@ export class CenterPanel {
   ): void {
     this.onRenderComplete_abyssPrivate = complete;
     this.onTaskRowsSettled_abyssPrivate = options.onTaskRowsSettled;
+    this.onTaskFooterVisibilityChange_abyssPrivate = options.onTaskFooterVisibilityChange;
   }
 
   /** Selection permission survives blur, but not a later selection or list context change. */
@@ -2940,6 +2944,7 @@ export class CenterPanel {
     this.calendar_abyssPrivate.destroy();
     this.destroyProjectsPanel_abyssPrivate();
     this.md_abyssPrivate.unload();
+    this.onTaskFooterVisibilityChange_abyssPrivate?.(false);
     if ('el' in this) this.el.empty();
   }
 
@@ -3063,6 +3068,7 @@ export class CenterPanel {
 
   private prepareRender_abyssPrivate(mode: string, retainTaskShell = false): void {
     if (!retainTaskShell) {
+      this.onTaskFooterVisibilityChange_abyssPrivate?.(false);
       this.taskMenuCleanup_abyssPrivate?.();
       this.captureSessions_abyssPrivate.unmountActiveCapture();
     }
@@ -3266,6 +3272,7 @@ export class CenterPanel {
 
   private clearTaskShell_abyssPrivate(): void {
     this.taskShell_abyssPrivate = null;
+    this.onTaskFooterVisibilityChange_abyssPrivate?.(false);
   }
 
   private renderTaskFilterInput_abyssPrivate(controls: HTMLElement): HTMLInputElement {

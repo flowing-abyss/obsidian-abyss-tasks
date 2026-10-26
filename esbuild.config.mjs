@@ -96,6 +96,9 @@ import process from 'process';
 // Retained dashboard property cells and status lifecycle guards: 2,234,303 bytes, contained by
 // 2182 KiB. Compact controls/shared cell CSS remains within 205 KiB.
 // Uses existing renderers and dependencies; enforcement remains unchanged.
+// Dashboard spacing and explicit footer visibility add 570 main bytes (2,234,303 -> 2,234,873)
+// and 292 CSS bytes (209,912 -> 210,204). Minimal containing limits: 2183 / 206 KiB.
+// No dependencies added; both artifact checks remain enforced.
 const { mainJsBudgetBytes: MAIN_JS_BUDGET_BYTES } = JSON.parse(
   readFileSync('package.json', 'utf8'),
 ).release;

@@ -79,6 +79,7 @@ interface CaptureSessionsOptions {
     revealAuthority?: CreationRevealAuthority,
   ) => void;
   readonly captureReveal?: (isCurrent: () => boolean) => CaptureRevealAuthority;
+  readonly onFooterVisibilityChange?: ((visible: boolean) => void) | undefined;
   readonly root: () => HTMLElement;
 }
 
@@ -98,6 +99,7 @@ export class CaptureSessions {
   readonly #root: () => HTMLElement;
   readonly #captureReveal: CaptureSessionsOptions['captureReveal'];
   readonly #onCreationResult: CaptureSessionsOptions['onCreationResult'];
+  readonly #onFooterVisibilityChange: CaptureSessionsOptions['onFooterVisibilityChange'];
 
   constructor(options: CaptureSessionsOptions) {
     this.#app = options.app;
@@ -105,6 +107,7 @@ export class CaptureSessions {
     this.#collection = options.collection;
     this.#root = options.root;
     this.#onCreationResult = options.onCreationResult;
+    this.#onFooterVisibilityChange = options.onFooterVisibilityChange;
     this.#captureReveal = options.captureReveal;
     this.#captureTargets =
       options.application != null
@@ -123,7 +126,11 @@ export class CaptureSessions {
     if (placement.type === 'list') {
       host.dataset['abyssCaptureSelection'] = placement.selectionKey;
     }
-    if (host.querySelector('.abyss-add-task-trigger') !== null) return;
+    const existing = host.querySelector<HTMLButtonElement>('.abyss-add-task-trigger');
+    if (existing !== null) {
+      this.#onFooterVisibilityChange?.(existing.hidden === false);
+      return;
+    }
     const trigger = renderAddTaskTrigger(host, (trigger) => {
       const context: CaptureContext =
         placement.type === 'project'
@@ -137,6 +144,7 @@ export class CaptureSessions {
       active.returnFocus = trigger;
       this.#mountCaptureSurface(active, host);
     }
+    this.#onFooterVisibilityChange?.(trigger.hidden === false);
   }
 
   openKanbanCapture(status: TaskStatusDef, trigger: HTMLElement): void {
@@ -393,6 +401,7 @@ export class CaptureSessions {
     if (trigger != null) {
       trigger.hidden = true;
       active.returnFocus = trigger;
+      this.#onFooterVisibilityChange?.(false);
     }
     return undefined;
   }
@@ -463,7 +472,11 @@ export class CaptureSessions {
       host.remove();
       return;
     }
-    host.querySelector<HTMLButtonElement>('.abyss-add-task-trigger')?.removeAttribute('hidden');
+    const trigger = host.querySelector<HTMLButtonElement>('.abyss-add-task-trigger');
+    if (trigger !== null) {
+      trigger.removeAttribute('hidden');
+      this.#onFooterVisibilityChange?.(true);
+    }
   }
 
   #sameCapturePlacement(left: PanelCapturePlacement, right: PanelCapturePlacement): boolean {

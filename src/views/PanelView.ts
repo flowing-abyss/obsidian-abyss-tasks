@@ -796,6 +796,7 @@ export class PanelView extends ItemView {
         this.presentCreationResult_abyssPrivate(result, description, revealAuthority);
       },
       onTaskRowsSettled: (root) => this.creationPresentation_abyssPrivate?.refreshMounted(root),
+      onTaskFooterVisibilityChange: this.setTaskFooterVisibility_abyssPrivate.bind(this),
       onRenderComplete: (root) => {
         this.creationPresentation_abyssPrivate?.afterRender(root);
         this.checkSearchOpportunity_abyssPrivate();
@@ -841,6 +842,12 @@ export class PanelView extends ItemView {
       interactionOwnership: this.interactionRegistry_abyssPrivate,
       timeTracking,
     });
+  }
+
+  private setTaskFooterVisibility_abyssPrivate(visible: boolean): void {
+    this.contentEl
+      .querySelector('.abyss-center-shell')
+      ?.toggleClass('abyss-center-shell--footer-visible', visible);
   }
 
   private createDependencySearch_abyssPrivate(): TaskDependencySearchProvider | undefined {

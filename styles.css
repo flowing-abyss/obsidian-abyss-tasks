@@ -299,6 +299,14 @@
   padding-block-end: var(--abyss-shell-bottom-inset, 0);
 }
 
+/* A regular footer's centered action clears the floating status bar. Compact layouts and an
+   open composer keep the measured space; phone navigation retains its own inset below. */
+@container abyss-panel-layout (min-width: 48rem) {
+  .abyss-center-shell.abyss-center-shell--footer-visible {
+    padding-block-end: 0;
+  }
+}
+
 button.abyss-compact-pane-button {
   display: none;
   flex: 0 0 var(--abyss-toolbar-control-size);
@@ -9038,7 +9046,7 @@ button.abyss-project-dashboard-date {
   width: min(22rem, var(--abyss-pop-width, 80cqi));
   max-height: min(50vh, var(--abyss-pop-height, 50vh));
   overflow: auto;
-  padding: var(--size-4-3);
+  padding: var(--size-4-2);
   font-size: var(--font-ui-small);
 }
 
@@ -9053,9 +9061,17 @@ button.abyss-project-dashboard-date {
   display: grid;
   align-items: center;
   grid-template-columns: minmax(5rem, 1fr) minmax(0, 2fr);
-  gap: var(--size-4-3);
-  padding-block: var(--size-4-1);
+  gap: var(--size-4-2);
+  padding-block: var(--size-2-1);
   overflow-wrap: anywhere;
+}
+
+.abyss-project-dashboard-properties .abyss-project-description {
+  margin: 0;
+}
+
+body.is-mobile .abyss-project-dashboard-property {
+  padding-block: var(--size-4-1);
 }
 
 button.abyss-project-dashboard-property-label {

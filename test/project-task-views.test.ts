@@ -48,6 +48,7 @@ async function mount(projectHeader = '', configure?: (settings: CalendarSettings
   );
   const root = document.body.createDiv({ cls: 'abyss-panel-view' });
   prepareTaskPanelViewport(root);
+  const footerVisibility = vi.fn<(visible: boolean) => void>();
   const panel = new CenterPanel({
     state,
     app: h.app,
@@ -59,6 +60,7 @@ async function mount(projectHeader = '', configure?: (settings: CalendarSettings
     statusRegistry: h.statusRegistry,
     projectStore: projects,
     projectManager: manager,
+    onTaskFooterVisibilityChange: footerVisibility,
   });
   panel.mount(root);
   const open = (path: string) => {
@@ -79,6 +81,7 @@ async function mount(projectHeader = '', configure?: (settings: CalendarSettings
     projects,
     open,
     choose,
+    footerVisibility,
     dispose: () => {
       panel.destroy();
       projects.destroy();
@@ -87,6 +90,37 @@ async function mount(projectHeader = '', configure?: (settings: CalendarSettings
     },
   };
 }
+it('publishes footer visibility across dashboard capture, view changes and navigation', async () => {
+  const h = await mount();
+  const visible = () => h.footerVisibility.mock.lastCall?.[0] ?? false;
+  try {
+    expect(visible()).toBe(false);
+    h.open('Projects/A.md');
+    expect(visible()).toBe(true);
+    for (const view of ['List', 'Kanban', 'Timeline'] as const) {
+      await h.choose(view);
+      expect(visible()).toBe(true);
+      expectDefined(h.root.querySelector<HTMLButtonElement>('.abyss-add-task-trigger')).click();
+      await flushMicrotasks();
+      expect(visible()).toBe(false);
+      const input = expectDefined(h.root.querySelector<HTMLInputElement>('.abyss-capture-input'));
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      expect(visible()).toBe(true);
+    }
+    expectDefined(h.root.querySelector<HTMLButtonElement>('.abyss-project-back')).click();
+    expect(visible()).toBe(false);
+    h.open('Projects/A.md');
+    expect(visible()).toBe(true);
+    h.state.set('mode', 'calendar');
+    expect(visible()).toBe(false);
+    h.state.set('mode', 'projects');
+    h.open('Projects/A.md');
+    expect(visible()).toBe(true);
+  } finally {
+    h.dispose();
+  }
+  expect(visible()).toBe(false);
+});
 it('uses table values and guarded edits for dashboard properties, including absent configured fields', async () => {
   vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _markdown, holder) => {
     holder.createEl('a', {
