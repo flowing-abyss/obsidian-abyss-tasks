@@ -480,11 +480,10 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
 
     it.each([
       {
-        name: 'a second recurrence on a sibling',
+        name: 'a recurrence on the selected subtask ancestor',
         source:
-          '- [ ] Shell\n' +
-          '  - [ ] Owner 🔁 every day 📅 2026-08-01\n' +
-          '  - [ ] Sibling 🔁 every week 📅 2026-08-02\n',
+          '- [ ] Shell 🔁 every week 📅 2026-08-02\n' +
+          '  - [ ] Owner 🔁 every day 📅 2026-08-01\n',
         owner: (roots: readonly TaskSnapshot[]) =>
           expectDefined(expectDefined(roots[0]).subtasks[0]),
       },
@@ -508,6 +507,188 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
         issues: [{ code: 'nested-recurrence-conflict', field: 'recurrence' }],
       });
       expect(await harness.read()).toBe(source);
+    });
+
+    it.each(
+      [
+        {
+          placement: 'before' as const,
+          deletes: false,
+          eol: '\n',
+          trailing: '\n',
+          activeOffset: 0,
+          completedOffset: 1,
+        },
+        {
+          placement: 'after' as const,
+          deletes: false,
+          eol: '\r\n',
+          trailing: '',
+          activeOffset: 1,
+          completedOffset: 0,
+        },
+        {
+          placement: 'before' as const,
+          deletes: true,
+          eol: '\r\n',
+          trailing: '\r\n',
+          activeOffset: 0,
+          completedOffset: 0,
+        },
+        {
+          placement: 'after' as const,
+          deletes: true,
+          eol: '\n',
+          trailing: '',
+          activeOffset: 0,
+          completedOffset: 0,
+        },
+      ].flatMap((policy) => [0, 1].map((selected) => ({ ...policy, selected }))),
+    )(
+      'completes issue 7 sibling $selected with $placement placement and delete=$deletes',
+      async ({ placement, deletes, eol, trailing, selected, activeOffset, completedOffset }) => {
+        const completion = deletes ? ' 🏁 delete' : '';
+        const parent = ' - [ ] parent task 📅 2026-10-26';
+        const siblings = [
+          `     - [ ] 🔄 subtask1 🔁 every day${completion} ➕ 2026-10-26 📅 2026-10-26`,
+          `     - [ ] 🔄 subtask2 🔁 every day${completion} ➕ 2026-10-26 📅 2026-10-26`,
+        ];
+        const source = [parent, ...siblings].join(eol) + trailing;
+        const h = await makeHarness(adapter, source);
+        const owner = expectDefined(expectDefined(h.snapshots(source)[0]).subtasks[selected]);
+        const target = { type: 'subtask' as const, ref: owner.ref };
+        const options = {
+          today: localDate('2026-10-26'),
+          placement,
+        };
+
+        const result = await h.repository.completeRecurrence(request(target, options));
+
+        const clean = `     - [ ] 🔄 subtask${selected + 1} 🔁 every day${completion} ➕ 2026-10-26 📅 2026-10-27`;
+        const done = `     - [x] 🔄 subtask${selected + 1} 🔁 every day ➕ 2026-10-26 📅 2026-10-26 ✅ 2026-10-26`;
+        let replacement = placement === 'before' ? [clean, done] : [done, clean];
+        if (deletes) replacement = [clean];
+        const expected =
+          [
+            parent,
+            ...siblings.slice(0, selected),
+            ...replacement,
+            ...siblings.slice(selected + 1),
+          ].join(eol) + trailing;
+        expect(await h.read()).toBe(expected);
+        expect(result).toMatchObject({ type: 'committed', outcome: { type: 'recurrence' } });
+        if (result.type !== 'committed' || result.outcome.type !== 'recurrence')
+          throw new Error('missing recurrence outcome');
+        const installed = expectDefined(h.index.list()[0]);
+        const activeIndex = selected + activeOffset;
+        expect(result.outcome.active.root.ref).toEqual(installed.ref);
+        expect(result.outcome.active.target).toEqual({
+          type: 'subtask',
+          ref: expectDefined(installed.subtasks[activeIndex]).ref,
+        });
+        if (deletes) expect(result.outcome.completed).toBeUndefined();
+        else {
+          const completedIndex = selected + completedOffset;
+          expect(result.outcome.completed?.target).toEqual({
+            type: 'subtask',
+            ref: expectDefined(installed.subtasks[completedIndex]).ref,
+          });
+        }
+        await expect(
+          h.repository.completeRecurrence(request(target, options)),
+        ).resolves.toMatchObject({ type: 'conflict' });
+        expect(await h.read()).toBe(expected);
+      },
+    );
+
+    it('completes successive occurrences beside history and another active recurrence', async () => {
+      const source =
+        '- [ ] Root\n  - [ ] Owner 🔁 every day 📅 2026-08-01\n  - [ ] Other 🔁 every week 📅 2026-08-02\n';
+      const h = await makeHarness(adapter, source);
+      const owner = expectDefined(expectDefined(h.snapshots(source)[0]).subtasks[0]);
+      const first = await h.repository.completeRecurrence(
+        request({ type: 'subtask', ref: owner.ref }),
+      );
+      if (first.type !== 'committed' || first.outcome.type !== 'recurrence')
+        throw new Error(`first completion failed: ${first.type}`);
+
+      await expect(
+        h.repository.completeRecurrence(request(first.outcome.active.target)),
+      ).resolves.toMatchObject({ type: 'committed', outcome: { type: 'recurrence' } });
+
+      expect(await h.read()).toBe(
+        '- [ ] Root\n' +
+          '  - [ ] Owner 🔁 every day ➕ 2026-08-01 📅 2026-08-03\n' +
+          '  - [x] Owner 🔁 every day ➕ 2026-08-01 📅 2026-08-02 ✅ 2026-08-01\n' +
+          '  - [x] Owner 🔁 every day 📅 2026-08-01 ✅ 2026-08-01\n' +
+          '  - [ ] Other 🔁 every week 📅 2026-08-02\n',
+      );
+      expect(
+        expectDefined(h.index.list()[0]).subtasks.map(({ status, planning }) => [
+          status,
+          planning.due,
+        ]),
+      ).toEqual([
+        ['open', '2026-08-03'],
+        ['done', '2026-08-02'],
+        ['done', '2026-08-01'],
+        ['open', '2026-08-02'],
+      ]);
+    });
+
+    it('preserves malformed neighboring branches and renews only the selected same-title subtree', async () => {
+      const source = [
+        '> - [ ] Root 📅 2026-02-30',
+        '>   - [ ] Repeat 🔁 every day 📅 2026-08-01',
+        '>     - untouched first comment ^first',
+        '>   - [ ] Branch',
+        '>     - [ ] Repeat 🔁 every day 📅 2026-08-01 🆔 selected ^owner',
+        '>       - [x] Child 📅 2026-08-03 ✅ 2026-07-31 ^child',
+        '>       - selected comment ^comment',
+        '>   - [ ] Broken 🔁 📅 2026-02-30',
+        '>     - untouched trailing spaces  ',
+      ].join('\r\n');
+      const h = await makeHarness(adapter, source);
+      const root = expectDefined(h.snapshots(source)[0]);
+      const owner = expectDefined(expectDefined(root.subtasks[1]).subtasks[0]);
+
+      const result = await h.repository.completeRecurrence(
+        request({ type: 'subtask', ref: owner.ref }),
+      );
+
+      expect(result).toMatchObject({ type: 'committed', outcome: { type: 'recurrence' } });
+      expect(await h.read()).toBe(
+        [
+          '> - [ ] Root 📅 2026-02-30',
+          '>   - [ ] Repeat 🔁 every day 📅 2026-08-01',
+          '>     - untouched first comment ^first',
+          '>   - [ ] Branch',
+          '>     - [ ] Repeat 🔁 every day ➕ 2026-08-01 📅 2026-08-02',
+          '>       - [ ] Child ➕ 2026-08-01 📅 2026-08-04',
+          '>       - selected comment',
+          '>     - [x] Repeat 🔁 every day 📅 2026-08-01 ✅ 2026-08-01 🆔 selected ^owner',
+          '>       - [x] Child 📅 2026-08-03 ✅ 2026-07-31 ^child',
+          '>       - selected comment ^comment',
+          '>   - [ ] Broken 🔁 📅 2026-02-30',
+          '>     - untouched trailing spaces  ',
+        ].join('\r\n'),
+      );
+      const branch = expectDefined(expectDefined(h.index.list()[0]).subtasks[1]);
+      expect(branch.subtasks).toHaveLength(2);
+      expect(branch.subtasks.map(({ dependencyId }) => dependencyId)).toEqual([
+        undefined,
+        'selected',
+      ]);
+      if (result.type !== 'committed' || result.outcome.type !== 'recurrence')
+        throw new Error('missing recurrence outcome');
+      expect(result.outcome.active.target).toEqual({
+        type: 'subtask',
+        ref: expectDefined(branch.subtasks[0]).ref,
+      });
+      expect(result.outcome.completed?.target).toEqual({
+        type: 'subtask',
+        ref: expectDefined(branch.subtasks[1]).ref,
+      });
     });
 
     it('rejects an unsafe descendant date without changing bytes', async () => {

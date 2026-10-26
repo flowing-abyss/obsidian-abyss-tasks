@@ -661,14 +661,46 @@ function recurrenceStructureIssue(
   lines: readonly SourceLine[],
   ownership: RecurrenceOwnedSubtree,
 ): IterationIssueCode | undefined {
-  const counts = lines.map((line) => semanticRecurrenceMarkerCount(line.text + line.ending));
-  const total = counts.reduce((sum, count) => sum + count, 0);
-  return total === 1 && counts[ownership.fromLine] === 1 ? undefined : 'nested-recurrence-conflict';
+  for (const index of ownership.taskLines) {
+    const line = lines[index];
+    if (line === undefined) return 'invalid-task-syntax';
+    const expected = index === ownership.fromLine ? 1 : 0;
+    if (semanticRecurrenceMarkerCount(line.text + line.ending) !== expected)
+      return 'nested-recurrence-conflict';
+  }
+  return ancestorRecurrenceIssue(lines, ownership.fromLine);
 }
 
-function iterationLinesIssue(lines: readonly SourceLine[]): IterationIssueCode | undefined {
-  for (const line of lines) {
-    if (readTaskLinePrefix(line.text) === null) continue;
+function ancestorRecurrenceIssue(
+  lines: readonly SourceLine[],
+  ownerRelativeLine: number,
+): IterationIssueCode | undefined {
+  const commentLines = lines.map((line) => line.text);
+  let index = 0;
+  while (index < ownerRelativeLine) {
+    const line = lines[index];
+    if (line === undefined) return 'invalid-task-syntax';
+    if (semanticRecurrenceMarkerCount(line.text + line.ending) === 0) {
+      index = commentBlockEnd(commentLines, index);
+      continue;
+    }
+    const end = ownedSubtreeEnd(lines, commentLines, index, line);
+    if (end === undefined) return 'invalid-task-syntax';
+    if (end >= ownerRelativeLine) return 'nested-recurrence-conflict';
+    // Skip the entire disjoint branch, including its history and malformed descendants.
+    // Each preceding branch is visited once using the same boundaries as replacement.
+    index = end + 1;
+  }
+  return undefined;
+}
+
+function iterationLinesIssue(
+  lines: readonly SourceLine[],
+  ownership: RecurrenceOwnedSubtree,
+): IterationIssueCode | undefined {
+  for (const index of ownership.taskLines) {
+    const line = lines[index];
+    if (line === undefined) return 'invalid-task-syntax';
     const parsed = parseIterationTaskLine(line.text + line.ending);
     if (parsed.type === 'invalid') return parsed.code;
   }
@@ -769,7 +801,7 @@ export function prepareRecurrenceIteration(
   const ownership = recurrenceOwnedSubtree(input.rootBlock, input.ownerRelativeLine);
   if (ownership == null || !calendarDate(input.today)) return invalid('invalid-task-syntax');
   if (!Number.isSafeInteger(input.dayDelta)) return invalid('invalid-descendant-date');
-  const issue = recurrenceStructureIssue(lines, ownership) ?? iterationLinesIssue(lines);
+  const issue = recurrenceStructureIssue(lines, ownership) ?? iterationLinesIssue(lines, ownership);
   if (issue !== undefined) return invalid(issue);
   const completed = completedIterationLines(lines, ownership, input);
   if (completed.type === 'invalid') return invalid(completed.code);

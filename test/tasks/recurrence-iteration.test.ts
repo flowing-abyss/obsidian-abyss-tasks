@@ -347,9 +347,14 @@ describe('prepareRecurrenceIteration', () => {
     ['ancestor', ['- [ ] Root 🔁 every month', '  - [/] Owner 🔁 every day'].join('\n'), 1],
     ['descendant malformed marker', ['- [/] Owner 🔁 every day', '  - [ ] Child 🔁'].join('\n'), 0],
     [
-      'sibling empty marker',
-      ['- [ ] Root', '  - [/] Owner 🔁 every day', '  - [ ] Sibling 🔁'].join('\n'),
-      1,
+      'nested ancestor past an ordinary sibling',
+      [
+        '- [ ] Root',
+        '  - [ ] Branch 🔁 every week',
+        '    - [ ] Sibling',
+        '    - [/] Owner 🔁 every day',
+      ].join('\n'),
+      3,
     ],
     ['same task', '- [/] Owner 🔁 every day 🔁 every week', 0],
   ])('rejects a second recurrence marker on the %s', (_name, rootBlock, ownerRelativeLine) => {
@@ -366,6 +371,89 @@ describe('prepareRecurrenceIteration', () => {
         addCompletionDate: true,
       }),
     ).toEqual({ type: 'invalid', code: 'nested-recurrence-conflict' });
+  });
+
+  it.each([
+    {
+      name: 'recurring sibling before the owner',
+      before: ['- [ ] Root', '  - [ ] Sibling 🔁 every week'],
+      after: [],
+    },
+    {
+      name: 'completed recurring sibling after the owner',
+      before: ['- [ ] Root'],
+      after: ['  - [x] Sibling 🔁 every day ✅ 2026-07-31'],
+    },
+    {
+      name: 'empty recurrence on another branch',
+      before: ['- [ ] Root'],
+      after: ['  - [ ] Sibling 🔁'],
+    },
+    {
+      name: 'malformed metadata on an ancestor and sibling',
+      before: ['- [ ] Root 📅 2026-02-30', '  - [ ] Sibling ⏰ 99:99'],
+      after: ['  - [ ] Other 📅 2026-08-01 📅 2026-08-02'],
+    },
+    {
+      name: 'preceding recurring cousin with nested recurrence',
+      before: ['- [ ] Root', '  - [ ] Branch 🔁 every week', '    - [ ] Cousin 🔁 every day'],
+      after: [],
+    },
+    {
+      name: 'protected markers and a multiline comment on the parent',
+      before: [
+        '- [ ] Root `🔁 every month`',
+        '  - 2026-07-31: literal 🔁',
+        '    \\- [ ] example 🔁 every day',
+      ],
+      after: [],
+    },
+  ])('isolates completion from $name', ({ before, after }) => {
+    expect(
+      prepareRecurrenceIteration({
+        rootBlock: [...before, '  - [/] Owner 🔁 every day', ...after].join('\n'),
+        ownerRelativeLine: before.length,
+        nextPlanning: {},
+        dayDelta: 0,
+        doneSymbol: 'x',
+        todoSymbol: ' ',
+        today: localDate('2026-08-01'),
+        addCreatedDate: false,
+        addCompletionDate: false,
+      }),
+    ).toEqual({
+      type: 'prepared',
+      cleanSubtree: '  - [ ] Owner 🔁 every day',
+      completedSubtree: '  - [x] Owner 🔁 every day',
+    });
+  });
+
+  it('allows a deeply nested owner after a disjoint recurring branch', () => {
+    expect(
+      prepareRecurrenceIteration({
+        rootBlock: [
+          '> - [ ] Root',
+          '>   - [ ] Other branch 🔁 every week',
+          '>     - [ ] Cousin',
+          '>   - [ ] Branch',
+          '>     - [ ] Owner 🔁 every day',
+          '>       - [x] Child 📅 2026-08-03',
+          '>   - [ ] Later 🔁 every month',
+        ].join('\r\n'),
+        ownerRelativeLine: 4,
+        nextPlanning: {},
+        dayDelta: 1,
+        doneSymbol: 'x',
+        todoSymbol: ' ',
+        today: localDate('2026-08-01'),
+        addCreatedDate: false,
+        addCompletionDate: false,
+      }),
+    ).toEqual({
+      type: 'prepared',
+      cleanSubtree: '>     - [ ] Owner 🔁 every day\r\n>       - [ ] Child 📅 2026-08-04',
+      completedSubtree: '>     - [x] Owner 🔁 every day\r\n>       - [x] Child 📅 2026-08-03',
+    });
   });
 
   it.each([
