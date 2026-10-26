@@ -238,3 +238,27 @@ describe('virtual task Kanban', () => {
     expect(h.surface.element('n:0')).toBeDefined();
   });
 });
+it.each([false, true])(
+  'recompacts a revealed emptied column unless creation is active (%s)',
+  (creating) => {
+    const h = harness(2);
+    h.settings.emptyColumns = 'compact';
+    h.surface.reveal('n:0');
+    const column = expectDefined(
+      h.host.querySelector<HTMLElement>('[data-column-key="status:todo"]'),
+    );
+    if (creating)
+      expectDefined(column.querySelector<HTMLElement>('.abyss-task-kanban-capture')).createEl(
+        'input',
+      );
+    const model = buildTaskKanbanModel(indexedRows<Value>([]), statuses, h.settings, (v) => v);
+    h.surface.setModel(model, h.settings);
+    h.surface.update(model.rows, {
+      revision: 'empty',
+      preserveAnchor: true,
+      estimate: () => 64,
+      measurementRevision: () => 'one',
+    });
+    expect(column.hasClass('is-collapsed')).toBe(!creating);
+  },
+);

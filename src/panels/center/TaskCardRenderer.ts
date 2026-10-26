@@ -501,8 +501,7 @@ export class TaskCardRenderer {
     const evidence = search?.context.tree.evidence.filter(isTaskSearchSemanticEvidence) ?? [];
     return JSON.stringify([
       this.#host.currentDate(),
-      this.#settings.sourceNoteDisplay,
-      this.#settings.taskFilePath,
+      this.#sourceMetadataKey(),
       current.tagGroups,
       current.flags.occurrence,
       current.flags.calendar?.planning,
@@ -1166,8 +1165,7 @@ export class TaskCardRenderer {
         JSON.stringify([
           datePresentationDay,
           tagGroups,
-          this.#settings.sourceNoteDisplay,
-          this.#settings.taskFilePath,
+          this.#sourceMetadataKey(),
           this.#suppressTodayMetadata(node),
           evidence,
           evidence.length === 0 ? undefined : search.query.tokens,
@@ -1377,7 +1375,25 @@ export class TaskCardRenderer {
     );
   }
 
+  #sourceMetadataKey(): string {
+    return JSON.stringify([
+      this.#settings.sourceNoteDisplay,
+      this.#settings.taskFilePath,
+      this.#projectScope(),
+    ]);
+  }
+  #projectScope(): string | undefined {
+    if (this.#state.get('mode') === 'projects') {
+      const panel = this.#state.get('projectsPanel');
+      return panel.view === 'dashboard' ? panel.path : undefined;
+    }
+    if (this.#state.get('mode') !== 'tasks') return undefined;
+    const list = this.#state.get('selectedList');
+    return typeof list === 'object' && list.type === 'project' ? list.path : undefined;
+  }
+
   #renderSourceMetadata(host: HTMLElement, task: TaskSnapshot): void {
+    if (task.source.filePath === this.#projectScope()) return;
     if (shouldShowSourceNote(task, this.#settings.sourceNoteDisplay, this.#settings.taskFilePath))
       renderSourceNoteChip(host, task, (filePath) => {
         this.#listControls.addPropertyFilter({ type: 'file', filePath });

@@ -7587,7 +7587,6 @@ button.abyss-project-table-status-pill {
   min-height: 0;
   flex: 1 1 auto;
   padding: var(--size-4-2);
-  scrollbar-gutter: stable;
 }
 
 .abyss-status-dot[hidden] {

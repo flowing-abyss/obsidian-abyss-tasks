@@ -2324,3 +2324,30 @@ it('renders the complete description when the collection requests more than a pr
   expect(mount.element.querySelector('.abyss-task-desc')?.textContent).not.toContain('…');
   mount.destroy();
 });
+it('omits only the current project source note and refreshes retained cards on context changes', () => {
+  const h = renderer();
+  h.settings.sourceNoteDisplay = 'always';
+  const original = task({ source: { filePath: 'Project.md' } });
+  const flags = { selected: false, showDelete: false };
+  const mount = h.subject.mount(document.body, original, [], flags);
+  const refresh = () => {
+    mount.update(original, [], flags);
+  };
+  const chip = () => mount.element.querySelector('.abyss-task-source-note');
+  h.state.set('mode', 'tasks');
+  h.state.set('selectedList', { type: 'project', path: 'Project.md' });
+  refresh();
+  expect(chip()).toBeNull();
+  h.state.set('selectedList', { type: 'tag', tag: '#work' });
+  refresh();
+  expect(chip()).not.toBeNull();
+  h.state.set('mode', 'projects');
+  h.state.set('projectsPanel', { view: 'dashboard', path: 'Project.md' });
+  refresh();
+  expect(chip()).toBeNull();
+  h.state.set('projectsPanel', { view: 'dashboard', path: 'Other.md' });
+  refresh();
+  expect(chip()).not.toBeNull();
+  mount.destroy();
+  h.hostComponent.unload();
+});

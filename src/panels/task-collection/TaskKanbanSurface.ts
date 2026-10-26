@@ -96,7 +96,7 @@ export class TaskKanbanSurface<T> implements TaskCollectionSurface<T> {
     let previous: HTMLElement | undefined;
     for (const model of this.#model.columns) {
       const column = this.#columns.get(model.key) ?? this.#createColumn(model);
-      column.model = model;
+      this.#replaceModel(column, model);
       this.#columns.set(model.key, column);
       this.#updateHeader(column);
       const before =
@@ -111,6 +111,11 @@ export class TaskKanbanSurface<T> implements TaskCollectionSurface<T> {
       this.#visibility();
     }
     this.options.mountedChanged();
+  }
+  #replaceModel(column: Column<T>, model: TaskKanbanModel<T>['columns'][number]): void {
+    if (column.model.rows.taskCount > 0 && model.rows.taskCount === 0)
+      this.#expanded.delete(model.key);
+    column.model = model;
   }
   #updateColumn(
     column: Column<T>,
@@ -198,6 +203,7 @@ export class TaskKanbanSurface<T> implements TaskCollectionSurface<T> {
   }
   #collapsed(column: Column<T>): boolean {
     return (
+      column.capture.childElementCount === 0 &&
       !this.#expanded.has(column.model.key) &&
       (this.#settings.collapsedColumns.includes(column.model.key) ||
         (column.model.rows.taskCount === 0 && this.#settings.emptyColumns === 'compact'))
