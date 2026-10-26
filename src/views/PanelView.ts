@@ -83,6 +83,7 @@ import { TrackingTicker } from '../ui/timeTracking/TrackingTicker';
 import { createTrackingActions } from '../ui/timeTracking/trackingActions';
 import { CompactPaneAccess } from './CompactPaneAccess';
 import { PanelNavigator } from './panelNavigation';
+import { mountPanelStatusBarInset } from './panelStatusBarInset';
 import { PANEL_DISPLAY_TEXT, panelTitle } from './panelTitle';
 
 export const PANEL_VIEW_TYPE = 'task-calendar-panel';
@@ -198,6 +199,7 @@ export class PanelView extends ItemView {
   /** The phone view header text; Obsidian reads it before onOpen and on every layout save. */
   private hostTitle_abyssPrivate = PANEL_DISPLAY_TEXT;
   private keyboardCleanup_abyssPrivate: (() => void) | undefined = undefined;
+  private statusBarCleanup_abyssPrivate: (() => void) | undefined;
   private selectedListRenameUnsub_abyssPrivate: (() => void) | undefined;
   private projectStore_abyssPrivate?: ProjectStore;
   private projectStoreUnsub_abyssPrivate?: () => void;
@@ -639,6 +641,11 @@ export class PanelView extends ItemView {
     const railEl = layout.createDiv({ cls: 'abyss-rail' });
     const leftEl = layout.createDiv({ cls: 'abyss-left' });
     const centerShell = layout.createDiv({ cls: 'abyss-center-shell' });
+    if (!Platform.isMobile)
+      this.statusBarCleanup_abyssPrivate = mountPanelStatusBarInset(
+        centerShell,
+        this.app.workspace,
+      );
     const compactLeftButton = centerShell.createEl('button');
     compactLeftButton.addClass('abyss-compact-pane-button', 'abyss-compact-pane-button--left');
     compactLeftButton.setAttrs({
@@ -1191,6 +1198,8 @@ export class PanelView extends ItemView {
     this.localScope_abyssPrivate = undefined;
     this.keyboardCleanup_abyssPrivate?.();
     this.keyboardCleanup_abyssPrivate = undefined;
+    this.statusBarCleanup_abyssPrivate?.();
+    this.statusBarCleanup_abyssPrivate = undefined;
     this.contentEl.empty();
   }
 

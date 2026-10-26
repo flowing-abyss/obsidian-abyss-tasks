@@ -374,6 +374,10 @@ duplicate shell subscriptions. LeftPanel defers task navigation presentation in 
 and Projects; returning to Tasks rebuilds counts, tags, projects and active state from current data
 and settings. Its outer render still settles inline sessions while hidden.
 
+PanelView's desktop center shell measures overlap with the owning window's floating status bar
+before allocating scroll and footer space. Its disposable inset observer follows layout, theme,
+resize, and window migration; phone navigation continues to use Obsidian's keyboard-aware inset.
+
 | Owner                                               | Responsibility                                                                                   |
 | --------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
 | [CompactPaneAccess](src/views/CompactPaneAccess.ts) | Responsive pane access, local focus, observers, and pending pane intent                          |

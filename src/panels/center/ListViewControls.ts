@@ -71,6 +71,7 @@ interface ListViewControlsOptions {
 
 export class ListViewControls {
   readonly #options: ListViewControlsOptions;
+  readonly #chipKeys = new WeakMap<HTMLElement, string>();
   #viewStatePopoverCleanup: ((restoreFocus?: boolean) => void) | null = null;
 
   constructor(options: ListViewControlsOptions) {
@@ -98,13 +99,25 @@ export class ListViewControls {
   }
 
   /** Renders filters in source order, optionally before a toolbar anchor. */
-  renderPropertyChips(controls: HTMLElement, anchor?: HTMLElement): HTMLElement[] {
+  renderPropertyChips(
+    controls: HTMLElement,
+    anchor?: HTMLElement,
+    previous: readonly HTMLElement[] = [],
+  ): HTMLElement[] {
     const vs = this.#read();
     const chips: HTMLElement[] = [];
     for (const [i, f] of vs.filters.entries()) {
       const label = this.#filterChipLabel(f);
+      const key = JSON.stringify([f, label]);
+      const retained = previous[i];
+      if (retained?.parentElement === controls && this.#chipKeys.get(retained) === key) {
+        chips.push(retained);
+        continue;
+      }
       const chip = controls.createSpan({ cls: 'abyss-filter-chip' });
-      anchor?.before(chip);
+      this.#chipKeys.set(chip, key);
+      if (retained?.parentElement === controls) retained.before(chip);
+      else anchor?.before(chip);
       chip.createSpan({ cls: 'abyss-filter-chip-label', text: label });
       const x = chip.createEl('button', { cls: 'abyss-filter-chip-x', text: '×' });
       const idx = i;
@@ -114,6 +127,9 @@ export class ListViewControls {
       });
       chips.push(chip);
     }
+    previous.forEach((chip) => {
+      if (!chips.includes(chip)) chip.remove();
+    });
     return chips;
   }
 

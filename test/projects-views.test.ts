@@ -1,7 +1,11 @@
 import { Component, Menu, Notice } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
-import { renderProjectDashboard } from '../src/panels/projects/ProjectsDashboardView';
+import {
+  disposeProjectDashboard,
+  refreshProjectDashboard,
+  renderProjectDashboard,
+} from '../src/panels/projects/ProjectsDashboardView';
 import { ProjectsPanel } from '../src/panels/projects/ProjectsPanel';
 import { renderProgressBar } from '../src/panels/projects/progressBar';
 import { ObsidianProjectProperties } from '../src/projects/ObsidianProjectProperties';
@@ -884,4 +888,33 @@ describe('ProjectsPanel dispatch', () => {
       error: failure,
     });
   });
+});
+
+it('retains focused date buttons through late dashboard source refresh', () => {
+  const el = document.body.createDiv();
+  const renderTasks = (host: HTMLElement): void => {
+    if (host.querySelector('.abyss-center-header') === null)
+      host.createDiv({ cls: 'abyss-center-header' });
+  };
+  const project = proj({ frontmatter: { start: '2026-10-26', end: '2026-10-29' } });
+  renderProjectDashboard(el, project, {
+    state: new AppState(),
+    settings: DEFAULT_SETTINGS,
+    renderTasks,
+    onSetStatus: () => {},
+    openNote: () => {},
+  });
+  const end = expectDefined(el.querySelector<HTMLButtonElement>('[data-project-field="end"]'));
+  end.focus();
+  refreshProjectDashboard(
+    el,
+    { ...project, frontmatter: { start: '2026-10-27', end: '2026-10-30' } },
+    renderTasks,
+    DEFAULT_SETTINGS.projects.statuses,
+  );
+  expect(el.querySelector('[data-project-field="end"]')).toBe(end);
+  expect(document.activeElement).toBe(end);
+  expect(end.textContent).toContain('30');
+  disposeProjectDashboard(el);
+  el.remove();
 });

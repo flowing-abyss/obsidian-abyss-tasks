@@ -145,6 +145,36 @@ describe('initial list options indicator', () => {
 });
 
 describe('mounted tag polarity chips', () => {
+  it('retains focused filter controls on a source refresh and removes the correct updated filter', () => {
+    const state = new AppState();
+    const root = document.body.createDiv();
+    const controls = new ListViewControls({
+      state,
+      settings: structuredClone(DEFAULT_SETTINGS),
+      statusRegistry: makeStubStore([]).statusRegistry,
+      interactionOwnership: noInteractionOwnership,
+      saveViewState: async () => {},
+      host: { root: () => root, formatDate: (value) => value },
+    });
+    try {
+      controls.addPropertyFilter({ type: 'tag', value: '#work' });
+      controls.addPropertyFilter({ type: 'priority', value: 'A' });
+      let chips = controls.renderPropertyChips(root);
+      const close = expectDefined(root.querySelector<HTMLButtonElement>('.abyss-filter-chip-x'));
+      close.focus();
+      chips = controls.renderPropertyChips(root, undefined, chips);
+      expect(document.activeElement).toBe(close);
+      expect(root.querySelectorAll('.abyss-filter-chip')).toHaveLength(2);
+      close.click();
+      chips = controls.renderPropertyChips(root, undefined, chips);
+      expect(root.querySelectorAll('.abyss-filter-chip')).toHaveLength(1);
+      expect(chips[0]?.textContent).toContain('Highest');
+      expectDefined(root.querySelector<HTMLButtonElement>('.abyss-filter-chip-x')).click();
+      expect(state.get('centerListViewState').filters).toEqual([]);
+    } finally {
+      root.remove();
+    }
+  });
   it('replaces aliases at the original slot, preserves selected spelling and removes through the chip button', () => {
     const state = new AppState();
     const settings = structuredClone(DEFAULT_SETTINGS);

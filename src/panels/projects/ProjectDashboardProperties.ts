@@ -21,9 +21,16 @@ function metadataText(value: unknown): string {
   return '';
 }
 
+interface DateControl {
+  readonly button: HTMLButtonElement;
+  readonly label: HTMLElement;
+  field: ProjectFieldCatalogItem;
+}
+
 /** Retains date anchors during saves and shares the overview's exact editor session. */
 export class ProjectDashboardProperties {
   readonly #dates: HTMLElement;
+  readonly #dateControls = new Map<string, DateControl>();
   readonly #plus: HTMLButtonElement;
   #popover: AnchoredPopover | undefined;
   #editor: ProjectCellEditorHandle | undefined;
@@ -58,22 +65,39 @@ export class ProjectDashboardProperties {
 
   refresh(): void {
     if (this.#destroyed || this.#editor !== undefined) return;
-    this.#dates.empty();
+    const visible = new Set<string>();
     for (const field of this.#fields().filter(({ id }) => id === 'start' || id === 'end')) {
-      const value = this.#value(field);
-      if (metadataText(value) === '') continue;
-      const button = this.#dates.createEl('button', {
-        cls: 'abyss-project-dashboard-date',
-        attr: { 'aria-label': `${field.label}: ${this.#display(field)}` },
-      });
-      button.dataset['projectField'] = field.id;
-      setIcon(button.createSpan(), field.id === 'start' ? 'calendar-arrow-up' : 'calendar-check');
-      button.createSpan({ text: this.#display(field) });
-      button.addEventListener('click', () => {
-        this.#edit(field, button);
-      });
+      if (metadataText(this.#value(field)) === '') continue;
+      visible.add(field.id);
+      this.#patchDate(field);
+    }
+    for (const [id, control] of this.#dateControls) {
+      if (visible.has(id)) continue;
+      if (control.button === this.owner.ownerDocument.activeElement) this.#plus.focus();
+      control.button.remove();
+      this.#dateControls.delete(id);
     }
     if (this.#popover !== undefined) this.#renderProperties(this.#popover.element);
+  }
+
+  #patchDate(field: ProjectFieldCatalogItem): void {
+    let control = this.#dateControls.get(field.id);
+    if (control === undefined) {
+      const button = this.#dates.createEl('button', { cls: 'abyss-project-dashboard-date' });
+      button.dataset['projectField'] = field.id;
+      setIcon(button.createSpan(), field.id === 'start' ? 'calendar-arrow-up' : 'calendar-check');
+      const created = { button, field, label: button.createSpan() };
+      button.addEventListener('click', () => {
+        this.#edit(created.field, button);
+      });
+      control = created;
+      this.#dateControls.set(field.id, control);
+      if (field.id === 'start') this.#dates.prepend(button);
+    }
+    control.field = field;
+    const text = this.#display(field);
+    control.button.setAttribute('aria-label', `${field.label}: ${text}`);
+    if (control.label.textContent !== text) control.label.setText(text);
   }
 
   #fields(): ProjectFieldCatalogItem[] {
@@ -188,7 +212,9 @@ export class ProjectDashboardProperties {
       },
       restoreFocus: () => {},
     });
+    const toolbar = this.owner.querySelector<HTMLElement>('.abyss-center-header');
     positionCleanup = mountProjectCellEditorPosition({
+      ...(toolbar === null ? {} : { stickyHeader: toolbar }),
       host,
       anchor,
       boundary: this.owner,

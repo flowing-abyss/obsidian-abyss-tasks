@@ -14,6 +14,17 @@ const fixtureContracts = { ...contracts, exceptions: [], runtime: { produced: []
 const analyze = (css: string) =>
   analyzeCss(css, { file: 'fixture.css', contracts: fixtureContracts });
 
+it('enrolls the measured desktop shell inset with its existing CSS consumer', async () => {
+  const { default: ts } = await import('typescript');
+  const source = ts.sys.readFile(ts.sys.resolvePath('src/views/panelStatusBarInset.ts'));
+  const css = ts.sys.readFile(ts.sys.resolvePath('styles.css'));
+  expect(source).toBeDefined();
+  const name = '--abyss-shell-bottom-inset';
+  expect(discoverRuntimeVariables(source ?? '').produced).toEqual([name]);
+  expect(contracts.runtime.produced).toContain(name);
+  expect(css).toContain(`padding-block-end: var(${name}, 0px)`);
+});
+
 it('enrolls only the exact time-grid clock and card geometry producers', async () => {
   const { default: ts } = await import('typescript');
   const files = ['HourGrid.ts', 'renderTimedBlocks.ts'];

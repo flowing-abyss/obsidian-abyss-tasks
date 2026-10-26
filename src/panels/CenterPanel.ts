@@ -1162,8 +1162,11 @@ export class CenterPanel {
   private syncSearchHeader_abyssPrivate(): void {
     const header = this.searchHeader_abyssPrivate;
     if (header === null) return;
-    for (const chip of header.chips) chip.remove();
-    header.chips = this.searchControls_abyssPrivate.renderPropertyChips(header.host, header.button);
+    header.chips = this.searchControls_abyssPrivate.renderPropertyChips(
+      header.host,
+      header.button,
+      header.chips,
+    );
     header.button.toggleClass(
       'abyss-view-state-btn--active',
       this.searchView_abyssPrivate.list.filters.length > 0 ||
@@ -3203,9 +3206,10 @@ export class CenterPanel {
     shell: NonNullable<CenterPanel['taskShell_abyssPrivate']>,
   ): void {
     shell.title.setText(this.getTitle_abyssPrivate());
-    for (const chip of shell.filterChips) chip.remove();
     shell.filterChips = this.listViewControls_abyssPrivate.renderPropertyChips(
       shell.filterChipsHost,
+      undefined,
+      shell.filterChips,
     );
     const viewState = this.taskCollectionState_abyssPrivate();
     shell.viewSwitcher.update(viewState.view ?? 'list');

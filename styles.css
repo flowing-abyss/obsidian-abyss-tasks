@@ -296,6 +296,7 @@
   flex: 1;
   min-inline-size: 0;
   overflow: hidden;
+  padding-block-end: var(--abyss-shell-bottom-inset, 0);
 }
 
 button.abyss-compact-pane-button {
