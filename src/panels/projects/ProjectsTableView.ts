@@ -107,6 +107,7 @@ import {
   mountProjectCellEditor,
   type ProjectCellEditorHandle,
   type ProjectCellEditorNavigation,
+  type ProjectCellEditSession,
 } from './ProjectCellEditor';
 import { mountProjectCellEditorPosition } from './projectCellEditorPosition';
 import { ProjectCreationComposer } from './ProjectCreationComposer';
@@ -3620,6 +3621,35 @@ export class ProjectsTableView {
     };
     handle.focus();
     return cleanup;
+  }
+
+  /** A retained dashboard editor shares this session's source guards, queue and receipts. */
+  createFieldEditorSession(
+    project: Project,
+    rawField: ProjectFieldCatalogItem,
+  ): ProjectCellEditSession {
+    const { field, ownedClear } = this.effectiveField_abyssPrivate(project, rawField);
+    if (!editableField(field))
+      return {
+        field,
+        value: projectFieldValue(project, field),
+        save: async () => {
+          throw new ProjectEditValidationError(`${field.label} is not editable here.`);
+        },
+      };
+    const state = projectCellEditorState(
+      project,
+      field,
+      this.context_abyssPrivate.settings,
+      ownedClear,
+    );
+    const presets = this.editorPresets_abyssPrivate(field);
+    return {
+      field,
+      value: state.expectedValue,
+      ...(presets === undefined ? {} : { presets }),
+      save: (value) => this.saveEditorValue_abyssPrivate(project, field, state, value),
+    };
   }
 
   private editCell_abyssPrivate(

@@ -21,7 +21,12 @@ import type {
   TimelineContextOverlayLayout,
 } from '../timeline/TimelineContextOverlay';
 import { ProjectDashboardTimeline } from './ProjectDashboardTimeline';
-import { refreshProjectDashboard, renderProjectDashboard } from './ProjectsDashboardView';
+import {
+  disposeProjectDashboard,
+  finishProjectDashboardEditorBefore,
+  refreshProjectDashboard,
+  renderProjectDashboard,
+} from './ProjectsDashboardView';
 import { ProjectsTableView } from './ProjectsTableView';
 
 export interface ProjectsPanelOptions {
@@ -104,6 +109,8 @@ export class ProjectsPanel {
       }),
       this.projectProperties_abyssPrivate.onChange(() => {
         this.tableView_abyssPrivate?.refreshFields();
+        const view = this.state_abyssPrivate.get('projectsPanel');
+        if (view.view === 'dashboard') this.renderDashboard_abyssPrivate(view.path);
       }),
       this.projectStore_abyssPrivate.onSourceObservation((observation) => {
         this.tableView_abyssPrivate?.observeProjectSource(observation);
@@ -195,6 +202,7 @@ export class ProjectsPanel {
 
   /** Runs an action after the project overview's active draft is committed or cancelled. */
   finishTableEditorBefore(action: () => void): void {
+    if (finishProjectDashboardEditorBefore(this.dashboardHost_abyssPrivate, action)) return;
     const table = this.tableView_abyssPrivate;
     if (table === null) action();
     else table.finishEditorBeforeAction(action);
@@ -218,6 +226,8 @@ export class ProjectsPanel {
     this.tableHost_abyssPrivate?.remove();
     this.tableHost_abyssPrivate = null;
     if (this.dashboardHost_abyssPrivate !== null) this.unmountTasks_abyssPrivate();
+    if (this.dashboardHost_abyssPrivate !== null)
+      disposeProjectDashboard(this.dashboardHost_abyssPrivate);
     this.dashboardHost_abyssPrivate?.remove();
     this.dashboardHost_abyssPrivate = null;
     this.el_abyssPrivate?.empty();
@@ -247,8 +257,11 @@ export class ProjectsPanel {
     return this.projectManager_abyssPrivate.applyEdits(changes);
   }
 
-  private openNote_abyssPrivate(path: string): void {
-    runAsyncAction(openProjectNote(this.app_abyssPrivate, path), 'Could not open project note');
+  private openNote_abyssPrivate(path: string, newTab = false): void {
+    runAsyncAction(
+      openProjectNote(this.app_abyssPrivate, path, newTab),
+      'Could not open project note',
+    );
   }
 
   private syncView_abyssPrivate(tableAlreadyCurrent = false): void {
@@ -273,6 +286,7 @@ export class ProjectsPanel {
     const dashboard = this.dashboardHost_abyssPrivate;
     const allowFocus = dashboard?.contains(tableHost.ownerDocument.activeElement) === true;
     if (dashboard !== null) this.unmountTasks_abyssPrivate();
+    if (dashboard !== null) disposeProjectDashboard(dashboard);
     dashboard?.remove();
     this.dashboardHost_abyssPrivate = null;
     el.appendChild(tableHost);
@@ -300,11 +314,32 @@ export class ProjectsPanel {
     const scrollTop =
       previous !== null && this.dashboardPath_abyssPrivate === path ? previous.scrollTop : 0;
     if (previous !== null) this.unmountTasks_abyssPrivate();
+    disposeProjectDashboard(previous);
     previous?.remove();
     const host = el.createDiv({ cls: 'abyss-project-dashboard-session' });
     this.dashboardHost_abyssPrivate = host;
     this.dashboardPath_abyssPrivate = path;
     renderProjectDashboard(host, this.dashboardProject_abyssPrivate(path), {
+      finishEditorBefore: (action) => {
+        this.finishTableEditorBefore(action);
+      },
+      editor: {
+        app: this.app_abyssPrivate,
+        catalog: this.projectProperties_abyssPrivate,
+        capture: (project, field) => {
+          const session = this.tableView_abyssPrivate?.createFieldEditorSession(project, field);
+          if (session === undefined) return undefined;
+          return {
+            ...session,
+            save: async (value) => {
+              await session.save(value);
+              const view = this.state_abyssPrivate.get('projectsPanel');
+              if (view.view === 'dashboard') this.renderDashboard_abyssPrivate(view.path);
+              this.projectStore_abyssPrivate.refresh();
+            },
+          };
+        },
+      },
       state: this.state_abyssPrivate,
       settings: this.settings_abyssPrivate,
       onSetStatus: (projectPath, statusId) => {
@@ -320,7 +355,7 @@ export class ProjectsPanel {
         );
       },
       openNote: (projectPath) => {
-        this.openNote_abyssPrivate(projectPath);
+        this.openNote_abyssPrivate(projectPath, true);
       },
       renderTasks: this.renderTasks_abyssPrivate,
     });

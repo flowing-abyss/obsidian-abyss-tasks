@@ -88,6 +88,9 @@ import process from 'process';
 // Mobile inspector visibility and keyboard-bounded link suggestions: main 2,150,070 ->
 // 2,152,652 bytes (+2,582); no dependencies added. The minimal containing KiB limit is
 // 2,153,472 bytes (2103 KiB). CSS and artifact enforcement remain unchanged.
+// Retained dashboard property editors and shared timeline release ownership: main 2,222,212
+// bytes, no new dependencies. The minimal containing KiB limit is 2,223,104 (2171 KiB).
+// CSS remains within its existing limit; both artifact checks stay enforced.
 const { mainJsBudgetBytes: MAIN_JS_BUDGET_BYTES } = JSON.parse(
   readFileSync('package.json', 'utf8'),
 ).release;

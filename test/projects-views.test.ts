@@ -302,6 +302,7 @@ describe('ProjectsPanel dispatch', () => {
     expect(activeDocument.activeElement).toBe(input);
     expect([input.selectionStart, input.selectionEnd]).toEqual([2, 5]);
     expect(el.querySelector('.abyss-project-dashboard-title')?.textContent).toBe('Renamed');
+    expectDefined(el.querySelector<HTMLElement>('[aria-label="Project properties"]')).click();
     expect(el.querySelector('.abyss-project-description')?.textContent).toBe('After');
     expect(el.querySelector('.abyss-progress-label')?.textContent).toBe('3/4');
     panel.destroy();
@@ -334,10 +335,11 @@ describe('ProjectsPanel dispatch', () => {
     expect(el.querySelector('.abyss-center-scroll')).toBe(scroll);
     expect(scroll.scrollTop).toBe(612.25);
     const details = expectDefined(
-      el.querySelector<HTMLDetailsElement>('.abyss-project-dashboard-details'),
+      el.querySelector<HTMLButtonElement>('.abyss-project-dashboard-details'),
     );
-    expect(details.open).toBe(false);
-    expect(details.querySelector('.abyss-project-description')?.textContent).toBe(
+    expect(details.getAttribute('aria-expanded')).toBe('false');
+    details.click();
+    expect(el.querySelector('.abyss-project-description')?.textContent).toBe(
       'A much longer description',
     );
     panel.destroy();
@@ -851,7 +853,7 @@ describe('ProjectsPanel dispatch', () => {
     expect(log).not.toHaveBeenCalled();
   });
 
-  it('reports a failed open from the dashboard open button', async () => {
+  it('reports a failed open from the dashboard title', async () => {
     const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const failure = new Error('leaf closed');
     const notices = spyOnNotices();
@@ -868,7 +870,7 @@ describe('ProjectsPanel dispatch', () => {
     el.ownerDocument.body.append(el);
     panel.mount(el);
     try {
-      expectDefined(el.querySelector<HTMLButtonElement>('.abyss-project-open-btn')).click();
+      expectDefined(el.querySelector<HTMLButtonElement>('.abyss-project-dashboard-title')).click();
       await flushMicrotasks();
 
       expect(notices.mock.calls.map(([text]) => text)).toEqual([

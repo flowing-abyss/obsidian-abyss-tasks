@@ -20,6 +20,7 @@ import { taskCollectionListState } from '../task-lists/taskCollectionSettings';
 import { buildTaskKanbanModel } from '../task-lists/taskKanbanModel';
 import { normalizeTaskKanbanSettings } from '../task-lists/taskKanbanSettings';
 import { outgoingTaskLinkValues, type TaskLinkValues } from '../task-lists/taskLinkValues';
+import { taskNodeMembershipValue } from '../task-lists/taskNodeMembership';
 import type { TaskOccurrencePresentation } from '../task-lists/taskOccurrencePresentation';
 import type {
   TaskSearchOccurrence,
@@ -1622,7 +1623,7 @@ export class CenterPanel {
         rows,
         normalizeTaskTimelineSettings(this.taskCollectionState_abyssPrivate().timeline),
         this.statusRegistry_abyssPrivate.all(),
-        (task) => ('root' in task ? task.node : task.menu),
+        (task) => ('root' in task ? taskNodeMembershipValue(task) : task.menu),
       );
     if (!(surface instanceof TaskKanbanSurface)) return rows;
     const settings = normalizeTaskKanbanSettings(this.taskCollectionState_abyssPrivate().kanban);
@@ -3169,7 +3170,9 @@ export class CenterPanel {
       ],
       {
         onSelect: (view) => {
-          this.listViewControls_abyssPrivate.setView(view);
+          this.finishProjectTableEditorBefore(() => {
+            this.listViewControls_abyssPrivate.setView(view);
+          });
         },
         family: 'abyss-task-collection',
       },

@@ -31,15 +31,15 @@ export async function changeProjectStatus(
   onChanged();
 }
 
-/** Opens a project's note in the current leaf; a missing note or a failed open raises a Notice. */
-export async function openProjectNote(app: App, path: string): Promise<void> {
+/** Opens a project's note in the requested leaf; a missing note or a failed open raises a Notice. */
+export async function openProjectNote(app: App, path: string, newTab = false): Promise<void> {
   const file = app.vault.getAbstractFileByPath(path);
   if (!(file instanceof TFile)) {
     new Notice(`Could not find ${path}.`);
     return;
   }
   try {
-    await app.workspace.getLeaf(false).openFile(file);
+    await app.workspace.getLeaf(newTab ? 'tab' : false).openFile(file);
   } catch (error) {
     console.error('[abyss-tasks] Could not open the project note', { path, error });
     new Notice(withFailureCause(`Could not open ${path}.`, error));

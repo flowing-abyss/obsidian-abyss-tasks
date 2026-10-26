@@ -120,3 +120,11 @@ describe('openProjectNote', () => {
     expect(notices).not.toHaveBeenCalled();
   });
 });
+it('opens the project title in a new tab when requested', async () => {
+  const app = await createAppWithFiles({ 'Projects/A.md': '' });
+  const openFile = vi.fn().mockResolvedValue(undefined);
+  const getLeaf = vi.spyOn(app.workspace, 'getLeaf').mockReturnValue({ openFile } as never);
+  await openProjectNote(app, 'Projects/A.md', true);
+  expect(getLeaf).toHaveBeenCalledExactlyOnceWith('tab');
+  expect(openFile).toHaveBeenCalledOnce();
+});

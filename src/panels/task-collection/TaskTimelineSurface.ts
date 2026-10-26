@@ -555,6 +555,12 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
     mount.scheduledTrack.hidden =
       !this.actions.settings().showScheduled || dates.scheduled === undefined;
     mount.scheduled.setAttribute('aria-label', `Scheduled ${dates.scheduled ?? ''}`);
+    mount.element.toggleClass(
+      'has-scheduled-range',
+      !mount.scheduledTrack.hidden &&
+        dates.range.kind !== 'unscheduled' &&
+        dates.range.kind !== 'malformed',
+    );
     this.#patchState(mount, dates);
   }
   #patchState(mount: TimelineMount<T>, dates: ReturnType<typeof taskTimelineDates>): void {

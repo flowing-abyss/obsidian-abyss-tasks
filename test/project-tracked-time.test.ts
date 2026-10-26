@@ -356,6 +356,7 @@ describe('tracked time presentation', () => {
     const empty = freshContainer();
     renderProjectDashboard(empty, project(), context);
 
+    expectDefined(withTime.querySelector<HTMLElement>('[aria-label="Project properties"]')).click();
     expect(withTime.querySelector('.abyss-project-time-label')?.textContent).toBe('Time');
     expect(withTime.querySelector('.abyss-project-time-value')?.textContent).toBe('2h 5m');
     expect(empty.querySelector('.abyss-project-time')).toBeNull();

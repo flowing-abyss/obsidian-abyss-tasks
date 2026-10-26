@@ -3,7 +3,7 @@ import { indexedRows } from '../src/panels/task-list/taskListRows';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { buildTaskTimelineRows } from '../src/task-lists/taskTimelineRows';
 import { defaultTaskTimelineSettings } from '../src/task-lists/taskTimelineSettings';
-import { localDate, type TaskPlanning } from '../src/tasks';
+import { localDate, localTime, type TaskPlanning } from '../src/tasks';
 it('filters status and truly undated tasks while retaining exact grouped row identities', () => {
   const tasks = [
     { statusSymbol: ' ', planning: { due: localDate('2026-10-26') } },
@@ -68,5 +68,45 @@ it.each(['asc', 'desc'] as const)(
     expect([...result.slice(0, result.rowCount)].map((row) => row.key)).toEqual(
       dir === 'asc' ? ['3', '6', '2', '4', '0', '5', '1'] : ['5', '0', '4', '2', '3', '6', '1'],
     );
+  },
+);
+it.each(['asc', 'desc'] as const)(
+  'breaks equal Start/Due ties by source order even after list date/time sorting (%s)',
+  (dir) => {
+    const values = [
+      {
+        statusSymbol: ' ',
+        source: { filePath: 'A.md', line: 8 },
+        planning: {
+          start: localDate('2026-10-26'),
+          due: localDate('2026-10-28'),
+          time: localTime('09:00'),
+        },
+      },
+      {
+        statusSymbol: ' ',
+        source: { filePath: 'A.md', line: 2 },
+        planning: {
+          start: localDate('2026-10-26'),
+          due: localDate('2026-10-28'),
+          time: localTime('14:00'),
+        },
+      },
+    ];
+    const rows = indexedRows(
+      values.map((task) => ({
+        kind: 'task' as const,
+        task,
+        key: String(task.source.line),
+        taskKey: String(task.source.line),
+      })),
+    );
+    const result = buildTaskTimelineRows(
+      rows,
+      { ...defaultTaskTimelineSettings(), sortBy: { field: 'date', dir } },
+      [],
+      (v) => v,
+    );
+    expect([...result.slice(0, result.rowCount)].map((r) => r.key)).toEqual(['2', '8']);
   },
 );

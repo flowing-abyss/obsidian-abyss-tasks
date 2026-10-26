@@ -4,7 +4,7 @@ import { CenterPanel } from '../src/panels/CenterPanel';
 import { ProjectManager } from '../src/projects/ProjectManager';
 import { ProjectStore } from '../src/projects/ProjectStore';
 import { DEFAULT_SETTINGS, getListViewDefaults } from '../src/settings/defaults';
-import { expectDefined, useRealMoment } from './helpers';
+import { expectDefined, flushMicrotasks, useRealMoment } from './helpers';
 import { prepareTaskPanelViewport } from './support/taskPanelViewport';
 import { createCanonicalSearchHarness } from './support/taskSearchHarness';
 import { searchUiCompleted } from './support/taskSearchUiHarness';
@@ -445,3 +445,147 @@ it('undoes a project date edit from the dashboard range itself', async () => {
     h.dispose();
   }
 });
+it('uses a clickable title and toggled Plus, and places status between filters and views', async () => {
+  const h = await mount('---\nstart: 2026-10-20\nend: 2026-10-31\nowner: Team\n---\n');
+  try {
+    const openFile = vi.fn().mockResolvedValue(undefined);
+    const getLeaf = vi.spyOn(h.app.workspace, 'getLeaf').mockReturnValue({ openFile } as never);
+    h.open('Projects/A.md');
+    expectDefined(h.root.querySelector<HTMLElement>('.abyss-project-dashboard-title')).click();
+    expect(getLeaf).toHaveBeenCalledWith('tab');
+    expect(h.root.querySelector('.abyss-project-open-btn')).toBeNull();
+    const controls = expectDefined(h.root.querySelector('.abyss-center-controls'));
+    const filters = expectDefined(controls.querySelector('.abyss-task-collection-filters'));
+    const status = expectDefined(controls.querySelector('.abyss-status-pill'));
+    expect(filters.nextElementSibling).toBe(status);
+    const plus = expectDefined(
+      h.root.querySelector<HTMLElement>('[aria-label="Project properties"]'),
+    );
+    plus.click();
+    expect(h.root.querySelector('.abyss-project-dashboard-properties')).not.toBeNull();
+    plus.click();
+    expect(h.root.querySelector('.abyss-project-dashboard-properties')).toBeNull();
+  } finally {
+    h.dispose();
+  }
+});
+
+it('edits a dashboard date through the existing guarded project editor and retains the task viewport', async () => {
+  const h = await mount('---\nstart: 2026-10-20\nend: 2026-10-31\n---\n');
+  try {
+    h.open('Projects/A.md');
+    const scroll = h.root.querySelector('.abyss-center-scroll');
+    expectDefined(h.root.querySelector<HTMLElement>('[data-project-field="start"]')).click();
+    const input = expectDefined(
+      h.root.querySelector<HTMLInputElement>('.abyss-project-editor-input'),
+    );
+    expect(document.activeElement).toBe(input);
+    input.value = '2026-10-22';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    const file = h.app.vault.getFileByPath('Projects/A.md');
+    await vi.waitFor(async () => {
+      expect(await h.app.vault.read(expectDefined(file ?? undefined))).toContain(
+        'start: 2026-10-22',
+      );
+    });
+    expect(h.root.querySelector('.abyss-center-scroll')).toBe(scroll);
+  } finally {
+    h.dispose();
+  }
+});
+it.each(['Back', 'mode'] as const)(
+  'retains an invalid property draft before %s navigation, then resumes after correction',
+  async (navigation) => {
+    const h = await mount('---\nstart: 2026-10-20\nend: 2026-10-31\n---\n');
+    try {
+      h.open('Projects/A.md');
+      expectDefined(h.root.querySelector<HTMLElement>('[data-project-field="start"]')).click();
+      const input = expectDefined(
+        h.root.querySelector<HTMLInputElement>('.abyss-project-editor-input'),
+      );
+      const validity = { badInput: true, valid: false };
+      Object.defineProperty(input, 'validity', { get: () => validity });
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      if (navigation === 'Back')
+        expectDefined(h.root.querySelector<HTMLElement>('.abyss-project-back')).click();
+      else
+        h.panel.finishProjectTableEditorBefore(() => {
+          h.state.set('mode', 'tasks');
+        });
+      await flushMicrotasks();
+      expect(h.state.get('mode')).toBe('projects');
+      expect(h.state.get('projectsPanel')).toEqual({ view: 'dashboard', path: 'Projects/A.md' });
+      expect(input.isConnected).toBe(true);
+      validity.badInput = false;
+      validity.valid = true;
+      input.value = '2026-10-22';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await vi.waitFor(() => {
+        if (navigation === 'Back') expect(h.state.get('projectsPanel')).toEqual({ view: 'table' });
+        else expect(h.state.get('mode')).toBe('tasks');
+      });
+    } finally {
+      h.dispose();
+    }
+  },
+);
+it.each([false, true])(
+  'returns keyboard focus from a property editor on Tab (reverse %s)',
+  async (reverse) => {
+    const h = await mount('---\nstart: 2026-10-20\nend: 2026-10-31\n---\n');
+    try {
+      h.open('Projects/A.md');
+      expectDefined(h.root.querySelector<HTMLElement>('[data-project-field="start"]')).click();
+      const input = expectDefined(
+        h.root.querySelector<HTMLInputElement>('.abyss-project-editor-input'),
+      );
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Tab',
+          shiftKey: reverse,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      await vi.waitFor(() => {
+        expect(document.activeElement).toBe(
+          h.root.querySelector(
+            reverse ? '.abyss-project-dashboard-title' : '[data-project-field="end"]',
+          ),
+        );
+      });
+    } finally {
+      h.dispose();
+    }
+  },
+);
+it.each(['Escape', 'Back'] as const)(
+  'keeps an unconfigured property dismissible via %s without blocking navigation',
+  async (action) => {
+    const h = await mount('---\nowner: Team\n---\n');
+    try {
+      h.open('Projects/A.md');
+      expectDefined(h.root.querySelector<HTMLElement>('[aria-label="Project properties"]')).click();
+      expectDefined(
+        h.root.querySelector<HTMLElement>('[data-project-field="property:owner"]'),
+      ).click();
+      const editor = expectDefined(
+        h.root.querySelector<HTMLElement>('.abyss-project-dashboard-editor'),
+      );
+      expect(editor.contains(document.activeElement)).toBe(true);
+      if (action === 'Escape')
+        document.activeElement?.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+        );
+      else expectDefined(h.root.querySelector<HTMLElement>('.abyss-project-back')).click();
+      await vi.waitFor(() => {
+        expect(editor.isConnected).toBe(false);
+        if (action === 'Back') expect(h.state.get('projectsPanel')).toEqual({ view: 'table' });
+      });
+    } finally {
+      h.dispose();
+    }
+  },
+);

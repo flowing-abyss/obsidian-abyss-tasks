@@ -44,6 +44,11 @@ export interface ProjectCellEditorOptions {
   readonly restoreFocus?: () => void;
 }
 
+export type ProjectCellEditSession = Pick<
+  ProjectCellEditorOptions,
+  'field' | 'value' | 'presets' | 'save'
+>;
+
 export interface ProjectCellEditorHandle {
   readonly element: HTMLElement;
   readonly preferredWidth: number | undefined;

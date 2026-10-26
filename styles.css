@@ -8862,6 +8862,7 @@ button.abyss-project-table-status-pill {
 }
 
 .abyss-project-dashboard-session {
+  position: relative;
   overflow-anchor: none;
 }
 
@@ -8913,7 +8914,13 @@ button.abyss-project-table-status-pill {
   gap: var(--size-4-2);
 }
 
-.abyss-project-dashboard-title {
+button.abyss-project-dashboard-title {
+  padding: var(--size-2-1);
+  height: auto;
+  background: transparent;
+  box-shadow: none;
+  border: 0;
+  text-align: start;
   margin: 0;
   min-width: 4rem;
   overflow: hidden;
@@ -8948,6 +8955,18 @@ button.abyss-project-table-status-pill {
   white-space: nowrap;
 }
 
+button.abyss-project-dashboard-date {
+  padding: var(--size-2-1);
+  height: auto;
+  background: transparent;
+  box-shadow: none;
+  border: 0;
+}
+
+:is(.abyss-project-dashboard-title, .abyss-project-dashboard-date):hover {
+  background: var(--background-modifier-hover);
+}
+
 .abyss-project-dashboard-dates:empty {
   display: none;
 }
@@ -8962,37 +8981,39 @@ button.abyss-project-table-status-pill {
   flex: 0 0 auto;
 }
 
-.abyss-project-dashboard-details > summary {
-  list-style: none;
-  display: flex;
-  padding: var(--size-4-1);
-  color: var(--text-muted);
-  cursor: pointer;
-  border-radius: var(--radius-s);
-}
-
-.abyss-project-dashboard-details > summary:hover {
-  background: var(--background-modifier-hover);
-}
-
 .abyss-project-dashboard-properties {
-  position: absolute;
-  top: calc(100% + var(--size-4-2));
-  right: 0;
-  z-index: var(--layer-popover);
-  width: min(22rem, 80cqi);
-  max-height: 50vh;
+  width: min(22rem, var(--abyss-pop-width, 80cqi));
+  max-height: min(50vh, var(--abyss-pop-height, 50vh));
   overflow: auto;
   padding: var(--size-4-3);
   font-size: var(--font-ui-small);
 }
 
-.abyss-project-dashboard-property {
+button.abyss-project-dashboard-property {
+  width: 100%;
+  height: auto;
+  background: transparent;
+  box-shadow: none;
+  border: 0;
+  text-align: start;
+  white-space: normal;
   display: grid;
   grid-template-columns: minmax(5rem, 1fr) minmax(0, 2fr);
   gap: var(--size-4-3);
   padding-block: var(--size-4-1);
   overflow-wrap: anywhere;
+}
+
+.abyss-project-dashboard-property:hover {
+  background: var(--background-modifier-hover);
+}
+
+.abyss-project-dashboard-editor {
+  width: min(22rem, 100%);
+  z-index: var(--layer-popover);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-s, none);
 }
 
 .abyss-project-dashboard-property > :first-child {
@@ -9014,7 +9035,7 @@ button.abyss-project-table-status-pill {
     flex-basis: 100%;
   }
 
-  .abyss-project-dashboard-title {
+  button.abyss-project-dashboard-title {
     flex: 1;
   }
 }
@@ -11315,6 +11336,23 @@ button.abyss-calendar-date[aria-pressed='true'] {
   border: none;
   background: transparent;
   box-shadow: none;
+}
+
+/* Separate the Scheduled target from the range grips even at compact calendar scales. */
+.abyss-task-timeline-row.has-scheduled-range {
+  min-height: calc(3 * var(--size-4-4));
+}
+
+.abyss-task-timeline-row.has-scheduled-range
+  > .abyss-project-timeline-track
+  > .abyss-project-timeline-bar {
+  top: calc(50% - var(--size-4-3));
+}
+
+.abyss-task-timeline-row.has-scheduled-range
+  .abyss-task-timeline-scheduled-track
+  > .abyss-project-timeline-bar {
+  top: calc(50% + var(--size-4-3));
 }
 
 .abyss-task-timeline-scheduled-track {

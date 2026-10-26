@@ -1,19 +1,44 @@
 import { Menu, setIcon } from 'obsidian';
-import { findFrontmatterProperty } from '../../projects/projectFields';
-import { projectTrackedDisplayValue } from '../../projects/projectTableModel';
 import { projectStatusDisplayName } from '../../projects/status';
 import type { Project } from '../../projects/types';
-import type { ProjectsSettings, ProjectStatus } from '../../settings/types';
+import type { ProjectStatus } from '../../settings/types';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import { renderProgressBar } from './progressBar';
-import { formatProjectPrettyDate } from './projectDatePresentation';
+import { ProjectDashboardProperties } from './ProjectDashboardProperties';
 import { applyProjectStatusPresentation } from './projectStatusPresentation';
 import type { ProjectsDashboardContext } from './viewContext';
 
-const dashboardProjects = new WeakMap<
-  HTMLElement,
-  { project: Project; header: HTMLElement; settings: ProjectsSettings }
->();
+interface DashboardState {
+  project: Project;
+  header: HTMLElement;
+  pill: HTMLElement;
+  properties?: ProjectDashboardProperties;
+  disposeMenu: () => void;
+}
+const dashboardProjects = new WeakMap<HTMLElement, DashboardState>();
+
+export function disposeProjectDashboard(container: HTMLElement | null | undefined): void {
+  if (container == null) return;
+  const current = dashboardProjects.get(container);
+  current?.disposeMenu();
+  current?.properties?.destroy();
+  dashboardProjects.delete(container);
+}
+
+export function finishProjectDashboardEditorBefore(
+  container: HTMLElement | null,
+  action: () => void,
+): boolean {
+  const properties = container === null ? undefined : dashboardProjects.get(container)?.properties;
+  if (properties === undefined) return false;
+  properties.finishBefore(action);
+  return true;
+}
+
+function finishAction(ctx: ProjectsDashboardContext, action: () => void): void {
+  if (ctx.finishEditorBefore === undefined) action();
+  else ctx.finishEditorBefore(action);
+}
 
 /** Refresh the same project's presentation without detaching its task or capture owner. */
 export function refreshProjectDashboard(
@@ -29,81 +54,24 @@ export function refreshProjectDashboard(
   current.project = project;
   const title = current.header.querySelector('.abyss-project-dashboard-title');
   if (title !== null) title.textContent = project.name;
-  refreshProjectDashboardStatus(current.header, project, statuses);
+  patchProjectDashboardStatus(current.pill, project, projectStatus(project, statuses));
   const stats = current.header.querySelector<HTMLElement>('.abyss-project-dashboard-stats');
   if (stats !== null) {
     stats.empty();
     renderProgressBar(stats, project.stats);
   }
-  refreshProjectMetadata(current.header, project, current.settings);
+  current.properties?.refresh();
   renderTasks(taskHost, project.path);
-  attachDashboardHeader(taskHost, current.header);
+  attachDashboardHeader(taskHost, current);
   return true;
 }
 
-function attachDashboardHeader(taskHost: HTMLElement, header: HTMLElement): void {
+function attachDashboardHeader(taskHost: HTMLElement, current: DashboardState): void {
   const toolbar = taskHost.querySelector<HTMLElement>('.abyss-center-header');
-  if (toolbar !== null && header.parentElement !== toolbar) toolbar.prepend(header);
-}
-
-function metadataText(value: unknown): string {
-  if (Array.isArray(value)) return value.map(metadataText).filter(Boolean).join(', ');
-  if (typeof value === 'string' || typeof value === 'number') return String(value);
-  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
-  return '';
-}
-
-function refreshProjectDates(
-  header: HTMLElement,
-  project: Project,
-  settings: ProjectsSettings,
-): void {
-  const dates = header.querySelector<HTMLElement>('.abyss-project-dashboard-dates');
-  if (dates !== null) {
-    dates.empty();
-    for (const [label, key] of [
-      ['Start', settings.startProperty],
-      ['End', settings.endProperty],
-    ] as const) {
-      const raw = findFrontmatterProperty(project.frontmatter, key)?.value;
-      if (metadataText(raw) === '') continue;
-      const value =
-        formatProjectPrettyDate(
-          raw,
-          header.ownerDocument.defaultView?.navigator.language ?? 'en',
-        ) ?? metadataText(raw);
-      const chip = dates.createSpan({
-        cls: 'abyss-project-dashboard-date',
-        attr: { 'aria-label': `${label}: ${value}` },
-      });
-      setIcon(chip.createSpan(), label === 'Start' ? 'calendar-arrow-up' : 'calendar-check');
-      chip.createSpan({ text: value });
-    }
-  }
-}
-
-function refreshProjectMetadata(
-  header: HTMLElement,
-  project: Project,
-  settings: ProjectsSettings,
-): void {
-  refreshProjectDates(header, project, settings);
-  const body = header.querySelector<HTMLElement>('.abyss-project-dashboard-properties');
-  if (body === null) return;
-  body.empty();
-  const description = metadataText(project.frontmatter['description']).trim();
-  if (description !== '') body.createDiv({ cls: 'abyss-project-description', text: description });
-  renderTrackedTime(body, project);
-  const excluded = new Set(['position', 'description', settings.statusProperty.toLowerCase()]);
-  for (const [key, raw] of Object.entries(project.frontmatter)) {
-    if (excluded.has(key.toLowerCase())) continue;
-    const value = metadataText(raw);
-    if (value === '') continue;
-    const row = body.createDiv({ cls: 'abyss-project-dashboard-property' });
-    row.createSpan({ text: key });
-    row.createSpan({ text: value });
-  }
-  if (body.childElementCount === 0) body.createDiv({ text: 'No additional properties' });
+  if (toolbar !== null && current.header.parentElement !== toolbar) toolbar.prepend(current.header);
+  const filters = toolbar?.querySelector('.abyss-task-collection-filters');
+  if (filters !== undefined && filters !== null && filters.nextElementSibling !== current.pill)
+    filters.after(current.pill);
 }
 
 /** Detail view for a single project: header, stats, description, its tasks. */
@@ -121,7 +89,9 @@ export function renderProjectDashboard(
   });
   setIcon(back, 'arrow-left');
   back.addEventListener('click', () => {
-    ctx.state.set('projectsPanel', { view: 'table' });
+    finishAction(ctx, () => {
+      ctx.state.set('projectsPanel', { view: 'table' });
+    });
   });
 
   if (project == null) {
@@ -138,84 +108,101 @@ function renderProjectDetails(
   project: Project,
   ctx: ProjectsDashboardContext,
 ): void {
-  const current = { project, header, settings: ctx.settings.projects };
+  const pill = header.createEl('button', { cls: 'abyss-status-pill' });
+  const current: DashboardState = { project, header, pill, disposeMenu: () => {} };
   dashboardProjects.set(container, current);
-  const statuses = ctx.settings.projects.statuses;
-  const status = projectStatus(project, statuses);
-
-  header.createEl('h2', { cls: 'abyss-project-dashboard-title', text: project.name });
-
+  const title = header.createEl('button', {
+    cls: 'abyss-project-dashboard-title',
+    text: project.name,
+  });
+  title.addEventListener('click', () => {
+    finishAction(ctx, () => {
+      ctx.openNote(current.project.path);
+    });
+  });
   const stats = header.createDiv({ cls: 'abyss-project-dashboard-stats' });
   renderProgressBar(stats, project.stats);
+  patchProjectDashboardStatus(
+    pill,
+    project,
+    projectStatus(project, ctx.settings.projects.statuses),
+  );
+  current.disposeMenu = bindStatusMenu(pill, current, ctx);
+  current.properties = new ProjectDashboardProperties(
+    container,
+    header,
+    () => current.project,
+    ctx,
+  );
+  const taskHost = container.createDiv({ cls: 'abyss-project-tasks' });
+  ctx.renderTasks(taskHost, project.path);
+  attachDashboardHeader(taskHost, current);
+}
 
-  const pill = header.createEl('button', {
-    cls: 'abyss-status-pill',
+/** Capture the closing press before Obsidian's outside-click dismissal removes the native menu. */
+function bindStatusMenu(
+  pill: HTMLElement,
+  current: DashboardState,
+  ctx: ProjectsDashboardContext,
+): () => void {
+  let menu: Menu | undefined;
+  let closingPress = false;
+  let release = (): void => {};
+  const bind = (): void => {
+    release();
+    const win = pill.ownerDocument.defaultView;
+    const press = (pointer: PointerEvent): void => {
+      closingPress = menu !== undefined && pointer.composedPath().includes(pill);
+      if (closingPress) menu?.hide();
+    };
+    const cancel = (): void => {
+      closingPress = false;
+    };
+    win?.addEventListener('pointerdown', press, true);
+    win?.addEventListener('pointercancel', cancel, true);
+    release = () => {
+      win?.removeEventListener('pointerdown', press, true);
+      win?.removeEventListener('pointercancel', cancel, true);
+    };
+  };
+  bind();
+  const migration = pill.onWindowMigrated(() => {
+    menu?.hide();
+    bind();
   });
-  patchProjectDashboardStatus(pill, project, status);
-  pill.addEventListener('click', (e) => {
-    const menu = new Menu();
-    for (const s of ctx.settings.projects.statuses) {
-      menu.addItem((item) =>
+  pill.addEventListener('click', (event) => {
+    if (closingPress) {
+      closingPress = false;
+      return;
+    }
+    if (menu !== undefined) {
+      menu.hide();
+      return;
+    }
+    const next = new Menu();
+    menu = next;
+    pill.setAttribute('aria-expanded', 'true');
+    for (const status of ctx.settings.projects.statuses) {
+      next.addItem((item) =>
         item
-          .setTitle(projectStatusDisplayName(s))
-          .setChecked(s.id === current.project.statusId)
+          .setTitle(projectStatusDisplayName(status))
+          .setChecked(status.id === current.project.statusId)
           .onClick(() => {
-            ctx.onSetStatus(current.project.path, s.id);
+            ctx.onSetStatus(current.project.path, status.id);
           }),
       );
     }
-    showMenuAtMouseEventWithFocus(menu, e);
+    next.onHide(() => {
+      if (menu === next) menu = undefined;
+      pill.setAttribute('aria-expanded', 'false');
+    });
+    showMenuAtMouseEventWithFocus(next, event);
   });
-
-  const open = header.createEl('button', {
-    cls: 'abyss-project-open-btn',
-    attr: { 'aria-label': 'Open note' },
-  });
-  setIcon(open, 'file-text');
-  open.addEventListener('click', () => {
-    ctx.openNote(current.project.path);
-  });
-
-  header.createDiv({ cls: 'abyss-project-dashboard-dates' });
-  const details = header.createEl('details', { cls: 'abyss-project-dashboard-details' });
-  const summary = details.createEl('summary', { attr: { 'aria-label': 'Project properties' } });
-  setIcon(summary, 'info');
-  details.createDiv({ cls: 'abyss-project-dashboard-properties abyss-popover' });
-  details.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') {
-      details.open = false;
-      summary.focus();
-    }
-  });
-  details.addEventListener('focusout', (event) => {
-    if (event.relatedTarget instanceof Node && !details.contains(event.relatedTarget))
-      details.open = false;
-  });
-  refreshProjectMetadata(header, project, ctx.settings.projects);
-  const taskHost = container.createDiv({ cls: 'abyss-project-tasks' });
-  ctx.renderTasks(taskHost, project.path);
-  attachDashboardHeader(taskHost, header);
-}
-
-/** The note's tracked total, left out entirely while a project has recorded no time. */
-function renderTrackedTime(stats: HTMLElement, project: Project): void {
-  const tracked = projectTrackedDisplayValue(project.stats, Date.now());
-  if (tracked === '') return;
-  const time = stats.createDiv({ cls: 'abyss-project-time' });
-  time.createSpan({ cls: 'abyss-project-time-label', text: 'Time' });
-  time.createSpan({ cls: 'abyss-project-time-value', text: tracked });
-}
-
-/** Refreshes the dashboard's status presentation without replacing its retained content. */
-function refreshProjectDashboardStatus(
-  container: HTMLElement,
-  project: Project | undefined,
-  statuses: readonly ProjectStatus[],
-): void {
-  if (project === undefined) return;
-  const pill = container.querySelector<HTMLElement>('.abyss-status-pill');
-  if (pill === null) return;
-  patchProjectDashboardStatus(pill, project, projectStatus(project, statuses));
+  return () => {
+    menu?.hide();
+    release();
+    migration();
+  };
 }
 
 function patchProjectDashboardStatus(

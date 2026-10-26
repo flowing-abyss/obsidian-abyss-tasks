@@ -758,6 +758,12 @@ change rank after success; filtering does not delete hidden ranks. Timeline uses
 plan for preview and persistence and validates both endpoints together. All project surfaces reuse
 bounded row geometry, pin active editors/gestures, and retire native work on hide or migration.
 Drafts and submitted receipts keep their controller ownership through those transitions.
+The dashboard's retained property controller uses the same `ProjectCellEditor` and its positioning
+primitive as the overview. `ProjectsTableView.createFieldEditorSession` captures the effective field,
+exact source state and presets, and submits through the existing mutation queue/history/receipts.
+The dashboard owns editor and popover disposal; refreshing project evidence keeps active anchors
+attached. Source-note chips are suppressed only for a task whose source matches the current project.
+
 `TimelinePointerInteraction` owns shared pointer capture, preview, cancellation, edge scrolling and
 row pins. Like calendar gestures, it ignores unpressed mouse motion, retains window release
 ownership after released capture loss, and samples the final pointer position before submission.
