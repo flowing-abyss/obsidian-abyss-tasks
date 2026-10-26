@@ -52,9 +52,12 @@ function mount(frontmatter: Project['frontmatter'] = { start: '2026-10-02', end:
     apply,
     history: async () => ({ applied: [], failed: [] }),
   });
-  view.update(window, { cells: [], hierarchyCells: [], gridBoundaries: [] });
+  view.update(window);
   const track = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-track'));
-  const bar = expectDefined(track.querySelector<HTMLElement>('.abyss-project-timeline-bar'));
+  const bar = expectDefined(track.querySelector<HTMLButtonElement>('[data-timeline-part="end"]'));
+  const start = expectDefined(
+    track.querySelector<HTMLButtonElement>('[data-timeline-part="start"]'),
+  );
   vi.spyOn(track, 'getBoundingClientRect').mockReturnValue({
     x: 100,
     y: 0,
@@ -71,6 +74,7 @@ function mount(frontmatter: Project['frontmatter'] = { start: '2026-10-02', end:
     view,
     track,
     bar,
+    start,
     apply,
     window,
     change: (kind: string) => {
@@ -93,10 +97,9 @@ function mount(frontmatter: Project['frontmatter'] = { start: '2026-10-02', end:
 it('resizes the project End through the shared visible handle while guarding Start', async () => {
   const h = mount();
   try {
-    const end = expectDefined(
-      h.bar.querySelector<HTMLElement>('.abyss-project-timeline-handle.is-end'),
-    );
-    expect(end.querySelector('.abyss-project-timeline-grip')).not.toBeNull();
+    expect(h.host.querySelector('.abyss-project-timeline-row')).toBeNull();
+    expect(h.host.querySelector('.abyss-project-timeline-bar')).toBeNull();
+    const end = h.bar;
     end.dispatchEvent(pointer('pointerdown', 170));
     await flushMicrotasks();
     end.dispatchEvent(pointer('pointermove', 190));
@@ -117,26 +120,63 @@ it('resizes the project End through the shared visible handle while guarding Sta
     h.dispose();
   }
 });
-it('draws an undated project interval with both endpoint guards', async () => {
+it('sets a missing Start from its axis handle with both endpoint guards', async () => {
   const h = mount({});
   try {
-    h.track.dispatchEvent(pointer('pointerdown', 130));
+    h.start.dispatchEvent(pointer('pointerdown', 130));
     await flushMicrotasks();
-    h.track.dispatchEvent(pointer('pointermove', 170));
-    h.track.dispatchEvent(pointer('pointerup', 170));
+    h.start.dispatchEvent(pointer('pointermove', 170));
+    h.start.dispatchEvent(pointer('pointerup', 170));
     await flushMicrotasks();
     expect(h.apply).toHaveBeenCalledWith([
       expect.objectContaining({
         path: 'Projects/A.md',
         sourceProperty: 'start',
         expectedExists: false,
-        value: '2026-10-02',
+        value: '2026-10-04',
       }),
       expect.objectContaining({
         path: 'Projects/A.md',
         sourceProperty: 'end',
         expectedExists: false,
+        valueExists: false,
+        restoreSourceValue: true,
+      }),
+    ]);
+  } finally {
+    h.dispose();
+  }
+});
+it('sets a missing End to today on a short axis press without opening a calendar', async () => {
+  const h = mount({});
+  try {
+    h.bar.dispatchEvent(pointer('pointerdown', 110));
+    await flushMicrotasks();
+    h.bar.dispatchEvent(pointer('pointerup', 110));
+    await flushMicrotasks();
+    expect(h.apply).toHaveBeenCalledWith([
+      expect.objectContaining({
+        sourceProperty: 'start',
+        expectedExists: false,
+        valueExists: false,
+      }),
+      expect.objectContaining({ sourceProperty: 'end', value: '2026-10-01' }),
+    ]);
+  } finally {
+    h.dispose();
+  }
+});
+it('moves the focused Start with the keyboard and preserves End', async () => {
+  const h = mount();
+  try {
+    h.start.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    await flushMicrotasks();
+    expect(h.apply).toHaveBeenCalledWith([
+      expect.objectContaining({ sourceProperty: 'start', value: '2026-10-03' }),
+      expect.objectContaining({
+        sourceProperty: 'end',
         value: '2026-10-04',
+        restoreSourceValue: true,
       }),
     ]);
   } finally {
@@ -165,10 +205,43 @@ it('does not revive a queued edit after its navigation context is cancelled and 
   try {
     h.bar.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
     h.view.cancel();
-    h.view.update(h.window, { cells: [], hierarchyCells: [], gridBoundaries: [] });
+    h.view.update(h.window);
     await flushMicrotasks();
     expect(h.apply).not.toHaveBeenCalled();
   } finally {
+    h.dispose();
+  }
+});
+
+it('previews both vertical boundaries in mounted tracks and restores them on cancel', async () => {
+  const h = mount();
+  const taskTrack = h.host.createDiv();
+  const release = h.view.mountTrack(taskTrack);
+  try {
+    const line = expectDefined(
+      taskTrack.querySelector<HTMLElement>('.abyss-project-boundary-line.is-end'),
+    );
+    const initial = line.style.left;
+    expect(line.getAttribute('aria-hidden')).toBe('true');
+    h.bar.dispatchEvent(pointer('pointerdown', 170));
+    await flushMicrotasks();
+    h.bar.dispatchEvent(pointer('pointermove', 190));
+    expect(line.style.left).not.toBe(initial);
+    const remountedTrack = h.host.createDiv();
+    const releaseRemount = h.view.mountTrack(remountedTrack);
+    const remountedLine = expectDefined(
+      remountedTrack.querySelector<HTMLElement>('.abyss-project-boundary-line.is-end'),
+    );
+    expect(remountedLine.style.left).toBe(line.style.left);
+    h.bar.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(line.style.left).toBe(initial);
+    expect(remountedLine.style.left).toBe(initial);
+    releaseRemount();
+    expect(h.apply).not.toHaveBeenCalled();
+    release();
+    expect(taskTrack.children).toHaveLength(0);
+  } finally {
+    release();
     h.dispose();
   }
 });

@@ -495,8 +495,11 @@ selection and query. Returning to Tasks reads saved preferences without overwrit
 inactive state. Each layout uses the shared inner task viewport; the dashboard keeps its compact project
 context in the task toolbar and its Add task footer outside scrolling content. `CompactPaneAccess` opens the shared task inspector as an overlay on dashboard selection,
 anchored below the task toolbar; the overview keeps it hidden. The task Timeline owns the shared axis
-and a contextual range slot. `ProjectDashboardTimeline` fills that slot with the project's own
-interval, independently of task filtering. It shares endpoint source capture, paired write guards,
+and a contextual overlay slot. `ProjectDashboardTimeline` adds distinct Start/End handles to that
+axis and passive vertical boundaries to mounted task tracks, independently of task filtering and
+without a project row. Virtual mounts release their boundary decorations on disposal. The shared
+pointer owner publishes previews for these barless handles; task track gestures remain unobstructed.
+The overlay shares endpoint source capture, paired write guards,
 gesture planning and failure feedback with the overview; `ProjectsPanel` submits changes through
 ProjectManager using the overview session's mutation queue and receipt projections. Dashboard
 range Undo/Redo uses the same project edit history. Successful receipts update the range and

@@ -36,6 +36,8 @@ export interface TimelinePointerInteractionContext<Source extends TimelineRangeS
     request: TimelinePointerRequest<Source>,
   ) => Promise<{ readonly changed: boolean; readonly failure?: unknown }>;
   readonly reportRangeFailure: (failure: unknown) => void;
+  readonly previewRange?: (occurrenceId: string, range: ProjectTimelineRange | undefined) => void;
+  readonly clickEndpoint?: (source: Source, endpoint: 'start' | 'end') => void;
   readonly clickTrack?: (source: Source, day: string) => void;
   readonly clickRange?: (occurrenceId: string) => void;
   readonly root: HTMLElement;
@@ -366,7 +368,7 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
         continue;
       }
       pending.barSnapshot = barSnapshot(pending.target.bar);
-      this.applyPreview_abyssPrivate(pending.target.bar, pending.range);
+      this.applyPreview_abyssPrivate(pending.target, pending.range);
     }
   }
 
@@ -375,7 +377,7 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
     this.active_abyssPrivate = undefined;
     this.stopEdgeScroll_abyssPrivate();
     this.hideOverlays_abyssPrivate();
-    if (restorePreview && active?.barSnapshot !== undefined && active.target.bar !== null) {
+    if (restorePreview && active !== undefined) {
       this.restorePendingPreview_abyssPrivate(active);
     }
     if (active !== undefined) {
@@ -404,6 +406,7 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
   private restorePendingPreview_abyssPrivate(
     pending: Pick<PendingPointerPreview<Source>, 'target' | 'barSnapshot'>,
   ): void {
+    this.context_abyssPrivate.previewRange?.(pending.target.occurrenceId, undefined);
     const snapshot = pending.barSnapshot;
     const bar = pending.target.bar;
     if (snapshot === undefined || bar?.isConnected !== true) return;
@@ -442,7 +445,7 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
       occurrenceId,
       track,
       bar,
-      focus: part === 'track' ? track : (bar ?? track),
+      focus: part === 'track' ? track : (bar ?? partElement),
       part,
     };
   }
@@ -565,6 +568,7 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
 
   private activatePress_abyssPrivate(active: ActivePointerGesture<Source>): boolean {
     if (active.moved) return false;
+    if (this.activateEndpoint_abyssPrivate(active)) return true;
     const { part, occurrenceId } = active.target;
     const trackPress = part === 'track' ? this.context_abyssPrivate.clickTrack : undefined;
     const rangePress = part === 'bar' ? this.context_abyssPrivate.clickRange : undefined;
@@ -573,6 +577,19 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
     this.suppressClickOccurrence_abyssPrivate = occurrenceId;
     if (trackPress !== undefined) trackPress(active.source, active.startDay);
     else rangePress?.(occurrenceId);
+    return true;
+  }
+
+  private activateEndpoint_abyssPrivate(active: ActivePointerGesture<Source>): boolean {
+    const { part, occurrenceId } = active.target;
+    if (
+      (part !== 'start' && part !== 'end') ||
+      this.context_abyssPrivate.clickEndpoint === undefined
+    )
+      return false;
+    this.cancelGesture_abyssPrivate(true);
+    this.suppressClickOccurrence_abyssPrivate = occurrenceId;
+    this.context_abyssPrivate.clickEndpoint(active.source, part);
     return true;
   }
 
@@ -613,7 +630,7 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
     this.hideOverlays_abyssPrivate();
     this.releasePointerCapture_abyssPrivate(active);
     this.pending_abyssPrivate.set(active.target.occurrenceId, pending);
-    this.applyPreview_abyssPrivate(active.target.bar, pending.range);
+    this.applyPreview_abyssPrivate(active.target, pending.range);
     this.suppressClickOccurrence_abyssPrivate = active.target.occurrenceId;
   }
 
@@ -657,7 +674,7 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
       this.showTooltip_abyssPrivate(active.lastClientX, active.target.track);
       return;
     }
-    this.applyPreview_abyssPrivate(active.target.bar, plan.range);
+    this.applyPreview_abyssPrivate(active.target, plan.range);
     this.markWrittenDay_abyssPrivate(active, plan.range);
     this.tooltip_abyssPrivate.setText(gestureLabel(active, plan.range));
     this.showTooltip_abyssPrivate(active.lastClientX, active.target.track);
@@ -689,7 +706,12 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
     else this.placeCursor_abyssPrivate(track, left);
   }
 
-  private applyPreview_abyssPrivate(bar: HTMLElement | null, range: ProjectTimelineRange): void {
+  private applyPreview_abyssPrivate(
+    target: TimelinePointerTarget,
+    range: ProjectTimelineRange,
+  ): void {
+    this.context_abyssPrivate.previewRange?.(target.occurrenceId, range);
+    const bar = target.bar;
     if (bar === null) return;
     const geometry = projectTimelineBarGeometry(range, this.context_abyssPrivate.window());
     if (geometry === undefined) return;

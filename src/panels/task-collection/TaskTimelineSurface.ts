@@ -35,7 +35,10 @@ import {
   type TaskListSurfaceOptions,
   type TaskRowMount,
 } from '../task-list/TaskListSurface';
-import type { TimelineContextRow, TimelineContextRowLayout } from '../timeline/TimelineContextRow';
+import type {
+  TimelineContextOverlay,
+  TimelineContextOverlayLayout,
+} from '../timeline/TimelineContextOverlay';
 import {
   TimelinePointerInteraction,
   applyProjectTimelineBarGeometry,
@@ -67,8 +70,8 @@ interface TaskTimelineActions<T> {
   changeScale(scale: ProjectTimelineScale): void;
   mountContext?(
     host: HTMLElement,
-    layout: TimelineContextRowLayout,
-  ): TimelineContextRow | undefined;
+    layout: TimelineContextOverlayLayout,
+  ): TimelineContextOverlay | undefined;
 }
 interface TimelineMount<T> {
   row: Extract<TaskListRow<T>, { kind: 'task' }>;
@@ -116,7 +119,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
   readonly #viewport: TaskListSurface<T>;
   readonly #axis: HTMLElement;
   readonly #heading: HTMLElement;
-  readonly #contextRow: TimelineContextRow | undefined;
+  readonly #contextOverlay: TimelineContextOverlay | undefined;
   readonly #summary: HTMLElement;
   readonly #dates: HTMLElement;
   readonly #hierarchy: HTMLElement;
@@ -179,7 +182,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
       cls: 'abyss-project-timeline-axis-cells',
       attr: { 'aria-hidden': 'true' },
     });
-    this.#contextRow = this.#mountContext();
+    this.#contextOverlay = this.#mountContext();
     this.#rowsHost = options.host.createDiv({ cls: 'abyss-task-timeline-rows' });
     this.#viewport = new TaskListSurface({
       ...options,
@@ -218,8 +221,8 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
     this.#centerDay = localDay(this.#anchor);
     this.#migrationCleanup = this.#watchViewport();
   }
-  #mountContext(): TimelineContextRow | undefined {
-    return this.actions.mountContext?.(this.#heading, {
+  #mountContext(): TimelineContextOverlay | undefined {
+    return this.actions.mountContext?.(this.#dates, {
       scroll: this.options.scroll,
       window: () => this.#window(),
       now: () => this.actions.now(),
@@ -281,7 +284,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
     this.#bind();
     const settings = this.actions.settings();
     if (settings.scale !== this.#scale) {
-      this.#contextRow?.cancel();
+      this.#contextOverlay?.cancel();
       this.#scale = settings.scale;
       this.#fitted = this.#fit(rows);
       this.#interaction.cancelActive();
@@ -322,7 +325,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
   }
   suspend(releaseMounts = false): void {
     this.#suspended = true;
-    this.#contextRow?.cancel();
+    this.#contextOverlay?.cancel();
     this.#interaction.cancelActive();
     this.#cancelFrame();
     this.#viewport.suspend(releaseMounts);
@@ -345,7 +348,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
     this.#migrationCleanup();
     this.options.scroll.removeEventListener('scroll', this.#schedule);
     this.#viewport.destroy();
-    this.#contextRow?.destroy();
+    this.#contextOverlay?.destroy();
     this.#heading.remove();
     this.#rowsHost.remove();
     this.options.host.removeClass(
@@ -476,6 +479,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
     };
     this.#mounts.set(row.key, mount);
     const unbind = this.#bindRow(mount);
+    const releaseContext = this.#contextOverlay?.mountTrack(track);
     this.#patch(mount);
     return {
       element,
@@ -492,6 +496,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
       destroy: () => {
         this.#mounts.delete(row.key);
         unbind();
+        releaseContext?.();
         card.destroy();
         element.remove();
       },
@@ -608,7 +613,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
       : projectTimelineFitWindow(first, last, this.#scale);
   }
   *#dateValues(rows: TaskListRows<T>): Iterable<string> {
-    if (this.#contextRow !== undefined) yield* bounds(this.#contextRow.range());
+    if (this.#contextOverlay !== undefined) yield* bounds(this.#contextOverlay.range());
     for (const row of rows.slice(0, rows.rowCount)) {
       if (row.kind !== 'task') continue;
       const dates = taskTimelineDates(this.actions.planning(row.task));
@@ -632,7 +637,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
     this.#navigationChanged();
   }
   #navigationChanged(): void {
-    this.#contextRow?.cancel();
+    this.#contextOverlay?.cancel();
     this.#interaction.cancelActive();
     this.#calendar();
     this.#viewport.refreshMeasurements();
@@ -694,7 +699,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
       button.toggleClass('is-active', scale === this.#scale);
     }
     patchTimelineToday(this.#dates, window, this.actions.now());
-    this.#contextRow?.update(window, this.#axisLayout);
+    this.#contextOverlay?.update(window);
     for (const mount of this.#mounts.values()) this.#patch(mount);
   }
   #bind(): void {

@@ -16,7 +16,10 @@ import type { CalendarSettings } from '../../settings/types';
 import type { LocalSearchFocusTarget } from '../../ui/localSearchKeys';
 import { changeProjectStatus, openProjectNote } from '../../ui/projectActions';
 import { runAsyncAction } from '../../ui/runAsyncAction';
-import type { TimelineContextRow, TimelineContextRowLayout } from '../timeline/TimelineContextRow';
+import type {
+  TimelineContextOverlay,
+  TimelineContextOverlayLayout,
+} from '../timeline/TimelineContextOverlay';
 import { ProjectDashboardTimeline } from './ProjectDashboardTimeline';
 import { refreshProjectDashboard, renderProjectDashboard } from './ProjectsDashboardView';
 import { ProjectsTableView } from './ProjectsTableView';
@@ -132,8 +135,8 @@ export class ProjectsPanel {
 
   mountDashboardTimeline(
     host: HTMLElement,
-    layout: TimelineContextRowLayout,
-  ): TimelineContextRow | undefined {
+    layout: TimelineContextOverlayLayout,
+  ): TimelineContextOverlay | undefined {
     const view = this.state_abyssPrivate.get('projectsPanel');
     if (view.view !== 'dashboard') return undefined;
     const path = view.path;

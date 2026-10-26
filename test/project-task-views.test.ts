@@ -332,10 +332,13 @@ it('edits the project interval in its task Timeline without changing task dates'
   try {
     h.open('Projects/A.md');
     await h.choose('Timeline');
-    const projectRow = expectDefined(h.root.querySelector('.abyss-project-dashboard-range'));
-    const bar = expectDefined(projectRow.querySelector<HTMLElement>('.abyss-project-timeline-bar'));
+    const boundaries = expectDefined(h.root.querySelector('.abyss-project-timeline-boundaries'));
+    expect(
+      h.root.querySelector('.abyss-task-timeline-heading .abyss-project-timeline-row'),
+    ).toBeNull();
+    const bar = expectDefined(boundaries.querySelector<HTMLElement>('[data-timeline-part="end"]'));
     expect(bar.hidden).toBe(false);
-    expect(bar.getAttribute('aria-label')).toContain('2026-10-20');
+    expect(bar.getAttribute('aria-label')).toBe('End: 2026-10-31');
     const file = expectDefined(h.app.vault.getFileByPath('Projects/A.md'));
     bar.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'ArrowRight', shiftKey: true, bubbles: true }),
@@ -354,7 +357,8 @@ it('edits the project interval in its task Timeline without changing task dates'
     input.value = 'No matching task';
     input.dispatchEvent(new Event('input', { bubbles: true }));
     await searchUiCompleted(h.root);
-    expect(h.root.querySelector('.abyss-project-dashboard-range')).not.toBeNull();
+    expect(h.root.querySelector('.abyss-project-timeline-boundaries')).not.toBeNull();
+    expect(h.root.querySelector('.abyss-project-dashboard-range')).toBeNull();
     expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(0);
   } finally {
     h.dispose();
@@ -368,7 +372,7 @@ it('accumulates dashboard project keyboard edits while native metadata echoes la
     await h.choose('Timeline');
     const bar = expectDefined(
       h.root.querySelector<HTMLElement>(
-        '.abyss-project-dashboard-range .abyss-project-timeline-bar',
+        '.abyss-project-timeline-boundaries [data-timeline-part="end"]',
       ),
     );
     const file = expectDefined(h.app.vault.getFileByPath('Projects/A.md'));
@@ -408,7 +412,7 @@ it('undoes a project date edit from the dashboard range itself', async () => {
     await h.choose('Timeline');
     const bar = expectDefined(
       h.root.querySelector<HTMLElement>(
-        '.abyss-project-dashboard-range .abyss-project-timeline-bar',
+        '.abyss-project-timeline-boundaries [data-timeline-part="end"]',
       ),
     );
     const file = expectDefined(h.app.vault.getFileByPath('Projects/A.md'));

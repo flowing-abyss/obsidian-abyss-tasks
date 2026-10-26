@@ -11384,25 +11384,124 @@ button.abyss-calendar-date[aria-pressed='true'] {
   background: var(--background-primary);
 }
 
-.abyss-project-dashboard-range > .abyss-project-timeline-summary {
-  display: flex;
-  align-items: center;
-  gap: var(--size-4-2);
-  font-weight: var(--font-semibold);
+/* Project date boundaries occupy the existing axis and never intercept task gestures. */
+.abyss-project-timeline-boundaries,
+.abyss-project-timeline-boundaries > .abyss-project-timeline-track {
+  position: absolute;
+  inset: 0;
+  min-height: 0;
+  pointer-events: none;
 }
 
-.abyss-project-dashboard-range-icon {
-  display: flex;
-  color: var(--text-muted);
+.abyss-project-timeline-boundaries {
+  z-index: 2;
 }
 
-.abyss-project-dashboard-range-icon svg {
-  width: var(--size-4-4);
-  height: var(--size-4-4);
+.abyss-project-timeline-boundaries > .abyss-project-timeline-track {
+  overflow: visible;
 }
 
-.abyss-project-dashboard-range > .abyss-project-timeline-track {
-  background: var(--background-primary-alt);
+.abyss-project-timeline-boundaries .abyss-project-boundary-handle {
+  position: absolute;
+  display: block;
+  appearance: none;
+  top: 0;
+  width: 24px;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  pointer-events: auto;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.abyss-project-boundary-handle.is-start,
+.abyss-project-boundary-line.is-start {
+  color: var(--color-green);
+}
+
+.abyss-project-boundary-handle.is-end,
+.abyss-project-boundary-line.is-end {
+  color: var(--color-orange);
+}
+
+.abyss-project-boundary-handle.is-start {
+  transform: translateX(-100%);
+}
+
+.abyss-project-boundary-handle::before,
+.abyss-project-boundary-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-inline-start: 2px solid currentcolor;
+  pointer-events: none;
+}
+
+.abyss-project-boundary-handle::before {
+  content: '';
+}
+
+.abyss-project-boundary-handle.is-start::before {
+  right: 0;
+}
+
+.abyss-project-boundary-handle.is-end::before {
+  left: 0;
+  border-inline-start-style: dashed;
+}
+
+.abyss-project-boundary-line {
+  z-index: 2;
+}
+
+.abyss-project-boundary-line.is-end {
+  border-inline-start-style: dashed;
+}
+
+.abyss-project-boundary-label {
+  position: absolute;
+  top: var(--size-2-1);
+  padding: var(--size-2-1) var(--size-2-2);
+  border-radius: var(--radius-s);
+  background: var(--background-primary);
+  color: inherit;
+  font-size: var(--font-ui-smaller);
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.abyss-project-boundary-handle.is-start .abyss-project-boundary-label {
+  right: 0;
+}
+
+.abyss-project-boundary-handle.is-end .abyss-project-boundary-label {
+  left: 0;
+}
+
+.abyss-project-boundary-handle.is-near-start .abyss-project-boundary-label {
+  left: 100%;
+  right: auto;
+}
+
+.abyss-project-boundary-handle.is-near-end .abyss-project-boundary-label {
+  left: auto;
+  right: 100%;
+}
+
+.abyss-project-boundary-line[hidden],
+.abyss-project-boundary-handle:is(.is-missing, .is-offscreen)::before {
+  display: none;
+}
+
+.abyss-project-boundary-handle:focus-visible .abyss-project-boundary-label {
+  outline: 2px solid currentcolor;
+  outline-offset: 2px;
 }
 
 .abyss-task-timeline .abyss-project-timeline-state:disabled {

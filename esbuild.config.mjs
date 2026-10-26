@@ -1,3 +1,5 @@
+// Project boundary handles: measured main 2,215,176 bytes; containing limit 2164 KiB.
+// Axis and passive boundary styles: shipped CSS 205,867 bytes; containing limit 202 KiB.
 // Dashboard receipt continuity and Undo/Redo: measured main 2,213,176 bytes; 2162 KiB limit.
 // Project context row: shipped CSS 204,141 bytes; containing limit 200 KiB.
 // Shared project range adapter and endpoint guards: main 2,212,289 bytes; 2161 KiB limit.

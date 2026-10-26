@@ -125,7 +125,14 @@ interface ProjectTimelinePointerInteractionContext
     ProjectTimelineRangeCommitter,
     Pick<
       TimelinePointerInteractionContext<FrozenProjectTimelineRangeSource>,
-      'root' | 'scroll' | 'window' | 'finishEditor' | 'pinsChanged' | 'selectRange'
+      | 'root'
+      | 'scroll'
+      | 'window'
+      | 'finishEditor'
+      | 'pinsChanged'
+      | 'selectRange'
+      | 'previewRange'
+      | 'clickEndpoint'
     > {}
 
 /** Project metadata capture and receipts adapt to the shared calendar gesture owner. */
