@@ -7615,6 +7615,11 @@ button.abyss-project-table-status-pill {
   padding: var(--size-4-2);
 }
 
+.abyss-task-kanban-column-body {
+  /* Column height comes from the board; virtual content need not size its flex basis. */
+  flex-basis: 0;
+}
+
 .abyss-status-dot[hidden] {
   display: none;
 }
