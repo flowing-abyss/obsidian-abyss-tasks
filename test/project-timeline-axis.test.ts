@@ -7,7 +7,6 @@ import {
 import {
   PROJECT_TIMELINE_MAX_TRACK_WIDTH,
   projectTimelineAxisLayout,
-  projectTimelineTrackWidth,
 } from '../src/projects/projectTimelineAxis';
 import { projectTimelineWindowForRange } from '../src/projects/projectTimelineModel';
 
@@ -299,13 +298,11 @@ describe('project Timeline calendar axis', () => {
     expect(layout.cells[0]?.startDay).toBe('2024-01-31');
     expect(layout.cells[layout.cells.length - 1]?.endDay).toBe('2024-03-01');
     expect(layout.gridBoundaries.length).toBeLessThanOrEqual(33);
-    expect(projectTimelineTrackWidth(window, 700)).toBe(PROJECT_TIMELINE_MAX_TRACK_WIDTH);
-    expect(Number.isFinite(projectTimelineTrackWidth(window, 700))).toBe(true);
   });
 
   it('covers the pixel-derived visible tail when capped density exposes more than 512 days', () => {
     const window = projectTimelineWindowForRange('0100-01-01', '9999-12-31', 'day');
-    const trackWidth = projectTimelineTrackWidth(window, 2_560);
+    const trackWidth = PROJECT_TIMELINE_MAX_TRACK_WIDTH;
     const visibleStartOrdinal = ordinal('2024-01-01');
     const visibleDayCount = Math.ceil((2_560 / trackWidth) * window.dayCount);
     const visibleEndOrdinal = visibleStartOrdinal + visibleDayCount - 1;
@@ -341,23 +338,5 @@ describe('project Timeline calendar axis', () => {
       rightPercent: (15 / 30) * 100,
       labelPercent: 27.5,
     });
-  });
-
-  it('honors each scale density and expands short ranges to the visible track', () => {
-    const day = projectTimelineWindowForRange('2024-01-01', '2024-01-14', 'day');
-    const week = projectTimelineWindowForRange('2024-01-01', '2024-03-24', 'week');
-    const month = projectTimelineWindowForRange('2024-01-01', '2024-12-31', 'month');
-    const quarter = projectTimelineWindowForRange('2024-01-01', '2024-12-31', 'quarter');
-    const year = projectTimelineWindowForRange('2024-01-01', '2024-12-31', 'year');
-    const fourYears = projectTimelineWindowForRange('2023-01-01', '2026-12-31', 'year');
-
-    expect(projectTimelineTrackWidth(day, 0)).toBe(14 * 32);
-    expect(projectTimelineTrackWidth(day, 700)).toBe(700);
-    expect(projectTimelineTrackWidth(week, 0)).toBe(84 * 12);
-    expect(projectTimelineTrackWidth(month, 0)).toBeGreaterThanOrEqual(12 * 120);
-    expect(projectTimelineTrackWidth(quarter, 0)).toBeGreaterThanOrEqual(4 * 144);
-    expect(projectTimelineTrackWidth(year, 0)).toBeGreaterThanOrEqual(200);
-    expect(projectTimelineTrackWidth(fourYears, 0)).toBeGreaterThanOrEqual(4 * 200);
-    expect(projectTimelineTrackWidth(day, 900)).toBe(900);
   });
 });

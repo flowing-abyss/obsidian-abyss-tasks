@@ -59,13 +59,6 @@ interface TimelinePointerTarget {
   readonly part: TimelinePointerPart;
 }
 
-interface RangeBarSnapshot {
-  readonly className: string;
-  readonly hidden: HTMLElement['hidden'];
-  readonly width: string;
-  readonly rangeLeft: string;
-}
-
 interface ActivePointerGesture<Source extends TimelineRangeSource = TimelineRangeSource> {
   readonly pointerId: number;
   readonly target: TimelinePointerTarget;
@@ -77,7 +70,6 @@ interface ActivePointerGesture<Source extends TimelineRangeSource = TimelineRang
   prepared: boolean;
   released: boolean;
   moved: boolean;
-  readonly barSnapshot?: RangeBarSnapshot;
 }
 
 interface PendingPointerPreview<Source extends TimelineRangeSource = TimelineRangeSource> {
@@ -85,7 +77,6 @@ interface PendingPointerPreview<Source extends TimelineRangeSource = TimelineRan
   readonly target: TimelinePointerTarget;
   readonly source: Source;
   readonly range: ProjectTimelineRange;
-  barSnapshot?: ActivePointerGesture['barSnapshot'];
 }
 
 const MOVEMENT_THRESHOLD_PX = 4;
@@ -110,25 +101,6 @@ function eventTimelineTarget(event: Event): HTMLElement | undefined {
   return nestedControl !== null && !nestedControl.hasAttribute('data-timeline-part')
     ? undefined
     : event.target;
-}
-
-function barSnapshot(bar: HTMLElement | null): RangeBarSnapshot | undefined {
-  return bar === null
-    ? undefined
-    : {
-        className: bar.className,
-        hidden: bar.hidden,
-        width: bar.style.width,
-        rangeLeft: bar.style.getPropertyValue('--abyss-project-timeline-range-left'),
-      };
-}
-
-function restoreBar(bar: HTMLElement, snapshot: RangeBarSnapshot): void {
-  bar.className = snapshot.className;
-  bar.hidden = snapshot.hidden;
-  bar.style.width = snapshot.width;
-  if (snapshot.rangeLeft === '') bar.style.removeProperty('--abyss-project-timeline-range-left');
-  else setRangeLeft(bar, snapshot.rangeLeft);
 }
 
 function isOneDateRange(range: ProjectTimelineRange): boolean {
@@ -246,6 +218,8 @@ function edgeDirection(clientX: number, bounds: DOMRect): -1 | 0 | 1 {
 /** Owns Timeline pointer capture, preview, cancellation, hover, and edge scrolling. */
 export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
   private active_abyssPrivate: ActivePointerGesture<Source> | undefined;
+  private hoverPosition_abyssPrivate:
+    { readonly track: HTMLElement; readonly clientX: number } | undefined;
   private readonly pending_abyssPrivate = new Map<string, PendingPointerPreview<Source>>();
   private previewSequence_abyssPrivate = 0;
   private destroyed_abyssPrivate = false;
@@ -339,19 +313,8 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
   }
 
   reconcileAfterRender(): void {
-    const active = this.active_abyssPrivate;
-    if (active !== undefined) {
-      const current = this.context_abyssPrivate.captureRangeSource(active.target.occurrenceId);
-      if (
-        !active.target.track.isConnected ||
-        current.kind === 'rejected' ||
-        !this.context_abyssPrivate.sameSource(active.source, current.source)
-      ) {
-        this.cancelGesture_abyssPrivate(false);
-      } else if (active.prepared) {
-        this.preview_abyssPrivate(active);
-      }
-    }
+    this.reprojectHover_abyssPrivate();
+    this.reconcileActive_abyssPrivate();
     for (const [occurrenceId, pending] of this.pending_abyssPrivate) {
       const current = this.context_abyssPrivate.captureRangeSource(occurrenceId);
       if (
@@ -363,9 +326,34 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
         this.notifyPins_abyssPrivate();
         continue;
       }
-      pending.barSnapshot = barSnapshot(pending.target.bar);
       this.applyPreview_abyssPrivate(pending.target, pending.range);
     }
+  }
+
+  private reconcileActive_abyssPrivate(): void {
+    const active = this.active_abyssPrivate;
+    if (active !== undefined) {
+      const current = this.context_abyssPrivate.captureRangeSource(active.target.occurrenceId);
+      if (
+        !active.target.track.isConnected ||
+        current.kind === 'rejected' ||
+        !this.context_abyssPrivate.sameSource(active.source, current.source)
+      ) {
+        this.cancelGesture_abyssPrivate(false);
+      } else if (active.prepared) {
+        if (active.moved)
+          active.lastDay =
+            this.dayAtClientX_abyssPrivate(active.target.track, active.lastClientX) ??
+            active.lastDay;
+        this.preview_abyssPrivate(active);
+      }
+    }
+  }
+
+  private reprojectHover_abyssPrivate(): void {
+    const hover = this.hoverPosition_abyssPrivate;
+    if (this.active_abyssPrivate === undefined && hover?.track.isConnected === true)
+      this.showCursor_abyssPrivate(hover.track, hover.clientX);
   }
 
   private cancelGesture_abyssPrivate(restorePreview: boolean): void {
@@ -401,13 +389,17 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
   }
 
   private restorePendingPreview_abyssPrivate(
-    pending: Pick<PendingPointerPreview<Source>, 'target' | 'barSnapshot'>,
+    pending: Pick<PendingPointerPreview<Source>, 'target' | 'source'>,
   ): void {
     this.context_abyssPrivate.previewRange?.(pending.target.occurrenceId, undefined);
-    const snapshot = pending.barSnapshot;
     const bar = pending.target.bar;
-    if (snapshot === undefined || bar?.isConnected !== true) return;
-    restoreBar(bar, snapshot);
+    if (bar?.isConnected !== true) return;
+    const current = this.context_abyssPrivate.captureRangeSource(pending.target.occurrenceId);
+    const range = current.kind === 'ready' ? current.source.range : pending.source.range;
+    const geometry = projectTimelineBarGeometry(range, this.context_abyssPrivate.window());
+    bar.hidden = geometry === undefined;
+    bar.removeClass('is-previewing');
+    if (geometry !== undefined) applyProjectTimelineBarGeometry(bar, range, geometry);
   }
 
   private releasePointerCapture_abyssPrivate(active: ActivePointerGesture<Source>): void {
@@ -484,7 +476,6 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
     this.context_abyssPrivate.selectRange(target.occurrenceId, target.focus);
     this.cancelGesture_abyssPrivate(true);
     this.cancelPendingOccurrence_abyssPrivate(target.occurrenceId);
-    const snapshot = barSnapshot(target.bar);
     const active: ActivePointerGesture<Source> = {
       pointerId: event.pointerId,
       target,
@@ -496,7 +487,6 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
       prepared: false,
       released: false,
       moved: false,
-      ...(snapshot === undefined ? {} : { barSnapshot: snapshot }),
     };
     this.active_abyssPrivate = active;
     this.notifyPins_abyssPrivate();
@@ -522,7 +512,10 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
   private readonly hover_abyssPrivate = (event: PointerEvent): void => {
     if (this.active_abyssPrivate !== undefined) return;
     const target = this.target_abyssPrivate(event);
-    if (target !== undefined) this.showCursor_abyssPrivate(target.track, event.clientX);
+    if (target !== undefined) {
+      this.hoverPosition_abyssPrivate = { track: target.track, clientX: event.clientX };
+      this.showCursor_abyssPrivate(target.track, event.clientX);
+    }
   };
 
   private readonly pointerMove_abyssPrivate = (event: PointerEvent): void => {
@@ -619,7 +612,6 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
       target: active.target,
       source: active.source,
       range: plan.range,
-      ...(active.barSnapshot === undefined ? {} : { barSnapshot: active.barSnapshot }),
     };
     return {
       pending,
@@ -674,7 +666,7 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
     if (plan.kind === 'rejected') {
       this.restorePendingPreview_abyssPrivate({
         target: active.target,
-        ...(active.barSnapshot === undefined ? {} : { barSnapshot: active.barSnapshot }),
+        source: active.source,
       });
       this.tooltip_abyssPrivate.setText(plan.reason);
       this.showTooltip_abyssPrivate(active.lastClientX, active.target.track);
@@ -720,8 +712,8 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
     const bar = target.bar;
     if (bar === null) return;
     const geometry = projectTimelineBarGeometry(range, this.context_abyssPrivate.window());
+    bar.hidden = geometry === undefined;
     if (geometry === undefined) return;
-    bar.hidden = false;
     applyProjectTimelineBarGeometry(bar, range, geometry);
     bar.addClass('is-previewing');
   }
@@ -766,6 +758,7 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
   }
 
   private hideOverlays_abyssPrivate(): void {
+    this.hoverPosition_abyssPrivate = undefined;
     this.cursor_abyssPrivate.hidden = true;
     this.tooltip_abyssPrivate.hidden = true;
   }

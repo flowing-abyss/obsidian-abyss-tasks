@@ -7,7 +7,6 @@ import { buildDefaultProjectTableSettings } from '../src/projects/projectTableSe
 import {
   buildProjectTimelineModel,
   projectTimelineBarGeometry,
-  projectTimelineFitWindow,
   projectTimelineWindow,
 } from '../src/projects/projectTimelineModel';
 import { buildDefaultProjectTimelineSettings } from '../src/projects/projectTimelineSettings';
@@ -118,50 +117,6 @@ describe('project Timeline model', () => {
     expect(window.endDay).toBe('2024-03-10');
     expect(window.dayCount).toBe(14);
     expect(geometry).toEqual({ leftPercent: 21.428571428571427, widthPercent: 21.428571428571427 });
-  });
-
-  it('fits a leap-day project to the complete February calendar unit', () => {
-    expect(projectTimelineFitWindow('2024-02-29', '2024-02-29', 'month')).toMatchObject({
-      startDay: '2024-02-01',
-      endDay: '2024-02-29',
-      dayCount: 29,
-      scale: 'month',
-    });
-  });
-
-  it('fits a cross-year project outward to complete Monday-through-Sunday weeks', () => {
-    expect(projectTimelineFitWindow('2026-12-31', '2027-01-01', 'week')).toMatchObject({
-      startDay: '2026-12-28',
-      endDay: '2027-01-03',
-      dayCount: 7,
-      scale: 'week',
-    });
-  });
-
-  it('fits a Year window to four complete calendar years around a leap-year project', () => {
-    expect(projectTimelineFitWindow('2024-02-29', '2024-02-29', 'year')).toMatchObject({
-      startDay: '2023-01-01',
-      endDay: '2026-12-31',
-      dayCount: 1461,
-      scale: 'year',
-    });
-  });
-
-  it('extends a fitted Year window through a distant final project', () => {
-    expect(projectTimelineFitWindow('2024-06-15', '2032-10-20', 'year')).toMatchObject({
-      startDay: '2023-01-01',
-      endDay: '2032-12-31',
-      scale: 'year',
-    });
-  });
-
-  it('preserves padded years below 100 in a fitted Year window', () => {
-    expect(projectTimelineFitWindow('0099-12-31', '0100-01-01', 'year')).toMatchObject({
-      startDay: '0098-01-01',
-      endDay: '0101-12-31',
-      dayCount: 1460,
-      scale: 'year',
-    });
   });
 
   it('renders open ranges as one-day anchored points', () => {

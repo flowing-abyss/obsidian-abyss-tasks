@@ -338,6 +338,7 @@ export class CenterPanel {
   private taskKanbanDrag_abyssPrivate: TaskKanbanDrag | undefined;
   private readonly projectTaskQueries_abyssPrivate = new Map<string, string>();
   private readonly taskScroll_abyssPrivate = new Map<string, TaskCollectionScroll>();
+  private resetTimelineFocus_abyssPrivate = false;
   private outgoingLinks_abyssPrivate: TaskLinkValues = new Map();
   private refocusSearch_abyssPrivate = false;
   private taskShell_abyssPrivate: {
@@ -1421,16 +1422,24 @@ export class CenterPanel {
     });
   }
 
+  private restoreTaskTimeline_abyssPrivate(
+    options: TaskListSurfaceOptions<SurfaceTask>,
+    saved: TaskCollectionScroll | undefined,
+  ): TaskTimelineSurface<SurfaceTask> {
+    const surface = this.createTaskTimelineSurface_abyssPrivate(options);
+    if (saved?.type === 'timeline') surface.restoreScroll(saved.value);
+    if (this.resetTimelineFocus_abyssPrivate) surface.focusToday();
+    this.resetTimelineFocus_abyssPrivate = false;
+    return surface;
+  }
+
   private createTaskCollectionSurface_abyssPrivate(
     options: TaskListSurfaceOptions<SurfaceTask>,
   ): TaskCollectionSurface<SurfaceTask> {
     const key = this.taskViewportKey_abyssPrivate();
     const saved = key === undefined ? undefined : this.taskScroll_abyssPrivate.get(key);
-    if (this.taskCollectionView_abyssPrivate() === 'timeline') {
-      const surface = this.createTaskTimelineSurface_abyssPrivate(options);
-      if (saved?.type === 'timeline') surface.restoreScroll(saved.value);
-      return surface;
-    }
+    if (this.taskCollectionView_abyssPrivate() === 'timeline')
+      return this.restoreTaskTimeline_abyssPrivate(options, saved);
     if (!this.isTaskKanban_abyssPrivate()) {
       const surface = new TaskListSurface(options);
       if (saved?.type === 'list') surface.restoreScroll(saved.value);
@@ -2470,11 +2479,21 @@ export class CenterPanel {
         this.handleSelectedListChanged_abyssPrivate();
       }),
       this.state_abyssPrivate.on('mode', (_mode, previous) => {
+        this.resetTimelineFocus_abyssPrivate = true;
         if (previous === 'statistics') this.statistics_abyssPrivate?.unmount();
         this.wholeCardFocus_abyssPrivate = null;
         this.clearCardReturn_abyssPrivate();
         this.captureSessions_abyssPrivate.cancelStaleListCapture();
         this.calendar_abyssPrivate.cancelKeyboardInteraction();
+      }),
+      this.state_abyssPrivate.on('projectsPanel', (next, previous) => {
+        if (
+          next.view !== previous.view ||
+          (next.view === 'dashboard' &&
+            previous.view === 'dashboard' &&
+            next.path !== previous.path)
+        )
+          this.resetTimelineFocus_abyssPrivate = true;
       }),
       this.state_abyssPrivate.on('searchQuery', (query) => {
         this.taskSearch_abyssPrivate.queryChanged(query);
@@ -2489,6 +2508,7 @@ export class CenterPanel {
   }
 
   private handleSelectedListChanged_abyssPrivate(): void {
+    this.resetTimelineFocus_abyssPrivate = true;
     this.wholeCardFocus_abyssPrivate = null;
     this.clearCardReturn_abyssPrivate();
     this.captureSessions_abyssPrivate.cancelStaleListCapture();
@@ -3213,6 +3233,7 @@ export class CenterPanel {
       {
         onSelect: (view) => {
           this.finishProjectTableEditorBefore(() => {
+            if (view === 'timeline') this.resetTimelineFocus_abyssPrivate = true;
             this.listViewControls_abyssPrivate.setView(view);
           });
         },

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  createTimelineNavigation,
   patchTimelineAxisCells,
   patchTimelineToday,
 } from '../src/panels/timeline/timelinePresentation';
@@ -159,4 +160,19 @@ describe('retained Timeline presentation', () => {
     patchTimelineToday(host, narrower, new Date(2024, 3, 1));
     expect(host.children).toHaveLength(0);
   });
+});
+
+it('offers only the five scale buttons, with repeated active scale delegated to its owner', () => {
+  const host = createDiv();
+  const selected: string[] = [];
+  const buttons = createTimelineNavigation(host, { scale: (scale) => selected.push(scale) });
+  expect(host.querySelector('[aria-label="Previous range"]')).toBeNull();
+  expect(host.querySelector('[aria-label="Next range"]')).toBeNull();
+  expect(
+    [...host.querySelectorAll('button')].some((button) => button.textContent === 'Today'),
+  ).toBe(false);
+  expect(buttons.size).toBe(5);
+  buttons.get('month')?.click();
+  buttons.get('month')?.click();
+  expect(selected).toEqual(['month', 'month']);
 });

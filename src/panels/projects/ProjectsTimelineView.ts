@@ -15,14 +15,11 @@ import {
 import type { ProjectTableGroup } from '../../projects/projectTableModel';
 import {
   projectTimelineAxisLayout,
-  projectTimelineTrackWidth,
   type ProjectTimelineAxisLayout,
 } from '../../projects/projectTimelineAxis';
 import {
   buildProjectTimelineModel,
   projectTimelineBarGeometry,
-  projectTimelineFitWindow,
-  projectTimelineWindow,
   type ProjectTimelineBarGeometry,
   type ProjectTimelineGroup,
   type ProjectTimelineModel,
@@ -36,6 +33,13 @@ import {
   projectTimelineFields,
   type ProjectTimelineSettings,
 } from '../../projects/projectTimelineSettings';
+import {
+  rebaseTimelineViewport,
+  timelineViewportAt,
+  timelineViewportCenter,
+  type TimelineViewport,
+  type TimelineViewportPosition,
+} from '../../projects/projectTimelineViewport';
 import type { Project } from '../../projects/types';
 import {
   createTimelineNavigation,
@@ -142,15 +146,8 @@ interface RenderedRow<TCell extends ProjectTimelineCellContext> {
 }
 
 interface TimelineScrollPosition {
-  readonly left: number;
   readonly top: number;
-}
-
-interface TimelineAxisGeometry {
-  readonly summaryWidth: number;
-  readonly trackStart: number;
-  readonly trackWidth: number;
-  readonly viewportWidth: number;
+  readonly center: number;
 }
 
 interface TimelineFocusIdentity {
@@ -164,14 +161,6 @@ function clamp(value: number, minimum: number, maximum: number): number {
 
 function dayOrdinal(day: string): number {
   return projectCalendarDayOrdinal(day) as number;
-}
-
-function dayDate(day: string): Date {
-  const [year, month, date] = day.split('-').map(Number) as [number, number, number];
-  const value = new Date(0);
-  value.setFullYear(year, month - 1, date);
-  value.setHours(0, 0, 0, 0);
-  return value;
 }
 
 function dayFromOrdinal(ordinal: number): string {
@@ -188,12 +177,6 @@ function localDay(date: Date): string {
 function rangeAnchor(range: ProjectTimelineRange): string | undefined {
   if (range.kind === 'closed' || range.kind === 'open-end') return range.startDay;
   return range.kind === 'open-start' ? range.endDay : undefined;
-}
-
-function rangeBounds(range: ProjectTimelineRange): readonly string[] {
-  if (range.kind === 'closed') return [range.startDay, range.endDay];
-  const anchor = rangeAnchor(range);
-  return anchor === undefined ? [] : [anchor];
 }
 
 function timelineRangeLabel(range: ProjectTimelineRange): string {
@@ -267,13 +250,6 @@ function exactRangeEventTarget(
   return undefined;
 }
 
-function fallbackAxisDayCount(scale: ProjectTimelineSettings['scale']): number {
-  if (scale === 'day') return 31;
-  if (scale === 'week') return 140;
-  if (scale === 'month') return 732;
-  return 2_922;
-}
-
 function reconcileOrder(parent: HTMLElement, desired: readonly HTMLElement[]): void {
   let cursor = parent.firstChild;
   for (const element of desired) {
@@ -311,11 +287,12 @@ export class ProjectsTimelineView<
   private projects_abyssPrivate: readonly Project[] = [];
   private search_abyssPrivate = '';
   private model_abyssPrivate: ProjectTimelineModel | undefined;
-  private anchor_abyssPrivate: Date;
+  private viewport_abyssPrivate: TimelineViewport;
+  private usableWidth_abyssPrivate = 0;
+  private lastLeft_abyssPrivate = 0;
+  private calendarSignature_abyssPrivate = '';
   private renderedScale_abyssPrivate: ProjectTimelineSettings['scale'];
-  private preparedScaleChange_abyssPrivate = false;
   private scaleContextOrdinal_abyssPrivate: number | undefined;
-  private fittedWindow_abyssPrivate: ProjectTimelineWindow | undefined;
   private selectedPath_abyssPrivate: string | undefined;
   private editingMarks_abyssPrivate: HTMLElement[] = [];
   private hiddenScrollPosition_abyssPrivate: TimelineScrollPosition | undefined;
@@ -334,8 +311,14 @@ export class ProjectsTimelineView<
     host: HTMLElement,
     private readonly context_abyssPrivate: ProjectsTimelineViewContext<TCell>,
   ) {
-    this.anchor_abyssPrivate = new Date((context_abyssPrivate.now ?? (() => new Date()))());
     this.renderedScale_abyssPrivate = context_abyssPrivate.settings().scale;
+    this.scaleContextOrdinal_abyssPrivate =
+      dayOrdinal(localDay((context_abyssPrivate.now ?? (() => new Date()))())) + 0.5;
+    this.viewport_abyssPrivate = timelineViewportAt(
+      this.scaleContextOrdinal_abyssPrivate,
+      this.renderedScale_abyssPrivate,
+      1,
+    ).viewport;
     this.root = host.createDiv({ cls: 'abyss-project-timeline', attr: { tabindex: '-1' } });
     const surfaceName = this.root.createSpan({
       cls: 'abyss-sr-only',
@@ -369,7 +352,7 @@ export class ProjectsTimelineView<
     });
     this.groupsHost_abyssPrivate = this.scroll.createDiv({ cls: 'abyss-project-timeline-groups' });
     this.syncRangeStateOffset_abyssPrivate();
-    this.scroll.addEventListener('scroll', this.syncRangeStateOffset_abyssPrivate, {
+    this.scroll.addEventListener('scroll', this.scrollChanged_abyssPrivate, {
       passive: true,
     });
     if (context_abyssPrivate.copy !== undefined)
@@ -405,9 +388,7 @@ export class ProjectsTimelineView<
           this.interaction_abyssPrivate.cancelActive();
           return;
         }
-        this.syncRangeStateOffset_abyssPrivate();
-        this.syncTrackWidth_abyssPrivate(this.currentWindow_abyssPrivate());
-        this.patchVisibleCalendar_abyssPrivate(this.currentWindow_abyssPrivate());
+        this.refreshCalendar_abyssPrivate();
         this.refreshLayout_abyssPrivate();
       },
       mountedChanged: () => {
@@ -427,26 +408,13 @@ export class ProjectsTimelineView<
 
   private createNavigation_abyssPrivate(): void {
     const buttons = createTimelineNavigation(this.axisSummary_abyssPrivate, {
-      previous: () => {
-        this.context_abyssPrivate.requestNavigation(() => {
-          this.moveAnchor_abyssPrivate(-1);
-        });
-      },
-      next: () => {
-        this.context_abyssPrivate.requestNavigation(() => {
-          this.moveAnchor_abyssPrivate(1);
-        });
-      },
-      today: () => {
-        this.context_abyssPrivate.requestNavigation(() => {
-          const today = new Date((this.context_abyssPrivate.now ?? (() => new Date()))());
-          this.anchor_abyssPrivate = today;
-          this.fittedWindow_abyssPrivate = undefined;
-          this.scaleContextOrdinal_abyssPrivate = dayOrdinal(localDay(today));
-          this.render_abyssPrivate(true);
-        });
-      },
       scale: (scale) => {
+        if (scale === this.renderedScale_abyssPrivate) {
+          this.context_abyssPrivate.requestNavigation(() => {
+            this.focusToday();
+          });
+          return;
+        }
         void this.context_abyssPrivate.requestScaleChange(scale).catch((error: unknown) => {
           console.error('[abyss-tasks] Could not change project Timeline scale', error);
         });
@@ -482,7 +450,7 @@ export class ProjectsTimelineView<
   destroy(): void {
     this.rendering_abyssPrivate = true;
     this.interaction_abyssPrivate.destroy();
-    this.scroll.removeEventListener('scroll', this.syncRangeStateOffset_abyssPrivate);
+    this.scroll.removeEventListener('scroll', this.scrollChanged_abyssPrivate);
     if (this.context_abyssPrivate.copy !== undefined)
       this.root.removeEventListener('copy', this.context_abyssPrivate.copy);
     if (this.context_abyssPrivate.paste !== undefined)
@@ -561,13 +529,31 @@ export class ProjectsTimelineView<
     this.interaction_abyssPrivate.cancelActive();
     this.rowMounts_abyssPrivate.setActive(false);
     this.hiddenScrollPosition_abyssPrivate = {
-      left: this.scroll.scrollLeft,
       top: this.scroll.scrollTop,
+      center:
+        this.scaleContextOrdinal_abyssPrivate ??
+        timelineViewportCenter(
+          this.viewport_abyssPrivate,
+          this.scroll.scrollLeft,
+          this.usableWidth_abyssPrivate,
+        ),
     };
   }
 
   prepareScaleChange(): void {
-    this.preparedScaleChange_abyssPrivate = true;
+    this.scaleContextOrdinal_abyssPrivate ??= timelineViewportCenter(
+      this.viewport_abyssPrivate,
+      this.scroll.scrollLeft,
+      this.usableWidth_abyssPrivate,
+    );
+  }
+
+  focusToday(): void {
+    this.interaction_abyssPrivate.cancelActive();
+    this.hiddenScrollPosition_abyssPrivate = undefined;
+    this.scaleContextOrdinal_abyssPrivate =
+      dayOrdinal(localDay((this.context_abyssPrivate.now ?? (() => new Date()))())) + 0.5;
+    this.refreshCalendar_abyssPrivate();
   }
 
   revealProject(path: string): void {
@@ -577,26 +563,18 @@ export class ProjectsTimelineView<
     }
     const row = located?.row;
     if (row === undefined) return;
-    const window = this.currentWindow_abyssPrivate();
-    let revealedOrdinal: number | undefined;
-    if (projectTimelineBarGeometry(row.range, window) === undefined) {
+    if (
+      this.scaleContextOrdinal_abyssPrivate !== undefined ||
+      !this.rangeExposed_abyssPrivate(row.range)
+    ) {
       const anchor = rangeAnchor(row.range);
       if (anchor !== undefined) {
-        revealedOrdinal = dayOrdinal(anchor);
-        this.anchor_abyssPrivate = dayDate(anchor);
-        this.fittedWindow_abyssPrivate = undefined;
-        this.scaleContextOrdinal_abyssPrivate = revealedOrdinal;
-        this.render_abyssPrivate(true);
+        this.scaleContextOrdinal_abyssPrivate = dayOrdinal(anchor) + 0.5;
+        this.interaction_abyssPrivate.cancelActive();
+        this.refreshCalendar_abyssPrivate();
       }
     }
     this.rowMounts_abyssPrivate.reveal(row.occurrenceId);
-    if (revealedOrdinal !== undefined) {
-      this.scroll.scrollLeft = this.scaleScrollLeft_abyssPrivate(
-        this.currentWindow_abyssPrivate(),
-        revealedOrdinal,
-        this.scroll.scrollLeft,
-      );
-    }
   }
 
   private renderProjects_abyssPrivate(
@@ -606,7 +584,7 @@ export class ProjectsTimelineView<
     this.projects_abyssPrivate = projects;
     this.search_abyssPrivate = search;
     this.handleScaleTransition_abyssPrivate();
-    return this.render_abyssPrivate(false);
+    return this.render_abyssPrivate();
   }
 
   private syncScaleButtons_abyssPrivate(): void {
@@ -615,127 +593,98 @@ export class ProjectsTimelineView<
       const active = candidate === scale;
       button.setAttribute('aria-pressed', String(active));
       button.toggleClass('is-active', active);
+      button.title = active ? 'Center Today' : 'Change Timeline scale';
     }
   }
 
   private handleScaleTransition_abyssPrivate(): void {
     const scale = this.context_abyssPrivate.settings().scale;
     if (scale === this.renderedScale_abyssPrivate) return;
-    this.fittedWindow_abyssPrivate = undefined;
+    this.prepareScaleChange();
+    this.interaction_abyssPrivate.cancelActive();
     this.renderedScale_abyssPrivate = scale;
   }
 
-  private scaleScrollLeft_abyssPrivate(
-    window: ProjectTimelineWindow,
-    contextOrdinal: number,
-    fallback: number,
-  ): number {
-    const geometry = this.axisGeometry_abyssPrivate();
-    if (geometry === undefined) return fallback;
-    const { summaryWidth, trackStart, trackWidth, viewportWidth } = geometry;
-    const fraction =
-      (contextOrdinal - dayOrdinal(window.startDay) + 0.5) / Math.max(1, window.dayCount);
-    const contextPosition = trackStart + clamp(fraction, 0, 1) * trackWidth;
-    const centered = contextPosition - (summaryWidth + viewportWidth) / 2;
-    return clamp(centered, 0, Math.max(0, trackStart + trackWidth - viewportWidth));
-  }
-
-  private axisGeometry_abyssPrivate(): TimelineAxisGeometry | undefined {
-    const summary = this.axis_abyssPrivate.querySelector<HTMLElement>(
-      '.abyss-project-timeline-axis-summary',
-    );
-    const dates = this.axis_abyssPrivate.querySelector<HTMLElement>(
-      '.abyss-project-timeline-axis-dates',
-    );
-    if (summary === null || dates === null) return undefined;
-    const viewport = this.scroll.getBoundingClientRect();
-    const summaryBounds = summary.getBoundingClientRect();
-    const dateBounds = dates.getBoundingClientRect();
-    const excludedWidth = Math.max(0, this.scroll.offsetWidth - this.scroll.clientWidth);
-    const viewportWidth =
-      viewport.width > 0 ? viewport.width - excludedWidth : this.scroll.clientWidth;
-    if (dateBounds.width <= 0 || viewportWidth <= summaryBounds.width) return undefined;
-    return {
-      summaryWidth: summaryBounds.width,
-      trackStart:
-        dateBounds.left - (viewport.left + this.scroll.clientLeft) + this.scroll.scrollLeft,
-      trackWidth: dateBounds.width,
-      viewportWidth,
-    };
-  }
-
-  private moveAnchor_abyssPrivate(direction: -1 | 1): void {
-    const scale = this.context_abyssPrivate.settings().scale;
-    if (scale === 'year') {
-      this.moveYearAnchor_abyssPrivate(direction);
-      return;
-    }
-    if (this.fittedWindow_abyssPrivate !== undefined) {
-      const context =
-        dayOrdinal(this.fittedWindow_abyssPrivate.startDay) +
-        Math.floor((this.fittedWindow_abyssPrivate.dayCount - 1) / 2);
-      this.anchor_abyssPrivate = dayDate(dayFromOrdinal(context));
-    }
-    this.fittedWindow_abyssPrivate = undefined;
-    if (scale === 'day' || scale === 'week') {
-      const span = scale === 'day' ? 14 : 84;
-      this.anchor_abyssPrivate = dayDate(
-        dayFromOrdinal(dayOrdinal(localDay(this.anchor_abyssPrivate)) + span * direction),
-      );
-    } else {
-      const years = scale === 'month' ? 1 : 3;
-      const current = this.anchor_abyssPrivate;
-      const shifted = new Date(0);
-      shifted.setFullYear(current.getFullYear() + years * direction, current.getMonth(), 1);
-      const lastDay = new Date(0);
-      lastDay.setFullYear(shifted.getFullYear(), shifted.getMonth() + 1, 0);
-      shifted.setDate(Math.min(current.getDate(), lastDay.getDate()));
-      shifted.setHours(0, 0, 0, 0);
-      this.anchor_abyssPrivate = shifted;
-    }
-    this.render_abyssPrivate(true);
-  }
-
-  private moveYearAnchor_abyssPrivate(direction: -1 | 1): void {
-    const window = this.currentWindow_abyssPrivate();
-    const anchor = dayDate(direction === 1 ? window.endDay : window.startDay);
-    anchor.setFullYear(anchor.getFullYear() + (direction === 1 ? 2 : -3), 0, 1);
-    this.anchor_abyssPrivate = anchor;
-    this.fittedWindow_abyssPrivate = undefined;
-    this.render_abyssPrivate(true);
-  }
-
-  private fittedWindowForModel_abyssPrivate(
-    model: ProjectTimelineModel,
-  ): ProjectTimelineWindow | undefined {
-    const bounds = model.groups.flatMap(({ rows }) =>
-      rows.flatMap(({ range }) => rangeBounds(range)),
-    );
-    if (bounds.length === 0) return undefined;
-    bounds.sort((left, right) => dayOrdinal(left) - dayOrdinal(right));
-    return projectTimelineFitWindow(
-      bounds[0] as string,
-      bounds[bounds.length - 1] as string,
-      this.context_abyssPrivate.settings().scale,
-    );
-  }
-
   private currentWindow_abyssPrivate(): ProjectTimelineWindow {
+    return this.viewport_abyssPrivate.window;
+  }
+
+  private rangeExposed_abyssPrivate(range: ProjectTimelineRange): boolean {
+    const start = rangeAnchor(range);
+    if (start === undefined) return false;
+    const end = range.kind === 'closed' ? range.endDay : start;
+    const first =
+      dayOrdinal(this.currentWindow_abyssPrivate().startDay) +
+      this.scroll.scrollLeft / this.viewport_abyssPrivate.dayWidth;
     return (
-      this.fittedWindow_abyssPrivate ??
-      projectTimelineWindow(this.anchor_abyssPrivate, this.context_abyssPrivate.settings().scale)
+      dayOrdinal(start) <
+        first + this.usableWidth_abyssPrivate / this.viewport_abyssPrivate.dayWidth &&
+      dayOrdinal(end) + 1 > first
     );
   }
 
-  private render_abyssPrivate(navigation: boolean): ProjectTimelineModel {
+  private viewportPosition_abyssPrivate(usable: number): TimelineViewportPosition {
+    if (usable <= 0) return { viewport: this.viewport_abyssPrivate, left: this.scroll.scrollLeft };
+    if (
+      usable > 0 &&
+      (this.scaleContextOrdinal_abyssPrivate !== undefined ||
+        usable !== this.usableWidth_abyssPrivate)
+    ) {
+      const center =
+        this.scaleContextOrdinal_abyssPrivate ??
+        timelineViewportCenter(
+          this.viewport_abyssPrivate,
+          this.scroll.scrollLeft,
+          this.usableWidth_abyssPrivate,
+        );
+      this.scaleContextOrdinal_abyssPrivate = undefined;
+      return timelineViewportAt(center, this.renderedScale_abyssPrivate, usable);
+    }
+    return rebaseTimelineViewport(this.viewport_abyssPrivate, this.scroll.scrollLeft, usable);
+  }
+  private refreshCalendar_abyssPrivate(): void {
+    const usable =
+      this.scroll.clientWidth - this.axisSummary_abyssPrivate.getBoundingClientRect().width;
+    const position = this.viewportPosition_abyssPrivate(usable);
+    const changed = position.viewport !== this.viewport_abyssPrivate;
+    this.viewport_abyssPrivate = position.viewport;
+    if (usable > 0) this.usableWidth_abyssPrivate = usable;
+    this.syncTrackWidth_abyssPrivate();
+    if (usable > 0 && this.scroll.scrollLeft !== position.left)
+      this.scroll.scrollLeft = position.left;
+    this.lastLeft_abyssPrivate = this.scroll.scrollLeft;
+    const window = this.currentWindow_abyssPrivate();
+    const signature = `${window.startDay}:${window.scale}:${this.lastLeft_abyssPrivate}:${usable}:${localDay((this.context_abyssPrivate.now ?? (() => new Date()))())}`;
+    if (signature === this.calendarSignature_abyssPrivate) return;
+    this.calendarSignature_abyssPrivate = signature;
+    this.syncRangeStateOffset_abyssPrivate();
+    this.patchVisibleCalendar_abyssPrivate(window);
+    for (const row of this.rows_abyssPrivate.values()) {
+      if (changed) this.patchRange_abyssPrivate(row, row.range, window);
+      else if (!this.rangeExposed_abyssPrivate(row.range))
+        this.renderMissingRange_abyssPrivate(row, row.range, window);
+      else row.state.hidden = true;
+    }
+    this.interaction_abyssPrivate.reconcileAfterRender();
+  }
+
+  private readonly scrollChanged_abyssPrivate = (): void => {
+    if (this.scroll.scrollLeft !== this.lastLeft_abyssPrivate)
+      this.scaleContextOrdinal_abyssPrivate = undefined;
+    this.syncRangeStateOffset_abyssPrivate();
+  };
+
+  private render_abyssPrivate(): ProjectTimelineModel {
     this.syncScaleButtons_abyssPrivate();
     const focused = this.focusedDescendant_abyssPrivate();
     const focusedRange = this.focusedRangeIdentity_abyssPrivate(focused);
     const hiddenPosition = this.scroll.isConnected
       ? this.hiddenScrollPosition_abyssPrivate
       : undefined;
-    const left = hiddenPosition?.left ?? this.scroll.scrollLeft;
-    if (hiddenPosition !== undefined) this.scroll.scrollTop = hiddenPosition.top;
+    if (hiddenPosition !== undefined) {
+      this.scroll.scrollTop = hiddenPosition.top;
+      this.scaleContextOrdinal_abyssPrivate ??= hiddenPosition.center;
+    }
     if (hiddenPosition !== undefined) this.hiddenScrollPosition_abyssPrivate = undefined;
     const input = this.context_abyssPrivate.modelInput();
     const model = buildProjectTimelineModel({
@@ -758,34 +707,16 @@ export class ProjectsTimelineView<
       ),
       effectiveField: this.context_abyssPrivate.effectiveField,
     });
-    this.fitScale_abyssPrivate(model);
+    this.refreshCalendar_abyssPrivate();
     const window = this.currentWindow_abyssPrivate();
-    this.syncTrackWidth_abyssPrivate(window);
     this.patchAxis_abyssPrivate(window);
     this.reconcileGroups_abyssPrivate(model.groups, window);
     this.interaction_abyssPrivate.reconcileAfterRender();
     this.syncSelectedRows_abyssPrivate();
-    this.restoreScroll_abyssPrivate(navigation, window, left);
     this.patchVisibleCalendar_abyssPrivate(window);
     this.restoreFocus_abyssPrivate(focused, focusedRange);
     this.rendering_abyssPrivate = false;
     return model;
-  }
-
-  private fitScale_abyssPrivate(model: ProjectTimelineModel): void {
-    if (this.preparedScaleChange_abyssPrivate) {
-      this.preparedScaleChange_abyssPrivate = false;
-      this.renderedScale_abyssPrivate = this.context_abyssPrivate.settings().scale;
-      this.fittedWindow_abyssPrivate = this.fittedWindowForModel_abyssPrivate(model);
-      if (this.fittedWindow_abyssPrivate === undefined) {
-        this.anchor_abyssPrivate = new Date(
-          (this.context_abyssPrivate.now ?? (() => new Date()))(),
-        );
-        this.scaleContextOrdinal_abyssPrivate = dayOrdinal(localDay(this.anchor_abyssPrivate));
-      } else {
-        this.scaleContextOrdinal_abyssPrivate = dayOrdinal(this.fittedWindow_abyssPrivate.startDay);
-      }
-    }
   }
 
   private indexModel_abyssPrivate(model: ProjectTimelineModel): void {
@@ -828,25 +759,6 @@ export class ProjectsTimelineView<
     this.interaction_abyssPrivate.reconcileAfterRender();
   }
 
-  private restoreScroll_abyssPrivate(
-    navigation: boolean,
-    window: ProjectTimelineWindow,
-    left: number,
-  ): void {
-    if (this.scaleContextOrdinal_abyssPrivate !== undefined) {
-      this.scroll.scrollLeft = this.scaleScrollLeft_abyssPrivate(
-        window,
-        this.scaleContextOrdinal_abyssPrivate,
-        left,
-      );
-
-      this.scaleContextOrdinal_abyssPrivate = undefined;
-    } else if (!navigation && this.scroll.scrollLeft !== left) {
-      this.scroll.scrollLeft = left;
-    }
-    this.syncRangeStateOffset_abyssPrivate();
-  }
-
   private readonly syncRangeStateOffset_abyssPrivate = (): void => {
     this.root.style.setProperty(
       '--abyss-project-timeline-range-state-left',
@@ -875,10 +787,8 @@ export class ProjectsTimelineView<
     replacement.focus({ preventScroll: true });
   }
 
-  private syncTrackWidth_abyssPrivate(window: ProjectTimelineWindow): void {
-    const summaryWidth = this.axisSummary_abyssPrivate.getBoundingClientRect().width;
-    const viewportWidth = Math.max(0, this.scroll.clientWidth - summaryWidth);
-    const trackWidth = projectTimelineTrackWidth(window, viewportWidth);
+  private syncTrackWidth_abyssPrivate(): void {
+    const trackWidth = this.viewport_abyssPrivate.trackWidth;
     this.root.style.setProperty('--abyss-project-timeline-track-width', `${String(trackWidth)}px`);
     this.axisDates_abyssPrivate.dataset['trackWidth'] = String(trackWidth);
   }
@@ -888,40 +798,26 @@ export class ProjectsTimelineView<
     readonly visibleEndDay: string;
     readonly visibleStartPercent: number;
   } {
-    const geometry = this.axisGeometry_abyssPrivate();
     const first = dayOrdinal(window.startDay);
-    const last = dayOrdinal(window.endDay);
-    if (geometry === undefined) {
-      return {
-        visibleStartDay: window.startDay,
-        visibleEndDay: dayFromOrdinal(
-          Math.min(last, first + fallbackAxisDayCount(window.scale) - 1),
-        ),
-        visibleStartPercent: 0,
-      };
-    }
-    const visibleLeft = clamp(
-      this.scroll.scrollLeft + geometry.summaryWidth - geometry.trackStart,
-      0,
-      geometry.trackWidth,
-    );
+    const trackWidth = this.viewport_abyssPrivate.trackWidth;
+    const visibleLeft = clamp(this.scroll.scrollLeft, 0, trackWidth);
     const visibleRight = clamp(
-      this.scroll.scrollLeft + geometry.viewportWidth - geometry.trackStart,
+      visibleLeft + Math.max(1, this.usableWidth_abyssPrivate),
       visibleLeft,
-      geometry.trackWidth,
+      trackWidth,
     );
     const startOffset = Math.min(
       window.dayCount - 1,
-      Math.floor((visibleLeft / geometry.trackWidth) * window.dayCount),
+      Math.floor((visibleLeft / trackWidth) * window.dayCount),
     );
     const endOffset = Math.min(
       window.dayCount - 1,
-      Math.max(startOffset, Math.ceil((visibleRight / geometry.trackWidth) * window.dayCount) - 1),
+      Math.max(startOffset, Math.ceil((visibleRight / trackWidth) * window.dayCount) - 1),
     );
     return {
       visibleStartDay: dayFromOrdinal(first + startOffset),
       visibleEndDay: dayFromOrdinal(first + endOffset),
-      visibleStartPercent: (visibleLeft / geometry.trackWidth) * 100,
+      visibleStartPercent: (visibleLeft / trackWidth) * 100,
     };
   }
 
@@ -945,11 +841,6 @@ export class ProjectsTimelineView<
       `abyss-project-timeline-axis-cell${window.scale === 'day' ? ' is-day' : ''}`,
       false,
     );
-    for (const marker of this.axisDates_abyssPrivate.querySelectorAll(
-      ':scope > .abyss-project-timeline-today',
-    )) {
-      marker.remove();
-    }
     this.addTodayMarker_abyssPrivate(this.axisDates_abyssPrivate, window);
   }
 
@@ -1388,9 +1279,6 @@ export class ProjectsTimelineView<
     range: ProjectTimelineRange,
     window: ProjectTimelineWindow,
   ): void {
-    for (const marker of row.track.querySelectorAll(':scope > .abyss-project-timeline-today')) {
-      marker.remove();
-    }
     this.addTodayMarker_abyssPrivate(row.track, window);
     patchTimelineGrid(row.grid, this.axisLayout_abyssPrivate);
     this.patchRangeEditability_abyssPrivate(row);
@@ -1401,6 +1289,8 @@ export class ProjectsTimelineView<
       return;
     }
     this.patchVisibleRange_abyssPrivate(row, range, window, geometry);
+    if (!this.rangeExposed_abyssPrivate(range))
+      this.renderMissingRange_abyssPrivate(row, range, window);
   }
 
   private patchRangeEditability_abyssPrivate(row: RenderedRow<TCell>): void {
@@ -1459,7 +1349,11 @@ export class ProjectsTimelineView<
       return;
     }
     const anchor = rangeAnchor(range) as string;
-    const direction = dayOrdinal(anchor) < dayOrdinal(window.startDay) ? 'before' : 'after';
+    const direction =
+      dayOrdinal(anchor) <
+      dayOrdinal(window.startDay) + this.scroll.scrollLeft / this.viewport_abyssPrivate.dayWidth
+        ? 'before'
+        : 'after';
     row.state.hidden = false;
     row.state.className = `abyss-project-timeline-state abyss-project-timeline-boundary-marker is-${direction}`;
     row.state.dataset['direction'] = direction;

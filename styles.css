@@ -7910,19 +7910,11 @@ button.abyss-project-table-status-pill {
   display: none;
 }
 
-/* Keep both navigation rows in the axis's measured height, including the scale divider. */
+/* The absolute calendar tiers retain their own measured header height. */
 .abyss-project-timeline-navigation {
   display: flex;
   flex-direction: column;
   width: 100%;
-}
-
-.abyss-project-timeline-range-navigation {
-  display: grid;
-  grid-template-columns: var(--abyss-toolbar-control-size) minmax(0, 1fr) var(
-      --abyss-toolbar-control-size
-    );
-  block-size: var(--abyss-toolbar-control-size);
 }
 
 .abyss-project-timeline-scale-control {
@@ -7946,11 +7938,6 @@ button.abyss-project-table-status-pill {
   block-size: 100%;
   min-block-size: 0;
   white-space: nowrap;
-}
-
-.abyss-project-timeline-range-navigation button {
-  inline-size: 100%;
-  min-inline-size: 0;
 }
 
 .abyss-project-timeline-axis .svg-icon {
@@ -7980,6 +7967,7 @@ button.abyss-project-table-status-pill {
 
 .abyss-project-timeline-scroll {
   overflow: auto;
+  overflow-anchor: none;
   min-width: 0;
   min-height: 0;
   flex: 1 1 auto;
@@ -7998,6 +7986,7 @@ button.abyss-project-table-status-pill {
 }
 
 .abyss-project-timeline-axis {
+  min-block-size: calc(var(--abyss-toolbar-control-size) * 2 + 1px);
   position: sticky;
   z-index: 5;
   top: 0;

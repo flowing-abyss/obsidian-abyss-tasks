@@ -1,4 +1,3 @@
-import { setIcon } from 'obsidian';
 import { projectCalendarDayOrdinal } from '../../projects/projectDateValue';
 import type {
   ProjectTimelineAxisCell,
@@ -102,32 +101,10 @@ export function patchTimelineGrid(grid: HTMLElement, layout: ProjectTimelineAxis
 export function createTimelineNavigation(
   host: HTMLElement,
   actions: {
-    readonly previous: () => void;
-    readonly next: () => void;
-    readonly today: () => void;
     readonly scale: (scale: ProjectTimelineScale) => void;
   },
 ): Map<ProjectTimelineScale, HTMLButtonElement> {
   const navigation = host.createDiv({ cls: 'abyss-project-timeline-navigation' });
-  const range = navigation.createDiv({ cls: 'abyss-project-timeline-range-navigation' });
-  const previous = range.createEl('button', {
-    cls: 'clickable-icon abyss-cal-nav-btn',
-    attr: { type: 'button', 'aria-label': 'Previous range' },
-  });
-  setIcon(previous, 'chevron-left');
-  previous.addEventListener('click', actions.previous);
-  const today = range.createEl('button', {
-    cls: 'abyss-cal-nav-today',
-    text: 'Today',
-    attr: { type: 'button' },
-  });
-  today.addEventListener('click', actions.today);
-  const next = range.createEl('button', {
-    cls: 'clickable-icon abyss-cal-nav-btn',
-    attr: { type: 'button', 'aria-label': 'Next range' },
-  });
-  setIcon(next, 'chevron-right');
-  next.addEventListener('click', actions.next);
   const scales = navigation.createDiv({
     cls: 'abyss-project-timeline-scale-control abyss-cal-view-switcher',
     attr: { role: 'group', 'aria-label': 'Timeline scale' },

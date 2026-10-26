@@ -1,10 +1,20 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import { ProjectDashboardTimeline } from '../src/panels/projects/ProjectDashboardTimeline';
 import { TaskTimelineSurface } from '../src/panels/task-collection/TaskTimelineSurface';
 import { indexedRows } from '../src/panels/task-list/taskListRows';
+import type {
+  TimelineContextOverlay,
+  TimelineContextOverlayLayout,
+} from '../src/panels/timeline/TimelineContextOverlay';
+import { projectCalendarDayOrdinal } from '../src/projects/projectDateValue';
+import { buildConfiguredProjectFieldCatalog } from '../src/projects/projectFields';
+import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { defaultTaskTimelineSettings } from '../src/task-lists/taskTimelineSettings';
 import { localDate, type TaskPlanning } from '../src/tasks';
-import { expectDefined } from './helpers';
+import { expectDefined, flushMicrotasks } from './helpers';
+import { projectWindowMigration } from './support/projectWindowMigration';
 import { prepareTaskPanelViewport } from './support/taskPanelViewport';
+import { taskViewportOwner } from './support/taskViewportOwner';
 afterEach(() => vi.restoreAllMocks());
 it('bounds mounted rows and calendar cells and reveals a distant task through the shared viewport', () => {
   const host = document.body.createDiv({ cls: 'abyss-center-scroll' });
@@ -82,5 +92,357 @@ it('bounds mounted rows and calendar cells and reveals a distant task through th
   } finally {
     surface.destroy();
     host.remove();
+  }
+});
+
+function continuousTimeline(
+  initialWidth = 900,
+  planning: TaskPlanning = { start: localDate('2026-10-24'), due: localDate('2026-10-28') },
+  mountContext?: (
+    host: HTMLElement,
+    layout: TimelineContextOverlayLayout,
+  ) => TimelineContextOverlay,
+) {
+  const host = document.body.createDiv({ cls: 'abyss-center-scroll' });
+  prepareTaskPanelViewport(host);
+  let width = initialWidth;
+  Object.defineProperty(host, 'clientWidth', { configurable: true, get: () => width });
+  const frames = new Map<number, FrameRequestCallback>();
+  let next = 0;
+  vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+    frames.set(++next, callback);
+    return next;
+  });
+  vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => {
+    frames.delete(id);
+  });
+  let now = new Date(2026, 9, 26);
+  const settings = defaultTaskTimelineSettings();
+  const updates = vi.fn();
+  const changeScale = vi.fn((scale: typeof settings.scale) => {
+    settings.scale = scale;
+    update();
+  });
+  const surface = new TaskTimelineSurface<TaskPlanning>(
+    {
+      host,
+      scroll: host,
+      mountedChanged: () => {},
+      reportFailure: (error) => {
+        throw error;
+      },
+      mount: (parent) => {
+        const element = parent.createDiv({ cls: 'abyss-task-card' });
+        return {
+          element,
+          update: updates,
+          destroy: () => {
+            element.remove();
+          },
+        };
+      },
+    },
+    {
+      settings: () => settings,
+      now: () => now,
+      planning: (value) => value,
+      snapshot: () => undefined,
+      commit: async () => false,
+      select: () => {},
+      openDates: () => {},
+      changeScale,
+      mountContext: (host, layout) => mountContext?.(host, layout),
+    },
+  );
+  const summary = expectDefined(
+    host.querySelector<HTMLElement>('.abyss-project-timeline-axis-summary'),
+  );
+  vi.spyOn(summary, 'getBoundingClientRect').mockReturnValue({ width: 180 } as DOMRect);
+  const rows = indexedRows([{ kind: 'task' as const, key: 'one', taskKey: 'one', task: planning }]);
+  function update() {
+    surface.update(rows, {
+      revision: 'one',
+      preserveAnchor: true,
+      estimate: () => 64,
+      measurementRevision: () => '',
+    });
+  }
+  function flush() {
+    const callbacks = [...frames.values()];
+    frames.clear();
+    for (const callback of callbacks) callback(0);
+  }
+  const button = (name: string) =>
+    expectDefined(
+      [...host.querySelectorAll('button')].find((button) => button.textContent === name),
+    );
+  const todayX = () => {
+    const marker = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-timeline-axis-dates > .abyss-project-timeline-today',
+      ),
+    );
+    return (
+      180 +
+      (parseFloat(marker.style.left) / 100) * surface.captureScroll().viewport.trackWidth -
+      host.scrollLeft
+    );
+  };
+  update();
+  return {
+    host,
+    surface,
+    updates,
+    changeScale,
+    update,
+    flush,
+    button,
+    todayX,
+    resize: (value: number) => {
+      width = value;
+      surface.refreshMeasurements();
+      flush();
+    },
+    nextDay: () => {
+      now = new Date(2026, 9, 27);
+      update();
+    },
+    dispose: () => {
+      surface.destroy();
+      host.remove();
+    },
+  };
+}
+
+it('centers Today, keeps a fractional zoom center, and centers active scales without a settings write', () => {
+  const h = continuousTimeline();
+  try {
+    expect(h.host.querySelector('[aria-label="Previous range"]')).toBeNull();
+    expect(
+      [...h.host.querySelectorAll('button')].some((button) => button.textContent === 'Today'),
+    ).toBe(false);
+    expect(h.todayX()).toBeCloseTo(540, 1);
+    h.host.scrollLeft += 153.375;
+    const center = h.surface.captureScroll().center;
+    h.button('Day').click();
+    expect(h.surface.captureScroll().center).toBeCloseTo(center, 9);
+    h.button('Day').click();
+    expect(h.todayX()).toBeCloseTo(540, 1);
+    expect(h.changeScale).toHaveBeenCalledTimes(1);
+    expect(h.button('Day').title).toContain('Today');
+    h.host.scrollTop = 83.5;
+    h.resize(550);
+    expect(h.todayX()).toBeCloseTo(365, 1);
+    expect(h.host.scrollTop).toBe(83.5);
+  } finally {
+    h.dispose();
+  }
+});
+
+it('retains pending Today until nonzero measurement and yields to a newer reveal', () => {
+  const h = continuousTimeline(0, { scheduled: localDate('2032-04-08') });
+  try {
+    h.surface.reveal('one');
+    h.resize(900);
+    const state = expectDefined(
+      h.host.querySelector<HTMLButtonElement>('.abyss-project-timeline-state'),
+    );
+    expect(state.hidden).toBe(true);
+    expect(h.surface.captureScroll().center).toBe(
+      (projectCalendarDayOrdinal('2032-04-08') as number) + 0.5,
+    );
+    h.button('Month').click();
+    expect(h.todayX()).toBeCloseTo(540, 1);
+  } finally {
+    h.dispose();
+  }
+  const initial = continuousTimeline(0);
+  try {
+    initial.resize(900);
+    expect(initial.todayX()).toBeCloseTo(540, 1);
+  } finally {
+    initial.dispose();
+  }
+});
+
+it('rebases repeatedly in both directions with continuous coordinates and retained card DOM', () => {
+  const h = continuousTimeline();
+  try {
+    const card = h.surface.element('one');
+    const initial = h.surface.captureScroll();
+    h.updates.mockClear();
+    for (const left of [100.375, 30000.125, 50.625, 32000.875]) {
+      const before = h.surface.captureScroll().viewport;
+      const expected =
+        (projectCalendarDayOrdinal(before.window.startDay) as number) +
+        (left + 360) / before.dayWidth;
+      h.host.scrollLeft = left;
+      h.host.dispatchEvent(new Event('scroll'));
+      h.flush();
+      expect(h.surface.captureScroll().center).toBeCloseTo(expected, 9);
+      expect(h.surface.captureScroll().viewport.trackWidth).toBe(initial.viewport.trackWidth);
+      expect(h.surface.element('one')).toBe(card);
+      expect(h.host.querySelectorAll('.abyss-project-timeline-axis-cell').length).toBeLessThan(100);
+    }
+    expect(h.updates).not.toHaveBeenCalled();
+    const saved = h.surface.captureScroll();
+    h.surface.suspend();
+    h.surface.resume();
+    h.flush();
+    expect(h.surface.captureScroll().center).toBeCloseTo(saved.center, 9);
+    h.button('Month').click();
+    h.surface.restoreScroll(saved);
+    h.resize(600);
+    expect(h.surface.captureScroll().center).toBeCloseTo(saved.center, 9);
+  } finally {
+    h.dispose();
+  }
+});
+
+it('reveals a Scheduled-only task that is in the physical buffer but outside the exposed viewport without replacing its card', () => {
+  const h = continuousTimeline(900, { scheduled: localDate('2027-04-08') });
+  try {
+    const card = h.surface.element('one');
+    const scheduled = expectDefined(
+      h.host.querySelector<HTMLElement>(
+        '.abyss-task-timeline-scheduled-track .abyss-project-timeline-bar',
+      ),
+    );
+    const state = expectDefined(
+      h.host.querySelector<HTMLButtonElement>('.abyss-project-timeline-state'),
+    );
+    expect(scheduled.hidden).toBe(false);
+    expect(state.hidden).toBe(false);
+    expect(state.disabled).toBe(false);
+    state.click();
+    expect(state.hidden).toBe(true);
+    expect(h.surface.element('one')).toBe(card);
+    expect(h.surface.captureScroll().center).toBe(
+      (projectCalendarDayOrdinal('2027-04-08') as number) + 0.5,
+    );
+  } finally {
+    h.dispose();
+  }
+});
+
+it('preserves logical focus while moving the retained surface to another owning window and retires old native work', () => {
+  const migration = projectWindowMigration();
+  const h = continuousTimeline();
+  const target = taskViewportOwner();
+  try {
+    h.host.scrollLeft += 123.375;
+    h.host.dispatchEvent(new Event('scroll'));
+    const center = h.surface.captureScroll().center;
+    target.doc.body.append(h.host);
+    migration.notify(h.host);
+    h.surface.resume();
+    h.flush();
+    target.flush();
+    expect(h.surface.captureScroll().center).toBeCloseTo(center, 9);
+    expect(target.observers.some((observer) => observer.elements.has(h.host))).toBe(true);
+    h.surface.destroy();
+    expect(target.frames.size).toBe(0);
+    expect(target.observers.every((observer) => observer.elements.size === 0)).toBe(true);
+    expect(migration.bindings.size).toBe(0);
+  } finally {
+    h.dispose();
+    target.destroy();
+  }
+});
+
+it('updates mounted Today markers when the civil day changes without a row revision', () => {
+  const h = continuousTimeline();
+  try {
+    h.nextDay();
+    const header = expectDefined(
+      h.host.querySelector<HTMLElement>(
+        '.abyss-project-timeline-axis-dates > .abyss-project-timeline-today',
+      ),
+    );
+    const row = expectDefined(
+      h.host.querySelector<HTMLElement>('.abyss-task-timeline-row .abyss-project-timeline-today'),
+    );
+    expect(header.getAttribute('aria-label')).toBe('Today, 2026-10-27');
+    expect(row.getAttribute('aria-label')).toBe(header.getAttribute('aria-label'));
+    expect(row.style.left).toBe(header.style.left);
+  } finally {
+    h.dispose();
+  }
+});
+
+it('lets newer horizontal user motion supersede pending initial Today', () => {
+  const h = continuousTimeline(0);
+  try {
+    h.host.scrollLeft = 211.75;
+    h.host.dispatchEvent(new Event('scroll'));
+    h.flush();
+    const center = h.surface.captureScroll().center;
+    h.resize(900);
+    expect(h.surface.captureScroll().center).toBeCloseTo(center, 9);
+    expect(center).not.toBe((projectCalendarDayOrdinal('2026-10-26') as number) + 0.5);
+  } finally {
+    h.dispose();
+  }
+});
+
+it('keeps dashboard boundaries actionable when active-scale Today leaves the geometry unchanged', async () => {
+  const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+  const apply = vi.fn(async () => ({ applied: [], failed: [] }));
+  const h = continuousTimeline(
+    900,
+    {},
+    (host, layout) =>
+      new ProjectDashboardTimeline(host, {
+        ...layout,
+        project: () => ({
+          path: 'Projects/A.md',
+          name: 'A',
+          frontmatter: { start: '2026-10-24', end: '2026-10-28' },
+          statusId: null,
+          rawStatus: null,
+          tags: [],
+          stats: {
+            total: 0,
+            done: 0,
+            cancelled: 0,
+            inProgress: 0,
+            tracked: { closedMs: 0, openStartsMs: [] },
+          },
+        }),
+        fields: () => buildConfiguredProjectFieldCatalog(DEFAULT_SETTINGS.projects),
+        apply,
+        history: async () => ({ applied: [], failed: [] }),
+      }),
+  );
+  try {
+    h.button('Month').click();
+    const end = expectDefined(
+      h.host.querySelector<HTMLElement>('.abyss-project-boundary-handle.is-end'),
+    );
+    end.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    await flushMicrotasks();
+    expect(apply).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ sourceProperty: 'end', value: '2026-10-29' }),
+      ]),
+    );
+    expect(logged).not.toHaveBeenCalled();
+  } finally {
+    h.dispose();
+  }
+});
+
+it('lets a reveal supersede delayed Today even when its date is exposed in retained geometry', () => {
+  const h = continuousTimeline(900, { start: localDate('2032-04-08') });
+  try {
+    h.surface.reveal('one');
+    const center = h.surface.captureScroll().center;
+    h.resize(0);
+    h.surface.focusToday();
+    h.surface.reveal('one');
+    h.resize(900);
+    expect(h.surface.captureScroll().center).toBe(center);
+  } finally {
+    h.dispose();
   }
 });

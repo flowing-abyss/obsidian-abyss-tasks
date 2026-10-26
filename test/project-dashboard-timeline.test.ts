@@ -42,11 +42,12 @@ function mount(frontmatter: Project['frontmatter'] = { start: '2026-10-02', end:
     endDay: '2026-10-14',
     dayCount: 14,
   };
+  const revealDay = vi.fn();
   const view = new ProjectDashboardTimeline(host, {
     scroll: host,
     window: () => window,
     now: () => new Date(2026, 9, 1),
-    revealDay: () => {},
+    revealDay,
     project: () => project,
     fields: () => fields,
     apply,
@@ -77,6 +78,7 @@ function mount(frontmatter: Project['frontmatter'] = { start: '2026-10-02', end:
     start,
     apply,
     window,
+    revealDay,
     change: (kind: string) => {
       if (kind === 'replace' && project !== undefined)
         project = { ...project, frontmatter: { ...frontmatter, end: '2026-10-10' } };
@@ -245,3 +247,81 @@ it('previews both vertical boundaries in mounted tracks and restores them on can
     h.dispose();
   }
 });
+
+it('keeps a project boundary in the exposed viewport and reveals its day even inside the larger buffer', () => {
+  const h = mount({ start: '2026-10-02', end: '2026-10-12' });
+  try {
+    Object.defineProperty(h.host, 'clientWidth', { configurable: true, value: 210 });
+    vi.spyOn(h.host, 'getBoundingClientRect').mockReturnValue({ left: 0, width: 210 } as DOMRect);
+    h.view.update(h.window);
+    expect(h.bar.classList.contains('is-offscreen')).toBe(true);
+    expect(parseFloat(h.bar.style.left)).toBeCloseTo((110 / 280) * 100, 6);
+    h.bar.click();
+    expect(h.revealDay).toHaveBeenCalledWith('2026-10-12');
+  } finally {
+    h.dispose();
+  }
+});
+
+it.each(['finish', 'cancel', 'reject'] as const)(
+  'keeps dashboard boundary previews through several window moves until %s',
+  async (outcome) => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const h = mount();
+    const track = h.host.createDiv();
+    const release = h.view.mountTrack(track);
+    let reject: ((error: unknown) => void) | undefined;
+    if (outcome === 'reject')
+      h.apply.mockReturnValueOnce(
+        new Promise((_resolve, fail) => {
+          reject = fail;
+        }),
+      );
+    try {
+      h.bar.dispatchEvent(pointer('pointerdown', 170));
+      await flushMicrotasks();
+      h.bar.dispatchEvent(pointer('pointermove', 190));
+      for (const [startDay, endDay, left] of [
+        ['2026-09-29', '2026-10-12', 60],
+        ['2026-10-02', '2026-10-15', 120],
+      ] as const) {
+        Object.assign(h.window, { startDay, endDay });
+        vi.spyOn(h.track, 'getBoundingClientRect').mockReturnValue({
+          left,
+          right: left + 280,
+          width: 280,
+          top: 0,
+          bottom: 70,
+          height: 70,
+        } as DOMRect);
+        h.view.update(h.window);
+        expect(
+          parseFloat(expectDefined(track.querySelector<HTMLElement>('.is-end')).style.left),
+        ).toBeCloseTo(startDay === '2026-10-02' ? 25 : 46.4285714286, 6);
+      }
+      if (outcome === 'cancel') {
+        h.bar.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        expect(h.apply).not.toHaveBeenCalled();
+      } else {
+        h.bar.dispatchEvent(pointer('pointerup', 190));
+        await flushMicrotasks();
+        expect(h.apply).toHaveBeenCalledWith(
+          expect.arrayContaining([
+            expect.objectContaining({ sourceProperty: 'end', value: '2026-10-05' }),
+          ]),
+        );
+        if (outcome === 'reject') {
+          reject?.(new Error('Write rejected'));
+          await flushMicrotasks();
+          expect(logged).toHaveBeenCalledTimes(1);
+        }
+      }
+      expect(
+        parseFloat(expectDefined(track.querySelector<HTMLElement>('.is-end')).style.left),
+      ).toBeCloseTo(17.8571428571, 6);
+    } finally {
+      release();
+      h.dispose();
+    }
+  },
+);

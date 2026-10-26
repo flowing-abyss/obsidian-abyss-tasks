@@ -17,6 +17,7 @@ import type { Project } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { createAppWithFiles, expectDefined, flushMicrotasks, freshContainer } from './helpers';
 import { useProjectTableViewport } from './support/projectTableViewport';
+import { projectTimelineLogicalCenter } from './support/projectTimelineGeometry';
 
 useProjectTableViewport();
 
@@ -677,7 +678,10 @@ describe('ProjectsPanel dispatch', () => {
     document.body.append(el);
     panel.mount(el);
     const scroll = expectDefined(el.querySelector<HTMLElement>('.abyss-project-timeline-scroll'));
-    scroll.scrollLeft = 47;
+    Object.defineProperty(scroll, 'clientWidth', { configurable: true, value: 900 });
+    panel.refreshTableSettings();
+    scroll.scrollLeft += 47;
+    const center = projectTimelineLogicalCenter(scroll);
 
     expectDefined(el.querySelector<HTMLButtonElement>('.abyss-project-table-name')).click();
     expect(el.querySelector('.abyss-projects-dashboard')).not.toBeNull();
@@ -685,7 +689,7 @@ describe('ProjectsPanel dispatch', () => {
     expectDefined(el.querySelector<HTMLButtonElement>('.abyss-project-back')).click();
 
     expect(el.querySelector<HTMLElement>('.abyss-project-timeline-scroll')).toBe(scroll);
-    expect(scroll.scrollLeft).toBe(47);
+    expect(projectTimelineLogicalCenter(scroll)).toBeCloseTo(center, 8);
     panel.destroy();
     el.remove();
     size.mockRestore();

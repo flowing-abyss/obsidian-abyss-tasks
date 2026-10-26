@@ -47,3 +47,42 @@ it('switches Tasks to Timeline with shared search, exact descendant cards and in
     h.dispose();
   }
 });
+
+it('resets horizontal focus on intentional Timeline entry while ordinary search refresh preserves it', async () => {
+  const h = await mountCanonicalSearchUi(
+    { 'tasks.md': '- [ ] needle #inbox 🛫 2026-10-24 📅 2026-10-26' },
+    structuredClone(DEFAULT_SETTINGS),
+    'tasks',
+  );
+  try {
+    const measure = expectDefined(
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').getMockImplementation(),
+    );
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      const rect = measure.call(this);
+      return this.classList.contains('abyss-project-timeline-axis-summary')
+        ? { ...rect, width: 180, right: 180 }
+        : rect;
+    });
+    const choose = async (view: string) => {
+      expectDefined(h.root.querySelector<HTMLButtonElement>(`[aria-label="${view} view"]`)).click();
+      await h.completed();
+    };
+    await choose('Timeline');
+    const scroll = expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-timeline'));
+    const initial = scroll.scrollLeft;
+    scroll.scrollLeft += 401.375;
+    h.query('needle');
+    await h.completed();
+    expect(scroll.scrollLeft).toBeCloseTo(initial + 401.375, 6);
+    await choose('List');
+    await choose('Timeline');
+    expect(
+      expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-timeline')).scrollLeft,
+    ).toBeCloseTo(initial, 6);
+  } finally {
+    h.dispose();
+  }
+});

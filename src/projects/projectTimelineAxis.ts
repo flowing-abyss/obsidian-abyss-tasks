@@ -359,12 +359,3 @@ export function projectTimelineAxisLayout(
 export function projectTimelineDayWidth(scale: ProjectTimelineScale): number {
   return MINIMUM_DAY_WIDTH[scale];
 }
-
-export function projectTimelineTrackWidth(
-  window: ProjectTimelineAxisWindow,
-  viewportWidth: number,
-): number {
-  const readableWidth = window.dayCount * projectTimelineDayWidth(window.scale);
-  const requested = Math.max(Number.isFinite(viewportWidth) ? viewportWidth : 0, readableWidth);
-  return Math.min(PROJECT_TIMELINE_MAX_TRACK_WIDTH, Math.max(1, Math.ceil(requested)));
-}

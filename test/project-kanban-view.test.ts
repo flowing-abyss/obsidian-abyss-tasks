@@ -12,6 +12,7 @@ import {
 import type { ProjectTableSelectableCell } from '../src/panels/projects/projectTableSelection';
 import { projectTimelineOptionsRows } from '../src/panels/projects/ProjectTimelineOptions';
 import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProperties';
+import { projectCalendarDayOrdinal } from '../src/projects/projectDateValue';
 import { ProjectEditValidationError } from '../src/projects/projectEditError';
 import { ProjectEditHistory } from '../src/projects/projectEditHistory';
 import {
@@ -759,17 +760,14 @@ describe('project Kanban overview', () => {
     const month = Array.from(
       host.querySelectorAll<HTMLButtonElement>('.abyss-project-timeline-scale-control button'),
     ).find(({ textContent }) => textContent === 'Month');
+    const window = host.querySelector('.abyss-project-timeline-axis-range')?.textContent;
     expectDefined(month).click();
-    expect(host.querySelector('.abyss-project-timeline-axis-range')?.textContent).toBe(
-      '2026-09-01 – 2026-09-30',
-    );
+    expect(host.querySelector('.abyss-project-timeline-axis-range')?.textContent).toBe(window);
     expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
     const popover = expectDefined(host.querySelector<HTMLElement>('.abyss-view-state-popover'));
     chooseViewOption(host, 'Scale', 'Month');
     await flushMicrotasks();
-    expect(host.querySelector('.abyss-project-timeline-axis-range')?.textContent).toBe(
-      '2026-09-01 – 2026-09-30',
-    );
+    expect(host.querySelector('.abyss-project-timeline-axis-range')?.textContent).toBe(window);
     chooseViewOption(host, 'Scale', 'Quarter');
     await flushMicrotasks();
     expect(host.querySelector('.abyss-view-state-popover')).toBe(popover);
@@ -819,43 +817,48 @@ describe('project Kanban overview', () => {
     expect(year.getAttribute('aria-pressed')).toBe('true');
   });
 
-  it('refits Year from options, including reselection, while retaining the popover', async () => {
-    const { host, settings } = mountView([
-      project({
-        path: 'Projects/Future.md',
-        frontmatter: { start: '2045-06-28', end: '2045-07-04' },
-      }),
-    ]);
+  it('preserves center on an option zoom and centers Today on reselection while retaining the popover', async () => {
+    const item = project({
+      path: 'Projects/Future.md',
+      frontmatter: { start: '2045-06-28', end: '2045-07-04' },
+    });
+    const saveViewState = vi.fn().mockResolvedValue(undefined);
+    const { host, settings, view } = mountView([item], { saveViewState });
     clickView(host, 'Timeline');
+    const scroll = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-scroll'));
+    Object.defineProperty(scroll, 'clientWidth', { configurable: true, value: 900 });
+    view.update([item]);
+    const center = () => {
+      const [first, last] = expectDefined(
+        host.querySelector('.abyss-project-timeline-axis-range')?.textContent,
+      ).split(' – ') as [string, string];
+      const count =
+        (projectCalendarDayOrdinal(last) as number) -
+        (projectCalendarDayOrdinal(first) as number) +
+        1;
+      const width = Number(
+        expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-axis-dates'))
+          .dataset['trackWidth'],
+      );
+      return (
+        (projectCalendarDayOrdinal(first) as number) + (scroll.scrollLeft + 450) / (width / count)
+      );
+    };
+    const today = center();
+    scroll.scrollLeft += 123.25;
+    const remote = center();
     expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
     const popover = expectDefined(host.querySelector<HTMLElement>('.abyss-view-state-popover'));
-
     chooseViewOption(host, 'Scale', 'Year');
     await flushMicrotasks();
-
     expect(settings.projects.timeline?.scale).toBe('year');
-    expect(host.querySelector('.abyss-project-timeline-axis-range')?.textContent).toBe(
-      '2044-01-01 – 2047-12-31',
-    );
+    expect(center()).toBeCloseTo(remote, 8);
+    saveViewState.mockClear();
+    chooseViewOption(host, 'Scale', 'Year');
+    await flushMicrotasks();
+    expect(center()).toBeCloseTo(today, 8);
+    expect(saveViewState).not.toHaveBeenCalled();
     expect(host.querySelector('.abyss-view-state-popover')).toBe(popover);
-
-    expectDefined(host.querySelector<HTMLButtonElement>('[aria-label="Next range"]')).click();
-    expect(host.querySelector('.abyss-project-timeline-axis-range')?.textContent).toBe(
-      '2048-01-01 – 2051-12-31',
-    );
-    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
-    const reopenedPopover = expectDefined(
-      host.querySelector<HTMLElement>('.abyss-view-state-popover'),
-    );
-
-    chooseViewOption(host, 'Scale', 'Year');
-    await flushMicrotasks();
-
-    expect(settings.projects.timeline?.scale).toBe('year');
-    expect(host.querySelector('.abyss-project-timeline-axis-range')?.textContent).toBe(
-      '2044-01-01 – 2047-12-31',
-    );
-    expect(host.querySelector('.abyss-view-state-popover')).toBe(reopenedPopover);
   });
 
   it('leaves the Timeline scale and window unchanged when an editor guard rejects', async () => {

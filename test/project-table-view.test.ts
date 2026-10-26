@@ -16,6 +16,7 @@ import { mountProjectCellEditorPosition } from '../src/panels/projects/projectCe
 import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProperties';
 import { ProjectManager } from '../src/projects/ProjectManager';
 import { ProjectCreationError } from '../src/projects/projectCreation';
+import { projectCalendarDayOrdinal } from '../src/projects/projectDateValue';
 import { ProjectEditValidationError } from '../src/projects/projectEditError';
 import { ProjectEditHistory } from '../src/projects/projectEditHistory';
 import type {
@@ -105,6 +106,27 @@ function timelinePointerEvent(type: string, clientX: number, pointerId = 1): Eve
     pointerId: { value: pointerId },
   });
   return event;
+}
+
+function timelineTrackAt(
+  host: HTMLElement,
+  track: HTMLElement,
+  day: string,
+  clientX: number,
+): void {
+  const [start, end] = expectDefined(
+    host.querySelector('.abyss-project-timeline-axis-range')?.textContent,
+  ).split(' – ') as [string, string];
+  const first = projectCalendarDayOrdinal(start) as number;
+  const count = (projectCalendarDayOrdinal(end) as number) - first + 1;
+  const width = Number(
+    expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-axis-dates')).dataset[
+      'trackWidth'
+    ],
+  );
+  const left =
+    clientX - (((projectCalendarDayOrdinal(day) as number) - first + 0.5) * width) / count;
+  vi.spyOn(track, 'getBoundingClientRect').mockReturnValue(rectangle(left, 0, left + width, 30));
 }
 
 function pressTimelineArrow(bar: HTMLElement, shiftKey = false): void {
@@ -1763,7 +1785,7 @@ describe('ProjectsTableView', () => {
   });
 
   it('keeps a held Start resize visible and reorders its focused row on the receipt', async () => {
-    // The Day window is the fortnight around today, so the fixture dates need a pinned clock.
+    // Pin the viewport center to the fixture dates.
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date(2026, 8, 10, 12));
     const config = settings();
@@ -1811,7 +1833,7 @@ describe('ProjectsTableView', () => {
     const start = expectDefined(
       bar.parentElement?.querySelector<HTMLElement>('.abyss-project-timeline-handle.is-start'),
     );
-    vi.spyOn(track, 'getBoundingClientRect').mockReturnValue(rectangle(0, 0, 140, 30));
+    timelineTrackAt(host, track, '2026-09-13', 65);
 
     start.dispatchEvent(timelinePointerEvent('pointerdown', 35));
     await flushMicrotasks();
@@ -1953,11 +1975,11 @@ describe('ProjectsTableView', () => {
       expect(bar.getAttribute('aria-disabled')).toBe('false');
       if (input === 'keyboard') pressTimelineArrow(bar);
       else {
-        vi.spyOn(track, 'getBoundingClientRect').mockReturnValue(rectangle(0, 0, 140, 30));
+        timelineTrackAt(host, track, '2026-09-03', 35);
         bar.dispatchEvent(timelinePointerEvent('pointerdown', 35));
         await flushMicrotasks();
-        track.dispatchEvent(timelinePointerEvent('pointermove', 45));
-        track.dispatchEvent(timelinePointerEvent('pointerup', 45));
+        track.dispatchEvent(timelinePointerEvent('pointermove', 67));
+        track.dispatchEvent(timelinePointerEvent('pointerup', 67));
       }
       await flushMicrotasks();
       expect(applyEdits).toHaveBeenCalledOnce();
@@ -2002,15 +2024,12 @@ describe('ProjectsTableView', () => {
       const handle = expectDefined(
         track.querySelector<HTMLElement>(`[data-timeline-part="${missing}"]`),
       );
-      vi.spyOn(track, 'getBoundingClientRect').mockReturnValue(rectangle(145, 0, 1710, 30));
+      timelineTrackAt(host, track, '2026-09-22', 400);
       expect(bar.hidden).toBe(false);
       expect(bar.style.getPropertyValue('--abyss-project-timeline-range-left')).not.toBe('');
-      // Captured native centers of the compact 40px range's handles on the 1565px annual axis.
-      // Each handle is displayed days away from its date, so the pointer day decides the write.
-      const position = existing === 'start' ? 1301.3671875 : 1256.8046875;
-      handle.dispatchEvent(timelinePointerEvent('pointerdown', position));
+      handle.dispatchEvent(timelinePointerEvent('pointerdown', 350));
       await flushMicrotasks();
-      const destination = 145 + 264.5 * (1565 / 365);
+      const destination = 400;
       track.dispatchEvent(timelinePointerEvent('pointermove', destination));
       track.dispatchEvent(timelinePointerEvent('pointerup', destination));
       for (let attempt = 0; attempt < 5; attempt++) await flushMicrotasks();
