@@ -56,14 +56,16 @@ describe.each(scales)('moving Timeline viewport: %s', (scale) => {
     expect(next.viewport.trackWidth).toBe(viewport.trackWidth);
   });
 
-  it('stays bounded through repeated alternating motion', () => {
+  it('stays bounded through four thousand consecutive non-clamped rebases', () => {
     let position = timelineViewportAt(ordinal('5000-06-15') + 0.5, scale, 900);
     const width = position.viewport.trackWidth;
-    for (let index = 0; index < 100; index += 1) {
+    for (let index = 0; index < 4000; index += 1) {
       const left = index % 2 === 0 ? 1000.125 : width - 1900.375;
       const date = timelineViewportCenter(position.viewport, left, 900);
       const before = screenX(position.viewport, left, date);
+      const previousStart = position.viewport.window.startDay;
       position = rebaseTimelineViewport(position.viewport, left, 900);
+      expect(position.viewport.window.startDay).not.toBe(previousStart);
       expect(screenX(position.viewport, position.left, date)).toBeCloseTo(before, 7);
       expect(position.viewport.trackWidth).toBe(width);
     }

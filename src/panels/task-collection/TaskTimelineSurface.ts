@@ -136,6 +136,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
   #usableWidth = 0;
   #lastLeft = 0;
   #calendarSignature = '';
+  #todayDay = '';
   #scale: ProjectTimelineScale;
   #axisLayout: ProjectTimelineAxisLayout = { cells: [], hierarchyCells: [], gridBoundaries: [] };
   #center: number | undefined;
@@ -663,7 +664,10 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
       this.options.scroll.scrollLeft = position.left;
     this.#lastLeft = this.options.scroll.scrollLeft;
     this.#contextOverlay?.update(window);
-    const signature = `${window.startDay}:${window.scale}:${this.#lastLeft}:${usable}:${localDay(this.actions.now())}`;
+    const todayDay = localDay(this.actions.now());
+    const todayChanged = todayDay !== this.#todayDay;
+    this.#todayDay = todayDay;
+    const signature = `${window.startDay}:${window.scale}:${this.#lastLeft}:${usable}:${todayDay}`;
     if (signature === this.#calendarSignature) return;
     this.#calendarSignature = signature;
     this.options.host.style.setProperty(
@@ -692,7 +696,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
       overscanCells: 1,
     });
     this.#patchCalendarHeading();
-    this.#patchMountedCalendar(changed);
+    this.#patchMountedCalendar(changed, todayChanged);
   }
   #patchCalendarHeading(): void {
     const window = this.#window();
@@ -715,12 +719,12 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
     }
     patchTimelineToday(this.#dates, window, this.actions.now());
   }
-  #patchMountedCalendar(changed: boolean): void {
+  #patchMountedCalendar(changed: boolean, todayChanged: boolean): void {
     const window = this.#window();
     for (const mount of this.#mounts.values()) {
       patchTimelineGrid(mount.grid, this.#axisLayout);
+      if (changed || todayChanged) patchTimelineToday(mount.track, window, this.actions.now());
       if (changed) {
-        patchTimelineToday(mount.track, window, this.actions.now());
         const dates = taskTimelineDates(this.actions.planning(mount.row.task));
         this.#patchBar(mount.bar, dates.range);
         this.#patchBar(

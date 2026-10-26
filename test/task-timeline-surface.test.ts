@@ -203,9 +203,9 @@ function continuousTimeline(
       surface.refreshMeasurements();
       flush();
     },
-    nextDay: () => {
+    nextDay: (refresh = true) => {
       now = new Date(2026, 9, 27);
-      update();
+      if (refresh) update();
     },
     dispose: () => {
       surface.destroy();
@@ -370,6 +370,33 @@ it('updates mounted Today markers when the civil day changes without a row revis
   }
 });
 
+it('refreshes row Today markers on a scroll frame after midnight without repainting cards', () => {
+  const h = continuousTimeline();
+  try {
+    const card = h.surface.element('one');
+    h.updates.mockClear();
+    h.nextDay(false);
+    h.host.scrollLeft += 37.25;
+    h.host.dispatchEvent(new Event('scroll'));
+    h.flush();
+    const header = expectDefined(
+      h.host.querySelector<HTMLElement>(
+        '.abyss-project-timeline-axis-dates > .abyss-project-timeline-today',
+      ),
+    );
+    const row = expectDefined(
+      h.host.querySelector<HTMLElement>('.abyss-task-timeline-row .abyss-project-timeline-today'),
+    );
+    expect(header.getAttribute('aria-label')).toBe('Today, 2026-10-27');
+    expect(row.getAttribute('aria-label')).toBe('Today, 2026-10-27');
+    expect(row.style.left).toBe(header.style.left);
+    expect(h.surface.element('one')).toBe(card);
+    expect(h.updates).not.toHaveBeenCalled();
+  } finally {
+    h.dispose();
+  }
+});
+
 it('lets newer horizontal user motion supersede pending initial Today', () => {
   const h = continuousTimeline(0);
   try {
@@ -446,3 +473,121 @@ it('lets a reveal supersede delayed Today even when its date is exposed in retai
     h.dispose();
   }
 });
+
+it.each(['commit', 'cancel'] as const)(
+  'keeps dashboard boundary %s continuous through the real surface rebase scheduler',
+  async (outcome) => {
+    const apply = vi.fn(async () => ({ applied: [], failed: [] }));
+    const h = continuousTimeline(900, {}, (host, layout) => {
+      const overlay = new ProjectDashboardTimeline(host, {
+        ...layout,
+        project: () => ({
+          path: 'Projects/A.md',
+          name: 'A',
+          frontmatter: { end: '2026-10-28' },
+          statusId: null,
+          rawStatus: null,
+          tags: [],
+          stats: {
+            total: 0,
+            done: 0,
+            cancelled: 0,
+            inProgress: 0,
+            tracked: { closedMs: 0, openStartsMs: [] },
+          },
+        }),
+        fields: () => buildConfiguredProjectFieldCatalog(DEFAULT_SETTINGS.projects),
+        apply,
+        history: async () => ({ applied: [], failed: [] }),
+      });
+      const track = expectDefined(
+        host.querySelector<HTMLElement>(
+          '.abyss-project-timeline-boundaries > .abyss-project-timeline-track',
+        ),
+      );
+      vi.spyOn(track, 'getBoundingClientRect').mockImplementation(
+        () =>
+          ({
+            left: 180 - layout.scroll.scrollLeft,
+            width: layout.window().dayCount * (120 / 28),
+          }) as DOMRect,
+      );
+      return overlay;
+    });
+    const pointer = (type: string, clientX: number): Event => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperties(event, {
+        button: { value: 0 },
+        buttons: { value: type === 'pointerup' ? 0 : 1 },
+        pointerId: { value: 1 },
+        isPrimary: { value: true },
+        clientX: { value: clientX },
+        clientY: { value: 40 },
+      });
+      return event;
+    };
+    try {
+      const handle = expectDefined(
+        h.host.querySelector<HTMLElement>('.abyss-project-boundary-handle.is-end'),
+      );
+      const line = expectDefined(
+        h.host.querySelector<HTMLElement>(
+          '.abyss-task-timeline-row .abyss-project-boundary-line.is-end',
+        ),
+      );
+      const card = h.surface.element('one');
+      handle.dispatchEvent(pointer('pointerdown', 550));
+      await flushMicrotasks();
+      handle.dispatchEvent(pointer('pointermove', 600));
+      let expectedOrdinal = 0;
+      for (const left of [100.375, 32000.125, 100.375, 32000.125]) {
+        const before = h.surface.captureScroll().viewport;
+        expectedOrdinal =
+          (projectCalendarDayOrdinal(before.window.startDay) as number) +
+          Math.floor((left + 420) / before.dayWidth);
+        h.host.scrollLeft = left;
+        h.host.dispatchEvent(new Event('scroll'));
+        h.flush();
+        const after = h.surface.captureScroll().viewport;
+        expect(after.window.startDay).not.toBe(before.window.startDay);
+        const displayedOrdinal =
+          (projectCalendarDayOrdinal(after.window.startDay) as number) +
+          (parseFloat(line.style.left) / 100) * after.window.dayCount -
+          0.5;
+        expect(displayedOrdinal).toBeCloseTo(expectedOrdinal, 7);
+        expect(h.host.querySelector('.abyss-project-boundary-handle.is-end')).toBe(handle);
+        expect(h.surface.element('one')).toBe(card);
+      }
+      const expectedDay = new Date(expectedOrdinal * 86400000).toISOString().slice(0, 10);
+      if (outcome === 'cancel')
+        handle.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      handle.dispatchEvent(pointer('pointerup', 600));
+      await flushMicrotasks();
+      if (outcome === 'commit')
+        expect(apply).toHaveBeenCalledWith(
+          expect.arrayContaining([
+            expect.objectContaining({
+              sourceProperty: 'end',
+              expectedValue: '2026-10-28',
+              value: expectedDay,
+            }),
+            expect.objectContaining({
+              sourceProperty: 'start',
+              expectedExists: false,
+              valueExists: false,
+              restoreSourceValue: true,
+            }),
+          ]),
+        );
+      else expect(apply).not.toHaveBeenCalled();
+      const after = h.surface.captureScroll().viewport;
+      const restoredOrdinal =
+        (projectCalendarDayOrdinal(after.window.startDay) as number) +
+        (parseFloat(line.style.left) / 100) * after.window.dayCount -
+        0.5;
+      expect(restoredOrdinal).toBeCloseTo(projectCalendarDayOrdinal('2026-10-28') as number, 7);
+    } finally {
+      h.dispose();
+    }
+  },
+);
