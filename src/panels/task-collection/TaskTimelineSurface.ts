@@ -20,6 +20,7 @@ import type { ProjectTimelineScale } from '../../projects/projectTimelineSetting
 import { planTaskTimelineEdit, taskTimelineDates } from '../../task-lists/taskTimelineModel';
 import type { TaskTimelineSettings } from '../../task-lists/taskTimelineSettings';
 import {
+  localDate,
   sameTaskNodeRef,
   type TaskNodeSnapshot,
   type TaskPatch,
@@ -193,10 +194,8 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
       selectRange: (identity, focus) => {
         actions.select(this.#key(identity), focus);
       },
-      clickTrack: (identity) => {
-        const key = this.#key(identity);
-        const anchor = this.#mounts.get(key)?.track;
-        if (anchor !== undefined) actions.openDates(key, anchor);
+      clickTrack: (source, day) => {
+        this.#setDue(source, day);
       },
       clickRange: (identity) => {
         actions.inspect?.(this.#key(identity));
@@ -361,19 +360,28 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
     return { kind: 'ready', source: { occurrenceId: identity, key, task, part, range } };
   }
   async #commit(source: TaskTimelineSource, intent: ProjectTimelineEditIntent): Promise<boolean> {
+    const plan = planTaskTimelineEdit(source.task.node.planning, intent, source.part);
+    if (plan.kind === 'rejected') {
+      this.#report(plan.reason);
+      return false;
+    }
+    return this.#commitPatch(source, plan.patch);
+  }
+  #commitPatch(source: TaskTimelineSource, patch: TaskPatch): Promise<boolean> {
     const accept = (): boolean => {
       const current = this.#capture(source.occurrenceId);
       return (
         current.kind === 'ready' && sameTaskNodeRef(source.task.target, current.source.task.target)
       );
     };
-    if (!accept()) return false;
-    const plan = planTaskTimelineEdit(source.task.node.planning, intent, source.part);
-    if (plan.kind === 'rejected') {
-      this.#report(plan.reason);
-      return false;
-    }
-    return this.actions.commit(source.task, plan.patch, accept);
+    return accept() ? this.actions.commit(source.task, patch, accept) : Promise.resolve(false);
+  }
+  #setDue(source: TaskTimelineSource, day: string): void {
+    void this.#commitPatch(source, { due: { type: 'set', value: localDate(day) } }).catch(
+      (error: unknown) => {
+        this.#report(error);
+      },
+    );
   }
   #report(failure: unknown): void {
     new Notice(typeof failure === 'string' ? failure : 'Could not update task dates.');
@@ -508,6 +516,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
   #patch(mount: TimelineMount<T>): void {
     const dates = taskTimelineDates(this.actions.planning(mount.row.task));
     patchTimelineGrid(mount.grid, this.#axisLayout);
+    this.#todayMarker(mount.track, this.#window());
     this.#patchBar(mount.bar, dates.range);
     mount.bar.setAttribute('aria-label', this.#rangeLabel(dates.range));
     const scheduledRange: ProjectTimelineRange =
@@ -658,15 +667,15 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
       button.setAttribute('aria-pressed', String(scale === this.#scale));
       button.toggleClass('is-active', scale === this.#scale);
     }
-    this.#todayMarker(window);
+    this.#todayMarker(this.#dates, window);
     for (const mount of this.#mounts.values()) this.#patch(mount);
   }
-  #todayMarker(window: ProjectTimelineWindow): void {
-    this.#dates.querySelector(':scope > .abyss-project-timeline-today')?.remove();
+  #todayMarker(host: HTMLElement, window: ProjectTimelineWindow): void {
+    host.querySelector(':scope > .abyss-project-timeline-today')?.remove();
     const today = localDay(this.actions.now());
     const offset = ordinal(today) - ordinal(window.startDay);
     if (offset < 0 || offset >= window.dayCount) return;
-    const marker = this.#dates.createDiv({
+    const marker = host.createDiv({
       cls: 'abyss-project-timeline-today',
       attr: { 'aria-label': `Today, ${today}` },
     });

@@ -56,6 +56,22 @@ it('bounds mounted rows and calendar cells and reveals a distant task through th
       estimate: () => 64,
       measurementRevision: () => '',
     });
+    const today = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-timeline-axis-dates > .abyss-project-timeline-today',
+      ),
+    );
+    const tracks = [
+      ...host.querySelectorAll<HTMLElement>(
+        '.abyss-task-timeline-row > .abyss-project-timeline-track',
+      ),
+    ];
+    expect(tracks.length).toBeGreaterThan(0);
+    for (const track of tracks) {
+      expect(
+        track.querySelector<HTMLElement>(':scope > .abyss-project-timeline-today')?.style.left,
+      ).toBe(today.style.left);
+    }
     expect(host.querySelectorAll('.abyss-task-card').length).toBeGreaterThan(0);
     expect(host.querySelectorAll('.abyss-task-card').length).toBeLessThan(100);
     expect(host.querySelectorAll('.abyss-project-timeline-axis-cell').length).toBeLessThan(100);

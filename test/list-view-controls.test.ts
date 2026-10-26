@@ -234,7 +234,7 @@ describe('mounted tag polarity chips', () => {
 describe('task collection view controls', () => {
   it.each(['kanban', 'timeline'] as const)(
     'edits %s organization and visibility without changing saved List preferences',
-    (view) => {
+    async (view) => {
       const state = new AppState();
       const settings = structuredClone(DEFAULT_SETTINGS);
       const root = document.body.createDiv();
@@ -294,6 +294,17 @@ describe('task collection view controls', () => {
             showUnscheduled: false,
           });
         }
+        choose('Show', 'Active');
+        await Promise.resolve();
+        expect(row('Show').querySelector('.abyss-view-state-row-value')?.textContent).toBe(
+          'Active',
+        );
+        expect(state.get('centerListViewState')[view]?.hiddenStatuses).toEqual([
+          'status-3',
+          'status-4',
+        ]);
+        choose('Show', 'All');
+        expect(state.get('centerListViewState')[view]?.hiddenStatuses).toEqual([]);
         choose('Show', 'Done');
         expect(state.get('centerListViewState')[view]?.hiddenStatuses.length).toBe(1);
         controls.closeViewStatePopover();
@@ -365,7 +376,19 @@ it('keeps Kanban status visibility in settings order and offers the same groupin
       .grouped()
       .flatMap((g) => g.statuses)
       .map((s) => s.name);
-    expect(labels(show).slice(1)).toEqual(ordered);
+    expect(labels(show).slice(2)).toEqual(ordered);
+    expect(labels(show).slice(0, 2)).toEqual(['Active', 'All']);
+    expectDefined(
+      [...show.querySelectorAll<HTMLButtonElement>('.abyss-view-state-option')].find(
+        (b) => b.querySelector('.abyss-view-state-option-label')?.textContent === 'Active',
+      ),
+    ).click();
+    await Promise.resolve();
+    expect(state.get('centerListViewState').kanban?.hiddenStatuses).toEqual([
+      'status-3',
+      'status-4',
+    ]);
+    expect(labels(show).slice(2)).toEqual(ordered);
     const first = expectDefined(
       [...show.querySelectorAll<HTMLButtonElement>('.abyss-view-state-option')].find(
         (b) => b.querySelector('.abyss-view-state-option-label')?.textContent === ordered[0],
@@ -373,11 +396,11 @@ it('keeps Kanban status visibility in settings order and offers the same groupin
     );
     first.click();
     await Promise.resolve();
-    expect(labels(show).slice(1)).toEqual(ordered);
+    expect(labels(show).slice(2)).toEqual(ordered);
     expect(first.getAttribute('aria-pressed')).toBe('false');
     first.click();
     await Promise.resolve();
-    expect(labels(show).slice(1)).toEqual(ordered);
+    expect(labels(show).slice(2)).toEqual(ordered);
   } finally {
     controls.closeViewStatePopover();
     root.remove();

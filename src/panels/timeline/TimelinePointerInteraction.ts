@@ -36,7 +36,7 @@ export interface TimelinePointerInteractionContext<Source extends TimelineRangeS
     request: TimelinePointerRequest<Source>,
   ) => Promise<{ readonly changed: boolean; readonly failure?: unknown }>;
   readonly reportRangeFailure: (failure: unknown) => void;
-  readonly clickTrack?: (occurrenceId: string) => void;
+  readonly clickTrack?: (source: Source, day: string) => void;
   readonly clickRange?: (occurrenceId: string) => void;
   readonly root: HTMLElement;
   readonly scroll: HTMLElement;
@@ -566,13 +566,13 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
   private activatePress_abyssPrivate(active: ActivePointerGesture<Source>): boolean {
     if (active.moved) return false;
     const { part, occurrenceId } = active.target;
-    let activate: ((occurrenceId: string) => void) | undefined;
-    if (part === 'track') activate = this.context_abyssPrivate.clickTrack;
-    else if (part === 'bar') activate = this.context_abyssPrivate.clickRange;
-    if (activate === undefined) return false;
+    const trackPress = part === 'track' ? this.context_abyssPrivate.clickTrack : undefined;
+    const rangePress = part === 'bar' ? this.context_abyssPrivate.clickRange : undefined;
+    if (trackPress === undefined && rangePress === undefined) return false;
     this.cancelGesture_abyssPrivate(true);
     this.suppressClickOccurrence_abyssPrivate = occurrenceId;
-    activate(occurrenceId);
+    if (trackPress !== undefined) trackPress(active.source, active.startDay);
+    else rangePress?.(occurrenceId);
     return true;
   }
 

@@ -146,13 +146,15 @@ it.each(['range', 'scheduled'] as const)(
     }
   },
 );
-it('opens the date picker on a short track press and draws both dates in one patch on drag', async () => {
+it('sets Due on a short track press and draws both dates in one patch on drag', async () => {
   const h = mount({});
   try {
     await start(h.track);
     h.track.dispatchEvent(pointer('pointerup', 130));
-    expect(h.openDates).toHaveBeenCalledTimes(1);
-    expect(h.commit).not.toHaveBeenCalled();
+    await flushMicrotasks();
+    expect(h.openDates).not.toHaveBeenCalled();
+    expect(h.commit.mock.calls[0]?.[1]).toEqual({ due: { type: 'set', value: '2026-10-27' } });
+    h.commit.mockClear();
     await start(h.track);
     await finish(h.track);
     expect(h.commit.mock.calls[0]?.[1]).toEqual({
@@ -211,6 +213,20 @@ it('opens the inspector from a short captured bar press, including the first pre
     expect(h.inspect).toHaveBeenCalledTimes(1);
     expect(h.inspect).toHaveBeenCalledWith('one');
     expect(h.commit).toHaveBeenCalledTimes(1);
+  } finally {
+    h.dispose();
+  }
+});
+
+it('rejects a short track press after its task was replaced', async () => {
+  const h = mount({});
+  try {
+    await start(h.track);
+    h.replace();
+    h.track.dispatchEvent(pointer('pointerup', 130));
+    await flushMicrotasks();
+    expect(h.commit).not.toHaveBeenCalled();
+    expect(h.openDates).not.toHaveBeenCalled();
   } finally {
     h.dispose();
   }

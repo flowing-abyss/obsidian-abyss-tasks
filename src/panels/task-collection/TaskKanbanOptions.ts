@@ -1,4 +1,5 @@
 import type { TaskStatusDef } from '../../settings/types';
+import { ACTIVE_STATUS_GROUPS } from '../../status/statusConstants';
 import type { TaskKanbanSettings } from '../../task-lists/taskKanbanSettings';
 import type { ViewOptionsRow } from '../../ui/ViewOptionsPopover';
 
@@ -19,12 +20,30 @@ interface TaskKanbanOptionsContext {
   readonly group: ViewOptionsRow;
 }
 export function taskStatusOptionsRow(context: TaskCardOptionsContext): ViewOptionsRow {
+  const inactive = (): string[] =>
+    context
+      .statuses()
+      .filter((status) => !ACTIVE_STATUS_GROUPS.includes(status.type))
+      .map((status) => status.id);
+  const activeOnly = (): boolean => {
+    const hidden = context.read().hiddenStatuses;
+    const expected = inactive();
+    return (
+      expected.length > 0 &&
+      context
+        .statuses()
+        .every((status) => hidden.includes(status.id) === expected.includes(status.id))
+    );
+  };
   return {
     kind: 'multi',
     preserveOrder: true,
     icon: 'eye',
     label: 'Show',
-    displayValue: () => (context.read().hiddenStatuses.length === 0 ? 'All statuses' : 'Custom'),
+    displayValue: () => {
+      if (context.read().hiddenStatuses.length === 0) return 'All statuses';
+      return activeOnly() ? 'Active' : 'Custom';
+    },
     selected: () =>
       context
         .statuses()
@@ -40,6 +59,13 @@ export function taskStatusOptionsRow(context: TaskCardOptionsContext): ViewOptio
       });
     },
     presets: [
+      {
+        label: 'Active',
+        active: activeOnly,
+        onSelect: () => {
+          context.update({ hiddenStatuses: inactive() });
+        },
+      },
       {
         label: 'All',
         active: () => context.read().hiddenStatuses.length === 0,
