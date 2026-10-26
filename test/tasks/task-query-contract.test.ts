@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { StatusCatalog } from '../../src/tasks/domain/StatusCatalog';
 import { localDate } from '../../src/tasks/domain/validation';
 import { TaskIndex } from '../../src/tasks/infrastructure/TaskIndex';
 import {
@@ -31,6 +32,45 @@ async function queryIndex(files: Record<string, string>): Promise<TaskIndex> {
 }
 
 describe('TaskQueryApi contract', () => {
+  it('filters root candidates before classifying descendants and preserves composed query semantics', async () => {
+    const app = await createAppWithFiles({
+      'Work/a.md': '- [ ] Root #Work 📅 2026-10-27\n  - [x] Child #Else',
+      'Other/b.md': '- [ ] Other #Work\n  - [x] Unrelated child',
+    });
+    const catalog = new StatusCatalog(
+      canonicalStatusCatalog()
+        .all()
+        .map((rule) => (rule.symbol === ' ' ? { ...rule, type: 'cancelled' as const } : rule)),
+    );
+    const index = new TaskIndex(app, { statusCatalog: canonicalStatusCatalog() });
+    try {
+      await index.initialize();
+      index.setStatusCatalog(catalog);
+      const classify = vi.spyOn(catalog, 'statusForSymbol');
+      expect(index.listNodes({ tag: '#Missing', statuses: ['cancelled'] })).toEqual([]);
+      expect(classify).not.toHaveBeenCalled();
+      const query = {
+        filePath: 'Work/a.md',
+        folder: 'Work/',
+        tag: '#work',
+        statuses: ['cancelled'] as const,
+        dateRange: { from: localDate('2026-10-27'), to: localDate('2026-10-27') },
+      };
+      expect(index.listNodes(query).map(({ node }) => [node.title, node.status])).toEqual([
+        ['Root', 'cancelled'],
+        ['Child', 'done'],
+      ]);
+      expect(index.listNodes({ ...query, tag: '#Else' })).toEqual([]);
+      expect(index.listNodes({ ...query, filePath: 'missing.md' })).toEqual([]);
+      expect(index.listNodes({ ...query, statuses: [] }).map(({ node }) => node.title)).toEqual([
+        'Root',
+        'Child',
+      ]);
+    } finally {
+      index.destroy();
+    }
+  });
+
   it('enumerates only persisted nodes with hierarchy and detached dependency values', async () => {
     const index = await queryIndex({
       'z.md': '- [ ] last',

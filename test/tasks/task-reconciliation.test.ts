@@ -22,6 +22,28 @@ function root(line: number, title: string, revision = `revision:${title}`) {
 }
 
 describe('task reconciliation', () => {
+  it.each(['previous', 'current'] as const)(
+    'does not inspect source blocks when the %s population has no counterpart',
+    (side) => {
+      const candidate = root(0, 'Unpaired');
+      const source = candidate.source;
+      let reads = 0;
+      Object.defineProperty(candidate, 'source', {
+        get: () => {
+          reads += 1;
+          return source;
+        },
+      });
+      const result =
+        side === 'previous'
+          ? reconcileRootTransitions([candidate], [])
+          : reconcileRootTransitions([], [candidate]);
+      expect(result.writable.size).toBe(0);
+      expect(result.visual.size).toBe(0);
+      expect(reads).toBe(0);
+    },
+  );
+
   it('rejects a different task that moved onto the stale line', () => {
     const previous = root(4, 'Observed');
     const replacement = root(4, 'Different', 'revision:different');

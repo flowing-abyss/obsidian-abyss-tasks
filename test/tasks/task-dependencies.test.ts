@@ -25,6 +25,30 @@ function target(node: TaskSnapshot): TaskNodeRef {
   return { type: 'task', ref: node.ref };
 }
 
+it('enumerates a detached frozen hierarchy with current statuses without changing source identity', () => {
+  const original = root('root');
+  const child = subtask({
+    title: 'child',
+    status: 'done',
+    statusSymbol: 'x',
+    ref: { parent: target(original), relativeLine: 1 },
+  });
+  const aggregate = { ...original, subtasks: [child] };
+  const nodes = enumerateTaskNodes([aggregate], (symbol) =>
+    symbol === 'x' ? 'open' : 'cancelled',
+  );
+  expect(nodes.map(({ node }) => node.status)).toEqual(['cancelled', 'open']);
+  expect(nodes.map(({ target: nodeTarget }) => nodeTarget.ref)).toEqual([original.ref, child.ref]);
+  expect(nodes[1]?.path[0]).toBe(nodes[1]?.node);
+  expect(nodes[1]?.root).toBe(nodes[0]?.node);
+  expect(nodes[0]?.root).not.toBe(aggregate);
+  expect(nodes[1]?.node).not.toBe(child);
+  expect(Reflect.set(expectDefined(nodes[1]).node, 'title', 'changed')).toBe(false);
+  expect(aggregate.status).toBe('open');
+  expect(child.status).toBe('done');
+  expect(Object.isFrozen(aggregate)).toBe(false);
+});
+
 describe.each(['defensive', 'synchronous', 'cooperative'] as const)(
   'task dependency graph (%s)',
   (driver) => {

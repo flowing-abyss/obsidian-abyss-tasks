@@ -78,6 +78,13 @@ list-item metadata enriches discovery; omissions cannot remove authored tasks. S
 apply before public projections, while excluded content remains available for repository proof.
 Host-cache frontmatter supplies presentation values, with authored frontmatter as fallback.
 
+Initial discovery starts after layout readiness. Vault reads remain concurrent, while each
+initialization attempt owns a cancellable queue for accepting their results. The queue yields
+between atomic file installations after a short time or work budget, rechecks file ownership,
+and drains before publishing readiness. Retired attempts cannot accept late reads or failures.
+Repository commits and metadata observations retain synchronous acceptance. One large file can
+still exceed the slice budget; this is cooperative scheduling on the host thread.
+
 Edits preserve unrelated Markdown and identify the actual authored block or occurrence. Rendering,
 matching text, file/line position, and link labels confer no write authority.
 [`TaskRefAuthority`](src/tasks/infrastructure/TaskRefAuthority.ts) distinguishes occurrences and

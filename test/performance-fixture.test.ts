@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { TaskIndex } from '../src/tasks/infrastructure/TaskIndex';
 import { createFixture, FIXTURE_FOLDER } from '../tooling/performance/fixture.mts';
-import { indexScenarios } from '../tooling/performance/native-scenarios';
+import { indexScenarios, queryScenarios } from '../tooling/performance/native-scenarios';
 import type { Host } from '../tooling/performance/native-types';
 import {
   canonicalStatusCatalog,
@@ -64,6 +64,36 @@ describe('performance corpus', () => {
         const nodes = index.listNodes().map((entry) => entry.node);
         expect(index.list()).toHaveLength(4000);
         expect(nodes).toHaveLength(kind === 'standard' ? 6000 : 6999);
+        Object.defineProperty(app, 'plugins', {
+          configurable: true,
+          value: { plugins: { 'abyss-tasks': { queries: index, taskStatistics: index } } },
+        });
+        const filteredFacts: Record<string, unknown> = {};
+        await queryScenarios(
+          app as Host,
+          {
+            vault: 'dev-vault-tasks',
+            fixtureFolder: FIXTURE_FOLDER,
+            anchor: fixture.anchor,
+            fixtureKind: kind,
+            expectedRoots: fixture.roots,
+            expectedNodes: fixture.nodes,
+            startup: false,
+            viewport: '1024x768',
+          },
+          async (id, action) => {
+            if (
+              ['query.project', 'query.tag', 'query.project-tag', 'query.nodes-no-tag'].includes(id)
+            )
+              filteredFacts[id] = await action();
+          },
+        );
+        expect(filteredFacts).toEqual({
+          'query.project': { roots: 40 },
+          'query.tag': { roots: 500 },
+          'query.project-tag': { roots: 5 },
+          'query.nodes-no-tag': { nodes: 0 },
+        });
         expect(nodes.some((node) => node.title.startsWith('Archived '))).toBe(false);
         const root = expectDefined(index.list().find((task) => task.dependencyId === 'profile-0'));
         expect(root.subtasks).toHaveLength(kind === 'standard' ? 1 : 1000);

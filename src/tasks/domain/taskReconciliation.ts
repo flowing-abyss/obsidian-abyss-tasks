@@ -153,6 +153,7 @@ function authorityPairs(
   currentRoots: readonly TaskSnapshot[],
   authorityTransitions: readonly ProvenRootRevisionOverride[],
 ): Array<readonly [number, number, ProvenRootRevisionOverride]> {
+  if (authorityTransitions.length === 0) return [];
   const previousByRevision = new Map<string, number[]>();
   const currentByAuthority = new Map<string, number[]>();
   previousRoots.forEach((task, index) => {
@@ -324,6 +325,8 @@ export function reconcileRootTransitions(
   currentRoots: readonly TaskSnapshot[],
   authorityTransitions: readonly ProvenRootRevisionOverride[] = [],
 ): RootReconciliationTransitions {
+  if (previousRoots.length === 0 || currentRoots.length === 0)
+    return { writable: new Map(), visual: new Map() };
   const context: ReconciliationContext = {
     previousRoots,
     currentRoots,

@@ -1,4 +1,4 @@
-import { cloneTaskSnapshot } from './cloneTaskSnapshot';
+import { taskSnapshotWithStatuses } from './cloneTaskSnapshot';
 import {
   sameTaskNodeRef,
   type SubtaskSnapshot,
@@ -76,7 +76,10 @@ function freeze<T>(value: T): T {
   return value;
 }
 
-export function enumerateTaskNodes(tasks: readonly TaskSnapshot[]): readonly TaskNodeSnapshot[] {
+export function enumerateTaskNodes(
+  tasks: readonly TaskSnapshot[],
+  statusForSymbol?: (symbol: string) => TaskStatus,
+): readonly TaskNodeSnapshot[] {
   const nodes: TaskNodeSnapshot[] = [];
   const visit = (
     root: TaskSnapshot,
@@ -94,7 +97,7 @@ export function enumerateTaskNodes(tasks: readonly TaskSnapshot[]): readonly Tas
     return fileOrder !== 0 ? fileOrder : a.source.line - b.source.line;
   });
   for (const source of roots) {
-    const root = cloneTaskSnapshot(source);
+    const root = taskSnapshotWithStatuses(source, statusForSymbol);
     nodes.push({ root, path: [], target: { type: 'task', ref: root.ref }, node: root });
     visit(root, root.subtasks, []);
   }

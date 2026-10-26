@@ -95,6 +95,27 @@ export async function queryScenarios(
     const from = Date.parse(`${options.anchor}T00:00:00Z`) - 180 * 86400000;
     return Promise.resolve({ entries: q.entriesOverlapping(from, from + 365 * 86400000).length });
   });
+  for (const [id, query, expected] of [
+    ['query.project', { filePath: `${options.fixtureFolder}/projects/Project-000.md` }, 40],
+    ['query.tag', { tag: '#profile/group0' }, 500],
+    [
+      'query.project-tag',
+      { filePath: `${options.fixtureFolder}/projects/Project-000.md`, tag: '#profile/group0' },
+      5,
+    ],
+  ] as const) {
+    await measure(id, () => {
+      const roots = q.list(query);
+      if (roots.length !== expected || roots.some((root) => root.source.originalBlock.length === 0))
+        throw new Error(`Incomplete filtered query: ${id}`);
+      return Promise.resolve({ roots: roots.length });
+    });
+  }
+  await measure('query.nodes-no-tag', () => {
+    const nodes = q.listNodes({ tag: '#profile/no-such-tag' }).length;
+    if (nodes !== 0) throw new Error('Unexpected nodes for an absent tag');
+    return Promise.resolve({ nodes });
+  });
   await measure('search.cold', async () => {
     await plugin(host).search.prepare(new AbortController().signal);
     return { prepared: true };

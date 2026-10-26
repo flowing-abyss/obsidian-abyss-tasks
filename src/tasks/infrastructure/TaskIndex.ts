@@ -179,6 +179,16 @@ interface FileObservation {
   readonly generation: number;
 }
 
+interface InitialInstallQueue {
+  readonly controller: AbortController;
+  readonly reads: Set<Promise<boolean>>;
+  tail: Promise<void>;
+  sliceStart: number;
+  /** Files accepted in the current slice. */
+  count: number;
+  failure?: { readonly cause: unknown };
+}
+
 interface WritableReconciliationTransition {
   readonly previous: TaskSnapshot;
   readonly current: TaskSnapshot;
@@ -780,32 +790,12 @@ function nonEmpty(value: string | undefined): value is string {
   return value !== undefined && value.length > 0;
 }
 
-function hasOnlyFilePath(
-  query: TaskQuery | undefined,
-): query is TaskQuery & { readonly filePath: string } {
-  return (
-    query !== undefined &&
-    nonEmpty(query.filePath) &&
-    query.folder === undefined &&
-    query.tag === undefined &&
-    query.statuses === undefined &&
-    query.dateRange === undefined
-  );
-}
-
 function initialQueryTasks(
   taskMap: ReadonlyMap<string, readonly TaskSnapshot[]>,
   query: TaskQuery | undefined,
 ): readonly TaskSnapshot[] {
-  if (hasOnlyFilePath(query)) return taskMap.get(query.filePath) ?? [];
+  if (nonEmpty(query?.filePath)) return taskMap.get(query.filePath) ?? [];
   return [...taskMap.values()].flat();
-}
-
-function filterTasksByFile(
-  tasks: readonly TaskSnapshot[],
-  filePath: string | undefined,
-): readonly TaskSnapshot[] {
-  return nonEmpty(filePath) ? tasks.filter((task) => task.source.filePath === filePath) : tasks;
 }
 
 function filterTasksByFolder(
@@ -827,9 +817,10 @@ function filterTasksByTag(
 function filterTasksByStatus(
   tasks: readonly TaskSnapshot[],
   statuses: TaskQuery['statuses'],
+  statusForSymbol?: (symbol: string) => TaskSnapshot['status'],
 ): readonly TaskSnapshot[] {
   return statuses !== undefined && statuses.length > 0
-    ? tasks.filter((task) => statuses.includes(task.status))
+    ? tasks.filter((task) => statuses.includes(statusForSymbol?.(task.statusSymbol) ?? task.status))
     : tasks;
 }
 
@@ -848,12 +839,12 @@ function filterTasksByDate(
 function filterQueryTasks(
   tasks: readonly TaskSnapshot[],
   query: TaskQuery | undefined,
+  statusForSymbol?: (symbol: string) => TaskSnapshot['status'],
 ): readonly TaskSnapshot[] {
   if (query === undefined) return tasks;
-  const inFile = filterTasksByFile(tasks, query.filePath);
-  const inFolder = filterTasksByFolder(inFile, query.folder);
+  const inFolder = filterTasksByFolder(tasks, query.folder);
   const withTag = filterTasksByTag(inFolder, query.tag);
-  const withStatus = filterTasksByStatus(withTag, query.statuses);
+  const withStatus = filterTasksByStatus(withTag, query.statuses, statusForSymbol);
   return filterTasksByDate(withStatus, query.dateRange);
 }
 
@@ -1074,6 +1065,7 @@ export class TaskIndex
   private metadataCacheRefs_abyssPrivate: EventRef[] = [];
   private vaultRefs_abyssPrivate: EventRef[] = [];
   private initialization_abyssPrivate: Promise<void> | undefined;
+  private initialInstallQueue_abyssPrivate: InitialInstallQueue | undefined;
   private initialized_abyssPrivate = false;
   private destroyed_abyssPrivate = false;
   private statusCatalog_abyssPrivate: StatusCatalog;
@@ -1209,31 +1201,98 @@ export class TaskIndex
 
   private async performInitialization_abyssPrivate(): Promise<void> {
     if (!this.initializationActive_abyssPrivate()) return;
-    this.registerEvents_abyssPrivate();
-    const files = [...this.app_abyssPrivate.vault.getMarkdownFiles()]
-      .map((file) => ({ file, path: file.path }))
-      .sort((left, right) => left.path.localeCompare(right.path));
-    const chunkSize = 50;
-    for (let index = 0; index < files.length; index += chunkSize) {
-      if (!this.initializationActive_abyssPrivate()) return;
-      const settled = await Promise.allSettled(
-        files
-          .slice(index, index + chunkSize)
-          .map(({ file, path }) => this.loadInitialFile_abyssPrivate(file, path)),
-      );
-      const rejected = settled.find((result) => result.status === 'rejected');
-      if (rejected !== undefined) throw rejected.reason;
-      if (index + chunkSize < files.length) {
-        await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    const queue: InitialInstallQueue = {
+      controller: new AbortController(),
+      reads: new Set(),
+      tail: Promise.resolve(),
+      sliceStart: performance.now(),
+      count: 0,
+    };
+    this.initialInstallQueue_abyssPrivate = queue;
+    try {
+      this.registerEvents_abyssPrivate();
+      const files = [...this.app_abyssPrivate.vault.getMarkdownFiles()]
+        .map((file) => ({ file, path: file.path }))
+        .sort((left, right) => left.path.localeCompare(right.path));
+      const chunkSize = 50;
+      for (let index = 0; index < files.length; index += chunkSize) {
+        if (!this.initializationActive_abyssPrivate()) return;
+        const settled = await Promise.allSettled(
+          files
+            .slice(index, index + chunkSize)
+            .map(({ file, path }) => this.loadInitialFile_abyssPrivate(file, path)),
+        );
+        const rejected = settled.find((result) => result.status === 'rejected');
+        if (rejected !== undefined) throw rejected.reason;
+      }
+      await this.drainInitialReads_abyssPrivate(queue);
+      if (this.destroyed_abyssPrivate) return;
+      this.pruneMissingFiles_abyssPrivate();
+      this.initialized_abyssPrivate = true;
+      this.statistics_abyssPrivate.invalidateAll();
+      this.publishSearch_abyssPrivate({ type: 'state', state: this.searchState_abyssPrivate() });
+      this.publish_abyssPrivate({ type: 'initialized' });
+    } finally {
+      if (this.initialInstallQueue_abyssPrivate === queue)
+        this.initialInstallQueue_abyssPrivate = undefined;
+      queue.controller.abort();
+    }
+  }
+
+  private async drainInitialReads_abyssPrivate(queue: InitialInstallQueue): Promise<void> {
+    for (;;) {
+      await this.drainPendingReads_abyssPrivate();
+      // Every queued acceptance is owned by a tracked read through its settlement.
+      await Promise.all(queue.reads);
+      if (queue.failure !== undefined) throw queue.failure.cause;
+      if (queue.reads.size === 0 && this.pendingReads_abyssPrivate.size === 0) {
+        // Retire in the same continuation as the empty check. A newly admitted read must
+        // not capture this queue between drain completion and the readiness publication.
+        if (this.initialInstallQueue_abyssPrivate === queue)
+          this.initialInstallQueue_abyssPrivate = undefined;
+        return;
       }
     }
-    await this.drainPendingReads_abyssPrivate();
-    if (this.destroyed_abyssPrivate) return;
-    this.pruneMissingFiles_abyssPrivate();
-    this.initialized_abyssPrivate = true;
-    this.statistics_abyssPrivate.invalidateAll();
-    this.publishSearch_abyssPrivate({ type: 'state', state: this.searchState_abyssPrivate() });
-    this.publish_abyssPrivate({ type: 'initialized' });
+  }
+
+  private initialQueueActive_abyssPrivate(queue: InitialInstallQueue): boolean {
+    // Cancellation follows either retirement of this queue or destruction of the index.
+    return !this.destroyed_abyssPrivate && this.initialInstallQueue_abyssPrivate === queue;
+  }
+
+  private queueInitialAcceptance_abyssPrivate(
+    queue: InitialInstallQueue,
+    accept: () => boolean,
+  ): Promise<boolean> {
+    const accepted = queue.tail.then(async () => {
+      if (!this.initialQueueActive_abyssPrivate(queue)) return false;
+      if (queue.failure !== undefined) throw queue.failure.cause;
+      if (queue.count >= 8 || performance.now() - queue.sliceStart >= 6) {
+        try {
+          await this.yieldDependencies_abyssPrivate(queue.controller.signal);
+        } catch (error) {
+          if (!this.initialQueueActive_abyssPrivate(queue)) return false;
+          throw error;
+        }
+        this.resetInitialSlice_abyssPrivate(queue);
+      }
+      if (!this.initialQueueActive_abyssPrivate(queue)) return false;
+      queue.count += 1;
+      // Parsing, reference authority and publication for one file remain atomic.
+      return accept();
+    });
+    queue.tail = accepted.then(
+      () => undefined,
+      (cause: unknown) => {
+        queue.failure ??= { cause };
+      },
+    );
+    return accepted;
+  }
+
+  private resetInitialSlice_abyssPrivate(queue: InitialInstallQueue): void {
+    queue.sliceStart = performance.now();
+    queue.count = 0;
   }
 
   private async loadInitialFile_abyssPrivate(file: TFile, path: string): Promise<boolean> {
@@ -1769,16 +1828,18 @@ export class TaskIndex
   list(query?: TaskQuery): readonly TaskSnapshot[] {
     const tasks = initialQueryTasks(this.taskMap_abyssPrivate, query);
     const filtered = filterQueryTasks(tasks, query);
-    return [...filtered].sort(stableTaskOrder).map(cloneTaskSnapshot);
+    return filtered.map(cloneTaskSnapshot).sort(stableTaskOrder);
   }
 
   listNodes(query?: TaskQuery): readonly TaskNodeSnapshot[] {
-    const roots = initialQueryTasks(this.taskMap_abyssPrivate, query).map((root) =>
-      taskSnapshotWithStatuses(root, (symbol) =>
-        this.statusCatalog_abyssPrivate.statusForSymbol(symbol),
-      ),
+    const statusForSymbol = (symbol: string): TaskSnapshot['status'] =>
+      this.statusCatalog_abyssPrivate.statusForSymbol(symbol);
+    const roots = filterQueryTasks(
+      initialQueryTasks(this.taskMap_abyssPrivate, query),
+      query,
+      statusForSymbol,
     );
-    return enumerateTaskNodes(filterQueryTasks(roots, query));
+    return enumerateTaskNodes(roots, statusForSymbol);
   }
 
   dependencies(target: TaskNodeRef): TaskDependencyProjection {
@@ -1991,9 +2052,7 @@ export class TaskIndex
     this.acceptedStatisticsSources_abyssPrivate.clear();
     this.statisticsReadFailures_abyssPrivate.clear();
     this.taskMap_abyssPrivate.clear();
-    this.invalidateDependencies_abyssPrivate(
-      new TaskSearchError('disposed', 'Task index disposed'),
-    );
+    this.disposeReadPreparation_abyssPrivate();
     this.publishSearch_abyssPrivate({ type: 'state', state: this.searchState_abyssPrivate() });
     this.searchListeners_abyssPrivate.clear();
     this.searchFiles_abyssPrivate.clear();
@@ -2020,6 +2079,13 @@ export class TaskIndex
     this.recurringSourcesByFile_abyssPrivate.clear();
   }
 
+  private disposeReadPreparation_abyssPrivate(): void {
+    this.initialInstallQueue_abyssPrivate?.controller.abort();
+    this.invalidateDependencies_abyssPrivate(
+      new TaskSearchError('disposed', 'Task index disposed'),
+    );
+  }
+
   private async loadFile_abyssPrivate(
     file: TFile,
     path: string,
@@ -2028,7 +2094,18 @@ export class TaskIndex
     const observation = this.observe_abyssPrivate(file, path);
     if (observation == null) return false;
     const cache = this.app_abyssPrivate.metadataCache.getFileCache(file);
-    return this.loadParsedFile_abyssPrivate(observation, cache, observedFile);
+    const queue = this.initialInstallQueue_abyssPrivate;
+    const read = this.loadParsedFile_abyssPrivate(observation, cache, observedFile, queue);
+    if (queue !== undefined) {
+      // Keep acquisition ownership separate from event-read barriers: a policy refresh
+      // must not wait for unrelated bootstrap I/O, but readiness must join its queued reads.
+      queue.reads.add(read);
+      const release = (): void => {
+        queue.reads.delete(read);
+      };
+      read.then(release, release);
+    }
+    return read;
   }
 
   private commitEmptyObservation_abyssPrivate(observation: FileObservation): boolean {
@@ -2041,8 +2118,9 @@ export class TaskIndex
     observation: FileObservation,
     cache: CachedMetadata | null,
     observedFile: boolean,
+    queue: InitialInstallQueue | undefined,
   ): Promise<boolean> {
-    let reason: TaskStatisticsSourceIssue['reason'] = 'read-failed';
+    let accept: () => boolean;
     try {
       const content = await this.app_abyssPrivate.vault.cachedRead(observation.file);
       if (!this.isCurrent_abyssPrivate(observation)) return false;
@@ -2052,11 +2130,29 @@ export class TaskIndex
       )
         return false;
       if (!this.isCurrent_abyssPrivate(observation)) return false;
-      reason = 'projection-failed';
-      return this.installLoadedObservation_abyssPrivate(observation, content, cache, observedFile);
+      accept = () => {
+        if (!this.isCurrent_abyssPrivate(observation)) return false;
+        try {
+          return this.installLoadedObservation_abyssPrivate(
+            observation,
+            content,
+            cache,
+            observedFile,
+          );
+        } catch (error) {
+          return this.failedStatisticsObservation_abyssPrivate(
+            observation,
+            'projection-failed',
+            error,
+          );
+        }
+      };
     } catch (error) {
-      return this.failedStatisticsObservation_abyssPrivate(observation, reason, error);
+      accept = () =>
+        this.failedStatisticsObservation_abyssPrivate(observation, 'read-failed', error);
     }
+    // Scheduler errors belong to initialization, never to an accepted empty source observation.
+    return queue === undefined ? accept() : this.queueInitialAcceptance_abyssPrivate(queue, accept);
   }
 
   private installLoadedObservation_abyssPrivate(
