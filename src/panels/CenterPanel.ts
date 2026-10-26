@@ -3210,6 +3210,7 @@ export class CenterPanel {
       shell.filterChipsHost,
       undefined,
       shell.filterChips,
+      shell.viewButton,
     );
     const viewState = this.taskCollectionState_abyssPrivate();
     shell.viewSwitcher.update(viewState.view ?? 'list');

@@ -7,7 +7,7 @@ function bottomOverlap(pane: DOMRect, status: DOMRect): number {
     status.right <= pane.left ||
     status.left >= pane.right ||
     status.top >= pane.bottom ||
-    status.bottom < pane.bottom
+    status.bottom <= pane.top
   )
     return 0;
   return Math.max(0, Math.min(pane.height, pane.bottom - status.top));
@@ -25,10 +25,13 @@ export function mountPanelStatusBarInset(owner: HTMLElement, workspace?: Workspa
     const document = owner.ownerDocument;
     const win = document.defaultView;
     if (win === null) return;
+    let retired = false;
+    const current = (): boolean => !retired && owner.ownerDocument === document;
     let frame: number | undefined;
     let bar: HTMLElement | null = null;
     const measure = (): void => {
       frame = undefined;
+      if (!current()) return;
       const next = document.querySelector<HTMLElement>('.status-bar');
       if (next !== bar) {
         if (bar !== null) observer?.unobserve(bar);
@@ -44,6 +47,7 @@ export function mountPanelStatusBarInset(owner: HTMLElement, workspace?: Workspa
         owner.style.setProperty('--abyss-shell-bottom-inset', value);
     };
     refresh = () => {
+      if (!current()) return;
       frame ??= win.requestAnimationFrame(measure);
     };
     const observer =
@@ -51,6 +55,7 @@ export function mountPanelStatusBarInset(owner: HTMLElement, workspace?: Workspa
     observer?.observe(owner, { box: 'border-box' });
     win.addEventListener('resize', refresh);
     releaseWindow = () => {
+      retired = true;
       if (frame !== undefined) win.cancelAnimationFrame(frame);
       observer?.disconnect();
       win.removeEventListener('resize', refresh);

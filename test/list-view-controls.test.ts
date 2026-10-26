@@ -159,18 +159,25 @@ describe('mounted tag polarity chips', () => {
     try {
       controls.addPropertyFilter({ type: 'tag', value: '#work' });
       controls.addPropertyFilter({ type: 'priority', value: 'A' });
-      let chips = controls.renderPropertyChips(root);
+      const options = controls.renderViewStateButton(root);
+      let chips = controls.renderPropertyChips(root, options);
       const close = expectDefined(root.querySelector<HTMLButtonElement>('.abyss-filter-chip-x'));
       close.focus();
-      chips = controls.renderPropertyChips(root, undefined, chips);
+      chips = controls.renderPropertyChips(root, options, chips);
       expect(document.activeElement).toBe(close);
       expect(root.querySelectorAll('.abyss-filter-chip')).toHaveLength(2);
       close.click();
-      chips = controls.renderPropertyChips(root, undefined, chips);
+      chips = controls.renderPropertyChips(root, options, chips);
       expect(root.querySelectorAll('.abyss-filter-chip')).toHaveLength(1);
       expect(chips[0]?.textContent).toContain('Highest');
-      expectDefined(root.querySelector<HTMLButtonElement>('.abyss-filter-chip-x')).click();
+      const remaining = expectDefined(
+        root.querySelector<HTMLButtonElement>('.abyss-filter-chip-x'),
+      );
+      expect(document.activeElement).toBe(remaining);
+      remaining.click();
+      controls.renderPropertyChips(root, options, chips);
       expect(state.get('centerListViewState').filters).toEqual([]);
+      expect(document.activeElement).toBe(options);
     } finally {
       root.remove();
     }

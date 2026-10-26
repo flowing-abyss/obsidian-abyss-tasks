@@ -103,16 +103,18 @@ export class ListViewControls {
     controls: HTMLElement,
     anchor?: HTMLElement,
     previous: readonly HTMLElement[] = [],
+    focusFallback?: HTMLElement,
   ): HTMLElement[] {
     const vs = this.#read();
-    const chips: HTMLElement[] = [];
-    for (const [i, f] of vs.filters.entries()) {
+    const focused = previous.findIndex((chip) =>
+      chip.contains(controls.ownerDocument.activeElement),
+    );
+    const chips = vs.filters.map((f, i) => {
       const label = this.#filterChipLabel(f);
       const key = JSON.stringify([f, label]);
       const retained = previous[i];
       if (retained?.parentElement === controls && this.#chipKeys.get(retained) === key) {
-        chips.push(retained);
-        continue;
+        return retained;
       }
       const chip = controls.createSpan({ cls: 'abyss-filter-chip' });
       this.#chipKeys.set(chip, key);
@@ -125,12 +127,25 @@ export class ListViewControls {
         e.stopPropagation();
         this.#removePropertyFilter(idx);
       });
-      chips.push(chip);
-    }
+      return chip;
+    });
+    this.#finishPropertyChips(previous, chips, focused, focusFallback ?? anchor);
+    return chips;
+  }
+
+  #finishPropertyChips(
+    previous: readonly HTMLElement[],
+    chips: readonly HTMLElement[],
+    focused: number,
+    fallback: HTMLElement | undefined,
+  ): void {
     previous.forEach((chip) => {
       if (!chips.includes(chip)) chip.remove();
     });
-    return chips;
+    const former = previous[focused];
+    if (former === undefined || chips.includes(former)) return;
+    const next = chips[Math.min(focused, chips.length - 1)]?.querySelector<HTMLElement>('button');
+    (next ?? fallback)?.focus({ preventScroll: true });
   }
 
   #filterChipLabel(f: PropertyFilter): string {

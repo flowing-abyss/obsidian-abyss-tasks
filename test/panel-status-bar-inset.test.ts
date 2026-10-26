@@ -28,6 +28,10 @@ describe('desktop panel status-bar overlap', () => {
     try {
       vi.advanceTimersByTime(20);
       expect(value()).toBe('27px');
+      bounds = new DOMRect(210, 873, 201, 25);
+      resize([], observer);
+      vi.advanceTimersByTime(20);
+      expect(value()).toBe('27px');
       bounds = new DOMRect(210, 873, 0, 0);
       resize([], observer);
       vi.advanceTimersByTime(20);
@@ -39,6 +43,7 @@ describe('desktop panel status-bar overlap', () => {
       bounds = new DOMRect(210, 873, 201, 27);
       resize([], observer);
       stop();
+      resize([], observer);
       vi.advanceTimersByTime(20);
       expect(value()).toBe('');
       expect(disconnect).toHaveBeenCalledOnce();
