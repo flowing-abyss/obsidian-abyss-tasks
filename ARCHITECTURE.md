@@ -759,7 +759,10 @@ plan for preview and persistence and validates both endpoints together. All proj
 bounded row geometry, pin active editors/gestures, and retire native work on hide or migration.
 Drafts and submitted receipts keep their controller ownership through those transitions.
 `TimelinePointerInteraction` owns shared pointer capture, preview, cancellation, edge scrolling and
-row pins. Its caller supplies immutable source evidence, equality, planning and command receipts;
+row pins. Like calendar gestures, it ignores unpressed mouse motion, retains window release
+ownership after released capture loss, and samples the final pointer position before submission.
+A physical-click guard survives inspector reflow; the next press and keyboard activation remain
+independent. Its caller supplies immutable source evidence, equality, planning and command receipts;
 the Projects adapter retains frontmatter binding and write authority. `timelinePresentation` shares
 calendar navigation, scale controls, axis cells and grid rendering without acquiring write authority.
 

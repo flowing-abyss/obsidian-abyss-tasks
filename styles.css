@@ -11448,7 +11448,7 @@ button.abyss-calendar-date[aria-pressed='true'] {
 }
 
 .abyss-project-boundary-handle.is-start::before {
-  right: 0;
+  left: 100%;
 }
 
 .abyss-project-boundary-handle.is-end::before {

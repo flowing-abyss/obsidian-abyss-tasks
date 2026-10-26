@@ -9,6 +9,7 @@ import {
   type ProjectTimelineRange,
   type ProjectTimelineWindow,
 } from '../../projects/projectTimelineModel';
+import { isReleasedMousePointer } from '../../ui/pointerRelease';
 
 export interface TimelineRangeSource {
   readonly occurrenceId: string;
@@ -248,7 +249,8 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
   private readonly pending_abyssPrivate = new Map<string, PendingPointerPreview<Source>>();
   private previewSequence_abyssPrivate = 0;
   private destroyed_abyssPrivate = false;
-  private suppressClickOccurrence_abyssPrivate: string | undefined;
+  private gestureCleanup_abyssPrivate: (() => void) | undefined;
+  private clickCleanup_abyssPrivate: (() => void) | undefined;
   private edgeDirection_abyssPrivate: -1 | 0 | 1 = 0;
   private edgeFrame_abyssPrivate: number | undefined;
   private readonly cursor_abyssPrivate: HTMLElement;
@@ -271,12 +273,8 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
     });
     this.tooltip_abyssPrivate.hidden = true;
     context_abyssPrivate.root.addEventListener('pointerdown', this.pointerDown_abyssPrivate);
-    context_abyssPrivate.root.addEventListener('pointermove', this.pointerMove_abyssPrivate);
-    context_abyssPrivate.root.addEventListener('pointerup', this.pointerUp_abyssPrivate);
-    context_abyssPrivate.root.addEventListener('pointercancel', this.cancelEvent_abyssPrivate);
-    context_abyssPrivate.root.addEventListener('lostpointercapture', this.cancelEvent_abyssPrivate);
+    context_abyssPrivate.root.addEventListener('pointermove', this.hover_abyssPrivate);
     context_abyssPrivate.root.addEventListener('pointerleave', this.pointerLeave_abyssPrivate);
-    context_abyssPrivate.root.addEventListener('click', this.click_abyssPrivate, true);
     context_abyssPrivate.root.addEventListener('keydown', this.keydown_abyssPrivate, true);
     this.bindOwner_abyssPrivate();
     this.migrationCleanup_abyssPrivate = context_abyssPrivate.root.onWindowMigrated(
@@ -292,15 +290,12 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
     this.cancelActive();
     const { root } = this.context_abyssPrivate;
     root.removeEventListener('pointerdown', this.pointerDown_abyssPrivate);
-    root.removeEventListener('pointermove', this.pointerMove_abyssPrivate);
-    root.removeEventListener('pointerup', this.pointerUp_abyssPrivate);
-    root.removeEventListener('pointercancel', this.cancelEvent_abyssPrivate);
-    root.removeEventListener('lostpointercapture', this.cancelEvent_abyssPrivate);
+    root.removeEventListener('pointermove', this.hover_abyssPrivate);
     root.removeEventListener('pointerleave', this.pointerLeave_abyssPrivate);
-    root.removeEventListener('click', this.click_abyssPrivate, true);
     root.removeEventListener('keydown', this.keydown_abyssPrivate, true);
     this.migrationCleanup_abyssPrivate();
     this.nativeCleanup_abyssPrivate?.();
+    this.clickCleanup_abyssPrivate?.();
     for (const event of ['pointerdown', 'pointermove', 'pointerup', 'keydown', 'focusin'])
       root.removeEventListener(event, this.bindOwner_abyssPrivate, true);
     this.cursor_abyssPrivate.remove();
@@ -312,6 +307,7 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
     if (this.destroyed_abyssPrivate || doc === this.ownerDocument_abyssPrivate) return;
     this.cancelActive();
     this.nativeCleanup_abyssPrivate?.();
+    this.clickCleanup_abyssPrivate?.();
     this.ownerDocument_abyssPrivate = doc;
     const win = doc.defaultView;
     this.ownerWindow_abyssPrivate = win ?? undefined;
@@ -375,6 +371,7 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
   private cancelGesture_abyssPrivate(restorePreview: boolean): void {
     const active = this.active_abyssPrivate;
     this.active_abyssPrivate = undefined;
+    this.gestureCleanup_abyssPrivate?.();
     this.stopEdgeScroll_abyssPrivate();
     this.hideOverlays_abyssPrivate();
     if (restorePreview && active !== undefined) {
@@ -476,7 +473,6 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
     if (this.destroyed_abyssPrivate || event.button !== 0 || !event.isPrimary) return;
     const target = this.target_abyssPrivate(event);
     if (target === undefined) return;
-    this.suppressClickOccurrence_abyssPrivate = undefined;
     const startDay = this.dayAtClientX_abyssPrivate(target.track, event.clientX);
     if (startDay === undefined) return;
     const captured = this.context_abyssPrivate.captureRangeSource(target.occurrenceId);
@@ -504,6 +500,8 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
     };
     this.active_abyssPrivate = active;
     this.notifyPins_abyssPrivate();
+    this.listenGesture_abyssPrivate(active);
+    this.guardClick_abyssPrivate(active.pointerId);
     if (!this.capturePointer_abyssPrivate(active)) return;
     void this.context_abyssPrivate.finishEditor().then(
       (finished) => {
@@ -521,14 +519,23 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
     );
   };
 
+  private readonly hover_abyssPrivate = (event: PointerEvent): void => {
+    if (this.active_abyssPrivate !== undefined) return;
+    const target = this.target_abyssPrivate(event);
+    if (target !== undefined) this.showCursor_abyssPrivate(target.track, event.clientX);
+  };
+
   private readonly pointerMove_abyssPrivate = (event: PointerEvent): void => {
     const active = this.active_abyssPrivate;
-    if (active === undefined) {
-      const target = this.target_abyssPrivate(event);
-      if (target !== undefined) this.showCursor_abyssPrivate(target.track, event.clientX);
-      return;
-    }
-    if (event.pointerId !== active.pointerId) return;
+    if (active?.pointerId !== event.pointerId || isReleasedMousePointer(event)) return;
+    event.preventDefault();
+    this.updatePointer_abyssPrivate(active, event);
+  };
+
+  private updatePointer_abyssPrivate(
+    active: ActivePointerGesture<Source>,
+    event: PointerEvent,
+  ): void {
     const day = this.dayAtClientX_abyssPrivate(active.target.track, event.clientX);
     if (day === undefined) return;
     active.lastClientX = event.clientX;
@@ -536,11 +543,12 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
     active.moved ||= Math.abs(event.clientX - active.startClientX) >= MOVEMENT_THRESHOLD_PX;
     this.updateEdgeScroll_abyssPrivate(event.clientX);
     if (active.prepared) this.preview_abyssPrivate(active);
-  };
+  }
 
   private readonly pointerUp_abyssPrivate = (event: PointerEvent): void => {
     const active = this.active_abyssPrivate;
     if (active?.pointerId !== event.pointerId) return;
+    this.updatePointer_abyssPrivate(active, event);
     active.released = true;
     if (this.activatePress_abyssPrivate(active)) return;
     const submission = this.pointerSubmission_abyssPrivate(active);
@@ -574,21 +582,19 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
     const rangePress = part === 'bar' ? this.context_abyssPrivate.clickRange : undefined;
     if (trackPress === undefined && rangePress === undefined) return false;
     this.cancelGesture_abyssPrivate(true);
-    this.suppressClickOccurrence_abyssPrivate = occurrenceId;
     if (trackPress !== undefined) trackPress(active.source, active.startDay);
     else rangePress?.(occurrenceId);
     return true;
   }
 
   private activateEndpoint_abyssPrivate(active: ActivePointerGesture<Source>): boolean {
-    const { part, occurrenceId } = active.target;
+    const { part } = active.target;
     if (
       (part !== 'start' && part !== 'end') ||
       this.context_abyssPrivate.clickEndpoint === undefined
     )
       return false;
     this.cancelGesture_abyssPrivate(true);
-    this.suppressClickOccurrence_abyssPrivate = occurrenceId;
     this.context_abyssPrivate.clickEndpoint(active.source, part);
     return true;
   }
@@ -626,12 +632,12 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
     pending: PendingPointerPreview<Source>,
   ): void {
     this.active_abyssPrivate = undefined;
+    this.gestureCleanup_abyssPrivate?.();
     this.stopEdgeScroll_abyssPrivate();
     this.hideOverlays_abyssPrivate();
     this.releasePointerCapture_abyssPrivate(active);
     this.pending_abyssPrivate.set(active.target.occurrenceId, pending);
     this.applyPreview_abyssPrivate(active.target, pending.range);
-    this.suppressClickOccurrence_abyssPrivate = active.target.occurrenceId;
   }
 
   private settlePending_abyssPrivate(
@@ -773,15 +779,54 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
     if (this.active_abyssPrivate === undefined) this.hideOverlays_abyssPrivate();
   };
 
-  private readonly click_abyssPrivate = (event: MouseEvent): void => {
-    const suppressedOccurrence = this.suppressClickOccurrence_abyssPrivate;
-    if (suppressedOccurrence === undefined) return;
-    const target = this.target_abyssPrivate(event);
-    this.suppressClickOccurrence_abyssPrivate = undefined;
-    if (target?.occurrenceId !== suppressedOccurrence) return;
-    event.preventDefault();
-    event.stopPropagation();
-  };
+  /** Calendar-compatible ownership: a released mouse can lose capture before its final up. */
+  private listenGesture_abyssPrivate(active: ActivePointerGesture<Source>): void {
+    const win = this.ownerWindow_abyssPrivate;
+    const track = active.target.track;
+    const lost = (event: PointerEvent): void => {
+      if (!isReleasedMousePointer(event)) this.cancelEvent_abyssPrivate(event);
+    };
+    const press = (event: PointerEvent): void => {
+      if (event.pointerId === active.pointerId || event.pointerType === 'touch')
+        this.cancelActive();
+    };
+    win?.addEventListener('pointerdown', press, true);
+    win?.addEventListener('pointermove', this.pointerMove_abyssPrivate);
+    win?.addEventListener('pointerup', this.pointerUp_abyssPrivate);
+    win?.addEventListener('pointercancel', this.cancelEvent_abyssPrivate);
+    win?.addEventListener('keydown', this.keydown_abyssPrivate, true);
+    track.addEventListener('lostpointercapture', lost);
+    this.gestureCleanup_abyssPrivate = () => {
+      this.gestureCleanup_abyssPrivate = undefined;
+      win?.removeEventListener('pointerdown', press, true);
+      win?.removeEventListener('pointermove', this.pointerMove_abyssPrivate);
+      win?.removeEventListener('pointerup', this.pointerUp_abyssPrivate);
+      win?.removeEventListener('pointercancel', this.cancelEvent_abyssPrivate);
+      win?.removeEventListener('keydown', this.keydown_abyssPrivate, true);
+      track.removeEventListener('lostpointercapture', lost);
+    };
+  }
+
+  /** The ensuing physical click still belongs to this press even if inspection reflows the UI. */
+  private guardClick_abyssPrivate(pointerId: number): void {
+    this.clickCleanup_abyssPrivate?.();
+    const win = this.ownerWindow_abyssPrivate;
+    const clear = (): void => {
+      win?.removeEventListener('click', click, true);
+      win?.removeEventListener('pointerdown', clear, true);
+      this.clickCleanup_abyssPrivate = undefined;
+    };
+    const click = (event: MouseEvent): void => {
+      if (event.detail === 0) return;
+      if ('pointerId' in event && event.pointerId !== pointerId) return;
+      clear();
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    };
+    win?.addEventListener('click', click, true);
+    win?.addEventListener('pointerdown', clear, true);
+    this.clickCleanup_abyssPrivate = clear;
+  }
 
   private readonly keydown_abyssPrivate = (event: KeyboardEvent): void => {
     if (event.key !== 'Escape' || this.active_abyssPrivate === undefined) return;

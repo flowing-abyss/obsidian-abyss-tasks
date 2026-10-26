@@ -11,7 +11,7 @@ import {
 import { expectDefined, flushMicrotasks, task } from './helpers';
 import { prepareTaskPanelViewport } from './support/taskPanelViewport';
 afterEach(() => vi.restoreAllMocks());
-function pointer(type: string, x: number): Event {
+function pointer(type: string, x: number, buttons = type === 'pointerup' ? 0 : 1): Event {
   const event = new Event(type, { bubbles: true, cancelable: true });
   Object.defineProperties(event, {
     button: { value: 0 },
@@ -19,6 +19,8 @@ function pointer(type: string, x: number): Event {
     clientY: { value: 120 },
     isPrimary: { value: true },
     pointerId: { value: 1 },
+    pointerType: { value: 'mouse' },
+    buttons: { value: buttons },
   });
   return event;
 }
@@ -246,6 +248,68 @@ it('rejects a short track press after its task was replaced', async () => {
     expect(h.commit).not.toHaveBeenCalled();
     expect(h.openDates).not.toHaveBeenCalled();
   } finally {
+    h.dispose();
+  }
+});
+
+it('retains a trackpad resize through unpressed motion and capture loss until window release', async () => {
+  const h = mount();
+  try {
+    const end = expectDefined(h.bar.querySelector<HTMLElement>('[data-timeline-part="end"]'));
+    await start(end, 150);
+    end.dispatchEvent(pointer('pointermove', 170));
+    const preview = h.bar.style.width;
+    end.dispatchEvent(pointer('pointermove', 250, 0));
+    expect(h.bar.style.width).toBe(preview);
+    h.track.dispatchEvent(pointer('lostpointercapture', 170, 0));
+    window.dispatchEvent(pointer('pointerup', 190));
+    await flushMicrotasks();
+    expect(h.commit).toHaveBeenCalledTimes(1);
+    expect(h.commit.mock.calls[0]?.[1]).toEqual({ due: { type: 'set', value: '2026-10-30' } });
+  } finally {
+    h.dispose();
+  }
+});
+
+it.each(['pressed capture loss', 'cancel', 'blur', 'new press'] as const)(
+  'retires the window gesture on %s',
+  async (cause) => {
+    const h = mount();
+    try {
+      await start(h.bar);
+      h.bar.dispatchEvent(pointer('pointermove', 170));
+      if (cause === 'pressed capture loss')
+        h.track.dispatchEvent(pointer('lostpointercapture', 170));
+      if (cause === 'cancel') window.dispatchEvent(pointer('pointercancel', 170));
+      if (cause === 'blur') window.dispatchEvent(new Event('blur'));
+      if (cause === 'new press') document.body.dispatchEvent(pointer('pointerdown', 170));
+      window.dispatchEvent(pointer('pointerup', 190));
+      await flushMicrotasks();
+      expect(h.commit).not.toHaveBeenCalled();
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it('consumes the native click after inspector layout changes without disabling the next checkbox press', async () => {
+  const h = mount();
+  const checkbox = document.body.createEl('button');
+  const complete = vi.fn();
+  checkbox.addEventListener('click', complete);
+  try {
+    await start(h.bar);
+    h.bar.dispatchEvent(pointer('pointerup', 130));
+    expect(h.inspect).toHaveBeenCalledTimes(1);
+    checkbox.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }));
+    expect(complete).not.toHaveBeenCalled();
+    checkbox.dispatchEvent(pointer('pointerdown', 130));
+    checkbox.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }));
+    expect(complete).toHaveBeenCalledTimes(1);
+    checkbox.click();
+    expect(complete).toHaveBeenCalledTimes(2);
+  } finally {
+    checkbox.remove();
     h.dispose();
   }
 });
