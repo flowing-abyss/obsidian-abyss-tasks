@@ -103,6 +103,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
   #focusedKey: string | undefined;
   #ordered: string[] = [];
   #pendingScroll: TaskListScroll | undefined;
+  #pendingUpdate = false;
   readonly #scrollWindow = new LogicalScrollWindow();
   #logicalTop = 0;
   #acceptedNativeTop = 0;
@@ -184,6 +185,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
       this.#ownedWrite = undefined;
       this.#rows = rows;
       this.#presentation = presentation;
+      this.#pendingUpdate = true;
       // A surviving holder keeps its visible extent while its new exact source hydrates.
       // Only mounted rows are retained; layout invalidation still drops these measurements.
       const retained = recovering ? [] : this.#mountedExtents();
@@ -200,8 +202,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
         }
       }
       if (!this.#active()) {
-        this.#pendingScroll = { anchor, top };
-        this.#unbind();
+        this.#deferRender({ anchor, top });
         return;
       }
       this.#pendingScroll = undefined;
@@ -228,6 +229,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     const readiness = { pending: false };
     this.#guard(() => {
       if (this.#viewport.rowBounds(key) === undefined || !this.#bind()) return;
+      this.#pendingScroll = undefined;
       const top = this.#checkLayout()?.top ?? this.#top();
       if (
         this.#reconcile(false, {
@@ -279,7 +281,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     const token: PinOwner = { nativeWrite: observer, onInvalidated };
     if (!this.#destroyed) this.#nativeObservers.add(token);
     return () => {
-      this.#nativeObservers.delete(token);
+      if (this.#nativeObservers.delete(token) && this.#pendingUpdate) this.#schedule();
     };
   }
 
@@ -302,15 +304,8 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     this.#listen(true);
     this.#failed = false;
     this.#guard(() => {
-      if (!this.#active()) return;
-      if (!this.#bind()) return;
-      let target = this.#checkLayout();
-      if (this.#pendingScroll !== undefined) {
-        const { anchor, top } = this.#pendingScroll;
-        this.#pendingScroll = undefined;
-        target = { top: this.#restoreTop(anchor, top), anchor };
-      }
-      this.#reconcile(false, target);
+      if (!this.#options.host.isConnected || !this.#bind() || !this.#active()) return;
+      this.#reconcilePending();
     });
   }
   destroy(): void {
@@ -608,8 +603,24 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     }
     this.#guard(() => {
       if (!this.#active()) return;
-      this.#reconcile(false, this.#checkLayout());
+      this.#reconcilePending();
     });
+  }
+  #reconcilePending(): void {
+    let target = this.#checkLayout();
+    const pending = this.#pendingScroll;
+    if (pending !== undefined) {
+      target = { top: this.#restoreTop(pending.anchor, pending.top), anchor: pending.anchor };
+    }
+    if (this.#reconcile(false, target) && this.#pendingScroll === pending)
+      this.#pendingScroll = undefined;
+  }
+  #deferRender(position: TaskListScroll): void {
+    this.#pendingScroll = position;
+    this.#cancelFrame();
+    // Hidden tabs still need their size observer to wake the latest source on return.
+    if (!this.#suspended && this.#options.host.isConnected) this.#bind();
+    else this.#unbind();
   }
   #bind(): boolean {
     const binding = this.#binding;
@@ -683,6 +694,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
       if (sameOwner && previous?.top === next.top && previous.left !== next.left) return;
       // Read each vertical event before the frame so away-and-back input retains its intent.
       this.#top();
+      if (previous?.top !== next.top && this.#active()) this.#pendingScroll = undefined;
       this.#schedule();
     });
   };
@@ -832,6 +844,13 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     return rect !== undefined && rect.bottom > top && rect.top < top + this.#height();
   }
   #reconcile(update: boolean, target?: TaskListScroll): boolean {
+    const revision = this.#revision;
+    const complete = this.#reconcileViewport(update || this.#pendingUpdate, target);
+    // Source snapshots remain pending through a veto, hide, or reentrant replacement.
+    if (complete && revision === this.#revision) this.#pendingUpdate = false;
+    return complete;
+  }
+  #reconcileViewport(update: boolean, target?: TaskListScroll): boolean {
     const current = this.#currentReconciliation();
     this.#readFocus();
     this.#resolvePinOrder();

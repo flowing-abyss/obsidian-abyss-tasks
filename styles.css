@@ -9160,6 +9160,18 @@ button.abyss-project-dashboard-property-label {
   background: transparent;
 }
 
+.abyss-project-dashboard-editor.is-temporal {
+  width: max-content;
+}
+
+.abyss-project-dashboard-editor.is-temporal .abyss-project-editor-input {
+  width: auto;
+}
+
+.abyss-project-dashboard-editor.is-temporal .abyss-project-editor-error {
+  overflow-wrap: anywhere;
+}
+
 .abyss-project-dashboard-property > :first-child {
   color: var(--text-muted);
 }

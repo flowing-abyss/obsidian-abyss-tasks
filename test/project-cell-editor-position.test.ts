@@ -80,3 +80,37 @@ it('follows asynchronous layout changes above an unchanged field inside a scroll
     vi.unstubAllGlobals();
   }
 });
+
+it('keeps a content-sized editor free to grow while clamping it inside its owner', () => {
+  const boundary = document.body.createDiv();
+  const anchor = boundary.createDiv();
+  const host = boundary.createDiv();
+  vi.spyOn(boundary, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 400, 500));
+  Object.defineProperties(boundary, { clientWidth: { value: 400 }, clientHeight: { value: 500 } });
+  vi.spyOn(anchor, 'getBoundingClientRect').mockReturnValue(new DOMRect(350, 80, 40, 26));
+  let contentWidth = 150;
+  vi.spyOn(host, 'getBoundingClientRect').mockImplementation(
+    () => new DOMRect(0, 0, contentWidth, 32),
+  );
+  const release = mountProjectCellEditorPosition({
+    boundary,
+    anchor,
+    host,
+    positioningContainer: boundary,
+    fitContent: true,
+    placement: 'below',
+  });
+  try {
+    expect(host.style.width).toBe('');
+    expect(host.style.maxWidth).toBe('384px');
+    expect(host.style.left).toBe('242px');
+    contentWidth = 250;
+    window.dispatchEvent(new Event('resize'));
+    expect(host.style.width).toBe('');
+    expect(host.style.left).toBe('142px');
+  } finally {
+    release();
+    boundary.remove();
+    vi.restoreAllMocks();
+  }
+});

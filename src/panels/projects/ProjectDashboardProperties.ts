@@ -487,6 +487,7 @@ export class ProjectDashboardProperties {
     this.#editorHost = host;
     const inMenu = this.#popover?.element.contains(anchor) === true;
     host.toggleClass('is-expanded', field.id === 'description');
+    host.toggleClass('is-temporal', field.type === 'date' || field.type === 'datetime');
     let positionCleanup = (): void => {};
     const release = (): void => {
       positionCleanup();
@@ -535,6 +536,7 @@ export class ProjectDashboardProperties {
       boundary: this.owner,
       positioningContainer: this.owner,
       preferredWidth: preferredWidth ?? host.getBoundingClientRect().width,
+      fitContent: host.hasClass('is-temporal'),
       ...(inMenu ? { placement: 'below' as const } : {}),
       layoutElements:
         this.#popover === undefined

@@ -8,6 +8,7 @@ interface ProjectCellEditorPositionOptions {
   readonly avoid?: HTMLElement;
   readonly positioningContainer?: HTMLElement;
   readonly preferredWidth?: number;
+  readonly fitContent?: boolean;
   readonly onMove?: () => void;
   readonly placement?: 'below';
   /** Retained menu rows can move the anchor without changing the anchor's own size. */
@@ -36,8 +37,17 @@ function clamp(value: number, minimum: number, maximum: number): number {
   return Math.max(minimum, Math.min(value, maximum));
 }
 
-function editorWidth(options: ProjectCellEditorPositionOptions, maximum: number): number {
-  return Math.min(options.preferredWidth ?? options.anchor.getBoundingClientRect().width, maximum);
+function sizeEditor(options: ProjectCellEditorPositionOptions, maximum: number): number {
+  if (options.fitContent === true) {
+    options.host.style.maxWidth = `${maximum}px`;
+    return Math.min(options.host.getBoundingClientRect().width, maximum);
+  }
+  const width = Math.min(
+    options.preferredWidth ?? options.anchor.getBoundingClientRect().width,
+    maximum,
+  );
+  options.host.style.width = `${width}px`;
+  return width;
 }
 
 function verticalPosition(
@@ -63,9 +73,8 @@ function positionEditor(options: ProjectCellEditorPositionOptions): string | und
   const anchorRect = anchor.getBoundingClientRect();
   const edgeGap = 8;
   const maxWidth = Math.max(0, boundary.width - edgeGap * 2);
-  const width = editorWidth(options, maxWidth);
+  const width = sizeEditor(options, maxWidth);
   const maxHeight = Math.max(0, boundary.height - edgeGap * 2);
-  host.style.width = `${width}px`;
   host.style.maxHeight = `${maxHeight}px`;
   host.style.setProperty('--abyss-project-editor-content-max-height', `${maxHeight}px`);
   const measured = host.getBoundingClientRect().height;

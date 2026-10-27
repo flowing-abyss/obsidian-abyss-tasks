@@ -1,3 +1,4 @@
+// Compact date editors and hidden list recovery: measured main 2,240,169 bytes; containing limit 2188 KiB.
 // Project boundary handles: measured main 2,215,176 bytes; containing limit 2164 KiB.
 // Axis and passive boundary styles: shipped CSS 205,867 bytes; containing limit 202 KiB.
 // Dashboard receipt continuity and Undo/Redo: measured main 2,213,176 bytes; 2162 KiB limit.

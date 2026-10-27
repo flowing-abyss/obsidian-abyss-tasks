@@ -28,10 +28,10 @@ const presentation: TaskListPresentation = {
   estimate: () => 48,
   measurementRevision: (row) => (row.kind === 'task' ? row.task.title : row.label),
 };
-function rows(count: number) {
+function rows(count: number, prefix = 'Task') {
   return buildTaskListRows(
     Array.from({ length: count }, (_, line) =>
-      task({ title: `Task ${line}`, source: { filePath: 'n.md', line } }),
+      task({ title: `${prefix} ${line}`, source: { filePath: 'n.md', line } }),
     ),
     { by: 'none' },
   );
@@ -3584,5 +3584,276 @@ it('accepts vertical input back to the last event position after a programmatic 
   h.frame();
   expect(h.surface.mountedKeys()).toEqual(keys);
   expect(h.reportFailure).not.toHaveBeenCalled();
+  h.surface.destroy();
+});
+
+it('publishes changed snapshots when a hidden surface becomes visible without an explicit resume', () => {
+  const h = harness();
+  h.surface.update(rows(10), presentation);
+  h.size(0, 0);
+  h.surface.update(
+    buildTaskListRows(
+      [task({ title: 'Reopened while hidden', source: { filePath: 'n.md', line: 0 } })],
+      { by: 'none' },
+    ),
+    presentation,
+  );
+  expect(h.pending()).toBe(0);
+  h.size(600, 480);
+  if (h.observed.has(h.scroll)) h.resize();
+  h.frame();
+  expect(h.surface.element('n.md:0')?.textContent).toBe('Reopened while hidden');
+});
+
+it('restores a task removed and added by source updates while its surface is hidden', () => {
+  const h = harness();
+  h.surface.update(rows(1), presentation);
+  h.size(0, 0);
+  h.surface.update(rows(0), presentation);
+  expect(h.surface.element('n.md:0')).toBeUndefined();
+  h.size(600, 480);
+  if (h.observed.has(h.scroll)) h.resize();
+  h.frame();
+  h.size(0, 0);
+  h.surface.update(rows(1), presentation);
+  expect(h.pending()).toBe(0);
+  expect(h.surface.element('n.md:0')).toBeUndefined();
+  h.size(600, 480);
+  if (h.observed.has(h.scroll)) h.resize();
+  h.frame();
+  expect(h.surface.element('n.md:0')?.isConnected).toBe(true);
+});
+
+it.each(['initial update', 'resume'] as const)(
+  'mounts after a hidden %s when geometry returns without another source update',
+  (entry) => {
+    const h = harness();
+    h.size(0, 0);
+    if (entry === 'resume') h.surface.suspend();
+    h.surface.update(rows(1), presentation);
+    if (entry === 'resume') h.surface.resume();
+    expect(h.mount).not.toHaveBeenCalled();
+    expect(h.pending()).toBe(0);
+    h.size(600, 480);
+    if (h.observed.has(h.scroll)) h.resize();
+    h.frame();
+    expect(h.surface.element('n.md:0')?.isConnected).toBe(true);
+  },
+);
+
+it('keeps explicit suspension in effect through source updates and size recovery', () => {
+  const h = harness();
+  h.surface.update(rows(1), presentation);
+  h.surface.suspend(true);
+  h.size(0, 0);
+  h.surface.update(rows(2), presentation);
+  h.size(600, 480);
+  if (h.observed.has(h.scroll)) h.resize();
+  window.dispatchEvent(new Event('resize'));
+  h.frame();
+  expect(h.surface.element('n.md:0')).toBeUndefined();
+  expect(h.pending()).toBe(0);
+  h.surface.resume();
+  expect(h.surface.element('n.md:1')?.isConnected).toBe(true);
+});
+
+it('latest hidden publication refreshes every retained mount over three cycles', () => {
+  const h = harness();
+  h.surface.update(rows(10), presentation);
+  const original = h.surface.element('n.md:0');
+  for (let cycle = 1; cycle <= 3; cycle++) {
+    h.size(0, 0);
+    h.surface.update(rows(10, `Discard ${cycle}`), presentation);
+    h.surface.update(rows(10, `Latest ${cycle}`), presentation);
+    expect(h.pending()).toBe(0);
+    h.size(600, 480);
+    if (h.observed.has(h.scroll)) h.resize();
+    h.frame();
+    expect([...h.surface.cards()].map(([, el]) => el.textContent)).toEqual(
+      Array.from({ length: 10 }, (_, n) => `Latest ${cycle} ${n}`),
+    );
+    expect(h.surface.element('n.md:0')).toBe(original);
+  }
+  h.surface.destroy();
+  expect(h.observed.size).toBe(0);
+});
+it('newer explicit reveal wins over deferred hidden scroll on the next observer frame', () => {
+  const h = harness();
+  h.surface.update(rows(100), presentation);
+  h.size(0, 0);
+  h.surface.update(rows(100), presentation);
+  h.size(600, 480);
+  h.resize();
+  expect(h.surface.reveal('n.md:99')).toBeDefined();
+  const revealedTop = h.scroll.scrollTop;
+  expect(revealedTop).toBe(4320);
+  h.frame();
+  expect(h.scroll.scrollTop).toBe(revealedTop);
+  expect(h.surface.element('n.md:99')?.isConnected).toBe(true);
+  h.surface.destroy();
+});
+it('newer native scroll wins over deferred hidden scroll on the next observer frame', () => {
+  const h = harness();
+  h.surface.update(rows(100), presentation);
+  h.size(0, 0);
+  h.surface.update(rows(100), presentation);
+  h.size(600, 480);
+  h.scrollTo(2400);
+  h.frame();
+  expect(h.scroll.scrollTop).toBe(2400);
+  expect(h.surface.element('n.md:50')?.isConnected).toBe(true);
+  h.surface.destroy();
+});
+it('retains pending publication if a retained update hides during recovery', () => {
+  const h = harness();
+  h.surface.update(rows(3), presentation);
+  const mounts = h.mount.mock.results.map((result) => result.value as TaskRowMount);
+  const first = expectDefined(mounts[0]);
+  const oldUpdate = first.update.bind(first);
+  vi.spyOn(first, 'update').mockImplementationOnce((row) => {
+    oldUpdate(row);
+    h.size(0, 0);
+  });
+  h.size(0, 0);
+  h.surface.update(rows(3, 'Latest'), presentation);
+  h.size(600, 480);
+  h.resize();
+  h.frame();
+  h.size(600, 480);
+  h.resize();
+  h.frame();
+  expect([...h.surface.cards()].map(([, el]) => el.textContent)).toEqual([
+    'Latest 0',
+    'Latest 1',
+    'Latest 2',
+  ]);
+  h.surface.destroy();
+});
+it('retains newest source when a recovered retained mount reenters update', () => {
+  const h = harness();
+  h.surface.update(rows(3), presentation);
+  const first = expectDefined(h.mount.mock.results[0]).value as TaskRowMount;
+  const oldUpdate = first.update.bind(first);
+  vi.spyOn(first, 'update').mockImplementationOnce((row) => {
+    oldUpdate(row);
+    h.surface.update(rows(3, 'Replacement'), presentation);
+  });
+  h.size(0, 0);
+  h.surface.update(rows(3, 'Stale'), presentation);
+  h.size(600, 480);
+  h.resize();
+  h.frame();
+  expect([...h.surface.cards()].map(([, el]) => el.textContent)).toEqual([
+    'Replacement 0',
+    'Replacement 1',
+    'Replacement 2',
+  ]);
+  h.surface.destroy();
+});
+it('recovers hidden data after connected adoption with no explicit resume', () => {
+  const h = harness();
+  h.surface.update(rows(3), presentation);
+  h.size(0, 0);
+  const owner = taskViewportOwner();
+  owner.doc.body.append(h.scroll);
+  h.surface.update(rows(3, 'Adopted'), presentation);
+  expect(h.observed.size).toBe(0);
+  h.size(600, 480);
+  for (const { callback, elements } of owner.observers)
+    if (elements.has(h.scroll)) callback([], {} as ResizeObserver);
+  owner.flush();
+  expect([...h.surface.cards()].map(([, el]) => el.textContent)).toEqual([
+    'Adopted 0',
+    'Adopted 1',
+    'Adopted 2',
+  ]);
+  expect(h.surface.element('n.md:0')?.ownerDocument).toBe(owner.doc);
+  h.surface.destroy();
+  expect(owner.observers.every(({ elements }) => elements.size === 0)).toBe(true);
+  owner.destroy();
+});
+it('does not discard a hidden publication when native ownership vetoes its first recovery pass', () => {
+  const h = harness();
+  h.surface.update(rows(3), presentation);
+  let release = () => {};
+  release = h.surface.observeNativeWrites(
+    {
+      beforeWrite: () => {
+        release();
+        return false;
+      },
+      afterWrite: () => {},
+    },
+    () => {},
+  );
+  h.size(0, 0);
+  h.surface.update(rows(3, 'Latest'), presentation);
+  h.size(600, 480);
+  h.resize();
+  h.frame();
+  expect(h.pending()).toBe(1);
+  h.frame();
+  expect([...h.surface.cards()].map(([, el]) => el.textContent)).toEqual([
+    'Latest 0',
+    'Latest 1',
+    'Latest 2',
+  ]);
+  h.surface.destroy();
+});
+it('reports one failed hidden recovery then accepts a later update', () => {
+  const h = harness();
+  h.surface.update(rows(3), presentation);
+  const first = expectDefined(h.mount.mock.results[0]).value as TaskRowMount;
+  vi.spyOn(first, 'update').mockImplementationOnce(() => {
+    throw new Error('Render failed');
+  });
+  h.size(0, 0);
+  h.surface.update(rows(3, 'Latest'), presentation);
+  h.size(600, 480);
+  h.resize();
+  h.frame();
+  h.resize();
+  h.frame();
+  expect(h.reportFailure).toHaveBeenCalledTimes(1);
+  expect(h.surface.mountedKeys()).toEqual([]);
+  h.surface.update(rows(3, 'Recovered'), presentation);
+  expect([...h.surface.cards()].map(([, el]) => el.textContent)).toEqual([
+    'Recovered 0',
+    'Recovered 1',
+    'Recovered 2',
+  ]);
+  h.surface.destroy();
+});
+it('destroying a hidden publication prevents old callbacks from reviving it', () => {
+  const h = harness();
+  h.surface.update(rows(3), presentation);
+  h.scrollTo(48);
+  const oldFrame = expectDefined([...h.frames.values()][0]);
+  const oldResize = h.resizeCallback();
+  h.size(0, 0);
+  h.surface.update(rows(3, 'Latest'), presentation);
+  h.surface.destroy();
+  h.size(600, 480);
+  oldResize([], {} as ResizeObserver);
+  oldFrame(0);
+  h.frame();
+  expect(h.host.childElementCount).toBe(0);
+  expect(h.observed.size).toBe(0);
+  expect(h.pending()).toBe(0);
+  expect(h.reportFailure).not.toHaveBeenCalled();
+});
+
+it('reveals a retained row with its latest hidden snapshot before the recovery frame', () => {
+  const h = harness();
+  h.surface.update(rows(3), presentation);
+  const original = h.surface.element('n.md:1');
+  h.size(0, 0);
+  h.surface.update(rows(3, 'Latest'), presentation);
+  h.size(600, 480);
+  h.resize();
+  expect(h.surface.reveal('n.md:1')).toBe(original);
+  expect(original?.textContent).toBe('Latest 1');
+  h.frame();
+  expect(original?.textContent).toBe('Latest 1');
   h.surface.destroy();
 });
