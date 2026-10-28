@@ -663,22 +663,29 @@ describe('physical Q creation reveal through PanelView', () => {
         return resolve(hits, signal);
       });
       const input = await ownedWait(h.openQ(), lifetime.signal);
+      const owner = expectDefined(h.root.ownerDocument.defaultView);
+      const scheduled = vi.spyOn(owner, 'setTimeout');
       const presented = nextQuickPresentation(h.presentation);
       enter(input, 'Z cancelled owner');
       await ownedWait(entered.promise, lifetime.signal);
       const created = expectDefined(h.index.list({ filePath: 'created.md' })[0]);
       expect(h.state.get('taskStack')).toEqual([created]);
-      const pending = expectDefined(h.presentation['pending'][0]);
-      const announcement = h.presentation['announcementTimeout'];
-      const clear = vi.spyOn(window, 'clearTimeout');
+      const presentationTimers = scheduled.mock.calls.flatMap(([, delay], index) => {
+        const result = scheduled.mock.results[index];
+        if ((delay !== 3_000 && delay !== 4_000) || result?.type !== 'return') return [];
+        const id: unknown = result.value;
+        return [id];
+      });
+      expect(presentationTimers).toHaveLength(2);
+      scheduled.mockRestore();
+      const clear = vi.spyOn(owner, 'clearTimeout');
       const resumed = vi.fn();
       const body = ownedWait(presented, lifetime.signal).then(resumed);
       const rejected = expect(body).rejects.toThrow('cancel test owner');
       lifetime.abort(new Error('cancel test owner'));
       // Cancellation stops the actual owner before any asynchronous disposal/finished hook.
       expect(h.presentation['pending']).toHaveLength(0);
-      expect(clear).toHaveBeenCalledWith(pending.timeout);
-      expect(clear).toHaveBeenCalledWith(announcement);
+      for (const id of presentationTimers) expect(clear).toHaveBeenCalledWith(id);
       expect(h.view.containerEl.isConnected).toBe(false);
       expect(h.root.querySelector('.is-just-created')).toBeNull();
       clock.mockRestore();

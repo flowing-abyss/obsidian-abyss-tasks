@@ -33,6 +33,8 @@ export interface CreationRevealAuthority {
   ): HTMLElement | undefined | Promise<HTMLElement | undefined>;
 }
 
+type OwnedPresentationTimeout = () => void;
+
 interface PendingPresentation {
   readonly id: number;
   lookupRef: TaskRef;
@@ -40,7 +42,7 @@ interface PendingPresentation {
   readonly expiresAt: number;
   highlightUntil?: number;
   highlightedElement?: HTMLElement | undefined;
-  timeout: number;
+  timeout: OwnedPresentationTimeout | undefined;
   readonly revealAuthority?: CreationRevealAuthority;
   revealing?: boolean;
   revealReady?: boolean;
@@ -152,7 +154,7 @@ export class CreationPresentationController {
   private renderRoot: HTMLElement | undefined;
   private nextId = 0;
   private announcementGeneration = 0;
-  private announcementTimeout = 0;
+  private announcementTimeout: OwnedPresentationTimeout | undefined;
   private destroyed = false;
 
   constructor(
@@ -200,7 +202,7 @@ export class CreationPresentationController {
       id: ++this.nextId,
       lookupRef: result.outcome.task.ref,
       expiresAt: this.options.now() + PRESENTATION_TIMEOUT_MS,
-      timeout: 0,
+      timeout: undefined,
     };
     entry.timeout = this.setTimeout(() => {
       this.expire(entry);
@@ -242,8 +244,8 @@ export class CreationPresentationController {
     this.unsubscribe();
     const entries = this.pending.splice(0);
     for (const entry of entries) this.discard(entry);
-    this.clearTimeout(this.announcementTimeout);
-    this.announcementTimeout = 0;
+    this.announcementTimeout?.();
+    this.announcementTimeout = undefined;
     ++this.announcementGeneration;
     for (const entry of entries) entry.highlightedElement?.classList.remove('is-just-created');
     this.renderRoot = undefined;
@@ -256,7 +258,7 @@ export class CreationPresentationController {
 
   private announce(description: CreationResultDescription): void {
     const generation = ++this.announcementGeneration;
-    this.clearTimeout(this.announcementTimeout);
+    this.announcementTimeout?.();
     this.options.host.setAttribute('aria-live', description.ariaLive);
     this.options.host.toggleAttribute('data-requires-recovery', description.requiresRecovery);
     this.options.host.dataset['resultKind'] = description.kind;
@@ -268,7 +270,7 @@ export class CreationPresentationController {
 
   private clearAnnouncement(generation: number): void {
     if (this.destroyed || generation !== this.announcementGeneration) return;
-    this.announcementTimeout = 0;
+    this.announcementTimeout = undefined;
     this.options.host.textContent = '';
     this.options.host.removeAttribute('data-requires-recovery');
     delete this.options.host.dataset['resultKind'];
@@ -410,7 +412,7 @@ export class CreationPresentationController {
   }
 
   private startHighlight(entry: PendingPresentation): void {
-    this.clearTimeout(entry.timeout);
+    entry.timeout?.();
     const duration = this.options.reducedMotion() ? REDUCED_HIGHLIGHT_MS : NORMAL_HIGHLIGHT_MS;
     entry.highlightUntil = this.options.now() + duration;
     entry.timeout = this.setTimeout(() => {
@@ -436,6 +438,7 @@ export class CreationPresentationController {
 
   private expire(entry: PendingPresentation): void {
     if (!this.pending.includes(entry)) return;
+    entry.timeout = undefined;
     const deadline = entry.highlightUntil ?? entry.expiresAt;
     const remaining = deadline - this.options.now();
     if (remaining > 0) {
@@ -466,7 +469,7 @@ export class CreationPresentationController {
     entry.attempt?.abort();
     entry.attempt = undefined;
     entry.attemptCurrent = undefined;
-    this.clearTimeout(entry.timeout);
+    entry.timeout?.();
     this.releaseHighlight(entry);
   }
 
@@ -483,13 +486,19 @@ export class CreationPresentationController {
     }
   }
 
-  private setTimeout(callback: () => void, delay: number): number {
-    const ownerWindow = this.options.host.ownerDocument.defaultView;
-    return (ownerWindow ?? window).setTimeout(callback, delay);
-  }
-
-  private clearTimeout(timeout: number): void {
-    const ownerWindow = this.options.host.ownerDocument.defaultView;
-    (ownerWindow ?? window).clearTimeout(timeout);
+  private setTimeout(callback: () => void, delay: number): OwnedPresentationTimeout | undefined {
+    const owner = this.options.host.ownerDocument.defaultView;
+    if (owner === null) return undefined;
+    let active = true;
+    const id = owner.setTimeout(() => {
+      if (!active) return;
+      active = false;
+      callback();
+    }, delay);
+    return () => {
+      if (!active) return;
+      active = false;
+      owner.clearTimeout(id);
+    };
   }
 }

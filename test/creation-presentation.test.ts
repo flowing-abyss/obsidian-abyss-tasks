@@ -1,6 +1,15 @@
 import { Component, MarkdownRenderer, Notice, Platform, type App } from 'obsidian';
 import postcss from 'postcss';
-import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+  type MockInstance,
+} from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { CenterPanel } from '../src/panels/CenterPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
@@ -129,6 +138,32 @@ function renderIdentity(root: HTMLElement, ref: TaskRef): HTMLElement {
   element.getBoundingClientRect = () => rect(10, 20, 100, 40);
   applyTaskPresentationIdentity(element, ref);
   return element;
+}
+
+function recordTimers(owner: Window) {
+  let next = 0;
+  const callbacks = new Map<number, () => void>();
+  const active = new Set<number>();
+  vi.spyOn(owner, 'setTimeout').mockImplementation((callback: TimerHandler) => {
+    if (typeof callback !== 'function') throw new Error('Expected callback');
+    const id = ++next;
+    callbacks.set(id, () => {
+      (callback as () => void)();
+    });
+    active.add(id);
+    return id;
+  });
+  const clear = vi.spyOn(owner, 'clearTimeout').mockImplementation((id) => {
+    if (id !== undefined) active.delete(id);
+  });
+  return { callbacks, active, clear };
+}
+
+function creationTimerOwner() {
+  const frame = document.body.createEl('iframe');
+  const doc = expectDefined(frame.contentDocument);
+  const owner = expectDefined(doc.defaultView);
+  return { frame, doc, owner, timers: recordTimers(owner) };
 }
 
 type ComputedStyleOverride = Readonly<Partial<Record<'display' | 'overflowY', string>>>;
@@ -284,6 +319,181 @@ describe('CreationPresentationController', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.useRealTimers();
+  });
+
+  it('cancels announcements and highlights in their acquiring window after adoption', () => {
+    const created = task({ source: { filePath: 'capture.md', line: 2 } });
+    const next = task({ source: { filePath: 'newest.md', line: 4 } });
+    const h = controllerHarness(exact(created));
+    const firstTimers = recordTimers(expectDefined(h.host.ownerDocument.defaultView));
+    const second = creationTimerOwner();
+    onTestFinished(() => {
+      h.controller.destroy();
+      h.root.remove();
+      second.frame.remove();
+    });
+    const unrelated = second.owner.setTimeout(() => {}, 10_000);
+    const first = renderIdentity(h.root, created.ref);
+    h.controller.afterRender(h.root);
+    const result = successfulCreation(created);
+    h.controller.present(result, describeTaskCreationResult(result));
+    expect(first.classList.contains('is-just-created')).toBe(true);
+    expect(firstTimers.active).toEqual(new Set([1, 3]));
+    expect(unrelated).toBe(1);
+    second.doc.body.append(h.host, h.root);
+    const focused = h.root.createEl('input');
+    focused.focus();
+    const selected = h.root.createDiv({ cls: 'is-selected' });
+    h.queries.setResolution(exact(next));
+    const newest = renderIdentity(h.root, next.ref);
+    const newerResult = successfulCreation(next);
+    h.controller.present(newerResult, describeTaskCreationResult(newerResult));
+    expect(firstTimers.active).toEqual(new Set([3]));
+    expect(second.timers.active.has(unrelated)).toBe(true);
+    const text = h.host.textContent;
+    expectDefined(firstTimers.callbacks.get(1))();
+    expectDefined(firstTimers.callbacks.get(2))();
+    expect(h.host.textContent).toBe(text);
+    expect(newest.classList.contains('is-just-created')).toBe(true);
+    expect(selected.classList.contains('is-selected')).toBe(true);
+    expect(second.doc.activeElement).toBe(focused);
+    h.controller.destroy();
+    expect(firstTimers.active.size).toBe(0);
+    expect(second.timers.active).toEqual(new Set([unrelated]));
+    expect(h.queries.listenerCount()).toBe(0);
+    h.host.textContent = 'Current surface';
+    newest.classList.add('is-just-created');
+    for (const callback of firstTimers.callbacks.values()) callback();
+    expect(h.host.textContent).toBe('Current surface');
+    expect(newest.classList.contains('is-just-created')).toBe(true);
+    expect(selected.classList.contains('is-selected')).toBe(true);
+    expect(second.doc.activeElement).toBe(focused);
+  });
+
+  it('retires the presentation deadline when a mounted highlight replaces it', () => {
+    const created = task();
+    const h = controllerHarness(exact(created));
+    const timers = recordTimers(expectDefined(h.host.ownerDocument.defaultView));
+    const second = creationTimerOwner();
+    onTestFinished(() => {
+      h.controller.destroy();
+      second.frame.remove();
+    });
+    const result = successfulCreation(created);
+    h.controller.present(result, describeTaskCreationResult(result));
+    const cancelledDeadline = expectDefined(timers.callbacks.get(2));
+    second.doc.body.append(h.host, h.root);
+    const element = renderIdentity(h.root, created.ref);
+    h.controller.afterRender(h.root);
+    expect(timers.active).toEqual(new Set([1]));
+    expect(second.timers.active).toEqual(new Set([1]));
+    cancelledDeadline();
+    expect(second.timers.active).toEqual(new Set([1]));
+    expect(element.classList.contains('is-just-created')).toBe(true);
+    h.controller.destroy();
+    expect(timers.active.size).toBe(0);
+    expect(second.timers.active.size).toBe(0);
+  });
+
+  it.each([
+    { reducedMotion: false, duration: 1_100 },
+    { reducedMotion: true, duration: 800 },
+  ])('ends remounted feedback once after adoption (reducedMotion=$reducedMotion)', (options) => {
+    const created = task();
+    const h = controllerHarness(exact(created), options);
+    const timers = recordTimers(expectDefined(h.host.ownerDocument.defaultView));
+    const second = creationTimerOwner();
+    onTestFinished(() => {
+      h.controller.destroy();
+      second.frame.remove();
+    });
+    const element = renderIdentity(h.root, created.ref);
+    h.controller.afterRender(h.root);
+    const result = successfulCreation(created);
+    const start = Date.now();
+    h.controller.present(result, describeTaskCreationResult(result));
+    const oldHighlight = expectDefined(timers.callbacks.get(3));
+    second.doc.body.append(h.host, h.root);
+    element.remove();
+    const remounted = renderIdentity(h.root, created.ref);
+    vi.setSystemTime(start + options.duration - 1);
+    h.controller.refreshMounted(h.root);
+    expect(element.classList.contains('is-just-created')).toBe(false);
+    expect(remounted.classList.contains('is-just-created')).toBe(true);
+    timers.active.delete(3);
+    oldHighlight();
+    expect(second.timers.active).toEqual(new Set([1]));
+    oldHighlight();
+    expect(second.timers.active).toEqual(new Set([1]));
+    vi.setSystemTime(start + options.duration);
+    second.timers.active.delete(1);
+    expectDefined(second.timers.callbacks.get(1))();
+    expect(remounted.classList.contains('is-just-created')).toBe(false);
+    h.controller.destroy();
+    expect(timers.active.size).toBe(0);
+    expect(second.timers.active.size).toBe(0);
+  });
+
+  it.each(['adoption', 'destroy'] as const)(
+    'rejects a held reveal settling after %s and releases original timers',
+    async (cause) => {
+      const created = task();
+      const h = controllerHarness(exact(created));
+      const timers = recordTimers(expectDefined(h.host.ownerDocument.defaultView));
+      const second = creationTimerOwner();
+      onTestFinished(() => {
+        h.controller.destroy();
+        second.frame.remove();
+      });
+      const held = deferred<HTMLElement | undefined>();
+      let request: CreationRevealRequest | undefined;
+      const target = renderIdentity(h.root, created.ref);
+      h.controller.afterRender(h.root);
+      const result = successfulCreation(created);
+      h.controller.present(result, describeTaskCreationResult(result), {
+        isCurrent: () => true,
+        reveal: (_ref, current) => {
+          request = current;
+          return held.promise;
+        },
+      });
+      second.doc.body.append(h.host, h.root);
+      const focused = h.root.createEl('input');
+      focused.focus();
+      const selected = h.root.createDiv({ cls: 'is-selected' });
+      if (cause === 'destroy') h.controller.destroy();
+      expect(request?.isCurrent()).toBe(false);
+      const text = h.host.textContent;
+      held.resolve(target);
+      await held.promise;
+      await Promise.resolve();
+      expect(target.classList.contains('is-just-created')).toBe(false);
+      expect(h.host.textContent).toBe(text);
+      expect(selected.classList.contains('is-selected')).toBe(true);
+      expect(second.doc.activeElement).toBe(focused);
+      h.controller.destroy();
+      expect(request?.signal.aborted).toBe(true);
+      expect(timers.active.size).toBe(0);
+      expect(second.timers.active.size).toBe(0);
+      expect(h.queries.listenerCount()).toBe(0);
+    },
+  );
+
+  it('does not acquire ambient timers for an ownerless document and still destroys its host', () => {
+    const created = task();
+    const h = controllerHarness(exact(created));
+    const timers = recordTimers(window);
+    const ownerless = document.implementation.createHTMLDocument();
+    ownerless.body.append(h.host, h.root);
+    expect(h.host.ownerDocument.defaultView).toBeNull();
+    const result = successfulCreation(created);
+    h.controller.present(result, describeTaskCreationResult(result));
+    expect(h.host.textContent).toBe('Task added to f.md');
+    expect(timers.active.size).toBe(0);
+    h.controller.destroy();
+    expect(h.host.textContent).toBe('');
+    expect(h.host.dataset['resultKind']).toBeUndefined();
+    expect(h.queries.listenerCount()).toBe(0);
   });
 
   it('announces Added immediately and highlights an already-rendered exact task', () => {
