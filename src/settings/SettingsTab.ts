@@ -66,6 +66,13 @@ type ReorderItemsOptions<T> = readonly [
   action: string,
 ];
 
+type ProjectTextSetting = readonly [
+  key: 'membershipQuery' | 'createFolder' | 'templatePath' | 'taskInsertionSection',
+  name: string,
+  description: string,
+  placeholder: string,
+];
+
 interface ProjectMetadataSourceSetting {
   readonly description: string;
   readonly key: 'statusProperty' | 'startProperty' | 'endProperty';
@@ -234,6 +241,14 @@ export class CalendarSettingsTab extends PluginSettingTab {
               await this.plugin_abyssPrivate.saveViewState();
             }
           : saveStatic,
+    });
+  }
+
+  private saveProjectDraft_abyssPrivate(action: string): void {
+    saveSettingsDraft({
+      owner: this.plugin_abyssPrivate,
+      action,
+      save: () => this.persistProjectSettings_abyssPrivate(),
     });
   }
 
@@ -1093,44 +1108,44 @@ export class CalendarSettingsTab extends PluginSettingTab {
     });
   }
 
-  private renderProjectDefinitionSettings_abyssPrivate(containerEl: HTMLElement): void {
+  private renderProjectTextSetting_abyssPrivate(
+    container: HTMLElement,
+    [key, name, description, placeholder]: ProjectTextSetting,
+  ): void {
     const projects = this.plugin_abyssPrivate.settings.projects;
-    new Setting(containerEl)
-      .setName('Membership query')
-      .setDesc('What counts as a project. Syntax: folder/, #tag, key=value, and / or / not / ( ).')
+    new Setting(container)
+      .setName(name)
+      .setDesc(description)
       .addText((text) =>
         text
-          .setPlaceholder('Projects/')
-          .setValue(projects.membershipQuery)
-          .onChange(async (value) => {
-            projects.membershipQuery = value;
-            await this.plugin_abyssPrivate.saveSettings();
+          .setPlaceholder(placeholder)
+          .setValue(projects[key])
+          .onChange((value) => {
+            projects[key] = value;
+            this.saveProjectDraft_abyssPrivate(`save project ${name.toLowerCase()}`);
           }),
       );
-    new Setting(containerEl)
-      .setName('Create folder')
-      .setDesc('Where new project notes are created.')
-      .addText((text) =>
-        text
-          .setPlaceholder('Projects')
-          .setValue(projects.createFolder)
-          .onChange(async (value) => {
-            projects.createFolder = value;
-            await this.plugin_abyssPrivate.saveSettings();
-          }),
-      );
-    new Setting(containerEl)
-      .setName('Template path')
-      .setDesc('Optional template for new projects. Templater is used when installed.')
-      .addText((text) =>
-        text
-          .setPlaceholder('Templates/Project.md')
-          .setValue(projects.templatePath)
-          .onChange(async (value) => {
-            projects.templatePath = value;
-            await this.plugin_abyssPrivate.saveSettings();
-          }),
-      );
+  }
+
+  private renderProjectDefinitionSettings_abyssPrivate(containerEl: HTMLElement): void {
+    this.renderProjectTextSetting_abyssPrivate(containerEl, [
+      'membershipQuery',
+      'Membership query',
+      'What counts as a project. Syntax: folder/, #tag, key=value, and / or / not / ( ).',
+      'Projects/',
+    ]);
+    this.renderProjectTextSetting_abyssPrivate(containerEl, [
+      'createFolder',
+      'Create folder',
+      'Where new project notes are created.',
+      'Projects',
+    ]);
+    this.renderProjectTextSetting_abyssPrivate(containerEl, [
+      'templatePath',
+      'Template path',
+      'Optional template for new projects. Templater is used when installed.',
+      'Templates/Project.md',
+    ]);
   }
 
   private renderProjectTaskInsertionSettings_abyssPrivate(containerEl: HTMLElement): void {
@@ -1140,32 +1155,21 @@ export class CalendarSettingsTab extends PluginSettingTab {
       .setDesc('Where a task is placed in a project note when created there or moved in.')
       .addDropdown((d) =>
         d
-          .addOptions({
-            append: 'End of note',
-            prepend: 'Start of note',
-            section: 'In section',
-          })
+          .addOptions({ append: 'End of note', prepend: 'Start of note', section: 'In section' })
           .setValue(projects.taskInsertionMode)
-          .onChange(async (v) => {
+          .onChange((v) => {
             projects.taskInsertionMode = v as typeof projects.taskInsertionMode;
-            await this.plugin_abyssPrivate.saveSettings();
+            this.saveProjectDraft_abyssPrivate('save project task insert position');
             this.render_abyssPrivate();
           }),
       );
-
     if (projects.taskInsertionMode === 'section') {
-      new Setting(containerEl)
-        .setName('Task section heading')
-        .setDesc('Tasks are inserted under this heading in the project note. Created if absent.')
-        .addText((t) =>
-          t
-            .setPlaceholder('## Tasks')
-            .setValue(projects.taskInsertionSection)
-            .onChange(async (v) => {
-              projects.taskInsertionSection = v;
-              await this.plugin_abyssPrivate.saveSettings();
-            }),
-        );
+      this.renderProjectTextSetting_abyssPrivate(containerEl, [
+        'taskInsertionSection',
+        'Task section heading',
+        'Tasks are inserted under this heading in the project note. Created if absent.',
+        '## Tasks',
+      ]);
       new Setting(containerEl)
         .setName('Task section position')
         .setDesc('Place new tasks at the top or bottom of this section.')
@@ -1173,9 +1177,9 @@ export class CalendarSettingsTab extends PluginSettingTab {
           dropdown
             .addOptions({ top: 'Top of section', bottom: 'Bottom of section' })
             .setValue(projects.taskInsertionSectionPosition)
-            .onChange(async (value) => {
+            .onChange((value) => {
               projects.taskInsertionSectionPosition = value as 'top' | 'bottom';
-              await this.plugin_abyssPrivate.saveSettings();
+              this.saveProjectDraft_abyssPrivate('save project task section position');
             }),
         );
     }
@@ -1185,6 +1189,12 @@ export class CalendarSettingsTab extends PluginSettingTab {
     const projects = this.plugin_abyssPrivate.settings.projects;
     const migration = projects.statusMigration;
     if (migration === undefined) return;
+    const resolve = (property: string): void => {
+      projects.statusProperty = property;
+      delete projects.statusMigration;
+      this.saveProjectDraft_abyssPrivate('resolve project status migration');
+      this.render_abyssPrivate();
+    };
     const setting = new Setting(containerEl)
       .setName('Status migration needs attention')
       .setDesc(
@@ -1196,21 +1206,14 @@ export class CalendarSettingsTab extends PluginSettingTab {
       setting.addDropdown((dropdown) => {
         dropdown.addOption('', 'Choose source');
         for (const property of migration.propertyCandidates) dropdown.addOption(property, property);
-        dropdown.onChange(async (property) => {
-          if (property.length === 0) return;
-          projects.statusProperty = property;
-          delete projects.statusMigration;
-          await this.plugin_abyssPrivate.saveSettings();
-          this.render_abyssPrivate();
+        dropdown.onChange((property) => {
+          if (property.length > 0) resolve(property);
         });
       });
     } else {
       setting.addButton((button) =>
-        button.setButtonText('Discard invalid entries').onClick(async () => {
-          projects.statusProperty = 'status';
-          delete projects.statusMigration;
-          await this.plugin_abyssPrivate.saveSettings();
-          this.render_abyssPrivate();
+        button.setButtonText('Discard invalid entries').onClick(() => {
+          resolve('status');
         }),
       );
     }
@@ -1230,7 +1233,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
       );
       const input = text.setValue(current).inputEl;
       input.setAttribute('aria-label', name);
-      const commit = async (): Promise<void> => {
+      const commit = (): void => {
         const property = input.value.trim();
         if (property !== '' && this.sameProperty_abyssPrivate(property, current)) {
           input.value = current;
@@ -1249,12 +1252,10 @@ export class CalendarSettingsTab extends PluginSettingTab {
           return;
         }
         projects[key] = property;
-        await this.plugin_abyssPrivate.saveSettings();
+        this.saveProjectDraft_abyssPrivate(`save ${name.toLowerCase()}`);
         this.render_abyssPrivate();
       };
-      this.settingsValueCommit_abyssPrivate?.register(input, () => {
-        runAsyncAction(commit(), `Could not save ${name.toLowerCase()}`);
-      });
+      this.settingsValueCommit_abyssPrivate?.register(input, commit);
     });
   }
 
@@ -1331,9 +1332,9 @@ export class CalendarSettingsTab extends PluginSettingTab {
         }
         dropdown
           .setValue(projects.defaultStatusId === '' ? firstStatus.id : projects.defaultStatusId)
-          .onChange(async (value) => {
+          .onChange((value) => {
             projects.defaultStatusId = value;
-            await this.plugin_abyssPrivate.saveSettings();
+            this.saveProjectDraft_abyssPrivate('save default project status');
           });
       });
   }

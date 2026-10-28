@@ -26,9 +26,28 @@ import {
   useRealMoment,
 } from './helpers';
 
+interface ConnectedNoticeFixture {
+  readonly containerEl: HTMLElement;
+  readonly messageEl: HTMLElement;
+  readonly hide: () => void;
+}
+
 vi.mock('obsidian', async () => {
   const actual = await vi.importActual<typeof ObsidianModule>('obsidian');
-  return { ...actual, Notice: vi.fn() };
+  return {
+    ...actual,
+    Notice: vi.fn(function (message: string | DocumentFragment) {
+      const containerEl = document.body.createDiv({ cls: 'settings-test-notice' });
+      const messageEl = containerEl.createDiv();
+      if (typeof message === 'string') messageEl.setText(message);
+      else messageEl.append(message);
+      const hide = vi.fn(() => {
+        containerEl.remove();
+      });
+      containerEl.addEventListener('click', hide);
+      return { containerEl, messageEl, hide };
+    }),
+  };
 });
 
 useRealMoment();
@@ -46,6 +65,9 @@ afterEach(() => {
   settle.focus();
   settle.blur();
   settle.remove();
+  document.querySelectorAll('.settings-test-notice').forEach((element) => {
+    element.remove();
+  });
 });
 
 const css = await loadPluginStyles();
@@ -2284,12 +2306,13 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     ]);
     expect(projectStatusOrder(tab)).toEqual(plugin.settings.projects.statuses.map(({ id }) => id));
     expect(Notice).toHaveBeenCalledOnce();
-    const noticeContent = vi.mocked(Notice).mock.calls[0]?.[0];
-    expect(noticeContent).toBeInstanceOf(DocumentFragment);
-    expect((noticeContent as DocumentFragment).textContent).toContain(
+    const noticeContent = (vi.mocked(Notice).mock.results[0]?.value as ConnectedNoticeFixture)
+      .messageEl;
+    expect(vi.mocked(Notice).mock.calls[0]?.[0]).toBeInstanceOf(DocumentFragment);
+    expect(noticeContent.textContent).toContain(
       'Could not reorder project statuses: disk unavailable. Changes are kept in this session.',
     );
-    expectDefined((noticeContent as DocumentFragment).querySelector('button')).click();
+    expectDefined(noticeContent.querySelector('button')).click();
     await Promise.resolve();
     expect(saveSettings).toHaveBeenCalledTimes(2);
     expect(errorLog).toHaveBeenCalledExactlyOnceWith(
@@ -2411,7 +2434,8 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
         expect(plugin.saveViewState).not.toHaveBeenCalled();
         expect(plugin.refreshProjectSettings).toHaveBeenCalled();
       }
-      const content = vi.mocked(Notice).mock.calls[0]?.[0] as DocumentFragment;
+      const content = (vi.mocked(Notice).mock.results[0]?.value as ConnectedNoticeFixture)
+        .messageEl;
       expectDefined(content.querySelector('button')).click();
       await vi.waitFor(() => {
         expect(plugin.saveViewState).toHaveBeenCalledTimes(phase === 'static' ? 1 : 2);
@@ -3062,5 +3086,285 @@ describe('CalendarSettingsTab card badges and project status metadata', () => {
     expect(plugin.settings.projects.statusProperty).toBe('phase');
     expect(plugin.settings.projects.statusMigration).toBeUndefined();
     expect(plugin.saveSettings).toHaveBeenCalledOnce();
+  });
+});
+
+const projectSaveCases = [
+  ['Membership query', 'Projects/ and #work'],
+  ['Create folder', 'Projects/New'],
+  ['Template path', 'Templates/New Project.md'],
+  ['Task insert position', 'section'],
+  ['Task section heading', '## Work'],
+  ['Task section position', 'top'],
+] as const;
+const projectSaveKeys = {
+  'Membership query': ['membershipQuery', 'save project membership query'],
+  'Create folder': ['createFolder', 'save project create folder'],
+  'Template path': ['templatePath', 'save project template path'],
+  'Task insert position': ['taskInsertionMode', 'save project task insert position'],
+  'Task section heading': ['taskInsertionSection', 'save project task section heading'],
+  'Task section position': ['taskInsertionSectionPosition', 'save project task section position'],
+} as const;
+
+function projectDraftControl(component: CapturedComp): HTMLInputElement | HTMLSelectElement {
+  if (component.type === 'text') return component.comp.inputEl;
+  if (component.type === 'dropdown') return component.comp.selectEl;
+  throw new Error('Expected a text or dropdown project control');
+}
+
+const projectSourceSaveCases = [
+  {
+    name: 'Status property',
+    key: 'statusProperty',
+    value: 'Workflow state',
+    action: 'save status property',
+  },
+  {
+    name: 'Default status',
+    key: 'defaultStatusId',
+    value: 'status-2',
+    action: 'save default project status',
+  },
+  {
+    name: 'Choose source',
+    key: 'statusProperty',
+    value: 'phase',
+    action: 'resolve project status migration',
+  },
+  {
+    name: 'Discard invalid entries',
+    key: 'statusProperty',
+    value: 'status',
+    action: 'resolve project status migration',
+  },
+] as const;
+
+function editProjectSourceControl(
+  tab: CalendarSettingsTab,
+  captured: CapturedComp[],
+  name: (typeof projectSourceSaveCases)[number]['name'],
+): void {
+  if (name === 'Status property') {
+    const input = expectDefined(findInput(tab.containerEl, name));
+    editSettingControl(input, 'Workflow state');
+    input.dispatchEvent(new Event('blur'));
+  } else if (name === 'Default status' || name === 'Choose source') {
+    const dropdown = expectDefined(
+      findComp(
+        captured,
+        name === 'Choose source' ? 'Status migration needs attention' : name,
+        'dropdown',
+      ),
+    );
+    editSettingControl(dropdown.comp.selectEl, name === 'Choose source' ? 'phase' : 'status-2');
+  } else {
+    expectDefined(
+      findComp(captured, 'Status migration needs attention', 'button'),
+    ).comp.buttonEl.click();
+  }
+}
+
+describe('project settings draft failures through real controls', () => {
+  it.each(projectSaveCases)(
+    'retains failed %s and retries the latest draft',
+    async (name, value) => {
+      const failure = new Error('project disk unavailable');
+      const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      const projects = structuredClone(DEFAULT_SETTINGS.projects);
+      if (name === 'Task section heading' || name === 'Task section position')
+        projects.taskInsertionMode = 'section';
+      const { tab, plugin, captured } = makeTab(
+        { projects },
+        {
+          saveSettings: vi.fn<() => Promise<void>>().mockRejectedValue(failure),
+        },
+      );
+      openSection(tab, 3);
+      const component = expectDefined(captured.find((entry) => entry.name === name));
+      editSettingControl(projectDraftControl(component), value);
+      await flushMicrotasks();
+      const [key, action] = projectSaveKeys[name];
+      expect(plugin.settings.projects[key]).toBe(value);
+      expect(plugin.refreshProjectSettings).toHaveBeenCalledOnce();
+      expect(Notice).toHaveBeenCalledOnce();
+      expect(log).toHaveBeenCalledExactlyOnceWith(`[abyss-tasks] Could not ${action}`, {
+        cause: failure,
+      });
+      const fragment = (vi.mocked(Notice).mock.results[0]?.value as ConnectedNoticeFixture)
+        .messageEl;
+      const retry = expectDefined(fragment.querySelector('button'));
+      vi.mocked(plugin.saveSettings).mockResolvedValue(undefined);
+      retry.click();
+      await flushMicrotasks();
+      expect(plugin.saveSettings).toHaveBeenCalledTimes(2);
+      expect(Notice).toHaveBeenCalledOnce();
+      expect(plugin.settings.projects[key]).toBe(value);
+    },
+  );
+
+  it.each(projectSaveCases)('saves %s silently', async (name, value) => {
+    const projects = structuredClone(DEFAULT_SETTINGS.projects);
+    if (name === 'Task section heading' || name === 'Task section position')
+      projects.taskInsertionMode = 'section';
+    const { tab, plugin, captured } = makeTab({ projects });
+    openSection(tab, 3);
+    const component = expectDefined(captured.find((entry) => entry.name === name));
+    editSettingControl(projectDraftControl(component), value);
+    await flushMicrotasks();
+    expect(plugin.settings.projects[projectSaveKeys[name][0]]).toBe(value);
+    expect(plugin.saveSettings).toHaveBeenCalledOnce();
+    expect(Notice).not.toHaveBeenCalled();
+  });
+
+  it.each(
+    projectSourceSaveCases.flatMap((testCase) => [
+      { ...testCase, failing: true },
+      { ...testCase, failing: false },
+    ]),
+  )(
+    'keeps the $name draft with failing save: $failing',
+    async ({ name, key, value, action, failing }) => {
+      const failure = new Error('project disk unavailable');
+      const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      const projects = structuredClone(DEFAULT_SETTINGS.projects);
+      const migration = name === 'Choose source' || name === 'Discard invalid entries';
+      if (migration) {
+        projects.statusProperty = '';
+        projects.statusMigration = {
+          issue: name === 'Choose source' ? 'conflicting-properties' : 'invalid-statuses',
+          legacyStatuses: [
+            { id: 'a', match: { kind: 'property', property: 'status', value: 'active' } },
+          ],
+          propertyCandidates: name === 'Choose source' ? ['status', 'phase'] : [],
+        };
+      }
+      const { tab, plugin, captured } = makeTab(
+        { projects },
+        {
+          saveSettings: failing
+            ? vi
+                .fn<() => Promise<void>>()
+                .mockRejectedValueOnce(failure)
+                .mockResolvedValue(undefined)
+            : vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+        },
+      );
+      openSection(tab, 3);
+      editProjectSourceControl(tab, captured, name);
+      await flushMicrotasks();
+      expect(plugin.settings.projects[key]).toBe(value);
+      if (migration) expect(plugin.settings.projects.statusMigration).toBeUndefined();
+      if (failing) {
+        expect(plugin.refreshProjectSettings).toHaveBeenCalledOnce();
+        expect(log).toHaveBeenCalledExactlyOnceWith(`[abyss-tasks] Could not ${action}`, {
+          cause: failure,
+        });
+        expect(Notice).toHaveBeenCalledOnce();
+        const fragment = (vi.mocked(Notice).mock.results[0]?.value as ConnectedNoticeFixture)
+          .messageEl;
+        expectDefined(fragment.querySelector('button')).click();
+        await flushMicrotasks();
+        expect(plugin.saveSettings).toHaveBeenCalledTimes(2);
+        expect(Notice).toHaveBeenCalledOnce();
+      } else {
+        expect(plugin.saveSettings).toHaveBeenCalledOnce();
+        expect(plugin.refreshProjectSettings).not.toHaveBeenCalled();
+        expect(Notice).not.toHaveBeenCalled();
+        expect(log).not.toHaveBeenCalled();
+      }
+    },
+  );
+
+  it.each(['resolve', 'reject'] as const)(
+    'does not rerender a hidden tab when a submitted mode save settles: %s',
+    async (outcome) => {
+      const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      const gate = deferred<Error | undefined>();
+      const pending = gate.promise.then((error) => {
+        if (error !== undefined) throw error;
+      });
+      const caught = pending.catch(() => undefined);
+      const projects = structuredClone(DEFAULT_SETTINGS.projects);
+      projects.taskInsertionMode = 'append';
+      const { tab, plugin, captured } = makeTab(
+        { projects },
+        { saveSettings: vi.fn(() => pending) },
+      );
+      openSection(tab, 3);
+      const mode = expectDefined(findComp(captured, 'Task insert position', 'dropdown'));
+      editSettingControl(mode.comp.selectEl, 'section');
+      expect(findInput(tab.containerEl, 'Task section heading')).not.toBeNull();
+      tab.hide();
+      const hiddenContents = [...tab.containerEl.childNodes];
+      const focus = document.body.createEl('button');
+      focus.focus();
+      const failure = new Error('late disk failure');
+      gate.resolve(outcome === 'reject' ? failure : undefined);
+      await caught;
+      await flushMicrotasks();
+      expect([...tab.containerEl.childNodes]).toEqual(hiddenContents);
+      expect(activeDocument.activeElement).toBe(focus);
+      (tab as unknown as { display(): void }).display();
+      await flushMicrotasks();
+      expect(plugin.saveSettings).toHaveBeenCalledOnce();
+      expect(plugin.settings.projects.taskInsertionMode).toBe('section');
+      if (outcome === 'reject')
+        expect(log).toHaveBeenCalledExactlyOnceWith(
+          '[abyss-tasks] Could not save project task insert position',
+          { cause: failure },
+        );
+      else expect(log).not.toHaveBeenCalled();
+      focus.remove();
+    },
+  );
+});
+
+it('keeps the latest membership control draft and failure when an older Retry settles', async () => {
+  const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  const retry = deferred<void>();
+  const failure = new Error('first failure');
+  const latestFailure = new Error('new draft failed');
+  const saved: string[] = [];
+  const { tab, plugin } = makeTab(
+    {},
+    {
+      saveSettings: vi
+        .fn<() => Promise<void>>()
+        .mockRejectedValueOnce(failure)
+        .mockReturnValueOnce(retry.promise)
+        .mockRejectedValueOnce(latestFailure),
+    },
+  );
+  openSection(tab, 3);
+  const input = expectDefined(findInput(tab.containerEl, 'Membership query'));
+  editSettingControl(input, 'Projects/ and #first');
+  await flushMicrotasks();
+  const fragment = (vi.mocked(Notice).mock.results[0]?.value as ConnectedNoticeFixture).messageEl;
+  const button = expectDefined(fragment.querySelector('button'));
+  button.click();
+  editSettingControl(input, 'Projects/ and #latest');
+  await flushMicrotasks();
+  expect(Notice).toHaveBeenCalledOnce();
+  retry.resolve();
+  await flushMicrotasks();
+  expect(
+    (vi.mocked(Notice).mock.results[0]?.value as ConnectedNoticeFixture).hide,
+  ).not.toHaveBeenCalled();
+  expect(plugin.settings.projects.membershipQuery).toBe('Projects/ and #latest');
+  expect(button.disabled).toBe(false);
+  expect(fragment.textContent).toContain('new draft failed');
+  vi.mocked(plugin.saveSettings).mockImplementation(async () => {
+    saved.push(plugin.settings.projects.membershipQuery);
+  });
+  button.click();
+  await flushMicrotasks();
+  expect(saved).toEqual(['Projects/ and #latest']);
+  expect(
+    (vi.mocked(Notice).mock.results[0]?.value as ConnectedNoticeFixture).hide,
+  ).toHaveBeenCalledOnce();
+  expect(plugin.refreshProjectSettings).toHaveBeenCalledTimes(2);
+  expect(log).toHaveBeenCalledTimes(2);
+  expect(log).toHaveBeenLastCalledWith('[abyss-tasks] Could not save project membership query', {
+    cause: latestFailure,
   });
 });

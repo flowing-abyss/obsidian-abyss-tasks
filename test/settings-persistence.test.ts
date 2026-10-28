@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-import { Platform } from 'obsidian';
+import type * as ObsidianModule from 'obsidian';
+import { Notice, Platform } from 'obsidian';
 import ts from 'typescript';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { initializeProjectPropertyDefinitions } from '../src/projects/initializeProjectPropertyDefinitions';
 import { buildConfiguredProjectFieldCatalog } from '../src/projects/projectFields';
@@ -23,6 +24,7 @@ import {
   type SettingsPersistencePort,
 } from '../src/settings/persistence';
 import { removeConfiguredProjectProperty } from '../src/settings/projectTableSettings';
+import { saveSettingsDraft } from '../src/settings/settingsSaveFailure';
 import {
   removeProjectStatusViewState,
   removeTaskStatusViewState,
@@ -40,8 +42,38 @@ import {
 } from './architecture/settingsOwnership';
 import schema1Provenance from './fixtures/settings-persistence/06dee47-schema1-provenance.json';
 import priorSerializerFixture from './fixtures/settings-persistence/cc84b5d-property-definitions-roundtrip.json';
-import { createAppWithFiles, deferred, expectDefined } from './helpers';
+import { createAppWithFiles, deferred, expectDefined, flushMicrotasks } from './helpers';
 import { TYPESCRIPT_PROGRAM_TIMEOUT_MS } from './support/timeouts';
+
+interface ConnectedNoticeFixture {
+  readonly containerEl: HTMLElement;
+  readonly messageEl: HTMLElement;
+  readonly hide: () => void;
+}
+
+vi.mock('obsidian', async () => {
+  const actual = await vi.importActual<typeof ObsidianModule>('obsidian');
+  return {
+    ...actual,
+    Notice: vi.fn(function (message: string | DocumentFragment) {
+      const containerEl = document.body.createDiv({ cls: 'settings-test-notice' });
+      const messageEl = containerEl.createDiv();
+      if (typeof message === 'string') messageEl.setText(message);
+      else messageEl.append(message);
+      const hide = vi.fn(() => {
+        containerEl.remove();
+      });
+      containerEl.addEventListener('click', hide);
+      return { containerEl, messageEl, hide };
+    }),
+  };
+});
+
+afterEach(() => {
+  document.querySelectorAll('.settings-test-notice').forEach((element) => {
+    element.remove();
+  });
+});
 
 const loadHistoricalNodeTools = async () => {
   if (!Platform.isDesktop)
@@ -2826,4 +2858,157 @@ describe('queued note view persistence', () => {
     });
     expect(savedTagViews(port)[newKey]).not.toHaveProperty('timeline');
   });
+});
+
+describe('settings draft Retry through the persistence coordinator', () => {
+  function retryDraft(): void {
+    const fragment = (vi.mocked(Notice).mock.results[0]?.value as ConnectedNoticeFixture).messageEl;
+    expectDefined(fragment.querySelector('button')).click();
+  }
+
+  it('retries a rejected static write with current project settings and unknown static extensions', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const port = memoryPort(markedStatic({ futureStatic: { keep: 'static' } }), stateEnvelope());
+    const coordinator = new SettingsPersistenceCoordinator(port);
+    const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    const durableBefore = structuredClone(port.staticData);
+    const failure = new Error('static unavailable');
+    vi.mocked(port.saveStatic).mockRejectedValueOnce(failure);
+    settings.projects.membershipQuery = 'Projects/ and #first';
+    saveSettingsDraft({
+      owner: coordinator,
+      action: 'save project membership query',
+      save: () => coordinator.saveSettings(settings),
+    });
+    await flushMicrotasks();
+    expect(port.staticData).toEqual(durableBefore);
+    settings.projects.membershipQuery = 'Projects/ and #latest';
+    retryDraft();
+    await flushMicrotasks();
+    expect(port.staticData).toMatchObject({
+      futureStatic: { keep: 'static' },
+      projects: { membershipQuery: 'Projects/ and #latest' },
+    });
+    const reloaded = await new SettingsPersistenceCoordinator(port).loadSettings(DEFAULT_SETTINGS);
+    expect(reloaded.settings.projects.membershipQuery).toBe('Projects/ and #latest');
+    expect(Notice).toHaveBeenCalledOnce();
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not save project membership query',
+      { cause: failure },
+    );
+  });
+
+  it('retries current static then view drafts after the view write fails and retains nested extensions', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const port = memoryPort(
+      markedStatic({ futureStatic: { keep: true } }),
+      stateEnvelope({
+        futureView: { keep: true },
+        projects: {
+          futureProject: { keep: 'project' },
+          table: {
+            ...structuredClone(DEFAULT_SETTINGS.projects.table),
+            futureTable: { keep: 'table' },
+          },
+        },
+      }),
+    );
+    const coordinator = new SettingsPersistenceCoordinator(port);
+    const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    const durableView = port.stateText;
+    const failure = new Error('state unavailable');
+    vi.mocked(port.state.write).mockRejectedValueOnce(failure);
+    settings.projects.createFolder = 'Projects/First';
+    settings.projects.table.groupBy = 'start';
+    const save = async (): Promise<void> => {
+      await coordinator.saveSettings(settings);
+      await coordinator.saveViewState(settings);
+    };
+    port.writes.length = 0;
+    saveSettingsDraft({ owner: coordinator, action: 'save project settings', save });
+    await flushMicrotasks();
+    expect(port.staticData).toMatchObject({ projects: { createFolder: 'Projects/First' } });
+    expect(port.stateText).toBe(durableView);
+    settings.projects.createFolder = 'Projects/Latest';
+    settings.projects.table.groupBy = 'end';
+    retryDraft();
+    await flushMicrotasks();
+    expect(port.writes).toEqual(['data.json', 'data.json', STATE_PATH]);
+    expect(port.staticData).toMatchObject({
+      futureStatic: { keep: true },
+      projects: { createFolder: 'Projects/Latest' },
+    });
+    expect(JSON.parse(expectDefined(port.stateText))).toMatchObject({
+      views: {
+        futureView: { keep: true },
+        projects: {
+          futureProject: { keep: 'project' },
+          table: { groupBy: 'end', futureTable: { keep: 'table' } },
+        },
+      },
+    });
+    const reloaded = await new SettingsPersistenceCoordinator(port).loadSettings(DEFAULT_SETTINGS);
+    expect(reloaded.settings.projects.createFolder).toBe('Projects/Latest');
+    expect(reloaded.settings.projects.table.groupBy).toBe('end');
+    expect(Notice).toHaveBeenCalledOnce();
+    expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] Could not save project settings', {
+      cause: failure,
+    });
+  });
+
+  it.each(['phase', 'status'] as const)(
+    'keeps durable legacy evidence after a failed resolution and retries the live %s source',
+    async (source) => {
+      const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      const projects = structuredClone(DEFAULT_SETTINGS.projects);
+      projects.statusProperty = '';
+      projects.statusMigration = {
+        issue: source === 'phase' ? 'conflicting-properties' : 'invalid-statuses',
+        legacyStatuses: [
+          { id: 'legacy', match: { kind: 'property', property: 'status', value: 'active' } },
+        ],
+        propertyCandidates: source === 'phase' ? ['status', 'phase'] : [],
+      };
+      const durableMigration = structuredClone(projects.statusMigration);
+      const port = memoryPort(
+        markedStatic({ projects, futureStatic: { keep: true } }),
+        stateEnvelope(),
+      );
+      const coordinator = new SettingsPersistenceCoordinator(port);
+      const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+      const failure = new Error('migration write unavailable');
+      vi.mocked(port.saveStatic).mockRejectedValueOnce(failure);
+      settings.projects.statusProperty = source;
+      delete settings.projects.statusMigration;
+      saveSettingsDraft({
+        owner: coordinator,
+        action: 'resolve project status migration',
+        save: () => coordinator.saveSettings(settings),
+      });
+      await flushMicrotasks();
+      const recovered = await new SettingsPersistenceCoordinator(port).loadSettings(
+        DEFAULT_SETTINGS,
+      );
+      expect(recovered.settings.projects.statusMigration).toEqual(durableMigration);
+      expect(recovered.settings.projects.statusProperty).toBe('');
+      Object.assign(settings.projects, {
+        statusProperty: source === 'phase' ? 'Latest phase' : 'Latest status',
+      });
+      retryDraft();
+      await flushMicrotasks();
+      const reloaded = await new SettingsPersistenceCoordinator(port).loadSettings(
+        DEFAULT_SETTINGS,
+      );
+      expect(reloaded.settings.projects.statusProperty).toBe(
+        source === 'phase' ? 'Latest phase' : 'Latest status',
+      );
+      expect(reloaded.settings.projects.statusMigration).toBeUndefined();
+      expect(port.staticData).toMatchObject({ futureStatic: { keep: true } });
+      expect(Notice).toHaveBeenCalledOnce();
+      expect(log).toHaveBeenCalledExactlyOnceWith(
+        '[abyss-tasks] Could not resolve project status migration',
+        { cause: failure },
+      );
+    },
+  );
 });

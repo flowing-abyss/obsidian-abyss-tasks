@@ -417,6 +417,11 @@ references, while preserving unrelated state and authored note values. Static de
 before cleaned view state. Retryable failures retain the current draft and offer retry; these separate file
 writes are not a transaction. Unknown raw project statuses remain independent values.
 
+[`settingsSaveFailure`](src/settings/settingsSaveFailure.ts) owns transient current failure and Retry
+feedback per plugin session and settings action. Stale completions cannot replace current feedback.
+Retry reads current runtime settings; successful saves remain silent. SettingsTab renders draft
+changes while visible, independently of save completion.
+
 [`ViewStatePathOwner`](src/settings/ViewStatePathOwner.ts) forwards note rename/delete events to the
 persistence coordinator, which rebases both runtime preferences and their retained raw extensions;
 PanelNavigator owns session navigation. [`tagViewState`](src/settings/tagViewState.ts) preserves raw
