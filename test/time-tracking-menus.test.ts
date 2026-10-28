@@ -15,6 +15,7 @@ import {
   flushMicrotasks,
   useRealMoment,
 } from './helpers';
+import { subscribeInspectorReconciliation } from './support/inspectorHarness';
 import { captureMenus, rightClick } from './support/linkEditHarness';
 import { useTaskPanelViewport } from './support/taskPanelViewport';
 
@@ -489,7 +490,9 @@ function mountInspector(stack: TrackingStack, title: string) {
 
 async function inspector(markdown: string, title = 'Alpha') {
   const stack = await trackingStack(markdown);
-  return { ...stack, ...mountInspector(stack, title) };
+  const harness = { ...stack, ...mountInspector(stack, title) };
+  cleanups.push(subscribeInspectorReconciliation(harness));
+  return harness;
 }
 
 function inspectorMenuItems(el: HTMLElement): HTMLElement[] {
@@ -615,4 +618,167 @@ it('starts inspector row tracking on the clicked grandchild while its parent is 
     );
   });
   expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['Alpha', 'Owner']);
+});
+
+const FINISH_ACTIONS = [
+  { surface: 'card', action: 'checkbox', status: 'Done' },
+  { surface: 'card', action: 'status menu', status: 'Done' },
+  { surface: 'card', action: 'status menu', status: 'Cancelled' },
+  { surface: 'card', action: 'context menu', status: 'Done' },
+  { surface: 'card', action: 'context menu', status: 'Cancelled' },
+  { surface: 'inspector', action: 'checkbox', status: 'Done' },
+  { surface: 'inspector', action: 'status menu', status: 'Done' },
+  { surface: 'inspector', action: 'status menu', status: 'Cancelled' },
+] as const;
+
+type FinishAction = (typeof FINISH_ACTIONS)[number];
+
+function chooseStatus(marker: HTMLElement, status: 'Done' | 'Cancelled'): void {
+  rightClick(marker);
+  expectDefined(
+    [...activeDocument.querySelectorAll<HTMLElement>('.abyss-status-popover-row')].find(
+      (row) => row.querySelector('.abyss-status-popover-name')?.textContent === status,
+    ),
+  ).click();
+}
+
+function finishTask(el: HTMLElement, choice: FinishAction): void {
+  const row =
+    choice.surface === 'card'
+      ? cardFor(el, 'Alpha')
+      : expectDefined(el.querySelector<HTMLElement>('.abyss-right-header'));
+  const marker = expectDefined(row.querySelector<HTMLElement>('[role="checkbox"]'));
+  if (choice.action === 'checkbox') marker.click();
+  else if (choice.action === 'status menu') chooseStatus(marker, choice.status);
+  else {
+    const item = expectDefined(openCardMenu(row).find((item) => item.title__ === choice.status));
+    item.onClick__?.(new MouseEvent('click'));
+  }
+}
+
+async function changeTracking(
+  el: HTMLElement,
+  surface: FinishAction['surface'],
+  action: 'Start tracking' | 'Pause tracking',
+): Promise<void> {
+  if (surface === 'inspector') expectDefined(inspectorItem(el, action)).click();
+  else {
+    const item = expectDefined(trackingItem(openCardMenu(cardFor(el, 'Alpha'))));
+    expect(item.title__).toBe(action);
+    item.onClick__?.(new MouseEvent('click'));
+  }
+  await flushMicrotasks();
+}
+
+const PREVIOUS_INTERVAL = '  - 2026-09-18T09:12:00+03:00 → 2026-09-18T09:15:00+03:00\n';
+const FINISHED_INTERVAL = `  - ${NOW_ATOM} → 2026-09-18T14:07:32+03:00\n`;
+
+describe.each(FINISH_ACTIONS)('$surface $action → $status', (choice) => {
+  it.each(['active', 'stopped', 'never started'] as const)(
+    'finishes with tracking %s without duplicating or inventing intervals',
+    async (tracking) => {
+      const history = tracking === 'never started' ? '' : PREVIOUS_INTERVAL;
+      const markdown = `- [ ] Alpha\n${history}- [ ] Beta\n`;
+      const h = await (choice.surface === 'card' ? center(markdown) : inspector(markdown));
+      const badgeSelector =
+        choice.surface === 'card' ? '.abyss-task-time-badge' : '.abyss-time-badge';
+      if (tracking !== 'never started') {
+        await changeTracking(h.el, choice.surface, 'Start tracking');
+        expect(await h.read()).toBe(`- [ ] Alpha\n${history}  - ${NOW_ATOM} →\n- [ ] Beta\n`);
+        expect(h.el.querySelector(`${badgeSelector}.is-tracking`)).not.toBeNull();
+        h.advance(2 * MINUTE);
+        if (tracking === 'stopped') {
+          await changeTracking(h.el, choice.surface, 'Pause tracking');
+          h.advance(5 * MINUTE);
+        }
+      }
+
+      finishTask(h.el, choice);
+      await flushMicrotasks();
+
+      const task =
+        choice.status === 'Done' ? '- [x] Alpha ✅ 2026-09-18' : '- [-] Alpha ❌ 2026-09-18';
+      const interval = tracking === 'never started' ? '' : FINISHED_INTERVAL;
+      expect(await h.read()).toBe(`${task}\n${history}${interval}- [ ] Beta\n`);
+      expect(h.tasks.queries.activeEntries()).toEqual([]);
+      expect(h.el.querySelector(`${badgeSelector}.is-tracking`)).toBeNull();
+    },
+  );
+});
+
+it.each(['Done', 'Cancelled'] as const)(
+  'keeps closed history unchanged when %s is selected again',
+  async (status) => {
+    const h = await center(`- [ ] Alpha\n${PREVIOUS_INTERVAL}- [ ] Beta\n`);
+    await changeTracking(h.el, 'card', 'Start tracking');
+    h.advance(2 * MINUTE);
+    const choice = { surface: 'card', action: 'context menu', status } as const;
+    finishTask(h.el, choice);
+    await flushMicrotasks();
+    const task = status === 'Done' ? '- [x] Alpha ✅ 2026-09-18' : '- [-] Alpha ❌ 2026-09-18';
+    const expected = `${task}\n${PREVIOUS_INTERVAL}${FINISHED_INTERVAL}- [ ] Beta\n`;
+    expect(await h.read()).toBe(expected);
+
+    h.advance(5 * MINUTE);
+    finishTask(h.el, choice);
+    await flushMicrotasks();
+
+    expect(await h.read()).toBe(expected);
+    expect(h.tasks.queries.activeEntries()).toEqual([]);
+    expect(timeBadge(cardFor(h.el, 'Alpha'))?.textContent).toBe('5m');
+  },
+);
+
+it.each([
+  { action: 'checkbox', status: 'Done', line: '    - [x] Child ✅ 2026-09-18' },
+  { action: 'context menu', status: 'Done', line: '    - [x] Child ✅ 2026-09-18' },
+  { action: 'context menu', status: 'Cancelled', line: '    - [-] Child ❌ 2026-09-18' },
+] as const)('closes the clicked grandchild timer via $action → $status', async (choice) => {
+  const shown = captureMenus();
+  const h = await inspector(
+    '- [ ] Alpha\n  - [ ] Owner\n    - [ ] Child\n    - [ ] Sibling\n',
+    'Owner',
+  );
+  const row = () => expectDefined(h.el.querySelector<HTMLElement>('.abyss-subtask-row'));
+  rightClick(row());
+  expectDefined(shown[shown.length - 1]).pick('Start tracking');
+  await flushMicrotasks();
+  h.advance(2 * MINUTE);
+
+  if (choice.action === 'checkbox')
+    expectDefined(row().querySelector<HTMLElement>('[role="checkbox"]')).click();
+  else {
+    rightClick(row());
+    expectDefined(shown[shown.length - 1]).pick('Status', choice.status);
+  }
+  await flushMicrotasks();
+
+  expect(await h.read()).toBe(
+    `- [ ] Alpha\n  - [ ] Owner\n${choice.line}\n    \t- ${NOW_ATOM} → 2026-09-18T14:07:32+03:00\n    - [ ] Sibling\n`,
+  );
+  expect(h.tasks.queries.activeEntries()).toEqual([]);
+  expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['Alpha', 'Owner']);
+});
+
+it.each([
+  { status: 'Done', alpha: '- [x] Alpha ✅ 2026-09-18', beta: '- [x] Beta ✅ 2026-09-18' },
+  { status: 'Cancelled', alpha: '- [-] Alpha ❌ 2026-09-18', beta: '- [-] Beta ❌ 2026-09-18' },
+] as const)('closes only the existing timer during bulk $status', async (choice) => {
+  const h = await center(`- [ ] Alpha\n${PREVIOUS_INTERVAL}- [ ] Beta\n`);
+  await changeTracking(h.el, 'card', 'Start tracking');
+  h.advance(2 * MINUTE);
+  for (const card of cards(h.el)) {
+    card.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+  }
+
+  const item = expectDefined(
+    openCardMenu(cardFor(h.el, 'Beta')).find((item) => item.title__ === choice.status),
+  );
+  item.onClick__?.(new MouseEvent('click'));
+  await flushMicrotasks();
+
+  expect(await h.read()).toBe(
+    `${choice.alpha}\n${PREVIOUS_INTERVAL}${FINISHED_INTERVAL}${choice.beta}\n`,
+  );
+  expect(h.tasks.queries.activeEntries()).toEqual([]);
 });

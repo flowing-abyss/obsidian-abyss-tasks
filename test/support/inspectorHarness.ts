@@ -157,7 +157,9 @@ export function notices(messages?: string[]): Notice[] {
 }
 
 /** What the sidebar and the modal do on an index change: rebuild the selection, carry drafts. */
-export function subscribeInspectorReconciliation(h: InspectorHarness): () => void {
+export function subscribeInspectorReconciliation(
+  h: Pick<InspectorHarness, 'index' | 'state' | 'panel'>,
+): () => void {
   return h.index.subscribe(() => {
     const stack = h.state.get('taskStack');
     const root = expectDefined(stack[0]);
