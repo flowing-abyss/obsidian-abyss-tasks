@@ -250,15 +250,15 @@ it('places the reminder interval last in General and previews only an explicit c
     '50',
     '60',
   ]);
-  expect(select.value).toBe('0');
+  expect(select.value).toBe('30');
   expect(select.closest('.setting-item')?.parentElement?.lastElementChild?.contains(select)).toBe(
     true,
   );
   expect(preview).not.toHaveBeenCalled();
-  select.value = '30';
+  select.value = '10';
   select.dispatchEvent(new Event('change', { bubbles: true }));
   expect(preview).toHaveBeenCalledOnce();
-  expect(plugin.settings.timeTrackingReminderMinutes).toBe(30);
+  expect(plugin.settings.timeTrackingReminderMinutes).toBe(10);
   await flushMicrotasks();
   expect(plugin.saveSettings).toHaveBeenCalled();
   expect(plugin.saveViewState).not.toHaveBeenCalled();

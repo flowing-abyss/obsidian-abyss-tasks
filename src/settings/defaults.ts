@@ -1,6 +1,7 @@
 import { buildDefaultProjectTableSettings } from '../projects/projectTableSettings';
 import { ACTIVE_STATUS_GROUPS } from '../status/statusConstants';
 import { defaultShortcuts } from './shortcuts';
+import { DEFAULT_TIME_TRACKING_REMINDER_MINUTES } from './timeTrackingReminderSettings';
 import type { CalendarSettings, ListViewState, ProjectsSettings, TaskStatusDef } from './types';
 
 export function buildDefaultProjectsSettings(): ProjectsSettings {
@@ -100,7 +101,7 @@ export function buildDefaultTaskStatuses(): TaskStatusDef[] {
 
 export const DEFAULT_SETTINGS: CalendarSettings = {
   firstDayOfWeek: 1,
-  timeTrackingReminderMinutes: 0,
+  timeTrackingReminderMinutes: DEFAULT_TIME_TRACKING_REMINDER_MINUTES,
   taskPrefix: '',
   applyTaskPrefixToSubtasks: false,
   parseDatesInQuickCapture: true,

@@ -2516,12 +2516,33 @@ describe('smart Q static setting', () => {
 });
 
 describe('time tracking reminder static preference', () => {
+  it.each([undefined, {}])('defaults fresh or older settings to 30 minutes', async (stored) => {
+    const port = memoryPort(stored, undefined);
+    const { settings } = await new SettingsPersistenceCoordinator(port).loadSettings(
+      DEFAULT_SETTINGS,
+    );
+    expect(settings.timeTrackingReminderMinutes).toBe(30);
+  });
+
+  it('preserves an explicit Off selection after saving and reloading', async () => {
+    const port = memoryPort(undefined, undefined);
+    const coordinator = new SettingsPersistenceCoordinator(port);
+    const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    expect(settings.timeTrackingReminderMinutes).toBe(30);
+    settings.timeTrackingReminderMinutes = 0;
+    await coordinator.saveSettings(settings);
+    expect(
+      (await new SettingsPersistenceCoordinator(port).loadSettings(DEFAULT_SETTINGS)).settings
+        .timeTrackingReminderMinutes,
+    ).toBe(0);
+  });
+
   it.each([
-    [undefined, 0],
-    [null, 0],
-    ['30', 0],
-    [-5, 0],
-    [15, 0],
+    [undefined, 30],
+    [null, 30],
+    ['30', 30],
+    [-5, 30],
+    [15, 30],
     [0, 0],
     [5, 5],
     [10, 10],
@@ -2539,19 +2560,19 @@ describe('time tracking reminder static preference', () => {
     const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
     expect(settings.timeTrackingReminderMinutes).toBe(expected);
     const staticBefore = structuredClone(port.staticData);
-    settings.timeTrackingReminderMinutes = 30;
+    settings.timeTrackingReminderMinutes = 10;
     await coordinator.saveViewState(settings);
     expect(port.staticData).toEqual(staticBefore);
     expect(port.stateText).not.toContain('timeTrackingReminderMinutes');
     await coordinator.saveSettings(settings);
     expect(port.staticData).toMatchObject({
-      timeTrackingReminderMinutes: 30,
+      timeTrackingReminderMinutes: 10,
       futureStatic: { keep: true },
     });
     expect(
       (await new SettingsPersistenceCoordinator(port).loadSettings(DEFAULT_SETTINGS)).settings
         .timeTrackingReminderMinutes,
-    ).toBe(30);
+    ).toBe(10);
   });
 });
 
