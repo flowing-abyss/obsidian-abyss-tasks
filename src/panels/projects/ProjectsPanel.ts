@@ -5,6 +5,7 @@ import {
   type ProjectPropertyCatalog,
 } from '../../projects/ObsidianProjectProperties';
 import type { ProjectManager } from '../../projects/ProjectManager';
+import { ProjectMutationSession } from '../../projects/ProjectMutationSession';
 import type { ProjectStore } from '../../projects/ProjectStore';
 import type { ProjectCreateRequest } from '../../projects/projectCreation';
 import { ProjectEditValidationError } from '../../projects/projectEditError';
@@ -50,6 +51,7 @@ export class ProjectsPanel {
   private readonly saveStatic_abyssPrivate: (() => Promise<void>) | undefined;
   private readonly projectProperties_abyssPrivate: ProjectPropertyCatalog;
   private readonly editHistory_abyssPrivate: ProjectEditHistory;
+  private mutationSession_abyssPrivate: ProjectMutationSession | null = null;
   private el_abyssPrivate: HTMLElement | null = null;
   private tableHost_abyssPrivate: HTMLElement | null = null;
   private tableView_abyssPrivate: ProjectsTableView | null = null;
@@ -78,6 +80,20 @@ export class ProjectsPanel {
   }
 
   mount(el: HTMLElement): void {
+    const session = new ProjectMutationSession({
+      revalidateSourceObservation: (observation) =>
+        this.projectStore_abyssPrivate.revalidateSourceObservation(observation),
+      onChange: (change) => {
+        this.tableView_abyssPrivate?.onMutationSessionChange(change);
+        const view = this.state_abyssPrivate.get('projectsPanel');
+        if (
+          view.view === 'dashboard' &&
+          (change.type === 'projection' || (change.type === 'source' && view.path === change.path))
+        )
+          this.renderDashboard_abyssPrivate(view.path);
+      },
+    });
+    this.mutationSession_abyssPrivate = session;
     this.el_abyssPrivate = el;
     el.addClass('abyss-projects-panel');
     this.tableHost_abyssPrivate = el.createDiv({ cls: 'abyss-projects-table-session' });
@@ -99,8 +115,7 @@ export class ProjectsPanel {
       openNote: (path) => {
         this.openNote_abyssPrivate(path);
       },
-      revalidateSourceObservation: (observation) =>
-        this.projectStore_abyssPrivate.revalidateSourceObservation(observation),
+      mutationSession: session,
     });
     this.tableView_abyssPrivate.mount(this.projectStore_abyssPrivate.list());
     this.offs_abyssPrivate.push(
@@ -113,10 +128,7 @@ export class ProjectsPanel {
         if (view.view === 'dashboard') this.renderDashboard_abyssPrivate(view.path);
       }),
       this.projectStore_abyssPrivate.onSourceObservation((observation) => {
-        this.tableView_abyssPrivate?.observeProjectSource(observation);
-        const view = this.state_abyssPrivate.get('projectsPanel');
-        if (view.view === 'dashboard' && view.path === observation.path)
-          this.renderDashboard_abyssPrivate(view.path);
+        session.observe(observation);
       }),
     );
     this.syncView_abyssPrivate(true);
@@ -177,23 +189,24 @@ export class ProjectsPanel {
     const project = this.projectStore_abyssPrivate.get(path);
     return project === undefined
       ? undefined
-      : (this.tableView_abyssPrivate?.projectWithAppliedReceipts(project) ?? project);
+      : (this.mutationSession_abyssPrivate?.project(
+          [project],
+          this.settings_abyssPrivate.projects,
+        )[0] ?? project);
   }
 
   private runDashboardMutation_abyssPrivate(
     mutation: () => Promise<ProjectEditResult>,
   ): Promise<ProjectEditResult> {
-    const table = this.tableView_abyssPrivate;
-    if (table === null)
+    const session = this.mutationSession_abyssPrivate;
+    if (session === null)
       return Promise.reject(
         new ProjectEditValidationError('The project session is no longer available.'),
       );
-    return table.runTableSessionMutation(async () => {
+    return session.run(async () => {
       const result = await mutation();
-      if (result.applied.length > 0 && this.tableView_abyssPrivate === table) {
-        table.publishAppliedReceipts(result.applied);
-        const view = this.state_abyssPrivate.get('projectsPanel');
-        if (view.view === 'dashboard') this.renderDashboard_abyssPrivate(view.path);
+      if (result.applied.length > 0 && this.mutationSession_abyssPrivate === session) {
+        session.publish(result.applied);
         this.projectStore_abyssPrivate.refresh();
       }
       return result;
@@ -219,6 +232,8 @@ export class ProjectsPanel {
   }
 
   destroy(): void {
+    this.mutationSession_abyssPrivate?.dispose();
+    this.mutationSession_abyssPrivate = null;
     for (const off of this.offs_abyssPrivate) off();
     this.offs_abyssPrivate = [];
     this.tableView_abyssPrivate?.destroy();
@@ -327,14 +342,14 @@ export class ProjectsPanel {
         app: this.app_abyssPrivate,
         catalog: this.projectProperties_abyssPrivate,
         capture: (project, field) => {
+          const owner = this.mutationSession_abyssPrivate;
           const session = this.tableView_abyssPrivate?.createFieldEditorSession(project, field);
           if (session === undefined) return undefined;
           return {
             ...session,
             save: async (value) => {
               await session.save(value);
-              const view = this.state_abyssPrivate.get('projectsPanel');
-              if (view.view === 'dashboard') this.renderDashboard_abyssPrivate(view.path);
+              if (this.mutationSession_abyssPrivate !== owner) return;
               this.projectStore_abyssPrivate.refresh();
             },
           };

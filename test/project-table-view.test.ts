@@ -15,6 +15,7 @@ import type { ProjectsTimelineView } from '../src/panels/projects/ProjectsTimeli
 import { mountProjectCellEditorPosition } from '../src/panels/projects/projectCellEditorPosition';
 import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProperties';
 import { ProjectManager } from '../src/projects/ProjectManager';
+import { ProjectMutationSession } from '../src/projects/ProjectMutationSession';
 import { ProjectCreationError } from '../src/projects/projectCreation';
 import { projectCalendarDayOrdinal } from '../src/projects/projectDateValue';
 import { ProjectEditValidationError } from '../src/projects/projectEditError';
@@ -200,7 +201,11 @@ function destroyMountedView(view: ProjectsTableView): void {
   if (mountedViews.delete(view)) view.destroy();
 }
 
+const mutationSessions = new Map<ProjectsTableView, ProjectMutationSession>();
+
 afterEach(() => {
+  for (const session of mutationSessions.values()) session.dispose();
+  mutationSessions.clear();
   for (const view of mountedViews) view.destroy();
   mountedViews.clear();
   activeDocument.body.empty();
@@ -266,6 +271,9 @@ function catalog(
 function mount(
   projects: Project[],
   overrides: Partial<ConstructorParameters<typeof ProjectsTableView>[1]> & {
+    revalidateSourceObservation?: ConstructorParameters<
+      typeof ProjectMutationSession
+    >[0]['revalidateSourceObservation'];
     saveProperty?: (
       path: string,
       field: ProjectFieldCatalogItem,
@@ -305,6 +313,13 @@ function mount(
       return successful(changes);
     });
   const history = overrides.history ?? new ProjectEditHistory(applyEdits);
+  const mutationSession = new ProjectMutationSession({
+    revalidateSourceObservation:
+      overrides.revalidateSourceObservation ?? vi.fn().mockResolvedValue(false),
+    onChange: (change) => {
+      view.onMutationSessionChange(change);
+    },
+  });
   const view = new ProjectsTableView(host, {
     app: new App(),
     state: new AppState(),
@@ -315,9 +330,10 @@ function mount(
     history,
     createProject: vi.fn().mockResolvedValue(undefined),
     openProject,
-    revalidateSourceObservation: vi.fn().mockResolvedValue(false),
+    mutationSession,
     ...overrides,
   });
+  mutationSessions.set(view, mutationSession);
   mountedViews.add(view);
   view.mount(projects);
   return { host, view, config, saveSettings, saveProperty, saveStatus, openProject };
@@ -5435,10 +5451,18 @@ describe('ProjectsTableView', () => {
       name: 'A',
       frontmatter: { Owner: 'Saved' },
     });
-    view.observeProjectSource({ path: savedA.path, revision: 1, project: savedA });
+    expectDefined(mutationSessions.get(view)).observe({
+      path: savedA.path,
+      revision: 1,
+      project: savedA,
+    });
     view.update([savedA, originalB]);
     expect(ownerCell('Projects/A.md').textContent).toBe('Saved');
-    view.observeProjectSource({ path: staleA.path, revision: 2, project: staleA });
+    expectDefined(mutationSessions.get(view)).observe({
+      path: staleA.path,
+      revision: 2,
+      project: staleA,
+    });
     view.update([staleA, originalB]);
     expect(ownerCell('Projects/A.md').textContent).toBe('Original');
   });
@@ -5452,7 +5476,11 @@ describe('ProjectsTableView', () => {
       async (changes: readonly ProjectCellChange[]): Promise<ProjectEditResult> => {
         const change = expectDefined(changes[0]);
         const currentView = expectDefined(viewRef.current);
-        currentView.observeProjectSource({ path: oldA.path, revision: 2, project: oldA });
+        expectDefined(mutationSessions.get(currentView)).observe({
+          path: oldA.path,
+          revision: 2,
+          project: oldA,
+        });
         currentView.update([oldA]);
         return {
           applied: [
@@ -5476,7 +5504,11 @@ describe('ProjectsTableView', () => {
       applyEdits,
     });
     viewRef.current = mounted.view;
-    mounted.view.observeProjectSource({ path: oldA.path, revision: 1, project: oldA });
+    expectDefined(mutationSessions.get(mounted.view)).observe({
+      path: oldA.path,
+      revision: 1,
+      project: oldA,
+    });
     const cell = expectDefined(
       mounted.host.querySelector<HTMLElement>(
         '.abyss-project-table-row [data-column-id="property:Owner"]',
@@ -5510,7 +5542,11 @@ describe('ProjectsTableView', () => {
         const change = expectDefined(changes[0]);
         const currentView = expectDefined(viewRef.current);
         currentView.update([external]);
-        currentView.observeProjectSource({ path: external.path, revision: 1, project: external });
+        expectDefined(mutationSessions.get(currentView)).observe({
+          path: external.path,
+          revision: 1,
+          project: external,
+        });
         return {
           applied: [
             {
@@ -5702,14 +5738,14 @@ describe('ProjectsTableView', () => {
   it('serializes table-session mutations for later Undo and Redo integration', async () => {
     const { view } = mount([project({})]);
     let release: (() => void) | undefined;
-    const first = view.runTableSessionMutation(
+    const first = expectDefined(mutationSessions.get(view)).run(
       () =>
         new Promise<void>((resolve) => {
           release = resolve;
         }),
     );
     const secondMutation = vi.fn().mockResolvedValue('second');
-    const second = view.runTableSessionMutation(secondMutation);
+    const second = expectDefined(mutationSessions.get(view)).run(secondMutation);
     await flushMicrotasks();
     expect(secondMutation).not.toHaveBeenCalled();
 
@@ -7422,7 +7458,7 @@ describe('ProjectsTableView', () => {
     composer.value = created.name;
     composer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     view.update([existing, intermediate]);
-    const mutation = view.runTableSessionMutation(
+    const mutation = expectDefined(mutationSessions.get(view)).run(
       () =>
         new Promise<void>((resolve) => {
           finishMutation = resolve;

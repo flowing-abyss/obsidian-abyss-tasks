@@ -15,7 +15,6 @@ import type { ProjectEditHistory } from '../../projects/projectEditHistory';
 import {
   projectCellSourceValue,
   projectFieldWithOwnedClear,
-  type AppliedProjectCellChange,
   type OwnedInferredPropertyClear,
   type ProjectCellChange,
   type ProjectEditResult,
@@ -42,6 +41,10 @@ import {
   type ProjectKanbanSettings,
   type ProjectOverviewMode,
 } from '../../projects/projectKanbanSettings';
+import type {
+  ProjectMutationSession,
+  ProjectMutationSessionChange,
+} from '../../projects/ProjectMutationSession';
 import {
   hasAuthoritativeProjectPropertyDefinitions,
   projectPropertyTypeChoices,
@@ -55,7 +58,6 @@ import {
   compileProjectPropertyPresets,
   type CompiledProjectPropertyPresets,
 } from '../../projects/projectPropertyPresets';
-import type { ProjectSourceObservation } from '../../projects/ProjectStore';
 import {
   buildProjectTableModel,
   projectProgressDisplayValue,
@@ -82,7 +84,7 @@ import {
   projectTimelineFields,
   type ProjectTimelineSettings,
 } from '../../projects/projectTimelineSettings';
-import { projectStatusDisplayName, resolveStatus } from '../../projects/status';
+import { projectStatusDisplayName } from '../../projects/status';
 import type { Project } from '../../projects/types';
 import {
   enforceProjectTableColumnInvariants,
@@ -252,7 +254,7 @@ export interface ProjectsTableViewContext {
   readonly createProject: (request: ProjectCreateRequest) => Promise<string | null>;
   readonly openProject: (path: string) => void;
   readonly openNote?: (path: string) => void;
-  readonly revalidateSourceObservation: (observation: ProjectSourceObservation) => Promise<boolean>;
+  readonly mutationSession: ProjectMutationSession;
 }
 
 interface ActiveEditor {
@@ -364,12 +366,6 @@ interface EditorCloseDestination {
   readonly preservesExternalFocus: boolean;
 }
 
-interface ProjectReceiptProjection {
-  readonly receipt: AppliedProjectCellChange;
-  readonly sourceRevisionAtMutationStart: number;
-  readonly ordinal: number;
-}
-
 interface RemoveListValueRequest extends ProjectCellEditRequest {
   readonly value: unknown[];
   readonly expectedValue: unknown;
@@ -435,24 +431,6 @@ function sameRowDragPayload(left: ProjectRowDragPayload, right: ProjectRowDragPa
   );
 }
 
-function observationMatchesReceipt(
-  observation: ProjectSourceObservation,
-  receipt: AppliedProjectCellChange,
-): boolean {
-  const source =
-    observation.project === undefined
-      ? undefined
-      : findFrontmatterProperty(observation.project.frontmatter, receipt.sourceProperty);
-  return (
-    (source !== undefined) === receipt.appliedExists &&
-    (!receipt.appliedExists || equalProjectedValue(source?.value, receipt.value))
-  );
-}
-
-function projectionKey(receipt: AppliedProjectCellChange): string {
-  return `${receipt.path}\u0000${receipt.field.id}`;
-}
-
 function isTagCarrier(property: string | undefined): boolean {
   const key = property?.toLocaleLowerCase();
   return key === 'tag' || key === 'tags';
@@ -507,6 +485,7 @@ export class ProjectsTableView {
    */
   private trackedNowMs_abyssPrivate = Date.now();
   private readonly segment_abyssPrivate = createSearchWordSegmenter();
+  private readonly mutationSession_abyssPrivate: ProjectMutationSession;
   private readonly sessions_abyssPrivate: Record<ProjectOverviewMode, OverviewSession> = {
     table: { selection: new ProjectTableSelection(), search: '' },
     kanban: { selection: new ProjectTableSelection(), search: '' },
@@ -519,13 +498,7 @@ export class ProjectsTableView {
   private mounted_abyssPrivate = false;
   private timelineInteractionRevision_abyssPrivate = 0;
   private tableActionTail_abyssPrivate: Promise<void> = Promise.resolve();
-  private mutationTail_abyssPrivate: Promise<void> = Promise.resolve();
-  private mutationActive_abyssPrivate = false;
   private renderPending_abyssPrivate = false;
-  private readonly sourceObservations_abyssPrivate = new Map<string, ProjectSourceObservation>();
-  private readonly receiptProjections_abyssPrivate = new Map<string, ProjectReceiptProjection>();
-  private activeMutationSourceRevisions_abyssPrivate: ReadonlyMap<string, number> | undefined;
-  private nextReceiptOrdinal_abyssPrivate = 0;
   private pendingAction_abyssPrivate:
     { readonly run: () => void; readonly replace?: () => void } | undefined;
   private finishingEditor_abyssPrivate: Promise<boolean> | undefined;
@@ -550,6 +523,7 @@ export class ProjectsTableView {
     host: HTMLElement,
     private readonly context_abyssPrivate: ProjectsTableViewContext,
   ) {
+    this.mutationSession_abyssPrivate = context_abyssPrivate.mutationSession;
     this.overviewMode_abyssPrivate = context_abyssPrivate.settings.projects.overviewView ?? 'table';
     this.root_abyssPrivate = host.createDiv({ cls: 'abyss-projects-table' });
     this.toolbar_abyssPrivate = this.createToolbar_abyssPrivate();
@@ -1049,34 +1023,6 @@ export class ProjectsTableView {
     );
   }
 
-  /**
-   * Serializes every table-session metadata mutation. Task 4 Undo/Redo uses this same queue.
-   */
-  runTableSessionMutation<T>(mutation: () => Promise<T>): Promise<T> {
-    const run = async (): Promise<T> => {
-      this.mutationActive_abyssPrivate = true;
-      this.activeMutationSourceRevisions_abyssPrivate = new Map(
-        Array.from(this.sourceObservations_abyssPrivate, ([path, observation]) => [
-          path,
-          observation.revision,
-        ]),
-      );
-      try {
-        return await mutation();
-      } finally {
-        this.activeMutationSourceRevisions_abyssPrivate = undefined;
-        this.mutationActive_abyssPrivate = false;
-        if (this.renderPending_abyssPrivate) this.renderTable_abyssPrivate();
-      }
-    };
-    const result = this.mutationTail_abyssPrivate.then(run, run);
-    this.mutationTail_abyssPrivate = result.then(
-      () => undefined,
-      () => undefined,
-    );
-    return result;
-  }
-
   /** Orders user-submitted actions before they enter the metadata mutation queue. */
   private runTableActionInOrder_abyssPrivate<T>(action: () => Promise<T>): Promise<T> {
     const result = this.tableActionTail_abyssPrivate.then(action, action);
@@ -1087,23 +1033,13 @@ export class ProjectsTableView {
     return result;
   }
 
-  /** Reconciles receipt projections only from ProjectStore's verified per-path source stream. */
-  observeProjectSource(observation: ProjectSourceObservation): void {
-    const current = this.sourceObservations_abyssPrivate.get(observation.path);
-    if (current !== undefined && current.revision >= observation.revision) return;
-    this.sourceObservations_abyssPrivate.set(observation.path, observation);
-    this.kanbanView_abyssPrivate?.invalidatePreviewPlan();
-    let changed = false;
-    for (const [key, projection] of this.receiptProjections_abyssPrivate) {
-      if (
-        projection.receipt.path === observation.path &&
-        observation.revision > projection.sourceRevisionAtMutationStart
-      ) {
-        this.receiptProjections_abyssPrivate.delete(key);
-        changed = true;
-      }
+  onMutationSessionChange(change: ProjectMutationSessionChange): void {
+    if (change.type === 'source') {
+      this.kanbanView_abyssPrivate?.invalidatePreviewPlan();
+      if (!change.projectionChanged) return;
     }
-    if (changed) this.renderTable_abyssPrivate();
+    if (change.type !== 'settled' || this.renderPending_abyssPrivate)
+      this.renderTable_abyssPrivate();
   }
 
   /** Keeps only the newest deliberate action while an editor is saving or blocked. */
@@ -1304,7 +1240,7 @@ export class ProjectsTableView {
       this.root_abyssPrivate.isConnected &&
       this.root_abyssPrivate.hidden === false &&
       this.context_abyssPrivate.state.get('projectsPanel').view === 'table' &&
-      !this.mutationActive_abyssPrivate &&
+      !this.mutationSession_abyssPrivate.active &&
       this.activeEditor_abyssPrivate === undefined &&
       !this.projectDragActive_abyssPrivate &&
       !this.renderPending_abyssPrivate
@@ -1427,7 +1363,7 @@ export class ProjectsTableView {
     this.kanbanView_abyssPrivate?.invalidatePreviewPlan();
     if (!this.mounted_abyssPrivate) return;
     if (
-      this.mutationActive_abyssPrivate ||
+      this.mutationSession_abyssPrivate.active ||
       this.activeEditor_abyssPrivate !== undefined ||
       this.projectDragActive_abyssPrivate
     ) {
@@ -1739,10 +1675,10 @@ export class ProjectsTableView {
   private applyBoardChanges_abyssPrivate(
     changes: readonly ProjectCellChange[],
   ): Promise<ProjectEditResult> {
-    return this.runTableSessionMutation(async () => {
+    return this.mutationSession_abyssPrivate.run(async () => {
       const result = await this.context_abyssPrivate.applyEdits(changes);
       this.context_abyssPrivate.history.record(result);
-      this.publishAppliedReceipts(result.applied);
+      this.mutationSession_abyssPrivate.publish(result.applied);
       return result;
     });
   }
@@ -1756,7 +1692,7 @@ export class ProjectsTableView {
     if (!(await this.requestFinishActiveEditor())) {
       throw new Error('The active project edit must finish before moving the card');
     }
-    return this.runTableSessionMutation(async () => {
+    return this.mutationSession_abyssPrivate.run(async () => {
       const planned = build();
       const result: ProjectEditResult =
         planned.changes.length === 0
@@ -1764,7 +1700,7 @@ export class ProjectsTableView {
           : await this.context_abyssPrivate.applyEdits(planned.changes);
       if (result.applied.length > 0) {
         this.context_abyssPrivate.history.record(result);
-        this.publishAppliedReceipts(result.applied);
+        this.mutationSession_abyssPrivate.publish(result.applied);
       }
       if (result.failed.length === 0 && result.applied.length === planned.changes.length) {
         planned.afterApplied?.();
@@ -1849,7 +1785,7 @@ export class ProjectsTableView {
           'The active project edit must finish before changing Timeline dates.',
         );
       }
-      return this.runTableSessionMutation(async () => {
+      return this.mutationSession_abyssPrivate.run(async () => {
         if (interactionRevision !== this.timelineInteractionRevision_abyssPrivate) {
           throw new ProjectEditValidationError('This project range is no longer visible.');
         }
@@ -1882,7 +1818,7 @@ export class ProjectsTableView {
         const result = await this.context_abyssPrivate.applyEdits(changes);
         if (result.applied.length > 0) {
           this.context_abyssPrivate.history.record(result);
-          this.publishAppliedReceipts(result.applied);
+          this.mutationSession_abyssPrivate.publish(result.applied);
         }
         return result;
       });
@@ -1896,9 +1832,10 @@ export class ProjectsTableView {
   private boardTagsReliable_abyssPrivate(path: string, fieldId: string): boolean {
     const field = findProjectFieldById(this.fields_abyssPrivate, fieldId);
     const property = field?.property;
-    const pendingTagChange = Array.from(this.receiptProjections_abyssPrivate.values()).some(
-      ({ receipt }) => receipt.path === path && isTagCarrier(receipt.sourceKey),
-    );
+    const pendingTagChange = this.mutationSession_abyssPrivate.hasPendingSourceProperty(path, [
+      'tag',
+      'tags',
+    ]);
     return field?.type !== 'tags' && !isTagCarrier(property) && !pendingTagChange;
   }
 
@@ -3240,7 +3177,7 @@ export class ProjectsTableView {
     this.runTableAction_abyssPrivate(label, async () => {
       const result = await this.context_abyssPrivate.applyEdits(changes);
       this.context_abyssPrivate.history.record(result);
-      this.publishAppliedReceipts(result.applied);
+      this.mutationSession_abyssPrivate.publish(result.applied);
       return result;
     });
   }
@@ -3250,7 +3187,7 @@ export class ProjectsTableView {
       direction === 'undo' ? 'Could not undo project edits' : 'Could not redo project edits',
       async () => {
         const result = await this.context_abyssPrivate.history[direction]();
-        this.publishAppliedReceipts(result.applied);
+        this.mutationSession_abyssPrivate.publish(result.applied);
         return result;
       },
     );
@@ -3261,7 +3198,9 @@ export class ProjectsTableView {
     mutation: () => Promise<ProjectEditResult>,
   ): void {
     this.feedback_abyssPrivate.empty();
-    void this.runTableActionInOrder_abyssPrivate(() => this.runTableSessionMutation(mutation)).then(
+    void this.runTableActionInOrder_abyssPrivate(() =>
+      this.mutationSession_abyssPrivate.run(mutation),
+    ).then(
       (result) => {
         if (result.failed.length === 0) return;
         const first = result.failed[0];
@@ -3450,8 +3389,9 @@ export class ProjectsTableView {
     change: ProjectCellChange,
     plan: GroupDropPlan,
   ): boolean {
-    const pendingTagChange = Array.from(this.receiptProjections_abyssPrivate.values()).some(
-      ({ receipt }) => receipt.path === change.path && isTagCarrier(receipt.sourceKey),
+    const pendingTagChange = this.mutationSession_abyssPrivate.hasPendingSourceProperty(
+      change.path,
+      ['tag', 'tags'],
     );
     return (
       plan.cell.field.type !== 'tags' &&
@@ -3810,7 +3750,7 @@ export class ProjectsTableView {
       sourceKey,
       ownedClear,
     } = request;
-    const receipt = await this.runTableSessionMutation(async () => {
+    const receipt = await this.mutationSession_abyssPrivate.run(async () => {
       const change: ProjectCellChange = {
         path: project.path,
         field,
@@ -3823,7 +3763,7 @@ export class ProjectsTableView {
       };
       const result = await this.context_abyssPrivate.applyEdits([change]);
       this.context_abyssPrivate.history.record(result);
-      this.publishAppliedReceipts(result.applied);
+      this.mutationSession_abyssPrivate.publish(result.applied);
       const failure = result.failed[0];
       if (failure !== undefined) throw new Error(failure.message);
       const applied = result.applied[0];
@@ -3839,93 +3779,11 @@ export class ProjectsTableView {
     };
   }
 
-  /** Publishes successful editor, paste, drop, Undo, and Redo receipts into this session. */
-  publishAppliedReceipts(receipts: readonly AppliedProjectCellChange[]): void {
-    for (const receipt of receipts) {
-      this.publishAppliedReceipt_abyssPrivate(receipt);
-    }
-    this.renderTable_abyssPrivate();
-  }
-
-  private publishAppliedReceipt_abyssPrivate(receipt: AppliedProjectCellChange): void {
-    const activeRevisions = this.activeMutationSourceRevisions_abyssPrivate;
-    const sourceRevisionAtMutationStart =
-      activeRevisions !== undefined
-        ? (activeRevisions.get(receipt.path) ?? 0)
-        : (this.sourceObservations_abyssPrivate.get(receipt.path)?.revision ?? 0);
-    const observation = this.sourceObservations_abyssPrivate.get(receipt.path);
-    const observedDuringMutation =
-      observation !== undefined && observation.revision > sourceRevisionAtMutationStart;
-    const key = projectionKey(receipt);
-    if (observedDuringMutation && observationMatchesReceipt(observation, receipt)) {
-      this.receiptProjections_abyssPrivate.delete(key);
-      return;
-    }
-    const projection: ProjectReceiptProjection = {
-      receipt,
-      sourceRevisionAtMutationStart,
-      ordinal: ++this.nextReceiptOrdinal_abyssPrivate,
-    };
-    this.receiptProjections_abyssPrivate.set(key, projection);
-    if (observedDuringMutation) {
-      this.revalidateReceiptProjection_abyssPrivate(key, projection, observation);
-    }
-  }
-
-  private revalidateReceiptProjection_abyssPrivate(
-    key: string,
-    projection: ProjectReceiptProjection,
-    observation: ProjectSourceObservation,
-  ): void {
-    void this.context_abyssPrivate.revalidateSourceObservation(observation).then(
-      (current) => {
-        if (!current || this.receiptProjections_abyssPrivate.get(key) !== projection) return;
-        if (this.sourceObservations_abyssPrivate.get(observation.path) !== observation) return;
-        this.receiptProjections_abyssPrivate.delete(key);
-        this.renderTable_abyssPrivate();
-      },
-      (error: unknown) => {
-        console.error('[abyss-tasks] Could not revalidate project receipt projection', {
-          path: observation.path,
-          cause: error,
-        });
-      },
+  private projectedProjects_abyssPrivate(): readonly Project[] {
+    return this.mutationSession_abyssPrivate.project(
+      this.projects_abyssPrivate,
+      this.context_abyssPrivate.settings.projects,
     );
-  }
-
-  /** Dashboard ranges share the overview's receipts until verified source observations arrive. */
-  projectWithAppliedReceipts(project: Project): Project {
-    return this.projectedProjects_abyssPrivate([project])[0] ?? project;
-  }
-
-  private projectedProjects_abyssPrivate(
-    projects: readonly Project[] = this.projects_abyssPrivate,
-  ): readonly Project[] {
-    const byPath = new Map<string, ProjectReceiptProjection[]>();
-    for (const projection of this.receiptProjections_abyssPrivate.values()) {
-      const projections = byPath.get(projection.receipt.path) ?? [];
-      projections.push(projection);
-      byPath.set(projection.receipt.path, projections);
-    }
-    return projects.map((project) => {
-      const projections = byPath.get(project.path);
-      if (projections === undefined) return project;
-      const frontmatter = { ...project.frontmatter };
-      const sortedProjections = [...projections];
-      sortedProjections.sort((left, right) => left.ordinal - right.ordinal);
-      for (const { receipt } of sortedProjections) {
-        if (receipt.appliedExists) {
-          frontmatter[receipt.sourceKey] = copyProjectedValue(receipt.value);
-        } else {
-          delete frontmatter[receipt.sourceKey];
-        }
-      }
-      return {
-        ...project,
-        frontmatter,
-        ...resolveStatus(this.context_abyssPrivate.settings.projects, frontmatter),
-      };
-    });
   }
 
   private removeListValue_abyssPrivate(request: RemoveListValueRequest): void {

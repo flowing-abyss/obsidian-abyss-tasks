@@ -563,6 +563,7 @@ export default defineConfig(
       'src/markdown/linkTarget.ts',
       'src/panels/task-list/taskRowSelection.ts',
       'src/panels/task-list/taskOccurrenceSelection.ts',
+      'src/projects/ProjectMutationSession.ts',
       'src/settings/viewStatePaths.ts',
       'src/settings/tagViewState.ts',
       'src/settings/tagFilters.ts',

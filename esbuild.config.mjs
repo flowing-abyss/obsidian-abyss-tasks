@@ -1,3 +1,6 @@
+// Shared project mutation lifetime and defensive receipts: measured main 2,248,667 bytes (+990).
+// Deliberately increase the main cap by 1 KiB to 2,248,704; retain hard enforcement and CSS limits.
+// Dependency inventory is unchanged.
 // Compact date editors and hidden list recovery: measured main 2,240,169 bytes; containing limit 2188 KiB.
 // Project boundary handles: measured main 2,215,176 bytes; containing limit 2164 KiB.
 // Axis and passive boundary styles: shipped CSS 205,867 bytes; containing limit 202 KiB.

@@ -31,6 +31,7 @@ import {
   normalizeProjectKanbanSettings,
   type ProjectKanbanSettings,
 } from '../src/projects/projectKanbanSettings';
+import { ProjectMutationSession } from '../src/projects/ProjectMutationSession';
 import {
   buildDefaultProjectTimelineSettings,
   type ProjectTimelineSettings,
@@ -98,7 +99,11 @@ function dragEvent(
 
 const mounted = new Set<ProjectsTableView>();
 
+const mutationSessions = new Map<ProjectsTableView, ProjectMutationSession>();
+
 afterEach(() => {
+  for (const session of mutationSessions.values()) session.dispose();
+  mutationSessions.clear();
   for (const view of mounted) view.destroy();
   mounted.clear();
   activeDocument.body.empty();
@@ -180,6 +185,12 @@ function mountView(
   const applyEdits = vi.fn(async (changes: readonly ProjectCellChange[]) => successful(changes));
   // The overview ranks only projects whose notes exist, so the vault holds each project's note.
   const app = appWithFiles(Object.fromEntries(projects.map(({ path }) => [path, ''])));
+  const mutationSession = new ProjectMutationSession({
+    revalidateSourceObservation: vi.fn().mockResolvedValue(false),
+    onChange: (change) => {
+      view.onMutationSessionChange(change);
+    },
+  });
   const view = new ProjectsTableView(host, {
     app,
     state: new AppState(),
@@ -190,9 +201,10 @@ function mountView(
     history: new ProjectEditHistory(applyEdits),
     createProject: vi.fn().mockResolvedValue(undefined),
     openProject: vi.fn(),
-    revalidateSourceObservation: vi.fn().mockResolvedValue(false),
+    mutationSession,
     ...overrides,
   });
+  mutationSessions.set(view, mutationSession);
   mounted.add(view);
   view.mount(projects);
   return { host, view, settings, applyEdits, app };
@@ -2384,7 +2396,11 @@ describe('project Kanban overview', () => {
       }
       if (kind === 'catalog') h.view.refreshFields();
       if (kind === 'observation')
-        h.view.observeProjectSource({ path: 'Projects/Z.md', revision: 1, project: h.projects[0] });
+        expectDefined(mutationSessions.get(h.view)).observe({
+          path: 'Projects/Z.md',
+          revision: 1,
+          project: h.projects[0],
+        });
       expect(h.source.isConnected).toBe(true);
       h.frame();
       expect(h.planner).toHaveBeenCalledTimes(2);
@@ -2393,7 +2409,11 @@ describe('project Kanban overview', () => {
       h.frame();
       expect(h.planner).toHaveBeenCalledTimes(2);
       if (kind === 'observation') {
-        h.view.observeProjectSource({ path: 'Projects/Z.md', revision: 1, project: undefined });
+        expectDefined(mutationSessions.get(h.view)).observe({
+          path: 'Projects/Z.md',
+          revision: 1,
+          project: undefined,
+        });
         h.frame();
         expect(h.planner).toHaveBeenCalledTimes(2);
       }
@@ -3030,7 +3050,7 @@ describe('project Kanban overview', () => {
       settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
       settings.projects.kanban.sortBy = { field: 'none', dir: 'asc' };
       view.refreshFields();
-      const held = view.runTableSessionMutation(async () => queued);
+      const held = expectDefined(mutationSessions.get(view)).run(async () => queued);
       clickView(host, 'Kanban');
       saveViewState.mockClear();
       const card = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban-card'));

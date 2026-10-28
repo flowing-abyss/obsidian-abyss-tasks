@@ -2,7 +2,10 @@ import {
   projectCalendarDayFromOrdinal,
   projectCalendarDayOrdinal,
 } from '../../projects/projectDateValue';
-import { ProjectEditValidationError } from '../../projects/projectEditError';
+import {
+  isProjectEditValidationError,
+  ProjectEditValidationError,
+} from '../../projects/projectEditError';
 import type { ProjectCellChange, ProjectEditResult } from '../../projects/projectEdits';
 import type { ProjectFieldCatalogItem } from '../../projects/projectFields';
 import type { ProjectTimelineEditIntent } from '../../projects/projectTimelineEdits';
@@ -72,7 +75,7 @@ export class ProjectDashboardTimeline implements TimelineContextOverlay {
       window: () => context.window(),
       captureRangeSource: () => this.#capture(),
       commitRangeEdit: (request) => this.#commit(request),
-      reportRangeFailure: reportFailure,
+      reportRangeFailure: this.#reportFailure,
       finishEditor: () => Promise.resolve(true),
       selectRange: (_identity, element) => {
         element.focus({ preventScroll: true });
@@ -102,7 +105,7 @@ export class ProjectDashboardTimeline implements TimelineContextOverlay {
   #activateCurrent(endpoint: Endpoint): void {
     const capture = this.#capture();
     if (capture.kind === 'ready') this.#activate(capture.source, endpoint);
-    else reportFailure(capture.reason);
+    else this.#reportFailure(capture.reason);
   }
   #activate(source: FrozenProjectTimelineRangeSource, endpoint: Endpoint): void {
     const day = boundaryDay(source.range, endpoint);
@@ -120,8 +123,8 @@ export class ProjectDashboardTimeline implements TimelineContextOverlay {
         day: localDay(this.context.now()),
       },
     }).then((result) => {
-      if (result.failed.length > 0) reportFailure(result);
-    }, reportFailure);
+      if (result.failed.length > 0) this.#reportFailure(result);
+    }, this.#reportFailure);
   }
   range(): ProjectTimelineRange {
     const project = this.context.project();
@@ -269,6 +272,11 @@ export class ProjectDashboardTimeline implements TimelineContextOverlay {
       return this.context.apply(projectTimelineRangeChanges(source, plan));
     });
   }
+  readonly #reportFailure = (failure: unknown): void => {
+    if (this.#destroyed && isProjectEditValidationError(failure)) return;
+    reportFailure(failure);
+  };
+
   #enqueue(mutation: () => Promise<ProjectEditResult>): Promise<ProjectEditResult> {
     const revision = this.#revision;
     const result = this.#queue.then(() => {
@@ -289,9 +297,9 @@ export class ProjectDashboardTimeline implements TimelineContextOverlay {
     event.stopPropagation();
     void this.#enqueue(() => this.context.history(event.shiftKey ? 'redo' : 'undo')).then(
       (result) => {
-        if (result.failed.length > 0) reportFailure(result);
+        if (result.failed.length > 0) this.#reportFailure(result);
       },
-      reportFailure,
+      this.#reportFailure,
     );
   }
   #intent(
@@ -331,7 +339,7 @@ export class ProjectDashboardTimeline implements TimelineContextOverlay {
     event.stopPropagation();
     const captured = this.#capture();
     if (captured.kind === 'rejected') {
-      reportFailure(captured.reason);
+      this.#reportFailure(captured.reason);
       return;
     }
     void this.#commit(
@@ -342,8 +350,8 @@ export class ProjectDashboardTimeline implements TimelineContextOverlay {
       },
       endpoint,
     ).then((result) => {
-      if (result.failed.length > 0) reportFailure(result);
-    }, reportFailure);
+      if (result.failed.length > 0) this.#reportFailure(result);
+    }, this.#reportFailure);
   }
 }
 

@@ -11,6 +11,7 @@ import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProp
 import { ProjectEditHistory } from '../src/projects/projectEditHistory';
 import type { ProjectEditResult } from '../src/projects/projectEdits';
 import { buildDefaultProjectKanbanSettings } from '../src/projects/projectKanbanSettings';
+import { ProjectMutationSession } from '../src/projects/ProjectMutationSession';
 import { buildDefaultProjectTimelineSettings } from '../src/projects/projectTimelineSettings';
 import type { Project } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
@@ -70,7 +71,11 @@ interface RecordedObserver {
 
 const mounted = new Set<ProjectsTableView>();
 
+const mutationSessions = new Map<ProjectsTableView, ProjectMutationSession>();
+
 afterEach(() => {
+  for (const session of mutationSessions.values()) session.dispose();
+  mutationSessions.clear();
   for (const view of mounted) view.destroy();
   mounted.clear();
   activeDocument.body.empty();
@@ -180,6 +185,12 @@ function mountSurface(
     Promise.resolve({ applied: [], failed: [] }),
   );
   const contextApp = appWithFiles(Object.fromEntries(listed.map(({ path }) => [path, ''])));
+  const mutationSession = new ProjectMutationSession({
+    revalidateSourceObservation: vi.fn().mockResolvedValue(false),
+    onChange: (change) => {
+      view.onMutationSessionChange(change);
+    },
+  });
   const view = new ProjectsTableView(host, {
     app: contextApp,
     state: new AppState(),
@@ -190,8 +201,9 @@ function mountSurface(
     history: new ProjectEditHistory(applyEdits),
     createProject: vi.fn().mockResolvedValue(undefined),
     openProject: vi.fn(),
-    revalidateSourceObservation: vi.fn().mockResolvedValue(false),
+    mutationSession,
   });
+  mutationSessions.set(view, mutationSession);
   mounted.add(view);
   view.mount(listed);
   expectDefined(
@@ -585,6 +597,12 @@ function mountHorizontalPicker(kind: 'status' | 'list' | 'tags') {
     applied: [],
     failed: [{ path: 'Projects/picker-0-0.md', message: 'Source changed' }],
   }));
+  const mutationSession = new ProjectMutationSession({
+    revalidateSourceObservation: vi.fn().mockResolvedValue(false),
+    onChange: (change) => {
+      view.onMutationSessionChange(change);
+    },
+  });
   const view = new ProjectsTableView(host, {
     app: appWithFiles(Object.fromEntries(listed.map(({ path }) => [path, '']))),
     state: new AppState(),
@@ -599,8 +617,9 @@ function mountHorizontalPicker(kind: 'status' | 'list' | 'tags') {
     history: new ProjectEditHistory(applyEdits),
     createProject: vi.fn().mockResolvedValue(undefined),
     openProject: vi.fn(),
-    revalidateSourceObservation: vi.fn().mockResolvedValue(false),
+    mutationSession,
   });
+  mutationSessions.set(view, mutationSession);
   mounted.add(view);
   view.mount(listed);
   expectDefined(host.querySelector<HTMLButtonElement>('[aria-label="Kanban view"]')).click();

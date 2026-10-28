@@ -1,9 +1,13 @@
+import { Notice } from 'obsidian';
 import { afterEach, expect, it, vi } from 'vitest';
 import { ProjectDashboardTimeline } from '../src/panels/projects/ProjectDashboardTimeline';
+import { ProjectMutationSession } from '../src/projects/ProjectMutationSession';
+import { ProjectEditValidationError } from '../src/projects/projectEditError';
+import type { ProjectEditResult } from '../src/projects/projectEdits';
 import { buildConfiguredProjectFieldCatalog } from '../src/projects/projectFields';
 import type { Project } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import { expectDefined, flushMicrotasks } from './helpers';
+import { deferred, expectDefined, flushMicrotasks } from './helpers';
 import { timelineWindow } from './support/timelineWindow';
 afterEach(() => vi.restoreAllMocks());
 function pointer(type: string, clientX: number): Event {
@@ -17,7 +21,10 @@ function pointer(type: string, clientX: number): Event {
   });
   return event;
 }
-function mount(frontmatter: Project['frontmatter'] = { start: '2026-10-02', end: '2026-10-04' }) {
+function mount(
+  frontmatter: Project['frontmatter'] = { start: '2026-10-02', end: '2026-10-04' },
+  history?: () => Promise<ProjectEditResult>,
+) {
   const host = document.body.createDiv();
   let now = new Date(2026, 9, 1);
   let project: Project | undefined = {
@@ -36,7 +43,7 @@ function mount(frontmatter: Project['frontmatter'] = { start: '2026-10-02', end:
     },
   };
   let fields = buildConfiguredProjectFieldCatalog(DEFAULT_SETTINGS.projects);
-  const apply = vi.fn(async () => ({ applied: [], failed: [] }));
+  const apply = vi.fn(async (): Promise<ProjectEditResult> => ({ applied: [], failed: [] }));
   const window = timelineWindow('2026-10-01', '2026-10-14');
   const revealDay = vi.fn();
   const view = new ProjectDashboardTimeline(host, {
@@ -47,7 +54,7 @@ function mount(frontmatter: Project['frontmatter'] = { start: '2026-10-02', end:
     project: () => project,
     fields: () => fields,
     apply,
-    history: async () => ({ applied: [], failed: [] }),
+    history: history ?? (async () => ({ applied: [], failed: [] })),
   });
   view.update(window);
   const track = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-track'));
@@ -369,6 +376,75 @@ it.each(['start', 'end'] as const)(
         `${endpoint === 'start' ? 'Start' : 'End'}: Not set`,
       );
       expect(h.apply).not.toHaveBeenCalled();
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it.each(['keyboard', 'history'] as const)(
+  'keeps disposed queued %s validation quiet without calling its write',
+  async (kind) => {
+    const notices = vi.spyOn(
+      Notice.prototype as unknown as { constructor__(message: unknown): void },
+      'constructor__',
+    );
+    const gate = deferred<void>();
+    const session = new ProjectMutationSession({
+      revalidateSourceObservation: async () => false,
+      onChange: () => {},
+    });
+    const held = session.run(() => gate.promise);
+    const write = vi.fn(async (): Promise<ProjectEditResult> => ({ applied: [], failed: [] }));
+    const h = mount(undefined, () => session.run(write));
+    h.apply.mockImplementation(() => session.run(write));
+    try {
+      h.bar.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: kind === 'history' ? 'z' : 'ArrowRight',
+          ctrlKey: kind === 'history',
+          bubbles: true,
+        }),
+      );
+      await flushMicrotasks();
+      h.view.destroy();
+      session.dispose();
+      gate.resolve();
+      await held;
+      await flushMicrotasks();
+      expect(write).not.toHaveBeenCalled();
+      expect(notices).not.toHaveBeenCalled();
+    } finally {
+      session.dispose();
+      h.dispose();
+    }
+  },
+);
+
+it.each(['validation', 'io', 'partial'] as const)(
+  'preserves %s failure feedback for the dashboard owner',
+  async (kind) => {
+    const notices = vi.spyOn(
+      Notice.prototype as unknown as { constructor__(message: unknown): void },
+      'constructor__',
+    );
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const gate = deferred<void>();
+    const h = mount();
+    h.apply.mockImplementation(async () => {
+      await gate.promise;
+      if (kind === 'validation') throw new ProjectEditValidationError('Source changed');
+      if (kind === 'io') throw new Error('Write failed');
+      return { applied: [], failed: [{ path: 'Projects/A.md', message: 'Write failed' }] };
+    });
+    try {
+      h.bar.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+      await flushMicrotasks();
+      if (kind !== 'validation') h.view.destroy();
+      gate.resolve();
+      await flushMicrotasks();
+      expect(notices).toHaveBeenCalledOnce();
+      expect(logged).toHaveBeenCalledTimes(kind === 'validation' ? 0 : 1);
     } finally {
       h.dispose();
     }

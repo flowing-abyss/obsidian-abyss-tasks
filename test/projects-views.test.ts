@@ -1,4 +1,4 @@
-import { Component, Menu, Notice } from 'obsidian';
+import { Component, Menu, Notice, parseYaml } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import {
@@ -9,13 +9,21 @@ import {
 import { ProjectsPanel } from '../src/panels/projects/ProjectsPanel';
 import { renderProgressBar } from '../src/panels/projects/progressBar';
 import { ObsidianProjectProperties } from '../src/projects/ObsidianProjectProperties';
+import { ProjectManager } from '../src/projects/ProjectManager';
+import type { ProjectSourceObservation } from '../src/projects/ProjectStore';
 import { ProjectCreationError } from '../src/projects/projectCreation';
 import { ProjectEditValidationError } from '../src/projects/projectEditError';
 import { buildDefaultProjectKanbanSettings } from '../src/projects/projectKanbanSettings';
 import { buildDefaultProjectTimelineSettings } from '../src/projects/projectTimelineSettings';
 import type { Project } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import { createAppWithFiles, expectDefined, flushMicrotasks, freshContainer } from './helpers';
+import {
+  createAppWithFiles,
+  deferred,
+  expectDefined,
+  flushMicrotasks,
+  freshContainer,
+} from './helpers';
 import { useProjectTableViewport } from './support/projectTableViewport';
 import { projectTimelineLogicalCenter } from './support/projectTimelineGeometry';
 
@@ -1007,4 +1015,313 @@ it('retains focused date buttons through late dashboard source refresh', () => {
   expect(end.textContent).toContain('30');
   disposeProjectDashboard(el);
   el.remove();
+});
+
+describe('shared project mutation session', () => {
+  async function openDashboard(mode: 'table' | 'kanban' | 'timeline' = 'table') {
+    if (mode === 'timeline') {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date(2026, 9, 3));
+      vi.spyOn(Element.prototype, 'clientHeight', 'get').mockReturnValue(500);
+      vi.spyOn(Element.prototype, 'clientWidth', 'get').mockReturnValue(900);
+    }
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.propertyDefinitions = {
+      'property:Flag': { type: 'checkbox' },
+      'property:Labels': { type: 'list' },
+      'property:Text': { type: 'text' },
+      'property:Budget': { type: 'number' },
+    };
+    settings.projects.table.groupBy = 'none';
+    settings.projects.overviewView = mode;
+    settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+    settings.projects.timeline = buildDefaultProjectTimelineSettings(settings.projects.table);
+    settings.projects.table.columns.push(
+      { id: 'property:Flag', visible: true },
+      { id: 'property:Budget', visible: true },
+    );
+    const status = expectDefined(settings.projects.statuses[0]).name;
+    const frontmatter = {
+      status,
+      Flag: false,
+      Labels: ['one', 'two'],
+      Text: 'Before',
+      Budget: 10,
+      start: '2026-10-02',
+      end: '2026-10-04',
+    };
+    const project = proj({ frontmatter });
+    const app = await createAppWithFiles({
+      [project.path]: `---\nstatus: ${
+        status
+      }\nFlag: false\nLabels: [one, two]\nText: Before\nBudget: 10\nstart: 2026-10-02\nend: 2026-10-04\n---\n`,
+    });
+    const state = new AppState();
+    state.set('mode', 'projects');
+    state.set('projectsPanel', { view: 'dashboard', path: project.path });
+    let listed = project;
+    let source: ((observation: ProjectSourceObservation) => void) | undefined;
+    const store = {
+      list: () => [listed],
+      get: () => listed,
+      onSourceObservation: (callback: (observation: ProjectSourceObservation) => void) => {
+        source = callback;
+        return () => {
+          source = undefined;
+        };
+      },
+      revalidateSourceObservation: async () => false,
+      refresh: vi.fn(),
+    };
+    const catalog = new ObsidianProjectProperties(app);
+    const manager = new ProjectManager(app, settings, {} as never, {} as never, catalog);
+    const panel = new ProjectsPanel(state, store as never, manager, settings, app, {
+      projectProperties: catalog,
+    });
+    const el = activeDocument.body.createDiv();
+    panel.mount(el);
+    const file = expectDefined(app.vault.getFileByPath(project.path));
+    const property = (field: string) =>
+      expectDefined(el.querySelector<HTMLElement>(`[data-project-field="${field}"]`));
+    const properties = () => {
+      expectDefined(el.querySelector<HTMLElement>('[aria-label="Project properties"]')).click();
+    };
+    const metadata = async () =>
+      parseYaml((await app.vault.read(file)).split('---')[1] ?? '') as Record<string, unknown>;
+    return {
+      panel,
+      el,
+      state,
+      manager,
+      store,
+      project,
+      app,
+      file,
+      property,
+      properties,
+      metadata,
+      observe: (frontmatter: Record<string, unknown>) => {
+        listed = { ...listed, frontmatter };
+        source?.({ path: project.path, revision: 1, project: listed });
+      },
+      dispose: () => {
+        panel.destroy();
+        el.remove();
+        vi.restoreAllMocks();
+        vi.useRealTimers();
+      },
+    };
+  }
+
+  it.each([
+    { field: 'property:Flag', property: 'Flag', kind: 'checkbox', expected: true },
+    { field: 'property:Labels', property: 'Labels', kind: 'list', expected: ['two'] },
+    { field: 'property:Text', property: 'Text', kind: 'text', expected: 'After' },
+    { field: 'start', property: 'start', kind: 'date', expected: '2026-10-03' },
+  ])(
+    'projects a direct dashboard $kind edit through navigation before metadata catches up',
+    async ({ field, property, kind, expected }) => {
+      const h = await openDashboard();
+      const gate = deferred<void>();
+      const apply = h.manager.applyEdits.bind(h.manager);
+      const writes = vi.spyOn(h.manager, 'applyEdits').mockImplementationOnce(async (changes) => {
+        await gate.promise;
+        return apply(changes);
+      });
+      try {
+        expect(h.el.querySelector('.abyss-projects-table-session')).toBeNull();
+        if (field.startsWith('property:')) h.properties();
+        const row = h.property(field);
+        if (kind === 'checkbox')
+          expectDefined(row.querySelector<HTMLInputElement>('input')).click();
+        else if (kind === 'list')
+          expectDefined(row.querySelector<HTMLButtonElement>('[aria-label="Remove one"]')).click();
+        else {
+          row.click();
+          const input = expectDefined(
+            h.el.querySelector<HTMLInputElement>('.abyss-project-editor-input'),
+          );
+          input.value = String(expected);
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        }
+        await flushMicrotasks();
+        expect(writes).toHaveBeenCalledOnce();
+        h.state.set('projectsPanel', { view: 'table' });
+        gate.resolve();
+        await flushMicrotasks();
+        expect(h.state.get('projectsPanel')).toEqual({ view: 'table' });
+        expect((await h.metadata())[property]).toEqual(expected);
+        h.state.set('projectsPanel', { view: 'dashboard', path: h.project.path });
+        if (field.startsWith('property:')) h.properties();
+        if (kind === 'checkbox')
+          expect(h.property(field).querySelector<HTMLInputElement>('input')?.checked).toBe(true);
+        else if (kind === 'list') {
+          expect(h.property(field).textContent).toContain('two');
+          expect(h.property(field).textContent).not.toContain('one');
+        } else if (kind === 'text') expect(h.property(field).textContent).toContain('After');
+        else {
+          h.property(field).click();
+          const input = expectDefined(
+            h.el.querySelector<HTMLInputElement>('.abyss-project-editor-input'),
+          );
+          expect(input.value).toBe(String(expected));
+          input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        }
+        h.observe(await h.metadata());
+        h.state.set('projectsPanel', { view: 'table' });
+        const table = expectDefined(h.el.querySelector<HTMLElement>('.abyss-project-table'));
+        table.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }),
+        );
+        await flushMicrotasks();
+        expect((await h.metadata())[property]).toEqual(h.project.frontmatter[property]);
+      } finally {
+        gate.resolve();
+        h.dispose();
+      }
+    },
+  );
+
+  function submitOverviewAction(
+    h: Awaited<ReturnType<typeof openDashboard>>,
+    action: 'paste' | 'multi-edit' | 'kanban' | 'timeline',
+  ): void {
+    if (action === 'paste') {
+      const cell = expectDefined(
+        h.el.querySelector<HTMLElement>(
+          '.abyss-project-table-cell[data-column-id="property:Budget"]',
+        ),
+      );
+      cell.click();
+      const paste = new Event('paste', { bubbles: true, cancelable: true });
+      Object.defineProperty(paste, 'clipboardData', {
+        value: {
+          types: ['text/plain'],
+          getData: (type: string) => (type === 'text/plain' ? '42' : ''),
+        },
+      });
+      cell.dispatchEvent(paste);
+    } else if (action === 'multi-edit') {
+      expectDefined(
+        h.el.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="start"]'),
+      ).click();
+      const end = expectDefined(
+        h.el.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="end"]'),
+      );
+      end.dispatchEvent(new MouseEvent('click', { shiftKey: true, bubbles: true }));
+      end.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
+    } else if (action === 'kanban') {
+      const card = expectDefined(h.el.querySelector<HTMLElement>('.abyss-project-kanban-card'));
+      const targetStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]);
+      const target = expectDefined(
+        h.el.querySelector<HTMLElement>(
+          `.abyss-project-kanban-column[data-status-key="id:${targetStatus.id}"]`,
+        ),
+      );
+      const values = new Map<string, string>();
+      const data = {
+        get types() {
+          return [...values.keys()];
+        },
+        setData: (key: string, value: string) => values.set(key, value),
+        getData: (key: string) => values.get(key) ?? '',
+        dropEffect: 'move',
+        effectAllowed: 'all',
+        setDragImage: () => {},
+      };
+      const drag = (type: string) => {
+        const event = new Event(type, { bubbles: true, cancelable: true });
+        Object.defineProperty(event, 'dataTransfer', { value: data });
+        return event;
+      };
+      card.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      card.dispatchEvent(drag('dragstart'));
+      target.dispatchEvent(drag('drop'));
+    }
+  }
+
+  it.each(['paste', 'multi-edit', 'kanban', 'timeline'] as const)(
+    'orders overview %s and dashboard writes through one shared session',
+    async (action) => {
+      const modes = {
+        paste: 'table',
+        'multi-edit': 'table',
+        kanban: 'kanban',
+        timeline: 'timeline',
+      } as const;
+      const h = await openDashboard(modes[action]);
+      const gate = deferred<void>();
+      const apply = h.manager.applyEdits.bind(h.manager);
+      const writes = vi.spyOn(h.manager, 'applyEdits').mockImplementationOnce(async (changes) => {
+        await gate.promise;
+        return apply(changes);
+      });
+      try {
+        if (action === 'timeline') {
+          h.state.set('projectsPanel', { view: 'table' });
+          await flushMicrotasks();
+          expectDefined(
+            h.el.querySelector<HTMLElement>('.abyss-project-timeline-bar'),
+          ).dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+          await flushMicrotasks();
+          h.state.set('projectsPanel', { view: 'dashboard', path: h.project.path });
+        }
+        h.properties();
+        expectDefined(h.property('property:Flag').querySelector<HTMLInputElement>('input')).click();
+        await flushMicrotasks();
+        if (action !== 'timeline') h.state.set('projectsPanel', { view: 'table' });
+        submitOverviewAction(h, action);
+        await flushMicrotasks();
+        expect(writes).toHaveBeenCalledOnce();
+        gate.resolve();
+        await flushMicrotasks();
+        expect(writes).toHaveBeenCalledTimes(2);
+        const metadata = await h.metadata();
+        expect(metadata['Flag']).toBe(true);
+        if (action === 'paste') expect(metadata['Budget']).toBe(42);
+        if (action === 'multi-edit') {
+          expect(metadata).not.toHaveProperty('start');
+          expect(metadata).not.toHaveProperty('end');
+          expect(writes.mock.calls[1]?.[0]).toHaveLength(2);
+        }
+        if (action === 'timeline') {
+          expect(metadata['start']).toBe('2026-10-03');
+          expect(metadata['end']).toBe('2026-10-05');
+        }
+        if (action === 'kanban')
+          expect(metadata['status']).toBe(DEFAULT_SETTINGS.projects.statuses[1]?.name);
+      } finally {
+        gate.resolve();
+        h.dispose();
+      }
+    },
+  );
+
+  it('allows an active manager write to finish without refreshing a retired or replacement panel', async () => {
+    const h = await openDashboard();
+    const gate = deferred<void>();
+    const apply = h.manager.applyEdits.bind(h.manager);
+    const writes = vi.spyOn(h.manager, 'applyEdits').mockImplementationOnce(async (changes) => {
+      await gate.promise;
+      return apply(changes);
+    });
+    try {
+      h.properties();
+      expectDefined(h.property('property:Flag').querySelector<HTMLInputElement>('input')).click();
+      await flushMicrotasks();
+      expect(writes).toHaveBeenCalledOnce();
+      h.panel.destroy();
+      h.panel.mount(h.el);
+      const replacement = h.el.innerHTML;
+      gate.resolve();
+      await flushMicrotasks();
+      expect((await h.metadata())['Flag']).toBe(true);
+      expect(h.el.innerHTML).toBe(replacement);
+      expect(h.store.refresh).not.toHaveBeenCalled();
+    } finally {
+      gate.resolve();
+      h.dispose();
+    }
+  });
 });

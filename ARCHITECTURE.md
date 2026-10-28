@@ -334,11 +334,18 @@ read-only. Removing a definition does not delete note metadata; derived statisti
 [`projectTableModel`](src/projects/projectTableModel.ts) supplies shared search, typed filtering,
 sorting, grouping, and counts. Pure models receive explicit time and data. The retained
 [`ProjectsTableView`](src/panels/projects/ProjectsTableView.ts) shares toolbar, field rendering,
-editors, mutation queues, history, and clipboard logic across Table, Kanban, and Timeline. Surfaces
-retain separate organization, selection, and viewport state. Logical cells drive keyboard movement,
+editors, action sequencing, render gates, and clipboard logic across Table, Kanban, and Timeline.
+Surfaces retain separate organization, selection, and viewport state. Logical cells drive keyboard movement,
 selection and reveal across windowed DOM. Clipboard content conveys values, not write authority.
 
-The overview orders actions; ProjectManager serializes metadata operations per App. Transactions
+[`ProjectsPanel`](src/panels/projects/ProjectsPanel.ts) owns one shared
+[`ProjectMutationSession`](src/projects/ProjectMutationSession.ts) for its mounted lifetime. The
+headless session serializes metadata mutations and owns source revisions and copied receipt
+projections. ProjectStore observations reach it directly, including while the table DOM is detached.
+The table adapts session changes to its existing editor, drag, and pending-render gates; the dashboard
+reads the same projections. Disposal clears transient projections and retires callbacks. An active
+write can finish, but queued writes reject before starting and cannot publish into a replacement
+panel. ProjectManager retains write authority and serializes metadata operations per App. Transactions
 recheck field/type binding, source key, property presence, and expected value. Queued status writes
 also retain the chosen definition's meaning. Batches return applied/failed receipts. Successful
 receipts project immediately until verified source observations acknowledge or supersede them;
@@ -357,7 +364,7 @@ larger physical buffer. Adapters retain their own source and write authority.
 
 Dashboard properties reuse [`projectTableCells`](src/panels/projects/projectTableCells.ts), presets,
 and `ProjectCellEditor`. `createFieldEditorSession` captures effective type and exact source state,
-then submits through the overview's queue, history, and receipts. This also owns inline checkbox and
+then submits through the shared mutation session and ProjectEditHistory. This also owns inline checkbox and
 list changes. The dashboard owns finite Markdown, popover, and editor resources and retains active
 anchors and focus on refresh. Its floating field editor belongs to the properties menu's focus
 scope; value changes keep both surfaces open. Configured empty properties stay available for editing.
