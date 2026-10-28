@@ -902,7 +902,7 @@ export function configuredTaskApplication(
       },
       (filePath, templatePath, title) => noteTemplates.ensureNote(filePath, templatePath, title),
     ),
-    options.capturePreview === true ? () => settings : undefined,
+    () => settings,
     undefined,
     options.diagnostics,
     options.capturePreview === true

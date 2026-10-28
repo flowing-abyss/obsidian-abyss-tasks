@@ -19,7 +19,7 @@ const options = {
   'regexp/no-super-linear-move': { report: 'certain' },
   'redos/no-vulnerable': { timeout: 10000, cache: false, ignoreErrors: false },
 };
-/** Manual flat registration: the published redos 4.5.0 preset is legacy-only. @type {import('eslint').Linter.Config[]} */
+/** Explicit flat rules keep analyzer options bound to the audit evidence. @type {import('eslint').Linter.Config[]} */
 export const auditConfig = [
   {
     files: ['**/*.ts', '**/*.js'],

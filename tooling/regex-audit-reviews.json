@@ -19,7 +19,7 @@
     },
     "analyzer": {
       "regexp": "3.3.1",
-      "redos": "4.5.0",
+      "redos": "4.6.2",
       "options": {
         "regexp/no-super-linear-backtracking": {
           "report": "certain"
@@ -70,7 +70,7 @@
     },
     "analyzer": {
       "regexp": "3.3.1",
-      "redos": "4.5.0",
+      "redos": "4.6.2",
       "options": {
         "regexp/no-super-linear-backtracking": {
           "report": "certain"
@@ -120,7 +120,7 @@
     },
     "analyzer": {
       "regexp": "3.3.1",
-      "redos": "4.5.0",
+      "redos": "4.6.2",
       "options": {
         "regexp/no-super-linear-backtracking": {
           "report": "certain"
@@ -169,7 +169,7 @@
     },
     "analyzer": {
       "regexp": "3.3.1",
-      "redos": "4.5.0",
+      "redos": "4.6.2",
       "options": {
         "regexp/no-super-linear-backtracking": {
           "report": "certain"
@@ -218,7 +218,7 @@
     },
     "analyzer": {
       "regexp": "3.3.1",
-      "redos": "4.5.0",
+      "redos": "4.6.2",
       "options": {
         "regexp/no-super-linear-backtracking": {
           "report": "certain"
@@ -267,7 +267,7 @@
     },
     "analyzer": {
       "regexp": "3.3.1",
-      "redos": "4.5.0",
+      "redos": "4.6.2",
       "options": {
         "regexp/no-super-linear-backtracking": {
           "report": "certain"
@@ -318,7 +318,7 @@
     },
     "analyzer": {
       "regexp": "3.3.1",
-      "redos": "4.5.0",
+      "redos": "4.6.2",
       "options": {
         "regexp/no-super-linear-backtracking": {
           "report": "certain"
@@ -369,7 +369,7 @@
     },
     "analyzer": {
       "regexp": "3.3.1",
-      "redos": "4.5.0",
+      "redos": "4.6.2",
       "options": {
         "regexp/no-super-linear-backtracking": {
           "report": "certain"

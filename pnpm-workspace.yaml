@@ -11,12 +11,6 @@ peerDependencyRules:
     'eslint-plugin-obsidianmd@0.4.2>obsidian': '1.14.4'
 allowedDeprecatedVersions:
   eslint: '9.39.5'
-# Mocks 7.2.2 and 7.2.3 throw on nested quote lists such as "- > 1. item"; keep 7.2.1 until fixed.
-# GHSA-4p3w-j4w9-5jqw: obsidian-test-mocks@7.2.1 still pins moment 2.29.4 exactly.
-# Obsidian@1.14.4 uses 2.31.0, including the lint plugin's resolved Obsidian peer.
-# The shipped plugin uses the host's Moment. Remove once compatible mocks admit 2.31.0 or later.
-overrides:
-  'moment@>=2.29.2 <2.31.0': '2.31.0'
 
 # GitHub withdrew this braces advisory on 2026-10-23 as not practically exploitable.
 # The npm audit feed still reports it; remove this existing exception when the feed catches up.

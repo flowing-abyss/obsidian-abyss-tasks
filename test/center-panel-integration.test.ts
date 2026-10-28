@@ -7118,7 +7118,8 @@ describe('CenterPanel actual centre focus continuity', () => {
   it.each([false, true])(
     'retires selection for a recurring successor even with identical source (%s)',
     async (identical) => {
-      const source = `- [ ] Repeat 🔁 every day 🏁 delete${identical ? ' ➕ 2026-10-02' : ' 📅 2026-10-02'}\n`;
+      // With lifecycle stamps disabled, an undated successor retains the exact source bytes.
+      const source = `- [ ] Repeat 🔁 every day 🏁 delete${identical ? '' : ' 📅 2026-10-02'}\n`;
       const h = await makePanel(
         { 'repeat.md': source },
         { ...DEFAULT_SETTINGS, taskLifecycle: { addCreatedDate: false, addCompletionDate: false } },
