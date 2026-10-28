@@ -185,8 +185,8 @@ Unload disposes Search before TaskIndex. The inward
 MiniSearch import boundary. The internal
 [`TaskSearchWorkerHandler`](src/tasks/infrastructure/search/TaskSearchWorkerHandler.ts) owns
 request decoding, first-init epoch selection, FIFO dispatch, and sanitized replies. The production
-Worker bootstrap and controlled test transport use this handler with the same runtime; the test
-transport controls cloning and delivery only. The bootstrap reports failed transport through a
+bootstrap and controlled tests share the Worker handler and runtime; the harness controls cloning,
+delivery, and selected backend completion timing. The bootstrap reports failed transport through a
 sanitized Worker error, including maintenance replies sent outside request processing. The existing
 parent error boundary owns recovery. The runtime lives for the Worker's lifetime.
 
@@ -292,12 +292,11 @@ authored values. Shared project axis, navigation, geometry, and pointer componen
 The task adapter captures canonical references and submits one guarded date patch through
 `TaskCommands`. Moving an open range preserves absent endpoints. CenterPanel retains queries,
 selection, hydration, and receipts; layout scroll anchors remain session state. Timeline owners
-retain the shared [`projectTimelineViewport`](src/projects/projectTimelineViewport.ts) geometry and
-logical center through refresh, resize, and window migration. Their existing frame owners rebase
-the bounded physical track, patch calendar layers, and compensate native horizontal scroll together;
-scrolling does not rebuild task cards or project models. Axis slices retain overlapping date cells.
-Explicit Timeline entry and the active scale button center Today; other scales preserve the fractional
-center. Pending initial focus waits for usable geometry and yields to later reveals or user scrolling.
+share [`projectTimelineViewport`](src/projects/projectTimelineViewport.ts) and preserve the logical
+center through refresh, resize, and window migration. Their frame owners rebase bounded physical
+tracks and compensate native horizontal scroll without rebuilding task cards or project models.
+Initial focus waits for usable geometry and yields to later reveals or user scrolling; explicit
+Timeline entry centers Today.
 
 The project dashboard embeds this same task shell. ProjectsPanel owns project details, while
 CenterPanel supplies the note-scoped task context. Preferences share `project:<path>` with Tasks'
@@ -372,11 +371,9 @@ list changes. The dashboard owns finite Markdown, popover, and editor resources 
 anchors and focus on refresh. Its floating field editor belongs to the properties menu's focus
 scope; value changes keep both surfaces open. Configured empty properties stay available for editing.
 
-`ProjectDashboardTimeline` overlays Start/End handles on the shared sticky date axis and extends
-their lines through the task date tracks. It adds no row or vertical space; the task viewport
-measures the calendar axis as its inset. The axis height provides separate endpoint hit targets.
-Its edits share overview endpoint guards, mutation ordering, receipt projection, and history through
-ProjectManager. Project range changes never derive task dates or add task metadata.
+`ProjectDashboardTimeline` reuses the task Timeline axis and shared interaction components. Its
+project endpoint edits use the shared mutation session, ProjectManager guards, receipt projection,
+and ProjectEditHistory. Project range changes never derive task dates or add task metadata.
 
 Creation shares NoteTemplateService and retains the owned path/failed phase for recovery. Status
 renames coordinate metadata and settings writes, compensating only owned values. Recovery across
@@ -433,11 +430,12 @@ references, while preserving unrelated state and authored note values. Static de
 before cleaned view state. Retryable failures retain the current draft and offer retry; these separate file
 writes are not a transaction. Unknown raw project statuses remain independent values.
 
-[`settingsSaveFailure`](src/settings/settingsSaveFailure.ts) owns transient current failure and Retry
-feedback per plugin session and settings action. Dismissal retires feedback before the host hides its
-Notice; stale hides and save completions cannot replace current feedback.
-Retry reads current runtime settings; successful saves remain silent. SettingsTab renders draft
-changes while visible, independently of save completion.
+[`settingsSaveFailure`](src/settings/settingsSaveFailure.ts) owns transient failure and Retry feedback.
+Calls sharing an explicit owner and action coordinate settings failure feedback; unscoped calls
+retain independent feedback. Retry invokes the retained latest save callback. Within that state,
+dismissal retires feedback before the host hides its Notice; stale hides and save completions cannot
+replace current feedback. Successful saves stay silent. SettingsTab renders draft changes while
+visible, independently of save completion.
 
 [`ViewStatePathOwner`](src/settings/ViewStatePathOwner.ts) forwards note rename/delete events to the
 persistence coordinator, which rebases both runtime preferences and their retained raw extensions;
@@ -478,8 +476,6 @@ tokens. Static checks cannot establish every capability flow, native lifetime, l
 [`verify-changes.mjs`](tooling/verify-changes.mjs); behavior, tooling, and uncertain history require
 full verification, including authored and freshly built artifact CSS. See [AGENTS.md](AGENTS.md)
 for workflow and native UI requirements, and [PERFORMANCE.md](PERFORMANCE.md) for performance work.
-UI changes require dev-vault interaction, screenshots, DOM evidence, and runtime-error checks at
-normal and constrained widths. Releases need an explicit request and the existing release workflow.
 
 Update this document when ownership, public boundaries, dependency direction, critical data flow,
 or persisted authority changes. Algorithms and local rendering details belong in source and tests;
