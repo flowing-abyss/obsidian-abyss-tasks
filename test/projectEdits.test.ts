@@ -443,9 +443,24 @@ describe('ProjectManager.applyEdits', () => {
       unavailable.applyEdits([{ path: 'A.md', field: budget, value: 30, expectedValue: 20 }]),
     ).resolves.toMatchObject({ failed: [] });
     await expect(unavailable.setProperty('A.md', budget, 40, 30)).resolves.toBeUndefined();
-    await expect(
-      unavailable.setStatus('A.md', settings.projects.statuses[2]?.id ?? ''),
-    ).resolves.toBeUndefined();
+    const targetStatus = expectDefined(settings.projects.statuses[2]);
+    await expect(unavailable.setStatus('A.md', targetStatus.id)).resolves.toEqual({
+      applied: [
+        {
+          path: 'A.md',
+          field: status,
+          sourceProperty: 'status',
+          sourceKey: 'status',
+          expectedValue: 'active',
+          previousValue: 'active',
+          previousExists: true,
+          value: 'wip',
+          appliedExists: true,
+        },
+      ],
+      failed: [],
+    });
+    expect(await frontmatter(app, 'A.md')).toEqual({ Budget: 40, status: 'wip' });
   });
 
   it('rejects a configured type changed before the fresh Vault process callback', async () => {
