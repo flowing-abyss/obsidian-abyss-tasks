@@ -177,6 +177,116 @@ describe('inspector planning focus continuity', () => {
     },
   );
 
+  const allDates = '- [ ] Current #work 🛫 2026-09-21 ⏳ 2026-09-22 📅 2026-09-23 ⏰ 10:30\n';
+  const dateCases = [
+    {
+      field: 'due',
+      selector: '.abyss-chips-row > button',
+      picked: '2026-09-24',
+      changed: '- [ ] Current #work 🛫 2026-09-21 ⏳ 2026-09-22 📅 2026-09-24 ⏰ 10:30\n',
+      cleared: '- [ ] Current #work 🛫 2026-09-21 ⏳ 2026-09-22 ⏰ 10:30\n',
+    },
+    {
+      field: 'start',
+      selector: '.abyss-chip-start',
+      picked: '2026-09-20',
+      changed: '- [ ] Current #work 🛫 2026-09-20 ⏳ 2026-09-22 📅 2026-09-23 ⏰ 10:30\n',
+      cleared: '- [ ] Current #work ⏳ 2026-09-22 📅 2026-09-23 ⏰ 10:30\n',
+    },
+    {
+      field: 'scheduled',
+      selector: '.abyss-chip-scheduled',
+      picked: '2026-09-24',
+      changed: '- [ ] Current #work 🛫 2026-09-21 ⏳ 2026-09-24 📅 2026-09-23 ⏰ 10:30\n',
+      cleared: '- [ ] Current #work 🛫 2026-09-21 📅 2026-09-23 ⏰ 10:30\n',
+    },
+  ] as const;
+
+  it.each(dateCases)(
+    'clears only $field through native Clear after selecting a date and reopening',
+    async ({ field, selector, picked, changed, cleared }) => {
+      const h = await hosted(allDates);
+      activate(control(h, selector));
+      await flushMicrotasks();
+      change(control<HTMLInputElement>(h, '.abyss-date-input'), picked);
+      await flushMicrotasks();
+      expect(await h.read()).toBe(changed);
+      expect(h.el.querySelector('.abyss-date-popover')).toBeNull();
+
+      activate(control(h, selector));
+      await flushMicrotasks();
+      const input = control<HTMLInputElement>(h, '.abyss-date-input');
+      expect(input.value).toBe(picked);
+      // Chromium's native Clear emits an empty change with badInput=false.
+      expect(input.validity.badInput).toBe(false);
+      change(input, '');
+      await flushMicrotasks();
+
+      expect(await h.read()).toBe(cleared);
+      expect(h.node('Current').node.planning[field]).toBeUndefined();
+      expect(h.el.querySelector('.abyss-date-popover')).toBeNull();
+      expect(activeDocument.activeElement).toBe(
+        field === 'due' ? dateChip(h) : control(h, '.abyss-chip-add-date'),
+      );
+    },
+  );
+
+  it.each(dateCases)(
+    'keeps an incomplete $field draft from clearing the saved date',
+    async ({ selector }) => {
+      const h = await hosted(allDates);
+      activate(control(h, selector));
+      await flushMicrotasks();
+      const input = control<HTMLInputElement>(h, '.abyss-date-input');
+      // Native inputs expose an incomplete segment as an empty value with badInput=true.
+      vi.spyOn(input, 'validity', 'get').mockReturnValue({ badInput: true } as ValidityState);
+      change(input, '');
+      key(input, 'Backspace');
+      key(input, 'Enter');
+      await flushMicrotasks();
+
+      expect(await h.read()).toBe(allDates);
+      expect(input.isConnected).toBe(true);
+      expect(activeDocument.activeElement).toBe(input);
+    },
+  );
+
+  it.each(dateCases)(
+    'clears $field on Enter after every date segment is deleted',
+    async ({ selector, cleared }) => {
+      const h = await hosted(allDates);
+      activate(control(h, selector));
+      await flushMicrotasks();
+      const input = control<HTMLInputElement>(h, '.abyss-date-input');
+      key(input, 'Backspace');
+      change(input, '');
+      await flushMicrotasks();
+      expect(await h.read()).toBe(allDates);
+
+      key(input, 'Enter');
+      await flushMicrotasks();
+      expect(await h.read()).toBe(cleared);
+      expect(h.el.querySelector('.abyss-date-popover')).toBeNull();
+    },
+  );
+
+  it('clears the scheduled fallback through native Clear in the Date calendar', async () => {
+    const h = await hosted('- [ ] Current #work 🛫 2026-09-21 ⏳ 2026-09-22 ⏰ 10:30\n');
+    activate(dateChip(h));
+    await flushMicrotasks();
+    const input = control<HTMLInputElement>(h, '.abyss-date-input');
+    expect(input.value).toBe('2026-09-22');
+
+    change(input, '');
+    await flushMicrotasks();
+
+    expect(await h.read()).toBe('- [ ] Current #work 🛫 2026-09-21 ⏰ 10:30\n');
+    expect(h.node('Current').node.planning.scheduled).toBeUndefined();
+    expect(h.el.querySelector('.abyss-date-popover')).toBeNull();
+    expect(dateChip(h).textContent).toBe('📅 Date');
+    expect(activeDocument.activeElement).toBe(dateChip(h));
+  });
+
   const childPlain = '- [ ] Current #parent\n  - [ ] Child #child\n  - [ ] Sibling #sibling\n';
   const childTagged = childPlain.replace('Child #child', 'Child #child #added');
   const childCompleted = childPlain.replace('- [ ] Child', '- [x] Child');

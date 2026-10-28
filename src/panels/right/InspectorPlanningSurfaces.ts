@@ -956,14 +956,18 @@ export class InspectorPlanningSurfaces {
       submitted: false,
     };
     this.#typedInput = entry;
+    const commitDate = (value: string): void => {
+      entry.submitted = true;
+      draft.cancel();
+      this.#commitDateChoice(currentTask, field, value);
+      this.#removeAnchoredSurface(pop);
+    };
     const draft = bindSegmentedInputCommit({
       input,
       boundary: pop,
       commit: () => {
-        if (!isUsableDateInputValue(input.value)) return;
-        entry.submitted = true;
-        runAsyncAction(this.#commands.updateDate(currentTask, field, localDate(input.value)));
-        this.#removeAnchoredSurface(pop);
+        if (input.validity.badInput) return;
+        if (input.value === '' || isUsableDateInputValue(input.value)) commitDate(input.value);
       },
     });
     const focusTimer = ownerWindow?.setTimeout(() => {
@@ -987,11 +991,7 @@ export class InspectorPlanningSurfaces {
     }, 0);
 
     this.#renderPopoverClear(inputRow, 'Clear date', () => {
-      entry.submitted = true;
-      draft.cancel();
-      if (field === 'due') runAsyncAction(this.#commands.clearDate(currentTask));
-      else runAsyncAction(this.#commands.clearPlanningDate(currentTask, field));
-      this.#removeAnchoredSurface(pop);
+      commitDate('');
     });
     this.positionAnchoredSurface(pop, anchor, 'below-start');
     this.#dismissMenuOnOutsideClick(pop, anchor, undefined, {
@@ -1008,6 +1008,12 @@ export class InspectorPlanningSurfaces {
         this.#releaseTypedInput(pop);
       },
     });
+  }
+
+  #commitDateChoice(task: TaskLike, field: SchedulingDateField, value: string): void {
+    if (value !== '') runAsyncAction(this.#commands.updateDate(task, field, localDate(value)));
+    else if (field === 'due') runAsyncAction(this.#commands.clearDate(task));
+    else runAsyncAction(this.#commands.clearPlanningDate(task, field));
   }
 
   #showPriorityPopover(anchor: HTMLElement, task: TaskLike): void {
