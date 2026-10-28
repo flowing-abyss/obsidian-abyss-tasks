@@ -11,6 +11,11 @@ import {
   removeConfiguredProjectProperty,
   renderProjectTableSettings,
 } from '../src/settings/projectTableSettings';
+import type * as ProjectPropertySuggestModule from '../src/ui/ProjectPropertySuggest';
+import type {
+  ProjectPropertySuggest,
+  ProjectPropertySuggestOptions,
+} from '../src/ui/ProjectPropertySuggest';
 import {
   cssDeclarationsFor,
   cssRuleParts,
@@ -21,6 +26,22 @@ import {
   loadPluginStyles,
   methodOf,
 } from './helpers';
+
+const suggestionOwners = vi.hoisted(() => [] as ProjectPropertySuggest[]);
+vi.mock('../src/ui/ProjectPropertySuggest', async () => {
+  const actual = await vi.importActual<typeof ProjectPropertySuggestModule>(
+    '../src/ui/ProjectPropertySuggest',
+  );
+  return {
+    ...actual,
+    ProjectPropertySuggest: class extends actual.ProjectPropertySuggest {
+      constructor(options: ProjectPropertySuggestOptions) {
+        super(options);
+        suggestionOwners.push(this);
+      }
+    },
+  };
+});
 
 vi.mock('obsidian', async () => {
   const actual = await vi.importActual<typeof ObsidianModule>('obsidian');
@@ -454,6 +475,39 @@ describe('renderProjectTableSettings', () => {
     );
     expect(saveViewState).toHaveBeenCalledTimes(2);
     expect(projects.table.collapsedGroups).toEqual(['hidden-group']);
+  });
+
+  it('refreshes retained property suggestions against the current status source', () => {
+    const projects = buildDefaultProjectsSettings();
+    const container = document.body.createDiv();
+    let sourceChanged: (() => void) | undefined;
+    const cleanup = renderProjectTableSettings({
+      app: new App(),
+      container,
+      projects,
+      catalog: catalog([
+        { name: 'status', type: 'text' },
+        { name: 'Workflow state', type: 'text' },
+      ]),
+      saveStatic: vi.fn().mockResolvedValue(undefined),
+      saveViewState: vi.fn().mockResolvedValue(undefined),
+      expandedCards: new Set(['project-property:status']),
+      renderStatusSettings: (_host, changed) => {
+        sourceChanged = changed;
+      },
+      refresh: vi.fn(),
+    });
+    const suggest = expectDefined(suggestionOwners[suggestionOwners.length - 1]);
+    expect(suggest.getSuggestions('').map(({ value }) => value)).toEqual(['Workflow state']);
+    const ownerCount = suggestionOwners.length;
+    projects.statusProperty = 'Workflow state';
+    expectDefined(sourceChanged)();
+    expect(suggest.getSuggestions('').map(({ value }) => value)).toEqual(['status']);
+    projects.statusProperty = 'status';
+    expectDefined(sourceChanged)();
+    expect(suggest.getSuggestions('').map(({ value }) => value)).toEqual(['Workflow state']);
+    expect(suggestionOwners).toHaveLength(ownerCount);
+    cleanup();
   });
 
   it('embeds status controls once inside the expanded Status property', () => {

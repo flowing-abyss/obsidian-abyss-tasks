@@ -1099,8 +1099,8 @@ export class CalendarSettingsTab extends PluginSettingTab {
         }
       },
       expandedCards: this.expandedCards_abyssPrivate,
-      renderStatusSettings: (host) => {
-        this.renderProjectStatusesSettings_abyssPrivate(host, false);
+      renderStatusSettings: (host, sourceChanged) => {
+        this.renderProjectStatusesSettings_abyssPrivate(host, false, sourceChanged);
       },
       refresh: (focusCardId) => {
         this.render_abyssPrivate(
@@ -1237,18 +1237,19 @@ export class CalendarSettingsTab extends PluginSettingTab {
   private renderProjectMetadataSource_abyssPrivate(
     containerEl: HTMLElement,
     source: ProjectMetadataSourceSetting,
+    sourceChanged?: () => void,
   ): void {
     const { description, key, name } = source;
     const projects = this.plugin_abyssPrivate.settings.projects;
-    const current = projects[key];
     const setting = new Setting(containerEl).setName(name).setDesc(description);
     setting.addText((text) => {
       const siblingKeys = (['statusProperty', 'startProperty', 'endProperty'] as const).filter(
         (candidate) => candidate !== key,
       );
-      const input = text.setValue(current).inputEl;
+      const input = text.setValue(projects[key]).inputEl;
       input.setAttribute('aria-label', name);
       const commit = (): void => {
+        const current = projects[key];
         const property = input.value.trim();
         if (property !== '' && this.sameProperty_abyssPrivate(property, current)) {
           input.value = current;
@@ -1263,12 +1264,13 @@ export class CalendarSettingsTab extends PluginSettingTab {
           )
         ) {
           new Notice(`${name} must use a different property from the other curated fields.`);
-          this.render_abyssPrivate();
+          input.value = current;
           return;
         }
         projects[key] = property;
+        input.value = property;
+        if (this.settingsVisible_abyssPrivate) sourceChanged?.();
         this.saveProjectDraft_abyssPrivate(`save ${name.toLowerCase()}`);
-        this.render_abyssPrivate();
       };
       this.settingsValueCommit_abyssPrivate?.register(input, commit);
     });
@@ -1281,15 +1283,20 @@ export class CalendarSettingsTab extends PluginSettingTab {
   private renderProjectStatusesSettings_abyssPrivate(
     containerEl: HTMLElement,
     includeHeading = true,
+    sourceChanged?: () => void,
   ): void {
     const projects = this.plugin_abyssPrivate.settings.projects;
     if (includeHeading) new Setting(containerEl).setName('Statuses').setHeading();
     this.renderStatusMigration_abyssPrivate(containerEl);
-    this.renderProjectMetadataSource_abyssPrivate(containerEl, {
-      name: 'Status property',
-      description: 'The single frontmatter property used for every project status.',
-      key: 'statusProperty',
-    });
+    this.renderProjectMetadataSource_abyssPrivate(
+      containerEl,
+      {
+        name: 'Status property',
+        description: 'The single frontmatter property used for every project status.',
+        key: 'statusProperty',
+      },
+      sourceChanged,
+    );
     const list = containerEl.createDiv({ cls: 'abyss-project-value-list' });
     for (const status of projects.statuses) {
       this.renderProjectStatusRow_abyssPrivate(list, status);

@@ -2892,6 +2892,241 @@ describe('CalendarSettingsTab card badges and project status metadata', () => {
     expect(projectStatusRowNamed(body, 'inbox')).toBeDefined();
   });
 
+  it('preserves status source focus when handing off to the add destination', async () => {
+    const pending = deferred<void>();
+    const { tab, plugin } = makeTab({}, { saveSettings: vi.fn(() => pending.promise) });
+    openSection(tab, 3);
+    attachSettingsScroller(tab, 513);
+    const input = expectDefined(findInput(tab.containerEl, 'Status property'));
+    const destination = expectDefined(
+      tab.containerEl.querySelector<HTMLButtonElement>('[aria-label="Add project status"]'),
+    );
+    input.focus();
+    input.value = 'Workflow state';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    destination.focus();
+    expect(document.activeElement).toBe(destination);
+    expect(destination.isConnected).toBe(true);
+    expect(findInput(tab.containerEl, 'Status property')).toBe(input);
+    expect(plugin.settings.projects.statusProperty).toBe('Workflow state');
+    expect(plugin.saveSettings).toHaveBeenCalledOnce();
+    pending.resolve();
+    await flushMicrotasks();
+  });
+
+  it('preserves the actionable status Show destination during a pointer handoff', async () => {
+    const pending = deferred<void>();
+    const { tab, plugin } = makeTab({}, { saveSettings: vi.fn(() => pending.promise) });
+    openSection(tab, 3);
+    attachSettingsScroller(tab, 513);
+    const input = expectDefined(findInput(tab.containerEl, 'Status property'));
+    const destination = expectDefined(
+      tab.containerEl.querySelector<HTMLInputElement>(
+        '[data-column-id="status"] .abyss-project-column-visible',
+      ),
+    );
+    const visible = destination.checked;
+    input.focus();
+    input.value = 'Workflow state';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    destination.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    destination.focus();
+    expect(destination.isConnected).toBe(true);
+    expect(document.activeElement).toBe(destination);
+    destination.dispatchEvent(new Event('pointerup', { bubbles: true }));
+    destination.click();
+    expect(plugin.settings.projects.table.columns.find(({ id }) => id === 'status')?.visible).toBe(
+      !visible,
+    );
+    expect(plugin.saveViewState).toHaveBeenCalledOnce();
+    expect(plugin.saveSettings).toHaveBeenCalledOnce();
+    expect(destination.isConnected).toBe(true);
+    pending.resolve();
+    await flushMicrotasks();
+  });
+
+  it('retains status source controls and derived displays across repeated pending commits', async () => {
+    const pending = deferred<void>();
+    const projects = structuredClone(DEFAULT_SETTINGS.projects);
+    addProjectPropertyColumn(projects, [], 'Workflow state');
+    const projectProperties: ProjectPropertyCatalog = {
+      list: () => [
+        { name: 'status', type: 'text' },
+        { name: 'Workflow state', type: 'text' },
+        { name: 'start', type: 'date' },
+        { name: 'end', type: 'date' },
+      ],
+      inspect: () => ({ kind: 'available', property: undefined, assignment: { kind: 'none' } }),
+      values: () => [],
+      onChange: () => () => {},
+    };
+    const { tab, plugin } = makeTab(
+      { projects },
+      {
+        projectProperties,
+        saveSettings: vi.fn(() => pending.promise),
+      },
+    );
+    openSection(tab, 3);
+    attachSettingsScroller(tab, 513);
+    const input = expectDefined(findInput(tab.containerEl, 'Status property'));
+    const destination = expectDefined(
+      tab.containerEl.querySelector<HTMLButtonElement>('[aria-label="Add project status"]'),
+    );
+    const show = expectDefined(
+      tab.containerEl.querySelector<HTMLInputElement>(
+        '[data-column-id="status"] .abyss-project-column-visible',
+      ),
+    );
+    const summary = expectDefined(
+      tab.containerEl.querySelector<HTMLElement>(
+        '[data-column-id="status"] .abyss-project-column-source > span',
+      ),
+    );
+    const start = expectDefined(findDropdown(tab.containerEl, 'Start property'));
+    const end = expectDefined(findDropdown(tab.containerEl, 'End property'));
+    const custom = expectDefined(
+      tab.containerEl.querySelector<HTMLElement>('[data-column-id="property:Workflow state"]'),
+    );
+    const customControls = [...custom.querySelectorAll('input, select, button')];
+    input.focus();
+    input.value = '  Workflow state  ';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    destination.focus();
+    expect(input.value).toBe('Workflow state');
+    expect(summary.textContent).toBe('Workflow state');
+    expect(show.getAttribute('aria-label')).toBe('Show Workflow state');
+    expect(Array.from(start.options, ({ value }) => value)).toEqual(['status', 'start']);
+    expect(Array.from(end.options, ({ value }) => value)).toEqual(['status', 'end']);
+    expect(start.value).toBe('start');
+    expect(end.value).toBe('end');
+    const reserved = expectDefined(
+      custom.querySelector<HTMLElement>('.abyss-project-property-inactive'),
+    );
+    expect(reserved.hidden).toBe(false);
+    expect(reserved.textContent).toBe(
+      'Used by Status. This custom column is inactive; its type and predefined values remain saved.',
+    );
+    expect(plugin.saveSettings).toHaveBeenCalledOnce();
+    input.focus();
+    input.value = 'status';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    destination.focus();
+    expect(plugin.settings.projects.statusProperty).toBe('status');
+    expect(plugin.saveSettings).toHaveBeenCalledTimes(2);
+    expect(summary.textContent).toBe('status');
+    expect(show.getAttribute('aria-label')).toBe('Show status');
+    expect(Array.from(start.options, ({ value }) => value)).toEqual(['Workflow state', 'start']);
+    expect(reserved.hidden).toBe(true);
+    expect([...custom.querySelectorAll('input, select, button')]).toEqual(customControls);
+    expect(findInput(tab.containerEl, 'Status property')).toBe(input);
+    expect(findDropdown(tab.containerEl, 'Start property')).toBe(start);
+    expect(findDropdown(tab.containerEl, 'End property')).toBe(end);
+    expect(show.isConnected).toBe(true);
+    expect(destination.isConnected).toBe(true);
+    expect(document.activeElement).toBe(destination);
+    pending.resolve();
+    await flushMicrotasks();
+    expect(document.activeElement).toBe(destination);
+    expect(Notice).not.toHaveBeenCalled();
+  });
+
+  it('retries the latest retained status source draft after a rejected save', async () => {
+    const first = deferred<Error>();
+    const firstSave = first.promise.then((error) => {
+      throw error;
+    });
+    const second = deferred<Error>();
+    const secondSave = second.promise.then((error) => {
+      throw error;
+    });
+    const failure = new Error('project disk unavailable');
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const saved: string[] = [];
+    const saveSettings = vi
+      .fn<() => Promise<void>>()
+      .mockImplementationOnce(() => firstSave)
+      .mockImplementationOnce(() => secondSave);
+    const { tab, plugin } = makeTab({}, { saveSettings });
+    saveSettings.mockImplementation(async () => {
+      saved.push(plugin.settings.projects.statusProperty);
+    });
+    openSection(tab, 3);
+    attachSettingsScroller(tab, 513);
+    const input = expectDefined(findInput(tab.containerEl, 'Status property'));
+    const destination = expectDefined(
+      tab.containerEl.querySelector<HTMLButtonElement>('[aria-label="Add project status"]'),
+    );
+    input.focus();
+    input.value = 'Workflow state';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    destination.focus();
+    first.resolve(failure);
+    await flushMicrotasks();
+    expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] Could not save status property', {
+      cause: failure,
+    });
+    expect(Notice).toHaveBeenCalledOnce();
+    const notice = (vi.mocked(Notice).mock.results[0]?.value as ConnectedNoticeFixture).messageEl;
+    expect(notice.textContent).toBe(
+      'Could not save status property: project disk unavailable. Changes are kept in this session. Retry',
+    );
+    const retry = expectDefined(notice.querySelector<HTMLButtonElement>('button'));
+    input.focus();
+    input.value = 'Latest workflow';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    retry.focus();
+    second.resolve(failure);
+    await flushMicrotasks();
+    retry.click();
+    await flushMicrotasks();
+    expect(saved).toEqual(['Latest workflow']);
+    expect(plugin.saveSettings).toHaveBeenCalledTimes(3);
+    expect(plugin.settings.projects.statusProperty).toBe('Latest workflow');
+    expect(findInput(tab.containerEl, 'Status property')).toBe(input);
+    expect(Notice).toHaveBeenCalledOnce();
+  });
+
+  it.each(['resolve', 'reject'] as const)(
+    'settles a hidden status source save without a late render or write: %s',
+    async (outcome) => {
+      const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      const gate = deferred<Error | undefined>();
+      const pending = gate.promise.then((error) => {
+        if (error !== undefined) throw error;
+      });
+      const { tab, plugin } = makeTab({}, { saveSettings: vi.fn(() => pending) });
+      openSection(tab, 3);
+      attachSettingsScroller(tab, 513);
+      const input = expectDefined(findInput(tab.containerEl, 'Status property'));
+      input.focus();
+      input.value = 'Workflow state';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      tab.hide();
+      const hiddenContents = [...tab.containerEl.childNodes];
+      const focus = document.body.createEl('button');
+      focus.focus();
+      const failure = new Error('late status failure');
+      gate.resolve(outcome === 'reject' ? failure : undefined);
+      await flushMicrotasks();
+      expect([...tab.containerEl.childNodes]).toEqual(hiddenContents);
+      expect(document.activeElement).toBe(focus);
+      (tab as unknown as { display(): void }).display();
+      await flushMicrotasks();
+      expect(plugin.saveSettings).toHaveBeenCalledOnce();
+      expect(plugin.settings.projects.statusProperty).toBe('Workflow state');
+      expect(findInput(tab.containerEl, 'Status property')?.value).toBe('Workflow state');
+      if (outcome === 'reject')
+        expect(log).toHaveBeenCalledExactlyOnceWith(
+          '[abyss-tasks] Could not save status property',
+          { cause: failure },
+        );
+      else expect(log).not.toHaveBeenCalled();
+      focus.remove();
+    },
+  );
+
   it('commits a status rename on blur rather than on each input event', async () => {
     const { tab, plugin } = makeTab();
     const body = openSection(tab, 3);
@@ -3018,7 +3253,8 @@ describe('CalendarSettingsTab card badges and project status metadata', () => {
 
     expect(plugin.settings.projects.statusProperty).toBe('status');
     expect(plugin.saveSettings).not.toHaveBeenCalled();
-    expect(findInput(tab.containerEl, 'Status property')?.value).toBe('status');
+    expect(findInput(tab.containerEl, 'Status property')).toBe(input);
+    expect(input.value).toBe('status');
     expect(Notice).toHaveBeenCalledOnce();
   });
 

@@ -33,7 +33,7 @@ export interface RenderProjectTableSettingsOptions {
   readonly catalog: ProjectPropertyCatalog;
   readonly saveStatic: () => Promise<void>;
   readonly saveViewState: () => Promise<void>;
-  readonly renderStatusSettings?: (container: HTMLElement) => void;
+  readonly renderStatusSettings?: (container: HTMLElement, sourceChanged: () => void) => void;
   readonly expandedCards?: Set<string>;
   readonly refresh: (focusCardId?: string) => void;
   readonly valueCommit?: SettingsValueCommitRegistrar;
@@ -253,6 +253,8 @@ interface ColumnRowContext {
   readonly options: RenderProjectTableSettingsOptions;
   readonly persist: ProjectTablePersist;
   readonly persistStatic: ProjectTablePersist;
+  readonly sourceRefreshes: Array<() => void>;
+  readonly sourceChanged: () => void;
 }
 
 interface ColumnRenderContext extends ColumnRowContext {
@@ -303,7 +305,7 @@ function saveSchemaThenRefresh(
 function renderColumnSummary(summary: HTMLElement, context: ColumnRenderContext): void {
   const { column, options, persist, source, display, cardId, expanded } = context;
   const sourceElement = summary.createDiv({ cls: 'abyss-project-column-source' });
-  sourceElement.createSpan({ text: source });
+  const sourceLabel = sourceElement.createSpan({ text: source });
   if (column.id === 'progress' || column.id === 'tracked') {
     sourceElement.createSpan({
       cls: 'abyss-project-column-source-badge abyss-project-column-auto',
@@ -331,6 +333,11 @@ function renderColumnSummary(summary: HTMLElement, context: ColumnRenderContext)
   const visible = summary.createEl('input', {
     cls: 'abyss-project-column-visible',
     attr: { type: 'checkbox', 'aria-label': `Show ${source}` },
+  });
+  context.sourceRefreshes.push(() => {
+    const currentSource = projectColumnSourceLabel(options.projects, column);
+    sourceLabel.textContent = currentSource;
+    visible.setAttribute('aria-label', `Show ${currentSource}`);
   });
   visible.checked = column.visible;
   visible.disabled = column.id === 'name';
@@ -391,10 +398,10 @@ function setDefinitionType(
 }
 
 function renderCuratedColumnSettings(body: HTMLElement, context: ColumnRenderContext): void {
-  const { column, options, persistStatic } = context;
-  if (column.id === 'start') renderCuratedDateSource(body, 'startProperty', options, persistStatic);
-  if (column.id === 'end') renderCuratedDateSource(body, 'endProperty', options, persistStatic);
-  if (column.id === 'status') options.renderStatusSettings?.(body);
+  const { column, options } = context;
+  if (column.id === 'start') renderCuratedDateSource(body, 'startProperty', context);
+  if (column.id === 'end') renderCuratedDateSource(body, 'endProperty', context);
+  if (column.id === 'status') options.renderStatusSettings?.(body, context.sourceChanged);
 }
 
 function renderColumnBody(body: HTMLElement, context: ColumnRenderContext): void {
@@ -402,11 +409,16 @@ function renderColumnBody(body: HTMLElement, context: ColumnRenderContext): void
   body.addClass('abyss-project-property-details');
   const entry = definitionEntry(options.projects, column.id);
   const native = sourceProperty(column);
-  if (native !== undefined && isReservedProjectProperty(options.projects, native)) {
-    body.createDiv({
-      cls: 'abyss-project-property-inactive',
-      text: `Used by ${reservedOwner(options.projects, native)}. This custom column is inactive; its type and predefined values remain saved.`,
-    });
+  if (native !== undefined) {
+    const reservation = body.createDiv({ cls: 'abyss-project-property-inactive' });
+    const refreshReservation = (): void => {
+      reservation.hidden = !isReservedProjectProperty(options.projects, native);
+      reservation.textContent = reservation.hidden
+        ? ''
+        : `Used by ${reservedOwner(options.projects, native)}. This custom column is inactive; its type and predefined values remain saved.`;
+    };
+    refreshReservation();
+    context.sourceRefreshes.push(refreshReservation);
   }
   renderProjectPropertyOptions({
     container: body,
@@ -491,11 +503,10 @@ function renderColumnRow(base: ColumnRowContext): void {
 function renderCuratedDateSource(
   section: HTMLElement,
   key: 'startProperty' | 'endProperty',
-  options: RenderProjectTableSettingsOptions,
-  persistStatic: (refresh?: boolean) => void,
+  context: ColumnRenderContext,
 ): void {
+  const { options, persistStatic, sourceRefreshes } = context;
   const name = key === 'startProperty' ? 'Start property' : 'End property';
-  const current = options.projects[key];
   new Setting(section)
     .setName(name)
     .setDesc(
@@ -505,28 +516,39 @@ function renderCuratedDateSource(
       const siblingKeys = (['statusProperty', 'startProperty', 'endProperty'] as const).filter(
         (candidate) => candidate !== key,
       );
-      const properties =
-        options.catalog
-          .list()
-          ?.filter(
-            ({ name: property }) =>
-              !sameProjectPropertyName(property, 'tags') &&
-              !sameProjectPropertyName(property, 'description') &&
-              !siblingKeys.some((candidate) =>
-                sameProjectPropertyName(options.projects[candidate], property),
-              ),
-          )
-          .map(({ name: property }) => property) ?? [];
-      const matching = properties.find((property) => sameProjectPropertyName(property, current));
-      const selected = matching ?? current;
-      if (matching === undefined) {
-        dropdown.addOption(current, `${current} (current)`);
-      }
-      for (const property of properties) {
-        const suspended = definitionEntry(options.projects, `property:${property}`) !== undefined;
-        dropdown.addOption(property, suspended ? `${property} (suspends custom column)` : property);
-      }
-      dropdown.setValue(selected).onChange((property) => {
+      let selected: string;
+      const refreshOptions = (): void => {
+        dropdown.selectEl.empty();
+        const current = options.projects[key];
+        const properties =
+          options.catalog
+            .list()
+            ?.filter(
+              ({ name: property }) =>
+                !sameProjectPropertyName(property, 'tags') &&
+                !sameProjectPropertyName(property, 'description') &&
+                !siblingKeys.some((candidate) =>
+                  sameProjectPropertyName(options.projects[candidate], property),
+                ),
+            )
+            .map(({ name: property }) => property) ?? [];
+        const matching = properties.find((property) => sameProjectPropertyName(property, current));
+        selected = matching ?? current;
+        if (matching === undefined) {
+          dropdown.addOption(current, `${current} (current)`);
+        }
+        for (const property of properties) {
+          const suspended = definitionEntry(options.projects, `property:${property}`) !== undefined;
+          dropdown.addOption(
+            property,
+            suspended ? `${property} (suspends custom column)` : property,
+          );
+        }
+        dropdown.setValue(selected);
+      };
+      refreshOptions();
+      sourceRefreshes.push(refreshOptions);
+      dropdown.onChange((property) => {
         if (
           sameProjectPropertyName(property, 'description') ||
           siblingKeys.some((candidate) =>
@@ -601,9 +623,8 @@ function renderAddPropertyControl(context: AddPropertyContext): () => void {
   const suggest = new ProjectPropertySuggest({
     app: options.app,
     input,
-    values: available
-      .filter(({ name }) => !isReservedProjectProperty(options.projects, name))
-      .map(({ name }) => name),
+    values: available.map(({ name }) => name),
+    exclude: (value) => isReservedProjectProperty(options.projects, String(value)),
     onPick: (property) => {
       if (typeof property !== 'string') return;
       input.value = property;
@@ -670,6 +691,10 @@ function projectPropertyRows(projects: ProjectsSettings): ProjectColumn[] {
 
 /** Renders the shared project-column preference editor and returns its suggestion cleanup. */
 export function renderProjectTableSettings(options: RenderProjectTableSettingsOptions): () => void {
+  const sourceRefreshes: Array<() => void> = [];
+  const sourceChanged = (): void => {
+    for (const refresh of sourceRefreshes) refresh();
+  };
   const section = options.container.createDiv({ cls: 'abyss-project-table-settings' });
   section.createEl('h4', { text: 'Project properties' });
   const feedback = section.createDiv({
@@ -725,6 +750,8 @@ export function renderProjectTableSettings(options: RenderProjectTableSettingsOp
       options,
       persist: persistViewState,
       persistStatic,
+      sourceRefreshes,
+      sourceChanged,
     });
   });
 
