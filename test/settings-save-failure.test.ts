@@ -8,37 +8,12 @@ import {
 } from '../src/settings/settingsSaveFailure';
 import { deferred, expectDefined, flushMicrotasks } from './helpers';
 
-interface ConnectedNoticeFixture {
-  readonly containerEl: HTMLElement;
-  readonly messageEl: HTMLElement;
-  hide(): void;
-  deferDetach: boolean;
-}
+import type { ConnectedNoticeFixture } from './support/connectedNoticeFixture';
 
 vi.mock('obsidian', async () => {
   const actual = await vi.importActual<typeof ObsidianModule>('obsidian');
-  return {
-    ...actual,
-    Notice: vi.fn(
-      class {
-        readonly containerEl = document.body.createDiv({ cls: 'settings-test-notice' });
-        readonly messageEl = this.containerEl.createDiv();
-        deferDetach = false;
-
-        constructor(message: string | DocumentFragment) {
-          if (typeof message === 'string') this.messageEl.setText(message);
-          else this.messageEl.append(message);
-          this.containerEl.addEventListener('click', () => {
-            this.hide();
-          });
-        }
-
-        hide(): void {
-          if (!this.deferDetach) this.containerEl.remove();
-        }
-      },
-    ),
-  };
+  const { ConnectedNoticeFixture } = await import('./support/connectedNoticeFixture');
+  return { ...actual, Notice: vi.fn(ConnectedNoticeFixture) };
 });
 
 const LOG_MESSAGE = '[abyss-tasks] Could not save project table settings';
