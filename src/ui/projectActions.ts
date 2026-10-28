@@ -1,5 +1,4 @@
 import { Notice, TFile, type App } from 'obsidian';
-import type { ProjectManager } from '../projects/ProjectManager';
 import { withFailureCause } from '../projects/projectCreation';
 import { isProjectEditValidationError } from '../projects/projectEditError';
 
@@ -12,7 +11,7 @@ export function projectStatusFailureNotice(error: unknown): string {
 
 /** Sets a status from a menu without inline feedback; a failure raises one Notice. */
 export async function changeProjectStatus(
-  manager: Pick<ProjectManager, 'setStatus'>,
+  manager: { setStatus(path: string, statusId: string): Promise<unknown> },
   change: { readonly path: string; readonly statusId: string },
   onChanged: () => void,
 ): Promise<void> {

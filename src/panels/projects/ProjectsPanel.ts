@@ -272,6 +272,45 @@ export class ProjectsPanel {
     return this.projectManager_abyssPrivate.applyEdits(changes);
   }
 
+  private changeProjectStatus_abyssPrivate(projectPath: string, statusId: string): void {
+    const owner = this.mutationSession_abyssPrivate;
+    if (owner === null) return;
+    const name = this.settings_abyssPrivate.projects.statuses.find(
+      ({ id }) => id === statusId,
+    )?.name;
+    let started = false;
+    const action = owner.run(async () => {
+      started = true;
+      await changeProjectStatus(
+        {
+          setStatus: async (path, id) => {
+            const result = await this.projectManager_abyssPrivate.setStatus(path, id, undefined, {
+              name,
+            });
+            if (this.mutationSession_abyssPrivate === owner) owner.publish(result.applied);
+            return result;
+          },
+        },
+        { path: projectPath, statusId },
+        () => {
+          if (this.mutationSession_abyssPrivate === owner) this.projectStore_abyssPrivate.refresh();
+        },
+      );
+    });
+    runAsyncAction(
+      action.catch((error: unknown) => {
+        if (
+          !started &&
+          this.mutationSession_abyssPrivate !== owner &&
+          error instanceof ProjectEditValidationError
+        )
+          return;
+        throw error;
+      }),
+      'Could not update project status',
+    );
+  }
+
   private openNote_abyssPrivate(path: string, newTab = false): void {
     runAsyncAction(
       openProjectNote(this.app_abyssPrivate, path, newTab),
@@ -358,16 +397,7 @@ export class ProjectsPanel {
       state: this.state_abyssPrivate,
       settings: this.settings_abyssPrivate,
       onSetStatus: (projectPath, statusId) => {
-        runAsyncAction(
-          changeProjectStatus(
-            this.projectManager_abyssPrivate,
-            { path: projectPath, statusId },
-            () => {
-              this.projectStore_abyssPrivate.refresh();
-            },
-          ),
-          'Could not update project status',
-        );
+        this.changeProjectStatus_abyssPrivate(projectPath, statusId);
       },
       openNote: (projectPath) => {
         this.openNote_abyssPrivate(projectPath, true);

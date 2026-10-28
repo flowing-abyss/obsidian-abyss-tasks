@@ -103,6 +103,87 @@ describe('ProjectManager.setStatus', () => {
     await expect(write).rejects.toThrow(/status.*changed/iu);
     expect((await readFm(app, 'P.md'))['status']).toBe('active');
   });
+  it('rejects a target definition changed before a captured status reaches the manager', async () => {
+    const app = await createAppWithFiles({ 'P.md': '---\nstatus: active\n---\n' });
+    const settings = clone();
+    const status = expectDefined(settings.projects.statuses[1]);
+    const name = status.name;
+    status.name = 'Replacement';
+    const manager = new ProjectManager(app, settings, {} as never, {} as never);
+    await expect(manager.setStatus('P.md', status.id, undefined, { name })).rejects.toThrow(
+      'Project status changed in settings. Choose it again.',
+    );
+    expect((await readFm(app, 'P.md'))['status']).toBe('active');
+  });
+
+  it('does not bind an explicitly captured missing target to a newly created definition', async () => {
+    const app = await createAppWithFiles({ 'P.md': '---\nstatus: active\n---\n' });
+    const settings = clone();
+    const status = expectDefined(settings.projects.statuses.splice(1, 1)[0]);
+    const capturedTarget = {
+      name: settings.projects.statuses.find(({ id }) => id === status.id)?.name,
+    };
+    settings.projects.statuses.push({ ...status });
+    const manager = new ProjectManager(app, settings, {} as never, {} as never);
+    await expect(manager.setStatus('P.md', status.id, undefined, capturedTarget)).rejects.toThrow(
+      'Project status changed in settings. Choose it again.',
+    );
+    expect((await readFm(app, 'P.md'))['status']).toBe('active');
+  });
+
+  it.each([
+    {
+      source: 'Status: active\nother: keep',
+      sourceKey: 'Status',
+      previousValue: 'active',
+      previousExists: true,
+      expectedMarkdown: '---\nStatus: todo\nother: keep\n---\n\nProject body\n',
+    },
+    {
+      source: 'other: keep',
+      sourceKey: 'status',
+      previousValue: undefined,
+      previousExists: false,
+      expectedMarkdown: '---\nother: keep\nstatus: todo\n---\n\nProject body\n',
+    },
+  ])(
+    'returns the actual status receipt for $sourceKey (present: $previousExists)',
+    async ({ source, sourceKey, previousValue, previousExists, expectedMarkdown }) => {
+      const app = await createAppWithFiles({ 'P.md': `---\n${source}\n---\n\nProject body\n` });
+      const settings = clone();
+      const status = expectDefined(settings.projects.statuses[1]);
+      const manager = new ProjectManager(app, settings, {} as never, {} as never);
+      const result = await manager.setStatus('P.md', status.id);
+      expect(result).toMatchObject({
+        applied: [
+          {
+            path: 'P.md',
+            sourceProperty: 'status',
+            sourceKey,
+            previousValue,
+            previousExists,
+            value: 'todo',
+            appliedExists: true,
+          },
+        ],
+        failed: [],
+      });
+      const file = expectDefined(app.vault.getFileByPath('P.md'));
+      expect(await app.vault.read(file)).toBe(expectedMarkdown);
+    },
+  );
+
+  it('preserves the exact process error from a status write', async () => {
+    const app = await createAppWithFiles({ 'P.md': '---\nstatus: active\n---\n' });
+    const settings = clone();
+    const manager = new ProjectManager(app, settings, {} as never, {} as never);
+    const failure = new Error('disk full');
+    vi.spyOn(app.vault, 'process').mockRejectedValueOnce(failure);
+    await expect(
+      manager.setStatus('P.md', expectDefined(settings.projects.statuses[1]).id),
+    ).rejects.toBe(failure);
+  });
+
   it('rejects missing project files and unknown statuses', async () => {
     const app = await createAppWithFiles({ 'P.md': '# Project\n' });
     const pm = new ProjectManager(app, clone(), {} as never, {} as never);

@@ -851,9 +851,13 @@ export class ProjectManager {
     path: string,
     statusId: string,
     expectedStatus?: ExpectedProjectStatus,
-  ): Promise<void> {
-    const targetName = this.settings.projects.statuses.find(({ id }) => id === statusId)?.name;
-    await coordinateMetadataOperation(this.app, () =>
+    capturedTarget?: { readonly name: string | undefined },
+  ): Promise<ProjectEditResult> {
+    const targetName =
+      capturedTarget === undefined
+        ? this.settings.projects.statuses.find(({ id }) => id === statusId)?.name
+        : capturedTarget.name;
+    return coordinateMetadataOperation(this.app, () =>
       this.setStatusGuarded(path, statusId, targetName, expectedStatus),
     );
   }
@@ -863,7 +867,7 @@ export class ProjectManager {
     statusId: string,
     targetName: string | undefined,
     expectedStatus?: ExpectedProjectStatus,
-  ): Promise<void> {
+  ): Promise<ProjectEditResult> {
     const statuses = this.settings.projects.statuses;
     const target = statuses.find((s) => s.id === statusId);
     if (target == null) {
@@ -895,7 +899,7 @@ export class ProjectManager {
       expectedValue = uniqueFrontmatterProperty(parsed.frontmatter, property)?.value;
       checkExpected = true;
     }
-    await this.applyEditsGuarded(
+    return this.applyEditsGuarded(
       [{ path, field, value: target.name, expectedValue }],
       checkExpected,
       false,

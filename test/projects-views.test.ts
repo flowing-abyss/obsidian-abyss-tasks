@@ -949,11 +949,16 @@ describe('ProjectsPanel dispatch', () => {
   it('refreshes the project store once after a dashboard status change', async () => {
     const log = vi.spyOn(console, 'error');
     const notices = spyOnNotices();
-    const setStatus = vi.fn().mockResolvedValue(undefined);
+    const setStatus = vi.fn().mockResolvedValue({ applied: [], failed: [] });
 
     const refresh = await chooseDashboardStatus(setStatus);
 
-    expect(setStatus).toHaveBeenCalledExactlyOnceWith('Projects/A.md', SECOND_STATUS_ID);
+    expect(setStatus).toHaveBeenCalledExactlyOnceWith(
+      'Projects/A.md',
+      SECOND_STATUS_ID,
+      undefined,
+      { name: 'todo' },
+    );
     expect(refresh).toHaveBeenCalledOnce();
     expect(notices).not.toHaveBeenCalled();
     expect(log).not.toHaveBeenCalled();
@@ -1097,6 +1102,7 @@ describe('shared project mutation session', () => {
       el,
       state,
       manager,
+      settings,
       store,
       project,
       app,
@@ -1116,6 +1122,358 @@ describe('shared project mutation session', () => {
       },
     };
   }
+
+  type DashboardHarness = Awaited<ReturnType<typeof openDashboard>>;
+
+  function chooseHeaderStatus(h: DashboardHarness, index = 1): void {
+    const show = vi.spyOn(Menu.prototype, 'showAtMouseEvent');
+    expectDefined(h.el.querySelector<HTMLButtonElement>('.abyss-status-pill')).click();
+    const menu = expectDefined(show.mock.instances[show.mock.instances.length - 1]) as {
+      menuItems__: Array<{ onClick__: ((event: MouseEvent) => void) | null }>;
+    };
+    expectDefined(expectDefined(menu.menuItems__[index]).onClick__)(new MouseEvent('click'));
+  }
+
+  function toggleDashboardFlag(h: DashboardHarness): void {
+    h.properties();
+    expectDefined(h.property('property:Flag').querySelector<HTMLInputElement>('input')).click();
+  }
+
+  function holdFirstProcess(h: DashboardHarness) {
+    const gate = deferred<void>();
+    const process = h.app.vault.process.bind(h.app.vault);
+    const written: Array<Record<string, unknown>> = [];
+    let first = true;
+    vi.spyOn(h.app.vault, 'process').mockImplementation(async (file, change) => {
+      if (first) {
+        first = false;
+        await gate.promise;
+      }
+      return process(file, (content) => {
+        const next = change(content);
+        written.push(parseYaml(next.split('---')[1] ?? '') as Record<string, unknown>);
+        return next;
+      });
+    });
+    return { gate, written };
+  }
+
+  it('orders two dashboard fields before the accepted header status through the real manager', async () => {
+    const h = await openDashboard();
+    const { gate, written } = holdFirstProcess(h);
+    try {
+      toggleDashboardFlag(h);
+      await flushMicrotasks();
+      expectDefined(
+        h.property('property:Labels').querySelector<HTMLButtonElement>('[aria-label="Remove one"]'),
+      ).click();
+      await flushMicrotasks();
+      chooseHeaderStatus(h);
+      await flushMicrotasks();
+      gate.resolve();
+      await flushMicrotasks();
+      expect(written.map(({ Flag, Labels, status }) => ({ Flag, Labels, status }))).toEqual([
+        { Flag: true, Labels: ['one', 'two'], status: 'inbox' },
+        { Flag: true, Labels: ['two'], status: 'inbox' },
+        { Flag: true, Labels: ['two'], status: 'todo' },
+      ]);
+    } finally {
+      gate.resolve();
+      h.dispose();
+    }
+  });
+
+  it('retires a queued header status without writing or notifying a replacement panel', async () => {
+    const h = await openDashboard();
+    const { gate, written } = holdFirstProcess(h);
+    const notices = spyOnNotices();
+    const log = vi.spyOn(console, 'error');
+    try {
+      toggleDashboardFlag(h);
+      await flushMicrotasks();
+      chooseHeaderStatus(h);
+      await flushMicrotasks();
+      h.panel.destroy();
+      h.panel.mount(h.el);
+      const replacement = h.el.innerHTML;
+      gate.resolve();
+      await flushMicrotasks();
+      expect(written).toHaveLength(1);
+      expect(await h.metadata()).toMatchObject({ Flag: true, status: 'inbox' });
+      expect(h.el.innerHTML).toBe(replacement);
+      expect(h.store.refresh).not.toHaveBeenCalled();
+      expect(notices).not.toHaveBeenCalled();
+      expect(log).not.toHaveBeenCalled();
+    } finally {
+      gate.resolve();
+      h.dispose();
+    }
+  });
+
+  it.each(['session', 'manager'] as const)(
+    'keeps a selected header definition across the %s queue',
+    async (queue) => {
+      const h = await openDashboard();
+      const { gate } = holdFirstProcess(h);
+      try {
+        const blocking =
+          queue === 'manager'
+            ? h.manager.setProperty(
+                h.project.path,
+                { id: 'property:Flag', property: 'Flag', label: 'Flag', type: 'checkbox' },
+                true,
+                false,
+              )
+            : undefined;
+        if (queue === 'session') toggleDashboardFlag(h);
+        await flushMicrotasks();
+        chooseHeaderStatus(h);
+        await flushMicrotasks();
+        const target = expectDefined(h.settings.projects.statuses[1]);
+        target.name = 'Replacement';
+        const notices = spyOnNotices();
+        gate.resolve();
+        await blocking;
+        await flushMicrotasks();
+        expect((await h.metadata())['status']).toBe('inbox');
+        expect(notices).toHaveBeenCalledExactlyOnceWith(
+          'Project status changed in settings. Choose it again.',
+          undefined,
+        );
+      } finally {
+        gate.resolve();
+        h.dispose();
+      }
+    },
+  );
+
+  it.each([
+    ['session', 'deleted'],
+    ['session', 'reused'],
+    ['session', 'same'],
+    ['manager', 'deleted'],
+    ['manager', 'reused'],
+    ['manager', 'same'],
+  ] as const)('validates a %s-queued header definition when %s', async (queue, transition) => {
+    const h = await openDashboard();
+    const { gate, written } = holdFirstProcess(h);
+    const notices = spyOnNotices();
+    const log = vi.spyOn(console, 'error');
+    try {
+      const blocking =
+        queue === 'manager'
+          ? h.manager.setProperty(
+              h.project.path,
+              { id: 'property:Flag', property: 'Flag', label: 'Flag', type: 'checkbox' },
+              true,
+              false,
+            )
+          : undefined;
+      if (queue === 'session') toggleDashboardFlag(h);
+      await flushMicrotasks();
+      chooseHeaderStatus(h);
+      await flushMicrotasks();
+      const target = expectDefined(h.settings.projects.statuses[1]);
+      h.settings.projects.statuses.splice(1, 1);
+      if (transition !== 'deleted')
+        h.settings.projects.statuses.push({
+          ...target,
+          name: transition === 'same' ? target.name : 'Replacement',
+        });
+      gate.resolve();
+      await blocking;
+      await flushMicrotasks();
+      expect((await h.metadata())['status']).toBe(transition === 'same' ? 'todo' : 'inbox');
+      expect(written).toHaveLength(transition === 'same' ? 2 : 1);
+      if (transition === 'same') expect(notices).not.toHaveBeenCalled();
+      else
+        expect(notices).toHaveBeenCalledExactlyOnceWith(
+          transition === 'deleted'
+            ? `Unknown project status: ${target.id}`
+            : 'Project status changed in settings. Choose it again.',
+          undefined,
+        );
+      expect(log).not.toHaveBeenCalled();
+    } finally {
+      gate.resolve();
+      h.dispose();
+    }
+  });
+
+  it.each(['dashboard', 'overview'] as const)(
+    'projects a header receipt in %s before source observation',
+    async (destination) => {
+      const h = await openDashboard();
+      const { gate } = holdFirstProcess(h);
+      try {
+        chooseHeaderStatus(h);
+        await flushMicrotasks();
+        if (destination === 'overview') h.state.set('projectsPanel', { view: 'table' });
+        gate.resolve();
+        await flushMicrotasks();
+        expect(h.state.get('projectsPanel')).toEqual(
+          destination === 'overview'
+            ? { view: 'table' }
+            : { view: 'dashboard', path: h.project.path },
+        );
+        expect((await h.metadata())['status']).toBe('todo');
+        if (destination === 'overview')
+          h.state.set('projectsPanel', { view: 'dashboard', path: h.project.path });
+        expect(h.el.querySelector('.abyss-status-pill')?.textContent).toBe('todo');
+        h.panel.refresh();
+        await flushMicrotasks();
+        expect(h.el.querySelector('.abyss-status-pill')?.textContent).toBe('todo');
+        expect(h.project.frontmatter['status']).toBe('inbox');
+      } finally {
+        gate.resolve();
+        h.dispose();
+      }
+    },
+  );
+
+  it('finishes an active header write without publishing or refreshing into a remounted panel', async () => {
+    const h = await openDashboard();
+    const { gate, written } = holdFirstProcess(h);
+    const notices = spyOnNotices();
+    const log = vi.spyOn(console, 'error');
+    try {
+      chooseHeaderStatus(h);
+      await flushMicrotasks();
+      h.panel.destroy();
+      h.panel.mount(h.el);
+      const replacement = h.el.innerHTML;
+      gate.resolve();
+      await flushMicrotasks();
+      expect(written).toHaveLength(1);
+      expect((await h.metadata())['status']).toBe('todo');
+      expect(h.el.innerHTML).toBe(replacement);
+      expect(h.store.refresh).not.toHaveBeenCalled();
+      expect(notices).not.toHaveBeenCalled();
+      expect(log).not.toHaveBeenCalled();
+    } finally {
+      gate.resolve();
+      h.dispose();
+    }
+  });
+
+  it('reports the original I/O failure when an active header write fails after remount', async () => {
+    const h = await openDashboard();
+    const gate = deferred<void>();
+    const failure = new Error('disk stopped');
+    vi.spyOn(h.app.vault, 'process').mockImplementationOnce(async () => {
+      await gate.promise;
+      throw failure;
+    });
+    const notices = spyOnNotices();
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      chooseHeaderStatus(h);
+      await flushMicrotasks();
+      h.panel.destroy();
+      h.panel.mount(h.el);
+      gate.resolve();
+      await flushMicrotasks();
+      expect((await h.metadata())['status']).toBe('inbox');
+      expect(h.store.refresh).not.toHaveBeenCalled();
+      expect(notices).toHaveBeenCalledExactlyOnceWith(
+        'Could not change the project status. disk stopped',
+        undefined,
+      );
+      expect(log).toHaveBeenCalledExactlyOnceWith(
+        '[abyss-tasks] Could not change the project status',
+        {
+          path: h.project.path,
+          statusId: expectDefined(h.settings.projects.statuses[1]).id,
+          cause: failure,
+        },
+      );
+    } finally {
+      gate.resolve();
+      h.dispose();
+    }
+  });
+
+  it('reports late definition validation after a started header action loses its panel owner', async () => {
+    const h = await openDashboard();
+    const { gate } = holdFirstProcess(h);
+    const notices = spyOnNotices();
+    const log = vi.spyOn(console, 'error');
+    try {
+      const blocking = h.manager.setProperty(
+        h.project.path,
+        { id: 'property:Flag', property: 'Flag', label: 'Flag', type: 'checkbox' },
+        true,
+        false,
+      );
+      await flushMicrotasks();
+      chooseHeaderStatus(h);
+      await flushMicrotasks();
+      h.panel.destroy();
+      h.panel.mount(h.el);
+      expectDefined(h.settings.projects.statuses[1]).name = 'Replacement';
+      gate.resolve();
+      await blocking;
+      await flushMicrotasks();
+      expect((await h.metadata())['status']).toBe('inbox');
+      expect(h.store.refresh).not.toHaveBeenCalled();
+      expect(notices).toHaveBeenCalledExactlyOnceWith(
+        'Project status changed in settings. Choose it again.',
+        undefined,
+      );
+      expect(log).not.toHaveBeenCalled();
+    } finally {
+      gate.resolve();
+      h.dispose();
+    }
+  });
+
+  function undoFromOverview(h: DashboardHarness): void {
+    h.state.set('projectsPanel', { view: 'table' });
+    expectDefined(h.el.querySelector<HTMLElement>('.abyss-projects-table')).dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }),
+    );
+  }
+
+  it('keeps header status out of history so overview Undo still undoes the prior field edit', async () => {
+    const h = await openDashboard();
+    try {
+      toggleDashboardFlag(h);
+      await flushMicrotasks();
+      chooseHeaderStatus(h);
+      await flushMicrotasks();
+      undoFromOverview(h);
+      await flushMicrotasks();
+      expect(await h.metadata()).toMatchObject({ Flag: false, status: 'todo' });
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it('guards a prior status-field Undo against a later header status change', async () => {
+    const h = await openDashboard('kanban');
+    const notices = spyOnNotices();
+    const log = vi.spyOn(console, 'error');
+    try {
+      h.state.set('projectsPanel', { view: 'table' });
+      submitOverviewAction(h, 'kanban');
+      await flushMicrotasks();
+      expect((await h.metadata())['status']).toBe('todo');
+      h.state.set('projectsPanel', { view: 'dashboard', path: h.project.path });
+      chooseHeaderStatus(h, 2);
+      await flushMicrotasks();
+      expect((await h.metadata())['status']).toBe('wip');
+      undoFromOverview(h);
+      await flushMicrotasks();
+      expect((await h.metadata())['status']).toBe('wip');
+      expect(h.el.querySelector('.abyss-project-table-feedback')?.textContent).toContain(
+        'Status changed externally',
+      );
+      expect(notices).not.toHaveBeenCalled();
+      expect(log).not.toHaveBeenCalled();
+    } finally {
+      h.dispose();
+    }
+  });
 
   it.each([
     { field: 'property:Flag', property: 'Flag', kind: 'checkbox', expected: true },

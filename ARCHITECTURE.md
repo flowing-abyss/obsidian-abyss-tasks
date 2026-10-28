@@ -339,13 +339,16 @@ Surfaces retain separate organization, selection, and viewport state. Logical ce
 selection and reveal across windowed DOM. Clipboard content conveys values, not write authority.
 
 [`ProjectsPanel`](src/panels/projects/ProjectsPanel.ts) owns one shared
-[`ProjectMutationSession`](src/projects/ProjectMutationSession.ts) for its mounted lifetime. The
-headless session serializes metadata mutations and owns source revisions and copied receipt
-projections. ProjectStore observations reach it directly, including while the table DOM is detached.
-The table adapts session changes to its existing editor, drag, and pending-render gates; the dashboard
-reads the same projections. Disposal clears transient projections and retires callbacks. An active
-write can finish, but queued writes reject before starting and cannot publish into a replacement
-panel. ProjectManager retains write authority and serializes metadata operations per App. Transactions
+[`ProjectMutationSession`](src/projects/ProjectMutationSession.ts) for its mounted lifetime.
+ProjectStore allocates verified source-observation revisions. The panel-owned session retains those
+observations and revisions, orders shared field edits, Timeline/history mutations and dashboard-header
+status actions, and owns copied receipt projections. Header status actions retain their existing
+non-history behavior. Creation uses its existing manager path. ProjectStore observations reach the
+session directly, including while the table DOM is detached. The table adapts session changes to its
+existing editor, drag, and pending-render gates; the dashboard reads the same projections. Disposal
+clears transient projections and retires queued session work and callbacks. Active writes may finish
+without publication or refresh into a replacement panel. ProjectManager retains write authority and
+serializes metadata operations per App. Transactions
 recheck field/type binding, source key, property presence, and expected value. Queued status writes
 also retain the chosen definition's meaning. Batches return applied/failed receipts. Successful
 receipts project immediately until verified source observations acknowledge or supersede them;
