@@ -341,26 +341,25 @@ describe('real analyzer and bounded orchestration', () => {
   );
 
   it.each([
-    ['deadline', true, 'while(true){}'],
+    ['deadline', { deadlineMs: 1200 }, 'while(true){}'],
     [
       'output limit',
-      true,
+      { deadlineMs: CHILD_PROCESS_TIMEOUT_MS / 2 },
       "process.stdout.write('x'.repeat(10_000_001)); setTimeout(()=>{},4500);",
     ],
     [
       'error output limit',
-      true,
+      { deadlineMs: CHILD_PROCESS_TIMEOUT_MS / 2 },
       "process.stderr.write('x'.repeat(1_000_001)); setTimeout(()=>{},4500);",
     ],
   ])(
     'bounds %s cleanup despite worker and solver retaining stderr',
-    async (reason, inherit, action) => {
-      const fixture = await descendantFixture(inherit, action);
+    async (reason, settings, action) => {
+      const fixture = await descendantFixture(true, action);
       try {
         const start = performance.now();
-        await expect(runBoundedChild(['-e', fixture.code], { deadlineMs: 1200 })).rejects.toThrow(
-          reason,
-        );
+        // Overflow must trigger its own cleanup, even when cold process startup exceeds 1200 ms.
+        await expect(runBoundedChild(['-e', fixture.code], settings)).rejects.toThrow(reason);
         expect(performance.now() - start).toBeLessThan(2500);
         await expectDescendantsGone(await fixture.pids());
       } finally {
