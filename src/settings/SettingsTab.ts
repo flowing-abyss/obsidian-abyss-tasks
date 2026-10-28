@@ -73,6 +73,14 @@ type ProjectTextSetting = readonly [
   placeholder: string,
 ];
 
+type ProjectTaskInsertionKey = 'taskInsertionMode' | 'taskInsertionSectionPosition';
+type ProjectTaskInsertionChoice<K extends ProjectTaskInsertionKey> = readonly [
+  key: K,
+  name: string,
+  description: string,
+  choices: Record<CalendarSettings['projects'][K], string>,
+];
+
 interface ProjectMetadataSourceSetting {
   readonly description: string;
   readonly key: 'statusProperty' | 'startProperty' | 'endProperty';
@@ -1148,21 +1156,34 @@ export class CalendarSettingsTab extends PluginSettingTab {
     ]);
   }
 
-  private renderProjectTaskInsertionSettings_abyssPrivate(containerEl: HTMLElement): void {
+  private renderProjectTaskInsertionChoice_abyssPrivate<K extends ProjectTaskInsertionKey>(
+    container: HTMLElement,
+    [key, name, description, choices]: ProjectTaskInsertionChoice<K>,
+  ): void {
     const projects = this.plugin_abyssPrivate.settings.projects;
-    new Setting(containerEl)
-      .setName('Task insert position')
-      .setDesc('Where a task is placed in a project note when created there or moved in.')
-      .addDropdown((d) =>
-        d
-          .addOptions({ append: 'End of note', prepend: 'Start of note', section: 'In section' })
-          .setValue(projects.taskInsertionMode)
-          .onChange((v) => {
-            projects.taskInsertionMode = v as typeof projects.taskInsertionMode;
-            this.saveProjectDraft_abyssPrivate('save project task insert position');
-            this.render_abyssPrivate();
+    new Setting(container)
+      .setName(name)
+      .setDesc(description)
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOptions(choices)
+          .setValue(projects[key])
+          .onChange((value) => {
+            projects[key] = value as CalendarSettings['projects'][K];
+            this.saveProjectDraft_abyssPrivate(`save project ${name.toLowerCase()}`);
+            if (key === 'taskInsertionMode') this.render_abyssPrivate();
           }),
       );
+  }
+
+  private renderProjectTaskInsertionSettings_abyssPrivate(containerEl: HTMLElement): void {
+    const projects = this.plugin_abyssPrivate.settings.projects;
+    this.renderProjectTaskInsertionChoice_abyssPrivate(containerEl, [
+      'taskInsertionMode',
+      'Task insert position',
+      'Where a task is placed in a project note when created there or moved in.',
+      { append: 'End of note', prepend: 'Start of note', section: 'In section' },
+    ]);
     if (projects.taskInsertionMode === 'section') {
       this.renderProjectTextSetting_abyssPrivate(containerEl, [
         'taskInsertionSection',
@@ -1170,18 +1191,12 @@ export class CalendarSettingsTab extends PluginSettingTab {
         'Tasks are inserted under this heading in the project note. Created if absent.',
         '## Tasks',
       ]);
-      new Setting(containerEl)
-        .setName('Task section position')
-        .setDesc('Place new tasks at the top or bottom of this section.')
-        .addDropdown((dropdown) =>
-          dropdown
-            .addOptions({ top: 'Top of section', bottom: 'Bottom of section' })
-            .setValue(projects.taskInsertionSectionPosition)
-            .onChange((value) => {
-              projects.taskInsertionSectionPosition = value as 'top' | 'bottom';
-              this.saveProjectDraft_abyssPrivate('save project task section position');
-            }),
-        );
+      this.renderProjectTaskInsertionChoice_abyssPrivate(containerEl, [
+        'taskInsertionSectionPosition',
+        'Task section position',
+        'Place new tasks at the top or bottom of this section.',
+        { top: 'Top of section', bottom: 'Bottom of section' },
+      ]);
     }
   }
 

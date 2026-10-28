@@ -48,24 +48,33 @@ import { TYPESCRIPT_PROGRAM_TIMEOUT_MS } from './support/timeouts';
 interface ConnectedNoticeFixture {
   readonly containerEl: HTMLElement;
   readonly messageEl: HTMLElement;
-  readonly hide: () => void;
+  hide(): void;
+  deferDetach: boolean;
 }
 
 vi.mock('obsidian', async () => {
   const actual = await vi.importActual<typeof ObsidianModule>('obsidian');
   return {
     ...actual,
-    Notice: vi.fn(function (message: string | DocumentFragment) {
-      const containerEl = document.body.createDiv({ cls: 'settings-test-notice' });
-      const messageEl = containerEl.createDiv();
-      if (typeof message === 'string') messageEl.setText(message);
-      else messageEl.append(message);
-      const hide = vi.fn(() => {
-        containerEl.remove();
-      });
-      containerEl.addEventListener('click', hide);
-      return { containerEl, messageEl, hide };
-    }),
+    Notice: vi.fn(
+      class {
+        readonly containerEl = document.body.createDiv({ cls: 'settings-test-notice' });
+        readonly messageEl = this.containerEl.createDiv();
+        deferDetach = false;
+
+        constructor(message: string | DocumentFragment) {
+          if (typeof message === 'string') this.messageEl.setText(message);
+          else this.messageEl.append(message);
+          this.containerEl.addEventListener('click', () => {
+            this.hide();
+          });
+        }
+
+        hide(): void {
+          if (!this.deferDetach) this.containerEl.remove();
+        }
+      },
+    ),
   };
 });
 

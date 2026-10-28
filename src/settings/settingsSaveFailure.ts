@@ -26,11 +26,23 @@ function createDraftState(initial: SettingsDraftSave): DraftSaveState {
   let retry: HTMLButtonElement | undefined;
   let message: HTMLElement | undefined;
 
-  function retireFailure(): void {
-    (notice as Partial<Notice> | undefined)?.hide?.();
+  function clearFailure(): void {
     notice = undefined;
     retry = undefined;
     message = undefined;
+  }
+
+  class DraftFailureNotice extends Notice {
+    override hide(): void {
+      if (notice === this) clearFailure();
+      (super.hide as Partial<Notice>['hide'])?.();
+    }
+  }
+
+  function retireFailure(): void {
+    const previous = notice;
+    clearFailure();
+    (previous as Partial<Notice> | undefined)?.hide?.();
   }
 
   function reportFailure(error: unknown, generation: number): void {
@@ -48,7 +60,7 @@ function createDraftState(initial: SettingsDraftSave): DraftSaveState {
       const fragment = createFragment();
       message = fragment.createSpan();
       retry = fragment.createEl('button', { text: 'Retry' });
-      notice = new Notice(fragment, 0);
+      notice = new DraftFailureNotice(fragment, 0);
       retry.onclick = (event) => {
         event.preventDefault();
         event.stopPropagation();

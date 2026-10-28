@@ -29,24 +29,33 @@ import {
 interface ConnectedNoticeFixture {
   readonly containerEl: HTMLElement;
   readonly messageEl: HTMLElement;
-  readonly hide: () => void;
+  hide(): void;
+  deferDetach: boolean;
 }
 
 vi.mock('obsidian', async () => {
   const actual = await vi.importActual<typeof ObsidianModule>('obsidian');
   return {
     ...actual,
-    Notice: vi.fn(function (message: string | DocumentFragment) {
-      const containerEl = document.body.createDiv({ cls: 'settings-test-notice' });
-      const messageEl = containerEl.createDiv();
-      if (typeof message === 'string') messageEl.setText(message);
-      else messageEl.append(message);
-      const hide = vi.fn(() => {
-        containerEl.remove();
-      });
-      containerEl.addEventListener('click', hide);
-      return { containerEl, messageEl, hide };
-    }),
+    Notice: vi.fn(
+      class {
+        readonly containerEl = document.body.createDiv({ cls: 'settings-test-notice' });
+        readonly messageEl = this.containerEl.createDiv();
+        deferDetach = false;
+
+        constructor(message: string | DocumentFragment) {
+          if (typeof message === 'string') this.messageEl.setText(message);
+          else this.messageEl.append(message);
+          this.containerEl.addEventListener('click', () => {
+            this.hide();
+          });
+        }
+
+        hide(): void {
+          if (!this.deferDetach) this.containerEl.remove();
+        }
+      },
+    ),
   };
 });
 
@@ -3348,8 +3357,8 @@ it('keeps the latest membership control draft and failure when an older Retry se
   retry.resolve();
   await flushMicrotasks();
   expect(
-    (vi.mocked(Notice).mock.results[0]?.value as ConnectedNoticeFixture).hide,
-  ).not.toHaveBeenCalled();
+    (vi.mocked(Notice).mock.results[0]?.value as ConnectedNoticeFixture).messageEl.isConnected,
+  ).toBe(true);
   expect(plugin.settings.projects.membershipQuery).toBe('Projects/ and #latest');
   expect(button.disabled).toBe(false);
   expect(fragment.textContent).toContain('new draft failed');
@@ -3360,11 +3369,52 @@ it('keeps the latest membership control draft and failure when an older Retry se
   await flushMicrotasks();
   expect(saved).toEqual(['Projects/ and #latest']);
   expect(
-    (vi.mocked(Notice).mock.results[0]?.value as ConnectedNoticeFixture).hide,
-  ).toHaveBeenCalledOnce();
+    (vi.mocked(Notice).mock.results[0]?.value as ConnectedNoticeFixture).messageEl.isConnected,
+  ).toBe(false);
   expect(plugin.refreshProjectSettings).toHaveBeenCalledTimes(2);
   expect(log).toHaveBeenCalledTimes(2);
   expect(log).toHaveBeenLastCalledWith('[abyss-tasks] Could not save project membership query', {
     cause: latestFailure,
   });
+});
+
+it('preserves insertion choices and rerenders section controls only for mode changes', async () => {
+  const projects = structuredClone(DEFAULT_SETTINGS.projects);
+  projects.taskInsertionMode = 'append';
+  const { tab, plugin } = makeTab({ projects });
+  openSection(tab, 3);
+  const mode = expectDefined(findDropdown(tab.containerEl, 'Task insert position'));
+  expect(Array.from(mode.options).map(({ value, text }) => [value, text])).toEqual([
+    ['append', 'End of note'],
+    ['prepend', 'Start of note'],
+    ['section', 'In section'],
+  ]);
+  expect(findInput(tab.containerEl, 'Task section heading')).toBeNull();
+  editSettingControl(mode, 'section');
+  const heading = expectDefined(findInput(tab.containerEl, 'Task section heading'));
+  const position = expectDefined(findDropdown(tab.containerEl, 'Task section position'));
+  expect(tab.containerEl.contains(mode)).toBe(false);
+  expect(Array.from(position.options).map(({ value, text }) => [value, text])).toEqual([
+    ['top', 'Top of section'],
+    ['bottom', 'Bottom of section'],
+  ]);
+  editSettingControl(position, 'bottom');
+  expect(findInput(tab.containerEl, 'Task section heading')).toBe(heading);
+  expect(findDropdown(tab.containerEl, 'Task section position')).toBe(position);
+  expect(plugin.settings.projects.taskInsertionSectionPosition).toBe('bottom');
+  editSettingControl(
+    expectDefined(findDropdown(tab.containerEl, 'Task insert position')),
+    'prepend',
+  );
+  expect(findInput(tab.containerEl, 'Task section heading')).toBeNull();
+  expect(findDropdown(tab.containerEl, 'Task section position')).toBeNull();
+  expect(plugin.settings.projects.taskInsertionMode).toBe('prepend');
+  editSettingControl(
+    expectDefined(findDropdown(tab.containerEl, 'Task insert position')),
+    'section',
+  );
+  expect(findDropdown(tab.containerEl, 'Task section position')?.value).toBe('bottom');
+  await flushMicrotasks();
+  expect(plugin.saveSettings).toHaveBeenCalledTimes(4);
+  expect(Notice).not.toHaveBeenCalled();
 });

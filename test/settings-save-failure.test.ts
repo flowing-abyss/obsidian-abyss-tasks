@@ -11,24 +11,33 @@ import { deferred, expectDefined, flushMicrotasks } from './helpers';
 interface ConnectedNoticeFixture {
   readonly containerEl: HTMLElement;
   readonly messageEl: HTMLElement;
-  readonly hide: () => void;
+  hide(): void;
+  deferDetach: boolean;
 }
 
 vi.mock('obsidian', async () => {
   const actual = await vi.importActual<typeof ObsidianModule>('obsidian');
   return {
     ...actual,
-    Notice: vi.fn(function (message: string | DocumentFragment) {
-      const containerEl = document.body.createDiv({ cls: 'settings-test-notice' });
-      const messageEl = containerEl.createDiv();
-      if (typeof message === 'string') messageEl.setText(message);
-      else messageEl.append(message);
-      const hide = vi.fn(() => {
-        containerEl.remove();
-      });
-      containerEl.addEventListener('click', hide);
-      return { containerEl, messageEl, hide };
-    }),
+    Notice: vi.fn(
+      class {
+        readonly containerEl = document.body.createDiv({ cls: 'settings-test-notice' });
+        readonly messageEl = this.containerEl.createDiv();
+        deferDetach = false;
+
+        constructor(message: string | DocumentFragment) {
+          if (typeof message === 'string') this.messageEl.setText(message);
+          else this.messageEl.append(message);
+          this.containerEl.addEventListener('click', () => {
+            this.hide();
+          });
+        }
+
+        hide(): void {
+          if (!this.deferDetach) this.containerEl.remove();
+        }
+      },
+    ),
   };
 });
 
@@ -46,10 +55,6 @@ beforeEach(() => {
 
 function noticeFragment(): HTMLElement {
   return (vi.mocked(Notice).mock.results[0]?.value as ConnectedNoticeFixture).messageEl;
-}
-
-function noticeHide(): () => void {
-  return (vi.mocked(Notice).mock.results[0]?.value as ConnectedNoticeFixture).hide;
 }
 
 describe('reportSettingsDraftSaveFailure', () => {
@@ -161,12 +166,12 @@ describe('owner-scoped settings drafts', () => {
     expect(noticeFragment().textContent).toContain('newer failure');
     retry.resolve();
     await flushMicrotasks();
-    expect(noticeHide()).not.toHaveBeenCalled();
+    expect(noticeFragment().isConnected).toBe(true);
     expect(button.disabled).toBe(false);
     expect(Notice).toHaveBeenCalledOnce();
     button.click();
     await flushMicrotasks();
-    expect(noticeHide()).toHaveBeenCalledOnce();
+    expect(noticeFragment().isConnected).toBe(false);
     expect(log).toHaveBeenNthCalledWith(2, '[abyss-tasks] Could not save query', {
       cause: newerFailure,
     });
@@ -204,7 +209,7 @@ describe('owner-scoped settings drafts', () => {
     await flushMicrotasks();
     saveSettingsDraft({ owner, action: 'save query', save: async () => {} });
     await flushMicrotasks();
-    expect(noticeHide()).toHaveBeenCalledOnce();
+    expect(noticeFragment().isConnected).toBe(false);
     expect(Notice).toHaveBeenCalledOnce();
     expect(log).toHaveBeenCalledOnce();
   });
@@ -223,7 +228,7 @@ describe('owner-scoped settings drafts', () => {
     await flushMicrotasks();
     older.resolve();
     await flushMicrotasks();
-    expect(noticeHide()).not.toHaveBeenCalled();
+    expect(noticeFragment().isConnected).toBe(true);
     expect(Notice).toHaveBeenCalledOnce();
     expect(expectDefined(noticeFragment().querySelector('button')).disabled).toBe(false);
     expect(log).toHaveBeenCalledOnce();
@@ -303,7 +308,7 @@ describe('settings Retry current closure', () => {
       },
     });
     await flushMicrotasks();
-    expect(noticeHide()).toHaveBeenCalledOnce();
+    expect(noticeFragment().isConnected).toBe(false);
     expect(vi.mocked(Notice).mock.calls[1]).toEqual([
       'Could not save query: Saved view state writes are suspended. Changes are kept in this session.',
     ]);
@@ -311,7 +316,7 @@ describe('settings Retry current closure', () => {
   });
 });
 
-it('shows a fresh actionable failure after the previous Notice was dismissed', async () => {
+it('shows a fresh actionable failure after the previous Notice was detached', async () => {
   const owner = {};
   const failure = new Error('disk unavailable');
   let failing = true;
@@ -325,7 +330,7 @@ it('shows a fresh actionable failure after the previous Notice was dismissed', a
   await flushMicrotasks();
   const first = vi.mocked(Notice).mock.results[0]?.value as ConnectedNoticeFixture;
   expect(first.messageEl.isConnected).toBe(true);
-  first.containerEl.click();
+  first.containerEl.remove();
   expect(first.messageEl.isConnected).toBe(false);
   draft = 'latest';
   saveSettingsDraft({ owner, action: 'save query', save });
@@ -333,6 +338,37 @@ it('shows a fresh actionable failure after the previous Notice was dismissed', a
   expect(Notice).toHaveBeenCalledTimes(2);
   const current = vi.mocked(Notice).mock.results[1]?.value as ConnectedNoticeFixture;
   expect(current.messageEl.isConnected).toBe(true);
+  failing = false;
+  expectDefined(current.messageEl.querySelector('button')).click();
+  await flushMicrotasks();
+  expect(saved).toEqual(['first', 'latest', 'latest']);
+  expect(current.messageEl.isConnected).toBe(false);
+  expect(log).toHaveBeenCalledTimes(2);
+});
+
+it('replaces feedback when dismissal starts before detachment and ignores an old Notice hide', async () => {
+  const owner = {};
+  let draft = 'first';
+  const saved: string[] = [];
+  let failing = true;
+  const save = async (): Promise<void> => {
+    saved.push(draft);
+    if (failing) throw new Error('disk unavailable');
+  };
+  saveSettingsDraft({ owner, action: 'save query', save });
+  await flushMicrotasks();
+  const first = vi.mocked(Notice).mock.results[0]?.value as ConnectedNoticeFixture;
+  first.deferDetach = true;
+  first.containerEl.click();
+  expect(first.messageEl.isConnected).toBe(true);
+  draft = 'latest';
+  saveSettingsDraft({ owner, action: 'save query', save });
+  await flushMicrotasks();
+  expect(Notice).toHaveBeenCalledTimes(2);
+  const current = vi.mocked(Notice).mock.results[1]?.value as ConnectedNoticeFixture;
+  expect(current.messageEl.isConnected).toBe(true);
+  first.containerEl.click();
+  first.containerEl.remove();
   failing = false;
   expectDefined(current.messageEl.querySelector('button')).click();
   await flushMicrotasks();

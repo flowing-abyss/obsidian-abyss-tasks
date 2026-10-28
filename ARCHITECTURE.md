@@ -418,7 +418,8 @@ before cleaned view state. Retryable failures retain the current draft and offer
 writes are not a transaction. Unknown raw project statuses remain independent values.
 
 [`settingsSaveFailure`](src/settings/settingsSaveFailure.ts) owns transient current failure and Retry
-feedback per plugin session and settings action. Stale completions cannot replace current feedback.
+feedback per plugin session and settings action. Dismissal retires feedback before the host hides its
+Notice; stale hides and save completions cannot replace current feedback.
 Retry reads current runtime settings; successful saves remain silent. SettingsTab renders draft
 changes while visible, independently of save completion.
 
