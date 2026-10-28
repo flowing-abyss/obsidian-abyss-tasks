@@ -238,6 +238,24 @@ function loadArtifact(code: string): typeof TaskCalendarPlugin {
   return module.exports.default;
 }
 
+function embeddedSearchWorker(code: string): string {
+  let workerSource: string | undefined;
+  const parsed = ts.createSourceFile(
+    'main.js',
+    code,
+    ts.ScriptTarget.ES2021,
+    true,
+    ts.ScriptKind.JS,
+  );
+  function visit(node: ts.Node): void {
+    if (ts.isStringLiteral(node) && node.text.startsWith('/* abyss-task-search-worker */'))
+      workerSource = node.text;
+    ts.forEachChild(node, visit);
+  }
+  visit(parsed);
+  return expectDefined(workerSource);
+}
+
 describe('production JavaScript artifact', () => {
   let directory: string;
   let code: string;
@@ -310,22 +328,7 @@ describe('production JavaScript artifact', () => {
   });
 
   it('embeds a self-contained browser worker and executes its minified ready/add/query protocol', async () => {
-    let workerSource: string | undefined;
-    const parsed = ts.createSourceFile(
-      'main.js',
-      code,
-      ts.ScriptTarget.ES2021,
-      true,
-      ts.ScriptKind.JS,
-    );
-    function visit(node: ts.Node): void {
-      if (ts.isStringLiteral(node) && node.text.startsWith('/* abyss-task-search-worker */'))
-        workerSource = node.text;
-      ts.forEachChild(node, visit);
-    }
-    visit(parsed);
-    expect(workerSource).toBeDefined();
-    const source = expectDefined(workerSource);
+    const source = embeddedSearchWorker(code);
     expect(lookbehindOpeners(source)).toEqual([]);
     expect(source).not.toMatch(/\brequire\s*\(|\bimport\s*\(/u);
     const replies: Array<{ type: string; value?: { total: number } }> = [];
@@ -401,6 +404,94 @@ describe('production JavaScript artifact', () => {
     });
     expect(replies[replies.length - 1]).toMatchObject({ type: 'failure', code: 'cursor-expired' });
   });
+
+  it.each(['init', 'operation', 'maintenance'] as const)(
+    'reports a sanitized terminal Worker error when %s reply transport fails',
+    (phase) => {
+      // Isolate rejection reporting from Vitest and execute the unchanged minified Worker.
+      const script = `
+        const source = ${JSON.stringify(embeddedSearchWorker(code))};
+        const phase = ${JSON.stringify(phase)};
+        const reported = [], unhandled = [], synchronous = [], failedReplies = [];
+        let timerCalls = 0;
+        process.on('unhandledRejection', (error) => unhandled.push(String(error)));
+        const scope = {
+          onmessage: undefined,
+          postMessage(reply) {
+            if ((phase === 'init' && reply.type === 'ready') ||
+                (phase === 'operation' && reply.type !== 'ready') ||
+                (phase === 'maintenance' && reply.type === 'failure' && reply.id === 0)) {
+              failedReplies.push(reply);
+              throw new Error('private transport contents');
+            }
+          },
+        };
+        const reportMicrotask = (callback) => queueMicrotask(() => {
+          try { callback(); } catch (error) {
+            reported.push({ name: error.name, message: error.message });
+          }
+        });
+        const failMaintenanceTimer = () => {
+          timerCalls++;
+          throw new Error('private maintenance contents');
+        };
+        new Function('self', 'queueMicrotask', 'setTimeout', source)(scope, reportMicrotask, failMaintenanceTimer);
+        const send = async (message) => {
+          try { scope.onmessage({ data: message }); } catch (error) { synchronous.push(String(error)); }
+          for (let turn = 0; turn < 30; turn++) await Promise.resolve();
+        };
+        await send({ type: 'init', epoch: 4, id: 0 });
+        if (phase === 'operation')
+          await send({ type: 'mutate', epoch: 4, id: 1, operation: { type: 'publish', generation: 1 } });
+        if (phase === 'maintenance') {
+          const mutate = (id, operation) => send({ type: 'mutate', epoch: 4, id, operation });
+          await mutate(1, { type: 'begin', path: 'a.md' });
+          await mutate(2, { type: 'add', documents: [{
+            id: 1, rootId: 1, order: { filePath: 'a.md', line: 0, childLines: [] },
+            title: Array.from({ length: 1100 }, (_, i) => 'term' + i).join(' '),
+            description: '', comments: '', tags: '', metadata: '', links: '', sourcePath: '',
+          }] });
+          await mutate(3, { type: 'commit', path: 'a.md' });
+          await mutate(4, { type: 'publish', generation: 1 });
+          await mutate(5, { type: 'remove', path: 'a.md' });
+          await mutate(6, { type: 'publish', generation: 2 });
+        }
+        await new Promise((resolve) => setImmediate(resolve));
+        process.stdout.write(JSON.stringify({ reported, unhandled, synchronous, failedReplies, timerCalls }));
+      `;
+      const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+        encoding: 'utf8',
+        timeout: CHILD_PROCESS_TIMEOUT_MS,
+      });
+      expect(result.status, result.stderr).toBe(0);
+      const observed = JSON.parse(result.stdout) as {
+        reported: Array<{ name: string; message: string }>;
+        unhandled: string[];
+        synchronous: string[];
+        failedReplies: unknown[];
+        timerCalls: number;
+      };
+      expect(observed.reported).toEqual([{ name: 'Error', message: 'Search worker failed' }]);
+      expect(observed.unhandled).toEqual([]);
+      expect(observed.synchronous).toEqual([]);
+      const failedReply = {
+        init: { epoch: 4, type: 'ready' },
+        operation: { epoch: 4, id: 1, type: 'success' },
+        maintenance: {
+          epoch: 4,
+          id: 0,
+          type: 'failure',
+          code: 'unavailable',
+          message: 'Search maintenance failed',
+        },
+      }[phase];
+      expect(observed.failedReplies).toEqual([failedReply]);
+      expect(observed.timerCalls).toBe(phase === 'maintenance' ? 1 : 0);
+      expect(result.stdout).not.toContain('private');
+      expect(result.stderr).toBe('');
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
 
   it('ships no lookbehind, which iOS before 16.4 cannot compile', () => {
     expect(lookbehindOpeners(code)).toEqual([]);

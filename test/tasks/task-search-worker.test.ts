@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
 import type {
+  TaskSearchBackend,
   TaskSearchMessage,
   TaskSearchReply,
 } from '../../src/tasks/application/TaskSearchBackend';
 import { fallbackSearchWords, prepareSearchQuery } from '../../src/tasks/domain/searchMatchPolicy';
-import { TaskSearchError } from '../../src/tasks/domain/taskSearchTypes';
 import {
   BrowserTaskSearchBackend,
   createBrowserSearchScheduler,
@@ -13,7 +13,10 @@ import {
 import { createMiniSearchTaskEngine } from '../../src/tasks/infrastructure/search/MiniSearchTaskEngine';
 import { TaskSearchRuntime } from '../../src/tasks/infrastructure/search/TaskSearchRuntime';
 import { TaskSearchService } from '../../src/tasks/infrastructure/search/TaskSearchService';
-import { decodeTaskSearchRequest } from '../../src/tasks/infrastructure/search/taskSearch.worker';
+import {
+  createTaskSearchWorkerHandler,
+  decodeTaskSearchRequest,
+} from '../../src/tasks/infrastructure/search/TaskSearchWorkerHandler';
 import { deferred, expectDefined } from '../helpers';
 import {
   assertNoRevision,
@@ -30,7 +33,9 @@ class ControlledWorker {
   readonly incoming: unknown[] = [];
   readonly engine = createMiniSearchTaskEngine(fallbackSearchWords);
   readonly runtime = new TaskSearchRuntime(this.engine);
-  private epoch: number | undefined;
+  private readonly receive: ReturnType<typeof createTaskSearchWorkerHandler>;
+  private readonly processing: Array<Promise<void>> = [];
+  private readonly heldOpenIds = new Set<number>();
   onmessage: ((event: { data: TaskSearchReply }) => void) | undefined;
   onerror: ((event: { preventDefault(): void }) => void) | undefined;
   onmessageerror: (() => void) | undefined;
@@ -42,86 +47,49 @@ class ControlledWorker {
   readonly held: TaskSearchReply[] = [];
   readonly allocated = deferred<void>();
   async flush(): Promise<void> {
-    await this.queue;
+    await Promise.all(this.processing);
   }
-  private queue = Promise.resolve();
   constructor(readonly url: string) {
     ControlledWorker.instances.push(this);
-    this.runtime.subscribeFailure(() => {
-      if (!this.terminated && this.epoch !== undefined)
-        this.reply({
-          epoch: this.epoch,
-          id: 0,
-          type: 'failure',
-          code: 'unavailable',
-          message: 'Search maintenance failed',
-        });
+    const backend: TaskSearchBackend = {
+      mutate: (operation) => this.runtime.mutate(operation),
+      open: (request, generation, allocationId) =>
+        this.runtime.open(request, generation, allocationId),
+      read: (cursor, offset, limit) => this.runtime.read(cursor, offset, limit),
+      release: async (cursor) => {
+        if (this.holdReleases) {
+          this.releasing.resolve();
+          await this.releaseGate.promise;
+        }
+        this.runtime.release(cursor);
+      },
+      subscribeFailure: (listener) => this.runtime.subscribeFailure(listener),
+      dispose: () => {
+        this.runtime.dispose();
+      },
+    };
+    this.receive = createTaskSearchWorkerHandler(backend, (reply) => {
+      if (this.terminated) return;
+      if (
+        (reply.type === 'ready' && !ControlledWorker.settings.autoReady) ||
+        (reply.type === 'success' && this.heldOpenIds.delete(reply.id))
+      ) {
+        this.held.push(structuredClone(reply));
+        if (reply.type === 'success') this.allocated.resolve();
+      } else this.reply(reply);
     });
   }
   reply(reply: TaskSearchReply): void {
+    if (this.terminated) return;
     this.incoming.push(structuredClone(reply));
     this.onmessage?.({ data: structuredClone(reply) });
   }
   postMessage(value: TaskSearchMessage): void {
+    if (this.terminated) return;
     const message = structuredClone(value);
     this.outgoing.push(message);
-    this.queue = this.queue.then(async () => {
-      if (message.type === 'init') {
-        this.epoch = message.epoch;
-        if (ControlledWorker.settings.autoReady)
-          this.reply({ type: 'ready', epoch: message.epoch });
-        return;
-      }
-      let result: Extract<TaskSearchReply, { type: 'success' }>['value'];
-      try {
-        switch (message.type) {
-          case 'mutate':
-            await this.runtime.mutate(message.operation);
-            break;
-          case 'open':
-            result = await this.runtime.open(
-              message.request,
-              message.generation,
-              message.allocationId,
-            );
-            break;
-          case 'read':
-            result = await this.runtime.read(message.cursor, message.offset, message.limit);
-            break;
-          case 'release':
-            if (this.holdReleases) {
-              this.releasing.resolve();
-              await this.releaseGate.promise;
-            }
-            this.runtime.release(message.cursor);
-            break;
-        }
-        this.deliver(message, result);
-      } catch (error) {
-        this.reply({
-          type: 'failure',
-          epoch: message.epoch,
-          id: message.id,
-          code: error instanceof TaskSearchError ? error.code : 'unavailable',
-          message: 'Search operation failed',
-        });
-      }
-    });
-  }
-  private deliver(
-    message: TaskSearchMessage,
-    result: Extract<TaskSearchReply, { type: 'success' }>['value'],
-  ): void {
-    const reply: TaskSearchReply = {
-      type: 'success',
-      epoch: message.epoch,
-      id: message.id,
-      value: result,
-    };
-    if (message.type === 'open' && this.holdOpens) {
-      this.held.push(reply);
-      this.allocated.resolve();
-    } else this.reply(reply);
+    if (message.type === 'open' && this.holdOpens) this.heldOpenIds.add(message.id);
+    this.processing.push(this.receive(message));
   }
   terminate(): void {
     this.terminated = true;
@@ -150,6 +118,95 @@ afterEach(() => {
   for (const worker of ControlledWorker.instances) worker.terminate();
   vi.useRealTimers();
 });
+it('keeps read behind a mutation and continues after operation rejection', async ({
+  onTestFinished,
+}) => {
+  const runtime = new TaskSearchRuntime(createMiniSearchTaskEngine(fallbackSearchWords));
+  const replies: TaskSearchReply[] = [];
+  const receive = createTaskSearchWorkerHandler(runtime, (reply) => replies.push(reply));
+  const gate = deferred<Error | undefined>();
+  onTestFinished(() => {
+    gate.resolve(undefined);
+    runtime.dispose();
+  });
+  const mutate = vi.spyOn(runtime, 'mutate').mockImplementationOnce(() =>
+    gate.promise.then((error) => {
+      if (error !== undefined) throw error;
+    }),
+  );
+  const read = vi.spyOn(runtime, 'read');
+  await receive({ epoch: 4, id: 0, type: 'init' });
+  const first = receive({
+    epoch: 4,
+    id: 1,
+    type: 'mutate',
+    operation: { type: 'publish', generation: 1 },
+  });
+  const second = receive({
+    epoch: 4,
+    id: 2,
+    type: 'read',
+    offset: 0,
+    limit: 1,
+    cursor: { id: 'absent', generation: 1, total: 1, kind: 'nodes', access: 'random' },
+  });
+  await Promise.resolve();
+  expect(mutate).toHaveBeenCalledOnce();
+  expect(read).not.toHaveBeenCalled();
+  gate.resolve(new Error('private note contents'));
+  await first;
+  await second;
+  expect(read).toHaveBeenCalledOnce();
+  expect(replies).toContainEqual({
+    epoch: 4,
+    id: 1,
+    type: 'failure',
+    code: 'unavailable',
+    message: 'Search operation failed',
+  });
+  expect(replies).toContainEqual({
+    epoch: 4,
+    id: 2,
+    type: 'failure',
+    code: 'stale',
+    message: 'Search operation failed',
+  });
+  expect(JSON.stringify(replies)).not.toContain('private note contents');
+  await receive({ epoch: 4, id: 3, type: 'mutate', operation: { type: 'publish', generation: 2 } });
+  expect(replies).toContainEqual({ epoch: 4, id: 3, type: 'success', value: undefined });
+});
+
+it('ignores malformed, pre-init, wrong-epoch and duplicate-init requests', async ({
+  onTestFinished,
+}) => {
+  const runtime = new TaskSearchRuntime(createMiniSearchTaskEngine(fallbackSearchWords));
+  onTestFinished(() => {
+    runtime.dispose();
+  });
+  const replies: TaskSearchReply[] = [];
+  const receive = createTaskSearchWorkerHandler(runtime, (reply) => replies.push(reply));
+  const mutate = vi.spyOn(runtime, 'mutate');
+  const open = vi.spyOn(runtime, 'open');
+  const read = vi.spyOn(runtime, 'read');
+  const release = vi.spyOn(runtime, 'release');
+  await receive({ epoch: 4, id: 1, type: 'open', request: 'bad' });
+  await receive({ epoch: 4, id: 2, type: 'mutate', operation: { type: 'publish', generation: 1 } });
+  await receive({ epoch: 4, id: 0, type: 'init' });
+  await receive({ epoch: 5, id: 3, type: 'mutate', operation: { type: 'publish', generation: 2 } });
+  await receive({ epoch: 5, id: 0, type: 'init' });
+  await receive({ epoch: 5, id: 4, type: 'mutate', operation: { type: 'publish', generation: 3 } });
+  expect(mutate).not.toHaveBeenCalled();
+  await receive({ epoch: 4, id: 5, type: 'mutate', operation: { type: 'publish', generation: 4 } });
+  expect(mutate).toHaveBeenCalledExactlyOnceWith({ type: 'publish', generation: 4 });
+  expect(open).not.toHaveBeenCalled();
+  expect(read).not.toHaveBeenCalled();
+  expect(release).not.toHaveBeenCalled();
+  expect(replies).toEqual([
+    { epoch: 4, type: 'ready' },
+    { epoch: 4, id: 5, type: 'success', value: undefined },
+  ]);
+});
+
 it('rejects malformed protocol requests before runtime', () => {
   expect(
     decodeTaskSearchRequest({ epoch: 1, id: 1, type: 'open', request: 'bad' }),
@@ -182,6 +239,83 @@ it('does not coerce malformed fuzzy edit counts in protocol tokens', () => {
       }),
     ).toBeUndefined();
 });
+it('accepts only primitive strings at every protocol string field', () => {
+  const open = {
+    epoch: 1,
+    id: 1,
+    type: 'open',
+    generation: 1,
+    allocationId: 'reserved',
+    request: {
+      kind: 'nodes',
+      includeSourcePath: false,
+      filePath: 'a.md',
+      preferFilePath: 'a.md',
+      query: {
+        original: 'needle',
+        tokens: [{ term: 'needle', edits: 1, prefix: false, swaps: ['other'] }],
+      },
+    },
+  };
+  const add = {
+    epoch: 1,
+    id: 1,
+    type: 'mutate',
+    operation: { type: 'add', documents: nodeDocuments(1) },
+  };
+  const fields: Array<{ message: unknown; path: Array<string | number>; optional?: boolean }> = [
+    { message: open, path: ['allocationId'], optional: true },
+    { message: open, path: ['request', 'filePath'], optional: true },
+    { message: open, path: ['request', 'preferFilePath'], optional: true },
+    { message: open, path: ['request', 'query', 'original'] },
+    { message: open, path: ['request', 'query', 'tokens', 0, 'term'] },
+    { message: open, path: ['request', 'query', 'tokens', 0, 'swaps', 0] },
+    { message: add, path: ['operation', 'documents', 0, 'order', 'filePath'] },
+    ...['title', 'description', 'comments', 'tags', 'metadata', 'links', 'sourcePath'].map(
+      (field) => ({
+        message: add,
+        path: ['operation', 'documents', 0, field],
+      }),
+    ),
+    {
+      message: { epoch: 1, id: 1, type: 'mutate', operation: { type: 'begin', path: 'a.md' } },
+      path: ['operation', 'path'],
+    },
+    {
+      message: {
+        epoch: 1,
+        id: 1,
+        type: 'release',
+        cursor: { id: 'vector', generation: 1, total: 0, kind: 'nodes', access: 'random' },
+      },
+      path: ['cursor', 'id'],
+    },
+  ];
+  const values: Array<{ value: unknown; required: boolean; optional: boolean }> = [
+    { value: '', required: true, optional: true },
+    { value: 'text', required: true, optional: true },
+    { value: undefined, required: false, optional: true },
+    { value: null, required: false, optional: false },
+    { value: 1, required: false, optional: false },
+    { value: false, required: false, optional: false },
+    { value: Object('text'), required: false, optional: false },
+    { value: {}, required: false, optional: false },
+    { value: [], required: false, optional: false },
+  ];
+  for (const field of fields) {
+    for (const entry of values) {
+      const message = structuredClone(field.message) as Record<string | number, unknown>;
+      let parent = message;
+      for (const key of field.path.slice(0, -1))
+        parent = parent[key] as Record<string | number, unknown>;
+      parent[expectDefined(field.path[field.path.length - 1])] = entry.value;
+      expect(decodeTaskSearchRequest(message) !== undefined, field.path.join('.')).toBe(
+        field.optional === true ? entry.optional : entry.required,
+      );
+    }
+  }
+});
+
 it('URL revoked on failure and unload; idle error notifies service', async () => {
   const backend = await BrowserTaskSearchBackend.create('source');
   const failure = vi.fn();
@@ -742,7 +876,16 @@ it('recovers a genuine maintenance failure through Worker id zero with one sanit
       (reply) =>
         (reply as TaskSearchReply).type === 'failure' && (reply as { id: number }).id === 0,
     ),
-  ).toHaveLength(1);
+  ).toEqual([
+    {
+      epoch: (worker.outgoing[0] as TaskSearchMessage).epoch,
+      id: 0,
+      type: 'failure',
+      code: 'unavailable',
+      message: 'Search maintenance failed',
+    },
+  ]);
+  expect(JSON.stringify(worker.incoming)).not.toContain('private authored content');
   expect(diagnostics).toHaveLength(1);
   expect(JSON.stringify(diagnostics)).not.toContain('private');
 });

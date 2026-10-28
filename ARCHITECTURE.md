@@ -182,7 +182,13 @@ service. Consumers own requests, cursors, and subscriptions; shared preparation 
 an individual caller's cancellation. Worker execution has an inline fallback and bounded recovery.
 Unload disposes Search before TaskIndex. The inward
 [`MiniSearchTaskEngine`](src/tasks/infrastructure/search/MiniSearchTaskEngine.ts) is the only
-MiniSearch import boundary.
+MiniSearch import boundary. The internal
+[`TaskSearchWorkerHandler`](src/tasks/infrastructure/search/TaskSearchWorkerHandler.ts) owns
+request decoding, first-init epoch selection, FIFO dispatch, and sanitized replies. The production
+Worker bootstrap and controlled test transport use this handler with the same runtime; the test
+transport controls cloning and delivery only. The bootstrap reports failed transport through a
+sanitized Worker error, including maintenance replies sent outside request processing. The existing
+parent error boundary owns recovery. The runtime lives for the Worker's lifetime.
 
 TaskIndex owns source generations, exact compact addresses, and a separate semantic revision for
 status changes. Hydration returns detached roots/nodes in bounded batches and rejects stale
