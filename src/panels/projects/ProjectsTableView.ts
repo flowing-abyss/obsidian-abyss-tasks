@@ -1826,6 +1826,7 @@ export class ProjectsTableView {
   }
 
   private reportTimelineRangeFailure_abyssPrivate(failure: unknown): void {
+    if (!this.mounted_abyssPrivate && isProjectEditValidationError(failure)) return;
     reportProjectTimelineRangeFailure(failure);
   }
 

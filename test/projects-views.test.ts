@@ -12,6 +12,7 @@ import { ObsidianProjectProperties } from '../src/projects/ObsidianProjectProper
 import { ProjectManager } from '../src/projects/ProjectManager';
 import type { ProjectSourceObservation } from '../src/projects/ProjectStore';
 import { ProjectCreationError } from '../src/projects/projectCreation';
+import { projectCalendarDayOrdinal } from '../src/projects/projectDateValue';
 import { ProjectEditValidationError } from '../src/projects/projectEditError';
 import { buildDefaultProjectKanbanSettings } from '../src/projects/projectKanbanSettings';
 import { buildDefaultProjectTimelineSettings } from '../src/projects/projectTimelineSettings';
@@ -25,7 +26,10 @@ import {
   freshContainer,
 } from './helpers';
 import { useProjectTableViewport } from './support/projectTableViewport';
-import { projectTimelineLogicalCenter } from './support/projectTimelineGeometry';
+import {
+  projectTimelineBounds,
+  projectTimelineLogicalCenter,
+} from './support/projectTimelineGeometry';
 
 useProjectTableViewport();
 
@@ -1291,6 +1295,149 @@ describe('shared project mutation session', () => {
         }
         if (action === 'kanban')
           expect(metadata['status']).toBe(DEFAULT_SETTINGS.projects.statuses[1]?.name);
+      } finally {
+        gate.resolve();
+        h.dispose();
+      }
+    },
+  );
+
+  async function openOverviewTimeline() {
+    const h = await openDashboard('timeline');
+    h.state.set('projectsPanel', { view: 'table' });
+    await flushMicrotasks();
+    const bar = expectDefined(h.el.querySelector<HTMLElement>('.abyss-project-timeline-bar'));
+    const arrow = () => {
+      bar.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    };
+    const pointer = async () => {
+      const track = expectDefined(bar.parentElement);
+      const { first, days } = projectTimelineBounds(h.el);
+      const width = Number(
+        expectDefined(h.el.querySelector<HTMLElement>('.abyss-project-timeline-axis-dates'))
+          .dataset['trackWidth'],
+      );
+      const left =
+        100 -
+        ((expectDefined(projectCalendarDayOrdinal('2026-10-02')) - first + 0.5) * width) / days;
+      vi.spyOn(track, 'getBoundingClientRect').mockReturnValue({
+        left,
+        right: left + width,
+        width,
+        top: 0,
+        bottom: 30,
+        height: 30,
+      } as DOMRect);
+      const event = (type: string, clientX: number) => {
+        const pointerEvent = new Event(type, { bubbles: true, cancelable: true });
+        Object.defineProperties(pointerEvent, {
+          button: { value: 0 },
+          clientX: { value: clientX },
+          clientY: { value: 15 },
+          isPrimary: { value: true },
+          pointerId: { value: 1 },
+        });
+        return pointerEvent;
+      };
+      bar.dispatchEvent(event('pointerdown', 100));
+      await flushMicrotasks();
+      track.dispatchEvent(event('pointermove', 100 + width / days));
+      track.dispatchEvent(event('pointerup', 100 + width / days));
+    };
+    return { ...h, bar, arrow, pointer };
+  }
+
+  it.each([
+    ['destroy', 'arrow'],
+    ['destroy', 'pointer'],
+    ['dashboard', 'arrow'],
+    ['dashboard', 'pointer'],
+  ] as const)(
+    'retires queued overview Timeline validation only for actual owner destruction (%s, %s)',
+    async (retirement, input) => {
+      const h = await openOverviewTimeline();
+      const notice = spyOnNotices();
+      const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const gate = deferred<void>();
+      const apply = h.manager.applyEdits.bind(h.manager);
+      const writes = vi.spyOn(h.manager, 'applyEdits').mockImplementationOnce(async (changes) => {
+        await gate.promise;
+        return apply(changes);
+      });
+      try {
+        h.arrow();
+        await flushMicrotasks();
+        expect(writes).toHaveBeenCalledOnce();
+        await h[input]();
+        await flushMicrotasks();
+        expect(writes).toHaveBeenCalledOnce();
+        if (retirement === 'destroy') h.panel.destroy();
+        else h.state.set('projectsPanel', { view: 'dashboard', path: h.project.path });
+        gate.resolve();
+        await flushMicrotasks();
+        expect(writes).toHaveBeenCalledOnce();
+        expect(await h.metadata()).toMatchObject({ start: '2026-10-03', end: '2026-10-05' });
+        if (retirement === 'destroy') expect(notice).not.toHaveBeenCalled();
+        else
+          expect(notice).toHaveBeenCalledExactlyOnceWith(
+            'This project range is no longer visible.',
+            undefined,
+          );
+        expect(logged).not.toHaveBeenCalled();
+      } finally {
+        gate.resolve();
+        h.dispose();
+      }
+    },
+  );
+
+  it.each([
+    ['io', 'arrow'],
+    ['io', 'pointer'],
+    ['partial', 'arrow'],
+    ['partial', 'pointer'],
+  ] as const)(
+    'preserves late overview Timeline %s failure feedback after panel destruction (%s)',
+    async (failure, input) => {
+      const h = await openOverviewTimeline();
+      const notice = spyOnNotices();
+      const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const gate = deferred<void>();
+      const apply = h.manager.applyEdits.bind(h.manager);
+      const error = new Error('disk stopped');
+      let partialResult: Awaited<ReturnType<typeof h.manager.applyEdits>> | undefined;
+      const writes = vi.spyOn(h.manager, 'applyEdits').mockImplementationOnce(async (changes) => {
+        await gate.promise;
+        if (failure === 'io') throw error;
+        const result = await apply(changes.slice(0, 1));
+        partialResult = {
+          ...result,
+          failed: [{ path: h.project.path, message: 'End write failed' }],
+        };
+        return partialResult;
+      });
+      try {
+        await h[input]();
+        await flushMicrotasks();
+        expect(writes).toHaveBeenCalledOnce();
+        h.panel.destroy();
+        gate.resolve();
+        await flushMicrotasks();
+        expect(writes).toHaveBeenCalledOnce();
+        expect(notice).toHaveBeenCalledExactlyOnceWith(
+          failure === 'io'
+            ? 'Could not update project Timeline dates: disk stopped'
+            : 'Could not update project Timeline dates: 1 updated; 1 failed: End write failed',
+          undefined,
+        );
+        expect(logged).toHaveBeenCalledExactlyOnceWith(
+          '[abyss-tasks] Could not update project Timeline dates',
+          failure === 'io' ? { cause: error } : { result: partialResult },
+        );
+        expect(await h.metadata()).toMatchObject({
+          start: failure === 'io' ? '2026-10-02' : '2026-10-03',
+          end: '2026-10-04',
+        });
       } finally {
         gate.resolve();
         h.dispose();
