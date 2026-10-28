@@ -1,4 +1,4 @@
-import { TFile, type CachedMetadata } from 'obsidian';
+import { Notice, TFile, type CachedMetadata } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProjectStore, type ProjectSourceObservation } from '../src/projects/ProjectStore';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
@@ -73,12 +73,13 @@ function harness() {
   const getMarkdownFiles = vi.fn(() => files);
   let currentFrontmatter: Record<string, unknown> = { status: 'active' };
   let currentData = '';
+  const read = vi.fn(async () => currentData);
   const app = {
     vault: {
       getMarkdownFiles,
       getAbstractFileByPath: (path: string) =>
         files.find((candidate) => candidate.path === path) ?? null,
-      read: vi.fn(async () => currentData),
+      read,
       on,
       offref,
     },
@@ -111,6 +112,7 @@ function harness() {
   return {
     app: app as never,
     queries,
+    read,
     metadata: (
       changedFile: TFile = file,
       data = '',
@@ -175,13 +177,19 @@ describe('ProjectStore event convergence', () => {
     store.destroy();
     await pending;
     await store.whenSettled();
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(notify).not.toHaveBeenCalled();
   });
 
-  it('acknowledges a captured flush while keeping reentrant accepted work pending', async () => {
+  it('acknowledges a failed listener flush while keeping reentrant accepted work pending', async () => {
     vi.useFakeTimers();
     const h = harness();
     const store = new ProjectStore(h.app, h.queries, DEFAULT_SETTINGS);
     store.initialize();
+    const failure = new Error('broken reentrant view');
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const later = vi.fn();
     let second: Promise<void> | undefined;
     let secondDone = false;
     store.onUpdate(() => {
@@ -189,7 +197,9 @@ describe('ProjectStore event convergence', () => {
       second = store.whenSettled().then(() => {
         secondDone = true;
       });
+      throw failure;
     });
+    store.onUpdate(later);
     h.setTasks([task('done')]);
     h.reconciled([h.file.path]);
     const first = store.whenSettled();
@@ -200,6 +210,208 @@ describe('ProjectStore event convergence', () => {
     await vi.advanceTimersByTimeAsync(150);
     await second;
     expect(secondDone).toBe(true);
+    expect(later).toHaveBeenCalledExactlyOnceWith();
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not notify project update subscriber',
+      { cause: failure },
+    );
+    store.destroy();
+  });
+
+  it('isolates a failed update listener and still settles source publication', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    const store = new ProjectStore(h.app, h.queries, DEFAULT_SETTINGS);
+    store.initialize();
+    const failure = new Error('broken update view');
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const later = vi.fn();
+    const source = vi.fn();
+    store.onUpdate(() => {
+      throw failure;
+    });
+    store.onUpdate(later);
+    store.onSourceObservation(source);
+    h.setTasks([task('done')]);
+    h.metadata(h.file, 'changed source', { frontmatter: { status: 'active' } });
+    h.reconciled([h.file.path]);
+    const settled = store.whenSettled();
+    await vi.advanceTimersByTimeAsync(150);
+    await settled;
+    expect(later).toHaveBeenCalledExactlyOnceWith();
+    expect(source).toHaveBeenCalledOnce();
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not notify project update subscriber',
+      { cause: failure },
+    );
+    store.destroy();
+  });
+
+  it('isolates a failed source listener and keeps delivering the same observation to later listeners', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    const other = tfile('Projects/B.md');
+    h.setFiles([h.file, other]);
+    h.setTasks([]);
+    const store = new ProjectStore(h.app, h.queries, DEFAULT_SETTINGS);
+    store.initialize();
+    const failure = new Error('broken source view');
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const first = vi.fn<(observation: ProjectSourceObservation) => void>();
+    const second = vi.fn<(observation: ProjectSourceObservation) => void>();
+    store.onSourceObservation(() => {
+      throw failure;
+    });
+    store.onSourceObservation(first);
+    store.onSourceObservation(second);
+
+    h.setFiles([other]);
+    h.vault('delete', h.file);
+    const settled = store.whenSettled();
+    await vi.advanceTimersByTimeAsync(150);
+    await settled;
+    expect(first).toHaveBeenCalledOnce();
+    expect(second).toHaveBeenCalledOnce();
+    expect(first.mock.calls[0]?.[0]).toEqual({
+      path: 'Projects/A.md',
+      revision: 1,
+      project: undefined,
+    });
+    expect(first.mock.calls[0]?.[0]).toBe(second.mock.calls[0]?.[0]);
+    expect(first.mock.calls[0]).toHaveLength(1);
+    expect(second.mock.calls[0]).toHaveLength(1);
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not notify project source subscriber',
+      { path: 'Projects/A.md', cause: failure },
+    );
+
+    h.setFiles([]);
+    h.vault('delete', other);
+    const nextSettled = store.whenSettled();
+    await vi.advanceTimersByTimeAsync(150);
+    await nextSettled;
+    expect(first).toHaveBeenCalledTimes(2);
+    expect(second).toHaveBeenCalledTimes(2);
+    expect(first.mock.calls[1]?.[0]).toEqual({
+      path: 'Projects/B.md',
+      revision: 2,
+      project: undefined,
+    });
+    expect(first.mock.calls[1]?.[0]).toBe(second.mock.calls[1]?.[0]);
+    expect(log).toHaveBeenCalledTimes(2);
+    expect(log).toHaveBeenNthCalledWith(
+      2,
+      '[abyss-tasks] Could not notify project source subscriber',
+      { path: 'Projects/B.md', cause: failure },
+    );
+    store.destroy();
+  });
+
+  it.each([
+    ['update', 'unsubscribe'],
+    ['update', 'destroy'],
+    ['source', 'unsubscribe'],
+    ['source', 'destroy'],
+  ] as const)(
+    'finishes the current %s delivery when a subscriber calls %s',
+    async (stream, action) => {
+      vi.useFakeTimers();
+      const h = harness();
+      h.setTasks([]);
+      const store = new ProjectStore(h.app, h.queries, DEFAULT_SETTINGS);
+      store.initialize();
+      const later = vi.fn();
+      const subscribe = (listener: () => void) =>
+        stream === 'update' ? store.onUpdate(listener) : store.onSourceObservation(listener);
+      const duringDelivery = vi.fn(() => {
+        if (action === 'destroy') store.destroy();
+        else unsubscribeLater();
+      });
+      subscribe(duringDelivery);
+      const unsubscribeLater = subscribe(later);
+
+      h.setFiles([]);
+      h.vault('delete', h.file);
+      const settled = store.whenSettled();
+      await vi.advanceTimersByTimeAsync(150);
+      await settled;
+      expect(duringDelivery).toHaveBeenCalledOnce();
+      expect(later).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+      if (action === 'unsubscribe') {
+        if (stream === 'update') store.refresh();
+        else {
+          h.vault('delete', h.file);
+          h.reconciled([h.file.path]);
+          await vi.advanceTimersByTimeAsync(150);
+        }
+        expect(duringDelivery).toHaveBeenCalledTimes(2);
+        expect(later).toHaveBeenCalledOnce();
+      }
+      store.destroy();
+    },
+  );
+
+  it('publishes successful update and source delivery without diagnostics or Notices', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    const store = new ProjectStore(h.app, h.queries, DEFAULT_SETTINGS);
+    store.initialize();
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const notices = vi.spyOn(
+      Notice.prototype as unknown as { constructor__(message: unknown, duration?: number): void },
+      'constructor__',
+    );
+    const update = vi.fn();
+    const source = vi.fn();
+    store.onUpdate(update);
+    store.onSourceObservation(source);
+    h.setTasks([task('done')]);
+    h.metadata(h.file, 'changed source', { frontmatter: { status: 'active' } });
+    h.reconciled([h.file.path]);
+    await vi.advanceTimersByTimeAsync(150);
+    await store.whenSettled();
+    expect(update).toHaveBeenCalledOnce();
+    expect(source).toHaveBeenCalledOnce();
+    expect(log).not.toHaveBeenCalled();
+    expect(notices).not.toHaveBeenCalled();
+    store.destroy();
+  });
+
+  it('preserves source read and revalidation diagnostics when a vault read rejects', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    const store = new ProjectStore(h.app, h.queries, DEFAULT_SETTINGS);
+    store.initialize();
+    const source = vi.fn<(observation: ProjectSourceObservation) => void>();
+    store.onSourceObservation(source);
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const readFailure = new Error('source unavailable');
+    h.read.mockRejectedValueOnce(readFailure);
+    h.metadata(h.file, 'changed source', { frontmatter: { status: 'active' } });
+    h.reconciled([h.file.path]);
+    await vi.advanceTimersByTimeAsync(150);
+    await store.whenSettled();
+    expect(source).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not reconcile project source observation',
+      { path: h.file.path, cause: readFailure },
+    );
+
+    h.metadata(h.file, 'available source', { frontmatter: { status: 'active' } });
+    h.reconciled([h.file.path]);
+    await vi.advanceTimersByTimeAsync(150);
+    expect(source).toHaveBeenCalledOnce();
+    const observation = expectDefined(source.mock.calls[0]?.[0]);
+    const revalidationFailure = new Error('source no longer available');
+    h.read.mockRejectedValueOnce(revalidationFailure);
+    await expect(store.revalidateSourceObservation(observation)).resolves.toBe(false);
+    expect(log).toHaveBeenCalledTimes(2);
+    expect(log).toHaveBeenNthCalledWith(
+      2,
+      '[abyss-tasks] Could not revalidate project source observation',
+      { path: h.file.path, cause: revalidationFailure },
+    );
     store.destroy();
   });
 

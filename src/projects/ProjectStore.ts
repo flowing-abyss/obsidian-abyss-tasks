@@ -78,6 +78,30 @@ function metadataMayContainTasks(data: string, cache: CachedMetadata): boolean {
   return data.split('\n').some((line) => /^[\s>]*- \[.\]/u.test(line));
 }
 
+const logProjectFailure = (
+  action: 'notify' | 'reconcile' | 'revalidate',
+  cause: unknown,
+  path?: string,
+): void => {
+  console.error(
+    `[abyss-tasks] Could not ${action} project ${path === undefined ? 'update' : 'source'} ${action === 'notify' ? 'subscriber' : 'observation'}`,
+    { ...(path === undefined ? {} : { path }), cause },
+  );
+};
+
+const notifySubscribers = <Args extends [] | [ProjectSourceObservation]>(
+  listeners: Array<(...args: Args) => void>,
+  ...args: Args
+): void => {
+  for (const listener of listeners) {
+    try {
+      listener(...args);
+    } catch (cause) {
+      logProjectFailure('notify', cause, args[0]?.path);
+    }
+  }
+};
+
 /**
  * Enumerates and caches project notes (markdown files matching the membership
  * query), computing per-note task stats. Registers its own vault/metadata
@@ -352,10 +376,7 @@ export class ProjectStore {
       },
       (error: unknown) => {
         if (this.pendingSourceObservations_abyssPrivate.get(path) !== pending) return;
-        console.error('[abyss-tasks] Could not reconcile project source observation', {
-          path,
-          cause: error,
-        });
+        logProjectFailure('reconcile', error, path);
       },
     );
   }
@@ -373,7 +394,7 @@ export class ProjectStore {
       project,
     };
     this.publishedSourceObservations_abyssPrivate.set(path, { pending, observation });
-    for (const listener of this.sourceListeners_abyssPrivate) listener(observation);
+    notifySubscribers(this.sourceListeners_abyssPrivate, observation);
   }
 
   private hasIndexedTasks_abyssPrivate(...paths: string[]): boolean {
@@ -393,7 +414,7 @@ export class ProjectStore {
   /** Notifies every update listener, which also publishes any earlier move. */
   private publish_abyssPrivate(): void {
     this.unpublished_abyssPrivate = false;
-    for (const cb of this.listeners_abyssPrivate) cb();
+    notifySubscribers(this.listeners_abyssPrivate);
   }
 
   /**
@@ -540,10 +561,7 @@ export class ProjectStore {
         currentData === pending.data
       );
     } catch (error) {
-      console.error('[abyss-tasks] Could not revalidate project source observation', {
-        path: observation.path,
-        cause: error,
-      });
+      logProjectFailure('revalidate', error, observation.path);
       return false;
     }
   }

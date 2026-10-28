@@ -219,6 +219,31 @@ describe('ProjectStore enumeration', () => {
     ps.destroy();
   });
 
+  it('keeps refresh usable after a subscriber fails and unsubscribes', () => {
+    const { app } = makeApp([{ path: 'Projects/A.md', tags: [], fm: { status: 'active' } }]);
+    const store = new ProjectStore(app, storeWith([]), { ...DEFAULT_SETTINGS });
+    store.initialize();
+    const failure = new Error('broken refresh view');
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const unsubscribe = store.onUpdate(() => {
+      throw failure;
+    });
+    const later = vi.fn();
+    store.onUpdate(later);
+
+    store.refresh();
+    expect(later).toHaveBeenCalledOnce();
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not notify project update subscriber',
+      { cause: failure },
+    );
+    unsubscribe();
+    store.refresh();
+    expect(later).toHaveBeenCalledTimes(2);
+    expect(log).toHaveBeenCalledOnce();
+    store.destroy();
+  });
+
   it('notifies presentation settings changes without rescanning vault files or tasks', () => {
     const mock = makeApp([{ path: 'Projects/A.md', tags: [], fm: { status: 'active' } }]);
     const list = vi.fn(() => [] as TaskSnapshot[]);
