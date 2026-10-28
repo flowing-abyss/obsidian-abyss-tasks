@@ -100,6 +100,7 @@ export function buildDefaultTaskStatuses(): TaskStatusDef[] {
 
 export const DEFAULT_SETTINGS: CalendarSettings = {
   firstDayOfWeek: 1,
+  timeTrackingReminderMinutes: 0,
   taskPrefix: '',
   applyTaskPrefixToSubtasks: false,
   parseDatesInQuickCapture: true,

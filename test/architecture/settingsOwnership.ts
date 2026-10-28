@@ -6,6 +6,7 @@ type SettingsOwner = 'static' | 'view' | 'partitioned';
 // the serializer's compatibility responsibility, never a runtime whitelist.
 export const CALENDAR_SETTINGS_OWNERS = {
   firstDayOfWeek: 'static',
+  timeTrackingReminderMinutes: 'static',
   taskPrefix: 'static',
   applyTaskPrefixToSubtasks: 'static',
   parseDatesInQuickCapture: 'static',

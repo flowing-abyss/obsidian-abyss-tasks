@@ -11783,3 +11783,26 @@ button.abyss-calendar-date[aria-pressed='true'] {
 .abyss-task-timeline .abyss-project-timeline-state:disabled {
   pointer-events: none;
 }
+
+.abyss-tracking-reminder {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-2-2);
+  min-width: 0;
+  max-width: 26rem;
+  overflow-wrap: anywhere;
+}
+
+.abyss-tracking-reminder-time {
+  font-weight: var(--font-semibold);
+}
+
+.abyss-tracking-reminder-title {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}

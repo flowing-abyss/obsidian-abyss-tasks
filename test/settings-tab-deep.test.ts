@@ -67,6 +67,7 @@ interface StubPlugin {
   rebuildTaskStatusSemantics: Mock<() => void>;
   tagManager?: TagManager;
   queries?: ReturnType<typeof queryApiForTasks>;
+  previewTimeTrackingReminder?: () => void;
 }
 
 function expandAllSettingsCards(settings: CalendarSettings, expanded: Set<string>): void {
@@ -232,6 +233,36 @@ function openSection(tab: CalendarSettingsTab, index: number): HTMLElement {
     ).querySelector<HTMLElement>('.abyss-settings-section-body'),
   );
 }
+
+it('places the reminder interval last in General and previews only an explicit change', async () => {
+  const { plugin, captured } = makeTab();
+  const preview = vi.fn();
+  plugin.previewTimeTrackingReminder = preview;
+  const select = expectDefined(findComp(captured, 'Time tracking reminder', 'dropdown')).comp
+    .selectEl;
+  expect(Array.from(select.options, (option) => option.value)).toEqual([
+    '0',
+    '5',
+    '10',
+    '20',
+    '30',
+    '40',
+    '50',
+    '60',
+  ]);
+  expect(select.value).toBe('0');
+  expect(select.closest('.setting-item')?.parentElement?.lastElementChild?.contains(select)).toBe(
+    true,
+  );
+  expect(preview).not.toHaveBeenCalled();
+  select.value = '30';
+  select.dispatchEvent(new Event('change', { bubbles: true }));
+  expect(preview).toHaveBeenCalledOnce();
+  expect(plugin.settings.timeTrackingReminderMinutes).toBe(30);
+  await flushMicrotasks();
+  expect(plugin.saveSettings).toHaveBeenCalled();
+  expect(plugin.saveViewState).not.toHaveBeenCalled();
+});
 
 /** Find a Setting's root element within a section body by its nameEl text.
  * Searches recursively so Settings nested inside tag-group cards are found. */

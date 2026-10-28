@@ -2515,6 +2515,46 @@ describe('smart Q static setting', () => {
   );
 });
 
+describe('time tracking reminder static preference', () => {
+  it.each([
+    [undefined, 0],
+    [null, 0],
+    ['30', 0],
+    [-5, 0],
+    [15, 0],
+    [0, 0],
+    [5, 5],
+    [10, 10],
+    [20, 20],
+    [30, 30],
+    [40, 40],
+    [50, 50],
+    [60, 60],
+  ])('loads %j as %j and keeps it out of saved view state', async (input, expected) => {
+    const port = memoryPort(
+      markedStatic({ timeTrackingReminderMinutes: input, futureStatic: { keep: true } }),
+      stateEnvelope({ futureView: { keep: true } }),
+    );
+    const coordinator = new SettingsPersistenceCoordinator(port);
+    const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    expect(settings.timeTrackingReminderMinutes).toBe(expected);
+    const staticBefore = structuredClone(port.staticData);
+    settings.timeTrackingReminderMinutes = 30;
+    await coordinator.saveViewState(settings);
+    expect(port.staticData).toEqual(staticBefore);
+    expect(port.stateText).not.toContain('timeTrackingReminderMinutes');
+    await coordinator.saveSettings(settings);
+    expect(port.staticData).toMatchObject({
+      timeTrackingReminderMinutes: 30,
+      futureStatic: { keep: true },
+    });
+    expect(
+      (await new SettingsPersistenceCoordinator(port).loadSettings(DEFAULT_SETTINGS)).settings
+        .timeTrackingReminderMinutes,
+    ).toBe(30);
+  });
+});
+
 describe('Tasks Kanban saved view compatibility', () => {
   it('keeps Kanban view preferences out of static settings and preserves unknown nested extensions', async () => {
     const port = memoryPort(

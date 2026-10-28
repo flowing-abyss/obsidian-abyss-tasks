@@ -31,6 +31,10 @@ import { saveSettingsDraft } from './settingsSaveFailure';
 import { SettingsValueCommit } from './settingsValueCommit';
 import { removeProjectStatusViewState, removeTaskStatusViewState } from './statusViewState';
 import { type TaskStorageSettings, validateTaskStorageDraft } from './taskStorageSettings';
+import {
+  normalizeTimeTrackingReminderInterval,
+  TIME_TRACKING_REMINDER_INTERVALS,
+} from './timeTrackingReminderSettings';
 import type { CalendarSettings, ProjectStatus } from './types';
 
 const IGNORED_SOURCE_EXAMPLE = '#private';
@@ -43,6 +47,7 @@ interface TaskCalendarPlugin extends Plugin {
   queries?: Pick<TaskDependencyQueryApi, 'listNodes'>;
   rebuildTaskStatusSemantics(): void;
   saveSettings(): Promise<void>;
+  previewTimeTrackingReminder?(): void;
   saveTaskStorageSettings?(draft: TaskStorageSettings): Promise<void>;
   saveViewState(): Promise<void>;
   refreshProjectTableSettings(): void;
@@ -384,6 +389,27 @@ export class CalendarSettingsTab extends PluginSettingTab {
     this.renderTaskDestinationSettings_abyssPrivate(containerEl);
     this.renderTaskLifecycleSettings_abyssPrivate(containerEl);
     this.renderRecurrenceSettings_abyssPrivate(containerEl);
+    new Setting(containerEl)
+      .setName('Time tracking reminder')
+      .setDesc(
+        'Play a gentle sound while tracking a task with Obsidian visible. Changing the interval previews the sound.',
+      )
+      .addDropdown((dropdown) => {
+        for (const interval of TIME_TRACKING_REMINDER_INTERVALS) {
+          dropdown.addOption(String(interval), interval === 0 ? 'Off' : `${interval} minutes`);
+        }
+        dropdown
+          .setValue(String(this.plugin_abyssPrivate.settings.timeTrackingReminderMinutes))
+          .onChange((value) => {
+            this.plugin_abyssPrivate.settings.timeTrackingReminderMinutes =
+              normalizeTimeTrackingReminderInterval(Number(value));
+            this.plugin_abyssPrivate.previewTimeTrackingReminder?.();
+            saveSettingsDraft({
+              action: 'save time tracking reminders',
+              save: () => this.plugin_abyssPrivate.saveSettings(),
+            });
+          });
+      });
   }
 
   private renderTaskCreationSettings_abyssPrivate(containerEl: HTMLElement): void {

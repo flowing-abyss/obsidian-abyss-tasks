@@ -161,6 +161,15 @@ Completion/cancellation closes affected subtree timers in a follow-up write usin
 clock. A failed follow-up leaves the status committed and the entries visible for repair. Manual
 status edits do not trigger writes. Recurring successors start without prior tracking entries.
 
+The plugin-owned [`TimeTrackingReminder`](src/ui/timeTracking/TimeTrackingReminder.ts) observes
+public active-entry queries independently of panel mounting. Its static interval preference lives
+in `data.json`; deadlines and delivered intervals remain transient. It schedules one upcoming
+boundary for the current running entry and skips missed boundaries on startup or visibility return.
+The owning document supplies visibility and trusted interaction events. Unload removes listeners
+and pending work before the task index is destroyed. [`ReminderAudio`](src/ui/timeTracking/ReminderAudio.ts)
+synthesizes the short local signal, bounds audio activation, suspends hardware between sounds, and
+releases its context on disable/unload. Sound failures leave tracking and textual notices available.
+
 Recurrence forecasts are bounded derived values with no direct write authority. Edits resolve the
 persisted source through existing adapters. The domain owns recurrence parsing, canonical English
 labels; invalid stored rules remain visible as authored. Timing normalization

@@ -78,7 +78,10 @@ import { TaskSearchService } from './tasks/infrastructure/search/TaskSearchServi
 import { TaskIndex, type TaskSourceMetadata } from './tasks/infrastructure/TaskIndex';
 import { TaskRefAuthority } from './tasks/infrastructure/TaskRefAuthority';
 import { presentTaskCommandResult } from './ui/taskCommandResult';
+import { ReminderAudio } from './ui/timeTracking/ReminderAudio';
+import { TimeTrackingReminder } from './ui/timeTracking/TimeTrackingReminder';
 import { createTrackingActions } from './ui/timeTracking/trackingActions';
+import { createTrackingReminderMessage } from './ui/timeTracking/trackingReminderNotice';
 import { PANEL_VIEW_TYPE, PanelView } from './views/PanelView';
 
 function configuredTaskInsertion(settings: CalendarSettings): TaskInsertionPolicy {
@@ -117,6 +120,7 @@ export default class TaskCalendarPlugin extends Plugin {
   private viewStatePaths!: ViewStatePathOwner;
   private effectiveTaskStorage!: TaskStorageSettings;
   private projectPropertyCaptureQueue: Promise<void> = Promise.resolve();
+  private timeTrackingReminder: TimeTrackingReminder | undefined = undefined;
 
   override async onload(): Promise<void> {
     await this.loadSettings();
@@ -125,6 +129,22 @@ export default class TaskCalendarPlugin extends Plugin {
     this.registerProjectPropertyCaptureOpportunities();
     await this.captureProjectPropertyDefinitions();
     this.initializeTaskServices();
+    this.timeTrackingReminder = new TimeTrackingReminder({
+      queries: this.queries,
+      win: window,
+      now: () => Date.now(),
+      createSound: () => new ReminderAudio(window),
+      notify: (entry, minutes) => {
+        new Notice(createTrackingReminderMessage(window.document, entry.title, minutes), 8000);
+      },
+      reportFailure: (error) => {
+        console.warn('[abyss-tasks] Reminder sound is unavailable', error);
+        new Notice(
+          'Reminder sound is unavailable. Time tracking and text reminders will continue.',
+        );
+      },
+    });
+    this.timeTrackingReminder.setInterval(this.settings.timeTrackingReminderMinutes);
     const commentTimeContext: CommentTimeContextProvider = systemCommentTimeContext;
     this.registerPanel(commentTimeContext);
     this.registerCommands();
@@ -375,6 +395,7 @@ export default class TaskCalendarPlugin extends Plugin {
   }
 
   override onunload(): void {
+    this.timeTrackingReminder?.destroy();
     this.viewStatePaths.flushPendingSave();
     this.taskSearch.dispose();
     this.taskIndex.destroy();
@@ -410,7 +431,13 @@ export default class TaskCalendarPlugin extends Plugin {
   async saveSettings(): Promise<void> {
     beginSettingsSave(this.settings);
     await this.settingsPersistence.saveSettings(this.settings);
+    this.timeTrackingReminder?.setInterval(this.settings.timeTrackingReminderMinutes);
     this.refreshProjectSettings();
+  }
+
+  previewTimeTrackingReminder(): void {
+    this.timeTrackingReminder?.setInterval(this.settings.timeTrackingReminderMinutes);
+    this.timeTrackingReminder?.preview();
   }
 
   async saveTaskStorageSettings(draft: TaskStorageSettings): Promise<void> {

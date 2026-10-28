@@ -25,6 +25,7 @@ import { getListViewDefaults } from './defaults';
 import { migrateSettings } from './migration';
 import { normalizeTagFilters } from './tagFilters';
 import { prepareTagViewStateRename } from './tagViewState';
+import { normalizeTimeTrackingReminderInterval } from './timeTrackingReminderSettings';
 import type {
   CalendarSettings,
   ListViewState,
@@ -506,6 +507,9 @@ function composeSettings(
   settings.firstDayOfWeek = normalizeFirstDayOfWeek(
     staticData['firstDayOfWeek'],
     defaults.firstDayOfWeek,
+  );
+  settings.timeTrackingReminderMinutes = normalizeTimeTrackingReminderInterval(
+    staticData['timeTrackingReminderMinutes'],
   );
   settings.parseDatesInQuickCapture =
     typeof staticData['parseDatesInQuickCapture'] === 'boolean'

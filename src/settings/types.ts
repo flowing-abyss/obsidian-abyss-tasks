@@ -78,8 +78,11 @@ export interface ProjectsSettings {
   overviewView?: ProjectOverviewMode;
 }
 
+import type { TimeTrackingReminderInterval } from './timeTrackingReminderSettings';
+
 export interface CalendarSettings {
   firstDayOfWeek: 0 | 1 | 2 | 3 | 4 | 5 | 6;
+  timeTrackingReminderMinutes: TimeTrackingReminderInterval;
   taskPrefix: string;
   applyTaskPrefixToSubtasks: boolean;
   parseDatesInQuickCapture: boolean;
