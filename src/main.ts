@@ -593,7 +593,13 @@ export default class TaskCalendarPlugin extends Plugin {
     const statePath = normalizePath(`${pluginDirectory}/state.json`);
     return {
       loadStatic: () => this.loadData(),
-      saveStatic: (data) => this.saveData(data),
+      saveStatic: async (data) => {
+        const expected = JSON.stringify(data);
+        await this.saveData(data);
+        if (JSON.stringify(await this.loadData()) !== expected) {
+          throw new Error('Saved settings could not be confirmed.');
+        }
+      },
       state: {
         path: statePath,
         exists: (path) => adapter.exists(path),

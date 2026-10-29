@@ -408,7 +408,8 @@ live nodes; archive rows can only open a verified retained source.
 
 [`SettingsPersistenceCoordinator`](src/settings/persistence.ts) serializes `data.json` and adjacent
 `state.json` through composition-root ports. One composed CalendarSettings object is the runtime
-authority. Static and view-state saves remain separate. Status changes rebuild task catalog,
+authority. The composition-root static port confirms host writes by JSON readback before coordinator
+deduplication advances. Static and view-state saves remain separate. Status changes rebuild task catalog,
 registry, and index semantics together. Navigation, search choices, drafts, gestures, history, and
 Analysis state remain transient.
 

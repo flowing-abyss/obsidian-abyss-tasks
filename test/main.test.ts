@@ -10,6 +10,7 @@ import {
   ViewStateWritesSuspendedError,
 } from '../src/settings/persistence';
 import { latestSettingsSaveRevision } from '../src/settings/settingsSaveRevision';
+import { CalendarSettingsTab } from '../src/settings/SettingsTab';
 import type { TaskStorageSettings } from '../src/settings/taskStorageSettings';
 import type { CalendarSettings } from '../src/settings/types';
 import { taskNodeAddress, type TrackedEntry } from '../src/tasks';
@@ -20,11 +21,13 @@ import { PANEL_VIEW_TYPE, PanelView } from '../src/views/PanelView';
 import {
   createAppWithFiles,
   deferred,
+  editSettingControl,
   expectDefined,
   flushMicrotasks,
   objectMatching,
   useRealMoment,
 } from './helpers';
+import { ConnectedNoticeFixture } from './support/connectedNoticeFixture';
 
 useRealMoment();
 
@@ -174,9 +177,12 @@ describe('TaskCalendarPlugin loadSettings', () => {
     }
   });
 
-  it('loadSettings calls loadData exactly once', async () => {
+  it('reads initial settings and confirms migration, then reads recognized state only once', async () => {
     const plugin = makePlugin();
     const spy = vi.spyOn(plugin, 'loadData');
+    await plugin.loadSettings();
+    expect(spy).toHaveBeenCalledTimes(2);
+    spy.mockClear();
     await plugin.loadSettings();
     expect(spy).toHaveBeenCalledOnce();
   });
@@ -228,6 +234,255 @@ describe('TaskCalendarPlugin saveSettings', () => {
     expect(saved['sectionCollapse']).toBeUndefined();
     expect((saved['projects'] as Record<string, unknown>)['table']).toBeUndefined();
     expect(saved[STATIC_SAVED_VIEW_STATE_MARKER]).toBe(2);
+  });
+
+  it('rejects an acknowledged write with stale bytes and keeps the same draft retryable', async () => {
+    const plugin = makePlugin();
+    await plugin.loadSettings();
+    plugin.settings.taskPrefix = '#retained-draft';
+    const writer = vi.spyOn(plugin, 'saveData').mockResolvedValueOnce(undefined);
+    await expect(plugin.saveSettings()).rejects.toThrow('Saved settings could not be confirmed.');
+    expect(plugin.settings.taskPrefix).toBe('#retained-draft');
+    await plugin.saveSettings();
+    expect(writer).toHaveBeenCalledTimes(2);
+    expect((plugin.data__ as Record<string, unknown>)['taskPrefix']).toBe('#retained-draft');
+    await plugin.saveSettings();
+    expect(writer).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    { name: 'null', readback: null },
+    { name: 'undefined', readback: undefined },
+    { name: 'different JSON', readback: { taskPrefix: '#other' } },
+  ])('rejects $name readback without advancing deduplication', async ({ readback }) => {
+    const plugin = makePlugin();
+    await plugin.loadSettings();
+    plugin.settings.taskPrefix = '#retained';
+    const writer = vi.spyOn(plugin, 'saveData');
+    const reader = vi.spyOn(plugin, 'loadData').mockResolvedValueOnce(readback);
+    await expect(plugin.saveSettings()).rejects.toThrow('Saved settings could not be confirmed.');
+    expect(writer).toHaveBeenCalledOnce();
+    expect(reader).toHaveBeenCalledOnce();
+    await plugin.saveSettings();
+    expect(writer).toHaveBeenCalledTimes(2);
+    expect(reader).toHaveBeenCalledTimes(2);
+  });
+
+  it('propagates the original read failure and allows the next queued save', async () => {
+    const plugin = makePlugin();
+    await plugin.loadSettings();
+    const failure = new Error('read unavailable');
+    const reader = vi.spyOn(plugin, 'loadData').mockRejectedValueOnce(failure);
+    const writer = vi.spyOn(plugin, 'saveData');
+    plugin.settings.taskPrefix = '#first';
+    const first = expect(plugin.saveSettings()).rejects.toBe(failure);
+    plugin.settings.taskPrefix = '#second';
+    const second = plugin.saveSettings();
+    await first;
+    await second;
+    expect(reader).toHaveBeenCalledTimes(2);
+    expect(writer).toHaveBeenCalledTimes(2);
+    expect(plugin.data__).toMatchObject({ taskPrefix: '#second' });
+  });
+
+  it('does not read back a genuinely rejected write', async () => {
+    const plugin = makePlugin();
+    await plugin.loadSettings();
+    const failure = new Error('write unavailable');
+    vi.spyOn(plugin, 'saveData').mockRejectedValueOnce(failure);
+    const reader = vi.spyOn(plugin, 'loadData');
+    plugin.settings.taskPrefix = '#changed';
+    await expect(plugin.saveSettings()).rejects.toBe(failure);
+    expect(reader).not.toHaveBeenCalled();
+  });
+
+  it('holds the queue through confirmation of the detached first snapshot', async () => {
+    const plugin = makePlugin();
+    await plugin.loadSettings();
+    const readStarted = deferred<void>();
+    const readback = deferred<unknown>();
+    const writer = vi.spyOn(plugin, 'saveData');
+    const reader = vi.spyOn(plugin, 'loadData').mockImplementationOnce(() => {
+      readStarted.resolve();
+      return readback.promise;
+    });
+    plugin.settings.taskPrefix = '#first';
+    let firstSettled = false;
+    const first = plugin.saveSettings().then(() => {
+      firstSettled = true;
+    });
+    await readStarted.promise;
+    const firstPayload = structuredClone(plugin.data__);
+    plugin.settings.taskPrefix = '#second';
+    const second = plugin.saveSettings();
+    await Promise.resolve();
+    expect(firstSettled).toBe(false);
+    expect(writer).toHaveBeenCalledOnce();
+    readback.resolve(firstPayload);
+    await first;
+    await second;
+    expect(
+      writer.mock.calls.map(([data]) => (data as Record<string, unknown>)['taskPrefix']),
+    ).toEqual(['#first', '#second']);
+    expect(plugin.settings.taskPrefix).toBe('#second');
+    expect(plugin.data__).toMatchObject({ taskPrefix: '#second' });
+    await plugin.saveSettings();
+    expect(writer).toHaveBeenCalledTimes(2);
+    expect(reader).toHaveBeenCalledTimes(2);
+  });
+
+  it('confirms JSON roundtrips with unknown nested extensions quietly and deduplicates before I/O', async () => {
+    const plugin = makePlugin({
+      extension: {
+        nested: { text: 'Задача', absent: undefined },
+        values: [undefined, Number.NaN, -0, Number.POSITIVE_INFINITY, null, 2],
+      },
+    });
+    await plugin.loadSettings();
+    const notices = spyOnNotices();
+    const log = vi.spyOn(console, 'error');
+    const writer = vi.spyOn(plugin, 'saveData').mockImplementation(async (data) => {
+      plugin.data__ = JSON.parse(JSON.stringify(data)) as unknown;
+    });
+    const reader = vi.spyOn(plugin, 'loadData');
+    plugin.settings.taskPrefix = '#changed';
+    await plugin.saveSettings();
+    expect(plugin.data__).toMatchObject({
+      extension: { nested: { text: 'Задача' }, values: [null, null, 0, null, null, 2] },
+    });
+    expect(writer.mock.calls[0]?.[0]).toHaveProperty('extension.nested.absent', undefined);
+    expect(plugin.data__).not.toHaveProperty('extension.nested.absent');
+    await plugin.saveSettings();
+    expect(writer).toHaveBeenCalledOnce();
+    expect(reader).toHaveBeenCalledOnce();
+    expect(notices).not.toHaveBeenCalled();
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it('retains verified legacy recovery when initial static cleanup cannot be confirmed', async () => {
+    const legacy = {
+      taskPrefix: '#legacy',
+      sectionCollapse: { tags: true },
+      extension: { kept: 3 },
+    };
+    const plugin = makePlugin(legacy);
+    const writer = vi.spyOn(plugin, 'saveData').mockResolvedValueOnce(undefined);
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await expect(plugin.loadSettings()).rejects.toThrow('Saved settings could not be confirmed.');
+    const verifiedState = expectDefined(plugin.stateFiles__.get(STATE_PATH));
+    expect(JSON.parse(verifiedState)).toMatchObject({
+      schemaVersion: 2,
+      recovery: { preSplitData: legacy },
+    });
+    expect(plugin.data__).toEqual(legacy);
+    expect(writer).toHaveBeenCalledOnce();
+    expect(log).toHaveBeenCalledOnce();
+    await plugin.loadSettings();
+    expect(writer).toHaveBeenCalledTimes(2);
+    expect(plugin.stateFiles__.get(STATE_PATH)).toBe(verifiedState);
+    expect(plugin.settings.sectionCollapse.tags).toBe(true);
+    expect(plugin.data__).toMatchObject({ savedViewStateSchemaVersion: 2, extension: { kept: 3 } });
+    expect(plugin.data__).not.toHaveProperty('sectionCollapse');
+  });
+
+  it('retains the schema-1 legacy guard after unconfirmed upgrade cleanup until explicit retry', async () => {
+    const plugin = makePlugin({ savedViewStateSchemaVersion: 1, extension: { kept: 3 } });
+    plugin.stateFiles__.set(
+      STATE_PATH,
+      JSON.stringify({
+        schemaVersion: 1,
+        views: { sectionCollapse: { tags: true } },
+        recovery: { older: { kept: 5 } },
+      }),
+    );
+    await plugin.loadSettings();
+    const writer = vi.spyOn(plugin, 'saveData').mockResolvedValueOnce(undefined);
+    await expect(plugin.saveViewState()).rejects.toThrow('Saved settings could not be confirmed.');
+    const verifiedState = expectDefined(plugin.stateFiles__.get(STATE_PATH));
+    expect(JSON.parse(verifiedState)).toMatchObject({
+      schemaVersion: 2,
+      recovery: { older: { kept: 5 } },
+    });
+    expect(plugin.data__).toMatchObject({ savedViewStateSchemaVersion: 1 });
+    plugin.settings.taskPrefix = '#guarded';
+    await plugin.saveSettings();
+    expect(plugin.data__).toMatchObject({ savedViewStateSchemaVersion: 1, taskPrefix: '#guarded' });
+    await plugin.saveViewState();
+    expect(writer).toHaveBeenCalledTimes(3);
+    expect(plugin.data__).toMatchObject({ savedViewStateSchemaVersion: 2, extension: { kept: 3 } });
+    expect(plugin.stateFiles__.get(STATE_PATH)).toBe(verifiedState);
+  });
+
+  it('retains Create folder drafts and one Retry through two unconfirmed saves, then confirms the latest', async () => {
+    const plugin = makePlugin();
+    await plugin.onload();
+    const noticeFixtures: ConnectedNoticeFixture[] = [];
+    const noticesByOwner = new WeakMap<object, ConnectedNoticeFixture>();
+    const notices = spyOnNotices().mockImplementation(function (this: object, message: unknown) {
+      if (typeof message !== 'string' && !(message instanceof DocumentFragment)) {
+        throw new Error('Expected a settings Notice message');
+      }
+      const fixture = new ConnectedNoticeFixture(message);
+      noticeFixtures.push(fixture);
+      noticesByOwner.set(this, fixture);
+    });
+    vi.spyOn(Notice.prototype, 'hide').mockImplementation(function (this: object) {
+      noticesByOwner.get(this)?.hide();
+    });
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const writer = vi
+      .spyOn(plugin, 'saveData')
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined);
+    const tab = new CalendarSettingsTab(
+      plugin.app as unknown as App,
+      plugin as unknown as TaskCalendarPlugin,
+    );
+    document.body.append(tab.containerEl);
+    try {
+      (tab as unknown as { display(): void }).display();
+      expectDefined(
+        tab.containerEl.querySelectorAll<HTMLElement>('.abyss-settings-section-header')[3],
+      ).click();
+      const row = expectDefined(
+        [...tab.containerEl.querySelectorAll<HTMLElement>('.setting-item')].find(
+          (entry) => entry.querySelector('.setting-item-name')?.textContent === 'Create folder',
+        ),
+      );
+      const input = expectDefined(row.querySelector('input'));
+      editSettingControl(input, 'Projects/A');
+      await flushMicrotasks();
+      expect(plugin.settings.projects.createFolder).toBe('Projects/A');
+      const retry = expectDefined(
+        document.querySelector<HTMLButtonElement>('.settings-test-notice button'),
+      );
+      editSettingControl(input, 'Projects/B');
+      await flushMicrotasks();
+      expect(plugin.settings.projects.createFolder).toBe('Projects/B');
+      expect(input.value).toBe('Projects/B');
+      expect(document.querySelectorAll('.settings-test-notice button')).toHaveLength(1);
+      expect(document.querySelector('.settings-test-notice button')).toBe(retry);
+      expect(notices).toHaveBeenCalledOnce();
+      expect(writer).toHaveBeenCalledTimes(2);
+      expect(log.mock.calls).toEqual(
+        [1, 2].map(() => [
+          '[abyss-tasks] Could not save project create folder',
+          { cause: objectMatching<Error>({ message: 'Saved settings could not be confirmed.' }) },
+        ]),
+      );
+      retry.click();
+      await flushMicrotasks();
+      expect(writer).toHaveBeenCalledTimes(3);
+      expect(plugin.data__).toMatchObject({ projects: { createFolder: 'Projects/B' } });
+      expect(document.querySelector('.settings-test-notice')).toBeNull();
+      expect(notices).toHaveBeenCalledOnce();
+      expect(log).toHaveBeenCalledTimes(2);
+    } finally {
+      tab.hide();
+      tab.containerEl.remove();
+      for (const fixture of noticeFixtures) fixture.hide();
+      plugin.onunload();
+    }
   });
 
   it('saves one validated storage draft and rebuilds source exclusion after durability', async () => {
@@ -950,7 +1205,6 @@ describe('TaskCalendarPlugin openPanel', () => {
       const errors = vi.spyOn(console, 'error');
       const warnings = vi.spyOn(console, 'warn');
       const plugin = new TaskCalendarPlugin(app, MANIFEST);
-      vi.spyOn(plugin, 'loadData').mockResolvedValue(null);
       const registerCommand = vi.spyOn(plugin, 'addCommand');
       const registerRibbon = vi.spyOn(plugin, 'addRibbonIcon');
       await plugin.onload();
@@ -993,7 +1247,6 @@ describe('TaskCalendarPlugin openPanel', () => {
       const app = await createAppWithFiles({});
       await app.vault.adapter.mkdir(`${app.vault.configDir}/plugins/${MANIFEST.id}`);
       const plugin = new TaskCalendarPlugin(app, MANIFEST);
-      vi.spyOn(plugin, 'loadData').mockResolvedValue(null);
       const registerCommand = vi.spyOn(plugin, 'addCommand');
       const registerRibbon = vi.spyOn(plugin, 'addRibbonIcon');
       await plugin.onload();
@@ -1076,7 +1329,6 @@ async function pluginWithOpenPanel() {
   // Obsidian installs the plugin directory before loading its entry point.
   await app.vault.adapter.mkdir(`${app.vault.configDir}/plugins/${MANIFEST.id}`);
   const plugin = new TaskCalendarPlugin(app, MANIFEST);
-  vi.spyOn(plugin, 'loadData').mockResolvedValue(null);
   const registerCommand = vi.spyOn(plugin, 'addCommand');
   await plugin.onload();
   (app.workspace as unknown as WorkspaceLike).setLayoutReady__();
