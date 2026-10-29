@@ -8,8 +8,11 @@ description: Cuts a release for this Obsidian plugin — bumps the version, runs
 ## The one command
 
 ```bash
-pnpm run release patch   # or: minor / major
+GIT_SSH_COMMAND='ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=6' \
+  pnpm run release patch   # or: minor / major
 ```
+
+The SSH keepalive prevents an idle connection from closing while the pre-push tests run. It applies only to this command and its child processes, without changing global SSH settings.
 
 **Confirm with the user before running this.** It pushes a commit and a tag to the remote and (via `.github/workflows/release.yml`) creates a draft GitHub release — a one-way action, not a local dry run. (It's a draft — nothing is public until it's manually published; see "What's still manual" below.)
 
