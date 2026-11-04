@@ -354,3 +354,43 @@ it('retains the reserved next when final parent DTO allocation exhausts capacity
   expect(receipt.original.task).toBeUndefined();
   expect(receipt.warnings.map((item) => item.code)).toContain('RESULT_SNAPSHOT_UNAVAILABLE');
 });
+
+it.each([false, true])(
+  'reports skipped tracking after confirmed main publication fails, recurring=%s',
+  async (recurring) => {
+    const { h, client, input } = await setup(
+      `- [ ] Task${recurring ? ' 🔁 every day 📅 2026-08-01' : ''}\n  - 2026-08-01T11:00:00Z →\n`,
+    );
+    const writes = vi.spyOn(h.app.vault, 'process');
+    vi.spyOn(h.index, 'installCommittedContent').mockImplementation(() => {
+      h.index.destroy();
+      throw new Error('publication failed');
+    });
+    const result = await client.tasks.complete(input);
+    expect(await h.read('a.md')).toContain('- [x] Task');
+    expect(await h.read('a.md')).toContain('2026-08-01T11:00:00Z →\n');
+    expect(writes).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      ok: true,
+      receipt: {
+        outcome: 'changed',
+        effects: 'partial',
+        recovery: 'reread',
+        original: { target: input.target, state: 'retained' },
+        snapshots: 'unavailable',
+        warnings: expect.arrayContaining([
+          { code: 'TRACKING_INCOMPLETE', message: expect.any(String) as unknown },
+        ]) as unknown,
+      },
+    });
+    if (recurring)
+      expect(result).toMatchObject({
+        receipt: { next: { target: expect.any(String) as unknown } },
+      });
+    expect(await client.tasks.complete(input)).toMatchObject({
+      ok: false,
+      error: { code: 'DISPOSED' },
+    });
+    expect(writes).toHaveBeenCalledTimes(1);
+  },
+);

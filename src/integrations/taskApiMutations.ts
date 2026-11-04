@@ -124,12 +124,21 @@ function operationFacts(outcome: TaskStatusMutationOutcome): OperationFacts {
     return { outcome: 'changed', effects: incomplete ? 'partial' : 'committed' };
   }
   if (result.type === 'io-error' && result.contentState === 'unknown') {
-    return unknownMainFacts(outcome.occurrences.original);
+    return unknownMainFacts(outcome);
   }
   return { outcome: 'failed', effects: 'unchanged', error: rejection(result.type) };
 }
-function unknownMainFacts(original: TaskStatusOccurrenceContinuation): OperationFacts {
-  if (original.state !== 'unproven') return { outcome: 'changed', effects: 'committed' };
+function unknownMainFacts(
+  outcome: Extract<TaskStatusMutationOutcome, { type: 'result' }>,
+): OperationFacts {
+  if (outcome.occurrences.original.state !== 'unproven')
+    return {
+      outcome: 'changed',
+      effects:
+        outcome.followUp !== undefined && outcome.followUp.state !== 'complete'
+          ? 'partial'
+          : 'committed',
+    };
   return { outcome: 'failed', effects: 'unknown', error: rejection('io-error') };
 }
 function discardedEntry(outcome: Extract<TaskStatusMutationOutcome, { type: 'result' }>): boolean {

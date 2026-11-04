@@ -2,6 +2,7 @@ import { TFile } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
 import { StatusCatalog } from '../../src/tasks/domain/StatusCatalog';
+import { ObsidianTaskRepository } from '../../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
 import { expectDefined, flushMicrotasks, metadataChangedEmitter } from '../helpers';
 import { publicApiHarness, type PublicApiHarness } from '../support/publicApiHarness';
 
@@ -499,4 +500,85 @@ it('preserves ordinary live-catalog eligibility after main acceptance', async ()
   } finally {
     subscription.unsubscribe();
   }
+});
+
+describe('confirmed main failure before tracking', () => {
+  it.each(['publication', 'dispatch-throw'] as const)(
+    'retains skipped subtree tracking when %s fails after persistence',
+    async (failure) => {
+      const h = await harness();
+      const input = request(h, true);
+      const writes = vi.spyOn(h.app.vault, 'process');
+      if (failure === 'publication') {
+        vi.spyOn(h.index, 'installCommittedContent').mockImplementation(() => {
+          h.index.destroy();
+          throw new Error('publication failed');
+        });
+      } else {
+        const edit = vi.spyOn(ObsidianTaskRepository.prototype, 'edit');
+        edit.mockImplementationOnce(async function (this: ObsidianTaskRepository, command) {
+          edit.mockRestore();
+          await this.edit(command);
+          throw new Error('after confirmed dispatch');
+        });
+      }
+      const outcome = await h.service.mutateStatus(input);
+      expect(await h.read('a.md')).toContain('- [x] Child');
+      expect(await h.read('a.md')).toContain('2026-08-01T11:00:00Z →\n');
+      expect(writes).toHaveBeenCalledTimes(1);
+      expect(outcome).toMatchObject({
+        type: 'result',
+        result: { type: 'io-error', contentState: 'unknown' },
+        occurrences: { original: { state: 'retained' } },
+        followUp: { closed: 0, unclosed: 1, state: 'partial', discardedShortEntry: false },
+      });
+    },
+  );
+
+  it.each([
+    { name: 'timer-free completion', source: '- [ ] Task\n', symbol: 'x', state: 'retained' },
+    {
+      name: 'non-completing transition',
+      source: '- [x] Task\n  - 2026-08-01T11:00:00Z →\n',
+      symbol: ' ',
+      state: 'retained',
+    },
+    {
+      name: 'removed original',
+      source: '- [ ] Task 🏁 delete\n  - 2026-08-01T11:00:00Z →\n',
+      symbol: 'x',
+      state: 'removed',
+    },
+    {
+      name: 'deleted recurring original',
+      source: '- [ ] Task 🔁 every day 📅 2026-08-01 🏁 delete\n  - 2026-08-01T11:00:00Z →\n',
+      symbol: 'x',
+      state: 'removed',
+    },
+  ])('does not invent skipped tracking for $name', async ({ source, symbol, state }) => {
+    const h = await harness(source);
+    vi.spyOn(h.index, 'installCommittedContent').mockImplementation(() => {
+      h.index.destroy();
+      throw new Error('publication failed');
+    });
+    const outcome = await h.service.mutateStatus({
+      ...request(h),
+      intent: { type: 'set-status', symbol },
+    });
+    expect(outcome).toMatchObject({ type: 'result', occurrences: { original: { state } } });
+    if (outcome.type !== 'result') throw new Error('Expected result');
+    expect(outcome.followUp).toBeUndefined();
+  });
+
+  it('does not label an unknown main writer as skipped tracking', async () => {
+    const h = await harness();
+    vi.spyOn(h.app.vault, 'process').mockRejectedValue(new Error('unknown writer'));
+    const outcome = await h.service.mutateStatus(request(h));
+    expect(outcome).toMatchObject({
+      type: 'result',
+      occurrences: { original: { state: 'unproven' } },
+    });
+    if (outcome.type !== 'result') throw new Error('Expected result');
+    expect(outcome.followUp).toBeUndefined();
+  });
 });

@@ -109,6 +109,45 @@ import type {
 } from './TaskStatusMutationApi';
 import { TimeTrackingService } from './TimeTrackingService';
 
+function runningEntryCount(node: TaskSnapshot | SubtaskSnapshot): number {
+  return (
+    node.timeEntries.filter((entry) => entry.state === 'running').length +
+    node.subtasks.reduce((count, child) => count + runningEntryCount(child), 0)
+  );
+}
+
+function pendingCompletionTracking(
+  request: TaskStatusMutationRequest,
+  prepared: PreparedMutation,
+): CompletionFollowUpDetails | undefined {
+  if (prepared.validateCurrent === undefined || !('atom' in prepared.clock)) return undefined;
+  const current = snapshotForTarget(request.root, request.target);
+  const unclosed = current === undefined ? 0 : runningEntryCount(current);
+  return unclosed > 0
+    ? { closed: 0, unclosed, discardedShortEntry: false, state: 'partial' }
+    : undefined;
+}
+
+function trackingAfterDispatch(
+  result: TaskCommandResult,
+  pending: CompletionFollowUpDetails | undefined,
+): CompletionFollowUpDetails | undefined {
+  // Once a successful dispatch starts the pass, an unexpected exception cannot establish
+  // timer effects. A failed dispatch instead leaves required tracking known to be skipped.
+  return result.type === 'ok' && result.changed && pending !== undefined
+    ? { ...pending, state: 'unknown' }
+    : pending;
+}
+
+function confirmedPendingTracking(
+  lease: TaskStatusReadLease,
+  pending: CompletionFollowUpDetails | undefined,
+): CompletionFollowUpDetails | undefined {
+  // A removed original has no remaining completion subtree to close. Unknown main writes
+  // cannot establish that the captured completion plan became applicable.
+  return lease.occurrences().original.state === 'retained' ? pending : undefined;
+}
+
 function uniqueInOrder(values: readonly string[]): string[] {
   const seen = new Set<string>();
   return values.filter((tag) => {
@@ -832,20 +871,26 @@ export class TaskApplicationService
     request: TaskStatusMutationRequest,
     lease: TaskStatusReadLease,
   ): Promise<TaskStatusMutationOutcome> {
+    let pendingTracking: CompletionFollowUpDetails | undefined;
     try {
       const prepared = this.prepareStrictStatus_abyssPrivate(request, lease);
       if ('type' in prepared) return prepared;
       const strict: { rejection?: TaskStrictStatusFailure } = {};
       const completionConfirmed = prepared.validateCurrent !== undefined;
+      pendingTracking = pendingCompletionTracking(request, prepared);
       const result = await this.dispatchPrepared_abyssPrivate(prepared, undefined, strict);
       if (strict.rejection !== undefined) return { type: 'rejected', reason: strict.rejection };
       if (result.type === 'io-error' && result.contentState === 'unknown') lease.markMainUnknown();
-      const followUp = await this.closeStrictTracking_abyssPrivate(request, result, {
-        lease,
-        settings: prepared.settings,
-        reading: prepared.clock,
-        completionConfirmed,
-      });
+      pendingTracking = trackingAfterDispatch(result, pendingTracking);
+      const followUp =
+        result.type === 'io-error' && result.contentState === 'unknown'
+          ? confirmedPendingTracking(lease, pendingTracking)
+          : await this.closeStrictTracking_abyssPrivate(request, result, {
+              lease,
+              settings: prepared.settings,
+              reading: prepared.clock,
+              completionConfirmed,
+            });
       return {
         type: 'result',
         result,
@@ -854,10 +899,12 @@ export class TaskApplicationService
       };
     } catch {
       lease.markMainUnknown();
+      const followUp = confirmedPendingTracking(lease, pendingTracking);
       return {
         type: 'result',
         result: { type: 'io-error', cause: 'repository-error', contentState: 'unknown' },
         occurrences: lease.occurrences(),
+        ...(followUp === undefined ? {} : { followUp }),
       };
     }
   }

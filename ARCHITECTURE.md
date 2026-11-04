@@ -221,7 +221,11 @@ reaches recurrence generation and its completion stamp handling. Already-complet
 same-symbol requests still pass through the repository guard as no-ops. The service returns the
 lease's final occurrence proofs before disposal. Main status results remain separate from tracking
 details, which retain the last proven root, closed and unclosed counts, discarded entries, and
-partial or unknown outcomes. A no-op status request does not close timers. Ordinary UI commands
+partial or unknown outcomes. The application captures pending timer counts before dispatch. If a
+confirmed retained status write fails publication before tracking starts, it reports that skipped
+work as partial; an unexpected failure after tracking starts reports unknown effects. Historical
+confirmation never resumes timer writes, and removed originals and transitions without required
+tracking acquire no tracking warning. A no-op status request does not close timers. Ordinary UI commands
 keep their existing result shapes and follow-up behavior.
 
 [`TaskStatusReadLease`](src/tasks/infrastructure/TaskStatusReadLease.ts) advances only from a trusted
