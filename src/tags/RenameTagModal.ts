@@ -59,6 +59,7 @@ export class RenameTagModal extends Modal {
   constructor(...dependencies: RenameTagModalDependencies) {
     const [app, tagManager, currentTag, onRenamed, renameScope = 'exact'] = dependencies;
     super(app);
+    this.modalEl.addClass('abyss-scroll-surface');
     this.tagManager = tagManager;
     this.currentTag = currentTag;
     this.onRenamed = onRenamed;

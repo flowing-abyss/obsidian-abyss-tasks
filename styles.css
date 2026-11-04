@@ -353,8 +353,9 @@
     background-color: var(--scrollbar-active-thumb-bg);
   }
 
-  /* Change paint only: hiding a thumb never removes its gutter. Keyboard users can reveal
-     it without a mouse; touch and forced-color environments retain visible indicators. */
+  /* Change paint only: hiding a thumb never removes its gutter. Focused native modals keep
+     sibling result lists visible. Detached suggestions keep theirs while open because their
+     input lives elsewhere. Touch and forced-color environments retain visible indicators. */
   @media (hover: hover) and (pointer: fine) and (forced-colors: none) {
     body
       :is(
@@ -383,8 +384,13 @@
           *
       ):where(:not(.abyss-project-status-filters, .abyss-project-timeline-scale-control)):not(
         :hover,
-        :focus-visible,
-        :has(:focus-visible)
+        :focus-within
+      ):where(
+        :not(
+          .abyss-scroll-surface.suggestion-container,
+          .abyss-scroll-surface.suggestion-container *,
+          .abyss-scroll-surface:focus-within *
+        )
       )::-webkit-scrollbar-thumb {
       background-color: transparent;
     }
@@ -6107,6 +6113,9 @@ body.abyss-modal-open .popover.hover-popover {
 .abyss-modal > .modal-content {
   margin: 0;
   padding: 0;
+
+  /* Obsidian makes this a scrollport on phones; the outer task modal owns scrolling. */
+  overflow: visible;
 }
 
 /* Modal body reuses abyss-right panel styles — no extra CSS needed */
