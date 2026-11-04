@@ -45,6 +45,9 @@ const privateOwners = new Set([
   'TaskIntegrationReadState',
   // Operation-owned lease fields are never reflected, serialized, or spread.
   'TaskStatusReadLeaseOwner',
+  // Registry internals are accessed only through methods, never reflected, serialized, or spread.
+  'TaskIdentityRegistry',
+  'TaskCursorRegistry',
   'MiniSearchTaskEngine',
   'TaskApplicationService',
   'TimeTrackingService',

@@ -59,7 +59,7 @@ export interface TaskStatusReadBasisApi {
     | { readonly type: 'rejected'; readonly reason: TaskStrictStatusFailure };
 }
 
-export type TaskStatusIntent =
+type TaskStatusIntent =
   | { readonly type: 'complete' }
   | { readonly type: 'set-status'; readonly symbol: string }
   | { readonly type: 'toggle-completion' };

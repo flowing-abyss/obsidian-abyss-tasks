@@ -195,3 +195,11 @@ export type {
 export type { TaskInputRecurrenceCandidate } from './domain/recurrenceInputTypes';
 
 export type { RecurrenceInputParser } from './application/RecurrenceInputParser';
+
+export type {
+  TaskAcceptedOccurrenceChange,
+  TaskReadNode,
+  TaskReadObservation,
+} from './application/TaskIntegrationReadApi';
+export type { TaskStatusOccurrenceContinuation } from './application/TaskStatusMutationApi';
+export type { TaskOccurrenceAddress } from './domain/taskOccurrence';

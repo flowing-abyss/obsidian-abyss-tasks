@@ -79,6 +79,21 @@ only their copied options envelope is frozen. [`values.ts`](src/integrations/val
 plain-value freezing and structured API errors. These modules do not register a provider or
 change ordinary task commands, storage, or lifecycle wiring.
 
+[`TaskIdentityRegistry`](src/integrations/TaskIdentityRegistry.ts) owns bounded, epoch-scoped
+opaque targets and revisions for issued occurrences. It consumes accepted semantic witnesses
+synchronously, preserves proven continuations, and retires uncertain or removed occurrences
+without reviving their targets. Whole-root or semantics changes advance the public revision.
+Projection allocates a node and its parent atomically; lookup does not renew idle expiry or grant
+source permission. Pins preserve accepted operation authority, while reserved capacity guarantees
+a next-occurrence receipt can settle even after disposal. Receipt claims reuse an already projected
+next occurrence only at its currently proven address.
+
+[`TaskCursorRegistry`](src/integrations/TaskCursorRegistry.ts) retains bounded query bindings and
+next offsets. Cursors bind normalized filters, page size, generation, scope, semantics, and provider
+epoch; replay does not extend expiry. Both registries reject live capacity overflow instead of
+evicting issued state. Their only task dependencies are inward value types exported through
+`src/tasks`; neither registry registers a provider or changes the composition root.
+
 ## Task source and command flow
 
 ### Identity and reconciliation
