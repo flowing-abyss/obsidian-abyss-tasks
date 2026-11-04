@@ -98,7 +98,8 @@ evicting issued state. Their only task dependencies are inward value types expor
 `TaskIntegrationReadApi`. Its constructor owns clients, identity and cursor registries; clients expose
 only frozen info, read methods, readiness, subscription and disposal. The first client activates
 occurrence evidence and installs a synchronous accepted-event listener. That listener applies identity
-witnesses before external invalidations. Every callback checks its registration and client lifetime.
+witnesses before external invalidations. Outward publications retain their original listener audience
+and drain in order across callback reentry. Every callback checks its registration and client lifetime.
 Provider closure settles pending readiness and closes listeners before releasing its inward subscription.
 
 [`taskApiReads`](src/integrations/taskApiReads.ts) snapshots validated inputs before yielding, checks

@@ -30,6 +30,13 @@ interface ClientRecord {
   readonly listeners: Set<(event: ApiEventV1) => void>;
   readonly waits: Set<() => void>;
 }
+interface Publication {
+  readonly event: ApiEventV1;
+  readonly audience: ReadonlyArray<{
+    readonly client: ClientRecord;
+    readonly listeners: ReadonlyArray<(event: ApiEventV1) => void>;
+  }>;
+}
 interface ProviderOptions {
   readonly reads: TaskIntegrationReadApi;
   readonly pluginVersion: string;
@@ -43,6 +50,8 @@ interface ProviderOwner {
   readonly cursors: TaskCursorRegistry;
   readonly clients: Set<ClientRecord>;
   readonly info: ApiInfoV1;
+  readonly publications: Publication[];
+  publishing: boolean;
   closed: boolean;
   diagnostics: number;
   terminal?: ApiResultV1<never>;
@@ -107,6 +116,7 @@ function closeClient(owner: ProviderOwner, client: ClientRecord): void {
 function closeProvider(owner: ProviderOwner): void {
   if (owner.closed) return;
   owner.closed = true;
+  owner.publications.length = 0;
   for (const client of [...owner.clients]) closeClient(owner, client);
   owner.unsubscribe?.();
   delete owner.unsubscribe;
@@ -145,14 +155,31 @@ function invoke(
     internal(owner, 'subscribe');
   }
 }
+function deliver(owner: ProviderOwner, publication: Publication): void {
+  for (const { client } of publication.audience) for (const wake of [...client.waits]) wake();
+  for (const { client, listeners } of publication.audience)
+    for (const listener of listeners) invoke(owner, client, listener, publication.event);
+}
 function publish(owner: ProviderOwner, event: ApiEventV1): void {
-  const publication = [...owner.clients].map((client) => ({
-    client,
-    listeners: [...client.listeners],
-  }));
-  for (const { client } of publication) for (const wake of [...client.waits]) wake();
-  for (const { client, listeners } of publication)
-    for (const listener of listeners) invoke(owner, client, listener, event);
+  owner.publications.push({
+    event,
+    audience: [...owner.clients].map((client) => ({ client, listeners: [...client.listeners] })),
+  });
+  // Inward acceptance may reenter this loop; its identities are already installed.
+  // Keep outward callbacks ordered, with the audience captured before any reentry.
+  if (owner.publishing) return;
+  owner.publishing = true;
+  try {
+    for (
+      let next = owner.publications.shift();
+      next !== undefined;
+      next = owner.publications.shift()
+    ) {
+      deliver(owner, next);
+    }
+  } finally {
+    owner.publishing = false;
+  }
 }
 function activate(owner: ProviderOwner): void {
   if (owner.unsubscribe !== undefined) return;
@@ -271,6 +298,8 @@ export class TaskApiProvider {
       identities: new TaskIdentityRegistry({ epoch: options.epoch, now: options.now }),
       cursors: new TaskCursorRegistry({ epoch: options.epoch, now: options.now }),
       clients: new Set(),
+      publications: [],
+      publishing: false,
       info: apiInfo(options),
       closed: false,
       diagnostics: 0,

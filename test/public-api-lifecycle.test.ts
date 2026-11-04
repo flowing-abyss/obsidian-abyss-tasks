@@ -234,3 +234,93 @@ it('terminates pending work on safe-integer exhaustion without exposing source s
     errors.mockRestore();
   }
 });
+
+it('orders invalidations when a callback synchronously installs accepted content', async () => {
+  const h = await setup();
+  let inwardEvents = 0;
+  h.reads.subscribe(() => {
+    inwardEvents++;
+  });
+  const client = h.client();
+  let registeredAt = 0;
+  let immediateCount = 0;
+  const lateChangedAt: number[] = [];
+  let armed = false;
+  const lateRevisions: number[] = [];
+  ok(
+    client.subscribe(() => {
+      if (!armed) return;
+      armed = false;
+      h.index.installCommittedContent('a.md', '- [ ] task\n');
+      registeredAt = inwardEvents;
+      ok(
+        client.subscribe((event) => {
+          if (event.type === 'changed') lateChangedAt.push(inwardEvents);
+          lateRevisions.push(event.revision);
+        }),
+      );
+      immediateCount = lateRevisions.length;
+    }),
+  );
+  const revisions: number[] = [];
+  ok(
+    client.subscribe((event) => {
+      revisions.push(event.revision);
+    }),
+  );
+  armed = true;
+  h.index.updateIntegrationSemantics('nested-accepted-content');
+  expect(immediateCount).toBe(1);
+  expect(lateChangedAt.every((count) => count > registeredAt)).toBe(true);
+  expect(revisions.length).toBeGreaterThan(2);
+  expect(revisions).toEqual([...revisions].sort((a, b) => a - b));
+  expect(lateRevisions).toEqual([...lateRevisions].sort((a, b) => a - b));
+  expect(lateRevisions.every((revision) => revision >= required(lateRevisions[0]))).toBe(true);
+});
+
+it('preserves lifecycle transitions across nested acceptance without delivering old queued states to late subscribers', async () => {
+  const h = await setup(false);
+  const client = h.client();
+  const state = Object.getOwnPropertyDescriptor(h.index, 'integrationReadState_abyssPrivate')
+    ?.value as TaskIntegrationReadState;
+  let armed = true;
+  const lateEvents: Array<{ revision: number; lifecycle: string }> = [];
+  let immediateCount = 0;
+  ok(
+    client.subscribe((event) => {
+      if (!armed || event.lifecycle !== 'ready') return;
+      armed = false;
+      state.setLifecycle('failed');
+      h.index.installCommittedContent('a.md', '- [ ] task\n');
+      ok(
+        client.subscribe((current) => {
+          lateEvents.push(current);
+        }),
+      );
+      immediateCount = lateEvents.length;
+    }),
+  );
+  const events: Array<{ revision: number; lifecycle: string }> = [];
+  ok(
+    client.subscribe((event) => {
+      events.push(event);
+    }),
+  );
+  await h.index.initialize();
+  const transitions = () =>
+    events
+      .filter((event, index) => event.lifecycle !== events[index - 1]?.lifecycle)
+      .map((event) => event.lifecycle);
+  expect(immediateCount).toBe(1);
+  expect(transitions()).toEqual(['initializing', 'ready', 'failed']);
+  expect(events.map((event) => event.revision)).toEqual(
+    events.map((event) => event.revision).sort((a, b) => a - b),
+  );
+  expect(lateEvents.every((event) => event.lifecycle === 'failed')).toBe(true);
+  expect(lateEvents.map((event) => event.revision)).toEqual(
+    lateEvents.map((event) => event.revision).sort((a, b) => a - b),
+  );
+  state.setLifecycle('initializing');
+  state.setLifecycle('ready');
+  expect(transitions()).toEqual(['initializing', 'ready', 'failed', 'initializing', 'ready']);
+});
