@@ -2975,6 +2975,7 @@ export class TaskIndex
   ): void {
     if (
       tasks.length === 0 ||
+      this.integrationReadState_abyssPrivate.isUnsettled(newPath, file) ||
       this.excludeSource_abyssPrivate !== undefined ||
       this.statistics_abyssPrivate.active ||
       this.options_abyssPrivate.statisticsFileKind !== undefined

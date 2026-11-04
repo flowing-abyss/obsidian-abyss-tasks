@@ -130,6 +130,11 @@ export class TaskIntegrationReadState implements TaskIntegrationReadStateApi {
     this.changed_abyssPrivate();
   }
 
+  isUnsettled(path: string, fileIdentity: object): boolean {
+    const source = this.sources_abyssPrivate.get(path);
+    return source?.fileIdentity === fileIdentity && source.phase !== 'settled';
+  }
+
   /** Enumerates health owners for confirmed-absence pruning, never source contents. */
   sources(): ReadonlyArray<{ readonly path: string; readonly fileIdentity: object }> {
     return [...this.sources_abyssPrivate.values()].map(({ path, fileIdentity }) => ({

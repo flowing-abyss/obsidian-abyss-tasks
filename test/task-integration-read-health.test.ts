@@ -373,4 +373,61 @@ describe('integration source health', () => {
     expect(h.reads.coverage().type).toBe('ok');
     expect(h.index.list()[0]?.title).toBe('Replacement');
   });
+  it('reacquires a nonempty renamed note after retiring a pending reload', async () => {
+    const content = '- [ ] Task';
+    const h = await harness({ 'old.md': content });
+    const pending = deferred<string>();
+    vi.spyOn(h.app.vault, 'cachedRead').mockImplementationOnce(() => pending.promise);
+    const refresh = h.index.refreshSourceExclusion(undefined);
+    try {
+      expect(h.reads.coverage()).toMatchObject({ reason: 'incomplete' });
+      await h.app.vault.rename(file(h, 'old.md'), 'new.md');
+      pending.resolve('- [ ] Obsolete reload');
+      await refresh;
+      await flushMicrotasks();
+      expect(h.reads.coverage({ path: 'new.md' }).type).toBe('ok');
+      expect(h.index.list().map((task) => [task.source.filePath, task.title])).toEqual([
+        ['new.md', 'Task'],
+      ]);
+    } finally {
+      pending.resolve(content);
+      await refresh;
+    }
+  });
+
+  it('reacquires a nonempty renamed note after retiring pending committed-content verification', async () => {
+    const content = '- [ ] Task';
+    const h = await harness({ 'old.md': content });
+    h.index.installCommittedContent('old.md', content);
+    const pending = deferred<string>();
+    vi.spyOn(h.app.vault, 'read').mockImplementationOnce(() => pending.promise);
+    try {
+      h.app.metadataCache.trigger('changed', file(h, 'old.md'), '- [ ] Stale metadata', {});
+      expect(h.reads.coverage()).toMatchObject({ reason: 'incomplete' });
+      await h.app.vault.rename(file(h, 'old.md'), 'new.md');
+      pending.resolve(content);
+      await flushMicrotasks();
+      expect(h.reads.coverage({ path: 'new.md' }).type).toBe('ok');
+      expect(h.index.list().map((task) => [task.source.filePath, task.title])).toEqual([
+        ['new.md', 'Task'],
+      ]);
+    } finally {
+      pending.resolve(content);
+      await flushMicrotasks();
+    }
+  });
+
+  it('keeps settled nonempty rename synchronous without a replacement read', async () => {
+    const h = await harness({ 'old.md': '- [ ] Task' });
+    const read = vi.spyOn(h.app.vault, 'cachedRead');
+    const renamedPaths: string[][] = [];
+    h.index.subscribe((event) => {
+      if (event.type === 'renamed')
+        renamedPaths.push(h.index.list().map((task) => task.source.filePath));
+    });
+    await h.app.vault.rename(file(h, 'old.md'), 'new.md');
+    expect(renamedPaths).toEqual([['new.md']]);
+    expect(h.reads.coverage().type).toBe('ok');
+    expect(read).not.toHaveBeenCalled();
+  });
 });
