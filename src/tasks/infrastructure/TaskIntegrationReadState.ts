@@ -44,6 +44,8 @@ export class TaskIntegrationReadState implements TaskIntegrationReadStateApi {
   private readonly acquisitions_abyssPrivate = new WeakMap<object, SourceHealth>();
   private publicationDepth_abyssPrivate = 0;
   private publishing_abyssPrivate = false;
+  private accepting_abyssPrivate = false;
+  private readonly acceptedEvents_abyssPrivate: ReadPublication[] = [];
   private readonly events_abyssPrivate: ReadPublication[] = [];
   private readonly listeners_abyssPrivate = new Set<ReadListener>();
 
@@ -71,7 +73,9 @@ export class TaskIntegrationReadState implements TaskIntegrationReadStateApi {
         type: 'error',
         reason: observation.lifecycle === 'initializing' ? 'not-ready' : observation.lifecycle,
       };
-    if (this.publicationDepth_abyssPrivate > 0) return { type: 'error', reason: 'incomplete' };
+    // Nested installation may advance roots beyond the acceptance currently being delivered.
+    if (this.publicationDepth_abyssPrivate > 0 || this.acceptedEvents_abyssPrivate.length > 0)
+      return { type: 'error', reason: 'incomplete' };
     for (const source of this.sources_abyssPrivate.values()) {
       if (!matchesScope(source.path, scope)) continue;
       if (source.phase !== 'settled') return { type: 'error', reason: 'incomplete' };
@@ -195,14 +199,28 @@ export class TaskIntegrationReadState implements TaskIntegrationReadStateApi {
   /** Accepted canonical installation reaches inward consumers before held health callbacks. */
   accepted(change: TaskAcceptedOccurrenceChange): void {
     if (!this.advance_abyssPrivate()) return;
+    this.acceptedEvents_abyssPrivate.push({
+      event: Object.freeze({ type: 'accepted', observation: this.capture(), change }),
+      listeners: [...this.listeners_abyssPrivate],
+    });
+    this.flushAccepted_abyssPrivate();
+  }
+
+  private flushAccepted_abyssPrivate(): void {
+    if (this.accepting_abyssPrivate) return;
     const publishing = this.publishing_abyssPrivate;
     this.publishing_abyssPrivate = true;
+    this.accepting_abyssPrivate = true;
     try {
-      this.notify_abyssPrivate({
-        event: Object.freeze({ type: 'accepted', observation: this.capture(), change }),
-        listeners: [...this.listeners_abyssPrivate],
-      });
+      for (
+        let event = this.acceptedEvents_abyssPrivate.shift();
+        event !== undefined;
+        event = this.acceptedEvents_abyssPrivate.shift()
+      ) {
+        this.notify_abyssPrivate(event);
+      }
     } finally {
+      this.accepting_abyssPrivate = false;
       this.publishing_abyssPrivate = publishing;
       this.flush_abyssPrivate();
     }

@@ -134,16 +134,20 @@ index. Authority staging carries frozen continued, removed, and created witnesse
 operation token. Staging checks source-backed physical endpoints; acceptance checks their exact
 canonical predecessor and successor addresses. Invalid or ambiguous evidence invalidates affected
 addresses without claiming removal. Replacement file owners invalidate previous addresses even when
-bytes match. Unchanged exact roots preserve their basis, duplicate echoes
-cannot recreate occurrences, and restoration revokes forward semantics.
+bytes match. Unchanged exact occurrences reserve their own endpoints and cannot be claimed by a
+continuation from another occurrence. Duplicate echoes cannot recreate occurrences, and restoration
+revokes forward semantics.
 
 Loaded observations, metadata observations, repository installs, and rename relocation share a
 synchronous accepted-install boundary. Repository batches prepare and prove every file before
 installing any roots. Once all roots and source health are installed, inward accepted listeners
 receive exact accepted bytes, owned file identities, and settled acquisition tokens before held
 health, Search, Statistics, or UI callbacks can read those roots. Previews publish no acceptance.
-Held notifications retain their acquisition evidence and original listener audience; subscribers
-already advanced by acceptance receive the current complete observation rather than an older
+Nested accepted installations deliver their evidence in order to every listener. Integration reads
+remain incomplete while newer installed roots await semantic delivery; the latest accepted event
+can hydrate its own roots synchronously. Held notifications retain their acquisition evidence and
+original listener audience; subscribers already advanced by acceptance receive the current complete
+observation rather than an older
 revision. Accepted source evidence is transient and never enters public task DTOs.
 
 Edits preserve unrelated Markdown and identify the actual authored block or occurrence. Rendering,

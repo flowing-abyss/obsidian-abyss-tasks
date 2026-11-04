@@ -105,10 +105,14 @@ export function reconcileOccurrenceWitnesses(
   const current = occurrenceAddresses(after);
   const priorKeys = new Set(prior.map(occurrenceKey));
   const currentKeys = new Set(current.map(occurrenceKey));
+  // An exact occurrence retained on both sides already owns its predecessor and successor.
   const witnesses =
     candidates.every((witness) => {
       if (witness.kind === 'created') return !priorKeys.has(occurrenceKey(witness.after));
-      return witness.kind !== 'removed' || !currentKeys.has(occurrenceKey(witness.before));
+      if (witness.kind === 'removed') return !currentKeys.has(occurrenceKey(witness.before));
+      const beforeKey = occurrenceKey(witness.before);
+      const afterKey = occurrenceKey(witness.after);
+      return beforeKey === afterKey || (!currentKeys.has(beforeKey) && !priorKeys.has(afterKey));
     }) &&
     validOccurrenceWitnesses(
       candidates,

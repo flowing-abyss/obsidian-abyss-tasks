@@ -512,3 +512,122 @@ it('finishes accepted delivery before publishing reentrant state changes to othe
     h.dispose();
   }
 });
+
+it.each(['repository', 'metadata'] as const)(
+  'orders nested %s acceptance and blocks hydration until the corresponding evidence is delivered',
+  async (route) => {
+    const h = await publicApiHarness({ 'a.md': '- [ ] first' });
+    try {
+      h.reads.activateOccurrences();
+      const initial = h.authority.revision('- [ ] first');
+      const middle = h.authority.mintRevision('- [x] second');
+      const final = h.authority.mintRevision('- [-] third');
+      const address = (rootRevision: string) => ({
+        filePath: 'a.md',
+        rootRevision,
+        rootLine: 0,
+        nodeOffset: 0,
+      });
+      const firstWitness = {
+        kind: 'continued' as const,
+        before: address(initial),
+        after: address(middle),
+      };
+      const secondWitness = {
+        kind: 'continued' as const,
+        before: address(middle),
+        after: address(final),
+      };
+      const stage = (content: string, witness: typeof firstWitness) =>
+        h.authority.stage(
+          {
+            filePath: 'a.md',
+            candidateFingerprint: taskRefContentFingerprint(content),
+            candidateLength: content.length,
+            expectedRevision: witness.before.rootRevision,
+            roots: [{ line: 0, source: content, revision: witness.after.rootRevision }],
+            occurrences: [witness],
+          },
+          witness.before.rootRevision,
+        );
+      const install = (content: string): void => {
+        if (route === 'repository') h.index.installCommittedContent('a.md', content);
+        else
+          h.app.metadataCache.trigger(
+            'changed',
+            expectDefined(h.app.vault.getFileByPath('a.md')),
+            content,
+            {},
+          );
+      };
+      const first = stage('- [x] second', firstWitness);
+      if (first.type !== 'staged') throw new Error('first stage failed');
+      const seenA: TaskOccurrenceWitness[][] = [];
+      const seenB: TaskOccurrenceWitness[][] = [];
+      const nestedReads: unknown[] = [];
+      const laterReads: unknown[] = [];
+      let nested = false;
+      h.reads.subscribe((event) => {
+        if (event.type !== 'accepted') return;
+        seenA.push([...event.change.witnesses]);
+        if (nested) return;
+        nested = true;
+        h.authority.commit(first.token);
+        h.authority.acknowledge('a.md', '- [x] second');
+        const next = stage('- [-] third', secondWitness);
+        if (next.type !== 'staged') throw new Error('second stage failed');
+        install('- [-] third');
+        nestedReads.push(h.reads.node(address(final)));
+      });
+      h.reads.subscribe((event) => {
+        if (event.type !== 'accepted') return;
+        seenB.push([...event.change.witnesses]);
+        laterReads.push(h.reads.node(address(final)));
+      });
+      install('- [x] second');
+      expect(seenA).toEqual([[firstWitness], [secondWitness]]);
+      expect(seenB).toEqual([[firstWitness], [secondWitness]]);
+      expect(nestedReads).toEqual([{ type: 'error', reason: 'incomplete' }]);
+      expect(laterReads[0]).toEqual({ type: 'error', reason: 'incomplete' });
+      expect(laterReads[1]).toMatchObject({ type: 'ok', value: { address: address(final) } });
+      expect(h.reads.node(address(final)).type).toBe('ok');
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it('rejects continuation into an unchanged exact occurrence and preserves its identity', async () => {
+  const h = await publicApiHarness({ 'a.md': '- [ ] A\n\n- [ ] B' });
+  try {
+    h.reads.activateOccurrences();
+    const page = h.reads.page({}, 2);
+    if (page.type !== 'ok') throw new Error('read failed');
+    const a = expectDefined(page.value.nodes[0]).address;
+    const b = expectDefined(page.value.nodes[1]).address;
+    const content = '\n\n- [ ] B';
+    expect(
+      h.authority.stage(
+        {
+          filePath: 'a.md',
+          candidateFingerprint: taskRefContentFingerprint(content),
+          candidateLength: content.length,
+          expectedRevision: a.rootRevision,
+          roots: [{ line: 2, source: '- [ ] B', revision: b.rootRevision }],
+          occurrences: [{ kind: 'continued', before: a, after: b }],
+        },
+        a.rootRevision,
+      ).type,
+    ).toBe('staged');
+    const changes: TaskAcceptedOccurrenceChange[] = [];
+    h.reads.subscribe((event) => {
+      if (event.type === 'accepted') changes.push(event.change);
+    });
+    h.index.installCommittedContent('a.md', content);
+    expect(changes[0]?.witnesses).toEqual([]);
+    expect(changes[0]?.invalidated).toEqual([a]);
+    expect(h.reads.node(b)).toMatchObject({ type: 'ok', value: { address: b } });
+  } finally {
+    h.dispose();
+  }
+});
