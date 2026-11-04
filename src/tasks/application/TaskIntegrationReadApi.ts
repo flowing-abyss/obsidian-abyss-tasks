@@ -1,6 +1,6 @@
 import type { TaskNodeSnapshot } from '../domain/taskDependencies';
-import type { TaskOccurrenceAddress } from '../domain/taskOccurrence';
-import type { TaskStatus } from '../domain/types';
+import type { TaskOccurrenceAddress, TaskOccurrenceWitness } from '../domain/taskOccurrence';
+import type { TaskSnapshot, TaskStatus } from '../domain/types';
 
 export interface TaskReadObservation {
   readonly revision: number;
@@ -32,7 +32,28 @@ export interface TaskSourceHealthChange {
   readonly acquisition: object;
   readonly phase: 'pending' | 'failed' | 'settled';
 }
+export interface TaskAcceptedSourceEvidence {
+  readonly filePath: string;
+  readonly fileIdentity: object;
+  readonly content: string;
+  readonly settledAcquisitions: readonly object[];
+}
+export interface TaskAcceptedOccurrenceChange {
+  readonly sources: readonly TaskAcceptedSourceEvidence[];
+  readonly paths: readonly string[];
+  readonly before: readonly TaskSnapshot[];
+  readonly after: readonly TaskSnapshot[];
+  readonly witnesses: readonly TaskOccurrenceWitness[];
+  readonly invalidated: readonly TaskOccurrenceAddress[];
+  readonly restored: boolean;
+  readonly operation?: object;
+}
 export type TaskReadEvent =
+  | {
+      readonly type: 'accepted';
+      readonly observation: TaskReadObservation;
+      readonly change: TaskAcceptedOccurrenceChange;
+    }
   | { readonly type: 'state' | 'changed'; readonly observation: TaskReadObservation }
   | {
       readonly type: 'health';
@@ -74,6 +95,7 @@ export interface TaskReadPage {
   readonly next?: { readonly path: string; readonly line: number };
 }
 export interface TaskIntegrationReadApi extends TaskIntegrationReadStateApi {
+  activateOccurrences(): void;
   page(
     query: TaskNodeReadQuery,
     limit: number,

@@ -561,6 +561,7 @@ export default defineConfig(
       'src/panels/center/taskSearchDestination.ts',
       'src/tasks/infrastructure/search/taskSearchContext.ts',
       'src/tasks/domain/taskSearchMetadata.ts',
+      'src/tasks/domain/taskOccurrence.ts',
       'src/panels/task-list/taskListRows.ts',
       'src/panels/task-list/taskDailyRows.ts',
       'src/panels/task-list/taskRevealRows.ts',

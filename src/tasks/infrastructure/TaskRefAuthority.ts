@@ -1,3 +1,10 @@
+import { readTaskLinePrefix } from '../domain/taskLineSourceModel';
+import {
+  freezeOccurrenceWitnesses,
+  validOccurrenceWitnesses,
+  type TaskOccurrenceAddress,
+  type TaskOccurrenceWitness,
+} from '../domain/taskOccurrence';
 import type {
   ProvenRootRevisionOverride,
   RootRevisionOverride,
@@ -14,6 +21,8 @@ export interface TaskRefEvidence {
 }
 
 export interface TaskRefTransition {
+  readonly occurrences?: readonly TaskOccurrenceWitness[];
+  readonly operation?: object;
   readonly filePath: string;
   readonly candidateFingerprint: string;
   readonly candidateLength: number;
@@ -22,12 +31,16 @@ export interface TaskRefTransition {
 }
 
 export interface TaskRefAuthorityObservation {
+  readonly occurrences?: readonly TaskOccurrenceWitness[];
+  readonly operation?: object;
   readonly roots: readonly RootRevisionOverride[];
   readonly transitions: readonly ProvenRootRevisionOverride[];
   readonly restored?: true;
 }
 
 export interface TaskRefBatchTransition {
+  readonly occurrences?: readonly TaskOccurrenceWitness[];
+  readonly operation?: object;
   readonly filePath: string;
   readonly candidateFingerprint: string;
   readonly candidateLength: number;
@@ -43,6 +56,8 @@ export interface ExactSourceMutation {
 }
 
 export interface StructuralSourceMutation extends Omit<ExactSourceMutation, 'roots'> {
+  readonly occurrences?: readonly TaskOccurrenceWitness[];
+  readonly operation?: object;
   readonly roots: readonly RootRevisionOverride[];
   readonly transitions: readonly ProvenRootRevisionOverride[];
 }
@@ -98,6 +113,8 @@ export function hasUnconfirmedCurrentRoot(
 const REVISION_PREFIX = 'task-ref:1:';
 
 interface PendingTransition {
+  readonly occurrences?: readonly TaskOccurrenceWitness[];
+  readonly operation?: object;
   readonly token: object;
   readonly filePath: string;
   readonly candidateFingerprint: string;
@@ -169,6 +186,15 @@ function sourceLineage(
   return { before, after, forwarded, invalid: false };
 }
 
+function occurrenceEvidence(
+  value: Pick<TaskRefAuthorityObservation, 'occurrences' | 'operation'>,
+): Pick<TaskRefAuthorityObservation, 'occurrences' | 'operation'> {
+  return {
+    ...(value.occurrences === undefined ? {} : { occurrences: value.occurrences }),
+    ...(value.operation === undefined ? {} : { operation: value.operation }),
+  };
+}
+
 export class TaskRefAuthority {
   private generation = 0;
   private readonly transitions = new Map<string, PendingTransition>();
@@ -222,13 +248,16 @@ export class TaskRefAuthority {
     ) {
       return { type: 'conflict' };
     }
-    return this.stageTransition({
-      ...transition,
-      roots: transition.roots.map((root) => ({
-        ...root,
-        previousRevision: transition.expectedRevision,
-      })),
-    });
+    return this.stageTransition(
+      {
+        ...transition,
+        roots: transition.roots.map((root) => ({
+          ...root,
+          previousRevision: transition.expectedRevision,
+        })),
+      },
+      [transition.expectedRevision],
+    );
   }
 
   stageBatch(
@@ -267,8 +296,12 @@ export class TaskRefAuthority {
           candidateFingerprint: taskRefContentFingerprint(source.after),
           candidateLength: source.after.length,
           roots: source.roots,
+          ...(source.occurrences === undefined ? {} : { occurrences: source.occurrences }),
+          ...(source.operation === undefined ? {} : { operation: source.operation }),
         },
         source.transitions,
+        false,
+        source.predecessors.map(({ revision }) => revision),
       ),
     );
   }
@@ -287,7 +320,13 @@ export class TaskRefAuthority {
     if (
       !this.exactPopulation(source.before, source.predecessors) ||
       !this.exactPopulation(source.after, source.roots) ||
-      !this.newStructuralRootsAreFresh(source)
+      !this.newStructuralRootsAreFresh(source) ||
+      !this.validOccurrences(
+        source.filePath,
+        source.occurrences ?? [],
+        source.predecessors,
+        source.roots,
+      )
     )
       return false;
     return (
@@ -518,6 +557,8 @@ export class TaskRefAuthority {
         candidateFingerprint: restoration.fingerprint,
         candidateLength: restoration.length,
         roots: restoration.roots,
+        ...(pending.occurrences === undefined ? {} : { occurrences: [] }),
+        ...(pending.operation === undefined ? {} : { operation: pending.operation }),
       },
       [],
       true,
@@ -531,8 +572,11 @@ export class TaskRefAuthority {
       : undefined;
   }
 
-  private stageTransition(transition: TaskRefBatchTransition): TaskRefStageResult {
-    return this.stageContent(transition, transition.roots);
+  private stageTransition(
+    transition: TaskRefBatchTransition,
+    predecessors = transition.roots.map(({ previousRevision }) => previousRevision),
+  ): TaskRefStageResult {
+    return this.stageContent(transition, transition.roots, false, predecessors);
   }
 
   private stageContent(
@@ -541,7 +585,17 @@ export class TaskRefAuthority {
     },
     transitions: readonly ProvenRootRevisionOverride[],
     restored = false,
+    predecessors: readonly string[] = [],
   ): TaskRefStageResult {
+    if (
+      !this.validOccurrences(
+        transition.filePath,
+        transition.occurrences ?? [],
+        predecessors.map((revision) => ({ revision })),
+        transition.roots,
+      )
+    )
+      return { type: 'conflict' };
     if (this.transitions.has(transition.filePath)) return { type: 'conflict' };
     const token = Object.freeze({});
     const pending: PendingTransition = {
@@ -558,10 +612,48 @@ export class TaskRefAuthority {
       phase: 'staged',
       observed: false,
       restored,
+      ...(transition.occurrences === undefined
+        ? {}
+        : { occurrences: freezeOccurrenceWitnesses(transition.occurrences) }),
+      ...(transition.operation === undefined ? {} : { operation: transition.operation }),
     };
     this.transitions.set(transition.filePath, pending);
     this.tokens.set(token, pending);
     return { type: 'staged', token };
+  }
+
+  private validOccurrences(
+    path: string,
+    witnesses: readonly TaskOccurrenceWitness[],
+    before: ReadonlyArray<{ readonly revision: string; readonly line?: number }>,
+    after: readonly RootRevisionOverride[],
+  ): boolean {
+    const endpoint = (
+      address: TaskOccurrenceAddress,
+      roots: ReadonlyArray<{ readonly revision: string; readonly line?: number }>,
+    ): boolean => {
+      if (address.filePath !== path) return false;
+      const root = roots.find(
+        (candidate) =>
+          candidate.revision === address.rootRevision &&
+          (candidate.line === undefined || candidate.line === address.rootLine),
+      );
+      if (root === undefined) return false;
+      const source = this.evidence(root.revision)?.source;
+      const line = source?.split(/\r?\n/u)[address.nodeOffset];
+      return line !== undefined && readTaskLinePrefix(line) !== null;
+    };
+    return validOccurrenceWitnesses(
+      witnesses,
+      (address) => endpoint(address, before),
+      (address) =>
+        endpoint(address, after) &&
+        after.some(
+          (root) =>
+            root.revision === address.rootRevision &&
+            this.evidence(root.revision)?.source === root.source,
+        ),
+    );
   }
 
   /** Watchers defer owned transaction bytes; contrary observations still revoke ownership. */
@@ -587,6 +679,7 @@ export class TaskRefAuthority {
     return {
       roots: transition.roots,
       transitions: structuredClone(transition.transitions),
+      ...occurrenceEvidence(transition),
       ...(transition.restored && { restored: true }),
     };
   }

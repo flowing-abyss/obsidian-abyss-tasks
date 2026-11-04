@@ -17,6 +17,7 @@ import type { TaskSnapshot, TaskStatus } from '../domain/types';
 
 interface IntegrationProjectionOwner {
   readonly state: TaskIntegrationReadStateApi;
+  activateOccurrences(): void;
   paths(): readonly string[];
   sourceCurrent(path: string): boolean;
   roots(path: string): readonly TaskSnapshot[];
@@ -229,6 +230,9 @@ export function taskIntegrationProjection(
   owner: IntegrationProjectionOwner,
 ): TaskIntegrationReadApi {
   return {
+    activateOccurrences: () => {
+      owner.activateOccurrences();
+    },
     capture: () => owner.state.capture(),
     subscribe: (listener) => owner.state.subscribe(listener),
     coverage: (scope) => integrationCoverage(owner, scope),

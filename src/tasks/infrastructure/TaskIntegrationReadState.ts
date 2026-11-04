@@ -1,4 +1,5 @@
 import type {
+  TaskAcceptedOccurrenceChange,
   TaskIntegrationReadStateApi,
   TaskReadEvent,
   TaskReadObservation,
@@ -15,6 +16,7 @@ interface SourceHealth {
 }
 
 interface ReadListener {
+  revision: number;
   readonly receive: (event: TaskReadEvent) => void;
 }
 interface ReadPublication {
@@ -52,7 +54,7 @@ export class TaskIntegrationReadState implements TaskIntegrationReadStateApi {
   subscribe(
     listener: (event: TaskReadEvent) => void,
   ): ReturnType<TaskIntegrationReadStateApi['subscribe']> {
-    const record = { receive: listener };
+    const record = { receive: listener, revision: this.capture().revision };
     if (this.capture().lifecycle !== 'disposed') this.listeners_abyssPrivate.add(record);
     return {
       state: this.capture(),
@@ -174,12 +176,34 @@ export class TaskIntegrationReadState implements TaskIntegrationReadStateApi {
   }
 
   /** Canonical relocation is synchronous; outward readers cannot observe its intermediate state. */
-  batch(change: () => void): void {
+  batch(change: () => void, accepted?: () => void): void {
     this.publicationDepth_abyssPrivate += 1;
     try {
       change();
     } finally {
       this.publicationDepth_abyssPrivate -= 1;
+      accepted?.();
+      this.flush_abyssPrivate();
+    }
+  }
+
+  currentAcquisition(path: string, fileIdentity: object): object | undefined {
+    const source = this.sources_abyssPrivate.get(path);
+    return source?.fileIdentity === fileIdentity ? source.acquisition : undefined;
+  }
+
+  /** Accepted canonical installation reaches inward consumers before held health callbacks. */
+  accepted(change: TaskAcceptedOccurrenceChange): void {
+    if (!this.advance_abyssPrivate()) return;
+    const publishing = this.publishing_abyssPrivate;
+    this.publishing_abyssPrivate = true;
+    try {
+      this.notify_abyssPrivate({
+        event: Object.freeze({ type: 'accepted', observation: this.capture(), change }),
+        listeners: [...this.listeners_abyssPrivate],
+      });
+    } finally {
+      this.publishing_abyssPrivate = publishing;
       this.flush_abyssPrivate();
     }
   }
@@ -258,7 +282,14 @@ export class TaskIntegrationReadState implements TaskIntegrationReadStateApi {
     for (const listener of publication.listeners) {
       if (!this.listeners_abyssPrivate.has(listener)) continue;
       try {
-        listener.receive(publication.event);
+        // An accepted installation can overtake held health evidence. Keep its exact tokens
+        // and phases while reporting the latest observation to consumers already advanced.
+        const event =
+          publication.event.observation.revision < listener.revision
+            ? Object.freeze({ ...publication.event, observation: this.capture() })
+            : publication.event;
+        listener.revision = event.observation.revision;
+        listener.receive(event);
       } catch {
         console.error('[abyss-tasks] Integration read subscriber failed');
       }

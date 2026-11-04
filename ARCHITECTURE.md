@@ -129,6 +129,23 @@ wait for synchronous canonical relocation and read admission, with coverage unav
 that transition. Counter exhaustion fails the integration read state with a sanitized diagnostic.
 This capability reuses the index's accepted source records and does not activate Statistics.
 
+Occurrence collection activates synchronously on the inward read port. It retains no second task
+index. Authority staging carries frozen continued, removed, and created witnesses with an opaque
+operation token. Staging checks source-backed physical endpoints; acceptance checks their exact
+canonical predecessor and successor addresses. Invalid or ambiguous evidence invalidates affected
+addresses without claiming removal. Replacement file owners invalidate previous addresses even when
+bytes match. Unchanged exact roots preserve their basis, duplicate echoes
+cannot recreate occurrences, and restoration revokes forward semantics.
+
+Loaded observations, metadata observations, repository installs, and rename relocation share a
+synchronous accepted-install boundary. Repository batches prepare and prove every file before
+installing any roots. Once all roots and source health are installed, inward accepted listeners
+receive exact accepted bytes, owned file identities, and settled acquisition tokens before held
+health, Search, Statistics, or UI callbacks can read those roots. Previews publish no acceptance.
+Held notifications retain their acquisition evidence and original listener audience; subscribers
+already advanced by acceptance receive the current complete observation rather than an older
+revision. Accepted source evidence is transient and never enters public task DTOs.
+
 Edits preserve unrelated Markdown and identify the actual authored block or occurrence. Rendering,
 matching text, file/line position, and link labels confer no write authority.
 [`TaskRefAuthority`](src/tasks/infrastructure/TaskRefAuthority.ts) distinguishes occurrences and

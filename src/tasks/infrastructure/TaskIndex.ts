@@ -11,7 +11,10 @@ import type {
   TaskSearchEligibilityRequest,
   TimeTrackingQueryApi,
 } from '../application/TaskApplicationApi';
-import type { TaskIntegrationReadApi } from '../application/TaskIntegrationReadApi';
+import type {
+  TaskAcceptedSourceEvidence,
+  TaskIntegrationReadApi,
+} from '../application/TaskIntegrationReadApi';
 import type { TaskReadProjectionApi } from '../application/TaskSearchApi';
 import type {
   TaskSearchDocument,
@@ -39,6 +42,7 @@ import {
   type TaskNodeSnapshot,
 } from '../domain/taskDependencies';
 import { readTaskLinePrefix } from '../domain/taskLineSourceModel';
+import { reconcileOccurrenceWitnesses } from '../domain/taskOccurrence';
 import {
   reconcileRootTransitions,
   taskReconciliationKey,
@@ -95,6 +99,7 @@ import { TaskIntegrationReadState } from './TaskIntegrationReadState';
 import {
   type RootRevisionOverride,
   type TaskRefAuthority,
+  type TaskRefAuthorityObservation,
   type TaskSnapshotState,
 } from './TaskRefAuthority';
 import { sameTaskSnapshots } from './taskSnapshotEquality';
@@ -575,10 +580,7 @@ interface ParseFileInput {
   readonly content: string;
   readonly cache: CachedMetadata;
   readonly allocateSuccessor?: boolean;
-  readonly captureAuthorityTransitions?: (
-    transitions: readonly ProvenRootRevisionOverride[],
-    restored?: true,
-  ) => void;
+  readonly captureAuthorityTransitions?: (observation: TaskRefAuthorityObservation) => void;
   readonly observedFile?: boolean;
   readonly noAuthority?: boolean;
 }
@@ -1084,10 +1086,16 @@ export class TaskIndex
   >();
   private readonly integrationAcquisitions_abyssPrivate = new WeakMap<FileObservation, object>();
   private readonly integrationReadState_abyssPrivate = new TaskIntegrationReadState();
+  private occurrencesActive_abyssPrivate = false;
+  private acceptedInstallDepth_abyssPrivate = 0;
+  private readonly acceptedPublications_abyssPrivate: Array<() => void> = [];
   private integrationSemanticsKey_abyssPrivate: string | undefined;
   private readonly integrationPaths_abyssPrivate: string[] = [];
   private readonly integrationProjection_abyssPrivate = taskIntegrationProjection({
     state: this.integrationReadState_abyssPrivate,
+    activateOccurrences: () => {
+      this.occurrencesActive_abyssPrivate = true;
+    },
     paths: () => this.integrationPaths_abyssPrivate,
     roots: (path) => this.taskMap_abyssPrivate.get(path) ?? [],
     sourceCurrent: (path) => this.integrationSourceCurrent_abyssPrivate(path),
@@ -1462,6 +1470,12 @@ export class TaskIndex
   }
 
   private publishSearch_abyssPrivate(event: TaskSearchSourceEvent): void {
+    if (this.acceptedInstallDepth_abyssPrivate > 0) {
+      this.acceptedPublications_abyssPrivate.push(() => {
+        this.publishSearch_abyssPrivate(event);
+      });
+      return;
+    }
     const detached = immutableSearchEvent(event);
     for (const listener of [...this.searchListeners_abyssPrivate]) {
       try {
@@ -2265,24 +2279,32 @@ export class TaskIndex
     )
       return false;
     const prepared = this.prepareObservation_abyssPrivate(observation.path, content, cache);
-    const selectedCache = prepared.cache;
-    if (this.excludeSource_abyssPrivate?.(prepared.metadata) === true) {
-      this.options_abyssPrivate.refAuthority?.discard(observation.path);
-      this.acceptStatisticsSource_abyssPrivate(observation.path, content, prepared, []);
-      const committed = this.commitEmptyObservation_abyssPrivate(observation);
-      this.settleIntegrationObservation_abyssPrivate(observation, true);
-      return committed;
-    }
-    const tasks = this.parseFile_abyssPrivate({
-      filePath: observation.path,
-      content,
-      cache: selectedCache,
-      allocateSuccessor: true,
-      observedFile,
-    });
-    this.replaceFile_abyssPrivate(observation.path, tasks, [], true);
-    this.acceptStatisticsSource_abyssPrivate(observation.path, content, prepared, tasks);
-    this.settleIntegrationObservation_abyssPrivate(observation, true);
+    let authority: TaskRefAuthorityObservation | undefined;
+    const excluded = this.excludeSource_abyssPrivate?.(prepared.metadata) === true;
+    if (excluded) this.options_abyssPrivate.refAuthority?.discard(observation.path);
+    const tasks = excluded
+      ? []
+      : this.parseFile_abyssPrivate({
+          filePath: observation.path,
+          content,
+          cache: prepared.cache,
+          allocateSuccessor: true,
+          observedFile,
+          captureAuthorityTransitions: (value) => {
+            authority = value;
+          },
+        });
+    this.acceptInstallation_abyssPrivate(
+      [observation.path],
+      () => {
+        this.replaceFile_abyssPrivate(observation.path, tasks, authority?.transitions, true);
+        if (authority?.restored === true)
+          this.reconciliationTransitions_abyssPrivate.delete(observation.path);
+        this.acceptStatisticsSource_abyssPrivate(observation.path, content, prepared, tasks);
+        this.settleIntegrationObservation_abyssPrivate(observation, true);
+      },
+      () => [authority],
+    );
     return true;
   }
 
@@ -2481,10 +2503,7 @@ export class TaskIndex
     );
     const overrides = authorityObservation?.roots ?? [];
     if (authorityObservation != null) {
-      input.captureAuthorityTransitions?.(
-        authorityObservation.transitions,
-        authorityObservation.restored,
-      );
+      input.captureAuthorityTransitions?.(authorityObservation);
     }
     return overrides;
   }
@@ -2705,49 +2724,176 @@ export class TaskIndex
     prove: (roots: readonly TaskSnapshot[]) => void,
   ): readonly TaskSnapshot[] {
     const roots: TaskSnapshot[] = [];
-    const acquisitions = new Map<string, FileObservation>();
-    for (const filePath of contents.keys()) {
-      this.invalidatePendingRead_abyssPrivate(filePath);
-      const file = this.app_abyssPrivate.vault.getAbstractFileByPath(filePath);
-      const observation =
-        file instanceof TFile ? this.observe_abyssPrivate(file, filePath) : undefined;
-      if (observation !== undefined) {
-        this.beginIntegrationObservation_abyssPrivate(observation);
-        acquisitions.set(filePath, observation);
+    const authorities: Array<TaskRefAuthorityObservation | undefined> = [];
+    this.acceptInstallation_abyssPrivate(
+      [...contents.keys()],
+      () => {
+        const acquisitions = new Map<string, FileObservation>();
+        for (const filePath of contents.keys()) {
+          this.invalidatePendingRead_abyssPrivate(filePath);
+          const file = this.app_abyssPrivate.vault.getAbstractFileByPath(filePath);
+          const observation =
+            file instanceof TFile ? this.observe_abyssPrivate(file, filePath) : undefined;
+          if (observation !== undefined) {
+            this.beginIntegrationObservation_abyssPrivate(observation);
+            acquisitions.set(filePath, observation);
+          }
+        }
+        const prepared = [...contents].map(([filePath, content]) => {
+          let authority: TaskRefAuthorityObservation | undefined;
+          const observation = this.prepareObservation_abyssPrivate(filePath, content, null);
+          const rawTasks = this.parseFile_abyssPrivate({
+            filePath,
+            content,
+            cache: observation.cache,
+            allocateSuccessor: true,
+            captureAuthorityTransitions: (value) => {
+              authority = value;
+            },
+            observedFile: this.fileGenerations_abyssPrivate.has(filePath),
+          });
+          const tasks =
+            this.excludeSource_abyssPrivate?.(observation.metadata) === true ? [] : rawTasks;
+          authorities.push(authority);
+          roots.push(...tasks);
+          return () => {
+            this.committedContents_abyssPrivate.set(filePath, content);
+            if (this.replaceFile_abyssPrivate(filePath, tasks, authority?.transitions))
+              this.queueChanged_abyssPrivate(filePath);
+            if (authority?.restored === true)
+              this.reconciliationTransitions_abyssPrivate.delete(filePath);
+            this.acceptStatisticsSource_abyssPrivate(filePath, content, observation, tasks);
+            const acquisition = acquisitions.get(filePath);
+            if (acquisition !== undefined)
+              this.settleIntegrationObservation_abyssPrivate(acquisition, true);
+          };
+        });
+        prove(roots);
+        for (const install of prepared) install();
+      },
+      () => authorities,
+    );
+    return roots.map(cloneTaskSnapshot);
+  }
+
+  /** One synchronous boundary for installed roots, semantic evidence, and source settlement. */
+  private acceptInstallation_abyssPrivate(
+    paths: readonly string[],
+    install: () => void,
+    observations: () => ReadonlyArray<TaskRefAuthorityObservation | undefined> = () => [],
+  ): void {
+    const active = this.occurrencesActive_abyssPrivate;
+    const before = active ? paths.flatMap((path) => this.taskMap_abyssPrivate.get(path) ?? []) : [];
+    const priorAcquisitions = this.acceptedAcquisitions_abyssPrivate(active ? paths : []);
+    const priorOwners = new Map(
+      (active ? paths : []).map((path) => [
+        path,
+        this.acceptedStatisticsSources_abyssPrivate.get(path)?.fileIdentity,
+      ]),
+    );
+    const release = this.statistics_abyssPrivate.hold();
+    let installed = false;
+    this.acceptedInstallDepth_abyssPrivate += 1;
+    try {
+      this.integrationReadState_abyssPrivate.batch(
+        () => {
+          install();
+          installed = true;
+        },
+        () => {
+          if (!active || !installed) return;
+          this.publishAcceptedInstallation_abyssPrivate(paths, before, observations(), {
+            acquisitions: priorAcquisitions,
+            owners: priorOwners,
+          });
+        },
+      );
+    } finally {
+      this.acceptedInstallDepth_abyssPrivate -= 1;
+      release();
+      if (this.acceptedInstallDepth_abyssPrivate === 0) {
+        for (const publish of this.acceptedPublications_abyssPrivate.splice(0)) publish();
       }
     }
-    const prepared = [...contents].map(([filePath, content]) => {
-      let restored = false;
-      const observation = this.prepareObservation_abyssPrivate(filePath, content, null);
-      const { cache, metadata } = observation;
-      let authorityTransitions: readonly ProvenRootRevisionOverride[] = [];
-      const rawTasks = this.parseFile_abyssPrivate({
-        filePath,
-        content,
-        cache,
-        allocateSuccessor: true,
-        captureAuthorityTransitions: (transitions, restoration) => {
-          authorityTransitions = transitions;
-          restored = restoration === true;
-        },
-        observedFile: this.fileGenerations_abyssPrivate.has(filePath),
-      });
-      const tasks = this.excludeSource_abyssPrivate?.(metadata) === true ? [] : rawTasks;
-      roots.push(...tasks);
-      return () => {
-        this.committedContents_abyssPrivate.set(filePath, content);
-        if (this.replaceFile_abyssPrivate(filePath, tasks, authorityTransitions))
-          this.queueChanged_abyssPrivate(filePath);
-        if (restored) this.reconciliationTransitions_abyssPrivate.delete(filePath);
-        this.acceptStatisticsSource_abyssPrivate(filePath, content, observation, tasks);
-        const acquisition = acquisitions.get(filePath);
-        if (acquisition !== undefined)
-          this.settleIntegrationObservation_abyssPrivate(acquisition, true);
-      };
-    });
-    prove(roots);
-    for (const publish of prepared) publish();
-    return roots.map(cloneTaskSnapshot);
+  }
+
+  private acceptedAcquisitions_abyssPrivate(paths: readonly string[]): ReadonlyMap<string, object> {
+    const acquisitions = new Map<string, object>();
+    for (const path of paths) {
+      const file = this.app_abyssPrivate.vault.getAbstractFileByPath(path);
+      if (!(file instanceof TFile)) continue;
+      const acquisition = this.integrationReadState_abyssPrivate.currentAcquisition(path, file);
+      if (acquisition !== undefined) acquisitions.set(path, acquisition);
+    }
+    return acquisitions;
+  }
+
+  private acceptedSources_abyssPrivate(
+    paths: readonly string[],
+    priorAcquisitions: ReadonlyMap<string, object>,
+  ): readonly TaskAcceptedSourceEvidence[] {
+    const sources: TaskAcceptedSourceEvidence[] = [];
+    for (const path of paths) {
+      const source = this.acceptedStatisticsSources_abyssPrivate.get(path);
+      if (source?.fileIdentity === undefined || !this.integrationSourceCurrent_abyssPrivate(path))
+        continue;
+      const current = this.integrationReadState_abyssPrivate.currentAcquisition(
+        path,
+        source.fileIdentity,
+      );
+      const settled = !this.integrationReadState_abyssPrivate.isUnsettled(
+        path,
+        source.fileIdentity,
+      );
+      const acquisitions = [priorAcquisitions.get(path), current].filter(
+        (value): value is object => value !== undefined,
+      );
+      sources.push(
+        Object.freeze({
+          filePath: path,
+          fileIdentity: source.fileIdentity,
+          content: source.content,
+          settledAcquisitions: Object.freeze(settled ? [...new Set(acquisitions)] : []),
+        }),
+      );
+    }
+    return Object.freeze(sources);
+  }
+
+  private publishAcceptedInstallation_abyssPrivate(
+    paths: readonly string[],
+    before: readonly TaskSnapshot[],
+    evidence: ReadonlyArray<TaskRefAuthorityObservation | undefined>,
+    prior: {
+      readonly acquisitions: ReadonlyMap<string, object>;
+      readonly owners: ReadonlyMap<string, object | undefined>;
+    },
+  ): void {
+    const after = paths.flatMap((path) => this.taskMap_abyssPrivate.get(path) ?? []);
+    const restored = evidence.some((value) => value?.restored === true);
+    const operation = evidence[0]?.operation;
+    const sameOperation = evidence.every((value) => value?.operation === operation);
+    const candidates =
+      !restored && sameOperation ? evidence.flatMap((value) => value?.occurrences ?? []) : [];
+    const replacedPaths = new Set(
+      paths.filter(
+        (path) =>
+          prior.owners.get(path) !==
+          this.acceptedStatisticsSources_abyssPrivate.get(path)?.fileIdentity,
+      ),
+    );
+    const semantics = reconcileOccurrenceWitnesses(before, after, candidates, replacedPaths);
+    this.integrationReadState_abyssPrivate.accepted(
+      Object.freeze({
+        sources: this.acceptedSources_abyssPrivate(paths, prior.acquisitions),
+        paths: Object.freeze([...paths]),
+        before: Object.freeze(before),
+        after: Object.freeze(after),
+        ...semantics,
+        restored,
+        ...(sameOperation && operation !== undefined ? { operation } : {}),
+      }),
+    );
   }
 
   private invalidatePendingRead_abyssPrivate(filePath: string): void {
@@ -2902,7 +3048,7 @@ export class TaskIndex
   ): void {
     if (!this.isCurrent_abyssPrivate(observation)) return;
     try {
-      if (this.installMetadataObservation_abyssPrivate(observation.path, data, cache))
+      if (this.installMetadataObservation_abyssPrivate(observation, data, cache))
         this.settleIntegrationObservation_abyssPrivate(observation, true);
     } catch (error) {
       if (this.isCurrent_abyssPrivate(observation)) {
@@ -2913,36 +3059,40 @@ export class TaskIndex
   }
 
   private installMetadataObservation_abyssPrivate(
-    path: string,
+    observation: FileObservation,
     data: string,
     cache: CachedMetadata,
   ): boolean {
+    const path = observation.path;
     if (this.options_abyssPrivate.refAuthority?.deferObservation(path, data) === true) return false;
     const prepared = this.prepareObservation_abyssPrivate(path, data, cache);
-    const selectedCache = prepared.cache;
-    if (this.excludeSource_abyssPrivate?.(prepared.metadata) === true) {
-      this.options_abyssPrivate.refAuthority?.discard(path);
-      const changed = this.replaceFile_abyssPrivate(path, [], [], true);
-      this.acceptStatisticsSource_abyssPrivate(path, data, prepared, []);
-      if (changed) this.queueChanged_abyssPrivate(path);
-      else this.queueReconciled_abyssPrivate(path);
-      return true;
-    }
-    let authorityTransitions: readonly ProvenRootRevisionOverride[] = [];
-    const tasks = this.parseFile_abyssPrivate({
-      filePath: path,
-      content: data,
-      cache: selectedCache,
-      allocateSuccessor: true,
-      captureAuthorityTransitions: (transitions) => {
-        authorityTransitions = transitions;
+    let authority: TaskRefAuthorityObservation | undefined;
+    const excluded = this.excludeSource_abyssPrivate?.(prepared.metadata) === true;
+    if (excluded) this.options_abyssPrivate.refAuthority?.discard(path);
+    const tasks = excluded
+      ? []
+      : this.parseFile_abyssPrivate({
+          filePath: path,
+          content: data,
+          cache: prepared.cache,
+          allocateSuccessor: true,
+          captureAuthorityTransitions: (value) => {
+            authority = value;
+          },
+          observedFile: this.fileGenerations_abyssPrivate.has(path),
+        });
+    this.acceptInstallation_abyssPrivate(
+      [path],
+      () => {
+        const changed = this.replaceFile_abyssPrivate(path, tasks, authority?.transitions, true);
+        if (authority?.restored === true) this.reconciliationTransitions_abyssPrivate.delete(path);
+        this.acceptStatisticsSource_abyssPrivate(path, data, prepared, tasks);
+        this.settleIntegrationObservation_abyssPrivate(observation, true);
+        if (changed) this.queueChanged_abyssPrivate(path);
+        else this.queueReconciled_abyssPrivate(path);
       },
-      observedFile: this.fileGenerations_abyssPrivate.has(path),
-    });
-    const changed = this.replaceFile_abyssPrivate(path, tasks, authorityTransitions, true);
-    this.acceptStatisticsSource_abyssPrivate(path, data, prepared, tasks);
-    if (changed) this.queueChanged_abyssPrivate(path);
-    else this.queueReconciled_abyssPrivate(path);
+      () => [authority],
+    );
     return true;
   }
 
@@ -2965,7 +3115,7 @@ export class TaskIndex
     if (!wasMarkdown && !isMarkdown) return;
     if (this.app_abyssPrivate.vault.getAbstractFileByPath(newPath) !== file) return;
     const tasks = this.taskMap_abyssPrivate.get(oldPath) ?? [];
-    this.integrationReadState_abyssPrivate.batch(() => {
+    this.acceptInstallation_abyssPrivate([oldPath, newPath], () => {
       try {
         this.relocateFile_abyssPrivate({ file, oldPath, newPath, tasks, wasMarkdown, isMarkdown });
       } catch (error) {
@@ -3278,6 +3428,12 @@ export class TaskIndex
   }
 
   private publish_abyssPrivate(event: TaskIndexEvent): void {
+    if (this.acceptedInstallDepth_abyssPrivate > 0) {
+      this.acceptedPublications_abyssPrivate.push(() => {
+        this.publish_abyssPrivate(event);
+      });
+      return;
+    }
     if (
       this.destroyed_abyssPrivate ||
       (!this.initialized_abyssPrivate && event.type !== 'initialized')
