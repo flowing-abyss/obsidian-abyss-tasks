@@ -2,6 +2,7 @@ import { TFile, type App } from 'obsidian';
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
 import { toStatusRules } from '../../src/settings/statusCatalogAdapter';
 import { TaskApplicationService } from '../../src/tasks/application/TaskApplicationService';
+import type { TaskBehaviorSettingsProvider } from '../../src/tasks/application/TaskBehaviorSettings';
 import type { TaskIntegrationReadApi } from '../../src/tasks/application/TaskIntegrationReadApi';
 import type { TaskStatusReadBasisApi } from '../../src/tasks/application/TaskStatusMutationApi';
 import { clockFrom } from '../../src/tasks/domain/clock';
@@ -29,7 +30,11 @@ export interface PublicApiHarness {
 
 export async function publicApiHarness(
   files: Readonly<Record<string, string>>,
-  options: { readonly initialize?: boolean; readonly index?: Partial<TaskIndexOptions> } = {},
+  options: {
+    readonly initialize?: boolean;
+    readonly index?: Partial<TaskIndexOptions>;
+    readonly behaviorSettings?: TaskBehaviorSettingsProvider;
+  } = {},
 ): Promise<PublicApiHarness> {
   const app = await createAppWithFiles({ ...files });
   const statusCatalog =
@@ -58,7 +63,7 @@ export async function publicApiHarness(
     statusCatalog,
     { read: () => clockFrom(now, 0).read() },
     undefined,
-    undefined,
+    options.behaviorSettings,
     undefined,
     undefined,
     undefined,

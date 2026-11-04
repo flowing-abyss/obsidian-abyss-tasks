@@ -60,7 +60,7 @@ describe('guarded desired-state status', () => {
 
   it('already done bypasses missing defaults, new blockers and running timers', async () => {
     const source =
-      '- [D] done 🆔 done ⛔ blocker\n  / 2026-08-01T11:00:00+00:00\n- [ ] blocker 🆔 blocker\n';
+      '- [D] done 🆔 done ⛔ blocker\n  - 2026-08-01T11:00:00+00:00 →\n- [ ] blocker 🆔 blocker\n';
     const h = await harness(
       source,
       rules.filter((r) => r.id !== 'done'),
@@ -260,14 +260,14 @@ describe('guarded desired-state status', () => {
     expect(await h.read('a.md')).toBe(expected);
   });
 
-  it('does not run ordinary tracking follow-up or duplicate the status writer', async () => {
-    const h = await harness('- [ ] task\n  / 2026-08-01T11:00:00+00:00\n');
+  it('runs one strict follow-up without duplicating the status writer', async () => {
+    const h = await harness('- [ ] task\n  - 2026-08-01T11:00:00+00:00 →\n');
     const process = vi.spyOn(h.app.vault, 'process');
     expect(
       await h.service.mutateStatus({ ...request(h), intent: { type: 'complete' } }),
     ).toMatchObject({ type: 'result', result: { type: 'ok' } });
-    expect(await h.read('a.md')).toContain('/ 2026-08-01T11:00:00+00:00');
-    expect(process).toHaveBeenCalledTimes(1);
+    expect(await h.read('a.md')).toContain('→ 2026-08-01T12:00:00+00:00');
+    expect(process).toHaveBeenCalledTimes(2);
   });
 
   it('rejects a source changed inside the writer without retrying', async () => {

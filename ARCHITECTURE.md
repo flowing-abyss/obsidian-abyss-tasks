@@ -137,11 +137,17 @@ precondition. Ordinary commands retain their existing retries and result shapes.
 
 `TaskApplicationService.mutateStatus` exposes a separate inward desired-state capability. It
 reserves the existing dependency mutation queue once, admits an exact read lease, and dispatches a
-guarded status edit without retry or the ordinary tracking follow-up. Semantic completion uses the
+guarded status edit without retry. Changed completion/cancellation operations use the existing
+tracking service once, with the same lease, captured settings, and clock through every timer write.
+Each edit requires the exact owning root and node; a failed lease prevents further writes and
+cannot acquire a successor. Semantic completion uses the
 current status catalog and authored cancellation marker. The transient semantic transition intent
 reaches recurrence generation and its completion stamp handling. Already-complete and exact configured
 same-symbol requests still pass through the repository guard as no-ops. The service returns the
-lease's occurrence proofs before disposal; ordinary UI commands keep their existing behavior.
+lease's final occurrence proofs before disposal. Main status results remain separate from tracking
+details, which retain the last proven root, closed and unclosed counts, discarded entries, and
+partial or unknown outcomes. A no-op status request does not close timers. Ordinary UI commands
+keep their existing result shapes and follow-up behavior.
 
 [`TaskStatusReadLease`](src/tasks/infrastructure/TaskStatusReadLease.ts) advances only from a trusted
 operation-tagged acceptance of its exact pending full-source candidate. Repositories supply the
@@ -266,7 +272,10 @@ Nested time-entry lines are the sole tracked-time record. Invalid entries remain
 not contribute totals. [`TimeTrackingService`](src/tasks/application/TimeTrackingService.ts) shares
 dependency mutation coordination. Starting a timer closes other running entries before opening it.
 Completion/cancellation closes affected subtree timers in a follow-up write using the captured
-clock. A failed follow-up leaves the status committed and the entries visible for repair. Manual
+clock. A failed follow-up leaves the status and prior timer writes committed. Strict follow-up
+stops on the first failure across the subtree; ordinary follow-up still sets aside unwritable
+entries and reports through existing diagnostics. Its failed-pass result continues to suppress the
+short-entry notice, while strict details report whether a short entry was discarded. Manual
 status edits do not trigger writes. Recurring successors start without prior tracking entries.
 
 The plugin-owned [`TimeTrackingReminder`](src/ui/timeTracking/TimeTrackingReminder.ts) observes

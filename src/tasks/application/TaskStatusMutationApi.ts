@@ -70,9 +70,12 @@ export interface TaskStatusMutationRequest {
   readonly intent: TaskStatusIntent;
 }
 export interface CompletionFollowUpDetails {
+  /** Last root proven by this operation, even when later source proof is lost. */
   readonly root?: TaskSnapshot;
   readonly discardedShortEntry: boolean;
+  /** Timer writes confirmed before the pass stopped. */
   readonly closed: number;
+  /** Entries still running in the last proven root, including entries set aside. */
   readonly unclosed: number;
   readonly state: 'complete' | 'partial' | 'unknown';
 }

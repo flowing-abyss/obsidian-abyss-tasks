@@ -99,6 +99,7 @@ import {
 } from './taskRetryPolicy';
 import type { TaskReadProjectionApi } from './TaskSearchApi';
 import type {
+  CompletionFollowUpDetails,
   TaskStatusMutationApi,
   TaskStatusMutationOutcome,
   TaskStatusMutationRequest,
@@ -234,6 +235,12 @@ type PreparedTaskCommand =
   | { readonly command: TaskEditCommand }
   | { readonly recurrence: RecurrenceCompletionRequest }
   | { readonly result: TaskCommandResult };
+interface StrictTrackingContext {
+  readonly lease: TaskStatusReadLease;
+  readonly settings: TaskBehaviorSettings;
+  readonly reading: ClockReading | { readonly localDate: ClockReading['localDate'] };
+}
+
 interface RecentOutcome {
   readonly task: TaskSnapshot;
   readonly permittedTarget?: TaskNodeRef;
@@ -832,7 +839,17 @@ export class TaskApplicationService
       const result = await this.dispatchPrepared_abyssPrivate(prepared, undefined, strict);
       if (strict.rejection !== undefined) return { type: 'rejected', reason: strict.rejection };
       if (result.type === 'io-error' && result.contentState === 'unknown') lease.markMainUnknown();
-      return { type: 'result', result, occurrences: lease.occurrences() };
+      const followUp = await this.closeStrictTracking_abyssPrivate(request, result, {
+        lease,
+        settings: prepared.settings,
+        reading: prepared.clock,
+      });
+      return {
+        type: 'result',
+        result,
+        occurrences: lease.occurrences(),
+        ...(followUp === undefined ? {} : { followUp }),
+      };
     } catch {
       lease.markMainUnknown();
       return {
@@ -841,6 +858,28 @@ export class TaskApplicationService
         occurrences: lease.occurrences(),
       };
     }
+  }
+
+  private async closeStrictTracking_abyssPrivate(
+    request: TaskStatusMutationRequest,
+    result: TaskCommandResult,
+    context: StrictTrackingContext,
+  ): Promise<CompletionFollowUpDetails | undefined> {
+    if (result.type !== 'ok' || !result.changed || !('atom' in context.reading)) return undefined;
+    const outcome = result.outcome;
+    if (outcome.type !== 'task' && outcome.type !== 'recurrence') return undefined;
+    const follow =
+      outcome.type === 'task' ? { root: outcome.task, target: request.target } : outcome.completed;
+    if (follow === undefined) return undefined;
+    return await this.tracking_abyssPrivate.closeAfterCompletion(
+      follow.root,
+      follow.target,
+      context.reading,
+      {
+        edit: (command) => this.executeTrackingEdit_abyssPrivate(command, context),
+        stopOnFailure: true,
+      },
+    );
   }
 
   async execute(
@@ -911,7 +950,10 @@ export class TaskApplicationService
   /** Writes one internal tracking edit through the resolution, retry and outcome path of a command. */
   private async executeTrackingEdit_abyssPrivate(
     command: TaskEditCommand,
+    strictContext?: StrictTrackingContext,
   ): Promise<TaskCommandResult> {
+    if (strictContext !== undefined)
+      return await this.executeStrictTrackingEdit_abyssPrivate(command, strictContext);
     const settings = snapshotBehaviorSettings(this.behaviorSettings_abyssPrivate);
     const reading = captureClock(this.clock_abyssPrivate);
     const targetBase = taskEditMutationTarget(command);
@@ -935,6 +977,31 @@ export class TaskApplicationService
       clock: reading,
       settings,
       retry: retryPolicy(command),
+    });
+  }
+
+  private async executeStrictTrackingEdit_abyssPrivate(
+    command: TaskEditCommand,
+    context: StrictTrackingContext,
+  ): Promise<TaskCommandResult> {
+    if (context.lease.failure() !== undefined) return invalidTaskTarget('target');
+    const target = taskMutationNodeRef(taskEditMutationTarget(command));
+    const resolution = this.queries.resolve(rootRefOf(target));
+    if (resolution.type !== 'exact') return invalidTaskTarget('target');
+    const root = resolution.task;
+    return await this.dispatchPrepared_abyssPrivate({
+      repositoryRequest: {
+        command,
+        baseRoot: root,
+        baseTarget: target,
+        reconciliation: { observed: root },
+        strictStatus: context.lease.guard(root, target),
+      },
+      base: root,
+      targetBase: target,
+      clock: context.reading,
+      settings: context.settings,
+      retry: 'never',
     });
   }
 
