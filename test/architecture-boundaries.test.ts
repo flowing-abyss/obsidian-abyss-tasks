@@ -233,8 +233,9 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   hierarchyWouldCycle: ['src/ui/taskHierarchyActions.ts'],
   taskPrefixForSubtask: ['src/panels/RightPanel.ts'],
   isTaskInboxMember: ['src/task-lists/taskNodeMembership.ts'],
-  sameTag: ['src/ui/taskCapture/CaptureMetadataRow.ts'],
+  sameTag: ['src/ui/taskCapture/CaptureMetadataRow.ts', 'src/integrations/validation.ts'],
   normalizeTaskTagInput: [
+    'src/integrations/validation.ts',
     'src/settings/SettingsTab.ts',
     'src/task-lists/taskNodeMembership.ts',
     'src/ui/tagDropdown.ts',
@@ -395,6 +396,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   formatTrackedDurationWithSeconds: ['src/ui/timeTracking/TimeEntriesPopover.ts'],
   groupTrackedDays: ['src/ui/timeTracking/RailTrackingWidget.ts'],
   localDate: [
+    'src/integrations/validation.ts',
     'src/ui/taskCapture/CaptureMetadataRow.ts',
     'src/statistics/statisticsCalendar.ts',
     'src/statistics/statisticsDataset.ts',

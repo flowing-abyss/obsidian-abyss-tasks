@@ -68,6 +68,17 @@ renames. Settings writes use composition-root ports. The exact file/owner/API au
 the reasons for exceptions live in [`storageAuthority.ts`](test/architecture/storageAuthority.ts).
 Passing data to a renderer or deriving a projection grants no write authority.
 
+## Portable integration contract
+
+[`api.d.ts`](api.d.ts) defines the standalone v1 contract for external consumers without
+Obsidian or DOM type dependencies. Its request and result data is recursively readonly.
+[`src/integrations/validation.ts`](src/integrations/validation.ts) accepts allowlisted plain
+records, normalizes canonical task dates and tags through the task public boundary, and
+copies and freezes validated data. Cancellation signals remain live caller-owned capabilities;
+only their copied options envelope is frozen. [`values.ts`](src/integrations/values.ts) owns
+plain-value freezing and structured API errors. These modules do not register a provider or
+change ordinary task commands, storage, or lifecycle wiring.
+
 ## Task source and command flow
 
 ### Identity and reconciliation

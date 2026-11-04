@@ -96,6 +96,11 @@ export default defineConfig(
   ...obsidianmd.configs.recommendedWithLocalesEn,
   sonarjs.configs.recommended,
   {
+    files: ['api.d.ts'],
+    // These named aliases are the portable public contract, not redundant implementation types.
+    rules: { 'sonarjs/redundant-type-aliases': 'off' },
+  },
+  {
     files: ['**/*.ts', 'tooling/performance/**/*.mts'],
     rules: {
       // Complexity budgets (cyclomatic + cognitive), mirrors the reference TypeScript template.
