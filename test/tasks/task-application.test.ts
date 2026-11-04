@@ -2383,3 +2383,12 @@ it('keeps the cleanup warning on successful explicit deletion', async () => {
     outcome,
   });
 });
+
+it('keeps defensive strict repository rejection in the legacy invalid-target shape', async () => {
+  const application = service({
+    edit: async () => ({ type: 'strict-rejected', reason: 'unsupported-precondition' }),
+  });
+  expect(
+    await application.execute({ type: 'set-status', target: { type: 'task', ref }, symbol: '/' }),
+  ).toEqual({ type: 'invalid', issues: [{ code: 'invalid-target', field: 'target' }] });
+});

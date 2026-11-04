@@ -29,6 +29,7 @@ import type {
   TaskStatisticsSource,
   TaskStatisticsSourceIssue,
 } from '../application/TaskStatisticsSource';
+import type { TaskStatusReadBasisApi } from '../application/TaskStatusMutationApi';
 import { cloneTaskSnapshot, taskSnapshotWithStatuses } from '../domain/cloneTaskSnapshot';
 import type { TaskResolutionCandidate } from '../domain/commands';
 import { readCommentBlock } from '../domain/commentSource';
@@ -111,6 +112,7 @@ import {
   TaskStatisticsProjection,
   type StatisticsProjectionInput,
 } from './TaskStatisticsProjection';
+import { TaskStatusReadLeaseOwner } from './TaskStatusReadLease';
 import { TimeEntryIndex } from './TimeEntryIndex';
 export type { TaskSourceMetadata } from './taskSourceMetadata';
 
@@ -1168,6 +1170,35 @@ export class TaskIndex
 
   integrationReads(): TaskIntegrationReadApi {
     return this.integrationProjection_abyssPrivate;
+  }
+
+  statusReadBasis(): TaskStatusReadBasisApi {
+    return {
+      lease: (root, target, observation) =>
+        TaskStatusReadLeaseOwner.create(
+          {
+            state: this.integrationReadState_abyssPrivate,
+            source: (path) => this.acceptedStatisticsSources_abyssPrivate.get(path),
+            permitted: (metadata) => this.excludeSource_abyssPrivate?.(metadata) !== true,
+            current: (root) =>
+              this.integrationSourceCurrent_abyssPrivate(root.ref.filePath) &&
+              this.taskMap_abyssPrivate
+                .get(root.ref.filePath)
+                ?.some(
+                  (current) =>
+                    current.ref.revision === root.ref.revision &&
+                    current.ref.line === root.ref.line &&
+                    current.source.originalBlock === root.source.originalBlock,
+                ) === true,
+            activate: () => {
+              this.integrationProjection_abyssPrivate.activateOccurrences();
+            },
+          },
+          root,
+          target,
+          observation,
+        ),
+    };
   }
 
   updateIntegrationSemantics(key: string): void {
@@ -2921,7 +2952,19 @@ export class TaskIndex
           filePath: path,
           fileIdentity: source.fileIdentity,
           content: source.content,
-          settledAcquisitions: Object.freeze(settled ? [...new Set(acquisitions)] : []),
+          settledAcquisitions: Object.freeze(
+            settled
+              ? [
+                  ...new Set([
+                    ...acquisitions,
+                    ...this.integrationReadState_abyssPrivate.takeSettledAcquisitions(
+                      path,
+                      source.fileIdentity,
+                    ),
+                  ]),
+                ]
+              : [],
+          ),
         }),
       );
     }

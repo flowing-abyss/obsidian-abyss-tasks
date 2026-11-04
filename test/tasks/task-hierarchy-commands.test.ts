@@ -112,3 +112,16 @@ describe('hierarchy application commands', () => {
     expect(repository.content('target.md')).toBe('- [ ] Parent\n    - [ ] Move\n');
   });
 });
+
+it('keeps defensive strict rejection out of hierarchy command results', async () => {
+  const h = await hierarchyHarness();
+  vi.spyOn(h.repository, 'hierarchy').mockResolvedValue({
+    type: 'strict-rejected',
+    reason: 'unsupported-precondition',
+  });
+  expect(await h.service.execute(h.command)).toEqual({
+    type: 'invalid',
+    issues: [{ code: 'invalid-target', field: 'target' }],
+  });
+  h.index.destroy();
+});

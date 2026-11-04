@@ -129,6 +129,23 @@ wait for synchronous canonical relocation and read admission, with coverage unav
 that transition. Counter exhaustion fails the integration read state with a sanitized diagnostic.
 This capability reuses the index's accepted source records and does not activate Statistics.
 
+`TaskIndex.statusReadBasis()` creates a temporary, operation-owned read lease for strict status
+writes. The lease checks complete coverage, source policy, file identity, source observations, and
+semantics. Repository guards run inside the existing synchronous writer before edits or no-ops;
+strict requests cannot rebase or fall back to legacy arguments. Unsupported writer paths reject the
+precondition. Ordinary commands retain their existing retries and result shapes.
+
+[`TaskStatusReadLease`](src/tasks/infrastructure/TaskStatusReadLease.ts) advances only from a trusted
+operation-tagged acceptance of its exact pending full-source candidate. Repositories supply the
+original and newly created recurrence owner coordinates before staging. The lease validates those
+roles against accepted witnesses and follows them independently through timer edits, including two
+occurrences in one root. Its inward listener runs before outward callbacks. It retains exact settled
+acquisition tokens for its lifetime so delayed health notifications cannot invalidate already-proven
+reads. Source health retains only overlapping acquisition cohorts until acceptance or invalidation;
+a newer unconfirmed read grants no authority. An unrelated source failure stops later writes while
+retaining unaffected occurrence proofs. Later source invalidation clears those proofs without
+following another operation's successors. Disposal releases the subscription and pending bytes.
+
 Occurrence collection activates synchronously on the inward read port. It retains no second task
 index. Authority staging carries frozen continued, removed, and created witnesses with an opaque
 operation token. Staging checks source-backed physical endpoints; acceptance checks their exact

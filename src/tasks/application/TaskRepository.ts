@@ -26,6 +26,7 @@ import type {
 } from '../domain/types';
 import { sameTaskNodeRef } from '../domain/types';
 import type { TaskIssue } from '../domain/validation';
+import type { TaskStrictStatusFailure, TaskStrictStatusGuard } from './TaskStatusMutationApi';
 
 type AddSubtaskLifecycle =
   | { readonly today: LocalDate; readonly addCreatedDate: true }
@@ -175,6 +176,7 @@ export interface RecurrenceCompletionRequest {
 }
 
 export interface RevisionPrecondition {
+  readonly strictStatus?: TaskStrictStatusGuard;
   readonly baseRoot: TaskSnapshot;
   readonly baseTarget: TaskMutationTarget;
   readonly reconciliation: RootReconciliationBasis;
@@ -250,6 +252,7 @@ export type RepositoryRevisionResult =
   | { readonly type: 'ambiguous'; readonly candidates: readonly TaskResolutionCandidate[] };
 
 export type TaskRepositoryResult =
+  | { readonly type: 'strict-rejected'; readonly reason: TaskStrictStatusFailure }
   | { readonly type: 'committed'; readonly outcome: TaskCommandOutcome; readonly changed: boolean }
   | { readonly type: 'conflict'; readonly current: TaskSnapshot }
   | RepositoryRevisionResult
@@ -271,6 +274,7 @@ export type TaskRepositoryResult =
     };
 
 export interface TaskRepository {
+  readonly supportsStrictStatusPreconditions?: true;
   hierarchy(request: TaskHierarchyRequest): Promise<TaskRepositoryResult>;
   /** Production adapters opt in to immutable revision preconditions. */
   readonly supportsRevisionPreconditions?: true;

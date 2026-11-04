@@ -431,3 +431,25 @@ describe('integration source health', () => {
     expect(read).not.toHaveBeenCalled();
   });
 });
+
+it('proves only the overlapping acquisition cohort for the exact file identity', () => {
+  const state = new TaskIntegrationReadState();
+  state.setLifecycle('ready');
+  const file = {};
+  const old = state.begin('tasks.md', file, {});
+  const accepted = state.begin('tasks.md', file, {});
+  state.accept(accepted);
+  expect(state.takeSettledAcquisitions('tasks.md', file)).toEqual([old, accepted]);
+  expect(state.takeSettledAcquisitions('tasks.md', file)).toEqual([accepted]);
+  const newer = state.begin('tasks.md', file, {});
+  expect(state.takeSettledAcquisitions('tasks.md', file)).toEqual([]);
+  state.accept(accepted);
+  expect(state.coverage()).toMatchObject({ type: 'error', reason: 'incomplete' });
+  const replacement = {};
+  const replacementRead = state.begin('tasks.md', replacement, {});
+  state.accept(replacementRead);
+  expect(state.takeSettledAcquisitions('tasks.md', file)).toEqual([]);
+  expect(state.takeSettledAcquisitions('tasks.md', replacement)).toEqual([replacementRead]);
+  state.accept(newer);
+  state.dispose();
+});

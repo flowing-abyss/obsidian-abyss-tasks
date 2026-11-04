@@ -1908,3 +1908,18 @@ describe('strict dependency completion', () => {
     expect(h.node('Dependent').node.dependsOn).toEqual([]);
   });
 });
+
+it('keeps defensive strict rejection out of dependency command results', async () => {
+  const h = await harness({ 'tasks.md': '- [ ] Blocker\n- [ ] Dependent\n' });
+  vi.spyOn(h.repository, 'editBatch').mockResolvedValue({
+    type: 'strict-rejected',
+    reason: 'unsupported-precondition',
+  });
+  expect(
+    await h.application.execute({
+      type: 'add-dependency',
+      blocker: h.node('Blocker').target,
+      dependent: h.node('Dependent').target,
+    }),
+  ).toEqual({ type: 'invalid', issues: [{ code: 'invalid-target', field: 'target' }] });
+});

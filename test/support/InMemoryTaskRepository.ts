@@ -1,4 +1,7 @@
-import type { TaskHierarchyRequest } from '../../src/tasks/application/TaskRepository';
+import type {
+  RevisionPrecondition,
+  TaskHierarchyRequest,
+} from '../../src/tasks/application/TaskRepository';
 import {
   dependencyMetadataIssues,
   subtaskRestorationGapIsCurrent,
@@ -14,6 +17,7 @@ import {
   type TaskRepository,
   type TaskRepositoryResult,
 } from '../../src/tasks/application/TaskRepository';
+import type { TaskStrictWriteContext } from '../../src/tasks/application/TaskStatusMutationApi';
 import type {
   PlanningTarget,
   TaskOccurrenceResult,
@@ -29,6 +33,7 @@ import {
   recurrenceMarkerCountInOwnedSubtree,
 } from '../../src/tasks/domain/recurrenceIteration';
 import { isOwnedLineTarget } from '../../src/tasks/domain/taskCommandTargets';
+import type { TaskOccurrenceWitness } from '../../src/tasks/domain/taskOccurrence';
 import type {
   CommentRef,
   LocalDate,
@@ -60,7 +65,11 @@ import { TaskLocator } from '../../src/tasks/infrastructure/markdown/TaskLocator
 import { type TaskMarkdownCodec } from '../../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { recoverTimeEntryRemoval } from '../../src/tasks/infrastructure/markdown/timeEntryRemovalRecovery';
 import { taskHierarchyTransaction } from '../../src/tasks/infrastructure/obsidian/taskHierarchyTransaction';
-import { preparedRevisionResult } from '../../src/tasks/infrastructure/preparedRevisionResult';
+import {
+  preparedRevisionResult,
+  strictStatusEffects,
+  strictStatusPrecondition,
+} from '../../src/tasks/infrastructure/preparedRevisionResult';
 import {
   prepareTaskEditBatch,
   stageTaskEditBatch,
@@ -85,6 +94,7 @@ import { expectDefined } from './../helpers';
 type LocateResult = ReturnType<TaskLocator['locate']>;
 
 interface Options {
+  readonly fileIdentity?: (path: string) => object | undefined;
   readonly files: Record<string, string>;
   readonly codec: TaskMarkdownCodec;
   readonly snapshotsFromContent: (path: string, content: string) => readonly TaskSnapshot[];
@@ -662,8 +672,16 @@ function editRequestInput(request: TaskEditRequest | TaskEditCommand): EditInput
   return { prepared, command, ref: commandRootRef(command) };
 }
 
+function strictOperation(prepared: RevisionPrecondition | undefined): {
+  readonly operation?: object;
+} {
+  return prepared?.strictStatus === undefined ? {} : { operation: prepared.strictStatus.operation };
+}
+
 export class InMemoryTaskRepository implements TaskRepository {
   readonly supportsRevisionPreconditions = true as const;
+  readonly supportsStrictStatusPreconditions = true as const;
+  private readonly fileIdentities = new Map<string, object>();
 
   private readonly files: Map<string, string>;
   private readonly editor: TaskBlockEditor;
@@ -671,6 +689,7 @@ export class InMemoryTaskRepository implements TaskRepository {
 
   constructor(private readonly options: Options) {
     this.files = new Map(Object.entries(options.files));
+    for (const path of this.files.keys()) this.fileIdentities.set(path, {});
     this.editor = options.editor ?? new TaskBlockEditor();
     this.locator = options.locator ?? new TaskLocator();
   }
@@ -684,6 +703,8 @@ export class InMemoryTaskRepository implements TaskRepository {
   }
 
   async hierarchy(request: TaskHierarchyRequest): Promise<TaskRepositoryResult> {
+    if (request.source.strictStatus !== undefined || request.parent?.strictStatus !== undefined)
+      return { type: 'strict-rejected', reason: 'unsupported-precondition' };
     const app = await createAppWithFiles(Object.fromEntries(this.files));
     return taskHierarchyTransaction(app, request, {
       authority: this.options.refAuthority,
@@ -737,6 +758,8 @@ export class InMemoryTaskRepository implements TaskRepository {
     request: TaskMoveRequest | TaskRef,
     legacyDestination?: TaskDestination,
   ): Promise<TaskRepositoryResult> {
+    if ('baseRoot' in request && request.strictStatus !== undefined)
+      return { type: 'strict-rejected', reason: 'unsupported-precondition' };
     const input = normalizeMoveInput(request, legacyDestination);
     if (input === undefined) {
       return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'destination' }] };
@@ -944,6 +967,8 @@ export class InMemoryTaskRepository implements TaskRepository {
     if (content === undefined) {
       return { type: 'result', result: { type: 'not-found', target: request.target } };
     }
+    const strict = this.checkStrictStatus(input.revisionRequest, content, input.request.target);
+    if (strict !== undefined) return { type: 'result', result: strict };
     const evidence = this.options.refAuthority?.evidence(ref.revision);
     const indexedRef =
       evidence === undefined
@@ -1149,8 +1174,10 @@ export class InMemoryTaskRepository implements TaskRepository {
     if (roots === undefined) {
       return { type: 'result', result: invalidRecurrence('invalid-task-syntax') };
     }
+    this.expectStrictRecurrence(input, location, candidate, roots);
     const staged = authority.stage(
       {
+        ...strictOperation(input.revisionRequest),
         filePath: input.ref.filePath,
         candidateFingerprint: taskRefContentFingerprint(candidate.candidate),
         candidateLength: candidate.candidate.length,
@@ -1185,6 +1212,43 @@ export class InMemoryTaskRepository implements TaskRepository {
     return staged.type === 'conflict'
       ? { type: 'result', result: { type: 'conflict', current: location.current } }
       : { type: 'ready', token: staged.token };
+  }
+
+  private expectStrictRecurrence(
+    input: RecurrenceInput,
+    location: Extract<RecurrenceLocation, { type: 'ready' }>,
+    candidate: RecurrenceCandidate,
+    roots: readonly RootRevisionOverride[],
+  ): void {
+    const strict = input.revisionRequest?.strictStatus;
+    if (strict !== undefined && input.revisionRequest !== undefined) {
+      const current = this.strictContext(input.revisionRequest, location.content);
+      if (current === undefined) throw new Error('Missing strict source');
+      const address = (rootLine: number, offset: number) => {
+        const root = roots.find((root) => root.line === rootLine);
+        if (root === undefined) throw new Error('Missing strict occurrence');
+        return {
+          filePath: input.ref.filePath,
+          rootRevision: root.revision,
+          rootLine,
+          nodeOffset: candidate.nestedOwner ? location.relativeLine + offset : 0,
+        };
+      };
+      strict.expectCommit(current, candidate.candidate, {
+        original: {
+          before: {
+            filePath: input.ref.filePath,
+            rootRevision: input.ref.revision,
+            rootLine: input.ref.line,
+            nodeOffset: location.relativeLine,
+          },
+          ...(!candidate.deletesCompleted
+            ? { after: address(candidate.completedRootLine, candidate.completedOffset) }
+            : {}),
+        },
+        next: address(candidate.activeRootLine, candidate.cleanOffset),
+      });
+    }
   }
 
   private recurrenceRevisionRoots(
@@ -1250,6 +1314,13 @@ export class InMemoryTaskRepository implements TaskRepository {
   }
 
   async edit(request: TaskEditRequest | TaskEditCommand): Promise<TaskRepositoryResult> {
+    if (
+      'command' in request &&
+      request.strictStatus !== undefined &&
+      request.command.type !== 'set-status' &&
+      request.command.type !== 'close-time-entry'
+    )
+      return { type: 'strict-rejected', reason: 'unsupported-precondition' };
     const input = editRequestInput(request);
     const metadataIssues = [
       ...dependencyMetadataIssues(input.command),
@@ -1264,6 +1335,8 @@ export class InMemoryTaskRepository implements TaskRepository {
   }
 
   async editBatch(request: TaskEditBatchRequest): Promise<TaskRepositoryResult> {
+    if (request.edits.some((edit) => edit.strictStatus !== undefined))
+      return { type: 'strict-rejected', reason: 'unsupported-precondition' };
     const issues = taskEditBatchIssues(request);
     if (issues.length > 0) return { type: 'invalid', issues };
     const content = this.files.get(request.filePath);
@@ -1310,6 +1383,8 @@ export class InMemoryTaskRepository implements TaskRepository {
   async createDependencySubtask(
     request: CreateDependencySubtaskRequest,
   ): Promise<TaskRepositoryResult> {
+    if (request.strictStatus !== undefined)
+      return { type: 'strict-rejected', reason: 'unsupported-precondition' };
     const resolution = dependencySubtaskResolutionRequest(request);
     if (resolution === undefined)
       return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'subtask' }] };
@@ -1352,22 +1427,79 @@ export class InMemoryTaskRepository implements TaskRepository {
     return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'subtask-parent' }] };
   }
 
+  private strictContext(
+    prepared: RevisionPrecondition,
+    content: string,
+  ): TaskStrictWriteContext | undefined {
+    const target = prepared.baseTarget;
+    if (target.type !== 'task' && target.type !== 'subtask') return undefined;
+    const filePath = prepared.baseRoot.ref.filePath;
+    const fileIdentity = this.options.fileIdentity?.(filePath) ?? this.fileIdentities.get(filePath);
+    if (fileIdentity === undefined) return undefined;
+    return { fileIdentity, filePath, content, root: prepared.baseRoot, target };
+  }
+  private checkStrictStatus(
+    prepared: RevisionPrecondition | undefined,
+    content: string,
+    target: TaskNodeRef | undefined,
+  ): TaskRepositoryResult | undefined {
+    if (prepared?.strictStatus === undefined) return undefined;
+    if (this.options.refAuthority === undefined || this.options.snapshotState === undefined)
+      return { type: 'strict-rejected', reason: 'unsupported-precondition' };
+    this.options.refAuthority.activateOccurrences();
+    const basis = this.strictContext(prepared, content);
+    const current = basis === undefined || target === undefined ? undefined : { ...basis, target };
+    if (current === undefined) return { type: 'strict-rejected', reason: 'source-unavailable' };
+    return strictStatusPrecondition(
+      prepared,
+      current,
+      this.exactStrictRoot(prepared.baseRoot, content),
+    );
+  }
+  private exactStrictRoot(root: TaskSnapshot, content: string): boolean {
+    const blocks = this.editor.rootBlocks(content);
+    const indexed = this.options.snapshotState?.currentRoot(
+      root.ref.filePath,
+      root.ref.line,
+      root.source.originalBlock,
+    );
+    const located = this.locator.locate(blocks, root.ref, indexed);
+    return (
+      indexed?.revision === root.ref.revision &&
+      located.type === 'exact' &&
+      located.block.line === root.ref.line &&
+      located.block.source === root.source.originalBlock
+    );
+  }
+  private expectStrictEdit(
+    input: EditInput | undefined,
+    candidate: string,
+    witnesses: readonly TaskOccurrenceWitness[],
+  ): void {
+    const prepared = input?.prepared;
+    if (prepared?.strictStatus === undefined) return;
+    const current = this.strictContext(
+      prepared,
+      this.files.get(prepared.baseRoot.ref.filePath) ?? '',
+    );
+    if (current === undefined) throw new Error('Missing strict source');
+    prepared.strictStatus.expectCommit(
+      current,
+      candidate,
+      input?.command.type === 'set-status' ? strictStatusEffects(current, witnesses) : undefined,
+    );
+  }
+
   private resolveEditLocation(input: EditInput): EditLocation {
     const content = this.files.get(input.ref.filePath);
     if (content === undefined) {
       return { type: 'result', result: { type: 'not-found', target: targetOf(input.command) } };
     }
+    const strict = this.checkStrictStatus(input.prepared, content, nodeTarget(input.command));
+    if (strict !== undefined) return { type: 'result', result: strict };
     const blocks = this.editor.rootBlocks(content);
     const evidence = this.options.refAuthority?.evidence(input.ref.revision);
-    const indexedRef =
-      evidence === undefined
-        ? undefined
-        : this.options.snapshotState?.currentRoot(
-            input.ref.filePath,
-            input.ref.line,
-            evidence.source,
-            blocks.filter((block) => block.source === evidence.source).map((block) => block.line),
-          );
+    const indexedRef = this.indexedEditRef(input.ref, blocks, evidence);
     const located = this.locator.locate(blocks, input.ref, indexedRef);
     if (hasUnconfirmedCurrentRoot(this.options.snapshotState, input.ref, evidence, indexedRef))
       return { type: 'result', result: this.editResolution(input, content, located) };
@@ -1380,6 +1512,21 @@ export class InMemoryTaskRepository implements TaskRepository {
     });
     if (revision !== undefined) return { type: 'result', result: revision };
     return this.resolveLocatedEdit(input, content, located, indexedRef?.revision);
+  }
+
+  private indexedEditRef(
+    ref: TaskRef,
+    blocks: readonly TaskRootBlock[],
+    evidence: ReturnType<TaskRefAuthority['evidence']>,
+  ): TaskRef | undefined {
+    return evidence === undefined
+      ? undefined
+      : this.options.snapshotState?.currentRoot(
+          ref.filePath,
+          ref.line,
+          evidence.source,
+          blocks.filter((block) => block.source === evidence.source).map((block) => block.line),
+        );
   }
 
   private resolveLocatedEdit(
@@ -1562,12 +1709,10 @@ export class InMemoryTaskRepository implements TaskRepository {
     if (edited.type === 'unchanged') {
       return { type: 'committed', outcome: { type: 'task', task: current }, changed: false };
     }
-    return this.commitSurvivingRoot(
-      input.process.ref,
-      edited.content,
-      input.block.line,
-      edited.nodeMap,
-    );
+    return this.commitSurvivingRoot(input.process.ref, edited.content, input.block.line, {
+      nodeMap: edited.nodeMap,
+      input: input.process,
+    });
   }
 
   private editTextTarget(
@@ -1641,12 +1786,10 @@ export class InMemoryTaskRepository implements TaskRepository {
       edited.content,
       this.options.refAuthority?.collectsOccurrences(),
     );
-    return this.commitSurvivingRoot(
-      input.process.ref,
-      next.content,
-      input.block.line,
-      next.nodeMap,
-    );
+    return this.commitSurvivingRoot(input.process.ref, next.content, input.block.line, {
+      nodeMap: next.nodeMap,
+      input: input.process,
+    });
   }
 
   private editOrdinaryLine(input: LocatedEditInput): TaskRepositoryResult {
@@ -1663,7 +1806,10 @@ export class InMemoryTaskRepository implements TaskRepository {
         result.content,
         this.options.refAuthority?.collectsOccurrences(),
       );
-      return this.commitSurvivingRoot(process.ref, next.content, block.line, next.nodeMap);
+      return this.commitSurvivingRoot(process.ref, next.content, block.line, {
+        nodeMap: next.nodeMap,
+        input: process,
+      });
     }
     const root = this.snapshot(process.ref.filePath, content, block.line);
     return root !== undefined
@@ -1675,11 +1821,14 @@ export class InMemoryTaskRepository implements TaskRepository {
     consumed: TaskRef,
     candidate: string,
     line: number,
-    nodeMap?: readonly TaskNodeLineMapping[],
+    proof: {
+      readonly nodeMap?: readonly TaskNodeLineMapping[] | undefined;
+      readonly input?: EditInput | undefined;
+    } = {},
   ): TaskRepositoryResult {
     const block = this.editor.rootBlocks(candidate).find((root) => root.line === line);
     if (block == null) return { type: 'invalid', issues: [{ code: 'invalid-task-syntax' }] };
-    const transition = this.stageSurvivingRoot(consumed, candidate, block, nodeMap);
+    const transition = this.stageSurvivingRoot(consumed, candidate, block, proof);
     if (transition.type === 'result') return transition.result;
     const root = (
       this.options.snapshotState?.previewContent(consumed.filePath, candidate) ??
@@ -1696,8 +1845,12 @@ export class InMemoryTaskRepository implements TaskRepository {
     consumed: TaskRef,
     candidate: string,
     block: TaskRootBlock,
-    nodeMap?: readonly TaskNodeLineMapping[],
+    proof: {
+      readonly nodeMap?: readonly TaskNodeLineMapping[] | undefined;
+      readonly input?: EditInput | undefined;
+    } = {},
   ): SurvivingRootTransition {
+    const { nodeMap, input } = proof;
     const authority = this.options.refAuthority;
     const snapshotState = this.options.snapshotState;
     if (authority == null || snapshotState == null) {
@@ -1715,21 +1868,20 @@ export class InMemoryTaskRepository implements TaskRepository {
         result: { type: 'not-found', target: { type: 'task', ref: consumed } },
       };
     }
+    const occurrences = editedOccurrenceWitnesses(
+      consumed,
+      { filePath: consumed.filePath, line: block.line, revision },
+      nodeMap ?? [],
+    );
+    this.expectStrictEdit(input, candidate, occurrences);
     const staged = authority.stage(
       {
+        ...strictOperation(input?.prepared),
         filePath: consumed.filePath,
         candidateFingerprint: taskRefContentFingerprint(candidate),
         candidateLength: candidate.length,
         expectedRevision: consumed.revision,
-        ...(nodeMap === undefined
-          ? {}
-          : {
-              occurrences: editedOccurrenceWitnesses(
-                consumed,
-                { filePath: consumed.filePath, line: block.line, revision },
-                nodeMap,
-              ),
-            }),
+        occurrences,
         roots: [{ line: block.line, source: block.source, revision }],
       },
       current.revision,
@@ -1803,7 +1955,7 @@ export class InMemoryTaskRepository implements TaskRepository {
       return invalidRecurrence('nested-recurrence-conflict');
     }
     return target.type === 'task'
-      ? this.deleteCompletedRoot(content, block, current)
+      ? this.deleteCompletedRoot(content, block, current, input.process)
       : this.deleteCompletedSubtask(input, current.ref);
   }
 
@@ -1819,20 +1971,22 @@ export class InMemoryTaskRepository implements TaskRepository {
     content: string,
     block: TaskRootBlock,
     current: TaskSnapshot,
+    input: EditInput,
   ): TaskRepositoryResult {
     const next = this.editor.deleteRoot(content, block);
     if (next === undefined) return invalidRecurrence('invalid-task-syntax');
-    return this.installDeletedRoot(current, block.source, next);
+    return this.installDeletedRoot(current, block.source, next, input);
   }
 
   private installDeletedRoot(
     current: TaskSnapshot,
     source: string,
     content: string,
+    input?: EditInput,
   ): TaskRepositoryResult {
     const ref = current.ref;
     const authority = this.options.refAuthority;
-    const transition = this.stageDeletedRoot(ref, source, content);
+    const transition = this.stageDeletedRoot(ref, source, content, input);
     if (transition?.type === 'conflict') return { type: 'conflict', current };
     this.files.set(ref.filePath, content);
     if (transition?.type === 'staged') authority?.commit(transition.token);
@@ -1845,10 +1999,17 @@ export class InMemoryTaskRepository implements TaskRepository {
     ref: TaskRef,
     source: string,
     content: string,
+    input?: EditInput,
   ): TaskRefStageResult | undefined {
     const authority = this.options.refAuthority;
+    this.expectStrictEdit(
+      input,
+      content,
+      editedOccurrenceWitnesses(ref, ref, removedSubtreeNodeMap(source, 0)),
+    );
     return authority?.stage(
       {
+        ...strictOperation(input?.prepared),
         filePath: ref.filePath,
         candidateFingerprint: taskRefContentFingerprint(content),
         candidateLength: content.length,
@@ -1874,14 +2035,13 @@ export class InMemoryTaskRepository implements TaskRepository {
     const root = this.snapshot(path, next, updatedBlock.line);
     if (root == null) return invalidRecurrence('invalid-task-syntax');
     if (this.options.snapshotState != null)
-      return this.commitSurvivingRoot(
-        consumed,
-        next,
-        block.line,
-        this.options.refAuthority?.collectsOccurrences() === true
-          ? removedSubtreeNodeMap(block.source, relativeLine)
-          : undefined,
-      );
+      return this.commitSurvivingRoot(consumed, next, block.line, {
+        nodeMap:
+          this.options.refAuthority?.collectsOccurrences() === true
+            ? removedSubtreeNodeMap(block.source, relativeLine)
+            : undefined,
+        input: input.process,
+      });
     this.files.set(path, next);
     return { type: 'committed', outcome: { type: 'task', task: root }, changed: true };
   }

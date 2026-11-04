@@ -9,6 +9,7 @@ import type {
 } from '../application/TaskIntegrationReadApi';
 
 interface SourceHealth {
+  readonly superseded: object[];
   path: string;
   readonly fileIdentity: object;
   readonly acquisition: object;
@@ -16,6 +17,7 @@ interface SourceHealth {
 }
 
 interface ReadListener {
+  readonly inward?: true;
   revision: number;
   readonly receive: (event: TaskReadEvent) => void;
 }
@@ -66,6 +68,23 @@ export class TaskIntegrationReadState implements TaskIntegrationReadStateApi {
     };
   }
 
+  subscribeInward(
+    listener: (event: TaskReadEvent) => void,
+  ): ReturnType<TaskIntegrationReadStateApi['subscribe']> {
+    const record: ReadListener = {
+      receive: listener,
+      revision: this.capture().revision,
+      inward: true,
+    };
+    if (this.capture().lifecycle !== 'disposed') this.listeners_abyssPrivate.add(record);
+    return {
+      state: this.capture(),
+      unsubscribe: () => {
+        this.listeners_abyssPrivate.delete(record);
+      },
+    };
+  }
+
   coverage(scope?: TaskReadScope): TaskReadResult<true> {
     const observation = this.capture();
     if (observation.lifecycle !== 'ready')
@@ -84,7 +103,13 @@ export class TaskIntegrationReadState implements TaskIntegrationReadStateApi {
   }
 
   begin(path: string, fileIdentity: object, observationId: object): object {
+    const previous = this.sources_abyssPrivate.get(path);
+    const superseded =
+      previous?.fileIdentity === fileIdentity && previous.phase === 'pending'
+        ? [...previous.superseded, previous.acquisition]
+        : [];
     const source: SourceHealth = {
+      superseded,
       path,
       fileIdentity,
       acquisition: observationId,
@@ -114,6 +139,7 @@ export class TaskIntegrationReadState implements TaskIntegrationReadStateApi {
     )
       return;
     source.phase = phase;
+    if (phase === 'failed') source.superseded.length = 0;
     this.health_abyssPrivate(source);
   }
 
@@ -152,7 +178,10 @@ export class TaskIntegrationReadState implements TaskIntegrationReadStateApi {
   advanceScope(): void {
     if (this.closed_abyssPrivate()) return;
     // Policy refresh must be incomplete even inside its synchronous invalidation callback.
-    for (const source of this.sources_abyssPrivate.values()) source.phase = 'pending';
+    for (const source of this.sources_abyssPrivate.values()) {
+      source.phase = 'pending';
+      source.superseded.length = 0;
+    }
     if (this.advance_abyssPrivate('scopeRevision'))
       this.publish_abyssPrivate({ type: 'changed', observation: this.capture() });
   }
@@ -166,6 +195,8 @@ export class TaskIntegrationReadState implements TaskIntegrationReadStateApi {
     if (this.closed_abyssPrivate() || lifecycle === this.capture().lifecycle) return;
     if (!this.advance_abyssPrivate()) return;
     this.observation_abyssPrivate = Object.freeze({ ...this.capture(), lifecycle });
+    if (lifecycle !== 'ready')
+      for (const source of this.sources_abyssPrivate.values()) source.superseded.length = 0;
     this.publish_abyssPrivate({ type: 'state', observation: this.capture() });
   }
 
@@ -194,6 +225,12 @@ export class TaskIntegrationReadState implements TaskIntegrationReadStateApi {
   currentAcquisition(path: string, fileIdentity: object): object | undefined {
     const source = this.sources_abyssPrivate.get(path);
     return source?.fileIdentity === fileIdentity ? source.acquisition : undefined;
+  }
+
+  takeSettledAcquisitions(path: string, fileIdentity: object): readonly object[] {
+    const source = this.sources_abyssPrivate.get(path);
+    if (source?.fileIdentity !== fileIdentity || source.phase !== 'settled') return [];
+    return [...source.superseded.splice(0), source.acquisition];
   }
 
   /** Accepted canonical installation reaches inward consumers before held health callbacks. */
@@ -297,7 +334,9 @@ export class TaskIntegrationReadState implements TaskIntegrationReadStateApi {
   }
 
   private notify_abyssPrivate(publication: ReadPublication): void {
-    for (const listener of publication.listeners) {
+    for (const listener of [...publication.listeners].sort(
+      (left, right) => Number(right.inward === true) - Number(left.inward === true),
+    )) {
       if (!this.listeners_abyssPrivate.has(listener)) continue;
       try {
         // An accepted installation can overtake held health evidence. Keep its exact tokens

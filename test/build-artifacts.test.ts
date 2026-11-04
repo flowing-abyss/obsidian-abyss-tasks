@@ -43,6 +43,8 @@ const privateOwners = new Set([
   'TaskIndex',
   // Integration health exposes methods and immutable observations, never private source/listener state.
   'TaskIntegrationReadState',
+  // Operation-owned lease fields are never reflected, serialized, or spread.
+  'TaskStatusReadLeaseOwner',
   'MiniSearchTaskEngine',
   'TaskApplicationService',
   'TimeTrackingService',

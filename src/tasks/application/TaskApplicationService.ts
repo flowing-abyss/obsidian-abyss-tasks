@@ -1533,21 +1533,12 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
   }
 
   private terminalRepositoryResult_abyssPrivate(result: TaskRepositoryResult): TaskCommandResult {
-    switch (result.type) {
-      case 'committed':
-        return { type: 'ok', outcome: result.outcome, changed: result.changed };
-      case 'rebased':
-        return { type: 'conflict', current: result.current };
-      case 'uncertain':
-        return { type: 'not-found', target: result.target };
-      case 'partial':
-      case 'invalid':
-      case 'not-found':
-      case 'ambiguous':
-      case 'conflict':
-      case 'io-error':
-        return result;
-    }
+    if (result.type === 'strict-rejected') return invalidTaskTarget('target');
+    if (result.type === 'committed')
+      return { type: 'ok', outcome: result.outcome, changed: result.changed };
+    if (result.type === 'rebased') return { type: 'conflict', current: result.current };
+    if (result.type === 'uncertain') return { type: 'not-found', target: result.target };
+    return result;
   }
 
   private async finishPrepared_abyssPrivate(
