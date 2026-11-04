@@ -1,5 +1,6 @@
 import { TFile, type App } from 'obsidian';
-import { TaskApiProvider, type TaskReadClientV1 } from '../../src/integrations/TaskApiProvider';
+import type { TasksApiV1 } from '../../api';
+import { TaskApiProvider } from '../../src/integrations/TaskApiProvider';
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
 import { toStatusRules } from '../../src/settings/statusCatalogAdapter';
 import { TaskApplicationService } from '../../src/tasks/application/TaskApplicationService';
@@ -20,7 +21,7 @@ let providerEpoch = 0;
 
 export interface PublicApiHarness {
   readonly provider: TaskApiProvider;
-  client(consumerId?: string): TaskReadClientV1;
+  client(consumerId?: string): TasksApiV1;
   readonly app: App;
   readonly index: TaskIndex;
   readonly service: TaskApplicationService;
@@ -77,6 +78,7 @@ export async function publicApiHarness(
   const reads = index.integrationReads();
   const provider = new TaskApiProvider({
     reads,
+    mutations: service,
     pluginVersion: '2.3.2',
     epoch: `test-${++providerEpoch}`,
     now: () => now,

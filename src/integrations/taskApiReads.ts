@@ -23,10 +23,10 @@ export function readError(
 }
 export function lifecycleError(state: TaskReadObservation): ApiResultV1<never> | undefined {
   if (state.lifecycle === 'ready') return undefined;
-  return failure(state.lifecycle === 'initializing' ? 'not-ready' : state.lifecycle);
+  return readFailure(state.lifecycle === 'initializing' ? 'not-ready' : state.lifecycle);
 }
 
-function failure(
+export function readFailure(
   reason: Extract<TaskReadResult<never>, { type: 'error' }>['reason'],
 ): ApiResultV1<never> {
   switch (reason) {
@@ -57,7 +57,7 @@ function project(
 ): ApiResultV1<readonly TaskDtoV1[]> {
   const items: TaskDtoV1[] = [];
   for (const node of nodes) {
-    if (!context.reads.canDisclose(node.address)) return failure('unavailable');
+    if (!context.reads.canDisclose(node.address)) return readFailure('unavailable');
     const identity = context.identities.project(node, observation.semanticsRevision);
     if (!identity.ok) return identity;
     items.push(toTaskDto(node, identity.value));
@@ -76,9 +76,9 @@ function list(
       : context.cursors.resume(query.cursor, query, observation);
   if (resume !== undefined && !resume.ok) return resume;
   if (observation.generation !== before.generation)
-    return failure(query.cursor === undefined ? 'incomplete' : 'generation-changed');
+    return readFailure(query.cursor === undefined ? 'incomplete' : 'generation-changed');
   const page = context.reads.page(query, query.limit ?? 100, resume?.value, observation.generation);
-  if (page.type === 'error') return failure(page.reason);
+  if (page.type === 'error') return readFailure(page.reason);
   const projected = project(context, page.value.nodes, page.observation);
   if (!projected.ok) return projected;
   return finishPage(context, query, page, projected.value);
@@ -112,11 +112,11 @@ function get(context: TaskApiContext, target: string): ApiResultV1<TaskDtoV1> {
     read.type === 'error' &&
     ['unavailable', 'incomplete', 'not-ready', 'failed', 'disposed'].includes(read.reason)
   )
-    return failure(read.reason);
-  if (identity.value.state === 'removed') return failure('missing');
-  if (identity.value.state === 'unproven') return failure('stale');
-  if (read.type === 'error') return failure(read.reason);
-  if (!context.reads.canDisclose(read.value.address)) return failure('unavailable');
+    return readFailure(read.reason);
+  if (identity.value.state === 'removed') return readFailure('missing');
+  if (identity.value.state === 'unproven') return readFailure('stale');
+  if (read.type === 'error') return readFailure(read.reason);
+  if (!context.reads.canDisclose(read.value.address)) return readFailure('unavailable');
   const projected = context.identities.project(read.value, read.observation.semanticsRevision);
   if (!projected.ok) return projected;
   return freezeValue({ ok: true, value: toTaskDto(read.value, projected.value) });
@@ -126,7 +126,7 @@ function resolve(
   selector: Parameters<TaskReadClientV1['tasks']['resolve']>[0],
 ): ApiResultV1<ResolutionV1> {
   const read = context.reads.resolve(selector);
-  if (read.type === 'error') return failure(read.reason);
+  if (read.type === 'error') return readFailure(read.reason);
   const projected = project(context, read.value.nodes, read.observation);
   if (!projected.ok) return projected;
   const observation = context.observation(read.observation);
@@ -151,7 +151,7 @@ function resolve(
 }
 function statuses(context: TaskApiContext): ApiResultV1<StatusCatalogV1> {
   const read = context.reads.statuses();
-  if (read.type === 'error') return failure(read.reason);
+  if (read.type === 'error') return readFailure(read.reason);
   return freezeValue({
     ok: true,
     value: {

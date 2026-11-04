@@ -181,7 +181,35 @@ export class TaskStatusReadLeaseOwner implements TaskStatusReadLease {
         const reason = this.check_abyssPrivate(root, target, current);
         if (reason !== undefined) throw new Error('Rejected strict candidate');
         this.pending_abyssPrivate = { current, content, effects };
+        return this.confirmation_abyssPrivate(effects);
       },
+    };
+  }
+
+  private confirmation_abyssPrivate(effects: TaskStatusOccurrenceEffects | undefined): () => void {
+    // Retain only detached historical roles, not the candidate source or a live read basis.
+    const original =
+      effects === undefined
+        ? undefined
+        : {
+            origin: { ...effects.original.before },
+            state:
+              effects.original.after === undefined ? ('removed' as const) : ('retained' as const),
+          };
+    const next =
+      effects?.next === undefined
+        ? undefined
+        : { origin: { ...effects.next }, state: 'retained' as const };
+    let consumed = false;
+    return () => {
+      if (consumed) return;
+      consumed = true;
+      if (this.disposed_abyssPrivate || this.mainKnown_abyssPrivate || original === undefined)
+        return;
+      if (!sameAddress(original.origin, this.original_abyssPrivate.origin)) return;
+      this.original_abyssPrivate = original;
+      this.next_abyssPrivate = next;
+      this.mainKnown_abyssPrivate = true;
     };
   }
 

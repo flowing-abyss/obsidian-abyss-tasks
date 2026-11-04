@@ -207,7 +207,7 @@ describe('prepareRetry', () => {
         baseTarget: target,
         reconciliation: { observed: base },
         baseOwnedDescendants: '',
-        strictStatus: { operation: {}, check: () => undefined, expectCommit: () => {} },
+        strictStatus: { operation: {}, check: () => undefined, expectCommit: () => () => {} },
         command: {
           target,
           doneSymbol: 'x',

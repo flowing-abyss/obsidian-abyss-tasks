@@ -39,7 +39,7 @@ export interface TaskStrictStatusGuard {
     current: TaskStrictWriteContext,
     nextContent: string,
     effects?: TaskStatusOccurrenceEffects,
-  ): void;
+  ): () => void;
 }
 export interface TaskStatusReadLease {
   readonly observation: TaskReadObservation;

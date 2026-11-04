@@ -1706,3 +1706,141 @@ it('plugin load and canonical workspace bootstrap alone leave search backend col
     vi.unstubAllGlobals();
   }
 });
+
+it('discovers the public API before initialization, replaces epochs on reload and retires old clients', async () => {
+  const plugin = makePlugin() as unknown as TaskCalendarPlugin;
+  expect(plugin.getApi(1, { consumerId: 'test' })).toMatchObject({
+    ok: false,
+    error: { code: 'NOT_READY' },
+  });
+  await plugin.onload();
+  const result = plugin.getApi(1, { consumerId: 'test' });
+  if (!result.ok) throw new Error('Missing API');
+  expect(await result.value.tasks.list()).toMatchObject({ error: { code: 'NOT_READY' } });
+  plugin.onunload();
+  expect(await result.value.ready()).toMatchObject({ error: { code: 'DISPOSED' } });
+  const reloaded = makePlugin() as unknown as TaskCalendarPlugin;
+  await reloaded.onload();
+  try {
+    const replacement = reloaded.getApi(1, { consumerId: 'test' });
+    if (!replacement.ok) throw new Error('Missing replacement');
+    expect(replacement.value.info.providerEpoch).not.toBe(result.value.info.providerEpoch);
+  } finally {
+    reloaded.onunload();
+  }
+});
+
+it('advances effective public semantics synchronously before settings persistence', async () => {
+  const plugin = makePlugin() as unknown as TaskCalendarPlugin;
+  await plugin.onload();
+  try {
+    const result = plugin.getApi(1, { consumerId: 'test' });
+    if (!result.ok) throw new Error('Missing API');
+    const revisions: number[] = [];
+    result.value.subscribe((event) => {
+      revisions.push(event.semanticsRevision);
+    });
+    const before = revisions[revisions.length - 1];
+    plugin.settings.recurrence.newOccurrencePlacement =
+      plugin.settings.recurrence.newOccurrencePlacement === 'before' ? 'after' : 'before';
+    const saved = plugin.saveSettings();
+    expect(revisions[revisions.length - 1]).toBeGreaterThan(before ?? -1);
+    await saved;
+    const after = revisions[revisions.length - 1];
+    plugin.settings.recurrence = {
+      removeScheduledDate: plugin.settings.recurrence.removeScheduledDate,
+      newOccurrencePlacement: plugin.settings.recurrence.newOccurrencePlacement,
+    };
+    plugin.settings.taskLifecycle = {
+      addCompletionDate: plugin.settings.taskLifecycle.addCompletionDate,
+      addCreatedDate: plugin.settings.taskLifecycle.addCreatedDate,
+    };
+    await plugin.saveSettings();
+    expect(revisions[revisions.length - 1]).toBe(after);
+    plugin.settings.taskPrefix = '#unrelated';
+    await plugin.saveSettings();
+    expect(revisions[revisions.length - 1]).toBe(after);
+  } finally {
+    plugin.onunload();
+  }
+});
+
+it.each(['keep', 'delete'] as const)(
+  'settles accepted recurring %s work truthfully after real plugin unload',
+  async (mode) => {
+    const plugin = makePlugin() as unknown as TaskCalendarPlugin;
+    await plugin.onload();
+    const entered = deferred<void>();
+    const resume = deferred<void>();
+    const index = (plugin as unknown as { taskIndex: TaskIndex }).taskIndex;
+    try {
+      await plugin.app.vault.create(
+        'repeat.md',
+        `- [ ] Repeat 🔁 every day 📅 2026-08-01 🏁 ${mode}\n`,
+      );
+      await index.initialize();
+      const api = plugin.getApi(1, { consumerId: 'unload' });
+      if (!api.ok) throw new Error('Missing API');
+      const found = await api.value.tasks.resolve({ source: { path: 'repeat.md', line: 0 } });
+      if (!found.ok || found.value.type !== 'found') throw new Error('Missing repeat task');
+      const changed = vi.fn();
+      api.value.subscribe(changed);
+      vi.spyOn(plugin.app.vault, 'process').mockImplementation(async (file, transform) => {
+        const candidate = transform(await plugin.app.vault.read(file));
+        entered.resolve();
+        await resume.promise;
+        await plugin.app.vault.modify(file, candidate);
+        return candidate;
+      });
+      const pending = api.value.tasks.complete({
+        target: found.value.task.target,
+        expectedRevision: found.value.task.revision,
+        requestId: 'unload:1',
+        expiresAt: Date.now() + 300_000,
+      });
+      await entered.promise;
+      plugin.onunload();
+      const callbacks = changed.mock.calls.length;
+      resume.resolve();
+      const result = await pending;
+      expect(result).toMatchObject({
+        ok: true,
+        receipt: {
+          effects: 'committed',
+          original: { state: mode === 'delete' ? 'removed' : 'retained' },
+          snapshots: 'unavailable',
+        },
+      });
+      expect(result.receipt?.next?.target).toBeTypeOf('string');
+      expect(result.receipt?.original.task).toBeUndefined();
+      expect(result.receipt?.next?.task).toBeUndefined();
+      expect(changed).toHaveBeenCalledTimes(callbacks);
+    } finally {
+      resume.resolve();
+      plugin.onunload();
+      vi.restoreAllMocks();
+    }
+  },
+);
+
+it('exposes index initialization failure through the production provider', async () => {
+  const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
+  const plugin = makePlugin() as unknown as TaskCalendarPlugin;
+  await plugin.onload();
+  const failed = vi.spyOn(plugin.app.vault, 'getMarkdownFiles').mockImplementationOnce(() => {
+    throw new Error('startup');
+  });
+  try {
+    const api = plugin.getApi(1, { consumerId: 'startup' });
+    if (!api.ok) throw new Error('Missing API');
+    const waiting = api.value.ready();
+    const index = (plugin as unknown as { taskIndex: TaskIndex }).taskIndex;
+    await expect(index.initialize()).rejects.toThrow('startup');
+    expect(await waiting).toMatchObject({ ok: false, error: { code: 'INITIALIZATION_FAILED' } });
+    expect(diagnostic).toHaveBeenCalled();
+  } finally {
+    diagnostic.mockRestore();
+    failed.mockRestore();
+    plugin.onunload();
+  }
+});

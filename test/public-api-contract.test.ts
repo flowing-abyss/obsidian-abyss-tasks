@@ -84,7 +84,7 @@ describe('portable public API contract', () => {
   });
 });
 
-it('keeps the staged client exactly read-only until mutation composition', () => {
+it('keeps the inward read-method projection limited to the canonical read contract', () => {
   expectTypeOf<TaskReadClientV1>().toEqualTypeOf<
     Omit<TasksApiV1, 'tasks'> & {
       readonly tasks: Pick<TasksApiV1['tasks'], 'list' | 'get' | 'resolve' | 'statuses'>;

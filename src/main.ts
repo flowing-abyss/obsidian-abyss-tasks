@@ -1,5 +1,8 @@
 import taskSearchWorkerSource from 'abyss-task-search-worker';
 import { getAllTags, normalizePath, Notice, Plugin, TFile, type TAbstractFile } from 'obsidian';
+import type { ApiResultV1, TasksApiV1 } from '../api';
+import { TaskApiProvider } from './integrations/TaskApiProvider';
+import { readError } from './integrations/taskApiReads';
 import { extractMarkdownBodyTags } from './markdown/markdownTagRename';
 import { compileNotePathPattern, type NotePathPattern } from './markdown/notePathPattern';
 import { NoteTemplateService } from './notes/NoteTemplateService';
@@ -103,6 +106,13 @@ export default class TaskCalendarPlugin extends Plugin {
   queries!: TaskQueryApi & TaskDependencyQueryApi & TimeTrackingQueryApi;
   tasks!: TaskApplicationApi & TaskCaptureApplicationApi;
   private taskIndex!: TaskIndex;
+  private taskApiProvider: TaskApiProvider | undefined = undefined;
+  getApi(version: number, options: { readonly consumerId: string }): ApiResultV1<TasksApiV1> {
+    return (
+      this.taskApiProvider?.getApi(version, options) ??
+      readError('lifecycle', 'NOT_READY', 'Task API is initializing.')
+    );
+  }
   taskStatistics!: TaskStatisticsSource;
   private taskInputServices!: TaskInputServices;
   private statisticsArchivePattern!: NotePathPattern;
@@ -213,7 +223,7 @@ export default class TaskCalendarPlugin extends Plugin {
       (filePath) => this.canonicalTaskDestinationPath(filePath),
     );
     const clock = this.initializeTaskInputServices();
-    this.tasks = new TaskApplicationService(
+    const tasks = new TaskApplicationService(
       this.taskIndex,
       repository,
       this.statusCatalog,
@@ -237,8 +247,9 @@ export default class TaskCalendarPlugin extends Plugin {
       ),
       diagnostics,
       new MarkdownTaskCreatePreview(codec),
+      this.taskIndex.statusReadBasis(),
     );
-    this.queries = this.tasks.queries;
+    this.initializeTaskApi(tasks);
     this.projectManager = new ProjectManager(
       this.app,
       this.settings,
@@ -247,6 +258,24 @@ export default class TaskCalendarPlugin extends Plugin {
       this.projectProperties,
     );
     this.initializeTagManager();
+  }
+
+  private initializeTaskApi(tasks: TaskApplicationService): void {
+    this.tasks = tasks;
+    this.queries = tasks.queries;
+    this.taskApiProvider = new TaskApiProvider({
+      reads: this.taskIndex.integrationReads(),
+      mutations: tasks,
+      pluginVersion: this.manifest.version,
+      epoch: Array.from(crypto.getRandomValues(new Uint8Array(16)), (value) =>
+        value.toString(16).padStart(2, '0'),
+      ).join(''),
+      now: () => Date.now(),
+      diagnostic: (operation, code, diagnosticId) => {
+        console.error('[abyss-tasks] API operation failed', { operation, code, diagnosticId });
+      },
+    });
+    this.updateTaskApiSemantics();
   }
 
   private initializeTagManager(): void {
@@ -398,6 +427,7 @@ export default class TaskCalendarPlugin extends Plugin {
     this.timeTrackingReminder?.destroy();
     this.viewStatePaths.flushPendingSave();
     this.taskSearch.dispose();
+    this.taskApiProvider?.dispose();
     this.taskIndex.destroy();
   }
 
@@ -429,6 +459,7 @@ export default class TaskCalendarPlugin extends Plugin {
   }
 
   async saveSettings(): Promise<void> {
+    this.updateTaskApiSemantics();
     beginSettingsSave(this.settings);
     await this.settingsPersistence.saveSettings(this.settings);
     this.timeTrackingReminder?.setInterval(this.settings.timeTrackingReminderMinutes);
@@ -569,10 +600,28 @@ export default class TaskCalendarPlugin extends Plugin {
     );
   }
 
+  private updateTaskApiSemantics(): void {
+    if (this.taskApiProvider === undefined) return;
+    this.taskIndex.updateIntegrationSemantics(
+      JSON.stringify({
+        statuses: this.statusCatalog.all(),
+        taskLifecycle: {
+          addCreatedDate: this.settings.taskLifecycle.addCreatedDate,
+          addCompletionDate: this.settings.taskLifecycle.addCompletionDate,
+        },
+        recurrence: {
+          newOccurrencePlacement: this.settings.recurrence.newOccurrencePlacement,
+          removeScheduledDate: this.settings.recurrence.removeScheduledDate,
+        },
+      }),
+    );
+  }
+
   rebuildTaskStatusSemantics(): void {
     this.statusCatalog.replace(toStatusRules(this.settings.taskStatuses));
     this.statusRegistry.replace(this.settings.taskStatuses);
     this.taskIndex.setStatusCatalog(this.statusCatalog);
+    this.updateTaskApiSemantics();
   }
 
   private async openPanel(): Promise<void> {

@@ -203,5 +203,10 @@ export type {
   TaskReadObservation,
   TaskReadResult,
 } from './application/TaskIntegrationReadApi';
-export type { TaskStatusOccurrenceContinuation } from './application/TaskStatusMutationApi';
+export type {
+  TaskStatusMutationApi,
+  TaskStatusMutationOutcome,
+  TaskStatusMutationRequest,
+  TaskStatusOccurrenceContinuation,
+} from './application/TaskStatusMutationApi';
 export type { TaskOccurrenceAddress } from './domain/taskOccurrence';

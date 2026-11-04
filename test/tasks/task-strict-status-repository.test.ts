@@ -674,7 +674,11 @@ it('enforces the prepared node even when a supplied guard accepts current semant
     expect(
       await h.repository.edit({
         ...revisionPrecondition(root, target),
-        strictStatus: { operation: {}, check: () => undefined, expectCommit: () => undefined },
+        strictStatus: {
+          operation: {},
+          check: () => undefined,
+          expectCommit: () => () => undefined,
+        },
         command: {
           type: 'set-status',
           target: child,
@@ -703,6 +707,7 @@ it('provides exact effects to an accepting guard without a public read projectio
         check: () => undefined,
         expectCommit: (_current, _next, effect) => {
           effects.push(effect);
+          return () => {};
         },
       },
       command: {
@@ -801,7 +806,11 @@ it('never turns a strict revision precondition into an authority rebase', async 
       preparedRevisionResult({
         prepared: {
           ...revisionPrecondition(root, target),
-          strictStatus: { operation: {}, check: () => undefined, expectCommit: () => undefined },
+          strictStatus: {
+            operation: {},
+            check: () => undefined,
+            expectCommit: () => () => undefined,
+          },
         },
         located: { type: 'exact', block },
         authorityCurrent: successor.ref,
@@ -971,3 +980,212 @@ for (const mutation of ['delete', 'rename'] as const) {
     );
   }
 }
+
+for (const adapter of ['obsidian', 'in-memory'] as const) {
+  it(`${adapter} confirms only changed successful candidates after publication failure`, async () => {
+    const h = await makeRepositoryHarness(adapter, '- [ ] Root');
+    const { root, target, lease } = leased(h);
+    const install = vi.spyOn(h.index, 'installCommittedContent').mockImplementation(() => {
+      h.index.destroy();
+      throw new Error('publication failed');
+    });
+    try {
+      await h.repository
+        .edit({
+          ...revisionPrecondition(root, target),
+          strictStatus: lease.guard(root, target),
+          command: {
+            type: 'set-status',
+            target,
+            symbol: 'x',
+            stamp: localDate('2026-08-01'),
+            addCompletionDate: false,
+          },
+        })
+        .catch(() => undefined);
+      expect(await h.read()).toBe('- [x] Root');
+      lease.markMainUnknown();
+      expect(lease.occurrences().original).toEqual({
+        origin: {
+          filePath: 'tasks.md',
+          rootRevision: root.ref.revision,
+          rootLine: 0,
+          nodeOffset: 0,
+        },
+        state: 'retained',
+      });
+      expect(lease.failure()).toBeDefined();
+    } finally {
+      install.mockRestore();
+      lease.dispose();
+      h.index.destroy();
+    }
+  });
+  it.each(['noop', 'reject', 'stage-failure'] as const)(
+    `${adapter} never confirms %s candidates`,
+    async (failure) => {
+      const h = await makeRepositoryHarness(adapter, '- [ ] Root');
+      const { root, target, lease } = leased(h);
+      const confirm = vi.fn();
+      const stage =
+        failure === 'stage-failure'
+          ? vi.spyOn(h.authority, 'stage').mockReturnValue({ type: 'conflict' })
+          : undefined;
+      try {
+        await h.repository.edit({
+          ...revisionPrecondition(root, target),
+          strictStatus: {
+            operation: {},
+            check: () => (failure === 'reject' ? 'semantics-changed' : undefined),
+            expectCommit: () => confirm,
+          },
+          command: {
+            type: 'set-status',
+            target,
+            symbol: failure === 'noop' ? ' ' : 'x',
+            stamp: localDate('2026-08-01'),
+            addCompletionDate: false,
+          },
+        });
+        expect(confirm).not.toHaveBeenCalled();
+        expect(await h.read()).toBe('- [ ] Root');
+      } finally {
+        stage?.mockRestore();
+        lease.dispose();
+        h.index.destroy();
+      }
+    },
+  );
+}
+it('keeps writer confirmation inert after operation disposal and idempotent after index closure', async () => {
+  for (const disposeLease of [false, true]) {
+    const h = await makeRepositoryHarness('obsidian', '- [ ] Root');
+    const { root, target, lease } = leased(h);
+    const current = {
+      root,
+      target,
+      fileIdentity: expectDefined(h.app.vault.getFileByPath('tasks.md') ?? undefined),
+      filePath: 'tasks.md',
+      content: '- [ ] Root',
+    };
+    const before = {
+      filePath: 'tasks.md',
+      rootRevision: root.ref.revision,
+      rootLine: 0,
+      nodeOffset: 0,
+    };
+    const next = { ...before, rootRevision: 'prepared-next' };
+    const confirm = lease
+      .guard(root, target)
+      .expectCommit(current, '- [ ] Next', { original: { before }, next });
+    try {
+      h.index.destroy();
+      if (disposeLease) lease.dispose();
+      confirm();
+      confirm();
+      const facts = lease.occurrences();
+      expect(facts.original.state).toBe(disposeLease ? 'retained' : 'removed');
+      expect(facts.original.current).toBeUndefined();
+      if (disposeLease) expect(facts.next).toBeUndefined();
+      else expect(facts.next).toEqual({ origin: next, state: 'retained' });
+      expect(lease.guard(root, target).check(current)).toBeDefined();
+    } finally {
+      lease.dispose();
+      h.index.destroy();
+    }
+  }
+});
+it('never confirms an unknown writer even after its transform ran', async () => {
+  const h = await makeRepositoryHarness('obsidian', '- [ ] Root');
+  const { root, target, lease } = leased(h);
+  const confirm = vi.fn();
+  const process = vi.spyOn(h.app.vault, 'process').mockImplementation(async (file, transform) => {
+    transform(await h.app.vault.read(file));
+    throw new Error('write failed');
+  });
+  try {
+    expect(
+      await h.repository.edit({
+        ...revisionPrecondition(root, target),
+        strictStatus: { operation: {}, check: () => undefined, expectCommit: () => confirm },
+        command: {
+          type: 'set-status',
+          target,
+          symbol: 'x',
+          stamp: localDate('2026-08-01'),
+          addCompletionDate: false,
+        },
+      }),
+    ).toMatchObject({ type: 'io-error', contentState: 'unknown' });
+    expect(confirm).not.toHaveBeenCalled();
+  } finally {
+    process.mockRestore();
+    lease.dispose();
+    h.index.destroy();
+  }
+});
+
+for (const adapter of ['obsidian', 'in-memory'] as const) {
+  it(`${adapter} confirms byte-identical Delete recurrence without restoring snapshots`, async () => {
+    const source = '- [ ] Repeat 🔁 every day 🏁 delete';
+    const h = await makeRepositoryHarness(adapter, source);
+    const { root, target, lease } = leased(h);
+    const install = vi.spyOn(h.index, 'installCommittedContent').mockImplementation(() => {
+      h.index.destroy();
+      throw new Error('publication failed');
+    });
+    try {
+      await h.repository
+        .completeRecurrence({
+          ...revisionPrecondition(root, target),
+          strictStatus: lease.guard(root, target),
+          baseOwnedDescendants: '',
+          command: {
+            target,
+            doneSymbol: 'x',
+            today: localDate('2026-08-01'),
+            todoSymbol: ' ',
+            addCreatedDate: false,
+            addCompletionDate: false,
+            placement: 'after',
+            policy: { removeScheduledDate: false },
+          },
+        })
+        .catch(() => undefined);
+      expect(await h.read()).toBe(source);
+      lease.markMainUnknown();
+      expect(lease.occurrences().original.state).toBe('removed');
+      expect(lease.occurrences().next?.state).toBe('retained');
+      expect(lease.occurrences().next?.current).toBeUndefined();
+    } finally {
+      install.mockRestore();
+      lease.dispose();
+      h.index.destroy();
+    }
+  });
+}
+
+it('does not seed main facts from a confirmation without main occurrence effects', async () => {
+  const h = await makeRepositoryHarness('obsidian', '- [ ] Root');
+  const { root, target, lease } = leased(h);
+  try {
+    const confirm = lease.guard(root, target).expectCommit(
+      {
+        root,
+        target,
+        fileIdentity: expectDefined(h.app.vault.getFileByPath('tasks.md') ?? undefined),
+        filePath: 'tasks.md',
+        content: '- [ ] Root',
+      },
+      '- [ ] Root',
+    );
+    h.index.destroy();
+    confirm();
+    lease.markMainUnknown();
+    expect(lease.occurrences().original.state).toBe('unproven');
+    expect(lease.occurrences().next).toBeUndefined();
+  } finally {
+    lease.dispose();
+    h.index.destroy();
+  }
+});

@@ -8,6 +8,10 @@ the vault and writes user changes through application commands.
 
 ```mermaid
 flowchart LR
+  Integrator[External plugin] -->|getApi v1| Facade[TaskApiProvider]
+  Facade -->|bounded reads and accepted witnesses| Index
+  Facade -->|guarded status intent| Service
+  Facade -->|epoch request receipts| Requests[TaskRequestRegistry]
   Person[User] -->|interacts with| UI[Sidebar]
   UI -->|reads through| Query[TaskQueryApi]
   Query -->|is implemented by| Index[TaskIndex]
@@ -76,8 +80,8 @@ Obsidian or DOM type dependencies. Its request and result data is recursively re
 records, normalizes canonical task dates and tags through the task public boundary, and
 copies and freezes validated data. Cancellation signals remain live caller-owned capabilities;
 only their copied options envelope is frozen. [`values.ts`](src/integrations/values.ts) owns
-plain-value freezing and structured API errors. These modules do not register a provider or
-change ordinary task commands, storage, or lifecycle wiring.
+plain-value freezing and structured API errors. Public integration calls return structured failures
+without UI notices; ordinary task commands retain their existing behavior.
 
 [`TaskIdentityRegistry`](src/integrations/TaskIdentityRegistry.ts) owns bounded, epoch-scoped
 opaque targets and revisions for issued occurrences. It consumes accepted semantic witnesses
@@ -92,11 +96,13 @@ next occurrence only at its currently proven address.
 next offsets. Cursors bind normalized filters, page size, generation, scope, semantics, and provider
 epoch; replay does not extend expiry. Both registries reject live capacity overflow instead of
 evicting issued state. Their only task dependencies are inward value types exported through
-`src/tasks`; neither registry registers a provider or changes the composition root.
+`src/tasks`. Their contents are transient and belong to one provider lifetime.
 
-[`TaskApiProvider`](src/integrations/TaskApiProvider.ts) composes the optional read facade over
-`TaskIntegrationReadApi`. Its constructor owns clients, identity and cursor registries; clients expose
-only frozen info, read methods, readiness, subscription and disposal. The first client activates
+[`TaskApiProvider`](src/integrations/TaskApiProvider.ts) implements the full v1 facade over
+`TaskIntegrationReadApi` and `TaskStatusMutationApi`. Main constructs it before index initialization,
+exposes `getApi`, and disposes it before destroying the index. Existing `queries` and `tasks` fields
+keep their application interfaces. The provider owns clients, identity, cursor and request registries;
+clients expose frozen method tables, readiness, subscription and disposal. The first client activates
 occurrence evidence and installs a synchronous accepted-event listener. That listener applies identity
 witnesses before external invalidations. Outward publications retain their original listener audience
 and drain in order across callback reentry. Every callback checks its registration and client lifetime.
@@ -107,8 +113,8 @@ liveness and current source permission at delivery, and maps inward failures to 
 Cursor binding failures precede incomplete coverage. [`taskDto`](src/integrations/taskDto.ts) copies
 only the public allowlist, including parent targets; no inward revision or source block becomes a public
 token. Current exclusion precedes incomplete health for target reads, while lifecycle failure retains
-precedence. The provider is composed in the real test harness; production lifecycle wiring and public
-mutations are not installed yet.
+precedence. Source health determines whether a snapshot can be disclosed; identity witnesses determine
+whether an opaque target still names the same occurrence. Either proof can be unavailable independently.
 
 [`TaskRequestRegistry`](src/integrations/TaskRequestRegistry.ts) owns bounded accepted promises and
 terminal mutation outcomes within one provider epoch and consumer namespace. It validates and
@@ -120,7 +126,30 @@ listener is removed when the synchronous reserve/reject decision finishes. Accep
 keeps its authority pin through settlement and retains failures as well as successes; client disposal
 cannot erase it. A monotonic effective clock rejects expired payloads, and only expired settled
 records free capacity. Provider disposal rejects new work and drops terminal state while accepted
-operations finish. This registry is not yet connected to the read-only provider.
+operations finish. Each admission ticket pins the original public target and retains the exact inward
+root, selected node and observation. Any authored recurrence field reserves one possible-next slot before
+acceptance. The ticket releases both resources on rejection or settlement, including construction failure.
+
+[`taskApiMutations`](src/integrations/taskApiMutations.ts) validates new requests against current source
+eligibility, coverage, revision and status semantics, then submits one intent through the existing
+application mutation queue. The service acquires the strict read lease inside that queue. The facade
+neither acquires a second lease nor imports reference authority or concrete storage adapters. It claims
+the reserved next target from exact final occurrence continuations before projecting result snapshots.
+Receipt mapping preserves committed status and known next facts when tracking or snapshot projection
+fails. After a successful changed writer settles, its transaction invokes the one-shot confirmation
+returned by the strict guard. Normal accepted-index installation runs first. If observation closed or
+publication failed, the callback retains only historical original/next facts from that exact candidate.
+It cannot restore current addresses, clear lease failure, or authorize follow-up writes. Existing
+accepted roles and later timer continuations take precedence. Rejected writers never invoke it, and
+lease disposal makes retained callbacks inert. Replays retain the original values and effects; each delivery checks current disclosure proof
+and strips unavailable DTOs without replacing them with newer task data.
+
+Main updates the effective mutation semantics key synchronously before settings persistence and when
+the status catalog changes. The key covers the catalog, lifecycle date policy and recurrence settings;
+unchanged effective values and unrelated preferences preserve it. Source exclusions continue using
+the existing successfully persisted storage-policy hook. Reload creates a fresh provider epoch and
+keeps old clients disposed. Public state, receipts and identity reservations never enter settings or
+Markdown.
 
 ## Task source and command flow
 

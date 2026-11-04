@@ -586,7 +586,11 @@ type PreparedRecurrence =
 
 type RecurrenceTransition =
   | { readonly type: 'result'; readonly result: TaskRepositoryResult }
-  | { readonly type: 'ready'; readonly token: object | undefined };
+  | {
+      readonly type: 'ready';
+      readonly token: object | undefined;
+      readonly confirmStrict?: (() => void) | undefined;
+    };
 
 interface RecurrenceOccurrences {
   readonly active: TaskOccurrenceResult;
@@ -638,7 +642,11 @@ type TextEditLocation =
 
 type SurvivingRootTransition =
   | { readonly type: 'result'; readonly result: TaskRepositoryResult }
-  | { readonly type: 'ready'; readonly token: object | undefined };
+  | {
+      readonly type: 'ready';
+      readonly token: object | undefined;
+      readonly confirmStrict?: (() => void) | undefined;
+    };
 
 interface LocatedEditInput {
   readonly process: EditInput;
@@ -1145,7 +1153,7 @@ export class InMemoryTaskRepository implements TaskRepository {
         input.ref.filePath,
         candidate.candidate,
         occurrences,
-        transitionToken,
+        transition,
       );
     } catch {
       this.abortTransition(transitionToken);
@@ -1178,7 +1186,7 @@ export class InMemoryTaskRepository implements TaskRepository {
     if (roots === undefined) {
       return { type: 'result', result: invalidRecurrence('invalid-task-syntax') };
     }
-    this.expectStrictRecurrence(input, location, candidate, roots);
+    const confirmStrict = this.expectStrictRecurrence(input, location, candidate, roots);
     const staged = authority.stage(
       {
         ...strictOperation(input.revisionRequest),
@@ -1215,7 +1223,7 @@ export class InMemoryTaskRepository implements TaskRepository {
     );
     return staged.type === 'conflict'
       ? { type: 'result', result: { type: 'conflict', current: location.current } }
-      : { type: 'ready', token: staged.token };
+      : { type: 'ready', token: staged.token, confirmStrict };
   }
 
   private expectStrictRecurrence(
@@ -1223,7 +1231,7 @@ export class InMemoryTaskRepository implements TaskRepository {
     location: Extract<RecurrenceLocation, { type: 'ready' }>,
     candidate: RecurrenceCandidate,
     roots: readonly RootRevisionOverride[],
-  ): void {
+  ): (() => void) | undefined {
     const strict = input.revisionRequest?.strictStatus;
     if (strict !== undefined && input.revisionRequest !== undefined) {
       const current = this.strictContext(input.revisionRequest, location.content);
@@ -1238,7 +1246,7 @@ export class InMemoryTaskRepository implements TaskRepository {
           nodeOffset: candidate.nestedOwner ? location.relativeLine + offset : 0,
         };
       };
-      strict.expectCommit(current, candidate.candidate, {
+      return strict.expectCommit(current, candidate.candidate, {
         original: {
           before: {
             filePath: input.ref.filePath,
@@ -1253,6 +1261,7 @@ export class InMemoryTaskRepository implements TaskRepository {
         next: address(candidate.activeRootLine, candidate.cleanOffset),
       });
     }
+    return undefined;
   }
 
   private recurrenceRevisionRoots(
@@ -1298,13 +1307,17 @@ export class InMemoryTaskRepository implements TaskRepository {
     path: string,
     candidate: string,
     occurrences: RecurrenceOccurrences,
-    transitionToken: object | undefined,
+    transition: Extract<RecurrenceTransition, { type: 'ready' }>,
   ): TaskRepositoryResult {
     this.files.set(path, candidate);
-    if (transitionToken != null) {
-      this.options.refAuthority?.commit(transitionToken);
-      this.options.snapshotState?.installCommittedContent(path, candidate);
-      this.options.refAuthority?.acknowledge(path, candidate);
+    try {
+      if (transition.token != null) {
+        this.options.refAuthority?.commit(transition.token);
+        this.options.snapshotState?.installCommittedContent(path, candidate);
+        this.options.refAuthority?.acknowledge(path, candidate);
+      }
+    } finally {
+      transition.confirmStrict?.();
     }
     return {
       type: 'committed',
@@ -1367,12 +1380,10 @@ export class InMemoryTaskRepository implements TaskRepository {
       );
       if (staged.type !== 'staged') return staged;
       token = staged.token;
-      return this.installSurvivingRoot(
-        request.filePath,
-        prepared.content,
-        prepared.outcomeRoot,
+      return this.installSurvivingRoot(request.filePath, prepared.content, prepared.outcomeRoot, {
+        type: 'ready',
         token,
-      );
+      });
     } catch {
       this.abortTransition(token);
       return {
@@ -1412,7 +1423,10 @@ export class InMemoryTaskRepository implements TaskRepository {
       );
       if (staged.type !== 'staged') return staged;
       token = staged.token;
-      const result = this.installSurvivingRoot(path, prepared.content, prepared.outcomeRoot, token);
+      const result = this.installSurvivingRoot(path, prepared.content, prepared.outcomeRoot, {
+        type: 'ready',
+        token,
+      });
       return finishDependencySubtask(
         request,
         prepared,
@@ -1479,7 +1493,7 @@ export class InMemoryTaskRepository implements TaskRepository {
     input: EditInput | undefined,
     candidate: string,
     witnesses: readonly TaskOccurrenceWitness[],
-  ): void {
+  ): (() => void) | undefined {
     const prepared = input?.prepared;
     if (prepared?.strictStatus === undefined) return;
     const current = this.strictContext(
@@ -1487,7 +1501,7 @@ export class InMemoryTaskRepository implements TaskRepository {
       this.files.get(prepared.baseRoot.ref.filePath) ?? '',
     );
     if (current === undefined) throw new Error('Missing strict source');
-    prepared.strictStatus.expectCommit(
+    return prepared.strictStatus.expectCommit(
       current,
       candidate,
       input?.command.type === 'set-status' ? strictStatusEffects(current, witnesses) : undefined,
@@ -1842,7 +1856,7 @@ export class InMemoryTaskRepository implements TaskRepository {
       this.abortTransition(transition.token);
       return { type: 'invalid', issues: [{ code: 'invalid-task-syntax' }] };
     }
-    return this.installSurvivingRoot(consumed.filePath, candidate, root, transition.token);
+    return this.installSurvivingRoot(consumed.filePath, candidate, root, transition);
   }
 
   private stageSurvivingRoot(
@@ -1877,7 +1891,7 @@ export class InMemoryTaskRepository implements TaskRepository {
       { filePath: consumed.filePath, line: block.line, revision },
       nodeMap ?? [],
     );
-    this.expectStrictEdit(input, candidate, occurrences);
+    const confirmStrict = this.expectStrictEdit(input, candidate, occurrences);
     const staged = authority.stage(
       {
         ...strictOperation(input?.prepared),
@@ -1890,7 +1904,7 @@ export class InMemoryTaskRepository implements TaskRepository {
       },
       current.revision,
     );
-    if (staged.type !== 'conflict') return { type: 'ready', token: staged.token };
+    if (staged.type !== 'conflict') return { type: 'ready', token: staged.token, confirmStrict };
     return { type: 'result', result: this.survivingRootConflict(consumed, block.line) };
   }
 
@@ -1905,14 +1919,18 @@ export class InMemoryTaskRepository implements TaskRepository {
     path: string,
     candidate: string,
     root: TaskSnapshot,
-    token: object | undefined,
+    transition: Extract<SurvivingRootTransition, { type: 'ready' }>,
   ): TaskRepositoryResult {
     this.files.set(path, candidate);
-    if (token !== undefined) this.options.refAuthority?.commit(token);
-    const installed = this.options.snapshotState?.installCommittedContent(path, candidate);
-    if (token !== undefined) this.options.refAuthority?.acknowledge(path, candidate);
-    const committed = installed?.find((task) => task.source.line === root.source.line) ?? root;
-    return { type: 'committed', outcome: { type: 'task', task: committed }, changed: true };
+    try {
+      if (transition.token !== undefined) this.options.refAuthority?.commit(transition.token);
+      const installed = this.options.snapshotState?.installCommittedContent(path, candidate);
+      if (transition.token !== undefined) this.options.refAuthority?.acknowledge(path, candidate);
+      const committed = installed?.find((task) => task.source.line === root.source.line) ?? root;
+      return { type: 'committed', outcome: { type: 'task', task: committed }, changed: true };
+    } finally {
+      transition.confirmStrict?.();
+    }
   }
 
   private snapshot(path: string, content: string, line: number): TaskSnapshot | undefined {
@@ -1990,13 +2008,17 @@ export class InMemoryTaskRepository implements TaskRepository {
   ): TaskRepositoryResult {
     const ref = current.ref;
     const authority = this.options.refAuthority;
-    const transition = this.stageDeletedRoot(ref, source, content, input);
+    const { transition, confirmStrict } = this.stageDeletedRoot(ref, source, content, input);
     if (transition?.type === 'conflict') return { type: 'conflict', current };
     this.files.set(ref.filePath, content);
-    if (transition?.type === 'staged') authority?.commit(transition.token);
-    this.options.snapshotState?.installCommittedContent(ref.filePath, content);
-    if (transition?.type === 'staged') authority?.acknowledge(ref.filePath, content);
-    return { type: 'committed', outcome: { type: 'deleted', ref }, changed: true };
+    try {
+      if (transition !== undefined) authority?.commit(transition.token);
+      this.options.snapshotState?.installCommittedContent(ref.filePath, content);
+      if (transition !== undefined) authority?.acknowledge(ref.filePath, content);
+      return { type: 'committed', outcome: { type: 'deleted', ref }, changed: true };
+    } finally {
+      confirmStrict?.();
+    }
   }
 
   private stageDeletedRoot(
@@ -2004,14 +2026,14 @@ export class InMemoryTaskRepository implements TaskRepository {
     source: string,
     content: string,
     input?: EditInput,
-  ): TaskRefStageResult | undefined {
+  ): { transition: TaskRefStageResult | undefined; confirmStrict: (() => void) | undefined } {
     const authority = this.options.refAuthority;
-    this.expectStrictEdit(
+    const confirmStrict = this.expectStrictEdit(
       input,
       content,
       editedOccurrenceWitnesses(ref, ref, removedSubtreeNodeMap(source, 0)),
     );
-    return authority?.stage(
+    const transition = authority?.stage(
       {
         ...strictOperation(input?.prepared),
         filePath: ref.filePath,
@@ -2025,6 +2047,7 @@ export class InMemoryTaskRepository implements TaskRepository {
       },
       ref.revision,
     );
+    return { transition, confirmStrict };
   }
 
   private deleteCompletedSubtask(input: LocatedEditInput, consumed: TaskRef): TaskRepositoryResult {

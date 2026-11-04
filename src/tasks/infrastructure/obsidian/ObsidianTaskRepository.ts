@@ -731,6 +731,7 @@ interface RecurrenceTransaction {
   transitionToken: object | undefined;
   committedContent: string | undefined;
   rollbackBasis?: RollbackBasis | undefined;
+  confirmStrict?: (() => void) | undefined;
 }
 
 type RecurrenceLocation =
@@ -779,6 +780,7 @@ interface EditTransaction {
   transitionToken: object | undefined;
   committedContent: string | undefined;
   rollbackBasis?: RollbackBasis | undefined;
+  confirmStrict?: (() => void) | undefined;
 }
 
 interface RollbackBasis {
@@ -1677,7 +1679,11 @@ export class ObsidianTaskRepository implements TaskRepository {
       await this.rejectMutation_abyssPrivate(file, rootRef, transaction);
       return this.processError_abyssPrivate(rootRef.filePath);
     }
-    this.commitRecurrence_abyssPrivate(input, transaction);
+    try {
+      this.commitRecurrence_abyssPrivate(input, transaction);
+    } finally {
+      this.confirmStrictTransaction_abyssPrivate(transaction);
+    }
     return transaction.result ?? this.processError_abyssPrivate(rootRef.filePath);
   }
 
@@ -1905,7 +1911,7 @@ export class ObsidianTaskRepository implements TaskRepository {
         : {
             operation: process.revisionRequest.strictStatus.operation,
             beforeStage: (roots: readonly RootRevisionOverride[]) => {
-              this.expectStrictRecurrence_abyssPrivate(input, roots);
+              transaction.confirmStrict = this.expectStrictRecurrence_abyssPrivate(input, roots);
             },
           }),
       rootLines: [
@@ -1928,7 +1934,7 @@ export class ObsidianTaskRepository implements TaskRepository {
   private expectStrictRecurrence_abyssPrivate(
     input: RecurrenceStageInput,
     roots: readonly RootRevisionOverride[],
-  ): void {
+  ): (() => void) | undefined {
     const { process, location, prepared, coordinates } = input;
     const request = process.revisionRequest;
     if (request?.strictStatus === undefined) return;
@@ -1944,7 +1950,7 @@ export class ObsidianTaskRepository implements TaskRepository {
         nodeOffset: coordinates.targetRelativeLine,
       };
     };
-    request.strictStatus.expectCommit(current, prepared.candidate, {
+    return request.strictStatus.expectCommit(current, prepared.candidate, {
       original: {
         before: {
           filePath: process.rootRef.filePath,
@@ -2066,8 +2072,12 @@ export class ObsidianTaskRepository implements TaskRepository {
         file,
         (content) => transform(transaction, content),
         async () => {
-          this.commitEdit_abyssPrivate(path, transaction);
-          await this.cleanupEmptyTaskNote_abyssPrivate(file, path, cleanupPolicy, transaction);
+          try {
+            this.commitEdit_abyssPrivate(path, transaction);
+            await this.cleanupEmptyTaskNote_abyssPrivate(file, path, cleanupPolicy, transaction);
+          } finally {
+            this.confirmStrictTransaction_abyssPrivate(transaction);
+          }
         },
       );
     } catch {
@@ -2526,12 +2536,12 @@ export class ObsidianTaskRepository implements TaskRepository {
     originalContent: string,
     candidate: string,
     witnesses: readonly TaskOccurrenceWitness[],
-  ): void {
+  ): (() => void) | undefined {
     const guard = process.prepared?.strictStatus;
     if (guard === undefined || process.prepared === undefined) return;
     const current = this.strictContext_abyssPrivate(process.prepared, originalContent);
     if (current === undefined) throw new Error('Missing strict source');
-    guard.expectCommit(
+    return guard.expectCommit(
       current,
       candidate,
       process.command.type === 'set-status' ? strictStatusEffects(current, witnesses) : undefined,
@@ -2556,7 +2566,12 @@ export class ObsidianTaskRepository implements TaskRepository {
       { filePath: process.rootRef.filePath, line: surviving.line, revision },
       edit.nodeMap ?? [],
     );
-    this.expectStrictEdit_abyssPrivate(process, originalContent, edit.content, witnesses);
+    transaction.confirmStrict = this.expectStrictEdit_abyssPrivate(
+      process,
+      originalContent,
+      edit.content,
+      witnesses,
+    );
 
     const staged = authority.stage(
       {
@@ -2603,7 +2618,7 @@ export class ObsidianTaskRepository implements TaskRepository {
   ): string {
     const authority = this.authority_abyssPrivate;
     if (authority === undefined || this.state_abyssPrivate === undefined) return input.edit.content;
-    this.expectStrictEdit_abyssPrivate(
+    transaction.confirmStrict = this.expectStrictEdit_abyssPrivate(
       input.process,
       input.originalContent,
       input.edit.content,
@@ -2673,6 +2688,17 @@ export class ObsidianTaskRepository implements TaskRepository {
     } else if (transaction.committedContent !== undefined) {
       await this.reconcileRejectedDeletion_abyssPrivate(file, rootRef.filePath, rootRef);
     }
+  }
+
+  private confirmStrictTransaction_abyssPrivate(transaction: EditTransaction): void {
+    const confirm = transaction.confirmStrict;
+    transaction.confirmStrict = undefined;
+    if (
+      transaction.result?.type === 'committed' &&
+      transaction.result.changed &&
+      transaction.committedContent !== undefined
+    )
+      confirm?.();
   }
 
   private commitEdit_abyssPrivate(path: string, transaction: EditTransaction): void {

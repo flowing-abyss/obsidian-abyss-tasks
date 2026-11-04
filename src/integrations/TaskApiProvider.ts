@@ -5,11 +5,14 @@ import type {
   ApiResultV1,
   ObservationV1,
   ReadyV1,
+  TasksApiProviderV1,
   TasksApiV1,
 } from '../../api';
-import type { TaskIntegrationReadApi, TaskReadObservation } from '../tasks';
+import type { TaskIntegrationReadApi, TaskReadObservation, TaskStatusMutationApi } from '../tasks';
 import { TaskCursorRegistry } from './TaskCursorRegistry';
 import { TaskIdentityRegistry } from './TaskIdentityRegistry';
+import { TaskRequestRegistry } from './TaskRequestRegistry';
+import { createTaskApiMutations } from './taskApiMutations';
 import { createTaskApiReads, lifecycleError, readError } from './taskApiReads';
 import { validateApiRequest, validateReadOptions } from './validation';
 import { apiError, freezeValue } from './values';
@@ -38,6 +41,7 @@ interface Publication {
   }>;
 }
 interface ProviderOptions {
+  readonly mutations: TaskStatusMutationApi;
   readonly reads: TaskIntegrationReadApi;
   readonly pluginVersion: string;
   readonly epoch: string;
@@ -45,6 +49,7 @@ interface ProviderOptions {
   readonly diagnostic: (operation: string, code: string, diagnosticId: string) => void;
 }
 interface ProviderOwner {
+  readonly requests: TaskRequestRegistry;
   readonly options: ProviderOptions;
   readonly identities: TaskIdentityRegistry;
   readonly cursors: TaskCursorRegistry;
@@ -62,7 +67,16 @@ function apiInfo(options: ProviderOptions): ApiInfoV1 {
     apiVersion: 1,
     pluginVersion: options.pluginVersion,
     providerEpoch: options.epoch,
-    capabilities: ['tasks.read', 'tasks.resolve', 'tasks.statuses', 'events.invalidate'],
+    capabilities: [
+      'tasks.read',
+      'tasks.resolve',
+      'tasks.statuses',
+      'tasks.complete',
+      'tasks.setStatus',
+      'tasks.toggleCompletion',
+      'events.invalidate',
+      'requests.epochDeduplication',
+    ],
     limits: {
       defaultPageSize: 100,
       maxPageSize: 500,
@@ -120,6 +134,7 @@ function closeProvider(owner: ProviderOwner): void {
   for (const client of [...owner.clients]) closeClient(owner, client);
   owner.unsubscribe?.();
   delete owner.unsubscribe;
+  owner.requests.dispose();
   owner.identities.dispose();
   owner.cursors.dispose();
 }
@@ -259,7 +274,7 @@ function getApi(
   owner: ProviderOwner,
   version: number,
   input: { consumerId: string },
-): ApiResultV1<TaskReadClientV1> {
+): ApiResultV1<TasksApiV1> {
   try {
     const validation = validateApiRequest(version, input);
     if (!validation.ok) return validation;
@@ -271,14 +286,24 @@ function getApi(
     const client: ClientRecord = { live: true, listeners: new Set(), waits: new Set() };
     owner.clients.add(client);
     const context = clientContext(owner, client);
-    const api: TaskReadClientV1 = {
+    const api: TasksApiV1 = {
       info: owner.info,
       ready: (input) => ready(context, client, input),
       subscribe: (listener) => subscribe(owner, context, client, listener),
       dispose: () => {
         closeClient(owner, client);
       },
-      tasks: createTaskApiReads(context),
+      tasks: Object.freeze({
+        ...createTaskApiReads(context),
+        ...createTaskApiMutations({
+          api: context,
+          mutations: owner.options.mutations,
+          requests: owner.requests,
+          consumerId: validation.value,
+          epoch: owner.options.epoch,
+          isDisposed: () => owner.closed || !client.live,
+        }),
+      }),
     };
     return Object.freeze({ ok: true, value: Object.freeze(api) });
   } catch {
@@ -286,15 +311,13 @@ function getApi(
   }
 }
 /** One optional, epoch-local facade. Mutable ownership remains constructor-local. */
-export class TaskApiProvider {
-  readonly getApi: (
-    version: number,
-    options: { consumerId: string },
-  ) => ApiResultV1<TaskReadClientV1>;
+export class TaskApiProvider implements TasksApiProviderV1 {
+  readonly getApi: (version: number, options: { consumerId: string }) => ApiResultV1<TasksApiV1>;
   readonly dispose: () => void;
   constructor(options: ProviderOptions) {
     const owner: ProviderOwner = {
       options,
+      requests: new TaskRequestRegistry({ epoch: options.epoch, now: options.now }),
       identities: new TaskIdentityRegistry({ epoch: options.epoch, now: options.now }),
       cursors: new TaskCursorRegistry({ epoch: options.epoch, now: options.now }),
       clients: new Set(),

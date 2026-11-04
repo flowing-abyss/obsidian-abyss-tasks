@@ -118,6 +118,7 @@ it('isolates callback exceptions and logs only sanitized metadata', async () => 
   const diagnostic = vi.fn();
   const { TaskApiProvider } = await import('../src/integrations/TaskApiProvider');
   const provider = new TaskApiProvider({
+    mutations: h.service,
     reads: h.reads,
     epoch: 'diagnostic',
     pluginVersion: '2.3.2',
@@ -178,16 +179,23 @@ it('validates runtime inputs and exposes only implemented capabilities', async (
   expect(await client.ready(null as never)).toMatchObject({ error: { code: 'INVALID_ARGUMENT' } });
   expect(await client.tasks.get('')).toMatchObject({ error: { code: 'INVALID_ARGUMENT' } });
   expect(Object.keys(client.tasks).sort((a, b) => a.localeCompare(b))).toEqual([
+    'complete',
     'get',
     'list',
     'resolve',
+    'setStatus',
     'statuses',
+    'toggleCompletion',
   ]);
   expect(client.info.capabilities).toEqual([
     'tasks.read',
     'tasks.resolve',
     'tasks.statuses',
+    'tasks.complete',
+    'tasks.setStatus',
+    'tasks.toggleCompletion',
     'events.invalidate',
+    'requests.epochDeduplication',
   ]);
   expect(Object.isFrozen(client.info.limits)).toBe(true);
 });

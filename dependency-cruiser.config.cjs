@@ -2,6 +2,20 @@
 module.exports = {
   forbidden: [
     {
+      name: 'public-task-api-depends-inward',
+      comment: 'The public facade acquires task capabilities only through the public inward entry.',
+      severity: 'error',
+      from: { path: '^src/integrations/' },
+      to: {
+        pathNot: [
+          '^src/integrations/',
+          '^src/tasks/index[.]ts$',
+          '^api[.]d[.]ts$',
+          '^src/markdown/tagSyntax[.]ts$',
+        ],
+      },
+    },
+    {
       name: 'no-circular',
       comment:
         'Import cycles are hard to spot in a diff and easy to introduce as src/ grows past main.ts.',

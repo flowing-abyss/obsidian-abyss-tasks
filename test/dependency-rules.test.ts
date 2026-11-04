@@ -81,3 +81,25 @@ it('allows only the neutral browser scheduler bridge and rejects reversed owners
   expect(violations.some((v) => v.includes(':src/panels/valid.ts->'))).toBe(false);
   expect(violations.some((v) => v.startsWith('task-browser-scheduler-adapter:'))).toBe(false);
 });
+
+it('keeps the public facade on inward task ports and keeps the external contract outward', async () => {
+  const options = await extractDepcruiseOptions(path.join(ROOT, 'dependency-cruiser.config.cjs'));
+  const result = await cruise(['src'], {
+    ...options,
+    baseDir: path.join(ROOT, 'test/fixtures/public-api-architecture'),
+    tsConfig: { fileName: path.join(ROOT, 'tsconfig.json') },
+  });
+  const graph = result.output as ICruiseResult;
+  expect(
+    graph.summary.violations
+      .map(({ rule, from, to }) => `${rule.name}:${from}->${to}`)
+      .sort((left, right) => left.localeCompare(right)),
+  ).toEqual([
+    'public-task-api-depends-inward:src/integrations/invalid-infrastructure.ts->src/tasks/infrastructure/value.ts',
+    'public-task-api-depends-inward:src/integrations/invalid-presentation.ts->src/panels/value.ts',
+    'public-task-api-depends-inward:src/integrations/invalid-vault.ts->obsidian',
+    'task-application-depends-inward:src/tasks/application/invalid-api.ts->api.d.ts',
+    'task-infrastructure-depends-inward:src/tasks/infrastructure/invalid-facade.ts->src/integrations/valid.ts',
+  ]);
+  expect(graph.summary.warn).toBe(0);
+});
