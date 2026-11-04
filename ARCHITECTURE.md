@@ -29,6 +29,14 @@ Queries return detached, immutable snapshots. Commands validate current source, 
 and return structured outcomes. Successful writes enter the read model before the command returns;
 later vault and metadata events reconcile through the same parsing path as manual edits.
 
+The opt-in native profiler in [`tooling/performance/native-api.ts`](tooling/performance/native-api.ts)
+is a structural consumer of the external v1 contract, imported only as types from `api.d.ts`.
+Its scan measures complete coherent pagination after untimed client activation. Its status span
+measures one guarded completion, identical receipt replay, and final hydration after untimed
+sandbox creation through the existing application command. Ordinary profiling never discovers
+the provider. Both selections use the same profiler, pending-work drain, cycle reset, and
+transaction restoration; the API client and listener belong to one cycle.
+
 ## Sources of truth
 
 | Concern                                                 | Authoritative source                                         | Derived or temporary state            |

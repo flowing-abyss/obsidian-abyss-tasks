@@ -1,3 +1,4 @@
+import { apiScenarios } from './native-api.ts';
 import { NativeCdp } from './native-cdp.ts';
 import {
   assertRoots,
@@ -256,7 +257,8 @@ export function install(host: Host, bridge: NativeBridge, options: NativeOptions
     const nodes = plugin(host).queries.listNodes().length;
     if (nodes !== options.expectedNodes)
       throw new Error(`Fixture nodes: expected ${options.expectedNodes}, received ${nodes}`);
-    if (!options.startup)
+    if (options.api === true) await apiScenarios(host, options, measure);
+    else if (!options.startup)
       await suite(host, options, measure, { cdp: resources.get('cdp'), bridge });
     const cdp = resources.get('cdp');
     if (cdp !== undefined) {

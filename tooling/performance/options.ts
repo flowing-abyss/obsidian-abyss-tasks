@@ -6,6 +6,7 @@ export interface Options {
   fixture: FixtureKind;
   width?: number;
   startup: boolean;
+  api: boolean;
   diagnostics: boolean;
   out?: string;
   baseline?: string;
@@ -29,16 +30,15 @@ function applyOption(options: Options, args: string[], index: number): number {
     options.fixture = fixtureKind(argument(args, index + 1));
     return index + 1;
   }
-  if (arg === '--startup') {
-    options.startup = true;
-    return index;
-  }
-  if (arg === '--no-diagnostics') {
-    options.diagnostics = false;
-    return index;
-  }
-  if (arg === '--help') {
-    options.help = true;
+  const flags = new Map([
+    ['--api', ['api', true]],
+    ['--startup', ['startup', true]],
+    ['--no-diagnostics', ['diagnostics', false]],
+    ['--help', ['help', true]],
+  ] as const);
+  const flag = flags.get(arg as '--api');
+  if (flag !== undefined) {
+    options[flag[0]] = flag[1];
     return index;
   }
   if (arg === '--compare') {
@@ -68,6 +68,7 @@ export function parseOptions(args: string[]): Options {
     fixture: 'standard',
     runs: 10,
     startup: false,
+    api: false,
     diagnostics: true,
     help: false,
   };
@@ -80,6 +81,7 @@ export function parseOptions(args: string[]): Options {
     i = applyOption(options, args, i) + 1;
   }
   validateLimits(options);
+  if (options.api && options.startup) throw new Error('--api cannot be combined with --startup');
   const modes = ['--compare', '--recover', '--recover-offline'].filter((mode) => seen.has(mode));
   if (modes.length > 1 || (modes.length === 1 && seen.size !== 1))
     throw new Error('Comparison and recovery modes cannot be combined with other options');

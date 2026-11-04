@@ -56,5 +56,6 @@ export interface NativeOptions {
   expectedRoots: number;
   expectedNodes: number;
   startup: boolean;
+  readonly api?: boolean;
   viewport: string;
 }

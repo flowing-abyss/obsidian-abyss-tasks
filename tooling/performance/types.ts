@@ -110,7 +110,8 @@ const SCENARIOS = [
   'panel.close',
 ];
 
-export function scenarioIds(kind: FixtureKind, startup: boolean): string[] {
+export function scenarioIds(kind: FixtureKind, startup: boolean, api = false): string[] {
+  if (api) return ['startup.index', 'api.scan', 'api.status'];
   if (startup) return ['startup.index'];
   const scenarios = [...SCENARIOS];
   if (kind === 'wide-tree')
@@ -123,17 +124,26 @@ export function scenarioIds(kind: FixtureKind, startup: boolean): string[] {
   return scenarios;
 }
 
+function apiSelection(identity: ProfileRun['identity']): boolean | undefined {
+  const api = identity['apiOnly'];
+  if (api === undefined) return false;
+  if (typeof api !== 'boolean' || (api && identity['startupOnly'] === true)) return undefined;
+  return api;
+}
+
 /** Legacy schema-1 runs without fixtureKind remain readable for historical comparisons. */
 export function fixtureScenarioProblem(
   run: Pick<ProfileRun, 'identity' | 'expectedScenarios'>,
 ): string | undefined {
   const kind = run.identity['fixtureKind'];
-  if (kind === undefined) return undefined;
+  const api = apiSelection(run.identity);
   const startup = run.identity['startupOnly'];
+  if (api === undefined) return 'Invalid fixture scenario roster';
+  if (kind === undefined && !api) return undefined;
   if (
     (kind !== 'standard' && kind !== 'wide-tree') ||
     typeof startup !== 'boolean' ||
-    JSON.stringify(run.expectedScenarios) !== JSON.stringify(scenarioIds(kind, startup))
+    JSON.stringify(run.expectedScenarios) !== JSON.stringify(scenarioIds(kind, startup, api))
   )
     return 'Invalid fixture scenario roster';
   return undefined;

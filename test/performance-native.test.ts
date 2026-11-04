@@ -30,6 +30,61 @@ import { AbyssProfiler, bounded, PendingWork } from '../tooling/performance/prof
 import type { Sample } from '../tooling/performance/types';
 import { canonicalStatusCatalog, createAppWithFiles, seedTaskCache } from './helpers';
 
+const originalStandardRoster = [
+  'startup.index',
+  'query.roots',
+  'query.nodes',
+  'query.dependencies',
+  'query.time',
+  'query.project',
+  'query.tag',
+  'query.project-tag',
+  'query.nodes-no-tag',
+  'search.cold',
+  'search.warm',
+  'search.no-results',
+  'search.subtree',
+  'panel.first-open',
+  'ui.search',
+  'ui.scroll',
+  'ui.inspector',
+  'ui.inspector.link-input',
+  'ui.calendar.day',
+  'ui.calendar.week',
+  'ui.calendar.month',
+  'ui.tasks.kanban',
+  'ui.tasks.kanban-scroll',
+  'ui.tasks.timeline',
+  'ui.tasks.timeline-scroll',
+  'ui.projects.table',
+  'ui.projects.kanban',
+  'ui.projects.timeline',
+  'ui.projects.timeline-scroll',
+  'statistics.acquire',
+  ...[
+    'rhythm',
+    'completion',
+    'deadlines',
+    'cohorts',
+    'allocation',
+    'timeline',
+    'sessions',
+    'patterns',
+    'movement',
+    'aging',
+    'dependencies',
+  ].map((id) => `ui.analysis.${id}`),
+  'search.edit-to-query',
+  'command.create',
+  'command.edit',
+  'command.complete',
+  'command.comment',
+  'command.tracking',
+  'command.recurrence',
+  'index.external-edit',
+  'panel.close',
+];
+
 const loadClock = async () => {
   if (!Platform.isDesktop) throw new Error('Native clock test requires desktop');
   return (await import('node:perf_hooks')).performance;
@@ -137,6 +192,76 @@ describe('native profile boundaries', () => {
       modify.mockRestore();
     }
   });
+  it.each([undefined, false, true])(
+    'keeps provider discovery exclusive to API mode (%s)',
+    async (api) => {
+      const app = await createAppWithFiles({});
+      const candidate = {
+        queries: { initialize: () => Promise.resolve(), list: () => [], listNodes: () => [] },
+        search: { prepare: () => Promise.resolve() },
+      };
+      const discovery = vi.fn(() => {
+        throw new Error('Unexpected provider discovery');
+      });
+      if (api !== true) Object.defineProperty(candidate, 'getApi', { get: discovery });
+      Object.defineProperty(app, 'plugins', {
+        value: {
+          plugins: { 'abyss-tasks': candidate },
+          disablePlugin: () => Promise.resolve(),
+          enablePlugin: () => Promise.resolve(),
+        },
+      });
+      const name = vi.spyOn(app.vault, 'getName').mockReturnValue('dev-vault-tasks');
+      const ordinary = (
+        [
+          'queryScenarios',
+          'panelScenarios',
+          'calendarScenarios',
+          'taskBoardScenarios',
+          'taskTimelineScenarios',
+          'projectScenarios',
+          'statisticsScenarios',
+          'indexScenarios',
+          'searchEditScenario',
+          'commandScenarios',
+        ] as const
+      ).map((name) => vi.spyOn(scenarios, name).mockResolvedValue(undefined));
+      const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) =>
+        window.setTimeout(() => {
+          callback(0);
+        }, 0),
+      );
+      const bridge = { save: () => {} } as unknown as NativeBridge;
+      const h = install(app as Host, bridge, {
+        vault: 'dev-vault-tasks',
+        fixtureFolder: '__abyss_profile_fixture_v1__',
+        anchor: '2026-08-01',
+        fixtureKind: 'standard',
+        expectedRoots: 0,
+        expectedNodes: 0,
+        startup: false,
+        ...(api === undefined ? {} : { api }),
+        viewport: `${window.innerWidth}x${window.innerHeight}`,
+      });
+      try {
+        if (api === true)
+          await expect(h.cycle(0, false)).rejects.toThrow('Unsupported API profile');
+        else
+          expect((await h.cycle(0, false)).map((sample) => sample.scenario)).toEqual([
+            'startup.index',
+            'panel.close',
+          ]);
+        expect(discovery).not.toHaveBeenCalled();
+        for (const scenario of ordinary)
+          expect(scenario).toHaveBeenCalledTimes(api === true ? 0 : 1);
+      } finally {
+        await h.cleanup();
+        name.mockRestore();
+        for (const scenario of ordinary) scenario.mockRestore();
+        raf.mockRestore();
+      }
+    },
+  );
   it('rejects a viewport that changes after preflight', () => {
     expect(() => {
       assertViewport(`${window.innerWidth}x${window.innerHeight}`);
@@ -308,6 +433,23 @@ describe('native profile boundaries', () => {
     expect(parseOptions(['--compare', 'before', 'after']).compare).toEqual(['before', 'after']);
     expect(parseOptions(['--recover-offline', 'run']).recoverOffline).toBe('run');
     expect(() => parseOptions(['--recover-offline', 'run', '--runs', '2'])).toThrow();
+  });
+  it('selects the opt-in API roster without changing the ordinary roster', () => {
+    expect(parseOptions([]).api).toBe(false);
+    expect(parseOptions(['--api']).api).toBe(true);
+    expect(() => parseOptions(['--api', '--startup'])).toThrow();
+    expect(scenarioIds('standard', false, true)).toEqual([
+      'startup.index',
+      'api.scan',
+      'api.status',
+    ]);
+    expect(scenarioIds('wide-tree', false, true)).toEqual([
+      'startup.index',
+      'api.scan',
+      'api.status',
+    ]);
+    expect(scenarioIds('standard', false, false)).toEqual(originalStandardRoster);
+    expect(scenarioIds('standard', false)).toEqual(originalStandardRoster);
   });
   it('selects only the finite fixture roster and keeps startup mode startup-only', () => {
     expect(parseOptions([]).fixture).toBe('standard');

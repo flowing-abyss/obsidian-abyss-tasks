@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { Platform } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { prepareBuild } from '../tooling/performance/build.mts';
+import { prepareBuild, protocolHash } from '../tooling/performance/build.mts';
 import { CHILD_PROCESS_TIMEOUT_MS } from './support/timeouts';
 
 const loadNodeTools = async () => {
@@ -131,6 +131,36 @@ describe('performance build artifact provenance', () => {
         dirty: true,
         sha256: createHash('sha256').update(mainJs).digest('hex'),
       });
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
+
+  it(
+    'builds API profiling against a type-only contract without candidate product imports',
+    async () => {
+      const { root, output } = await fixture();
+      await writeFile(
+        path.join(root, 'tooling/performance/native-api.ts'),
+        await readFile(path.join(process.cwd(), 'tooling/performance/native-api.ts')),
+      );
+      await writeFile(
+        path.join(root, 'tooling/performance/native-helpers.ts'),
+        'export function plugin(host) { return host.plugin; }',
+      );
+      await writeFile(
+        path.join(root, 'tooling/performance/native.ts'),
+        "export { apiScenarios } from './native-api.ts';",
+      );
+      const before = await protocolHash(root);
+      await prepareBuild(root, output);
+      const native = await readFile(path.join(output, 'native.js'), 'utf8');
+      expect(native).toContain('Unsupported API profile');
+      expect(native).not.toContain('TaskApiProvider');
+      await writeFile(
+        path.join(root, 'tooling/performance/native-api.ts'),
+        '// changed API workload',
+      );
+      expect(await protocolHash(root)).not.toBe(before);
     },
     CHILD_PROCESS_TIMEOUT_MS,
   );

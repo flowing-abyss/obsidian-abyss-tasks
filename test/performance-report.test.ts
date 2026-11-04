@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseRun, renderReport } from '../tooling/performance/report';
 import { compareRuns, summarize } from '../tooling/performance/statistics';
-import { scenarioIds, type ProfileRun } from '../tooling/performance/types';
+import { fixtureScenarioProblem, scenarioIds, type ProfileRun } from '../tooling/performance/types';
 
 function run(values: number[], overrides: Partial<ProfileRun> = {}): ProfileRun {
   return {
@@ -211,5 +211,36 @@ describe('native performance statistics', () => {
     if (first === undefined) throw new Error('Missing fixture sample');
     missing.samples.push({ ...first, scenario: 'search' });
     expect(compareRuns(missing, missing).compatible).toBe(false);
+  });
+});
+
+describe('API profile selection identity', () => {
+  it('accepts historical ordinary rosters and validates API selection', () => {
+    const normal = {
+      identity: { fixtureKind: 'standard', startupOnly: false },
+      expectedScenarios: scenarioIds('standard', false),
+    };
+    expect(fixtureScenarioProblem(normal)).toBeUndefined();
+    expect(
+      fixtureScenarioProblem({ ...normal, identity: { ...normal.identity, apiOnly: false } }),
+    ).toBeUndefined();
+    const api = {
+      ...normal,
+      identity: { ...normal.identity, apiOnly: true },
+      expectedScenarios: ['startup.index', 'api.scan', 'api.status'],
+    };
+    expect(fixtureScenarioProblem(api)).toBeUndefined();
+    expect(
+      fixtureScenarioProblem({ ...api, expectedScenarios: normal.expectedScenarios }),
+    ).toBeDefined();
+    expect(
+      fixtureScenarioProblem({ ...normal, expectedScenarios: api.expectedScenarios }),
+    ).toBeDefined();
+    expect(
+      fixtureScenarioProblem({ ...api, identity: { ...api.identity, apiOnly: 'true' } }),
+    ).toBeDefined();
+    expect(
+      fixtureScenarioProblem({ ...api, identity: { ...api.identity, startupOnly: true } }),
+    ).toBeDefined();
   });
 });

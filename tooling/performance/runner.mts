@@ -23,15 +23,18 @@ function checkCancellation(): void {
   if (stopRequested) throw new Error('Profile cancelled');
 }
 
-const HELP = `pnpm run profile [--runs 10] [--startup] [--anchor YYYY-MM-DD] [--out DIR] [--baseline DIR]
+const HELP = `pnpm run profile [--runs 10] [--startup | --api] [--anchor YYYY-MM-DD] [--out DIR] [--baseline DIR]
              [--vault-path PATH] [--width 420] [--fixture standard|wide-tree] [--no-diagnostics]
 pnpm profile:startup [--runs 10]
+pnpm run profile --api --out <fresh-output>
 pnpm profile:compare BEFORE_DIR AFTER_DIR
 pnpm run profile --recover RUN_DIR
 pnpm run profile --recover-offline RUN_DIR  (Obsidian must be fully closed)
 
 Uses the running dev-vault-tasks only. Keep that window foreground and do not edit the dev vault during a run.
 Artifacts and recovery backups stay local under docs/performance by default. Startup is a warm-host plugin restart.
+API mode measures startup, a coherent full scan, and status receipt replay with final hydration.
+It requires getApi(1), prepares the client and sandbox outside timing, and cannot combine with --startup.
 `;
 
 async function json(file: string, value: unknown): Promise<void> {
@@ -53,7 +56,7 @@ async function inject(
   output: string,
   before: HostBefore,
   fixture: Fixture,
-  mode: { startup: boolean; viewport: string },
+  mode: { startup: boolean; api: boolean; viewport: string },
 ): Promise<void> {
   await evaluate(
     `window.__abyssProfileModule=(0,eval)(require('fs').readFileSync(${JSON.stringify(path.join(output, 'native.js'))},'utf8')+'\\n__abyssProfileModule;');return true;`,
@@ -292,6 +295,7 @@ async function runSuite(root: string, options: Options): Promise<void> {
     await configureViewport(options, before, run);
     await inject(output, before, fixture, {
       startup: options.startup,
+      api: options.api,
       viewport: String(run.identity['viewport']),
     });
     await prepareVault(tx, before, output, fixture);
@@ -347,10 +351,11 @@ async function newRun(input: {
       memory: totalmem(),
       platform: platform(),
       startupOnly: options.startup,
+      apiOnly: options.api,
       preexistingDebugger: before.debugger,
       viewportOverride: options.width !== undefined,
     },
-    expectedScenarios: scenarioIds(fixture.kind, options.startup),
+    expectedScenarios: scenarioIds(fixture.kind, options.startup, options.api),
     samples: [],
     errors: [],
     diagnostics: [],
