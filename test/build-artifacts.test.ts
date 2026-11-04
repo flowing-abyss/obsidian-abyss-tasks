@@ -41,6 +41,8 @@ const privateOwners = new Set([
   'AnchoredRecurrenceEditorController',
   'LeftPanel',
   'TaskIndex',
+  // Integration health exposes methods and immutable observations, never private source/listener state.
+  'TaskIntegrationReadState',
   'MiniSearchTaskEngine',
   'TaskApplicationService',
   'TimeTrackingService',

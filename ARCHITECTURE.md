@@ -96,6 +96,23 @@ and drains before publishing readiness. Retired attempts cannot accept late read
 Repository commits and metadata observations retain synchronous acceptance. One large file can
 still exceed the slice budget; this is cooperative scheduling on the host thread.
 
+`TaskIndex.integrationReads()` exposes an internal lifecycle and coverage capability.
+[`TaskIntegrationReadState`](src/tasks/infrastructure/TaskIntegrationReadState.ts) tracks source
+acquisitions by file identity, initialization attempt, and current observation, including empty
+notes. Pending or failed sources make reads incomplete within the requested path or folder;
+ordinary UI queries keep their existing empty-source behavior. Accepted bytes settle only their
+current acquisition. Verified repository installs supersede older acquisitions, while previews
+and rename relocation cannot clear unresolved health. Confirmed deletion and bootstrap pruning
+remove health even when a file had no tasks.
+
+Integration observations have their own revision, scan generation, scope revision, and status
+semantics revision, independent of Search and UI notifications. Policy refresh marks coverage
+unsettled before awaiting reads. Subscription registration returns the current state atomically;
+ordered notifications isolate subscriber failures and respect unsubscribe. Rename notifications
+wait for synchronous canonical relocation and read admission, with coverage unavailable during
+that transition. Counter exhaustion fails the integration read state with a sanitized diagnostic.
+This capability reuses the index's accepted source records and does not activate Statistics.
+
 Edits preserve unrelated Markdown and identify the actual authored block or occurrence. Rendering,
 matching text, file/line position, and link labels confer no write authority.
 [`TaskRefAuthority`](src/tasks/infrastructure/TaskRefAuthority.ts) distinguishes occurrences and

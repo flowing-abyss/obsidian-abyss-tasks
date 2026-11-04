@@ -19,6 +19,7 @@ import type {
   TaskSearchEligibilityRequest,
   TimeTrackingQueryApi,
 } from '../application/TaskApplicationApi';
+import type { TaskIntegrationReadStateApi } from '../application/TaskIntegrationReadApi';
 import type { TaskReadProjectionApi } from '../application/TaskSearchApi';
 import type {
   TaskSearchDocument,
@@ -97,6 +98,7 @@ import {
 } from './markdown/TaskSnapshotProjector';
 import { taskSearchDocument } from './search/taskSearchDocuments';
 import { calendarDatesForPlanning, calendarRangeForPlanning, TaskDateIndex } from './TaskDateIndex';
+import { TaskIntegrationReadState } from './TaskIntegrationReadState';
 import {
   type RootRevisionOverride,
   type TaskRefAuthority,
@@ -177,6 +179,16 @@ interface FileObservation {
   readonly file: TFile;
   readonly path: string;
   readonly generation: number;
+  readonly attempt: object;
+}
+
+interface FileRenameObservation {
+  readonly file: TFile;
+  readonly oldPath: string;
+  readonly newPath: string;
+  readonly tasks: readonly TaskSnapshot[];
+  readonly wasMarkdown: boolean;
+  readonly isMarkdown: boolean;
 }
 
 interface InitialInstallQueue {
@@ -613,6 +625,7 @@ interface FileParseContext {
 }
 
 interface AcceptedStatisticsSource {
+  readonly integrationScopeRevision: number;
   readonly content: string;
   readonly cache: CachedMetadata;
   readonly tasks: readonly TaskSnapshot[];
@@ -1075,6 +1088,15 @@ export class TaskIndex
   private readonly locator_abyssPrivate: TaskLocator;
   private excludeSource_abyssPrivate: TaskIndexOptions['excludeSource'];
 
+  private integrationAttempt_abyssPrivate: object = {};
+  private readonly integrationCurrentObservations_abyssPrivate = new WeakMap<
+    TFile,
+    FileObservation
+  >();
+  private readonly integrationAcquisitions_abyssPrivate = new WeakMap<FileObservation, object>();
+  private integrationStatusKey_abyssPrivate: string | undefined;
+  private readonly integrationReadState_abyssPrivate = new TaskIntegrationReadState();
+
   constructor(
     private readonly app_abyssPrivate: App,
     private readonly options_abyssPrivate: TaskIndexOptions,
@@ -1082,10 +1104,19 @@ export class TaskIndex
     this.statusCatalog_abyssPrivate = options_abyssPrivate.statusCatalog;
     this.locator_abyssPrivate = new TaskLocator(options_abyssPrivate.refAuthority);
     this.excludeSource_abyssPrivate = options_abyssPrivate.excludeSource;
+    this.integrationStatusKey_abyssPrivate = JSON.stringify(this.statusCatalog_abyssPrivate.all());
+  }
+
+  integrationReads(): TaskIntegrationReadStateApi {
+    return this.integrationReadState_abyssPrivate;
   }
 
   setStatusCatalog(statusCatalog: StatusCatalog): void {
+    const key = JSON.stringify(statusCatalog.all());
+    const changed = key !== this.integrationStatusKey_abyssPrivate;
+    this.integrationStatusKey_abyssPrivate = key;
     this.statusCatalog_abyssPrivate = statusCatalog;
+    if (changed) this.integrationReadState_abyssPrivate.advanceSemantics();
     this.invalidateDependencies_abyssPrivate();
     this.publishSearch_abyssPrivate({
       type: 'semantics',
@@ -1154,6 +1185,7 @@ export class TaskIndex
 
   async refreshSourceExclusion(excludeSource: TaskIndexOptions['excludeSource']): Promise<void> {
     this.excludeSource_abyssPrivate = excludeSource;
+    this.integrationReadState_abyssPrivate.advanceScope();
     this.statisticsPolicyRevision_abyssPrivate += 1;
     this.statistics_abyssPrivate.prune();
     const files = [...this.app_abyssPrivate.vault.getMarkdownFiles()];
@@ -1164,6 +1196,7 @@ export class TaskIndex
       }),
     );
     await this.drainPendingReads_abyssPrivate();
+    this.pruneMissingFiles_abyssPrivate();
     this.statistics_abyssPrivate.invalidateAll();
     await this.statistics_abyssPrivate.settled();
   }
@@ -1171,10 +1204,13 @@ export class TaskIndex
   async initialize(): Promise<void> {
     if (this.initialized_abyssPrivate || this.destroyed_abyssPrivate) return;
     if (this.initialization_abyssPrivate === undefined) {
+      this.integrationAttempt_abyssPrivate = {};
+      this.integrationReadState_abyssPrivate.setLifecycle('initializing');
       this.initialization_abyssPrivate = Promise.resolve()
         .then(() => this.performInitialization_abyssPrivate())
         .catch((cause: unknown) => {
           if (!this.destroyed_abyssPrivate) {
+            this.integrationReadState_abyssPrivate.setLifecycle('failed');
             this.searchFailure_abyssPrivate = { cause };
             this.invalidateDependencies_abyssPrivate(
               new TaskSearchError('unavailable', 'Task index unavailable'),
@@ -1229,6 +1265,7 @@ export class TaskIndex
       if (this.destroyed_abyssPrivate) return;
       this.pruneMissingFiles_abyssPrivate();
       this.initialized_abyssPrivate = true;
+      this.integrationReadState_abyssPrivate.setLifecycle('ready');
       this.statistics_abyssPrivate.invalidateAll();
       this.publishSearch_abyssPrivate({ type: 'state', state: this.searchState_abyssPrivate() });
       this.publish_abyssPrivate({ type: 'initialized' });
@@ -1314,9 +1351,23 @@ export class TaskIndex
 
   private pruneMissingFiles_abyssPrivate(): void {
     // A partial listener registration may have missed a deletion before the next attempt.
-    for (const path of this.taskMap_abyssPrivate.keys()) {
+    const health = new Map(
+      this.integrationReadState_abyssPrivate
+        .sources()
+        .map((source) => [source.path, source.fileIdentity]),
+    );
+    for (const path of new Set([
+      ...this.taskMap_abyssPrivate.keys(),
+      ...this.acceptedStatisticsSources_abyssPrivate.keys(),
+      ...this.statisticsReadFailures_abyssPrivate.keys(),
+      ...health.keys(),
+    ])) {
       const file = this.app_abyssPrivate.vault.getAbstractFileByPath(path);
-      if (!(file instanceof TFile) || file.extension !== 'md') this.removeFile_abyssPrivate(path);
+      if (!(file instanceof TFile) || file.extension !== 'md') {
+        this.removeFile_abyssPrivate(path);
+        const owner = health.get(path);
+        if (owner !== undefined) this.integrationReadState_abyssPrivate.remove(path, owner);
+      }
     }
   }
 
@@ -2080,6 +2131,7 @@ export class TaskIndex
   }
 
   private disposeReadPreparation_abyssPrivate(): void {
+    this.integrationReadState_abyssPrivate.dispose();
     this.initialInstallQueue_abyssPrivate?.controller.abort();
     this.invalidateDependencies_abyssPrivate(
       new TaskSearchError('disposed', 'Task index disposed'),
@@ -2093,7 +2145,14 @@ export class TaskIndex
   ): Promise<boolean> {
     const observation = this.observe_abyssPrivate(file, path);
     if (observation == null) return false;
-    const cache = this.app_abyssPrivate.metadataCache.getFileCache(file);
+    this.beginIntegrationObservation_abyssPrivate(observation);
+    let cache: CachedMetadata | null;
+    try {
+      cache = this.app_abyssPrivate.metadataCache.getFileCache(file);
+    } catch (error) {
+      this.settleIntegrationObservation_abyssPrivate(observation, false);
+      throw error;
+    }
     const queue = this.initialInstallQueue_abyssPrivate;
     const read = this.loadParsedFile_abyssPrivate(observation, cache, observedFile, queue);
     if (queue !== undefined) {
@@ -2170,7 +2229,9 @@ export class TaskIndex
     if (this.excludeSource_abyssPrivate?.(prepared.metadata) === true) {
       this.options_abyssPrivate.refAuthority?.discard(observation.path);
       this.acceptStatisticsSource_abyssPrivate(observation.path, content, prepared, []);
-      return this.commitEmptyObservation_abyssPrivate(observation);
+      const committed = this.commitEmptyObservation_abyssPrivate(observation);
+      this.settleIntegrationObservation_abyssPrivate(observation, true);
+      return committed;
     }
     const tasks = this.parseFile_abyssPrivate({
       filePath: observation.path,
@@ -2181,6 +2242,7 @@ export class TaskIndex
     });
     this.replaceFile_abyssPrivate(observation.path, tasks, [], true);
     this.acceptStatisticsSource_abyssPrivate(observation.path, content, prepared, tasks);
+    this.settleIntegrationObservation_abyssPrivate(observation, true);
     return true;
   }
 
@@ -2190,6 +2252,7 @@ export class TaskIndex
     error: unknown,
   ): boolean {
     if (!this.isCurrent_abyssPrivate(observation)) return false;
+    this.settleIntegrationObservation_abyssPrivate(observation, false);
     this.recordStatisticsFailure_abyssPrivate(observation.path, reason, error);
     return this.commitEmptyObservation_abyssPrivate(observation);
   }
@@ -2328,13 +2391,15 @@ export class TaskIndex
       prior?.content !== content ||
       prior.frontmatterSignature !== frontmatterSignature ||
       !sameTaskSnapshots(prior.tasks, tasks);
-    if (changed) {
+    const integrationScopeRevision = this.integrationReadState_abyssPrivate.capture().scopeRevision;
+    if (changed || prior.integrationScopeRevision !== integrationScopeRevision) {
       this.acceptedStatisticsSources_abyssPrivate.set(path, {
+        integrationScopeRevision,
         content,
         cache,
         tasks,
         frontmatterSignature,
-        revision: ++this.statisticsSourceRevision_abyssPrivate,
+        revision: changed ? ++this.statisticsSourceRevision_abyssPrivate : prior.revision,
         metadata,
       });
     }
@@ -2589,7 +2654,17 @@ export class TaskIndex
     prove: (roots: readonly TaskSnapshot[]) => void,
   ): readonly TaskSnapshot[] {
     const roots: TaskSnapshot[] = [];
-    for (const filePath of contents.keys()) this.invalidatePendingRead_abyssPrivate(filePath);
+    const acquisitions = new Map<string, FileObservation>();
+    for (const filePath of contents.keys()) {
+      this.invalidatePendingRead_abyssPrivate(filePath);
+      const file = this.app_abyssPrivate.vault.getAbstractFileByPath(filePath);
+      const observation =
+        file instanceof TFile ? this.observe_abyssPrivate(file, filePath) : undefined;
+      if (observation !== undefined) {
+        this.beginIntegrationObservation_abyssPrivate(observation);
+        acquisitions.set(filePath, observation);
+      }
+    }
     const prepared = [...contents].map(([filePath, content]) => {
       let restored = false;
       const observation = this.prepareObservation_abyssPrivate(filePath, content, null);
@@ -2614,6 +2689,9 @@ export class TaskIndex
           this.queueChanged_abyssPrivate(filePath);
         if (restored) this.reconciliationTransitions_abyssPrivate.delete(filePath);
         this.acceptStatisticsSource_abyssPrivate(filePath, content, observation, tasks);
+        const acquisition = acquisitions.get(filePath);
+        if (acquisition !== undefined)
+          this.settleIntegrationObservation_abyssPrivate(acquisition, true);
       };
     });
     prove(roots);
@@ -2753,30 +2831,33 @@ export class TaskIndex
     this.advance_abyssPrivate(file, path);
     const observation = this.observe_abyssPrivate(file, path);
     if (observation === undefined) return;
+    this.beginIntegrationObservation_abyssPrivate(observation);
     if (this.observationNeedsVerification_abyssPrivate(path, data)) {
       const read = this.observationMatchesVault_abyssPrivate(observation, data).then((matches) => {
         if (matches && this.isCurrent_abyssPrivate(observation)) {
-          this.applyMetadataChanged_abyssPrivate(path, data, cache);
+          this.applyMetadataChanged_abyssPrivate(observation, data, cache);
         }
       });
       this.trackRead_abyssPrivate(read);
       return;
     }
-    this.applyMetadataChanged_abyssPrivate(path, data, cache);
+    this.applyMetadataChanged_abyssPrivate(observation, data, cache);
   }
 
   private applyMetadataChanged_abyssPrivate(
-    path: string,
+    observation: FileObservation,
     data: string,
     cache: CachedMetadata,
   ): void {
+    if (!this.isCurrent_abyssPrivate(observation)) return;
     try {
-      this.installMetadataObservation_abyssPrivate(path, data, cache);
+      if (this.installMetadataObservation_abyssPrivate(observation.path, data, cache))
+        this.settleIntegrationObservation_abyssPrivate(observation, true);
     } catch (error) {
-      const file = this.app_abyssPrivate.vault.getAbstractFileByPath(path);
-      const observation = file instanceof TFile ? this.observe_abyssPrivate(file, path) : undefined;
-      if (observation !== undefined)
-        this.recordStatisticsFailure_abyssPrivate(path, 'projection-failed', error);
+      if (this.isCurrent_abyssPrivate(observation)) {
+        this.settleIntegrationObservation_abyssPrivate(observation, false);
+        this.recordStatisticsFailure_abyssPrivate(observation.path, 'projection-failed', error);
+      }
     }
   }
 
@@ -2784,8 +2865,8 @@ export class TaskIndex
     path: string,
     data: string,
     cache: CachedMetadata,
-  ): void {
-    if (this.options_abyssPrivate.refAuthority?.deferObservation(path, data) === true) return;
+  ): boolean {
+    if (this.options_abyssPrivate.refAuthority?.deferObservation(path, data) === true) return false;
     const prepared = this.prepareObservation_abyssPrivate(path, data, cache);
     const selectedCache = prepared.cache;
     if (this.excludeSource_abyssPrivate?.(prepared.metadata) === true) {
@@ -2794,7 +2875,7 @@ export class TaskIndex
       this.acceptStatisticsSource_abyssPrivate(path, data, prepared, []);
       if (changed) this.queueChanged_abyssPrivate(path);
       else this.queueReconciled_abyssPrivate(path);
-      return;
+      return true;
     }
     let authorityTransitions: readonly ProvenRootRevisionOverride[] = [];
     const tasks = this.parseFile_abyssPrivate({
@@ -2811,6 +2892,7 @@ export class TaskIndex
     this.acceptStatisticsSource_abyssPrivate(path, data, prepared, tasks);
     if (changed) this.queueChanged_abyssPrivate(path);
     else this.queueReconciled_abyssPrivate(path);
+    return true;
   }
 
   private handleVaultCreate_abyssPrivate(file: TAbstractFile): void {
@@ -2832,12 +2914,27 @@ export class TaskIndex
     if (!wasMarkdown && !isMarkdown) return;
     if (this.app_abyssPrivate.vault.getAbstractFileByPath(newPath) !== file) return;
     const tasks = this.taskMap_abyssPrivate.get(oldPath) ?? [];
+    this.integrationReadState_abyssPrivate.batch(() => {
+      try {
+        this.relocateFile_abyssPrivate({ file, oldPath, newPath, tasks, wasMarkdown, isMarkdown });
+      } catch (error) {
+        const token = this.integrationReadState_abyssPrivate.begin(newPath, file, {});
+        this.integrationReadState_abyssPrivate.fail(token);
+        throw error;
+      }
+    });
+  }
+
+  private relocateFile_abyssPrivate(input: FileRenameObservation): void {
+    const { file, oldPath, newPath, tasks, isMarkdown } = input;
     const accepted = this.acceptedStatisticsSources_abyssPrivate.get(oldPath);
     this.advance_abyssPrivate(file, isMarkdown ? newPath : undefined);
+    if (isMarkdown) this.integrationReadState_abyssPrivate.rename(oldPath, newPath, file);
+    else this.integrationReadState_abyssPrivate.remove(oldPath, file);
     this.removeFile_abyssPrivate(oldPath);
     if (newPath !== oldPath) this.removeFile_abyssPrivate(newPath);
     if (isMarkdown) this.relocateStatisticsSource_abyssPrivate(newPath, accepted, tasks);
-    this.finishVaultRename_abyssPrivate({ file, oldPath, newPath, tasks, wasMarkdown, isMarkdown });
+    this.finishVaultRename_abyssPrivate(input);
   }
 
   private relocateStatisticsSource_abyssPrivate(
@@ -2854,14 +2951,7 @@ export class TaskIndex
     );
   }
 
-  private finishVaultRename_abyssPrivate(input: {
-    readonly file: TFile;
-    readonly oldPath: string;
-    readonly newPath: string;
-    readonly tasks: readonly TaskSnapshot[];
-    readonly wasMarkdown: boolean;
-    readonly isMarkdown: boolean;
-  }): void {
+  private finishVaultRename_abyssPrivate(input: FileRenameObservation): void {
     if (input.wasMarkdown && input.isMarkdown) {
       this.handleMarkdownRename_abyssPrivate(input.file, input.oldPath, input.newPath, input.tasks);
       return;
@@ -2933,9 +3023,12 @@ export class TaskIndex
   private handleVaultDelete_abyssPrivate(file: TAbstractFile): void {
     if (!(file instanceof TFile) || file.extension !== 'md' || this.destroyed_abyssPrivate) return;
     const path = file.path;
+    const current = this.app_abyssPrivate.vault.getAbstractFileByPath(path);
+    if (current !== null && current !== file) return;
     const existed = this.taskMap_abyssPrivate.has(path);
     this.advance_abyssPrivate(file, undefined);
     this.removeFile_abyssPrivate(path);
+    this.integrationReadState_abyssPrivate.remove(path, file);
     if (existed) this.publish_abyssPrivate({ type: 'deleted', path });
   }
 
@@ -2968,7 +3061,12 @@ export class TaskIndex
     if (existing != null && existing.path !== path) return undefined;
     const lifecycle = existing ?? { path, generation: 0 };
     if (existing == null) this.fileLifecycles_abyssPrivate.set(file, lifecycle);
-    return { file, path, generation: lifecycle.generation };
+    return {
+      file,
+      path,
+      generation: lifecycle.generation,
+      attempt: this.integrationAttempt_abyssPrivate,
+    };
   }
 
   private advance_abyssPrivate(file: TFile, path: string | undefined): void {
@@ -2983,6 +3081,8 @@ export class TaskIndex
     const lifecycle = this.fileLifecycles_abyssPrivate.get(observation.file);
     return (
       !this.destroyed_abyssPrivate &&
+      observation.attempt === this.integrationAttempt_abyssPrivate &&
+      this.integrationCurrentObservations_abyssPrivate.get(observation.file) === observation &&
       lifecycle?.path === observation.path &&
       lifecycle.generation === observation.generation &&
       observation.file.extension === 'md' &&
@@ -3005,22 +3105,70 @@ export class TaskIndex
     return committed !== undefined && committed !== content;
   }
 
+  private beginIntegrationObservation_abyssPrivate(observation: FileObservation): void {
+    this.integrationCurrentObservations_abyssPrivate.set(observation.file, observation);
+    this.integrationAcquisitions_abyssPrivate.set(
+      observation,
+      this.integrationReadState_abyssPrivate.begin(observation.path, observation.file, observation),
+    );
+  }
+
+  private settleIntegrationObservation_abyssPrivate(
+    observation: FileObservation,
+    accepted: boolean,
+  ): void {
+    if (!this.isCurrent_abyssPrivate(observation)) return;
+    const token = this.integrationAcquisitions_abyssPrivate.get(observation);
+    if (token === undefined) return;
+    if (accepted) this.integrationReadState_abyssPrivate.accept(token);
+    else this.integrationReadState_abyssPrivate.fail(token);
+  }
+
+  private async verifyCommittedContent_abyssPrivate(
+    observation: FileObservation,
+    content: string,
+  ): Promise<'observed' | 'committed' | 'superseded' | 'unconfirmed' | 'failed'> {
+    const committed = this.committedContents_abyssPrivate.get(observation.path);
+    if (committed === undefined || committed === content) return 'observed';
+    try {
+      const current = await this.app_abyssPrivate.vault.read(observation.file);
+      if (!this.isCurrent_abyssPrivate(observation)) return 'superseded';
+      if (current === committed) return 'committed';
+      if (current !== content) return 'unconfirmed';
+      this.committedContents_abyssPrivate.delete(observation.path);
+      return 'observed';
+    } catch {
+      return this.isCurrent_abyssPrivate(observation) ? 'failed' : 'superseded';
+    }
+  }
+
+  private hasCommittedCoverage_abyssPrivate(path: string): boolean {
+    const accepted = this.acceptedStatisticsSources_abyssPrivate.get(path);
+    if (accepted === undefined || this.statisticsReadFailures_abyssPrivate.has(path)) return false;
+    if (
+      accepted.content !== this.committedContents_abyssPrivate.get(path) ||
+      accepted.integrationScopeRevision !==
+        this.integrationReadState_abyssPrivate.capture().scopeRevision
+    )
+      return false;
+    const roots =
+      this.excludeSource_abyssPrivate?.(accepted.metadata) === true ? [] : accepted.tasks;
+    return sameTaskSnapshots(roots, this.taskMap_abyssPrivate.get(path) ?? []);
+  }
+
   private async observationMatchesVault_abyssPrivate(
     observation: FileObservation,
     content: string,
   ): Promise<boolean> {
-    const committed = this.committedContents_abyssPrivate.get(observation.path);
-    if (committed === undefined || committed === content) return true;
-    try {
-      const current = await this.app_abyssPrivate.vault.read(observation.file);
-      if (!this.isCurrent_abyssPrivate(observation)) return false;
-      if (current === committed) return false;
-      if (current !== content) return false;
-      this.committedContents_abyssPrivate.delete(observation.path);
-      return true;
-    } catch {
-      return false;
-    }
+    const result = await this.verifyCommittedContent_abyssPrivate(observation, content);
+    if (result === 'committed')
+      this.settleIntegrationObservation_abyssPrivate(
+        observation,
+        this.hasCommittedCoverage_abyssPrivate(observation.path),
+      );
+    else if (result === 'failed' || result === 'unconfirmed')
+      this.settleIntegrationObservation_abyssPrivate(observation, false);
+    return result === 'observed';
   }
 
   private trackRead_abyssPrivate(read: Promise<void>): void {

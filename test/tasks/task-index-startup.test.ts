@@ -297,6 +297,7 @@ describe('cooperative initial file acceptance', () => {
     await expect(initializing).rejects.toThrow('Cannot schedule');
     expect(index.list({ filePath: 'accepted.md' })[0]?.title).toBe('retained');
     expect(index.searchSource().subscribe(() => {}).state.type).toBe('failed');
+    expect(index.integrationReads().capture().lifecycle).toBe('failed');
     await index.whenStatisticsSettled();
     const statistics = index.readStatistics();
     expect(index.isStatisticsCurrent(statistics)).toBe(true);
@@ -307,47 +308,53 @@ describe('cooperative initial file acceptance', () => {
     await index.initialize();
     expect(index.list()).toHaveLength(50);
     expect(index.searchSource().subscribe(() => {}).state.type).toBe('ready');
+    expect(index.integrationReads().coverage().type).toBe('ok');
   });
 
-  it('ignores a late read failure from a failed attempt after a successful retry', async () => {
-    const { app, index, gate, initializing } = await startup();
-    const issuePaths: string[] = [];
-    index.subscribeStatistics(() => {
-      issuePaths.push(...index.readStatistics().issues.map((issue) => issue.path));
-    });
-    const late = deferred<void>();
-    const started = deferred<void>();
-    const read = app.vault.cachedRead.bind(app.vault);
-    let held = false;
-    app.vault.cachedRead = async (target): Promise<string> => {
-      if (target.path === 'late.md' && !held) {
-        held = true;
-        started.resolve();
-        await late.promise;
-        throw new Error('Old read failed');
-      }
-      return read(target);
-    };
-    await app.vault.create('late.md', '- [ ] latest');
-    await started.promise;
-    gate.fail(new Error('Cannot schedule'));
-    await expect(initializing).rejects.toThrow('Cannot schedule');
-    // The retry also drains the old read; release it only after the retry has accepted latest.
-    const retry = index.initialize();
-    await vi.waitFor(() => {
+  it.each(['success', 'failure'] as const)(
+    'ignores a late read %s from a failed attempt after a successful retry',
+    async (outcome) => {
+      const { app, index, gate, initializing } = await startup();
+      const issuePaths: string[] = [];
+      index.subscribeStatistics(() => {
+        issuePaths.push(...index.readStatistics().issues.map((issue) => issue.path));
+      });
+      const late = deferred<void>();
+      const started = deferred<void>();
+      const read = app.vault.cachedRead.bind(app.vault);
+      let held = false;
+      app.vault.cachedRead = async (target): Promise<string> => {
+        if (target.path === 'late.md' && !held) {
+          held = true;
+          started.resolve();
+          await late.promise;
+          if (outcome === 'failure') throw new Error('Old read failed');
+          return '- [ ] obsolete';
+        }
+        return read(target);
+      };
+      await app.vault.create('late.md', '- [ ] latest');
+      await started.promise;
+      gate.fail(new Error('Cannot schedule'));
+      await expect(initializing).rejects.toThrow('Cannot schedule');
+      // The retry also drains the old read; release it only after the retry has accepted latest.
+      const retry = index.initialize();
+      await vi.waitFor(() => {
+        expect(index.list({ filePath: 'late.md' })[0]?.title).toBe('latest');
+      });
+      late.resolve();
+      await retry;
       expect(index.list({ filePath: 'late.md' })[0]?.title).toBe('latest');
-    });
-    late.resolve();
-    await retry;
-    expect(index.list({ filePath: 'late.md' })[0]?.title).toBe('latest');
-    expect(index.list()).toHaveLength(51);
-    await index.whenStatisticsSettled();
-    const statistics = index.readStatistics();
-    expect(index.isStatisticsCurrent(statistics)).toBe(true);
-    expect(statistics.files.find((source) => source.path === 'late.md')?.roots[0]?.title).toBe(
-      'latest',
-    );
-    expect(statistics.issues).toEqual([]);
-    expect(issuePaths).toEqual([]);
-  });
+      expect(index.list()).toHaveLength(51);
+      await index.whenStatisticsSettled();
+      const statistics = index.readStatistics();
+      expect(index.isStatisticsCurrent(statistics)).toBe(true);
+      expect(statistics.files.find((source) => source.path === 'late.md')?.roots[0]?.title).toBe(
+        'latest',
+      );
+      expect(statistics.issues).toEqual([]);
+      expect(issuePaths).toEqual([]);
+      expect(index.integrationReads().coverage().type).toBe('ok');
+    },
+  );
 });
