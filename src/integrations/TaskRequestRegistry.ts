@@ -43,6 +43,9 @@ interface RequestContext {
   readonly key: string;
   readonly payload: string;
 }
+type AdmissionCheck =
+  | { readonly acceptedAt: number }
+  | { readonly result: MutationResultV1 | Promise<MutationResultV1> };
 const errors = {
   DISPOSED: ['lifecycle', 'Task requests are disposed.', 'none'],
   ABORTED: ['lifecycle', 'Task request was aborted before acceptance.', 'retry-same-request'],
@@ -73,8 +76,12 @@ function failure(code: keyof typeof errors): MutationResultV1 {
     recovery,
   });
 }
-function isAborted(options: RequestOptions): boolean {
-  return options.signal?.aborted === true;
+function abortState(options: RequestOptions): 'aborted' | 'live' | 'failed' {
+  try {
+    return options.signal?.aborted === true ? 'aborted' : 'live';
+  } catch {
+    return 'failed';
+  }
 }
 function context(
   consumerId: string,
@@ -136,8 +143,8 @@ export class TaskRequestRegistry {
       const replay = this.replay_abyssPrivate(current);
       if (replay !== undefined) return replay;
       if (current.request.expiresAt - now > 300_000) return failure('INVALID_ARGUMENT');
-      if (isAborted(options)) return failure('ABORTED');
-      if (this.disposed_abyssPrivate) return failure('DISPOSED');
+      const checked = this.checkAdmission_abyssPrivate(current, options);
+      if ('result' in checked) return checked.result;
       return this.admit_abyssPrivate(current, options);
     } catch {
       return rejected(this.internal_abyssPrivate(method));
@@ -147,6 +154,25 @@ export class TaskRequestRegistry {
     const clientDisposed = this.disposed_abyssPrivate ? true : options.isDisposed();
     return this.disposed_abyssPrivate || clientDisposed;
   }
+  private checkAdmission_abyssPrivate(
+    current: RequestContext,
+    options: RequestOptions,
+  ): AdmissionCheck {
+    // A live signal getter can accept this request, dispose its client, or advance
+    // time. Recheck those facts after the callbacks, before abort or admission.
+    const signal = abortState(options);
+    const closed = this.closed_abyssPrivate(options);
+    const now = this.time_abyssPrivate();
+    if (this.disposed_abyssPrivate || closed) return { result: failure('DISPOSED') };
+    this.reclaim_abyssPrivate(now);
+    if (current.request.expiresAt <= now) return { result: failure('REQUEST_EXPIRED') };
+    const replay = this.replay_abyssPrivate(current);
+    if (replay !== undefined) return { result: replay };
+    if (signal === 'failed')
+      return { result: rejected(this.internal_abyssPrivate(current.method)) };
+    if (signal === 'aborted') return { result: failure('ABORTED') };
+    return { acceptedAt: now };
+  }
   private admit_abyssPrivate(
     current: RequestContext,
     options: RequestOptions,
@@ -154,20 +180,11 @@ export class TaskRequestRegistry {
     const admission = options.admit();
     let ticket = admission.ok ? admission.value : undefined;
     try {
-      // Capability callbacks may reenter, dispose, abort, or advance time. Do all of
-      // them before the final map lookup; no callbacks intervene before reservation.
-      const closed = this.closed_abyssPrivate(options);
-      const aborted = isAborted(options);
-      const acceptedAt = this.time_abyssPrivate();
-      if (this.disposed_abyssPrivate || closed) return failure('DISPOSED');
-      this.reclaim_abyssPrivate(acceptedAt);
-      if (current.request.expiresAt <= acceptedAt) return failure('REQUEST_EXPIRED');
-      const replay = this.replay_abyssPrivate(current);
-      if (replay !== undefined) return replay;
-      if (aborted) return failure('ABORTED');
+      const checked = this.checkAdmission_abyssPrivate(current, options);
+      if ('result' in checked) return checked.result;
       if (!admission.ok) return rejected(admission.error);
       if (this.full_abyssPrivate(current.consumerId)) return failure('RESOURCE_LIMIT');
-      const promise = this.reserve_abyssPrivate(current, admission.value, acceptedAt);
+      const promise = this.reserve_abyssPrivate(current, admission.value, checked.acceptedAt);
       ticket = undefined;
       return promise;
     } finally {

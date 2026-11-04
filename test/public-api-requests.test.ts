@@ -290,6 +290,84 @@ describe('bounded mutation requests', () => {
     expect(forbidden).not.toHaveBeenCalled();
   });
 
+  it.each([true, false, 'throw'] as const)(
+    'joins accepted work created by a signal getter returning %s',
+    async (aborted) => {
+      const registry = new TaskRequestRegistry({ epoch: 'epoch', now: () => 1_000 });
+      const committed: MutationResultV1 = freezeValue({
+        ok: true,
+        receipt: { ...terminal.receipt, outcome: 'changed', effects: 'committed' },
+      });
+      const accepted = ticket(async () => committed);
+      const outerAdmission = vi.fn(options().admit);
+      let inner: Promise<MutationResultV1> | undefined;
+      const outer = registry.execute('consumer', 'complete', input, {
+        isDisposed: live,
+        admit: outerAdmission,
+        signal: {
+          get aborted() {
+            inner = registry.execute('consumer', 'complete', input, options(accepted));
+            if (aborted === 'throw') throw new Error('private signal');
+            return aborted;
+          },
+          addEventListener() {},
+          removeEventListener() {},
+        },
+      });
+      expect(await outer).toEqual(committed);
+      expect(await inner).toEqual(committed);
+      expect(outerAdmission).not.toHaveBeenCalled();
+      expect(accepted.execute).toHaveBeenCalledExactlyOnceWith(1_000);
+      expect(accepted.release).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('sanitizes a throwing signal getter when no request was accepted', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const registry = new TaskRequestRegistry({ epoch: 'epoch', now: () => 1_000 });
+    const result = await registry.execute('consumer', 'complete', input, {
+      isDisposed: live,
+      admit: forbidden,
+      signal: {
+        get aborted(): boolean {
+          throw new Error('private signal');
+        },
+        addEventListener() {},
+        removeEventListener() {},
+      },
+    });
+    expectFailure(result, 'INTERNAL_ERROR');
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify([result, log.mock.calls])).not.toContain('private signal');
+    expect(forbidden).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['client-dispose', 'DISPOSED'],
+    ['provider-dispose', 'DISPOSED'],
+    ['expire', 'REQUEST_EXPIRED'],
+  ] as const)('preserves %s precedence when a signal getter returns true', async (change, code) => {
+    let now = 1_000;
+    let disposed = false;
+    const registry = new TaskRequestRegistry({ epoch: 'epoch', now: () => now });
+    const result = await registry.execute('consumer', 'complete', input, {
+      isDisposed: () => disposed,
+      admit: forbidden,
+      signal: {
+        get aborted() {
+          if (change === 'client-dispose') disposed = true;
+          if (change === 'provider-dispose') registry.dispose();
+          if (change === 'expire') now = 2_000;
+          return true;
+        },
+        addEventListener() {},
+        removeEventListener() {},
+      },
+    });
+    expectFailure(result, code);
+    expect(forbidden).not.toHaveBeenCalled();
+  });
+
   it('does not evict live terminal results and frees pending capacity at settlement', async () => {
     const registry = new TaskRequestRegistry({
       epoch: 'epoch',
@@ -396,17 +474,18 @@ describe('bounded mutation requests', () => {
       const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
       let now = 1_000;
       let disposed = false;
-      let checks = 0;
+      let acquired = false;
       const registry = new TaskRequestRegistry({ epoch: 'epoch', now: () => now });
       const controller = new AbortController();
       const accepted = ticket();
       const result = await registry.execute('consumer', 'complete', input, {
         signal: controller.signal,
         isDisposed: () => {
-          if (change === 'throw' && checks++ > 0) throw new Error('private');
+          if (change === 'throw' && acquired) throw new Error('private');
           return disposed;
         },
         admit: () => {
+          acquired = true;
           if (change === 'abort') controller.abort();
           if (change === 'client-dispose') disposed = true;
           if (change === 'provider-dispose') registry.dispose();
