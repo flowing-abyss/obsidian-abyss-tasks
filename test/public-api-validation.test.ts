@@ -187,6 +187,38 @@ describe('public API validation', () => {
     expect(calls).toBe(0);
   });
 
+  it('rejects excessive filters behind a changing proxy length', () => {
+    const tags = Array.from({ length: 21 }, (_, index) => `#tag${index}`);
+    let reads = 0;
+    const proxied = new Proxy(tags, {
+      get(target, key, receiver): unknown {
+        if (key === 'length' && reads++ < 2) return 1;
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    expect(validateList({ tagsAll: proxied }).ok).toBe(false);
+  });
+
+  it.each<[string, unknown[]]>([
+    ['tagsAll', ['#one', '#two']],
+    ['statuses', ['open', 'done']],
+    [
+      'dates',
+      [
+        { field: 'due', from: '2026-11-04' },
+        { field: 'start', to: '2026-11-04' },
+      ],
+    ],
+  ])('rejects %s when admitted own length disagrees with array keys', (field, values) => {
+    const filters = new Proxy(values, {
+      getOwnPropertyDescriptor(target, key) {
+        const descriptor = Reflect.getOwnPropertyDescriptor(target, key);
+        return key === 'length' ? { ...descriptor, value: 1 } : descriptor;
+      },
+    });
+    expect(validateList({ [field]: filters }).ok).toBe(false);
+  });
+
   it('validates exact selector unions and source coordinates', () => {
     expect(validateSelector({ source: { path: 'tasks.md', line: 0 } }).ok).toBe(true);
     expect(validateSelector({ authoredId: 'ID-1' })).toEqual({

@@ -57,22 +57,19 @@ function dataProperty(value: object, key: PropertyKey): PropertyDescriptor {
 }
 
 function boundedArray(value: unknown, maximum: number): unknown[] {
-  if (!Array.isArray(value) || value.length < 1 || value.length > maximum) return invalid();
-  return recordArray(value);
+  if (!Array.isArray(value)) return invalid();
+  const length = integer(dataProperty(value, 'length').value, 1, maximum);
+  return recordArray(value, length);
 }
 
-function recordArray(value: unknown[]): unknown[] {
+function recordArray(value: unknown[], length: number): unknown[] {
+  const keys = Reflect.ownKeys(value);
+  if (keys.length !== length + 1 || !keys.includes('length')) return invalid();
   const result: unknown[] = [];
-  for (const key of Reflect.ownKeys(value)) {
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    if (typeof key !== 'string' || descriptor === undefined || !('value' in descriptor))
-      return invalid();
-    if (key !== 'length' && !/^(0|[1-9]\d*)$/u.test(key)) return invalid();
-  }
-  for (let index = 0; index < value.length; index += 1) {
-    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
-    if (descriptor === undefined || !('value' in descriptor)) return invalid();
-    result.push(descriptor.value);
+  for (let index = 0; index < length; index += 1) {
+    const key = String(index);
+    if (!keys.includes(key)) return invalid();
+    result.push(dataProperty(value, key).value);
   }
   return result;
 }
