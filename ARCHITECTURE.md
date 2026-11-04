@@ -33,8 +33,10 @@ The opt-in native profiler in [`tooling/performance/native-api.ts`](tooling/perf
 is a structural consumer of the external v1 contract, imported only as types from `api.d.ts`.
 Its scan measures complete coherent pagination after untimed client activation. Its status span
 measures one guarded completion, identical receipt replay, and final hydration after untimed
-sandbox creation through the existing application command. Ordinary profiling never discovers
-the provider. Both selections use the same profiler, pending-work drain, cycle reset, and
+sandbox creation through the existing application command. Preparation waits for matching metadata,
+current and cached bytes, and canonical acceptance before one fresh public resolve. This establishes
+the sandbox read basis without reserving coverage against later host events. Ordinary profiling never
+discovers the provider. Both selections use the same profiler, pending-work drain, cycle reset, and
 transaction restoration; the API client and listener belong to one cycle.
 
 ## Sources of truth
@@ -61,7 +63,7 @@ alternate task repositories, indexes, or Search services.
 
 | Boundary                                         | Responsibility and dependencies                                                                                                                                 |
 | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Task public API](src/tasks/index.ts)            | Presentation's entry point for task queries, commands, capture, Search, Statistics sources, and task values                                                     |
+| [Internal task boundary](src/tasks/index.ts)     | Presentation's entry point for task queries, commands, capture, Search, Statistics sources, and task values                                                     |
 | [Task domain](src/tasks/domain/)                 | Immutable values, identity, validation, status, recurrence, dates, and time; depends on itself, deterministic `rrule`, and shared tag syntax                    |
 | [Task application](src/tasks/application/)       | Use cases and validation through domain contracts and application ports; no Obsidian or presentation imports                                                    |
 | [Task infrastructure](src/tasks/infrastructure/) | Obsidian adapters, index, codec, source editing, and reference authority; depends inward, with explicit host, Markdown, scheduler, and search-engine boundaries |
@@ -82,8 +84,20 @@ Passing data to a renderer or deriving a projection grants no write authority.
 
 ## Portable integration contract
 
-[`api.d.ts`](api.d.ts) defines the standalone v1 contract for external consumers without
-Obsidian or DOM type dependencies. Its request and result data is recursively readonly.
+[`api.d.ts`](api.d.ts) is the canonical external contract, including discovery and cleanup
+examples. Consumers inspect an integration-supplied candidate for `getApi`, request major version
+1 explicitly, and check the result and `info.apiVersion`. Unsupported majors fail without fallback.
+The contract does not prescribe an Obsidian plugin registry. Register client disposal and the
+subscription's unsubscribe function with the consumer's own lifecycle. Read capabilities and limits
+from `client.info`; they describe supported operations and bounded resources, not permissions.
+
+External plugins and future AI or MCP consumers use this client boundary. No AI or MCP adapter,
+transport, or SDK is implemented. `src/main.ts` alone composes the provider with the real index and
+application service. `src/integrations/` imports inward contracts through `src/tasks`; the task domain,
+application and infrastructure layers do not depend on the external declaration or facade.
+
+The declaration has no imports, runtime statements, ambient host augmentation, or internal type
+references, and needs no Obsidian or DOM typings. Its request and result data is recursively readonly.
 [`src/integrations/validation.ts`](src/integrations/validation.ts) accepts allowlisted plain
 records, normalizes canonical task dates and tags through the task public boundary, and
 copies and freezes validated data. Cancellation signals remain live caller-owned capabilities;
@@ -152,12 +166,43 @@ accepted roles and later timer continuations take precedence. Rejected writers n
 lease disposal makes retained callbacks inert. Replays retain the original values and effects; each delivery checks current disclosure proof
 and strips unavailable DTOs without replacing them with newer task data.
 
+Readiness means initialization completed; it does not prove complete current coverage. A failed
+or pending source, including an empty note, can make an otherwise ready scoped read incomplete.
+A coherent scan subscribes before paging, keeps the same normalized query and limit, and accepts
+only pages from one observation with no intervening invalidation. Consumers restart after a stale
+cursor or incomplete read. Physical child nodes match filters independently of their parents.
+Authored IDs are exact lookup values and may resolve ambiguously; neither source coordinates nor
+an authored ID replaces an issued occurrence target.
+
+Successful readiness or a read does not reserve complete coverage for a later queued write. An
+accepted request that fails unchanged with `INCOMPLETE_READ` keeps that terminal result for replay.
+The consumer rereads and decides whether to make a distinct request with a fresh ID and revision.
+Committed, partial, or unknown effects must not be repeated just to obtain a missing DTO; use a fresh
+read and the receipt's recovery guidance.
+
+Targets describe proven occurrences within one provider epoch and idle lifetime. They are not
+durable IDs; a continued occurrence can keep its target while its whole-root revision changes.
+Request replay is bounded and in memory, so it is not durable exactly-once delivery. `consumerId`
+is a request namespace, not authorization. Strict writer checks protect the current file and captured
+read observations; they do not lock the whole vault into a cross-file transaction. A committed main
+write can retain known effects while timer work is partial or unknown. Consumers follow the returned
+effect and recovery values and reread when needed, without repeating known committed work.
+
+Compatibility is exercised by the standalone consumer fixture and public contract, validation,
+lifecycle, read, identity, cursor, request and receipt suites in `test/public-api-*.test.ts`. The real
+index/repository harness also covers empty-source health, ordinary/UI occurrence continuation,
+strict writer callbacks and per-timer guards. Architecture tests enforce the inward imports and exact
+storage owners. Native desktop acceptance and the opt-in API profiler check the running host;
+constrained desktop widths do not establish real-device mobile behavior. Product runtime remains
+free of new Node/Electron imports and retains `isDesktopOnly: false`.
+
 Main updates the effective mutation semantics key synchronously before settings persistence and when
 the status catalog changes. The key covers the catalog, lifecycle date policy and recurrence settings;
 unchanged effective values and unrelated preferences preserve it. Source exclusions continue using
 the existing successfully persisted storage-policy hook. Reload creates a fresh provider epoch and
 keeps old clients disposed. Public state, receipts and identity reservations never enter settings or
-Markdown.
+Markdown. The boundary adds no persisted fields or settings format changes, so it needs no data
+migration. Rolling back v1 discovery leaves existing Markdown and settings readable.
 
 ## Task source and command flow
 
