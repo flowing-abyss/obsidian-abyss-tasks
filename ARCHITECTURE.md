@@ -94,6 +94,21 @@ epoch; replay does not extend expiry. Both registries reject live capacity overf
 evicting issued state. Their only task dependencies are inward value types exported through
 `src/tasks`; neither registry registers a provider or changes the composition root.
 
+[`TaskApiProvider`](src/integrations/TaskApiProvider.ts) composes the optional read facade over
+`TaskIntegrationReadApi`. Its constructor owns clients, identity and cursor registries; clients expose
+only frozen info, read methods, readiness, subscription and disposal. The first client activates
+occurrence evidence and installs a synchronous accepted-event listener. That listener applies identity
+witnesses before external invalidations. Every callback checks its registration and client lifetime.
+Provider closure settles pending readiness and closes listeners before releasing its inward subscription.
+
+[`taskApiReads`](src/integrations/taskApiReads.ts) snapshots validated inputs before yielding, checks
+liveness and current source permission at delivery, and maps inward failures to sanitized API errors.
+Cursor binding failures precede incomplete coverage. [`taskDto`](src/integrations/taskDto.ts) copies
+only the public allowlist, including parent targets; no inward revision or source block becomes a public
+token. Current exclusion precedes incomplete health for target reads, while lifecycle failure retains
+precedence. The provider is composed in the real test harness; production lifecycle wiring and public
+mutations are not installed yet.
+
 ## Task source and command flow
 
 ### Identity and reconciliation

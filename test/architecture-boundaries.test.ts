@@ -76,8 +76,18 @@ const ALLOWED_WRITER_CALLS: Record<string, AllowedWriter> = {
 
 const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   TaskAcceptedOccurrenceChange: ['src/integrations/TaskIdentityRegistry.ts'],
-  TaskReadNode: ['src/integrations/TaskIdentityRegistry.ts'],
-  TaskReadObservation: ['src/integrations/TaskCursorRegistry.ts'],
+  TaskIntegrationReadApi: ['src/integrations/TaskApiProvider.ts'],
+  TaskReadResult: ['src/integrations/taskApiReads.ts'],
+  TaskReadNode: [
+    'src/integrations/TaskIdentityRegistry.ts',
+    'src/integrations/taskApiReads.ts',
+    'src/integrations/taskDto.ts',
+  ],
+  TaskReadObservation: [
+    'src/integrations/TaskCursorRegistry.ts',
+    'src/integrations/TaskApiProvider.ts',
+    'src/integrations/taskApiReads.ts',
+  ],
   TaskOccurrenceAddress: ['src/integrations/TaskIdentityRegistry.ts'],
   TaskStatusOccurrenceContinuation: ['src/integrations/TaskIdentityRegistry.ts'],
   TaskCreateRequest: ['src/ui/taskCapture/TaskCaptureController.ts'],

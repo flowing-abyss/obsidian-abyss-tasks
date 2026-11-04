@@ -282,3 +282,16 @@ describe('complete integration node reads', () => {
     expect(statisticsConstruction).not.toHaveBeenCalled();
   });
 });
+
+it('checks current exclusion before pending coverage, while preserving lifecycle precedence', async () => {
+  const h = await harness({ 'a.md': '- [ ] task\n' });
+  const address = expectDefined(ok(h.reads.page({}, 1)).nodes[0]).address;
+  const pending = deferred<string>();
+  vi.spyOn(h.app.vault, 'cachedRead').mockImplementationOnce(() => pending.promise);
+  const refresh = h.index.refreshSourceExclusion(() => true);
+  expect(h.reads.node(address)).toMatchObject({ reason: 'unavailable' });
+  h.dispose();
+  expect(h.reads.node(address)).toMatchObject({ reason: 'disposed' });
+  pending.resolve('- [ ] task\n');
+  await refresh;
+});

@@ -1,6 +1,8 @@
 // @vitest-environment node
 import ts from 'typescript';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
+import type { TasksApiV1 } from '../api';
+import type { TaskReadClientV1 } from '../src/integrations/TaskApiProvider';
 import { TYPESCRIPT_PROGRAM_TIMEOUT_MS } from './support/timeouts';
 
 const fixture = ts.sys.resolvePath('test/fixtures/public-api-consumer/tsconfig.json');
@@ -80,4 +82,12 @@ describe('portable public API contract', () => {
       ),
     ).toBe(true);
   });
+});
+
+it('keeps the staged client exactly read-only until mutation composition', () => {
+  expectTypeOf<TaskReadClientV1>().toEqualTypeOf<
+    Omit<TasksApiV1, 'tasks'> & {
+      readonly tasks: Pick<TasksApiV1['tasks'], 'list' | 'get' | 'resolve' | 'statuses'>;
+    }
+  >();
 });

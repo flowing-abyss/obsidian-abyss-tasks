@@ -119,8 +119,9 @@ function readNode(
   target: TaskOccurrenceAddress,
 ): TaskReadResult<TaskReadNode> {
   const health = owner.state.coverage({ path: target.filePath });
-  if (health.type === 'error') return health;
+  if (health.type === 'error' && health.reason !== 'incomplete') return health;
   if (!owner.permitted(target.filePath)) return { type: 'error', reason: 'unavailable' };
+  if (health.type === 'error') return health;
   const roots = owner.roots(target.filePath).filter((root) => root.source.line === target.rootLine);
   if (roots.length > 1) return { type: 'error', reason: 'ambiguous' };
   const root = roots[0];

@@ -1,4 +1,5 @@
 import { TFile, type App } from 'obsidian';
+import { TaskApiProvider, type TaskReadClientV1 } from '../../src/integrations/TaskApiProvider';
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
 import { toStatusRules } from '../../src/settings/statusCatalogAdapter';
 import { TaskApplicationService } from '../../src/tasks/application/TaskApplicationService';
@@ -15,7 +16,11 @@ import { TaskIndex, type TaskIndexOptions } from '../../src/tasks/infrastructure
 import { TaskRefAuthority } from '../../src/tasks/infrastructure/TaskRefAuthority';
 import { createAppWithFiles, flushMicrotasks, metadataChangedEmitter } from '../helpers';
 
+let providerEpoch = 0;
+
 export interface PublicApiHarness {
+  readonly provider: TaskApiProvider;
+  client(consumerId?: string): TaskReadClientV1;
   readonly app: App;
   readonly index: TaskIndex;
   readonly service: TaskApplicationService;
@@ -69,7 +74,21 @@ export async function publicApiHarness(
     undefined,
     index.statusReadBasis(),
   );
+  const reads = index.integrationReads();
+  const provider = new TaskApiProvider({
+    reads,
+    pluginVersion: '2.3.2',
+    epoch: `test-${++providerEpoch}`,
+    now: () => now,
+    diagnostic: () => {},
+  });
   return {
+    provider,
+    client: (consumerId = 'test') => {
+      const result = provider.getApi(1, { consumerId });
+      if (!result.ok) throw new Error(result.error.code);
+      return result.value;
+    },
     app,
     service,
     clock: (ms) => {
@@ -77,7 +96,7 @@ export async function publicApiHarness(
     },
     index,
     authority,
-    reads: index.integrationReads(),
+    reads,
     statusReadBasis: index.statusReadBasis(),
     read: (path) => app.vault.read(file(path)),
     external: async (path, content) => {
@@ -87,6 +106,7 @@ export async function publicApiHarness(
       await flushMicrotasks();
     },
     dispose: () => {
+      provider.dispose();
       index.destroy();
     },
   };

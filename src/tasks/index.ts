@@ -198,8 +198,10 @@ export type { RecurrenceInputParser } from './application/RecurrenceInputParser'
 
 export type {
   TaskAcceptedOccurrenceChange,
+  TaskIntegrationReadApi,
   TaskReadNode,
   TaskReadObservation,
+  TaskReadResult,
 } from './application/TaskIntegrationReadApi';
 export type { TaskStatusOccurrenceContinuation } from './application/TaskStatusMutationApi';
 export type { TaskOccurrenceAddress } from './domain/taskOccurrence';

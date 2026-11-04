@@ -255,3 +255,21 @@ export function validateReadOptions(value: unknown): ApiResultV1<ReadOptionsV1> 
     });
   }
 }
+
+export function validateApiRequest(version: unknown, options: unknown): ApiResultV1<string> {
+  const result = validated(() => {
+    integer(version);
+    return namespace(record(options, ['consumerId'])['consumerId']);
+  });
+  if (!result.ok) return result;
+  return version === 1
+    ? result
+    : freezeValue({
+        ok: false,
+        error: apiError('unsupported', 'UNSUPPORTED_API_VERSION', 'Unsupported API version.'),
+      });
+}
+
+export function validateTarget(value: unknown): ApiResultV1<string> {
+  return validated(() => text(value, 512));
+}
