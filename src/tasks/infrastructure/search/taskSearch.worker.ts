@@ -23,6 +23,9 @@ if (!('document' in self) && typeof scope.postMessage === 'function') {
       fatal();
     }
   });
+  // Dedicated Worker channel owned by BrowserTaskSearchBackend, not a Window listener.
+  // These messages have an empty origin; a Window-style origin allowlist would reject them.
+  // https://html.spec.whatwg.org/multipage/workers.html#dedicated-workers-and-the-dedicatedworkerglobalscope-interface
   scope.onmessage = (event): void => {
     receive(event.data).catch(fatal);
   };

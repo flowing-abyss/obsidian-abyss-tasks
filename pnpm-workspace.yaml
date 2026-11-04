@@ -12,12 +12,19 @@ peerDependencyRules:
 allowedDeprecatedVersions:
   eslint: '9.39.5'
 
-# GitHub withdrew this braces advisory on 2026-10-23 as not practically exploitable.
-# The npm audit feed still reports it; remove this existing exception when the feed catches up.
-# https://github.com/advisories/GHSA-vfj7-8cjw-p6xm
 audit:
   ignore:
+    # GitHub withdrew this braces advisory on 2026-10-23 as not practically exploitable.
+    # The npm audit feed still reports it; remove this exception when the feed catches up.
+    # https://github.com/advisories/GHSA-vfj7-8cjw-p6xm
     - GHSA-vfj7-8cjw-p6xm
+    # Reviewed 2026-11-04: minimatch is confined to development tooling. Its 8/9/10
+    # callers use the default optimizationLevel 1; this DoS requires level >= 2.
+    # Version 3 lacks the affected preprocessing. No production dependency uses it.
+    # A global v11 override would remove makeRe(), used by eslint-plugin-import.
+    # Reassess on dependency/glob-input changes; remove when callers support patched versions.
+    # https://github.com/advisories/GHSA-g3hv-75wg-m249
+    - GHSA-g3hv-75wg-m249
 
 allowBuilds:
   '@parcel/watcher': false
