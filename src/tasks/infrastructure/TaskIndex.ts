@@ -1,12 +1,4 @@
-import {
-  getAllTags,
-  TFile,
-  type App,
-  type CachedMetadata,
-  type EventRef,
-  type TAbstractFile,
-} from 'obsidian';
-import { extractMarkdownBodyTags } from '../../markdown/markdownTagRename';
+import { TFile, type App, type CachedMetadata, type EventRef, type TAbstractFile } from 'obsidian';
 import { sameTag } from '../../markdown/tagSyntax';
 import type {
   CalendarProjectionSources,
@@ -19,7 +11,7 @@ import type {
   TaskSearchEligibilityRequest,
   TimeTrackingQueryApi,
 } from '../application/TaskApplicationApi';
-import type { TaskIntegrationReadStateApi } from '../application/TaskIntegrationReadApi';
+import type { TaskIntegrationReadApi } from '../application/TaskIntegrationReadApi';
 import type { TaskReadProjectionApi } from '../application/TaskSearchApi';
 import type {
   TaskSearchDocument,
@@ -98,6 +90,7 @@ import {
 } from './markdown/TaskSnapshotProjector';
 import { taskSearchDocument } from './search/taskSearchDocuments';
 import { calendarDatesForPlanning, calendarRangeForPlanning, TaskDateIndex } from './TaskDateIndex';
+import { taskIntegrationProjection } from './taskIntegrationProjection';
 import { TaskIntegrationReadState } from './TaskIntegrationReadState';
 import {
   type RootRevisionOverride,
@@ -105,11 +98,13 @@ import {
   type TaskSnapshotState,
 } from './TaskRefAuthority';
 import { sameTaskSnapshots } from './taskSnapshotEquality';
+import { taskSourceMetadata, type TaskSourceMetadata } from './taskSourceMetadata';
 import {
   TaskStatisticsProjection,
   type StatisticsProjectionInput,
 } from './TaskStatisticsProjection';
 import { TimeEntryIndex } from './TimeEntryIndex';
+export type { TaskSourceMetadata } from './taskSourceMetadata';
 
 export interface TaskIndexOptions {
   readonly readYield?: (signal: AbortSignal) => Promise<void>;
@@ -126,13 +121,6 @@ export interface TaskIndexOptions {
    * device, so this is here for the tests that project a fixed zone across a daylight saving jump.
    */
   readonly timeZoneOffsetAt?: OffsetAt;
-}
-
-/** Detached note metadata available to the composition-root source exclusion policy. */
-export interface TaskSourceMetadata {
-  readonly filePath: string;
-  readonly tags: readonly string[];
-  readonly frontmatter: Readonly<Record<string, unknown>>;
 }
 
 interface PreparedObservation {
@@ -625,6 +613,7 @@ interface FileParseContext {
 }
 
 interface AcceptedStatisticsSource {
+  readonly fileIdentity: TFile | undefined;
   readonly integrationScopeRevision: number;
   readonly content: string;
   readonly cache: CachedMetadata;
@@ -1094,21 +1083,71 @@ export class TaskIndex
     FileObservation
   >();
   private readonly integrationAcquisitions_abyssPrivate = new WeakMap<FileObservation, object>();
-  private integrationStatusKey_abyssPrivate: string | undefined;
   private readonly integrationReadState_abyssPrivate = new TaskIntegrationReadState();
+  private integrationSemanticsKey_abyssPrivate: string | undefined;
+  private readonly integrationPaths_abyssPrivate: string[] = [];
+  private readonly integrationProjection_abyssPrivate = taskIntegrationProjection({
+    state: this.integrationReadState_abyssPrivate,
+    paths: () => this.integrationPaths_abyssPrivate,
+    roots: (path) => this.taskMap_abyssPrivate.get(path) ?? [],
+    sourceCurrent: (path) => this.integrationSourceCurrent_abyssPrivate(path),
+    permitted: (path) =>
+      this.integrationSourceCurrent_abyssPrivate(path) &&
+      this.excludeSource_abyssPrivate?.(
+        this.acceptedStatisticsSources_abyssPrivate.get(path)?.metadata ?? {
+          filePath: path,
+          tags: [],
+          frontmatter: {},
+        },
+      ) !== true,
+    catalog: () => this.statusCatalog_abyssPrivate,
+    status: (value) => {
+      const markdown =
+        value.target.type === 'task'
+          ? value.root.source.originalMarkdown
+          : (value.target.ref.originalBlock.split(/\r?\n/u)[0] ?? '');
+      const parsed = this.integrationCodec_abyssPrivate.parseLine(markdown, {
+        filePath: value.root.source.filePath,
+        line: 0,
+      });
+      return parsed?.planning.cancelled !== undefined && parsed.planning.cancelled.length > 0
+        ? 'cancelled'
+        : this.statusCatalog_abyssPrivate.statusForSymbol(value.node.statusSymbol);
+    },
+  });
+  private integrationCodec_abyssPrivate: TaskMarkdownCodec;
+  private integrationStatusKey_abyssPrivate: string | undefined;
 
   constructor(
     private readonly app_abyssPrivate: App,
     private readonly options_abyssPrivate: TaskIndexOptions,
   ) {
     this.statusCatalog_abyssPrivate = options_abyssPrivate.statusCatalog;
+    this.integrationCodec_abyssPrivate = new TaskMarkdownCodec(this.statusCatalog_abyssPrivate);
     this.locator_abyssPrivate = new TaskLocator(options_abyssPrivate.refAuthority);
     this.excludeSource_abyssPrivate = options_abyssPrivate.excludeSource;
     this.integrationStatusKey_abyssPrivate = JSON.stringify(this.statusCatalog_abyssPrivate.all());
   }
 
-  integrationReads(): TaskIntegrationReadStateApi {
-    return this.integrationReadState_abyssPrivate;
+  private clearIntegrationSources_abyssPrivate(): void {
+    this.acceptedStatisticsSources_abyssPrivate.clear();
+    this.integrationPaths_abyssPrivate.length = 0;
+  }
+
+  integrationReads(): TaskIntegrationReadApi {
+    return this.integrationProjection_abyssPrivate;
+  }
+
+  updateIntegrationSemantics(key: string): void {
+    if (key === this.integrationSemanticsKey_abyssPrivate) return;
+    this.integrationSemanticsKey_abyssPrivate = key;
+    this.integrationReadState_abyssPrivate.advanceSemantics();
+  }
+
+  private integrationSourceCurrent_abyssPrivate(path: string): boolean {
+    const accepted = this.acceptedStatisticsSources_abyssPrivate.get(path);
+    const file = accepted?.fileIdentity;
+    return file !== undefined && this.isFileAt_abyssPrivate(file, path);
   }
 
   setStatusCatalog(statusCatalog: StatusCatalog): void {
@@ -1116,6 +1155,7 @@ export class TaskIndex
     const changed = key !== this.integrationStatusKey_abyssPrivate;
     this.integrationStatusKey_abyssPrivate = key;
     this.statusCatalog_abyssPrivate = statusCatalog;
+    this.integrationCodec_abyssPrivate = new TaskMarkdownCodec(statusCatalog);
     if (changed) this.integrationReadState_abyssPrivate.advanceSemantics();
     this.invalidateDependencies_abyssPrivate();
     this.publishSearch_abyssPrivate({
@@ -2100,7 +2140,7 @@ export class TaskIndex
     if (this.destroyed_abyssPrivate) return;
     this.destroyed_abyssPrivate = true;
     this.statistics_abyssPrivate.dispose();
-    this.acceptedStatisticsSources_abyssPrivate.clear();
+    this.clearIntegrationSources_abyssPrivate();
     this.statisticsReadFailures_abyssPrivate.clear();
     this.taskMap_abyssPrivate.clear();
     this.disposeReadPreparation_abyssPrivate();
@@ -2286,16 +2326,13 @@ export class TaskIndex
     content: string,
     cache: CachedMetadata | null | undefined,
   ): PreparedObservation {
-    const authoredFrontmatter = frontmatterFromContent(content);
-    const frontmatter = authoredFrontmatter ?? {};
-    const frontmatterTags = getAllTags({ frontmatter }) ?? [];
     return {
-      cache: this.cacheWithFrontmatter_abyssPrivate(content, cache, authoredFrontmatter),
-      metadata: {
-        filePath,
-        tags: [...new Set([...frontmatterTags, ...extractMarkdownBodyTags(content)])],
-        frontmatter: { ...frontmatter },
-      },
+      cache: this.cacheWithFrontmatter_abyssPrivate(
+        content,
+        cache,
+        frontmatterFromContent(content),
+      ),
+      metadata: taskSourceMetadata(filePath, content),
     };
   }
 
@@ -2387,13 +2424,27 @@ export class TaskIndex
     const { cache, metadata } = prepared;
     const frontmatterSignature = JSON.stringify([cache.frontmatter]);
     const prior = this.acceptedStatisticsSources_abyssPrivate.get(path);
+    const currentFile = this.app_abyssPrivate.vault.getAbstractFileByPath(path);
+    const fileIdentity = currentFile instanceof TFile ? currentFile : undefined;
+    if (prior === undefined) {
+      this.integrationPaths_abyssPrivate.push(path);
+      this.integrationPaths_abyssPrivate.sort((left, right) => {
+        if (left === right) return 0;
+        return left < right ? -1 : 1;
+      });
+    }
     const changed =
       prior?.content !== content ||
       prior.frontmatterSignature !== frontmatterSignature ||
       !sameTaskSnapshots(prior.tasks, tasks);
     const integrationScopeRevision = this.integrationReadState_abyssPrivate.capture().scopeRevision;
-    if (changed || prior.integrationScopeRevision !== integrationScopeRevision) {
+    if (
+      changed ||
+      prior.fileIdentity !== fileIdentity ||
+      prior.integrationScopeRevision !== integrationScopeRevision
+    ) {
       this.acceptedStatisticsSources_abyssPrivate.set(path, {
+        fileIdentity,
         integrationScopeRevision,
         content,
         cache,
@@ -3035,6 +3086,8 @@ export class TaskIndex
 
   private removeFile_abyssPrivate(filePath: string): void {
     this.acceptedStatisticsSources_abyssPrivate.delete(filePath);
+    const integrationPath = this.integrationPaths_abyssPrivate.indexOf(filePath);
+    if (integrationPath >= 0) this.integrationPaths_abyssPrivate.splice(integrationPath, 1);
     this.statisticsReadFailures_abyssPrivate.delete(filePath);
     this.statistics_abyssPrivate.remove(filePath);
     this.taskMap_abyssPrivate.delete(filePath);

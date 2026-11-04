@@ -96,7 +96,23 @@ and drains before publishing readiness. Retired attempts cannot accept late read
 Repository commits and metadata observations retain synchronous acceptance. One large file can
 still exceed the slice budget; this is cooperative scheduling on the host thread.
 
-`TaskIndex.integrationReads()` exposes an internal lifecycle and coverage capability.
+`TaskIndex.integrationReads()` exposes internal lifecycle, coverage, and complete physical-node
+reads. [`taskIntegrationProjection`](src/tasks/infrastructure/taskIntegrationProjection.ts) walks
+canonical roots and descendants in code-unit path and absolute-line order. Filters apply to each
+node independently; page hydration is bounded to requested rows and one lookahead. Exact addresses
+retain whole-root revision and physical line offset, with parent lines calculated from full ancestry.
+ID resolution counts all matches while hydrating at most 100. Ordinary root-filtered queries retain
+their existing behavior. Read status uses the current catalog and authored cancellation precedence;
+planning uses canonical valid date, time, and duration projections.
+
+Accepted source records bind their existing evidence to the owned file object. Integration coverage
+and disclosure require that object to remain at its current path; legacy ghost records and vanished
+or replaced files grant no read authority. Disclosure also checks current source policy.
+[`taskSourceMetadata`](src/tasks/infrastructure/taskSourceMetadata.ts) supplies authored tags and
+frontmatter for that policy, separately from host-cache presentation enrichment. The projection
+retains sorted path keys and borrows canonical node records inward. These records include internal
+source and reference evidence; they are not external DTOs.
+
 [`TaskIntegrationReadState`](src/tasks/infrastructure/TaskIntegrationReadState.ts) tracks source
 acquisitions by file identity, initialization attempt, and current observation, including empty
 notes. Pending or failed sources make reads incomplete within the requested path or folder;
@@ -105,7 +121,7 @@ current acquisition. Verified repository installs supersede older acquisitions, 
 and rename relocation cannot clear unresolved health. Confirmed deletion and bootstrap pruning
 remove health even when a file had no tasks.
 
-Integration observations have their own revision, scan generation, scope revision, and status
+Integration observations have their own revision, scan generation, scope revision, and effective
 semantics revision, independent of Search and UI notifications. Policy refresh marks coverage
 unsettled before awaiting reads. Subscription registration returns the current state atomically;
 ordered notifications isolate subscriber failures and respect unsubscribe. Rename notifications

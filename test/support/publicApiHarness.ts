@@ -1,7 +1,7 @@
 import { TFile, type App } from 'obsidian';
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
 import { toStatusRules } from '../../src/settings/statusCatalogAdapter';
-import type { TaskIntegrationReadStateApi } from '../../src/tasks/application/TaskIntegrationReadApi';
+import type { TaskIntegrationReadApi } from '../../src/tasks/application/TaskIntegrationReadApi';
 import { StatusCatalog } from '../../src/tasks/domain/StatusCatalog';
 import { TaskIndex, type TaskIndexOptions } from '../../src/tasks/infrastructure/TaskIndex';
 import { TaskRefAuthority } from '../../src/tasks/infrastructure/TaskRefAuthority';
@@ -10,7 +10,7 @@ import { createAppWithFiles, flushMicrotasks, metadataChangedEmitter } from '../
 export interface PublicApiHarness {
   readonly app: App;
   readonly index: TaskIndex;
-  readonly reads: TaskIntegrationReadStateApi;
+  readonly reads: TaskIntegrationReadApi;
   readonly authority: TaskRefAuthority;
   read(path: string): Promise<string>;
   external(path: string, content: string): Promise<void>;
