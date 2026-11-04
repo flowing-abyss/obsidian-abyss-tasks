@@ -1507,6 +1507,7 @@ export class TaskBlockEditor {
       'add-subtask',
       'delete-subtask',
       'restore-subtask',
+      'restore-time-entry',
       'reorder-subtask',
     ].includes(edit.type);
     const context = editContext(

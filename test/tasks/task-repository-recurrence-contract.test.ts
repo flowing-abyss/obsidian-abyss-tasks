@@ -1194,6 +1194,55 @@ describe('Obsidian recurrence transaction boundary', () => {
 
 for (const adapter of ['in-memory', 'obsidian'] as const) {
   describe(`${adapter} occurrence producers`, () => {
+    it.each([false, true])(
+      'restores tracking Undo bytes but invalidates occurrences (nested=%s)',
+      async (nested) => {
+        const source =
+          '- [ ] Root\n  - 2026-08-01T10:00:00Z →\n  - [ ] Child\n    - 2026-08-01T11:00:00Z →\n    - [ ] Grandchild\n  - [ ] Sibling\n';
+        const h = await makeHarness(adapter, source);
+        try {
+          const reads = h.index.integrationReads();
+          reads.activateOccurrences();
+          const changes: TaskAcceptedOccurrenceChange[] = [];
+          reads.subscribe((event) => {
+            if (event.type === 'accepted') changes.push(event.change);
+          });
+          const root = expectDefined(h.index.list()[0]);
+          const node = nested ? expectDefined(root.subtasks[0]) : root;
+          const target: TaskNodeRef = nested
+            ? { type: 'subtask', ref: expectDefined(root.subtasks[0]).ref }
+            : { type: 'task', ref: root.ref };
+          const removed = await h.repository.edit({
+            type: 'delete-time-entry',
+            entry: timeEntryRef(target, expectDefined(node.timeEntries[0])),
+          });
+          expect(removed).toMatchObject({ type: 'committed', changed: true });
+          if (removed.type !== 'committed' || removed.outcome.type !== 'task')
+            throw new Error('Missing removal recovery');
+          const recovery = expectDefined(removed.outcome.timeEntryRemovalRecovery);
+          expect(changes.flatMap((change) => change.witnesses).map((value) => value.kind)).toEqual([
+            'continued',
+            'continued',
+            'continued',
+            'continued',
+          ]);
+          expect(changes.flatMap((change) => change.invalidated)).toEqual([]);
+          const page = reads.page({}, 20);
+          if (page.type !== 'ok') throw new Error('Missing current nodes');
+          const predecessors = page.value.nodes.map((node) => node.address);
+          changes.length = 0;
+          expect(
+            await h.repository.edit({ type: 'restore-time-entry', ...recovery }),
+          ).toMatchObject({ type: 'committed', changed: true });
+          expect(await h.read()).toBe(source);
+          expect(changes.flatMap((change) => change.witnesses)).toEqual([]);
+          expect(changes.flatMap((change) => change.invalidated)).toEqual(predecessors);
+        } finally {
+          h.index.destroy();
+        }
+      },
+    );
+
     it('leaves Delete content unchanged when authority staging rejects', async () => {
       const source = '- [ ] Root 🏁 delete\n  - [ ] Child\n';
       const h = await makeHarness(adapter, source);

@@ -1138,6 +1138,24 @@ it('inserts after complete child comments with reformatted quote continuations',
 });
 
 describe('editor occurrence line evidence', () => {
+  it('omits occurrence maps when restoring a removed tracking entry', () => {
+    const editor = new TaskBlockEditor();
+    const content = '- [ ] Root\n  - [ ] Child';
+    const block = expectDefined(editor.rootBlocks(content)[0]);
+    const result = editor.edit(
+      content,
+      block,
+      { relativeLine: 0, lineCount: 2, childRanges: [{ from: 1, to: 1 }] },
+      { type: 'restore-time-entry', markdown: '  - 2026-08-01T10:00:00Z →', relativeLine: 1 },
+      true,
+    );
+    expect(result).toMatchObject({
+      type: 'changed',
+      content: '- [ ] Root\n  - 2026-08-01T10:00:00Z →\n  - [ ] Child',
+    });
+    expect(result).not.toHaveProperty('nodeMap');
+  });
+
   it('maps the edited deep task line explicitly without comparing task text', () => {
     const editor = new TaskBlockEditor();
     const content = '- [ ] Same\n  - [ ] Same\n    - [ ] Same\n  - [ ] Same';
