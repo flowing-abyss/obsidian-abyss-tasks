@@ -505,6 +505,40 @@ describe('TaskCalendarPlugin saveSettings', () => {
     expect(refresh).toHaveBeenCalledOnce();
   });
 
+  it.each([true, false])(
+    'wires path-only integration coverage through storage policy, excluded at startup=%s',
+    async (excludedAtStartup) => {
+      const plugin = makePlugin({
+        taskArchivePath: excludedAtStartup ? 'hidden.md' : 'archive.md',
+      });
+      await plugin.app.vault.create('tasks.md', '- [ ] Allowed');
+      await plugin.app.vault.create('hidden.md', '- [ ] Secret');
+      const read = plugin.app.vault.cachedRead.bind(plugin.app.vault);
+      vi.spyOn(plugin.app.vault, 'cachedRead').mockImplementation(async (file) => {
+        if (file.path === 'hidden.md') throw new Error('unreadable');
+        return read(file);
+      });
+      try {
+        await plugin.onload();
+        const index = plugin.taskIndex as TaskIndex;
+        await index.initialize();
+        if (!excludedAtStartup) {
+          expect(index.integrationReads().coverage()).toMatchObject({ reason: 'incomplete' });
+          await plugin.saveTaskStorageSettings({
+            taskArchivePath: 'archive.md',
+            taskIgnoreQuery: '"hidden.md"',
+          });
+        }
+        expect(index.integrationReads().page({}, 10)).toMatchObject({
+          type: 'ok',
+          value: { nodes: [{ value: { node: { title: 'Allowed' } } }] },
+        });
+      } finally {
+        plugin.onunload();
+      }
+    },
+  );
+
   it('retains ordinary and Statistics policy when the real settings write rejects', async () => {
     const plugin = makePlugin({ taskArchivePath: 'old.md', taskIgnoreQuery: '#old-ignore' });
     try {

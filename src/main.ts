@@ -12,7 +12,7 @@ import {
   type ProjectPropertyCatalog,
 } from './projects/ObsidianProjectProperties';
 import { ProjectManager } from './projects/ProjectManager';
-import { compileQuery, type CompiledQuery } from './query/evaluateQuery';
+import { compileQuery, compileQueryPathProof, type CompiledQuery } from './query/evaluateQuery';
 import { DEFAULT_SETTINGS } from './settings/defaults';
 import {
   isViewStateWritesSuspended,
@@ -78,7 +78,11 @@ import { createMiniSearchTaskEngine } from './tasks/infrastructure/search/MiniSe
 import { createSearchWordSegmenter } from './tasks/infrastructure/search/searchWordSegmenter';
 import { TaskSearchRuntime } from './tasks/infrastructure/search/TaskSearchRuntime';
 import { TaskSearchService } from './tasks/infrastructure/search/TaskSearchService';
-import { TaskIndex, type TaskSourceMetadata } from './tasks/infrastructure/TaskIndex';
+import {
+  TaskIndex,
+  type TaskIndexOptions,
+  type TaskSourceMetadata,
+} from './tasks/infrastructure/TaskIndex';
 import { TaskRefAuthority } from './tasks/infrastructure/TaskRefAuthority';
 import { presentTaskCommandResult } from './ui/taskCommandResult';
 import { ReminderAudio } from './ui/timeTracking/ReminderAudio';
@@ -117,6 +121,7 @@ export default class TaskCalendarPlugin extends Plugin {
   private taskInputServices!: TaskInputServices;
   private statisticsArchivePattern!: NotePathPattern;
   private taskSourcePolicy!: CompiledQuery;
+  private taskSourcePathPolicy!: (path: string) => boolean;
   private taskIgnorePolicy!: CompiledQuery;
   private taskSearch!: TaskSearchService;
   get search(): TaskSearchApi {
@@ -188,7 +193,7 @@ export default class TaskCalendarPlugin extends Plugin {
     this.taskIndex = new TaskIndex(this.app, {
       statusCatalog: this.statusCatalog,
       refAuthority,
-      excludeSource: (source) => this.isTaskSourceExcluded(source),
+      ...this.taskSourceExclusion(),
       statisticsFileKind: (path, tags, frontmatter) =>
         this.taskStatisticsFileKind(path, tags, frontmatter),
       readYield: (signal) => scheduler.yield(signal),
@@ -493,7 +498,8 @@ export default class TaskCalendarPlugin extends Plugin {
     }
     this.effectiveTaskStorage = { ...validated.settings };
     this.compileTaskSourcePolicy();
-    await this.taskIndex.refreshSourceExclusion((source) => this.isTaskSourceExcluded(source));
+    const { excludeSource, excludePath } = this.taskSourceExclusion();
+    await this.taskIndex.refreshSourceExclusion(excludeSource, excludePath);
   }
 
   private initializeTaskStatisticsPolicy(): void {
@@ -508,8 +514,17 @@ export default class TaskCalendarPlugin extends Plugin {
     this.statisticsArchivePattern = compileNotePathPattern(
       this.effectiveTaskStorage.taskArchivePath,
     );
-    this.taskSourcePolicy = compileQuery(taskSourceIgnoreQuery(this.effectiveTaskStorage));
+    const query = taskSourceIgnoreQuery(this.effectiveTaskStorage);
+    this.taskSourcePolicy = compileQuery(query);
+    this.taskSourcePathPolicy = compileQueryPathProof(query);
     this.taskIgnorePolicy = compileQuery(this.effectiveTaskStorage.taskIgnoreQuery);
+  }
+
+  private taskSourceExclusion(): Pick<TaskIndexOptions, 'excludeSource' | 'excludePath'> {
+    return {
+      excludeSource: (source) => this.isTaskSourceExcluded(source),
+      excludePath: (path) => this.taskSourcePathPolicy(path),
+    };
   }
 
   private isTaskSourceExcluded(source: TaskSourceMetadata): boolean {

@@ -20,6 +20,7 @@ interface IntegrationProjectionOwner {
   activateOccurrences(): void;
   paths(): readonly string[];
   sourceCurrent(path: string): boolean;
+  excludedPath(path: string): boolean;
   roots(path: string): readonly TaskSnapshot[];
   permitted(path: string): boolean;
   catalog(): StatusCatalog;
@@ -87,7 +88,11 @@ function integrationCoverage(
   const health = owner.state.coverage(scope);
   if (health.type === 'error') return health;
   for (const path of owner.paths()) {
-    if (integrationScopeMatches(path, scope) && !owner.sourceCurrent(path))
+    if (
+      integrationScopeMatches(path, scope) &&
+      !owner.excludedPath(path) &&
+      !owner.sourceCurrent(path)
+    )
       return { type: 'error', reason: 'incomplete' };
   }
   return health;

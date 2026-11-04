@@ -121,6 +121,8 @@ export interface TaskIndexOptions {
   readonly statusCatalog: StatusCatalog;
   readonly refAuthority?: TaskRefAuthority;
   readonly excludeSource?: (source: TaskSourceMetadata) => boolean;
+  /** Current policy proof independent of authored metadata; never inferred from excludeSource. */
+  readonly excludePath?: (path: string) => boolean;
   readonly statisticsFileKind?: (
     path: string,
     tags: readonly string[],
@@ -1103,6 +1105,7 @@ export class TaskIndex
   private readonly blockEditor_abyssPrivate = new TaskBlockEditor();
   private readonly locator_abyssPrivate: TaskLocator;
   private excludeSource_abyssPrivate: TaskIndexOptions['excludeSource'];
+  private excludePath_abyssPrivate: TaskIndexOptions['excludePath'];
 
   private integrationAttempt_abyssPrivate: object = {};
   private readonly integrationCurrentObservations_abyssPrivate = new WeakMap<
@@ -1110,7 +1113,9 @@ export class TaskIndex
     FileObservation
   >();
   private readonly integrationAcquisitions_abyssPrivate = new WeakMap<FileObservation, object>();
-  private readonly integrationReadState_abyssPrivate = new TaskIntegrationReadState();
+  private readonly integrationReadState_abyssPrivate = new TaskIntegrationReadState(
+    (path) => this.excludePath_abyssPrivate?.(path) === true,
+  );
   private occurrencesActive_abyssPrivate = false;
   private acceptedInstallDepth_abyssPrivate = 0;
   private readonly acceptedPublications_abyssPrivate: Array<() => void> = [];
@@ -1125,7 +1130,9 @@ export class TaskIndex
     paths: () => this.integrationPaths_abyssPrivate,
     roots: (path) => this.taskMap_abyssPrivate.get(path) ?? [],
     sourceCurrent: (path) => this.integrationSourceCurrent_abyssPrivate(path),
+    excludedPath: (path) => this.excludePath_abyssPrivate?.(path) === true,
     permitted: (path) =>
+      this.excludePath_abyssPrivate?.(path) !== true &&
       this.integrationSourceCurrent_abyssPrivate(path) &&
       this.excludeSource_abyssPrivate?.(
         this.acceptedStatisticsSources_abyssPrivate.get(path)?.metadata ?? {
@@ -1160,6 +1167,7 @@ export class TaskIndex
     this.integrationCodec_abyssPrivate = new TaskMarkdownCodec(this.statusCatalog_abyssPrivate);
     this.locator_abyssPrivate = new TaskLocator(options_abyssPrivate.refAuthority);
     this.excludeSource_abyssPrivate = options_abyssPrivate.excludeSource;
+    this.excludePath_abyssPrivate = options_abyssPrivate.excludePath;
     this.integrationStatusKey_abyssPrivate = JSON.stringify(this.statusCatalog_abyssPrivate.all());
   }
 
@@ -1286,8 +1294,12 @@ export class TaskIndex
     return this.statistics_abyssPrivate.hold();
   }
 
-  async refreshSourceExclusion(excludeSource: TaskIndexOptions['excludeSource']): Promise<void> {
+  async refreshSourceExclusion(
+    excludeSource: TaskIndexOptions['excludeSource'],
+    excludePath?: TaskIndexOptions['excludePath'],
+  ): Promise<void> {
     this.excludeSource_abyssPrivate = excludeSource;
+    this.excludePath_abyssPrivate = excludePath;
     this.integrationReadState_abyssPrivate.advanceScope();
     this.statisticsPolicyRevision_abyssPrivate += 1;
     this.statistics_abyssPrivate.prune();

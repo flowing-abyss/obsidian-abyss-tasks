@@ -1,6 +1,11 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
-import { compileQuery, evaluateQuery, validateQuerySyntax } from '../src/query/evaluateQuery';
+import {
+  compileQuery,
+  compileQueryPathProof,
+  evaluateQuery,
+  validateQuerySyntax,
+} from '../src/query/evaluateQuery';
 import { localDate } from '../src/tasks';
 import { projectCalendarOccurrences } from '../src/views/calendarOccurrences';
 import { task, taskQueryApi } from './helpers';
@@ -228,4 +233,30 @@ it('reuses a compiled policy with current path, tags and frontmatter on each obs
   expect(policy('active.md', ['#private'], { state: 'hidden' })).toBe(true);
   expect(policy('active.md', ['#private'], { state: 'visible' })).toBe(false);
   expect(policy('active.md', [], { state: 'hidden' })).toBe(false);
+});
+
+describe('path-only query proof', () => {
+  it.each([
+    ['"hidden.md"', 'hidden.md', true],
+    ['"hidden.md"', 'tasks.md', false],
+    ['Archive/', 'archive/note.md', true],
+    ['"Archive/"', 'archive/note.md', true],
+    ['"archive/{{DATE:[FY]YYYY}}.md"', 'Archive/fy2026.md', true],
+    ['#private OR "hidden.md"', 'hidden.md', true],
+    ['#private AND "hidden.md"', 'hidden.md', false],
+    ['NOT #private', 'hidden.md', false],
+    ['private=true', 'hidden.md', false],
+    ['NOT private=true', 'hidden.md', false],
+    ['NOT ("tasks.md" OR #private)', 'hidden.md', false],
+    ['NOT ("tasks.md" AND #private)', 'hidden.md', true],
+    ['NOT ("tasks.md" AND private=true)', 'hidden.md', true],
+    ['NOT "tasks.md" AND ("hidden.md" OR #private)', 'hidden.md', true],
+    ['NOT "hidden.md"', 'hidden.md', false],
+    ['NOT "../private.md"', 'hidden.md', true],
+    ['NOT unknown', 'hidden.md', true],
+    ['#private OR (', 'hidden.md', false],
+    ['', 'hidden.md', false],
+  ])('proves %s at %s without authored metadata: %s', (query, path, expected) => {
+    expect(compileQueryPathProof(query)(path)).toBe(expected);
+  });
 });

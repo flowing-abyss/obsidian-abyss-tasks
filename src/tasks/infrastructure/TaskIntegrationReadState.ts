@@ -51,6 +51,10 @@ export class TaskIntegrationReadState implements TaskIntegrationReadStateApi {
   private readonly events_abyssPrivate: ReadPublication[] = [];
   private readonly listeners_abyssPrivate = new Set<ReadListener>();
 
+  constructor(
+    private readonly excludedPath_abyssPrivate: (path: string) => boolean = () => false,
+  ) {}
+
   capture(): TaskReadObservation {
     return this.observation_abyssPrivate;
   }
@@ -97,7 +101,8 @@ export class TaskIntegrationReadState implements TaskIntegrationReadStateApi {
       return { type: 'error', reason: 'incomplete' };
     for (const source of this.sources_abyssPrivate.values()) {
       if (!matchesScope(source.path, scope)) continue;
-      if (source.phase !== 'settled') return { type: 'error', reason: 'incomplete' };
+      if (source.phase !== 'settled' && !this.excludedPath_abyssPrivate(source.path))
+        return { type: 'error', reason: 'incomplete' };
     }
     return Object.freeze({ type: 'ok', value: true, observation });
   }

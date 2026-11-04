@@ -240,9 +240,14 @@ source and reference evidence; they are not external DTOs.
 
 [`TaskIntegrationReadState`](src/tasks/infrastructure/TaskIntegrationReadState.ts) tracks source
 acquisitions by file identity, initialization attempt, and current observation, including empty
-notes. Pending or failed sources make reads incomplete within the requested path or folder;
-ordinary UI queries keep their existing empty-source behavior. Accepted bytes settle only their
-current acquisition. Verified repository installs supersede older acquisitions, while previews
+notes. Pending or failed sources make reads incomplete within the requested path or folder unless
+current policy proves exclusion from the path alone. Main supplies that proof from the existing
+query parser and path matchers; unknown tags and frontmatter remain unknown through compound and
+negated queries. Shared coverage applies the proof to scans, authored-ID resolution, and strict
+status admission without hydrating excluded rows. Health remains tracked, so widening policy or
+renaming into an included path restores the incomplete result. Arbitrary source predicates without
+an explicit path proof stay conservative. Ordinary UI queries keep their existing empty-source
+behavior. Accepted bytes settle only their current acquisition. Verified repository installs supersede older acquisitions, while previews
 and rename relocation cannot clear unresolved health. Confirmed deletion and bootstrap pruning
 remove health even when a file had no tasks.
 

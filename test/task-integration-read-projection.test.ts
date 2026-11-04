@@ -228,7 +228,7 @@ describe('complete integration node reads', () => {
     expect(h.reads.statuses()).toMatchObject({ reason: 'disposed' });
   });
 
-  it('does not grant a ghost acceptance the identity of a file created during its proof callback', async () => {
+  it('does not grant a ghost acceptance ownership through an unrelated-file lookup alias', async () => {
     const h = await harness({ 'a.md': '- [ ] Existing' });
     const originalLookup = h.app.vault.getAbstractFileByPath.bind(h.app.vault);
     const replacement = file(h);
