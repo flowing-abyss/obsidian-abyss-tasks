@@ -378,3 +378,125 @@ it('retains a discarded short timer in strict details when the second timer has 
   expect(await h.read('a.md')).toContain('- [x] Root');
   expect(writes).toBe(3);
 });
+
+it.each(['x', '-'] as const)(
+  'retains strict timer progress when %s becomes unfinished after main acceptance',
+  async (symbol) => {
+    const catalog = new StatusCatalog([
+      { id: 'open', symbol: ' ', type: 'todo', defaultForType: true },
+      { id: 'done', symbol: 'x', type: 'done', defaultForType: true },
+      { id: 'cancelled', symbol: '-', type: 'cancelled', defaultForType: true },
+    ]);
+    const content = '- [ ] Root\n  - 2026-08-01T11:00:00Z →\n';
+    const h = await harness(content, { index: { statusCatalog: catalog } });
+    h.index.installCommittedContent('a.md', content);
+    let changed = false;
+    let mainRoot = request(h).root;
+    const subscription = h.reads.subscribe((event) => {
+      if (changed || event.type !== 'accepted') return;
+      changed = true;
+      mainRoot = expectDefined(event.change.after[0]);
+      catalog.replace(
+        catalog
+          .all()
+          .map((rule) =>
+            rule.symbol === symbol ? { ...rule, type: 'todo', defaultForType: false } : rule,
+          ),
+      );
+      h.index.setStatusCatalog(catalog);
+    });
+    const writes = vi.spyOn(h.app.vault, 'process');
+    try {
+      const outcome = await h.service.mutateStatus({
+        ...request(h),
+        intent: symbol === 'x' ? { type: 'complete' } : { type: 'set-status', symbol },
+      });
+      expect(outcome).toMatchObject({
+        type: 'result',
+        result: { type: 'ok', changed: true },
+        followUp: { root: mainRoot, closed: 0, unclosed: 1, state: 'partial' },
+        occurrences: { original: { state: 'retained' } },
+      });
+      expect(writes).toHaveBeenCalledTimes(1);
+      expect(await h.read('a.md')).toContain(`- [${symbol}] Root`);
+      expect(await h.read('a.md')).toContain('11:00:00Z →\n');
+    } finally {
+      subscription.unsubscribe();
+    }
+  },
+);
+
+it.each([false, true])(
+  'leaves strict unfinished transitions without timer work (catalog changes=%s)',
+  async (changeCatalog) => {
+    const catalog = new StatusCatalog([
+      { id: 'open', symbol: ' ', type: 'todo', defaultForType: true },
+      { id: 'done', symbol: 'x', type: 'done', defaultForType: true },
+    ]);
+    const content = '- [x] Root\n  - 2026-08-01T11:00:00Z →\n';
+    const h = await harness(content, { index: { statusCatalog: catalog } });
+    h.index.installCommittedContent('a.md', content);
+    let changed = false;
+    const subscription = h.reads.subscribe((event) => {
+      if (!changeCatalog || changed || event.type !== 'accepted') return;
+      changed = true;
+      catalog.replace([
+        { id: 'open', symbol: ' ', type: 'done', defaultForType: true },
+        { id: 'done', symbol: 'x', type: 'todo', defaultForType: true },
+      ]);
+      h.index.setStatusCatalog(catalog);
+    });
+    const writes = vi.spyOn(h.app.vault, 'process');
+    try {
+      expect(
+        await h.service.mutateStatus({
+          ...request(h),
+          intent: { type: 'set-status', symbol: ' ' },
+        }),
+      ).toMatchObject({
+        type: 'result',
+        result: { type: 'ok', changed: true },
+        followUp: { closed: 0, unclosed: 0, state: 'complete' },
+      });
+      expect(writes).toHaveBeenCalledTimes(1);
+      expect(await h.read('a.md')).toBe(content.replace('[x]', '[ ]'));
+    } finally {
+      subscription.unsubscribe();
+    }
+  },
+);
+
+it('preserves ordinary live-catalog eligibility after main acceptance', async () => {
+  const catalog = new StatusCatalog([
+    { id: 'open', symbol: ' ', type: 'todo', defaultForType: true },
+    { id: 'done', symbol: 'x', type: 'done', defaultForType: true },
+  ]);
+  const content = '- [ ] Root\n  - 2026-08-01T11:00:00Z →\n';
+  const h = await harness(content, { index: { statusCatalog: catalog } });
+  h.index.installCommittedContent('a.md', content);
+  h.reads.activateOccurrences();
+  let changed = false;
+  const subscription = h.reads.subscribe((event) => {
+    if (changed || event.type !== 'accepted') return;
+    changed = true;
+    catalog.replace([
+      { id: 'open', symbol: ' ', type: 'todo', defaultForType: true },
+      { id: 'done', symbol: 'x', type: 'todo', defaultForType: false },
+    ]);
+    h.index.setStatusCatalog(catalog);
+  });
+  const writes = vi.spyOn(h.app.vault, 'process');
+  try {
+    const outcome = await h.service.execute({
+      type: 'set-status',
+      target: request(h).target,
+      symbol: 'x',
+    });
+    expect(outcome).toMatchObject({ type: 'ok', changed: true });
+    expect(writes).toHaveBeenCalledTimes(1);
+    expect(await h.read('a.md')).toContain('- [x] Root');
+    expect(await h.read('a.md')).toContain('11:00:00Z →\n');
+  } finally {
+    subscription.unsubscribe();
+  }
+});

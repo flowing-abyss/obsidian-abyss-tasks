@@ -139,7 +139,10 @@ precondition. Ordinary commands retain their existing retries and result shapes.
 reserves the existing dependency mutation queue once, admits an exact read lease, and dispatches a
 guarded status edit without retry. Changed completion/cancellation operations use the existing
 tracking service once, with the same lease, captured settings, and clock through every timer write.
-Each edit requires the exact owning root and node; a failed lease prevents further writes and
+Strict follow-up also captures whether the prepared main command lands on done or cancelled, so a
+later catalog change cannot erase pending timers or turn an unfinished transition into a completion.
+Ordinary follow-up continues to check the live catalog. Each edit requires the exact owning root and
+node; a failed lease prevents further writes and
 cannot acquire a successor. Semantic completion uses the
 current status catalog and authored cancellation marker. The transient semantic transition intent
 reaches recurrence generation and its completion stamp handling. Already-complete and exact configured

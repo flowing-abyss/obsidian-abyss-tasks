@@ -836,6 +836,7 @@ export class TaskApplicationService
       const prepared = this.prepareStrictStatus_abyssPrivate(request, lease);
       if ('type' in prepared) return prepared;
       const strict: { rejection?: TaskStrictStatusFailure } = {};
+      const completionConfirmed = prepared.validateCurrent !== undefined;
       const result = await this.dispatchPrepared_abyssPrivate(prepared, undefined, strict);
       if (strict.rejection !== undefined) return { type: 'rejected', reason: strict.rejection };
       if (result.type === 'io-error' && result.contentState === 'unknown') lease.markMainUnknown();
@@ -843,6 +844,7 @@ export class TaskApplicationService
         lease,
         settings: prepared.settings,
         reading: prepared.clock,
+        completionConfirmed,
       });
       return {
         type: 'result',
@@ -863,7 +865,7 @@ export class TaskApplicationService
   private async closeStrictTracking_abyssPrivate(
     request: TaskStatusMutationRequest,
     result: TaskCommandResult,
-    context: StrictTrackingContext,
+    context: StrictTrackingContext & { readonly completionConfirmed: boolean },
   ): Promise<CompletionFollowUpDetails | undefined> {
     if (result.type !== 'ok' || !result.changed || !('atom' in context.reading)) return undefined;
     const outcome = result.outcome;
@@ -878,6 +880,7 @@ export class TaskApplicationService
       {
         edit: (command) => this.executeTrackingEdit_abyssPrivate(command, context),
         stopOnFailure: true,
+        completionConfirmed: context.completionConfirmed,
       },
     );
   }

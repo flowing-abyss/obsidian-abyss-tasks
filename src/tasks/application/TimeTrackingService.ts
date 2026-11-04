@@ -37,6 +37,8 @@ const NO_FOLLOW_UP: CompletionFollowUpDetails = {
 interface CompletionCloseOptions {
   readonly edit?: (command: TaskEditCommand) => Promise<TaskCommandResult>;
   readonly stopOnFailure?: true;
+  /** Eligibility captured by the strict main command before awaiting its write. */
+  readonly completionConfirmed?: boolean;
 }
 
 export interface TimeTrackingDependencies {
@@ -313,7 +315,9 @@ export class TimeTrackingService {
     options?: CompletionCloseOptions,
   ): Promise<RootClose | undefined> {
     const completed = nodeAtIndexPath(root, path);
-    if (completed === undefined || !this.isCompleted_abyssPrivate(completed.node)) return undefined;
+    if (completed === undefined) return undefined;
+    if (!(options?.completionConfirmed ?? this.isCompleted_abyssPrivate(completed.node)))
+      return undefined;
     return await this.closeInRoot_abyssPrivate(
       root,
       reading,
