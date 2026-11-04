@@ -255,6 +255,12 @@ export interface StatusCatalogV1 extends ObservationV1 {
  * Deduplication is scoped to providerEpoch/consumerId/requestId. Equal accepted
  * requests join/replay while retained; changed payloads are rejected while retained
  * and unexpired. Bounded storage cannot detect every reuse after record eviction.
+ * Replay precedes current readiness, revision, catalog and source-health admission
+ * checks. Accepted failures replay too; they never execute again. Signal and client
+ * identity are excluded from payload equality. Expiry is checked before replay using
+ * provider time that never decreases, so clock rollback cannot revive a request.
+ * Only expired settled records are reclaimed. Live capacity exhaustion rejects new
+ * work with unchanged effects and retry-same-request; accepted duplicates still join.
  * The original expired payload is rejected even after eviction. An unknown outcome,
  * provider reload, missing response or expiry needs fresh reads/reconciliation before
  * any new operation; that operation uses a new ID. There is no durable exactly-once

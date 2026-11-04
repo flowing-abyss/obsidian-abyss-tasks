@@ -48,6 +48,8 @@ const privateOwners = new Set([
   // Registry internals are accessed only through methods, never reflected, serialized, or spread.
   'TaskIdentityRegistry',
   'TaskCursorRegistry',
+  // Request records and admission tickets are never reflected, serialized, or spread from the owner.
+  'TaskRequestRegistry',
   'MiniSearchTaskEngine',
   'TaskApplicationService',
   'TimeTrackingService',

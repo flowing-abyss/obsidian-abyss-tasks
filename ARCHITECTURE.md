@@ -110,6 +110,15 @@ token. Current exclusion precedes incomplete health for target reads, while life
 precedence. The provider is composed in the real test harness; production lifecycle wiring and public
 mutations are not installed yet.
 
+[`TaskRequestRegistry`](src/integrations/TaskRequestRegistry.ts) owns bounded accepted promises and
+terminal mutation outcomes within one provider epoch and consumer namespace. It validates and
+normalizes payloads before replay, then acquires an admission ticket only for new requests. A final
+synchronous reservation check handles callback reentry and releases unused tickets. Accepted work
+keeps its authority pin through settlement and retains failures as well as successes; client disposal
+cannot erase it. A monotonic effective clock rejects expired payloads, and only expired settled
+records free capacity. Provider disposal rejects new work and drops terminal state while accepted
+operations finish. This registry is not yet connected to the read-only provider.
+
 ## Task source and command flow
 
 ### Identity and reconciliation

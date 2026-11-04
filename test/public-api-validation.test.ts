@@ -264,6 +264,21 @@ describe('public API validation', () => {
       expect(validateMutation('setStatus', { ...request, symbol }).ok).toBe(false);
   });
 
+  it('copies and freezes canonical mutation payloads without consulting a catalog', () => {
+    const mutable = { ...request, symbol: 'X' };
+    const normalized = validateMutation('setStatus', mutable);
+    mutable.symbol = '?';
+    mutable.target = 'other';
+    mutable.expiresAt = 456;
+    expect(normalized).toEqual({ ok: true, value: { ...request, symbol: 'x' } });
+    if (normalized.ok) expect(Object.isFrozen(normalized.value)).toBe(true);
+    expect(Object.isFrozen(mutable)).toBe(false);
+    expect(validateMutation('setStatus', { ...request, symbol: '?' })).toEqual({
+      ok: true,
+      value: { ...request, symbol: '?' },
+    });
+  });
+
   it('retains a live cancellation capability without freezing or cloning it', () => {
     let listener: (() => void) | undefined;
     let dispatched = false;
