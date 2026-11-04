@@ -195,6 +195,36 @@ function retryAgainst(
 }
 
 describe('prepareRetry', () => {
+  it('never replays a recurrence request with a strict guard even under an ordinary retry policy', () => {
+    const base = timingSnapshot('- [ ] Task 🔁 every day');
+    const target = { type: 'task' as const, ref: base.ref };
+    const mutation: PreparedMutation = {
+      ...prepared({ type: 'set-status', target, symbol: 'x' }, 'exact-target'),
+      base,
+      targetBase: target,
+      repositoryRequest: {
+        baseRoot: base,
+        baseTarget: target,
+        reconciliation: { observed: base },
+        baseOwnedDescendants: '',
+        strictStatus: { operation: {}, check: () => undefined, expectCommit: () => {} },
+        command: {
+          target,
+          doneSymbol: 'x',
+          todoSymbol: ' ',
+          today: localDate('2026-08-01'),
+          addCreatedDate: true,
+          addCompletionDate: true,
+          placement: 'before',
+          policy: { removeScheduledDate: false },
+        },
+      },
+    };
+    expect(
+      retryAgainst(mutation, base, { ...base, ref: { ...base.ref, revision: 'new' } }),
+    ).toEqual({ type: 'unsafe' });
+  });
+
   it('rebases anchored subtree restoration with the complete current parent and anchor references', () => {
     const previousBase = snapshot();
     const previous = {

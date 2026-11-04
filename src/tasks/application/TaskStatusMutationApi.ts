@@ -1,3 +1,4 @@
+import type { TaskCommandResult } from '../domain/commands';
 import type { TaskOccurrenceAddress } from '../domain/taskOccurrence';
 import type { TaskNodeRef, TaskSnapshot } from '../domain/types';
 import type { TaskReadObservation } from './TaskIntegrationReadApi';
@@ -56,4 +57,36 @@ export interface TaskStatusReadBasisApi {
   ):
     | { readonly type: 'ready'; readonly lease: TaskStatusReadLease }
     | { readonly type: 'rejected'; readonly reason: TaskStrictStatusFailure };
+}
+
+export type TaskStatusIntent =
+  | { readonly type: 'complete' }
+  | { readonly type: 'set-status'; readonly symbol: string }
+  | { readonly type: 'toggle-completion' };
+export interface TaskStatusMutationRequest {
+  readonly root: TaskSnapshot;
+  readonly target: TaskNodeRef;
+  readonly observation: TaskReadObservation;
+  readonly intent: TaskStatusIntent;
+}
+export interface CompletionFollowUpDetails {
+  readonly root?: TaskSnapshot;
+  readonly discardedShortEntry: boolean;
+  readonly closed: number;
+  readonly unclosed: number;
+  readonly state: 'complete' | 'partial' | 'unknown';
+}
+export type TaskStatusMutationOutcome =
+  | {
+      readonly type: 'result';
+      readonly result: TaskCommandResult;
+      readonly occurrences: TaskStatusOccurrenceContinuations;
+      readonly followUp?: CompletionFollowUpDetails;
+    }
+  | {
+      readonly type: 'rejected';
+      readonly reason: TaskStrictStatusFailure | 'missing-default-status' | 'unsupported-status';
+    };
+export interface TaskStatusMutationApi {
+  mutateStatus(request: TaskStatusMutationRequest): Promise<TaskStatusMutationOutcome>;
 }

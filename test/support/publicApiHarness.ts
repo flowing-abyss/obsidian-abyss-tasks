@@ -1,9 +1,15 @@
 import { TFile, type App } from 'obsidian';
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
 import { toStatusRules } from '../../src/settings/statusCatalogAdapter';
+import { TaskApplicationService } from '../../src/tasks/application/TaskApplicationService';
 import type { TaskIntegrationReadApi } from '../../src/tasks/application/TaskIntegrationReadApi';
 import type { TaskStatusReadBasisApi } from '../../src/tasks/application/TaskStatusMutationApi';
+import { clockFrom } from '../../src/tasks/domain/clock';
 import { StatusCatalog } from '../../src/tasks/domain/StatusCatalog';
+import { TaskBlockEditor } from '../../src/tasks/infrastructure/markdown/TaskBlockEditor';
+import { TaskLocator } from '../../src/tasks/infrastructure/markdown/TaskLocator';
+import { TaskMarkdownCodec } from '../../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
+import { ObsidianTaskRepository } from '../../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
 import { TaskIndex, type TaskIndexOptions } from '../../src/tasks/infrastructure/TaskIndex';
 import { TaskRefAuthority } from '../../src/tasks/infrastructure/TaskRefAuthority';
 import { createAppWithFiles, flushMicrotasks, metadataChangedEmitter } from '../helpers';
@@ -11,6 +17,8 @@ import { createAppWithFiles, flushMicrotasks, metadataChangedEmitter } from '../
 export interface PublicApiHarness {
   readonly app: App;
   readonly index: TaskIndex;
+  readonly service: TaskApplicationService;
+  clock(ms: number): void;
   readonly reads: TaskIntegrationReadApi;
   readonly statusReadBasis: TaskStatusReadBasisApi;
   readonly authority: TaskRefAuthority;
@@ -24,7 +32,8 @@ export async function publicApiHarness(
   options: { readonly initialize?: boolean; readonly index?: Partial<TaskIndexOptions> } = {},
 ): Promise<PublicApiHarness> {
   const app = await createAppWithFiles({ ...files });
-  const statusCatalog = new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses));
+  const statusCatalog =
+    options.index?.statusCatalog ?? new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses));
   const authority = new TaskRefAuthority('public-api-test');
   const fireChanged = metadataChangedEmitter(app);
   const index = new TaskIndex(app, { statusCatalog, refAuthority: authority, ...options.index });
@@ -34,8 +43,33 @@ export async function publicApiHarness(
     return target;
   };
   if (options.initialize !== false) await index.initialize();
+  let now = Date.UTC(2026, 7, 1, 12);
+  const repository = new ObsidianTaskRepository(app, {
+    codec: new TaskMarkdownCodec(statusCatalog),
+    editor: new TaskBlockEditor(),
+    locator: new TaskLocator(authority),
+    snapshotsFromContent: (path, content) => index.previewContent(path, content),
+    refAuthority: authority,
+    snapshotState: index,
+  });
+  const service = new TaskApplicationService(
+    index,
+    repository,
+    statusCatalog,
+    { read: () => clockFrom(now, 0).read() },
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    index.statusReadBasis(),
+  );
   return {
     app,
+    service,
+    clock: (ms) => {
+      now = ms;
+    },
     index,
     authority,
     reads: index.integrationReads(),

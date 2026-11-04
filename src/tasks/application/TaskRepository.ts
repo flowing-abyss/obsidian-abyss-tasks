@@ -54,6 +54,7 @@ export type TaskEditCommand =
       readonly symbol: string;
       readonly stamp?: LocalDate;
       readonly addCompletionDate?: boolean;
+      readonly semanticTransition?: boolean;
     }
   | {
       readonly type: 'add-comment';

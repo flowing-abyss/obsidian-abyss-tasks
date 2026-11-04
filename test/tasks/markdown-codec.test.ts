@@ -2377,6 +2377,18 @@ describe('ordinary tag validity at the codec write boundary', () => {
   });
 });
 
+describe('strict status semantic transition', () => {
+  it('clears cancellation on a semantic transition while ordinary same-symbol edits stay unchanged', () => {
+    const source = '- [x] Task ❌ 2026-07-01';
+    const edit = { type: 'set-status' as const, symbol: 'x', today: '2026-08-01' };
+    expect(codec.applyLineEdit(source, edit)).toEqual({ type: 'unchanged', content: source });
+    expect(codec.applyLineEdit(source, { ...edit, semanticTransition: true })).toEqual({
+      type: 'changed',
+      content: '- [x] Task ✅ 2026-08-01',
+    });
+  });
+});
+
 describe('authored task marker offsets', () => {
   it.each(['-', '*', '+', '1.', '1)'])(
     'partitions %s without changing authored bytes',

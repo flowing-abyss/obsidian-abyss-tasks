@@ -135,6 +135,13 @@ semantics. Repository guards run inside the existing synchronous writer before e
 strict requests cannot rebase or fall back to legacy arguments. Unsupported writer paths reject the
 precondition. Ordinary commands retain their existing retries and result shapes.
 
+`TaskApplicationService.mutateStatus` exposes a separate inward desired-state capability. It
+reserves the existing dependency mutation queue once, admits an exact read lease, and dispatches a
+guarded status edit without retry or the ordinary tracking follow-up. Semantic completion uses the
+current status catalog and authored cancellation marker. Already-complete and exact configured
+same-symbol requests still pass through the repository guard as no-ops. The service returns the
+lease's occurrence proofs before disposal; ordinary UI commands keep their existing behavior.
+
 [`TaskStatusReadLease`](src/tasks/infrastructure/TaskStatusReadLease.ts) advances only from a trusted
 operation-tagged acceptance of its exact pending full-source candidate. Repositories supply the
 original and newly created recurrence owner coordinates before staging. The lease validates those

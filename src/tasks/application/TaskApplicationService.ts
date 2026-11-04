@@ -28,6 +28,7 @@ import type {
   TaskCreateInboxPreview,
   TaskCreatePreview,
 } from '../domain/taskInputTypes';
+import { parseTaskLineSourceModel } from '../domain/taskLineSourceModel';
 import { reconcileTaskNodeRef, type TaskResolution } from '../domain/taskReconciliation';
 import {
   applyTaskCreationTagPolicy,
@@ -97,6 +98,14 @@ import {
   type RetryPolicy,
 } from './taskRetryPolicy';
 import type { TaskReadProjectionApi } from './TaskSearchApi';
+import type {
+  TaskStatusMutationApi,
+  TaskStatusMutationOutcome,
+  TaskStatusMutationRequest,
+  TaskStatusReadBasisApi,
+  TaskStatusReadLease,
+  TaskStrictStatusFailure,
+} from './TaskStatusMutationApi';
 import { TimeTrackingService } from './TimeTrackingService';
 
 function uniqueInOrder(values: readonly string[]): string[] {
@@ -524,13 +533,16 @@ type TaskApplicationServiceDependencies = [
   dependencies?: TaskDependencyService,
   diagnostics?: TaskDiagnosticSink,
   previewPort?: TaskCreatePreviewPort,
+  statusReadBasis?: TaskStatusReadBasisApi,
 ];
 
 type ArchiveDestinationResolution =
   | { readonly type: 'ready'; readonly destination: TaskDestination }
   | { readonly type: 'result'; readonly result: TaskCommandResult };
 
-export class TaskApplicationService implements TaskApplicationApi, TaskCaptureApplicationApi {
+export class TaskApplicationService
+  implements TaskApplicationApi, TaskCaptureApplicationApi, TaskStatusMutationApi
+{
   // Bridges the index-event lag only for exact refs returned by this service. The cache shares the
   // service lifetime and is bounded so revision churn cannot retain an unbounded snapshot history.
   private readonly recentOutcomes_abyssPrivate = new Map<string, RecentOutcome>();
@@ -541,6 +553,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     TaskReadProjectionApi;
   private readonly dependencies_abyssPrivate: TaskDependencyService;
   private readonly tracking_abyssPrivate: TimeTrackingService;
+  private readonly statusReadBasis_abyssPrivate: TaskStatusReadBasisApi | undefined;
   private readonly previewPort_abyssPrivate: TaskCreatePreviewPort | undefined;
   private readonly diagnostics_abyssPrivate: TaskDiagnosticSink;
   private readonly repository_abyssPrivate: TaskRepository;
@@ -560,7 +573,9 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
       dependencyService,
       diagnostics = () => {},
       previewPort,
+      statusReadBasis,
     ] = dependencies;
+    this.statusReadBasis_abyssPrivate = statusReadBasis;
     this.previewPort_abyssPrivate = previewPort;
     this.queries = queries;
     this.repository_abyssPrivate = repository;
@@ -657,6 +672,173 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
         error,
       );
       return { type: 'io-error', cause: 'repository-error', contentState: 'unknown' };
+    }
+  }
+
+  async mutateStatus(request: TaskStatusMutationRequest): Promise<TaskStatusMutationOutcome> {
+    const basis = this.statusReadBasis_abyssPrivate;
+    if (
+      basis === undefined ||
+      this.repository_abyssPrivate.supportsStrictStatusPreconditions !== true ||
+      this.repository_abyssPrivate.supportsRevisionPreconditions !== true
+    )
+      return { type: 'rejected', reason: 'unsupported-precondition' };
+    return await this.dependencies_abyssPrivate.serializeMutation(async () => {
+      const admission = basis.lease(request.root, request.target, request.observation);
+      if (admission.type === 'rejected') return admission;
+      try {
+        return await this.executeStrictStatus_abyssPrivate(request, admission.lease);
+      } finally {
+        admission.lease.dispose();
+      }
+    });
+  }
+
+  private strictRule_abyssPrivate(
+    request: TaskStatusMutationRequest,
+    semantic: TaskStatus,
+    currentRule: TaskStatusRule | undefined,
+  ): TaskStatusRule | undefined {
+    if (request.intent.type === 'set-status')
+      return this.statusCatalog_abyssPrivate.ruleForSymbol(request.intent.symbol);
+    if (request.intent.type === 'complete' && semantic === 'done') return currentRule;
+    const type =
+      request.intent.type === 'toggle-completion' && semantic === 'done' ? 'todo' : 'done';
+    return this.statusCatalog_abyssPrivate.defaultForType(type);
+  }
+
+  private strictSemantic_abyssPrivate(current: TaskSnapshot | SubtaskSnapshot): TaskStatus {
+    const source =
+      'source' in current
+        ? current.source.originalMarkdown
+        : (current.ref.originalBlock.split(/\r?\n/u)[0] ?? '');
+    const cancelled = parseTaskLineSourceModel(source)?.planning.cancelled;
+    return cancelled !== undefined && cancelled.length > 0
+      ? 'cancelled'
+      : this.statusCatalog_abyssPrivate.statusForSymbol(current.statusSymbol);
+  }
+
+  private strictSelection_abyssPrivate(request: TaskStatusMutationRequest):
+    | {
+        readonly type: 'selection';
+        readonly current: TaskSnapshot | SubtaskSnapshot;
+        readonly semantic: TaskStatus;
+        readonly currentRule: TaskStatusRule | undefined;
+        readonly rule: TaskStatusRule;
+        readonly noop: boolean;
+      }
+    | Extract<TaskStatusMutationOutcome, { readonly type: 'rejected' }> {
+    const current = snapshotForTarget(request.root, request.target);
+    if (current === undefined) return { type: 'rejected', reason: 'revision-changed' };
+    const semantic = this.strictSemantic_abyssPrivate(current);
+    const currentRule = this.statusCatalog_abyssPrivate.ruleForSymbol(current.statusSymbol);
+    const rule = this.strictRule_abyssPrivate(request, semantic, currentRule);
+    if (rule === undefined)
+      return {
+        type: 'rejected',
+        reason:
+          request.intent.type === 'set-status' ? 'unsupported-status' : 'missing-default-status',
+      };
+    const noop =
+      (request.intent.type === 'complete' && semantic === 'done') ||
+      (request.intent.type === 'set-status' && currentRule?.symbol === rule.symbol);
+    return { type: 'selection', current, semantic, currentRule, rule, noop };
+  }
+
+  private strictTransition_abyssPrivate(
+    operation: Exclude<PreparedTaskCommand, { readonly result: TaskCommandResult }>,
+    request: TaskStatusMutationRequest,
+    selection: {
+      readonly noop: boolean;
+      readonly semantic: TaskStatus;
+      readonly currentRule: TaskStatusRule | undefined;
+    },
+  ): Exclude<PreparedTaskCommand, { readonly result: TaskCommandResult }> {
+    if (
+      !selection.noop &&
+      request.intent.type !== 'set-status' &&
+      selection.semantic === 'cancelled' &&
+      selection.currentRule?.type === 'done' &&
+      'command' in operation &&
+      operation.command.type === 'set-status'
+    )
+      return { command: { ...operation.command, semanticTransition: true } };
+    return operation;
+  }
+
+  private prepareStrictStatus_abyssPrivate(
+    request: TaskStatusMutationRequest,
+    lease: TaskStatusReadLease,
+  ): PreparedMutation | TaskStatusMutationOutcome {
+    const selection = this.strictSelection_abyssPrivate(request);
+    if (selection.type === 'rejected') return selection;
+    const { current, semantic, rule, noop } = selection;
+    const settings = snapshotBehaviorSettings(this.behaviorSettings_abyssPrivate);
+    const reading = captureClock(this.clock_abyssPrivate);
+    const resolution: ProvenResolution = {
+      type: 'exact',
+      task: request.root,
+      basis: { observed: request.root },
+    };
+    const command: StatusCommand = {
+      type: 'set-status',
+      target: request.target,
+      symbol: rule.symbol,
+    };
+    let operation: PreparedTaskCommand = noop
+      ? { command: { ...command, symbol: current.statusSymbol } }
+      : this.prepareStatusCommand_abyssPrivate(command, settings, reading, {
+          resolution,
+          semanticOverride: semantic,
+        });
+    if ('result' in operation) {
+      if (operation.result.type === 'invalid')
+        return { type: 'rejected', reason: 'missing-default-status' };
+      return { type: 'result', result: operation.result, occurrences: lease.occurrences() };
+    }
+    operation = this.strictTransition_abyssPrivate(operation, request, selection);
+    const repoRequest = this.repositoryRequest_abyssPrivate(
+      operation,
+      request.root,
+      request.target,
+      resolution,
+    );
+    const validateCurrent = noop
+      ? undefined
+      : this.completionValidation_abyssPrivate(operation, request.target, request.root);
+    return {
+      repositoryRequest: {
+        ...repoRequest,
+        strictStatus: lease.guard(request.root, request.target),
+      },
+      base: request.root,
+      targetBase: request.target,
+      clock: reading,
+      settings,
+      retry: 'never',
+      ...(validateCurrent === undefined ? {} : { validateCurrent }),
+    };
+  }
+
+  private async executeStrictStatus_abyssPrivate(
+    request: TaskStatusMutationRequest,
+    lease: TaskStatusReadLease,
+  ): Promise<TaskStatusMutationOutcome> {
+    try {
+      const prepared = this.prepareStrictStatus_abyssPrivate(request, lease);
+      if ('type' in prepared) return prepared;
+      const strict: { rejection?: TaskStrictStatusFailure } = {};
+      const result = await this.dispatchPrepared_abyssPrivate(prepared, undefined, strict);
+      if (strict.rejection !== undefined) return { type: 'rejected', reason: strict.rejection };
+      if (result.type === 'io-error' && result.contentState === 'unknown') lease.markMainUnknown();
+      return { type: 'result', result, occurrences: lease.occurrences() };
+    } catch {
+      lease.markMainUnknown();
+      return {
+        type: 'result',
+        result: { type: 'io-error', cause: 'repository-error', contentState: 'unknown' },
+        occurrences: lease.occurrences(),
+      };
     }
   }
 
@@ -895,6 +1077,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
   private async dispatchPrepared_abyssPrivate(
     prepared: PreparedMutation,
     options?: Parameters<TaskApplicationApi['execute']>[1],
+    strict?: { rejection?: TaskStrictStatusFailure },
   ): Promise<TaskCommandResult> {
     const invalidCurrent = this.validateCompletion_abyssPrivate(
       prepared,
@@ -902,11 +1085,9 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     );
     if (invalidCurrent !== undefined) return invalidCurrent;
     this.notifyPreparedPatch_abyssPrivate(prepared.repositoryRequest, options);
-    return await this.finishPrepared_abyssPrivate(
-      prepared,
-      await this.dispatch_abyssPrivate(prepared.repositoryRequest),
-      options,
-    );
+    const result = await this.dispatch_abyssPrivate(prepared.repositoryRequest);
+    if (strict !== undefined && result.type === 'strict-rejected') strict.rejection = result.reason;
+    return await this.finishPrepared_abyssPrivate(prepared, result, options);
   }
 
   private completionValidation_abyssPrivate(
@@ -1259,7 +1440,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     resolution: ProvenResolution,
   ): PreparedTaskCommand {
     return isStatusCommand(command)
-      ? this.prepareStatusCommand_abyssPrivate(command, settings, reading, resolution)
+      ? this.prepareStatusCommand_abyssPrivate(command, settings, reading, { resolution })
       : this.prepareNonStatusCommand_abyssPrivate(command, settings, reading, resolution);
   }
 
@@ -1313,16 +1494,18 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     command: StatusCommand,
     settings: TaskBehaviorSettings,
     reading: ClockReading | { readonly localDate: ClockReading['localDate'] },
-    resolution: ProvenResolution,
+    context: { readonly resolution: ProvenResolution; readonly semanticOverride?: TaskStatus },
   ): PreparedTaskCommand {
+    const { resolution, semanticOverride } = context;
     const resolved = resolvedStatusSelection(resolution, command.target);
     if (resolved.current == null) return { result: { type: 'conflict', current: resolved.root } };
     const current = resolved.current;
     const currentRule = this.statusCatalog_abyssPrivate.ruleForSymbol(current.statusSymbol);
     const currentSemanticStatus =
-      currentRule == null
+      semanticOverride ??
+      (currentRule == null
         ? this.statusCatalog_abyssPrivate.statusForSymbol(current.statusSymbol)
-        : statusForRuleType(currentRule.type);
+        : statusForRuleType(currentRule.type));
     const rule = this.requestedStatusRule_abyssPrivate(command, currentSemanticStatus);
     if (rule === undefined) return invalidStatusResult();
     const recurrence = this.prepareRecurrenceCompletion_abyssPrivate({
