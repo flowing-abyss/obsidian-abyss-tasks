@@ -145,7 +145,7 @@ describe('performance build artifact provenance', () => {
       );
       await writeFile(
         path.join(root, 'tooling/performance/native-helpers.ts'),
-        'export function plugin(host) { return host.plugin; }',
+        'export function plugin(host) { return host.plugin; } export async function waitFor(read) { return read(); }',
       );
       await writeFile(
         path.join(root, 'tooling/performance/native.ts'),

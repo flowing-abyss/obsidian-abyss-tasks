@@ -1,5 +1,5 @@
 import type { ObservationV1, TaskDtoV1, TasksApiProviderV1, TasksApiV1 } from '../../api.d.ts';
-import { plugin } from './native-helpers.ts';
+import { plugin, waitFor } from './native-helpers.ts';
 import type { Measure } from './native-scenarios.ts';
 import type { Host, NativeOptions } from './native-types.ts';
 
@@ -159,25 +159,145 @@ async function status(
   return { writes: 1, requests: 2, replays: 1, hydrated: 1 };
 }
 
+type ProfileQueries = NonNullable<Host['plugins']['plugins'][string]>['queries'];
+type CreatedTask = Extract<ReturnType<ProfileQueries['resolve']>, { type: 'exact' }>['task'];
+interface CreationObservation {
+  readonly path: string;
+  readonly file: NonNullable<ReturnType<Host['vault']['getFileByPath']>>;
+  metadataStamp: number;
+  metadataContent: string | undefined;
+  acceptedStamp: number;
+  closed: boolean;
+}
+
+function observeCreation(
+  host: Host,
+  path: string,
+  signal: AbortSignal,
+): { readonly state: CreationObservation; readonly close: () => void } {
+  const file = host.vault.getFileByPath(path);
+  if (file === null) throw new Error('API status fixture inbox missing');
+  const state: CreationObservation = {
+    path,
+    file,
+    metadataStamp: 0,
+    metadataContent: undefined,
+    acceptedStamp: 0,
+    closed: false,
+  };
+  const cleanups: Array<() => void> = [];
+  const close = (): void => {
+    state.closed = true;
+    state.metadataContent = undefined;
+    for (const cleanup of cleanups.splice(0)) cleanup();
+  };
+  const accepted = (files: readonly string[]): void => {
+    if (files.includes(path)) state.acceptedStamp = state.metadataStamp;
+  };
+  try {
+    const ref = host.metadataCache.on('changed', (updated, content) => {
+      if (updated !== file || updated.path !== path) return;
+      state.metadataStamp += 1;
+      state.metadataContent = content;
+    });
+    cleanups.push(() => {
+      host.metadataCache.offref(ref);
+    });
+    const queries = plugin(host).queries;
+    cleanups.push(
+      queries.subscribe((event) => {
+        if (event.type === 'changed') accepted(event.files);
+      }),
+    );
+    cleanups.push(queries.subscribeReconciled(accepted));
+    signal.addEventListener('abort', close, { once: true });
+    cleanups.push(() => {
+      signal.removeEventListener('abort', close);
+    });
+    if (signal.aborted) throw new Error('API status preparation cancelled');
+    return { state, close };
+  } catch (error) {
+    close();
+    throw error;
+  }
+}
+
+function assertCreationFile(host: Host, state: CreationObservation): void {
+  if (state.closed) throw new Error('API status preparation cancelled');
+  if (state.file.path !== state.path || host.vault.getFileByPath(state.path) !== state.file)
+    throw new Error('API status fixture inbox identity changed');
+}
+
+function assertCreatedRoot(queries: ProfileQueries, created: CreatedTask): void {
+  const current = queries.resolve(created.ref);
+  if (
+    current.type !== 'exact' ||
+    current.task.ref.filePath !== created.ref.filePath ||
+    current.task.ref.line !== created.ref.line ||
+    current.task.ref.revision !== created.ref.revision ||
+    current.task.source.originalBlock !== created.source.originalBlock
+  )
+    throw new Error('API status sandbox canonical root changed');
+}
+
+async function settleCreation(
+  host: Host,
+  state: CreationObservation,
+  created: CreatedTask,
+): Promise<void> {
+  assertCreationFile(host, state);
+  const expected = await host.vault.read(state.file);
+  const block = created.source.originalBlock;
+  const physical = expected
+    .split('\n')
+    .slice(created.ref.line, created.ref.line + block.split('\n').length)
+    .join('\n');
+  if (physical !== block) throw new Error('API status sandbox source block changed');
+  await waitFor(
+    async () => {
+      assertCreationFile(host, state);
+      const stamp = state.metadataStamp;
+      if (stamp === 0 || state.acceptedStamp !== stamp || state.metadataContent !== expected)
+        return false;
+      const content = await host.vault.read(state.file);
+      const cached = await host.vault.cachedRead(state.file);
+      assertCreationFile(host, state);
+      if (content !== expected) throw new Error('API status sandbox contents changed');
+      if (cached !== expected || state.metadataStamp !== stamp) return false;
+      assertCreatedRoot(plugin(host).queries, created);
+      return true;
+    },
+    'API status sandbox metadata and canonical acceptance',
+    30000,
+  );
+}
+
 async function prepareStatus(
   host: Host,
   client: TasksApiV1,
   options: NativeOptions,
+  signal: AbortSignal,
 ): Promise<TaskDtoV1> {
-  const created = await plugin(host).tasks.execute({
-    type: 'create',
-    markdownBody: 'Profile API status sandbox',
-    destination: { type: 'configured-default' },
-  });
-  if (created.type !== 'ok' || created.outcome.type !== 'task')
-    throw new Error('API status sandbox creation did not return a task');
-  const ref = created.outcome.task.ref;
-  if (!ref.filePath.startsWith(`${options.fixtureFolder}/`))
-    throw new Error('API status sandbox escaped the fixture');
-  const resolved = await client.tasks.resolve({ source: { path: ref.filePath, line: ref.line } });
-  if (!resolved.ok || resolved.value.type !== 'found')
-    throw new Error('API status sandbox resolution failed');
-  return resolved.value.task;
+  const observation = observeCreation(host, `${options.fixtureFolder}/inbox.md`, signal);
+  try {
+    const created = await plugin(host).tasks.execute({
+      type: 'create',
+      markdownBody: 'Profile API status sandbox',
+      destination: { type: 'configured-default' },
+    });
+    if (created.type !== 'ok' || created.outcome.type !== 'task')
+      throw new Error('API status sandbox creation did not return a task');
+    const ref = created.outcome.task.ref;
+    if (ref.filePath !== observation.state.path)
+      throw new Error('API status sandbox escaped the fixture inbox');
+    await settleCreation(host, observation.state, created.outcome.task);
+    const resolved = await client.tasks.resolve({ source: { path: ref.filePath, line: ref.line } });
+    if (!resolved.ok || resolved.value.type !== 'found')
+      throw new Error('API status sandbox resolution failed');
+    return resolved.value.task;
+  } finally {
+    observation.close();
+  }
 }
 
 export async function apiScenarios(
@@ -185,6 +305,7 @@ export async function apiScenarios(
   options: NativeOptions,
   measure: Measure,
 ): Promise<void> {
+  const preparation = new AbortController();
   let client: TasksApiV1 | undefined;
   let unsubscribe: (() => void) | undefined;
   let latestRevision: number | undefined;
@@ -217,10 +338,11 @@ export async function apiScenarios(
         return status(active, sandbox);
       },
       async () => {
-        sandbox = await prepareStatus(host, active, options);
+        sandbox = await prepareStatus(host, active, options, preparation.signal);
       },
     );
   } finally {
+    preparation.abort();
     try {
       unsubscribe?.();
     } finally {

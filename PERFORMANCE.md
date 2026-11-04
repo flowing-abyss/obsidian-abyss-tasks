@@ -110,10 +110,22 @@ final revision equal to the latest subscription event. Standard completes 6,000 
 wide-tree completes 6,999 nodes in 70 pages. Facts contain only nodes, pages, and page size.
 
 Untimed `api.status` preparation creates one plain task through the existing configured-default
-command and resolves its accepted source coordinate. The timed span completes that task with a
-new request ID and five-minute deadline, repeats the identical request, then gets the original
-target. Completion requires a changed, committed receipt with complete snapshots, retained done
-original, no next occurrence or warnings, identical replay JSON, and a done final read at the
+command. Before dispatch it observes the exact fixture inbox file's metadata and ordinary queued
+changed/reconciled notifications. A bounded 30-second read-only wait requires matching post-create
+metadata, a later canonical notification associated with that metadata stamp, unchanged file identity,
+exact current/cached full bytes, and the returned created root's exact canonical source block/basis.
+It retains an echo already delivered during creation, and ignores early creation publication as
+proof of a later echo. This uses the index's deferred ordinary notifications; synchronous API events
+can precede the metadata observer when the index listener is registered first. Preparation releases
+all three observers on success, failure or cancellation, then returns the single freshly resolved
+target/revision. It performs no rewrite, extra task creation, status retry or arbitrary readiness sleep.
+This measures completion from a prepared source. It does not guarantee complete receipt snapshots
+for an arbitrary immediate consumer call; a later unrelated acquisition still fails the sample.
+
+The timed span completes that task with a new request ID and five-minute deadline, repeats the
+identical request, then gets the original target. Completion requires a changed, committed receipt
+with complete snapshots, retained done original, no next occurrence or warnings, identical replay
+JSON, and a done final read at the
 receipt's revision. Facts record one write, two requests, one replay, and one hydration. API mode
 stops there so this sandbox cannot alter ordinary population assumptions. Listeners and the client
 are released on success or failure; pending work drains before transaction restoration. Incomplete
