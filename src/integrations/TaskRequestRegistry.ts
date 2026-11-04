@@ -158,10 +158,11 @@ export class TaskRequestRegistry {
     current: RequestContext,
     options: RequestOptions,
   ): AdmissionCheck {
-    // A live signal getter can accept this request, dispose its client, or advance
-    // time. Recheck those facts after the callbacks, before abort or admission.
-    const signal = abortState(options);
+    // Observe getter side effects before lifecycle, then refresh a still-live
+    // signal: the lifecycle callback can itself abort before reservation.
+    const initialSignal = abortState(options);
     const closed = this.closed_abyssPrivate(options);
+    const signal = initialSignal === 'live' ? abortState(options) : initialSignal;
     const now = this.time_abyssPrivate();
     if (this.disposed_abyssPrivate || closed) return { result: failure('DISPOSED') };
     this.reclaim_abyssPrivate(now);

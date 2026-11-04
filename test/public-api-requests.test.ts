@@ -290,6 +290,66 @@ describe('bounded mutation requests', () => {
     expect(forbidden).not.toHaveBeenCalled();
   });
 
+  it.each([true, false])(
+    'observes abort=%s from the lifecycle callback after ticket acquisition',
+    async (abort) => {
+      const registry = new TaskRequestRegistry({ epoch: 'epoch', now: () => 1_000 });
+      const controller = new AbortController();
+      let acquired = false;
+      const accepted = ticket();
+      const result = await registry.execute('consumer', 'complete', input, {
+        signal: controller.signal,
+        isDisposed: () => {
+          if (acquired && abort) controller.abort();
+          return false;
+        },
+        admit: () => {
+          acquired = true;
+          return { ok: true, value: accepted };
+        },
+      });
+      expect(controller.signal.aborted).toBe(abort);
+      if (abort) expectFailure(result, 'ABORTED', 'retry-same-request');
+      else expect(result).toEqual(terminal);
+      expect(accepted.execute).toHaveBeenCalledTimes(abort ? 0 : 1);
+      expect(accepted.release).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('replays an accepted request before an abort raised by the final lifecycle callback', async () => {
+    const registry = new TaskRequestRegistry({ epoch: 'epoch', now: () => 1_000 });
+    const controller = new AbortController();
+    let acquired = false;
+    let inner: Promise<MutationResultV1> | undefined;
+    const committed: MutationResultV1 = freezeValue({
+      ok: true,
+      receipt: { ...terminal.receipt, outcome: 'changed', effects: 'committed' },
+    });
+    const accepted = ticket(async () => committed);
+    const duplicate = ticket();
+    const outer = registry.execute('consumer', 'complete', input, {
+      signal: controller.signal,
+      isDisposed: () => {
+        if (acquired) {
+          acquired = false;
+          inner = registry.execute('consumer', 'complete', input, options(accepted));
+          controller.abort();
+        }
+        return false;
+      },
+      admit: () => {
+        acquired = true;
+        return { ok: true, value: duplicate };
+      },
+    });
+    expect(await outer).toEqual(committed);
+    expect(await inner).toEqual(committed);
+    expect(accepted.execute).toHaveBeenCalledTimes(1);
+    expect(accepted.release).toHaveBeenCalledTimes(1);
+    expect(duplicate.execute).not.toHaveBeenCalled();
+    expect(duplicate.release).toHaveBeenCalledTimes(1);
+  });
+
   it.each([true, false, 'throw'] as const)(
     'joins accepted work created by a signal getter returning %s',
     async (aborted) => {
