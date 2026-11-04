@@ -331,3 +331,76 @@ it('does not revive an expired target when the injected wall clock moved backwar
   expect(ok(registry.project(row(h, 1), 1)).target).not.toBe(second.target);
   expect(ok(registry.lookup(first.target)).state).toBe('retained');
 });
+
+it('keeps observed pinned expiry after clock rollback and reclaims capacity on final release', async () => {
+  const { h, registry, clock } = await setup(undefined, 1);
+  const first = ok(registry.project(row(h), 1));
+  const release = ok(registry.pin(first.target));
+  clock(100);
+  expect(registry.lookup(first.target)).toMatchObject({
+    ok: false,
+    error: { code: 'EXPIRED_TARGET' },
+  });
+  clock(50);
+  expect
+    .soft(registry.lookup(first.target))
+    .toMatchObject({ ok: false, error: { code: 'EXPIRED_TARGET' } });
+  const freshPin = registry.pin(first.target);
+  expect.soft(freshPin).toMatchObject({ ok: false, error: { code: 'EXPIRED_TARGET' } });
+  // Release an erroneously admitted pin too, so the capacity assertion isolates expiry bookkeeping.
+  if (freshPin.ok) freshPin.value();
+  expect(registry.reserveNext()).toMatchObject({ ok: false, error: { code: 'RESOURCE_LIMIT' } });
+  release();
+  release();
+  const reclaimed = registry.reserveNext();
+  expect.soft(reclaimed.ok).toBe(true);
+  if (reclaimed.ok) registry.releaseReservation(reclaimed.value);
+  clock(200);
+  expect(registry.reserveNext().ok).toBe(true);
+});
+
+it('renews an observed-expired pinned identity only through proven projection after rollback', async () => {
+  const { h, registry, clock } = await setup(undefined, 1);
+  const first = ok(registry.project(row(h), 1));
+  const release = ok(registry.pin(first.target));
+  clock(100);
+  expect(registry.lookup(first.target)).toMatchObject({
+    ok: false,
+    error: { code: 'EXPIRED_TARGET' },
+  });
+  clock(50);
+  expect(ok(registry.project(row(h), 1))).toEqual(first);
+  expect(ok(registry.lookup(first.target)).state).toBe('retained');
+  const releaseFresh = ok(registry.pin(first.target));
+  release();
+  releaseFresh();
+  expect(registry.reserveNext()).toMatchObject({ ok: false, error: { code: 'RESOURCE_LIMIT' } });
+  clock(149);
+  expect(ok(registry.lookup(first.target)).state).toBe('retained');
+  clock(150);
+  expect(registry.reserveNext().ok).toBe(true);
+});
+
+it('preserves accepted next reservation and pinned witnesses while observed expiry remains closed', async () => {
+  const { h, registry, clock } = await setup('- [ ] Repeat 🔁 every day\n', 2);
+  const first = ok(registry.project(row(h), 1));
+  const release = ok(registry.pin(first.target));
+  const reservation = ok(registry.reserveNext());
+  clock(100);
+  expect(registry.lookup(first.target)).toMatchObject({
+    ok: false,
+    error: { code: 'EXPIRED_TARGET' },
+  });
+  const result = await complete(h);
+  if (result.type !== 'result' || result.occurrences.next === undefined)
+    throw new Error('Missing next');
+  clock(50);
+  const next = registry.claimNext(reservation, result.occurrences.next);
+  expect(next.target).not.toBe(first.target);
+  expect(ok(registry.lookup(next.target)).address).toEqual(result.occurrences.next.current);
+  expect
+    .soft(registry.lookup(first.target))
+    .toMatchObject({ ok: false, error: { code: 'EXPIRED_TARGET' } });
+  release();
+  expect(registry.reserveNext().ok).toBe(true);
+});

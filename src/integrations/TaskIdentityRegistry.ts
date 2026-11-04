@@ -19,6 +19,7 @@ interface IdentityRecord {
   revision: number;
   semantics: number | undefined;
   expires: number;
+  expired: boolean;
   pins: number;
 }
 type RootIndex<T> = Map<string, Map<string, Map<number, T>>>;
@@ -155,8 +156,7 @@ export class TaskIdentityRegistry {
     if (this.disposed_abyssPrivate) return failure('DISPOSED');
     this.retire_abyssPrivate();
     const record = this.records_abyssPrivate.get(target);
-    if (record === undefined || record.expires <= this.now_abyssPrivate())
-      return failure('EXPIRED_TARGET');
+    if (record === undefined || this.expired_abyssPrivate(record)) return failure('EXPIRED_TARGET');
     return freezeValue({
       ok: true,
       value: {
@@ -180,10 +180,7 @@ export class TaskIdentityRegistry {
         if (released) return;
         released = true;
         record.pins--;
-        if (
-          record.pins === 0 &&
-          (this.disposed_abyssPrivate || record.expires <= this.now_abyssPrivate())
-        )
+        if (record.pins === 0 && (this.disposed_abyssPrivate || this.expired_abyssPrivate(record)))
           this.remove_abyssPrivate(record);
       },
     });
@@ -362,6 +359,7 @@ export class TaskIdentityRegistry {
       revision: 1,
       semantics: undefined,
       expires: 0,
+      expired: false,
       pins: 0,
     };
     this.records_abyssPrivate.set(target, record);
@@ -369,7 +367,13 @@ export class TaskIdentityRegistry {
     this.renew_abyssPrivate(record);
     return record;
   }
+  private expired_abyssPrivate(record: IdentityRecord): boolean {
+    // Observed expiry is sticky while pins retain receipt authority; wall-clock rollback cannot renew it.
+    if (record.expires <= this.now_abyssPrivate()) record.expired = true;
+    return record.expired;
+  }
   private renew_abyssPrivate(record: IdentityRecord): void {
+    record.expired = false;
     record.expires = this.now_abyssPrivate() + this.ttl_abyssPrivate;
     this.idle_abyssPrivate.delete(record.target);
     if (this.idle_abyssPrivate.size === 0) this.expiryOrdered_abyssPrivate = true;
@@ -394,6 +398,7 @@ export class TaskIdentityRegistry {
         if (this.expiryOrdered_abyssPrivate) break;
         continue;
       }
+      record.expired = true;
       this.idle_abyssPrivate.delete(record.target);
       if (record.pins === 0) this.remove_abyssPrivate(record);
     }
