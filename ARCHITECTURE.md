@@ -143,8 +143,10 @@ occurrences in one root. Its inward listener runs before outward callbacks. It r
 acquisition tokens for its lifetime so delayed health notifications cannot invalidate already-proven
 reads. Source health retains only overlapping acquisition cohorts until acceptance or invalidation;
 a newer unconfirmed read grants no authority. An unrelated source failure stops later writes while
-retaining unaffected occurrence proofs. Later source invalidation clears those proofs without
-following another operation's successors. Disposal releases the subscription and pending bytes.
+retaining unaffected occurrence proofs. Pathless source bookkeeping events revalidate only the
+retained exact addresses against their accepted owner and current canonical roots. Later source
+invalidation clears those proofs without following another operation's successors. Disposal releases
+the subscription and pending bytes.
 
 Occurrence collection activates synchronously on the inward read port. It retains no second task
 index. Authority staging carries frozen continued, removed, and created witnesses with an opaque

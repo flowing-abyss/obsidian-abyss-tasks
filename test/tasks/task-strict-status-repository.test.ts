@@ -817,3 +817,85 @@ for (const adapter of ['obsidian', 'in-memory'] as const) {
     }
   });
 }
+
+function repositoryFile(h: Awaited<ReturnType<typeof makeRepositoryHarness>>, path: string): TFile {
+  const file = h.app.vault.getAbstractFileByPath(path);
+  if (!(file instanceof TFile)) throw new Error('Missing source fixture');
+  return file;
+}
+
+for (const mutation of ['delete', 'rename'] as const) {
+  for (const priorFailure of [false, true]) {
+    it.each(['unrelated', 'own'] as const)(
+      `${mutation} of %s source preserves only unaffected receipt proof (prior failure=${String(priorFailure)})`,
+      async (affected) => {
+        const h = await makeRepositoryHarness(
+          'obsidian',
+          '- [ ] Repeat 🔁 every day 📅 2026-08-01',
+          { extraFiles: { 'empty.md': '', 'failure.md': '' } },
+        );
+        const { root, target, lease } = leased(h);
+        try {
+          expect(
+            await h.repository.completeRecurrence({
+              ...revisionPrecondition(root, target),
+              strictStatus: lease.guard(root, target),
+              baseOwnedDescendants: '',
+              command: {
+                target,
+                doneSymbol: 'x',
+                today: localDate('2026-08-01'),
+                todoSymbol: ' ',
+                addCreatedDate: false,
+                addCompletionDate: false,
+                placement: 'after',
+                policy: { removeScheduledDate: false },
+              },
+            }),
+          ).toMatchObject({ type: 'committed' });
+          const proof = lease.occurrences();
+          expect(proof.original.current).toBeDefined();
+          expect(proof.next?.current).toBeDefined();
+          const current = expectDefined(h.index.list()[0]);
+          const currentTarget = { type: 'task' as const, ref: current.ref };
+          const own = repositoryFile(h, 'tasks.md');
+          const changed = repositoryFile(h, affected === 'own' ? 'tasks.md' : 'empty.md');
+          const failed = repositoryFile(h, 'failure.md');
+          const content = await h.read();
+          if (priorFailure) {
+            vi.spyOn(h.app.vault, 'read').mockRejectedValueOnce(new Error('unavailable source'));
+            h.fireChanged(failed, 'unconfirmed', {});
+            await flushMicrotasks();
+            expect(lease.failure()).toBe('incomplete-read');
+            expect(lease.occurrences()).toEqual(proof);
+          }
+          if (mutation === 'delete') await h.app.fileManager.trashFile(changed);
+          else await h.app.vault.rename(changed, 'renamed.md');
+          await flushMicrotasks();
+          expect(lease.failure()).toBe(priorFailure ? 'incomplete-read' : 'revision-changed');
+          const expected =
+            affected === 'unrelated'
+              ? proof
+              : {
+                  original: { origin: proof.original.origin, state: 'retained' },
+                  next: { origin: proof.next?.origin, state: 'retained' },
+                };
+          expect(lease.occurrences()).toEqual(expected);
+          expect(
+            lease.guard(current, currentTarget).check({
+              fileIdentity: own,
+              filePath: 'tasks.md',
+              content,
+              root: current,
+              target: currentTarget,
+            }),
+          ).toBeDefined();
+          expect(lease.occurrences()).toEqual(expected);
+        } finally {
+          lease.dispose();
+          h.index.destroy();
+        }
+      },
+    );
+  }
+}

@@ -22,6 +22,7 @@ import type { TaskIntegrationReadState } from './TaskIntegrationReadState';
 import { taskSourceMetadata, type TaskSourceMetadata } from './taskSourceMetadata';
 
 interface LeaseSource {
+  readonly tasks: readonly TaskSnapshot[];
   readonly fileIdentity: object | undefined;
   readonly revision: number;
   readonly content: string;
@@ -318,6 +319,20 @@ export class TaskStatusReadLeaseOwner implements TaskStatusReadLease {
     });
   }
 
+  private revalidateCurrents_abyssPrivate(): void {
+    // A pathless source bookkeeping event can follow accepted deletion/rename evidence.
+    // Check only retained exact addresses; this neither follows successors nor grants writes.
+    this.clearCurrents_abyssPrivate((role) => {
+      const current = role.current;
+      if (current === undefined) return false;
+      const source = this.ports_abyssPrivate.source(current.filePath);
+      return (
+        source?.fileIdentity !== this.fileIdentity_abyssPrivate ||
+        !source.tasks.some((root) => owns(root, current) && this.ports_abyssPrivate.current(root))
+      );
+    });
+  }
+
   private invalidateAfterFailure_abyssPrivate(event: TaskReadEvent): void {
     if (event.type === 'accepted') {
       this.invalidateChangedRoles_abyssPrivate(event.change);
@@ -329,7 +344,7 @@ export class TaskStatusReadLeaseOwner implements TaskStatusReadLease {
       this.clearCurrents_abyssPrivate((role) => role.origin.filePath === event.change.filePath);
       return;
     }
-    this.clearCurrents_abyssPrivate(() => true);
+    this.revalidateCurrents_abyssPrivate();
   }
 
   private receive_abyssPrivate(event: TaskReadEvent): void {
@@ -348,7 +363,8 @@ export class TaskStatusReadLeaseOwner implements TaskStatusReadLease {
       return;
     }
     if (event.type !== 'health') {
-      this.reject_abyssPrivate('revision-changed');
+      this.revalidateCurrents_abyssPrivate();
+      this.reject_abyssPrivate('revision-changed', []);
       return;
     }
     this.health_abyssPrivate(event.change);
