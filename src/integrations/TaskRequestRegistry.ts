@@ -46,6 +46,11 @@ interface RequestContext {
 type AdmissionCheck =
   | { readonly acceptedAt: number }
   | { readonly result: MutationResultV1 | Promise<MutationResultV1> };
+interface AbortObservation {
+  readonly read: () => void;
+  readonly state: () => 'aborted' | 'live' | 'failed';
+  readonly release: () => void;
+}
 const errors = {
   DISPOSED: ['lifecycle', 'Task requests are disposed.', 'none'],
   ABORTED: ['lifecycle', 'Task request was aborted before acceptance.', 'retry-same-request'],
@@ -76,12 +81,31 @@ function failure(code: keyof typeof errors): MutationResultV1 {
     recovery,
   });
 }
-function abortState(options: RequestOptions): 'aborted' | 'live' | 'failed' {
+function observeAbort(signal: ApiAbortSignalV1 | undefined): AbortObservation {
+  let state: 'aborted' | 'live' | 'failed' = 'live';
+  const aborted = (): void => {
+    state = 'aborted';
+  };
   try {
-    return options.signal?.aborted === true ? 'aborted' : 'live';
+    signal?.addEventListener('abort', aborted);
   } catch {
-    return 'failed';
+    state = 'failed';
   }
+  return {
+    read: () => {
+      if (state !== 'live') return;
+      try {
+        if (signal?.aborted === true) state = 'aborted';
+      } catch {
+        state = 'failed';
+      }
+    },
+    state: () => state,
+    // Remove even after registration throws: it may have installed the listener first.
+    release: () => {
+      signal?.removeEventListener('abort', aborted);
+    },
+  };
 }
 function context(
   consumerId: string,
@@ -143,11 +167,22 @@ export class TaskRequestRegistry {
       const replay = this.replay_abyssPrivate(current);
       if (replay !== undefined) return replay;
       if (current.request.expiresAt - now > 300_000) return failure('INVALID_ARGUMENT');
-      const checked = this.checkAdmission_abyssPrivate(current, options);
-      if ('result' in checked) return checked.result;
-      return this.admit_abyssPrivate(current, options);
+      return this.observeAdmission_abyssPrivate(current, options);
     } catch {
       return rejected(this.internal_abyssPrivate(method));
+    }
+  }
+  private observeAdmission_abyssPrivate(
+    current: RequestContext,
+    options: RequestOptions,
+  ): MutationResultV1 | Promise<MutationResultV1> {
+    const abort = observeAbort(options.signal);
+    try {
+      const checked = this.checkAdmission_abyssPrivate(current, options, abort);
+      if ('result' in checked) return checked.result;
+      return this.admit_abyssPrivate(current, options, abort);
+    } finally {
+      this.release_abyssPrivate(abort.release, current.method);
     }
   }
   private closed_abyssPrivate(options: RequestOptions): boolean {
@@ -157,18 +192,21 @@ export class TaskRequestRegistry {
   private checkAdmission_abyssPrivate(
     current: RequestContext,
     options: RequestOptions,
+    abort: AbortObservation,
   ): AdmissionCheck {
-    // Observe getter side effects before lifecycle, then refresh a still-live
-    // signal: the lifecycle callback can itself abort before reservation.
-    const initialSignal = abortState(options);
+    const initiallyClosed = this.closed_abyssPrivate(options);
+    abort.read();
+    // No untrusted signal getter runs after this client check. Abort notifications
+    // raised by the check update the operation-owned latch synchronously instead.
     const closed = this.closed_abyssPrivate(options);
-    const signal = initialSignal === 'live' ? abortState(options) : initialSignal;
     const now = this.time_abyssPrivate();
-    if (this.disposed_abyssPrivate || closed) return { result: failure('DISPOSED') };
+    if (this.disposed_abyssPrivate || initiallyClosed || closed)
+      return { result: failure('DISPOSED') };
     this.reclaim_abyssPrivate(now);
     if (current.request.expiresAt <= now) return { result: failure('REQUEST_EXPIRED') };
     const replay = this.replay_abyssPrivate(current);
     if (replay !== undefined) return { result: replay };
+    const signal = abort.state();
     if (signal === 'failed')
       return { result: rejected(this.internal_abyssPrivate(current.method)) };
     if (signal === 'aborted') return { result: failure('ABORTED') };
@@ -177,11 +215,12 @@ export class TaskRequestRegistry {
   private admit_abyssPrivate(
     current: RequestContext,
     options: RequestOptions,
+    abort: AbortObservation,
   ): Promise<MutationResultV1> | MutationResultV1 {
     const admission = options.admit();
     let ticket = admission.ok ? admission.value : undefined;
     try {
-      const checked = this.checkAdmission_abyssPrivate(current, options);
+      const checked = this.checkAdmission_abyssPrivate(current, options, abort);
       if ('result' in checked) return checked.result;
       if (!admission.ok) return rejected(admission.error);
       if (this.full_abyssPrivate(current.consumerId)) return failure('RESOURCE_LIMIT');

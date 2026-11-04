@@ -316,6 +316,208 @@ describe('bounded mutation requests', () => {
     },
   );
 
+  it.each([true, false])(
+    'checks client disposal=%s caused by a final signal observation',
+    async (dispose) => {
+      const registry = new TaskRequestRegistry({ epoch: 'epoch', now: () => 1_000 });
+      let acquired = false;
+      let finalLifecycleObserved = false;
+      let disposed = false;
+      const accepted = ticket();
+      const result = await registry.execute('consumer', 'complete', input, {
+        isDisposed: () => {
+          if (acquired) finalLifecycleObserved = true;
+          return disposed;
+        },
+        signal: {
+          get aborted() {
+            if (finalLifecycleObserved && dispose) disposed = true;
+            return false;
+          },
+          addEventListener() {},
+          removeEventListener() {},
+        },
+        admit: () => {
+          acquired = true;
+          return { ok: true, value: accepted };
+        },
+      });
+      expect(disposed).toBe(dispose);
+      if (dispose) expectFailure(result, 'DISPOSED');
+      else expect(result).toEqual(terminal);
+      expect(accepted.execute).toHaveBeenCalledTimes(dispose ? 0 : 1);
+      expect(accepted.release).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(['accepted', 'aborted', 'capacity', 'admission-throws'] as const)(
+    'releases the transient abort listener when %s',
+    async (outcome) => {
+      const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      const controller = new AbortController();
+      const add = vi.spyOn(controller.signal, 'addEventListener');
+      const remove = vi.spyOn(controller.signal, 'removeEventListener');
+      const registry = new TaskRequestRegistry({
+        epoch: 'epoch',
+        now: () => 1_000,
+        maxPendingPerConsumer: outcome === 'capacity' ? 0 : 32,
+      });
+      if (outcome === 'aborted') controller.abort();
+      const accepted = ticket();
+      const result = await registry.execute('consumer', 'complete', input, {
+        signal: controller.signal,
+        isDisposed: live,
+        admit: () => {
+          if (outcome === 'admission-throws') throw new Error('private admission');
+          return { ok: true, value: accepted };
+        },
+      });
+      expect(result.ok).toBe(outcome === 'accepted');
+      expect(add).toHaveBeenCalledTimes(1);
+      expect(remove).toHaveBeenCalledExactlyOnceWith('abort', add.mock.calls[0]?.[1]);
+      expect(accepted.execute).toHaveBeenCalledTimes(outcome === 'accepted' ? 1 : 0);
+      expect(log).toHaveBeenCalledTimes(outcome === 'admission-throws' ? 1 : 0);
+    },
+  );
+
+  it.each([false, true])(
+    'replays after abort-listener registration reentry, throwing=%s',
+    async (throws) => {
+      const registry = new TaskRequestRegistry({ epoch: 'epoch', now: () => 1_000 });
+      const listeners = new Set<() => void>();
+      const accepted = ticket();
+      let inner: Promise<MutationResultV1> | undefined;
+      const remove = vi.fn((_type: 'abort', listener: () => void) => {
+        listeners.delete(listener);
+      });
+      const result = await registry.execute('consumer', 'complete', input, {
+        isDisposed: live,
+        admit: forbidden,
+        signal: {
+          aborted: false,
+          addEventListener(_type, listener) {
+            listeners.add(listener);
+            inner = registry.execute('consumer', 'complete', input, options(accepted));
+            if (throws) throw new Error('private registration');
+          },
+          removeEventListener: remove,
+        },
+      });
+      expect(result).toEqual(terminal);
+      expect(await inner).toEqual(terminal);
+      expect(listeners.size).toBe(0);
+      expect(remove).toHaveBeenCalledTimes(1);
+      expect(accepted.execute).toHaveBeenCalledTimes(1);
+      expect(accepted.release).toHaveBeenCalledTimes(1);
+      expect(forbidden).not.toHaveBeenCalled();
+    },
+  );
+
+  it('captures an abort notification raised after the last signal getter', async () => {
+    const registry = new TaskRequestRegistry({ epoch: 'epoch', now: () => 1_000 });
+    const controller = new AbortController();
+    let acquired = false;
+    let observedAfterAcquisition = false;
+    const accepted = ticket();
+    const result = await registry.execute('consumer', 'complete', input, {
+      isDisposed: () => {
+        if (acquired && observedAfterAcquisition) controller.abort();
+        return false;
+      },
+      signal: {
+        get aborted() {
+          if (acquired) observedAfterAcquisition = true;
+          return controller.signal.aborted;
+        },
+        addEventListener: controller.signal.addEventListener.bind(controller.signal),
+        removeEventListener: controller.signal.removeEventListener.bind(controller.signal),
+      },
+      admit: () => {
+        acquired = true;
+        return { ok: true, value: accepted };
+      },
+    });
+    expectFailure(result, 'ABORTED', 'retry-same-request');
+    expect(controller.signal.aborted).toBe(true);
+    expect(accepted.execute).not.toHaveBeenCalled();
+    expect(accepted.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('removes its abort listener before accepted execution settles', async () => {
+    const registry = new TaskRequestRegistry({ epoch: 'epoch', now: () => 1_000 });
+    const controller = new AbortController();
+    const remove = vi.spyOn(controller.signal, 'removeEventListener');
+    const barrier = deferred();
+    const accepted = ticket(async () => {
+      await barrier.promise;
+      return terminal;
+    });
+    const pending = registry.execute('consumer', 'complete', input, {
+      ...options(accepted),
+      signal: controller.signal,
+    });
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(accepted.release).not.toHaveBeenCalled();
+    controller.abort();
+    barrier.resolve();
+    expect(await pending).toEqual(terminal);
+    expect(accepted.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('cleans up a partially registered abort listener before returning a setup error', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const registry = new TaskRequestRegistry({ epoch: 'epoch', now: () => 1_000 });
+    const listeners = new Set<() => void>();
+    const remove = vi.fn((_type: 'abort', listener: () => void) => {
+      listeners.delete(listener);
+    });
+    const result = await registry.execute('consumer', 'complete', input, {
+      isDisposed: live,
+      admit: forbidden,
+      signal: {
+        aborted: false,
+        addEventListener(_type, listener) {
+          listeners.add(listener);
+          throw new Error('private registration');
+        },
+        removeEventListener: remove,
+      },
+    });
+    expectFailure(result, 'INTERNAL_ERROR');
+    expect(listeners.size).toBe(0);
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(forbidden).not.toHaveBeenCalled();
+  });
+
+  it('preserves accepted effects if abort-listener removal throws', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const registry = new TaskRequestRegistry({ epoch: 'epoch', now: () => 1_000 });
+    const controller = new AbortController();
+    const originalRemove = controller.signal.removeEventListener.bind(controller.signal);
+    const remove = vi
+      .spyOn(controller.signal, 'removeEventListener')
+      .mockImplementation((...args) => {
+        originalRemove(...args);
+        throw new Error('private removal');
+      });
+    const committed: MutationResultV1 = freezeValue({
+      ok: true,
+      receipt: { ...terminal.receipt, outcome: 'changed', effects: 'committed' },
+    });
+    const accepted = ticket(async () => committed);
+    expect(
+      await registry.execute('consumer', 'complete', input, {
+        ...options(accepted),
+        signal: controller.signal,
+      }),
+    ).toEqual(committed);
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(accepted.release).toHaveBeenCalledTimes(1);
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(log.mock.calls)).not.toContain('private removal');
+  });
+
   it('replays an accepted request before an abort raised by the final lifecycle callback', async () => {
     const registry = new TaskRequestRegistry({ epoch: 'epoch', now: () => 1_000 });
     const controller = new AbortController();

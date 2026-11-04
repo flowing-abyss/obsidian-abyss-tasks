@@ -113,7 +113,10 @@ mutations are not installed yet.
 [`TaskRequestRegistry`](src/integrations/TaskRequestRegistry.ts) owns bounded accepted promises and
 terminal mutation outcomes within one provider epoch and consumer namespace. It validates and
 normalizes payloads before replay, then acquires an admission ticket only for new requests. A final
-synchronous reservation check handles callback reentry and releases unused tickets. Accepted work
+synchronous reservation check handles callback reentry and releases unused tickets. A transient
+abort listener covers admission: getter observations precede the final client check,
+and abort notifications update owned state without another signal getter after that check. The
+listener is removed when the synchronous reserve/reject decision finishes. Accepted work
 keeps its authority pin through settlement and retains failures as well as successes; client disposal
 cannot erase it. A monotonic effective clock rejects expired payloads, and only expired settled
 records free capacity. Provider disposal rejects new work and drops terminal state while accepted
