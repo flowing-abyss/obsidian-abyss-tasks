@@ -25,6 +25,7 @@ export class TagGroupAppearanceModal extends Modal {
     private readonly initialField_abyssPrivate: AppearanceField = 'name',
   ) {
     super(app);
+    this.modalEl.addClass('abyss-scroll-surface');
     this.name_abyssPrivate = current_abyssPrivate.name;
     this.color_abyssPrivate = current_abyssPrivate.color ?? null;
   }

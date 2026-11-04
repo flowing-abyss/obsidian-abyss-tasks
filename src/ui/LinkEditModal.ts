@@ -25,6 +25,7 @@ export class LinkEditModal extends Modal {
   ) {
     const [app, token, onSave, sourcePath = '', ownership = noInteractionOwnership] = args;
     super(app);
+    this.modalEl.addClass('abyss-scroll-surface');
     this.noteSuggest_abyssPrivate = undefined;
     this.displayInput_abyssPrivate = undefined;
     this.token_abyssPrivate = token;

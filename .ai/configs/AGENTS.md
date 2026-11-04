@@ -83,8 +83,9 @@ An Obsidian sidebar plugin that renders vault tasks in month, week, and list vie
 
 Use `superpowers:humanizer` for prose the user will read, including PR titles
 and descriptions, commit messages, and release notes. Preserve technical facts,
-verified checks, compatibility limits, and the requested scope. Do not edit
-README unless the task explicitly includes it.
+verified checks, compatibility limits, and the requested scope.
+
+README may be changed only when the user explicitly requests it or gives prior approval.
 
 ## Obsidian CLI
 

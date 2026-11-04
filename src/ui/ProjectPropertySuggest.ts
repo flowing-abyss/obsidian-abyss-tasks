@@ -201,6 +201,7 @@ export class ProjectPropertySuggest extends AbstractInputSuggest<ProjectProperty
   }
 
   renderSuggestion(suggestion: ProjectPropertySuggestion, element: HTMLElement): void {
+    element.closest('.suggestion-container')?.addClass('abyss-scroll-surface');
     const renderingContext = this.options_abyssPrivate.renderingContext;
     if (renderingContext === undefined) {
       renderProjectPropertySuggestion(suggestion, element);

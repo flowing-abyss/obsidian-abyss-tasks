@@ -60,6 +60,7 @@ export class NoteSuggest extends AbstractInputSuggest<TFile> {
   }
 
   renderSuggestion(file: TFile, el: HTMLElement): void {
+    el.closest('.suggestion-container')?.addClass('abyss-scroll-surface');
     // Show the extension for non-note files (e.g. 001.png) so attachments are recognizable.
     el.createDiv({
       cls: 'abyss-suggest-title',

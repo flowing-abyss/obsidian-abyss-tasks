@@ -282,6 +282,7 @@ class ScopePicker extends SuggestModal<ScopeOption> {
     private category_abyssPrivate: ScopeCategory = 'all',
   ) {
     super(app);
+    this.modalEl.addClass('abyss-scroll-surface');
     this.limit = 50;
     const categories = this.modalEl.createDiv({
       cls: 'abyss-statistics-scope-tabs',
@@ -365,6 +366,7 @@ class GroupPicker extends SuggestModal<FocusAction> {
     private readonly closed_abyssPrivate: () => void,
   ) {
     super(app);
+    this.modalEl.addClass('abyss-scroll-surface');
     this.limit = 50;
     this.setPlaceholder('Find group by name, path, tag or priority');
   }

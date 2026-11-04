@@ -73,6 +73,324 @@
   --abyss-preview-border-tag-strength: 55%;
 }
 
+/* Native scrollbars share theme tokens across owned panels, modals, and detached pickers.
+   Keep the two deliberately scrollbar-less toolbar strips out of this policy. */
+:is(
+  .abyss-panel-view,
+  .abyss-modal,
+  .abyss-scroll-surface,
+  .abyss-settings-tab,
+  .abyss-popover,
+  .abyss-popover-anchored,
+  .abyss-status-popover,
+  .abyss-time-tracking-popover,
+  .abyss-tag-picker-modal,
+  .abyss-task-move-recovery,
+  :is(
+      .abyss-panel-view,
+      .abyss-modal,
+      .abyss-scroll-surface,
+      .abyss-settings-tab,
+      .abyss-popover,
+      .abyss-popover-anchored,
+      .abyss-status-popover,
+      .abyss-time-tracking-popover,
+      .abyss-tag-picker-modal,
+      .abyss-task-move-recovery
+    )
+    *
+):where(:not(.abyss-project-status-filters, .abyss-project-timeline-scale-control)) {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb-bg) transparent;
+}
+
+@supports selector(::-webkit-scrollbar) {
+  /* Standard non-auto scrollbar properties override WebKit sizing in current Chromium.
+     https://developer.chrome.com/docs/css-ui/scrollbar-styling */
+  body
+    :is(
+      .abyss-panel-view,
+      .abyss-modal,
+      .abyss-scroll-surface,
+      .abyss-settings-tab,
+      .abyss-popover,
+      .abyss-popover-anchored,
+      .abyss-status-popover,
+      .abyss-time-tracking-popover,
+      .abyss-tag-picker-modal,
+      .abyss-task-move-recovery,
+      :is(
+          .abyss-panel-view,
+          .abyss-modal,
+          .abyss-scroll-surface,
+          .abyss-settings-tab,
+          .abyss-popover,
+          .abyss-popover-anchored,
+          .abyss-status-popover,
+          .abyss-time-tracking-popover,
+          .abyss-tag-picker-modal,
+          .abyss-task-move-recovery
+        )
+        *
+    ):where(:not(.abyss-project-status-filters, .abyss-project-timeline-scale-control)) {
+    scrollbar-width: auto;
+    scrollbar-color: auto;
+  }
+
+  body
+    :is(
+      .abyss-panel-view,
+      .abyss-modal,
+      .abyss-scroll-surface,
+      .abyss-settings-tab,
+      .abyss-popover,
+      .abyss-popover-anchored,
+      .abyss-status-popover,
+      .abyss-time-tracking-popover,
+      .abyss-tag-picker-modal,
+      .abyss-task-move-recovery,
+      :is(
+          .abyss-panel-view,
+          .abyss-modal,
+          .abyss-scroll-surface,
+          .abyss-settings-tab,
+          .abyss-popover,
+          .abyss-popover-anchored,
+          .abyss-status-popover,
+          .abyss-time-tracking-popover,
+          .abyss-tag-picker-modal,
+          .abyss-task-move-recovery
+        )
+        *
+    ):where(
+      :not(.abyss-project-status-filters, .abyss-project-timeline-scale-control)
+    )::-webkit-scrollbar {
+    width: var(--size-4-1);
+    height: var(--size-4-1);
+    background: transparent;
+  }
+
+  body
+    :is(
+      .abyss-panel-view,
+      .abyss-modal,
+      .abyss-scroll-surface,
+      .abyss-settings-tab,
+      .abyss-popover,
+      .abyss-popover-anchored,
+      .abyss-status-popover,
+      .abyss-time-tracking-popover,
+      .abyss-tag-picker-modal,
+      .abyss-task-move-recovery,
+      :is(
+          .abyss-panel-view,
+          .abyss-modal,
+          .abyss-scroll-surface,
+          .abyss-settings-tab,
+          .abyss-popover,
+          .abyss-popover-anchored,
+          .abyss-status-popover,
+          .abyss-time-tracking-popover,
+          .abyss-tag-picker-modal,
+          .abyss-task-move-recovery
+        )
+        *
+    ):where(
+      :not(.abyss-project-status-filters, .abyss-project-timeline-scale-control)
+    )::-webkit-scrollbar-track,
+  body
+    :is(
+      .abyss-panel-view,
+      .abyss-modal,
+      .abyss-scroll-surface,
+      .abyss-settings-tab,
+      .abyss-popover,
+      .abyss-popover-anchored,
+      .abyss-status-popover,
+      .abyss-time-tracking-popover,
+      .abyss-tag-picker-modal,
+      .abyss-task-move-recovery,
+      :is(
+          .abyss-panel-view,
+          .abyss-modal,
+          .abyss-scroll-surface,
+          .abyss-settings-tab,
+          .abyss-popover,
+          .abyss-popover-anchored,
+          .abyss-status-popover,
+          .abyss-time-tracking-popover,
+          .abyss-tag-picker-modal,
+          .abyss-task-move-recovery
+        )
+        *
+    ):where(
+      :not(.abyss-project-status-filters, .abyss-project-timeline-scale-control)
+    )::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  body
+    :is(
+      .abyss-panel-view,
+      .abyss-modal,
+      .abyss-scroll-surface,
+      .abyss-settings-tab,
+      .abyss-popover,
+      .abyss-popover-anchored,
+      .abyss-status-popover,
+      .abyss-time-tracking-popover,
+      .abyss-tag-picker-modal,
+      .abyss-task-move-recovery,
+      :is(
+          .abyss-panel-view,
+          .abyss-modal,
+          .abyss-scroll-surface,
+          .abyss-settings-tab,
+          .abyss-popover,
+          .abyss-popover-anchored,
+          .abyss-status-popover,
+          .abyss-time-tracking-popover,
+          .abyss-tag-picker-modal,
+          .abyss-task-move-recovery
+        )
+        *
+    ):where(
+      :not(.abyss-project-status-filters, .abyss-project-timeline-scale-control)
+    )::-webkit-scrollbar-thumb {
+    background-color: var(--scrollbar-thumb-bg);
+    border: 0;
+    border-radius: var(--radius-s);
+    min-height: var(--size-4-6);
+  }
+
+  body
+    :is(
+      .abyss-panel-view,
+      .abyss-modal,
+      .abyss-scroll-surface,
+      .abyss-settings-tab,
+      .abyss-popover,
+      .abyss-popover-anchored,
+      .abyss-status-popover,
+      .abyss-time-tracking-popover,
+      .abyss-tag-picker-modal,
+      .abyss-task-move-recovery,
+      :is(
+          .abyss-panel-view,
+          .abyss-modal,
+          .abyss-scroll-surface,
+          .abyss-settings-tab,
+          .abyss-popover,
+          .abyss-popover-anchored,
+          .abyss-status-popover,
+          .abyss-time-tracking-popover,
+          .abyss-tag-picker-modal,
+          .abyss-task-move-recovery
+        )
+        *
+    ):where(
+      :not(.abyss-project-status-filters, .abyss-project-timeline-scale-control)
+    )::-webkit-scrollbar-button {
+    display: none;
+  }
+
+  body
+    :is(
+      .abyss-panel-view,
+      .abyss-modal,
+      .abyss-scroll-surface,
+      .abyss-settings-tab,
+      .abyss-popover,
+      .abyss-popover-anchored,
+      .abyss-status-popover,
+      .abyss-time-tracking-popover,
+      .abyss-tag-picker-modal,
+      .abyss-task-move-recovery,
+      :is(
+          .abyss-panel-view,
+          .abyss-modal,
+          .abyss-scroll-surface,
+          .abyss-settings-tab,
+          .abyss-popover,
+          .abyss-popover-anchored,
+          .abyss-status-popover,
+          .abyss-time-tracking-popover,
+          .abyss-tag-picker-modal,
+          .abyss-task-move-recovery
+        )
+        *
+    ):where(
+      :not(.abyss-project-status-filters, .abyss-project-timeline-scale-control)
+    )::-webkit-scrollbar-thumb:hover,
+  body
+    :is(
+      .abyss-panel-view,
+      .abyss-modal,
+      .abyss-scroll-surface,
+      .abyss-settings-tab,
+      .abyss-popover,
+      .abyss-popover-anchored,
+      .abyss-status-popover,
+      .abyss-time-tracking-popover,
+      .abyss-tag-picker-modal,
+      .abyss-task-move-recovery,
+      :is(
+          .abyss-panel-view,
+          .abyss-modal,
+          .abyss-scroll-surface,
+          .abyss-settings-tab,
+          .abyss-popover,
+          .abyss-popover-anchored,
+          .abyss-status-popover,
+          .abyss-time-tracking-popover,
+          .abyss-tag-picker-modal,
+          .abyss-task-move-recovery
+        )
+        *
+    ):where(
+      :not(.abyss-project-status-filters, .abyss-project-timeline-scale-control)
+    )::-webkit-scrollbar-thumb:active {
+    background-color: var(--scrollbar-active-thumb-bg);
+  }
+
+  /* Change paint only: hiding a thumb never removes its gutter. Keyboard users can reveal
+     it without a mouse; touch and forced-color environments retain visible indicators. */
+  @media (hover: hover) and (pointer: fine) and (forced-colors: none) {
+    body
+      :is(
+        .abyss-panel-view,
+        .abyss-modal,
+        .abyss-scroll-surface,
+        .abyss-settings-tab,
+        .abyss-popover,
+        .abyss-popover-anchored,
+        .abyss-status-popover,
+        .abyss-time-tracking-popover,
+        .abyss-tag-picker-modal,
+        .abyss-task-move-recovery,
+        :is(
+            .abyss-panel-view,
+            .abyss-modal,
+            .abyss-scroll-surface,
+            .abyss-settings-tab,
+            .abyss-popover,
+            .abyss-popover-anchored,
+            .abyss-status-popover,
+            .abyss-time-tracking-popover,
+            .abyss-tag-picker-modal,
+            .abyss-task-move-recovery
+          )
+          *
+      ):where(:not(.abyss-project-status-filters, .abyss-project-timeline-scale-control)):not(
+        :hover,
+        :focus-visible,
+        :has(:focus-visible)
+      )::-webkit-scrollbar-thumb {
+      background-color: transparent;
+    }
+  }
+}
+
 /* ============================================================
    Abyss Tasks — Three-Panel Layout
    ============================================================ */
@@ -286,6 +604,7 @@
   background: var(--background-secondary);
   border-right: 1px solid var(--background-modifier-border);
   overflow: hidden auto;
+  scrollbar-gutter: stable both-edges;
 }
 
 /* Center panel */
@@ -374,7 +693,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   background: var(--background-secondary-alt, var(--background-primary));
   border-left: 1px solid var(--background-modifier-border);
   overflow-y: auto;
-  scrollbar-gutter: stable;
+  scrollbar-gutter: stable both-edges;
   display: flex;
   flex-direction: column;
   position: relative;
@@ -3720,7 +4039,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   gap: 0 var(--size-4-1);
   font-size: 17px;
   line-height: 1.4;
-  padding: var(--size-4-2) var(--size-4-4);
+  padding: var(--size-4-2) var(--size-4-3);
   position: relative;
   border-bottom: 1px solid var(--background-modifier-border);
 }
@@ -3852,7 +4171,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   display: flex;
   flex-wrap: wrap;
   gap: var(--size-2-3);
-  padding: var(--size-4-1) var(--size-4-4) var(--size-2-3);
+  padding: var(--size-4-1) var(--size-4-3) var(--size-2-3);
 }
 
 .abyss-chip {
@@ -4723,7 +5042,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
 /* Right panel body */
 .abyss-right-section {
-  padding: var(--size-4-3) var(--size-4-4) 0;
+  padding: var(--size-4-3) var(--size-4-3) 0;
   font-size: var(--font-ui-small);
 }
 
@@ -5769,12 +6088,13 @@ body.abyss-modal-open .popover.hover-popover {
 
 .abyss-modal {
   position: relative;
-  background: var(--background-primary);
+  background: var(--background-secondary-alt, var(--background-primary));
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-l, 8px);
   width: min(480px, calc(100vw - 32px));
   max-height: min(80vh, calc(100% - var(--size-4-8)));
   overflow-y: auto;
+  scrollbar-gutter: stable both-edges;
   box-shadow: var(--shadow-l, none);
 }
 
@@ -5793,6 +6113,9 @@ body.abyss-modal-open .popover.hover-popover {
 .abyss-modal-body {
   width: 100%;
   position: relative;
+  overflow: visible;
+  scrollbar-gutter: auto;
+  border-left: 0;
 }
 
 /* ── Drag-and-drop states ────────────────────────────────── */
@@ -7981,20 +8304,8 @@ button.abyss-project-table-status-pill {
 /* Height controls horizontal thickness; :horizontal is ignored during native size allocation.
    Auto scrollbar properties above allow this rule under themes using standard properties.
    https://webkit.org/blog/363/styling-scrollbars/ */
-.abyss-project-timeline-scroll::-webkit-scrollbar {
+body .abyss-project-timeline-scroll::-webkit-scrollbar {
   height: 0;
-}
-
-.abyss-project-timeline-scroll::-webkit-scrollbar-thumb {
-  border: var(--size-2-1) solid transparent;
-  border-radius: var(--radius-m);
-  background-color: var(--scrollbar-thumb-bg);
-  background-clip: padding-box;
-}
-
-.abyss-project-timeline-scroll::-webkit-scrollbar-thumb:hover,
-.abyss-project-timeline-scroll::-webkit-scrollbar-thumb:active {
-  background-color: var(--scrollbar-active-thumb-bg);
 }
 
 .abyss-project-timeline-axis,
