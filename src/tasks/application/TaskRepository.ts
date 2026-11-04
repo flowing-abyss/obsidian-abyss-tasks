@@ -168,6 +168,7 @@ export interface TaskDraft {
 export interface RecurrenceCompletionRequest {
   readonly target: TaskStatusTarget;
   readonly doneSymbol: string;
+  readonly semanticTransition?: boolean;
   readonly today: LocalDate;
   readonly todoSymbol: string;
   readonly addCreatedDate: boolean;

@@ -181,6 +181,78 @@ for (const adapter of ['obsidian', 'in-memory'] as const) {
       }
     });
 
+    it('keeps a guarded done recurrence unchanged without a semantic transition', async () => {
+      const source = '- [x] Repeat 🔁 every day 📅 2026-08-01 ❌ 2026-07-01';
+      const h = await makeRepositoryHarness(adapter, source);
+      const { root, target, lease } = leased(h);
+      try {
+        const result = await h.repository.completeRecurrence({
+          ...revisionPrecondition(root, target),
+          strictStatus: lease.guard(root, target),
+          baseOwnedDescendants: '',
+          command: {
+            target,
+            doneSymbol: 'x',
+            today: localDate('2026-08-01'),
+            todoSymbol: ' ',
+            addCreatedDate: false,
+            addCompletionDate: true,
+            placement: 'before',
+            policy: { removeScheduledDate: false },
+          },
+        });
+        expect(result).toMatchObject({ type: 'committed', changed: false });
+        expect(await h.read()).toBe(source);
+      } finally {
+        lease.dispose();
+        h.index.destroy();
+      }
+    });
+
+    it.each([false, true])('tracks semantic recurrence roles for nested=%s', async (nested) => {
+      const task = '- [x] Repeat 🔁 every day 📅 2026-08-01 ❌ 2026-07-01 ✅ 2026-07-02';
+      const h = await makeRepositoryHarness(adapter, nested ? `- [ ] Root\n  ${task}` : task);
+      const { root, target, lease } = leased(h, nested);
+      try {
+        const result = await h.repository.completeRecurrence({
+          ...revisionPrecondition(root, target),
+          strictStatus: lease.guard(root, target),
+          baseOwnedDescendants: '',
+          command: {
+            target,
+            doneSymbol: 'x',
+            semanticTransition: true,
+            today: localDate('2026-08-01'),
+            todoSymbol: ' ',
+            addCreatedDate: false,
+            addCompletionDate: true,
+            placement: 'before',
+            policy: { removeScheduledDate: false },
+          },
+        });
+        expect(result).toMatchObject({
+          type: 'committed',
+          changed: true,
+          outcome: { type: 'recurrence' },
+        });
+        expect(await h.read()).toContain('[x] Repeat 🔁 every day 📅 2026-08-01 ✅ 2026-08-01');
+        expect(lease.occurrences()).toMatchObject({
+          original: {
+            state: 'retained',
+            current: nested ? { rootLine: 0, nodeOffset: 2 } : { rootLine: 1, nodeOffset: 0 },
+          },
+          next: {
+            state: 'retained',
+            current: nested ? { rootLine: 0, nodeOffset: 1 } : { rootLine: 0, nodeOffset: 0 },
+          },
+        });
+        expect(lease.failure()).toBeUndefined();
+      } finally {
+        lease.dispose();
+        h.index.destroy();
+      }
+    });
+
     it('tracks unprojected recurrence roles independently through a discarded timer line', async () => {
       const source =
         '- [ ] Root\n  - [ ] Repeat 🔁 every day 📅 2026-08-01\n    - 2026-08-01T10:00:00Z →\n  - [ ] Sibling';

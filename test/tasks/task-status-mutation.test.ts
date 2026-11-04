@@ -180,6 +180,58 @@ describe('guarded desired-state status', () => {
     expect(await h.read('a.md')).toBe('- [x] open 🔁 tomorrow ✅ 2026-08-01\n');
   });
 
+  it.each(['complete', 'toggle-completion'] as const)(
+    '%s recurs a cancelled done checkbox',
+    async (type) => {
+      const h = await harness('- [x] repeat 🔁 every day 📅 2026-08-01 ❌ 2026-07-01\n');
+      expect(row(h).status).toBe('cancelled');
+      const result = await h.service.mutateStatus({ ...request(h), intent: { type } });
+      expect(result).toMatchObject({
+        type: 'result',
+        result: { type: 'ok', changed: true, outcome: { type: 'recurrence' } },
+        occurrences: {
+          original: { state: 'retained', current: { rootLine: 1 } },
+          next: { state: 'retained', current: { rootLine: 0 } },
+        },
+      });
+      expect(await h.read('a.md')).toBe(
+        '- [ ] repeat 🔁 every day ➕ 2026-08-01 📅 2026-08-02\n- [x] repeat 🔁 every day 📅 2026-08-01 ✅ 2026-08-01\n',
+      );
+    },
+  );
+
+  it('recurs when set-status changes a cancelled done checkbox to another done symbol', async () => {
+    const h = await harness('- [D] repeat 🔁 every day 📅 2026-08-01 ❌ 2026-07-01\n');
+    const result = await h.service.mutateStatus({
+      ...request(h),
+      intent: { type: 'set-status', symbol: 'x' },
+    });
+    expect(result).toMatchObject({
+      type: 'result',
+      result: { type: 'ok', changed: true, outcome: { type: 'recurrence' } },
+      occurrences: { original: { state: 'retained' }, next: { state: 'retained' } },
+    });
+    expect(await h.read('a.md')).toContain('- [x] repeat 🔁 every day 📅 2026-08-01 ✅ 2026-08-01');
+  });
+
+  it('retains both nested occurrence roles when a cancelled done checkbox recurs', async () => {
+    const h = await harness(
+      '- [ ] root\n  - [x] repeat 🔁 every day 📅 2026-08-01 ❌ 2026-07-01\n',
+    );
+    const result = await h.service.mutateStatus({ ...request(h, 1), intent: { type: 'complete' } });
+    expect(result).toMatchObject({
+      type: 'result',
+      result: { type: 'ok', changed: true, outcome: { type: 'recurrence' } },
+      occurrences: {
+        original: { state: 'retained', current: { rootLine: 0, nodeOffset: 2 } },
+        next: { state: 'retained', current: { rootLine: 0, nodeOffset: 1 } },
+      },
+    });
+    expect(await h.read('a.md')).toContain(
+      '  - [x] repeat 🔁 every day 📅 2026-08-01 ✅ 2026-08-01',
+    );
+  });
+
   it('returns explicit original and next occurrences from a recurring completion', async () => {
     const h = await harness('- [ ] repeat 🔁 every day 📅 2026-08-01\n');
     const result = await h.service.mutateStatus({ ...request(h), intent: { type: 'complete' } });

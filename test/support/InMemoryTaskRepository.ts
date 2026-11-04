@@ -949,7 +949,10 @@ export class InMemoryTaskRepository implements TaskRepository {
     const input = recurrenceRequestInput(requestOrCommand);
     const location = this.resolveRecurrenceLocation(input);
     if (location.type === 'result') return location.result;
-    if (this.options.codec.statusForSymbol(location.owner.statusSymbol) === 'done') {
+    if (
+      input.request.semanticTransition !== true &&
+      this.options.codec.statusForSymbol(location.owner.statusSymbol) === 'done'
+    ) {
       return {
         type: 'committed',
         outcome: { type: 'task', task: location.current },
@@ -1073,6 +1076,7 @@ export class InMemoryTaskRepository implements TaskRepository {
       nextPlanning: next.planning,
       dayDelta: next.dayDelta,
       doneSymbol: request.doneSymbol,
+      ...(request.semanticTransition === true && { semanticTransition: true }),
       todoSymbol: request.todoSymbol,
       today: request.today,
       addCreatedDate: request.addCreatedDate,

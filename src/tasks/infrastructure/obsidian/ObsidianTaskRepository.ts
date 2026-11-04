@@ -455,6 +455,7 @@ function prepareRecurrenceCandidate(input: RecurrenceCandidateInput): PreparedRe
     nextPlanning: next.planning,
     dayDelta: next.dayDelta,
     doneSymbol: request.doneSymbol,
+    semanticTransition: request.semanticTransition === true,
     todoSymbol: request.todoSymbol,
     today: request.today,
     addCreatedDate: request.addCreatedDate,
@@ -1704,7 +1705,10 @@ export class ObsidianTaskRepository implements TaskRepository {
       input.rootRef.filePath,
       content,
     );
-    if (this.codec_abyssPrivate.statusForSymbol(location.owner.statusSymbol) === 'done') {
+    if (
+      input.request.semanticTransition !== true &&
+      this.codec_abyssPrivate.statusForSymbol(location.owner.statusSymbol) === 'done'
+    ) {
       transaction.result = this.unchangedMove_abyssPrivate(location.current);
       return content;
     }

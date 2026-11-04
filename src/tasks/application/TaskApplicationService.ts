@@ -755,13 +755,14 @@ export class TaskApplicationService
     },
   ): Exclude<PreparedTaskCommand, { readonly result: TaskCommandResult }> {
     if (
-      !selection.noop &&
-      request.intent.type !== 'set-status' &&
-      selection.semantic === 'cancelled' &&
-      selection.currentRule?.type === 'done' &&
-      'command' in operation &&
-      operation.command.type === 'set-status'
+      selection.noop ||
+      selection.semantic !== 'cancelled' ||
+      selection.currentRule?.type !== 'done'
     )
+      return operation;
+    if ('recurrence' in operation)
+      return { recurrence: { ...operation.recurrence, semanticTransition: true } };
+    if (request.intent.type !== 'set-status' && operation.command.type === 'set-status')
       return { command: { ...operation.command, semanticTransition: true } };
     return operation;
   }

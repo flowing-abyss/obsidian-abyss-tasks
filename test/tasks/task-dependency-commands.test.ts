@@ -62,6 +62,8 @@ async function harness(
     undefined,
     dependencyService,
     diagnostics,
+    undefined,
+    index.statusReadBasis(),
   );
   const node = (title: string): TaskNodeSnapshot =>
     expectDefined(index.listNodes().find((candidate) => candidate.node.title === title));
@@ -565,6 +567,57 @@ describe('dependency-only structure proof regressions', () => {
 });
 
 describe('external review regressions', () => {
+  it('admits strict status after the shared dependency queue publishes and does not reacquire it', async () => {
+    const h = await harness({
+      'a.md': '- [ ] Blocker 🆔 id\n',
+      'b.md': '- [ ] Dependent\n',
+      'c.md': '- [ ] Target\n',
+    });
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    const original = h.repository.edit.bind(h.repository);
+    const edit = vi.spyOn(h.repository, 'edit').mockImplementation(async (request) => {
+      const command = 'command' in request ? request.command : request;
+      if (command.type === 'set-depends-on') {
+        entered.resolve();
+        await release.promise;
+      }
+      return await original(request);
+    });
+    const changing = h.application.execute({
+      type: 'add-dependency',
+      blocker: h.node('Blocker').target,
+      dependent: h.node('Dependent').target,
+    });
+    await entered.promise;
+    const target = h.node('Target');
+    const observation = h.index.integrationReads().capture();
+    const strict = h.application.mutateStatus({
+      root: target.root,
+      target: target.target,
+      observation,
+      intent: { type: 'complete' },
+    });
+    try {
+      expect(edit).toHaveBeenCalledTimes(1);
+    } finally {
+      release.resolve();
+    }
+    expect((await changing).type).toBe('ok');
+    expect(await strict).toEqual({ type: 'rejected', reason: 'revision-changed' });
+    const refreshed = h.node('Target');
+    expect(
+      await h.application.mutateStatus({
+        root: refreshed.root,
+        target: refreshed.target,
+        observation: h.index.integrationReads().capture(),
+        intent: { type: 'complete' },
+      }),
+    ).toMatchObject({ type: 'result', result: { type: 'ok', changed: true } });
+    expect(edit).toHaveBeenCalledTimes(2);
+    expect(await h.read('c.md')).toContain('- [x] Target');
+  });
+
   it('serializes dependency changes across services sharing one repository', async () => {
     const h = await harness({ 'a.md': '- [ ] A 🆔 a\n', 'b.md': '- [ ] B 🆔 b\n' });
     const other = new TaskDependencyService(

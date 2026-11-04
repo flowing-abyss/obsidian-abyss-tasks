@@ -38,6 +38,32 @@ function rootTarget(harness: Harness, source: string, index = 0): TaskNodeRef {
 
 for (const adapter of ['in-memory', 'obsidian'] as const) {
   describe(`${adapter} recurrence repository contract`, () => {
+    it('honors an explicit semantic transition while ordinary done recurrence remains unchanged', async () => {
+      const source = '- [x] Repeat 🔁 every day 📅 2026-08-01 ❌ 2026-07-01\n';
+      const ordinary = await makeHarness(adapter, source);
+      const h = await makeHarness(adapter, source);
+      try {
+        await expect(
+          ordinary.repository.completeRecurrence(request(rootTarget(ordinary, source))),
+        ).resolves.toMatchObject({ type: 'committed', changed: false });
+        expect(await ordinary.read()).toBe(source);
+        await expect(
+          h.repository.completeRecurrence(
+            request(rootTarget(h, source), { semanticTransition: true }),
+          ),
+        ).resolves.toMatchObject({
+          type: 'committed',
+          changed: true,
+          outcome: { type: 'recurrence' },
+        });
+        expect(await h.read()).toBe(
+          '- [ ] Repeat 🔁 every day ➕ 2026-08-01 📅 2026-08-02\n- [x] Repeat 🔁 every day 📅 2026-08-01 ✅ 2026-08-01\n',
+        );
+      } finally {
+        ordinary.index.destroy();
+        h.index.destroy();
+      }
+    });
     it('promotes a subtree with an owned multiline comment and preserves source bytes', async () => {
       const source =
         '- [ ] Root\r\n  - [ ] Move\r\n    - 2026-10-06: first\r\n      \\- [ ] literal\r\n      tail  ';

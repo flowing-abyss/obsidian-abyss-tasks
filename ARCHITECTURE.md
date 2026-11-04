@@ -138,7 +138,8 @@ precondition. Ordinary commands retain their existing retries and result shapes.
 `TaskApplicationService.mutateStatus` exposes a separate inward desired-state capability. It
 reserves the existing dependency mutation queue once, admits an exact read lease, and dispatches a
 guarded status edit without retry or the ordinary tracking follow-up. Semantic completion uses the
-current status catalog and authored cancellation marker. Already-complete and exact configured
+current status catalog and authored cancellation marker. The transient semantic transition intent
+reaches recurrence generation and its completion stamp handling. Already-complete and exact configured
 same-symbol requests still pass through the repository guard as no-ops. The service returns the
 lease's occurrence proofs before disposal; ordinary UI commands keep their existing behavior.
 
