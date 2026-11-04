@@ -44,6 +44,7 @@ import {
   taskNodeRootRef as rootRefOf,
   taskMutationNodeRef,
 } from '../../domain/taskCommandTargets';
+import type { TaskOccurrenceWitness } from '../../domain/taskOccurrence';
 import type { CompletionTrackingWitness } from '../../domain/taskReconciliation';
 import type {
   CommentRef,
@@ -80,6 +81,7 @@ import type {
   DescriptionLinkTarget,
   TaskBlockEdit,
   TaskBlockTarget,
+  TaskNodeLineMapping,
   TaskRootBlock,
 } from '../markdown/TaskBlockEditor';
 import { type TaskBlockEditor } from '../markdown/TaskBlockEditor';
@@ -97,6 +99,11 @@ import {
   taskEditBatchIssues,
   type PreparedTaskEditBatch,
 } from '../TaskEditBatch';
+import {
+  editedOccurrenceWitnesses,
+  recurrenceOccurrenceWitnesses,
+  removedSubtreeNodeMap,
+} from '../taskOccurrenceEdits';
 import {
   hasUnconfirmedCurrentRoot,
   taskRefContentFingerprint,
@@ -349,6 +356,9 @@ interface RootTransitionInput {
   readonly expectedRevision: string;
   readonly currentRevision: string;
   readonly rootLines: readonly number[];
+  readonly occurrences?: (
+    roots: readonly RootRevisionOverride[],
+  ) => readonly TaskOccurrenceWitness[];
 }
 
 function stageRootTransition(
@@ -374,6 +384,7 @@ function stageRootTransition(
       candidateLength: candidate.length,
       expectedRevision,
       roots,
+      ...(input.occurrences === undefined ? {} : { occurrences: input.occurrences(roots) }),
     },
     currentRevision,
   );
@@ -779,6 +790,7 @@ interface LocatedEditInput {
 }
 
 interface EditOutcome {
+  readonly nodeMap?: readonly TaskNodeLineMapping[];
   readonly result: TaskRepositoryResult;
   readonly content: string;
 }
@@ -1840,6 +1852,20 @@ export class ObsidianTaskRepository implements TaskRepository {
       candidate: prepared.candidate,
       expectedRevision: process.rootRef.revision,
       currentRevision: location.indexedRevision,
+      ...(authority.collectsOccurrences()
+        ? {
+            occurrences: (roots: readonly RootRevisionOverride[]) =>
+              recurrenceOccurrenceWitnesses({
+                before: location.current.ref,
+                source: location.block.source,
+                selectedOffset: location.relativeLine,
+                roots,
+                active: coordinates.active,
+                completed: coordinates.completed,
+                deletesCompleted: prepared.deletesCompleted,
+              }),
+          }
+        : {}),
       rootLines: [
         coordinates.active.rootLine,
         ...(!prepared.deletesCompleted ? [coordinates.completed.rootLine] : []),
@@ -2280,6 +2306,7 @@ export class ObsidianTaskRepository implements TaskRepository {
       block,
       relativeLine,
       edit.content,
+      this.authority_abyssPrivate?.collectsOccurrences(),
     );
     const task = this.snapshotFor_abyssPrivate(
       process.rootRef.filePath,
@@ -2291,6 +2318,7 @@ export class ObsidianTaskRepository implements TaskRepository {
       : {
           result: committedTask(task, true),
           content: replaced.content,
+          ...(replaced.nodeMap === undefined ? {} : { nodeMap: replaced.nodeMap }),
         };
   }
 
@@ -2354,6 +2382,15 @@ export class ObsidianTaskRepository implements TaskRepository {
         filePath: process.rootRef.filePath,
         candidateFingerprint: taskRefContentFingerprint(edit.content),
         candidateLength: edit.content.length,
+        ...(edit.nodeMap === undefined
+          ? {}
+          : {
+              occurrences: editedOccurrenceWitnesses(
+                process.rootRef,
+                { filePath: process.rootRef.filePath, line: surviving.line, revision },
+                edit.nodeMap,
+              ),
+            }),
         expectedRevision: process.rootRef.revision,
         roots: [
           {
@@ -2387,6 +2424,15 @@ export class ObsidianTaskRepository implements TaskRepository {
         filePath: input.process.rootRef.filePath,
         candidateFingerprint: taskRefContentFingerprint(input.edit.content),
         candidateLength: input.edit.content.length,
+        ...(authority.collectsOccurrences()
+          ? {
+              occurrences: editedOccurrenceWitnesses(
+                input.process.rootRef,
+                input.process.rootRef,
+                removedSubtreeNodeMap(input.location.block.source, 0),
+              ),
+            }
+          : {}),
         expectedRevision: input.process.rootRef.revision,
         roots: [],
       },
@@ -2497,6 +2543,7 @@ export class ObsidianTaskRepository implements TaskRepository {
       block,
       blockTarget(node, block, relativeLine),
       structuralEdit(prepared),
+      this.authority_abyssPrivate?.collectsOccurrences(),
     );
     const outcome = this.structuralEditOutcome_abyssPrivate(
       input.process.rootRef.filePath,
@@ -2585,6 +2632,7 @@ export class ObsidianTaskRepository implements TaskRepository {
       ? {
           result: committedTask(task, true),
           content: edited.content,
+          ...(edited.nodeMap === undefined ? {} : { nodeMap: edited.nodeMap }),
         }
       : {
           result: invalidTaskSyntax(),
@@ -2689,6 +2737,9 @@ export class ObsidianTaskRepository implements TaskRepository {
     return {
       result: committedTask(root, true),
       content: next,
+      ...(this.authority_abyssPrivate?.collectsOccurrences() === true
+        ? { nodeMap: removedSubtreeNodeMap(block.source, relativeLine) }
+        : {}),
     };
   }
 
@@ -2836,6 +2887,7 @@ export class ObsidianTaskRepository implements TaskRepository {
       block,
       target.relativeLine,
       editResult.content,
+      this.authority_abyssPrivate?.collectsOccurrences(),
     );
     const task = this.snapshotFor_abyssPrivate(
       input.process.rootRef.filePath,
@@ -2846,6 +2898,7 @@ export class ObsidianTaskRepository implements TaskRepository {
       ? {
           result: committedTask(task, true),
           content: replaced.content,
+          ...(replaced.nodeMap === undefined ? {} : { nodeMap: replaced.nodeMap }),
         }
       : {
           result: invalidTaskSyntax(),

@@ -51,6 +51,7 @@ import {
 import { applyTaskCommand } from '../../src/tasks/infrastructure/markdown/applyTaskCommand';
 import { createTaskBlock } from '../../src/tasks/infrastructure/markdown/createTaskBlock';
 import { recoverSubtaskRemoval } from '../../src/tasks/infrastructure/markdown/subtaskRemovalRecovery';
+import type { TaskNodeLineMapping } from '../../src/tasks/infrastructure/markdown/TaskBlockEditor';
 import {
   TaskBlockEditor,
   type TaskBlockEdit,
@@ -66,10 +67,16 @@ import {
   taskEditBatchIssues,
 } from '../../src/tasks/infrastructure/TaskEditBatch';
 import {
+  editedOccurrenceWitnesses,
+  recurrenceOccurrenceWitnesses,
+  removedSubtreeNodeMap,
+} from '../../src/tasks/infrastructure/taskOccurrenceEdits';
+import {
   hasUnconfirmedCurrentRoot,
   taskRefContentFingerprint,
   type RootRevisionOverride,
   type TaskRefAuthority,
+  type TaskRefStageResult,
   type TaskSnapshotState,
 } from '../../src/tasks/infrastructure/TaskRefAuthority';
 import { createAppWithFiles } from '../helpers';
@@ -1147,6 +1154,29 @@ export class InMemoryTaskRepository implements TaskRepository {
         filePath: input.ref.filePath,
         candidateFingerprint: taskRefContentFingerprint(candidate.candidate),
         candidateLength: candidate.candidate.length,
+        ...(authority.collectsOccurrences()
+          ? {
+              occurrences: recurrenceOccurrenceWitnesses({
+                before: location.current.ref,
+                source: location.block.source,
+                selectedOffset: location.relativeLine,
+                roots,
+                active: {
+                  rootLine: candidate.activeRootLine,
+                  targetRelativeLine: candidate.nestedOwner
+                    ? location.relativeLine + candidate.cleanOffset
+                    : 0,
+                },
+                completed: {
+                  rootLine: candidate.completedRootLine,
+                  targetRelativeLine: candidate.nestedOwner
+                    ? location.relativeLine + candidate.completedOffset
+                    : 0,
+                },
+                deletesCompleted: candidate.deletesCompleted,
+              }),
+            }
+          : {}),
         expectedRevision: input.ref.revision,
         roots,
       },
@@ -1437,9 +1467,7 @@ export class InMemoryTaskRepository implements TaskRepository {
     if (current === undefined || next === undefined) {
       return { type: 'not-found', target: targetOf(input.command) };
     }
-    this.files.set(input.ref.filePath, next);
-    this.options.snapshotState?.installCommittedContent(input.ref.filePath, next);
-    return { type: 'committed', outcome: { type: 'deleted', ref: current.ref }, changed: true };
+    return this.installDeletedRoot(current, location.block.source, next);
   }
 
   private relativeLineConflict(
@@ -1477,6 +1505,7 @@ export class InMemoryTaskRepository implements TaskRepository {
       input.block,
       blockTarget(targetSnapshot, blockLength, input.relativeLine),
       structuralEdit(prepared),
+      this.options.refAuthority?.collectsOccurrences(),
     );
     const result = this.structuralEditOutcome(input, current, edited);
     return recoverTimeEntryRemoval(command, edited, recoverSubtaskRemoval(command, edited, result));
@@ -1533,7 +1562,12 @@ export class InMemoryTaskRepository implements TaskRepository {
     if (edited.type === 'unchanged') {
       return { type: 'committed', outcome: { type: 'task', task: current }, changed: false };
     }
-    return this.commitSurvivingRoot(input.process.ref, edited.content, input.block.line);
+    return this.commitSurvivingRoot(
+      input.process.ref,
+      edited.content,
+      input.block.line,
+      edited.nodeMap,
+    );
   }
 
   private editTextTarget(
@@ -1605,8 +1639,14 @@ export class InMemoryTaskRepository implements TaskRepository {
       input.block,
       target.line - input.block.line,
       edited.content,
-    ).content;
-    return this.commitSurvivingRoot(input.process.ref, next, input.block.line);
+      this.options.refAuthority?.collectsOccurrences(),
+    );
+    return this.commitSurvivingRoot(
+      input.process.ref,
+      next.content,
+      input.block.line,
+      next.nodeMap,
+    );
   }
 
   private editOrdinaryLine(input: LocatedEditInput): TaskRepositoryResult {
@@ -1616,8 +1656,14 @@ export class InMemoryTaskRepository implements TaskRepository {
     const result = applyTaskCommand(this.options.codec, sourceLine, process.command);
     if (result.type === 'invalid') return result;
     if (result.type === 'changed') {
-      const next = this.editor.replaceLine(content, block, relativeLine, result.content).content;
-      return this.commitSurvivingRoot(process.ref, next, block.line);
+      const next = this.editor.replaceLine(
+        content,
+        block,
+        relativeLine,
+        result.content,
+        this.options.refAuthority?.collectsOccurrences(),
+      );
+      return this.commitSurvivingRoot(process.ref, next.content, block.line, next.nodeMap);
     }
     const root = this.snapshot(process.ref.filePath, content, block.line);
     return root !== undefined
@@ -1629,10 +1675,11 @@ export class InMemoryTaskRepository implements TaskRepository {
     consumed: TaskRef,
     candidate: string,
     line: number,
+    nodeMap?: readonly TaskNodeLineMapping[],
   ): TaskRepositoryResult {
     const block = this.editor.rootBlocks(candidate).find((root) => root.line === line);
     if (block == null) return { type: 'invalid', issues: [{ code: 'invalid-task-syntax' }] };
-    const transition = this.stageSurvivingRoot(consumed, candidate, block);
+    const transition = this.stageSurvivingRoot(consumed, candidate, block, nodeMap);
     if (transition.type === 'result') return transition.result;
     const root = (
       this.options.snapshotState?.previewContent(consumed.filePath, candidate) ??
@@ -1649,6 +1696,7 @@ export class InMemoryTaskRepository implements TaskRepository {
     consumed: TaskRef,
     candidate: string,
     block: TaskRootBlock,
+    nodeMap?: readonly TaskNodeLineMapping[],
   ): SurvivingRootTransition {
     const authority = this.options.refAuthority;
     const snapshotState = this.options.snapshotState;
@@ -1673,6 +1721,15 @@ export class InMemoryTaskRepository implements TaskRepository {
         candidateFingerprint: taskRefContentFingerprint(candidate),
         candidateLength: candidate.length,
         expectedRevision: consumed.revision,
+        ...(nodeMap === undefined
+          ? {}
+          : {
+              occurrences: editedOccurrenceWitnesses(
+                consumed,
+                { filePath: consumed.filePath, line: block.line, revision },
+                nodeMap,
+              ),
+            }),
         roots: [{ line: block.line, source: block.source, revision }],
       },
       current.revision,
@@ -1746,7 +1803,7 @@ export class InMemoryTaskRepository implements TaskRepository {
       return invalidRecurrence('nested-recurrence-conflict');
     }
     return target.type === 'task'
-      ? this.deleteCompletedRoot(path, content, block, current)
+      ? this.deleteCompletedRoot(content, block, current)
       : this.deleteCompletedSubtask(input, current.ref);
   }
 
@@ -1759,20 +1816,50 @@ export class InMemoryTaskRepository implements TaskRepository {
   }
 
   private deleteCompletedRoot(
-    path: string,
     content: string,
     block: TaskRootBlock,
     current: TaskSnapshot,
   ): TaskRepositoryResult {
     const next = this.editor.deleteRoot(content, block);
     if (next === undefined) return invalidRecurrence('invalid-task-syntax');
-    this.files.set(path, next);
-    this.options.snapshotState?.installCommittedContent(path, next);
-    return {
-      type: 'committed',
-      outcome: { type: 'deleted', ref: current.ref },
-      changed: true,
-    };
+    return this.installDeletedRoot(current, block.source, next);
+  }
+
+  private installDeletedRoot(
+    current: TaskSnapshot,
+    source: string,
+    content: string,
+  ): TaskRepositoryResult {
+    const ref = current.ref;
+    const authority = this.options.refAuthority;
+    const transition = this.stageDeletedRoot(ref, source, content);
+    if (transition?.type === 'conflict') return { type: 'conflict', current };
+    this.files.set(ref.filePath, content);
+    if (transition?.type === 'staged') authority?.commit(transition.token);
+    this.options.snapshotState?.installCommittedContent(ref.filePath, content);
+    if (transition?.type === 'staged') authority?.acknowledge(ref.filePath, content);
+    return { type: 'committed', outcome: { type: 'deleted', ref }, changed: true };
+  }
+
+  private stageDeletedRoot(
+    ref: TaskRef,
+    source: string,
+    content: string,
+  ): TaskRefStageResult | undefined {
+    const authority = this.options.refAuthority;
+    return authority?.stage(
+      {
+        filePath: ref.filePath,
+        candidateFingerprint: taskRefContentFingerprint(content),
+        candidateLength: content.length,
+        expectedRevision: ref.revision,
+        roots: [],
+        ...(authority.collectsOccurrences()
+          ? { occurrences: editedOccurrenceWitnesses(ref, ref, removedSubtreeNodeMap(source, 0)) }
+          : {}),
+      },
+      ref.revision,
+    );
   }
 
   private deleteCompletedSubtask(input: LocatedEditInput, consumed: TaskRef): TaskRepositoryResult {
@@ -1787,7 +1874,14 @@ export class InMemoryTaskRepository implements TaskRepository {
     const root = this.snapshot(path, next, updatedBlock.line);
     if (root == null) return invalidRecurrence('invalid-task-syntax');
     if (this.options.snapshotState != null)
-      return this.commitSurvivingRoot(consumed, next, block.line);
+      return this.commitSurvivingRoot(
+        consumed,
+        next,
+        block.line,
+        this.options.refAuthority?.collectsOccurrences() === true
+          ? removedSubtreeNodeMap(block.source, relativeLine)
+          : undefined,
+      );
     this.files.set(path, next);
     return { type: 'committed', outcome: { type: 'task', task: root }, changed: true };
   }

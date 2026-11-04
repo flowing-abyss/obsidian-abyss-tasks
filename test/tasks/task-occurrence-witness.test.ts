@@ -5,7 +5,7 @@ import {
   TaskRefAuthority,
   taskRefContentFingerprint,
 } from '../../src/tasks/infrastructure/TaskRefAuthority';
-import { expectDefined } from '../helpers';
+import { expectDefined, objectMatching } from '../helpers';
 import { publicApiHarness } from '../support/publicApiHarness';
 
 function stagedFixture(authority = new TaskRefAuthority('witness')) {
@@ -359,7 +359,7 @@ it('activates semantic collection synchronously without changing ordinary read b
   }
 });
 
-it('accepts rename invalidation before any health, Search, or UI callback reads relocated roots', async () => {
+it('accepts proven rename continuity before any health, Search, or UI callback reads relocated roots', async () => {
   const h = await publicApiHarness({ 'a.md': '- [ ] one' });
   try {
     h.reads.activateOccurrences();
@@ -382,7 +382,12 @@ it('accepts rename invalidation before any health, Search, or UI callback reads 
       callbacks.push(accepted);
     });
     await h.app.vault.rename(expectDefined(h.app.vault.getFileByPath('a.md')), 'renamed.md');
-    expect(changes[0]?.invalidated).toContainEqual(old);
+    expect(changes[0]?.invalidated).toEqual([]);
+    expect(changes[0]?.witnesses).toContainEqual({
+      kind: 'continued',
+      before: old,
+      after: objectMatching({ filePath: 'renamed.md', nodeOffset: 0 }),
+    });
     expect(changes[0]?.sources[0]?.fileIdentity).toBe(h.app.vault.getFileByPath('renamed.md'));
     expect(callbacks.length).toBeGreaterThan(0);
     expect(callbacks.every(Boolean)).toBe(true);

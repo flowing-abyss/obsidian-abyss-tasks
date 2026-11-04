@@ -200,6 +200,16 @@ export class TaskRefAuthority {
   private readonly transitions = new Map<string, PendingTransition>();
   private readonly tokens = new WeakMap<object, PendingTransition>();
 
+  private collectingOccurrences = false;
+
+  activateOccurrences(): void {
+    this.collectingOccurrences = true;
+  }
+
+  collectsOccurrences(): boolean {
+    return this.collectingOccurrences;
+  }
+
   constructor(private readonly session = randomSession()) {}
 
   revision(source: string): string {

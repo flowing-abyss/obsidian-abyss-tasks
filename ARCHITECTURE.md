@@ -138,6 +138,22 @@ bytes match. Unchanged exact occurrences reserve their own endpoints and cannot 
 continuation from another occurrence. Duplicate echoes cannot recreate occurrences, and restoration
 revokes forward semantics.
 
+Ordinary task-line edits and comment/tracking splices carry physical node mappings from the editor.
+The repository binds those mappings to minted candidate revisions before staging. Recurrence uses
+its actual completed and active subtree coordinates: Keep continues every history node, Delete
+removes every old selected node, and the next subtree consists entirely of created occurrences.
+Ancestors and containing siblings follow the verified line transform. UI successor ordering stays
+independent. Unsupported structural changes remain conservative invalidations.
+
+Owned host rename preserves occurrence identity across exact confirmed content and rechecks source
+exclusions. When policy or Statistics requires a reload, a transient rename operation borrows the
+old canonical roots until its exact acquisition settles. It defers semantic disposition only; health
+and existing UI timing remain unchanged, and old addresses are undisclosable while absent. Matching
+bytes under the same file owner establish continuation before accepted callbacks. Changed, failed,
+replaced, or superseded reads invalidate those predecessors and release the proof. External deletion
+invalidates before callbacks; recreation cannot revive a previous owner. Unique byte-identical
+same-file relocation reuses the existing reconciliation proof. Duplicate or visual matches do not.
+
 Loaded observations, metadata observations, repository installs, and rename relocation share a
 synchronous accepted-install boundary. Repository batches prepare and prove every file before
 installing any roots. Once all roots and source health are installed, inward accepted listeners

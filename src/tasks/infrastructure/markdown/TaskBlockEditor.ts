@@ -165,9 +165,15 @@ export type TaskBlockEdit =
       readonly relativeLine: number;
     };
 
+export interface TaskNodeLineMapping {
+  readonly beforeOffset: number;
+  readonly afterOffset?: number;
+}
+
 export type TaskBlockEditResult =
   | {
       readonly type: 'changed';
+      readonly nodeMap?: readonly TaskNodeLineMapping[];
       readonly content: string;
       readonly block: TaskRootBlock;
       readonly removedSubtask?: { readonly markdown: string; readonly lineEnding?: '\n' | '\r\n' };
@@ -318,6 +324,7 @@ function isConfirmedTarget(
 }
 
 interface BlockEditContext {
+  readonly originalNodes?: ReadonlyMap<SourceLine, number>;
   readonly indentUnit: TaskIndentUnit;
   readonly lines: SourceLine[];
   readonly content: string;
@@ -1236,6 +1243,14 @@ function editTaskContent(
   }
 }
 
+function survivingNodeLines(context: BlockEditContext): readonly TaskNodeLineMapping[] {
+  const positions = new Map(context.lines.map((line, index) => [line, index - context.block.line]));
+  return [...(context.originalNodes ?? [])].map(([line, beforeOffset]) => {
+    const afterOffset = positions.get(line);
+    return { beforeOffset, ...(afterOffset === undefined ? {} : { afterOffset }) };
+  });
+}
+
 function editedResult(context: BlockEditContext): TaskBlockEditResult {
   const next = serializeLines(context.lines, context.hadFinalEnding, context.ending);
   if (next === context.content) {
@@ -1245,15 +1260,23 @@ function editedResult(context: BlockEditContext): TaskBlockEditResult {
     (candidate) => candidate.line === context.block.line,
   );
   return updated != null
-    ? { type: 'changed', content: next, block: updated }
+    ? {
+        type: 'changed',
+        content: next,
+        block: updated,
+        ...(context.originalNodes === undefined ? {} : { nodeMap: survivingNodeLines(context) }),
+      }
     : { type: 'conflict' };
 }
 
 function editContext(
-  content: string,
-  block: TaskRootBlock,
-  target: TaskBlockTarget,
-  indentUnit: TaskIndentUnit,
+  ...[content, block, target, indentUnit, collectNodes = false]: [
+    content: string,
+    block: TaskRootBlock,
+    target: TaskBlockTarget,
+    indentUnit: TaskIndentUnit,
+    collectNodes?: boolean,
+  ]
 ): BlockEditContext | undefined {
   const lines = sourceLines(content);
   const parentLine = block.line + target.relativeLine;
@@ -1263,6 +1286,16 @@ function editContext(
   }
 
   return {
+    ...(collectNodes
+      ? {
+          originalNodes: new Map(
+            (recurrenceOwnedSubtree(block.source, 0)?.taskLines ?? []).flatMap((offset) => {
+              const line = lines[block.line + offset];
+              return line === undefined ? [] : [[line, offset] as const];
+            }),
+          ),
+        }
+      : {}),
     lines,
     content,
     block,
@@ -1387,11 +1420,18 @@ export class TaskBlockEditor {
   }
 
   replaceLine(
-    content: string,
-    block: TaskRootBlock,
-    relativeLine: number,
-    replacement: string,
-  ): { readonly content: string; readonly block: TaskRootBlock } {
+    ...[content, block, relativeLine, replacement, collectNodes = false]: [
+      content: string,
+      block: TaskRootBlock,
+      relativeLine: number,
+      replacement: string,
+      collectNodes?: boolean,
+    ]
+  ): {
+    readonly content: string;
+    readonly block: TaskRootBlock;
+    readonly nodeMap?: readonly TaskNodeLineMapping[];
+  } {
     const lines = sourceLines(content);
     const absoluteLine = block.line + relativeLine;
     const current = lines[absoluteLine];
@@ -1400,7 +1440,18 @@ export class TaskBlockEditor {
       content.slice(0, current.from) + replacement + current.ending + content.slice(current.to);
     const updated =
       readTaskRootBlocks(next).find((candidate) => candidate.line === block.line) ?? block;
-    return { content: next, block: updated };
+    return {
+      content: next,
+      block: updated,
+      ...(collectNodes && !LINE_BREAK_RE.test(replacement)
+        ? {
+            nodeMap: (recurrenceOwnedSubtree(block.source, 0)?.taskLines ?? []).map((offset) => ({
+              beforeOffset: offset,
+              afterOffset: offset,
+            })),
+          }
+        : {}),
+    };
   }
 
   /**
@@ -1444,12 +1495,27 @@ export class TaskBlockEditor {
   }
 
   edit(
-    content: string,
-    block: TaskRootBlock,
-    target: TaskBlockTarget,
-    edit: TaskBlockEdit,
+    ...[content, block, target, edit, collectNodes = false]: [
+      content: string,
+      block: TaskRootBlock,
+      target: TaskBlockTarget,
+      edit: TaskBlockEdit,
+      collectNodes?: boolean,
+    ]
   ): TaskBlockEditResult {
-    const context = editContext(content, block, target, this.indentUnit_abyssPrivate());
+    const supported = ![
+      'add-subtask',
+      'delete-subtask',
+      'restore-subtask',
+      'reorder-subtask',
+    ].includes(edit.type);
+    const context = editContext(
+      content,
+      block,
+      target,
+      this.indentUnit_abyssPrivate(),
+      collectNodes && supported,
+    );
     if (context === undefined) return { type: 'conflict' };
     const earlyResult = applyEdit(context, edit);
     return earlyResult ?? editedResult(context);

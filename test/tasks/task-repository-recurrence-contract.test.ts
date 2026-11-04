@@ -2,22 +2,27 @@ import { TFile, type App, type CachedMetadata } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
 import { toStatusRules } from '../../src/settings/statusCatalogAdapter';
+import type { TaskAcceptedOccurrenceChange } from '../../src/tasks/application/TaskIntegrationReadApi';
 import type {
   RecurrenceCompletionRequest,
   TaskRepository,
 } from '../../src/tasks/application/TaskRepository';
+import { atomDateTime } from '../../src/tasks/domain/commentTimestamp';
+import { recurrenceOwnedSubtree } from '../../src/tasks/domain/recurrenceIteration';
 import { StatusCatalog } from '../../src/tasks/domain/StatusCatalog';
+import { taskNodeSourceLine, taskTreeNodes } from '../../src/tasks/domain/taskSearchProjection';
+import { timeEntryRef } from '../../src/tasks/domain/timeTracking';
 import type { TaskNodeRef, TaskSnapshot } from '../../src/tasks/domain/types';
 import { localDate } from '../../src/tasks/domain/validation';
+import { TaskBlockEditor } from '../../src/tasks/infrastructure/markdown/TaskBlockEditor';
+import { TaskLocator } from '../../src/tasks/infrastructure/markdown/TaskLocator';
+import { TaskMarkdownCodec } from '../../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
+import { ObsidianTaskRepository } from '../../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
 import { TaskIndex } from '../../src/tasks/infrastructure/TaskIndex';
 import {
   TaskRefAuthority,
   type TaskSnapshotState,
 } from '../../src/tasks/infrastructure/TaskRefAuthority';
-import { TaskBlockEditor } from '../../src/tasks/infrastructure/markdown/TaskBlockEditor';
-import { TaskLocator } from '../../src/tasks/infrastructure/markdown/TaskLocator';
-import { TaskMarkdownCodec } from '../../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
-import { ObsidianTaskRepository } from '../../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
 import { createAppWithFiles, flushMicrotasks, metadataChangedEmitter } from '../helpers';
 import { InMemoryTaskRepository } from '../support/InMemoryTaskRepository';
 import { expectDefined } from './../helpers';
@@ -1186,3 +1191,218 @@ describe('Obsidian recurrence transaction boundary', () => {
     expect(await harness.read()).toBe(source);
   });
 });
+
+for (const adapter of ['in-memory', 'obsidian'] as const) {
+  describe(`${adapter} occurrence producers`, () => {
+    it('leaves Delete content unchanged when authority staging rejects', async () => {
+      const source = '- [ ] Root 🏁 delete\n  - [ ] Child\n';
+      const h = await makeHarness(adapter, source);
+      try {
+        h.index.integrationReads().activateOccurrences();
+        vi.spyOn(h.authority, 'stage').mockReturnValue({ type: 'conflict' });
+        const root = expectDefined(h.index.list()[0]);
+        expect(
+          await h.repository.edit({
+            type: 'set-status',
+            target: { type: 'task', ref: root.ref },
+            symbol: 'x',
+            stamp: localDate('2026-08-01'),
+          }),
+        ).toMatchObject({ type: 'conflict' });
+        expect(await h.read()).toBe(source);
+      } finally {
+        h.index.destroy();
+      }
+    });
+
+    it('continues deep nodes through field, comment and tracking edits', async () => {
+      const h = await makeHarness(adapter, '- [ ] Root\n  - [ ] Child\n    - [ ] Grandchild\n');
+      try {
+        const reads = h.index.integrationReads();
+        reads.activateOccurrences();
+        const changes: TaskAcceptedOccurrenceChange[] = [];
+        reads.subscribe((event) => {
+          if (event.type === 'accepted') changes.push(event.change);
+        });
+        let root = expectDefined(h.index.list()[0]);
+        const deep = expectDefined(expectDefined(root.subtasks[0]).subtasks[0]);
+        expect(
+          await h.repository.edit({
+            type: 'set-status',
+            target: { type: 'subtask', ref: deep.ref },
+            symbol: 'x',
+            stamp: localDate('2026-08-01'),
+          }),
+        ).toMatchObject({ type: 'committed' });
+        root = expectDefined(h.index.list()[0]);
+        expect(
+          await h.repository.edit({
+            type: 'add-comment',
+            parent: { type: 'task', ref: root.ref },
+            text: 'first\nsecond',
+            stamp: atomDateTime('2026-08-01T10:00:00Z'),
+          }),
+        ).toMatchObject({ type: 'committed' });
+        root = expectDefined(h.index.list()[0]);
+        expect(
+          await h.repository.edit({
+            type: 'add-time-entry',
+            parent: { type: 'task', ref: root.ref },
+            stamp: atomDateTime('2026-08-01T10:00:00Z'),
+          }),
+        ).toMatchObject({ type: 'committed' });
+        root = expectDefined(h.index.list()[0]);
+        expect(
+          await h.repository.edit({
+            type: 'close-time-entry',
+            entry: timeEntryRef(
+              { type: 'task', ref: root.ref },
+              expectDefined(root.timeEntries[0]),
+            ),
+            stamp: atomDateTime('2026-08-01T10:00:01Z'),
+            endMs: Date.parse('2026-08-01T10:00:01Z'),
+            minimumMs: 2000,
+          }),
+        ).toMatchObject({ type: 'committed' });
+        expect(changes.filter((change) => change.witnesses.length > 0)).toHaveLength(4);
+        for (const change of changes.filter((value) => value.witnesses.length > 0)) {
+          expect(change.witnesses.map((value) => value.kind)).toEqual([
+            'continued',
+            'continued',
+            'continued',
+          ]);
+          expect(change.invalidated).toEqual([]);
+        }
+      } finally {
+        h.index.destroy();
+      }
+    });
+
+    for (const nested of [false, true])
+      for (const deletes of [false, true]) {
+        const indent = nested ? '  ' : '';
+        const history = deletes ? '' : `${indent}  - 2026-08-01T10:00:00Z →\n`;
+        it.each(['before', 'after'] as const)(
+          `witnesses every recurrence node nested=${nested} delete=${deletes} placement=%s`,
+          async (placement) => {
+            const selected = `${indent}- [ ] Repeat 🔁 every day${deletes ? ' 🏁 delete' : ''}\n${history}${indent}  - [ ] Child\n${indent}    - [ ] Grandchild\n`;
+            const source = nested ? `- [ ] Container\n${selected}  - [ ] Sibling\n` : selected;
+            const h = await makeHarness(adapter, source);
+            try {
+              const reads = h.index.integrationReads();
+              reads.activateOccurrences();
+              const changes: TaskAcceptedOccurrenceChange[] = [];
+              reads.subscribe((event) => {
+                if (event.type === 'accepted') changes.push(event.change);
+              });
+              const oldRoot = expectDefined(h.snapshots(source)[0]);
+              const target: TaskNodeRef = nested
+                ? { type: 'subtask', ref: expectDefined(oldRoot.subtasks[0]).ref }
+                : { type: 'task', ref: oldRoot.ref };
+              const result = await h.repository.completeRecurrence(
+                request(target, { placement, addCreatedDate: false, addCompletionDate: false }),
+              );
+              expect(result.type).toBe('committed');
+              const change = expectDefined(changes.find((value) => value.witnesses.length > 0));
+              const allBefore = [...taskTreeNodes(oldRoot)];
+              const recurringOffset = taskNodeSourceLine(target) - oldRoot.source.line;
+              const selectedBefore = allBefore.filter(
+                (value) => !nested || value.path[0] === oldRoot.subtasks[0],
+              );
+              expect(change.witnesses.filter((value) => value.kind === 'created')).toHaveLength(
+                selectedBefore.length,
+              );
+              expect(change.witnesses.filter((value) => value.kind === 'removed')).toHaveLength(
+                deletes ? selectedBefore.length : 0,
+              );
+              expect(change.witnesses.filter((value) => value.kind === 'continued')).toHaveLength(
+                allBefore.length - (deletes ? selectedBefore.length : 0),
+              );
+              expect(change.invalidated).toEqual([]);
+              if (result.type !== 'committed' || result.outcome.type !== 'recurrence')
+                throw new Error('Missing recurrence');
+              const active = result.outcome.active;
+              expect(h.index.authoritySuccessor(oldRoot.ref)).toEqual(active.root.ref);
+              const activeOffset = taskNodeSourceLine(active.target) - active.root.source.line;
+              const activeOwnership = expectDefined(
+                recurrenceOwnedSubtree(active.root.source.originalBlock, activeOffset),
+              );
+              const created = change.witnesses.filter((value) => value.kind === 'created');
+              expect(created.map((value) => value.after.nodeOffset)).toEqual(
+                activeOwnership.taskLines,
+              );
+              expect(
+                created.every(
+                  (value) =>
+                    value.after.rootRevision === active.root.ref.revision &&
+                    value.after.rootLine === active.root.source.line,
+                ),
+              ).toBe(true);
+              const nextOffsets = new Set(activeOwnership.taskLines);
+              expect(
+                change.witnesses.some(
+                  (value) =>
+                    value.kind === 'continued' &&
+                    value.after.rootRevision === active.root.ref.revision &&
+                    nextOffsets.has(value.after.nodeOffset),
+                ),
+              ).toBe(false);
+
+              expect(
+                change.witnesses.some(
+                  (value) =>
+                    value.kind === 'continued' &&
+                    value.before.rootRevision === oldRoot.ref.revision &&
+                    value.before.nodeOffset === recurringOffset &&
+                    value.after.rootRevision === active.root.ref.revision &&
+                    value.after.nodeOffset === activeOffset,
+                ),
+              ).toBe(false);
+              if (deletes) expect(await h.read()).toBe(source);
+            } finally {
+              h.index.destroy();
+            }
+          },
+        );
+      }
+    it.each([false, true])('witnesses ordinary Delete descendants nested=%s', async (nested) => {
+      const selected = '- [ ] Remove 🏁 delete\n  - [ ] Child\n';
+      const source = nested
+        ? `- [ ] Container\n${selected
+            .split('\n')
+            .filter(Boolean)
+            .map((line) => `  ${line}\n`)
+            .join('')}  - [ ] Sibling\n`
+        : selected;
+      const h = await makeHarness(adapter, source);
+      try {
+        const reads = h.index.integrationReads();
+        reads.activateOccurrences();
+        const changes: TaskAcceptedOccurrenceChange[] = [];
+        reads.subscribe((event) => {
+          if (event.type === 'accepted') changes.push(event.change);
+        });
+        const root = expectDefined(h.snapshots(source)[0]);
+        const target: TaskNodeRef = nested
+          ? { type: 'subtask', ref: expectDefined(root.subtasks[0]).ref }
+          : { type: 'task', ref: root.ref };
+        expect(
+          await h.repository.edit({
+            type: 'set-status',
+            target,
+            symbol: 'x',
+            stamp: localDate('2026-08-01'),
+          }),
+        ).toMatchObject({ type: 'committed' });
+        const change = expectDefined(changes.find((value) => value.witnesses.length > 0));
+        expect(change.witnesses.filter((value) => value.kind === 'removed')).toHaveLength(2);
+        expect(change.witnesses.filter((value) => value.kind === 'continued')).toHaveLength(
+          nested ? 2 : 0,
+        );
+        expect(change.invalidated).toEqual([]);
+      } finally {
+        h.index.destroy();
+      }
+    });
+  });
+}
