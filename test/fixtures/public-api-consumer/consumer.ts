@@ -35,7 +35,6 @@ async function exerciseStatusIntents(
   host: { readonly newRequestId: () => string; readonly now: () => number },
 ): Promise<void> {
   const { newRequestId, now } = host;
-  const catalog = value(await client.tasks.statuses({ signal }));
   const inputFor = (current: TaskDtoV1) => ({
     target: current.target,
     expectedRevision: current.revision,
@@ -48,6 +47,7 @@ async function exerciseStatusIntents(
   mutation(completed);
   if (!completed.ok) return;
   const fresh = value(await client.tasks.get(current.target, { signal }));
+  const catalog = value(await client.tasks.statuses({ signal }));
   const open = catalog?.items.find((item) => item.status === 'open' && item.defaultForStatus);
   if (fresh === undefined || open === undefined) return;
   const reopened = await client.tasks.setStatus(

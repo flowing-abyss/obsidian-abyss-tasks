@@ -211,10 +211,10 @@ async function setDesiredStatus(
   newRequestId: () => string,
   now: () => number,
 ): Promise<MutationResultV1> {
+  const task = value(await client.tasks.get(target));
   const catalog = value(await client.tasks.statuses());
   const entry = catalog.items.find((item) => item.status === desired && item.defaultForStatus);
   if (!entry) throw new Error(`No configured default for ${desired}`);
-  const task = value(await client.tasks.get(target));
   return client.tasks.setStatus({
     ...inputFor(client, task, newRequestId, now),
     symbol: entry.symbol,
@@ -247,7 +247,7 @@ async function deliberateToggle(
 }
 ```
 
-Each function performs one intent; a caller must inspect its result before deciding on another. Catalog/semantics can change after a read, so handle conflicts. Do not trim a catalog symbol. To advance a recurring task, inspect the receipt's distinct `next.target`, reread it, and send a new request only for a deliberate next-occurrence intent.
+Each function performs one intent; a caller must inspect its result before deciding on another. Read the task revision before the catalog so a later semantic change rejects the intent instead of pairing an old symbol mapping with a newer revision. Handle conflicts and do not trim a catalog symbol. To advance a recurring task, inspect the receipt's distinct `next.target`, reread it, and send a new request only for a deliberate next-occurrence intent.
 
 Deduplication uses `(providerEpoch, consumerId, requestId)` across that consumer's clients. While retained and unexpired, identical accepted requests join/replay the original outcome, including failures, before fresh readiness/revision checks. Preserve method, target, expected revision, normalized symbol, ID, and deadline. Never extend a retry's deadline or repurpose an ID. Signal/client identity is excluded from payload equality. Capacity is bounded; expired settled records can be reclaimed. Replay is in memory and offers no exactly-once guarantee across provider unload. Missing responses, expiry, or reload require fresh reads/reconciliation before a new operation.
 

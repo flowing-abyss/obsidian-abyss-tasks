@@ -301,6 +301,72 @@ it('uses catalog defaults and freshly read revisions for each status intent', as
   expect(await h.read('a.md')).toBe('- [ ] Task\n');
 });
 
+it.each(['before-catalog', 'before-write'] as const)(
+  'rejects a status intent when catalog semantics change %s, then rereads deliberately',
+  async (timing) => {
+    const source = '- [ ] Task\n';
+    const catalog = new StatusCatalog([
+      { id: 'open', symbol: ' ', type: 'todo', defaultForType: true },
+      { id: 'progress', symbol: '/', type: 'in-progress', defaultForType: true },
+      { id: 'done', symbol: 'x', type: 'done', defaultForType: true },
+    ]);
+    const h = await publicApiHarness({ 'a.md': source }, { index: { statusCatalog: catalog } });
+    harnesses.push(h);
+    const client = h.client('calendar');
+    const original = required(ok(await client.tasks.list()).items[0]);
+    const current = ok(await client.tasks.get(original.target));
+    const changeCatalog = () => {
+      catalog.replace([
+        { id: 'open', symbol: ' ', type: 'todo', defaultForType: true },
+        { id: 'cancelled', symbol: '/', type: 'cancelled', defaultForType: true },
+        { id: 'progress', symbol: '>', type: 'in-progress', defaultForType: true },
+        { id: 'done', symbol: 'x', type: 'done', defaultForType: true },
+      ]);
+      h.index.setStatusCatalog(catalog);
+    };
+    if (timing === 'before-catalog') changeCatalog();
+    const statuses = ok(await client.tasks.statuses());
+    const progress = required(
+      statuses.items.find((item) => item.status === 'in-progress' && item.defaultForStatus),
+    );
+    if (timing === 'before-write') changeCatalog();
+    const writes = vi.spyOn(h.app.vault, 'process');
+    expect(
+      await client.tasks.setStatus({
+        ...request(current, 'before-settings'),
+        symbol: progress.symbol,
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { code: 'REVISION_CONFLICT' },
+      effects: 'unchanged',
+      recovery: 'reread',
+    });
+    expect(writes).not.toHaveBeenCalled();
+    expect(await h.read('a.md')).toBe(source);
+
+    const fresh = ok(await client.tasks.get(current.target));
+    const freshCatalog = ok(await client.tasks.statuses());
+    const desired = required(
+      freshCatalog.items.find((item) => item.status === 'in-progress' && item.defaultForStatus),
+    );
+    expect(desired.symbol).toBe('>');
+    expect(freshCatalog.items).toContainEqual({
+      symbol: '/',
+      status: 'cancelled',
+      defaultForStatus: true,
+    });
+    expect(
+      await client.tasks.setStatus({ ...request(fresh, 'after-settings'), symbol: desired.symbol }),
+    ).toMatchObject({ ok: true, receipt: { effects: 'committed' } });
+    expect(ok(await client.tasks.get(fresh.target))).toMatchObject({
+      status: 'in-progress',
+      statusSymbol: '>',
+    });
+    expect(await h.read('a.md')).toBe('- [>] Task\n');
+  },
+);
+
 it.each(['keep', 'delete'] as const)(
   'replays %s recurrence receipts across clients before advancing the next occurrence',
   async (policy) => {
