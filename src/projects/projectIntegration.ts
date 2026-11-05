@@ -109,6 +109,10 @@ class ProjectReads implements ProjectIntegrationReads {
   get(path: string): TaskReadResult<ProjectReadRecord | undefined> {
     return this.read(path, true) as TaskReadResult<ProjectReadRecord | undefined>;
   }
+  canDiscloseSource(path: string): boolean {
+    const read = this.source.get(path);
+    return read.type === 'ok' && read.value !== undefined;
+  }
   matchesFile(proof: ProjectReadSummary, file: object): boolean {
     return proof.semantics === this.semantics() && this.source.matchesFile(proof, file);
   }

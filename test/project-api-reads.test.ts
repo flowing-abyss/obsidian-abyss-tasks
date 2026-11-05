@@ -43,6 +43,48 @@ it('keeps reserved capacity and pinned expiry separate from public project looku
   }
 });
 
+it('releases the reverse project identity on rollback, expiry and disposal and preserves a newer target', async () => {
+  const h = await publicApiHarness({ 'a.md': '#project' });
+  try {
+    const port = createProjectIntegrationReads(h.index.projectSources(), () => ({
+      ...DEFAULT_SETTINGS.projects,
+      membershipQuery: '#project',
+    }));
+    const read = port.summary('a.md');
+    if (read.type !== 'ok' || read.value === undefined) throw new Error('Missing project');
+    const summary = read.value;
+    let now = 0;
+    const registry = new ProjectReadRegistry(port, { epoch: 'epoch', now: () => now });
+    const removed = vi.spyOn(WeakMap.prototype, 'delete');
+    try {
+      const checkpoint = registry.checkpoint();
+      expect(registry.project(summary).ok).toBe(true);
+      registry.rollback(checkpoint);
+      expect(removed).toHaveBeenCalledWith(summary.identity);
+      removed.mockClear();
+      expect(registry.project(summary).ok).toBe(true);
+      now++;
+      const renamed = { ...summary, path: 'b.md' };
+      const next = registry.project(renamed);
+      now = 1_800_000;
+      registry.clean();
+      expect(removed).not.toHaveBeenCalledWith(summary.identity);
+      expect(registry.project(renamed)).toEqual(next);
+      now += 1_800_000;
+      registry.clean();
+      expect(removed).toHaveBeenCalledWith(summary.identity);
+      removed.mockClear();
+      expect(registry.project(renamed).ok).toBe(true);
+      registry.dispose();
+      expect(removed).toHaveBeenCalledWith(summary.identity);
+    } finally {
+      removed.mockRestore();
+    }
+  } finally {
+    h.dispose();
+  }
+});
+
 it('paginates projects with opaque identities and expires a cursor when sources change', async () => {
   const h = await publicApiHarness({
     'a.md': '---\nkind: project\n---\n# A',

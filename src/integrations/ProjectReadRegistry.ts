@@ -67,7 +67,7 @@ export class ProjectReadRegistry {
     const now = this.options_abyssPrivate.now();
     for (const [key, value] of this.handles_abyssPrivate) {
       if (value.expires > now) continue;
-      if (value.pins === 0) this.handles_abyssPrivate.delete(key);
+      if (value.pins === 0) this.remove_abyssPrivate(key, value);
       else value.expires = -Infinity; // A clock rollback cannot renew a pinned handle.
     }
     for (const [key, value] of this.cursors_abyssPrivate)
@@ -111,9 +111,14 @@ export class ProjectReadRegistry {
   }
   rollback(checkpoint: number): void {
     for (const [key, handle] of this.handles_abyssPrivate)
-      if (handle.created > checkpoint) this.handles_abyssPrivate.delete(key);
+      if (handle.created > checkpoint) this.remove_abyssPrivate(key, handle);
     for (const [key, cursor] of this.cursors_abyssPrivate)
       if (cursor.created > checkpoint) this.cursors_abyssPrivate.delete(key);
+  }
+  private remove_abyssPrivate(target: string, handle: Handle): void {
+    this.handles_abyssPrivate.delete(target);
+    if (this.reverse_abyssPrivate.get(handle.identity)?.target === target)
+      this.reverse_abyssPrivate.delete(handle.identity);
   }
   project<T extends ProjectReadSummary>(
     value: T,
@@ -221,7 +226,8 @@ export class ProjectReadRegistry {
   }
   dispose(): void {
     this.disposed_abyssPrivate = true;
-    this.handles_abyssPrivate.clear();
+    for (const [target, handle] of this.handles_abyssPrivate)
+      this.remove_abyssPrivate(target, handle);
     this.cursors_abyssPrivate.clear();
   }
 }

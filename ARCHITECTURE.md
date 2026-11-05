@@ -196,8 +196,10 @@ root, selected node and observation. Any authored recurrence field reserves one 
 acceptance. The ticket releases both resources on rejection or settlement, including construction failure.
 
 Project receipts retain storage facts and optional opaque references. Each joined call or replay
-checks its own client and the current permission for each reference. A move records the destination
-copy and source removal separately. A failed second phase leaves the acknowledged copy in place.
+checks its own client and the current permission for each reference. A task reference needs a
+proven occurrence and a permitted, well-formed source at issuance and delivery. A healthy source
+can still disclose the task after it leaves project membership. A move records the destination copy
+and source removal separately. A failed second phase leaves the acknowledged copy in place.
 
 [`taskApiMutations`](src/integrations/taskApiMutations.ts) validates new requests against current source
 eligibility, coverage, revision and status semantics, then submits one intent through the existing

@@ -30,6 +30,8 @@ export interface ProjectIntegrationReads {
   paths(): readonly string[];
   summary(path: string, semantics?: object): TaskReadResult<ProjectReadSummary | undefined>;
   get(path: string): TaskReadResult<ProjectReadRecord | undefined>;
+  /** Source permission for a task reference, independent of project membership. */
+  canDiscloseSource(path: string): boolean;
   matchesFile(proof: ProjectReadSummary, file: object): boolean;
   guard(proof: ProjectReadSummary, live: string, candidate: string): TaskReadResult<true>;
   prospective(path: string, candidate: string): TaskReadResult<true>;

@@ -3,7 +3,14 @@ import type { ApiResultV1, ProjectMutationResultV1 } from '../api';
 import TaskCalendarPlugin from '../src/main';
 import * as projectIntegration from '../src/projects/projectIntegration';
 import { PANEL_VIEW_TYPE } from '../src/views/PanelView';
-import { createAppWithFiles, deferred, expectDefined, useRealMoment } from './helpers';
+import {
+  createAppWithFiles,
+  deferred,
+  expectDefined,
+  flushMicrotasks,
+  metadataChangedEmitter,
+  useRealMoment,
+} from './helpers';
 import { publicApiHarness } from './support/publicApiHarness';
 
 useRealMoment();
@@ -395,6 +402,54 @@ it('returns the original exact root for a same-project no-op, and rejects select
         });
     }
     expect(await h.app.vault.adapter.read(empty)).toBe(tree);
+  } finally {
+    h.plugin.onunload();
+  }
+});
+
+it('withholds a retained project-write task reference after metadata permission becomes unprovable', async () => {
+  const body = '- [ ] Root';
+  const h = await setup({ [empty]: ['---', 'secret: no', 'extra: one', '---', body].join('\n') });
+  try {
+    await h.plugin.saveTaskStorageSettings({
+      taskArchivePath: h.plugin.settings.taskArchivePath,
+      taskIgnoreQuery: 'secret=yes',
+    });
+    const projects = expectDefined(h.first.projects);
+    const project = expectDefined(value(await projects.list()).items[0]);
+    const task = expectDefined(value(await h.first.tasks.list({ path: empty })).items[0]);
+    const input = {
+      ...basis(project),
+      ...request('move'),
+      taskTarget: task.target,
+      expectedTaskRevision: task.revision,
+    };
+    expect(receipt(await projects.moveTask(input)).task?.target).toBe(task.target);
+    const file = expectDefined(h.app.vault.getFileByPath(empty));
+    const next = ['---', 'secret: yes', 'extra: [', '---', body].join('\n');
+    await h.app.vault.adapter.write(empty, next);
+    file.stat = { ...file.stat, size: next.length, mtime: file.stat.mtime + 1 };
+    const start = { line: 4, col: 0, offset: next.indexOf(body) };
+    metadataChangedEmitter(h.app)(file, next, {
+      listItems: [
+        {
+          task: ' ',
+          parent: -1,
+          position: {
+            start,
+            end: { ...start, col: body.length, offset: next.length },
+          },
+        },
+      ],
+    });
+    await flushMicrotasks();
+    expect(await projects.resolve({ path: empty })).toMatchObject({
+      error: { code: 'INCOMPLETE_READ' },
+    });
+    const replay = receipt(await projects.moveTask(input));
+    expect(replay).toMatchObject({ outcome: 'noop', effects: 'unchanged' });
+    expect(replay.project).toBeUndefined();
+    expect(replay.task).toBeUndefined();
   } finally {
     h.plugin.onunload();
   }

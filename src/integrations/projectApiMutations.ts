@@ -144,7 +144,8 @@ function taskReference(
   return proven(ctx, 'projects.taskReference', () => {
     const { reads, identities } = ctx.api;
     const node = reads.node(address);
-    if (node.type !== 'ok' || !reads.canDisclose(address)) return undefined;
+    if (node.type !== 'ok' || !ctx.ports.reads.canDiscloseSource(address.filePath))
+      return undefined;
     const target =
       typeof authority === 'string'
         ? authority
@@ -319,7 +320,12 @@ function deliver(ctx: Context, result: ProjectMutationResultV1): ProjectMutation
   );
   const allowedTask = disclose(ctx, 'projects.discloseTask', task, (ref) => {
     const id = ctx.api.identities.lookup(ref.target);
-    return id.ok && id.value.state === 'retained' && ctx.api.reads.canDisclose(id.value.address);
+    return (
+      id.ok &&
+      id.value.state === 'retained' &&
+      ctx.ports.reads.canDiscloseSource(id.value.address.filePath) &&
+      ctx.api.reads.canDisclose(id.value.address)
+    );
   });
   return freezeValue({
     ...result,
