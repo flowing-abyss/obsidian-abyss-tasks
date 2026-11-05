@@ -18,7 +18,7 @@ export function readError(
   category: ErrorCategoryV1,
   code: string,
   message: string,
-): ApiResultV1<never> {
+): Extract<ApiResultV1<never>, { ok: false }> {
   return freezeValue({ ok: false, error: apiError(category, code, message) });
 }
 export function lifecycleError(state: TaskReadObservation): ApiResultV1<never> | undefined {
@@ -28,7 +28,7 @@ export function lifecycleError(state: TaskReadObservation): ApiResultV1<never> |
 
 export function readFailure(
   reason: Extract<TaskReadResult<never>, { type: 'error' }>['reason'],
-): ApiResultV1<never> {
+): Extract<ApiResultV1<never>, { ok: false }> {
   switch (reason) {
     case 'not-ready':
       return readError('lifecycle', 'NOT_READY', 'Task reads are initializing.');

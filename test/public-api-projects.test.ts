@@ -1,0 +1,488 @@
+import { afterEach, expect, it, vi } from 'vitest';
+import type { ApiResultV1, ProjectMutationResultV1 } from '../api';
+import TaskCalendarPlugin from '../src/main';
+import * as projectIntegration from '../src/projects/projectIntegration';
+import { PANEL_VIEW_TYPE } from '../src/views/PanelView';
+import { createAppWithFiles, deferred, expectDefined, useRealMoment } from './helpers';
+import { publicApiHarness } from './support/publicApiHarness';
+
+useRealMoment();
+afterEach(() => vi.restoreAllMocks());
+
+function value<T>(result: ApiResultV1<T>): T {
+  if (!result.ok) throw new Error(result.error.code);
+  return result.value;
+}
+function receipt(result: ProjectMutationResultV1) {
+  if (!result.ok) throw new Error(result.error.code);
+  return result.receipt;
+}
+const root = 'source.md';
+const empty = 'projects/Empty.md';
+const tree = '- [ ] Root\n  - [ ] Child';
+async function setup(files: Record<string, string> = {}) {
+  const app = await createAppWithFiles({ [root]: tree, [empty]: '', ...files });
+  await app.vault.adapter.mkdir(`${app.vault.configDir}/plugins/abyss-tasks`);
+  const plugin = new TaskCalendarPlugin(app, {
+    id: 'abyss-tasks',
+    name: 'Abyss Tasks',
+    version: 'test',
+  } as ConstructorParameters<typeof TaskCalendarPlugin>[1]);
+  await plugin.onload();
+  Object.assign(plugin.settings.projects, {
+    membershipQuery: 'projects/',
+    createFolder: 'projects',
+    taskInsertionMode: 'prepend',
+    propertyDefinitionsVersion: 1,
+    propertyDefinitions: { 'property:budget': { type: 'number' } },
+  });
+  plugin.settings.taskPrefix = '';
+  plugin.settings.taskLifecycle.addCreatedDate = false;
+  await plugin.saveSettings();
+  const client = () => value(plugin.getApi(1, { consumerId: 'consumer' }));
+  const first = client();
+  (app.workspace as unknown as { setLayoutReady__(): void }).setLayoutReady__();
+  value(await first.ready());
+  return { app, plugin, first, client };
+}
+function request(requestId: string) {
+  return { requestId, expiresAt: Date.now() + 120_000 };
+}
+function basis(ref: { target: string; revision: string }) {
+  return { target: ref.target, expectedRevision: ref.revision };
+}
+
+it('manages a project and its physical occurrences through main with the panel closed', async () => {
+  const { app, plugin, first, client } = await setup();
+  try {
+    const other = client();
+    const projects = expectDefined(first.projects);
+    const peers = expectDefined(other.projects);
+    const changes: number[] = [];
+    value(first.subscribe((event) => changes.push(event.generation)));
+    expect(first.info.capabilities).toEqual(
+      expect.arrayContaining([
+        'projects.read',
+        'projects.schema',
+        'projects.create',
+        'projects.update',
+        'projects.createTask',
+        'projects.moveTask',
+      ]),
+    );
+    expect(first.info.projectLimits?.maxProjectInputBytes).toBe(65_536);
+    const schema = value(await projects.schema());
+    const status = expectDefined(schema.statuses[1]);
+    expect(schema.fields).toContainEqual(
+      expect.objectContaining({ id: 'property:budget', writable: true }),
+    );
+    expect(value(await projects.resolve({ path: root })).type).toBe('not-found');
+    const pre = value(await projects.list());
+    expect(pre.items.map((item) => [item.path, item.stats.total])).toEqual([[empty, 0]]);
+    const created = receipt(await projects.create({ ...request('project'), name: 'Launch' }));
+    const target = expectDefined(created.project);
+    const project = value(await peers.get(target.target));
+    expect(value(await projects.resolve({ path: project.path }))).toMatchObject({
+      type: 'found',
+      project,
+    });
+    const edit = {
+      ...request('edit'),
+      ...basis(project),
+      statusId: status.id,
+      fields: [{ fieldId: 'property:budget', value: 0 }],
+    };
+    const edited = receipt(await peers.update(edit));
+    const detail = value(await projects.get(target.target));
+    expect(detail.status).toEqual({ state: 'configured', id: status.id });
+    expect(detail.fields).toContainEqual({ fieldId: 'property:budget', state: 'value', value: 0 });
+    const one = receipt(
+      await projects.createTask({
+        ...request('one'),
+        ...basis(expectDefined(edited.project)),
+        title: 'Duplicate',
+      }),
+    );
+    const duplicate = {
+      ...request('two'),
+      ...basis(expectDefined(one.project)),
+      title: 'Duplicate',
+    };
+    const [a, b] = await Promise.all([projects.createTask(duplicate), peers.createTask(duplicate)]);
+    expect(a).toEqual(b);
+    const two = receipt(a);
+    const original = expectDefined(one.task),
+      inserted = expectDefined(two.task);
+    expect(original.target).not.toBe(inserted.target);
+    const chosen = value(await other.tasks.get(inserted.target));
+    expect(chosen.title).toBe('Duplicate');
+    expect(chosen.source.line).toBeLessThan(
+      value(await first.tasks.get(original.target)).source.line,
+    );
+    expect(await first.tasks.complete({ ...basis(chosen), ...request('two') })).toMatchObject({
+      error: { code: 'REQUEST_ID_REUSED' },
+    });
+    expect(await first.tasks.complete({ ...basis(chosen), ...request('complete') })).toMatchObject({
+      ok: true,
+    });
+    expect(
+      value(await other.tasks.list({ path: project.path })).items.map((item) => item.status),
+    ).toEqual(['done', 'open']);
+    const [source, child] = value(await first.tasks.list({ path: root })).items;
+    expect(child?.parentTarget).toBe(source?.target);
+    const move = {
+      ...request('move'),
+      ...basis(value(await projects.get(target.target))),
+      taskTarget: expectDefined(source).target,
+      expectedTaskRevision: expectDefined(source).revision,
+    };
+    const moved = receipt(await peers.moveTask(move));
+    expect(moved).toMatchObject({
+      effects: 'committed',
+      destinationCopy: 'committed',
+      sourceRemoval: 'committed',
+    });
+    expect(await projects.moveTask(move)).toEqual({ ok: true, receipt: moved });
+    expect(value(await first.tasks.list({ path: root })).items).toHaveLength(0);
+    const tasks = value(await first.tasks.list({ path: project.path })).items;
+    expect(
+      value(await first.tasks.list({ path: project.path, statuses: ['done'] })).items.map(
+        (item) => item.title,
+      ),
+    ).toEqual(['Duplicate']);
+    expect(tasks.find((t) => t.title === 'Child')?.parentTarget).toBe(
+      expectDefined(moved.task).target,
+    );
+    expect(value(await projects.get(target.target)).stats).toMatchObject({ total: 3, done: 1 });
+    const page = value(await projects.list({ limit: 1 }));
+    const last = value(await peers.list({ limit: 1, cursor: expectDefined(page.nextCursor) }));
+    expect([page.items[0]?.path, last.items[0]?.path]).toEqual([empty, project.path]);
+    expect(last.generation).toBe(changes[changes.length - 1]);
+    expect(app.workspace.getLeavesOfType(PANEL_VIEW_TYPE)).toHaveLength(0);
+  } finally {
+    plugin.onunload();
+  }
+});
+
+it.each(['folder', 'note'] as const)(
+  'retains creation effects when the %s was written before failure',
+  async (race) => {
+    const h = await setup();
+    try {
+      const projects = expectDefined(h.first.projects);
+      const { vault } = h.app;
+      const folder = 'projects/new';
+      h.plugin.settings.projects.createFolder = folder;
+      const path = `${folder}/Report.md`;
+      if (race === 'folder') {
+        const createFolder = vault.createFolder.bind(vault);
+        vi.spyOn(vault, 'createFolder').mockImplementationOnce(async (dir) => {
+          const result = await createFolder(dir);
+          h.plugin.settings.projects.membershipQuery = '#other';
+          return result;
+        });
+      } else {
+        await vault.createFolder(folder);
+        const create = vault.create.bind(vault);
+        vi.spyOn(vault, 'create').mockImplementationOnce(async (...args) => {
+          await create(...args);
+          throw new Error('lost note acknowledgement');
+        });
+      }
+      const input = { ...request('create-failure'), name: 'Report' };
+      const result = await projects.create(input);
+      expect(result).toMatchObject({
+        ok: false,
+        effects: race === 'folder' ? 'partial' : 'unknown',
+        recovery: 'reconcile',
+        receipt: { outcome: 'failed' },
+      });
+      expect(result.receipt?.project).toBeUndefined();
+      expect(JSON.stringify(result)).not.toContain(path);
+      expect(await expectDefined(h.client().projects).create(input)).toEqual(result);
+      expect(await vault.adapter.exists(folder)).toBe(true);
+      expect(await vault.adapter.exists(path)).toBe(race === 'note');
+    } finally {
+      h.plugin.onunload();
+    }
+  },
+);
+
+it('shares pending request capacity across namespaces and admits a matching join while full', async () => {
+  const h = await setup();
+  const resume = deferred<void>();
+  try {
+    const projects = expectDefined(h.first.projects),
+      other = h.client();
+    const source = expectDefined(value(await other.tasks.list({ path: root })).items[0]);
+    const project = expectDefined(value(await projects.list()).items[0]);
+    const process = h.app.vault.process.bind(h.app.vault);
+    vi.spyOn(h.app.vault, 'process').mockImplementationOnce(async (file, edit) => {
+      await resume.promise;
+      return process(file, edit);
+    });
+    const inputs = Array.from(
+      { length: h.first.info.limits.maxPendingRequestsPerConsumer },
+      (_, i) => ({
+        ...basis(project),
+        ...request(`pending-${i}`),
+        title: 'once',
+      }),
+    );
+    const pending = inputs.map((input) => projects.createTask(input));
+    const join = expectDefined(other.projects).createTask(expectDefined(inputs[0]));
+    const complete = { ...basis(source), ...request('task-after-full') };
+    const rejected = await other.tasks.complete(complete);
+    expect(rejected).toMatchObject({
+      ok: false,
+      error: { code: 'RESOURCE_LIMIT' },
+      effects: 'unchanged',
+    });
+    expect(rejected.receipt).toBeUndefined();
+    resume.resolve();
+    const settled = await Promise.all(pending);
+    expect(await join).toEqual(settled[0]);
+    expect(settled.filter((result) => result.ok)).toHaveLength(1);
+    expect(await other.tasks.complete(complete)).toMatchObject({ ok: true });
+  } finally {
+    resume.resolve();
+    h.plugin.onunload();
+  }
+});
+
+it('opens the plugin and reads tasks without materializing project notes', async () => {
+  const observed = vi.fn();
+  const port = projectIntegration.createProjectIntegrationReads;
+  vi.spyOn(projectIntegration, 'createProjectIntegrationReads').mockImplementation(
+    (source, settings) => {
+      return port(
+        {
+          ...source,
+          get: (path) => {
+            observed(path);
+            return source.get(path);
+          },
+        },
+        settings,
+      );
+    },
+  );
+  const h = await setup();
+  try {
+    expect(value(await h.first.tasks.list()).items).toHaveLength(2);
+    expect(observed).not.toHaveBeenCalled();
+    expect(value(await expectDefined(h.first.projects).list()).items).toHaveLength(1);
+    expect(observed).toHaveBeenCalledWith(empty);
+  } finally {
+    h.plugin.onunload();
+  }
+  const legacy = await publicApiHarness({ [root]: tree });
+  try {
+    const client = legacy.client();
+    expect(client.projects).toBeUndefined();
+    expect(client.info.projectLimits).toBeUndefined();
+    expect(client.info.capabilities.some((cap) => cap.startsWith('projects.'))).toBe(false);
+    expect(value(await client.tasks.list()).items).toHaveLength(2);
+  } finally {
+    legacy.dispose();
+  }
+});
+
+it('uses a summary proof for writes and receipt delivery even when detail exceeds the wire limit', async () => {
+  const detail = vi.fn();
+  const read = projectIntegration.createProjectIntegrationReads;
+  vi.spyOn(projectIntegration, 'createProjectIntegrationReads').mockImplementation(
+    (source, settings) => {
+      const port = read(source, settings);
+      const get = port.get.bind(port);
+      vi.spyOn(port, 'get').mockImplementation((path) => {
+        detail(path);
+        return get(path);
+      });
+      return port;
+    },
+  );
+  const h = await setup({ [empty]: `---\ndescription: ${'x'.repeat(270_000)}\n---\n` });
+  try {
+    const projects = expectDefined(h.first.projects);
+    const project = expectDefined(value(await projects.list()).items[0]);
+    expect(await projects.get(project.target)).toMatchObject({ error: { code: 'RESOURCE_LIMIT' } });
+    expect(detail).toHaveBeenCalledTimes(1);
+    const result = receipt(
+      await projects.createTask({ ...basis(project), ...request('oversize'), title: 'Ship' }),
+    );
+    expect(result.project?.target).toBe(project.target);
+    expect(detail).toHaveBeenCalledTimes(1);
+    expect(value(await h.first.tasks.get(expectDefined(result.task).target)).title).toBe('Ship');
+  } finally {
+    h.plugin.onunload();
+  }
+});
+
+it('checks permission independently for each recipient and both references on replay', async () => {
+  const h = await setup();
+  const resume = deferred<void>();
+  try {
+    const projects = expectDefined(h.first.projects),
+      peers = expectDefined(h.client().projects);
+    const project = expectDefined(value(await projects.list()).items[0]);
+    const input = { ...basis(project), ...request('once'), title: 'Private title' };
+    const process = h.app.vault.process.bind(h.app.vault);
+    const started = deferred<void>();
+    vi.spyOn(h.app.vault, 'process').mockImplementationOnce(async (file, transform) => {
+      started.resolve();
+      await resume.promise;
+      return process(file, transform);
+    });
+    const first = projects.createTask(input);
+    await started.promise;
+    const joined = peers.createTask(input);
+    h.first.dispose();
+    resume.resolve();
+    const hidden = receipt(await first),
+      live = receipt(await joined);
+    expect(hidden.effects).toBe('committed');
+    expect(hidden.project).toBeUndefined();
+    expect(hidden.task).toBeUndefined();
+    expect(live.project?.target).toBe(project.target);
+    expect(live.task).toBeDefined();
+    h.plugin.settings.projects.membershipQuery = '#other';
+    await h.plugin.saveSettings();
+    const taskOnly = receipt(await peers.createTask(input));
+    expect(taskOnly.project).toBeUndefined();
+    expect(taskOnly.task).toEqual(live.task);
+    await h.plugin.saveTaskStorageSettings({
+      taskArchivePath: h.plugin.settings.taskArchivePath,
+      taskIgnoreQuery: 'projects/',
+    });
+    const revoked = receipt(await peers.createTask(input));
+    expect(revoked).toEqual(hidden);
+    expect(JSON.stringify(revoked)).not.toContain('Private title');
+    expect(await h.app.vault.adapter.read(empty)).toBe('- [ ] Private title');
+  } finally {
+    resume.resolve();
+    h.plugin.onunload();
+  }
+});
+
+it('returns the original exact root for a same-project no-op, and rejects selecting its child', async () => {
+  const h = await setup({ [empty]: tree });
+  try {
+    const projects = expectDefined(h.first.projects);
+    const project = expectDefined(value(await projects.list()).items[0]);
+    const [parent, child] = value(await h.first.tasks.list({ path: empty })).items;
+    for (const [id, task] of [
+      ['child', expectDefined(child)],
+      ['root', expectDefined(parent)],
+    ] as const) {
+      const result = await projects.moveTask({
+        ...basis(project),
+        ...request(id),
+        taskTarget: task.target,
+        expectedTaskRevision: task.revision,
+      });
+      expect(result.receipt).toMatchObject({
+        effects: 'unchanged',
+        destinationCopy: 'unchanged',
+        sourceRemoval: 'unchanged',
+      });
+      if (id === 'child')
+        expect(result).toMatchObject({ ok: false, error: { category: 'unsupported' } });
+      else
+        expect(receipt(result)).toMatchObject({
+          outcome: 'noop',
+          task: { target: task.target, revision: task.revision },
+        });
+    }
+    expect(await h.app.vault.adapter.read(empty)).toBe(tree);
+  } finally {
+    h.plugin.onunload();
+  }
+});
+
+it.each(['changed source', 'lost removal ack', 'lost copy ack'] as const)(
+  'reconciles two-file effects after %s without repeating either phase',
+  async (race) => {
+    const h = await setup();
+    try {
+      const projects = expectDefined(h.first.projects),
+        peers = expectDefined(h.client().projects);
+      const project = expectDefined(value(await projects.list()).items[0]);
+      const source = expectDefined(value(await h.first.tasks.list({ path: root })).items[0]);
+      const input = {
+        ...basis(project),
+        ...request('partial-move'),
+        taskTarget: source.target,
+        expectedTaskRevision: source.revision,
+      };
+      const process = h.app.vault.process.bind(h.app.vault);
+      const spy = vi.spyOn(h.app.vault, 'process').mockImplementation(async (file, edit) => {
+        if (file.path === root && race === 'changed source')
+          await h.app.vault.modify(file, `${tree}\n#external`);
+        const result = await process(file, edit);
+        if (
+          (file.path === root && race === 'lost removal ack') ||
+          (file.path === empty && race === 'lost copy ack')
+        )
+          throw new Error('private diagnostic');
+        return result;
+      });
+      const result = await projects.moveTask(input);
+      expect(result).toMatchObject({
+        ok: false,
+        effects: race === 'lost copy ack' ? 'unknown' : 'partial',
+        recovery: 'reconcile',
+        receipt: {
+          destinationCopy: race === 'lost copy ack' ? 'unknown' : 'committed',
+          sourceRemoval: race === 'lost removal ack' ? 'unknown' : 'unchanged',
+        },
+      });
+      expect(JSON.stringify(result)).not.toMatch(/private diagnostic|source\.md|Empty\.md|Child/u);
+      const writes = spy.mock.calls.length;
+      expect(await peers.moveTask(input)).toEqual(result);
+      expect(spy).toHaveBeenCalledTimes(writes);
+      expect(await h.app.vault.adapter.read(empty)).toBe(tree);
+      expect((await h.app.vault.adapter.read(root)).includes('Child')).toBe(
+        race !== 'lost removal ack',
+      );
+    } finally {
+      h.plugin.onunload();
+    }
+  },
+);
+
+it.each(['status', 'field', 'membership'] as const)(
+  'rejects changed %s inside the storage callback',
+  async (change) => {
+    const h = await setup();
+    try {
+      const projects = expectDefined(h.first.projects);
+      const project = expectDefined(value(await projects.list()).items[0]);
+      const schema = value(await projects.schema()),
+        status = expectDefined(schema.statuses[0]);
+      const process = h.app.vault.process.bind(h.app.vault);
+      vi.spyOn(h.app.vault, 'process').mockImplementationOnce((file, edit) =>
+        process(file, (live) => {
+          if (change === 'status')
+            expectDefined(h.plugin.settings.projects.statuses[0]).name = 'New meaning';
+          if (change === 'field') h.plugin.settings.projects.propertyDefinitions = {};
+          if (change === 'membership') h.plugin.settings.projects.membershipQuery = '#other';
+          return edit(live);
+        }),
+      );
+      const input = {
+        ...basis(project),
+        ...request('race'),
+        statusId: status.id,
+        fields: [{ fieldId: 'property:budget', value: 17 }],
+      };
+      expect(await projects.update(input)).toMatchObject({
+        ok: false,
+        receipt: { outcome: 'failed', effects: 'unchanged' },
+      });
+      expect(await h.app.vault.adapter.read(empty)).toBe('');
+    } finally {
+      h.plugin.onunload();
+    }
+  },
+);

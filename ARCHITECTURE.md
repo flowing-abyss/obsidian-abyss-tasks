@@ -98,9 +98,11 @@ application service. `src/integrations/` imports inward contracts through `src/t
 application and infrastructure layers do not depend on the external declaration or facade.
 
 The headless project read adapter derives membership and fields from accepted TaskIndex sources,
-including empty notes, without opening ProjectStore. Its provider-owned registry retains bounded
-opaque identities and cursors; the project owner rechecks live and candidate source evidence for
-future writers. Project configuration invalidates common scans without changing task status semantics.
+including empty notes, without opening ProjectStore. Main injects one reader, the ProjectManager
+write port and the prepared project task commands into TaskApiProvider. Only this complete
+composition advertises the six project capabilities and exposes the eight project methods.
+Requests materialize project notes on demand. Clients share a provider-owned ProjectReadRegistry
+for bounded opaque file identities and cursors. Project configuration invalidates common scans without changing task status semantics.
 ProjectStore and the adapter share root statistics through the pure project statistics model.
 
 Headless project updates run through ProjectManager's per-app metadata queue. The manager checks
@@ -110,7 +112,9 @@ When a note has frontmatter, TaskIndex and the writer require a YAML mapping and
 boundaries against Obsidian after accounting for a leading byte-order mark.
 For headless creation, NoteTemplateService prepares the configured static template and the manager
 adds the initial fields in memory. The service rechecks the template, destination and project scope
-after folder creation, then creates one note with its final content. Both writers reconcile the
+after folder creation, then creates one note with its final content. This route accepts core static
+substitutions and suppresses recognized automatic Templater execution. Executable templates and
+unsupported active adapters fail before note creation. Both writers reconcile the
 actual file through TaskIndex before issuing a new project reference.
 
 Project task capture uses the dashboard insertion policy and the application service's task
@@ -121,7 +125,10 @@ would remain. Before removal, it reads back the destination and verifies the ins
 current project membership and original source incarnation. Each phase records its own storage
 acknowledgement. TaskIndex accepts structural occurrence witnesses only while the file and
 acquisition still match the readback. The inserted root receives a fresh revision even beside
-identical roots.
+identical roots. The facade pins existing targets at admission and reserves capacity for a new
+project or task. A confirmed task result names the writer's exact occurrence. A same-note move
+uses the pinned original target. Summary evidence suffices for project writes and disclosure,
+including projects whose configured detail exceeds the public result limit.
 
 Accepted integration source bytes also carry the native note size and modification time sampled
 at acquisition. A changed stamp makes those bytes unavailable. For notes observed through the
@@ -172,7 +179,10 @@ precedence. Source health determines whether a snapshot can be disclosed; identi
 whether an opaque target still names the same occurrence. Either proof can be unavailable independently.
 
 [`TaskRequestRegistry`](src/integrations/TaskRequestRegistry.ts) owns bounded accepted promises and
-terminal mutation outcomes within one provider epoch and consumer namespace. It validates and
+terminal mutation outcomes across task and project operations within one provider epoch and
+consumer namespace. Exact normalized payloads include the operation and deadline. Project request
+bytes share a 4 MiB cap in addition to the provider's request counts. Task and project targets
+and cursors have separate capacity and expiry accounting. The registry validates and
 normalizes payloads before replay, then acquires an admission ticket only for new requests. A final
 synchronous reservation check handles callback reentry and releases unused tickets. A transient
 abort listener covers admission: getter observations precede the final client check,
@@ -181,9 +191,13 @@ listener is removed when the synchronous reserve/reject decision finishes. Accep
 keeps its authority pin through settlement and retains failures as well as successes; client disposal
 cannot erase it. A monotonic effective clock rejects expired payloads, and only expired settled
 records free capacity. Provider disposal rejects new work and drops terminal state while accepted
-operations finish. Each admission ticket pins the original public target and retains the exact inward
+operations finish. Each task status ticket pins the original public target and retains the exact inward
 root, selected node and observation. Any authored recurrence field reserves one possible-next slot before
 acceptance. The ticket releases both resources on rejection or settlement, including construction failure.
+
+Project receipts retain storage facts and optional opaque references. Each joined call or replay
+checks its own client and the current permission for each reference. A move records the destination
+copy and source removal separately. A failed second phase leaves the acknowledged copy in place.
 
 [`taskApiMutations`](src/integrations/taskApiMutations.ts) validates new requests against current source
 eligibility, coverage, revision and status semantics, then submits one intent through the existing

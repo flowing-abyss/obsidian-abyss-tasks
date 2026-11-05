@@ -6,6 +6,43 @@ import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { flushMicrotasks } from './helpers';
 import { publicApiHarness } from './support/publicApiHarness';
 
+it('keeps reserved capacity and pinned expiry separate from public project lookup', async () => {
+  const h = await publicApiHarness({ 'a.md': '#project' });
+  try {
+    const port = createProjectIntegrationReads(h.index.projectSources(), () => ({
+      ...DEFAULT_SETTINGS.projects,
+      membershipQuery: '#project',
+    }));
+    let now = 100;
+    const registry = new ProjectReadRegistry(port, {
+      epoch: 'epoch',
+      now: () => now,
+      maxTargets: 1,
+    });
+    const summary = port.summary('a.md');
+    if (summary.type !== 'ok' || summary.value === undefined) throw new Error('Missing project');
+    const reservation = registry.reserve();
+    if (!reservation.ok) throw new Error('Missing reservation');
+    expect(registry.project(summary.value)).toMatchObject({ error: { code: 'RESOURCE_LIMIT' } });
+    reservation.value();
+    reservation.value();
+    const issued = registry.project(summary.value);
+    if (!issued.ok) throw new Error('Missing handle');
+    const target = issued.value.target;
+    const pin = registry.pin(target);
+    if (!pin.ok) throw new Error('Missing pin');
+    now += 1_800_001;
+    expect(registry.acquire(target).ok).toBe(false);
+    expect(registry.reserve().ok).toBe(false);
+    now = 100;
+    expect(registry.acquire(target).ok).toBe(false);
+    pin.value();
+    expect(registry.reserve().ok).toBe(true);
+  } finally {
+    h.dispose();
+  }
+});
+
 it('paginates projects with opaque identities and expires a cursor when sources change', async () => {
   const h = await publicApiHarness({
     'a.md': '---\nkind: project\n---\n# A',

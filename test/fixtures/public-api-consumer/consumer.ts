@@ -2,7 +2,10 @@ import type {
   ApiAbortSignalV1,
   ApiResultV1,
   MutationResultV1,
+  ProjectDtoV1,
+  ProjectRequestV1,
   ProjectSchemaV1,
+  ProjectsApiV1,
   ResolutionV1,
   TaskDtoV1,
   TasksApiProviderV1,
@@ -96,43 +99,67 @@ export async function consume(
   }
 }
 
-export async function exerciseProjects(client: TasksApiV1): Promise<void> {
+async function createAndFindProject(
+  projects: ProjectsApiV1,
+  request: () => ProjectRequestV1,
+): Promise<ProjectDtoV1 | undefined> {
+  const created = await projects.create({ name: 'New', ...request() });
+  if (!created.ok || created.receipt.project === undefined) return;
+  const detail = await projects.get(created.receipt.project.target);
+  if (!detail.ok) return;
+  const resolved = await projects.resolve({ path: detail.value.path });
+  if (!resolved.ok || resolved.value.type !== 'found') return;
+  return resolved.value.project;
+}
+async function populateProject(
+  projects: ProjectsApiV1,
+  project: ProjectDtoV1,
+  request: () => ProjectRequestV1,
+) {
+  const schema = await projects.schema();
+  if (!schema.ok || !schema.value.fields.some((f) => f.id === 'description' && f.writable)) return;
+  const updated = await projects.update({
+    target: project.target,
+    expectedRevision: project.revision,
+    statusId: schema.value.defaultStatusId ?? null,
+    fields: [{ fieldId: 'description', value: 'Text' }],
+    ...request(),
+  });
+  if (!updated.ok || updated.receipt.project === undefined) return;
+  return projects.createTask({
+    target: project.target,
+    expectedRevision: updated.receipt.project.revision,
+    title: 'Task',
+    ...request(),
+  });
+}
+export async function exerciseProjects(
+  client: TasksApiV1,
+  taskToMove: TaskDtoV1,
+  newRequestId: () => string,
+): Promise<void> {
   const projects = client.projects;
   if (projects === undefined) return; // A task-only v1 provider remains valid.
-  const schema = await projects.schema();
-  const page = await projects.list({ limit: 10 });
-  const resolved = await projects.resolve({ path: 'Projects/example.md' });
-  if (!schema.ok || !page.ok || !resolved.ok || resolved.value.type !== 'found') return;
-  const project = resolved.value.project;
-  await projects.get(project.target);
-  await projects.create({
-    name: 'New',
-    fields: [{ fieldId: 'description', value: 'Text' }],
-    requestId: 'create',
-    expiresAt: 1000,
+  const request = () => ({
+    requestId: newRequestId(),
+    expiresAt: Date.now() + client.info.limits.maxRequestWindowMs,
   });
-  await projects.update({
+  await projects.list({ limit: 10 });
+  const project = await createAndFindProject(projects, request);
+  if (project === undefined) return;
+  const inserted = await populateProject(projects, project, request);
+  if (inserted === undefined || !inserted.ok || inserted.receipt.project === undefined) return;
+  const source = await client.tasks.get(taskToMove.target);
+  if (!source.ok || source.value.parentTarget !== undefined) return;
+  const moved = await projects.moveTask({
     target: project.target,
-    expectedRevision: project.revision,
-    statusId: null,
-    requestId: 'update',
-    expiresAt: 1000,
+    expectedRevision: inserted.receipt.project.revision,
+    taskTarget: source.value.target,
+    expectedTaskRevision: source.value.revision,
+    ...request(),
   });
-  await projects.createTask({
-    target: project.target,
-    expectedRevision: project.revision,
-    title: 'Task',
-    requestId: 'task',
-    expiresAt: 1000,
-  });
-  await projects.moveTask({
-    target: project.target,
-    expectedRevision: project.revision,
-    taskTarget: 'task',
-    expectedTaskRevision: 'revision',
-    requestId: 'move',
-    expiresAt: 1000,
-  });
+  if (!moved.ok && moved.recovery === 'reconcile')
+    await client.tasks.list({ path: source.value.source.path });
   await client.tasks.list({ path: project.path });
 }
 

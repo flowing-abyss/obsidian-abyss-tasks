@@ -124,7 +124,7 @@ export interface TaskIntegrationReadApi extends TaskIntegrationReadStateApi {
 }
 
 /** Borrowed accepted source data, available only to the inward project owner. */
-export interface ProjectAcceptedSource {
+interface ProjectAcceptedSource {
   readonly path: string;
   readonly identity: object;
   readonly version: number;

@@ -9,7 +9,7 @@ import type {
   ReadOptionsV1,
   ResolveProjectV1,
 } from '../../api';
-import type { ProjectIntegrationReads, ProjectReadRecord } from '../projects/projectApi';
+import type { ProjectIntegrationReads, ProjectReadSummary } from '../projects/projectApi';
 import type { TaskReadObservation } from '../tasks';
 import type { ProjectReadRegistry } from './ProjectReadRegistry';
 import { validateProjectList, validateProjectResolve } from './projectValidation';
@@ -28,7 +28,7 @@ function* remainingPaths(paths: readonly string[], after: string | undefined): I
 }
 export interface ProjectApiReads {
   readonly api: ReadMethods;
-  acquire(target: string, expectedRevision?: string): ApiResultV1<ProjectReadRecord>;
+  acquire(target: string, expectedRevision?: string): ApiResultV1<ProjectReadSummary>;
 }
 function sized<T>(value: T): ApiResultV1<T> {
   try {
@@ -153,7 +153,7 @@ class ProjectReadClient {
     return { ok: true, value: { rows, more: false } };
   }
   get(target: string): ApiResultV1<ProjectDtoV1> {
-    const read = this.registry.acquire(target);
+    const read = this.registry.detail(target);
     if (!read.ok) return read;
     const result = this.registry.project(read.value);
     return result.ok ? sized(result.value) : result;

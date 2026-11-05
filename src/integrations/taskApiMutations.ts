@@ -304,9 +304,9 @@ function redactMutationResult(
       : { receipt: redactedReceipt(result.receipt, identities, reads) }),
   });
 }
-function currentNode(
+export function currentNode(
   api: TaskApiContext,
-  input: StatusMutationV1,
+  input: Pick<StatusMutationV1, 'target' | 'expectedRevision'>,
 ): ApiResultV1<{ node: TaskReadNode; observation: TaskReadObservation }> {
   const failed = api.check() ?? lifecycleError(api.reads.capture());
   if (failed !== undefined) return failed;

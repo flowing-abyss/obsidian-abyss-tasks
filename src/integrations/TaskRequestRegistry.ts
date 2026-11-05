@@ -40,7 +40,7 @@ type AcceptedProjectResult =
       readonly recovery: RecoveryV1;
       readonly receipt: ProjectMutationReceiptV1;
     };
-interface ProjectAdmissionTicket {
+export interface ProjectAdmissionTicket {
   readonly execute: (acceptedAt: number) => Promise<AcceptedProjectResult>;
   readonly release: () => void;
   readonly unknown: (acceptedAt: number) => ProjectMutationReceiptV1;

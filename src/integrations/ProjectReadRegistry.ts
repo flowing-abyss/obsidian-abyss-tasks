@@ -4,7 +4,7 @@ import type {
   ProjectReadRecord,
   ProjectReadSummary,
 } from '../projects/projectApi';
-import type { TaskReadObservation } from '../tasks';
+import type { TaskReadObservation, TaskReadResult } from '../tasks';
 import { readError, readFailure } from './taskApiReads';
 
 interface Handle {
@@ -15,6 +15,7 @@ interface Handle {
   semantics: object;
   revision: string;
   expires: number;
+  pins: number;
 }
 interface Cursor {
   readonly created: number;
@@ -32,6 +33,13 @@ interface RegistryOptions {
 function failure(): ApiResultV1<never> {
   return readError('resource', 'RESOURCE_LIMIT', 'Project capacity is exhausted.');
 }
+function matchesRevision(handle: Handle, value: ProjectReadSummary, revision: string): boolean {
+  return (
+    handle.revision === revision &&
+    handle.version === value.version &&
+    handle.semantics === value.semantics
+  );
+}
 function binding(limit: number, observation: TaskReadObservation): string {
   return JSON.stringify([
     limit,
@@ -46,6 +54,7 @@ export class ProjectReadRegistry {
   private readonly reverse_abyssPrivate = new WeakMap<object, { path: string; target: string }>();
   private readonly cursors_abyssPrivate = new Map<string, Cursor>();
   private count_abyssPrivate = 0;
+  private reservations_abyssPrivate = 0;
   private disposed_abyssPrivate = false;
   constructor(
     private readonly port_abyssPrivate: ProjectIntegrationReads,
@@ -56,13 +65,49 @@ export class ProjectReadRegistry {
   }
   clean(): void {
     const now = this.options_abyssPrivate.now();
-    for (const [key, value] of this.handles_abyssPrivate)
-      if (value.expires <= now) this.handles_abyssPrivate.delete(key);
+    for (const [key, value] of this.handles_abyssPrivate) {
+      if (value.expires > now) continue;
+      if (value.pins === 0) this.handles_abyssPrivate.delete(key);
+      else value.expires = -Infinity; // A clock rollback cannot renew a pinned handle.
+    }
     for (const [key, value] of this.cursors_abyssPrivate)
       if (value.expires <= now) this.cursors_abyssPrivate.delete(key);
   }
   checkpoint(): number {
     return this.count_abyssPrivate;
+  }
+  reserve(): ApiResultV1<() => void> {
+    this.clean();
+    if (this.disposed_abyssPrivate) return readFailure('disposed');
+    if (!this.capacity_abyssPrivate()) return failure();
+    this.reservations_abyssPrivate++;
+    let active = true;
+    return {
+      ok: true,
+      value: () => {
+        if (active) this.reservations_abyssPrivate--;
+        active = false;
+      },
+    };
+  }
+  pin(target: string): ApiResultV1<() => void> {
+    const handle = this.handles_abyssPrivate.get(target);
+    if (handle === undefined || handle.expires <= this.options_abyssPrivate.now())
+      return readFailure('stale');
+    handle.pins++;
+    return {
+      ok: true,
+      value: () => {
+        handle.pins--;
+      },
+    };
+  }
+  private capacity_abyssPrivate(): boolean {
+    return (
+      this.handles_abyssPrivate.size + this.reservations_abyssPrivate <
+        (this.options_abyssPrivate.maxTargets ?? 50_000) &&
+      this.count_abyssPrivate <= Number.MAX_SAFE_INTEGER - 2 * (this.reservations_abyssPrivate + 1)
+    );
   }
   rollback(checkpoint: number): void {
     for (const [key, handle] of this.handles_abyssPrivate)
@@ -107,11 +152,7 @@ export class ProjectReadRegistry {
     let handle = target === undefined ? undefined : this.handles_abyssPrivate.get(target);
     if (handle === undefined) {
       if (this.disposed_abyssPrivate) return readFailure('disposed');
-      if (
-        this.handles_abyssPrivate.size >= (this.options_abyssPrivate.maxTargets ?? 50_000) ||
-        this.count_abyssPrivate >= Number.MAX_SAFE_INTEGER - 2
-      )
-        return failure();
+      if (!this.capacity_abyssPrivate()) return failure();
       target = this.token_abyssPrivate('p');
       handle = {
         created: this.count_abyssPrivate,
@@ -121,26 +162,35 @@ export class ProjectReadRegistry {
         semantics: value.semantics,
         revision: this.token_abyssPrivate('r'),
         expires: 0,
+        pins: 0,
       };
       this.handles_abyssPrivate.set(target, handle);
       this.reverse_abyssPrivate.set(value.identity, { path: value.path, target });
     }
     return { ok: true, value: { target: target ?? '', handle } };
   }
-  acquire(target: string, expectedRevision?: string): ApiResultV1<ProjectReadRecord> {
+  detail(target: string): ApiResultV1<ProjectReadRecord> {
+    return this.read_abyssPrivate(target, undefined, (path) => this.port_abyssPrivate.get(path));
+  }
+  acquire(target: string, expectedRevision?: string): ApiResultV1<ProjectReadSummary> {
+    return this.read_abyssPrivate(target, expectedRevision, (path) =>
+      this.port_abyssPrivate.summary(path),
+    );
+  }
+  private read_abyssPrivate<T extends ProjectReadSummary>(
+    target: string,
+    expectedRevision: string | undefined,
+    from: (path: string) => TaskReadResult<T | undefined>,
+  ): ApiResultV1<T> {
     if (this.disposed_abyssPrivate) return readFailure('disposed');
     this.clean();
     const handle = this.handles_abyssPrivate.get(target);
-    if (handle === undefined) return readFailure('stale');
-    const read = this.port_abyssPrivate.get(handle.path);
+    if (handle === undefined || handle.expires <= this.options_abyssPrivate.now())
+      return readFailure('stale');
+    const read = from(handle.path);
     if (read.type === 'error') return readFailure(read.reason);
     if (read.value?.identity !== handle.identity) return readFailure('stale');
-    if (
-      expectedRevision !== undefined &&
-      (handle.revision !== expectedRevision ||
-        handle.version !== read.value.version ||
-        handle.semantics !== read.value.semantics)
-    )
+    if (expectedRevision !== undefined && !matchesRevision(handle, read.value, expectedRevision))
       return readError('conflict', 'STALE_REVISION', 'Project has changed.');
     return { ok: true, value: read.value };
   }

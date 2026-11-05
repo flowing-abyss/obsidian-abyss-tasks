@@ -9,9 +9,12 @@ import type {
   TasksApiV1,
 } from '../../api';
 import type { TaskIntegrationReadApi, TaskReadObservation, TaskStatusMutationApi } from '../tasks';
+import { ProjectReadRegistry } from './ProjectReadRegistry';
 import { TaskCursorRegistry } from './TaskCursorRegistry';
 import { TaskIdentityRegistry } from './TaskIdentityRegistry';
 import { TaskRequestRegistry } from './TaskRequestRegistry';
+import { createProjectApiMutations, type ProjectPorts } from './projectApiMutations';
+import { createProjectApiReads } from './projectApiReads';
 import { createTaskApiMutations } from './taskApiMutations';
 import { createTaskApiReads, lifecycleError, readError } from './taskApiReads';
 import { validateApiRequest, validateReadOptions } from './validation';
@@ -41,6 +44,7 @@ interface Publication {
   }>;
 }
 interface ProviderOptions {
+  readonly projects?: ProjectPorts;
   readonly mutations: TaskStatusMutationApi;
   readonly reads: TaskIntegrationReadApi;
   readonly pluginVersion: string;
@@ -49,6 +53,7 @@ interface ProviderOptions {
   readonly diagnostic: (operation: string, code: string, diagnosticId: string) => void;
 }
 interface ProviderOwner {
+  readonly projects?: { ports: ProjectPorts; registry: ProjectReadRegistry };
   readonly requests: TaskRequestRegistry;
   readonly options: ProviderOptions;
   readonly identities: TaskIdentityRegistry;
@@ -76,7 +81,29 @@ function apiInfo(options: ProviderOptions): ApiInfoV1 {
       'tasks.toggleCompletion',
       'events.invalidate',
       'requests.epochDeduplication',
+      ...(options.projects === undefined
+        ? []
+        : [
+            'projects.read',
+            'projects.schema',
+            'projects.create',
+            'projects.update',
+            'projects.createTask',
+            'projects.moveTask',
+          ]),
     ],
+    ...(options.projects === undefined
+      ? {}
+      : {
+          projectLimits: {
+            maxFieldsPerWrite: 64,
+            maxValuesPerField: 256,
+            maxTextLength: 16_384,
+            maxProjectInputBytes: 65_536,
+            maxProjectResultBytes: 262_144,
+            maxRetainedProjectBytes: 4 * 1024 * 1024,
+          },
+        }),
     limits: {
       defaultPageSize: 100,
       maxPageSize: 500,
@@ -137,6 +164,7 @@ function closeProvider(owner: ProviderOwner): void {
   owner.requests.dispose();
   owner.identities.dispose();
   owner.cursors.dispose();
+  owner.projects?.registry.dispose();
 }
 function checkProvider(owner: ProviderOwner): ApiResultV1<never> | undefined {
   if (owner.terminal !== undefined) return owner.terminal;
@@ -286,6 +314,13 @@ function getApi(
     const client: ClientRecord = { live: true, listeners: new Set(), waits: new Set() };
     owner.clients.add(client);
     const context = clientContext(owner, client);
+    const mutation = {
+      api: context,
+      consumerId: validation.value,
+      requests: owner.requests,
+      epoch: owner.options.epoch,
+      isDisposed: () => owner.closed || !client.live,
+    };
     const api: TasksApiV1 = {
       info: owner.info,
       ready: (input) => ready(context, client, input),
@@ -295,15 +330,21 @@ function getApi(
       },
       tasks: Object.freeze({
         ...createTaskApiReads(context),
-        ...createTaskApiMutations({
-          api: context,
-          mutations: owner.options.mutations,
-          requests: owner.requests,
-          consumerId: validation.value,
-          epoch: owner.options.epoch,
-          isDisposed: () => owner.closed || !client.live,
-        }),
+        ...createTaskApiMutations({ ...mutation, mutations: owner.options.mutations }),
       }),
+      ...(owner.projects === undefined
+        ? {}
+        : {
+            projects: Object.freeze({
+              ...createProjectApiReads(context, owner.projects.ports.reads, owner.projects.registry)
+                .api,
+              ...createProjectApiMutations({
+                ...mutation,
+                projects: owner.projects.registry,
+                ports: owner.projects.ports,
+              }),
+            }),
+          }),
     };
     return Object.freeze({ ok: true, value: Object.freeze(api) });
   } catch {
@@ -317,6 +358,14 @@ export class TaskApiProvider implements TasksApiProviderV1 {
   constructor(options: ProviderOptions) {
     const owner: ProviderOwner = {
       options,
+      ...(options.projects === undefined
+        ? {}
+        : {
+            projects: {
+              ports: options.projects,
+              registry: new ProjectReadRegistry(options.projects.reads, options),
+            },
+          }),
       requests: new TaskRequestRegistry({ epoch: options.epoch, now: options.now }),
       identities: new TaskIdentityRegistry({ epoch: options.epoch, now: options.now }),
       cursors: new TaskCursorRegistry({ epoch: options.epoch, now: options.now }),

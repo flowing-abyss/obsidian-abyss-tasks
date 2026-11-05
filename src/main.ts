@@ -11,8 +11,9 @@ import {
   ObsidianProjectProperties,
   type ProjectPropertyCatalog,
 } from './projects/ObsidianProjectProperties';
-import { projectSemantics } from './projects/projectIntegration';
+import { createProjectIntegrationReads, projectSemantics } from './projects/projectIntegration';
 import { ProjectManager } from './projects/ProjectManager';
+import { createProjectTaskCommands } from './projects/projectTaskCommands';
 import { compileQuery, compileQueryPathProof, type CompiledQuery } from './query/evaluateQuery';
 import { DEFAULT_SETTINGS } from './settings/defaults';
 import {
@@ -255,23 +256,31 @@ export default class TaskCalendarPlugin extends Plugin {
       new MarkdownTaskCreatePreview(codec),
       this.taskIndex.statusReadBasis(),
     );
-    this.initializeTaskApi(tasks);
     this.projectManager = new ProjectManager(
       this.app,
       this.settings,
       noteTemplates,
-      this.tasks,
+      tasks,
       this.projectProperties,
     );
+    this.initializeTaskApi(tasks);
     this.initializeTagManager();
   }
 
   private initializeTaskApi(tasks: TaskApplicationService): void {
     this.tasks = tasks;
     this.queries = tasks.queries;
+    const sources = this.taskIndex.projectSources();
+    const settings = (): CalendarSettings['projects'] => this.settings.projects;
+    const reads = createProjectIntegrationReads(sources, settings);
     this.taskApiProvider = new TaskApiProvider({
       reads: this.taskIndex.integrationReads(),
       mutations: tasks,
+      projects: {
+        reads,
+        writes: this.projectManager.integrationWrites(reads, sources),
+        tasks: createProjectTaskCommands(reads, sources, tasks, settings),
+      },
       pluginVersion: this.manifest.version,
       epoch: Array.from(crypto.getRandomValues(new Uint8Array(16)), (value) =>
         value.toString(16).padStart(2, '0'),
