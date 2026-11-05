@@ -31,8 +31,17 @@ interface RequestOptions<T extends Result = MutationResultV1> {
   readonly isDisposed: () => boolean;
   readonly admit: () => ApiResultV1<AdmissionTicket<T>>;
 }
+type AcceptedProjectResult =
+  | { readonly ok: true; readonly receipt: ProjectMutationReceiptV1 }
+  | {
+      readonly ok: false;
+      readonly error: ApiErrorV1;
+      readonly effects: ProjectMutationReceiptV1['effects'];
+      readonly recovery: RecoveryV1;
+      readonly receipt: ProjectMutationReceiptV1;
+    };
 interface ProjectAdmissionTicket {
-  readonly execute: (acceptedAt: number) => Promise<ProjectMutationResultV1>;
+  readonly execute: (acceptedAt: number) => Promise<AcceptedProjectResult>;
   readonly release: () => void;
   readonly unknown: (acceptedAt: number) => ProjectMutationReceiptV1;
 }
@@ -163,6 +172,7 @@ export class TaskRequestRegistry {
   private readonly maxPending_abyssPrivate: number;
   private readonly maxConsumer_abyssPrivate: number;
   private readonly maxRetained_abyssPrivate: number;
+  private retainedProjectBytes_abyssPrivate = 0;
   private lastNow_abyssPrivate = Number.NEGATIVE_INFINITY;
   private disposed_abyssPrivate = false;
   private diagnostics_abyssPrivate = 0;
@@ -333,6 +343,7 @@ export class TaskRequestRegistry {
       release: ticket.release,
     };
     this.records_abyssPrivate.set(current.key, record);
+    this.retainedProjectBytes_abyssPrivate += record.projectBytes;
     this.settle_abyssPrivate(record, current, ticket, acceptedAt).then(resolve, () => {
       resolve(this.unknownResult_abyssPrivate(current, ticket, acceptedAt));
     });
@@ -346,25 +357,69 @@ export class TaskRequestRegistry {
   ): Promise<Result> {
     let result: Result;
     try {
-      result = freezeValue(await ticket.execute(acceptedAt));
+      result = await ticket.execute(acceptedAt);
+      if (current.method.startsWith('projects.') && !result.ok && result.receipt === undefined) {
+        result = {
+          ...result,
+          receipt: this.projectReceipt_abyssPrivate(
+            current,
+            acceptedAt,
+            result.effects,
+            result.recovery,
+          ),
+        };
+      }
+      result = freezeValue(result);
     } catch {
       result = this.unknownResult_abyssPrivate(current, ticket, acceptedAt);
+    } finally {
+      const release = record.release;
+      record.release = undefined;
+      if (release !== undefined) this.release_abyssPrivate(release, current.method);
+      record.pending = false;
+      if (this.disposed_abyssPrivate || record.expiresAt <= this.lastNow_abyssPrivate)
+        this.delete_abyssPrivate(current.key, record);
     }
-    const release = record.release;
-    record.release = undefined;
-    if (release !== undefined) this.release_abyssPrivate(release, current.method);
-    record.pending = false;
-    if (this.disposed_abyssPrivate || record.expiresAt <= this.lastNow_abyssPrivate)
-      this.records_abyssPrivate.delete(current.key);
     return result;
+  }
+  private projectReceipt_abyssPrivate(
+    current: RequestContext,
+    acceptedAt: number,
+    effects: ProjectMutationReceiptV1['effects'],
+    recovery: ProjectMutationReceiptV1['recovery'],
+  ): ProjectMutationReceiptV1 {
+    return {
+      providerEpoch: this.options_abyssPrivate.epoch,
+      requestId: current.request.requestId,
+      acceptedAt,
+      expiresAt: current.request.expiresAt,
+      outcome: 'failed',
+      effects,
+      recovery,
+      ...(current.method === 'projects.moveTask'
+        ? { destinationCopy: 'unknown' as const, sourceRemoval: 'unknown' as const }
+        : {}),
+    };
   }
   private unknownResult_abyssPrivate(
     current: RequestContext,
     ticket: AdmissionTicket<Result>,
     acceptedAt: number,
   ): Result {
-    if (ticket.unknown !== undefined)
-      return freezeValue(ticket.unknown(acceptedAt, this.internal_abyssPrivate(current.method)));
+    if (ticket.unknown !== undefined) {
+      const error = this.internal_abyssPrivate(current.method);
+      try {
+        return freezeValue(ticket.unknown(acceptedAt, error));
+      } catch {
+        return freezeValue<ProjectMutationResultV1>({
+          ok: false,
+          error,
+          effects: 'unknown',
+          recovery: 'reconcile',
+          receipt: this.projectReceipt_abyssPrivate(current, acceptedAt, 'unknown', 'reconcile'),
+        });
+      }
+    }
     return this.unknown_abyssPrivate(current, acceptedAt);
   }
   private unknown_abyssPrivate(current: RequestContext, acceptedAt: number): MutationResultV1 {
@@ -402,15 +457,17 @@ export class TaskRequestRegistry {
   }
   private reclaim_abyssPrivate(now: number): void {
     for (const [key, record] of this.records_abyssPrivate) {
-      if (!record.pending && record.expiresAt <= now) this.records_abyssPrivate.delete(key);
+      if (!record.pending && record.expiresAt <= now) this.delete_abyssPrivate(key, record);
     }
   }
+  private delete_abyssPrivate(key: string, record: RequestRecord): void {
+    if (this.records_abyssPrivate.get(key) !== record) return;
+    this.records_abyssPrivate.delete(key);
+    this.retainedProjectBytes_abyssPrivate -= record.projectBytes;
+  }
   private full_abyssPrivate(consumerId: string, projectBytes: number): boolean {
-    let retainedProjectBytes = 0;
-    for (const record of this.records_abyssPrivate.values())
-      retainedProjectBytes += record.projectBytes;
     if (
-      retainedProjectBytes + projectBytes >
+      this.retainedProjectBytes_abyssPrivate + projectBytes >
       (this.options_abyssPrivate.maxProjectBytes ?? 4 * 1024 * 1024)
     )
       return true;
@@ -443,7 +500,7 @@ export class TaskRequestRegistry {
   dispose(): void {
     this.disposed_abyssPrivate = true;
     for (const [key, record] of this.records_abyssPrivate) {
-      if (!record.pending) this.records_abyssPrivate.delete(key);
+      if (!record.pending) this.delete_abyssPrivate(key, record);
     }
   }
 }

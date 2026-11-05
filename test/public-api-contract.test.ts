@@ -60,6 +60,8 @@ describe('portable public API contract', () => {
   );
 
   it.each([
+    ['receipt does not expose project content', 'receipt.project?.path;', 2339],
+    ['receipt does not expose task content', 'receipt.task?.title;', 2339],
     ['readonly project', "project.path = 'other.md';", 2540],
     [
       'invalid field value',
@@ -74,10 +76,11 @@ describe('portable public API contract', () => {
     'rejects %s in external consumer code',
     (_name, expression, expectedCode) => {
       const source = [
-        "import type { TaskDtoV1, TaskPageV1, ProjectDtoV1, ProjectFieldAssignmentV1 } from '../../../api';",
+        "import type { TaskDtoV1, TaskPageV1, ProjectDtoV1, ProjectFieldAssignmentV1, ProjectMutationReceiptV1 } from '../../../api';",
         'declare const task: TaskDtoV1;',
         'declare const page: TaskPageV1;',
         'declare const project: ProjectDtoV1;',
+        'declare const receipt: ProjectMutationReceiptV1;',
         expression,
       ].join('\n');
       expect(compileConsumer(source).map((diagnostic) => diagnostic.code)).toEqual([expectedCode]);

@@ -403,18 +403,43 @@ export interface ProjectSchemaV1 extends ObservationV1 {
     readonly displayName?: string;
   }>;
   readonly defaultStatusId?: string;
-  readonly fields: ReadonlyArray<{
-    readonly id: string;
-    readonly label: string;
-    readonly type: 'text' | 'number' | 'checkbox' | 'list' | 'tags' | 'date' | 'datetime';
-    readonly writable: boolean;
-    readonly unavailable?: boolean;
-    readonly suggestions?: ReadonlyArray<{
-      readonly value: ProjectFieldValueV1;
-      readonly displayName?: string;
-    }>;
-  }>;
+  readonly fields: readonly ProjectSchemaFieldV1[];
 }
+export type ProjectEditableFieldTypeV1 =
+  'text' | 'number' | 'checkbox' | 'list' | 'tags' | 'date' | 'datetime';
+export type ProjectSchemaFieldV1 =
+  | {
+      readonly id: string;
+      readonly label: string;
+      readonly kind: 'field';
+      readonly type: ProjectEditableFieldTypeV1;
+      readonly writable: boolean;
+      readonly suggestions?: ReadonlyArray<{
+        readonly value: ProjectFieldValueV1;
+        readonly displayName?: string;
+      }>;
+    }
+  | {
+      readonly id: string;
+      readonly label: string;
+      readonly kind: 'derived';
+      readonly type: 'name' | 'progress' | 'tracking';
+      readonly writable: false;
+    }
+  | {
+      readonly id: string;
+      readonly label: string;
+      readonly kind: 'status';
+      readonly type: 'status';
+      readonly writable: boolean;
+    }
+  | {
+      readonly id: string;
+      readonly label: string;
+      readonly kind: 'unavailable';
+      readonly type: ProjectEditableFieldTypeV1 | 'status';
+      readonly writable: false;
+    };
 export type ProjectStatusV1 =
   | { readonly state: 'absent' }
   | { readonly state: 'configured'; readonly id: string }
@@ -489,8 +514,8 @@ export interface ProjectMutationReceiptV1 {
   readonly outcome: 'changed' | 'noop' | 'failed';
   readonly effects: EffectStateV1;
   readonly recovery: RecoveryV1;
-  readonly project?: ProjectDtoV1;
-  readonly task?: TaskDtoV1;
+  readonly project?: { readonly target: ProjectTargetV1; readonly revision: ProjectRevisionV1 };
+  readonly task?: { readonly target: TaskTargetV1; readonly revision: TaskRevisionV1 };
   readonly destinationCopy?: 'unchanged' | 'committed' | 'unknown';
   readonly sourceRemoval?: 'unchanged' | 'committed' | 'unknown';
 }

@@ -2,6 +2,7 @@ import type {
   ApiAbortSignalV1,
   ApiResultV1,
   MutationResultV1,
+  ProjectSchemaV1,
   ResolutionV1,
   TaskDtoV1,
   TasksApiProviderV1,
@@ -133,4 +134,36 @@ export async function exerciseProjects(client: TasksApiV1): Promise<void> {
     expiresAt: 1000,
   });
   await client.tasks.list({ path: project.path });
+}
+
+/** A provider compiled against the original client and info shape remains assignable. */
+export function legacyProvider(client: TasksApiV1): TasksApiProviderV1 {
+  const { apiVersion, pluginVersion, providerEpoch, capabilities, limits } = client.info;
+  const oldClient: TasksApiV1 = {
+    info: { apiVersion, pluginVersion, providerEpoch, capabilities, limits },
+    ready: client.ready,
+    subscribe: client.subscribe,
+    dispose: client.dispose,
+    tasks: client.tasks,
+  };
+  return { getApi: () => ({ ok: true, value: oldClient }) };
+}
+
+export function schemaFields(schema: ProjectSchemaV1): readonly string[] {
+  return schema.fields.map((field) => {
+    if (field.kind === 'derived') {
+      const type: 'name' | 'progress' | 'tracking' = field.type;
+      const writable: false = field.writable;
+      return `${type}:${writable}`;
+    }
+    if (field.kind === 'status') {
+      const type: 'status' = field.type;
+      return type;
+    }
+    if (field.kind === 'unavailable') {
+      const writable: false = field.writable;
+      return `${field.type}:${writable}`;
+    }
+    return field.type;
+  });
 }
