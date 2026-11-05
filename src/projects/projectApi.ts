@@ -19,5 +19,6 @@ export interface ProjectIntegrationReads {
   paths(): readonly string[];
   summary(path: string, semantics?: object): TaskReadResult<ProjectReadSummary | undefined>;
   get(path: string): TaskReadResult<ProjectReadRecord | undefined>;
+  matchesFile(proof: ProjectReadSummary, file: object): boolean;
   guard(proof: ProjectReadSummary, live: string, candidate: string): TaskReadResult<true>;
 }

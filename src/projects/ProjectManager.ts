@@ -19,7 +19,7 @@ import {
   type ProjectPropertyCatalog,
 } from './ObsidianProjectProperties';
 import { ProjectCreationError, type ProjectCreateOptions } from './projectCreation';
-import { parseProjectDate } from './projectDateValue';
+import { parseProjectDate, validDate, validDatetime } from './projectDateValue';
 import { isProjectEditValidationError, ProjectEditValidationError } from './projectEditError';
 import {
   createOwnedInferredPropertyClear,
@@ -107,27 +107,6 @@ function projectTaskInsertion(settings: CalendarSettings['projects']): TaskInser
   }
   if (settings.taskInsertionMode === 'prepend') return { type: 'prepend' };
   return { type: 'append' };
-}
-
-function validDate(value: string): boolean {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(value);
-  if (match === null) return false;
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  const date = new Date(Date.UTC(year, month - 1, day));
-  return (
-    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
-  );
-}
-
-function validDatetime(value: string): boolean {
-  const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,3})?)?$/u.exec(value);
-  if (match === null || !validDate(match[1] ?? '')) return false;
-  const hours = Number(match[2]);
-  const minutes = Number(match[3]);
-  const seconds = match[4] === undefined ? 0 : Number(match[4]);
-  return hours <= 23 && minutes <= 59 && seconds <= 59;
 }
 
 function isInvalidProjectDateRange(start: unknown, end: unknown): boolean {

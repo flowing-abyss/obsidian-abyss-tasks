@@ -8,6 +8,7 @@ import type { TaskReadObservation } from '../tasks';
 import { readError, readFailure } from './taskApiReads';
 
 interface Handle {
+  readonly created: number;
   readonly path: string;
   readonly identity: object;
   version: number;
@@ -16,6 +17,7 @@ interface Handle {
   expires: number;
 }
 interface Cursor {
+  readonly created: number;
   readonly binding: string;
   readonly semantics: object;
   readonly after: string;
@@ -58,6 +60,15 @@ export class ProjectReadRegistry {
       if (value.expires <= now) this.handles_abyssPrivate.delete(key);
     for (const [key, value] of this.cursors_abyssPrivate)
       if (value.expires <= now) this.cursors_abyssPrivate.delete(key);
+  }
+  checkpoint(): number {
+    return this.count_abyssPrivate;
+  }
+  rollback(checkpoint: number): void {
+    for (const [key, handle] of this.handles_abyssPrivate)
+      if (handle.created > checkpoint) this.handles_abyssPrivate.delete(key);
+    for (const [key, cursor] of this.cursors_abyssPrivate)
+      if (cursor.created > checkpoint) this.cursors_abyssPrivate.delete(key);
   }
   project<T extends ProjectReadSummary>(
     value: T,
@@ -103,6 +114,7 @@ export class ProjectReadRegistry {
         return failure();
       target = this.token_abyssPrivate('p');
       handle = {
+        created: this.count_abyssPrivate,
         path: value.path,
         identity: value.identity,
         version: value.version,
@@ -149,6 +161,7 @@ export class ProjectReadRegistry {
       return failure();
     const token = this.token_abyssPrivate('pc');
     this.cursors_abyssPrivate.set(token, {
+      created: this.count_abyssPrivate,
       binding: binding(limit, observation),
       semantics: this.port_abyssPrivate.semantics(),
       after,

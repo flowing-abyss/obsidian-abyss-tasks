@@ -101,6 +101,7 @@ The headless project read adapter derives membership and fields from accepted Ta
 including empty notes, without opening ProjectStore. Its provider-owned registry retains bounded
 opaque identities and cursors; the project owner rechecks live and candidate source evidence for
 future writers. Project configuration invalidates common scans without changing task status semantics.
+ProjectStore and the adapter share root statistics through the pure project statistics model.
 
 The declaration has no imports, runtime statements, ambient host augmentation, or internal type
 references, and needs no Obsidian or DOM typings. Its request and result data is recursively readonly.

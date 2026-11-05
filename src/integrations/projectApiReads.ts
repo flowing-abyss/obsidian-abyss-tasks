@@ -32,12 +32,36 @@ export interface ProjectApiReads {
 }
 function sized<T>(value: T): ApiResultV1<T> {
   try {
-    if (new TextEncoder().encode(JSON.stringify(value)).length <= 262_144)
+    if (
+      withinLowerBound(value, { remaining: 262_144 }) &&
+      new TextEncoder().encode(JSON.stringify(value)).length <= 262_144
+    )
       return freezeValue({ ok: true, value });
   } catch {
     /* Non-wire values cannot be disclosed. */
   }
   return readError('resource', 'RESOURCE_LIMIT', 'Project result is too large.');
+}
+/** Reject obvious oversize values before making a full JSON/UTF-8 copy. */
+function withinLowerBound(value: unknown, budget: { remaining: number }): boolean {
+  if (typeof value === 'string') budget.remaining -= value.length;
+  else if (Array.isArray(value)) {
+    budget.remaining -= value.length;
+    return lowerBoundItems(value as readonly unknown[], budget);
+  } else if (value !== null && typeof value === 'object') return lowerBoundObject(value, budget);
+  return budget.remaining >= 0;
+}
+function lowerBoundItems(values: readonly unknown[], budget: { remaining: number }): boolean {
+  for (const item of values)
+    if (budget.remaining < 0 || !withinLowerBound(item, budget)) return false;
+  return budget.remaining >= 0;
+}
+function lowerBoundObject(value: object, budget: { remaining: number }): boolean {
+  for (const [key, item] of Object.entries(value)) {
+    budget.remaining -= key.length;
+    if (budget.remaining < 0 || !withinLowerBound(item, budget)) return false;
+  }
+  return budget.remaining >= 0;
 }
 class ProjectReadClient {
   constructor(
@@ -63,10 +87,21 @@ class ProjectReadClient {
       const later =
         this.context.check(valid.value.signal) ?? lifecycleError(this.context.reads.capture());
       if (later !== undefined) return later;
-      const result = read(input.value, before);
-      return this.context.check() ?? result;
+      return this.deliver(() => read(input.value, before));
     } catch {
       return this.context.internal(operation);
+    }
+  }
+  private deliver<T>(read: () => ApiResultV1<T>): ApiResultV1<T> {
+    const checkpoint = this.registry.checkpoint();
+    try {
+      const result = this.context.check() ?? read();
+      const delivered = this.context.check() ?? result;
+      if (!delivered.ok) this.registry.rollback(checkpoint);
+      return delivered;
+    } catch (error) {
+      this.registry.rollback(checkpoint);
+      throw error;
     }
   }
   list(query: ListProjectsV1, before: TaskReadObservation): ApiResultV1<ProjectPageV1> {

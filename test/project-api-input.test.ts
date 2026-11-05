@@ -529,3 +529,19 @@ describe('project request admission', () => {
     expect(execute).toHaveBeenCalledTimes(1);
   });
 });
+
+it('accepts a custom status property while rejecting a direct status field', () => {
+  const input = { name: 'P', requestId: 'id', expiresAt: 2000 };
+  expect(
+    validateProjectMutation('projects.create', {
+      ...input,
+      fields: [{ fieldId: 'property:status', value: 'Waiting' }],
+    }),
+  ).toMatchObject({ ok: true });
+  expect(
+    validateProjectMutation('projects.create', {
+      ...input,
+      fields: [{ fieldId: 'status', value: 'Waiting' }],
+    }),
+  ).toMatchObject({ ok: false });
+});

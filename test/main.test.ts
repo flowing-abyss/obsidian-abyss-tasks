@@ -1878,3 +1878,38 @@ it('exposes index initialization failure through the production provider', async
     plugin.onunload();
   }
 });
+
+it('publishes project semantics on save while ignoring preset presentation changes', async () => {
+  const plugin = makePlugin() as unknown as TaskCalendarPlugin;
+  await plugin.onload();
+  try {
+    plugin.settings.projects.propertyDefinitionsVersion = 1;
+    plugin.settings.projects.propertyDefinitions = {
+      'property:color': { type: 'text', presets: [{ value: 'red', color: '#fff' }] },
+    };
+    await plugin.saveSettings();
+    const result = plugin.getApi(1, { consumerId: 'project-settings-test' });
+    if (!result.ok) throw new Error('Missing API');
+    const events: Array<{ generation: number; semanticsRevision: number }> = [];
+    result.value.subscribe((event) => events.push(event));
+    const before = events.length;
+    plugin.settings.projects.propertyDefinitions['property:color'] = {
+      type: 'text',
+      presets: [{ value: 'red', color: '#000', display: 'dot' }],
+    };
+    Reflect.set(
+      plugin.settings.projects.propertyDefinitions['property:color'] ?? {},
+      'presetsEnabled',
+      false,
+    );
+    await plugin.saveSettings();
+    expect(events).toHaveLength(before);
+    plugin.settings.projects.taskInsertionSection = 'New section';
+    await plugin.saveSettings();
+    expect(events).toHaveLength(before + 1);
+    expect(events[events.length - 1]?.generation).toBeGreaterThan(events[0]?.generation ?? -1);
+    expect(events[events.length - 1]?.semanticsRevision).toBe(events[0]?.semanticsRevision);
+  } finally {
+    plugin.onunload();
+  }
+});

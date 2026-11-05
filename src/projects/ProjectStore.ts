@@ -3,10 +3,10 @@ import { noteNameOfPath } from '../markdown/noteName';
 import { evaluateQuery } from '../query/evaluateQuery';
 import type { CalendarSettings } from '../settings/types';
 import type { TaskIndexEvent, TaskQueryApi, TaskSnapshot, TimeTrackingQueryApi } from '../tasks';
-import { computeStats } from './projectIntegration';
+import { computeStats } from './projectStats';
 import { resolveStatus } from './status';
 import type { Project } from './types';
-export { computeStats } from './projectIntegration';
+export { computeStats } from './projectStats';
 
 /** A verified native source observation for one project path. */
 export interface ProjectSourceObservation {

@@ -51,3 +51,65 @@ it('publishes project settings changes without changing the task semantic revisi
     h.dispose();
   }
 });
+
+it('keeps the native file handle inside TaskIndex', async () => {
+  const h = await publicApiHarness({ 'project.md': 'project' });
+  try {
+    const source = h.index.projectSources().get('project.md');
+    if (source.type !== 'ok' || source.value === undefined) throw new Error('Missing source');
+    expect(source.value.identity).not.toBe(h.app.vault.getFileByPath('project.md'));
+  } finally {
+    h.dispose();
+  }
+});
+
+it.each(['!!timestamp 2026-11-05', '!!binary SGVsbG8=', '!!set {one: null}'])(
+  'does not treat non-mapping authored YAML %s as an empty project mapping',
+  async (yaml) => {
+    const h = await publicApiHarness({ 'project.md': `---\n${yaml}\n---\n` });
+    try {
+      expect(h.index.projectSources().get('project.md')).toMatchObject({
+        type: 'error',
+        reason: 'incomplete',
+      });
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it('scopes non-mapping YAML failures and skips sources excluded by path alone', async () => {
+  const h = await publicApiHarness({
+    'bad.md': '---\n!!timestamp 2026-11-05\n---\n',
+    'good.md': '---\nkind: project\n---\n',
+  });
+  try {
+    expect(h.index.projectSources().coverage()).toMatchObject({
+      type: 'error',
+      reason: 'incomplete',
+    });
+    expect(h.index.projectSources().get('good.md')).toMatchObject({ type: 'ok' });
+    await h.index.refreshSourceExclusion(
+      () => false,
+      (path) => path === 'bad.md',
+    );
+    expect(h.index.projectSources().coverage()).toMatchObject({ type: 'ok' });
+  } finally {
+    h.dispose();
+  }
+});
+
+it('checks the writer file against the opaque incarnation token', async () => {
+  const h = await publicApiHarness({ 'project.md': 'project' });
+  try {
+    const sources = h.index.projectSources(),
+      source = sources.get('project.md');
+    if (source.type !== 'ok' || source.value === undefined) throw new Error('Missing source');
+    const file = h.app.vault.getFileByPath('project.md');
+    if (file === null) throw new Error('Missing file');
+    expect(sources.matchesFile(source.value, file)).toBe(true);
+    expect(sources.matchesFile(source.value, {})).toBe(false);
+  } finally {
+    h.dispose();
+  }
+});

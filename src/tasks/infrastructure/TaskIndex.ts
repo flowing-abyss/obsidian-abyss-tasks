@@ -1132,6 +1132,8 @@ export class TaskIndex
   private integrationSemanticsKey_abyssPrivate: string | undefined;
   private projectIntegrationSemanticsKey_abyssPrivate: string | undefined;
   private readonly integrationPaths_abyssPrivate: string[] = [];
+  private readonly invalidProjectSources_abyssPrivate = new Set<string>();
+  private readonly projectFileIdentities_abyssPrivate = new WeakMap<TFile, object>();
   private readonly integrationProjection_abyssPrivate = taskIntegrationProjection({
     state: this.integrationReadState_abyssPrivate,
     activateOccurrences: () => {
@@ -1185,6 +1187,7 @@ export class TaskIndex
   private clearIntegrationSources_abyssPrivate(): void {
     this.acceptedStatisticsSources_abyssPrivate.clear();
     this.integrationPaths_abyssPrivate.length = 0;
+    this.invalidProjectSources_abyssPrivate.clear();
   }
 
   integrationReads(): TaskIntegrationReadApi {
@@ -1208,7 +1211,7 @@ export class TaskIndex
         type: 'ok',
         value: {
           path,
-          identity: source.fileIdentity,
+          identity: this.projectIdentity_abyssPrivate(source.fileIdentity),
           version: source.revision,
           content: source.content,
           metadata: source.metadata,
@@ -1221,6 +1224,16 @@ export class TaskIndex
     return {
       paths: () => this.integrationPaths_abyssPrivate,
       get,
+      matchesFile: (proof, file) => {
+        const source = get(proof.path);
+        return (
+          source.type === 'ok' &&
+          source.value?.identity === proof.identity &&
+          source.value.version === proof.version &&
+          file instanceof TFile &&
+          this.acceptedStatisticsSources_abyssPrivate.get(proof.path)?.fileIdentity === file
+        );
+      },
       candidate: ({ path, identity, version }, live, content) => {
         const current = get(path);
         if (current.type === 'error') return current;
@@ -1240,14 +1253,23 @@ export class TaskIndex
       coverage: (scope) => {
         const health = this.integrationProjection_abyssPrivate.coverage(scope);
         if (health.type === 'error') return health;
-        for (const path of this.integrationPaths_abyssPrivate) {
+        for (const path of this.invalidProjectSources_abyssPrivate) {
           if (!projectSourceScopeMatches(path, scope)) continue;
-          const source = get(path);
-          if (source.type === 'error') return source;
+          if (this.excludePath_abyssPrivate?.(path) !== true)
+            return { type: 'error', reason: 'incomplete' };
         }
         return health;
       },
     };
+  }
+
+  private projectIdentity_abyssPrivate(file: TFile): object {
+    let identity = this.projectFileIdentities_abyssPrivate.get(file);
+    if (identity === undefined) {
+      identity = {};
+      this.projectFileIdentities_abyssPrivate.set(file, identity);
+    }
+    return identity;
   }
 
   statusReadBasis(): TaskStatusReadBasisApi {
@@ -2610,6 +2632,11 @@ export class TaskIndex
     }
   }
 
+  private setProjectSourceHealth_abyssPrivate(path: string, prepared: PreparedObservation): void {
+    if (prepared.validFrontmatter) this.invalidProjectSources_abyssPrivate.delete(path);
+    else this.invalidProjectSources_abyssPrivate.add(path);
+  }
+
   private acceptStatisticsSource_abyssPrivate(
     path: string,
     content: string,
@@ -2617,6 +2644,7 @@ export class TaskIndex
     tasks: readonly TaskSnapshot[],
   ): void {
     const { cache, metadata } = prepared;
+    this.setProjectSourceHealth_abyssPrivate(path, prepared);
     const frontmatterSignature = JSON.stringify([cache.frontmatter]);
     const prior = this.acceptedStatisticsSources_abyssPrivate.get(path);
     const currentFile = this.app_abyssPrivate.vault.getAbstractFileByPath(path);
@@ -3604,6 +3632,7 @@ export class TaskIndex
 
   private removeFile_abyssPrivate(filePath: string): void {
     this.acceptedStatisticsSources_abyssPrivate.delete(filePath);
+    this.invalidProjectSources_abyssPrivate.delete(filePath);
     const integrationPath = this.integrationPaths_abyssPrivate.indexOf(filePath);
     if (integrationPath >= 0) this.integrationPaths_abyssPrivate.splice(integrationPath, 1);
     this.statisticsReadFailures_abyssPrivate.delete(filePath);

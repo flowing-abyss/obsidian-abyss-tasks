@@ -136,3 +136,24 @@ export function projectCalendarDayFromParsed(parsed: ParsedProjectDate): string 
   const day = String(parsed.value.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 }
+
+export function validDate(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(value);
+  if (match === null) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
+  );
+}
+
+export function validDatetime(value: string): boolean {
+  const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,3})?)?$/u.exec(value);
+  if (match === null || !validDate(match[1] ?? '')) return false;
+  const hours = Number(match[2]);
+  const minutes = Number(match[3]);
+  const seconds = match[4] === undefined ? 0 : Number(match[4]);
+  return hours <= 23 && minutes <= 59 && seconds <= 59;
+}

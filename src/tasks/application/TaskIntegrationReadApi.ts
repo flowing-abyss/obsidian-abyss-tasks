@@ -140,6 +140,10 @@ export interface ProjectSourceReadApi {
   coverage(scope?: TaskReadScope): TaskReadResult<true>;
   paths(): readonly string[];
   get(path: string): TaskReadResult<ProjectAcceptedSource | undefined>;
+  matchesFile(
+    proof: Pick<ProjectAcceptedSource, 'path' | 'identity' | 'version'>,
+    file: object,
+  ): boolean;
   candidate(
     proof: { readonly path: string; readonly identity: object; readonly version: number },
     live: string,

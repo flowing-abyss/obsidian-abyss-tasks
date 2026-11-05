@@ -23,7 +23,12 @@ export function inspectTaskSourceMetadata(
   const parsed = parseMarkdownFrontmatter(content.split(/\r?\n/u));
   const frontmatter = parsed.type === 'valid' ? (parsed.value ?? {}) : {};
   return {
-    validFrontmatter: parsed.type !== 'invalid',
+    validFrontmatter:
+      parsed.type !== 'invalid' &&
+      (parsed.type !== 'valid' ||
+        parsed.value === undefined ||
+        Object.getPrototypeOf(parsed.value) === Object.prototype ||
+        Object.getPrototypeOf(parsed.value) === null),
     metadata: {
       filePath,
       tags: [

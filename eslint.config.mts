@@ -526,6 +526,7 @@ export default defineConfig(
       'src/markdown/sourceReferences.ts',
       'src/markdown/fences.ts',
       'src/projects/projectGroupCollapse.ts',
+      'src/projects/projectStats.ts',
       'src/projects/projectTableModel.ts',
       'src/projects/projectKanbanModel.ts',
       'src/task-lists/taskTimelineModel.ts',

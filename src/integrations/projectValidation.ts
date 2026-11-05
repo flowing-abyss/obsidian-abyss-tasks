@@ -82,7 +82,7 @@ function fields(value: unknown, budget: { bytes: number }): readonly ProjectFiel
       (!['start', 'end', 'description'].includes(folded) &&
         (!folded.startsWith('property:') || key.length === 0)) ||
       seen.has(folded) ||
-      ['__proto__', 'prototype', 'constructor', 'status'].includes(key)
+      ['__proto__', 'prototype', 'constructor'].includes(key)
     )
       return invalid();
     seen.add(folded);
