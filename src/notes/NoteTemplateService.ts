@@ -1,4 +1,5 @@
 import { normalizePath, TFile, TFolder, type App } from 'obsidian';
+import { sameNoteFileStamp } from '../markdown/noteFileStamp';
 import { TemplaterAdapter, type TemplaterSession } from './TemplaterAdapter';
 
 interface FailedPreparation {
@@ -150,13 +151,18 @@ export class NoteTemplateService {
     if (path !== request.path) throw new StaleStaticNoteError();
     TemplaterAdapter.fromApp(this.app, true);
     const template = this.resolveTemplate(request.templatePath);
+    const stamp = template === undefined ? undefined : { ...template.stat };
     const capture = template === undefined ? undefined : request.capture(template);
     if (capture?.content.includes('<%') === true) throw new ExecutableTemplateError();
     const body =
       capture === undefined ? undefined : renderCoreTemplate(capture.content, request.title);
     const content = request.prepare(body);
     const check = (): void => {
-      if (this.resolveTemplate(request.templatePath) !== template || capture?.current() === false)
+      if (
+        this.resolveTemplate(request.templatePath) !== template ||
+        !sameNoteFileStamp(stamp, template?.stat) ||
+        capture?.current() === false
+      )
         throw new StaleStaticNoteError();
       request.check(content);
     };

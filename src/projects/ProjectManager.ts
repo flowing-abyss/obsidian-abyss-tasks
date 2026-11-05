@@ -9,6 +9,7 @@ import {
   TFolder,
   type App,
 } from 'obsidian';
+import { sameNoteFileStamp } from '../markdown/noteFileStamp';
 import { parseMarkdownFrontmatter } from '../markdown/readFrontmatter';
 import {
   CreatedNoteTemplateError,
@@ -688,8 +689,12 @@ export class ProjectManager {
   ): Promise<ProjectWriteResult> {
     const { path, original, offered } = evidence;
     try {
+      const stamp = { ...file.stat };
       const live = await this.app.vault.read(file);
-      if (this.app.vault.getAbstractFileByPath(path) === file) {
+      if (
+        sameNoteFileStamp(stamp, file.stat) &&
+        this.app.vault.getAbstractFileByPath(path) === file
+      ) {
         if (live === original) return { outcome: 'failed', effects: 'unchanged', reason: 'io' };
         if (live === offered) {
           const project = await reconcileProject(ctx, path, file, offered);

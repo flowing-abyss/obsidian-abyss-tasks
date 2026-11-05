@@ -3,7 +3,7 @@ import { createProjectIntegrationReads } from '../src/projects/projectIntegratio
 import * as projectCommands from '../src/projects/projectTaskCommands';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { TaskReadEvent } from '../src/tasks/application/TaskIntegrationReadApi';
-import { expectDefined } from './helpers';
+import { expectDefined, flushMicrotasks, metadataChangedEmitter } from './helpers';
 import { publicApiHarness } from './support/publicApiHarness';
 
 const dest = 'projects/A.md';
@@ -45,6 +45,60 @@ async function setup(content = tree) {
 }
 
 describe('guarded project task commands at the vault writer', () => {
+  it.each(['install', 'delivery', 'noop'] as const)(
+    'rejects native bytes superseded during %s before metadata delivery',
+    async (phase) => {
+      const h = await setup();
+      try {
+        await h.index.refreshSourceExclusion((meta) => meta.tags.includes('#private'));
+        const vault = h.app.vault,
+          read = vault.read.bind(vault);
+        let destinationReads = 0;
+        vi.spyOn(vault, 'read').mockImplementation(async (file) => {
+          const previous = await read(file);
+          if (file.path === dest && ++destinationReads === (phase === 'delivery' ? 2 : 1)) {
+            const privateNote = `#private\n${previous}`;
+            await vault.adapter.write(dest, privateNote);
+            file.stat = { ...file.stat, size: privateNote.length, mtime: file.stat.mtime + 1 };
+          }
+          return previous;
+        });
+        const run =
+          phase === 'noop' ? h.prepareMove(dest) : h.commands.prepareCreate(h.proof, 'Task');
+        const result = await run();
+        expect(result).toMatchObject({
+          outcome: phase === 'noop' ? 'failed' : 'changed',
+          destinationCopy: phase === 'noop' ? 'unchanged' : 'committed',
+          sourceRemoval: 'unchanged',
+        });
+        expect(result.task).toBeUndefined();
+        expect(h.index.projectSources().get(dest)).toMatchObject({
+          type: 'error',
+          reason: 'incomplete',
+        });
+        expect(h.reads.page({ path: dest }, 1)).toMatchObject({ type: 'error' });
+        const latest = await h.read(dest);
+        expect(latest).toContain('#private');
+        const file = expectDefined(vault.getFileByPath(dest));
+        metadataChangedEmitter(h.app)(file, latest.slice('#private\n'.length), {});
+        await flushMicrotasks();
+        expect(h.index.projectSources().get(dest)).toMatchObject({
+          type: 'error',
+          reason: 'incomplete',
+        });
+        await h.external(dest, latest);
+        expect(h.index.projectSources().get(dest)).toMatchObject({ type: 'ok', value: undefined });
+        metadataChangedEmitter(h.app)(file, latest.slice('#private\n'.length), {});
+        await flushMicrotasks();
+        expect(h.index.projectSources().get(dest)).not.toMatchObject({
+          type: 'ok',
+          value: { path: dest },
+        });
+      } finally {
+        h.dispose();
+      }
+    },
+  );
   it('inserts a fresh occurrence before an identical task', async () => {
     const h = await setup('- [ ] Same');
     try {
@@ -57,6 +111,28 @@ describe('guarded project task commands at the vault writer', () => {
       });
       expect(result.task?.rootRevision).not.toBe(old.ref.revision);
       expect(await h.read(dest)).toBe('- [ ] Same\n- [ ] Same');
+    } finally {
+      h.dispose();
+    }
+  });
+  it('checks the original root and project again when the same-note move hold ends', async () => {
+    const h = await setup();
+    try {
+      const run = h.prepareMove(dest);
+      const file = expectDefined(h.app.vault.getFileByPath(dest));
+      const hold = h.index.holdStatisticsPublication.bind(h.index);
+      vi.spyOn(h.index, 'holdStatisticsPublication').mockImplementationOnce(() => {
+        const release = hold();
+        return () => {
+          release();
+          file.stat.mtime += 1;
+        };
+      });
+      expect(await run()).toMatchObject({
+        outcome: 'failed',
+        destinationCopy: 'unchanged',
+        sourceRemoval: 'unchanged',
+      });
     } finally {
       h.dispose();
     }

@@ -123,6 +123,12 @@ acknowledgement. TaskIndex accepts structural occurrence witnesses only while th
 acquisition still match the readback. The inserted root receives a fresh revision even beside
 identical roots.
 
+Accepted integration source bytes also carry the native note size and modification time sampled
+at acquisition. A changed stamp makes those bytes unavailable. For notes observed through the
+project reader, TaskIndex verifies incoming metadata against a native read when its bytes or stamp
+differ from the accepted observation. A delayed event cannot republish older bytes. Static template creation checks its
+captured template stamp through folder setup and final authorization.
+
 The declaration has no imports, runtime statements, ambient host augmentation, or internal type
 references, and needs no Obsidian or DOM typings. Its request and result data is recursively readonly.
 [`src/integrations/validation.ts`](src/integrations/validation.ts) accepts allowlisted plain

@@ -245,6 +245,62 @@ it('keeps an unobserved template edit from provisioning folders', async () => {
     h.dispose();
   }
 });
+
+it.each([1, 2])(
+  'rejects a native template change during verification read %s before metadata delivery',
+  async (at) => {
+    const h = await harness({ 'template.md': '#project' });
+    try {
+      h.projects.templatePath = 'template.md';
+      const vault = h.app.vault,
+        read = vault.read.bind(vault);
+      let count = 0;
+      vi.spyOn(vault, 'read').mockImplementation(async (file) => {
+        const old = await read(file);
+        if (file.path === 'template.md' && ++count === at) {
+          const next = '#private #project';
+          await vault.adapter.write(file.path, next);
+          file.stat = { ...file.stat, size: next.length, mtime: file.stat.mtime + 1 };
+        }
+        return old;
+      });
+      expect(await h.writes.create({ name: 'New' })).toMatchObject({
+        outcome: 'failed',
+        effects: at === 1 ? 'unchanged' : 'partial',
+      });
+      expect(vault.getFileByPath('Projects/New.md')).toBeNull();
+      expect(h.reads.get('template.md')).toMatchObject({ type: 'error', reason: 'incomplete' });
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it('keeps a rejected update unknown when native readback of its original bytes is superseded', async () => {
+  const h = await harness();
+  try {
+    const vault = h.app.vault,
+      read = vault.read.bind(vault);
+    vi.spyOn(vault, 'process').mockImplementationOnce(async (file, transform) => {
+      transform(await read(file));
+      vi.spyOn(vault, 'read').mockImplementationOnce(async (target) => {
+        const old = await read(target);
+        const next = '#private #project';
+        await vault.adapter.write(target.path, next);
+        target.stat = { ...target.stat, size: next.length, mtime: target.stat.mtime + 1 };
+        return old;
+      });
+      throw new Error('Host rejected the write');
+    });
+    expect(await h.writes.update(h.proof(), { statusId: 'active' })).toMatchObject({
+      outcome: 'failed',
+      effects: 'unknown',
+    });
+    expect(h.reads.get(path)).toMatchObject({ type: 'error', reason: 'incomplete' });
+  } finally {
+    h.dispose();
+  }
+});
 it('preserves a real false and validates the combined dates after both assignments', async () => {
   const h = await harness({ [path]: '---\nstart: 2026-01-01\nend: 2026-02-01\n---\n#project' });
   try {

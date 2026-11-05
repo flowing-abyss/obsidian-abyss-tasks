@@ -1,4 +1,5 @@
 import { TFile, type App } from 'obsidian';
+import { sameNoteFileStamp } from '../../../markdown/noteFileStamp';
 import { compileNotePathPattern } from '../../../markdown/notePathPattern';
 import type { TaskDiagnosticSink } from '../../application/TaskDependencyService';
 import {
@@ -972,9 +973,14 @@ export class ObsidianTaskRepository implements TaskRepository {
   ): Promise<TaskRef | undefined> {
     const file = this.app_abyssPrivate.vault.getAbstractFileByPath(copy.path);
     if (!(file instanceof TFile) || copy.task === undefined) return;
+    const stamp = { ...file.stat };
     try {
       const live = await this.app_abyssPrivate.vault.read(file);
-      if (live === copy.content && this.projectCopyCurrent_abyssPrivate(destination, copy, file))
+      if (
+        live === copy.content &&
+        sameNoteFileStamp(stamp, file.stat) &&
+        this.projectCopyCurrent_abyssPrivate(destination, copy, file)
+      )
         return copy.task.ref;
     } catch {
       // Storage effects survive an unavailable read at delivery.
@@ -1017,9 +1023,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     const current = (): boolean => this.isCurrentFile_abyssPrivate(file, phase.path);
     // Native changes may update a file's stat before its metadata acquisition reaches TaskIndex.
     const stat = peer === undefined ? undefined : { ...peer.file.stat };
-    const peerCurrent = (): boolean =>
-      peer === undefined ||
-      (peer.file.stat.mtime === stat?.mtime && peer.file.stat.size === stat.size);
+    const peerCurrent = (): boolean => sameNoteFileStamp(stat, peer?.file.stat);
     try {
       await this.processFile_abyssPrivate(
         file,
@@ -1172,26 +1176,35 @@ export class ObsidianTaskRepository implements TaskRepository {
       const result = await this.withStatisticsHold_abyssPrivate(() =>
         this.moveOnce_abyssPrivate(source.root.ref, destination, project),
       );
-      if (result.type === 'committed' && !result.changed) {
-        const ref = source.root.ref;
-        return {
-          outcome: 'noop',
-          destinationCopy: 'unchanged',
-          sourceRemoval: 'unchanged',
-          task: {
-            filePath: ref.filePath,
-            rootLine: ref.line,
-            rootRevision: ref.revision,
-            nodeOffset: 0,
-          },
-        };
-      }
+      if (result.type === 'committed' && !result.changed)
+        return this.projectNoop_abyssPrivate(project);
       if (result.type === 'io-error' && project.copy.effect === 'unchanged')
         project.copy.reason = 'io';
     } catch {
       (project.copy.effect === 'committed' ? project.removal : project.copy).reason = 'io';
     }
     return this.projectResult_abyssPrivate(destination, project.copy, project.removal);
+  }
+
+  private projectNoop_abyssPrivate(project: ProjectMove): ProjectTaskResult {
+    const { sourceFile, sourceContent, destination } = project;
+    if (sourceFile === undefined || sourceContent === undefined) return projectTaskFailure('stale');
+    const failure =
+      this.projectMoveSourceGuard_abyssPrivate(project, sourceFile, sourceContent, sourceContent) ??
+      destination.check(sourceFile, sourceContent, sourceContent);
+    if (failure !== undefined) return projectTaskFailure(failure);
+    const ref = project.source.root.ref;
+    return {
+      outcome: 'noop',
+      destinationCopy: 'unchanged',
+      sourceRemoval: 'unchanged',
+      task: {
+        filePath: ref.filePath,
+        rootLine: ref.line,
+        rootRevision: ref.revision,
+        nodeOffset: 0,
+      },
+    };
   }
 
   private async withStatisticsHold_abyssPrivate<T>(operation: () => Promise<T>): Promise<T> {
@@ -1216,7 +1229,11 @@ export class ObsidianTaskRepository implements TaskRepository {
     if (!(sourceFile instanceof TFile)) {
       return notFound({ type: 'task', ref });
     }
-    const sourceContent = await this.readMoveSource_abyssPrivate(sourceFile, ref.filePath);
+    const sourceContent = await this.readMoveSource_abyssPrivate(
+      sourceFile,
+      ref.filePath,
+      project !== undefined,
+    );
     if (typeof sourceContent !== 'string') return sourceContent;
     const source = this.resolveMoveSource_abyssPrivate(
       ref,
@@ -1497,9 +1514,14 @@ export class ObsidianTaskRepository implements TaskRepository {
   private async readMoveSource_abyssPrivate(
     file: TFile,
     path: string,
+    strict = false,
   ): Promise<string | TaskRepositoryResult> {
     try {
-      return await this.app_abyssPrivate.vault.read(file);
+      const stamp = strict ? { ...file.stat } : undefined;
+      const content = await this.app_abyssPrivate.vault.read(file);
+      return stamp !== undefined && !sameNoteFileStamp(stamp, file.stat)
+        ? { type: 'strict-rejected', reason: 'revision-changed' }
+        : content;
     } catch {
       return {
         type: 'io-error',
