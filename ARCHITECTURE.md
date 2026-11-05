@@ -130,11 +130,16 @@ project or task. A confirmed task result names the writer's exact occurrence. A 
 uses the pinned original target. Summary evidence suffices for project writes and disclosure,
 including projects whose configured detail exceeds the public result limit.
 
-Accepted integration source bytes also carry the native note size and modification time sampled
-at acquisition. A changed stamp makes those bytes unavailable. For notes observed through the
-project reader, TaskIndex verifies incoming metadata against a native read when its bytes or stamp
-differ from the accepted observation. A delayed event cannot republish older bytes. Static template creation checks its
-captured template stamp through folder setup and final authorization.
+TaskIndex samples the native file identity, size and modification time at acquisition. A changed
+stamp makes the accepted source unavailable. Ordinary metadata callbacks can update tasks immediately.
+TaskIndex records when their bytes still need confirmation for a project reader. An exact project
+read checks its own note. A page checks coverage across all potentially visible notes, including
+those after the page boundary. A pending proof yields incomplete coverage. Concurrent readers share
+a native read of that acquisition. Matching bytes confirm the source. Different bytes enter the
+normal index installation and invalidate subscribers. A superseded acquisition cannot settle a newer
+one. Project moves can wait for their captured source proof. Later callbacks for project-read notes
+reuse the proof only when the bytes and stamp still match. Static template creation checks its captured
+template stamp through folder setup and final authorization.
 
 The declaration has no imports, runtime statements, ambient host augmentation, or internal type
 references, and needs no Obsidian or DOM typings. Its request and result data is recursively readonly.

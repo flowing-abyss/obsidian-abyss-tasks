@@ -286,6 +286,9 @@ it('expires an old target when a note is recreated with identical bytes', async 
     await h.app.fileManager.trashFile(file);
     await h.app.vault.create('project.md', content);
     await flushMicrotasks();
+    const first = await api.get(old.value.project.target);
+    if (!first.ok && first.error.code === 'INCOMPLETE_READ') await flushMicrotasks();
+    else expect(first).toMatchObject({ ok: false, error: { code: 'STALE_TARGET' } });
     expect(await api.get(old.value.project.target)).toMatchObject({
       ok: false,
       error: { code: 'STALE_TARGET' },

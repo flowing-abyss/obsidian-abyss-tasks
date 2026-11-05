@@ -139,6 +139,7 @@ export interface TaskIndexOptions {
 }
 
 interface PreparedObservation {
+  readonly projectVerified: boolean;
   readonly stamp: NoteFileStamp | undefined;
   readonly cache: CachedMetadata;
   readonly metadata: TaskSourceMetadata;
@@ -652,18 +653,24 @@ function sameAcceptedContent(
   file: TFile,
   content: string,
 ): boolean {
-  return source?.content === content && sameAcceptedFile(source, file, file.stat);
+  return source?.content === content && sameAcceptedFile(source, file, file.stat, true);
 }
 
 function sameAcceptedFile(
   source: AcceptedStatisticsSource,
   file: TFile | undefined,
   stamp: NoteFileStamp | undefined,
+  projectVerified: boolean,
 ): boolean {
-  return source.fileIdentity === file && sameNoteFileStamp(source.stamp, stamp);
+  return (
+    source.projectVerified === projectVerified &&
+    source.fileIdentity === file &&
+    sameNoteFileStamp(source.stamp, stamp)
+  );
 }
 
 interface AcceptedStatisticsSource {
+  projectVerified: boolean;
   readonly stamp: NoteFileStamp | undefined;
   readonly fileIdentity: TFile | undefined;
   readonly integrationScopeRevision: number;
@@ -1152,7 +1159,10 @@ export class TaskIndex
   private integrationSemanticsKey_abyssPrivate: string | undefined;
   private projectIntegrationSemanticsKey_abyssPrivate: string | undefined;
   private readonly integrationPaths_abyssPrivate: string[] = [];
-  private readonly invalidProjectSources_abyssPrivate = new Set<string>();
+  private readonly pendingProjectProofs_abyssPrivate = new WeakMap<
+    FileObservation,
+    Promise<void>
+  >();
   private readonly projectFileIdentities_abyssPrivate = new WeakMap<TFile, object>();
   private readonly projectReadFiles_abyssPrivate = new WeakSet<TFile>();
   private readonly integrationProjection_abyssPrivate = taskIntegrationProjection({
@@ -1208,7 +1218,6 @@ export class TaskIndex
   private clearIntegrationSources_abyssPrivate(): void {
     this.acceptedStatisticsSources_abyssPrivate.clear();
     this.integrationPaths_abyssPrivate.length = 0;
-    this.invalidProjectSources_abyssPrivate.clear();
   }
 
   integrationReads(): TaskIntegrationReadApi {
@@ -1224,9 +1233,8 @@ export class TaskIndex
         return { type: 'ok', value: undefined, observation: health.observation };
       if (source.fileIdentity === undefined) return { type: 'error', reason: 'incomplete' };
       this.projectReadFiles_abyssPrivate.add(source.fileIdentity);
-      if (!this.integrationSourceCurrent_abyssPrivate(path))
+      if (!this.projectSourceReady_abyssPrivate(path, source))
         return { type: 'error', reason: 'incomplete' };
-      if (!source.validFrontmatter) return { type: 'error', reason: 'incomplete' };
       if (this.excludeSource_abyssPrivate?.(source.metadata) === true)
         return { type: 'ok', value: undefined, observation: health.observation };
       return {
@@ -1248,6 +1256,7 @@ export class TaskIndex
       reconcile: (path, file, content) => this.reconcileCommittedSource(path, file, content),
       paths: () => this.integrationPaths_abyssPrivate,
       get,
+      acquire: (path) => this.acquireProjectSource_abyssPrivate(path, get),
       matchesFile: (proof, file) => {
         const source = get(proof.path);
         return (
@@ -1270,16 +1279,84 @@ export class TaskIndex
         return this.prospectiveProjectSource_abyssPrivate(path, content);
       },
       coverage: (scope) => {
-        const health = this.integrationProjection_abyssPrivate.coverage(scope);
+        const health = this.integrationReadState_abyssPrivate.coverage(scope);
         if (health.type === 'error') return health;
-        for (const path of this.invalidProjectSources_abyssPrivate) {
-          if (!projectSourceScopeMatches(path, scope)) continue;
-          if (this.excludePath_abyssPrivate?.(path) !== true)
-            return { type: 'error', reason: 'incomplete' };
+        let complete = true;
+        for (const [path, source] of this.acceptedStatisticsSources_abyssPrivate) {
+          if (
+            !projectSourceScopeMatches(path, scope) ||
+            this.excludePath_abyssPrivate?.(path) === true
+          )
+            continue;
+          if (!this.projectSourceReady_abyssPrivate(path, source)) complete = false;
         }
-        return health;
+        return complete ? health : { type: 'error', reason: 'incomplete' };
       },
     };
+  }
+
+  private async acquireProjectSource_abyssPrivate(
+    path: string,
+    get: ProjectSourceReadApi['get'],
+  ): ReturnType<ProjectSourceReadApi['acquire']> {
+    const result = get(path);
+    if (result.type === 'ok') return result;
+    const source = this.acceptedStatisticsSources_abyssPrivate.get(path);
+    if (source?.fileIdentity === undefined) return result;
+    const observation = this.integrationCurrentObservations_abyssPrivate.get(source.fileIdentity);
+    if (observation === undefined) return result;
+    const proof = this.pendingProjectProofs_abyssPrivate.get(observation);
+    if (proof === undefined) return result;
+    await proof;
+    if (!this.isCurrent_abyssPrivate(observation)) return { type: 'error', reason: 'stale' };
+    return source.projectVerified ? get(path) : result;
+  }
+
+  private projectSourceReady_abyssPrivate(path: string, source: AcceptedStatisticsSource): boolean {
+    if (!this.integrationSourceCurrent_abyssPrivate(path)) return false;
+    if (source.projectVerified) return source.validFrontmatter;
+    const file = source.fileIdentity;
+    if (file !== undefined) {
+      this.projectReadFiles_abyssPrivate.add(file);
+      const observation = this.integrationCurrentObservations_abyssPrivate.get(file);
+      if (observation !== undefined && !this.pendingProjectProofs_abyssPrivate.has(observation)) {
+        const proof = Promise.resolve().then(() =>
+          this.verifyProjectSource_abyssPrivate(observation, source),
+        );
+        this.pendingProjectProofs_abyssPrivate.set(observation, proof);
+        this.trackRead_abyssPrivate(proof);
+      }
+    }
+    return false;
+  }
+
+  private async verifyProjectSource_abyssPrivate(
+    observation: FileObservation,
+    source: AcceptedStatisticsSource,
+  ): Promise<void> {
+    try {
+      const content = await this.app_abyssPrivate.vault.read(observation.file);
+      if (
+        !this.isCurrent_abyssPrivate(observation) ||
+        !sameNoteFileStamp(observation.stamp, observation.file.stat) ||
+        this.acceptedStatisticsSources_abyssPrivate.get(observation.path) !== source
+      )
+        return;
+      if (content !== source.content) {
+        // Parse the native bytes without the older callback's metadata cache.
+        const fresh = this.observe_abyssPrivate(observation.file, observation.path);
+        if (fresh === undefined) return;
+        this.beginIntegrationObservation_abyssPrivate(fresh);
+        this.applyMetadataChanged_abyssPrivate(fresh, content, {}, true);
+      } else {
+        source.projectVerified = true;
+        this.integrationReadState_abyssPrivate.advanceProjectObservation();
+      }
+    } catch {
+      // Keep the source incomplete. The next project read can retry.
+    } finally {
+      this.pendingProjectProofs_abyssPrivate.delete(observation);
+    }
   }
 
   async reconcileCommittedSource(
@@ -1370,7 +1447,7 @@ export class TaskIndex
   updateProjectIntegrationSemantics(key: string): void {
     if (key === this.projectIntegrationSemanticsKey_abyssPrivate) return;
     this.projectIntegrationSemanticsKey_abyssPrivate = key;
-    this.integrationReadState_abyssPrivate.advanceProjectConfiguration();
+    this.integrationReadState_abyssPrivate.advanceProjectObservation();
   }
 
   private integrationSourceCurrent_abyssPrivate(path: string): boolean {
@@ -2482,16 +2559,18 @@ export class TaskIndex
     try {
       const content = await this.app_abyssPrivate.vault.cachedRead(observation.file);
       if (!this.isCurrent_abyssPrivate(observation)) return false;
-      if (
-        this.observationNeedsVerification_abyssPrivate(observation, content) &&
-        !(await this.observationMatchesVault_abyssPrivate(observation, content))
-      )
+      const verified = this.observationNeedsVerification_abyssPrivate(observation, content);
+      if (verified && !(await this.observationMatchesVault_abyssPrivate(observation, content)))
         return false;
       if (!this.isCurrent_abyssPrivate(observation)) return false;
       accept = () => {
         if (!this.isCurrent_abyssPrivate(observation)) return false;
         try {
-          return this.installLoadedObservation_abyssPrivate(observation, content, cache, options);
+          const prior = this.acceptedStatisticsSources_abyssPrivate.get(observation.path);
+          return this.installLoadedObservation_abyssPrivate(observation, content, cache, {
+            ...options,
+            projectVerified: verified || prior?.projectVerified !== false,
+          });
         } catch (error) {
           return this.failedStatisticsObservation_abyssPrivate(
             observation,
@@ -2515,19 +2594,18 @@ export class TaskIndex
     options: {
       readonly observedFile: boolean;
       readonly rename: PendingOccurrenceRename | undefined;
+      readonly projectVerified: boolean;
     },
   ): boolean {
-    const { observedFile, rename } = options;
+    const { observedFile, rename, projectVerified } = options;
     if (
       this.options_abyssPrivate.refAuthority?.deferObservation(observation.path, content) === true
     )
       return false;
-    const prepared = this.prepareObservation_abyssPrivate(
-      observation.path,
-      content,
-      cache,
-      observation.stamp,
-    );
+    const prepared = this.prepareObservation_abyssPrivate(observation.path, content, cache, {
+      stamp: observation.stamp,
+      projectVerified,
+    });
     let authority: TaskRefAuthorityObservation | undefined;
     const excluded = this.excludeSource_abyssPrivate?.(prepared.metadata) === true;
     if (excluded) this.options_abyssPrivate.refAuthority?.discard(observation.path);
@@ -2617,11 +2695,11 @@ export class TaskIndex
     filePath: string,
     content: string,
     cache: CachedMetadata | null | undefined,
-    stamp: NoteFileStamp | undefined,
+    proof: Pick<PreparedObservation, 'stamp' | 'projectVerified'>,
   ): PreparedObservation {
     const source = inspectTaskSourceMetadata(filePath, content);
     return {
-      stamp,
+      ...proof,
       cache: this.cacheWithFrontmatter_abyssPrivate(
         content,
         cache,
@@ -2710,19 +2788,13 @@ export class TaskIndex
     }
   }
 
-  private setProjectSourceHealth_abyssPrivate(path: string, prepared: PreparedObservation): void {
-    if (prepared.validFrontmatter) this.invalidProjectSources_abyssPrivate.delete(path);
-    else this.invalidProjectSources_abyssPrivate.add(path);
-  }
-
   private acceptStatisticsSource_abyssPrivate(
     path: string,
     content: string,
     prepared: PreparedObservation,
     tasks: readonly TaskSnapshot[],
   ): void {
-    const { cache, metadata } = prepared;
-    this.setProjectSourceHealth_abyssPrivate(path, prepared);
+    const { cache, metadata, projectVerified } = prepared;
     const frontmatterSignature = JSON.stringify([cache.frontmatter]);
     const prior = this.acceptedStatisticsSources_abyssPrivate.get(path);
     const currentFile = this.app_abyssPrivate.vault.getAbstractFileByPath(path);
@@ -2741,10 +2813,11 @@ export class TaskIndex
     const integrationScopeRevision = this.integrationReadState_abyssPrivate.capture().scopeRevision;
     if (
       changed ||
-      !sameAcceptedFile(prior, fileIdentity, prepared.stamp) ||
+      !sameAcceptedFile(prior, fileIdentity, prepared.stamp, projectVerified) ||
       prior.integrationScopeRevision !== integrationScopeRevision
     ) {
       this.acceptedStatisticsSources_abyssPrivate.set(path, {
+        projectVerified,
         stamp: prepared.stamp,
         fileIdentity,
         integrationScopeRevision,
@@ -3022,12 +3095,10 @@ export class TaskIndex
         }
         const prepared = [...contents].map(([filePath, content]) => {
           let authority: TaskRefAuthorityObservation | undefined;
-          const observation = this.prepareObservation_abyssPrivate(
-            filePath,
-            content,
-            null,
-            acquisitions.get(filePath)?.stamp,
-          );
+          const observation = this.prepareObservation_abyssPrivate(filePath, content, null, {
+            stamp: acquisitions.get(filePath)?.stamp,
+            projectVerified: true,
+          });
           const rawTasks = this.parseFile_abyssPrivate({
             filePath,
             content,
@@ -3437,23 +3508,30 @@ export class TaskIndex
     if (this.observationNeedsVerification_abyssPrivate(observation, data)) {
       const read = this.observationMatchesVault_abyssPrivate(observation, data).then((matches) => {
         if (matches && this.isCurrent_abyssPrivate(observation)) {
-          this.applyMetadataChanged_abyssPrivate(observation, data, cache);
+          this.applyMetadataChanged_abyssPrivate(observation, data, cache, true);
         }
       });
       this.trackRead_abyssPrivate(read);
       return;
     }
-    this.applyMetadataChanged_abyssPrivate(observation, data, cache);
+    // For a project-read file the predicate above already checked its prior proof, bytes and stamp.
+    this.applyMetadataChanged_abyssPrivate(
+      observation,
+      data,
+      cache,
+      this.projectReadFiles_abyssPrivate.has(file),
+    );
   }
 
   private applyMetadataChanged_abyssPrivate(
     observation: FileObservation,
     data: string,
     cache: CachedMetadata,
+    projectVerified: boolean,
   ): void {
     if (!this.isCurrent_abyssPrivate(observation)) return;
     try {
-      if (this.installMetadataObservation_abyssPrivate(observation, data, cache))
+      if (this.installMetadataObservation_abyssPrivate(observation, data, cache, projectVerified))
         this.settleIntegrationObservation_abyssPrivate(observation, true);
     } catch (error) {
       if (this.isCurrent_abyssPrivate(observation)) {
@@ -3467,10 +3545,14 @@ export class TaskIndex
     observation: FileObservation,
     data: string,
     cache: CachedMetadata,
+    projectVerified: boolean,
   ): boolean {
     const path = observation.path;
     if (this.options_abyssPrivate.refAuthority?.deferObservation(path, data) === true) return false;
-    const prepared = this.prepareObservation_abyssPrivate(path, data, cache, observation.stamp);
+    const prepared = this.prepareObservation_abyssPrivate(path, data, cache, {
+      stamp: observation.stamp,
+      projectVerified,
+    });
     let authority: TaskRefAuthorityObservation | undefined;
     const excluded = this.excludeSource_abyssPrivate?.(prepared.metadata) === true;
     if (excluded) this.options_abyssPrivate.refAuthority?.discard(path);
@@ -3611,6 +3693,7 @@ export class TaskIndex
         cache: accepted.cache,
         metadata: { ...accepted.metadata, filePath: path },
         stamp: accepted.stamp,
+        projectVerified: accepted.projectVerified,
         validFrontmatter: accepted.validFrontmatter,
       },
       tasks.map((task) => relocateSnapshot(task, path)),
@@ -3652,6 +3735,7 @@ export class TaskIndex
           cache: accepted.cache,
           metadata: accepted.metadata,
           stamp: accepted.stamp,
+          projectVerified: accepted.projectVerified,
           validFrontmatter: accepted.validFrontmatter,
         },
         this.taskMap_abyssPrivate.get(newPath) ?? [],
@@ -3718,7 +3802,6 @@ export class TaskIndex
 
   private removeFile_abyssPrivate(filePath: string): void {
     this.acceptedStatisticsSources_abyssPrivate.delete(filePath);
-    this.invalidProjectSources_abyssPrivate.delete(filePath);
     const integrationPath = this.integrationPaths_abyssPrivate.indexOf(filePath);
     if (integrationPath >= 0) this.integrationPaths_abyssPrivate.splice(integrationPath, 1);
     this.statisticsReadFailures_abyssPrivate.delete(filePath);
@@ -3805,7 +3888,11 @@ export class TaskIndex
   ): boolean {
     if (!this.projectReadFiles_abyssPrivate.has(observation.file)) return false;
     const accepted = this.acceptedStatisticsSources_abyssPrivate.get(observation.path);
-    return accepted?.content !== content || !sameNoteFileStamp(accepted.stamp, observation.stamp);
+    return (
+      accepted?.projectVerified !== true ||
+      accepted.content !== content ||
+      !sameNoteFileStamp(accepted.stamp, observation.stamp)
+    );
   }
 
   private beginIntegrationObservation_abyssPrivate(observation: FileObservation): void {

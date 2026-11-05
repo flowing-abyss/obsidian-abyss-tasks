@@ -142,6 +142,8 @@ export interface ProjectSourceReadApi {
   coverage(scope?: TaskReadScope): TaskReadResult<true>;
   paths(): readonly string[];
   get(path: string): TaskReadResult<ProjectAcceptedSource | undefined>;
+  /** Pins the current acquisition while a move waits for its native source proof. */
+  acquire(path: string): Promise<TaskReadResult<ProjectAcceptedSource | undefined>>;
   matchesFile(
     proof: Pick<ProjectAcceptedSource, 'path' | 'identity' | 'version'>,
     file: object,

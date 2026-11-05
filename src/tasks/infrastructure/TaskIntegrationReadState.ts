@@ -209,7 +209,7 @@ export class TaskIntegrationReadState implements TaskIntegrationReadStateApi {
       this.publish_abyssPrivate({ type: 'changed', observation: this.capture() });
   }
 
-  advanceProjectConfiguration(): void {
+  advanceProjectObservation(): void {
     this.changed_abyssPrivate();
   }
 

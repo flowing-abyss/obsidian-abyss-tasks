@@ -42,7 +42,11 @@ import type {
   ProjectWriteReason,
   ProjectWriteResult,
 } from './projectApi';
-import { ProjectCreationError, type ProjectCreateOptions } from './projectCreation';
+import {
+  defaultProjectCreationStatus,
+  ProjectCreationError,
+  type ProjectCreateOptions,
+} from './projectCreation';
 import { parseProjectDate, validDate, validDatetime } from './projectDateValue';
 import { isProjectEditValidationError, ProjectEditValidationError } from './projectEditError';
 import {
@@ -724,7 +728,8 @@ export class ProjectManager {
       const clean = cleanProjectName(input.name);
       if (clean.length === 0) invalidAssignment();
       path = this.integrationCreatePath(clean);
-      const statusId = input.statusId === undefined ? this.creationStatusId({}) : input.statusId;
+      const statusId =
+        input.statusId === undefined ? defaultProjectCreationStatus(projects) : input.statusId;
       let scopeRevision: number | undefined;
       if (this.noteCreator.createStaticNote === undefined)
         throw new ProjectGuardFailure('unsupported');
@@ -1415,21 +1420,13 @@ export class ProjectManager {
     const folder = this.settings.projects.createFolder.trim();
     const clean = cleanProjectName(name);
     if (clean.length === 0) return null;
-    const targetStatusId = this.creationStatusId(options);
+    const targetStatusId = options.statusId ?? defaultProjectCreationStatus(this.settings.projects);
     this.validateCreationStatus(targetStatusId);
     const resolvedFolder = await this.ensureFolder(folder);
     const path = this.uniqueProjectPath(resolvedFolder, clean);
     const file = await this.createProjectFile(path, clean);
     await this.applyCreationStatus(file, targetStatusId);
     return file;
-  }
-
-  private creationStatusId(options: ProjectCreateOptions): string | undefined {
-    const configuredDefault = this.settings.projects.defaultStatusId;
-    return (
-      options.statusId ??
-      (configuredDefault.length > 0 ? configuredDefault : this.settings.projects.statuses[0]?.id)
-    );
   }
 
   private validateCreationStatus(targetStatusId: string | undefined): void {

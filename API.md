@@ -88,7 +88,7 @@ Check `client.projects` before use. Earlier v1 providers expose only the task me
 | `createTask({ target, expectedRevision, title, ...request })`                          | Insert a root task from a single input line, using dashboard placement, prefix and lifecycle settings.                                                                                                          |
 | `moveTask({ target, expectedRevision, taskTarget, expectedTaskRevision, ...request })` | Move a root and its descendants into this project with dashboard move placement. Selecting a root already in the project yields a checked no-op.                                                                |
 
-`request` supplies a unique `requestId` and an `expiresAt` deadline as for task writes. For a schema-dependent edit, read the project first, then call `schema()` and write with the captured project revision. A source edit or configuration change can invalidate that revision. Project targets identify one file incarnation at one path. Resolve again after a rename, replacement or reload.
+`request` supplies a unique `requestId` and an `expiresAt` deadline as for task writes. For a schema-dependent edit, read the project first, then call `schema()` and write with the captured project revision. A source edit or configuration change can invalidate that revision. Project targets identify one file incarnation at one path. Resolve again after a rename, replacement or reload. A project read can return `INCOMPLETE_READ` while the index verifies a changed note. Retry after the next subscription update.
 
 ```ts
 async function addProjectTask(client: Abyss.TasksApiV1, path: string, requestId: string) {
@@ -107,9 +107,11 @@ async function addProjectTask(client: Abyss.TasksApiV1, path: string, requestId:
 }
 ```
 
-Use `tasks.list({ path: project.path })` to read all physical occurrences in the note, including children. Project progress counts roots. Task and project pages share the subscription observation. If you combine pages or require a current project association, subscribe before scanning and verify that the final observation and project revision still match.
+Page through `tasks.list({ path: project.path })` to read all physical occurrences in the note, including children. Project progress counts roots. Task and project pages share the subscription observation. If you combine pages or require a current project association, subscribe before scanning and verify that the final observation and project revision still match.
 
 **Fields and statuses.** Pass assignments as `{ fieldId, value }`, using writable schema IDs such as `start`, `end`, `description` or `property:<configured-name>`. Text takes a string, number takes a finite number, checkbox takes a boolean, list takes an array of strings or finite numbers, and tags take a string array. Custom dates use `YYYY-MM-DD` and custom datetimes use a local ISO date and time. Curated start and end also accept ISO datetimes with a `Z` or numeric timezone offset. Presets offer a typed `value` and sometimes a `displayName` label. You can also supply another value of the field's type.
+
+Submitted strings, including descriptions and individual array items, cannot contain CR, LF or NUL. Reads can return multiline text from authored frontmatter.
 
 Omit a field to preserve it. Clear it with `null`. An empty string or array in a new assignment is invalid. Reads distinguish absent, supported values (including zero and false), and unsupported authored values. Derived name, progress, tracking and aggregated note tags are read-only. A configured frontmatter tags field can be writable.
 

@@ -1,7 +1,10 @@
 import { expect, it } from 'vitest';
 import { ProjectReadRegistry } from '../src/integrations/ProjectReadRegistry';
 import { createProjectApiReads } from '../src/integrations/projectApiReads';
-import { createProjectIntegrationReads } from '../src/projects/projectIntegration';
+import {
+  createProjectIntegrationReads,
+  projectSemantics,
+} from '../src/projects/projectIntegration';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { publicApiHarness } from './support/publicApiHarness';
 
@@ -342,6 +345,49 @@ it('marks prototype-name curated bindings unavailable without exposing their val
       type: 'ok',
       value: { status: { state: 'unsupported' } },
     });
+  } finally {
+    h.dispose();
+  }
+});
+
+it('enumerates authoritative definitions once per project settings fingerprint', () => {
+  const settings = structuredClone(DEFAULT_SETTINGS.projects);
+  const fields = Object.fromEntries(
+    Array.from({ length: 32 }, (_, i) => [`property:f${i}`, { type: 'text' as const }]),
+  );
+  let enumerations = 0;
+  settings.propertyDefinitionsVersion = 1;
+  settings.propertyDefinitions = new Proxy(fields, {
+    ownKeys(target) {
+      enumerations++;
+      return Reflect.ownKeys(target);
+    },
+  });
+  expect(projectSemantics(settings)).toContain('property:f31');
+  expect(enumerations).toBe(1);
+});
+
+it('groups collated definition aliases before checking canonical prefixes and preserves authored field order', async () => {
+  const h = await publicApiHarness({});
+  try {
+    const settings = structuredClone(DEFAULT_SETTINGS.projects);
+    settings.propertyDefinitionsVersion = 1;
+    settings.propertyDefinitions = {
+      'property:z': { type: 'number' },
+      'property:field': { type: 'text' },
+      'PROPERTY:ﬁeld': { type: 'text' },
+      'property:féld': { type: 'text' },
+      'property:a': { type: 'text' },
+    };
+    const reads = createProjectIntegrationReads(h.index.projectSources(), () => settings);
+    expect(
+      reads
+        .schema()
+        .fields.filter((f) => f.id.startsWith('property:'))
+        .map((f) => f.id),
+    ).toEqual(['property:z', 'property:féld', 'property:a']);
+    delete settings.propertyDefinitionsVersion;
+    expect(reads.schema().fields.some((f) => f.id.startsWith('property:'))).toBe(false);
   } finally {
     h.dispose();
   }

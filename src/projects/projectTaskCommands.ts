@@ -59,20 +59,21 @@ export function createProjectTaskCommands(
     ): ProjectTaskExecution {
       if (node.value.target.type !== 'task') return async () => projectTaskFailure('unsupported');
       const root = node.value.root;
-      const source = sources.get(root.ref.filePath);
-      if (source.type === 'error') return async () => projectTaskFailure(source.reason);
-      const original = source.value;
-      if (
-        original?.roots.some(
-          ({ ref }) => ref.line === root.ref.line && ref.revision === root.ref.revision,
-        ) !== true
-      )
-        return async () => projectTaskFailure('stale');
-      const { path, identity, version } = original;
-      const sourceProof = { path, identity, version };
+      const acquired = sources.acquire(root.ref.filePath);
       const target = destination(proof, 'move');
-      return () =>
-        service.moveProjectRoot(target, {
+      return async () => {
+        const source = await acquired;
+        if (source.type === 'error') return projectTaskFailure(source.reason);
+        const original = source.value;
+        if (
+          original?.roots.some(
+            ({ ref }) => ref.line === root.ref.line && ref.revision === root.ref.revision,
+          ) !== true
+        )
+          return projectTaskFailure('stale');
+        const { path, identity, version } = original;
+        const sourceProof = { path, identity, version };
+        return service.moveProjectRoot(target, {
           root,
           check: (file, live, candidate) => {
             if (!sources.matchesFile(sourceProof, file)) return 'stale';
@@ -86,6 +87,7 @@ export function createProjectTaskCommands(
             return undefined;
           },
         });
+      };
     },
   };
 }

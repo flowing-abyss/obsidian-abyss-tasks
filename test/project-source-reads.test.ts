@@ -1,4 +1,5 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
+import { deferred, expectDefined, flushMicrotasks, metadataChangedEmitter } from './helpers';
 import { publicApiHarness } from './support/publicApiHarness';
 
 it('reads accepted empty and nested-task files and refuses malformed metadata without blocking a healthy exact path', async () => {
@@ -110,6 +111,67 @@ it('checks the writer file against the opaque incarnation token', async () => {
     expect(sources.matchesFile(source.value, file)).toBe(true);
     expect(sources.matchesFile(source.value, {})).toBe(false);
   } finally {
+    h.dispose();
+  }
+});
+
+it('retries a failed native proof without reading a path-only exclusion', async () => {
+  const h = await publicApiHarness(
+    { 'visible.md': '', 'hidden.md': '' },
+    { index: { excludePath: (p) => p === 'hidden.md' } },
+  );
+  const native = vi.spyOn(h.app.vault, 'read');
+  try {
+    const emit = metadataChangedEmitter(h.app);
+    for (const path of ['hidden.md', 'visible.md']) {
+      const file = expectDefined(h.app.vault.getFileByPath(path));
+      await h.app.vault.adapter.write(path, 'updated');
+      file.stat = { ...file.stat, size: 7, mtime: file.stat.mtime + 1 };
+      emit(file, 'updated', {});
+    }
+    const source = h.index.projectSources();
+    expect(source.get('hidden.md')).toMatchObject({ type: 'ok', value: undefined });
+    expect(native).not.toHaveBeenCalled();
+    native.mockRejectedValueOnce(new Error('transient'));
+    expect(source.coverage()).toMatchObject({ type: 'error', reason: 'incomplete' });
+    await flushMicrotasks();
+    expect(await source.acquire('visible.md')).toMatchObject({
+      type: 'ok',
+      value: { content: 'updated' },
+    });
+    expect(source.coverage()).toMatchObject({ type: 'ok' });
+    expect(native.mock.calls.map(([file]) => file.path)).toEqual(['visible.md', 'visible.md']);
+  } finally {
+    native.mockRestore();
+    h.dispose();
+  }
+});
+
+it('revokes a pending source acquisition when a newer callback wins with the same native stamp', async () => {
+  const path = 'project.md';
+  const h = await publicApiHarness(
+    { [path]: '#public' },
+    { index: { excludeSource: (meta) => meta.tags.includes('#hidden') } },
+  );
+  const native = vi.spyOn(h.app.vault, 'read');
+  try {
+    const file = expectDefined(h.app.vault.getFileByPath(path));
+    const emit = metadataChangedEmitter(h.app);
+    emit(file, '#public', {});
+    const pending = deferred<string>();
+    native.mockReturnValueOnce(pending.promise);
+    const source = h.index.projectSources();
+    const captured = source.acquire(path);
+    await flushMicrotasks();
+    await h.app.vault.adapter.write(path, '#hidden');
+    emit(file, '#hidden', {});
+    await flushMicrotasks();
+    pending.resolve('#public');
+    expect(await captured).toMatchObject({ type: 'error', reason: 'stale' });
+    expect(source.get(path)).toMatchObject({ type: 'ok', value: undefined });
+    expect(native).toHaveBeenCalledTimes(2);
+  } finally {
+    native.mockRestore();
     h.dispose();
   }
 });

@@ -6,9 +6,11 @@ import type {
 } from '../../api';
 import type { ProjectsSettings } from '../settings/types';
 import type { ProjectIntegrationReads } from './projectApi';
+import { defaultProjectCreationStatus } from './projectCreation';
 import { parseProjectDate, validDate, validDatetime } from './projectDateValue';
-import { buildProjectFieldCatalog, type ProjectFieldCatalogItem } from './projectFields';
+import { buildCuratedProjectFieldCatalog, type ProjectFieldCatalogItem } from './projectFields';
 import {
+  configuredProjectCustomFields,
   hasAuthoritativeProjectPropertyDefinitions,
   resolveConfiguredProjectField,
 } from './projectPropertyDefinitions';
@@ -17,14 +19,19 @@ import { compileProjectPropertyPresets } from './projectPropertyPresets';
 
 export function schemaFor(
   settings: ProjectsSettings,
+  fields = catalog(settings),
 ): ReturnType<ProjectIntegrationReads['schema']> {
   const statuses = statusChoices(settings);
-  const fields = catalog(settings);
+  const defaultStatusId =
+    typeof settings.defaultStatusId === 'string'
+      ? defaultProjectCreationStatus(settings)
+      : undefined;
   return {
     statuses,
     ...(fields.some((field) => field.id === 'status' && field.type === 'status') &&
-    statuses.some(({ id }) => id === settings.defaultStatusId)
-      ? { defaultStatusId: settings.defaultStatusId }
+    defaultStatusId !== undefined &&
+    statuses.some(({ id }) => id === defaultStatusId)
+      ? { defaultStatusId }
       : {}),
     fields: fields.map((field) => schemaField(field, settings)),
   };
@@ -58,38 +65,18 @@ function isStatusChoice(
   );
 }
 export function catalog(settings: ProjectsSettings): ProjectFieldCatalogItem[] {
-  const fields = buildProjectFieldCatalog(settings, null)
-    .filter((field) => !field.id.startsWith('property:'))
-    .map((field) =>
-      field.property !== undefined && unsafeProperty(field.property)
-        ? {
-            id: field.id,
-            label: field.label,
-            property: field.property,
-            type: null,
-          }
-        : field,
-    );
-  if (hasAuthoritativeProjectPropertyDefinitions(settings)) {
-    for (const id of definitionIds(settings)) {
-      if (!id.startsWith('property:')) continue;
-      const field = resolveConfiguredProjectField(settings, id);
-      if (field !== undefined && field.type !== null) fields.push(field);
-    }
-  }
-  return fields.filter(
-    (field) =>
-      !field.id.startsWith('property:') ||
-      (!unsafeProperty(field.id.slice(9)) &&
-        hasAuthoritativeProjectPropertyDefinitions(settings) &&
-        definitionIds(settings).includes(field.id)),
+  const fields = buildCuratedProjectFieldCatalog(settings).map((field) =>
+    field.property !== undefined && unsafeProperty(field.property)
+      ? { ...field, property: field.property, type: null }
+      : field,
   );
-}
-function definitionIds(settings: ProjectsSettings): string[] {
-  const definitions: unknown = settings.propertyDefinitions;
-  return definitions !== null && typeof definitions === 'object' && !Array.isArray(definitions)
-    ? Object.keys(definitions)
-    : [];
+  return hasAuthoritativeProjectPropertyDefinitions(settings)
+    ? fields.concat(
+        configuredProjectCustomFields(settings).filter(
+          (field) => !unsafeProperty(field.id.slice(9)),
+        ),
+      )
+    : fields;
 }
 function unsafeProperty(property: string): boolean {
   return ['__proto__', 'constructor', 'prototype'].some((reserved) =>

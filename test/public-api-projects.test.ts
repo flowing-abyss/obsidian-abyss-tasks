@@ -541,3 +541,94 @@ it.each(['status', 'field', 'membership'] as const)(
     }
   },
 );
+
+it.each(['resolve', 'list'] as const)(
+  'withholds a delayed callback on the first project %s and verifies the installed note',
+  async (method) => {
+    const late = 'projects/Z.md';
+    const h = await setup({ 'projects/B.md': '', [late]: '' });
+    try {
+      await h.plugin.saveTaskStorageSettings({
+        taskArchivePath: h.plugin.settings.taskArchivePath,
+        taskIgnoreQuery: 'secret=yes',
+      });
+      const projects = expectDefined(h.first.projects);
+      const file = expectDefined(h.app.vault.getFileByPath(late));
+      const emit = metadataChangedEmitter(h.app);
+      const older = '---\nsecret: no\ndescription: public\n---\n';
+      const privateNote = '---\nsecret: yes\n---\n'.padEnd(older.length);
+      const events: number[] = [];
+      value(h.first.subscribe((event) => events.push(event.generation)));
+      const native = vi.spyOn(h.app.vault, 'read');
+      const cached = vi.spyOn(h.app.vault, 'cachedRead');
+      await h.app.vault.adapter.write(late, privateNote);
+      file.stat = { ...file.stat, size: older.length, mtime: file.stat.mtime + 1 };
+      emit(file, older, {});
+      await flushMicrotasks();
+      expect(native).not.toHaveBeenCalled();
+      expect(cached).not.toHaveBeenCalled();
+      const pending = deferred<string>();
+      native.mockReturnValueOnce(pending.promise);
+      // Z sorts after both the requested page and its lookahead.
+      const result =
+        method === 'resolve'
+          ? await projects.resolve({ path: late })
+          : await projects.list({ limit: 1 });
+      expect(result).toMatchObject({ ok: false, error: { code: 'INCOMPLETE_READ' } });
+      expect(await projects.resolve({ path: empty })).toMatchObject({
+        ok: true,
+        value: { type: 'found' },
+      });
+      expect(await projects.resolve({ path: late })).toMatchObject({ ok: false });
+      expect(native.mock.calls.map(([f]) => f.path)).toEqual([late]);
+      const before = events.length;
+      pending.resolve(privateNote);
+      await flushMicrotasks();
+      expect(events.length).toBeGreaterThan(before);
+      expect(await projects.resolve({ path: late })).toMatchObject({
+        ok: true,
+        value: { type: 'not-found' },
+      });
+      expect(value(await projects.list()).items.map((p) => p.path)).toEqual([
+        'projects/B.md',
+        empty,
+      ]);
+      native.mockClear();
+      await h.app.vault.adapter.write(late, older);
+      file.stat = { ...file.stat, mtime: file.stat.mtime + 1 };
+      emit(file, older, {});
+      await flushMicrotasks();
+      expect(await projects.resolve({ path: late })).toMatchObject({
+        ok: true,
+        value: { type: 'found' },
+      });
+      expect(native).toHaveBeenCalledTimes(1);
+      emit(file, older, {});
+      await flushMicrotasks();
+      expect(native).toHaveBeenCalledTimes(1);
+    } finally {
+      h.plugin.onunload();
+    }
+  },
+);
+
+it('reports the same effective default as headless project creation', async () => {
+  const h = await setup();
+  try {
+    const projects = expectDefined(h.first.projects);
+    h.plugin.settings.projects.defaultStatusId = '';
+    const schema = value(await projects.schema());
+    const created = receipt(await projects.create({ ...request('default'), name: 'Default' }));
+    const actual = value(await projects.get(expectDefined(created.project).target)).status;
+    expect(actual).toEqual({ state: 'configured', id: expectDefined(schema.statuses[0]).id });
+    expect(schema.defaultStatusId).toEqual(expectDefined(schema.statuses[0]).id);
+    h.plugin.settings.projects.defaultStatusId = 'removed-id';
+    expect(value(await projects.schema()).defaultStatusId).toBeUndefined();
+    expect(await projects.create({ ...request('removed'), name: 'Removed' })).toMatchObject({
+      ok: false,
+      receipt: { effects: 'unchanged' },
+    });
+  } finally {
+    h.plugin.onunload();
+  }
+});

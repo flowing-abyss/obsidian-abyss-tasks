@@ -17,13 +17,14 @@ export function projectSemantics(settings: ProjectsSettings): string {
     taskInsertionSection,
     taskInsertionSectionPosition,
   } = settings;
+  const fields = catalog(settings);
   return JSON.stringify({
     membershipQuery,
     createFolder,
     defaultStatusId,
     templatePath,
-    schema: schemaFor(settings),
-    bindings: catalog(settings)
+    schema: schemaFor(settings, fields),
+    bindings: fields
       .filter((field) => field.type !== null && field.property !== undefined)
       .map(({ id, property }) => ({ id, property })),
     taskInsertionMode,
