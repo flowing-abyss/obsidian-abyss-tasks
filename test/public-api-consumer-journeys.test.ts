@@ -42,7 +42,10 @@ async function scan(
   client: TasksApiV1,
   query: ListTasksV1,
   latestRevision: () => number,
-  afterPage: (last: boolean) => Promise<void> = async () => {},
+  options: {
+    publish?: (rows: readonly TaskDtoV1[], observation: ObservationV1) => void;
+    afterPage?: (last: boolean) => Promise<void>;
+  },
 ): Promise<ApiResultV1<readonly TaskDtoV1[]>> {
   const startedAt = latestRevision();
   const staged: TaskDtoV1[] = [];
@@ -70,9 +73,11 @@ async function scan(
     }
     staged.push(...page.items);
     cursor = page.nextCursor;
-    await afterPage(cursor === undefined);
+    await options.afterPage?.(cursor === undefined);
   } while (cursor !== undefined);
   if (latestRevision() !== startedAt || observation.revision !== startedAt) return invalidated;
+  options.publish?.(staged, observation);
+  // Returned rows support read-only assertions; mirrors use the synchronous callback.
   return { ok: true, value: staged };
 }
 
@@ -93,37 +98,34 @@ it('publishes only coherent scans after startup and stops callbacks at cleanup',
   expect(ok(await ready).lifecycle).toBe('ready');
 
   let published: readonly TaskDtoV1[] = [];
+  const publish = (rows: readonly TaskDtoV1[]) => {
+    published = rows;
+  };
   let changed = false;
-  const interrupted = await scan(
-    client,
-    { limit: 1 },
-    () => latest,
-    async (last) => {
+  const interrupted = await scan(client, { limit: 1 }, () => latest, {
+    publish,
+    afterPage: async (last) => {
       if (!last && !changed) {
         changed = true;
         await h.external('a.md', '- [ ] A edited\n- [ ] B\n');
       }
     },
-  );
-  if (interrupted.ok) published = interrupted.value;
+  });
   expect(interrupted).toMatchObject({ ok: false, error: { code: 'STALE_CURSOR' } });
   expect(published).toEqual([]);
-  published = ok(await scan(client, { limit: 1 }, () => latest));
+  ok(await scan(client, { limit: 1 }, () => latest, { publish }));
   expect(published.map((row) => row.title)).toEqual(['A edited', 'B']);
 
   const prior = published;
-  const lateChange = await scan(
-    client,
-    { limit: 1 },
-    () => latest,
-    async (last) => {
+  const lateChange = await scan(client, { limit: 1 }, () => latest, {
+    publish,
+    afterPage: async (last) => {
       if (last) await h.external('a.md', '- [ ] A edited\n- [ ] B edited\n');
     },
-  );
-  if (lateChange.ok) published = lateChange.value;
+  });
   expect(lateChange).toMatchObject({ ok: false, error: { code: 'SCAN_INVALIDATED' } });
   expect(published).toBe(prior);
-  published = ok(await scan(client, { limit: 1 }, () => latest));
+  ok(await scan(client, { limit: 1 }, () => latest, { publish }));
   expect(published.map((row) => row.title)).toEqual(['A edited', 'B edited']);
 
   unsubscribe();
@@ -140,6 +142,53 @@ it('publishes only coherent scans after startup and stops callbacks at cleanup',
   expect(disposedCallback).toHaveBeenCalledTimes(disposedCalls);
 });
 
+it('validates the observation at synchronous mirror replacement before a queued invalidation', async () => {
+  const h = await publicApiHarness({ 'a.md': '- [ ] Task\n' });
+  harnesses.push(h);
+  const client = h.client('calendar');
+  let latest = -1;
+  ok(
+    client.subscribe((event) => {
+      latest = event.revision;
+    }),
+  );
+  const startedAt = ok(await client.tasks.list({ limit: 1 })).revision;
+  let changed = false;
+  let published: readonly TaskDtoV1[] = [];
+  let publishedAt: number | undefined;
+  let publishedObservation: number | undefined;
+  const result = await scan(client, { limit: 1 }, () => latest, {
+    publish: (rows, observation) => {
+      published = rows;
+      publishedAt = latest;
+      publishedObservation = observation.revision;
+    },
+    afterPage: async (last) => {
+      if (last) {
+        // The second microtask runs after scan's final check, before the caller resumes.
+        queueMicrotask(() => {
+          queueMicrotask(() => {
+            h.index.setStatusCatalog(
+              new StatusCatalog([
+                { id: 'open', symbol: ' ', type: 'todo', defaultForType: true },
+                { id: 'cancelled', symbol: '/', type: 'cancelled', defaultForType: true },
+                { id: 'done', symbol: 'x', type: 'done', defaultForType: true },
+              ]),
+            );
+            changed = true;
+          });
+        });
+      }
+    },
+  });
+  expect(result.ok).toBe(true);
+  expect(changed).toBe(true);
+  expect(latest).toBeGreaterThan(startedAt);
+  expect(published.map((row) => row.title)).toEqual(['Task']);
+  expect(publishedObservation).toBe(startedAt);
+  expect(publishedAt).toBe(startedAt);
+});
+
 it('keeps published calendar rows when an unreadable empty note prevents complete coverage', async () => {
   const source = '- [ ] One 🆔 one 📅 2026-08-01\n- [ ] Two 📅 2026-08-02\n';
   const h = await publicApiHarness({ 'a.md': source, 'empty.md': '' });
@@ -151,7 +200,11 @@ it('keeps published calendar rows when an unreadable empty note prevents complet
       latest = event.revision;
     }),
   );
-  let published = ok(await scan(client, { limit: 1 }, () => latest));
+  let published: readonly TaskDtoV1[] = [];
+  const publish = (rows: readonly TaskDtoV1[]) => {
+    published = rows;
+  };
+  ok(await scan(client, { limit: 1 }, () => latest, { publish }));
   expect(published.map((row) => row.dates.due)).toEqual(['2026-08-01', '2026-08-02']);
   const prior = published;
   const cachedRead = h.app.vault.cachedRead.bind(h.app.vault);
@@ -161,8 +214,7 @@ it('keeps published calendar rows when an unreadable empty note prevents complet
   });
   await h.index.refreshSourceExclusion(undefined);
   expect(ok(await client.ready()).lifecycle).toBe('ready');
-  const incomplete = await scan(client, { limit: 1 }, () => latest);
-  if (incomplete.ok) published = incomplete.value;
+  const incomplete = await scan(client, { limit: 1 }, () => latest, { publish });
   expect(incomplete).toMatchObject({ ok: false, error: { code: 'INCOMPLETE_READ' } });
   expect(await client.tasks.resolve({ authoredId: 'one' })).toMatchObject({
     ok: false,
@@ -173,7 +225,7 @@ it('keeps published calendar rows when an unreadable empty note prevents complet
   expect(await h.read('empty.md')).toBe('');
   failure.mockRestore();
   await h.index.refreshSourceExclusion(undefined);
-  published = ok(await scan(client, { limit: 1 }, () => latest));
+  ok(await scan(client, { limit: 1 }, () => latest, { publish }));
   expect(published).toHaveLength(2);
   expect(published.map((row) => row.title)).toEqual(['One', 'Two']);
 });
@@ -213,6 +265,7 @@ it('composes calendar filters with inclusive dates, folder boundaries and indepe
         limit: 1,
       },
       () => latest,
+      {}, // Read-only query assertions; no local mirror replacement.
     ),
   );
   expect(rows.map((row) => ({ title: row.title, source: row.source, due: row.dates.due }))).toEqual(
@@ -269,6 +322,7 @@ it('uses catalog defaults and freshly read revisions for each status intent', as
   );
   harnesses.push(h);
   const client = h.client('calendar');
+  const original = required(ok(await client.tasks.list()).items[0]);
   const catalog = ok(await client.tasks.statuses());
   const progress = required(
     catalog.items.find((item) => item.status === 'in-progress' && item.defaultForStatus),
@@ -279,7 +333,6 @@ it('uses catalog defaults and freshly read revisions for each status intent', as
   const done = required(
     catalog.items.find((item) => item.status === 'done' && item.defaultForStatus),
   );
-  const original = required(ok(await client.tasks.list()).items[0]);
   expect(
     await client.tasks.setStatus({ ...request(original, 'start'), symbol: progress.symbol }),
   ).toMatchObject({ ok: true });
@@ -425,7 +478,14 @@ it.each(['keep', 'delete'] as const)(
         latest = event.revision;
       }),
     );
-    const published = ok(await scan(reconnected, { limit: 1 }, () => latest));
+    let published: readonly TaskDtoV1[] = [];
+    ok(
+      await scan(reconnected, { limit: 1 }, () => latest, {
+        publish: (rows) => {
+          published = rows;
+        },
+      }),
+    );
     expect(published.map((row) => ({ due: row.dates.due, status: row.status }))).toEqual(
       policy === 'keep'
         ? [
@@ -528,7 +588,11 @@ it.each(['event-delivered', 'readback-available', 'readback-unavailable'] as con
         latest = event.revision;
       }),
     );
-    let published = ok(await scan(client, { limit: 1 }, () => latest));
+    let published: readonly TaskDtoV1[] = [];
+    const publish = (rows: readonly TaskDtoV1[]) => {
+      published = rows;
+    };
+    ok(await scan(client, { limit: 1 }, () => latest, { publish }));
     const prior = published;
     const original = required(published[0]);
     const input = request(original, 'uncertain-completion');
@@ -588,7 +652,7 @@ it.each(['event-delivered', 'readback-available', 'readback-unavailable'] as con
     expect(await h.read('a.md')).toBe(actual);
     writes.mockRestore();
     await h.index.refreshSourceExclusion(undefined);
-    published = ok(await scan(client, { limit: 1 }, () => latest));
+    ok(await scan(client, { limit: 1 }, () => latest, { publish }));
     expect(published).toHaveLength(1);
     expect(required(published[0])).toMatchObject({ status: 'done', authoredId: 'uncertain' });
     expect(await h.read('a.md')).toBe(actual);
