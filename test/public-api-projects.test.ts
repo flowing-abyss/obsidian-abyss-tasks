@@ -171,6 +171,32 @@ it('manages a project and its physical occurrences through main with the panel c
   }
 });
 
+it('rejects project task creation when the saved prefix turns a valid title into multiple lines', async () => {
+  const h = await setup({ [empty]: tree });
+  try {
+    h.plugin.settings.taskPrefix = '#work\n- [ ] Extra';
+    await h.plugin.saveSettings();
+    const projects = expectDefined(h.first.projects);
+    const project = expectDefined(value(await projects.list()).items[0]);
+    const input = { ...basis(project), ...request('bad-prefix'), title: 'Ship' };
+    const result = await projects.createTask(input);
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: 'INVALID_ARGUMENT' },
+      effects: 'unchanged',
+      receipt: { requestId: input.requestId, outcome: 'failed', effects: 'unchanged' },
+    });
+    expect(result.receipt?.task).toBeUndefined();
+
+    h.plugin.settings.taskPrefix = '';
+    await h.plugin.saveSettings();
+    expect(await expectDefined(h.client().projects).createTask(input)).toEqual(result);
+    expect(await h.app.vault.adapter.read(empty)).toBe(tree);
+  } finally {
+    h.plugin.onunload();
+  }
+});
+
 it.each(['folder', 'note'] as const)(
   'retains creation effects when the %s was written before failure',
   async (race) => {
