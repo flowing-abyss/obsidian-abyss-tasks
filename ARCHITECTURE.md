@@ -93,8 +93,14 @@ from `client.info`; they describe supported operations and bounded resources, no
 
 External plugins and future AI or MCP consumers use this client boundary. No AI or MCP adapter,
 transport, or SDK is implemented. `src/main.ts` alone composes the provider with the real index and
-application service. `src/integrations/` imports inward contracts through `src/tasks`; the task domain,
+application service. `src/integrations/` imports inward contracts through `src/tasks` and the narrow
+[`projectApi`](src/projects/projectApi.ts) port; the task domain,
 application and infrastructure layers do not depend on the external declaration or facade.
+
+The headless project read adapter derives membership and fields from accepted TaskIndex sources,
+including empty notes, without opening ProjectStore. Its provider-owned registry retains bounded
+opaque identities and cursors; the project owner rechecks live and candidate source evidence for
+future writers. Project configuration invalidates common scans without changing task status semantics.
 
 The declaration has no imports, runtime statements, ambient host augmentation, or internal type
 references, and needs no Obsidian or DOM typings. Its request and result data is recursively readonly.

@@ -197,6 +197,7 @@ export type { TaskInputRecurrenceCandidate } from './domain/recurrenceInputTypes
 export type { RecurrenceInputParser } from './application/RecurrenceInputParser';
 
 export type {
+  ProjectSourceReadApi,
   TaskAcceptedOccurrenceChange,
   TaskIntegrationReadApi,
   TaskReadNode,

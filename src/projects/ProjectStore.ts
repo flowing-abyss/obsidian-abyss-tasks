@@ -2,15 +2,11 @@ import { getAllTags, TFile, type App, type CachedMetadata, type TAbstractFile } 
 import { noteNameOfPath } from '../markdown/noteName';
 import { evaluateQuery } from '../query/evaluateQuery';
 import type { CalendarSettings } from '../settings/types';
-import type {
-  TaskIndexEvent,
-  TaskQueryApi,
-  TaskSnapshot,
-  TimeTrackingQueryApi,
-  TrackedTotal,
-} from '../tasks';
+import type { TaskIndexEvent, TaskQueryApi, TaskSnapshot, TimeTrackingQueryApi } from '../tasks';
+import { computeStats } from './projectIntegration';
 import { resolveStatus } from './status';
-import type { Project, ProjectStats } from './types';
+import type { Project } from './types';
+export { computeStats } from './projectIntegration';
 
 /** A verified native source observation for one project path. */
 export interface ProjectSourceObservation {
@@ -28,18 +24,6 @@ interface PendingSourceObservation {
 interface PublishedSourceObservation {
   readonly pending: PendingSourceObservation;
   readonly observation: ProjectSourceObservation;
-}
-
-export function computeStats(tasks: readonly TaskSnapshot[], tracked: TrackedTotal): ProjectStats {
-  let done = 0;
-  let cancelled = 0;
-  let inProgress = 0;
-  for (const t of tasks) {
-    if (t.status === 'done') done++;
-    else if (t.status === 'cancelled') cancelled++;
-    else if (t.status === 'in-progress') inProgress++;
-  }
-  return { total: tasks.length, done, cancelled, inProgress, tracked };
 }
 
 function isMarkdownFile(file: TAbstractFile): file is TFile {

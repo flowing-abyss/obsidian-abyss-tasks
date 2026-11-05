@@ -10,13 +10,26 @@ export interface TaskSourceMetadata {
 }
 
 export function taskSourceMetadata(filePath: string, content: string): TaskSourceMetadata {
+  return inspectTaskSourceMetadata(filePath, content).metadata;
+}
+
+export function inspectTaskSourceMetadata(
+  filePath: string,
+  content: string,
+): {
+  readonly metadata: TaskSourceMetadata;
+  readonly validFrontmatter: boolean;
+} {
   const parsed = parseMarkdownFrontmatter(content.split(/\r?\n/u));
   const frontmatter = parsed.type === 'valid' ? (parsed.value ?? {}) : {};
   return {
-    filePath,
-    tags: [
-      ...new Set([...(getAllTags({ frontmatter }) ?? []), ...extractMarkdownBodyTags(content)]),
-    ],
-    frontmatter: { ...frontmatter },
+    validFrontmatter: parsed.type !== 'invalid',
+    metadata: {
+      filePath,
+      tags: [
+        ...new Set([...(getAllTags({ frontmatter }) ?? []), ...extractMarkdownBodyTags(content)]),
+      ],
+      frontmatter: { ...frontmatter },
+    },
   };
 }

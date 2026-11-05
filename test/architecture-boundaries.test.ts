@@ -86,7 +86,12 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   ],
   TaskStatusMutationRequest: ['src/integrations/taskApiMutations.ts'],
   TaskStatusMutationOutcome: ['src/integrations/taskApiMutations.ts'],
-  TaskReadResult: ['src/integrations/taskApiReads.ts'],
+  ProjectSourceReadApi: ['src/projects/projectIntegration.ts'],
+  TaskReadResult: [
+    'src/integrations/taskApiReads.ts',
+    'src/projects/projectApi.ts',
+    'src/projects/projectIntegration.ts',
+  ],
   TaskReadNode: [
     'src/integrations/taskApiMutations.ts',
     'src/integrations/TaskIdentityRegistry.ts',
@@ -98,6 +103,8 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
     'src/integrations/TaskCursorRegistry.ts',
     'src/integrations/TaskApiProvider.ts',
     'src/integrations/taskApiReads.ts',
+    'src/integrations/projectApiReads.ts',
+    'src/integrations/ProjectReadRegistry.ts',
   ],
   TaskOccurrenceAddress: ['src/integrations/TaskIdentityRegistry.ts'],
   TaskStatusOccurrenceContinuation: [

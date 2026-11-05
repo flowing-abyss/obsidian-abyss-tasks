@@ -1,5 +1,6 @@
 import type { TaskNodeSnapshot } from '../domain/taskDependencies';
 import type { TaskOccurrenceAddress, TaskOccurrenceWitness } from '../domain/taskOccurrence';
+import type { TrackedTotal } from '../domain/timeTracking';
 import type { TaskSnapshot, TaskStatus } from '../domain/types';
 
 export interface TaskReadObservation {
@@ -120,4 +121,28 @@ export interface TaskIntegrationReadApi extends TaskIntegrationReadStateApi {
     }>
   >;
   canDisclose(address: TaskOccurrenceAddress): boolean;
+}
+
+/** Borrowed accepted source data, available only to the inward project owner. */
+export interface ProjectAcceptedSource {
+  readonly path: string;
+  readonly identity: object;
+  readonly version: number;
+  readonly content: string;
+  readonly metadata: {
+    readonly tags: readonly string[];
+    readonly frontmatter: Readonly<Record<string, unknown>>;
+  };
+  readonly roots: readonly TaskSnapshot[];
+  readonly tracked: TrackedTotal;
+}
+export interface ProjectSourceReadApi {
+  coverage(scope?: TaskReadScope): TaskReadResult<true>;
+  paths(): readonly string[];
+  get(path: string): TaskReadResult<ProjectAcceptedSource | undefined>;
+  candidate(
+    proof: { readonly path: string; readonly identity: object; readonly version: number },
+    live: string,
+    content: string,
+  ): TaskReadResult<ProjectAcceptedSource['metadata']>;
 }

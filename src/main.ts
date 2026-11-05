@@ -11,6 +11,7 @@ import {
   ObsidianProjectProperties,
   type ProjectPropertyCatalog,
 } from './projects/ObsidianProjectProperties';
+import { projectSemantics } from './projects/projectIntegration';
 import { ProjectManager } from './projects/ProjectManager';
 import { compileQuery, compileQueryPathProof, type CompiledQuery } from './query/evaluateQuery';
 import { DEFAULT_SETTINGS } from './settings/defaults';
@@ -617,6 +618,7 @@ export default class TaskCalendarPlugin extends Plugin {
 
   private updateTaskApiSemantics(): void {
     if (this.taskApiProvider === undefined) return;
+    this.taskIndex.updateProjectIntegrationSemantics(projectSemantics(this.settings.projects));
     this.taskIndex.updateIntegrationSemantics(
       JSON.stringify({
         statuses: this.statusCatalog.all(),

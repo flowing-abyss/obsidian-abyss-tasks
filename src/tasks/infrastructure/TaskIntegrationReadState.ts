@@ -99,12 +99,25 @@ export class TaskIntegrationReadState implements TaskIntegrationReadStateApi {
     // Nested installation may advance roots beyond the acceptance currently being delivered.
     if (this.publicationDepth_abyssPrivate > 0 || this.acceptedEvents_abyssPrivate.length > 0)
       return { type: 'error', reason: 'incomplete' };
-    for (const source of this.sources_abyssPrivate.values()) {
-      if (!matchesScope(source.path, scope)) continue;
-      if (source.phase !== 'settled' && !this.excludedPath_abyssPrivate(source.path))
-        return { type: 'error', reason: 'incomplete' };
-    }
+    if (this.incomplete_abyssPrivate(scope)) return { type: 'error', reason: 'incomplete' };
     return Object.freeze({ type: 'ok', value: true, observation });
+  }
+
+  private incomplete_abyssPrivate(scope?: TaskReadScope): boolean {
+    const sources =
+      scope?.path === undefined
+        ? this.sources_abyssPrivate.values()
+        : [this.sources_abyssPrivate.get(scope.path)];
+    for (const source of sources) {
+      if (
+        source !== undefined &&
+        matchesScope(source.path, scope) &&
+        source.phase !== 'settled' &&
+        !this.excludedPath_abyssPrivate(source.path)
+      )
+        return true;
+    }
+    return false;
   }
 
   begin(path: string, fileIdentity: object, observationId: object): object {
@@ -194,6 +207,10 @@ export class TaskIntegrationReadState implements TaskIntegrationReadStateApi {
   advanceSemantics(): void {
     if (this.advance_abyssPrivate('semanticsRevision'))
       this.publish_abyssPrivate({ type: 'changed', observation: this.capture() });
+  }
+
+  advanceProjectConfiguration(): void {
+    this.changed_abyssPrivate();
   }
 
   setLifecycle(lifecycle: TaskReadObservation['lifecycle']): void {

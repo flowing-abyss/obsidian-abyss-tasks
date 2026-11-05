@@ -10,6 +10,7 @@ module.exports = {
         pathNot: [
           '^src/integrations/',
           '^src/tasks/index[.]ts$',
+          '^src/projects/projectApi[.]ts$',
           '^api[.]d[.]ts$',
           '^src/markdown/tagSyntax[.]ts$',
         ],

@@ -12,8 +12,10 @@ import type {
   TimeTrackingQueryApi,
 } from '../application/TaskApplicationApi';
 import type {
+  ProjectSourceReadApi,
   TaskAcceptedSourceEvidence,
   TaskIntegrationReadApi,
+  TaskReadScope,
 } from '../application/TaskIntegrationReadApi';
 import type { TaskReadProjectionApi } from '../application/TaskSearchApi';
 import type {
@@ -107,7 +109,7 @@ import {
   type TaskSnapshotState,
 } from './TaskRefAuthority';
 import { sameTaskSnapshots } from './taskSnapshotEquality';
-import { taskSourceMetadata, type TaskSourceMetadata } from './taskSourceMetadata';
+import { inspectTaskSourceMetadata, type TaskSourceMetadata } from './taskSourceMetadata';
 import {
   TaskStatisticsProjection,
   type StatisticsProjectionInput,
@@ -138,6 +140,7 @@ export interface TaskIndexOptions {
 interface PreparedObservation {
   readonly cache: CachedMetadata;
   readonly metadata: TaskSourceMetadata;
+  readonly validFrontmatter: boolean;
 }
 
 /** Use the host random source already used by TaskRefAuthority, including mobile runtimes. */
@@ -650,6 +653,7 @@ interface AcceptedStatisticsSource {
   readonly frontmatterSignature: string;
   readonly revision: number;
   readonly metadata: TaskSourceMetadata;
+  readonly validFrontmatter: boolean;
 }
 
 function reusablePriorRevision(input: ReconciledRevisionInput): string | undefined {
@@ -1027,6 +1031,12 @@ interface DependencyPreparation {
   settled: boolean;
 }
 
+function projectSourceScopeMatches(path: string, scope?: TaskReadScope): boolean {
+  if (scope?.path !== undefined && path !== scope.path) return false;
+  const folder = scope?.folder;
+  return folder === undefined || folder === '' || path.startsWith(`${folder.replace(/\/$/u, '')}/`);
+}
+
 export class TaskIndex
   implements
     TaskQueryApi,
@@ -1120,6 +1130,7 @@ export class TaskIndex
   private acceptedInstallDepth_abyssPrivate = 0;
   private readonly acceptedPublications_abyssPrivate: Array<() => void> = [];
   private integrationSemanticsKey_abyssPrivate: string | undefined;
+  private projectIntegrationSemanticsKey_abyssPrivate: string | undefined;
   private readonly integrationPaths_abyssPrivate: string[] = [];
   private readonly integrationProjection_abyssPrivate = taskIntegrationProjection({
     state: this.integrationReadState_abyssPrivate,
@@ -1180,6 +1191,65 @@ export class TaskIndex
     return this.integrationProjection_abyssPrivate;
   }
 
+  projectSources(): ProjectSourceReadApi {
+    const get: ProjectSourceReadApi['get'] = (path) => {
+      const health = this.integrationReadState_abyssPrivate.coverage({ path });
+      if (health.type === 'error') return health;
+      const source = this.acceptedStatisticsSources_abyssPrivate.get(path);
+      if (source === undefined || this.excludePath_abyssPrivate?.(path) === true)
+        return { type: 'ok', value: undefined, observation: health.observation };
+      if (!this.integrationSourceCurrent_abyssPrivate(path))
+        return { type: 'error', reason: 'incomplete' };
+      if (!source.validFrontmatter) return { type: 'error', reason: 'incomplete' };
+      if (this.excludeSource_abyssPrivate?.(source.metadata) === true)
+        return { type: 'ok', value: undefined, observation: health.observation };
+      if (source.fileIdentity === undefined) return { type: 'error', reason: 'incomplete' };
+      return {
+        type: 'ok',
+        value: {
+          path,
+          identity: source.fileIdentity,
+          version: source.revision,
+          content: source.content,
+          metadata: source.metadata,
+          roots: source.tasks,
+          tracked: this.fileTotal(path),
+        },
+        observation: health.observation,
+      };
+    };
+    return {
+      paths: () => this.integrationPaths_abyssPrivate,
+      get,
+      candidate: ({ path, identity, version }, live, content) => {
+        const current = get(path);
+        if (current.type === 'error') return current;
+        if (
+          current.value?.identity !== identity ||
+          current.value.version !== version ||
+          current.value.content !== live
+        )
+          return { type: 'error', reason: 'stale' };
+        const staged = inspectTaskSourceMetadata(path, content);
+        if (!staged.validFrontmatter) return { type: 'error', reason: 'incomplete' };
+        const metadata = staged.metadata;
+        if (this.excludeSource_abyssPrivate?.(metadata) === true)
+          return { type: 'error', reason: 'unavailable' };
+        return { type: 'ok', value: metadata, observation: current.observation };
+      },
+      coverage: (scope) => {
+        const health = this.integrationProjection_abyssPrivate.coverage(scope);
+        if (health.type === 'error') return health;
+        for (const path of this.integrationPaths_abyssPrivate) {
+          if (!projectSourceScopeMatches(path, scope)) continue;
+          const source = get(path);
+          if (source.type === 'error') return source;
+        }
+        return health;
+      },
+    };
+  }
+
   statusReadBasis(): TaskStatusReadBasisApi {
     return {
       lease: (root, target, observation) =>
@@ -1213,6 +1283,12 @@ export class TaskIndex
     if (key === this.integrationSemanticsKey_abyssPrivate) return;
     this.integrationSemanticsKey_abyssPrivate = key;
     this.integrationReadState_abyssPrivate.advanceSemantics();
+  }
+
+  updateProjectIntegrationSemantics(key: string): void {
+    if (key === this.projectIntegrationSemanticsKey_abyssPrivate) return;
+    this.projectIntegrationSemanticsKey_abyssPrivate = key;
+    this.integrationReadState_abyssPrivate.advanceProjectConfiguration();
   }
 
   private integrationSourceCurrent_abyssPrivate(path: string): boolean {
@@ -2444,13 +2520,14 @@ export class TaskIndex
     content: string,
     cache: CachedMetadata | null | undefined,
   ): PreparedObservation {
+    const source = inspectTaskSourceMetadata(filePath, content);
     return {
       cache: this.cacheWithFrontmatter_abyssPrivate(
         content,
         cache,
         frontmatterFromContent(content),
       ),
-      metadata: taskSourceMetadata(filePath, content),
+      ...source,
     };
   }
 
@@ -2570,6 +2647,7 @@ export class TaskIndex
         frontmatterSignature,
         revision: changed ? ++this.statisticsSourceRevision_abyssPrivate : prior.revision,
         metadata,
+        validFrontmatter: prepared.validFrontmatter,
       });
     }
     this.statisticsReadFailures_abyssPrivate.delete(path);
@@ -3417,7 +3495,11 @@ export class TaskIndex
     this.acceptStatisticsSource_abyssPrivate(
       path,
       accepted.content,
-      { cache: accepted.cache, metadata: { ...accepted.metadata, filePath: path } },
+      {
+        cache: accepted.cache,
+        metadata: { ...accepted.metadata, filePath: path },
+        validFrontmatter: accepted.validFrontmatter,
+      },
       tasks.map((task) => relocateSnapshot(task, path)),
     );
   }
@@ -3453,7 +3535,11 @@ export class TaskIndex
       this.acceptStatisticsSource_abyssPrivate(
         newPath,
         accepted.content,
-        { cache: accepted.cache, metadata: accepted.metadata },
+        {
+          cache: accepted.cache,
+          metadata: accepted.metadata,
+          validFrontmatter: accepted.validFrontmatter,
+        },
         this.taskMap_abyssPrivate.get(newPath) ?? [],
       );
     }

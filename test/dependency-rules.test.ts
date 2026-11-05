@@ -97,6 +97,8 @@ it('keeps the public facade on inward task ports and keeps the external contract
   ).toEqual([
     'public-task-api-depends-inward:src/integrations/invalid-infrastructure.ts->src/tasks/infrastructure/value.ts',
     'public-task-api-depends-inward:src/integrations/invalid-presentation.ts->src/panels/value.ts',
+    'public-task-api-depends-inward:src/integrations/invalid-project-manager.ts->src/projects/ProjectManager.ts',
+    'public-task-api-depends-inward:src/integrations/invalid-project-store.ts->src/projects/ProjectStore.ts',
     'public-task-api-depends-inward:src/integrations/invalid-vault.ts->obsidian',
     'task-application-depends-inward:src/tasks/application/invalid-api.ts->api.d.ts',
     'task-infrastructure-depends-inward:src/tasks/infrastructure/invalid-facade.ts->src/integrations/valid.ts',

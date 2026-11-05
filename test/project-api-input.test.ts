@@ -462,7 +462,7 @@ describe('project request admission', () => {
     } finally {
       log.mockRestore();
     }
-  }, 1000);
+  });
   it('adds a provider-owned receipt to an accepted failure lacking one', async () => {
     const registry = new TaskRequestRegistry({ epoch: 'epoch', now: () => 1000 });
     const result = await registry.executeProject(
