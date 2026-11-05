@@ -525,6 +525,7 @@ export default defineConfig(
       'src/tasks/infrastructure/markdown/taskHierarchyTransfer.ts',
       'src/markdown/sourceReferences.ts',
       'src/markdown/fences.ts',
+      'src/markdown/frontmatterRange.ts',
       'src/projects/projectGroupCollapse.ts',
       'src/projects/projectStats.ts',
       'src/projects/projectMetadataPolicy.ts',

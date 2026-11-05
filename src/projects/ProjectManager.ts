@@ -9,6 +9,7 @@ import {
   TFolder,
   type App,
 } from 'obsidian';
+import { parseMarkdownFrontmatter } from '../markdown/readFrontmatter';
 import {
   CreatedNoteTemplateError,
   ExecutableTemplateError,
@@ -366,6 +367,7 @@ interface ParsedProjectSource {
   readonly frontmatter: Record<string, unknown>;
   readonly prefix: string;
   readonly delimiter: string;
+  readonly lineEnding?: string;
   body: string;
 }
 
@@ -392,6 +394,33 @@ function parseProjectSource(source: string, path?: string): ParsedProjectSource 
     prefix: source.slice(0, info.from),
     delimiter: source.slice(info.to, info.contentStart),
     body: source.slice(info.contentStart),
+  };
+}
+
+/** Edits the same mapping the source reader validated, retaining the note's encoding and body. */
+function parseIntegrationProjectSource(source: string): ParsedProjectSource {
+  const parsed = parseMarkdownFrontmatter(source);
+  if (parsed.type === 'invalid' || (parsed.type === 'valid' && !parsed.verified))
+    throw new ProjectGuardFailure('incomplete');
+  const firstNewline = source.indexOf('\n');
+  const lineEnding = source[firstNewline - 1] === '\r' ? '\r\n' : '\n';
+  if (parsed.type === 'none') {
+    const bom = source.startsWith('\uFEFF') ? '\uFEFF' : '';
+    return {
+      frontmatter: {},
+      prefix: `${bom}---${lineEnding}`,
+      delimiter: `${lineEnding}---${lineEnding}`,
+      body: source.slice(bom.length),
+      lineEnding,
+    };
+  }
+  const { range } = parsed;
+  return {
+    frontmatter: parsed.value ?? {},
+    prefix: source.slice(0, range.yamlFrom),
+    delimiter: lineEnding + source.slice(range.yamlTo, range.bodyFrom),
+    body: source.slice(range.bodyFrom),
+    lineEnding,
   };
 }
 
@@ -553,7 +582,8 @@ export function joinSerializedFrontmatter(yaml: string, delimiter: string): stri
 }
 
 function serializeProjectSource(parsed: ParsedProjectSource): string {
-  const yaml = stringifyYaml(parsed.frontmatter);
+  const serialized = stringifyYaml(parsed.frontmatter);
+  const yaml = parsed.lineEnding === '\r\n' ? serialized.replace(/\r?\n/gu, '\r\n') : serialized;
   return `${parsed.prefix}${joinSerializedFrontmatter(yaml, parsed.delimiter)}${parsed.body}`;
 }
 
@@ -606,7 +636,7 @@ export class ProjectManager {
   }
 
   private applyProjectAssignments(input: ProjectAssignments, source: string): string {
-    const parsed = parseProjectSource(source);
+    const parsed = parseIntegrationProjectSource(source);
     const edits = projectAssignments(this.settings.projects, input, parsed);
     this.validateCombinedDateRange(parsed.frontmatter, edits, true);
     let changed = false;

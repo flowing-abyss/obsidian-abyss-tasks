@@ -469,3 +469,126 @@ it('does not reinstall a superseded readback over a newer private source', async
     h.dispose();
   }
 });
+
+const scalarHeader = '---\nexample: |\n  ---\n';
+const sentinel = 'secret: do-not-copy\n---\n#project';
+it('excludes private metadata after an indented YAML separator from reading and template creation', async () => {
+  const content = `${scalarHeader}tags: [private]\n${sentinel}`;
+  const h = await harness({ [path]: content });
+  try {
+    expect(h.reads.summary(path)).toMatchObject({ type: 'ok', value: undefined });
+    h.projects.templatePath = path;
+    expect(await h.writes.create({ name: 'New', statusId: null })).toMatchObject({
+      outcome: 'failed',
+      effects: 'unchanged',
+    });
+    expect(h.app.vault.getAbstractFileByPath('Projects')).toBeNull();
+  } finally {
+    h.dispose();
+  }
+});
+it('checks staged private metadata after an indented YAML separator', async () => {
+  const h = await harness({ [path]: `${scalarHeader}tags: [visible]\n${sentinel}` });
+  try {
+    const live = await h.read(path);
+    expect(h.reads.guard(h.proof(), live, live.replace('[visible]', '[private]'))).toMatchObject({
+      type: 'error',
+    });
+    expect(
+      h.reads.prospective('Projects/New.md', live.replace('[visible]', '[private]')),
+    ).toMatchObject({ type: 'error' });
+  } finally {
+    h.dispose();
+  }
+});
+it('rejects overwriting an unsupported numeric value in BOM-prefixed frontmatter', async () => {
+  const content = '\uFEFF---\r\nBudget: wrong\r\nkeep: unrelated\r\n---\r\n#project\r\n';
+  const h = await harness({ [path]: content });
+  try {
+    expect(await h.writes.update(h.proof(), { fields: [budget] })).toMatchObject({
+      outcome: 'failed',
+      effects: 'unchanged',
+    });
+    expect(await h.read(path)).toBe(content);
+  } finally {
+    h.dispose();
+  }
+});
+it.each(['existing header', 'new header'])(
+  'keeps a single leading BOM, CRLF and body bytes when writing a %s',
+  async (kind) => {
+    const body = '#project\r\nbody without terminal newline';
+    const header = kind === 'existing header' ? '---\r\nkeep: unrelated\r\n---\r\n' : '';
+    const h = await harness({ [path]: `\uFEFF${header}${body}` });
+    try {
+      expect(await h.writes.update(h.proof(), { fields: [budget] })).toMatchObject({
+        outcome: 'changed',
+        effects: 'committed',
+      });
+      expect(await h.read(path)).toBe(
+        `\uFEFF---\r\n${header === '' ? '' : 'keep: unrelated\r\n'}Budget: 0\r\n---\r\n${body}`,
+      );
+    } finally {
+      h.dispose();
+    }
+  },
+);
+it.each(['  ---\ntags: [private]\n---\n', '---\nexample: |\n  ---\ntags: [private]\n'])(
+  'fails closed on ambiguous or unterminated frontmatter before template consumption',
+  async (header) => {
+    const h = await harness({ [path]: `${header}#project` });
+    try {
+      expect(h.reads.get(path)).toMatchObject({ type: 'error', reason: 'incomplete' });
+      h.projects.templatePath = path;
+      expect(await h.writes.create({ name: 'New', statusId: null })).toMatchObject({
+        outcome: 'failed',
+        effects: 'unchanged',
+      });
+      expect(h.app.vault.getAbstractFileByPath('Projects')).toBeNull();
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it.each(['  ---', '---  '])(
+  'retains ordinary source exclusion for the legacy opening %j while public project reads fail closed',
+  async (opening) => {
+    const h = await harness({ [path]: `${opening}\ntags: [private]\n---\n#project\n- [ ] secret` });
+    try {
+      expect(await h.client().tasks.list({ path })).toMatchObject({
+        ok: true,
+        value: { items: [] },
+      });
+      expect(h.reads.get(path)).toMatchObject({ type: 'error', reason: 'incomplete' });
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it.each(['~', 'null', '...\ntags: [private]'])(
+  'rejects an unsupported or discordant YAML document %j before using its body',
+  async (yaml) => {
+    const h = await harness({ [path]: `---\n${yaml}\n---\n#project` });
+    try {
+      expect(h.reads.summary(path)).toMatchObject({ type: 'error', reason: 'incomplete' });
+      expect(h.reads.prospective('New.md', `---\n${yaml}\n---\n#project`)).toMatchObject({
+        type: 'error',
+        reason: 'incomplete',
+      });
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it('preserves task exclusion for an unverified legacy closer without authorizing a project', async () => {
+  const h = await harness({ [path]: '---\ntags: [private]\n  ---\n#project\n- [ ] secret' });
+  try {
+    expect(await h.client().tasks.list({ path })).toMatchObject({ ok: true, value: { items: [] } });
+    expect(h.reads.summary(path)).toMatchObject({ type: 'error', reason: 'incomplete' });
+  } finally {
+    h.dispose();
+  }
+});

@@ -1,3 +1,4 @@
+import { frontmatterRange } from './frontmatterRange';
 import { inlineCodeRanges, type SourceRange } from './inlineCode';
 import { matchesUnlessPreceded, replaceUnlessPreceded } from './precedingCodePoint';
 
@@ -464,31 +465,6 @@ function transformFrontmatterYaml(
     index = transformed.nextIndex + 1;
   }
   return transformedLines.join('');
-}
-
-interface FrontmatterRange {
-  readonly yamlFrom: number;
-  readonly yamlTo: number;
-  readonly bodyFrom: number;
-}
-
-function frontmatterRange(source: string): FrontmatterRange | null {
-  const opening = /^(?:\uFEFF)?---[ \t]*\r?\n/u.exec(source);
-  if (opening == null) return null;
-
-  let lineStart = opening[0].length;
-  while (lineStart <= source.length) {
-    const newline = source.indexOf('\n', lineStart);
-    const lineEnd = newline < 0 ? source.length : newline + 1;
-    const coreEnd = newline < 0 ? lineEnd : newline;
-    const core = source.slice(lineStart, coreEnd).replace(/\r$/u, '');
-    if (/^(?:---|\.\.\.)[ \t]*$/u.test(core)) {
-      return { yamlFrom: opening[0].length, yamlTo: lineStart, bodyFrom: lineEnd };
-    }
-    if (newline < 0) break;
-    lineStart = lineEnd;
-  }
-  return null;
 }
 
 interface OpenFence {

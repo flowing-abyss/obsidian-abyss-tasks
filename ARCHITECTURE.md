@@ -106,6 +106,8 @@ ProjectStore and the adapter share root statistics through the pure project stat
 Headless project updates run through ProjectManager's per-app metadata queue. The manager checks
 the accepted file, source bytes, field bindings and status meaning inside the single-note write.
 It validates membership and exclusion on the candidate before returning it to the vault.
+When a note has frontmatter, TaskIndex and the writer require a YAML mapping and verify its
+boundaries against Obsidian after accounting for a leading byte-order mark.
 For headless creation, NoteTemplateService prepares the configured static template and the manager
 adds the initial fields in memory. The service rechecks the template, destination and project scope
 after folder creation, then creates one note with its final content. Both writers reconcile the

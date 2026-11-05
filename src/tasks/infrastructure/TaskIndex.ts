@@ -574,7 +574,7 @@ function cacheWithContentFallback(
 }
 
 function frontmatterFromContent(data: string): Record<string, unknown> | undefined {
-  const frontmatter = parseMarkdownFrontmatter(data.split(/\r?\n/u));
+  const frontmatter = parseMarkdownFrontmatter(data);
   return frontmatter.type === 'valid' ? frontmatter.value : undefined;
 }
 

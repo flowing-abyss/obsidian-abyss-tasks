@@ -549,7 +549,7 @@ export default class TaskCalendarPlugin extends Plugin {
       return this.isTaskSourceExcluded({ filePath, tags: [], frontmatter: {} });
     }
     const content = await this.app.vault.cachedRead(actual);
-    const parsed = parseMarkdownFrontmatter(content.split(/\r?\n/u));
+    const parsed = parseMarkdownFrontmatter(content);
     const frontmatter = parsed.type === 'valid' ? (parsed.value ?? {}) : {};
     const frontmatterTags = getAllTags({ frontmatter }) ?? [];
     return this.isTaskSourceExcluded({

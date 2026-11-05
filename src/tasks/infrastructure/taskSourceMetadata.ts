@@ -20,15 +20,10 @@ export function inspectTaskSourceMetadata(
   readonly metadata: TaskSourceMetadata;
   readonly validFrontmatter: boolean;
 } {
-  const parsed = parseMarkdownFrontmatter(content.split(/\r?\n/u));
+  const parsed = parseMarkdownFrontmatter(content);
   const frontmatter = parsed.type === 'valid' ? (parsed.value ?? {}) : {};
   return {
-    validFrontmatter:
-      parsed.type !== 'invalid' &&
-      (parsed.type !== 'valid' ||
-        parsed.value === undefined ||
-        Object.getPrototypeOf(parsed.value) === Object.prototype ||
-        Object.getPrototypeOf(parsed.value) === null),
+    validFrontmatter: parsed.type === 'none' || (parsed.type === 'valid' && parsed.verified),
     metadata: {
       filePath,
       tags: [

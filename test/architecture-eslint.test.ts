@@ -227,6 +227,7 @@ const pureFiles = [
   'src/tasks/infrastructure/markdown/taskHierarchyTransfer.ts',
   'src/markdown/sourceReferences.ts',
   'src/markdown/fences.ts',
+  'src/markdown/frontmatterRange.ts',
   'src/projects/projectTableModel.ts',
   'src/projects/projectMetadataPolicy.ts',
   'src/projects/projectKanbanModel.ts',
