@@ -22,7 +22,7 @@ The [standalone contract](api.d.ts) defines every field and guarantee; [the arch
 
 ## Connect and release resources
 
-The host supplies `candidate`; its plugin registry is outside this API contract. Register both cleanup callbacks with your own plugin lifecycle. Subscription callbacks should schedule a rescan, retaining the latest observation even during initialization.
+The host supplies `candidate`; its plugin registry is outside this API contract. An Obsidian JavaScript plugin can pass `this.app.plugins?.plugins?.['abyss-tasks']` as `candidate` (absent or disabled means unavailable); isolate this host-specific lookup, which is outside v1 and Obsidian's public typings. Register both cleanup callbacks with your own plugin lifecycle. Subscription callbacks should schedule a rescan, retaining the latest observation even during initialization.
 
 ```ts
 import type {
