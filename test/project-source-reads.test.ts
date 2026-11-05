@@ -175,3 +175,40 @@ it('revokes a pending source acquisition when a newer callback wins with the sam
     h.dispose();
   }
 });
+
+it('keeps a direct acquisition available while bulk proof is blocked and retires queued work on disposal', async () => {
+  const files = { 'a.md': '', 'b.md': '', 'c.md': '', 'healthy.md': '' };
+  const h = await publicApiHarness(files);
+  const pending = deferred<string>();
+  const read = h.app.vault.read.bind(h.app.vault);
+  const calls = vi
+    .spyOn(h.app.vault, 'read')
+    .mockImplementation((file) => (file.path === 'a.md' ? pending.promise : read(file)));
+  try {
+    const emit = metadataChangedEmitter(h.app);
+    for (const path of ['a.md', 'b.md', 'c.md']) {
+      const file = expectDefined(h.app.vault.getFileByPath(path));
+      await h.app.vault.adapter.write(path, 'changed');
+      file.stat = { ...file.stat, size: 7, mtime: file.stat.mtime + 1 };
+      emit(file, 'changed', {});
+    }
+    const sources = h.index.projectSources();
+    expect(sources.coverage()).toMatchObject({ type: 'error', reason: 'incomplete' });
+    await flushMicrotasks();
+    expect(calls.mock.calls.map(([file]) => file.path)).toEqual(['a.md']);
+    expect(sources.get('healthy.md')).toMatchObject({ type: 'ok', value: { path: 'healthy.md' } });
+    expect(await sources.acquire('b.md')).toMatchObject({
+      type: 'ok',
+      value: { content: 'changed' },
+    });
+    h.dispose();
+    pending.resolve('changed');
+    await flushMicrotasks();
+    expect(sources.coverage()).toMatchObject({ type: 'error', reason: 'disposed' });
+    expect(calls.mock.calls.map(([file]) => file.path)).toEqual(['a.md', 'b.md']);
+  } finally {
+    pending.resolve('changed');
+    h.dispose();
+    calls.mockRestore();
+  }
+});

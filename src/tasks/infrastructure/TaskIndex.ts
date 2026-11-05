@@ -1163,6 +1163,9 @@ export class TaskIndex
     FileObservation,
     Promise<void>
   >();
+  private readonly coverageProofPaths_abyssPrivate = new Set<string>();
+  private provingCoverage_abyssPrivate = false;
+  private directProjectProof_abyssPrivate = Promise.resolve();
   private readonly projectFileIdentities_abyssPrivate = new WeakMap<TFile, object>();
   private readonly projectReadFiles_abyssPrivate = new WeakSet<TFile>();
   private readonly integrationProjection_abyssPrivate = taskIntegrationProjection({
@@ -1216,6 +1219,7 @@ export class TaskIndex
   }
 
   private clearIntegrationSources_abyssPrivate(): void {
+    this.coverageProofPaths_abyssPrivate.clear();
     this.acceptedStatisticsSources_abyssPrivate.clear();
     this.integrationPaths_abyssPrivate.length = 0;
   }
@@ -1278,20 +1282,7 @@ export class TaskIndex
           return { type: 'error', reason: 'stale' };
         return this.prospectiveProjectSource_abyssPrivate(path, content);
       },
-      coverage: (scope) => {
-        const health = this.integrationReadState_abyssPrivate.coverage(scope);
-        if (health.type === 'error') return health;
-        let complete = true;
-        for (const [path, source] of this.acceptedStatisticsSources_abyssPrivate) {
-          if (
-            !projectSourceScopeMatches(path, scope) ||
-            this.excludePath_abyssPrivate?.(path) === true
-          )
-            continue;
-          if (!this.projectSourceReady_abyssPrivate(path, source)) complete = false;
-        }
-        return complete ? health : { type: 'error', reason: 'incomplete' };
-      },
+      coverage: (scope) => this.projectCoverage_abyssPrivate(scope),
     };
   }
 
@@ -1312,36 +1303,87 @@ export class TaskIndex
     return source.projectVerified ? get(path) : result;
   }
 
-  private projectSourceReady_abyssPrivate(path: string, source: AcceptedStatisticsSource): boolean {
+  private projectCoverage_abyssPrivate(
+    scope?: TaskReadScope,
+  ): ReturnType<ProjectSourceReadApi['coverage']> {
+    const health = this.integrationReadState_abyssPrivate.coverage(scope);
+    if (health.type === 'error') return health;
+    let complete = true;
+    for (const [path, source] of this.acceptedStatisticsSources_abyssPrivate) {
+      if (!projectSourceScopeMatches(path, scope) || this.excludePath_abyssPrivate?.(path) === true)
+        continue;
+      if (!this.projectSourceReady_abyssPrivate(path, source, 'coverage')) complete = false;
+    }
+    if (!this.provingCoverage_abyssPrivate && this.coverageProofPaths_abyssPrivate.size > 0)
+      this.trackRead_abyssPrivate(this.proveProjectCoverage_abyssPrivate());
+    return complete ? health : { type: 'error', reason: 'incomplete' };
+  }
+
+  private projectSourceReady_abyssPrivate(
+    path: string,
+    source: AcceptedStatisticsSource,
+    request: 'direct' | 'coverage' = 'direct',
+  ): boolean {
     if (!this.integrationSourceCurrent_abyssPrivate(path)) return false;
     if (source.projectVerified) return source.validFrontmatter;
-    const file = source.fileIdentity;
-    if (file !== undefined) {
-      this.projectReadFiles_abyssPrivate.add(file);
-      const observation = this.integrationCurrentObservations_abyssPrivate.get(file);
-      if (observation !== undefined && !this.pendingProjectProofs_abyssPrivate.has(observation)) {
-        const proof = Promise.resolve().then(() =>
-          this.verifyProjectSource_abyssPrivate(observation, source),
-        );
-        this.pendingProjectProofs_abyssPrivate.set(observation, proof);
+    if (request === 'coverage') this.coverageProofPaths_abyssPrivate.add(path);
+    else {
+      const proof = this.requestProjectProof_abyssPrivate(source, 'direct');
+      if (proof !== undefined && !this.pendingReads_abyssPrivate.has(proof))
         this.trackRead_abyssPrivate(proof);
-      }
     }
     return false;
+  }
+
+  private async proveProjectCoverage_abyssPrivate(): Promise<void> {
+    this.provingCoverage_abyssPrivate = true;
+    try {
+      for (const path of this.coverageProofPaths_abyssPrivate) {
+        this.coverageProofPaths_abyssPrivate.delete(path);
+        const source = this.acceptedStatisticsSources_abyssPrivate.get(path);
+        if (source !== undefined && !source.projectVerified)
+          await this.requestProjectProof_abyssPrivate(source, 'coverage');
+      }
+    } finally {
+      this.provingCoverage_abyssPrivate = false;
+    }
+  }
+
+  private requestProjectProof_abyssPrivate(
+    source: AcceptedStatisticsSource,
+    request: 'direct' | 'coverage',
+  ): Promise<void> | undefined {
+    const file = source.fileIdentity;
+    if (file === undefined) return undefined;
+    const observation = this.integrationCurrentObservations_abyssPrivate.get(file);
+    if (observation === undefined) return undefined;
+    const pending = this.pendingProjectProofs_abyssPrivate.get(observation);
+    if (pending !== undefined) return pending;
+    // A blocked bulk read leaves a separate slot for exact reads and captured moves.
+    const previous =
+      request === 'direct' ? this.directProjectProof_abyssPrivate : Promise.resolve();
+    const proof = previous.then(() =>
+      this.verifyProjectSource_abyssPrivate(observation, source, request),
+    );
+    if (request === 'direct') this.directProjectProof_abyssPrivate = proof;
+    this.pendingProjectProofs_abyssPrivate.set(observation, proof);
+    return proof;
   }
 
   private async verifyProjectSource_abyssPrivate(
     observation: FileObservation,
     source: AcceptedStatisticsSource,
+    request: 'direct' | 'coverage',
   ): Promise<void> {
+    const current = (): boolean =>
+      this.isCurrent_abyssPrivate(observation) &&
+      sameNoteFileStamp(observation.stamp, observation.file.stat) &&
+      this.acceptedStatisticsSources_abyssPrivate.get(observation.path) === source &&
+      this.excludePath_abyssPrivate?.(observation.path) !== true;
     try {
+      if (!current()) return;
       const content = await this.app_abyssPrivate.vault.read(observation.file);
-      if (
-        !this.isCurrent_abyssPrivate(observation) ||
-        !sameNoteFileStamp(observation.stamp, observation.file.stat) ||
-        this.acceptedStatisticsSources_abyssPrivate.get(observation.path) !== source
-      )
-        return;
+      if (!current()) return;
       if (content !== source.content) {
         // Parse the native bytes without the older callback's metadata cache.
         const fresh = this.observe_abyssPrivate(observation.file, observation.path);
@@ -1356,6 +1398,12 @@ export class TaskIndex
       // Keep the source incomplete. The next project read can retry.
     } finally {
       this.pendingProjectProofs_abyssPrivate.delete(observation);
+      if (
+        request === 'coverage' &&
+        !this.destroyed_abyssPrivate &&
+        this.integrationCurrentObservations_abyssPrivate.get(observation.file) !== observation
+      )
+        this.coverageProofPaths_abyssPrivate.add(observation.path);
     }
   }
 

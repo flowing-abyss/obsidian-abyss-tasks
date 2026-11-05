@@ -3,7 +3,7 @@ import { ProjectReadRegistry } from '../src/integrations/ProjectReadRegistry';
 import { createProjectApiReads } from '../src/integrations/projectApiReads';
 import { createProjectIntegrationReads } from '../src/projects/projectIntegration';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import { flushMicrotasks } from './helpers';
+import { deferred, expectDefined, flushMicrotasks, metadataChangedEmitter } from './helpers';
 import { publicApiHarness } from './support/publicApiHarness';
 
 it('keeps reserved capacity and pinned expiry separate from public project lookup', async () => {
@@ -366,6 +366,68 @@ it('reclaims a target after an oversized detail is not delivered', async () => {
       value: { type: 'found' },
     });
   } finally {
+    h.dispose();
+  }
+});
+
+it('bounds concurrent proofs for a one-row list after a bulk edit and keeps paths beyond lookahead cold', async () => {
+  const paths = Array.from(
+    { length: 128 },
+    (_, i) => `projects/project-${String(i).padStart(3, '0')}.md`,
+  );
+  const h = await publicApiHarness(Object.fromEntries(paths.map((path) => [path, ''])));
+  const settings = structuredClone(DEFAULT_SETTINGS.projects);
+  settings.membershipQuery = 'kind=project';
+  const port = createProjectIntegrationReads(h.index.projectSources(), () => settings);
+  const registry = new ProjectReadRegistry(port, { epoch: 'epoch', now: () => 1 });
+  const api = createProjectApiReads(
+    {
+      reads: h.reads,
+      observation: (o) => ({ ...o, providerEpoch: 'epoch' }),
+      check: () => undefined,
+      internal: () => {
+        throw new Error('internal');
+      },
+    },
+    port,
+    registry,
+  ).api;
+  const emit = metadataChangedEmitter(h.app);
+  const changed = async (path: string, bytes: string) => {
+    const file = expectDefined(h.app.vault.getFileByPath(path));
+    await h.app.vault.adapter.write(path, bytes);
+    file.stat = { ...file.stat, mtime: file.stat.mtime + 1, size: bytes.length };
+    emit(file, bytes, {});
+  };
+  const barrier = deferred<string>();
+  const native = vi.spyOn(h.app.vault, 'read').mockReturnValue(barrier.promise);
+  const updated = '---\nkind: project\n---\nupdated';
+  try {
+    for (const path of paths) await changed(path, updated);
+    expect(native).not.toHaveBeenCalled();
+    expect(await api.list({ limit: 1 })).toMatchObject({
+      ok: false,
+      error: { code: 'INCOMPLETE_READ' },
+    });
+    await flushMicrotasks();
+    const beforeFirstCompletion = native.mock.calls.length;
+    barrier.resolve(updated);
+    await flushMicrotasks();
+    const result = await api.list({ limit: 1 });
+    expect(result).toMatchObject({ ok: true, value: { items: [{ path: paths[0] }] } });
+    const totalProofs = native.mock.calls.length;
+    expect(totalProofs).toBe(paths.length);
+    native.mockClear();
+    // The last note did not contribute the returned row or its immediate lookahead.
+    await changed(expectDefined(paths[paths.length - 1]), `${updated} again`);
+    await flushMicrotasks();
+    expect(beforeFirstCompletion).toBe(1);
+    expect(native).not.toHaveBeenCalled();
+  } finally {
+    barrier.resolve(updated);
+    await flushMicrotasks();
+    native.mockRestore();
+    registry.dispose();
     h.dispose();
   }
 });

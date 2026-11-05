@@ -134,8 +134,10 @@ TaskIndex samples the native file identity, size and modification time at acquis
 stamp makes the accepted source unavailable. Ordinary metadata callbacks can update tasks immediately.
 TaskIndex records when their bytes still need confirmation for a project reader. An exact project
 read checks its own note. A page checks coverage across all potentially visible notes, including
-those after the page boundary. A pending proof yields incomplete coverage. Concurrent readers share
-a native read of that acquisition. Matching bytes confirm the source. Different bytes enter the
+those after the page boundary. A pending proof yields incomplete coverage. TaskIndex confirms queued
+coverage paths one at a time, with a separate slot for exact reads and moves. Readers share a native
+read of the same acquisition. Only an individually read note receives ongoing native checks.
+Matching bytes confirm the source. Different bytes enter the
 normal index installation and invalidate subscribers. A superseded acquisition cannot settle a newer
 one. Project moves can wait for their captured source proof. Later callbacks for project-read notes
 reuse the proof only when the bytes and stamp still match. Static template creation checks its captured
