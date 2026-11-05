@@ -60,6 +60,12 @@ describe('portable public API contract', () => {
   );
 
   it.each([
+    ['readonly project', "project.path = 'other.md';", 2540],
+    [
+      'invalid field value',
+      "const assignment: ProjectFieldAssignmentV1 = { fieldId: 'start', value: { raw: 'x' } };",
+      2353,
+    ],
     ['readonly dates', "task.dates.due = '2026-11-04';", 2540],
     ['readonly pages', 'page.items.push(task);', 2339],
     ['private raw source', 'task.rawBlock;', 2339],
@@ -68,9 +74,10 @@ describe('portable public API contract', () => {
     'rejects %s in external consumer code',
     (_name, expression, expectedCode) => {
       const source = [
-        "import type { TaskDtoV1, TaskPageV1 } from '../../../api';",
+        "import type { TaskDtoV1, TaskPageV1, ProjectDtoV1, ProjectFieldAssignmentV1 } from '../../../api';",
         'declare const task: TaskDtoV1;',
         'declare const page: TaskPageV1;',
+        'declare const project: ProjectDtoV1;',
         expression,
       ].join('\n');
       expect(compileConsumer(source).map((diagnostic) => diagnostic.code)).toEqual([expectedCode]);

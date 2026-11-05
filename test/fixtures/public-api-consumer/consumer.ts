@@ -94,3 +94,43 @@ export async function consume(
     client.dispose();
   }
 }
+
+export async function exerciseProjects(client: TasksApiV1): Promise<void> {
+  const projects = client.projects;
+  if (projects === undefined) return; // A task-only v1 provider remains valid.
+  const schema = await projects.schema();
+  const page = await projects.list({ limit: 10 });
+  const resolved = await projects.resolve({ path: 'Projects/example.md' });
+  if (!schema.ok || !page.ok || !resolved.ok || resolved.value.type !== 'found') return;
+  const project = resolved.value.project;
+  await projects.get(project.target);
+  await projects.create({
+    name: 'New',
+    fields: [{ fieldId: 'description', value: 'Text' }],
+    requestId: 'create',
+    expiresAt: 1000,
+  });
+  await projects.update({
+    target: project.target,
+    expectedRevision: project.revision,
+    statusId: null,
+    requestId: 'update',
+    expiresAt: 1000,
+  });
+  await projects.createTask({
+    target: project.target,
+    expectedRevision: project.revision,
+    title: 'Task',
+    requestId: 'task',
+    expiresAt: 1000,
+  });
+  await projects.moveTask({
+    target: project.target,
+    expectedRevision: project.revision,
+    taskTarget: 'task',
+    expectedTaskRevision: 'revision',
+    requestId: 'move',
+    expiresAt: 1000,
+  });
+  await client.tasks.list({ path: project.path });
+}

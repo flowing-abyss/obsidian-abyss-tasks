@@ -99,6 +99,14 @@ export interface ApiInfoV1 {
   readonly pluginVersion: string;
   readonly providerEpoch: string;
   readonly capabilities: readonly string[];
+  readonly projectLimits?: {
+    readonly maxFieldsPerWrite: number;
+    readonly maxValuesPerField: number;
+    readonly maxTextLength: number;
+    readonly maxProjectInputBytes: number;
+    readonly maxProjectResultBytes: number;
+    readonly maxRetainedProjectBytes: number;
+  };
   readonly limits: {
     /** Initial limit: 100. */
     readonly defaultPageSize: number;
@@ -342,6 +350,7 @@ export interface TasksApiV1 {
   readonly ready: (options?: ReadOptionsV1) => Promise<ApiResultV1<ReadyV1>>;
   readonly subscribe: (listener: (event: ApiEventV1) => void) => ApiResultV1<() => void>;
   readonly dispose: () => void;
+  readonly projects?: ProjectsApiV1;
   readonly tasks: {
     readonly list: (
       query?: ListTasksV1,
@@ -377,4 +386,151 @@ export interface TasksApiProviderV1 {
       readonly consumerId: string;
     },
   ) => ApiResultV1<TasksApiV1>;
+}
+
+/** Project handles and revisions are opaque and valid only in this provider epoch. */
+export type ProjectTargetV1 = string;
+export type ProjectRevisionV1 = string;
+export type ProjectFieldValueV1 = string | number | boolean | ReadonlyArray<string | number>;
+export interface ProjectFieldAssignmentV1 {
+  readonly fieldId: string;
+  readonly value: ProjectFieldValueV1 | null;
+}
+export interface ProjectSchemaV1 extends ObservationV1 {
+  readonly statuses: ReadonlyArray<{
+    readonly id: string;
+    readonly name: string;
+    readonly displayName?: string;
+  }>;
+  readonly defaultStatusId?: string;
+  readonly fields: ReadonlyArray<{
+    readonly id: string;
+    readonly label: string;
+    readonly type: 'text' | 'number' | 'checkbox' | 'list' | 'tags' | 'date' | 'datetime';
+    readonly writable: boolean;
+    readonly unavailable?: boolean;
+    readonly suggestions?: ReadonlyArray<{
+      readonly value: ProjectFieldValueV1;
+      readonly displayName?: string;
+    }>;
+  }>;
+}
+export type ProjectStatusV1 =
+  | { readonly state: 'absent' }
+  | { readonly state: 'configured'; readonly id: string }
+  | { readonly state: 'unrecognized'; readonly value: string }
+  | { readonly state: 'unsupported' };
+export interface ProjectSummaryV1 {
+  readonly target: ProjectTargetV1;
+  readonly revision: ProjectRevisionV1;
+  readonly path: string;
+  readonly name: string;
+  readonly status: ProjectStatusV1;
+  readonly stats: {
+    readonly total: number;
+    readonly done: number;
+    readonly cancelled: number;
+    readonly inProgress: number;
+    readonly tracked: { readonly closedMs: number; readonly openStartsMs: readonly number[] };
+  };
+}
+export interface ProjectDtoV1 extends ProjectSummaryV1 {
+  readonly tags: readonly string[];
+  readonly fields: ReadonlyArray<
+    | { readonly fieldId: string; readonly state: 'absent' | 'unsupported' }
+    | { readonly fieldId: string; readonly state: 'value'; readonly value: ProjectFieldValueV1 }
+  >;
+}
+export interface ProjectPageV1 extends ObservationV1 {
+  readonly items: readonly ProjectSummaryV1[];
+  readonly nextCursor?: string;
+}
+export interface ListProjectsV1 {
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+export interface ResolveProjectV1 {
+  readonly path: string;
+}
+export type ProjectResolutionV1 =
+  | { readonly type: 'found'; readonly project: ProjectDtoV1; readonly observation: ObservationV1 }
+  | { readonly type: 'not-found'; readonly observation: ObservationV1 };
+export interface ProjectRequestV1 {
+  readonly requestId: string;
+  readonly expiresAt: number;
+}
+export interface CreateProjectV1 extends ProjectRequestV1 {
+  readonly name: string;
+  readonly statusId?: string | null;
+  readonly fields?: readonly ProjectFieldAssignmentV1[];
+}
+export interface UpdateProjectV1 extends ProjectRequestV1 {
+  readonly target: ProjectTargetV1;
+  readonly expectedRevision: ProjectRevisionV1;
+  readonly statusId?: string | null;
+  readonly fields?: readonly ProjectFieldAssignmentV1[];
+}
+export interface CreateProjectTaskV1 extends ProjectRequestV1 {
+  readonly target: ProjectTargetV1;
+  readonly expectedRevision: ProjectRevisionV1;
+  readonly title: string;
+}
+export interface MoveProjectTaskV1 extends ProjectRequestV1 {
+  readonly target: ProjectTargetV1;
+  readonly expectedRevision: ProjectRevisionV1;
+  readonly taskTarget: TaskTargetV1;
+  readonly expectedTaskRevision: TaskRevisionV1;
+}
+export interface ProjectMutationReceiptV1 {
+  readonly providerEpoch: string;
+  readonly requestId: string;
+  readonly acceptedAt: number;
+  readonly expiresAt: number;
+  readonly outcome: 'changed' | 'noop' | 'failed';
+  readonly effects: EffectStateV1;
+  readonly recovery: RecoveryV1;
+  readonly project?: ProjectDtoV1;
+  readonly task?: TaskDtoV1;
+  readonly destinationCopy?: 'unchanged' | 'committed' | 'unknown';
+  readonly sourceRemoval?: 'unchanged' | 'committed' | 'unknown';
+}
+export type ProjectMutationResultV1 =
+  | { readonly ok: true; readonly receipt: ProjectMutationReceiptV1 }
+  | {
+      readonly ok: false;
+      readonly error: ApiErrorV1;
+      readonly effects: EffectStateV1;
+      readonly recovery: RecoveryV1;
+      readonly receipt?: ProjectMutationReceiptV1;
+    };
+export interface ProjectsApiV1 {
+  readonly schema: (options?: ReadOptionsV1) => Promise<ApiResultV1<ProjectSchemaV1>>;
+  readonly list: (
+    query?: ListProjectsV1,
+    options?: ReadOptionsV1,
+  ) => Promise<ApiResultV1<ProjectPageV1>>;
+  readonly get: (
+    target: ProjectTargetV1,
+    options?: ReadOptionsV1,
+  ) => Promise<ApiResultV1<ProjectDtoV1>>;
+  readonly resolve: (
+    input: ResolveProjectV1,
+    options?: ReadOptionsV1,
+  ) => Promise<ApiResultV1<ProjectResolutionV1>>;
+  readonly create: (
+    input: CreateProjectV1,
+    options?: MutationOptionsV1,
+  ) => Promise<ProjectMutationResultV1>;
+  readonly update: (
+    input: UpdateProjectV1,
+    options?: MutationOptionsV1,
+  ) => Promise<ProjectMutationResultV1>;
+  readonly createTask: (
+    input: CreateProjectTaskV1,
+    options?: MutationOptionsV1,
+  ) => Promise<ProjectMutationResultV1>;
+  readonly moveTask: (
+    input: MoveProjectTaskV1,
+    options?: MutationOptionsV1,
+  ) => Promise<ProjectMutationResultV1>;
 }

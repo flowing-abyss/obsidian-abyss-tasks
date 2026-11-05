@@ -23,12 +23,12 @@ const DATE_FIELDS: ReadonlyArray<DateFilterV1['field']> = [
   'cancelled',
 ];
 
-function invalid(): never {
+export function invalid(): never {
   throw new Error('invalid-api-argument');
 }
 
 /** Accept Object.prototype and null records, without invoking caller-owned accessors. */
-function record(value: unknown, allowed: readonly string[]): RecordValue {
+export function record(value: unknown, allowed: readonly string[]): RecordValue {
   if (value === null || typeof value !== 'object') return invalid();
   const prototype: unknown = Object.getPrototypeOf(value);
   if (prototype !== Object.prototype && prototype !== null) return invalid();
@@ -56,7 +56,7 @@ function dataProperty(value: object, key: PropertyKey): PropertyDescriptor {
   return descriptor;
 }
 
-function boundedArray(value: unknown, maximum: number): unknown[] {
+export function boundedArray(value: unknown, maximum: number): unknown[] {
   if (!Array.isArray(value)) return invalid();
   const length = integer(dataProperty(value, 'length').value, 1, maximum);
   return recordArray(value, length);
@@ -74,18 +74,18 @@ function recordArray(value: unknown[], length: number): unknown[] {
   return result;
 }
 
-function text(value: unknown, maximum: number): string {
+export function text(value: unknown, maximum: number): string {
   return typeof value === 'string' && value.length > 0 && value.length <= maximum
     ? value
     : invalid();
 }
 
-function namespace(value: unknown): string {
+export function namespace(value: unknown): string {
   const result = text(value, 128);
   return /^[A-Za-z0-9._:-]+$/u.test(result) ? result : invalid();
 }
 
-function path(value: unknown, folder = false): string {
+export function path(value: unknown, folder = false): string {
   if (folder && value === '') return '';
   const result = text(value, 4096);
   if (/[\\\0]/u.test(result)) return invalid();
@@ -94,7 +94,7 @@ function path(value: unknown, folder = false): string {
   return result;
 }
 
-function integer(
+export function integer(
   value: unknown,
   minimum = Number.MIN_SAFE_INTEGER,
   maximum = Number.MAX_SAFE_INTEGER,
@@ -154,7 +154,7 @@ function parseDates(value: unknown): readonly DateFilterV1[] {
   return result;
 }
 
-function validated<T>(parse: () => T): ApiResultV1<T> {
+export function validated<T>(parse: () => T): ApiResultV1<T> {
   try {
     return freezeValue({ ok: true, value: parse() });
   } catch {

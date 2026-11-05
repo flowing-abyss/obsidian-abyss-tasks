@@ -4,22 +4,40 @@ import type {
   ApiResultV1,
   ErrorCategoryV1,
   MutationResultV1,
+  ProjectMutationReceiptV1,
+  ProjectMutationResultV1,
   RecoveryV1,
   SetTaskStatusV1,
   StatusMutationV1,
 } from '../../api';
+import {
+  validateProjectMutation,
+  type ProjectMutationInput,
+  type ProjectOperation,
+} from './projectValidation';
 import { validateConsumer, validateMutation } from './validation';
 import { apiError, freezeValue } from './values';
 
-type Method = 'complete' | 'setStatus' | 'toggleCompletion';
-interface AdmissionTicket {
-  readonly execute: (acceptedAt: number) => Promise<MutationResultV1>;
+type TaskMethod = 'complete' | 'setStatus' | 'toggleCompletion';
+type Method = TaskMethod | ProjectOperation;
+type Result = MutationResultV1 | ProjectMutationResultV1;
+interface AdmissionTicket<T extends Result = MutationResultV1> {
+  readonly execute: (acceptedAt: number) => Promise<T>;
+  readonly unknown?: (acceptedAt: number, error: ApiErrorV1) => T;
   readonly release: () => void;
 }
-interface RequestOptions {
+interface RequestOptions<T extends Result = MutationResultV1> {
   readonly signal?: ApiAbortSignalV1;
   readonly isDisposed: () => boolean;
-  readonly admit: () => ApiResultV1<AdmissionTicket>;
+  readonly admit: () => ApiResultV1<AdmissionTicket<T>>;
+}
+interface ProjectAdmissionTicket {
+  readonly execute: (acceptedAt: number) => Promise<ProjectMutationResultV1>;
+  readonly release: () => void;
+  readonly unknown: (acceptedAt: number) => ProjectMutationReceiptV1;
+}
+interface ProjectRequestOptions extends Omit<RequestOptions<ProjectMutationResultV1>, 'admit'> {
+  readonly admit: () => ApiResultV1<ProjectAdmissionTicket>;
 }
 interface RegistryOptions {
   readonly epoch: string;
@@ -27,25 +45,27 @@ interface RegistryOptions {
   readonly maxPendingPerConsumer?: number;
   readonly maxRetainedPerConsumer?: number;
   readonly maxRetained?: number;
+  readonly maxProjectBytes?: number;
 }
 interface RequestRecord {
   readonly consumerId: string;
   readonly payload: string;
   readonly expiresAt: number;
-  readonly promise: Promise<MutationResultV1>;
+  readonly promise: Promise<Result>;
+  readonly projectBytes: number;
   release: (() => void) | undefined;
   pending: boolean;
 }
 interface RequestContext {
   readonly consumerId: string;
   readonly method: Method;
-  readonly request: StatusMutationV1;
+  readonly request: StatusMutationV1 | ProjectMutationInput;
+  readonly projectBytes: number;
   readonly key: string;
   readonly payload: string;
 }
 type AdmissionCheck =
-  | { readonly acceptedAt: number }
-  | { readonly result: MutationResultV1 | Promise<MutationResultV1> };
+  { readonly acceptedAt: number } | { readonly result: Result | Promise<Result> };
 interface AbortObservation {
   readonly read: () => void;
   readonly state: () => 'aborted' | 'live' | 'failed';
@@ -109,7 +129,7 @@ function observeAbort(signal: ApiAbortSignalV1 | undefined): AbortObservation {
 }
 function context(
   consumerId: string,
-  method: Method,
+  method: TaskMethod,
   input: StatusMutationV1 | SetTaskStatusV1,
 ): ApiResultV1<RequestContext> {
   const consumer = validateConsumer(consumerId);
@@ -123,6 +143,7 @@ function context(
       consumerId: consumer.value,
       method,
       request,
+      projectBytes: 0,
       key: JSON.stringify([consumer.value, request.requestId]),
       payload: JSON.stringify([
         method,
@@ -152,13 +173,74 @@ export class TaskRequestRegistry {
   }
   async execute(
     consumerId: string,
-    method: Method,
+    method: TaskMethod,
     input: StatusMutationV1 | SetTaskStatusV1,
     options: RequestOptions,
   ): Promise<MutationResultV1> {
+    // Qualified operation and exact payload equality ensure a replay has this result type.
+    return this.run_abyssPrivate(
+      method,
+      () => context(consumerId, method, input),
+      options,
+    ) as Promise<MutationResultV1>;
+  }
+  async executeProject(
+    consumerId: string,
+    method: ProjectOperation,
+    input: ProjectMutationInput,
+    options: ProjectRequestOptions,
+  ): Promise<ProjectMutationResultV1> {
+    return this.run_abyssPrivate(
+      method,
+      () => {
+        const consumer = validateConsumer(consumerId);
+        const parsed = validateProjectMutation(method, input);
+        if (!consumer.ok) return consumer;
+        if (!parsed.ok) return parsed;
+        const request = parsed.value;
+        const payload = JSON.stringify([method, request]);
+        const current: RequestContext = {
+          consumerId: consumer.value,
+          method,
+          request,
+          key: JSON.stringify([consumer.value, request.requestId]),
+          payload,
+          projectBytes: new TextEncoder().encode(payload).length,
+        };
+        return { ok: true, value: current };
+      },
+      {
+        ...options,
+        admit: () => {
+          const admission = options.admit();
+          if (!admission.ok) return admission;
+          const ticket = admission.value;
+          return {
+            ok: true,
+            value: {
+              execute: ticket.execute,
+              release: ticket.release,
+              unknown: (acceptedAt, error) => ({
+                ok: false,
+                error,
+                effects: 'unknown',
+                recovery: 'reconcile',
+                receipt: ticket.unknown(acceptedAt),
+              }),
+            },
+          };
+        },
+      },
+    );
+  }
+  private async run_abyssPrivate(
+    method: Method,
+    parse: () => ApiResultV1<RequestContext>,
+    options: RequestOptions<Result>,
+  ): Promise<Result> {
     try {
       if (this.closed_abyssPrivate(options)) return failure('DISPOSED');
-      const parsed = context(consumerId, method, input);
+      const parsed = parse();
       if (!parsed.ok) return rejected(parsed.error);
       const current = parsed.value;
       const now = this.time_abyssPrivate();
@@ -174,8 +256,8 @@ export class TaskRequestRegistry {
   }
   private observeAdmission_abyssPrivate(
     current: RequestContext,
-    options: RequestOptions,
-  ): MutationResultV1 | Promise<MutationResultV1> {
+    options: RequestOptions<Result>,
+  ): Result | Promise<Result> {
     const abort = observeAbort(options.signal);
     try {
       const checked = this.checkAdmission_abyssPrivate(current, options, abort);
@@ -185,13 +267,13 @@ export class TaskRequestRegistry {
       this.release_abyssPrivate(abort.release, current.method);
     }
   }
-  private closed_abyssPrivate(options: RequestOptions): boolean {
+  private closed_abyssPrivate(options: RequestOptions<Result>): boolean {
     const clientDisposed = this.disposed_abyssPrivate ? true : options.isDisposed();
     return this.disposed_abyssPrivate || clientDisposed;
   }
   private checkAdmission_abyssPrivate(
     current: RequestContext,
-    options: RequestOptions,
+    options: RequestOptions<Result>,
     abort: AbortObservation,
   ): AdmissionCheck {
     const initiallyClosed = this.closed_abyssPrivate(options);
@@ -214,16 +296,17 @@ export class TaskRequestRegistry {
   }
   private admit_abyssPrivate(
     current: RequestContext,
-    options: RequestOptions,
+    options: RequestOptions<Result>,
     abort: AbortObservation,
-  ): Promise<MutationResultV1> | MutationResultV1 {
+  ): Promise<Result> | Result {
     const admission = options.admit();
     let ticket = admission.ok ? admission.value : undefined;
     try {
       const checked = this.checkAdmission_abyssPrivate(current, options, abort);
       if ('result' in checked) return checked.result;
       if (!admission.ok) return rejected(admission.error);
-      if (this.full_abyssPrivate(current.consumerId)) return failure('RESOURCE_LIMIT');
+      if (this.full_abyssPrivate(current.consumerId, current.projectBytes))
+        return failure('RESOURCE_LIMIT');
       const promise = this.reserve_abyssPrivate(current, admission.value, checked.acceptedAt);
       ticket = undefined;
       return promise;
@@ -233,16 +316,17 @@ export class TaskRequestRegistry {
   }
   private reserve_abyssPrivate(
     current: RequestContext,
-    ticket: AdmissionTicket,
+    ticket: AdmissionTicket<Result>,
     acceptedAt: number,
-  ): Promise<MutationResultV1> {
-    let resolve!: (result: MutationResultV1) => void;
-    const promise = new Promise<MutationResultV1>((done) => {
+  ): Promise<Result> {
+    let resolve!: (result: Result) => void;
+    const promise = new Promise<Result>((done) => {
       resolve = done;
     });
     const record: RequestRecord = {
       consumerId: current.consumerId,
       payload: current.payload,
+      projectBytes: current.projectBytes,
       expiresAt: current.request.expiresAt,
       promise,
       pending: true,
@@ -250,21 +334,21 @@ export class TaskRequestRegistry {
     };
     this.records_abyssPrivate.set(current.key, record);
     this.settle_abyssPrivate(record, current, ticket, acceptedAt).then(resolve, () => {
-      resolve(this.unknown_abyssPrivate(current, acceptedAt));
+      resolve(this.unknownResult_abyssPrivate(current, ticket, acceptedAt));
     });
     return promise;
   }
   private async settle_abyssPrivate(
     record: RequestRecord,
     current: RequestContext,
-    ticket: AdmissionTicket,
+    ticket: AdmissionTicket<Result>,
     acceptedAt: number,
-  ): Promise<MutationResultV1> {
-    let result: MutationResultV1;
+  ): Promise<Result> {
+    let result: Result;
     try {
       result = freezeValue(await ticket.execute(acceptedAt));
     } catch {
-      result = this.unknown_abyssPrivate(current, acceptedAt);
+      result = this.unknownResult_abyssPrivate(current, ticket, acceptedAt);
     }
     const release = record.release;
     record.release = undefined;
@@ -273,6 +357,15 @@ export class TaskRequestRegistry {
     if (this.disposed_abyssPrivate || record.expiresAt <= this.lastNow_abyssPrivate)
       this.records_abyssPrivate.delete(current.key);
     return result;
+  }
+  private unknownResult_abyssPrivate(
+    current: RequestContext,
+    ticket: AdmissionTicket<Result>,
+    acceptedAt: number,
+  ): Result {
+    if (ticket.unknown !== undefined)
+      return freezeValue(ticket.unknown(acceptedAt, this.internal_abyssPrivate(current.method)));
+    return this.unknown_abyssPrivate(current, acceptedAt);
   }
   private unknown_abyssPrivate(current: RequestContext, acceptedAt: number): MutationResultV1 {
     return freezeValue<MutationResultV1>({
@@ -288,15 +381,16 @@ export class TaskRequestRegistry {
         outcome: 'failed',
         effects: 'unknown',
         recovery: 'reconcile',
-        original: { target: current.request.target, state: 'unproven' },
+        original: {
+          target: 'target' in current.request ? current.request.target : '',
+          state: 'unproven',
+        },
         snapshots: 'unavailable',
         warnings: [],
       },
     });
   }
-  private replay_abyssPrivate(
-    current: RequestContext,
-  ): Promise<MutationResultV1> | MutationResultV1 | undefined {
+  private replay_abyssPrivate(current: RequestContext): Promise<Result> | Result | undefined {
     const record = this.records_abyssPrivate.get(current.key);
     if (record === undefined) return undefined;
     return record.payload === current.payload ? record.promise : failure('REQUEST_ID_REUSED');
@@ -311,7 +405,15 @@ export class TaskRequestRegistry {
       if (!record.pending && record.expiresAt <= now) this.records_abyssPrivate.delete(key);
     }
   }
-  private full_abyssPrivate(consumerId: string): boolean {
+  private full_abyssPrivate(consumerId: string, projectBytes: number): boolean {
+    let retainedProjectBytes = 0;
+    for (const record of this.records_abyssPrivate.values())
+      retainedProjectBytes += record.projectBytes;
+    if (
+      retainedProjectBytes + projectBytes >
+      (this.options_abyssPrivate.maxProjectBytes ?? 4 * 1024 * 1024)
+    )
+      return true;
     if (this.records_abyssPrivate.size >= this.maxRetained_abyssPrivate) return true;
     let pending = 0;
     let retained = 0;
