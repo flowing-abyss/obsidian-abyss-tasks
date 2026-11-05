@@ -1,4 +1,5 @@
 import type { ListSelection } from '../../app/AppState';
+import { projectTaskInsertion } from '../../projects/projectTaskInsertion';
 import { DEFAULT_SETTINGS } from '../../settings/defaults';
 import type { CalendarSettings } from '../../settings/types';
 import { effectiveGroupCaptureTag, resolveEffectiveTagGroups } from '../../tags/effectiveTagGroups';
@@ -12,7 +13,6 @@ import {
   type TaskCaptureApplicationApi,
   type TaskCommandResult,
   type TaskCreateSession,
-  type TaskInsertionPolicy,
   type TaskNodeSnapshot,
 } from '../../tasks';
 
@@ -78,18 +78,6 @@ function cloneContext(context: CaptureContext): CaptureContext {
 function normalizedTag(value: string): string {
   const tags = normalizeTaskTagInput(value);
   return tags?.length === 1 ? (tags[0] ?? '') : '';
-}
-
-function projectInsertion(settings: CalendarSettings['projects']): TaskInsertionPolicy {
-  if (settings.taskInsertionMode === 'section' && settings.taskInsertionSection.trim().length > 0) {
-    return {
-      type: 'section',
-      heading: settings.taskInsertionSection,
-      position: settings.taskInsertionSectionPosition,
-    };
-  }
-  if (settings.taskInsertionMode === 'prepend') return { type: 'prepend' };
-  return { type: 'append' };
 }
 
 export class CaptureTargetResolver {
@@ -239,7 +227,7 @@ export class CaptureTargetResolver {
     context: CaptureContext,
     path: string,
   ): Promise<CaptureTarget> {
-    const insertion = projectInsertion(this.settings_abyssPrivate.projects);
+    const insertion = projectTaskInsertion(this.settings_abyssPrivate.projects, 'capture');
     return {
       label: path,
       context,

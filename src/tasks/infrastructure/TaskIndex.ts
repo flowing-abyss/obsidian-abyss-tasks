@@ -644,6 +644,14 @@ interface OccurrenceInstallation {
   readonly defer?: boolean;
 }
 
+function sameAcceptedContent(
+  source: AcceptedStatisticsSource | undefined,
+  file: TFile,
+  content: string,
+): boolean {
+  return source?.fileIdentity === file && source.content === content;
+}
+
 interface AcceptedStatisticsSource {
   readonly fileIdentity: TFile | undefined;
   readonly integrationScopeRevision: number;
@@ -1223,8 +1231,7 @@ export class TaskIndex
     };
     return {
       prospective: (path, content) => this.prospectiveProjectSource_abyssPrivate(path, content),
-      reconcile: (path, file, content) =>
-        this.reconcileProjectSource_abyssPrivate(path, file, content),
+      reconcile: (path, file, content) => this.reconcileCommittedSource(path, file, content),
       paths: () => this.integrationPaths_abyssPrivate,
       get,
       matchesFile: (proof, file) => {
@@ -1261,10 +1268,11 @@ export class TaskIndex
     };
   }
 
-  private async reconcileProjectSource_abyssPrivate(
+  async reconcileCommittedSource(
     path: string,
     file: object,
     content: string,
+    install?: () => void,
   ): Promise<boolean> {
     if (!(file instanceof TFile) || this.observe_abyssPrivate(file, path) === undefined)
       return false;
@@ -1273,13 +1281,14 @@ export class TaskIndex
     const observed = await this.app_abyssPrivate.vault.read(file);
     if (observed !== content || !this.isFileAt_abyssPrivate(file, path)) return false;
     const current = this.acceptedStatisticsSources_abyssPrivate.get(path);
-    if (current?.fileIdentity === file && current.content === content) return true;
+    if (install === undefined && sameAcceptedContent(current, file, content)) return true;
     if (
       current !== prior ||
       this.integrationCurrentObservations_abyssPrivate.get(file) !== acquisition
     )
       return false;
-    this.installCommittedContent(path, content);
+    if (install === undefined) this.installCommittedContent(path, content);
+    else install();
     return true;
   }
 

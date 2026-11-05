@@ -5,7 +5,12 @@ import type {
   ProjectSchemaV1,
   ProjectSummaryV1,
 } from '../../api';
-import type { TaskReadResult } from '../tasks';
+import type {
+  ProjectTaskExecution,
+  TaskReadNode,
+  TaskReadObservation,
+  TaskReadResult,
+} from '../tasks';
 
 /** The integrations layer receives allowlisted values and opaque file evidence only. */
 export interface ProjectReadSummary extends Omit<ProjectSummaryV1, 'target' | 'revision'> {
@@ -49,4 +54,13 @@ export type ProjectWriteResult =
 export interface ProjectIntegrationWrites {
   create(input: ProjectCreation): Promise<ProjectWriteResult>;
   update(proof: ProjectReadSummary, input: ProjectAssignments): Promise<ProjectWriteResult>;
+}
+
+export interface ProjectTaskCommands {
+  prepareCreate(proof: ProjectReadSummary, title: string): ProjectTaskExecution;
+  prepareMove(
+    proof: ProjectReadSummary,
+    node: TaskReadNode,
+    observation: TaskReadObservation,
+  ): ProjectTaskExecution;
 }

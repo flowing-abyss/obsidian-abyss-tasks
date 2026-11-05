@@ -78,6 +78,13 @@ export interface TaskSnapshotState {
   /** Defers only evidence publication across a transfer and its recovery awaits. */
   holdStatisticsPublication?(): () => void;
   currentRoots?(filePath: string): readonly RootRevisionOverride[];
+  /** Install an owned candidate only while the native readback and accepted acquisition agree. */
+  reconcileCommittedSource?(
+    path: string,
+    file: object,
+    content: string,
+    install: () => void,
+  ): Promise<boolean>;
   /** For duplicate sources, supplied transaction occurrence lines must match the indexed population. */
   currentRoot(
     filePath: string,

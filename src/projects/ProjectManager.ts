@@ -25,7 +25,6 @@ import type {
   ProjectSourceReadApi,
   TaskApplicationApi,
   TaskCommandResult,
-  TaskInsertionPolicy,
   TaskReadResult,
   TaskRef,
 } from '../tasks';
@@ -62,6 +61,7 @@ import {
 import { catalog, fieldCompatible, statusChoices, statusFor } from './projectMetadataPolicy';
 import { resolveConfiguredProjectField } from './projectPropertyDefinitions';
 import { sameProjectPropertyName } from './projectPropertyNames';
+import { projectTaskInsertion } from './projectTaskInsertion';
 import { resolveStatus } from './status';
 
 export interface ExpectedProjectStatus {
@@ -230,18 +230,6 @@ function abstractFileByPathInsensitive(
 
 function cleanProjectName(name: string): string {
   return name.trim().replace(/[\\/:*?"<>|]/gu, '-');
-}
-
-function projectTaskInsertion(settings: CalendarSettings['projects']): TaskInsertionPolicy {
-  if (settings.taskInsertionMode === 'section') {
-    return {
-      type: 'section',
-      heading: settings.taskInsertionSection,
-      position: settings.taskInsertionSectionPosition,
-    };
-  }
-  if (settings.taskInsertionMode === 'prepend') return { type: 'prepend' };
-  return { type: 'append' };
 }
 
 function isInvalidProjectDateRange(start: unknown, end: unknown): boolean {
@@ -1173,7 +1161,7 @@ export class ProjectManager {
     projectPath: string,
     tasks: TaskApplicationApi = this.tasks,
   ): Promise<TaskCommandResult> {
-    const insertion = projectTaskInsertion(this.settings.projects);
+    const insertion = projectTaskInsertion(this.settings.projects, 'move');
     return tasks.execute({
       type: 'move',
       ref,

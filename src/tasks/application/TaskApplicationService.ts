@@ -79,9 +79,17 @@ import type {
   TaskDestinationResolution,
 } from './TaskDestinationProvider';
 import { TaskHierarchyService } from './TaskHierarchyService';
+import {
+  projectTaskFailure,
+  type ProjectTaskDestination,
+  type ProjectTaskExecution,
+  type ProjectTaskResult,
+  type ProjectTaskSource,
+} from './TaskProjectCommands';
 import type {
   RecurrenceCompletionRequest,
   RecurrenceCompletionRevisionRequest,
+  TaskDraft,
   TaskEditCommand,
   TaskEditRequest,
   TaskMoveRequest,
@@ -643,6 +651,48 @@ export class TaskApplicationService
         await this.dependencies_abyssPrivate.serializeMutation(async () => await operation()),
       diagnostics,
     });
+  }
+
+  prepareProjectCreate(destination: ProjectTaskDestination, title: string): ProjectTaskExecution {
+    if (!isSingleLineText(title) || title.trim().length === 0)
+      return async () => projectTaskFailure('invalid');
+    const settings = snapshotBehaviorSettings(this.behaviorSettings_abyssPrivate);
+    const key = (current: TaskBehaviorSettings): string =>
+      JSON.stringify([
+        current.taskPrefix,
+        current.inbox,
+        current.taskLifecycle,
+        this.statusCatalog_abyssPrivate.all(),
+      ]);
+    const accepted = key(settings);
+    const draft = this.creationDraft_abyssPrivate(
+      { markdownBody: title.trim() },
+      { type: 'valid' },
+      settings,
+      captureClock(this.clock_abyssPrivate),
+    );
+    if (!isSingleLineText(draft.markdownBody)) return async () => projectTaskFailure('invalid');
+    const guarded: ProjectTaskDestination = {
+      ...destination,
+      check: (file, live, candidate) =>
+        key(snapshotBehaviorSettings(this.behaviorSettings_abyssPrivate)) === accepted
+          ? destination.check(file, live, candidate)
+          : 'stale',
+    };
+    return async () =>
+      (await this.repository_abyssPrivate.createProjectRoot?.(guarded, draft)) ??
+      projectTaskFailure('unsupported');
+  }
+
+  async moveProjectRoot(
+    destination: ProjectTaskDestination,
+    source: ProjectTaskSource,
+  ): Promise<ProjectTaskResult> {
+    return await this.dependencies_abyssPrivate.serializeMutation(
+      async () =>
+        (await this.repository_abyssPrivate.moveProjectRoot?.(destination, source)) ??
+        projectTaskFailure('unsupported'),
+    );
   }
 
   async planCreate(
@@ -1396,16 +1446,25 @@ export class TaskApplicationService
     if (preparedInitial.type === 'invalid') {
       return invalidTaskTarget(preparedInitial.field);
     }
-    const draft = preparedCreateDraft(request, preparedInitial, settings);
-    const result = await this.repository_abyssPrivate.create(resolution.destination, {
-      ...draft,
-      today: reading.localDate,
-      addCreatedDate: settings.taskLifecycle.addCreatedDate,
-      addCompletionDate: settings.taskLifecycle.addCompletionDate,
-    });
+    const draft = this.creationDraft_abyssPrivate(request, preparedInitial, settings, reading);
+    const result = await this.repository_abyssPrivate.create(resolution.destination, draft);
     if (result.type !== 'committed') return this.terminalRepositoryResult_abyssPrivate(result);
     if (result.outcome.type === 'task') this.remember_abyssPrivate(result.outcome.task);
     return { type: 'ok', outcome: result.outcome, changed: result.changed };
+  }
+
+  private creationDraft_abyssPrivate(
+    request: TaskCreateRequest,
+    initial: Extract<PreparedCreateInitial, { type: 'valid' }>,
+    settings: TaskBehaviorSettings,
+    reading: Pick<ClockReading, 'localDate'>,
+  ): TaskDraft {
+    return {
+      ...preparedCreateDraft(request, initial, settings),
+      today: reading.localDate,
+      addCreatedDate: settings.taskLifecycle.addCreatedDate,
+      addCompletionDate: settings.taskLifecycle.addCompletionDate,
+    };
   }
 
   private async destinationPlan_abyssPrivate(

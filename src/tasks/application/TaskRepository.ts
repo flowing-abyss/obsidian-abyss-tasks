@@ -26,6 +26,11 @@ import type {
 } from '../domain/types';
 import { sameTaskNodeRef } from '../domain/types';
 import type { TaskIssue } from '../domain/validation';
+import type {
+  ProjectTaskDestination,
+  ProjectTaskResult,
+  ProjectTaskSource,
+} from './TaskProjectCommands';
 import type { TaskStrictStatusFailure, TaskStrictStatusGuard } from './TaskStatusMutationApi';
 
 type AddSubtaskLifecycle =
@@ -276,6 +281,14 @@ export type TaskRepositoryResult =
     };
 
 export interface TaskRepository {
+  createProjectRoot?(
+    destination: ProjectTaskDestination,
+    draft: TaskDraft,
+  ): Promise<ProjectTaskResult>;
+  moveProjectRoot?(
+    destination: ProjectTaskDestination,
+    source: ProjectTaskSource,
+  ): Promise<ProjectTaskResult>;
   readonly supportsStrictStatusPreconditions?: true;
   hierarchy(request: TaskHierarchyRequest): Promise<TaskRepositoryResult>;
   /** Production adapters opt in to immutable revision preconditions. */

@@ -113,6 +113,16 @@ adds the initial fields in memory. The service rechecks the template, destinatio
 after folder creation, then creates one note with its final content. Both writers reconcile the
 actual file through TaskIndex before issuing a new project reference.
 
+Project task capture uses the dashboard insertion policy and the application service's task
+prefix and lifecycle settings. The repository checks the project's file, accepted bytes and
+candidate inside the native write. A root move uses the same destination-first sequence as
+the dashboard. Before copying, it checks the source root and the permission of the note that
+would remain. Before removal, it reads back the destination and verifies the installed copy,
+current project membership and original source incarnation. Each phase records its own storage
+acknowledgement. TaskIndex accepts structural occurrence witnesses only while the file and
+acquisition still match the readback. The inserted root receives a fresh revision even beside
+identical roots.
+
 The declaration has no imports, runtime statements, ambient host augmentation, or internal type
 references, and needs no Obsidian or DOM typings. Its request and result data is recursively readonly.
 [`src/integrations/validation.ts`](src/integrations/validation.ts) accepts allowlisted plain

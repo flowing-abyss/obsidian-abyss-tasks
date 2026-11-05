@@ -96,6 +96,10 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   TaskStatusMutationRequest: ['src/integrations/taskApiMutations.ts'],
   TaskStatusMutationOutcome: ['src/integrations/taskApiMutations.ts'],
   ProjectSourceReadApi: ['src/projects/projectIntegration.ts'],
+  ProjectTaskDestination: ['src/projects/projectTaskCommands.ts'],
+  ProjectTaskExecution: ['src/projects/projectTaskCommands.ts'],
+  TaskProjectCommands: ['src/projects/projectTaskCommands.ts'],
+  projectTaskFailure: ['src/projects/projectTaskCommands.ts'],
   TaskReadResult: [
     'src/integrations/taskApiReads.ts',
     'src/projects/projectApi.ts',

@@ -204,6 +204,12 @@ export type {
   TaskReadObservation,
   TaskReadResult,
 } from './application/TaskIntegrationReadApi';
+export { projectTaskFailure } from './application/TaskProjectCommands';
+export type {
+  ProjectTaskDestination,
+  ProjectTaskExecution,
+  TaskProjectCommands,
+} from './application/TaskProjectCommands';
 export type {
   TaskStatusMutationApi,
   TaskStatusMutationOutcome,

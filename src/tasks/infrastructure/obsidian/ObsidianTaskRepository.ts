@@ -1,6 +1,13 @@
 import { TFile, type App } from 'obsidian';
 import { compileNotePathPattern } from '../../../markdown/notePathPattern';
 import type { TaskDiagnosticSink } from '../../application/TaskDependencyService';
+import {
+  projectTaskFailure,
+  type ProjectTaskDestination,
+  type ProjectTaskGuard,
+  type ProjectTaskResult,
+  type ProjectTaskSource,
+} from '../../application/TaskProjectCommands';
 import type { TaskHierarchyRequest } from '../../application/TaskRepository';
 import {
   dependencyMetadataIssues,
@@ -117,6 +124,7 @@ import {
   type TaskRefStageResult,
   type TaskSnapshotState,
 } from '../TaskRefAuthority';
+import { ProjectRootPhase, type ProjectRootEdit } from './projectRootPhase';
 import { reverseDependency } from './reverseDependency';
 import { runTaskFileMutation } from './taskFileMutationQueue';
 import { taskHierarchyTransaction } from './taskHierarchyTransaction';
@@ -644,6 +652,23 @@ interface MoveTargetInput {
   readonly indexedRevision: string;
   readonly archive: boolean;
   readonly archiveSource?: TaskRef;
+  readonly project?: ProjectMove | undefined;
+}
+
+interface ProjectPhaseInput {
+  readonly file: TFile;
+  readonly phase: ProjectRootPhase;
+  readonly check: ProjectTaskGuard;
+  readonly peer?: { readonly file: TFile; readonly content: string };
+}
+interface ProjectMove {
+  readonly source: ProjectTaskSource;
+  readonly destination: ProjectTaskDestination;
+  readonly copy: ProjectRootPhase;
+  readonly removal: ProjectRootPhase;
+  sourceFile?: TFile;
+  sourceContent?: string;
+  remaining?: string;
 }
 
 interface MoveTargetTransaction {
@@ -699,7 +724,7 @@ type ArchiveTargetProof =
   | { readonly type: 'absent' }
   | { readonly type: 'result'; readonly result: TaskRepositoryResult };
 
-function archiveRequestParts(
+function moveRequestParts(
   request: TaskMoveRequest | TaskRef,
   legacyDestination: TaskDestination | undefined,
 ): {
@@ -887,13 +912,148 @@ export class ObsidianTaskRepository implements TaskRepository {
   async create(destination: TaskDestination, draft: TaskDraft): Promise<TaskRepositoryResult> {
     const file = this.app_abyssPrivate.vault.getAbstractFileByPath(destination.filePath);
     if (!(file instanceof TFile)) return this.destinationUnavailable_abyssPrivate();
-    const block = createTaskBlock(this.codec_abyssPrivate, {
+    const block = this.draftBlock_abyssPrivate(draft);
+    if (block.type === 'invalid') return block;
+    return this.createInFile_abyssPrivate(file, destination, block.content);
+  }
+
+  private draftBlock_abyssPrivate(draft: TaskDraft): ReturnType<typeof createTaskBlock> {
+    return createTaskBlock(this.codec_abyssPrivate, {
       ...draft,
       today: draft.today ?? localDate('1970-01-01'),
       addCreatedDate: draft.addCreatedDate ?? false,
     });
-    if (block.type === 'invalid') return block;
-    return this.createInFile_abyssPrivate(file, destination, block.content);
+  }
+
+  async createProjectRoot(
+    destination: ProjectTaskDestination,
+    draft: TaskDraft,
+  ): Promise<ProjectTaskResult> {
+    const file = this.app_abyssPrivate.vault.getAbstractFileByPath(destination.filePath);
+    if (!(file instanceof TFile)) return projectTaskFailure('unavailable');
+    const block = this.draftBlock_abyssPrivate(draft);
+    if (block.type === 'invalid') return projectTaskFailure('invalid');
+    const phase = new ProjectRootPhase(destination.filePath, {});
+    await this.insertProjectRoot_abyssPrivate(
+      { file, phase, check: destination.check },
+      destination,
+      block.content,
+    );
+    return this.projectResult_abyssPrivate(destination, phase);
+  }
+
+  private async projectResult_abyssPrivate(
+    destination: ProjectTaskDestination,
+    copy: ProjectRootPhase,
+    removal?: ProjectRootPhase,
+  ): Promise<ProjectTaskResult> {
+    const last = copy.effect === 'committed' ? (removal ?? copy) : copy;
+    const changed = last.effect === 'committed';
+    const ref = await this.currentProjectCopy_abyssPrivate(destination, copy);
+    return {
+      outcome: changed ? 'changed' : 'failed',
+      destinationCopy: copy.effect,
+      sourceRemoval: removal?.effect ?? 'unchanged',
+      ...(!changed && { reason: last.reason }),
+      ...(ref !== undefined && {
+        task: {
+          filePath: ref.filePath,
+          rootLine: ref.line,
+          rootRevision: ref.revision,
+          nodeOffset: 0,
+        },
+      }),
+    };
+  }
+
+  private async currentProjectCopy_abyssPrivate(
+    destination: ProjectTaskDestination,
+    copy: ProjectRootPhase,
+  ): Promise<TaskRef | undefined> {
+    const file = this.app_abyssPrivate.vault.getAbstractFileByPath(copy.path);
+    if (!(file instanceof TFile) || copy.task === undefined) return;
+    try {
+      const live = await this.app_abyssPrivate.vault.read(file);
+      if (live === copy.content && this.projectCopyCurrent_abyssPrivate(destination, copy, file))
+        return copy.task.ref;
+    } catch {
+      // Storage effects survive an unavailable read at delivery.
+    }
+    return undefined;
+  }
+
+  private projectCopyCurrent_abyssPrivate(
+    destination: ProjectTaskDestination,
+    copy: ProjectRootPhase,
+    file: TFile,
+  ): boolean {
+    const { task, content } = copy;
+    return (
+      content !== undefined &&
+      task !== undefined &&
+      this.isCurrentFile_abyssPrivate(file, copy.path) &&
+      destination.checkCopy(file, content) &&
+      this.state_abyssPrivate?.currentRoot(copy.path, task.ref.line, task.source.originalBlock)
+        ?.revision === task.ref.revision
+    );
+  }
+
+  private async insertProjectRoot_abyssPrivate(
+    input: ProjectPhaseInput,
+    destination: TaskDestination,
+    block: string,
+  ): Promise<void> {
+    await this.writeProjectPhase_abyssPrivate(input, (live) => {
+      const inserted = this.editor_abyssPrivate.insertRootBlock(live, block, destination.insertion);
+      if (inserted?.block.source !== block) return;
+      return { kind: 'insert', line: inserted.block.line, content: inserted.content };
+    });
+  }
+
+  private async writeProjectPhase_abyssPrivate(
+    { file, phase, check, peer }: ProjectPhaseInput,
+    edit: (live: string) => ProjectRootEdit | undefined,
+  ): Promise<void> {
+    const current = (): boolean => this.isCurrentFile_abyssPrivate(file, phase.path);
+    // Native changes may update a file's stat before its metadata acquisition reaches TaskIndex.
+    const stat = peer === undefined ? undefined : { ...peer.file.stat };
+    const peerCurrent = (): boolean =>
+      peer === undefined ||
+      (peer.file.stat.mtime === stat?.mtime && peer.file.stat.size === stat.size);
+    try {
+      await this.processFile_abyssPrivate(
+        file,
+        (live) => {
+          if (!current() || !peerCurrent()) return live;
+          const candidate = edit(live);
+          if (candidate === undefined) return live;
+          const failed = check(file, live, candidate.content);
+          if (failed !== undefined) {
+            phase.reason = failed;
+            return live;
+          }
+          return phase.forward(live, candidate, this.options_abyssPrivate);
+        },
+        async () => {
+          if (phase.content === undefined) return;
+          phase.effect = 'committed';
+          const state = this.state_abyssPrivate;
+          await state?.reconcileCommittedSource?.(phase.path, file, phase.content, () => {
+            phase.install(state);
+          });
+        },
+        peer === undefined
+          ? undefined
+          : async () => {
+              if ((await this.app_abyssPrivate.vault.read(peer.file)) !== peer.content)
+                throw new Error('Move peer changed');
+            },
+      );
+    } catch {
+      phase.reason = 'io';
+    } finally {
+      phase.release();
+    }
   }
 
   private destinationUnavailable_abyssPrivate(): TaskRepositoryResult {
@@ -997,9 +1157,44 @@ export class ObsidianTaskRepository implements TaskRepository {
     );
   }
 
-  private async withStatisticsHold_abyssPrivate(
-    operation: () => Promise<TaskRepositoryResult>,
-  ): Promise<TaskRepositoryResult> {
+  async moveProjectRoot(
+    destination: ProjectTaskDestination,
+    source: ProjectTaskSource,
+  ): Promise<ProjectTaskResult> {
+    const operation = {};
+    const project: ProjectMove = {
+      source,
+      destination,
+      copy: new ProjectRootPhase(destination.filePath, operation),
+      removal: new ProjectRootPhase(source.root.ref.filePath, operation),
+    };
+    try {
+      const result = await this.withStatisticsHold_abyssPrivate(() =>
+        this.moveOnce_abyssPrivate(source.root.ref, destination, project),
+      );
+      if (result.type === 'committed' && !result.changed) {
+        const ref = source.root.ref;
+        return {
+          outcome: 'noop',
+          destinationCopy: 'unchanged',
+          sourceRemoval: 'unchanged',
+          task: {
+            filePath: ref.filePath,
+            rootLine: ref.line,
+            rootRevision: ref.revision,
+            nodeOffset: 0,
+          },
+        };
+      }
+      if (result.type === 'io-error' && project.copy.effect === 'unchanged')
+        project.copy.reason = 'io';
+    } catch {
+      (project.copy.effect === 'committed' ? project.removal : project.copy).reason = 'io';
+    }
+    return this.projectResult_abyssPrivate(destination, project.copy, project.removal);
+  }
+
+  private async withStatisticsHold_abyssPrivate<T>(operation: () => Promise<T>): Promise<T> {
     const release = this.state_abyssPrivate?.holdStatisticsPublication?.();
     try {
       return await operation();
@@ -1011,10 +1206,9 @@ export class ObsidianTaskRepository implements TaskRepository {
   private async moveOnce_abyssPrivate(
     request: TaskMoveRequest | TaskRef,
     legacyDestination?: TaskDestination,
+    project?: ProjectMove,
   ): Promise<TaskRepositoryResult> {
-    const prepared = 'baseRoot' in request ? request : undefined;
-    const ref = 'baseRoot' in request ? request.baseRoot.ref : request;
-    const destination = 'destination' in request ? request.destination : legacyDestination;
+    const { prepared, ref, destination } = moveRequestParts(request, legacyDestination);
     if (destination == null) {
       return invalidTaskTarget('destination');
     }
@@ -1024,8 +1218,15 @@ export class ObsidianTaskRepository implements TaskRepository {
     }
     const sourceContent = await this.readMoveSource_abyssPrivate(sourceFile, ref.filePath);
     if (typeof sourceContent !== 'string') return sourceContent;
-    const source = this.resolveMoveSource_abyssPrivate(ref, prepared, sourceContent);
+    const source = this.resolveMoveSource_abyssPrivate(
+      ref,
+      prepared,
+      sourceContent,
+      project?.source.root,
+    );
     if (source.type === 'result') return source.result;
+    if (!this.prepareProjectMove_abyssPrivate(project, sourceFile, sourceContent, source.block))
+      return conflict(source.task);
     if (ref.filePath === destination.filePath) return this.unchangedMove_abyssPrivate(source.task);
     const targetFile = this.app_abyssPrivate.vault.getAbstractFileByPath(destination.filePath);
     if (!(targetFile instanceof TFile)) return this.destinationUnavailable_abyssPrivate();
@@ -1036,12 +1237,35 @@ export class ObsidianTaskRepository implements TaskRepository {
       targetFile,
       indexedRevision: source.indexedRevision,
       archive: false,
+      project,
     });
     return await this.finishMoveSource_abyssPrivate(
       source.task,
       destination.filePath,
       targetResult,
+      project,
     );
+  }
+
+  private prepareProjectMove_abyssPrivate(
+    project: ProjectMove | undefined,
+    file: TFile,
+    content: string,
+    block: TaskRootBlock,
+  ): boolean {
+    if (project === undefined) return true;
+    project.sourceFile = file;
+    project.sourceContent = content;
+    const same = project.source.root.ref.filePath === project.destination.filePath;
+    const remaining = same ? content : this.editor_abyssPrivate.deleteRoot(content, block);
+    if (remaining === undefined) return false;
+    project.remaining = remaining;
+    const failure =
+      this.projectMoveSourceGuard_abyssPrivate(project, file, content, remaining) ??
+      (same ? project.destination.check(file, content, content) : undefined);
+    if (failure === undefined) return true;
+    project.copy.reason = failure;
+    return false;
   }
 
   async archive(
@@ -1066,10 +1290,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     request: TaskMoveRequest | TaskRef,
     legacyDestination?: TaskDestination,
   ): Promise<TaskRepositoryResult> {
-    const { prepared, ref, receiptRef, destination } = archiveRequestParts(
-      request,
-      legacyDestination,
-    );
+    const { prepared, ref, receiptRef, destination } = moveRequestParts(request, legacyDestination);
     if (destination == null || ref.filePath.toLowerCase() === destination.filePath.toLowerCase()) {
       return invalidTaskTarget('destination');
     }
@@ -1293,6 +1514,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     ref: TaskRef,
     prepared: RevisionPrecondition | undefined,
     sourceContent: string,
+    strictRoot?: TaskSnapshot,
   ): MoveSourceResolution {
     const evidence = this.authority_abyssPrivate?.evidence(ref.revision);
     const indexedRef =
@@ -1300,7 +1522,12 @@ export class ObsidianTaskRepository implements TaskRepository {
         ? undefined
         : this.state_abyssPrivate?.currentRoot(ref.filePath, ref.line, evidence.source);
     const sourceBlocks = this.editor_abyssPrivate.rootBlocks(sourceContent);
-    const sourceLocated = this.locator_abyssPrivate.locate(sourceBlocks, ref);
+    const confirmed =
+      strictRoot !== undefined &&
+      this.sourceRevisionIsCurrent_abyssPrivate(strictRoot, sourceBlocks)
+        ? indexedRef
+        : undefined;
+    const sourceLocated = this.locator_abyssPrivate.locate(sourceBlocks, ref, confirmed);
     const preparedResult = preparedRevisionResult({
       prepared,
       located: sourceLocated,
@@ -1373,12 +1600,13 @@ export class ObsidianTaskRepository implements TaskRepository {
     sourceTask: TaskSnapshot,
     targetPath: string,
     targetResult: TaskRepositoryResult,
+    project?: ProjectMove,
   ): Promise<TaskRepositoryResult> {
     if (targetResult.type !== 'committed' || targetResult.outcome.type !== 'task') {
       return targetResult;
     }
     const copiedTask = targetResult.outcome.task;
-    const sourceFailure = await this.removeMoveSource_abyssPrivate(sourceTask);
+    const sourceFailure = await this.removeMoveSource_abyssPrivate(sourceTask, project);
     if (sourceFailure !== undefined) {
       return this.partialMove_abyssPrivate(
         sourceTask.ref,
@@ -1391,6 +1619,31 @@ export class ObsidianTaskRepository implements TaskRepository {
   }
 
   private async copyMoveTarget_abyssPrivate(input: MoveTargetInput): Promise<TaskRepositoryResult> {
+    const project = input.project;
+    if (project !== undefined) {
+      const { sourceContent, remaining, sourceFile } = project;
+      if (sourceContent === undefined || remaining === undefined || sourceFile === undefined)
+        return conflict(input.sourceTask);
+      await this.insertProjectRoot_abyssPrivate(
+        {
+          file: input.targetFile,
+          phase: project.copy,
+          peer: { file: sourceFile, content: sourceContent },
+          check: (file, live, candidate) =>
+            this.projectMoveSourceGuard_abyssPrivate(
+              project,
+              sourceFile,
+              sourceContent,
+              remaining,
+            ) ?? project.destination.check(file, live, candidate),
+        },
+        input.destination,
+        input.sourceBlock.source,
+      );
+      return project.copy.task !== undefined
+        ? committedTask(project.copy.task, true)
+        : conflict(input.sourceTask);
+    }
     const transaction: MoveTargetTransaction = {
       result: undefined,
       transition: undefined,
@@ -1562,9 +1815,11 @@ export class ObsidianTaskRepository implements TaskRepository {
 
   private async removeMoveSource_abyssPrivate(
     sourceTask: TaskSnapshot,
+    project?: ProjectMove,
   ): Promise<SourceRemovalFailure | undefined> {
     const file = this.app_abyssPrivate.vault.getAbstractFileByPath(sourceTask.ref.filePath);
     if (!(file instanceof TFile)) return { cause: 'not-found', contentState: 'remains' };
+    if (project !== undefined) return await this.removeProjectSource_abyssPrivate(project, file);
     const transaction: SourceRemovalTransaction = {};
     try {
       await this.processFile_abyssPrivate(file, (content) =>
@@ -1583,17 +1838,75 @@ export class ObsidianTaskRepository implements TaskRepository {
     return undefined;
   }
 
+  private projectMoveSourceGuard_abyssPrivate(
+    project: ProjectMove,
+    file: TFile,
+    live: string,
+    candidate: string,
+  ): ReturnType<ProjectTaskGuard> {
+    const { root } = project.source;
+    if (
+      this.state_abyssPrivate === undefined ||
+      this.authority_abyssPrivate === undefined ||
+      project.sourceFile !== file ||
+      !this.isCurrentFile_abyssPrivate(file, root.ref.filePath) ||
+      !this.sourceRevisionIsCurrent_abyssPrivate(root, this.editor_abyssPrivate.rootBlocks(live))
+    )
+      return 'stale';
+    return project.source.check(file, live, candidate);
+  }
+
+  private async removeProjectSource_abyssPrivate(
+    project: ProjectMove,
+    file: TFile,
+  ): Promise<SourceRemovalFailure | undefined> {
+    const { copy, source, destination, removal } = project;
+    const target = this.app_abyssPrivate.vault.getAbstractFileByPath(copy.path);
+    const content = copy.content;
+    if (!(target instanceof TFile) || content === undefined || copy.task === undefined)
+      return { cause: 'conflict', contentState: 'remains' };
+    await this.writeProjectPhase_abyssPrivate(
+      {
+        file,
+        phase: removal,
+        peer: { file: target, content },
+        check: (actual, live, next) =>
+          actual === file && this.projectCopyCurrent_abyssPrivate(destination, copy, target)
+            ? this.projectMoveSourceGuard_abyssPrivate(project, file, live, next)
+            : 'stale',
+      },
+      (live) => {
+        const transaction: SourceRemovalTransaction = {};
+        this.removeMoveSourceContent_abyssPrivate(source.root, transaction, live, true);
+        if (transaction.committedContent === undefined) return;
+        return {
+          kind: 'remove',
+          content: transaction.committedContent,
+          line: source.root.ref.line,
+        };
+      },
+    );
+    return removal.effect === 'committed'
+      ? undefined
+      : { cause: 'conflict', contentState: removal.effect === 'unknown' ? 'unknown' : 'remains' };
+  }
+
   private removeMoveSourceContent_abyssPrivate(
     sourceTask: TaskSnapshot,
     transaction: SourceRemovalTransaction,
     content: string,
+    strict = false,
   ): string {
     const blocks = this.editor_abyssPrivate.rootBlocks(content);
     if (!this.sourceRevisionIsCurrent_abyssPrivate(sourceTask, blocks)) {
       transaction.failure = 'conflict';
       return content;
     }
-    const located = this.locator_abyssPrivate.locate(blocks, sourceTask.ref);
+    const located = this.locator_abyssPrivate.locate(
+      blocks,
+      sourceTask.ref,
+      strict ? sourceTask.ref : undefined,
+    );
     if (located.type !== 'exact') {
       transaction.failure = located.type;
       return content;
@@ -2970,9 +3283,11 @@ export class ObsidianTaskRepository implements TaskRepository {
     file: TFile,
     transform: (content: string) => string,
     afterProcess?: () => Promise<void>,
+    beforeProcess?: () => Promise<void>,
   ): Promise<void> {
     const path = file.path;
     const work = async (): Promise<void> => {
+      if (beforeProcess !== undefined) await beforeProcess();
       if (!this.isCurrentFile_abyssPrivate(file, path))
         throw new Error('Task file identity changed');
       await this.app_abyssPrivate.vault.process(file, transform);
