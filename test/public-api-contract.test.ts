@@ -40,6 +40,25 @@ describe('portable public API contract', () => {
     TYPESCRIPT_PROGRAM_TIMEOUT_MS,
   );
 
+  it(
+    'compiles every TypeScript example in the API guide as one strict consumer',
+    () => {
+      const guide = ts.sys.readFile('API.md') ?? '';
+      const blocks = [...guide.matchAll(/```ts\n([\s\S]*?)```/g)];
+      expect(blocks.length).toBeGreaterThan(0);
+      const source = blocks
+        .map((match) => match[1])
+        .join('\n')
+        .replace("from './api'", "from '../../../api'");
+      expect(
+        compileConsumer(source).map((item) =>
+          ts.flattenDiagnosticMessageText(item.messageText, '\n'),
+        ),
+      ).toEqual([]);
+    },
+    TYPESCRIPT_PROGRAM_TIMEOUT_MS,
+  );
+
   it.each([
     ['readonly dates', "task.dates.due = '2026-11-04';", 2540],
     ['readonly pages', 'page.items.push(task);', 2339],
