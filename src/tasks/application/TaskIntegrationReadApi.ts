@@ -137,6 +137,8 @@ export interface ProjectAcceptedSource {
   readonly tracked: TrackedTotal;
 }
 export interface ProjectSourceReadApi {
+  prospective(path: string, content: string): TaskReadResult<ProjectAcceptedSource['metadata']>;
+  reconcile(path: string, file: object, content: string): Promise<boolean>;
   coverage(scope?: TaskReadScope): TaskReadResult<true>;
   paths(): readonly string[];
   get(path: string): TaskReadResult<ProjectAcceptedSource | undefined>;

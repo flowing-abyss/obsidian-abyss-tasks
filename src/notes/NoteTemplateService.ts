@@ -16,6 +16,41 @@ interface TemplateApplication {
   readonly session: TemplaterSession | undefined;
 }
 
+export interface StaticNoteRequest {
+  readonly path: string;
+  readonly templatePath: string;
+  readonly title: string;
+  capture(file: TFile): { readonly content: string; current(): boolean };
+  prepare(body: string | undefined): string;
+  check(content: string): void;
+}
+
+export class StaticNoteFailure extends Error {
+  constructor(
+    readonly effects: 'unchanged' | 'partial' | 'unknown' | 'committed',
+    readonly cause: unknown,
+    readonly owned?: { file: TFile; content: string },
+  ) {
+    super('Static note creation failed.');
+  }
+}
+export class ExecutableTemplateError extends Error {}
+export class StaleStaticNoteError extends Error {}
+
+interface FolderGuard {
+  check(): void;
+  attempting(): void;
+  created(): void;
+}
+
+function renderCoreTemplate(raw: string, title: string): string {
+  const now = window.moment();
+  return raw
+    .replace(/\{\{\s*date\s*\}\}/giu, now.format('YYYY-MM-DD'))
+    .replace(/\{\{\s*time\s*\}\}/giu, now.format('HH:mm'))
+    .replace(/\{\{\s*title\s*\}\}/giu, () => title);
+}
+
 const inFlightByApp = new WeakMap<App, Map<string, Promise<TFile>>>();
 const failedByApp = new WeakMap<App, Map<string, FailedPreparation>>();
 
@@ -109,6 +144,79 @@ export class NoteTemplateService {
     return await this.createPreparedNote(path, template, templatePath.trim(), title);
   }
 
+  /** Creates final, prevalidated content without running template code or opening an existing note. */
+  async createStaticNote(request: StaticNoteRequest): Promise<{ file: TFile; content: string }> {
+    const path = notePath(request.path);
+    if (path !== request.path) throw new StaleStaticNoteError();
+    TemplaterAdapter.fromApp(this.app, true);
+    const template = this.resolveTemplate(request.templatePath);
+    const capture = template === undefined ? undefined : request.capture(template);
+    if (capture?.content.includes('<%') === true) throw new ExecutableTemplateError();
+    const body =
+      capture === undefined ? undefined : renderCoreTemplate(capture.content, request.title);
+    const content = request.prepare(body);
+    const check = (): void => {
+      if (this.resolveTemplate(request.templatePath) !== template || capture?.current() === false)
+        throw new StaleStaticNoteError();
+      request.check(content);
+    };
+    const verifyTemplate = async (): Promise<void> => {
+      if (template !== undefined && (await this.app.vault.read(template)) !== capture?.content)
+        throw new StaleStaticNoteError();
+    };
+    check();
+    await verifyTemplate();
+    check();
+    const folders: { effects: StaticNoteFailure['effects'] } = { effects: 'unchanged' };
+    try {
+      await this.ensureFolders(path, {
+        check,
+        attempting: () => {
+          if (folders.effects === 'unchanged') folders.effects = 'unknown';
+        },
+        created: () => {
+          folders.effects = 'partial';
+        },
+      });
+      return await this.commitStaticNote(path, content, { check, verifyTemplate }, folders.effects);
+    } catch (cause) {
+      if (cause instanceof StaticNoteFailure) throw cause;
+      throw new StaticNoteFailure(folders.effects, cause);
+    }
+  }
+
+  private async commitStaticNote(
+    path: string,
+    content: string,
+    guard: { check(): void; verifyTemplate(): Promise<void> },
+    folderEffects: StaticNoteFailure['effects'],
+  ): Promise<{ file: TFile; content: string }> {
+    let session: TemplaterSession | undefined;
+    let owned: { file: TFile; content: string } | undefined;
+    let failure: StaticNoteFailure | undefined;
+    let attempted = false;
+    try {
+      guard.check();
+      await guard.verifyTemplate();
+      session = TemplaterAdapter.fromApp(this.app, true)?.begin(path);
+      guard.check();
+      attempted = true;
+      owned = { file: await this.app.vault.create(path, content), content };
+    } catch (cause) {
+      const uncertain = attempted && folderEffects === 'unchanged';
+      failure = new StaticNoteFailure(uncertain ? 'unknown' : folderEffects, cause);
+    }
+    try {
+      await session?.finish();
+    } catch (cause) {
+      if (owned !== undefined) throw new StaticNoteFailure('committed', cause, owned);
+      // A failed create already retains its original ownership and I/O evidence.
+    }
+    if (failure !== undefined) throw failure;
+    if (owned === undefined) throw new StaticNoteFailure('unknown', undefined);
+    return owned;
+  }
+
   private async ensureNoteUnshared(
     path: string,
     templatePath: string,
@@ -168,24 +276,28 @@ export class NoteTemplateService {
     return template;
   }
 
-  private async ensureFolders(filePath: string): Promise<void> {
+  private async ensureFolders(filePath: string, guard?: FolderGuard): Promise<void> {
     const slash = filePath.lastIndexOf('/');
     if (slash < 0) return;
     const segments = filePath.slice(0, slash).split('/');
     let current = '';
     for (const segment of segments) {
       current = current.length === 0 ? segment : `${current}/${segment}`;
-      await this.ensureFolder(current, filePath);
+      guard?.check();
+      await this.ensureFolder(current, filePath, guard);
     }
   }
 
-  private async ensureFolder(path: string, filePath: string): Promise<void> {
+  private async ensureFolder(path: string, filePath: string, guard?: FolderGuard): Promise<void> {
     const existing = this.app.vault.getAbstractFileByPath(path);
     if (existing instanceof TFolder) return;
     if (existing !== null) throw new InvalidNotePathError(filePath);
     try {
+      guard?.attempting();
       await this.app.vault.createFolder(path);
+      guard?.created();
     } catch (cause) {
+      if (guard !== undefined) throw cause;
       if (!(this.app.vault.getAbstractFileByPath(path) instanceof TFolder)) throw cause;
     }
   }
@@ -295,11 +407,7 @@ export class NoteTemplateService {
       content = await session.render(template, file);
     } else {
       const raw = await this.app.vault.cachedRead(template);
-      const now = window.moment();
-      content = raw
-        .replace(/\{\{\s*date\s*\}\}/giu, now.format('YYYY-MM-DD'))
-        .replace(/\{\{\s*time\s*\}\}/giu, now.format('HH:mm'))
-        .replace(/\{\{\s*title\s*\}\}/giu, title);
+      content = renderCoreTemplate(raw, title);
     }
     await this.app.vault.process(file, (source) => {
       if (source !== expectedContent) {

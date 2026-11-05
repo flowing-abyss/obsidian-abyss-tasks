@@ -93,6 +93,8 @@ const allowed = [
     'cleanupEmptyTaskNote_abyssPrivate',
     'FileManager.trashFile',
   ],
+  ['src/projects/ProjectManager.ts', 'ProjectManager', 'updateIntegrationProject', 'Vault.process'],
+  ['src/notes/NoteTemplateService.ts', 'NoteTemplateService', 'commitStaticNote', 'Vault.create'],
   ['src/projects/ProjectManager.ts', 'ProjectManager', 'applyEditsGuarded', 'Vault.process'],
   ['src/projects/ProjectManager.ts', 'ProjectManager', 'createProjectFile', 'Vault.process'],
   ['src/projects/ProjectManager.ts', 'ProjectManager', 'writeStatusRename', 'Vault.process'],
@@ -309,7 +311,7 @@ describe('resolved Obsidian storage authority', () => {
       const found = [...new Set([...allowed.map(([file]) => file), 'src/main.ts'])].flatMap(
         accesses,
       );
-      expect(found).toHaveLength(11);
+      expect(found).toHaveLength(13);
       expect(storageAuthorityViolations(found, STORAGE_AUTHORIZATIONS)).toEqual([]);
     },
     TYPESCRIPT_PROGRAM_TIMEOUT_MS,
@@ -408,7 +410,7 @@ describe('resolved Obsidian storage authority', () => {
           .map((source) => source.fileName),
       ).toEqual([]);
       const found = collectStorageAccesses(sourceProgram, sourceFiles);
-      expect(found).toHaveLength(11);
+      expect(found).toHaveLength(13);
       expect(storageAuthorityViolations(found, STORAGE_AUTHORIZATIONS)).toEqual([]);
     },
     TYPESCRIPT_PROGRAM_TIMEOUT_MS,

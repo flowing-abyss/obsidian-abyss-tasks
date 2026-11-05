@@ -103,6 +103,14 @@ opaque identities and cursors; the project owner rechecks live and candidate sou
 future writers. Project configuration invalidates common scans without changing task status semantics.
 ProjectStore and the adapter share root statistics through the pure project statistics model.
 
+Headless project updates run through ProjectManager's per-app metadata queue. The manager checks
+the accepted file, source bytes, field bindings and status meaning inside the single-note write.
+It validates membership and exclusion on the candidate before returning it to the vault.
+For headless creation, NoteTemplateService prepares the configured static template and the manager
+adds the initial fields in memory. The service rechecks the template, destination and project scope
+after folder creation, then creates one note with its final content. Both writers reconcile the
+actual file through TaskIndex before issuing a new project reference.
+
 The declaration has no imports, runtime statements, ambient host augmentation, or internal type
 references, and needs no Obsidian or DOM typings. Its request and result data is recursively readonly.
 [`src/integrations/validation.ts`](src/integrations/validation.ts) accepts allowlisted plain

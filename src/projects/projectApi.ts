@@ -1,4 +1,10 @@
-import type { ProjectDtoV1, ProjectSchemaV1, ProjectSummaryV1 } from '../../api';
+import type {
+  CreateProjectV1,
+  EffectStateV1,
+  ProjectDtoV1,
+  ProjectSchemaV1,
+  ProjectSummaryV1,
+} from '../../api';
 import type { TaskReadResult } from '../tasks';
 
 /** The integrations layer receives allowlisted values and opaque file evidence only. */
@@ -21,4 +27,26 @@ export interface ProjectIntegrationReads {
   get(path: string): TaskReadResult<ProjectReadRecord | undefined>;
   matchesFile(proof: ProjectReadSummary, file: object): boolean;
   guard(proof: ProjectReadSummary, live: string, candidate: string): TaskReadResult<true>;
+  prospective(path: string, candidate: string): TaskReadResult<true>;
+}
+
+export type ProjectAssignments = Pick<CreateProjectV1, 'statusId' | 'fields'>;
+export type ProjectCreation = Pick<CreateProjectV1, 'name'> & ProjectAssignments;
+export type ProjectWriteReason =
+  Extract<TaskReadResult<true>, { type: 'error' }>['reason'] | 'invalid' | 'unsupported' | 'io';
+export type ProjectWriteResult =
+  | {
+      readonly outcome: 'changed' | 'noop';
+      readonly effects: 'committed' | 'unchanged';
+      readonly project?: ProjectReadSummary;
+    }
+  | {
+      readonly outcome: 'failed';
+      readonly effects: EffectStateV1;
+      readonly reason: ProjectWriteReason;
+      readonly project?: ProjectReadSummary;
+    };
+export interface ProjectIntegrationWrites {
+  create(input: ProjectCreation): Promise<ProjectWriteResult>;
+  update(proof: ProjectReadSummary, input: ProjectAssignments): Promise<ProjectWriteResult>;
 }

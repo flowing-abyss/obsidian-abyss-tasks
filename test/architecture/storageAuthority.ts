@@ -29,6 +29,20 @@ export const STORAGE_AUTHORIZATIONS: readonly StorageAuthorization[] = [
   },
   {
     file: 'src/projects/ProjectManager.ts',
+    owner: 'ProjectManager.updateIntegrationProject',
+    api: 'Vault.process',
+    reason:
+      'Applies one typed metadata batch only to the pinned file after live and candidate project scope checks.',
+  },
+  {
+    file: 'src/notes/NoteTemplateService.ts',
+    owner: 'NoteTemplateService.commitStaticNote',
+    api: 'Vault.create',
+    reason:
+      'Creates one final note after rechecking the static template, settings, destination and project scope.',
+  },
+  {
+    file: 'src/projects/ProjectManager.ts',
     owner: 'ProjectManager.applyEditsGuarded',
     api: 'Vault.process',
     reason:

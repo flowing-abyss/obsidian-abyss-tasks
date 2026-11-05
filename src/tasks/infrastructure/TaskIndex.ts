@@ -1222,6 +1222,9 @@ export class TaskIndex
       };
     };
     return {
+      prospective: (path, content) => this.prospectiveProjectSource_abyssPrivate(path, content),
+      reconcile: (path, file, content) =>
+        this.reconcileProjectSource_abyssPrivate(path, file, content),
       paths: () => this.integrationPaths_abyssPrivate,
       get,
       matchesFile: (proof, file) => {
@@ -1243,12 +1246,7 @@ export class TaskIndex
           current.value.content !== live
         )
           return { type: 'error', reason: 'stale' };
-        const staged = inspectTaskSourceMetadata(path, content);
-        if (!staged.validFrontmatter) return { type: 'error', reason: 'incomplete' };
-        const metadata = staged.metadata;
-        if (this.excludeSource_abyssPrivate?.(metadata) === true)
-          return { type: 'error', reason: 'unavailable' };
-        return { type: 'ok', value: metadata, observation: current.observation };
+        return this.prospectiveProjectSource_abyssPrivate(path, content);
       },
       coverage: (scope) => {
         const health = this.integrationProjection_abyssPrivate.coverage(scope);
@@ -1261,6 +1259,43 @@ export class TaskIndex
         return health;
       },
     };
+  }
+
+  private async reconcileProjectSource_abyssPrivate(
+    path: string,
+    file: object,
+    content: string,
+  ): Promise<boolean> {
+    if (!(file instanceof TFile) || this.observe_abyssPrivate(file, path) === undefined)
+      return false;
+    const acquisition = this.integrationCurrentObservations_abyssPrivate.get(file);
+    const prior = this.acceptedStatisticsSources_abyssPrivate.get(path);
+    const observed = await this.app_abyssPrivate.vault.read(file);
+    if (observed !== content || !this.isFileAt_abyssPrivate(file, path)) return false;
+    const current = this.acceptedStatisticsSources_abyssPrivate.get(path);
+    if (current?.fileIdentity === file && current.content === content) return true;
+    if (
+      current !== prior ||
+      this.integrationCurrentObservations_abyssPrivate.get(file) !== acquisition
+    )
+      return false;
+    this.installCommittedContent(path, content);
+    return true;
+  }
+
+  private prospectiveProjectSource_abyssPrivate(
+    path: string,
+    content: string,
+  ): ReturnType<ProjectSourceReadApi['prospective']> {
+    const health = this.integrationReadState_abyssPrivate.coverage({ path });
+    if (health.type === 'error') return health;
+    if (this.excludePath_abyssPrivate?.(path) === true)
+      return { type: 'error', reason: 'unavailable' };
+    const staged = inspectTaskSourceMetadata(path, content);
+    if (!staged.validFrontmatter) return { type: 'error', reason: 'incomplete' };
+    if (this.excludeSource_abyssPrivate?.(staged.metadata) === true)
+      return { type: 'error', reason: 'unavailable' };
+    return { type: 'ok', value: staged.metadata, observation: health.observation };
   }
 
   private projectIdentity_abyssPrivate(file: TFile): object {

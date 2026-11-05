@@ -20,15 +20,22 @@ export interface TemplaterSession {
   finish(): Promise<void>;
 }
 
-function templaterCore(app: App): TemplaterCore | undefined {
-  let plugin: unknown;
+export class UnsupportedTemplaterError extends Error {}
+
+function templaterPlugin(app: App, requireSuppression: boolean): unknown {
   try {
-    plugin = (
-      app as unknown as { plugins?: { getPlugin(id: string): unknown } }
-    ).plugins?.getPlugin('templater-obsidian');
+    return (app as unknown as { plugins?: { getPlugin(id: string): unknown } }).plugins?.getPlugin(
+      'templater-obsidian',
+    );
   } catch {
+    if (requireSuppression) throw new UnsupportedTemplaterError();
     return undefined;
   }
+}
+
+function templaterCore(app: App, requireSuppression: boolean): TemplaterCore | undefined {
+  const plugin = templaterPlugin(app, requireSuppression);
+  if (plugin == null) return undefined;
   const core = (plugin as { templater?: Partial<TemplaterCore> } | null)?.templater;
   if (
     !(core?.files_with_pending_templates instanceof Set) ||
@@ -37,6 +44,7 @@ function templaterCore(app: App): TemplaterCore | undefined {
     typeof core.create_running_config !== 'function' ||
     typeof core.read_and_parse_template !== 'function'
   ) {
+    if (requireSuppression) throw new UnsupportedTemplaterError();
     return undefined;
   }
   return core as TemplaterCore;
@@ -45,8 +53,8 @@ function templaterCore(app: App): TemplaterCore | undefined {
 export class TemplaterAdapter {
   private constructor(private readonly core: TemplaterCore) {}
 
-  static fromApp(app: App): TemplaterAdapter | undefined {
-    const core = templaterCore(app);
+  static fromApp(app: App, requireSuppression = false): TemplaterAdapter | undefined {
+    const core = templaterCore(app, requireSuppression);
     return core === undefined ? undefined : new TemplaterAdapter(core);
   }
 

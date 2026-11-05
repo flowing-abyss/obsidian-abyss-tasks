@@ -9,15 +9,38 @@ import {
   TFolder,
   type App,
 } from 'obsidian';
-import { CreatedNoteTemplateError } from '../notes/NoteTemplateService';
+import {
+  CreatedNoteTemplateError,
+  ExecutableTemplateError,
+  StaleStaticNoteError,
+  StaticNoteFailure,
+  type NoteTemplateService,
+} from '../notes/NoteTemplateService';
+import { UnsupportedTemplaterError } from '../notes/TemplaterAdapter';
 import { evaluateQuery } from '../query/evaluateQuery';
 import type { CalendarSettings, ProjectStatus } from '../settings/types';
 import { normalizeTag, transformMarkdownTags } from '../tags/markdownTagRename';
-import type { TaskApplicationApi, TaskCommandResult, TaskInsertionPolicy, TaskRef } from '../tasks';
+import type {
+  ProjectSourceReadApi,
+  TaskApplicationApi,
+  TaskCommandResult,
+  TaskInsertionPolicy,
+  TaskReadResult,
+  TaskRef,
+} from '../tasks';
 import {
   ObsidianProjectProperties,
   type ProjectPropertyCatalog,
 } from './ObsidianProjectProperties';
+import type {
+  ProjectAssignments,
+  ProjectCreation,
+  ProjectIntegrationReads,
+  ProjectIntegrationWrites,
+  ProjectReadSummary,
+  ProjectWriteReason,
+  ProjectWriteResult,
+} from './projectApi';
 import { ProjectCreationError, type ProjectCreateOptions } from './projectCreation';
 import { parseProjectDate, validDate, validDatetime } from './projectDateValue';
 import { isProjectEditValidationError, ProjectEditValidationError } from './projectEditError';
@@ -35,6 +58,7 @@ import {
   type ProjectField,
   type ProjectPropertyType,
 } from './projectFields';
+import { catalog, fieldCompatible, statusChoices, statusFor } from './projectMetadataPolicy';
 import { resolveConfiguredProjectField } from './projectPropertyDefinitions';
 import { sameProjectPropertyName } from './projectPropertyNames';
 import { resolveStatus } from './status';
@@ -52,6 +76,112 @@ interface NormalizedPropertyValue {
 /** The shared note provisioner used for project template creation. */
 export interface ProjectNoteCreator {
   createNoteFromTemplate(filePath: string, templatePath: string, title: string): Promise<TFile>;
+  createStaticNote?: NoteTemplateService['createStaticNote'];
+}
+
+interface WriteContext {
+  readonly reads: ProjectIntegrationReads;
+  readonly sources: ProjectSourceReadApi;
+}
+class ProjectGuardFailure extends Error {
+  constructor(readonly reason: ProjectWriteReason) {
+    super(reason);
+  }
+}
+function checked<T>(result: TaskReadResult<T>): T {
+  if (result.type === 'error') throw new ProjectGuardFailure(result.reason);
+  return result.value;
+}
+function failureReason(cause: unknown): ProjectWriteReason {
+  if (cause instanceof ProjectGuardFailure) return cause.reason;
+  if (cause instanceof ExecutableTemplateError || cause instanceof UnsupportedTemplaterError)
+    return 'unsupported';
+  if (cause instanceof StaleStaticNoteError) return 'stale';
+  return isProjectEditValidationError(cause) ? 'invalid' : 'io';
+}
+function invalidAssignment(): never {
+  throw new ProjectGuardFailure('invalid');
+}
+function staleProject(): never {
+  throw new ProjectGuardFailure('stale');
+}
+
+interface PhysicalAssignment {
+  readonly change: { readonly field: ProjectField };
+  readonly property: string;
+  readonly sourceKey: string;
+  readonly value: unknown;
+  readonly valueExists: boolean;
+}
+
+function projectAssignments(
+  settings: CalendarSettings['projects'],
+  input: ProjectAssignments,
+  parsed: ParsedProjectSource,
+): PhysicalAssignment[] {
+  const fields = catalog(settings);
+  const assignments: PhysicalAssignment[] = [];
+  const bind = (id: string, value: unknown, status: boolean): void => {
+    const field = fields.find((item) => sameProjectPropertyName(item.id, id));
+    if (field?.type == null || (field.type === 'status') !== status) invalidAssignment();
+    const property = field.property;
+    if (
+      property === undefined ||
+      assignments.some((item) => sameProjectPropertyName(item.property, property))
+    )
+      invalidAssignment();
+    const current = uniqueFrontmatterProperty(parsed.frontmatter, property);
+    validateProjectAssignment({ settings, parsed }, field, current, value);
+    assignments.push({
+      change: { field },
+      property,
+      sourceKey: current?.key ?? property,
+      value,
+      valueExists: value !== null,
+    });
+  };
+  if (input.statusId !== undefined) {
+    const literal =
+      input.statusId === null
+        ? null
+        : statusChoices(settings).find((status) => status.id === input.statusId)?.name;
+    if (literal === undefined) invalidAssignment();
+    bind('status', literal, true);
+  }
+  for (const { fieldId, value } of input.fields ?? []) bind(fieldId, value, false);
+  return assignments;
+}
+
+function validateProjectAssignment(
+  context: { settings: CalendarSettings['projects']; parsed: ParsedProjectSource },
+  field: ProjectField,
+  current: { value: unknown } | undefined,
+  value: unknown,
+): void {
+  if (field.type === 'status') {
+    if (statusFor(context.settings, context.parsed.frontmatter).state === 'unsupported')
+      invalidAssignment();
+    return;
+  }
+  if (current !== undefined && !fieldCompatible(field, current.value)) invalidAssignment();
+  if (value !== null && !fieldCompatible(field, value)) invalidAssignment();
+}
+
+async function reconcileProject(
+  ctx: WriteContext,
+  path: string,
+  file: TFile,
+  content: string,
+): Promise<ProjectReadSummary | undefined> {
+  try {
+    if (!(await ctx.sources.reconcile(path, file, content))) return undefined;
+    const accepted = checked(ctx.sources.get(path));
+    if (accepted?.content !== content) return undefined;
+    const proof = checked(ctx.reads.summary(path));
+    return proof !== undefined && ctx.reads.matchesFile(proof, file) ? proof : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 interface PreparedProjectCellChange {
@@ -95,6 +225,10 @@ function abstractFileByPathInsensitive(
 ): ReturnType<App['vault']['getAbstractFileByPath']> {
   const vault = app.vault as App['vault'] & CaseInsensitiveVaultLookup;
   return vault.getAbstractFileByPathInsensitive?.(path) ?? vault.getAbstractFileByPath(path);
+}
+
+function cleanProjectName(name: string): string {
+  return name.trim().replace(/[\\/:*?"<>|]/gu, '-');
 }
 
 function projectTaskInsertion(settings: CalendarSettings['projects']): TaskInsertionPolicy {
@@ -315,6 +449,20 @@ function uniqueFrontmatterProperty(
   return matches[0];
 }
 
+function resultingProjectMetadata(
+  frontmatter: Readonly<Record<string, unknown>>,
+  changes: readonly PhysicalAssignment[],
+): Record<string, unknown> {
+  const resulting = { ...frontmatter };
+  for (const change of changes) {
+    const current = uniqueFrontmatterProperty(resulting, change.property);
+    const key = current?.key ?? change.sourceKey;
+    if (change.valueExists) resulting[key] = change.value;
+    else delete resulting[key];
+  }
+  return resulting;
+}
+
 function projectTags(parsed: ParsedProjectSource): string[] {
   return [
     ...(parseFrontMatterTags(parsed.frontmatter) ?? []),
@@ -436,6 +584,188 @@ export class ProjectManager {
 
   async applyEdits(changes: readonly ProjectCellChange[]): Promise<ProjectEditResult> {
     return coordinateMetadataOperation(this.app, () => this.applyEditsGuarded(changes, true));
+  }
+
+  integrationWrites(
+    reads: ProjectIntegrationReads,
+    sources: ProjectSourceReadApi,
+  ): ProjectIntegrationWrites {
+    const ctx = { reads, sources };
+    return {
+      update: (proof, input) =>
+        coordinateMetadataOperation(this.app, () =>
+          this.updateIntegrationProject(ctx, proof, input),
+        ),
+      create: (input) => {
+        const semantics = reads.semantics();
+        return coordinateMetadataOperation(this.app, () =>
+          this.createIntegrationProject(ctx, semantics, input),
+        );
+      },
+    };
+  }
+
+  private applyProjectAssignments(input: ProjectAssignments, source: string): string {
+    const parsed = parseProjectSource(source);
+    const edits = projectAssignments(this.settings.projects, input, parsed);
+    this.validateCombinedDateRange(parsed.frontmatter, edits, true);
+    let changed = false;
+    for (const edit of edits) {
+      const exists = Object.prototype.hasOwnProperty.call(parsed.frontmatter, edit.sourceKey);
+      if (
+        exists === edit.valueExists &&
+        (!exists || valuesEqual(parsed.frontmatter[edit.sourceKey], edit.value))
+      )
+        continue;
+      changed = true;
+      if (edit.valueExists) parsed.frontmatter[edit.sourceKey] = edit.value;
+      else delete parsed.frontmatter[edit.sourceKey];
+    }
+    return changed ? serializeProjectSource(parsed) : source;
+  }
+
+  private async updateIntegrationProject(
+    ctx: WriteContext,
+    proof: ProjectReadSummary,
+    input: ProjectAssignments,
+  ): Promise<ProjectWriteResult> {
+    const { path } = proof;
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile))
+      return { outcome: 'failed', effects: 'unchanged', reason: 'stale' };
+    let original: string | undefined;
+    let offered: string | undefined;
+    try {
+      if (!ctx.reads.matchesFile(proof, file)) staleProject();
+      const accepted = checked(ctx.sources.get(path));
+      if (accepted === undefined) staleProject();
+      original = accepted.content;
+      const preflight = this.applyProjectAssignments(input, original);
+      checked(ctx.reads.guard(proof, original, preflight));
+      await this.app.vault.process(file, (live) => {
+        if (!ctx.reads.matchesFile(proof, file)) staleProject();
+        checked(ctx.reads.guard(proof, live, live));
+        const next = this.applyProjectAssignments(input, live);
+        checked(ctx.reads.guard(proof, live, next));
+        offered = next;
+        return next;
+      });
+    } catch (cause) {
+      if (offered === undefined || offered === original)
+        return { outcome: 'failed', effects: 'unchanged', reason: failureReason(cause) };
+      return this.rejectedProjectUpdate(ctx, file, { path, original, offered });
+    }
+    if (offered === undefined) return { outcome: 'failed', effects: 'unknown', reason: 'io' };
+    const project = await reconcileProject(ctx, path, file, offered);
+    const reference = project === undefined ? {} : { project };
+    return offered === original
+      ? { outcome: 'noop', effects: 'unchanged', ...reference }
+      : { outcome: 'changed', effects: 'committed', ...reference };
+  }
+
+  private async rejectedProjectUpdate(
+    ctx: WriteContext,
+    file: TFile,
+    evidence: { path: string; original: string | undefined; offered: string },
+  ): Promise<ProjectWriteResult> {
+    const { path, original, offered } = evidence;
+    try {
+      const live = await this.app.vault.read(file);
+      if (this.app.vault.getAbstractFileByPath(path) === file) {
+        if (live === original) return { outcome: 'failed', effects: 'unchanged', reason: 'io' };
+        if (live === offered) {
+          const project = await reconcileProject(ctx, path, file, offered);
+          return {
+            outcome: 'failed',
+            effects: 'committed',
+            reason: 'io',
+            ...(project === undefined ? {} : { project }),
+          };
+        }
+      }
+    } catch {
+      /* An unacknowledged write cannot be attributed without a current file. */
+    }
+    return { outcome: 'failed', effects: 'unknown', reason: 'io' };
+  }
+
+  private async createIntegrationProject(
+    ctx: WriteContext,
+    semantics: object,
+    input: ProjectCreation,
+  ): Promise<ProjectWriteResult> {
+    let path = '';
+    try {
+      if (semantics !== ctx.reads.semantics()) staleProject();
+      const { projects } = this.settings;
+      const clean = cleanProjectName(input.name);
+      if (clean.length === 0) invalidAssignment();
+      path = this.integrationCreatePath(clean);
+      const statusId = input.statusId === undefined ? this.creationStatusId({}) : input.statusId;
+      let scopeRevision: number | undefined;
+      if (this.noteCreator.createStaticNote === undefined)
+        throw new ProjectGuardFailure('unsupported');
+      const owned = await this.noteCreator.createStaticNote({
+        path,
+        title: clean,
+        templatePath: projects.templatePath.trim(),
+        capture: (file) => this.captureStaticTemplate(ctx.sources, file),
+        prepare: (body) =>
+          this.applyProjectAssignments(
+            { ...input, ...(statusId === undefined ? {} : { statusId }) },
+            body ?? `${projects.taskInsertionSection}\n`,
+          ),
+        check: (content) => {
+          if (ctx.reads.semantics() !== semantics || this.integrationCreatePath(clean) !== path)
+            staleProject();
+          const staged = ctx.reads.prospective(path, content);
+          if (staged.type === 'error') throw new ProjectGuardFailure(staged.reason);
+          scopeRevision ??= staged.observation.scopeRevision;
+          if (scopeRevision !== staged.observation.scopeRevision) staleProject();
+        },
+      });
+      const project = await reconcileProject(ctx, path, owned.file, owned.content);
+      return project === undefined
+        ? { outcome: 'failed', effects: 'committed', reason: 'unavailable' }
+        : { outcome: 'changed', effects: 'committed', project };
+    } catch (cause) {
+      return this.failedIntegrationCreate(ctx, path, cause);
+    }
+  }
+
+  private integrationCreatePath(clean: string): string {
+    const folder = this.settings.projects.createFolder.trim();
+    const existing = folder.length === 0 ? null : abstractFileByPathInsensitive(this.app, folder);
+    return this.uniqueProjectPath(existing instanceof TFolder ? existing.path : folder, clean);
+  }
+
+  private async failedIntegrationCreate(
+    ctx: WriteContext,
+    path: string,
+    cause: unknown,
+  ): Promise<ProjectWriteResult> {
+    if (!(cause instanceof StaticNoteFailure))
+      return { outcome: 'failed', effects: 'unchanged', reason: failureReason(cause) };
+    const project =
+      cause.owned === undefined
+        ? undefined
+        : await reconcileProject(ctx, path, cause.owned.file, cause.owned.content);
+    return {
+      outcome: 'failed',
+      effects: cause.effects,
+      reason: failureReason(cause.cause),
+      ...(project === undefined ? {} : { project }),
+    };
+  }
+
+  private captureStaticTemplate(
+    sources: ProjectSourceReadApi,
+    file: TFile,
+  ): { content: string; current(): boolean } {
+    const source = checked(sources.get(file.path));
+    if (source === undefined || !sources.matchesFile(source, file))
+      throw new ProjectGuardFailure('unavailable');
+    return { content: source.content, current: () => sources.matchesFile(source, file) };
   }
 
   private async applyEditsGuarded(
@@ -780,26 +1110,21 @@ export class ProjectManager {
 
   private validateCombinedDateRange(
     frontmatter: Readonly<Record<string, unknown>>,
-    changes: readonly PreparedProjectCellChange[],
+    changes: readonly PhysicalAssignment[],
+    strict = false,
   ): void {
-    const resulting = { ...frontmatter };
-    for (const change of changes) {
-      const current = uniqueFrontmatterProperty(resulting, change.property);
-      const key = current?.key ?? change.sourceKey;
-      if (change.valueExists) resulting[key] = change.value;
-      else delete resulting[key];
-    }
+    const resulting = resultingProjectMetadata(frontmatter, changes);
     const start = uniqueFrontmatterProperty(resulting, this.settings.projects.startProperty)?.value;
     const end = uniqueFrontmatterProperty(resulting, this.settings.projects.endProperty)?.value;
     const editsEndpoint = changes.some(
       ({ change }) => change.field.id === 'start' || change.field.id === 'end',
     );
-    if (!editsEndpoint && !bothDateOnly(start, end)) return;
+    if (!(strict || editsEndpoint || bothDateOnly(start, end))) return;
     if (!isInvalidProjectDateRange(start, end)) return;
     throw new ProjectEditValidationError(this.dateRangeMessage(changes));
   }
 
-  private dateRangeMessage(changes: readonly PreparedProjectCellChange[]): string {
+  private dateRangeMessage(changes: readonly PhysicalAssignment[]): string {
     const changedStart = changes.some(({ change }) => change.field.id === 'start');
     const changedEnd = changes.some(({ change }) => change.field.id === 'end');
     return changedEnd && !changedStart
@@ -1065,7 +1390,7 @@ export class ProjectManager {
 
   async create(name: string, options: ProjectCreateOptions = {}): Promise<TFile | null> {
     const folder = this.settings.projects.createFolder.trim();
-    const clean = name.trim().replace(/[\\/:*?"<>|]/g, '-');
+    const clean = cleanProjectName(name);
     if (clean.length === 0) return null;
     const targetStatusId = this.creationStatusId(options);
     this.validateCreationStatus(targetStatusId);

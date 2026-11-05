@@ -228,6 +228,7 @@ const pureFiles = [
   'src/markdown/sourceReferences.ts',
   'src/markdown/fences.ts',
   'src/projects/projectTableModel.ts',
+  'src/projects/projectMetadataPolicy.ts',
   'src/projects/projectKanbanModel.ts',
   'src/projects/projectTimelineModel.ts',
   'src/projects/projectTimelineAxis.ts',

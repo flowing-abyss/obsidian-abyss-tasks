@@ -35,6 +35,15 @@ interface AllowedWriter {
 }
 
 const ALLOWED_WRITER_CALLS: Record<string, AllowedWriter> = {
+  'src/projects/ProjectManager.ts#ProjectManager.updateIntegrationProject#process#1': {
+    mutation: 'project metadata',
+    reason: 'Rechecks a pinned project and all proposed metadata in one note transaction.',
+  },
+  'src/notes/NoteTemplateService.ts#NoteTemplateService.commitStaticNote#vault.create#1': {
+    mutation: 'destination provisioning',
+    reason:
+      'Creates final project bytes only after checking the original template, settings and candidate scope.',
+  },
   'src/projects/ProjectManager.ts#ProjectManager.applyEditsGuarded#process#1': {
     mutation: 'project metadata',
     reason:
