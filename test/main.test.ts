@@ -127,6 +127,13 @@ function makePlugin(data: Record<string, unknown> | null = null): PluginLike {
     }),
   };
   Object.assign(app.vault, { adapter, configDir: '.test-config' });
+  // This state-store adapter bypasses the package's in-memory stat implementation.
+  Object.assign(app.vault, {
+    refreshStat__(file: { path: string; stat: { size: number } }) {
+      const content = stateFiles.get(file.path);
+      if (content !== undefined) file.stat.size = new TextEncoder().encode(content).byteLength;
+    },
+  });
 
   const plugin = new TaskCalendarPlugin(app, MANIFEST) as unknown as PluginLike;
   // loadData() returns this.data__; seed it so loadSettings merges persisted values.

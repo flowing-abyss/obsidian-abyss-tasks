@@ -260,21 +260,31 @@ describe('creation destination races and effects', () => {
     });
   });
 
-  it('retains confirmed folder effects if subsequent note creation fails', async () => {
-    const h = await taskCreatePreparationHarness();
-    const p = ready(
-      await h.service.prepareCreateTree({
-        destination: configured,
-        tree: { markdownTitle: 'Planned' },
-      }),
-    );
-    vi.spyOn(h.app.vault, 'create').mockRejectedValueOnce(new Error('Denied'));
-    const first = await p.commit();
-    expect(first).toMatchObject({ result: { type: 'invalid' }, destinationEffects: 'committed' });
-    expect(await p.commit()).toEqual(first);
-    expect(h.app.vault.getAbstractFileByPath('draft')).not.toBeNull();
-    expect(h.app.vault.getAbstractFileByPath('draft/new.md')).toBeNull();
-  });
+  it.each([false, true])(
+    'retains unknown aggregate provisioning after rejected create (written=%s)',
+    async (written) => {
+      const h = await taskCreatePreparationHarness();
+      const p = ready(
+        await h.service.prepareCreateTree({
+          destination: configured,
+          tree: { markdownTitle: 'Planned' },
+        }),
+      );
+      const create = h.app.vault.create.bind(h.app.vault);
+      const writes = vi
+        .spyOn(h.app.vault, 'create')
+        .mockImplementationOnce(async (path, content) => {
+          if (written) await create(path, content);
+          throw new Error('Denied');
+        });
+      const first = await p.commit();
+      expect(first).toMatchObject({ result: { type: 'invalid' }, destinationEffects: 'unknown' });
+      expect(await p.commit()).toEqual(first);
+      expect(h.app.vault.getAbstractFileByPath('draft')).not.toBeNull();
+      expect(h.app.vault.getAbstractFileByPath('draft/new.md') !== null).toBe(written);
+      expect(writes).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it('reports unknown provisioning after a folder write rejects', async () => {
     const h = await taskCreatePreparationHarness();

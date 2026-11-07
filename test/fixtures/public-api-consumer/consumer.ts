@@ -254,3 +254,45 @@ export async function contentReads(
     await search({ query: 'review', fields: 'body', matchScope: 'subtree', statuses: ['open'] });
   if (tags !== undefined) await tags({ folder: 'projects', prefix: '#work', limit: 10 });
 }
+
+export async function noteWorkflow(client: TasksApiV1, deadline: number): Promise<void> {
+  const notes = client.notes;
+  if (notes === undefined) return;
+  const search = await notes.search({ query: 'ada@example.org', fields: 'body', limit: 10 });
+  if (!search.ok) return;
+  const item = search.value.items.find((candidate) => candidate.note.target.length > 0);
+  if (item === undefined) return;
+  const note = item.note;
+  const read = await notes.read({
+    selector: { target: note.target, expectedRevision: note.revision },
+  });
+  if (!read.ok) return;
+  const section = read.value.segments.find((segment) => segment.section.canAppend)?.section;
+  if (section === undefined) return;
+  const plan = await notes.prepare({
+    kind: 'edit',
+    target: note.target,
+    expectedRevision: note.revision,
+    operation: { type: 'append', section: section.target, text: '\nFollow up next week.' },
+  });
+  if (plan.ok)
+    await notes.apply({
+      plan: plan.value.target,
+      expectedPlanRevision: plan.value.revision,
+      requestId: 'note-edit',
+      expiresAt: deadline,
+    });
+  const creation = await notes.prepare({
+    kind: 'create',
+    path: 'contacts/new.md',
+    title: 'New contact',
+    text: 'Contact details',
+  });
+  if (creation.ok)
+    await notes.create({
+      plan: creation.value.target,
+      expectedPlanRevision: creation.value.revision,
+      requestId: 'note-create',
+      expiresAt: deadline,
+    });
+}

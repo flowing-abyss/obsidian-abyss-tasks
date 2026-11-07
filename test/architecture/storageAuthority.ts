@@ -21,6 +21,13 @@ export interface StorageAuthorization {
 // transactions. This adds the raw settings port and resolves the actual APIs.
 export const STORAGE_AUTHORIZATIONS: readonly StorageAuthorization[] = [
   {
+    file: 'src/notes/NoteApplicationService.ts',
+    owner: 'NoteApplicationService.commitPreparedSection',
+    api: 'Vault.process',
+    reason:
+      'Writes one previously read prose section only after exact note identity, revision, live bytes, source policy and unchanged frontmatter/task ownership checks.',
+  },
+  {
     file: 'src/tasks/infrastructure/obsidian/ObsidianTaskRepository.ts',
     owner: 'ObsidianTaskRepository.cleanupEmptyTaskNote_abyssPrivate',
     api: 'FileManager.trashFile',
@@ -39,7 +46,7 @@ export const STORAGE_AUTHORIZATIONS: readonly StorageAuthorization[] = [
     owner: 'NoteTemplateService.commitStaticNote',
     api: 'Vault.create',
     reason:
-      'Creates one final note after rechecking the static template, settings, destination and project scope.',
+      'Creates one final note after rechecking the static template, settings, destination and permitted source scope.',
   },
   {
     file: 'src/projects/ProjectManager.ts',

@@ -9,6 +9,7 @@ import {
   createAppWithFiles,
   metadataChangedEmitter,
   seedTaskCache,
+  setVaultSource,
   useRealMoment,
 } from '../helpers';
 import { expectDefined } from './../helpers';
@@ -32,7 +33,11 @@ async function snapshotIndex(content: string): Promise<{
 }> {
   const app = await createAppWithFiles({ 'tasks.md': content });
   seedTaskCache(app, 'tasks.md', [{ task: ' ', parent: -1, line: 0 }]);
-  const fireChanged = metadataChangedEmitter(app);
+  const emit = metadataChangedEmitter(app);
+  const fireChanged = (file: TFile, data: string, metadata: CachedMetadata): void => {
+    setVaultSource(app, file.path, data);
+    emit(file, data, metadata);
+  };
   const index = new TaskIndex(app, {
     statusCatalog: canonicalStatusCatalog(),
   });

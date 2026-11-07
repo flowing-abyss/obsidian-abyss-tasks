@@ -9,6 +9,7 @@ import type {
   TasksApiV1,
 } from '../api';
 import { StatusCatalog } from '../src/tasks/domain/StatusCatalog';
+import { setVaultSource } from './helpers';
 import { publicApiHarness, type PublicApiHarness } from './support/publicApiHarness';
 
 const harnesses: PublicApiHarness[] = [];
@@ -651,6 +652,8 @@ it.each(['event-delivered', 'readback-available', 'readback-unavailable'] as con
     expect(writes).toHaveBeenCalledTimes(1);
     expect(await h.read('a.md')).toBe(actual);
     writes.mockRestore();
+    // Model the host detecting the persisted bytes before consumer reconciliation.
+    setVaultSource(h.app, 'a.md', actual);
     await h.index.refreshSourceExclusion(undefined);
     ok(await scan(client, { limit: 1 }, () => latest, { publish }));
     expect(published).toHaveLength(1);

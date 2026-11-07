@@ -11,6 +11,7 @@ module.exports = {
           '^src/integrations/',
           '^src/tasks/index[.]ts$',
           '^src/projects/projectApi[.]ts$',
+          '^src/notes/(?:noteApi|NoteSourceApi)[.]ts$',
           '^api[.]d[.]ts$',
           '^src/markdown/tagSyntax[.]ts$',
         ],
@@ -56,7 +57,7 @@ module.exports = {
       comment: 'Task application may depend only on application ports and domain contracts.',
       severity: 'error',
       from: { path: '^src/tasks/application/' },
-      to: { pathNot: '^src/tasks/(?:application|domain)/' },
+      to: { pathNot: ['^src/tasks/(?:application|domain)/', '^src/notes/NoteSourceApi[.]ts$'] },
     },
     {
       name: 'browser-task-scheduler-is-neutral',
@@ -94,6 +95,7 @@ module.exports = {
         pathNot: [
           '^src/tasks/(?:infrastructure|application|domain)/',
           '^src/markdown/',
+          '^src/notes/(?:noteApi|NoteSourceApi)[.]ts$',
           '^obsidian$',
         ],
       },

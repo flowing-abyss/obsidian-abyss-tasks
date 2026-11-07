@@ -1,6 +1,8 @@
 import { TFile, type App } from 'obsidian';
 import type { TasksApiV1 } from '../../api';
 import { TaskApiProvider } from '../../src/integrations/TaskApiProvider';
+import { NoteApplicationService } from '../../src/notes/NoteApplicationService';
+import { NoteHostAdapter } from '../../src/notes/NoteHostAdapter';
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
 import { toStatusRules } from '../../src/settings/statusCatalogAdapter';
 import { TaskApplicationService } from '../../src/tasks/application/TaskApplicationService';
@@ -13,7 +15,9 @@ import { StatusCatalog } from '../../src/tasks/domain/StatusCatalog';
 import { TaskBlockEditor } from '../../src/tasks/infrastructure/markdown/TaskBlockEditor';
 import { TaskLocator } from '../../src/tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from '../../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
+import { CanonicalNoteTaskProtection } from '../../src/tasks/infrastructure/obsidian/NoteTaskProtection';
 import { ObsidianTaskRepository } from '../../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
+import { runTaskFileMutation } from '../../src/tasks/infrastructure/obsidian/taskFileMutationQueue';
 import { createMiniSearchTaskEngine } from '../../src/tasks/infrastructure/search/MiniSearchTaskEngine';
 import { TaskSearchRuntime } from '../../src/tasks/infrastructure/search/TaskSearchRuntime';
 import { TaskSearchService } from '../../src/tasks/infrastructure/search/TaskSearchService';
@@ -29,6 +33,7 @@ export interface PublicApiHarness {
   readonly app: App;
   readonly index: TaskIndex;
   readonly service: TaskApplicationService;
+  readonly noteService: NoteApplicationService;
   clock(ms: number): void;
   readonly reads: TaskIntegrationReadApi;
   readonly statusReadBasis: TaskStatusReadBasisApi;
@@ -92,7 +97,15 @@ export async function publicApiHarness(
       new TaskSearchRuntime(createMiniSearchTaskEngine(fallbackSearchWords)),
     diagnose: () => {},
   });
+  const noteSources = index.projectSources();
+  const noteService = new NoteApplicationService(app, noteSources, {
+    capture: () => reads.capture(),
+    host: new NoteHostAdapter(app, noteSources, (source) => index.noteStructure(source)),
+    protection: new CanonicalNoteTaskProtection(app, index, authority),
+    serialize: (path, work) => runTaskFileMutation(app, path, work),
+  });
   const provider = new TaskApiProvider({
+    notes: noteService,
     search,
     reads,
     mutations: service,
@@ -111,6 +124,7 @@ export async function publicApiHarness(
     },
     app,
     service,
+    noteService,
     clock: (ms) => {
       now = ms;
     },

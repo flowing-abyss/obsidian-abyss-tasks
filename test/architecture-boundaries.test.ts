@@ -26,6 +26,7 @@ const RECURRENCE_EDITOR_WRITE_CONSUMERS = [
 
 interface AllowedWriter {
   readonly mutation:
+    | 'note prose mutation'
     | 'single-task transaction'
     | 'destination provisioning'
     | 'project creation scaffold'
@@ -35,6 +36,11 @@ interface AllowedWriter {
 }
 
 const ALLOWED_WRITER_CALLS: Record<string, AllowedWriter> = {
+  'src/notes/NoteApplicationService.ts#NoteApplicationService.commitPreparedSection#process#1': {
+    mutation: 'note prose mutation',
+    reason:
+      'Changes one sealed prose section after exact file, accepted bytes, scope and canonical frontmatter/task ownership validation.',
+  },
   'src/projects/ProjectManager.ts#ProjectManager.updateIntegrationProject#process#1': {
     mutation: 'project metadata',
     reason: 'Rechecks a pinned project and all proposed metadata in one note transaction.',
@@ -42,7 +48,7 @@ const ALLOWED_WRITER_CALLS: Record<string, AllowedWriter> = {
   'src/notes/NoteTemplateService.ts#NoteTemplateService.commitStaticNote#vault.create#1': {
     mutation: 'destination provisioning',
     reason:
-      'Creates final project bytes only after checking the original template, settings and candidate scope.',
+      'Creates final static note bytes only after checking the original template, settings and candidate scope.',
   },
   'src/projects/ProjectManager.ts#ProjectManager.applyEditsGuarded#process#1': {
     mutation: 'project metadata',

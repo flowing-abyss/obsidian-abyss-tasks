@@ -1,5 +1,7 @@
 import { TFile, type App, type CachedMetadata, type EventRef, type TAbstractFile } from 'obsidian';
+import { exactSourceMetadata } from '../../markdown/exactSourceMetadata';
 import { sameNoteFileStamp, type NoteFileStamp } from '../../markdown/noteFileStamp';
+import { NoteSourceChangedError, readVaultText } from '../../markdown/readVaultText';
 import { sameTag } from '../../markdown/tagSyntax';
 import type {
   CalendarProjectionSources,
@@ -16,6 +18,7 @@ import type {
   ProjectSourceReadApi,
   TaskAcceptedSourceEvidence,
   TaskIntegrationReadApi,
+  TaskReadObservation,
   TaskReadScope,
 } from '../application/TaskIntegrationReadApi';
 import type { TaskReadProjectionApi } from '../application/TaskSearchApi';
@@ -35,7 +38,6 @@ import type {
 import type { TaskStatusReadBasisApi } from '../application/TaskStatusMutationApi';
 import { cloneTaskSnapshot, taskSnapshotWithStatuses } from '../domain/cloneTaskSnapshot';
 import type { TaskResolutionCandidate } from '../domain/commands';
-import { readCommentBlock } from '../domain/commentSource';
 import type { StatusCatalog } from '../domain/StatusCatalog';
 import {
   assembleTaskDependencyGraphSteps,
@@ -45,7 +47,6 @@ import {
   type TaskDependencyProjection,
   type TaskNodeSnapshot,
 } from '../domain/taskDependencies';
-import { readTaskLinePrefix } from '../domain/taskLineSourceModel';
 import type { TaskOccurrenceWitness } from '../domain/taskOccurrence';
 import { reconcileOccurrenceWitnesses } from '../domain/taskOccurrence';
 import {
@@ -86,11 +87,7 @@ import {
   type TaskSnapshot,
 } from '../domain/types';
 import { TaskBlockEditor, type TaskRootBlock } from './markdown/TaskBlockEditor';
-import {
-  consumeMarkdownFenceLine,
-  parseMarkdownFrontmatter,
-  type MarkdownFence,
-} from './markdown/taskBlockSyntax';
+import { parseMarkdownFrontmatter } from './markdown/taskBlockSyntax';
 import { TaskLocator } from './markdown/TaskLocator';
 import { TaskMarkdownCodec } from './markdown/TaskMarkdownCodec';
 import {
@@ -98,6 +95,7 @@ import {
   projectTaskSnapshotSteps,
   type TaskSnapshotProjection,
 } from './markdown/TaskSnapshotProjector';
+import { fallbackListItems, hasTaskAncestor } from './markdown/taskSourceListItems';
 import { taskSearchDocument } from './search/taskSearchDocuments';
 import { calendarDatesForPlanning, calendarRangeForPlanning, TaskDateIndex } from './TaskDateIndex';
 import { taskIntegrationProjection } from './taskIntegrationProjection';
@@ -139,6 +137,7 @@ export interface TaskIndexOptions {
 }
 
 interface PreparedObservation {
+  readonly structureVerified?: boolean;
   readonly projectVerified: boolean;
   readonly stamp: NoteFileStamp | undefined;
   readonly cache: CachedMetadata;
@@ -362,214 +361,6 @@ function deliverIsolated<T>(
   }
 }
 
-interface FallbackListItem {
-  readonly task?: string;
-  readonly parent: number;
-  readonly position: {
-    readonly start: { readonly line: number; readonly col: number; readonly offset: number };
-    readonly end: { readonly line: number; readonly col: number; readonly offset: number };
-  };
-}
-
-interface FallbackListAncestor {
-  readonly line: number;
-  readonly indent: number;
-}
-
-interface FallbackFenceTransition {
-  readonly active: MarkdownFence | undefined;
-  readonly skip: boolean;
-  readonly opening: boolean;
-}
-
-interface FallbackScanState {
-  readonly items: FallbackListItem[];
-  readonly ancestorsByQuoteDepth: Map<number, FallbackListAncestor[]>;
-  offset: number;
-  frontmatter: boolean;
-  fence: MarkdownFence | undefined;
-  previousQuoteDepth: number | undefined;
-}
-
-interface FallbackListLine {
-  readonly line: string;
-  readonly lineNumber: number;
-  readonly quoteDepth: number;
-  readonly prefix: string;
-}
-
-const FALLBACK_LIST_ITEM_RE = /^([\s>]*)(?:[-*+]|\d+[.)])\s+/u;
-const FALLBACK_PREFIX_RE = /^([\s>]*)/u;
-
-function fallbackFenceState(
-  line: string,
-  active: MarkdownFence | undefined,
-): FallbackFenceTransition {
-  const consumed = consumeMarkdownFenceLine(active, line);
-  return { active: consumed.fence, skip: !consumed.isContent, opening: consumed.opened };
-}
-
-function transitionFallbackQuoteDepth(
-  quoteDepth: number,
-  previousQuoteDepth: number | undefined,
-  ancestorsByQuoteDepth: Map<number, FallbackListAncestor[]>,
-): number {
-  if (previousQuoteDepth !== undefined && previousQuoteDepth !== quoteDepth) {
-    ancestorsByQuoteDepth.clear();
-  }
-  return quoteDepth;
-}
-
-function transitionFallbackNonListBoundary(
-  quoteDepth: number,
-  indent: number,
-  previousQuoteDepth: number | undefined,
-  ancestorsByQuoteDepth: Map<number, FallbackListAncestor[]>,
-): number {
-  const nextQuoteDepth = transitionFallbackQuoteDepth(
-    quoteDepth,
-    previousQuoteDepth,
-    ancestorsByQuoteDepth,
-  );
-  const ancestors = ancestorsByQuoteDepth.get(quoteDepth) ?? [];
-  while ((ancestors[ancestors.length - 1]?.indent ?? Number.NEGATIVE_INFINITY) >= indent) {
-    ancestors.pop();
-  }
-  ancestorsByQuoteDepth.set(quoteDepth, ancestors);
-  return nextQuoteDepth;
-}
-
-function fallbackIndent(prefix: string): number {
-  return prefix.replace(/\t/gu, '    ').length;
-}
-
-function advanceFallbackOffset(state: FallbackScanState, line: string): void {
-  state.offset += line.length + 1;
-}
-
-function consumeFallbackFrontmatter(
-  state: FallbackScanState,
-  line: string,
-  lineNumber: number,
-): boolean {
-  if (!state.frontmatter) return false;
-  if (lineNumber > 0 && line.trim() === '---') state.frontmatter = false;
-  advanceFallbackOffset(state, line);
-  return true;
-}
-
-function transitionFallbackBoundary(
-  state: FallbackScanState,
-  quoteDepth: number,
-  prefix: string,
-): void {
-  state.previousQuoteDepth = transitionFallbackNonListBoundary(
-    quoteDepth,
-    fallbackIndent(prefix),
-    state.previousQuoteDepth,
-    state.ancestorsByQuoteDepth,
-  );
-}
-
-function consumeFallbackFence(
-  state: FallbackScanState,
-  line: string,
-  quoteDepth: number,
-  prefix: string,
-): boolean {
-  const transition = fallbackFenceState(line, state.fence);
-  state.fence = transition.active;
-  if (!transition.skip) return false;
-  if (transition.opening) transitionFallbackBoundary(state, quoteDepth, prefix);
-  advanceFallbackOffset(state, line);
-  return true;
-}
-
-function fallbackParent(
-  ancestors: FallbackListAncestor[],
-  indent: number,
-  lineNumber: number,
-): number {
-  while ((ancestors[ancestors.length - 1]?.indent ?? Number.NEGATIVE_INFINITY) >= indent) {
-    ancestors.pop();
-  }
-  return ancestors[ancestors.length - 1]?.line ?? -(lineNumber + 1);
-}
-
-function appendFallbackListItem(state: FallbackScanState, item: FallbackListLine): void {
-  const { line, lineNumber, quoteDepth, prefix } = item;
-  state.previousQuoteDepth = transitionFallbackQuoteDepth(
-    quoteDepth,
-    state.previousQuoteDepth,
-    state.ancestorsByQuoteDepth,
-  );
-  const indent = fallbackIndent(prefix);
-  const ancestors = state.ancestorsByQuoteDepth.get(quoteDepth) ?? [];
-  const task = readTaskLinePrefix(line)?.statusSymbol;
-  state.items.push({
-    ...(task !== undefined && { task }),
-    parent: fallbackParent(ancestors, indent, lineNumber),
-    position: {
-      start: { line: lineNumber, col: prefix.length, offset: state.offset },
-      end: { line: lineNumber, col: line.length, offset: state.offset + line.length },
-    },
-  });
-  ancestors.push({ line: lineNumber, indent });
-  state.ancestorsByQuoteDepth.set(quoteDepth, ancestors);
-}
-
-function consumeFallbackLine(state: FallbackScanState, line: string, lineNumber: number): void {
-  if (consumeFallbackFrontmatter(state, line, lineNumber)) return;
-  const leadingPrefix = FALLBACK_PREFIX_RE.exec(line)?.[1] ?? '';
-  const quoteDepth = [...leadingPrefix].filter((character) => character === '>').length;
-  if (consumeFallbackFence(state, line, quoteDepth, leadingPrefix)) return;
-  if (/^[\s>]*$/u.test(line)) {
-    advanceFallbackOffset(state, line);
-    return;
-  }
-  const listMatch = FALLBACK_LIST_ITEM_RE.exec(line);
-  if (listMatch == null) {
-    transitionFallbackBoundary(state, quoteDepth, leadingPrefix);
-    advanceFallbackOffset(state, line);
-    return;
-  }
-  appendFallbackListItem(state, {
-    line,
-    lineNumber,
-    quoteDepth,
-    prefix: listMatch[1] ?? '',
-  });
-  advanceFallbackOffset(state, line);
-}
-
-function fallbackListItems(data: string): FallbackListItem[] {
-  const lines = data.split('\n');
-  const state: FallbackScanState = {
-    items: [],
-    ancestorsByQuoteDepth: new Map(),
-    offset: 0,
-    frontmatter: lines[0]?.trim() === '---',
-    fence: undefined,
-    previousQuoteDepth: undefined,
-  };
-  let lineNumber = 0;
-  while (lineNumber < lines.length) {
-    const comment =
-      !state.frontmatter && state.fence === undefined
-        ? readCommentBlock(lines, lineNumber)
-        : undefined;
-    consumeFallbackLine(state, lines[lineNumber] ?? '', lineNumber);
-    // Accepted continuations belong to the list head even when quote spacing changes.
-    // Their raw indentation must not pop the head's task ancestors.
-    if (comment !== undefined) {
-      for (let continuation = lineNumber + 1; continuation < comment.toExclusive; continuation++)
-        advanceFallbackOffset(state, lines[continuation] ?? '');
-      lineNumber = comment.toExclusive;
-    } else lineNumber++;
-  }
-  return state.items;
-}
-
 function cacheWithContentFallback(
   data: string,
   cache: CachedMetadata | null | undefined,
@@ -662,6 +453,20 @@ function sameAcceptedContent(
   return source?.content === content && sameAcceptedFile(source, file, file.stat, true);
 }
 
+function sameAcceptedObservation(
+  source: AcceptedStatisticsSource,
+  file: TFile | undefined,
+  prepared: PreparedObservation,
+  scopeRevision: number,
+): boolean {
+  return (
+    sameAcceptedFile(source, file, prepared.stamp, prepared.projectVerified) &&
+    source.integrationScopeRevision === scopeRevision &&
+    source.structureVerified === (prepared.structureVerified === true) &&
+    source.cache === prepared.cache
+  );
+}
+
 function sameAcceptedFile(
   source: AcceptedStatisticsSource,
   file: TFile | undefined,
@@ -676,6 +481,7 @@ function sameAcceptedFile(
 }
 
 interface AcceptedStatisticsSource {
+  readonly structureVerified: boolean;
   projectVerified: boolean;
   readonly stamp: NoteFileStamp | undefined;
   readonly fileIdentity: TFile | undefined;
@@ -799,23 +605,6 @@ function metadataItemsByLine(
   items: readonly MetadataListItem[],
 ): ReadonlyMap<number, MetadataListItem> {
   return new Map(items.map((item) => [item.position.start.line, item] as const));
-}
-
-function hasTaskAncestor(
-  item: MetadataListItem,
-  itemByLine: ReadonlyMap<number, MetadataListItem>,
-): boolean {
-  let parentLine = item.parent;
-  const seen = new Set<number>();
-  while (parentLine >= 0 && !seen.has(parentLine)) {
-    if (parentLine === item.position.start.line) return false;
-    seen.add(parentLine);
-    const parent = itemByLine.get(parentLine);
-    if (parent == null) return false;
-    if (parent.task !== undefined) return true;
-    parentLine = parent.parent;
-  }
-  return false;
 }
 
 function relocateSubtask(task: SubtaskSnapshot, parent: TaskNodeRef): SubtaskSnapshot {
@@ -1307,6 +1096,22 @@ export class TaskIndex
     return this.integrationProjection_abyssPrivate;
   }
 
+  /** Host structure is available only from an exact metadata event for this accepted version. */
+  noteStructure(proof: {
+    readonly path: string;
+    readonly identity: object;
+    readonly version: number;
+  }): CachedMetadata | undefined {
+    const current = this.projectSources().get(proof.path);
+    const source = this.acceptedStatisticsSources_abyssPrivate.get(proof.path);
+    return current.type === 'ok' &&
+      current.value?.identity === proof.identity &&
+      current.value.version === proof.version &&
+      source?.structureVerified === true
+      ? source.cache
+      : undefined;
+  }
+
   projectSources(): ProjectSourceReadApi {
     const get: ProjectSourceReadApi['get'] = (path) => {
       const health = this.integrationReadState_abyssPrivate.coverage({ path });
@@ -1461,14 +1266,19 @@ export class TaskIndex
       this.excludePath_abyssPrivate?.(observation.path) !== true;
     try {
       if (!current()) return;
-      const content = await this.app_abyssPrivate.vault.read(observation.file);
+      const content = await readVaultText(this.app_abyssPrivate.vault, observation.file);
       if (!current()) return;
       if (content !== source.content) {
         // Parse the native bytes without the older callback's metadata cache.
         const fresh = this.observe_abyssPrivate(observation.file, observation.path);
         if (fresh === undefined) return;
         this.beginIntegrationObservation_abyssPrivate(fresh);
-        this.applyMetadataChanged_abyssPrivate(fresh, content, {}, true);
+        this.applyMetadataChanged_abyssPrivate(
+          fresh,
+          content,
+          {},
+          { projectVerified: true, structureVerified: false },
+        );
       } else {
         source.projectVerified = true;
         this.integrationReadState_abyssPrivate.advanceProjectObservation();
@@ -1497,19 +1307,61 @@ export class TaskIndex
     if (basis === undefined) return false;
     this.projectReadFiles_abyssPrivate.add(file);
     const acquisition = this.integrationCurrentObservations_abyssPrivate.get(file);
+    const meaning = this.integrationReadState_abyssPrivate.capture();
     const prior = this.acceptedStatisticsSources_abyssPrivate.get(path);
-    const observed = await this.app_abyssPrivate.vault.read(file);
-    if (observed !== content || !this.observedFileCurrent_abyssPrivate(basis)) return false;
+    const observed = await this.readReconciliationSource_abyssPrivate(file);
+    if (observed !== content || !this.reconciliationReadCurrent_abyssPrivate(basis, meaning))
+      return false;
     const current = this.acceptedStatisticsSources_abyssPrivate.get(path);
     if (install === undefined && sameAcceptedContent(current, file, content)) return true;
     if (
       current !== prior ||
-      this.integrationCurrentObservations_abyssPrivate.get(file) !== acquisition
+      !this.reconciliationAcquisitionCurrent_abyssPrivate(
+        file,
+        acquisition,
+        content,
+        install !== undefined,
+      )
     )
       return false;
     if (install === undefined) this.installCommittedContent(path, content);
     else install();
     return true;
+  }
+
+  private async readReconciliationSource_abyssPrivate(file: TFile): Promise<string | undefined> {
+    try {
+      return await readVaultText(this.app_abyssPrivate.vault, file);
+    } catch (error) {
+      if (error instanceof NoteSourceChangedError) return undefined;
+      throw error;
+    }
+  }
+
+  private reconciliationAcquisitionCurrent_abyssPrivate(
+    file: TFile,
+    prior: FileObservation | undefined,
+    content: string,
+    owned: boolean,
+  ): boolean {
+    return (
+      this.integrationCurrentObservations_abyssPrivate.get(file) === prior ||
+      (owned &&
+        this.options_abyssPrivate.refAuthority?.ownsForwardedSource(file.path, content) === true)
+    );
+  }
+
+  private reconciliationReadCurrent_abyssPrivate(
+    basis: FileObservation,
+    meaning: TaskReadObservation,
+  ): boolean {
+    const current = this.integrationReadState_abyssPrivate.capture();
+    return (
+      this.observedFileCurrent_abyssPrivate(basis) &&
+      basis.attempt === this.integrationAttempt_abyssPrivate &&
+      current.scopeRevision === meaning.scopeRevision &&
+      current.semanticsRevision === meaning.semanticsRevision
+    );
   }
 
   private prospectiveProjectSource_abyssPrivate(
@@ -2688,16 +2540,29 @@ export class TaskIndex
     },
     queue: InitialInstallQueue | undefined,
   ): Promise<boolean> {
+    const committed = {
+      content: this.committedContents_abyssPrivate.get(observation.path),
+      source: this.acceptedStatisticsSources_abyssPrivate.get(observation.path),
+      meaning: this.integrationReadState_abyssPrivate.capture(),
+    };
     let accept: () => boolean;
     try {
-      const content = await this.app_abyssPrivate.vault.cachedRead(observation.file);
-      if (!this.isCurrent_abyssPrivate(observation)) return false;
+      const content = await readVaultText(this.app_abyssPrivate.vault, observation.file, 'cached');
+      if (
+        !this.isCurrent_abyssPrivate(observation) ||
+        !sameNoteFileStamp(observation.stamp, observation.file.stat)
+      )
+        return false;
       const verified = this.observationNeedsVerification_abyssPrivate(observation, content);
       if (verified && !(await this.observationMatchesVault_abyssPrivate(observation, content)))
         return false;
       if (!this.isCurrent_abyssPrivate(observation)) return false;
       accept = () => {
-        if (!this.isCurrent_abyssPrivate(observation)) return false;
+        if (
+          !this.isCurrent_abyssPrivate(observation) ||
+          !sameNoteFileStamp(observation.stamp, observation.file.stat)
+        )
+          return false;
         try {
           const prior = this.acceptedStatisticsSources_abyssPrivate.get(observation.path);
           return this.installLoadedObservation_abyssPrivate(observation, content, cache, {
@@ -2713,11 +2578,46 @@ export class TaskIndex
         }
       };
     } catch (error) {
-      accept = () =>
-        this.failedStatisticsObservation_abyssPrivate(observation, 'read-failed', error);
+      accept =
+        (await this.recoverCachedCommit_abyssPrivate(observation, error, committed)) ??
+        (() => this.failedStatisticsObservation_abyssPrivate(observation, 'read-failed', error));
     }
     // Scheduler errors belong to initialization, never to an accepted empty source observation.
     return queue === undefined ? accept() : this.queueInitialAcceptance_abyssPrivate(queue, accept);
+  }
+
+  private async recoverCachedCommit_abyssPrivate(
+    observation: FileObservation,
+    error: unknown,
+    basis: {
+      readonly content: string | undefined;
+      readonly source: AcceptedStatisticsSource | undefined;
+      readonly meaning: TaskReadObservation;
+    },
+  ): Promise<(() => boolean) | undefined> {
+    if (
+      !(error instanceof NoteSourceChangedError) ||
+      error.reason !== 'contrary-text' ||
+      basis.content === undefined ||
+      basis.source === undefined
+    )
+      return undefined;
+    const current = (): boolean =>
+      this.isCurrent_abyssPrivate(observation) &&
+      this.reconciliationReadCurrent_abyssPrivate(observation, basis.meaning) &&
+      this.committedContents_abyssPrivate.get(observation.path) === basis.content &&
+      this.acceptedStatisticsSources_abyssPrivate.get(observation.path) === basis.source;
+    if (!current()) return undefined;
+    const verified = await this.verifyCommittedContent_abyssPrivate(observation, basis.content);
+    if (verified !== 'observed' || !current()) return undefined;
+    return () => {
+      if (current())
+        this.settleIntegrationObservation_abyssPrivate(
+          observation,
+          this.hasCommittedCoverage_abyssPrivate(observation.path),
+        );
+      return false;
+    };
   }
 
   private installLoadedObservation_abyssPrivate(
@@ -2831,7 +2731,7 @@ export class TaskIndex
     filePath: string,
     content: string,
     cache: CachedMetadata | null | undefined,
-    proof: Pick<PreparedObservation, 'stamp' | 'projectVerified'>,
+    proof: Pick<PreparedObservation, 'stamp' | 'projectVerified' | 'structureVerified'>,
   ): PreparedObservation {
     const source = inspectTaskSourceMetadata(filePath, content);
     return {
@@ -2949,10 +2849,10 @@ export class TaskIndex
     const integrationScopeRevision = this.integrationReadState_abyssPrivate.capture().scopeRevision;
     if (
       changed ||
-      !sameAcceptedFile(prior, fileIdentity, prepared.stamp, projectVerified) ||
-      prior.integrationScopeRevision !== integrationScopeRevision
+      !sameAcceptedObservation(prior, fileIdentity, prepared, integrationScopeRevision)
     ) {
       this.acceptedStatisticsSources_abyssPrivate.set(path, {
+        structureVerified: prepared.structureVerified === true,
         projectVerified,
         stamp: prepared.stamp,
         fileIdentity,
@@ -3709,6 +3609,10 @@ export class TaskIndex
     const observation = this.observe_abyssPrivate(file, path);
     if (observation === undefined) return;
     this.beginIntegrationObservation_abyssPrivate(observation);
+    if (new TextEncoder().encode(data).byteLength !== observation.stamp.size) {
+      this.trackRead_abyssPrivate(this.acceptExactMetadata_abyssPrivate(observation, data, cache));
+      return;
+    }
     if (this.observationNeedsVerification_abyssPrivate(observation, data)) {
       const read = this.observationMatchesVault_abyssPrivate(observation, data).then((matches) => {
         if (matches && this.isCurrent_abyssPrivate(observation)) {
@@ -3727,15 +3631,61 @@ export class TaskIndex
     );
   }
 
+  private async acceptExactMetadata_abyssPrivate(
+    observation: FileObservation,
+    data: string,
+    cache: CachedMetadata,
+  ): Promise<void> {
+    try {
+      const raw = await readVaultText(this.app_abyssPrivate.vault, observation.file);
+      if (
+        !this.isCurrent_abyssPrivate(observation) ||
+        !sameNoteFileStamp(observation.stamp, observation.file.stat)
+      )
+        return;
+      const projected = exactSourceMetadata(data, raw, cache);
+      if (projected === undefined) {
+        // A delayed cache echo may describe pre-commit bytes. Keep only the
+        // existing committed coverage whose exact native readback still agrees.
+        this.settleIntegrationObservation_abyssPrivate(
+          observation,
+          raw === this.committedContents_abyssPrivate.get(observation.path) &&
+            this.hasCommittedCoverage_abyssPrivate(observation.path),
+        );
+        return;
+      }
+      if (
+        this.observationNeedsVerification_abyssPrivate(observation, raw) &&
+        !(await this.observationMatchesVault_abyssPrivate(observation, raw))
+      )
+        return;
+      if (
+        !this.isCurrent_abyssPrivate(observation) ||
+        !sameNoteFileStamp(observation.stamp, observation.file.stat)
+      )
+        return;
+      this.applyMetadataChanged_abyssPrivate(observation, raw, projected, true);
+    } catch {
+      this.settleIntegrationObservation_abyssPrivate(observation, false);
+    }
+  }
+
   private applyMetadataChanged_abyssPrivate(
     observation: FileObservation,
     data: string,
     cache: CachedMetadata,
-    projectVerified: boolean,
+    proof: boolean | { readonly projectVerified: boolean; readonly structureVerified: boolean },
   ): void {
     if (!this.isCurrent_abyssPrivate(observation)) return;
     try {
-      if (this.installMetadataObservation_abyssPrivate(observation, data, cache, projectVerified))
+      if (
+        this.installMetadataObservation_abyssPrivate(
+          observation,
+          data,
+          cache,
+          typeof proof === 'boolean' ? { projectVerified: proof, structureVerified: true } : proof,
+        )
+      )
         this.settleIntegrationObservation_abyssPrivate(observation, true);
     } catch (error) {
       if (this.isCurrent_abyssPrivate(observation)) {
@@ -3749,13 +3699,13 @@ export class TaskIndex
     observation: FileObservation,
     data: string,
     cache: CachedMetadata,
-    projectVerified: boolean,
+    proof: { readonly projectVerified: boolean; readonly structureVerified: boolean },
   ): boolean {
     const path = observation.path;
     if (this.options_abyssPrivate.refAuthority?.deferObservation(path, data) === true) return false;
     const prepared = this.prepareObservation_abyssPrivate(path, data, cache, {
+      ...proof,
       stamp: observation.stamp,
-      projectVerified,
     });
     let authority: TaskRefAuthorityObservation | undefined;
     const excluded = this.excludeSource_abyssPrivate?.(prepared.metadata) === true;
@@ -4128,7 +4078,7 @@ export class TaskIndex
   ): Promise<'observed' | 'committed' | 'superseded' | 'unconfirmed' | 'failed'> {
     const committed = this.committedContents_abyssPrivate.get(observation.path);
     try {
-      const current = await this.app_abyssPrivate.vault.read(observation.file);
+      const current = await readVaultText(this.app_abyssPrivate.vault, observation.file);
       if (!this.isCurrent_abyssPrivate(observation)) return 'superseded';
       if (!sameNoteFileStamp(observation.stamp, observation.file.stat)) return 'unconfirmed';
       if (current === committed && current !== content) return 'committed';

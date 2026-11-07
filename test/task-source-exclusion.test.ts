@@ -14,7 +14,13 @@ import {
   type TaskSourceMetadata,
 } from '../src/tasks/infrastructure/TaskIndex';
 import { taskSourceMetadata } from '../src/tasks/infrastructure/taskSourceMetadata';
-import { createAppWithFiles, expectDefined, flushMicrotasks, seedTaskCache } from './helpers';
+import {
+  createAppWithFiles,
+  expectDefined,
+  flushMicrotasks,
+  seedTaskCache,
+  setVaultSource,
+} from './helpers';
 import { publicApiHarness } from './support/publicApiHarness';
 
 function catalog(): StatusCatalog {
@@ -213,6 +219,7 @@ describe('TaskIndex source exclusion', () => {
     const excludes = ({ frontmatter }: TaskSourceMetadata): boolean =>
       frontmatter['private'] === true;
     const { app, index } = await sourceIndex({ [path]: '- [ ] Placeholder\n' }, excludes);
+    setVaultSource(app, path, content);
     app.vault.cachedRead = async () => content;
     seedTaskCache(app, path, [{ task: ' ', parent: -1, line: content.split('\n').length - 2 }], {
       private: true,

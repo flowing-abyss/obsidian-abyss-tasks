@@ -195,6 +195,11 @@ it('validates runtime inputs and exposes only implemented capabilities', async (
   ]);
   expect(client.info.capabilities).toEqual([
     'tasks.read',
+    'notes.search',
+    'notes.read',
+    'notes.prepare',
+    'notes.create',
+    'notes.apply',
     'tasks.tags',
     'tasks.search',
     'tasks.tree',

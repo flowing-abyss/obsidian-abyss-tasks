@@ -11,6 +11,7 @@ import {
 } from 'obsidian';
 import { sameNoteFileStamp } from '../markdown/noteFileStamp';
 import { parseMarkdownFrontmatter } from '../markdown/readFrontmatter';
+import { readVaultText } from '../markdown/readVaultText';
 import {
   CreatedNoteTemplateError,
   ExecutableTemplateError,
@@ -694,7 +695,7 @@ export class ProjectManager {
     const { path, original, offered } = evidence;
     try {
       const stamp = { ...file.stat };
-      const live = await this.app.vault.read(file);
+      const live = await readVaultText(this.app.vault, file);
       if (
         sameNoteFileStamp(stamp, file.stat) &&
         this.app.vault.getAbstractFileByPath(path) === file
@@ -943,6 +944,17 @@ export class ProjectManager {
     return byPath;
   }
 
+  private assertReadCurrent(
+    file: TFile,
+    path: string,
+    stamp: { readonly mtime: number; readonly size: number },
+  ): void {
+    if (this.app.vault.getAbstractFileByPath(path) !== file || !sameNoteFileStamp(stamp, file.stat))
+      throw new ProjectEditValidationError(
+        'Project source changed during reading. Reload it and try again.',
+      );
+  }
+
   private async preflightFile(
     path: string,
     entries: readonly RequestedProjectCellChange[],
@@ -952,7 +964,9 @@ export class ProjectManager {
     if (!(file instanceof TFile)) {
       throw new ProjectEditValidationError(`Project file not found: ${path}`);
     }
-    const parsed = parseProjectSource(await this.app.vault.read(file));
+    const stamp = { ...file.stat };
+    const parsed = parseProjectSource(await readVaultText(this.app.vault, file));
+    this.assertReadCurrent(file, path, stamp);
     const deduplicated = new Map<string, PreparedProjectCellChange>();
     for (const entry of entries) {
       const prepared = this.prepareCurrentEdit(parsed.frontmatter, entry, checkExpected);
@@ -1222,7 +1236,9 @@ export class ProjectManager {
       if (!(file instanceof TFile)) {
         throw new ProjectEditValidationError(`Project file not found: ${path}`);
       }
-      const parsed = parseProjectSource(await this.app.vault.read(file));
+      const stamp = { ...file.stat };
+      const parsed = parseProjectSource(await readVaultText(this.app.vault, file));
+      this.assertReadCurrent(file, path, stamp);
       if (!sameStatus(sourceStatus(parsed, this.settings.projects), expectedStatus)) {
         throw new ProjectEditValidationError(
           'Status changed externally. Reload the project and try your edit again.',
@@ -1316,7 +1332,10 @@ export class ProjectManager {
     const projects = this.settings.projects;
     const candidates: TFile[] = [];
     for (const file of this.app.vault.getMarkdownFiles()) {
-      const source = await this.app.vault.read(file);
+      const path = file.path,
+        stamp = { ...file.stat };
+      const source = await readVaultText(this.app.vault, file);
+      this.assertReadCurrent(file, path, stamp);
       const parsed = parseStatusRenameCandidate(
         source,
         file,

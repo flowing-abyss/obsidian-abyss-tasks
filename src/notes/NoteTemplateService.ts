@@ -1,5 +1,6 @@
 import { normalizePath, TFile, TFolder, type App } from 'obsidian';
 import { sameNoteFileStamp } from '../markdown/noteFileStamp';
+import { readVaultText } from '../markdown/readVaultText';
 import { TemplaterAdapter, type TemplaterSession } from './TemplaterAdapter';
 
 interface FailedPreparation {
@@ -26,11 +27,26 @@ export interface StaticNoteRequest {
   check(content: string): void;
 }
 
+export interface PreparedStaticNoteRequest {
+  readonly path: string;
+  readonly plan: StaticNotePlan;
+  readonly content: string;
+  validate(): Promise<boolean>;
+  check(content: string): void;
+}
+type StaticDestinationEffect = 'unchanged' | 'committed' | 'unknown';
+export interface PreparedStaticNoteResult {
+  readonly file: TFile;
+  readonly content: string;
+  readonly destinationEffects: StaticDestinationEffect;
+}
+
 export class StaticNoteFailure extends Error {
   constructor(
     readonly effects: 'unchanged' | 'partial' | 'unknown' | 'committed',
     readonly cause: unknown,
     readonly owned?: { file: TFile; content: string },
+    readonly destinationEffects?: PreparedStaticNoteResult['destinationEffects'],
   ) {
     super('Static note creation failed.');
   }
@@ -157,6 +173,11 @@ export class NoteTemplateService {
   ): Promise<StaticNotePlan> {
     const basis = await this.captureStaticPlan(filePath, templatePath, title);
     if (basis === undefined) return { type: 'unsupported-template' };
+    if (
+      !this.staticTemplateCurrent(basis) ||
+      this.app.vault.getAbstractFileByPath(basis.path) !== basis.original
+    )
+      throw new StaleStaticNoteError();
     return this.staticPlan(basis, {
       owned: basis.original === null ? undefined : { file: basis.original, content: basis.content },
       effects: 'unchanged',
@@ -174,7 +195,7 @@ export class NoteTemplateService {
       if (!(await this.verifyStaticTemplate(basis))) return false;
       if (state.owned === undefined)
         return this.app.vault.getAbstractFileByPath(basis.path) === null;
-      return check(state.owned.file, await this.app.vault.read(state.owned.file));
+      return check(state.owned.file, await readVaultText(this.app.vault, state.owned.file));
     };
     const plan: StaticNotePlan = {
       type: 'ready',
@@ -223,7 +244,9 @@ export class NoteTemplateService {
       return undefined;
     if (
       this.app.vault.getAbstractFileByPath(basis.path) !== current.file ||
-      (await this.app.vault.read(current.file)) !== current.content
+      (await readVaultText(this.app.vault, current.file)) !== current.content ||
+      this.app.vault.getAbstractFileByPath(basis.path) !== current.file ||
+      !this.staticTemplateCurrent(basis)
     )
       return undefined;
     return this.staticPlan(basis, {
@@ -254,7 +277,7 @@ export class NoteTemplateService {
       return {
         path,
         original,
-        content: await this.app.vault.read(original),
+        content: await readVaultText(this.app.vault, original),
         templatePath: '',
         template: undefined,
         raw: undefined,
@@ -262,7 +285,7 @@ export class NoteTemplateService {
       };
     const template = this.resolveTemplate(templatePath);
     const stamp = template === undefined ? undefined : { ...template.stat };
-    const raw = template === undefined ? undefined : await this.app.vault.read(template);
+    const raw = template === undefined ? undefined : await readVaultText(this.app.vault, template);
     if (raw?.includes('<%') === true) return undefined;
     TemplaterAdapter.fromApp(this.app, true);
     return {
@@ -287,7 +310,9 @@ export class NoteTemplateService {
   private async verifyStaticTemplate(basis: StaticPlanBasis): Promise<boolean> {
     return (
       this.staticTemplateCurrent(basis) &&
-      (basis.template === undefined || (await this.app.vault.read(basis.template)) === basis.raw)
+      (basis.template === undefined ||
+        (await readVaultText(this.app.vault, basis.template)) === basis.raw) &&
+      this.staticTemplateCurrent(basis)
     );
   }
 
@@ -375,7 +400,12 @@ export class NoteTemplateService {
   }
 
   /** Creates final, prevalidated content without running template code or opening an existing note. */
-  async createStaticNote(request: StaticNoteRequest): Promise<{ file: TFile; content: string }> {
+  createStaticNote(request: PreparedStaticNoteRequest): Promise<PreparedStaticNoteResult>;
+  createStaticNote(request: StaticNoteRequest): Promise<{ file: TFile; content: string }>;
+  async createStaticNote(
+    request: StaticNoteRequest | PreparedStaticNoteRequest,
+  ): Promise<{ file: TFile; content: string }> {
+    if ('plan' in request) return this.createSealedStaticNote(request);
     const path = notePath(request.path);
     if (path !== request.path) throw new StaleStaticNoteError();
     TemplaterAdapter.fromApp(this.app, true);
@@ -396,7 +426,10 @@ export class NoteTemplateService {
       request.check(content);
     };
     const verifyTemplate = async (): Promise<void> => {
-      if (template !== undefined && (await this.app.vault.read(template)) !== capture?.content)
+      if (
+        template !== undefined &&
+        (await readVaultText(this.app.vault, template)) !== capture?.content
+      )
         throw new StaleStaticNoteError();
     };
     check();
@@ -420,10 +453,70 @@ export class NoteTemplateService {
     }
   }
 
+  private async createSealedStaticNote(
+    request: PreparedStaticNoteRequest,
+  ): Promise<PreparedStaticNoteResult> {
+    const basis = this.staticPlanBases.get(request.plan);
+    if (
+      basis?.original !== null ||
+      basis.path !== request.path ||
+      notePath(request.path) !== request.path
+    )
+      throw new StaleStaticNoteError();
+    const finalCheck = (): void => {
+      if (
+        !this.staticTemplateCurrent(basis) ||
+        this.app.vault.getAbstractFileByPath(basis.path) !== null
+      )
+        throw new StaleStaticNoteError();
+      request.check(request.content);
+    };
+    const check = async (): Promise<void> => {
+      if (
+        !(await request.validate()) ||
+        !(await this.verifyStaticTemplate(basis)) ||
+        this.app.vault.getAbstractFileByPath(basis.path) !== null
+      )
+        throw new StaleStaticNoteError();
+      finalCheck();
+    };
+    const folders: { effects: PreparedStaticNoteResult['destinationEffects'] } = {
+      effects: 'unchanged',
+    };
+    try {
+      await check();
+      await this.ensureFolders(basis.path, {
+        check,
+        attempting: () => {
+          if (folders.effects === 'unchanged') folders.effects = 'unknown';
+        },
+        created: () => {
+          folders.effects = 'committed';
+        },
+      });
+      const result = await this.commitStaticNote(
+        basis.path,
+        request.content,
+        { check, verifyTemplate: check, finalCheck },
+        folders.effects === 'committed' ? 'partial' : folders.effects,
+      );
+      return { ...result, destinationEffects: folders.effects };
+    } catch (cause) {
+      if (cause instanceof StaticNoteFailure)
+        throw new StaticNoteFailure(cause.effects, cause.cause, cause.owned, folders.effects);
+      throw new StaticNoteFailure(
+        folders.effects === 'committed' ? 'partial' : folders.effects,
+        cause,
+        undefined,
+        folders.effects,
+      );
+    }
+  }
+
   private async commitStaticNote(
     path: string,
     content: string,
-    guard: { check(): void | Promise<void>; verifyTemplate(): Promise<void> },
+    guard: { check(): void | Promise<void>; verifyTemplate(): Promise<void>; finalCheck?(): void },
     folderEffects: StaticNoteFailure['effects'],
   ): Promise<{ file: TFile; content: string }> {
     let session: TemplaterSession | undefined;
@@ -435,10 +528,11 @@ export class NoteTemplateService {
       await guard.verifyTemplate();
       session = TemplaterAdapter.fromApp(this.app, true)?.begin(path);
       await guard.check();
+      guard.finalCheck?.();
       attempted = true;
       owned = { file: await this.app.vault.create(path, content), content };
     } catch (cause) {
-      const uncertain = attempted && folderEffects === 'unchanged';
+      const uncertain = attempted;
       failure = new StaticNoteFailure(uncertain ? 'unknown' : folderEffects, cause);
     }
     try {
@@ -483,7 +577,7 @@ export class NoteTemplateService {
         new Error(`Template preparation left unresolved content in ${file.path}.`),
       );
     }
-    const content = await this.app.vault.cachedRead(file);
+    const content = await readVaultText(this.app.vault, file, 'cached');
     if (content !== priorFailure.content) {
       failed.delete(file.path);
       return file;
@@ -619,7 +713,7 @@ export class NoteTemplateService {
     const failed = mapFor(failedByApp, this.app);
     failed.set(file.path, { content: undefined, templatePath, title, uncertain: true });
     try {
-      const content = await this.app.vault.cachedRead(file);
+      const content = await readVaultText(this.app.vault, file, 'cached');
       failed.set(file.path, {
         content,
         templatePath,
@@ -642,7 +736,7 @@ export class NoteTemplateService {
     if (session !== undefined) {
       content = await session.render(template, file);
     } else {
-      const raw = await this.app.vault.cachedRead(template);
+      const raw = await readVaultText(this.app.vault, template, 'cached');
       content = renderCoreTemplate(raw, title);
     }
     await this.app.vault.process(file, (source) => {

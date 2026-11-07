@@ -281,7 +281,7 @@ export default defineConfig(
         {
           patterns: [
             {
-              regex: '^(?!\\./|\\.\\./domain/)',
+              regex: '^(?!\\./|\\.\\./domain/|\\.\\./\\.\\./notes/NoteSourceApi$)',
               message:
                 'Task application may depend only on domain contracts and application ports.',
             },
@@ -530,6 +530,11 @@ export default defineConfig(
       'src/markdown/sourceReferences.ts',
       'src/markdown/fences.ts',
       'src/markdown/frontmatterRange.ts',
+      'src/markdown/exactSourceMetadata.ts',
+      'src/notes/NoteSourceApi.ts',
+      'src/notes/noteApi.ts',
+      'src/integrations/noteReceipt.ts',
+      'src/tasks/infrastructure/markdown/taskSourceListItems.ts',
       'src/projects/projectGroupCollapse.ts',
       'src/projects/projectStats.ts',
       'src/projects/projectMetadataPolicy.ts',

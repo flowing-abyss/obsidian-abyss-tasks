@@ -5,6 +5,7 @@ import type {
   ApplyTaskContentV1,
   ErrorCategoryV1,
   MutationResultV1,
+  NoteMutationResultV1,
   ProjectMutationReceiptV1,
   ProjectMutationResultV1,
   RecoveryV1,
@@ -23,8 +24,10 @@ import { validateConsumer, validateMutation } from './validation';
 import { apiError, freezeValue } from './values';
 
 type TaskMethod = 'complete' | 'setStatus' | 'toggleCompletion';
-type Method = TaskMethod | ProjectOperation | 'tasks.apply' | 'tasks.create';
-type Result = MutationResultV1 | ProjectMutationResultV1 | TaskContentMutationResultV1;
+type Method =
+  TaskMethod | ProjectOperation | 'tasks.apply' | 'tasks.create' | 'notes.apply' | 'notes.create';
+type Result =
+  MutationResultV1 | ProjectMutationResultV1 | TaskContentMutationResultV1 | NoteMutationResultV1;
 interface ContentEvidence {
   readonly target: string;
   readonly preparation: Extract<TaskCreatePreparation, { type: 'ready' }>;
@@ -289,6 +292,42 @@ export class TaskRequestRegistry {
       options,
     ) as Promise<TaskContentMutationResultV1>;
   }
+  async executeNote(
+    consumerId: string,
+    method: 'notes.apply' | 'notes.create',
+    input: ApplyTaskContentV1,
+    options: RequestOptions<NoteMutationResultV1>,
+  ): Promise<NoteMutationResultV1> {
+    return this.run_abyssPrivate(
+      method,
+      () => {
+        const consumer = validateConsumer(consumerId),
+          parsed = validateContentApply(input);
+        if (!consumer.ok) return consumer;
+        if (!parsed.ok) return parsed;
+        const request = parsed.value,
+          payload = JSON.stringify([
+            method,
+            request.plan,
+            request.expectedPlanRevision,
+            request.requestId,
+            request.expiresAt,
+          ]);
+        return {
+          ok: true,
+          value: {
+            consumerId: consumer.value,
+            method,
+            request,
+            payload,
+            projectBytes: new TextEncoder().encode(payload).length,
+            key: JSON.stringify([consumer.value, request.requestId]),
+          },
+        };
+      },
+      options,
+    ) as Promise<NoteMutationResultV1>;
+  }
   retainContentEvidence(consumerId: string, requestId: string, evidence: ContentEvidence): void {
     const record = this.records_abyssPrivate.get(JSON.stringify([consumerId, requestId]));
     if (record?.pending === true) record.contentEvidence = evidence;
@@ -481,6 +520,8 @@ export class TaskRequestRegistry {
       try {
         return freezeValue(ticket.unknown(acceptedAt, error));
       } catch {
+        if (current.method.startsWith('notes.') && 'plan' in current.request)
+          return this.unknownNote_abyssPrivate(current.request, acceptedAt);
         if ('plan' in current.request)
           return this.unknownContent_abyssPrivate(current.request, acceptedAt);
         return freezeValue<ProjectMutationResultV1>({
@@ -495,6 +536,8 @@ export class TaskRequestRegistry {
     return this.unknown_abyssPrivate(current, acceptedAt);
   }
   private unknown_abyssPrivate(current: RequestContext, acceptedAt: number): Result {
+    if (current.method.startsWith('notes.') && 'plan' in current.request)
+      return this.unknownNote_abyssPrivate(current.request, acceptedAt);
     if ('plan' in current.request)
       return this.unknownContent_abyssPrivate(current.request, acceptedAt);
     return freezeValue<MutationResultV1>({
@@ -515,6 +558,31 @@ export class TaskRequestRegistry {
           state: 'unproven',
         },
         snapshots: 'unavailable',
+        warnings: [],
+      },
+    });
+  }
+  private unknownNote_abyssPrivate(
+    request: ApplyTaskContentV1,
+    acceptedAt: number,
+  ): NoteMutationResultV1 {
+    return freezeValue<NoteMutationResultV1>({
+      ok: false,
+      error: this.internal_abyssPrivate('notes.apply'),
+      effects: 'unknown',
+      recovery: 'reconcile',
+      receipt: {
+        providerEpoch: this.options_abyssPrivate.epoch,
+        requestId: request.requestId,
+        acceptedAt,
+        expiresAt: request.expiresAt,
+        plan: request.plan,
+        planRevision: request.expectedPlanRevision,
+        outcome: 'failed',
+        effects: 'unknown',
+        recovery: 'reconcile',
+        noteEffects: 'unknown',
+        destinationEffects: 'unknown',
         warnings: [],
       },
     });

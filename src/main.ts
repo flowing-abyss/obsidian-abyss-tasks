@@ -5,6 +5,8 @@ import { TaskApiProvider } from './integrations/TaskApiProvider';
 import { readError } from './integrations/taskApiReads';
 import { extractMarkdownBodyTags } from './markdown/markdownTagRename';
 import { compileNotePathPattern, type NotePathPattern } from './markdown/notePathPattern';
+import { NoteApplicationService } from './notes/NoteApplicationService';
+import { NoteHostAdapter } from './notes/NoteHostAdapter';
 import { NoteTemplateService } from './notes/NoteTemplateService';
 import { initializeProjectPropertyDefinitions } from './projects/initializeProjectPropertyDefinitions';
 import {
@@ -72,8 +74,10 @@ import { parseMarkdownFrontmatter } from './tasks/infrastructure/markdown/taskBl
 import { TaskLocator } from './tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from './tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { nativeTaskIndentUnit } from './tasks/infrastructure/obsidian/nativeTaskIndentation';
+import { CanonicalNoteTaskProtection } from './tasks/infrastructure/obsidian/NoteTaskProtection';
 import { ObsidianTaskDestinationProvider } from './tasks/infrastructure/obsidian/ObsidianTaskDestinationProvider';
 import { ObsidianTaskRepository } from './tasks/infrastructure/obsidian/ObsidianTaskRepository';
+import { runTaskFileMutation } from './tasks/infrastructure/obsidian/taskFileMutationQueue';
 import {
   BrowserTaskSearchBackend,
   createBrowserSearchScheduler,
@@ -289,7 +293,7 @@ export default class TaskCalendarPlugin extends Plugin {
       tasks,
       this.projectProperties,
     );
-    this.initializeTaskApi(tasks);
+    this.initializeTaskApi(tasks, refAuthority);
     this.initializeTagManager();
   }
 
@@ -305,13 +309,21 @@ export default class TaskCalendarPlugin extends Plugin {
     };
   }
 
-  private initializeTaskApi(tasks: TaskApplicationService): void {
+  private initializeTaskApi(tasks: TaskApplicationService, authority: TaskRefAuthority): void {
     this.tasks = tasks;
     this.queries = tasks.queries;
     const sources = this.taskIndex.projectSources();
     const settings = (): CalendarSettings['projects'] => this.settings.projects;
     const reads = createProjectIntegrationReads(sources, settings);
     this.taskApiProvider = new TaskApiProvider({
+      notes: new NoteApplicationService(this.app, sources, {
+        capture: () => this.taskIndex.integrationReads().capture(),
+        host: new NoteHostAdapter(this.app, sources, (source) =>
+          this.taskIndex.noteStructure(source),
+        ),
+        protection: new CanonicalNoteTaskProtection(this.app, this.taskIndex, authority),
+        serialize: (path, work) => runTaskFileMutation(this.app, path, work),
+      }),
       reads: this.taskIndex.integrationReads(),
       mutations: tasks,
       search: this.taskSearch,

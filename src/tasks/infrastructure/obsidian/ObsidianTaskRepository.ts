@@ -1,6 +1,7 @@
 import { TFile, type App } from 'obsidian';
 import { sameNoteFileStamp } from '../../../markdown/noteFileStamp';
 import { compileNotePathPattern } from '../../../markdown/notePathPattern';
+import { readVaultText } from '../../../markdown/readVaultText';
 import type { TaskQueryApi } from '../../application/TaskApplicationApi';
 import type { TaskDiagnosticSink } from '../../application/TaskDependencyService';
 import type {
@@ -1160,7 +1161,7 @@ export class ObsidianTaskRepository implements TaskRepository {
       native === basis.file &&
       basis.accepted !== undefined &&
       basis.sources.matchesFile(basis.accepted, basis.file) &&
-      (await this.app_abyssPrivate.vault.read(basis.file)) === basis.accepted.content &&
+      (await readVaultText(this.app_abyssPrivate.vault, basis.file)) === basis.accepted.content &&
       basis.acquisition.current()
     );
   }
@@ -1238,7 +1239,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     if (!(file instanceof TFile) || copy.task === undefined) return;
     const stamp = { ...file.stat };
     try {
-      const live = await this.app_abyssPrivate.vault.read(file);
+      const live = await readVaultText(this.app_abyssPrivate.vault, file);
       if (
         live === copy.content &&
         sameNoteFileStamp(stamp, file.stat) &&
@@ -1312,7 +1313,7 @@ export class ObsidianTaskRepository implements TaskRepository {
         peer === undefined
           ? undefined
           : async () => {
-              if ((await this.app_abyssPrivate.vault.read(peer.file)) !== peer.content)
+              if ((await readVaultText(this.app_abyssPrivate.vault, peer.file)) !== peer.content)
                 throw new Error('Move peer changed');
             },
       );
@@ -1342,7 +1343,8 @@ export class ObsidianTaskRepository implements TaskRepository {
       content: undefined,
     };
     const phase = this.createInsertionPhase_abyssPrivate(destination.filePath);
-    const original = guard === undefined ? undefined : await this.app_abyssPrivate.vault.read(file);
+    const original =
+      guard === undefined ? undefined : await readVaultText(this.app_abyssPrivate.vault, file);
     try {
       await this.processFile_abyssPrivate(
         file,
@@ -1485,8 +1487,8 @@ export class ObsidianTaskRepository implements TaskRepository {
     if (original !== undefined) {
       try {
         if (
-          this.isCurrentFile_abyssPrivate(file, path) &&
-          (await this.app_abyssPrivate.vault.read(file)) === original
+          (await readVaultText(this.app_abyssPrivate.vault, file)) === original &&
+          this.isCurrentFile_abyssPrivate(file, path)
         )
           return { type: 'io-error', cause: 'process-error', path, contentState: 'unchanged' };
       } catch {
@@ -1509,7 +1511,10 @@ export class ObsidianTaskRepository implements TaskRepository {
         ? undefined
         : state.captureRejectedSourceInvalidation?.(path, file, createdContent);
     try {
-      const authoritative = await this.app_abyssPrivate.vault.read(file);
+      const readPath = file.path,
+        readStamp = { ...file.stat };
+      const authoritative = await readVaultText(this.app_abyssPrivate.vault, file);
+      this.assertReadCurrent_abyssPrivate(file, readPath, readStamp);
       if (phase === undefined) state.installCommittedContent(path, authoritative);
       else phase.rejectObserved(authoritative, state);
     } catch {
@@ -1820,7 +1825,9 @@ export class ObsidianTaskRepository implements TaskRepository {
     }
     let content: string;
     try {
-      content = await this.app_abyssPrivate.vault.read(target);
+      const readStamp = { ...target.stat };
+      content = await readVaultText(this.app_abyssPrivate.vault, target);
+      this.assertReadCurrent_abyssPrivate(target, receipt.targetPath, readStamp);
     } catch {
       return { type: 'result', result: this.partialArchive_abyssPrivate(receipt, 'io-error') };
     }
@@ -1906,7 +1913,10 @@ export class ObsidianTaskRepository implements TaskRepository {
   ): Promise<string | TaskRepositoryResult> {
     try {
       const stamp = strict ? { ...file.stat } : undefined;
-      const content = await this.app_abyssPrivate.vault.read(file);
+      const readPath = file.path,
+        readStamp = { ...file.stat };
+      const content = await readVaultText(this.app_abyssPrivate.vault, file);
+      this.assertReadCurrent_abyssPrivate(file, readPath, readStamp);
       return stamp !== undefined && !sameNoteFileStamp(stamp, file.stat)
         ? { type: 'strict-rejected', reason: 'revision-changed' }
         : content;
@@ -2367,7 +2377,10 @@ export class ObsidianTaskRepository implements TaskRepository {
       sourceTask.ref,
     );
     try {
-      const authoritative = await this.app_abyssPrivate.vault.read(file);
+      const readPath = file.path,
+        readStamp = { ...file.stat };
+      const authoritative = await readVaultText(this.app_abyssPrivate.vault, file);
+      this.assertReadCurrent_abyssPrivate(file, readPath, readStamp);
       const located = this.locator_abyssPrivate.locate(
         this.editor_abyssPrivate.rootBlocks(authoritative),
         sourceTask.ref,
@@ -2779,7 +2792,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     const fresh = this.capturePreparedRoot_abyssPrivate(current, acquisition);
     if (fresh === undefined || !this.samePreparedRootBasis_abyssPrivate(basis, fresh))
       return undefined;
-    return (await this.app_abyssPrivate.vault.read(fresh.file)) === fresh.content &&
+    return (await readVaultText(this.app_abyssPrivate.vault, fresh.file)) === fresh.content &&
       this.preparedRootCurrent_abyssPrivate(fresh, fresh.content)
       ? fresh
       : undefined;
@@ -3078,8 +3091,8 @@ export class ObsidianTaskRepository implements TaskRepository {
       let unchanged = false;
       try {
         unchanged =
-          this.isCurrentFile_abyssPrivate(basis.file, path) &&
-          (await this.app_abyssPrivate.vault.read(basis.file)) === basis.content;
+          (await readVaultText(this.app_abyssPrivate.vault, basis.file)) === basis.content &&
+          this.isCurrentFile_abyssPrivate(basis.file, path);
       } catch {
         /* No readback proof means the write effect remains unknown. */
       }
@@ -3314,7 +3327,10 @@ export class ObsidianTaskRepository implements TaskRepository {
   ): Promise<void> {
     if (transaction.transitionToken === undefined) return;
     try {
-      const content = await this.app_abyssPrivate.vault.read(file);
+      const readPath = file.path,
+        readStamp = { ...file.stat };
+      const content = await readVaultText(this.app_abyssPrivate.vault, file);
+      this.assertReadCurrent_abyssPrivate(file, readPath, readStamp);
       this.restoreOwnedTransition_abyssPrivate(
         request.filePath,
         content,
@@ -4145,7 +4161,7 @@ export class ObsidianTaskRepository implements TaskRepository {
       return;
     let cause: 'read-failed' | 'removal-unconfirmed' = 'read-failed';
     try {
-      const fresh = await this.app_abyssPrivate.vault.read(file);
+      const fresh = await readVaultText(this.app_abyssPrivate.vault, file);
       if (fresh !== candidate || !this.cleanupIdentityIsCurrent_abyssPrivate(file, path, policy))
         return;
       cause = 'removal-unconfirmed';
@@ -4398,10 +4414,22 @@ export class ObsidianTaskRepository implements TaskRepository {
     };
   }
 
+  private assertReadCurrent_abyssPrivate(
+    file: TFile,
+    path: string,
+    stamp: { readonly mtime: number; readonly size: number },
+  ): void {
+    if (!this.isCurrentFile_abyssPrivate(file, path) || !sameNoteFileStamp(stamp, file.stat))
+      throw new Error('Task source changed during readback.');
+  }
+
   private async reconcileAfterRejection_abyssPrivate(file: TFile, path: string): Promise<void> {
     if (this.state_abyssPrivate == null) return;
     try {
-      const authoritative = await this.app_abyssPrivate.vault.read(file);
+      const readPath = file.path,
+        readStamp = { ...file.stat };
+      const authoritative = await readVaultText(this.app_abyssPrivate.vault, file);
+      this.assertReadCurrent_abyssPrivate(file, readPath, readStamp);
       this.state_abyssPrivate.installCommittedContent(path, authoritative);
     } catch {
       // The caller's failure result records that the authoritative content is unknown.
@@ -4426,7 +4454,9 @@ export class ObsidianTaskRepository implements TaskRepository {
       : undefined;
     let authoritative: string;
     try {
-      authoritative = await this.app_abyssPrivate.vault.read(file);
+      const readStamp = { ...file.stat };
+      authoritative = await readVaultText(this.app_abyssPrivate.vault, file);
+      this.assertReadCurrent_abyssPrivate(file, path, readStamp);
     } catch {
       authority.abort(token);
       this.state_abyssPrivate.discardAuthoritySuccessor?.(consumed);
@@ -4447,7 +4477,10 @@ export class ObsidianTaskRepository implements TaskRepository {
     consumed: TaskRef,
   ): Promise<void> {
     try {
-      const authoritative = await this.app_abyssPrivate.vault.read(file);
+      const readPath = file.path,
+        readStamp = { ...file.stat };
+      const authoritative = await readVaultText(this.app_abyssPrivate.vault, file);
+      this.assertReadCurrent_abyssPrivate(file, readPath, readStamp);
       this.installRejectedContent_abyssPrivate(path, authoritative, consumed);
     } catch {
       // The caller's failure result records that the authoritative content is unknown.

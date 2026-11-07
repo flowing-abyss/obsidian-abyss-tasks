@@ -34,6 +34,11 @@ import {
   type TaskDescriptionLine,
 } from './taskBlockSyntax';
 import type { TaskMarkdownCodec } from './TaskMarkdownCodec';
+import {
+  hasTaskAncestor,
+  taskSourceListItemSteps,
+  type FallbackListItem,
+} from './taskSourceListItems';
 
 const PREFIX_RE = /^([\s>]*)/u;
 const LINE_BREAK_RE = /[\r\n]/u;
@@ -662,6 +667,22 @@ function readTaskRootBlocks(content: string): readonly TaskRootBlock[] {
 }
 
 /** The synchronous editor and cooperative evidence reader consume the same ownership algorithm. */
+function* semanticTaskRootLines(
+  commentLines: readonly string[],
+): Generator<undefined, ReadonlySet<number>> {
+  const semanticItems = new Map<number, FallbackListItem>();
+  const rootLines = new Set<number>();
+  for (const item of taskSourceListItemSteps(commentLines)) {
+    if (item !== undefined) {
+      semanticItems.set(item.position.start.line, item);
+      if (item.task !== undefined && !hasTaskAncestor(item, semanticItems))
+        rootLines.add(item.position.start.line);
+    }
+    yield undefined;
+  }
+  return rootLines;
+}
+
 function* taskRootBlockSteps(content: string): Generator<TaskRootBlock | undefined> {
   const lines: SourceLine[] = [];
   for (const line of sourceLineSteps(content)) {
@@ -669,9 +690,12 @@ function* taskRootBlockSteps(content: string): Generator<TaskRootBlock | undefin
     yield undefined;
   }
   const commentLines = lines.map((line) => line.text);
+  const rootLines = yield* semanticTaskRootLines(commentLines);
   let index = 0;
   while (index < lines.length) {
-    const found = yield* rootBlockAtSteps(lines, commentLines, content, index);
+    const found = rootLines.has(index)
+      ? yield* rootBlockAtSteps(lines, commentLines, content, index)
+      : undefined;
     if (found === undefined) {
       index++;
       yield undefined;
@@ -814,7 +838,7 @@ function nestedLinePrefix(context: BlockEditContext): string {
     if (line === undefined || isTaskBlockBlankLine(line.text)) continue;
     if (indentation(line.text) > parentIndent) return PREFIX_RE.exec(line.text)?.[1] ?? '';
   }
-  return `${PREFIX_RE.exec(context.parent.text)?.[1] ?? ''}${context.indentUnit}`;
+  return `${PREFIX_RE.exec(context.parent.text.replace(/^\uFEFF/u, ''))?.[1] ?? ''}${context.indentUnit}`;
 }
 
 function insertChildLine(context: BlockEditContext, at: number, text: string): void {

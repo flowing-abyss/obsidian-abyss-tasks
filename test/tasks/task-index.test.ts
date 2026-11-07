@@ -17,6 +17,7 @@ import {
   flushMicrotasks,
   metadataChangedEmitter,
   seedTaskCache,
+  setVaultSource,
   useRealMoment,
 } from '../helpers';
 import { expectDefined } from './../helpers';
@@ -57,7 +58,15 @@ async function setup(
   const app = await createAppWithFiles(files);
   for (const path of Object.keys(files))
     seedTaskCache(app, path, [{ task: ' ', parent: -1, line: 0 }]);
-  const fireChanged = metadataChangedEmitter(app);
+  const emitChanged = metadataChangedEmitter(app);
+  // These lifecycle fixtures model accepted native events: bytes/stat have changed first.
+  // Explicit stale callbacks continue to use metadataChangedEmitter directly.
+  const fireChanged = (file: TFile, data: string, cache: CachedMetadata): void => {
+    if (app.vault.getAbstractFileByPath(file.path) === file) {
+      setVaultSource(app, file.path, data);
+    }
+    emitChanged(file, data, cache);
+  };
   const index = new TaskIndex(app, {
     statusCatalog: canonicalStatusCatalog(),
 

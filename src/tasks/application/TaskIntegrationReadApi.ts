@@ -1,32 +1,16 @@
+import type {
+  AcceptedNoteSource,
+  NoteSourceReadApi,
+  TaskReadObservation,
+  TaskReadResult,
+  TaskReadScope,
+} from '../../notes/NoteSourceApi';
 import type { TaskNodeSnapshot } from '../domain/taskDependencies';
 import type { TaskOccurrenceAddress, TaskOccurrenceWitness } from '../domain/taskOccurrence';
 import type { TrackedTotal } from '../domain/timeTracking';
 import type { TaskSnapshot, TaskStatus } from '../domain/types';
+export type { TaskReadObservation, TaskReadResult, TaskReadScope } from '../../notes/NoteSourceApi';
 
-export interface TaskReadObservation {
-  readonly revision: number;
-  readonly generation: number;
-  readonly scopeRevision: number;
-  readonly semanticsRevision: number;
-  readonly lifecycle: 'initializing' | 'ready' | 'failed' | 'disposed';
-}
-export interface TaskReadScope {
-  readonly path?: string;
-  readonly folder?: string;
-}
-type TaskReadFailure =
-  | 'not-ready'
-  | 'failed'
-  | 'disposed'
-  | 'incomplete'
-  | 'generation-changed'
-  | 'unavailable'
-  | 'missing'
-  | 'stale'
-  | 'ambiguous';
-export type TaskReadResult<T> =
-  | { readonly type: 'ok'; readonly value: T; readonly observation: TaskReadObservation }
-  | { readonly type: 'error'; readonly reason: TaskReadFailure };
 export interface TaskSourceHealthChange {
   readonly filePath: string;
   readonly fileIdentity: object;
@@ -123,34 +107,12 @@ export interface TaskIntegrationReadApi extends TaskIntegrationReadStateApi {
   canDisclose(address: TaskOccurrenceAddress): boolean;
 }
 
-/** Borrowed accepted source data, available only to the inward project owner. */
-interface ProjectAcceptedSource {
-  readonly path: string;
-  readonly identity: object;
-  readonly version: number;
-  readonly content: string;
-  readonly metadata: {
-    readonly tags: readonly string[];
-    readonly frontmatter: Readonly<Record<string, unknown>>;
-  };
+/** Task/project projection over the same accepted Markdown source owner. */
+interface ProjectAcceptedSource extends AcceptedNoteSource {
   readonly roots: readonly TaskSnapshot[];
   readonly tracked: TrackedTotal;
 }
-export interface ProjectSourceReadApi {
-  prospective(path: string, content: string): TaskReadResult<ProjectAcceptedSource['metadata']>;
-  reconcile(path: string, file: object, content: string): Promise<boolean>;
-  coverage(scope?: TaskReadScope): TaskReadResult<true>;
-  paths(): readonly string[];
+export interface ProjectSourceReadApi extends NoteSourceReadApi {
   get(path: string): TaskReadResult<ProjectAcceptedSource | undefined>;
-  /** Pins the current acquisition while a move waits for its native source proof. */
   acquire(path: string): Promise<TaskReadResult<ProjectAcceptedSource | undefined>>;
-  matchesFile(
-    proof: Pick<ProjectAcceptedSource, 'path' | 'identity' | 'version'>,
-    file: object,
-  ): boolean;
-  candidate(
-    proof: { readonly path: string; readonly identity: object; readonly version: number },
-    live: string,
-    content: string,
-  ): TaskReadResult<ProjectAcceptedSource['metadata']>;
 }

@@ -748,6 +748,13 @@ export class TaskRefAuthority {
     );
   }
 
+  /** Positive current write ownership, never inferred from an equal metadata echo. */
+  ownsForwardedSource(filePath: string, content: string): boolean {
+    const pending = this.transitions.get(filePath);
+    const exact = pending?.exactSource;
+    return hasForwardOwnership(pending) && exact?.forwarded === true && exact.after === content;
+  }
+
   /** Watchers defer owned transaction bytes; contrary observations still revoke ownership. */
   deferObservation(filePath: string, content: string): boolean {
     const exact = this.transitions.get(filePath)?.exactSource;

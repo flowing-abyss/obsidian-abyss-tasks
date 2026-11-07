@@ -635,6 +635,16 @@ export function createAppWithFiles(files: Record<string, string>): Promise<Obsid
   return Promise.resolve(appWithFiles(files));
 }
 
+/** Model native bytes/stat changing before a separately controlled metadata event. */
+export function setVaultSource(app: ObsidianApp, path: string, content: string): void {
+  const file = expectDefined(app.vault.getFileByPath(path));
+  (app.vault.adapter as unknown as { writeSync__(path: string, text: string): void }).writeSync__(
+    path,
+    content,
+  );
+  (app.vault as unknown as { refreshStat__(file: TFile): void }).refreshStat__(file);
+}
+
 /** Edit a native settings control through its owning window's user-input event. */
 export function editSettingControl(
   element: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,

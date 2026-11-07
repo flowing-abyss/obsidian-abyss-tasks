@@ -5,7 +5,7 @@ import {
   TaskRefAuthority,
   taskRefContentFingerprint,
 } from '../../src/tasks/infrastructure/TaskRefAuthority';
-import { expectDefined, objectMatching } from '../helpers';
+import { expectDefined, objectMatching, setVaultSource } from '../helpers';
 import { publicApiHarness } from '../support/publicApiHarness';
 
 function stagedFixture(authority = new TaskRefAuthority('witness')) {
@@ -130,6 +130,7 @@ describe('accepted occurrence installation', () => {
         if (route === 'metadata') await h.external('a.md', f.after);
         else if (route === 'repository') h.index.installCommittedContent('a.md', f.after);
         else {
+          setVaultSource(h.app, 'a.md', f.after);
           vi.spyOn(h.app.vault, 'cachedRead').mockResolvedValue(f.after);
           await h.index.refreshSourceExclusion(undefined);
         }
@@ -557,13 +558,15 @@ it.each(['repository', 'metadata'] as const)(
         );
       const install = (content: string): void => {
         if (route === 'repository') h.index.installCommittedContent('a.md', content);
-        else
+        else {
+          setVaultSource(h.app, 'a.md', content);
           h.app.metadataCache.trigger(
             'changed',
             expectDefined(h.app.vault.getFileByPath('a.md')),
             content,
             {},
           );
+        }
       };
       const first = stage('- [x] second', firstWitness);
       if (first.type !== 'staged') throw new Error('first stage failed');

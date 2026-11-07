@@ -13,21 +13,24 @@ import type {
   TasksApiProviderV1,
   TasksApiV1,
 } from '../../api';
+import { NOTE_LIMITS, type NoteApplicationApi } from '../notes/noteApi';
 import type {
   TaskIntegrationReadApi,
   TaskReadObservation,
   TaskSearchApi,
   TaskStatusMutationApi,
 } from '../tasks';
-import { ProjectReadRegistry } from './ProjectReadRegistry';
-import { TaskCursorRegistry } from './TaskCursorRegistry';
-import { TaskIdentityRegistry } from './TaskIdentityRegistry';
-import { TaskRequestRegistry } from './TaskRequestRegistry';
+import { NoteApi } from './noteApi';
+import { NoteReadRegistry } from './NoteReadRegistry';
 import { createProjectApiMutations, type ProjectPorts } from './projectApiMutations';
 import { createProjectApiReads } from './projectApiReads';
+import { ProjectReadRegistry } from './ProjectReadRegistry';
 import { createTaskApiMutations } from './taskApiMutations';
 import { createTaskApiReads, lifecycleError, readError } from './taskApiReads';
 import { TaskContentApi, type TaskContentPorts } from './taskContentApi';
+import { TaskCursorRegistry } from './TaskCursorRegistry';
+import { TaskIdentityRegistry } from './TaskIdentityRegistry';
+import { TaskRequestRegistry } from './TaskRequestRegistry';
 import { TaskSearchReads } from './taskSearchApi';
 import { validateApiRequest, validateReadOptions } from './validation';
 import { apiError, freezeValue } from './values';
@@ -48,6 +51,7 @@ interface ClientRecord {
   readonly listeners: Set<(event: ApiEventV1) => void>;
   readonly waits: Set<() => void>;
   content?: TaskContentApi;
+  notes?: NoteApi;
   search?: TaskSearchReads;
 }
 interface Publication {
@@ -58,6 +62,7 @@ interface Publication {
   }>;
 }
 interface ProviderOptions {
+  readonly notes?: NoteApplicationApi;
   readonly search?: TaskSearchApi;
   readonly content?: TaskContentPorts;
   readonly projects?: ProjectPorts;
@@ -69,6 +74,7 @@ interface ProviderOptions {
   readonly diagnostic: (operation: string, code: string, diagnosticId: string) => void;
 }
 interface ProviderOwner {
+  readonly notes?: NoteReadRegistry;
   readonly projects?: { ports: ProjectPorts; registry: ProjectReadRegistry };
   readonly requests: TaskRequestRegistry;
   readonly options: ProviderOptions;
@@ -90,6 +96,9 @@ function apiInfo(options: ProviderOptions): ApiInfoV1 {
     providerEpoch: options.epoch,
     capabilities: [
       'tasks.read',
+      ...(options.notes === undefined
+        ? []
+        : ['notes.search', 'notes.read', 'notes.prepare', 'notes.create', 'notes.apply']),
       'tasks.tags',
       ...(options.search === undefined ? [] : ['tasks.search']),
       ...(options.content === undefined
@@ -125,6 +134,7 @@ function apiInfo(options: ProviderOptions): ApiInfoV1 {
             maxRetainedProjectBytes: 4 * 1024 * 1024,
           },
         }),
+    ...(options.notes === undefined ? {} : { noteLimits: NOTE_LIMITS }),
     limits: {
       defaultPageSize: 100,
       maxPageSize: 500,
@@ -171,6 +181,7 @@ function closeClient(owner: ProviderOwner, client: ClientRecord): void {
   if (!client.live) return;
   client.live = false;
   client.content?.dispose();
+  client.notes?.dispose();
   client.search?.dispose();
   client.listeners.clear();
   owner.clients.delete(client);
@@ -188,6 +199,7 @@ function closeProvider(owner: ProviderOwner): void {
   owner.identities.dispose();
   owner.cursors.dispose();
   owner.projects?.registry.dispose();
+  owner.notes?.dispose();
 }
 function checkProvider(owner: ProviderOwner): ApiResultV1<never> | undefined {
   if (owner.terminal !== undefined) return owner.terminal;
@@ -389,7 +401,13 @@ function getApi(
       epoch: owner.options.epoch,
       isDisposed: () => owner.closed || !client.live,
     };
+    const notes =
+      owner.notes === undefined
+        ? undefined
+        : new NoteApi({ ...mutation, registry: owner.notes, now: owner.options.now });
+    if (notes !== undefined) client.notes = notes;
     const api: TasksApiV1 = {
+      ...(notes === undefined ? {} : { notes: notes.api }),
       info: owner.info,
       ready: (input) => ready(context, client, input),
       subscribe: (listener) => subscribe(owner, context, client, listener),
@@ -423,6 +441,9 @@ export class TaskApiProvider implements TasksApiProviderV1 {
   constructor(options: ProviderOptions) {
     const owner: ProviderOwner = {
       options,
+      ...(options.notes === undefined
+        ? {}
+        : { notes: new NoteReadRegistry(options.notes, options.epoch, options.now) }),
       ...(options.projects === undefined
         ? {}
         : {

@@ -1,3 +1,6 @@
+export type MutationOutcomeV1 = 'changed' | 'noop' | 'failed';
+export type StorageEffectV1 = 'unchanged' | 'committed' | 'unknown';
+
 /**
  * Abyss Tasks public integration API, version 1.
  *
@@ -95,6 +98,29 @@ export interface ObservationV1 {
  * documented on each property below. Capability strings describe operations, not permissions.
  */
 export interface ApiInfoV1 {
+  readonly noteLimits?: {
+    readonly defaultPageCharacters: number;
+    readonly maxPageCharacters: number;
+    readonly maxSectionsPerPage: number;
+    readonly defaultSearchMatches: number;
+    readonly maxSearchMatches: number;
+    readonly searchSourceCharacterTarget: number;
+    readonly maxSingleSearchSourceCharacters: number;
+    readonly maxSearchQueryCharacters: number;
+    readonly maxSearchSources: number;
+    readonly snippetCharacters: number;
+    readonly cursorTtlMs: number;
+    readonly maxCursors: number;
+    readonly handleTtlMs: number;
+    readonly maxNoteHandles: number;
+    readonly maxSectionHandles: number;
+    readonly maxPlanTextBytes: number;
+    readonly maxInputBytes: number;
+    readonly maxRetainedPlanBytes: number;
+    readonly maxRetainedRequestBytes: number;
+    readonly planTtlMs: number;
+    readonly maxPlans: number;
+  };
   readonly apiVersion: 1;
   readonly pluginVersion: string;
   readonly providerEpoch: string;
@@ -309,7 +335,7 @@ export interface MutationReceiptV1 {
   readonly requestId: string;
   readonly acceptedAt: number;
   readonly expiresAt: number;
-  readonly outcome: 'changed' | 'noop' | 'failed';
+  readonly outcome: MutationOutcomeV1;
   readonly effects: EffectStateV1;
   readonly recovery: RecoveryV1;
   readonly original: {
@@ -346,6 +372,7 @@ export type MutationResultV1 =
  * Accepted writes and retained receipts survive client disposal, but not unload.
  */
 export interface TasksApiV1 {
+  readonly notes?: NotesApiV1;
   readonly info: ApiInfoV1;
   readonly ready: (options?: ReadOptionsV1) => Promise<ApiResultV1<ReadyV1>>;
   readonly subscribe: (listener: (event: ApiEventV1) => void) => ApiResultV1<() => void>;
@@ -537,13 +564,13 @@ export interface ProjectMutationReceiptV1 {
   readonly requestId: string;
   readonly acceptedAt: number;
   readonly expiresAt: number;
-  readonly outcome: 'changed' | 'noop' | 'failed';
+  readonly outcome: MutationOutcomeV1;
   readonly effects: EffectStateV1;
   readonly recovery: RecoveryV1;
   readonly project?: { readonly target: ProjectTargetV1; readonly revision: ProjectRevisionV1 };
   readonly task?: { readonly target: TaskTargetV1; readonly revision: TaskRevisionV1 };
-  readonly destinationCopy?: 'unchanged' | 'committed' | 'unknown';
-  readonly sourceRemoval?: 'unchanged' | 'committed' | 'unknown';
+  readonly destinationCopy?: StorageEffectV1;
+  readonly sourceRemoval?: StorageEffectV1;
 }
 export type ProjectMutationResultV1 =
   | { readonly ok: true; readonly receipt: ProjectMutationReceiptV1 }
@@ -827,3 +854,168 @@ export type TaskContentMutationResultV1 =
       readonly recovery: RecoveryV1;
       readonly receipt?: TaskContentReceiptV1;
     };
+
+export type NoteTargetV1 = string;
+export type NoteRevisionV1 = string;
+export type NoteSectionTargetV1 = string;
+export type NotePlanTargetV1 = string;
+export type NotePlanRevisionV1 = string;
+
+export interface NoteSummaryV1 {
+  readonly target: NoteTargetV1;
+  readonly revision: NoteRevisionV1;
+  readonly path: string;
+  readonly name: string;
+  readonly aliases: readonly string[];
+}
+export interface SearchNotesV1 {
+  readonly query: string;
+  readonly fields?: 'name' | 'body' | 'all'; // default all
+  readonly path?: string;
+  readonly folder?: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+export interface NoteSearchPageV1 extends ObservationV1 {
+  readonly items: ReadonlyArray<{
+    readonly note: NoteSummaryV1;
+    readonly matchedIn: ReadonlyArray<'name' | 'alias' | 'body'>;
+    readonly snippet?: string;
+    readonly snippetTruncated: boolean;
+  }>;
+  readonly coverage: 'complete' | 'incomplete';
+  readonly complete: boolean;
+  readonly truncated: boolean;
+  readonly nextCursor?: string;
+}
+
+export type NoteSelectorV1 =
+  | { readonly target: NoteTargetV1; readonly expectedRevision?: NoteRevisionV1 }
+  | { readonly path: string }
+  | { readonly section: NoteSectionTargetV1 }
+  | {
+      readonly link: {
+        readonly from: NoteTargetV1;
+        readonly expectedFromRevision: NoteRevisionV1;
+        readonly wikiLink: string; // exactly one complete [[target#fragment|display]] link
+      };
+    };
+export interface ReadNoteV1 {
+  readonly selector: NoteSelectorV1;
+  readonly limitCharacters?: number;
+  readonly limitSections?: number;
+  readonly cursor?: string;
+  readonly linkFor?: {
+    readonly from: NoteTargetV1;
+    readonly expectedFromRevision: NoteRevisionV1;
+    readonly alias?: string;
+  };
+}
+export interface NoteSectionV1 {
+  readonly target: NoteSectionTargetV1;
+  readonly kind: 'prose' | 'heading' | 'block' | 'frontmatter' | 'task' | 'other';
+  readonly label?: string;
+  readonly canReplace: boolean;
+  readonly canAppend: boolean;
+}
+export interface NoteReadPageV1 extends ObservationV1 {
+  readonly note: NoteSummaryV1;
+  readonly selection: 'note' | 'heading' | 'block' | 'section';
+  readonly resolvedSubpath?: string;
+  readonly segments: ReadonlyArray<{
+    readonly section: NoteSectionV1;
+    readonly text: string;
+    readonly continuesPrevious: boolean;
+    readonly continuesNext: boolean;
+  }>;
+  readonly complete: boolean;
+  readonly truncated: boolean;
+  readonly nextCursor?: string;
+  readonly markdownLink?: string;
+}
+
+export type NoteOperationV1 =
+  | { readonly type: 'append'; readonly section: NoteSectionTargetV1; readonly text: string }
+  | {
+      readonly type: 'replace-section';
+      readonly section: NoteSectionTargetV1;
+      readonly text: string;
+    };
+export type PrepareNoteV1 =
+  | {
+      readonly kind: 'edit';
+      readonly target: NoteTargetV1;
+      readonly expectedRevision: NoteRevisionV1;
+      readonly operation: NoteOperationV1;
+    }
+  | {
+      readonly kind: 'create';
+      readonly path: string;
+      readonly title: string;
+      readonly text: string;
+      readonly template?: NoteTargetV1;
+      readonly expectedTemplateRevision?: NoteRevisionV1;
+    };
+export interface NotePlanV1 extends Omit<ObservationV1, 'revision'> {
+  readonly target: NotePlanTargetV1;
+  readonly revision: NotePlanRevisionV1;
+  readonly kind: 'edit' | 'create';
+  readonly expiresAt: number;
+  readonly path: string;
+  readonly before: { readonly text: string; readonly complete: true } | null;
+  readonly after: { readonly text: string; readonly complete: true };
+  readonly note?: { readonly target: NoteTargetV1; readonly revision: NoteRevisionV1 };
+  readonly section?: NoteSectionTargetV1;
+}
+export interface CommitNoteV1 {
+  readonly plan: NotePlanTargetV1;
+  readonly expectedPlanRevision: NotePlanRevisionV1;
+  readonly requestId: string;
+  readonly expiresAt: number;
+}
+export interface NoteMutationReceiptV1 {
+  readonly providerEpoch: string;
+  readonly requestId: string;
+  readonly acceptedAt: number;
+  readonly expiresAt: number;
+  readonly plan: NotePlanTargetV1;
+  readonly planRevision: NotePlanRevisionV1;
+  readonly outcome: MutationOutcomeV1;
+  readonly effects: EffectStateV1;
+  readonly recovery: RecoveryV1;
+  readonly noteEffects: StorageEffectV1;
+  readonly destinationEffects: StorageEffectV1;
+  readonly note?: { readonly target: NoteTargetV1; readonly revision: NoteRevisionV1 };
+  readonly warnings: readonly MutationWarningV1[];
+}
+export type NoteMutationResultV1 =
+  | { readonly ok: true; readonly receipt: NoteMutationReceiptV1 }
+  | {
+      readonly ok: false;
+      readonly error: ApiErrorV1;
+      readonly effects: EffectStateV1;
+      readonly recovery: RecoveryV1;
+      readonly receipt?: NoteMutationReceiptV1;
+    };
+export interface NotesApiV1 {
+  readonly search: (
+    query: SearchNotesV1,
+    options?: ReadOptionsV1,
+  ) => Promise<ApiResultV1<NoteSearchPageV1>>;
+  readonly read: (
+    query: ReadNoteV1,
+    options?: ReadOptionsV1,
+  ) => Promise<ApiResultV1<NoteReadPageV1>>;
+  readonly prepare: (
+    input: PrepareNoteV1,
+    options?: ReadOptionsV1,
+  ) => Promise<ApiResultV1<NotePlanV1>>;
+  readonly create: (
+    input: CommitNoteV1,
+    options?: MutationOptionsV1,
+  ) => Promise<NoteMutationResultV1>;
+  readonly apply: (
+    input: CommitNoteV1,
+    options?: MutationOptionsV1,
+  ) => Promise<NoteMutationResultV1>;
+}

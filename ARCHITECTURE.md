@@ -177,6 +177,14 @@ renames. Settings writes use composition-root ports. The exact file/owner/API au
 the reasons for exceptions live in [`storageAuthority.ts`](test/architecture/storageAuthority.ts).
 Passing data to a renderer or deriving a projection grants no write authority.
 
+`NoteApplicationService.commitPreparedSection` owns one additional `Vault.process` acquisition
+for prepared prose sections. Main supplies the existing per-file task queue and canonical task
+protection. The writer checks the native file, full accepted bytes, source scope and semantics,
+frontmatter, and the complete task population before returning its sealed candidate. Its native
+adapter uses `TaskRefAuthority.reserveStructuralMutation` to preserve roots and children only
+through an exact prose-range displacement. Rejected or unreadable writes retire speculative
+continuations through the existing restoration and invalidation paths.
+
 ## Portable integration contract
 
 [`api.d.ts`](api.d.ts) is the canonical external contract, including discovery and cleanup
@@ -191,6 +199,43 @@ transport, or SDK is implemented. `src/main.ts` alone composes the provider with
 application service. `src/integrations/` imports inward contracts through `src/tasks` and the narrow
 [`projectApi`](src/projects/projectApi.ts) port; the task domain,
 application and infrastructure layers do not depend on the external declaration or facade.
+
+The optional `notes.search/read/prepare/create/apply` facade uses the neutral
+[`NoteSourceReadApi`](src/notes/NoteSourceApi.ts) over TaskIndex's existing accepted source store.
+The project reader extends that same contract. Zero-task notes participate in source observation
+and coverage. Opaque note and section handles retain identities and source ranges; write plans
+retain their sealed bytes within bounded budgets. All mutations share `TaskRequestRegistry`,
+including request IDs, admission, replay and retained receipts. Each delivery rechecks current
+disclosure while receipts retain historical storage effects.
+
+Note search uses the host's `prepareSimpleSearch` against whole accepted sources in canonical
+path order. Its per-call character target is 262,144, with one oversized source permitted up to
+4,194,304 characters; larger sources return `RESOURCE_LIMIT` and remain available through paged
+reads. Read pages preserve every selected character and keep transport fragments tied to their
+complete section handle. Frontmatter and task blocks remain read-only. Heading/block selection
+uses public host link resolution only with structure supplied by an exact accepted metadata event;
+unproven caches leave plain note reads and safe prose gaps available. Canonical block ownership
+and TaskIndex share `taskSourceListItems`, including fence and ancestor semantics.
+
+Native source acquisition and task/project/template readback use `readVaultText`, preserving
+`read` versus `cachedRead` scheduling. A UTF-8 byte-count/native-size discrepancy triggers
+`readBinary` and fatal UTF-8 decoding with the leading BOM retained; fallback succeeds only when
+raw text equals a single BOM followed by the original read. Contrary text raises a typed source-change
+refusal; reconciliation treats that refusal as no installation and preserves native I/O rejection
+routing. Initial cached-load recovery retains existing committed coverage only after a fresh exact
+read verifies the same captured source, native observation and scope; it installs no stale cache.
+Byte counts are not equality proofs. Owners retain and synchronously recheck their
+original native file, stamp and policy after the helper returns. A normalized metadata event is
+bound to raw text by exact equality or the verified single leading-BOM relation; `exactSourceMetadata`
+validates and projects its coordinates before installation. Unproven/stale events grant no
+heading/block authority. Append previews include a required existing trailing line separator
+before a following protected block; commit writes that sealed result.
+
+Prepared note creation freezes the static template and final prose through `NoteTemplateService`.
+Its existing `commitStaticNote` remains the sole static creation sink and checks the final source
+basis synchronously after asynchronous validation. Executable templates and task-containing
+candidates are rejected before provisioning. Folder effects and note effects remain separate;
+a later task-link failure never authorizes repeating a successful note creation.
 
 The headless project read adapter derives membership and fields from accepted TaskIndex sources,
 including empty notes, without opening ProjectStore. Main injects one reader, the ProjectManager

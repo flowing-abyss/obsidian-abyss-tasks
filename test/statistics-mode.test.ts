@@ -11,7 +11,13 @@ import type { StatisticsAction, StatisticsScope, StatisticsViewModel } from '../
 import { StatisticsSession } from '../src/statistics/statisticsSession';
 import { TagManager } from '../src/tags/TagManager';
 import type { TaskStatisticsSnapshot, TaskStatisticsSource } from '../src/tasks';
-import { configuredTaskApplication, createAppWithFiles, deferred, expectDefined } from './helpers';
+import {
+  configuredTaskApplication,
+  createAppWithFiles,
+  deferred,
+  expectDefined,
+  setVaultSource,
+} from './helpers';
 import { closed, date, request, source, task, utc, work } from './helpers/statisticsFixtures';
 import { resetStatisticsScrollAtCommit } from './support/statisticsNativeScroll';
 const cleanups: Array<() => void> = [];
@@ -441,10 +447,7 @@ it('joins real accepted source and project membership only after both barriers, 
   const first = element.querySelector('.abyss-statistics-section');
   const release = index.holdStatisticsPublication();
   nextCompletion();
-  await app.vault.adapter.write(
-    'Note.md',
-    '---\ntags: [project]\n---\n- [ ] Updated ➕ 2026-10-01\n',
-  );
+  setVaultSource(app, 'Note.md', '---\ntags: [project]\n---\n- [ ] Updated ➕ 2026-10-01\n');
   seedTaskCache(app, 'Note.md', [{ task: ' ', parent: -1, line: 3 }], { tags: ['project'] });
   await vi.advanceTimersByTimeAsync(150);
   await projects.whenSettled();
@@ -455,10 +458,7 @@ it('joins real accepted source and project membership only after both barriers, 
   await completion.current.promise;
   expect(element.querySelector('.abyss-statistics-section')).not.toBe(first);
   nextCompletion();
-  await app.vault.adapter.write(
-    'Note.md',
-    '---\ntags: []\n---\n- [ ] Updated again ➕ 2026-10-01\n',
-  );
+  setVaultSource(app, 'Note.md', '---\ntags: []\n---\n- [ ] Updated again ➕ 2026-10-01\n');
   seedTaskCache(app, 'Note.md', [{ task: ' ', parent: -1, line: 3 }], { tags: [] });
   await index.whenStatisticsSettled();
   await vi.advanceTimersByTimeAsync(150);
@@ -951,10 +951,7 @@ it.each(['membership loss', 'deletion'] as const)(
     h.reset();
     if (loss === 'deletion') await h.app.fileManager.trashFile(file);
     else {
-      await h.app.vault.adapter.write(
-        'After.md',
-        '---\ntags: []\n---\n- [ ] Original ➕ 2026-10-01\n',
-      );
+      setVaultSource(h.app, 'After.md', '---\ntags: []\n---\n- [ ] Original ➕ 2026-10-01\n');
       h.seedTaskCache(h.app, 'After.md', [{ task: ' ', parent: -1, line: 3 }], { tags: [] });
     }
     await h.index.whenStatisticsSettled();

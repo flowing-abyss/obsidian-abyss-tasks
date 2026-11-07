@@ -93,6 +93,12 @@ const allowed = [
     'cleanupEmptyTaskNote_abyssPrivate',
     'FileManager.trashFile',
   ],
+  [
+    'src/notes/NoteApplicationService.ts',
+    'NoteApplicationService',
+    'commitPreparedSection',
+    'Vault.process',
+  ],
   ['src/projects/ProjectManager.ts', 'ProjectManager', 'updateIntegrationProject', 'Vault.process'],
   ['src/notes/NoteTemplateService.ts', 'NoteTemplateService', 'commitStaticNote', 'Vault.create'],
   ['src/projects/ProjectManager.ts', 'ProjectManager', 'applyEditsGuarded', 'Vault.process'],
@@ -311,7 +317,7 @@ describe('resolved Obsidian storage authority', () => {
       const found = [...new Set([...allowed.map(([file]) => file), 'src/main.ts'])].flatMap(
         accesses,
       );
-      expect(found).toHaveLength(13);
+      expect(found).toHaveLength(14);
       expect(storageAuthorityViolations(found, STORAGE_AUTHORIZATIONS)).toEqual([]);
     },
     TYPESCRIPT_PROGRAM_TIMEOUT_MS,
@@ -350,6 +356,44 @@ describe('resolved Obsidian storage authority', () => {
       ),
     ).toHaveLength(2);
   });
+
+  it.each([
+    [
+      'src/notes/NoteApplicationService.ts',
+      'otherSection',
+      'await app.vault.process(file, text => text);',
+    ],
+    [
+      'src/notes/NoteApplicationService.ts',
+      'commitPreparedSection',
+      "await app.vault.modify(file, 'whole note');",
+    ],
+    [
+      'src/notes/NoteApplicationService.ts',
+      'otherSection',
+      'const extracted = app.vault.process; void extracted;',
+    ],
+    [
+      'src/integrations/noteApi.ts',
+      'commitPreparedSection',
+      'await app.vault.process(file, text => text);',
+    ],
+  ])(
+    'rejects adjacent note authority %s#%s',
+    (path, method, statement) => {
+      const source = `${prelude}class NoteApplicationService { async ${method}(): Promise<void> { ${statement} } }`;
+      const candidate = fixtureProgram(new Map([[repoFile(path), source]]));
+      const sourceFile = candidate.getSourceFile(repoFile(path));
+      if (sourceFile === undefined) throw new Error('Missing fixture');
+      const found = collectStorageAccesses(candidate, [sourceFile]);
+      expect(
+        storageAuthorityViolations(found, STORAGE_AUTHORIZATIONS).filter((message) =>
+          message.startsWith('storage/unauthorized'),
+        ),
+      ).not.toEqual([]);
+    },
+    TYPESCRIPT_PROGRAM_TIMEOUT_MS,
+  );
 
   it(
     'fails fixture setup on unresolved types or malformed syntax',
@@ -410,7 +454,7 @@ describe('resolved Obsidian storage authority', () => {
           .map((source) => source.fileName),
       ).toEqual([]);
       const found = collectStorageAccesses(sourceProgram, sourceFiles);
-      expect(found).toHaveLength(13);
+      expect(found).toHaveLength(14);
       expect(storageAuthorityViolations(found, STORAGE_AUTHORIZATIONS)).toEqual([]);
     },
     TYPESCRIPT_PROGRAM_TIMEOUT_MS,
