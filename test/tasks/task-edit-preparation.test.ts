@@ -17,7 +17,7 @@ describe('canonical task edit preparation', () => {
     const initial = reads.capture();
     const roots = h.index.list();
     const preparation = ready(
-      h.service.prepare(h.root, [
+      await h.service.prepare(h.root, [
         {
           type: 'patch',
           target: { type: 'task', ref: h.root.ref },
@@ -57,7 +57,7 @@ describe('canonical task edit preparation', () => {
 
   it('uses each preceding preview ref for nested child comments and structural changes', async () => {
     const h = await taskEditPreparationHarness('- [ ] Root\n\t- [ ] Child\n\t\t- [ ] Grandchild\n');
-    const original = ready(h.service.prepare(h.root, []));
+    const original = ready(await h.service.prepare(h.root, []));
     let p = original;
     const child = () => expectDefined(expectDefined(p.after).subtasks[0]);
     const grandchild = () => expectDefined(child().subtasks[0]);
@@ -101,7 +101,7 @@ describe('canonical task edit preparation', () => {
   it('keeps stale preview refs from modifying another revision', async () => {
     const h = await taskEditPreparationHarness('- [ ] Root\n');
     const p = ready(
-      h.service.prepare(h.root, [
+      await h.service.prepare(h.root, [
         {
           type: 'patch',
           target: { type: 'task', ref: h.root.ref },
@@ -124,7 +124,7 @@ describe('canonical task edit preparation', () => {
     const h = await taskEditPreparationHarness('- [ ] Root #work\n', { behavior });
     const ordinary = await taskEditPreparationHarness('- [ ] Root #work\n', { behavior });
     const p = ready(
-      h.service.prepare(h.root, [
+      await h.service.prepare(h.root, [
         { type: 'add-subtask', parent: { type: 'task', ref: h.root.ref }, text: 'Child' },
       ]),
     );
@@ -145,7 +145,7 @@ describe('canonical task edit preparation', () => {
 
   it.each(['invalid-date', 'line-injection'])('rejects %s before writing', async (kind) => {
     const h = await taskEditPreparationHarness('- [ ] Root\n');
-    const p = h.service.prepare(h.root, [
+    const p = await h.service.prepare(h.root, [
       {
         type: 'patch',
         target: { type: 'task', ref: h.root.ref },
@@ -161,7 +161,7 @@ describe('canonical task edit preparation', () => {
 
   it('preserves absent descriptions and clears them only on explicit null', async () => {
     const h = await taskEditPreparationHarness('- [ ] Root\n\t- > Description\n');
-    const p = ready(h.service.prepare(h.root, []));
+    const p = ready(await h.service.prepare(h.root, []));
     expect(p.after?.description).toBe('Description');
     const cleared = ready(
       p.append({
@@ -196,7 +196,7 @@ it.each([false, true])(
       if (event.type === 'accepted') changes.push(event.change);
     });
     let p = ready(
-      h.service.prepare(h.root, [
+      await h.service.prepare(h.root, [
         {
           type: 'patch',
           target: { type: 'task', ref: h.root.ref },

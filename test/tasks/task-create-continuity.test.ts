@@ -1,7 +1,10 @@
 import { expect, it, vi } from 'vitest';
 import type { TaskCommandResult } from '../../src/tasks/domain/commands';
-import { TaskRefAuthority } from '../../src/tasks/infrastructure/TaskRefAuthority';
-import { expectDefined } from '../helpers';
+import {
+  TaskRefAuthority,
+  taskRefContentFingerprint,
+} from '../../src/tasks/infrastructure/TaskRefAuthority';
+import { expectDefined, flushMicrotasks, metadataChangedEmitter } from '../helpers';
 import { ready, taskEditPreparationHarness } from '../support/taskEditPreparationHarness';
 
 it.each(['ordinary', 'prepared', 'project'] as const)(
@@ -11,7 +14,7 @@ it.each(['ordinary', 'prepared', 'project'] as const)(
       '- [ ] Same\n\t- [ ] Child\n- [ ] Same\n\t- [ ] Child\n',
     );
     const root = expectDefined(h.index.list()[1]),
-      pending = ready(h.service.prepare(root, [{ type: 'delete', ref: root.ref }]));
+      pending = ready(await h.service.prepare(root, [{ type: 'delete', ref: root.ref }]));
     const destination = {
       type: 'explicit' as const,
       destination: { filePath: 'tasks.md', insertion: { type: 'prepend' as const } },
@@ -91,7 +94,7 @@ it.each([
       h = await taskEditPreparationHarness(original);
     h.index.integrationReads().activateOccurrences();
     const root = expectDefined(h.index.list()[1]),
-      pending = ready(h.service.prepare(root, [{ type: 'delete', ref: root.ref }]));
+      pending = ready(await h.service.prepare(root, [{ type: 'delete', ref: root.ref }]));
     const read = h.app.vault.read.bind(h.app.vault);
     let restoreRead: (() => void) | undefined, laterRevision: string | undefined;
     h.writes.mockImplementationOnce(async (file, transform) => {
@@ -156,6 +159,9 @@ it.each([
       expect(h.index.integrationReads().coverage()).toMatchObject({ type: 'error' });
       await h.index.refreshSourceExclusion(undefined);
     }
+    await flushMicrotasks();
+    metadataChangedEmitter(h.app)(h.file, await h.read(), {});
+    await flushMicrotasks();
     if (mode === 'later' || mode === 'later-before')
       expect(h.index.list()[0]?.ref.revision).toBe(laterRevision);
     if (mode !== 'original') {
@@ -170,7 +176,7 @@ it('preserves duplicate descendants under section insertion', async () => {
     '# Work\n- [ ] Same\n\t- [ ] Child\n- [ ] Same\n\t- [ ] Child\n',
   );
   const root = expectDefined(h.index.list()[1]);
-  const pending = ready(h.service.prepare(root, []));
+  const pending = ready(await h.service.prepare(root, []));
   const p = await h.service.prepareCreateTree({
     destination: {
       type: 'explicit',
@@ -186,5 +192,42 @@ it('preserves duplicate descendants under section insertion', async () => {
   const current = expectDefined(h.index.list()[2]);
   expect(current.subtasks[0]?.title).toBe('Child');
   expect((await pending.refresh(current)).type).toBe('ready');
+  h.index.destroy();
+});
+
+it('keeps exact queued changed-generation delivery but makes a later matching echo visual', async () => {
+  const h = await taskEditPreparationHarness('- [ ] Root\n');
+  const original = h.root,
+    content = '- [x] Root\n';
+  await h.app.vault.adapter.write(h.file.path, content);
+  expect(h.index.list()[0]?.ref).toEqual(original.ref);
+  const next = expectDefined(h.index.previewContent('tasks.md', content)[0]);
+  const revision = expectDefined(
+    h.authority.successor(original.ref.revision, next.source.originalBlock),
+  );
+  const staged = h.authority.stage(
+    {
+      filePath: 'tasks.md',
+      candidateFingerprint: taskRefContentFingerprint(content),
+      candidateLength: content.length,
+      expectedRevision: original.ref.revision,
+      roots: [{ line: next.ref.line, source: next.source.originalBlock, revision }],
+    },
+    original.ref.revision,
+  );
+  if (staged.type !== 'staged') throw new Error('Missing native transaction');
+  h.authority.commit(staged.token);
+  h.index.installCommittedContent('tasks.md', content);
+  h.authority.acknowledge('tasks.md', content);
+  expect(h.index.list()[0]?.ref.revision).toBe(revision);
+  const before = h.index.resolve(original.ref);
+  expect(before.type).toBe('rebased');
+  metadataChangedEmitter(h.app)(h.file, content, {});
+  expect(h.index.resolve(original.ref).type).toBe('rebased');
+  await flushMicrotasks();
+  metadataChangedEmitter(h.app)(h.file, content, {});
+  await flushMicrotasks();
+  expect(h.index.resolve(original.ref).type).toBe('visual');
+  expect(h.index.resolve(expectDefined(h.index.list()[0]).ref).type).toBe('exact');
   h.index.destroy();
 });

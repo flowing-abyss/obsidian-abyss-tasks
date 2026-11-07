@@ -22,7 +22,10 @@ export interface TaskPreparedNodeContinuation {
 }
 
 export interface TaskEditPreparationApi {
-  prepare(root: TaskSnapshot, commands: readonly PreparedTaskEditCommand[]): TaskEditPreparation;
+  prepare(
+    root: TaskSnapshot,
+    commands: readonly PreparedTaskEditCommand[],
+  ): Promise<TaskEditPreparation>;
 }
 
 export type TaskEditPreparation =

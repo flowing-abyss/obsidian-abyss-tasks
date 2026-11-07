@@ -1,3 +1,5 @@
+// Native preparation acquisition and exact-source echo continuity: 2,436,578 -> 2,438,242 bytes (+1,664).
+// No new dependencies; minimal containing main budget: 2,439,168 bytes (2382 KiB), below the 5,000,000-byte ceiling.
 // Content delivery disclosure and provisional-plan cleanup: 2,434,812 -> 2,436,578 bytes (+1,766).
 // No new dependencies; minimal containing main budget: 2,437,120 bytes (2380 KiB), below the 5,000,000-byte ceiling.
 // Public task content/tree/search facade and insertion continuity: 2,397,444 -> 2,434,812 bytes (+37,368).

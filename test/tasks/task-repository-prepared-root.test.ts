@@ -4,7 +4,7 @@ import { ready, taskEditPreparationHarness } from '../support/taskEditPreparatio
 async function prepared() {
   const h = await taskEditPreparationHarness('- [ ] Root\n- [ ] Sibling\n');
   const p = ready(
-    h.service.prepare(h.root, [
+    await h.service.prepare(h.root, [
       {
         type: 'patch',
         target: { type: 'task', ref: h.root.ref },
@@ -57,7 +57,7 @@ describe('strict prepared root commit', () => {
       },
     });
     const p = ready(
-      h.service.prepare(h.root, [
+      await h.service.prepare(h.root, [
         {
           type: 'patch',
           target: { type: 'task', ref: h.root.ref },

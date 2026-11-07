@@ -1950,23 +1950,34 @@ export class TaskApplicationService
     }
   }
 
-  prepare(root: TaskSnapshot, commands: readonly PreparedTaskEditCommand[]): TaskEditPreparation {
-    const prepared = this.repository_abyssPrivate.prepareRootEdit?.(structuredClone(root));
-    if (prepared === undefined) return { type: 'invalid', result: invalidTaskTarget('target') };
+  async prepare(
+    root: TaskSnapshot,
+    commands: readonly PreparedTaskEditCommand[],
+  ): Promise<TaskEditPreparation> {
+    const target = structuredClone(root);
+    const operations = structuredClone(commands);
     const settings = structuredClone(this.behaviorSettings_abyssPrivate());
     const reading = captureClock(this.clock_abyssPrivate);
     const catalog = JSON.stringify(this.statusCatalog_abyssPrivate.all());
     const current = (): boolean =>
       JSON.stringify(this.behaviorSettings_abyssPrivate()) === JSON.stringify(settings) &&
       JSON.stringify(this.statusCatalog_abyssPrivate.all()) === catalog;
+    let prepared: TaskPreparedRootEdit | undefined;
+    try {
+      prepared = await this.repository_abyssPrivate.prepareRootEdit?.(target);
+    } catch {
+      return this.preparationReadFailure_abyssPrivate('patch');
+    }
+    if (prepared === undefined) return { type: 'invalid', result: invalidTaskTarget('target') };
+    if (!current()) return { type: 'invalid', result: invalidTaskTarget('settings') };
     let result = this.editPreparation_abyssPrivate(prepared, {
       settings,
       reading,
       current,
       family: { attempted: false },
-      ref: { ...root.ref },
+      ref: { ...target.ref },
     });
-    for (const command of commands) {
+    for (const command of operations) {
       if (result.type !== 'ready') break;
       result = result.append(command);
     }

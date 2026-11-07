@@ -48,7 +48,7 @@ describe('sealed task creation', () => {
 
   it('continues duplicate draft siblings from the immediately preceding preview', async () => {
     const h = await taskEditPreparationHarness('- [ ] Root\n\t- [ ] Same\n\t- [ ] Same\n');
-    let p = ready(h.service.prepare(h.root, []));
+    let p = ready(await h.service.prepare(h.root, []));
     p = ready(
       p.append({
         type: 'add-subtask',

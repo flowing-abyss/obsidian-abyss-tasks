@@ -24,9 +24,9 @@ describe('sealed preparation refresh', () => {
     const h = await taskEditPreparationHarness('- [ ] Same\n- [ ] Same\n');
     h.index.integrationReads().activateOccurrences();
     const source = expectDefined(h.index.list()[1]);
-    const remove = ready(h.service.prepare(source, [{ type: 'delete', ref: source.ref }]));
+    const remove = ready(await h.service.prepare(source, [{ type: 'delete', ref: source.ref }]));
     const merge = ready(
-      h.service.prepare(h.root, [
+      await h.service.prepare(h.root, [
         { type: 'add-subtask', parent: { type: 'task', ref: h.root.ref }, text: 'Merged' },
       ]),
     );
@@ -47,7 +47,7 @@ describe('sealed preparation refresh', () => {
     h.index.integrationReads().activateOccurrences();
     const root = expectDefined(h.index.list()[1]);
     const p = ready(
-      h.service.prepare(root, [
+      await h.service.prepare(root, [
         {
           type: 'add-comment',
           parent: { type: 'subtask', ref: expectDefined(root.subtasks[1]).ref },
@@ -106,7 +106,7 @@ describe('sealed preparation refresh', () => {
     'refuses refresh across every version of an attempted family (%s)',
     async (effect) => {
       const h = await taskEditPreparationHarness('- [ ] Root\n');
-      const original = ready(h.service.prepare(h.root, []));
+      const original = ready(await h.service.prepare(h.root, []));
       const p = ready(
         original.append({
           type: 'add-comment',
@@ -127,7 +127,7 @@ describe('sealed preparation refresh', () => {
 
   it('refuses target changes and forged current roots', async () => {
     const h = await taskEditPreparationHarness('- [ ] Root\n- [ ] Other\n');
-    const p = ready(h.service.prepare(h.root, [{ type: 'delete', ref: h.root.ref }]));
+    const p = ready(await h.service.prepare(h.root, [{ type: 'delete', ref: h.root.ref }]));
     expect((await p.refresh(expectDefined(h.index.list()[1]))).type).toBe('invalid');
     expect(
       (
@@ -267,7 +267,7 @@ describe('refresh guard and correspondence boundaries', () => {
     h.index.integrationReads().activateOccurrences();
     const root = expectDefined(h.index.list()[2]);
     const p = ready(
-      h.service.prepare(root, [
+      await h.service.prepare(root, [
         { type: 'add-comment', parent: { type: 'task', ref: root.ref }, text: 'Retained' },
       ]),
     );
@@ -296,7 +296,7 @@ describe('refresh guard and correspondence boundaries', () => {
     h.index.integrationReads().activateOccurrences();
     const root = expectDefined(h.index.list()[1]);
     const p = ready(
-      h.service.prepare(root, [
+      await h.service.prepare(root, [
         {
           type: 'add-comment',
           parent: { type: 'subtask', ref: expectDefined(root.subtasks[0]).ref },
@@ -317,7 +317,7 @@ describe('refresh guard and correspondence boundaries', () => {
       const h = await taskEditPreparationHarness('- [ ] Root\n');
       const p =
         kind === 'edit'
-          ? ready(h.service.prepare(h.root, []))
+          ? ready(await h.service.prepare(h.root, []))
           : creation(
               await h.service.prepareCreateTree({
                 destination,
@@ -340,7 +340,7 @@ describe('refresh guard and correspondence boundaries', () => {
   it('rejects changed settings and a post-refresh writer race', async () => {
     const settings = structuredClone(DEFAULT_SETTINGS);
     const h = await taskEditPreparationHarness('- [ ] Root\n', { behavior: () => settings });
-    const p = ready(h.service.prepare(h.root, [{ type: 'delete', ref: h.root.ref }]));
+    const p = ready(await h.service.prepare(h.root, [{ type: 'delete', ref: h.root.ref }]));
     settings.taskPrefix = '#new';
     expect((await p.refresh(h.root)).type).toBe('invalid');
     settings.taskPrefix = DEFAULT_SETTINGS.taskPrefix;
@@ -374,7 +374,7 @@ describe('refresh guard and correspondence boundaries', () => {
 
   it('returns a typed unchanged failure when refresh cannot read the native file', async () => {
     const h = await taskEditPreparationHarness('- [ ] Root\n');
-    const p = ready(h.service.prepare(h.root, []));
+    const p = ready(await h.service.prepare(h.root, []));
     vi.spyOn(h.app.vault, 'read').mockRejectedValue(new Error('Unavailable'));
     expect(await p.refresh(h.root)).toMatchObject({
       type: 'invalid',
@@ -414,7 +414,7 @@ it('advances a generation-zero private anchor after each acknowledged sibling wr
   const root = expectDefined(h.index.list()[1]);
   expect(h.authority.evidence(root.ref.revision)?.generation).toBe('0');
   const original = ready(
-    h.service.prepare(root, [
+    await h.service.prepare(root, [
       { type: 'add-comment', parent: { type: 'task', ref: root.ref }, text: 'Frozen' },
     ]),
   );
@@ -441,7 +441,7 @@ it('advances a generation-zero private anchor after each acknowledged sibling wr
 it('refuses an edited generation even if its root bytes are later restored', async () => {
   const h = await taskEditPreparationHarness('- [ ] Same\n- [ ] Same\n');
   const source = expectDefined(h.index.list()[1]);
-  const p = ready(h.service.prepare(source, [{ type: 'delete', ref: source.ref }]));
+  const p = ready(await h.service.prepare(source, [{ type: 'delete', ref: source.ref }]));
   for (const title of ['Changed', 'Same']) {
     const current = expectDefined(h.index.list()[1]);
     expect(
@@ -484,7 +484,7 @@ it('refuses every creation version after an unknown insertion attempt', async ()
 
 it('returns an accepted receipt for an unchanged refreshed edit and then seals its family', async () => {
   const h = await taskEditPreparationHarness('- [ ] Root\n');
-  const original = ready(h.service.prepare(h.root, []));
+  const original = ready(await h.service.prepare(h.root, []));
   const refreshed = ready(await original.refresh(h.root));
   const result = await refreshed.commit();
   expect(result).toMatchObject({
@@ -519,7 +519,7 @@ it('refreshes both an existing sealed note plan and its repository basis', async
 it('preserves an accepted external sibling edit outside the reviewed root', async () => {
   const h = await taskEditPreparationHarness('- [ ] Root\n- [ ] Sibling\n');
   const p = ready(
-    h.service.prepare(h.root, [
+    await h.service.prepare(h.root, [
       { type: 'add-comment', parent: { type: 'task', ref: h.root.ref }, text: 'Frozen' },
     ]),
   );
@@ -536,7 +536,7 @@ it.each(['original', 'refreshed'] as const)(
   async (stage) => {
     const h = await taskEditPreparationHarness('- [ ] Root\n');
     const supplied = structuredClone(h.root);
-    let p = ready(h.service.prepare(stage === 'original' ? supplied : h.root, []));
+    let p = ready(await h.service.prepare(stage === 'original' ? supplied : h.root, []));
     if (stage === 'refreshed') p = ready(await p.refresh(supplied));
     Object.assign(supplied.ref, { filePath: 'forged.md', line: 99 });
     expect((await p.refresh(h.root)).type).toBe('ready');
@@ -545,7 +545,7 @@ it.each(['original', 'refreshed'] as const)(
 
 it('keeps the native anchor when caller evidence mutates during refresh readback', async () => {
   const h = await taskEditPreparationHarness('- [ ] Root\n');
-  const p = ready(h.service.prepare(h.root, []));
+  const p = ready(await h.service.prepare(h.root, []));
   const supplied = structuredClone(h.root);
   const read = h.app.vault.read.bind(h.app.vault);
   vi.spyOn(h.app.vault, 'read').mockImplementationOnce(async (file) => {
@@ -568,9 +568,9 @@ it.each(['shift', 'same-line'] as const)(
         invalidated.push(...event.change.invalidated.map((address) => address.rootRevision));
     });
     const sibling = expectDefined(h.index.list()[1]);
-    const pending = ready(h.service.prepare(sibling, [{ type: 'delete', ref: sibling.ref }]));
+    const pending = ready(await h.service.prepare(sibling, [{ type: 'delete', ref: sibling.ref }]));
     const first = ready(
-      h.service.prepare(h.root, [
+      await h.service.prepare(h.root, [
         kind === 'shift'
           ? { type: 'add-comment', parent: { type: 'task', ref: h.root.ref }, text: 'Attempted' }
           : {

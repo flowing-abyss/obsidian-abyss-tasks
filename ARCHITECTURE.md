@@ -293,6 +293,11 @@ command. Prepared successors remain unpublished until the final delivery check. 
 releases only its unpublished version; a visible refresh predecessor retires only when a successor is
 published. Concurrent visible versions and separately admitted request pins retain their ownership.
 A mutation consumes the whole plan family, including divergent versions and failed attempts.
+Initial native edit preparation is asynchronous: the existing repository awaits the source owner's
+current acquisition, then rechecks file incarnation, lifecycle, scope, semantics and exact root.
+The application owner captures settings and commands before the await and rejects changed settings;
+the facade revalidates the accepted caller revision and releases pins on failed preparation. Creation
+and refresh use the same source-acquisition guard. Append remains synchronous over its sealed tree.
 Initial status symbols resolve through the current complete native catalog; saved status actions retain
 their separate lifecycle command path. Draft status edits are not part of the content command union.
 
@@ -313,7 +318,13 @@ catalogs enumerate permitted accepted nodes and reuse canonical case-insensitive
 [`taskContentReceipt`](src/integrations/taskContentReceipt.ts) is stateless. It compares the sealed final
 block with the writer's exact installed occurrence and current accepted readback, then maps only the
 final-plan task handles frozen at admission through canonical relative positions within that proved
-block. A missing readback or mapping preserves write effects and never authorizes replay. Comments
+block. The existing per-file reconciliation record also borrows the exact current installed file
+incarnation and source bytes. Matching host echoes retain its native transition before or after the
+notification flush only when that full basis and task population still match. Same-revision native
+relocation proof survives a later echo; changed-generation predecessor authority remains available only
+for its already queued delivery, then returns to the established visual-only lifecycle. Different bytes,
+replacement files, restoration or revocation replace or clear the proof;
+unchanged task lists alone grant no continuity. A missing readback or mapping preserves write effects and never authorizes replay. Comments
 remain version-scoped; receipts grant no durable comment correspondence. Every initial or replayed
 content receipt delivery checks current client/provider lifetime and disclosure of its retained task
 handles. It returns a detached redacted projection when proof is unavailable, while the request owner

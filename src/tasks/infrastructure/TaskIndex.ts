@@ -222,7 +222,13 @@ interface VisualReconciliationTransition {
   readonly evidence: VisualEvidence;
 }
 
+interface ReconciliationSourceBasis {
+  readonly file: TFile;
+  readonly content: string;
+}
+
 interface FileReconciliationTransition {
+  readonly source?: ReconciliationSourceBasis;
   readonly fromGeneration: number;
   readonly toGeneration: number;
   readonly writable: ReadonlyMap<string, WritableReconciliationTransition>;
@@ -1058,16 +1064,51 @@ function fallbackTaskResolution(input: FallbackResolutionInput): TaskResolution 
   return { type: 'not-found', ref: { ...ref } };
 }
 
-function hasQueuedAuthorityTransition(
-  filePath: string,
+function sameReconciliationSource(
+  left: ReconciliationSourceBasis | undefined,
+  right: ReconciliationSourceBasis | undefined,
+): boolean {
+  return left !== undefined && left.file === right?.file && left.content === right.content;
+}
+
+function shouldRecordReplacement(
   changed: boolean,
-  pendingFiles: ReadonlySet<string>,
+  advance: boolean | undefined,
+  source: ReconciliationSourceBasis | undefined,
   transition: FileReconciliationTransition | undefined,
 ): boolean {
-  if (changed || !pendingFiles.has(filePath)) return false;
-  return [...(transition?.writable.values() ?? [])].some(
-    (candidate) => candidate.basis.authorityTransition !== undefined,
+  return (
+    changed ||
+    advance === true ||
+    (source !== undefined &&
+      transition !== undefined &&
+      !sameReconciliationSource(source, transition.source))
   );
+}
+
+function currentAuthorityTransition(
+  changed: boolean,
+  source: ReconciliationSourceBasis | undefined,
+  transition: FileReconciliationTransition | undefined,
+  queued: boolean,
+): FileReconciliationTransition | undefined {
+  if (changed || transition === undefined || !sameReconciliationSource(source, transition.source))
+    return undefined;
+  const writable = new Map(
+    [...transition.writable].filter(
+      ([, candidate]) =>
+        candidate.basis.authorityTransition !== undefined &&
+        (queued || candidate.previous.ref.revision === candidate.current.ref.revision),
+    ),
+  );
+  return writable.size > 0 ? { ...transition, writable } : undefined;
+}
+
+function reconciliationSource(
+  observation: FileObservation | undefined,
+  content: string,
+): ReconciliationSourceBasis | undefined {
+  return observation === undefined ? undefined : { file: observation.file, content };
 }
 
 function activeRecurringSources(
@@ -2634,7 +2675,7 @@ export class TaskIndex
 
   private commitEmptyObservation_abyssPrivate(observation: FileObservation): boolean {
     if (!this.isCurrent_abyssPrivate(observation)) return false;
-    this.replaceFile_abyssPrivate(observation.path, [], [], true);
+    this.replaceFile_abyssPrivate(observation.path, [], [], { advanceGenerationOnUnchanged: true });
     return true;
   }
 
@@ -2716,8 +2757,11 @@ export class TaskIndex
     this.acceptInstallation_abyssPrivate(
       this.renameAcceptancePaths_abyssPrivate(observation.path, rename),
       () => {
-        this.replaceFile_abyssPrivate(observation.path, tasks, authority?.transitions, true);
-        if (authority?.restored === true)
+        this.replaceFile_abyssPrivate(observation.path, tasks, authority?.transitions, {
+          advanceGenerationOnUnchanged: true,
+          source: { file: observation.file, content },
+        });
+        if (authority?.restored === true || (authority?.revokedRevisions?.length ?? 0) > 0)
           this.reconciliationTransitions_abyssPrivate.delete(observation.path);
         this.acceptStatisticsSource_abyssPrivate(observation.path, content, prepared, tasks);
         this.settleIntegrationObservation_abyssPrivate(observation, true);
@@ -3251,12 +3295,16 @@ export class TaskIndex
           roots.push(...tasks);
           return () => {
             this.committedContents_abyssPrivate.set(filePath, content);
-            if (this.replaceFile_abyssPrivate(filePath, tasks, authority?.transitions))
+            const acquisition = acquisitions.get(filePath);
+            if (
+              this.replaceFile_abyssPrivate(filePath, tasks, authority?.transitions, {
+                source: reconciliationSource(acquisition, content),
+              })
+            )
               this.queueChanged_abyssPrivate(filePath);
             if (authority?.restored === true || (authority?.revokedRevisions?.length ?? 0) > 0)
               this.reconciliationTransitions_abyssPrivate.delete(filePath);
             this.acceptStatisticsSource_abyssPrivate(filePath, content, observation, tasks);
-            const acquisition = acquisitions.get(filePath);
             if (acquisition !== undefined)
               this.settleIntegrationObservation_abyssPrivate(acquisition, true);
           };
@@ -3544,26 +3592,33 @@ export class TaskIndex
     filePath: string,
     tasks: readonly TaskSnapshot[],
     authorityTransitions: readonly ProvenRootRevisionOverride[] = [],
-    advanceGenerationOnUnchanged = false,
+    options: {
+      readonly advanceGenerationOnUnchanged?: boolean;
+      readonly source?: ReconciliationSourceBasis | undefined;
+    } = {},
   ): boolean {
+    const { source, advanceGenerationOnUnchanged } = options;
     const current = this.taskMap_abyssPrivate.get(filePath) ?? [];
     const changed = !sameTaskSnapshots(current, tasks);
-    if (!changed && !advanceGenerationOnUnchanged) return false;
-    // A repository install and Obsidian's matching metadata event can arrive in either order
-    // before the already-queued notification is delivered. Keep that batch's proven transition
-    // visible to subscribers instead of replacing it with an unchanged self-transition.
-    const queuedTransition = this.reconciliationTransitions_abyssPrivate.get(filePath);
-    if (
-      hasQueuedAuthorityTransition(
-        filePath,
-        changed,
-        this.pendingFiles_abyssPrivate,
-        queuedTransition,
-      )
-    ) {
+    const transition = this.reconciliationTransitions_abyssPrivate.get(filePath);
+    if (!shouldRecordReplacement(changed, advanceGenerationOnUnchanged, source, transition))
+      return false;
+    // A matching host echo must not erase a still-current native insertion/edit proof.
+    // Equal task projections alone cannot prove an unchanged source or file incarnation.
+    const retained = currentAuthorityTransition(
+      changed,
+      source,
+      transition,
+      this.pendingFiles_abyssPrivate.has(filePath),
+    );
+    if (retained !== undefined) {
+      this.reconciliationTransitions_abyssPrivate.set(filePath, retained);
       return false;
     }
-    this.recordReconciliation_abyssPrivate(filePath, current, tasks, authorityTransitions);
+    this.recordReconciliation_abyssPrivate(filePath, current, tasks, {
+      authorityTransitions,
+      source,
+    });
     if (!changed) return false;
     this.installFileTasks_abyssPrivate(filePath, tasks);
     return true;
@@ -3573,13 +3628,18 @@ export class TaskIndex
     filePath: string,
     current: readonly TaskSnapshot[],
     tasks: readonly TaskSnapshot[],
-    authorityTransitions: readonly ProvenRootRevisionOverride[],
+    evidence: {
+      readonly authorityTransitions: readonly ProvenRootRevisionOverride[];
+      readonly source: ReconciliationSourceBasis | undefined;
+    },
   ): void {
+    const { authorityTransitions, source } = evidence;
     const fromGeneration = this.fileGenerations_abyssPrivate.get(filePath) ?? 0;
     const toGeneration = fromGeneration + 1;
     this.fileGenerations_abyssPrivate.set(filePath, toGeneration);
     const transitions = reconcileRootTransitions(current, tasks, authorityTransitions);
     this.reconciliationTransitions_abyssPrivate.set(filePath, {
+      ...(source === undefined ? {} : { source }),
       fromGeneration,
       toGeneration,
       writable: transitions.writable,
@@ -3715,7 +3775,10 @@ export class TaskIndex
     this.acceptInstallation_abyssPrivate(
       [path],
       () => {
-        const changed = this.replaceFile_abyssPrivate(path, tasks, authority?.transitions, true);
+        const changed = this.replaceFile_abyssPrivate(path, tasks, authority?.transitions, {
+          advanceGenerationOnUnchanged: true,
+          source: { file: observation.file, content: data },
+        });
         if (authority?.restored === true || (authority?.revokedRevisions?.length ?? 0) > 0)
           this.reconciliationTransitions_abyssPrivate.delete(path);
         this.acceptStatisticsSource_abyssPrivate(path, data, prepared, tasks);

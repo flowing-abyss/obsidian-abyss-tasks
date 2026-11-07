@@ -320,7 +320,7 @@ export interface TaskRepository {
     destination: TaskDestination,
     draft: TaskDraft,
   ): Promise<TaskPreparedCreateRoot>;
-  prepareRootEdit?(root: TaskSnapshot): TaskPreparedRootEdit;
+  prepareRootEdit?(root: TaskSnapshot): Promise<TaskPreparedRootEdit>;
   createProjectRoot?(
     destination: ProjectTaskDestination,
     draft: TaskDraft,

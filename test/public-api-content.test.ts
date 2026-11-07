@@ -18,8 +18,8 @@ function pauseFirstRefresh(h: PublicApiHarness) {
     resume = deferred<void>(),
     prepare = h.service.prepare.bind(h.service);
   let first = true;
-  vi.spyOn(h.service, 'prepare').mockImplementationOnce((snapshot, commands) => {
-    const native = prepare(snapshot, commands);
+  vi.spyOn(h.service, 'prepare').mockImplementationOnce(async (snapshot, commands) => {
+    const native = await prepare(snapshot, commands);
     if (native.type !== 'ready') return native;
     return {
       ...native,
@@ -966,8 +966,8 @@ it('does not retire the visible predecessor when native refresh is cancelled bef
     started = deferred<void>(),
     resume = deferred<void>(),
     prepare = h.service.prepare.bind(h.service);
-  vi.spyOn(h.service, 'prepare').mockImplementationOnce((snapshot, commands) => {
-    const native = prepare(snapshot, commands);
+  vi.spyOn(h.service, 'prepare').mockImplementationOnce(async (snapshot, commands) => {
+    const native = await prepare(snapshot, commands);
     return native.type !== 'ready'
       ? native
       : {

@@ -515,9 +515,9 @@ export class TaskContentApi {
     if (value.kind === 'refresh') return await this.refresh_abyssPrivate(v, value.afterRequestId);
     return this.append_abyssPrivate(v, value.operation);
   }
-  private edit_abyssPrivate(
+  private async edit_abyssPrivate(
     input: Extract<PrepareTaskContentV1, { kind: 'edit' }>,
-  ): ApiResultV1<ContentPlanV1> {
+  ): Promise<ApiResultV1<ContentPlanV1>> {
     const ctx = this.ctx_abyssPrivate,
       node = currentNode(ctx.api, input);
     if (!node.ok) return node;
@@ -535,28 +535,46 @@ export class TaskContentApi {
     if (!identity.ok) return identity;
     const pinned = ctx.api.identities.pin(identity.value.target);
     if (!pinned.ok) return pinned;
-    const native = ctx.ports.edits.prepare(root, []);
-    if (native.type !== 'ready') {
-      pinned.value();
-      return commandResultError(native.result);
+    let retained = false;
+    try {
+      const native = await ctx.ports.edits.prepare(root, []);
+      if (native.type !== 'ready') return commandResultError(native.result);
+      const check = ctx.api.check();
+      if (check !== undefined) return check;
+      const current = currentNode(ctx.api, input);
+      if (!current.ok) return current;
+      const initial = this.retain_abyssPrivate(native, undefined, {
+        kind: 'edit',
+        originalTarget: identity.value.target,
+        release: pinned.value,
+      });
+      retained = initial.ok;
+      return this.finishInitialEdit_abyssPrivate(
+        initial,
+        input,
+        root,
+        current.value.node.value.target,
+      );
+    } finally {
+      if (!retained) pinned.value();
     }
-    const initial = this.retain_abyssPrivate(native, undefined, {
-      kind: 'edit',
-      originalTarget: identity.value.target,
-      release: pinned.value,
-    });
-    if (!initial.ok) {
-      pinned.value();
-      return initial;
-    }
+  }
+  private finishInitialEdit_abyssPrivate(
+    initial: ApiResultV1<ContentPlanV1>,
+    input: Extract<PrepareTaskContentV1, { kind: 'edit' }>,
+    root: TaskSnapshot,
+    selected: TaskNodeRef,
+  ): ApiResultV1<ContentPlanV1> {
+    if (!initial.ok) return initial;
     const found = this.versions_abyssPrivate.get(initial.value.revision);
     if (found === undefined) throw new Error('Missing retained plan');
-    found.beforeTasks.set(input.target, node.value.node.value.target);
+    found.beforeTasks.set(input.target, selected);
     found.beforeRevisions.set(input.target, input.expectedRevision);
-    this.continueTasks_abyssPrivate(found, new Map([[input.target, node.value.node.value.target]]));
+    this.continueTasks_abyssPrivate(found, new Map([[input.target, selected]]));
     if (input.operation === undefined) return initial;
     return this.firstAppend_abyssPrivate(found, root, input.operation);
   }
+
   private firstAppend_abyssPrivate(
     found: Version,
     root: TaskSnapshot,
