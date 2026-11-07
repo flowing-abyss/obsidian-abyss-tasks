@@ -1,0 +1,125 @@
+diff --git a/dist/experimental-decision/index.js b/dist/experimental-decision/index.js
+index d7c54c2178b3c132e1595fc2bfdd2208ec1fa14f..e9122b616d130ee2154978a9fda1b7e490d02950 100644
+--- a/dist/experimental-decision/index.js
++++ b/dist/experimental-decision/index.js
+@@ -457,6 +457,10 @@ function addPattern(schema, regex, message, refs) {
+ }
+ function stringifyRegExpWithFlags(regex, refs) {
+ 	if (!refs.applyRegexFlags || !regex.flags) return regex.source;
++	// Abyss Tasks compatibility patch: older mobile WebViews cannot compile lookbehind.
++	if (regex.flags.includes("m")) {
++	  throw new Error("Multiline regex flag expansion is unsupported");
++	}
+ 	const flags = {
+ 		i: regex.flags.includes("i"),
+ 		m: regex.flags.includes("m"),
+@@ -491,15 +495,6 @@ function stringifyRegExpWithFlags(regex, refs) {
+ 				continue;
+ 			}
+ 		}
+-		if (flags.m) {
+-			if (source[i] === "^") {
+-				pattern += `(^|(?<=[\r\n]))`;
+-				continue;
+-			} else if (source[i] === "$") {
+-				pattern += `($|(?=[\r\n]))`;
+-				continue;
+-			}
+-		}
+ 		if (flags.s && source[i] === ".") {
+ 			pattern += inCharGroup ? `${source[i]}\r\n` : `[${source[i]}\r\n]`;
+ 			continue;
+diff --git a/dist/experimental-evaluation/index.js b/dist/experimental-evaluation/index.js
+index 8871413c1d1bdc6261f4c580815794bd736639b2..9ee13f1cc29444926e8f902152fdea283b199453 100644
+--- a/dist/experimental-evaluation/index.js
++++ b/dist/experimental-evaluation/index.js
+@@ -457,6 +457,10 @@ function addPattern(schema, regex, message, refs) {
+ }
+ function stringifyRegExpWithFlags(regex, refs) {
+ 	if (!refs.applyRegexFlags || !regex.flags) return regex.source;
++	// Abyss Tasks compatibility patch: older mobile WebViews cannot compile lookbehind.
++	if (regex.flags.includes("m")) {
++	  throw new Error("Multiline regex flag expansion is unsupported");
++	}
+ 	const flags = {
+ 		i: regex.flags.includes("i"),
+ 		m: regex.flags.includes("m"),
+@@ -491,15 +495,6 @@ function stringifyRegExpWithFlags(regex, refs) {
+ 				continue;
+ 			}
+ 		}
+-		if (flags.m) {
+-			if (source[i] === "^") {
+-				pattern += `(^|(?<=[\r\n]))`;
+-				continue;
+-			} else if (source[i] === "$") {
+-				pattern += `($|(?=[\r\n]))`;
+-				continue;
+-			}
+-		}
+ 		if (flags.s && source[i] === ".") {
+ 			pattern += inCharGroup ? `${source[i]}\r\n` : `[${source[i]}\r\n]`;
+ 			continue;
+diff --git a/dist/index.js b/dist/index.js
+index c7c8788251be0122f2e19b4c7bd12fb36416d844..adb0c93af665826004a54fca1de98e8bc095e9ac 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -2626,6 +2626,10 @@ function addPattern(schema, regex, message, refs) {
+ }
+ function stringifyRegExpWithFlags(regex, refs) {
+ 	if (!refs.applyRegexFlags || !regex.flags) return regex.source;
++	// Abyss Tasks compatibility patch: older mobile WebViews cannot compile lookbehind.
++	if (regex.flags.includes("m")) {
++	  throw new Error("Multiline regex flag expansion is unsupported");
++	}
+ 	const flags = {
+ 		i: regex.flags.includes("i"),
+ 		m: regex.flags.includes("m"),
+@@ -2660,15 +2664,6 @@ function stringifyRegExpWithFlags(regex, refs) {
+ 				continue;
+ 			}
+ 		}
+-		if (flags.m) {
+-			if (source[i] === "^") {
+-				pattern += `(^|(?<=[\r\n]))`;
+-				continue;
+-			} else if (source[i] === "$") {
+-				pattern += `($|(?=[\r\n]))`;
+-				continue;
+-			}
+-		}
+ 		if (flags.s && source[i] === ".") {
+ 			pattern += inCharGroup ? `${source[i]}\r\n` : `[${source[i]}\r\n]`;
+ 			continue;
+diff --git a/src/to-json-schema/zod3-to-json-schema/parsers/string.ts b/src/to-json-schema/zod3-to-json-schema/parsers/string.ts
+index a4b98dc98f312ea8661e11e28d55a6b3566b9b02..9770dcba8b498c172b58bf84e4cf04470cd9d455 100644
+--- a/src/to-json-schema/zod3-to-json-schema/parsers/string.ts
++++ b/src/to-json-schema/zod3-to-json-schema/parsers/string.ts
+@@ -345,6 +345,10 @@ function stringifyRegExpWithFlags(regex: RegExp, refs: Refs): string {
+   }
+ 
+   // Currently handled flags
++  // Abyss Tasks compatibility patch: older mobile WebViews cannot compile lookbehind.
++  if (regex.flags.includes("m")) {
++    throw new Error("Multiline regex flag expansion is unsupported");
++  }
+   const flags = {
+     i: regex.flags.includes('i'), // Case-insensitive
+     m: regex.flags.includes('m'), // `^` and `$` matches adjacent to newline characters
+@@ -386,16 +390,6 @@ function stringifyRegExpWithFlags(regex: RegExp, refs: Refs): string {
+       }
+     }
+ 
+-    if (flags.m) {
+-      if (source[i] === '^') {
+-        pattern += `(^|(?<=[\r\n]))`;
+-        continue;
+-      } else if (source[i] === '$') {
+-        pattern += `($|(?=[\r\n]))`;
+-        continue;
+-      }
+-    }
+-
+     if (flags.s && source[i] === '.') {
+       pattern += inCharGroup ? `${source[i]}\r\n` : `[${source[i]}\r\n]`;
+       continue;

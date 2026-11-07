@@ -134,9 +134,9 @@ describe('CalendarSettingsTab sections', () => {
   it('renders a Hotkeys section with one row per supported action', () => {
     const tab = makeTab();
     const sections = tab.containerEl.querySelectorAll('.abyss-settings-section');
-    expect(sections).toHaveLength(6);
+    expect(sections).toHaveLength(7);
 
-    const hotkeys = expectDefined(sections[5]);
+    const hotkeys = expectDefined(sections[6]);
     expectDefined(hotkeys.querySelector<HTMLElement>('.abyss-settings-section-header')).click();
     expect(hotkeys.textContent).toContain('Hotkeys');
     expect(hotkeys.querySelectorAll('.abyss-shortcut-row')).toHaveLength(SHORTCUT_ACTIONS.length);
@@ -204,19 +204,27 @@ describe('CalendarSettingsTab sections', () => {
     const labels = Array.from(
       tab.containerEl.querySelectorAll('.abyss-settings-section-label'),
     ).map((el) => el.textContent);
-    expect(labels).toEqual(['General', 'Inbox', 'Tags', 'Projects', 'Custom statuses', 'Hotkeys']);
+    expect(labels).toEqual([
+      'General',
+      'Inbox',
+      'Tags',
+      'Projects',
+      'Custom statuses',
+      'CommandMode',
+      'Hotkeys',
+    ]);
   });
 
   it('each section header has an icon element', () => {
     const tab = makeTab();
     const icons = tab.containerEl.querySelectorAll('.abyss-settings-section-icon');
-    expect(icons).toHaveLength(6);
+    expect(icons).toHaveLength(7);
   });
 
   it('each section header has a chevron element', () => {
     const tab = makeTab();
     const chevrons = tab.containerEl.querySelectorAll('.abyss-settings-section-chevron');
-    expect(chevrons).toHaveLength(6);
+    expect(chevrons).toHaveLength(7);
   });
 
   it('open sections stay open after display() re-render', () => {

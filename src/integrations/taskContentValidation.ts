@@ -64,7 +64,7 @@ function patchScalar(key: string, value: unknown): string {
   if (key === 'onCompletion' && value !== 'keep' && value !== 'delete') return invalid();
   return scalar(value);
 }
-export function parseContentPatch(value: unknown): TaskPatchV1 {
+function parseContentPatch(value: unknown): TaskPatchV1 {
   const keys = [
     'markdownTitle',
     'priority',

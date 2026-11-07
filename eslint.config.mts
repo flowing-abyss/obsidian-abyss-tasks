@@ -384,6 +384,7 @@ export default defineConfig(
       'tooling/verify-changes.mjs',
       'tooling/verification-receipt.mjs',
       'tooling/release-automation.mjs',
+      'tooling/published-metadata.mjs',
       'tooling/regex-audit.mjs',
       'tooling/regex-audit-process.mjs',
       'tooling/regex-audit-policy.mjs',

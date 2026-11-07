@@ -324,6 +324,14 @@ describe('production JavaScript artifact', () => {
       'node_modules/minisearch/LICENSE.txt',
       'node_modules/chrono-node/LICENSE.txt',
       'node_modules/rrule/LICENCE',
+      'node_modules/@ai-sdk/openai/LICENSE',
+      'node_modules/@ai-sdk/anthropic/LICENSE',
+      'node_modules/@openrouter/ai-sdk-provider/LICENSE',
+      'node_modules/zod/LICENSE',
+      'node_modules/ai/LICENSE',
+      'node_modules/.pnpm/@ai-sdk+provider@4.0.36/node_modules/@ai-sdk/provider/LICENSE',
+      'node_modules/.pnpm/eventsource-parser@3.1.1/node_modules/eventsource-parser/LICENSE',
+      'node_modules/.pnpm/@workflow+serde@4.1.0/node_modules/@workflow/serde/LICENSE.md',
     ])
       expect(code.includes(readFileSync(path.join(root, file), 'utf8').trim()), file).toBe(true);
     expect([...code.matchAll(/^Package: (.+)$/gm)].map((match) => match[1])).toEqual([
@@ -335,6 +343,14 @@ describe('production JavaScript artifact', () => {
       'minisearch@7.2.0',
       'chrono-node@2.10.3',
       'rrule@2.8.1',
+      '@ai-sdk/openai@4.0.110',
+      '@ai-sdk/anthropic@4.0.98',
+      '@openrouter/ai-sdk-provider@3.1.0',
+      'zod@4.6.7',
+      '@ai-sdk/provider@4.0.36',
+      '@ai-sdk/provider-utils@5.0.75',
+      'eventsource-parser@3.1.1',
+      '@workflow/serde@4.1.0',
     ]);
     const policy = obsidian.parseYaml(
       readFileSync(path.join(root, 'pnpm-workspace.yaml'), 'utf8'),

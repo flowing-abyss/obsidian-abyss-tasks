@@ -31,3 +31,6 @@ allowBuilds:
   classic-level: true
   esbuild: true
   unrs-resolver: true
+patchedDependencies:
+  '@ai-sdk/provider-utils@5.0.75': patches/@ai-sdk__provider-utils@5.0.75.patch
+  '@openrouter/ai-sdk-provider@3.1.0': patches/@openrouter__ai-sdk-provider@3.1.0.patch

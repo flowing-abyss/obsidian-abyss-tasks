@@ -1,3 +1,5 @@
+// Explicit provider factories and native SecretStorage: 2,478,468 -> 3,519,742 bytes, including installed notices.
+// Minimal containing budget 3,520,512 bytes (3438 KiB), below 5,000,000 bytes.
 // Guarded note search, sections and static creation: 2,438,428 -> 2,478,468 bytes (+40,040).
 // No new dependencies; minimal containing budget 2,479,104 bytes (2421 KiB), below 5,000,000 bytes.
 // Original acquisition proof through capture/read continuations: 2,438,242 -> 2,438,428 bytes (+186).
@@ -129,6 +131,9 @@ const { mainJsBudgetBytes: MAIN_JS_BUDGET_BYTES } = JSON.parse(
 const chartsEntry = fileURLToPath(import.meta.resolve('@tanstack/charts'));
 const chartsRequire = createRequire(chartsEntry);
 const arrayRequire = createRequire(chartsRequire.resolve('d3-array'));
+const sdkRequire = createRequire(fileURLToPath(import.meta.resolve('@ai-sdk/openai')));
+const providerUtilsEntry = sdkRequire.resolve('@ai-sdk/provider-utils');
+const providerUtilsRequire = createRequire(providerUtilsEntry);
 const thirdPartyNotices = [
   dependencyNotice('@tanstack/charts', chartsEntry, 'LICENSE'),
   dependencyNotice('d3-array', chartsRequire.resolve('d3-array'), 'LICENSE'),
@@ -142,6 +147,34 @@ const thirdPartyNotices = [
     'LICENSE.txt',
   ),
   dependencyNotice('rrule', fileURLToPath(import.meta.resolve('rrule')), 'LICENCE'),
+  dependencyNotice(
+    '@ai-sdk/openai',
+    fileURLToPath(import.meta.resolve('@ai-sdk/openai')),
+    'LICENSE',
+  ),
+  dependencyNotice(
+    '@ai-sdk/anthropic',
+    fileURLToPath(import.meta.resolve('@ai-sdk/anthropic')),
+    'LICENSE',
+  ),
+  dependencyNotice(
+    '@openrouter/ai-sdk-provider',
+    fileURLToPath(import.meta.resolve('@openrouter/ai-sdk-provider')),
+    'LICENSE',
+  ),
+  dependencyNotice('zod', fileURLToPath(import.meta.resolve('zod')), 'LICENSE'),
+  dependencyNotice('@ai-sdk/provider', sdkRequire.resolve('@ai-sdk/provider'), 'LICENSE'),
+  providerUtilsNotice(),
+  dependencyNotice(
+    'eventsource-parser',
+    providerUtilsRequire.resolve('eventsource-parser'),
+    'LICENSE',
+  ),
+  dependencyNotice(
+    '@workflow/serde',
+    providerUtilsRequire.resolve('@workflow/serde'),
+    'LICENSE.md',
+  ),
 ].join('\n\n\n');
 if (thirdPartyNotices.length === 0 || thirdPartyNotices.includes('*/')) {
   throw new Error('Third-party notices must be nonempty and safe to embed in a JavaScript comment');
@@ -268,16 +301,43 @@ function checkSizeBudget(metafile) {
 }
 
 function dependencyNotice(name, entry, licenseFile) {
+  const { directory, pkg } = installedPackage(name, entry);
+  const license = readFileSync(path.join(directory, licenseFile), 'utf8').trim();
+  if (license.length === 0) throw new Error(`The installed license for ${name} is empty`);
+  const modification =
+    name === '@openrouter/ai-sdk-provider'
+      ? '\nModified by Abyss Tasks: legacy multiline regex flag expansion explicitly rejects unsupported lookbehind; see the pinned pnpm patch.'
+      : '';
+  return `Package: ${name}@${pkg.version}\nLicense: ${pkg.license}${modification}\n${'-'.repeat(72)}\n\n${license}`;
+}
+
+// provider-utils5.0.75 omits LICENSE from its package. Its official vercel/ai
+// monorepo uses the identical Vercel Apache notice installed with ai7.0.164.
+// Full Apache terms are included by OpenRouter's installed LICENSE above.
+function providerUtilsNotice() {
+  const { pkg } = installedPackage('@ai-sdk/provider-utils', providerUtilsEntry);
+  const shared = installedPackage('ai', fileURLToPath(import.meta.resolve('ai')));
+  if (
+    pkg.version !== '5.0.75' ||
+    shared.pkg.version !== '7.0.164' ||
+    pkg.license !== 'Apache-2.0' ||
+    shared.pkg.license !== 'Apache-2.0'
+  )
+    throw new Error(
+      'Recheck the provider-utils shared license attribution after dependency changes.',
+    );
+  const notice = readFileSync(path.join(shared.directory, 'LICENSE'), 'utf8').trim();
+  if (notice.length === 0) throw new Error('The shared AI SDK license notice is empty.');
+  return `Package: @ai-sdk/provider-utils@${pkg.version}\nLicense: ${pkg.license}\nModified by Abyss Tasks: legacy multiline regex flag expansion explicitly rejects unsupported lookbehind; see the pinned pnpm patch.\nShared notice source: installed ai@${shared.pkg.version}/LICENSE; https://github.com/vercel/ai/blob/main/LICENSE\n${'-'.repeat(72)}\n\n${notice}`;
+}
+
+function installedPackage(name, entry) {
   let directory = path.dirname(entry);
   while (true) {
     const manifest = path.join(directory, 'package.json');
     if (existsSync(manifest)) {
       const pkg = JSON.parse(readFileSync(manifest, 'utf8'));
-      if (pkg.name === name) {
-        const license = readFileSync(path.join(directory, licenseFile), 'utf8').trim();
-        if (license.length === 0) throw new Error(`The installed license for ${name} is empty`);
-        return `Package: ${name}@${pkg.version}\nLicense: ${pkg.license}\n${'-'.repeat(72)}\n\n${license}`;
-      }
+      if (pkg.name === name) return { directory, pkg };
     }
     const parent = path.dirname(directory);
     if (parent === directory) throw new Error(`Cannot locate the installed package ${name}`);

@@ -57,7 +57,7 @@
     ]
   },
   "release": {
-    "mainJsBudgetBytes": 2479104,
+    "mainJsBudgetBytes": 3520512,
     "stylesCssBudgetBytes": 218112
   },
   "keywords": [
@@ -78,10 +78,15 @@
     "pnpm": ">=12"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "4.0.98",
+    "@ai-sdk/openai": "4.0.110",
+    "@openrouter/ai-sdk-provider": "3.1.0",
     "@tanstack/charts": "1.1.0",
+    "ai": "7.0.164",
     "chrono-node": "2.10.3",
     "minisearch": "7.2.0",
-    "rrule": "2.8.1"
+    "rrule": "2.8.1",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@colbymchenry/codegraph": "1.6.2",

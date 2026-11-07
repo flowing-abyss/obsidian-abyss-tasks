@@ -21,6 +21,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { builtinModules } from 'node:module';
 import path from 'node:path';
 import process from 'node:process';
+import { verifyDevelopmentMinimum } from './tooling/published-metadata.mjs';
 
 const releaseReady = process.argv.includes('--release-ready');
 const metadataOnly = process.argv.includes('--metadata-only');
@@ -157,7 +158,12 @@ function checkVersionsConsistency(manifest) {
   const recordedMinAppVersion = versions[manifest.version];
   if (recordedMinAppVersion === undefined) {
     errors.push(`versions.json has no entry for manifest.json's version "${manifest.version}".`);
-  } else if (recordedMinAppVersion !== manifest.minAppVersion) {
+  } else if (
+    recordedMinAppVersion !== manifest.minAppVersion &&
+    (releaseReady ||
+      process.env['GITHUB_REF_TYPE'] === 'tag' ||
+      !verifyDevelopmentMinimum({ package: packageJson, manifest, versions }))
+  ) {
     errors.push(
       `versions.json["${manifest.version}"] is "${recordedMinAppVersion}", but manifest.json's minAppVersion is "${manifest.minAppVersion}".`,
     );

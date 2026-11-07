@@ -21,6 +21,20 @@ export interface StorageAuthorization {
 // transactions. This adds the raw settings port and resolves the actual APIs.
 export const STORAGE_AUTHORIZATIONS: readonly StorageAuthorization[] = [
   {
+    file: 'src/ai/providers/ProviderSecrets.ts',
+    owner: 'ProviderSecrets.store',
+    api: 'SecretStorage.setSecret',
+    reason:
+      'Stores or clears only the four fixed plugin credential IDs through vault-scoped host secret storage.',
+  },
+  {
+    file: 'src/ai/providers/ProviderSecrets.ts',
+    owner: 'ProviderSecrets.read',
+    api: 'SecretStorage.getSecret',
+    reason:
+      'Resolves only a selected plugin credential for provider requests or presence-only settings feedback; never enumerates unrelated secrets.',
+  },
+  {
     file: 'src/notes/NoteApplicationService.ts',
     owner: 'NoteApplicationService.commitPreparedSection',
     api: 'Vault.process',
@@ -113,6 +127,9 @@ export const STORAGE_AUTHORIZATIONS: readonly StorageAuthorization[] = [
 ];
 
 const SINKS = new Set([
+  'SecretStorage.setSecret',
+  'SecretStorage.getSecret',
+  'SecretStorage.listSecrets',
   'Vault.process',
   'Vault.modify',
   'Vault.append',

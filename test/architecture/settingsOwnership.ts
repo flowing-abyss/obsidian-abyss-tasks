@@ -5,6 +5,7 @@ type SettingsOwner = 'static' | 'view' | 'partitioned';
 // Test-side obligations for known keys only: unknown persisted extensions remain
 // the serializer's compatibility responsibility, never a runtime whitelist.
 export const CALENDAR_SETTINGS_OWNERS = {
+  commandMode: 'static',
   firstDayOfWeek: 'static',
   timeTrackingReminderMinutes: 'static',
   taskPrefix: 'static',

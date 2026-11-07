@@ -1,3 +1,4 @@
+import type { ProviderSettings } from '../ai/providers/providerSettings';
 import type { ProjectTableSettings } from '../projects/projectFields';
 import type { ProjectKanbanSettings, ProjectOverviewMode } from '../projects/projectKanbanSettings';
 import type {
@@ -81,6 +82,7 @@ export interface ProjectsSettings {
 import type { TimeTrackingReminderInterval } from './timeTrackingReminderSettings';
 
 export interface CalendarSettings {
+  commandMode: ProviderSettings;
   firstDayOfWeek: 0 | 1 | 2 | 3 | 4 | 5 | 6;
   timeTrackingReminderMinutes: TimeTrackingReminderInterval;
   taskPrefix: string;

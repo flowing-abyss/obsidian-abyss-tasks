@@ -44,6 +44,9 @@ const denied = [
   ["await app.fileManager['trashFile'](file);", 'FileManager.trashFile'],
   ['const extracted = app.fileManager.trashFile;', 'FileManager.trashFile'],
   ['const bound = app.fileManager.trashFile.bind(app.fileManager);', 'FileManager.trashFile'],
+  ["app.secretStorage.setSecret('other', 'value');", 'SecretStorage.setSecret'],
+  ["app.secretStorage.getSecret('other');", 'SecretStorage.getSecret'],
+  ['app.secretStorage.listSecrets();', 'SecretStorage.listSecrets'],
   ['const { trashFile: extracted } = app.fileManager;', 'FileManager.trashFile'],
   ["const { ['trashFile']: extracted } = app.fileManager;", 'FileManager.trashFile'],
 ] as const;
@@ -87,6 +90,8 @@ void ordinaryObject;
 `;
 // These source-shaped fixtures independently enumerate the audited operation owners.
 const allowed = [
+  ['src/ai/providers/ProviderSecrets.ts', 'ProviderSecrets', 'store', 'SecretStorage.setSecret'],
+  ['src/ai/providers/ProviderSecrets.ts', 'ProviderSecrets', 'read', 'SecretStorage.getSecret'],
   [
     'src/tasks/infrastructure/obsidian/ObsidianTaskRepository.ts',
     'ObsidianTaskRepository',
@@ -206,6 +211,9 @@ for (const [file, className] of allowed) {
     .filter(([candidate]) => candidate === file)
     .map(([, , method, api]) => {
       const statements = {
+        'SecretStorage.setSecret':
+          "app.secretStorage.setSecret('abyss-tasks-openai-api-key', 'synthetic');",
+        'SecretStorage.getSecret': "app.secretStorage.getSecret('abyss-tasks-openai-api-key');",
         'FileManager.trashFile': 'await app.fileManager.trashFile(file);',
         'Vault.create': "await app.vault.create('a.md', '');",
         'Vault.process': 'await app.vault.process(file, text => text);',
@@ -317,7 +325,7 @@ describe('resolved Obsidian storage authority', () => {
       const found = [...new Set([...allowed.map(([file]) => file), 'src/main.ts'])].flatMap(
         accesses,
       );
-      expect(found).toHaveLength(14);
+      expect(found).toHaveLength(16);
       expect(storageAuthorityViolations(found, STORAGE_AUTHORIZATIONS)).toEqual([]);
     },
     TYPESCRIPT_PROGRAM_TIMEOUT_MS,
@@ -454,7 +462,7 @@ describe('resolved Obsidian storage authority', () => {
           .map((source) => source.fileName),
       ).toEqual([]);
       const found = collectStorageAccesses(sourceProgram, sourceFiles);
-      expect(found).toHaveLength(14);
+      expect(found).toHaveLength(16);
       expect(storageAuthorityViolations(found, STORAGE_AUTHORIZATIONS)).toEqual([]);
     },
     TYPESCRIPT_PROGRAM_TIMEOUT_MS,

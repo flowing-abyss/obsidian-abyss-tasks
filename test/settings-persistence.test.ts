@@ -2996,3 +2996,33 @@ describe('settings draft Retry through the persistence coordinator', () => {
     },
   );
 });
+
+describe('provider settings ownership', () => {
+  it('loads defaults for old data and keeps provider choices and unknown extensions in static settings', async () => {
+    const port = memoryPort(markedStatic({ futureExtension: { keep: true } }), stateEnvelope());
+    const coordinator = new SettingsPersistenceCoordinator(port);
+    const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    expect(settings.commandMode).toMatchObject({
+      provider: 'openrouter',
+      search: 'agent',
+      voice: 'disabled',
+    });
+    settings.commandMode.search = 'tavily';
+    settings.commandMode['futureProviderOption'] = { keep: true };
+    await coordinator.saveSettings(settings);
+    expect(port.staticData).toMatchObject({
+      commandMode: { search: 'tavily', futureProviderOption: { keep: true } },
+      futureExtension: { keep: true },
+    });
+    const writes = port.writes.length;
+    settings.sectionCollapse.tags = !settings.sectionCollapse.tags;
+    await coordinator.saveViewState(settings);
+    expect(port.writes.slice(writes)).toEqual([STATE_PATH]);
+    expect(JSON.parse(port.stateText ?? '{}')).not.toHaveProperty('views.commandMode');
+    const loaded = await new SettingsPersistenceCoordinator(port).loadSettings(DEFAULT_SETTINGS);
+    expect(loaded.settings.commandMode).toMatchObject({
+      search: 'tavily',
+      futureProviderOption: { keep: true },
+    });
+  });
+});

@@ -1,0 +1,301 @@
+// @vitest-environment jsdom
+import { generateText } from 'ai';
+import type { RequestUrlParam, RequestUrlResponse } from 'obsidian';
+import { describe, expect, it, vi } from 'vitest';
+import { NativeProviderTransport } from '../src/ai/providers/NativeProviderTransport';
+import { ProviderConnections } from '../src/ai/providers/ProviderConnections';
+import { providerFailure } from '../src/ai/providers/providerFailure';
+import { ProviderSecrets } from '../src/ai/providers/ProviderSecrets';
+import {
+  defaultProviderSettings,
+  parseProviderSettings,
+  researchProvider,
+} from '../src/ai/providers/providerSettings';
+
+function transportFixture(
+  request: ConstructorParameters<typeof NativeProviderTransport>[0],
+): NativeProviderTransport {
+  return new NativeProviderTransport(request, (callback, ms) => {
+    const timer = window.setTimeout(callback, ms);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  });
+}
+
+function reply(text = '{}', status = 200, headers = {}): RequestUrlResponse {
+  return {
+    status,
+    headers,
+    text,
+    arrayBuffer: new TextEncoder().encode(text).buffer,
+    json: undefined,
+  };
+}
+
+function secrets() {
+  const values = new Map<string, string>();
+  const owner = new ProviderSecrets({
+    getSecret: (id) => values.get(id) ?? null,
+    setSecret: (id, value) => {
+      values.set(id, value);
+    },
+  });
+  return { owner, values };
+}
+
+describe('provider connections', () => {
+  it('defaults to explicit OpenRouter and reuses only supported research billing providers', () => {
+    const settings = parseProviderSettings(undefined);
+    expect(settings).toEqual({
+      provider: 'openrouter',
+      model: 'openai/gpt-6-luna',
+      search: 'agent',
+      voice: 'disabled',
+    });
+    expect(researchProvider(settings)).toBe('openrouter');
+    expect(researchProvider({ ...settings, provider: 'anthropic' })).toBeNull();
+    expect(researchProvider({ ...settings, provider: 'anthropic', search: 'openai' })).toBe(
+      'openai',
+    );
+    expect(() => parseProviderSettings({ ...settings, provider: 'gateway' })).toThrow();
+    expect(parseProviderSettings({ ...settings, extension: { keep: true } })).toMatchObject({
+      extension: { keep: true },
+    });
+  });
+
+  it('round-trips only fixed IDs, clears keys, and never serializes the storage owner', () => {
+    const { owner, values } = secrets();
+    owner.store('openrouter', ' synthetic-private-key ');
+    expect(owner.has('openrouter')).toBe(true);
+    expect(owner.resolve('openrouter')).toBe('synthetic-private-key');
+    expect([...values.keys()]).toEqual(['abyss-tasks-openrouter-api-key']);
+    expect(JSON.stringify(owner)).not.toContain('synthetic-private-key');
+    owner.store('openrouter', '');
+    expect(owner.has('openrouter')).toBe(false);
+    expect(() => owner.resolve('openrouter')).toThrow(
+      expect.objectContaining({ code: 'missing-key' }),
+    );
+  });
+
+  it('maps unsafe failures to bounded credential-free messages', () => {
+    for (const [statusCode, code] of [
+      [401, 'authentication'],
+      [403, 'authentication'],
+      [429, 'rate-limit'],
+      [500, 'unavailable'],
+    ] as const) {
+      const failure = providerFailure({
+        statusCode,
+        message: 'SECRET provider response',
+        responseBody: 'SECRET',
+      });
+      expect(failure.code).toBe(code);
+      expect(JSON.stringify(failure)).not.toContain('SECRET');
+      expect(failure.message).not.toContain('SECRET');
+    }
+  });
+
+  it('uses selected SDK models and fixed native endpoints without an implicit provider fallback', async () => {
+    const { owner } = secrets();
+    const requests: RequestUrlParam[] = [];
+    const transport = transportFixture(async (request) => {
+      requests.push(request);
+      return reply('{broken');
+    });
+    const connections = new ProviderConnections(owner, transport);
+    expect(() => connections.model(defaultProviderSettings())).toThrow(
+      expect.objectContaining({ code: 'missing-key' }),
+    );
+    for (const [provider, model, url] of [
+      ['openrouter', 'openai/gpt-6-luna', 'https://openrouter.ai/api/v1/chat/completions'],
+      ['openai', 'gpt-6-luna', 'https://api.openai.com/v1/responses'],
+      ['anthropic', 'claude-haiku-5-5', 'https://api.anthropic.com/v1/messages'],
+    ] as const) {
+      owner.store(provider, 'synthetic-private-key');
+      expect(connections.model({ provider, model }).modelId).toBe(model);
+      await expect(
+        generateText({
+          model: connections.model({ provider, model }),
+          prompt: 'Reply OK.',
+          maxOutputTokens: 16,
+          maxRetries: 0,
+        }).catch((error: unknown) => {
+          throw providerFailure(error);
+        }),
+      ).rejects.toMatchObject({ code: 'invalid-response' });
+      expect(requests[requests.length - 1]?.url).toBe(url);
+      expect(requests[requests.length - 1]?.body).toContain(model);
+      expect(requests[requests.length - 1]?.throw).toBe(false);
+    }
+    expect(requests).toHaveLength(3);
+    transport.dispose();
+  });
+});
+
+describe('buffered native provider transport', () => {
+  it('retains status and headers and rejects arbitrary initial URLs before dispatch', async () => {
+    const native = vi.fn(async () => reply('{"error":"limited"}', 429, { 'retry-after': '9' }));
+    const transport = transportFixture(native);
+    const response = await transport.fetchFor('openai')('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      body: '{}',
+    });
+    expect(response.status).toBe(429);
+    expect(response.headers.get('retry-after')).toBe('9');
+    await expect(
+      transport.fetchFor('openai')('https://example.org/v1/responses'),
+    ).rejects.toMatchObject({ code: 'invalid-request' });
+    expect(native).toHaveBeenCalledTimes(1);
+    transport.dispose();
+  });
+
+  it('keeps cancelled physical requests occupying slots, removes obsolete queued calls and ignores late results', async () => {
+    const pending: Array<(value: RequestUrlResponse) => void> = [];
+    const native = vi.fn(() => new Promise<RequestUrlResponse>((resolve) => pending.push(resolve)));
+    const transport = transportFixture(native);
+    const fetch = transport.fetchFor('openrouter');
+    const url = 'https://openrouter.ai/api/v1/chat/completions';
+    const first = new AbortController();
+    const queued = new AbortController();
+    const a = fetch(url, { signal: first.signal });
+    const aRejected = expect(a).rejects.toMatchObject({ code: 'cancelled' });
+    const b = fetch(url);
+    const c = fetch(url, { signal: queued.signal });
+    const cRejected = expect(c).rejects.toMatchObject({ code: 'cancelled' });
+    await vi.waitFor(() => {
+      expect(native).toHaveBeenCalledTimes(2);
+    });
+    first.abort();
+    queued.abort();
+    await Promise.all([aRejected, cRejected]);
+    const d = fetch(url);
+    expect(native).toHaveBeenCalledTimes(2);
+    pending[0]?.(reply('{"late":true}'));
+    await vi.waitFor(() => {
+      expect(native).toHaveBeenCalledTimes(3);
+    });
+    pending[1]?.(reply());
+    pending[2]?.(reply());
+    await Promise.all([b, d]);
+    transport.dispose();
+  });
+});
+
+describe('native resource bounds', () => {
+  it('times out acceptance without freeing physical capacity and refuses excess queued work', async () => {
+    const deadlines: Array<() => void> = [];
+    const pending: Array<(response: RequestUrlResponse) => void> = [];
+    const native = vi.fn(
+      () =>
+        new Promise<RequestUrlResponse>((resolve) => {
+          pending.push(resolve);
+        }),
+    );
+    const transport = new NativeProviderTransport(native, (callback) => {
+      deadlines.push(callback);
+      return () => undefined;
+    });
+    const fetch = transport.fetchFor('openai');
+    const url = 'https://api.openai.com/v1/responses';
+    const first = fetch(url);
+    const rejection = expect(first).rejects.toMatchObject({ code: 'timeout' });
+    const second = fetch(url);
+    deadlines[0]?.();
+    await rejection;
+    const queued = Array.from({ length: 8 }, () => fetch(url));
+    await expect(fetch(url)).rejects.toMatchObject({ code: 'busy' });
+    expect(native).toHaveBeenCalledTimes(2);
+    const cancelled = [second, ...queued].map(async (request) => {
+      await expect(request).rejects.toMatchObject({ code: 'cancelled' });
+    });
+    transport.dispose();
+    await Promise.all(cancelled);
+    pending.forEach((resolve) => {
+      resolve(reply());
+    });
+    await Promise.resolve();
+    expect(native).toHaveBeenCalledTimes(2);
+    await expect(fetch(url)).rejects.toMatchObject({ code: 'cancelled' });
+  });
+  it('rejects streamed, non-JSON and oversized requests before native dispatch, and caps buffered response acceptance', async () => {
+    const native = vi.fn(async () => ({
+      ...reply(),
+      arrayBuffer: new ArrayBuffer(8 * 1024 * 1024 + 1),
+    }));
+    const transport = transportFixture(native);
+    const fetch = transport.fetchFor('anthropic');
+    const url = 'https://api.anthropic.com/v1/messages';
+    for (const body of ['{"stream":true}', 'not-json']) {
+      await expect(fetch(url, { body })).rejects.toMatchObject({ code: 'invalid-request' });
+    }
+    await expect(fetch(url, { body: 'x'.repeat(4 * 1024 * 1024 + 1) })).rejects.toMatchObject({
+      code: 'too-large',
+    });
+    expect(native).not.toHaveBeenCalled();
+    await expect(fetch(url, { body: '{}' })).rejects.toMatchObject({ code: 'too-large' });
+    expect(native).toHaveBeenCalledTimes(1);
+    transport.dispose();
+  });
+});
+
+it('runs a validated SDK tool exchange through the selected native OpenRouter model', async () => {
+  const { z } = await import('zod');
+  const { tool, isStepCount } = await import('ai');
+  const { owner } = secrets();
+  owner.store('openrouter', 'synthetic-tool-secret');
+  const requests: RequestUrlParam[] = [];
+  const transport = transportFixture(async (request) => {
+    requests.push(request);
+    const message =
+      requests.length === 1
+        ? {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'call-1',
+                type: 'function',
+                function: { name: 'double', arguments: '{"value":3}' },
+              },
+            ],
+          }
+        : { role: 'assistant', content: '6' };
+    return reply(
+      JSON.stringify({
+        id: 'fixture',
+        created: 1,
+        model: 'openai/gpt-6-luna',
+        choices: [
+          { index: 0, message, finish_reason: requests.length === 1 ? 'tool_calls' : 'stop' },
+        ],
+        usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
+      }),
+    );
+  });
+  const connections = new ProviderConnections(owner, transport);
+  const result = await generateText({
+    model: connections.model(defaultProviderSettings()),
+    prompt: 'Double 3.',
+    maxRetries: 0,
+    stopWhen: isStepCount(2),
+    tools: {
+      double: tool({
+        inputSchema: z.object({ value: z.number() }),
+        execute: ({ value }) => value * 2,
+      }),
+    },
+  });
+  expect(result.finalStep.text).toBe('6');
+  expect(requests).toHaveLength(2);
+  expect(requests[1]?.body).toContain('call-1');
+  expect(requests[1]?.body).toContain('"content":"6"');
+  expect(requests[0]?.headers?.['authorization']).toBe('Bearer synthetic-tool-secret');
+  transport.dispose();
+});
+
+it('uses provider-specific defaults and maps aborted SDK work without raw causes', () => {
+  expect(parseProviderSettings({ provider: 'openai' }).model).toBe('gpt-6-luna');
+  expect(parseProviderSettings({ provider: 'anthropic' }).model).toBe('claude-haiku-5-5');
+  expect(providerFailure({ name: 'AbortError', message: 'private prompt' }).code).toBe('cancelled');
+});

@@ -41,10 +41,15 @@ describe('README', () => {
   // Every runtime package is bundled into main.js, so a new one needs its own notice decision.
   it('keeps the exact approved runtime package roster', () => {
     expect(Object.keys(readManifest('package.json').dependencies ?? {})).toEqual([
+      '@ai-sdk/anthropic',
+      '@ai-sdk/openai',
+      '@openrouter/ai-sdk-provider',
       '@tanstack/charts',
+      'ai',
       'chrono-node',
       'minisearch',
       'rrule',
+      'zod',
     ]);
   });
 });

@@ -4,6 +4,28 @@ Abyss Tasks manages Markdown tasks through an Obsidian sidebar, with task lists,
 project views, and Analysis. Markdown is the durable record. The plugin builds read models over
 the vault and writes user changes through application commands.
 
+## Provider connections
+
+Main owns `ProviderSecrets`, `ProviderConnections`, and one `NativeProviderTransport` shared
+by the explicit OpenRouter, OpenAI, and Anthropic SDK factories. Credentials live only in the
+host's vault-scoped SecretStorage under four fixed plugin IDs. The settings section submits
+masked, initially empty inputs on Enter or blur, clears successful submissions, and reports key
+presence without claiming connectivity. Neither rendering settings nor constructing a model sends
+a request. `commandMode` holds only static provider/model/search/voice preferences; unknown
+extensions remain intact through the ordinary settings coordinator. There is no prior AI data
+format to migrate, and older plugin versions can retain the additive settings.
+
+The native adapter admits two requests and eight queued requests. Cancellation and a 60-second
+logical deadline reject local acceptance; an active slot remains occupied until `requestUrl`
+settles. Queued cancelled work never starts. JSON requests are capped at 4 MiB and accepted
+buffered responses at 8 MiB. Host buffering occurs before that response check. Streaming is
+rejected. Fixed official initial endpoints prevent arbitrary source-page requests, but the host
+follows redirects and offers no redirect isolation or physical abort. Typed safe failures omit
+raw provider messages, request bodies, and credentials. Search selection can reuse OpenRouter
+or OpenAI, or select independent OpenAI/Tavily billing; Anthropic has no implicit fallback.
+Voice defaults to disabled and has an explicit OpenAI connection preference. These settings do
+not start research, transcription, or an agent session.
+
 ## System at a glance
 
 ```mermaid

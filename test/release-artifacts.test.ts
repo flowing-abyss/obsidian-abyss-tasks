@@ -18,7 +18,7 @@ const loadNodeTools = async () => {
 };
 const [
   { execFileSync, spawnSync },
-  { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync },
+  { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync },
   { tmpdir },
   path,
 ] = await loadNodeTools();
@@ -499,6 +499,76 @@ describe('host Moment bundle boundary', () => {
         { encoding: 'utf8' },
       );
       expect(output.trim()).toBe('external host identity preserved');
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
+});
+
+describe('published development minimum', () => {
+  it(
+    'requires remote published evidence and rejects the same mismatch in release-ready and tag modes',
+    () => {
+      writeAcceptedFixture();
+      const manifestPath = path.join(fixtureDirectory, 'manifest.json');
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
+      writeFileSync(manifestPath, JSON.stringify({ ...manifest, id: 'abyss-tasks' }));
+      const git = (...args: string[]): string =>
+        execFileSync('git', args, { cwd: fixtureDirectory, encoding: 'utf8' }).trim();
+      git('init', '-q');
+      git('add', '.');
+      git(
+        '-c',
+        'user.name=Fixture',
+        '-c',
+        'user.email=fixture@example.org',
+        '-c',
+        'commit.gpgsign=false',
+        '-c',
+        'core.hooksPath=/dev/null',
+        'commit',
+        '-qm',
+        'fixture',
+      );
+      git('tag', '1.0.0');
+      const sha = git('rev-parse', 'HEAD');
+      writeFileSync(
+        manifestPath,
+        JSON.stringify({ ...manifest, id: 'abyss-tasks', minAppVersion: '1.11.5' }),
+      );
+      const bin = mkdtempSync(path.join(tmpdir(), 'abyss-published-tools-'));
+      try {
+        const gh = path.join(bin, 'gh');
+        writeFileSync(
+          gh,
+          `#!/usr/bin/env node
+const route = process.argv[3];
+process.stdout.write(JSON.stringify(route.includes('/releases/') ? { tag_name: '1.0.0', draft: false, prerelease: false, published_at: '2026-11-01' } : { object: { type: 'commit', sha: '${sha}' } }));
+`,
+        );
+        chmodSync(gh, 0o755);
+        const env = {
+          ...withoutAmbientReleaseRef(process.env),
+          PATH: `${bin}${path.delimiter}${process.env['PATH'] ?? ''}`,
+          GITHUB_REPOSITORY: 'fixture/plugin',
+        };
+        const accepted = runScript(CHECKER_PATH, env);
+        expect(accepted.status, accepted.stderr).toBe(0);
+        const strict = spawnSync(process.execPath, [CHECKER_PATH, '--release-ready'], {
+          cwd: fixtureDirectory,
+          encoding: 'utf8',
+          env,
+        });
+        expect(strict.status).toBe(1);
+        expect(strict.stderr).toContain('minAppVersion');
+        expect(
+          runScript(CHECKER_PATH, { ...env, GITHUB_REF_TYPE: 'tag', GITHUB_REF_NAME: '1.0.0' })
+            .status,
+        ).toBe(1);
+        writeFileSync(gh, '#!/usr/bin/env node\nprocess.exit(1);\n');
+        expect(runScript(CHECKER_PATH, env).status).toBe(1);
+      } finally {
+        rmSync(bin, { recursive: true, force: true });
+      }
     },
     CHILD_PROCESS_TIMEOUT_MS,
   );

@@ -1,6 +1,17 @@
 import taskSearchWorkerSource from 'abyss-task-search-worker';
-import { getAllTags, normalizePath, Notice, Plugin, TFile, type TAbstractFile } from 'obsidian';
+import {
+  getAllTags,
+  normalizePath,
+  Notice,
+  Plugin,
+  requestUrl,
+  TFile,
+  type TAbstractFile,
+} from 'obsidian';
 import type { ApiResultV1, TasksApiV1 } from '../api';
+import { NativeProviderTransport } from './ai/providers/NativeProviderTransport';
+import { ProviderConnections } from './ai/providers/ProviderConnections';
+import { ProviderSecrets } from './ai/providers/ProviderSecrets';
 import { TaskApiProvider } from './integrations/TaskApiProvider';
 import { readError } from './integrations/taskApiReads';
 import { extractMarkdownBodyTags } from './markdown/markdownTagRename';
@@ -148,8 +159,22 @@ export default class TaskCalendarPlugin extends Plugin {
   private projectPropertyCaptureQueue: Promise<void> = Promise.resolve();
   private timeTrackingReminder: TimeTrackingReminder | undefined = undefined;
 
+  providerSecrets!: ProviderSecrets;
+  providerConnections!: ProviderConnections;
+
   override async onload(): Promise<void> {
     await this.loadSettings();
+    this.providerSecrets = new ProviderSecrets(this.app.secretStorage);
+    const providerTransport = new NativeProviderTransport(requestUrl, (callback, delayMs) => {
+      const timer = window.setTimeout(callback, delayMs);
+      return () => {
+        window.clearTimeout(timer);
+      };
+    });
+    this.providerConnections = new ProviderConnections(this.providerSecrets, providerTransport);
+    this.register(() => {
+      providerTransport.dispose();
+    });
     for (const ref of this.viewStatePaths.listen(this.app.vault)) this.registerEvent(ref);
     this.projectProperties = new ObsidianProjectProperties(this.app);
     this.registerProjectPropertyCaptureOpportunities();

@@ -1201,7 +1201,7 @@ describe('CalendarSettingsTab renderGeneralSettings', () => {
 
 describe('CalendarSettingsTab Hotkeys', () => {
   function hotkeysBody(tab: CalendarSettingsTab): HTMLElement {
-    return openSection(tab, 5);
+    return openSection(tab, 6);
   }
 
   function shortcutInput(body: HTMLElement, action: string): HTMLInputElement {
@@ -1252,7 +1252,7 @@ describe('CalendarSettingsTab Hotkeys', () => {
   it('keeps collapsed Hotkeys inputs out of sequential focus and exposes disclosure state', () => {
     const { tab } = makeTab();
     const section = expectDefined(
-      tab.containerEl.querySelectorAll<HTMLElement>('.abyss-settings-section')[5],
+      tab.containerEl.querySelectorAll<HTMLElement>('.abyss-settings-section')[6],
     );
     const header = expectDefined(
       section.querySelector<HTMLButtonElement>('.abyss-settings-section-header'),

@@ -1,3 +1,4 @@
+import { defaultProviderSettings } from '../ai/providers/providerSettings';
 import { buildDefaultProjectTableSettings } from '../projects/projectTableSettings';
 import { ACTIVE_STATUS_GROUPS } from '../status/statusConstants';
 import { defaultShortcuts } from './shortcuts';
@@ -100,6 +101,7 @@ export function buildDefaultTaskStatuses(): TaskStatusDef[] {
 }
 
 export const DEFAULT_SETTINGS: CalendarSettings = {
+  commandMode: defaultProviderSettings(),
   firstDayOfWeek: 1,
   timeTrackingReminderMinutes: DEFAULT_TIME_TRACKING_REMINDER_MINUTES,
   taskPrefix: '',
