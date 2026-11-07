@@ -48,6 +48,10 @@ const privateOwners = new Set([
   // Registry internals are accessed only through methods, never reflected, serialized, or spread.
   'TaskIdentityRegistry',
   'TaskCursorRegistry',
+  // Client-owned plan/cursor state is accessed through methods, never reflection or spreading.
+  'TaskContentApi',
+  'TaskTreeReader',
+  'TaskSearchReads',
   // Project registry state is accessed through methods and is never reflected or serialized.
   'ProjectReadRegistry',
   // Request records and admission tickets are never reflected, serialized, or spread from the owner.

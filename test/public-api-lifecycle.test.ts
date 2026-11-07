@@ -179,16 +179,28 @@ it('validates runtime inputs and exposes only implemented capabilities', async (
   expect(await client.ready(null as never)).toMatchObject({ error: { code: 'INVALID_ARGUMENT' } });
   expect(await client.tasks.get('')).toMatchObject({ error: { code: 'INVALID_ARGUMENT' } });
   expect(Object.keys(client.tasks).sort((a, b) => a.localeCompare(b))).toEqual([
+    'apply',
     'complete',
+    'create',
     'get',
     'list',
+    'prepare',
     'resolve',
+    'search',
     'setStatus',
     'statuses',
+    'tags',
     'toggleCompletion',
+    'tree',
   ]);
   expect(client.info.capabilities).toEqual([
     'tasks.read',
+    'tasks.tags',
+    'tasks.search',
+    'tasks.tree',
+    'tasks.prepare',
+    'tasks.apply',
+    'tasks.create',
     'tasks.resolve',
     'tasks.statuses',
     'tasks.complete',

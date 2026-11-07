@@ -658,3 +658,76 @@ it('reports the same effective default as headless project creation', async () =
     h.plugin.onunload();
   }
 });
+
+it('prepares structured project task trees through the existing guarded destination and rejects stale proofs', async () => {
+  const { app, plugin, first } = await setup();
+  try {
+    const projects = expectDefined(first.projects),
+      project = expectDefined(value(await projects.list()).items[0]);
+    const prepare = expectDefined(first.tasks.prepare),
+      create = expectDefined(first.tasks.create);
+    const plan = value(
+      await prepare({
+        kind: 'create',
+        destination: {
+          type: 'project',
+          target: project.target,
+          expectedRevision: project.revision,
+        },
+        tree: {
+          markdownTitle: 'Prepared',
+          children: [{ markdownTitle: 'Nested', description: 'Details' }],
+        },
+      }),
+    );
+    expect(plan.destination).toMatchObject({
+      type: 'project',
+      path: empty,
+      insertion: { type: 'prepend' },
+    });
+    expect(value(await first.tasks.list({ path: empty })).items).toEqual([]);
+    const saved = await create({
+      ...request('prepared-project'),
+      plan: plan.target,
+      expectedPlanRevision: plan.revision,
+    });
+    expect(saved).toMatchObject({
+      ok: true,
+      receipt: { effects: 'committed', snapshots: 'complete' },
+    });
+    expect(value(await first.tasks.list({ path: empty })).items.map((task) => task.title)).toEqual([
+      'Prepared',
+      'Nested',
+    ]);
+    expect(
+      await prepare({
+        kind: 'create',
+        destination: {
+          type: 'project',
+          target: project.target,
+          expectedRevision: project.revision,
+        },
+        tree: { markdownTitle: 'Stale' },
+      }),
+    ).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+    const fresh = value(await projects.get(project.target));
+    const pending = value(
+      await prepare({
+        kind: 'create',
+        destination: { type: 'project', target: fresh.target, expectedRevision: fresh.revision },
+        tree: { markdownTitle: 'Pending' },
+      }),
+    );
+    plugin.settings.projects.taskInsertionMode = 'append';
+    expect(
+      await prepare({
+        kind: 'refresh',
+        plan: pending.target,
+        expectedPlanRevision: pending.revision,
+      }),
+    ).toMatchObject({ ok: false });
+    expect(app.vault.getAbstractFileByPath(empty)).toBeDefined();
+  } finally {
+    plugin.onunload();
+  }
+});

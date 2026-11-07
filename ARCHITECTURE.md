@@ -53,7 +53,7 @@ note, preserving other bytes. Refresh advances a private writer anchor while ret
 reviewed `before`, frozen clock, and composed child map. Any attempt, including an unchanged or
 unknown result, prevents refresh throughout that append/refresh family.
 
-Canonical single-root edits also prove untouched sibling roots from their exact exterior bytes and
+Canonical single-root edits and task insertions also prove untouched sibling roots from their exact exterior bytes and
 physical line displacement. The repository validates their accepted revisions and passes them through
 the existing TaskRefAuthority transition and occurrence witnesses, including duplicate full blocks and
 children. TaskIndex can use the latest native unchanged-revision witness across missed intermediate
@@ -64,14 +64,26 @@ Same-revision native transitions remain relocation evidence with an explicit aut
 basis, preserving ordinary archive behavior and keeping `authoritySuccessor` limited to changed
 generations. Refresh requires that native basis, never the relocation label alone.
 
-A rejected staged write cannot retain speculative sibling authority. Exact rejected-candidate
-readback remints those sibling revisions without continuations and publishes their invalidation
+Ordinary and prepared task creation reuse `ProjectRootPhase` and its full-population structural
+reservation. Canonical insertion retains all untouched roots and descendants by physical source
+correspondence, including duplicate blocks under prepend and section placement. A created receipt
+uses the structural owner's fresh reserved root reference; an unavailable accepted installation cannot
+make an equal preexisting root look like the inserted occurrence. Acknowledged storage remains a
+known commit even if later accepted readback is unavailable.
+
+A rejected staged write cannot retain speculative sibling or inserted-root authority. Exact rejected-candidate
+readback remints retained sibling and newly inserted revisions without continuations and publishes their invalidation
 through the existing occurrence boundary. Literal restoration ownership remains reserved for the
 original source. If rejection readback is unavailable, the repository captures a native file and
 observation guarded invalidation from TaskSnapshotState. The index revokes speculative task refs,
 marks source acquisition failed, and retires occurrence handles; it does not certify an empty note.
-Later acquisition cannot reuse the revoked refs, and a later accepted observation makes a captured
-invalidation inert.
+Later acquisition cannot reuse the revoked refs. Creation additionally binds the invalidation capture
+to the exact candidate content, so an already accepted competing source cannot be invalidated by an
+older failed write. A later accepted observation also makes a captured invalidation inert.
+The structural owner's optional rejected-readback path retains only its existing restoration or
+revocation stage through installation/release. Revocation stages cannot forward bytes, complete a
+mutation, or commit authority. Changed-generation status successors keep their established confirmed
+receipt behavior; rejected insertion revokes its fresh root as well as retained siblings.
 
 [`TaskCreatePreparationApi`](src/tasks/application/TaskCreatePreparationApi.ts) prepares complete
 new trees through the same application normalization, canonical creation codec, editor and snapshot
@@ -268,10 +280,42 @@ token. Current exclusion precedes incomplete health for target reads, while life
 precedence. Source health determines whether a snapshot can be disclosed; identity witnesses determine
 whether an opaque target still names the same occurrence. Either proof can be unavailable independently.
 
+[`taskContentApi`](src/integrations/taskContentApi.ts) composes the native edit and creation
+preparations into optional public tree, prepare, apply and create capabilities. A client owns bounded,
+expiring immutable plan versions and plan-only draft targets; native preparations retain the source,
+clock, settings and sealed candidate authority. Before trees retain the original reviewed root.
+The plan composes original-to-current native correspondence through each immediate-predecessor
+preparation. Late expansion issues existing descendant targets from the pinned original-root proof;
+new authored descendants remain plan-owned. Refresh resolves
+the pinned original accepted root, or a same-consumer successful insertion retained by the request
+owner with matching sealed destination basis. It advances an unattempted writer without replaying a
+command. A mutation consumes the whole plan family, including divergent versions and failed attempts.
+Initial status symbols resolve through the current complete native catalog; saved status actions retain
+their separate lifecycle command path. Draft status edits are not part of the content command union.
+
+[`taskTreeApi`](src/integrations/taskTreeApi.ts) projects canonical direct-entry order into detached
+trees and owns revision-scoped comment/time handles and shallow expansion cursors. Entry limits never
+truncate scalar text. Incomplete children expand independently, so exhausting a node cursor does not
+claim recursive completeness. Activity summaries derive from the full tree at one explicit observation
+time, independent of the returned entry window. Read-only time entries preserve their owning node.
+Plan handles never enter the accepted identity registry. Late before expansion projects accepted
+handles only within the unchanged original block proved at the current retained root address.
+
+[`taskSearchApi`](src/integrations/taskSearchApi.ts) owns client search cursors, releases borrowed native
+cursors on expiry/cancellation/disposal, and scans native retrieval batches through exact accepted
+hydration before applying node filters. Field selection travels through the existing Search service,
+worker validation and MiniSearch field selector. Existing UI defaults remain unchanged. Scoped tag
+catalogs enumerate permitted accepted nodes and reuse canonical case-insensitive representatives.
+
+[`taskContentReceipt`](src/integrations/taskContentReceipt.ts) is stateless. It compares the sealed final
+block with the writer's exact installed occurrence and current accepted readback, then maps only the
+final-plan task handles frozen at admission through canonical relative positions within that proved
+block. A missing readback or mapping preserves write effects and never authorizes replay. Comments
+remain version-scoped; receipts grant no durable comment correspondence.
+
 [`TaskRequestRegistry`](src/integrations/TaskRequestRegistry.ts) owns bounded accepted promises and
-terminal mutation outcomes across task and project operations within one provider epoch and
-consumer namespace. Exact normalized payloads include the operation and deadline. Project request
-bytes share a 4 MiB cap in addition to the provider's request counts. Task and project targets
+terminal mutation outcomes across status, project and prepared content operations within one provider epoch and
+consumer namespace. Exact normalized payloads include the operation and deadline. Project request bytes and content receipt/preparation reservations share a 4 MiB cap in addition to the provider's request counts. Task and project targets
 and cursors have separate capacity and expiry accounting. The registry validates and
 normalizes payloads before replay, then acquires an admission ticket only for new requests. A final
 synchronous reservation check handles callback reentry and releases unused tickets. A transient

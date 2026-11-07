@@ -3,12 +3,22 @@ import type {
   ApiEventV1,
   ApiInfoV1,
   ApiResultV1,
+  ApplyTaskContentV1,
+  ListTaskTagsV1,
+  MutationOptionsV1,
   ObservationV1,
+  ReadOptionsV1,
   ReadyV1,
+  SearchTasksV1,
   TasksApiProviderV1,
   TasksApiV1,
 } from '../../api';
-import type { TaskIntegrationReadApi, TaskReadObservation, TaskStatusMutationApi } from '../tasks';
+import type {
+  TaskIntegrationReadApi,
+  TaskReadObservation,
+  TaskSearchApi,
+  TaskStatusMutationApi,
+} from '../tasks';
 import { ProjectReadRegistry } from './ProjectReadRegistry';
 import { TaskCursorRegistry } from './TaskCursorRegistry';
 import { TaskIdentityRegistry } from './TaskIdentityRegistry';
@@ -17,6 +27,8 @@ import { createProjectApiMutations, type ProjectPorts } from './projectApiMutati
 import { createProjectApiReads } from './projectApiReads';
 import { createTaskApiMutations } from './taskApiMutations';
 import { createTaskApiReads, lifecycleError, readError } from './taskApiReads';
+import { TaskContentApi, type TaskContentPorts } from './taskContentApi';
+import { TaskSearchReads } from './taskSearchApi';
 import { validateApiRequest, validateReadOptions } from './validation';
 import { apiError, freezeValue } from './values';
 
@@ -35,6 +47,8 @@ interface ClientRecord {
   live: boolean;
   readonly listeners: Set<(event: ApiEventV1) => void>;
   readonly waits: Set<() => void>;
+  content?: TaskContentApi;
+  search?: TaskSearchReads;
 }
 interface Publication {
   readonly event: ApiEventV1;
@@ -44,6 +58,8 @@ interface Publication {
   }>;
 }
 interface ProviderOptions {
+  readonly search?: TaskSearchApi;
+  readonly content?: TaskContentPorts;
   readonly projects?: ProjectPorts;
   readonly mutations: TaskStatusMutationApi;
   readonly reads: TaskIntegrationReadApi;
@@ -74,6 +90,11 @@ function apiInfo(options: ProviderOptions): ApiInfoV1 {
     providerEpoch: options.epoch,
     capabilities: [
       'tasks.read',
+      'tasks.tags',
+      ...(options.search === undefined ? [] : ['tasks.search']),
+      ...(options.content === undefined
+        ? []
+        : ['tasks.tree', 'tasks.prepare', 'tasks.apply', 'tasks.create']),
       'tasks.resolve',
       'tasks.statuses',
       'tasks.complete',
@@ -149,6 +170,8 @@ function observation(owner: ProviderOwner, value: TaskReadObservation): Observat
 function closeClient(owner: ProviderOwner, client: ClientRecord): void {
   if (!client.live) return;
   client.live = false;
+  client.content?.dispose();
+  client.search?.dispose();
   client.listeners.clear();
   owner.clients.delete(client);
   for (const wake of [...client.waits]) wake();
@@ -298,6 +321,51 @@ function subscribe(
     return internal(owner, 'subscribe');
   }
 }
+function clientTasks(
+  owner: ProviderOwner,
+  client: ClientRecord,
+  mutation: Omit<Parameters<typeof createTaskApiMutations>[0], 'mutations'>,
+): TasksApiV1['tasks'] {
+  const context = mutation.api;
+  const content =
+    owner.options.content === undefined
+      ? undefined
+      : new TaskContentApi({
+          ...mutation,
+          ports: owner.options.content,
+          now: owner.options.now,
+          ...(owner.projects === undefined ? {} : { projects: owner.projects }),
+        });
+  if (content !== undefined) client.content = content;
+  const searches = new TaskSearchReads(
+    context,
+    owner.options.search,
+    owner.options.now,
+    owner.options.epoch,
+  );
+  client.search = searches;
+  return Object.freeze({
+    ...createTaskApiReads(context),
+    tags: (query?: ListTaskTagsV1, options?: ReadOptionsV1) => searches.tags(query, options),
+    ...(owner.options.search === undefined
+      ? {}
+      : {
+          search: (query: SearchTasksV1, options?: ReadOptionsV1) =>
+            searches.search(query, options),
+        }),
+    ...(content === undefined
+      ? {}
+      : {
+          tree: content.tree.bind(content),
+          prepare: content.prepare.bind(content),
+          apply: (input: ApplyTaskContentV1, options?: MutationOptionsV1) =>
+            content.mutate('tasks.apply', input, options),
+          create: (input: ApplyTaskContentV1, options?: MutationOptionsV1) =>
+            content.mutate('tasks.create', input, options),
+        }),
+    ...createTaskApiMutations({ ...mutation, mutations: owner.options.mutations }),
+  });
+}
 function getApi(
   owner: ProviderOwner,
   version: number,
@@ -328,10 +396,7 @@ function getApi(
       dispose: () => {
         closeClient(owner, client);
       },
-      tasks: Object.freeze({
-        ...createTaskApiReads(context),
-        ...createTaskApiMutations({ ...mutation, mutations: owner.options.mutations }),
-      }),
+      tasks: clientTasks(owner, client, mutation),
       ...(owner.projects === undefined
         ? {}
         : {

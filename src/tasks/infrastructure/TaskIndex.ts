@@ -3126,10 +3126,16 @@ export class TaskIndex
     return current != null ? { ...current.ref } : undefined;
   }
 
-  captureRejectedSourceInvalidation(filePath: string, file: object): () => void {
+  captureRejectedSourceInvalidation(
+    filePath: string,
+    file: object,
+    expectedContent?: string,
+  ): () => void {
     if (!(file instanceof TFile)) return () => undefined;
     const observation = this.integrationCurrentObservations_abyssPrivate.get(file);
     const source = this.acceptedStatisticsSources_abyssPrivate.get(filePath);
+    if (expectedContent !== undefined && source?.content !== expectedContent)
+      return () => undefined;
     return () => {
       if (
         observation === undefined ||

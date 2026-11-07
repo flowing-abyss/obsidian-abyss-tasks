@@ -364,6 +364,32 @@ export interface TasksApiV1 {
       selector: TaskSelectorV1,
       options?: ReadOptionsV1,
     ) => Promise<ApiResultV1<ResolutionV1>>;
+
+    readonly tree?: (
+      query: ReadTaskTreeV1,
+      options?: ReadOptionsV1,
+    ) => Promise<ApiResultV1<TaskTreePageV1>>;
+    readonly search?: (
+      query: SearchTasksV1,
+      options?: ReadOptionsV1,
+    ) => Promise<ApiResultV1<TaskSearchPageV1>>;
+    readonly tags?: (
+      query?: ListTaskTagsV1,
+      options?: ReadOptionsV1,
+    ) => Promise<ApiResultV1<TaskTagPageV1>>;
+    readonly prepare?: (
+      input: PrepareTaskContentV1,
+      options?: ReadOptionsV1,
+    ) => Promise<ApiResultV1<ContentPlanV1>>;
+    readonly apply?: (
+      input: ApplyTaskContentV1,
+      options?: MutationOptionsV1,
+    ) => Promise<TaskContentMutationResultV1>;
+    readonly create?: (
+      input: ApplyTaskContentV1,
+      options?: MutationOptionsV1,
+    ) => Promise<TaskContentMutationResultV1>;
+
     readonly statuses: (options?: ReadOptionsV1) => Promise<ApiResultV1<StatusCatalogV1>>;
     readonly complete: (
       input: StatusMutationV1,
@@ -559,3 +585,245 @@ export interface ProjectsApiV1 {
     options?: MutationOptionsV1,
   ) => Promise<ProjectMutationResultV1>;
 }
+
+export type RefreshTaskContentV1 = {
+  readonly kind: 'refresh';
+  readonly plan: ContentPlanTargetV1;
+  readonly expectedPlanRevision: ContentPlanRevisionV1;
+  readonly afterRequestId?: string;
+};
+export type TaskCommentTargetV1 = string;
+export type ContentPlanTargetV1 = string;
+export type ContentPlanRevisionV1 = string;
+
+export interface TaskCommentV1 {
+  readonly target: TaskCommentTargetV1;
+  readonly parentTarget: TaskTargetV1;
+  readonly text: string;
+  readonly timestamp?:
+    | { readonly precision: 'day'; readonly value: string }
+    | { readonly precision: 'instant'; readonly atom: string; readonly epochMs: number };
+}
+export interface TaskTrackedActivityV1 {
+  readonly closedMs: number;
+  readonly runningCount: number;
+  readonly runningMsAtObservation: number;
+  readonly lastRecordedWorkAtMs?: number;
+  readonly brokenEntryCount: number;
+}
+export interface TaskActivityV1 {
+  readonly observedAtMs: number;
+  readonly own: TaskTrackedActivityV1;
+  readonly subtree: TaskTrackedActivityV1;
+}
+export interface TaskTimeEntryV1 {
+  readonly target: string; // opaque read-only occurrence, bound to this tree revision
+  readonly parentTarget: TaskTargetV1;
+  readonly state: 'running' | 'closed' | 'broken';
+  readonly startMs?: number;
+  readonly endMs?: number;
+  readonly note?: string;
+  readonly issue?: 'invalid-start' | 'invalid-end' | 'end-before-start';
+}
+export type TaskTreeEntryV1 =
+  | { readonly kind: 'child'; readonly target: TaskTargetV1 }
+  | { readonly kind: 'comment'; readonly target: TaskCommentTargetV1 }
+  | { readonly kind: 'time-entry'; readonly target: string };
+export interface TaskTreeV1 extends Omit<TaskDtoV1, 'source'> {
+  readonly source?: TaskDtoV1['source']; // absent for draft nodes
+  readonly description?: string;
+  readonly children: readonly TaskTreeV1[];
+  readonly comments: readonly TaskCommentV1[];
+  readonly activity: TaskActivityV1;
+  readonly timeEntries: readonly TaskTimeEntryV1[];
+  readonly entries: readonly TaskTreeEntryV1[]; // canonical direct-entry order for this page
+  readonly timeEntryCount: number;
+  readonly childCount: number;
+  readonly commentCount: number;
+  readonly complete: boolean; // all own content and recursive descendants present
+  readonly truncated: boolean;
+}
+/** limit bounds direct entries, never scalar text bytes. Expand incomplete children separately. */
+export interface ReadTaskTreeV1 {
+  readonly target: TaskTargetV1;
+  readonly expectedRevision?: TaskRevisionV1;
+  readonly plan?: ContentPlanTargetV1;
+  readonly expectedPlanRevision?: ContentPlanRevisionV1;
+  readonly side?: 'before' | 'after'; // plan reads only, default after
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+export interface TaskTreePageV1 extends ObservationV1 {
+  readonly tree: TaskTreeV1;
+  readonly complete: boolean;
+  readonly truncated: boolean;
+  readonly nextCursor?: string;
+}
+
+export type TaskFieldV1<T> =
+  { readonly type: 'set'; readonly value: T } | { readonly type: 'clear' };
+export interface TaskPatchV1 {
+  readonly markdownTitle?: TaskFieldV1<string>;
+  readonly priority?: TaskFieldV1<'A' | 'B' | 'C' | 'D' | 'E' | 'F'>;
+  readonly due?: TaskFieldV1<string>;
+  readonly scheduled?: TaskFieldV1<string>;
+  readonly start?: TaskFieldV1<string>;
+  readonly time?: TaskFieldV1<string>;
+  readonly durationMinutes?: TaskFieldV1<number>;
+  readonly recurrence?: TaskFieldV1<string>;
+  readonly onCompletion?: TaskFieldV1<'keep' | 'delete'>;
+  readonly tags?: {
+    readonly add?: readonly string[];
+    readonly remove?: readonly string[];
+  };
+}
+export interface TaskInitialV1 extends Omit<TaskPatchV1, 'markdownTitle'> {
+  readonly statusSymbol?: string;
+}
+export interface TaskCreateTreeV1 {
+  readonly markdownTitle: string;
+  readonly initial?: TaskInitialV1;
+  readonly description?: string;
+  readonly comments?: ReadonlyArray<{ readonly text: string }>;
+  readonly children?: readonly TaskCreateTreeV1[];
+}
+export type TaskContentOperationV1 =
+  | { readonly type: 'patch'; readonly target: string; readonly patch: TaskPatchV1 }
+  | { readonly type: 'description'; readonly target: string; readonly text: string | null }
+  | { readonly type: 'add-child'; readonly target: string; readonly markdownTitle: string }
+  | { readonly type: 'remove'; readonly target: string }
+  | { readonly type: 'add-comment'; readonly target: string; readonly text: string }
+  | { readonly type: 'update-comment'; readonly target: string; readonly text: string }
+  | { readonly type: 'remove-comment'; readonly target: string };
+
+export type TaskCreateDestinationV1 =
+  | { readonly type: 'configured-default' }
+  | {
+      readonly type: 'note';
+      readonly path: string;
+      readonly insertion: TaskInsertionV1;
+      readonly provision?: 'if-missing';
+    }
+  | {
+      readonly type: 'project';
+      readonly target: ProjectTargetV1;
+      readonly expectedRevision: ProjectRevisionV1;
+    };
+export type TaskInsertionV1 =
+  | { readonly type: 'append' | 'prepend' }
+  | { readonly type: 'section'; readonly heading: string; readonly position?: 'top' | 'bottom' };
+
+export type PrepareTaskContentV1 =
+  | RefreshTaskContentV1
+  | {
+      readonly kind: 'edit';
+      readonly target: TaskTargetV1;
+      readonly expectedRevision: TaskRevisionV1;
+      readonly operation?: TaskContentOperationV1;
+    }
+  | {
+      readonly kind: 'create';
+      readonly destination: TaskCreateDestinationV1;
+      readonly tree: TaskCreateTreeV1;
+    }
+  | {
+      readonly kind: 'append';
+      readonly plan: ContentPlanTargetV1;
+      readonly expectedPlanRevision: ContentPlanRevisionV1;
+      readonly operation: TaskContentOperationV1;
+    };
+/** revision is an opaque plan version; it replaces the numeric observation revision. */
+export interface ContentPlanV1 extends Omit<ObservationV1, 'revision'> {
+  readonly target: ContentPlanTargetV1;
+  readonly revision: ContentPlanRevisionV1;
+  readonly kind: 'edit' | 'create';
+  readonly expiresAt: number;
+  readonly before: TaskTreeV1 | null;
+  readonly after: TaskTreeV1 | null;
+  readonly destination?: {
+    readonly type: TaskCreateDestinationV1['type'];
+    readonly path: string;
+    readonly insertion: TaskInsertionV1;
+    readonly projectTarget?: ProjectTargetV1;
+    readonly projectRevision?: ProjectRevisionV1;
+  };
+}
+export interface ApplyTaskContentV1 {
+  readonly plan: ContentPlanTargetV1;
+  readonly expectedPlanRevision: ContentPlanRevisionV1;
+  readonly requestId: string;
+  readonly expiresAt: number;
+}
+
+export interface SearchTasksV1 extends ListTasksV1 {
+  readonly query: string;
+  readonly fields?: 'title' | 'body' | 'all';
+  readonly matchScope?: 'node' | 'subtree';
+}
+export interface TaskSearchPageV1 extends TaskPageV1 {
+  readonly complete: boolean;
+  readonly truncated: boolean;
+}
+export interface ListTaskTagsV1 {
+  readonly path?: string;
+  readonly folder?: string;
+  readonly prefix?: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+export interface TaskTagPageV1 extends ObservationV1 {
+  readonly items: readonly string[];
+  readonly nextCursor?: string;
+  readonly complete: boolean;
+  readonly truncated: boolean;
+}
+
+export interface ContentCommitTaskContinuityV1 {
+  readonly plan: ContentPlanTargetV1;
+  readonly planRevision: ContentPlanRevisionV1; // final version actually committed
+  readonly correspondence:
+    | {
+        readonly state: 'complete';
+        readonly coverage: 'issued-plan-tasks';
+        readonly root: {
+          readonly target: TaskTargetV1;
+          readonly revision: TaskRevisionV1;
+        } | null; // null only for confirmed root deletion
+        readonly tasks: ReadonlyArray<{
+          readonly preparedTarget: TaskTargetV1;
+          readonly committedTarget: TaskTargetV1;
+          readonly committedRevision: TaskRevisionV1;
+        }>;
+      }
+    | { readonly state: 'unavailable' | 'redacted' };
+}
+
+export interface TaskContentReceiptV1 {
+  readonly providerEpoch: string;
+  readonly requestId: string;
+  readonly acceptedAt: number;
+  readonly expiresAt: number;
+  readonly plan: ContentPlanTargetV1;
+  readonly planRevision: ContentPlanRevisionV1;
+  readonly outcome: MutationReceiptV1['outcome'];
+  readonly effects: EffectStateV1;
+  readonly recovery: RecoveryV1;
+  readonly original?: {
+    readonly target: TaskTargetV1;
+    readonly state: 'retained' | 'removed' | 'unproven';
+  };
+  readonly task?: { readonly target: TaskTargetV1; readonly revision: TaskRevisionV1 };
+  readonly destinationEffects?: NonNullable<ProjectMutationReceiptV1['destinationCopy']>;
+  readonly snapshots: 'complete' | 'unavailable' | 'redacted';
+  readonly contentContinuity: ContentCommitTaskContinuityV1;
+  readonly warnings: readonly MutationWarningV1[];
+}
+export type TaskContentMutationResultV1 =
+  | { readonly ok: true; readonly receipt: TaskContentReceiptV1 }
+  | {
+      readonly ok: false;
+      readonly error: ApiErrorV1;
+      readonly effects: EffectStateV1;
+      readonly recovery: RecoveryV1;
+      readonly receipt?: TaskContentReceiptV1;
+    };

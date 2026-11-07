@@ -2,6 +2,7 @@ import type {
   ApiAbortSignalV1,
   ApiErrorV1,
   ApiResultV1,
+  ApplyTaskContentV1,
   ErrorCategoryV1,
   MutationResultV1,
   ProjectMutationReceiptV1,
@@ -9,19 +10,27 @@ import type {
   RecoveryV1,
   SetTaskStatusV1,
   StatusMutationV1,
+  TaskContentMutationResultV1,
 } from '../../api';
+import type { TaskCreatePreparation } from '../tasks';
 import {
   validateProjectMutation,
   type ProjectMutationInput,
   type ProjectOperation,
 } from './projectValidation';
+import { validateContentApply } from './taskContentValidation';
 import { validateConsumer, validateMutation } from './validation';
 import { apiError, freezeValue } from './values';
 
 type TaskMethod = 'complete' | 'setStatus' | 'toggleCompletion';
-type Method = TaskMethod | ProjectOperation;
-type Result = MutationResultV1 | ProjectMutationResultV1;
+type Method = TaskMethod | ProjectOperation | 'tasks.apply' | 'tasks.create';
+type Result = MutationResultV1 | ProjectMutationResultV1 | TaskContentMutationResultV1;
+interface ContentEvidence {
+  readonly target: string;
+  readonly preparation: Extract<TaskCreatePreparation, { type: 'ready' }>;
+}
 interface AdmissionTicket<T extends Result = MutationResultV1> {
+  readonly retainedBytes?: number;
   readonly execute: (acceptedAt: number) => Promise<T>;
   readonly unknown?: (acceptedAt: number, error: ApiErrorV1) => T;
   readonly release: () => void;
@@ -64,11 +73,12 @@ interface RequestRecord {
   readonly projectBytes: number;
   release: (() => void) | undefined;
   pending: boolean;
+  contentEvidence?: ContentEvidence;
 }
 interface RequestContext {
   readonly consumerId: string;
   readonly method: Method;
-  readonly request: StatusMutationV1 | ProjectMutationInput;
+  readonly request: StatusMutationV1 | ProjectMutationInput | ApplyTaskContentV1;
   readonly projectBytes: number;
   readonly key: string;
   readonly payload: string;
@@ -243,6 +253,62 @@ export class TaskRequestRegistry {
       },
     );
   }
+  async executeContent(
+    consumerId: string,
+    method: 'tasks.apply' | 'tasks.create',
+    input: ApplyTaskContentV1,
+    options: RequestOptions<TaskContentMutationResultV1>,
+  ): Promise<TaskContentMutationResultV1> {
+    return this.run_abyssPrivate(
+      method,
+      () => {
+        const consumer = validateConsumer(consumerId),
+          parsed = validateContentApply(input);
+        if (!consumer.ok) return consumer;
+        if (!parsed.ok) return parsed;
+        const request = parsed.value,
+          payload = JSON.stringify([
+            method,
+            request.plan,
+            request.expectedPlanRevision,
+            request.requestId,
+            request.expiresAt,
+          ]);
+        return {
+          ok: true,
+          value: {
+            consumerId: consumer.value,
+            method,
+            request,
+            payload,
+            projectBytes: new TextEncoder().encode(payload).length,
+            key: JSON.stringify([consumer.value, request.requestId]),
+          },
+        };
+      },
+      options,
+    ) as Promise<TaskContentMutationResultV1>;
+  }
+  retainContentEvidence(consumerId: string, requestId: string, evidence: ContentEvidence): void {
+    const record = this.records_abyssPrivate.get(JSON.stringify([consumerId, requestId]));
+    if (record?.pending === true) record.contentEvidence = evidence;
+  }
+  async contentEvidence(
+    consumerId: string,
+    requestId: string,
+  ): Promise<ContentEvidence | undefined> {
+    this.reclaim_abyssPrivate(this.time_abyssPrivate());
+    const record = this.records_abyssPrivate.get(JSON.stringify([consumerId, requestId]));
+    if (record === undefined || record.pending) return undefined;
+    const result = await record.promise;
+    if (
+      !result.ok ||
+      result.receipt.effects !== 'committed' ||
+      record.expiresAt <= this.time_abyssPrivate()
+    )
+      return undefined;
+    return record.contentEvidence;
+  }
   private async run_abyssPrivate(
     method: Method,
     parse: () => ApiResultV1<RequestContext>,
@@ -315,9 +381,13 @@ export class TaskRequestRegistry {
       const checked = this.checkAdmission_abyssPrivate(current, options, abort);
       if ('result' in checked) return checked.result;
       if (!admission.ok) return rejected(admission.error);
-      if (this.full_abyssPrivate(current.consumerId, current.projectBytes))
+      const retained = {
+        ...current,
+        projectBytes: current.projectBytes + (admission.value.retainedBytes ?? 0),
+      };
+      if (this.full_abyssPrivate(retained.consumerId, retained.projectBytes))
         return failure('RESOURCE_LIMIT');
-      const promise = this.reserve_abyssPrivate(current, admission.value, checked.acceptedAt);
+      const promise = this.reserve_abyssPrivate(retained, admission.value, checked.acceptedAt);
       ticket = undefined;
       return promise;
     } finally {
@@ -411,6 +481,8 @@ export class TaskRequestRegistry {
       try {
         return freezeValue(ticket.unknown(acceptedAt, error));
       } catch {
+        if ('plan' in current.request)
+          return this.unknownContent_abyssPrivate(current.request, acceptedAt);
         return freezeValue<ProjectMutationResultV1>({
           ok: false,
           error,
@@ -422,7 +494,9 @@ export class TaskRequestRegistry {
     }
     return this.unknown_abyssPrivate(current, acceptedAt);
   }
-  private unknown_abyssPrivate(current: RequestContext, acceptedAt: number): MutationResultV1 {
+  private unknown_abyssPrivate(current: RequestContext, acceptedAt: number): Result {
+    if ('plan' in current.request)
+      return this.unknownContent_abyssPrivate(current.request, acceptedAt);
     return freezeValue<MutationResultV1>({
       ok: false,
       error: this.internal_abyssPrivate(current.method),
@@ -441,6 +515,35 @@ export class TaskRequestRegistry {
           state: 'unproven',
         },
         snapshots: 'unavailable',
+        warnings: [],
+      },
+    });
+  }
+  private unknownContent_abyssPrivate(
+    request: ApplyTaskContentV1,
+    acceptedAt: number,
+  ): TaskContentMutationResultV1 {
+    return freezeValue<TaskContentMutationResultV1>({
+      ok: false,
+      error: this.internal_abyssPrivate('tasks.apply'),
+      effects: 'unknown',
+      recovery: 'reconcile',
+      receipt: {
+        providerEpoch: this.options_abyssPrivate.epoch,
+        requestId: request.requestId,
+        acceptedAt,
+        expiresAt: request.expiresAt,
+        plan: request.plan,
+        planRevision: request.expectedPlanRevision,
+        outcome: 'failed',
+        effects: 'unknown',
+        recovery: 'reconcile',
+        snapshots: 'unavailable',
+        contentContinuity: {
+          plan: request.plan,
+          planRevision: request.expectedPlanRevision,
+          correspondence: { state: 'unavailable' },
+        },
         warnings: [],
       },
     });

@@ -6,6 +6,7 @@ import type {
   ProjectSummaryV1,
 } from '../../api';
 import type {
+  ProjectTaskDestination,
   ProjectTaskExecution,
   TaskReadNode,
   TaskReadObservation,
@@ -59,6 +60,7 @@ export interface ProjectIntegrationWrites {
 }
 
 export interface ProjectTaskCommands {
+  prepareDestination(proof: ProjectReadSummary): TaskReadResult<ProjectTaskDestination>;
   prepareCreate(proof: ProjectReadSummary, title: string): ProjectTaskExecution;
   prepareMove(
     proof: ProjectReadSummary,

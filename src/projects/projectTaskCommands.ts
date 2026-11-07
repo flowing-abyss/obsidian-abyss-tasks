@@ -83,6 +83,17 @@ export function createProjectTaskCommands(
     action: 'capture' | 'move',
   ): ProjectTaskDestination => projectDestination({ reads, sources, settings }, proof, action);
   return {
+    prepareDestination(proof) {
+      const fresh = reads.summary(proof.path);
+      if (fresh.type === 'error') return fresh;
+      if (
+        fresh.value?.identity !== proof.identity ||
+        fresh.value.version !== proof.version ||
+        fresh.value.semantics !== proof.semantics
+      )
+        return { type: 'error', reason: 'stale' };
+      return { type: 'ok', value: destination(proof, 'capture'), observation: fresh.observation };
+    },
     prepareCreate(proof: ProjectReadSummary, title: string): ProjectTaskExecution {
       return service.prepareProjectCreate(destination(proof, 'capture'), title);
     },

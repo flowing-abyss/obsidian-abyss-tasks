@@ -122,6 +122,7 @@ export type { TaskDependencySummary } from './domain/taskSearchTypes';
 export type {
   TaskReadProjectionApi,
   TaskSearchApi,
+  TaskSearchCursor,
   TaskSearchState,
 } from './application/TaskSearchApi';
 export { TaskSearchError } from './domain/taskSearchTypes';
@@ -156,7 +157,7 @@ export {
   taskOccurrenceCompletion,
   taskTodayOccurrence,
 } from './domain/taskOccupiedDates';
-export { taskNodeSourceLine } from './domain/taskSearchProjection';
+export { observedTaskTags, taskNodeSourceLine } from './domain/taskSearchProjection';
 
 export type { TaskOccurrenceCompletion } from './domain/taskOccupiedDates';
 export {
@@ -218,6 +219,19 @@ export type {
 } from './application/TaskStatusMutationApi';
 export type { TaskOccurrenceAddress } from './domain/taskOccurrence';
 
-export type { TaskEditPreparationApi } from './application/TaskEditPreparationApi';
+export type {
+  PreparedTaskEditCommand,
+  TaskEditPreparation,
+  TaskEditPreparationApi,
+} from './application/TaskEditPreparationApi';
 
-export type { TaskCreatePreparationApi } from './application/TaskCreatePreparationApi';
+export type {
+  TaskCreatePreparation,
+  TaskCreatePreparationApi,
+  TaskCreatePreparationDestination,
+  TaskCreateTreeNode,
+} from './application/TaskCreatePreparationApi';
+
+export { addEntryToTotal } from './domain/timeTracking';
+
+export type { TaskStatusRule } from './domain/types';

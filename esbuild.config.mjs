@@ -1,3 +1,5 @@
+// Public task content/tree/search facade and insertion continuity: 2,397,444 -> 2,434,812 bytes (+37,368).
+// No new dependencies; minimal containing main budget: 2,435,072 bytes (2378 KiB), below the 5,000,000-byte ceiling.
 // Sealed-plan refresh: baseline 2,386,453 → 2,397,444 bytes (+10,991).
 // No new dependencies; minimal containing main budget: 2,398,208 bytes (2342 KiB).
 // Sealed full-tree creation and guarded static provisioning: 2,372,956 -> 2,386,366 bytes.

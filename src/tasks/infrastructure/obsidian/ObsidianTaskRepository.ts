@@ -1288,6 +1288,7 @@ export class ObsidianTaskRepository implements TaskRepository {
       );
     } catch {
       phase.reason = 'io';
+      await this.reconcileCreateFailure_abyssPrivate(file, phase.path, phase.content, phase);
     } finally {
       phase.release();
     }
@@ -1306,56 +1307,144 @@ export class ObsidianTaskRepository implements TaskRepository {
     blockContent: string,
     guard?: PreparedTaskCreateGuard,
   ): Promise<TaskRepositoryResult> {
-    let result: TaskRepositoryResult | undefined;
-    let createdContent: string | undefined;
+    const write: { result: TaskRepositoryResult | undefined; content: string | undefined } = {
+      result: undefined,
+      content: undefined,
+    };
+    const phase = this.createInsertionPhase_abyssPrivate(destination.filePath);
     const original = guard === undefined ? undefined : await this.app_abyssPrivate.vault.read(file);
     try {
       await this.processFile_abyssPrivate(
         file,
-        (content) => {
-          const inserted = this.editor_abyssPrivate.insertRootBlock(
+        (content) =>
+          this.insertCreatedCandidate_abyssPrivate(
+            { file, destination, guard, phase, blockContent },
+            write,
             content,
-            blockContent,
-            destination.insertion,
-          );
-          if (inserted == null) {
-            result = invalidTaskSyntax();
-            return content;
-          }
-          if (
-            guard !== undefined &&
-            (!this.isCurrentFile_abyssPrivate(file, destination.filePath) ||
-              !guard.check(file, content, inserted.content))
-          ) {
-            result = invalidTaskTarget('destination');
-            return content;
-          }
-          const task = this.snapshotFor_abyssPrivate(
-            destination.filePath,
-            inserted.content,
-            inserted.block,
-          );
-          if (task == null) {
-            result = invalidTaskSyntax();
-            return content;
-          }
-          result = committedTask(task, true);
-          createdContent = inserted.content;
-          return inserted.content;
-        },
-        async () => {
-          result = this.finalizeCreatedResult_abyssPrivate(
-            destination.filePath,
-            createdContent,
-            result,
-          );
-        },
+          ),
+        () =>
+          this.finalizeCreatedPhase_abyssPrivate(
+            { file, destination, phase, createdContent: write.content },
+            write,
+          ),
       );
     } catch {
-      await this.reconcileCreateFailure_abyssPrivate(file, destination.filePath, createdContent);
+      if (phase?.effect === 'committed' && write.result !== undefined) return write.result;
+      await this.reconcileCreateFailure_abyssPrivate(
+        file,
+        destination.filePath,
+        write.content,
+        phase,
+      );
       return this.guardedCreateFailure_abyssPrivate(file, destination.filePath, original);
+    } finally {
+      phase?.release();
     }
-    return result ?? this.processError_abyssPrivate(destination.filePath);
+    return write.result ?? this.processError_abyssPrivate(destination.filePath);
+  }
+  private insertCreatedCandidate_abyssPrivate(
+    input: {
+      file: TFile;
+      destination: TaskDestination;
+      guard: PreparedTaskCreateGuard | undefined;
+      phase: ProjectRootPhase | undefined;
+      blockContent: string;
+    },
+    write: { result: TaskRepositoryResult | undefined; content: string | undefined },
+    content: string,
+  ): string {
+    const { file, destination, guard, phase, blockContent } = input;
+
+    const inserted = this.editor_abyssPrivate.insertRootBlock(
+      content,
+      blockContent,
+      destination.insertion,
+    );
+    if (inserted === undefined) {
+      write.result = invalidTaskSyntax();
+      return content;
+    }
+    if (
+      !this.creationGuard_abyssPrivate(
+        { file, path: destination.filePath, guard },
+        content,
+        inserted.content,
+      )
+    ) {
+      write.result = invalidTaskTarget('destination');
+      return content;
+    }
+    let task = this.snapshotFor_abyssPrivate(
+      destination.filePath,
+      inserted.content,
+      inserted.block,
+    );
+    if (task === undefined) {
+      write.result = invalidTaskSyntax();
+      return content;
+    }
+    const forwarded =
+      phase?.forward(
+        content,
+        { kind: 'insert', line: inserted.block.line, content: inserted.content },
+        this.options_abyssPrivate,
+      ) ?? inserted.content;
+    if (forwarded !== inserted.content) {
+      write.result = invalidTaskTarget('source');
+      return content;
+    }
+    const reference = phase?.createdReference();
+    if (reference !== undefined) task = rebaseSnapshot(task, reference);
+    write.result = committedTask(task, true);
+    write.content = inserted.content;
+    return inserted.content;
+  }
+  private creationGuard_abyssPrivate(
+    input: { file: TFile; path: string; guard: PreparedTaskCreateGuard | undefined },
+    live: string,
+    candidate: string,
+  ): boolean {
+    return (
+      input.guard === undefined ||
+      (this.isCurrentFile_abyssPrivate(input.file, input.path) &&
+        input.guard.check(input.file, live, candidate))
+    );
+  }
+  private async finalizeCreatedPhase_abyssPrivate(
+    input: {
+      file: TFile;
+      destination: TaskDestination;
+      phase: ProjectRootPhase | undefined;
+      createdContent: string | undefined;
+    },
+    write: { result: TaskRepositoryResult | undefined },
+  ): Promise<void> {
+    const { file, destination, phase, createdContent } = input;
+    if (phase === undefined) {
+      write.result = this.finalizeCreatedResult_abyssPrivate(
+        destination.filePath,
+        createdContent,
+        write.result,
+      );
+      return;
+    }
+    if (createdContent === undefined) return;
+    phase.effect = 'committed';
+    const state = this.state_abyssPrivate;
+    if (state?.reconcileCommittedSource !== undefined)
+      await state.reconcileCommittedSource(destination.filePath, file, createdContent, () => {
+        phase.install(state);
+      });
+    if (phase.task !== undefined) write.result = committedTask(phase.task, true);
+  }
+  private createInsertionPhase_abyssPrivate(path: string): ProjectRootPhase | undefined {
+    const state = this.state_abyssPrivate;
+    return this.authority_abyssPrivate !== undefined &&
+      state?.currentRoots !== undefined &&
+      state.installCommittedBatch !== undefined &&
+      state.reconcileCommittedSource !== undefined
+      ? new ProjectRootPhase(path, {})
+      : undefined;
   }
 
   private async guardedCreateFailure_abyssPrivate(
@@ -1381,13 +1470,20 @@ export class ObsidianTaskRepository implements TaskRepository {
     file: TFile,
     path: string,
     createdContent: string | undefined,
+    phase?: ProjectRootPhase,
   ): Promise<void> {
-    if (createdContent === undefined || this.state_abyssPrivate == null) return;
+    const state = this.state_abyssPrivate;
+    if (createdContent === undefined || state === undefined) return;
+    const invalidate =
+      phase === undefined
+        ? undefined
+        : state.captureRejectedSourceInvalidation?.(path, file, createdContent);
     try {
       const authoritative = await this.app_abyssPrivate.vault.read(file);
-      this.state_abyssPrivate.installCommittedContent(path, authoritative);
+      if (phase === undefined) state.installCommittedContent(path, authoritative);
+      else phase.rejectObserved(authoritative, state);
     } catch {
-      // The I/O result records that final content state is unknown.
+      invalidate?.();
     }
   }
 

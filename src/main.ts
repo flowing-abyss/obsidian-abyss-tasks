@@ -314,6 +314,8 @@ export default class TaskCalendarPlugin extends Plugin {
     this.taskApiProvider = new TaskApiProvider({
       reads: this.taskIndex.integrationReads(),
       mutations: tasks,
+      search: this.taskSearch,
+      content: { edits: tasks, creates: tasks, statuses: () => this.statusCatalog.all() },
       projects: {
         reads,
         writes: this.projectManager.integrationWrites(reads, sources),

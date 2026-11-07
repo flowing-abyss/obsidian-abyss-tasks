@@ -194,3 +194,63 @@ export function schemaFields(schema: ProjectSchemaV1): readonly string[] {
     return field.type;
   });
 }
+
+export async function preparedContent(
+  client: TasksApiV1,
+  target: string,
+  revision: string,
+): Promise<void> {
+  await contentReads(client, target, revision);
+  const { prepare, apply, create } = client.tasks;
+  if (prepare === undefined || apply === undefined || create === undefined) return;
+  const draft = await prepare({
+    kind: 'edit',
+    target,
+    expectedRevision: revision,
+    operation: { type: 'description', target, text: null },
+  });
+  if (!draft.ok) return;
+  const refreshed = await prepare({
+    kind: 'refresh',
+    plan: draft.value.target,
+    expectedPlanRevision: draft.value.revision,
+  });
+  if (!refreshed.ok) return;
+  const result = await apply({
+    plan: refreshed.value.target,
+    expectedPlanRevision: refreshed.value.revision,
+    requestId: 'edit',
+    expiresAt: 123,
+  });
+  if (result.receipt?.contentContinuity.correspondence.state === 'complete')
+    for (const pair of result.receipt.contentContinuity.correspondence.tasks)
+      await client.tasks.get(pair.committedTarget);
+  const creation = await prepare({
+    kind: 'create',
+    destination: { type: 'note', path: 'tasks.md', insertion: { type: 'append' } },
+    tree: {
+      markdownTitle: 'Root',
+      initial: { statusSymbol: ' ', durationMinutes: { type: 'set', value: 30 } },
+      children: [{ markdownTitle: 'Child' }],
+    },
+  });
+  if (creation.ok)
+    await create({
+      plan: creation.value.target,
+      expectedPlanRevision: creation.value.revision,
+      requestId: 'create',
+      expiresAt: 124,
+    });
+}
+
+export async function contentReads(
+  client: TasksApiV1,
+  target: string,
+  revision: string,
+): Promise<void> {
+  const { tree, search, tags } = client.tasks;
+  if (tree !== undefined) await tree({ target, expectedRevision: revision, limit: 20 });
+  if (search !== undefined)
+    await search({ query: 'review', fields: 'body', matchScope: 'subtree', statuses: ['open'] });
+  if (tags !== undefined) await tags({ folder: 'projects', prefix: '#work', limit: 10 });
+}

@@ -8,11 +8,15 @@ import type { TaskBehaviorSettingsProvider } from '../../src/tasks/application/T
 import type { TaskIntegrationReadApi } from '../../src/tasks/application/TaskIntegrationReadApi';
 import type { TaskStatusReadBasisApi } from '../../src/tasks/application/TaskStatusMutationApi';
 import { clockFrom } from '../../src/tasks/domain/clock';
+import { fallbackSearchWords } from '../../src/tasks/domain/searchMatchPolicy';
 import { StatusCatalog } from '../../src/tasks/domain/StatusCatalog';
 import { TaskBlockEditor } from '../../src/tasks/infrastructure/markdown/TaskBlockEditor';
 import { TaskLocator } from '../../src/tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from '../../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { ObsidianTaskRepository } from '../../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
+import { createMiniSearchTaskEngine } from '../../src/tasks/infrastructure/search/MiniSearchTaskEngine';
+import { TaskSearchRuntime } from '../../src/tasks/infrastructure/search/TaskSearchRuntime';
+import { TaskSearchService } from '../../src/tasks/infrastructure/search/TaskSearchService';
 import { TaskIndex, type TaskIndexOptions } from '../../src/tasks/infrastructure/TaskIndex';
 import { TaskRefAuthority } from '../../src/tasks/infrastructure/TaskRefAuthority';
 import { createAppWithFiles, flushMicrotasks, metadataChangedEmitter } from '../helpers';
@@ -62,6 +66,9 @@ export async function publicApiHarness(
     snapshotsFromContent: (path, content) => index.previewContent(path, content),
     refAuthority: authority,
     snapshotState: index,
+    preparedRootQueries: index,
+    preparedRootSources: index.projectSources(),
+    preparedRootReads: index.integrationReads(),
   });
   const service = new TaskApplicationService(
     index,
@@ -76,9 +83,20 @@ export async function publicApiHarness(
     index.statusReadBasis(),
   );
   const reads = index.integrationReads();
+  const search = new TaskSearchService({
+    source: index.searchSource(),
+    reads: index,
+    segment: fallbackSearchWords,
+    scheduler: { now: () => now, yield: async () => {}, delay: async () => {} },
+    createBackend: async () =>
+      new TaskSearchRuntime(createMiniSearchTaskEngine(fallbackSearchWords)),
+    diagnose: () => {},
+  });
   const provider = new TaskApiProvider({
+    search,
     reads,
     mutations: service,
+    content: { edits: service, creates: service, statuses: () => statusCatalog.all() },
     pluginVersion: '2.3.2',
     epoch: `test-${++providerEpoch}`,
     now: () => now,
@@ -109,6 +127,7 @@ export async function publicApiHarness(
     },
     dispose: () => {
       provider.dispose();
+      search.dispose();
       index.destroy();
     },
   };

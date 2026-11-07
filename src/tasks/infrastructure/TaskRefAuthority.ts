@@ -70,7 +70,7 @@ export interface OwnedSourceMutation {
   restore(path: string, current: string): string | undefined;
   complete(contents: ReadonlyMap<string, string>): boolean;
   completeRestoration(contents: ReadonlyMap<string, string>): boolean;
-  rejectSource(path: string): void;
+  rejectSource(path: string, authoritativeContent?: string): void;
   release(): void;
 }
 
@@ -79,7 +79,11 @@ export type TaskRefStageResult =
 
 export interface TaskSnapshotState {
   /** Capture a generation-guarded source invalidation for unreadable rejected staged writes. */
-  captureRejectedSourceInvalidation?(filePath: string, file: object): () => void;
+  captureRejectedSourceInvalidation?(
+    filePath: string,
+    file: object,
+    expectedContent?: string,
+  ): () => void;
   /** Defers only evidence publication across a transfer and its recovery awaits. */
   holdStatisticsPublication?(): () => void;
   currentRoots?(filePath: string): readonly RootRevisionOverride[];
@@ -184,7 +188,11 @@ function matches(transition: PendingTransition, content: string): boolean {
 }
 
 function hasForwardOwnership(pending: PendingTransition | undefined): boolean {
-  return pending?.restored === false && pending.exactSource?.invalid !== true;
+  return (
+    pending?.restored === false &&
+    pending.revokedRevisions === undefined &&
+    pending.exactSource?.invalid !== true
+  );
 }
 
 function hasRestorationOwnership(pending: PendingTransition | undefined): boolean {
@@ -442,8 +450,8 @@ export class TaskRefAuthority {
       forward: (path, current) => {
         const entry = owned.get(path);
         if (
-          !this.confirmMutationSource(entry, current, false) ||
           !forwardOwned() ||
+          !this.confirmMutationSource(entry, current, false) ||
           entry === undefined
         )
           return undefined;
@@ -479,9 +487,15 @@ export class TaskRefAuthority {
         release();
         return true;
       },
-      rejectSource: (path) => {
+      rejectSource: (path, authoritativeContent) => {
         const entry = owned.get(path);
-        if (entry !== undefined) this.abort(entry.token);
+        if (entry === undefined) return;
+        if (authoritativeContent === undefined) {
+          this.abort(entry.token);
+          return;
+        }
+        const rejected = this.stageRestoration(entry.token, authoritativeContent);
+        if (rejected.type === 'staged') entry.token = rejected.token;
       },
       release,
     };
@@ -602,10 +616,18 @@ export class TaskRefAuthority {
     );
   }
 
-  /** Revoke speculative sibling provenance only after exact rejected-candidate readback. */
+  /** Revoke retained siblings and newly inserted roots after exact rejected-candidate readback. */
   private stageRejectedRetained(pending: PendingTransition, content: string): TaskRefStageResult {
-    const retained = pending.transitions.filter((root) => root.previousRevision === root.revision);
-    if (retained.length === 0 || !matches(pending, content)) return { type: 'conflict' };
+    const retained = pending.roots.filter((root) => {
+      const transition = pending.transitions.find((t) => t.revision === root.revision);
+      return transition === undefined || transition.previousRevision === root.revision;
+    });
+    if (
+      retained.length === 0 ||
+      !matches(pending, content) ||
+      (pending.exactSource !== undefined && pending.exactSource.after !== content)
+    )
+      return { type: 'conflict' };
     return this.stageContent(
       {
         filePath: pending.filePath,
@@ -756,7 +778,12 @@ export class TaskRefAuthority {
 
   commit(token: object): void {
     const transition = this.activeStaged(token);
-    if (transition === undefined || transition.restored) return;
+    if (
+      transition === undefined ||
+      transition.restored ||
+      transition.revokedRevisions !== undefined
+    )
+      return;
     transition.phase = 'committed';
     delete transition.restoration;
   }

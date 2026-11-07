@@ -5,7 +5,7 @@ import type {
   ProvenRootRevisionOverride,
   RootRevisionOverride,
 } from '../../domain/taskReconciliation';
-import type { TaskSnapshot } from '../../domain/types';
+import type { TaskRef, TaskSnapshot } from '../../domain/types';
 import type { TaskBlockEditor } from '../markdown/TaskBlockEditor';
 import type { OwnedSourceMutation, TaskRefAuthority, TaskSnapshotState } from '../TaskRefAuthority';
 
@@ -171,6 +171,16 @@ export class ProjectRootPhase {
     );
   }
 
+  createdReference(): TaskRef | undefined {
+    const root = this.inserted;
+    return root === undefined
+      ? undefined
+      : { filePath: this.path, line: root.line, revision: root.revision };
+  }
+  rejectObserved(content: string, state: TaskSnapshotState): void {
+    this.owner?.rejectSource(this.path, content);
+    state.installCommittedContent(this.path, content);
+  }
   release(): void {
     this.owner?.release();
   }
