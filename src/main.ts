@@ -43,6 +43,7 @@ import {
   type TaskApplicationApi,
   type TaskCaptureApplicationApi,
   type TaskDependencyQueryApi,
+  type TaskEditPreparationApi,
   type TaskInputServices,
   type TaskInsertionPolicy,
   type TaskQueryApi,
@@ -110,7 +111,7 @@ export default class TaskCalendarPlugin extends Plugin {
   override settings!: CalendarSettings;
   tagManager!: TagManager;
   queries!: TaskQueryApi & TaskDependencyQueryApi & TimeTrackingQueryApi;
-  tasks!: TaskApplicationApi & TaskCaptureApplicationApi;
+  tasks!: TaskApplicationApi & TaskCaptureApplicationApi & TaskEditPreparationApi;
   private taskIndex!: TaskIndex;
   private taskApiProvider: TaskApiProvider | undefined = undefined;
   getApi(version: number, options: { readonly consumerId: string }): ApiResultV1<TasksApiV1> {
@@ -212,7 +213,7 @@ export default class TaskCalendarPlugin extends Plugin {
       locator: new TaskLocator(refAuthority),
       snapshotsFromContent: (path, content) => this.taskIndex.snapshotsFromContent(path, content),
       refAuthority,
-      snapshotState: this.taskIndex,
+      ...this.taskPreparationSources(),
       configuredTaskNotePath: () => this.settings.taskFilePath,
       diagnostics,
     });
@@ -265,6 +266,17 @@ export default class TaskCalendarPlugin extends Plugin {
     );
     this.initializeTaskApi(tasks);
     this.initializeTagManager();
+  }
+
+  private taskPreparationSources(): Pick<
+    ConstructorParameters<typeof ObsidianTaskRepository>[1],
+    'snapshotState' | 'preparedRootSources' | 'preparedRootReads'
+  > {
+    return {
+      snapshotState: this.taskIndex,
+      preparedRootSources: this.taskIndex.projectSources(),
+      preparedRootReads: this.taskIndex.integrationReads(),
+    };
   }
 
   private initializeTaskApi(tasks: TaskApplicationService): void {

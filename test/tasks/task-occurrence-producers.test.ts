@@ -315,7 +315,7 @@ it('continues exact nodes through short tracking-line discard and multiline comm
   ]);
 });
 
-it('invalidates unsupported structural insertion without inventing continuity', async () => {
+it('continues existing physical nodes through insertion and gives the new child fresh identity', async () => {
   const h = await setup('- [ ] Root\n  - [ ] Child\n');
   const root = expectDefined(h.index.list()[0]);
   expect(
@@ -327,8 +327,19 @@ it('invalidates unsupported structural insertion without inventing continuity', 
       addCreatedDate: false,
     }),
   ).toMatchObject({ type: 'committed' });
-  expect(h.changes[0]?.witnesses).toEqual([]);
-  expect(h.changes[0]?.invalidated).toHaveLength(2);
+  expect(h.changes[0]?.witnesses.map((witness) => witness.kind)).toEqual([
+    'continued',
+    'continued',
+  ]);
+  expect(h.changes[0]?.invalidated).toEqual([]);
+  const page = h.reads.page({}, 10);
+  if (page.type !== 'ok') throw new Error('No page');
+  expect(page.value.nodes).toHaveLength(3);
+  expect(
+    h.changes[0]?.witnesses.flatMap((witness) =>
+      witness.kind === 'continued' ? [witness.after] : [],
+    ),
+  ).toEqual(page.value.nodes.slice(0, 2).map((node) => node.address));
 });
 
 it('invalidates promoted hierarchy occurrences without treating the copied subtree as a continuation', async () => {

@@ -2,6 +2,11 @@ import { TFile, type App } from 'obsidian';
 import { sameNoteFileStamp } from '../../../markdown/noteFileStamp';
 import { compileNotePathPattern } from '../../../markdown/notePathPattern';
 import type { TaskDiagnosticSink } from '../../application/TaskDependencyService';
+import type {
+  ProjectSourceReadApi,
+  TaskIntegrationReadStateApi,
+  TaskReadObservation,
+} from '../../application/TaskIntegrationReadApi';
 import {
   projectTaskFailure,
   type ProjectTaskDestination,
@@ -9,7 +14,7 @@ import {
   type ProjectTaskResult,
   type ProjectTaskSource,
 } from '../../application/TaskProjectCommands';
-import type { TaskHierarchyRequest } from '../../application/TaskRepository';
+import type { TaskHierarchyRequest, TaskPreparedRootEdit } from '../../application/TaskRepository';
 import {
   dependencyMetadataIssues,
   taskEditMutationTarget as mutationTarget,
@@ -82,6 +87,7 @@ import {
 } from '../createDependencySubtask';
 import { applyTaskCommand } from '../markdown/applyTaskCommand';
 import { createTaskBlock } from '../markdown/createTaskBlock';
+import { MarkdownTaskEditPreparation } from '../markdown/MarkdownTaskEditPreparation';
 import {
   recoverSubtaskRemoval,
   withSubtaskRemovalRecovery,
@@ -164,7 +170,19 @@ function authorityRevisionChanged(
   return hasAuthority && hasSnapshotState && indexedRef?.revision !== revision;
 }
 
+interface PreparedRootBasis {
+  readonly root: TaskSnapshot;
+  readonly content: string;
+  readonly file: TFile;
+  readonly observation: TaskReadObservation;
+  readonly source: NonNullable<
+    Extract<ReturnType<ProjectSourceReadApi['get']>, { type: 'ok' }>['value']
+  >;
+}
+
 interface RepositoryOptions {
+  readonly preparedRootSources?: ProjectSourceReadApi;
+  readonly preparedRootReads?: TaskIntegrationReadStateApi;
   readonly codec: TaskMarkdownCodec;
   readonly editor: TaskBlockEditor;
   readonly locator: TaskLocator;
@@ -795,6 +813,7 @@ interface RecurrenceStageInput {
 }
 
 interface EditProcessInput {
+  readonly collectNodes?: boolean;
   readonly fileIdentity?: object | undefined;
   readonly prepared: TaskEditRequest | undefined;
   readonly command: TaskEditCommand;
@@ -2344,6 +2363,208 @@ export class ObsidianTaskRepository implements TaskRepository {
     this.installTransition_abyssPrivate(input.rootRef.filePath, content, token);
   }
 
+  prepareRootEdit(root: TaskSnapshot): TaskPreparedRootEdit {
+    const basis = this.capturePreparedRoot_abyssPrivate(root);
+    if (basis === undefined) return { type: 'invalid', result: invalidTaskTarget('target') };
+    return new MarkdownTaskEditPreparation({
+      apply: (content, current, command) =>
+        this.previewRootEdit_abyssPrivate(content, current, command),
+      commit: (content, after, nodeMap) =>
+        this.commitPreparedRoot_abyssPrivate(basis, { content, after, nodeMap }),
+    }).prepare(
+      basis.root,
+      basis.content,
+      (
+        this.editor_abyssPrivate.ownedTaskSubtree(basis.root.source.originalBlock, 0)?.taskLines ??
+        []
+      ).map((offset) => ({ beforeOffset: offset, afterOffset: offset })),
+    );
+  }
+
+  private capturePreparedRoot_abyssPrivate(root: TaskSnapshot): PreparedRootBasis | undefined {
+    const sources = this.options_abyssPrivate.preparedRootSources;
+    const reads = this.options_abyssPrivate.preparedRootReads;
+    if (sources === undefined || reads === undefined) return undefined;
+    const observation = reads.capture();
+    const source = sources.get(root.ref.filePath);
+    const file = this.app_abyssPrivate.vault.getAbstractFileByPath(root.ref.filePath);
+    if (source.type !== 'ok' || source.value === undefined || !(file instanceof TFile))
+      return undefined;
+    const accepted = source.value.roots.find(
+      (candidate) =>
+        candidate.ref.line === root.ref.line &&
+        candidate.ref.revision === root.ref.revision &&
+        candidate.source.originalBlock === root.source.originalBlock,
+    );
+    if (accepted === undefined) return undefined;
+    const basis: PreparedRootBasis = {
+      root: structuredClone(accepted),
+      content: source.value.content,
+      source: source.value,
+      file,
+      observation,
+    };
+    return this.preparedRootCurrent_abyssPrivate(basis, basis.content) ? basis : undefined;
+  }
+
+  private previewRootEdit_abyssPrivate(
+    content: string,
+    root: TaskSnapshot,
+    command: TaskEditCommand,
+  ): EditOutcome {
+    const block = this.editor_abyssPrivate
+      .rootBlocks(content)
+      .find(
+        (candidate) =>
+          candidate.line === root.ref.line && candidate.source === root.source.originalBlock,
+      );
+    if (block === undefined) return { content, result: invalidTaskTarget('target') };
+    return this.applyLocatedEdit_abyssPrivate(
+      { command, rootRef: root.ref, prepared: undefined, collectNodes: true },
+      content,
+      block,
+    );
+  }
+
+  private preparedRootCurrent_abyssPrivate(basis: PreparedRootBasis, content: string): boolean {
+    const current = this.options_abyssPrivate.preparedRootReads?.capture();
+    return (
+      current?.lifecycle === 'ready' &&
+      current.scopeRevision === basis.observation.scopeRevision &&
+      current.semanticsRevision === basis.observation.semanticsRevision &&
+      content === basis.content &&
+      this.isCurrentFile_abyssPrivate(basis.file, basis.root.ref.filePath) &&
+      this.options_abyssPrivate.preparedRootSources?.matchesFile(basis.source, basis.file) ===
+        true &&
+      this.exactStrictRoot_abyssPrivate(basis.root, content)
+    );
+  }
+
+  private preparedRootContent_abyssPrivate(
+    prepared: {
+      readonly basis: PreparedRootBasis;
+      readonly candidate: string;
+      readonly after: TaskSnapshot | null;
+      readonly nodeMap: readonly TaskNodeLineMapping[] | undefined;
+    },
+    transaction: EditTransaction,
+    content: string,
+  ): string {
+    const { basis, candidate, after } = prepared;
+    if (
+      !this.preparedRootCurrent_abyssPrivate(basis, content) ||
+      this.options_abyssPrivate.preparedRootSources?.candidate(basis.source, content, candidate)
+        .type !== 'ok'
+    ) {
+      transaction.result = invalidTaskTarget('target');
+      return content;
+    }
+    const block = this.editor_abyssPrivate
+      .rootBlocks(content)
+      .find((item) => item.line === basis.root.ref.line);
+    if (block === undefined) {
+      transaction.result = invalidTaskTarget('target');
+      return content;
+    }
+    const command: TaskEditCommand =
+      after === null
+        ? { type: 'delete', ref: basis.root.ref }
+        : { type: 'patch', target: { type: 'task', ref: basis.root.ref }, patch: {} };
+    const process: EditProcessInput = {
+      command,
+      rootRef: basis.root.ref,
+      prepared: undefined,
+      fileIdentity: basis.file,
+    };
+    const result: TaskRepositoryResult = {
+      type: 'committed',
+      changed: candidate !== content,
+      outcome:
+        after === null ? { type: 'deleted', ref: basis.root.ref } : { type: 'task', task: after },
+    };
+    transaction.result = result;
+    if (!result.changed) return content;
+    transaction.rollbackBasis = this.captureRollbackBasis_abyssPrivate(
+      basis.root.ref.filePath,
+      content,
+    );
+    transaction.committedContent = candidate;
+    return this.stageEditTransition_abyssPrivate(
+      {
+        process,
+        originalContent: content,
+        location: { type: 'ready', block, indexedRevision: basis.root.ref.revision },
+        edit: {
+          content: candidate,
+          result,
+          ...(prepared.nodeMap === undefined ? {} : { nodeMap: prepared.nodeMap }),
+        },
+      },
+      transaction,
+    );
+  }
+
+  private async commitPreparedRoot_abyssPrivate(
+    basis: PreparedRootBasis,
+    candidate: {
+      readonly content: string;
+      readonly after: TaskSnapshot | null;
+      readonly nodeMap: readonly TaskNodeLineMapping[] | undefined;
+    },
+  ): Promise<TaskRepositoryResult> {
+    const { content, after, nodeMap } = candidate;
+    const path = basis.root.ref.filePath;
+    const transaction: EditTransaction = {
+      result: undefined,
+      transitionToken: undefined,
+      committedContent: undefined,
+    };
+    const cleanupPolicy =
+      after === null ? this.options_abyssPrivate.configuredTaskNotePath?.() : undefined;
+    try {
+      await this.processFile_abyssPrivate(
+        basis.file,
+        (live) =>
+          this.preparedRootContent_abyssPrivate(
+            { basis, candidate: content, after, nodeMap },
+            transaction,
+            live,
+          ),
+        async () => {
+          this.commitEdit_abyssPrivate(path, transaction);
+          await this.cleanupEmptyTaskNote_abyssPrivate(
+            basis.file,
+            path,
+            cleanupPolicy,
+            transaction,
+          );
+        },
+      );
+      return transaction.result ?? this.processError_abyssPrivate(path);
+    } catch {
+      await this.rejectMutation_abyssPrivate(basis.file, basis.root.ref, transaction);
+      this.options_abyssPrivate.diagnostics?.({
+        operation: after === null ? 'delete' : 'patch',
+        phase: 'unexpected',
+        cause: 'prepared-root-write',
+      });
+      let unchanged = false;
+      try {
+        unchanged =
+          this.isCurrentFile_abyssPrivate(basis.file, path) &&
+          (await this.app_abyssPrivate.vault.read(basis.file)) === basis.content;
+      } catch {
+        /* No readback proof means the write effect remains unknown. */
+      }
+      return {
+        type: 'io-error',
+        cause: 'process-failed',
+        path,
+        contentState: unchanged ? 'unchanged' : 'unknown',
+      };
+    }
+  }
+
   async edit(request: TaskEditRequest | TaskEditCommand): Promise<TaskRepositoryResult> {
     if (
       'command' in request &&
@@ -2808,7 +3029,7 @@ export class ObsidianTaskRepository implements TaskRepository {
       block,
       relativeLine,
       edit.content,
-      this.authority_abyssPrivate?.collectsOccurrences(),
+      process.collectNodes ?? this.authority_abyssPrivate?.collectsOccurrences(),
     );
     const task = this.snapshotFor_abyssPrivate(
       process.rootRef.filePath,
@@ -3101,7 +3322,7 @@ export class ObsidianTaskRepository implements TaskRepository {
       block,
       blockTarget(node, block, relativeLine),
       structuralEdit(prepared),
-      this.authority_abyssPrivate?.collectsOccurrences(),
+      input.process.collectNodes ?? this.authority_abyssPrivate?.collectsOccurrences(),
     );
     const outcome = this.structuralEditOutcome_abyssPrivate(
       input.process.rootRef.filePath,

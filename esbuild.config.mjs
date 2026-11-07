@@ -1,3 +1,5 @@
+// Canonical prepared tree edits and composed occurrence witnesses: 2,367,374 -> 2,372,956 bytes.
+// No new bundled dependencies; use the minimal containing 2,373,632-byte main limit.
 // Shared project mutation lifetime and defensive receipts: measured main 2,248,667 bytes (+990).
 // Deliberately increase the main cap by 1 KiB to 2,248,704; retain hard enforcement and CSS limits.
 // Dependency inventory is unchanged.

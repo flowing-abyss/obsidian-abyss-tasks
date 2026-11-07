@@ -217,3 +217,5 @@ export type {
   TaskStatusOccurrenceContinuation,
 } from './application/TaskStatusMutationApi';
 export type { TaskOccurrenceAddress } from './domain/taskOccurrence';
+
+export type { TaskEditPreparationApi } from './application/TaskEditPreparationApi';

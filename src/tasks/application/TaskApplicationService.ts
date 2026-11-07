@@ -78,6 +78,12 @@ import type {
   TaskDestinationProvider,
   TaskDestinationResolution,
 } from './TaskDestinationProvider';
+import {
+  isPreparedTaskEditCommand,
+  type PreparedTaskEditCommand,
+  type TaskEditPreparation,
+  type TaskEditPreparationApi,
+} from './TaskEditPreparationApi';
 import { TaskHierarchyService } from './TaskHierarchyService';
 import {
   projectTaskFailure,
@@ -93,6 +99,7 @@ import type {
   TaskEditCommand,
   TaskEditRequest,
   TaskMoveRequest,
+  TaskPreparedRootEdit,
   TaskRepository,
   TaskRepositoryResult,
 } from './TaskRepository';
@@ -595,7 +602,11 @@ type ArchiveDestinationResolution =
   | { readonly type: 'result'; readonly result: TaskCommandResult };
 
 export class TaskApplicationService
-  implements TaskApplicationApi, TaskCaptureApplicationApi, TaskStatusMutationApi
+  implements
+    TaskApplicationApi,
+    TaskCaptureApplicationApi,
+    TaskStatusMutationApi,
+    TaskEditPreparationApi
 {
   // Bridges the index-event lag only for exact refs returned by this service. The cache shares the
   // service lifetime and is bounded so revision churn cannot retain an unbounded snapshot history.
@@ -1608,6 +1619,85 @@ export class TaskApplicationService
       previewContext: () => ({ type: 'unavailable', cause: 'destination' }),
       execute: async () => destinationUnavailableResult(),
     };
+  }
+
+  prepare(root: TaskSnapshot, commands: readonly PreparedTaskEditCommand[]): TaskEditPreparation {
+    const prepared = this.repository_abyssPrivate.prepareRootEdit?.(structuredClone(root));
+    if (prepared === undefined) return { type: 'invalid', result: invalidTaskTarget('target') };
+    const settings = structuredClone(this.behaviorSettings_abyssPrivate());
+    const reading = captureClock(this.clock_abyssPrivate);
+    let result = this.editPreparation_abyssPrivate(prepared, settings, reading);
+    for (const command of commands) {
+      if (result.type !== 'ready') break;
+      result = result.append(command);
+    }
+    return result;
+  }
+
+  private editPreparation_abyssPrivate(
+    prepared: TaskPreparedRootEdit,
+    settings: TaskBehaviorSettings,
+    reading: ClockReading | { readonly localDate: ClockReading['localDate'] },
+  ): TaskEditPreparation {
+    if (prepared.type === 'invalid')
+      return {
+        type: 'invalid',
+        result: this.terminalRepositoryResult_abyssPrivate(prepared.result),
+      };
+    let attempt: Promise<TaskCommandResult> | undefined;
+    return {
+      type: 'ready',
+      get before() {
+        return prepared.before;
+      },
+      get after() {
+        return prepared.after;
+      },
+      append: (command) => {
+        const current = prepared.after;
+        const issue = multilineInputIssue(command);
+        if (issue !== undefined) return { type: 'invalid', result: issue };
+        const normalized = prepareCommentCommand(structuredClone(command));
+        if (normalized.type === 'invalid') return { type: 'invalid', result: normalized };
+        if (current === null || !isPreparedTaskEditCommand(normalized))
+          return { type: 'invalid', result: invalidTaskTarget('target') };
+        const next = this.prepareNonStatusCommand_abyssPrivate(normalized, settings, reading, {
+          type: 'exact',
+          task: current,
+          basis: { observed: current },
+        });
+        if (!('command' in next))
+          return {
+            type: 'invalid',
+            result: 'result' in next ? next.result : invalidTaskTarget('target'),
+          };
+        return this.editPreparation_abyssPrivate(prepared.append(next.command), settings, reading);
+      },
+      commit: async () => {
+        attempt ??= this.commitRootPreparation_abyssPrivate(prepared);
+        return structuredClone(await attempt);
+      },
+    };
+  }
+
+  private async commitRootPreparation_abyssPrivate(
+    prepared: Extract<TaskPreparedRootEdit, { type: 'ready' }>,
+  ): Promise<TaskCommandResult> {
+    try {
+      const result = await prepared.commit();
+      if (result.type === 'committed') {
+        if (result.outcome.type === 'task') this.remember_abyssPrivate(result.outcome.task);
+        if (result.outcome.type === 'deleted') this.forget_abyssPrivate(prepared.before.ref);
+      }
+      return this.terminalRepositoryResult_abyssPrivate(result);
+    } catch {
+      this.diagnostics_abyssPrivate({
+        operation: 'patch',
+        phase: 'unexpected',
+        cause: 'repository-error',
+      });
+      return { type: 'io-error', cause: 'repository-error', contentState: 'unknown' };
+    }
   }
 
   private prepare_abyssPrivate(

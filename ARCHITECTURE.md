@@ -29,6 +29,25 @@ Queries return detached, immutable snapshots. Commands validate current source, 
 and return structured outcomes. Successful writes enter the read model before the command returns;
 later vault and metadata events reconcile through the same parsing path as manual edits.
 
+[`TaskEditPreparationApi`](src/tasks/application/TaskEditPreparationApi.ts) prepares a root tree
+without writing or publishing accepted revisions. TaskApplicationService freezes settings and clock
+and normalizes typed edits through its ordinary command preparation. Immutable `append` operations
+use refs from the preceding `after` tree; `before` remains the original accepted root, and `after`
+is null only for deletion. Returned snapshots and receipts are detached.
+
+[`MarkdownTaskEditPreparation`](src/tasks/infrastructure/markdown/MarkdownTaskEditPreparation.ts)
+retains candidate content behind opaque commit closures and invokes the repository's existing
+canonical codec/editor path in memory. ObsidianTaskRepository borrows accepted source evidence
+through the index read ports. Inside the existing file writer it checks the native file identity,
+accepted source version, original full-file bytes and root revision, scope, semantics, and candidate
+source policy. Any intervening same-file edit rejects the preparation. One commit attempt writes the
+complete candidate and publishes through the normal transition path; root deletion uses normal
+delete receipts and configured empty-note cleanup. Composite edits carry canonical physical line
+mappings through each append. TaskBlockEditor proves insertion/removal continuity from retained
+source-line objects, including identical-title siblings; missing proof never becomes a continuation. Repeated commit calls retain the first result, including unknown failures;
+recovery reads do not replay the edit. Callers must acquire fresh accepted state and revalidate
+intent before constructing another preparation.
+
 The opt-in native profiler in [`tooling/performance/native-api.ts`](tooling/performance/native-api.ts)
 is a structural consumer of the external v1 contract, imported only as types from `api.d.ts`.
 Its scan measures complete coherent pagination after untimed client activation. Its status span

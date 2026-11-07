@@ -280,7 +280,19 @@ export type TaskRepositoryResult =
       readonly contentState: 'unchanged' | 'unknown';
     };
 
+/** Normalized commands only; content and source authority stay behind the opaque session. */
+export type TaskPreparedRootEdit =
+  | {
+      readonly type: 'ready';
+      readonly before: TaskSnapshot;
+      readonly after: TaskSnapshot | null;
+      append(command: TaskEditCommand): TaskPreparedRootEdit;
+      commit(): Promise<TaskRepositoryResult>;
+    }
+  | { readonly type: 'invalid'; readonly result: TaskRepositoryResult };
+
 export interface TaskRepository {
+  prepareRootEdit?(root: TaskSnapshot): TaskPreparedRootEdit;
   createProjectRoot?(
     destination: ProjectTaskDestination,
     draft: TaskDraft,

@@ -309,6 +309,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   TaskApplicationApi: ['src/main.ts', 'src/panels/RightPanel.ts'],
   TaskArchiveSession: ['src/panels/center/TaskCommands.ts'],
   TaskCaptureApplicationApi: ['src/main.ts'],
+  TaskEditPreparationApi: ['src/main.ts'],
   TaskCommand: ['src/panels/RightPanel.ts', 'src/panels/right/InspectorDependencies.ts'],
   TaskCommandResult: [
     'src/projects/ProjectManager.ts',
