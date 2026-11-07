@@ -3,6 +3,7 @@ import type {
   ContentCommitTaskContinuityV1,
   EffectStateV1,
   RecoveryV1,
+  TaskContentMutationResultV1,
   TaskContentReceiptV1,
 } from '../../api';
 import {
@@ -15,6 +16,7 @@ import {
 import type { TaskApiContext } from './TaskApiProvider';
 import type { TaskIdentityReservation } from './TaskIdentityRegistry';
 import { readNodeFor } from './taskTreeApi';
+import { freezeValue } from './values';
 type Correspondence = ContentCommitTaskContinuityV1['correspondence'];
 type Complete = Extract<Correspondence, { state: 'complete' }>;
 export interface ContentReceiptBasis {
@@ -167,4 +169,87 @@ export function contentReceipt(
     ...(e.destinationEffects === undefined ? {} : { destinationEffects: e.destinationEffects }),
     contentContinuity: { plan: basis.target, planRevision: basis.revision, correspondence: map },
   };
+}
+
+function disclosedTarget(context: TaskApiContext, target: string): boolean {
+  try {
+    const found = context.identities.lookup(target);
+    return (
+      found.ok && found.value.state === 'retained' && context.reads.canDisclose(found.value.address)
+    );
+  } catch {
+    return false;
+  }
+}
+function disclosedCorrespondence(context: TaskApiContext, map: Correspondence): boolean {
+  if (map.state !== 'complete') return true;
+  if (map.root !== null && !disclosedTarget(context, map.root.target)) return false;
+  return map.tasks.every((pair) => disclosedTarget(context, pair.committedTarget));
+}
+function disclosedOriginal(
+  context: TaskApiContext,
+  original: TaskContentReceiptV1['original'],
+  live: boolean,
+): TaskContentReceiptV1['original'] {
+  if (original === undefined || !live) return undefined;
+  if (!disclosedTarget(context, original.target)) return undefined;
+  return original;
+}
+function disclosedReceiptTask(
+  context: TaskApiContext,
+  task: TaskContentReceiptV1['task'],
+  live: boolean,
+): TaskContentReceiptV1['task'] {
+  return task !== undefined && live && disclosedTarget(context, task.target) ? task : undefined;
+}
+function removedDisclosure(before: object | undefined, after: object | undefined): boolean {
+  return before !== undefined && after === undefined;
+}
+function disclosureWarnings(
+  receipt: TaskContentReceiptV1,
+  redacted: boolean,
+): TaskContentReceiptV1['warnings'] {
+  const warnings = [...receipt.warnings];
+  if (redacted && !warnings.some((value) => value.code === 'RESULT_SNAPSHOT_REDACTED'))
+    warnings.push({
+      code: 'RESULT_SNAPSHOT_REDACTED',
+      message: 'Current content receipt disclosure is unavailable.',
+    });
+  return warnings;
+}
+function redactedContentReceipt(
+  receipt: TaskContentReceiptV1,
+  context: TaskApiContext,
+  live: boolean,
+): TaskContentReceiptV1 {
+  const { task: originalTask, original: originalRole, ...rest } = receipt;
+  const task = disclosedReceiptTask(context, originalTask, live),
+    original = disclosedOriginal(context, originalRole, live);
+  const mapAllowed =
+    live && disclosedCorrespondence(context, receipt.contentContinuity.correspondence);
+  const redacted =
+    !mapAllowed ||
+    removedDisclosure(originalTask, task) ||
+    (originalRole?.state === 'retained' && removedDisclosure(originalRole, original));
+  return {
+    ...rest,
+    ...(task === undefined ? {} : { task }),
+    ...(original === undefined ? {} : { original }),
+    snapshots: redacted ? 'redacted' : receipt.snapshots,
+    contentContinuity: {
+      ...receipt.contentContinuity,
+      correspondence: mapAllowed ? receipt.contentContinuity.correspondence : { state: 'redacted' },
+    },
+    warnings: disclosureWarnings(receipt, redacted),
+  };
+}
+/** Current delivery permissions never mutate the request owner's historical effect receipt. */
+export function redactContentMutationResult(
+  result: TaskContentMutationResultV1,
+  context: TaskApiContext,
+  live: boolean,
+): TaskContentMutationResultV1 {
+  const copied = structuredClone(result);
+  if (copied.receipt === undefined) return freezeValue(copied);
+  return freezeValue({ ...copied, receipt: redactedContentReceipt(copied.receipt, context, live) });
 }

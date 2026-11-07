@@ -1,3 +1,5 @@
+// Content delivery disclosure and provisional-plan cleanup: 2,434,812 -> 2,436,578 bytes (+1,766).
+// No new dependencies; minimal containing main budget: 2,437,120 bytes (2380 KiB), below the 5,000,000-byte ceiling.
 // Public task content/tree/search facade and insertion continuity: 2,397,444 -> 2,434,812 bytes (+37,368).
 // No new dependencies; minimal containing main budget: 2,435,072 bytes (2378 KiB), below the 5,000,000-byte ceiling.
 // Sealed-plan refresh: baseline 2,386,453 → 2,397,444 bytes (+10,991).

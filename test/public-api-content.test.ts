@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import type { ApiResultV1 } from '../api';
+import { deferred } from './helpers';
 import { publicApiHarness, type PublicApiHarness } from './support/publicApiHarness';
 const owners: PublicApiHarness[] = [];
 afterEach(() => {
@@ -11,6 +12,28 @@ async function setup(content: string) {
   const h = await publicApiHarness({ 'a.md': content });
   owners.push(h);
   return h;
+}
+function pauseFirstRefresh(h: PublicApiHarness) {
+  const started = deferred<void>(),
+    resume = deferred<void>(),
+    prepare = h.service.prepare.bind(h.service);
+  let first = true;
+  vi.spyOn(h.service, 'prepare').mockImplementationOnce((snapshot, commands) => {
+    const native = prepare(snapshot, commands);
+    if (native.type !== 'ready') return native;
+    return {
+      ...native,
+      refresh: async (current) => {
+        if (first) {
+          first = false;
+          started.resolve();
+          await resume.promise;
+        }
+        return await native.refresh(current);
+      },
+    };
+  });
+  return { started, resume };
 }
 function ok<T>(result: ApiResultV1<T>): T {
   if (!result.ok) throw new Error(result.error.code);
@@ -790,4 +813,346 @@ it('retains the explicitly focused deep child before any expansion', async () =>
         (pair) => pair.preparedTarget === focused.target && pair.committedTarget === focused.target,
       ),
     ).toBe(true);
+});
+
+it.each(['apply', 'create'] as const)(
+  'redacts current %s receipt disclosure on replay without changing retained effects',
+  async (method) => {
+    const h = await setup('- [ ] Root\n');
+    const c = h.client(),
+      root = required(ok(await c.tasks.list()).items[0]);
+    const writes = vi.spyOn(h.app.vault, 'process');
+    const plan = ok(
+      await required(c.tasks.prepare)(
+        method === 'apply'
+          ? {
+              kind: 'edit',
+              target: root.target,
+              expectedRevision: root.revision,
+              operation: {
+                type: 'patch',
+                target: root.target,
+                patch: { priority: { type: 'set', value: 'A' } },
+              },
+            }
+          : {
+              kind: 'create',
+              destination: { type: 'note', path: 'a.md', insertion: { type: 'append' } },
+              tree: { markdownTitle: 'Created' },
+            },
+      ),
+    );
+    const input = {
+        plan: plan.target,
+        expectedPlanRevision: plan.revision,
+        requestId: `disclosure-${method}`,
+        expiresAt: Date.UTC(2026, 7, 1, 12) + 60000,
+      },
+      run = required(c.tasks[method]);
+    const saved = await run(input);
+    expect(saved).toMatchObject({
+      ok: true,
+      receipt: {
+        effects: 'committed',
+        snapshots: 'complete',
+        contentContinuity: { correspondence: { state: 'complete' } },
+      },
+    });
+    const content = await h.read('a.md');
+    await h.index.refreshSourceExclusion(() => true);
+    const replay = await run(input);
+    expect(replay).toMatchObject({
+      ok: true,
+      receipt: {
+        requestId: input.requestId,
+        outcome: 'changed',
+        effects: 'committed',
+        snapshots: 'redacted',
+        contentContinuity: { correspondence: { state: 'redacted' } },
+      },
+    });
+    expect(replay.receipt?.destinationEffects).toBe(saved.receipt?.destinationEffects);
+    expect(replay.receipt?.task).toBeUndefined();
+    expect(writes).toHaveBeenCalledTimes(1);
+    expect(await h.read('a.md')).toBe(content);
+    expect(saved.receipt?.snapshots).toBe('complete');
+  },
+);
+it('redacts delivery after client disposal while preserving an admitted commit and live-peer replay', async () => {
+  const h = await setup('- [ ] Root\n');
+  const c = h.client(),
+    peer = h.client(),
+    root = required(ok(await c.tasks.list()).items[0]);
+  const p = ok(
+    await required(c.tasks.prepare)({
+      kind: 'edit',
+      target: root.target,
+      expectedRevision: root.revision,
+      operation: {
+        type: 'patch',
+        target: root.target,
+        patch: { priority: { type: 'set', value: 'A' } },
+      },
+    }),
+  );
+  const started = deferred<void>(),
+    resume = deferred<void>(),
+    process = h.app.vault.process.bind(h.app.vault);
+  const writes = vi.spyOn(h.app.vault, 'process').mockImplementation(async (file, transform) => {
+    started.resolve();
+    await resume.promise;
+    return await process(file, transform);
+  });
+  const input = {
+    plan: p.target,
+    expectedPlanRevision: p.revision,
+    requestId: 'dispose-delivery',
+    expiresAt: Date.UTC(2026, 7, 1, 12) + 60000,
+  };
+  const pending = required(c.tasks.apply)(input);
+  await started.promise;
+  c.dispose();
+  resume.resolve();
+  const result = await pending;
+  expect(result).toMatchObject({
+    ok: true,
+    receipt: {
+      effects: 'committed',
+      snapshots: 'redacted',
+      contentContinuity: { correspondence: { state: 'redacted' } },
+    },
+  });
+  expect(result.receipt?.task).toBeUndefined();
+  const replay = await required(peer.tasks.apply)(input);
+  expect(replay).toMatchObject({
+    ok: true,
+    receipt: {
+      effects: 'committed',
+      snapshots: 'complete',
+      contentContinuity: { correspondence: { state: 'complete' } },
+    },
+  });
+  expect(writes).toHaveBeenCalledTimes(1);
+  expect(await h.read('a.md')).toContain('🔺');
+});
+it('releases unpublished immediately aborted edit preparations', async () => {
+  const h = await setup('- [ ] Root\n');
+  const c = h.client(),
+    root = required(ok(await c.tasks.list()).items[0]);
+  for (let i = 0; i < 130; i++) {
+    const controller = new AbortController();
+    const pending = required(c.tasks.prepare)(
+      { kind: 'edit', target: root.target, expectedRevision: root.revision },
+      { signal: controller.signal },
+    );
+    controller.abort();
+    expect(await pending).toMatchObject({ ok: false, error: { code: 'ABORTED' } });
+  }
+  expect(
+    (
+      await required(c.tasks.prepare)({
+        kind: 'edit',
+        target: root.target,
+        expectedRevision: root.revision,
+      })
+    ).ok,
+  ).toBe(true);
+  expect(await h.read('a.md')).toBe('- [ ] Root\n');
+});
+it('does not retire the visible predecessor when native refresh is cancelled before delivery', async () => {
+  const h = await setup('- [ ] Root\n');
+  const c = h.client(),
+    root = required(ok(await c.tasks.list()).items[0]),
+    started = deferred<void>(),
+    resume = deferred<void>(),
+    prepare = h.service.prepare.bind(h.service);
+  vi.spyOn(h.service, 'prepare').mockImplementationOnce((snapshot, commands) => {
+    const native = prepare(snapshot, commands);
+    return native.type !== 'ready'
+      ? native
+      : {
+          ...native,
+          refresh: async (current) => {
+            started.resolve();
+            await resume.promise;
+            return await native.refresh(current);
+          },
+        };
+  });
+  const p = ok(
+    await required(c.tasks.prepare)({
+      kind: 'edit',
+      target: root.target,
+      expectedRevision: root.revision,
+    }),
+  );
+  const controller = new AbortController();
+  const pending = required(c.tasks.prepare)(
+    { kind: 'refresh', plan: p.target, expectedPlanRevision: p.revision },
+    { signal: controller.signal },
+  );
+  await started.promise;
+  controller.abort();
+  resume.resolve();
+  expect(await pending).toMatchObject({ ok: false, error: { code: 'ABORTED' } });
+  const refreshed = ok(
+    await required(c.tasks.prepare)({
+      kind: 'refresh',
+      plan: p.target,
+      expectedPlanRevision: p.revision,
+    }),
+  );
+  expect(
+    (
+      await required(c.tasks.apply)({
+        plan: refreshed.target,
+        expectedPlanRevision: refreshed.revision,
+        requestId: 'after-cancel',
+        expiresAt: Date.UTC(2026, 7, 1, 12) + 60000,
+      })
+    ).ok,
+  ).toBe(true);
+  expect(await h.read('a.md')).toBe('- [ ] Root\n');
+});
+
+it('keeps a concurrently published refresh version when an older refresh delivery is cancelled', async () => {
+  const h = await setup('- [ ] Root\n'),
+    c = h.client(),
+    root = required(ok(await c.tasks.list()).items[0]),
+    pause = pauseFirstRefresh(h);
+  const p = ok(
+      await required(c.tasks.prepare)({
+        kind: 'edit',
+        target: root.target,
+        expectedRevision: root.revision,
+      }),
+    ),
+    controller = new AbortController();
+  const pending = required(c.tasks.prepare)(
+    { kind: 'refresh', plan: p.target, expectedPlanRevision: p.revision },
+    { signal: controller.signal },
+  );
+  await pause.started.promise;
+  const visible = ok(
+    await required(c.tasks.prepare)({
+      kind: 'refresh',
+      plan: p.target,
+      expectedPlanRevision: p.revision,
+    }),
+  );
+  controller.abort();
+  pause.resume.resolve();
+  expect(await pending).toMatchObject({ ok: false, error: { code: 'ABORTED' } });
+  const expiresAt = Date.UTC(2026, 7, 1, 12) + 60000;
+  expect(
+    await required(c.tasks.apply)({
+      plan: p.target,
+      expectedPlanRevision: p.revision,
+      requestId: 'old-visible',
+      expiresAt,
+    }),
+  ).toMatchObject({ ok: false, error: { code: 'PLAN_CONSUMED' } });
+  expect(
+    (
+      await required(c.tasks.apply)({
+        plan: visible.target,
+        expectedPlanRevision: visible.revision,
+        requestId: 'new-visible',
+        expiresAt,
+      })
+    ).ok,
+  ).toBe(true);
+  expect(await h.read('a.md')).toBe('- [ ] Root\n');
+});
+it('keeps an independently admitted write while a concurrent refresh is cancelled', async () => {
+  const h = await setup('- [ ] Root\n'),
+    c = h.client(),
+    root = required(ok(await c.tasks.list()).items[0]),
+    pause = pauseFirstRefresh(h);
+  const p = ok(
+      await required(c.tasks.prepare)({
+        kind: 'edit',
+        target: root.target,
+        expectedRevision: root.revision,
+      }),
+    ),
+    controller = new AbortController();
+  const pending = required(c.tasks.prepare)(
+    { kind: 'refresh', plan: p.target, expectedPlanRevision: p.revision },
+    { signal: controller.signal },
+  );
+  await pause.started.promise;
+  const visible = ok(
+    await required(c.tasks.prepare)({
+      kind: 'append',
+      plan: p.target,
+      expectedPlanRevision: p.revision,
+      operation: {
+        type: 'patch',
+        target: root.target,
+        patch: { priority: { type: 'set', value: 'A' } },
+      },
+    }),
+  );
+  const started = deferred<void>(),
+    resume = deferred<void>(),
+    process = h.app.vault.process.bind(h.app.vault),
+    writes = vi.spyOn(h.app.vault, 'process').mockImplementation(async (file, transform) => {
+      started.resolve();
+      await resume.promise;
+      return await process(file, transform);
+    });
+  const input = {
+      plan: visible.target,
+      expectedPlanRevision: visible.revision,
+      requestId: 'admitted-concurrent',
+      expiresAt: Date.UTC(2026, 7, 1, 12) + 60000,
+    },
+    writing = required(c.tasks.apply)(input);
+  await started.promise;
+  controller.abort();
+  pause.resume.resolve();
+  expect(await pending).toMatchObject({ ok: false, error: { code: 'ABORTED' } });
+  resume.resolve();
+  const saved = await writing;
+  expect(saved).toMatchObject({
+    ok: true,
+    receipt: { effects: 'committed', snapshots: 'complete' },
+  });
+  expect(await required(c.tasks.apply)(input)).toEqual(saved);
+  expect(writes).toHaveBeenCalledTimes(1);
+  expect(await h.read('a.md')).toContain('🔺');
+});
+
+it('releases unpublished preparations when the final caller-owned signal getter fails', async () => {
+  const h = await setup('- [ ] Root\n'),
+    c = h.client(),
+    root = required(ok(await c.tasks.list()).items[0]);
+  for (let i = 0; i < 130; i++) {
+    let reads = 0;
+    const signal = {
+      get aborted() {
+        if (++reads === 3) throw new Error('Late signal failure');
+        return false;
+      },
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    };
+    expect(
+      await required(c.tasks.prepare)(
+        { kind: 'edit', target: root.target, expectedRevision: root.revision },
+        { signal },
+      ),
+    ).toMatchObject({ ok: false, error: { code: 'INTERNAL_ERROR' } });
+  }
+  expect(
+    (
+      await required(c.tasks.prepare)({
+        kind: 'edit',
+        target: root.target,
+        expectedRevision: root.revision,
+      })
+    ).ok,
+  ).toBe(true);
+  expect(await h.read('a.md')).toBe('- [ ] Root\n');
 });

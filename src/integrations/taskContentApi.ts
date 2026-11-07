@@ -36,6 +36,7 @@ import { currentNode } from './taskApiMutations';
 import { readError, readFailure } from './taskApiReads';
 import {
   contentReceipt,
+  redactContentMutationResult,
   unknownContentReceipt,
   type ContentReceiptBasis,
 } from './taskContentReceipt';
@@ -95,6 +96,7 @@ interface Version {
   readonly observation: ReturnType<TaskApiContext['reads']['capture']>;
   readonly bytes: number;
   superseded: boolean;
+  published: boolean;
 }
 function commandResultError(result: TaskCommandResult): ApiResultV1<never> {
   if (result.type === 'conflict') return contentFailure('REVISION_CONFLICT');
@@ -199,10 +201,14 @@ export class TaskContentApi {
           v.family.release();
       }
   }
-  private lookup_abyssPrivate(target: string, revision: string): ApiResultV1<Version> {
+  private lookup_abyssPrivate(
+    target: string,
+    revision: string,
+    includeUnpublished = false,
+  ): ApiResultV1<Version> {
     this.clean_abyssPrivate();
     const v = this.versions_abyssPrivate.get(revision);
-    if (v?.target !== target) return contentFailure();
+    if (v?.target !== target || (!v.published && !includeUnpublished)) return contentFailure();
     if (v.originalTarget !== undefined) {
       const identity = this.ctx_abyssPrivate.api.identities.lookup(v.originalTarget);
       if (!identity.ok) return identity;
@@ -441,6 +447,7 @@ export class TaskContentApi {
       comments: new Map<string, CommentRef>(),
       bytes,
       superseded: false,
+      published: false,
     };
     if (previous !== undefined) this.continueTasks_abyssPrivate(v, previous.tasks);
     const result = this.render_abyssPrivate(v);
@@ -457,20 +464,44 @@ export class TaskContentApi {
       read = validateReadOptions(options);
     if (!parsed.ok) return parsed;
     if (!read.ok) return read;
+    let result: ApiResultV1<ContentPlanV1> | undefined;
     try {
       const failed = ctx.api.check(read.value.signal);
       if (failed !== undefined) return failed;
-      const result = await this.prepareValue_abyssPrivate(parsed.value);
+      result = await this.prepareValue_abyssPrivate(parsed.value);
       const late = ctx.api.check(read.value.signal);
       if (late !== undefined) return late;
-      if (result.ok) {
-        const owned = this.lookup_abyssPrivate(result.value.target, result.value.revision);
-        if (!owned.ok) return owned;
-      }
-      return result;
+      if (!result.ok) return result;
+      const publication = this.publish_abyssPrivate(result.value, parsed.value);
+      return publication ?? result;
     } catch {
       return ctx.api.internal('tasks.prepare');
+    } finally {
+      if (result?.ok === true) this.discardUnpublished_abyssPrivate(result.value.revision);
     }
+  }
+  private publish_abyssPrivate(
+    plan: ContentPlanV1,
+    input: PrepareTaskContentV1,
+  ): ApiResultV1<never> | undefined {
+    const owned = this.lookup_abyssPrivate(plan.target, plan.revision, true);
+    if (!owned.ok) return owned;
+    const version = owned.value;
+    if (version.family.consumed) return contentFailure('PLAN_CONSUMED');
+    if (input.kind === 'refresh') {
+      const predecessor = this.versions_abyssPrivate.get(input.expectedPlanRevision);
+      if (predecessor === undefined) return contentFailure();
+      predecessor.superseded = true;
+    }
+    version.published = true;
+    return undefined;
+  }
+  private discardUnpublished_abyssPrivate(revision: string): void {
+    const version = this.versions_abyssPrivate.get(revision);
+    if (version === undefined || version.published) return;
+    this.versions_abyssPrivate.delete(revision);
+    if (![...this.versions_abyssPrivate.values()].some((value) => value.family === version.family))
+      version.family.release();
   }
   private async prepareValue_abyssPrivate(
     value: PrepareTaskContentV1,
@@ -661,7 +692,6 @@ export class TaskContentApi {
     }
     if (native.type !== 'ready') return commandResultError(native.result);
     const result = this.retain_abyssPrivate(native, v);
-    if (result.ok) v.superseded = true;
     return result;
   }
   private async refreshCreate_abyssPrivate(
@@ -744,13 +774,26 @@ export class TaskContentApi {
       read = validateReadOptions(options);
     if (!parsed.ok) return { ...parsed, effects: 'unchanged', recovery: 'none' };
     if (!read.ok) return { ...read, effects: 'unchanged', recovery: 'none' };
-    return ctx.requests.executeContent(ctx.consumerId, method, parsed.value, {
+    const result = await ctx.requests.executeContent(ctx.consumerId, method, parsed.value, {
       ...(read.value.signal === undefined ? {} : { signal: read.value.signal }),
       isDisposed: () => this.disposed_abyssPrivate || ctx.isDisposed(),
       admit: () => this.admit_abyssPrivate(method, parsed.value),
     });
+    return redactContentMutationResult(result, ctx.api, this.deliveryLive_abyssPrivate());
   }
 
+  private deliveryLive_abyssPrivate(): boolean {
+    try {
+      return (
+        !this.disposed_abyssPrivate &&
+        !this.ctx_abyssPrivate.isDisposed() &&
+        this.ctx_abyssPrivate.api.check() === undefined
+      );
+    } catch {
+      this.ctx_abyssPrivate.api.internal('tasks.content.delivery');
+      return false;
+    }
+  }
   private admit_abyssPrivate(
     method: 'tasks.apply' | 'tasks.create',
     input: ApplyTaskContentV1,

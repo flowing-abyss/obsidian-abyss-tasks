@@ -289,7 +289,10 @@ preparation. Late expansion issues existing descendant targets from the pinned o
 new authored descendants remain plan-owned. Refresh resolves
 the pinned original accepted root, or a same-consumer successful insertion retained by the request
 owner with matching sealed destination basis. It advances an unattempted writer without replaying a
-command. A mutation consumes the whole plan family, including divergent versions and failed attempts.
+command. Prepared successors remain unpublished until the final delivery check. Rejected delivery
+releases only its unpublished version; a visible refresh predecessor retires only when a successor is
+published. Concurrent visible versions and separately admitted request pins retain their ownership.
+A mutation consumes the whole plan family, including divergent versions and failed attempts.
 Initial status symbols resolve through the current complete native catalog; saved status actions retain
 their separate lifecycle command path. Draft status edits are not part of the content command union.
 
@@ -311,7 +314,10 @@ catalogs enumerate permitted accepted nodes and reuse canonical case-insensitive
 block with the writer's exact installed occurrence and current accepted readback, then maps only the
 final-plan task handles frozen at admission through canonical relative positions within that proved
 block. A missing readback or mapping preserves write effects and never authorizes replay. Comments
-remain version-scoped; receipts grant no durable comment correspondence.
+remain version-scoped; receipts grant no durable comment correspondence. Every initial or replayed
+content receipt delivery checks current client/provider lifetime and disclosure of its retained task
+handles. It returns a detached redacted projection when proof is unavailable, while the request owner
+keeps its immutable historical receipt and effect facts. Delivery never repeats the writer.
 
 [`TaskRequestRegistry`](src/integrations/TaskRequestRegistry.ts) owns bounded accepted promises and
 terminal mutation outcomes across status, project and prepared content operations within one provider epoch and
