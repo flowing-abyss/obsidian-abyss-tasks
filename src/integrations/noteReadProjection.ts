@@ -57,7 +57,7 @@ export function noteSegments(
   for (const range of registry.port.sections(selected.source)) {
     if (
       precedes(range, state.position) ||
-      (range.from >= selected.range.to && range.from !== range.to)
+      (range.from >= selected.range.to && range.to > selected.range.to)
     )
       continue;
     if (
@@ -68,7 +68,7 @@ export function noteSegments(
       break;
     }
     segment(registry, selected, range, state);
-    if (state.position < range.to) {
+    if (state.position < Math.min(range.to, selected.range.to)) {
       exhausted = false;
       break;
     }

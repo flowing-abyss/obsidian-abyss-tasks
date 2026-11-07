@@ -272,3 +272,114 @@ it('uses source policy for config paths and refuses traversal or absolute note p
   }
   expect(writes).not.toHaveBeenCalled();
 });
+
+it.each([2, 64])(
+  'finishes a task-child block selection with %i-character pages',
+  async (limitCharacters) => {
+    const content = '- [ ] Root\n  - [ ] Child ^phone\n  - [ ] Sibling\n';
+    const selectedText = '- [ ] Child ^phone';
+    const h = await setup({ 'tasks.md': content });
+    const file = required(h.app.vault.getFileByPath('tasks.md') ?? undefined);
+    metadataChangedEmitter(h.app)(file, content, {
+      blocks: {
+        phone: {
+          id: 'phone',
+          position: {
+            start: { line: 1, col: 2, offset: 13 },
+            end: { line: 1, col: 20, offset: 31 },
+          },
+        },
+      },
+    });
+    await flushMicrotasks();
+    const origin = ok(await h.notes.read({ selector: { path: 'tasks.md' } })).note;
+    const selector = {
+      link: { from: origin.target, expectedFromRevision: origin.revision, wikiLink: '[[#^phone]]' },
+    };
+    let cursor: string | undefined;
+    let text = '';
+    let complete = false;
+    for (let count = 0; count < 20; count++) {
+      const page = ok(
+        await h.notes.read({
+          selector,
+          limitCharacters,
+          ...(cursor === undefined ? {} : { cursor }),
+        }),
+      );
+      const part = page.segments.map((segment) => segment.text).join('');
+      expect(part.length).toBeGreaterThan(0);
+      expect(
+        page.segments.every((segment) => !segment.section.canAppend && !segment.section.canReplace),
+      ).toBe(true);
+      text += part;
+      cursor = page.nextCursor;
+      complete = page.complete;
+      if (complete) break;
+    }
+    expect(text).toBe(selectedText);
+    expect(complete).toBe(true);
+    expect(cursor).toBeUndefined();
+  },
+);
+
+it.each([
+  { underline: '=======', level: 1, newline: '\n', bom: '' },
+  { underline: '-------', level: 2, newline: '\r\n', bom: '\uFEFF' },
+])(
+  'protects the complete verified Setext anchor: $level',
+  async ({ underline, level, newline, bom }) => {
+    const normalized = `Topic${newline}${underline}${newline}Phone 123${newline}`;
+    const content = bom + normalized;
+    const h = await setup({ 'contact.md': content });
+    const origin = ok(await h.notes.read({ selector: { path: 'contact.md' } })).note;
+    const selector = {
+      link: { from: origin.target, expectedFromRevision: origin.revision, wikiLink: '[[#Topic]]' },
+    };
+    expect(await h.notes.read({ selector })).toMatchObject({
+      ok: false,
+      error: { code: 'INCOMPLETE_READ' },
+    });
+    const file = required(h.app.vault.getFileByPath('contact.md') ?? undefined);
+    metadataChangedEmitter(h.app)(file, normalized, {
+      headings: [
+        {
+          heading: 'Topic',
+          level,
+          position: {
+            start: { line: 0, col: 0, offset: 0 },
+            end: { line: 1, col: 7, offset: 5 + newline.length + 7 },
+          },
+        },
+      ],
+    });
+    await flushMicrotasks();
+    const page = ok(await h.notes.read({ selector }));
+    expect(page.selection).toBe('heading');
+    expect(page.complete).toBe(true);
+    expect(page.segments.map((part) => part.text).join('')).toBe(normalized);
+    const heading = required(page.segments.find((part) => part.section.kind === 'heading'));
+    expect(heading.text).toBe(`Topic${newline}${underline}${newline}`);
+    expect(heading.section).toMatchObject({ canAppend: false, canReplace: false });
+    expect(
+      await h.notes.prepare({
+        kind: 'edit',
+        target: page.note.target,
+        expectedRevision: page.note.revision,
+        operation: { type: 'replace-section', section: heading.section.target, text: 'Changed' },
+      }),
+    ).toMatchObject({ ok: false });
+    const whole = ok(await h.notes.read({ selector: { path: 'contact.md' } }));
+    expect(whole.segments.find((part) => part.section.kind === 'heading')?.text).toBe(heading.text);
+    const prose = required(whole.segments.find((part) => part.section.canAppend));
+    const plan = ok(
+      await h.notes.prepare({
+        kind: 'edit',
+        target: whole.note.target,
+        expectedRevision: whole.note.revision,
+        operation: { type: 'append', section: prose.section.target, text: 'Mobile 456' },
+      }),
+    );
+    expect(plan.after.text).not.toContain(underline);
+  },
+);

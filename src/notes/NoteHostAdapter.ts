@@ -34,13 +34,15 @@ export class NoteHostAdapter {
     ];
   }
   private headingRange(source: AcceptedNoteSource, heading: HeadingCache): NoteRange[] {
-    const from = heading.position.start.offset;
-    const lineEnd = source.content.indexOf('\n', from);
-    const to = lineEnd < 0 ? source.content.length : lineEnd + 1;
-    if (!this.validRange(source, from, to) || !this.headingAnchor(source, from, heading.heading))
-      return [];
+    const from = heading.position.start.offset,
+      end = heading.position.end.offset;
+    if (!this.validRange(source, from, end) || !this.headingAnchor(source, from, end)) return [];
+    let to = end;
+    if (source.content[to] === '\r') to++;
+    if (source.content[to] === '\n') to++;
     return [{ from, to, kind: 'heading', label: heading.heading, editable: false }];
   }
+
   private blockRange(source: AcceptedNoteSource, block: BlockCache): NoteRange[] {
     const from = block.position.start.offset,
       to = block.position.end.offset;
@@ -61,15 +63,21 @@ export class NoteHostAdapter {
       to <= source.content.length
     );
   }
-  private headingAnchor(source: AcceptedNoteSource, from: number, label: string): boolean {
+  private headingAnchor(source: AcceptedNoteSource, from: number, end: number): boolean {
     if (
       from !== 0 &&
       !(from === 1 && source.content.startsWith('\uFEFF')) &&
       source.content[from - 1] !== '\n'
     )
       return false;
-    const line = source.content.slice(from).split('\n', 1)[0] ?? '';
-    return /^ {0,3}#{1,6}[ \t]/u.test(line) && line.includes(label);
+    // Exact-event host metadata owns heading syntax, including Setext's underline.
+    // Validate its complete source boundaries without substituting an ATX-only parser.
+    return (
+      end > from &&
+      (end === source.content.length ||
+        source.content[end] === '\n' ||
+        source.content.startsWith('\r\n', end))
+    );
   }
   private parseLink(wikiLink: string): { path: string; subpath: string } {
     const links = parseLinks(wikiLink);
@@ -121,8 +129,10 @@ export class NoteHostAdapter {
     const start = found.start.offset,
       end = found.end?.offset ?? source.content.length;
     if (!this.validRange(source, start, end)) throw new NoteFailure('INCOMPLETE_READ');
-    if (found.type === 'heading' && !this.headingAnchor(source, start, found.current.heading))
-      throw new NoteFailure('INCOMPLETE_READ');
+    if (found.type === 'heading') {
+      const anchor = this.headingRange(source, found.current)[0];
+      if (anchor?.from !== start || anchor.to > end) throw new NoteFailure('INCOMPLETE_READ');
+    }
     if (found.type === 'block' && !source.content.slice(start, end).includes(`^${found.block.id}`))
       throw new NoteFailure('INCOMPLETE_READ');
     return { start, end };

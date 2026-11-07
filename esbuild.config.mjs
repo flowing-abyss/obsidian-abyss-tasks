@@ -1,4 +1,4 @@
-// Guarded note search, sections and static creation: 2,438,428 -> 2,478,002 bytes (+39,574).
+// Guarded note search, sections and static creation: 2,438,428 -> 2,478,055 bytes (+39,627).
 // No new dependencies; minimal containing budget 2,478,080 bytes (2420 KiB), below 5,000,000 bytes.
 // Original acquisition proof through capture/read continuations: 2,438,242 -> 2,438,428 bytes (+186).
 // No new dependencies; existing 2,439,168-byte (2382 KiB) main budget remains enforced.
