@@ -346,7 +346,11 @@ the same proof after later read awaits and before using or publishing a candidat
 cannot replace the original acquisition evidence across an await.
 The application owner captures settings and commands before the await and rejects changed settings;
 the facade revalidates the accepted caller revision and releases pins on failed preparation. Creation
-and refresh use the same source-acquisition guard. Append remains synchronous over its sealed tree.
+and refresh use the same source-acquisition guard. Append remains synchronous over its sealed tree. A refresh
+whose exact final read still matches its original native/stamp/scope/root proof can report
+`source-incomplete` when accepted coverage is pending. The facade returns `INCOMPLETE_READ` and
+retains the predecessor for read-only recovery after a public event; it never retries or installs a
+new basis inside that refused refresh.
 Initial status symbols resolve through the current complete native catalog; saved status actions retain
 their separate lifecycle command path. Draft status edits are not part of the content command union.
 

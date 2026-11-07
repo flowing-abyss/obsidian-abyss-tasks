@@ -91,6 +91,7 @@ import {
   type PreparedTaskEditCommand,
   type TaskEditPreparation,
   type TaskEditPreparationApi,
+  type TaskEditRefreshUnavailable,
 } from './TaskEditPreparationApi';
 import { TaskHierarchyService } from './TaskHierarchyService';
 import {
@@ -2041,7 +2042,7 @@ export class TaskApplicationService
     prepared: Extract<TaskPreparedRootEdit, { type: 'ready' }>,
     context: EditPreparationContext,
     current: TaskSnapshot,
-  ): Promise<TaskEditPreparation> {
+  ): Promise<TaskEditPreparation | TaskEditRefreshUnavailable> {
     const allowed = (): boolean => !context.family.attempted && context.current();
     try {
       const resolution = this.queries.resolve(context.ref);
@@ -2056,9 +2057,10 @@ export class TaskApplicationService
       )
         return { type: 'invalid', result: invalidTaskTarget('target') };
       const next = await prepared.refresh(current);
-      return allowed()
-        ? this.editPreparation_abyssPrivate(next, { ...context, ref: { ...proven.ref } })
-        : { type: 'invalid', result: invalidTaskTarget('target') };
+      if (!allowed()) return { type: 'invalid', result: invalidTaskTarget('target') };
+      return next.type === 'unavailable'
+        ? next
+        : this.editPreparation_abyssPrivate(next, { ...context, ref: { ...proven.ref } });
     } catch {
       return this.preparationReadFailure_abyssPrivate('patch');
     }

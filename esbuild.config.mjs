@@ -1,5 +1,5 @@
-// Guarded note search, sections and static creation: 2,438,428 -> 2,478,055 bytes (+39,627).
-// No new dependencies; minimal containing budget 2,478,080 bytes (2420 KiB), below 5,000,000 bytes.
+// Guarded note search, sections and static creation: 2,438,428 -> 2,478,468 bytes (+40,040).
+// No new dependencies; minimal containing budget 2,479,104 bytes (2421 KiB), below 5,000,000 bytes.
 // Original acquisition proof through capture/read continuations: 2,438,242 -> 2,438,428 bytes (+186).
 // No new dependencies; existing 2,439,168-byte (2382 KiB) main budget remains enforced.
 // Native preparation acquisition and exact-source echo continuity: 2,436,578 -> 2,438,242 bytes (+1,664).

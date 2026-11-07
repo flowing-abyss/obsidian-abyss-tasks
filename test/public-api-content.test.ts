@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import type { ApiResultV1 } from '../api';
-import { deferred } from './helpers';
+import { deferred, metadataChangedEmitter } from './helpers';
 import { publicApiHarness, type PublicApiHarness } from './support/publicApiHarness';
 const owners: PublicApiHarness[] = [];
 afterEach(() => {
@@ -1155,4 +1155,55 @@ it('releases unpublished preparations when the final caller-owned signal getter 
     ).ok,
   ).toBe(true);
   expect(await h.read('a.md')).toBe('- [ ] Root\n');
+});
+
+it('retains a refresh predecessor while BOM metadata coverage settles through a public event', async () => {
+  const h = await setup('\uFEFF- [ ] Root\n');
+  const c = h.client();
+  const root = required(ok(await c.tasks.list()).items[0]);
+  const prepare = required(c.tasks.prepare);
+  const plan = ok(
+    await prepare({
+      kind: 'edit',
+      target: root.target,
+      expectedRevision: root.revision,
+      operation: { type: 'description', target: root.target, text: 'Sealed description' },
+    }),
+  );
+  const settled = deferred<void>();
+  let coverageFailure: unknown;
+  const unsubscribe = ok(
+    c.subscribe((event) => {
+      if (event.type === 'state') return;
+      void c.tasks.list().then(
+        (result) => {
+          if (result.ok) settled.resolve();
+        },
+        (error: unknown) => {
+          coverageFailure = error;
+          settled.resolve();
+        },
+      );
+    }),
+  );
+  const writes = vi.spyOn(h.app.vault, 'process');
+  const read = h.app.vault.read.bind(h.app.vault);
+  vi.spyOn(h.app.vault, 'read').mockImplementationOnce(async (file) => {
+    const text = await read(file);
+    metadataChangedEmitter(h.app)(file, text.slice(1), {});
+    return text;
+  });
+  const request = {
+    kind: 'refresh' as const,
+    plan: plan.target,
+    expectedPlanRevision: plan.revision,
+  };
+  const refused = await prepare(request);
+  await settled.promise;
+  expect(coverageFailure).toBeUndefined();
+  const refreshed = ok(await prepare(request));
+  expect(refreshed.after?.description).toBe('Sealed description');
+  expect(writes).not.toHaveBeenCalled();
+  expect(refused).toMatchObject({ ok: false, error: { code: 'INCOMPLETE_READ' } });
+  unsubscribe();
 });

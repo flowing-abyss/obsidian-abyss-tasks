@@ -696,7 +696,9 @@ export class TaskContentApi {
     v: Version,
     afterRequestId?: string,
   ): Promise<ApiResultV1<ContentPlanV1>> {
-    let native: TaskEditPreparation | TaskCreatePreparation;
+    let native:
+      | Awaited<ReturnType<Extract<TaskEditPreparation, { type: 'ready' }>['refresh']>>
+      | TaskCreatePreparation;
     if (v.kind === 'edit') {
       const found = this.current_abyssPrivate(v.originalTarget ?? '');
       if (!found.ok) return found;
@@ -708,6 +710,7 @@ export class TaskContentApi {
       if (!refreshed.ok) return refreshed;
       native = refreshed.value;
     }
+    if (native.type === 'unavailable') return readFailure('incomplete');
     if (native.type !== 'ready') return commandResultError(native.result);
     const result = this.retain_abyssPrivate(native, v);
     return result;

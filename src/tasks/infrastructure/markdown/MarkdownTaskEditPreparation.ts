@@ -1,4 +1,7 @@
-import type { TaskPreparedNodeContinuation } from '../../application/TaskEditPreparationApi';
+import type {
+  TaskEditRefreshUnavailable,
+  TaskPreparedNodeContinuation,
+} from '../../application/TaskEditPreparationApi';
 import type {
   TaskEditCommand,
   TaskPreparedRootEdit,
@@ -29,6 +32,7 @@ interface PreparationPorts {
         readonly content: string;
         readonly after: TaskSnapshot | null;
       }
+    | TaskEditRefreshUnavailable
     | undefined
   >;
   /** The same canonical edit path used by ordinary repository commands, without publication. */
@@ -182,12 +186,13 @@ export class MarkdownTaskEditPreparation {
     before: TaskSnapshot,
     candidate: SealedCandidate,
     current: TaskSnapshot,
-  ): Promise<TaskPreparedRootEdit> {
+  ): Promise<TaskPreparedRootEdit | TaskEditRefreshUnavailable> {
     const allowed = (): boolean => !this.family.attempted;
     if (!allowed()) return { type: 'invalid', result: invalidTaskTarget('target') };
     const refreshed = await this.ports.refresh?.(structuredClone(current), candidate);
     if (refreshed === undefined || !allowed())
       return { type: 'invalid', result: invalidTaskTarget('target') };
+    if ('type' in refreshed) return refreshed;
     return new MarkdownTaskEditPreparation(refreshed.ports, this.family).stage(
       before,
       refreshed.content,

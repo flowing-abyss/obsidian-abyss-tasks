@@ -5,7 +5,10 @@ import { toStatusRules } from '../../src/settings/statusCatalogAdapter';
 import { TaskApplicationService } from '../../src/tasks/application/TaskApplicationService';
 import type { TaskBehaviorSettingsProvider } from '../../src/tasks/application/TaskBehaviorSettings';
 import type { TaskDestinationProvider } from '../../src/tasks/application/TaskDestinationProvider';
-import type { TaskEditPreparation } from '../../src/tasks/application/TaskEditPreparationApi';
+import type {
+  TaskEditPreparation,
+  TaskEditRefreshUnavailable,
+} from '../../src/tasks/application/TaskEditPreparationApi';
 import { clockFrom, type Clock } from '../../src/tasks/domain/clock';
 import { StatusCatalog } from '../../src/tasks/domain/StatusCatalog';
 import { TaskBlockEditor } from '../../src/tasks/infrastructure/markdown/TaskBlockEditor';
@@ -17,7 +20,9 @@ import { TaskIndex } from '../../src/tasks/infrastructure/TaskIndex';
 import { TaskRefAuthority } from '../../src/tasks/infrastructure/TaskRefAuthority';
 import { createAppWithFiles, expectDefined } from '../helpers';
 
-export function ready(value: TaskEditPreparation): Extract<TaskEditPreparation, { type: 'ready' }> {
+export function ready(
+  value: TaskEditPreparation | TaskEditRefreshUnavailable,
+): Extract<TaskEditPreparation, { type: 'ready' }> {
   if (value.type !== 'ready') throw new Error(`Preparation failed: ${JSON.stringify(value)}`);
   return value;
 }

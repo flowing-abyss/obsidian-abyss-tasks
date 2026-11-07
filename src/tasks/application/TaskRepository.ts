@@ -26,7 +26,10 @@ import type {
 } from '../domain/types';
 import { sameTaskNodeRef } from '../domain/types';
 import type { TaskIssue } from '../domain/validation';
-import type { TaskPreparedNodeContinuation } from './TaskEditPreparationApi';
+import type {
+  TaskEditRefreshUnavailable,
+  TaskPreparedNodeContinuation,
+} from './TaskEditPreparationApi';
 import type {
   ProjectTaskDestination,
   ProjectTaskResult,
@@ -289,7 +292,7 @@ export type TaskPreparedRootEdit =
       readonly continuations: readonly TaskPreparedNodeContinuation[];
       readonly after: TaskSnapshot | null;
       append(command: TaskEditCommand): TaskPreparedRootEdit;
-      refresh(current: TaskSnapshot): Promise<TaskPreparedRootEdit>;
+      refresh(current: TaskSnapshot): Promise<TaskPreparedRootEdit | TaskEditRefreshUnavailable>;
       commit(): Promise<TaskRepositoryResult>;
     }
   | { readonly type: 'invalid'; readonly result: TaskRepositoryResult };

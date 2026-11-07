@@ -28,6 +28,11 @@ export interface TaskEditPreparationApi {
   ): Promise<TaskEditPreparation>;
 }
 
+export interface TaskEditRefreshUnavailable {
+  readonly type: 'unavailable';
+  readonly reason: 'source-incomplete';
+}
+
 export type TaskEditPreparation =
   | {
       readonly type: 'ready';
@@ -36,7 +41,7 @@ export type TaskEditPreparation =
       readonly after: TaskSnapshot | null;
       /** Immutable continuation; command refs must belong to this preparation's after tree. */
       append(command: PreparedTaskEditCommand): TaskEditPreparation;
-      refresh(current: TaskSnapshot): Promise<TaskEditPreparation>;
+      refresh(current: TaskSnapshot): Promise<TaskEditPreparation | TaskEditRefreshUnavailable>;
       /** One attempt, with the same detached receipt on subsequent calls, including failures. */
       commit(): Promise<TaskCommandResult>;
     }

@@ -4,6 +4,7 @@ import { compileNotePathPattern } from '../../../markdown/notePathPattern';
 import { readVaultText } from '../../../markdown/readVaultText';
 import type { TaskQueryApi } from '../../application/TaskApplicationApi';
 import type { TaskDiagnosticSink } from '../../application/TaskDependencyService';
+import type { TaskEditRefreshUnavailable } from '../../application/TaskEditPreparationApi';
 import type {
   ProjectSourceReadApi,
   TaskIntegrationReadStateApi,
@@ -2770,9 +2771,8 @@ export class ObsidianTaskRepository implements TaskRepository {
         this.commitPreparedRoot_abyssPrivate(basis, { content, after, nodeMap }),
       refresh: async (current, candidate) => {
         const fresh = await this.refreshPreparedRootBasis_abyssPrivate(basis, current);
-        return fresh === undefined
-          ? undefined
-          : this.transplantPreparedRoot_abyssPrivate(fresh, candidate);
+        if (fresh === undefined || 'type' in fresh) return fresh;
+        return this.transplantPreparedRoot_abyssPrivate(fresh, candidate);
       },
     };
   }
@@ -2780,7 +2780,7 @@ export class ObsidianTaskRepository implements TaskRepository {
   private async refreshPreparedRootBasis_abyssPrivate(
     basis: PreparedRootBasis,
     current: TaskSnapshot,
-  ): Promise<PreparedRootBasis | undefined> {
+  ): Promise<PreparedRootBasis | TaskEditRefreshUnavailable | undefined> {
     const acquisition = await this.acquirePreparedSource_abyssPrivate(current.ref.filePath);
     if (acquisition === undefined) return undefined;
     const proven = this.provenPreparedRoot_abyssPrivate(basis.root.ref);
@@ -2792,9 +2792,27 @@ export class ObsidianTaskRepository implements TaskRepository {
     const fresh = this.capturePreparedRoot_abyssPrivate(current, acquisition);
     if (fresh === undefined || !this.samePreparedRootBasis_abyssPrivate(basis, fresh))
       return undefined;
-    return (await readVaultText(this.app_abyssPrivate.vault, fresh.file)) === fresh.content &&
-      this.preparedRootCurrent_abyssPrivate(fresh, fresh.content)
-      ? fresh
+    const stamp = { ...fresh.file.stat };
+    if ((await readVaultText(this.app_abyssPrivate.vault, fresh.file)) !== fresh.content)
+      return undefined;
+    if (this.preparedRootCurrent_abyssPrivate(fresh, fresh.content)) return fresh;
+    return this.incompletePreparedRefresh_abyssPrivate(fresh, stamp);
+  }
+
+  private incompletePreparedRefresh_abyssPrivate(
+    fresh: PreparedRootBasis,
+    stamp: { readonly mtime: number; readonly size: number },
+  ): TaskEditRefreshUnavailable | undefined {
+    if (
+      !fresh.acquisition.current() ||
+      !this.isCurrentFile_abyssPrivate(fresh.file, fresh.root.ref.filePath) ||
+      !sameNoteFileStamp(stamp, fresh.file.stat) ||
+      !this.exactStrictRoot_abyssPrivate(fresh.root, fresh.content)
+    )
+      return undefined;
+    const source = this.options_abyssPrivate.preparedRootSources?.get(fresh.root.ref.filePath);
+    return source?.type === 'error' && source.reason === 'incomplete'
+      ? { type: 'unavailable', reason: 'source-incomplete' }
       : undefined;
   }
 
