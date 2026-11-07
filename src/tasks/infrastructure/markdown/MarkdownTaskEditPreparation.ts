@@ -1,10 +1,11 @@
+import type { TaskPreparedNodeContinuation } from '../../application/TaskEditPreparationApi';
 import type {
   TaskEditCommand,
   TaskPreparedRootEdit,
   TaskRepositoryResult,
 } from '../../application/TaskRepository';
 import { taskEditRootRef } from '../../application/TaskRepository';
-import { sameTaskNodeRef, type TaskSnapshot } from '../../domain/types';
+import { sameTaskNodeRef, type TaskNodeRef, type TaskSnapshot } from '../../domain/types';
 import { invalidTaskTarget } from '../../domain/validation';
 import type { TaskNodeLineMapping } from './TaskBlockEditor';
 
@@ -43,6 +44,37 @@ function composeNodeMaps(
   });
 }
 
+function preparedNodes(root: TaskSnapshot | null): Map<number, TaskNodeRef> {
+  const nodes = new Map<number, TaskNodeRef>();
+  if (root === null) return nodes;
+  nodes.set(0, { type: 'task', ref: root.ref });
+  const visit = (children: TaskSnapshot['subtasks'], parentOffset: number): void => {
+    for (const child of children) {
+      const offset = parentOffset + child.ref.relativeLine;
+      nodes.set(offset, { type: 'subtask', ref: child.ref });
+      visit(child.subtasks, offset);
+    }
+  };
+  visit(root.subtasks, 0);
+  return nodes;
+}
+
+function continuations(
+  before: TaskSnapshot,
+  after: TaskSnapshot | null,
+  map: readonly TaskNodeLineMapping[] | undefined,
+): readonly TaskPreparedNodeContinuation[] {
+  const previous = preparedNodes(before);
+  const next = preparedNodes(after);
+  return (map ?? []).flatMap((entry) => {
+    const node = previous.get(entry.beforeOffset);
+    if (node === undefined) return [];
+    if (entry.afterOffset === undefined) return [{ before: node }];
+    const successor = next.get(entry.afterOffset);
+    return successor === undefined ? [] : [{ before: node, after: successor }];
+  });
+}
+
 /** Retains sealed candidates; public snapshots never become source or write authority. */
 export class MarkdownTaskEditPreparation {
   constructor(private readonly ports: PreparationPorts) {}
@@ -52,18 +84,28 @@ export class MarkdownTaskEditPreparation {
     content: string,
     nodeMap: readonly TaskNodeLineMapping[],
   ): TaskPreparedRootEdit {
-    return this.stage(structuredClone(before), content, structuredClone(before), nodeMap);
+    return this.stage(structuredClone(before), content, structuredClone(before), {
+      nodeMap,
+      correspondence: continuations(before, before, nodeMap),
+    });
   }
 
   private stage(
     before: TaskSnapshot,
     content: string,
     after: TaskSnapshot | null,
-    nodeMap: readonly TaskNodeLineMapping[] | undefined,
+    maps: {
+      readonly nodeMap: readonly TaskNodeLineMapping[] | undefined;
+      readonly correspondence: readonly TaskPreparedNodeContinuation[];
+    },
   ): TaskPreparedRootEdit {
+    const { nodeMap, correspondence } = maps;
     let attempt: Promise<TaskRepositoryResult> | undefined;
     return {
       type: 'ready',
+      get continuations() {
+        return structuredClone(correspondence);
+      },
       get before() {
         return structuredClone(before);
       },
@@ -88,7 +130,19 @@ export class MarkdownTaskEditPreparation {
           before,
           edit.content,
           outcome.type === 'task' ? structuredClone(outcome.task) : null,
-          edit.result.changed ? composeNodeMaps(nodeMap, edit.nodeMap) : nodeMap,
+          {
+            nodeMap: edit.result.changed ? composeNodeMaps(nodeMap, edit.nodeMap) : nodeMap,
+            correspondence: continuations(
+              after,
+              outcome.type === 'task' ? outcome.task : null,
+              edit.result.changed
+                ? edit.nodeMap
+                : [...preparedNodes(after).keys()].map((offset) => ({
+                    beforeOffset: offset,
+                    afterOffset: offset,
+                  })),
+            ),
+          },
         );
       },
       commit: async () => {

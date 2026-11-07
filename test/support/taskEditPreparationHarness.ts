@@ -1,9 +1,10 @@
-import { TFile } from 'obsidian';
+import { TFile, type App } from 'obsidian';
 import { vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
 import { toStatusRules } from '../../src/settings/statusCatalogAdapter';
 import { TaskApplicationService } from '../../src/tasks/application/TaskApplicationService';
 import type { TaskBehaviorSettingsProvider } from '../../src/tasks/application/TaskBehaviorSettings';
+import type { TaskDestinationProvider } from '../../src/tasks/application/TaskDestinationProvider';
 import type { TaskEditPreparation } from '../../src/tasks/application/TaskEditPreparationApi';
 import { clockFrom } from '../../src/tasks/domain/clock';
 import { StatusCatalog } from '../../src/tasks/domain/StatusCatalog';
@@ -23,10 +24,15 @@ export function ready(value: TaskEditPreparation): Extract<TaskEditPreparation, 
 
 export async function taskEditPreparationHarness(
   content: string,
-  options: { index?: Partial<TaskIndexOptions>; behavior?: TaskBehaviorSettingsProvider } = {},
+  options: {
+    index?: Partial<TaskIndexOptions>;
+    behavior?: TaskBehaviorSettingsProvider;
+    files?: Record<string, string>;
+    destination?: (app: App) => TaskDestinationProvider;
+  } = {},
 ) {
   const path = 'tasks.md';
-  const app = await createAppWithFiles({ [path]: content });
+  const app = await createAppWithFiles({ [path]: content, ...options.files });
   const catalog = new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses));
   const authority = new TaskRefAuthority('prepared-test');
   const index = new TaskIndex(app, {
@@ -50,7 +56,7 @@ export async function taskEditPreparationHarness(
     repository,
     catalog,
     clockFrom(Date.UTC(2026, 10, 7, 12), 0),
-    undefined,
+    options.destination?.(app),
     options.behavior,
   );
   const process = app.vault.process.bind(app.vault);
@@ -62,6 +68,8 @@ export async function taskEditPreparationHarness(
     index,
     authority,
     service,
+    catalog,
+    repository,
     writes,
     process,
     file,

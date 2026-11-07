@@ -1,3 +1,5 @@
+// Sealed full-tree creation and guarded static provisioning: 2,372,956 -> 2,386,366 bytes.
+// No new dependencies; minimal containing main budget: 2,386,944 bytes (2331 KiB).
 // Canonical prepared tree edits and composed occurrence witnesses: 2,367,374 -> 2,372,956 bytes.
 // No new bundled dependencies; use the minimal containing 2,373,632-byte main limit.
 // Shared project mutation lifetime and defensive receipts: measured main 2,248,667 bytes (+990).

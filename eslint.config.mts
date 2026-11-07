@@ -519,6 +519,8 @@ export default defineConfig(
       'src/tasks/application/TaskInputRecognizer.ts',
       'src/tasks/application/TaskCreatePreviewPort.ts',
       'src/tasks/application/TaskEditPreparationApi.ts',
+      'src/tasks/application/TaskCreatePreparationApi.ts',
+      'src/tasks/application/TaskCreateTreeBuilder.ts',
       'src/tasks/infrastructure/markdown/MarkdownTaskEditPreparation.ts',
       'src/tasks/infrastructure/markdown/MarkdownTaskCreatePreview.ts',
       'src/tasks/domain/commentText.ts',

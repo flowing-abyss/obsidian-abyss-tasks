@@ -219,3 +219,5 @@ export type {
 export type { TaskOccurrenceAddress } from './domain/taskOccurrence';
 
 export type { TaskEditPreparationApi } from './application/TaskEditPreparationApi';
+
+export type { TaskCreatePreparationApi } from './application/TaskCreatePreparationApi';

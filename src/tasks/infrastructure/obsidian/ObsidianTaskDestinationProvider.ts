@@ -27,8 +27,21 @@ type ProvisionTaskNote = (
   title: string,
 ) => Promise<ProvisionedNote>;
 
+export type TaskNotePreparation =
+  | { readonly type: 'unsupported-template' }
+  | {
+      readonly type: 'ready';
+      readonly content: string;
+      validate(): Promise<boolean>;
+      check(file: object, live: string): boolean;
+      provision(validate: () => Promise<boolean>): Promise<{
+        readonly path?: string;
+        readonly effects: 'unchanged' | 'committed' | 'unknown';
+      }>;
+    };
 interface DestinationPlanOptions {
   readonly allowExcluded: boolean;
+  readonly configuration?: ConfiguredTaskDestination;
   readonly provisionDestination?: boolean;
 }
 
@@ -38,7 +51,16 @@ export class ObsidianTaskDestinationProvider implements TaskDestinationProvider 
     private readonly provision: ProvisionTaskNote,
     private readonly isExcludedDestination: (filePath: string) => boolean | Promise<boolean> = () =>
       false,
-    private readonly canonicalizePath: (filePath: string) => string = (filePath) => filePath,
+    private readonly paths:
+      | ((filePath: string) => string)
+      | {
+          canonicalize(filePath: string): string;
+          planNote(
+            filePath: string,
+            templatePath: string,
+            title: string,
+          ): Promise<TaskNotePreparation>;
+        } = (filePath) => filePath,
   ) {}
 
   planConfiguredDefault(): Promise<TaskDestinationPlan> {
@@ -51,6 +73,7 @@ export class ObsidianTaskDestinationProvider implements TaskDestinationProvider 
     return Promise.resolve(
       this.plan(destination, configuration.taskTemplatePath, noteNameOfPath(destination.filePath), {
         allowExcluded: false,
+        configuration: structuredClone(configuration),
       }),
     );
   }
@@ -97,8 +120,13 @@ export class ObsidianTaskDestinationProvider implements TaskDestinationProvider 
     title: string,
     options: DestinationPlanOptions,
   ): TaskDestinationPlan {
-    return {
+    const plan: TaskDestinationPlan = {
       destination,
+      ...(typeof this.paths === 'function'
+        ? {}
+        : {
+            seal: async () => this.sealedPlan({ destination, templatePath, title, options }, plan),
+          }),
       validate: async (prepared) =>
         options.allowExcluded || !(await this.isExcludedDestination(prepared.filePath)),
       prepare: async () => {
@@ -113,6 +141,68 @@ export class ObsidianTaskDestinationProvider implements TaskDestinationProvider 
         return {
           type: 'resolved',
           destination: { filePath: file.path, insertion: destination.insertion },
+        };
+      },
+    };
+    return plan;
+  }
+
+  private canonicalizePath(filePath: string): string {
+    return typeof this.paths === 'function'
+      ? this.paths(filePath)
+      : this.paths.canonicalize(filePath);
+  }
+
+  private async sealedPlan(
+    input: {
+      destination: TaskDestination;
+      templatePath: string;
+      title: string;
+      options: DestinationPlanOptions;
+    },
+    legacy: TaskDestinationPlan,
+  ): Promise<TaskDestinationPlan> {
+    if (typeof this.paths === 'function') return legacy;
+    const { destination, templatePath, title, options } = input;
+    const note = await this.paths.planNote(destination.filePath, templatePath, title);
+    if (note.type === 'unsupported-template') return { ...legacy, preparedFailure: note.type };
+    const configurationCurrent = (): boolean => {
+      const expected = options.configuration;
+      if (expected === undefined)
+        return this.canonicalizePath(destination.filePath) === destination.filePath;
+      const current = this.currentConfiguration();
+      return (
+        current.taskFilePath === expected.taskFilePath &&
+        current.taskTemplatePath === expected.taskTemplatePath &&
+        JSON.stringify(current.insertion) === JSON.stringify(expected.insertion) &&
+        this.canonicalizePath(
+          compileNotePathPattern(current.taskFilePath).resolve(current.capturedToday),
+        ) === destination.filePath
+      );
+    };
+    const validate = async (): Promise<boolean> =>
+      configurationCurrent() &&
+      !(await this.isExcludedDestination(destination.filePath)) &&
+      (await note.validate());
+    return {
+      ...legacy,
+      plannedContent: note.content,
+      validatePrepared: validate,
+      checkPrepared: (file, live) => configurationCurrent() && note.check(file, live),
+      prepareGuarded: async (validateOuter) => {
+        if (!(await validateOuter()) || !(await validate()))
+          return { resolution: { type: 'unavailable' }, effects: 'unchanged' };
+        if (options.provisionDestination === false)
+          return { resolution: { type: 'resolved', destination }, effects: 'unchanged' };
+        const result = await note.provision(
+          async () => (await validateOuter()) && (await validate()),
+        );
+        return {
+          resolution:
+            result.path === destination.filePath
+              ? { type: 'resolved', destination }
+              : { type: 'unavailable' },
+          effects: result.effects,
         };
       },
     };

@@ -48,6 +48,31 @@ source-line objects, including identical-title siblings; missing proof never bec
 recovery reads do not replay the edit. Callers must acquire fresh accepted state and revalidate
 intent before constructing another preparation.
 
+[`TaskCreatePreparationApi`](src/tasks/application/TaskCreatePreparationApi.ts) prepares complete
+new trees through the same application normalization, canonical creation codec, editor and snapshot
+projector. Seed children receive native prefix/Inbox policy and initial lifecycle/status fields;
+initial status constructs the task without recurring completion. Descriptions, comments and their
+timestamps are visible before provisioning. Appends retain sealed candidates and expose detached
+physical node correspondence from the immediately preceding preview, including newly drafted
+children with identical titles. Changing previews have distinct draft revisions; these refs carry no
+accepted mutation authority. A creation starts with no predecessor map; root deletion discards the
+proposal rather than becoming a creation command.
+
+Destination planning remains read-only. The sealed plan captures effective behavior/catalog,
+resolved default path/insertion, native file identity and accepted bytes, or a missing note with a
+frozen static template. Pre-provision checks include project guards and complete candidate source
+policy. Each provisioning boundary rechecks the captured basis; insertion rechecks identity, bytes,
+settings, project revision, scope and semantics inside the existing queued writer. A changed default
+never redirects an agreed candidate. Commit inserts the exact reviewed block once, shares its receipt
+across repeated/concurrent calls, and reports destination provisioning separately as unchanged,
+committed or unknown. A persisted folder/note with a failed task insertion is not a saved task.
+
+`NoteTemplateService.planStaticNote` owns guarded static provisioning through its existing folder
+and note writers. It freezes core template expansion during preparation and rejects executable
+Templater syntax before any writes with `unsupported-template`. Existing destinations need no
+template execution. Ordinary Q capture retains its established eager preparation and Templater
+behavior. No new text-write authority or persisted task metadata is introduced.
+
 The opt-in native profiler in [`tooling/performance/native-api.ts`](tooling/performance/native-api.ts)
 is a structural consumer of the external v1 contract, imported only as types from `api.d.ts`.
 Its scan measures complete coherent pagination after untimed client activation. Its status span

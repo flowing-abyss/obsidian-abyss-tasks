@@ -42,6 +42,7 @@ import {
   taskInputReference,
   type TaskApplicationApi,
   type TaskCaptureApplicationApi,
+  type TaskCreatePreparationApi,
   type TaskDependencyQueryApi,
   type TaskEditPreparationApi,
   type TaskInputServices,
@@ -111,7 +112,10 @@ export default class TaskCalendarPlugin extends Plugin {
   override settings!: CalendarSettings;
   tagManager!: TagManager;
   queries!: TaskQueryApi & TaskDependencyQueryApi & TimeTrackingQueryApi;
-  tasks!: TaskApplicationApi & TaskCaptureApplicationApi & TaskEditPreparationApi;
+  tasks!: TaskApplicationApi &
+    TaskCaptureApplicationApi &
+    TaskEditPreparationApi &
+    TaskCreatePreparationApi;
   private taskIndex!: TaskIndex;
   private taskApiProvider: TaskApiProvider | undefined = undefined;
   getApi(version: number, options: { readonly consumerId: string }): ApiResultV1<TasksApiV1> {
@@ -187,6 +191,27 @@ export default class TaskCalendarPlugin extends Plugin {
     });
   }
 
+  private taskDestinationProvider(
+    noteTemplates: NoteTemplateService,
+  ): ObsidianTaskDestinationProvider {
+    return new ObsidianTaskDestinationProvider(
+      () => ({
+        taskFilePath: this.settings.taskFilePath,
+        taskArchivePath: this.effectiveTaskStorage.taskArchivePath,
+        taskTemplatePath: this.settings.taskTemplatePath,
+        capturedToday: window.moment().format('YYYY-MM-DD'),
+        insertion: configuredTaskInsertion(this.settings),
+      }),
+      (filePath, templatePath, title) => noteTemplates.ensureNote(filePath, templatePath, title),
+      (filePath) => this.isExcludedDestination(filePath),
+      {
+        canonicalize: (filePath) => this.canonicalTaskDestinationPath(filePath),
+        planNote: (filePath, templatePath, title) =>
+          noteTemplates.planStaticNote(filePath, templatePath, title),
+      },
+    );
+  }
+
   private initializeTaskServices(): void {
     this.statusCatalog = new StatusCatalog(toStatusRules(this.settings.taskStatuses));
     this.statusRegistry = new StatusRegistry(this.settings.taskStatuses);
@@ -218,18 +243,7 @@ export default class TaskCalendarPlugin extends Plugin {
       diagnostics,
     });
     const noteTemplates = new NoteTemplateService(this.app);
-    const destinationProvider = new ObsidianTaskDestinationProvider(
-      () => ({
-        taskFilePath: this.settings.taskFilePath,
-        taskArchivePath: this.effectiveTaskStorage.taskArchivePath,
-        taskTemplatePath: this.settings.taskTemplatePath,
-        capturedToday: window.moment().format('YYYY-MM-DD'),
-        insertion: configuredTaskInsertion(this.settings),
-      }),
-      (filePath, templatePath, title) => noteTemplates.ensureNote(filePath, templatePath, title),
-      (filePath) => this.isExcludedDestination(filePath),
-      (filePath) => this.canonicalTaskDestinationPath(filePath),
-    );
+    const destinationProvider = this.taskDestinationProvider(noteTemplates);
     const clock = this.initializeTaskInputServices();
     const tasks = new TaskApplicationService(
       this.taskIndex,

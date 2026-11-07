@@ -26,6 +26,7 @@ import type {
 } from '../domain/types';
 import { sameTaskNodeRef } from '../domain/types';
 import type { TaskIssue } from '../domain/validation';
+import type { TaskPreparedNodeContinuation } from './TaskEditPreparationApi';
 import type {
   ProjectTaskDestination,
   ProjectTaskResult,
@@ -285,13 +286,36 @@ export type TaskPreparedRootEdit =
   | {
       readonly type: 'ready';
       readonly before: TaskSnapshot;
+      readonly continuations: readonly TaskPreparedNodeContinuation[];
       readonly after: TaskSnapshot | null;
       append(command: TaskEditCommand): TaskPreparedRootEdit;
       commit(): Promise<TaskRepositoryResult>;
     }
   | { readonly type: 'invalid'; readonly result: TaskRepositoryResult };
 
+export interface PreparedTaskCreateGuard {
+  validateBeforeProvision(): Promise<boolean>;
+  check(file: object, live: string, candidate: string): boolean;
+}
+export type TaskPreparedCreateRoot =
+  | {
+      readonly type: 'ready';
+      readonly after: TaskSnapshot;
+      readonly continuations: readonly TaskPreparedNodeContinuation[];
+      append(command: TaskEditCommand): TaskPreparedCreateRoot;
+      validateBeforeProvision(
+        check?: PreparedTaskCreateGuard['check'],
+        plannedContent?: string,
+      ): Promise<boolean>;
+      commit(guard: PreparedTaskCreateGuard): Promise<TaskRepositoryResult>;
+    }
+  | { readonly type: 'invalid'; readonly result: TaskRepositoryResult };
+
 export interface TaskRepository {
+  prepareCreateRoot?(
+    destination: TaskDestination,
+    draft: TaskDraft,
+  ): Promise<TaskPreparedCreateRoot>;
   prepareRootEdit?(root: TaskSnapshot): TaskPreparedRootEdit;
   createProjectRoot?(
     destination: ProjectTaskDestination,

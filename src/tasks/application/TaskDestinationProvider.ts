@@ -4,7 +4,17 @@ export type TaskDestinationResolution =
   | { readonly type: 'resolved'; readonly destination: TaskDestination }
   | { readonly type: 'unavailable' };
 
+interface TaskDestinationCommitResolution {
+  readonly resolution: TaskDestinationResolution;
+  readonly effects: 'unchanged' | 'committed' | 'unknown';
+}
 export interface TaskDestinationPlan {
+  seal?(): Promise<TaskDestinationPlan>;
+  readonly preparedFailure?: 'unsupported-template';
+  readonly plannedContent?: string;
+  validatePrepared?(): Promise<boolean>;
+  checkPrepared?(file: object, live: string): boolean;
+  prepareGuarded?(validate: () => Promise<boolean>): Promise<TaskDestinationCommitResolution>;
   readonly destination: TaskDestination;
   prepare(): Promise<TaskDestinationResolution>;
   validate?(destination: TaskDestination): Promise<boolean>;

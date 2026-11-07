@@ -15,6 +15,7 @@ type TaskIssueCode =
   | 'invalid-target'
   | 'unsafe-comment-continuation'
   | 'destination-unavailable'
+  | 'unsupported-template'
   | 'invalid-on-completion'
   | RecurrenceIssueCode;
 

@@ -39,7 +39,7 @@ export class ExecutableTemplateError extends Error {}
 export class StaleStaticNoteError extends Error {}
 
 interface FolderGuard {
-  check(): void;
+  check(): void | Promise<void>;
   attempting(): void;
   created(): void;
 }
@@ -110,8 +110,176 @@ function notePath(filePath: string): string {
   return normalized;
 }
 
+interface StaticPlanBasis {
+  readonly path: string;
+  readonly original: TFile | null;
+  readonly content: string;
+  readonly templatePath: string;
+  readonly template: TFile | undefined;
+  readonly raw: string | undefined;
+  readonly stamp: TFile['stat'] | undefined;
+}
+interface StaticPlanState {
+  owned: { file: TFile; content: string } | undefined;
+  effects: 'unchanged' | 'committed' | 'unknown';
+}
+interface StaticPlanResult {
+  readonly path?: string;
+  readonly effects: 'unchanged' | 'committed' | 'unknown';
+}
+export type StaticNotePlan =
+  | { readonly type: 'unsupported-template' }
+  | {
+      readonly type: 'ready';
+      readonly content: string;
+      validate(): Promise<boolean>;
+      check(file: object, live: string): boolean;
+      provision(validate: () => Promise<boolean>): Promise<{
+        readonly path?: string;
+        readonly effects: 'unchanged' | 'committed' | 'unknown';
+      }>;
+    };
+
 export class NoteTemplateService {
   constructor(private readonly app: App) {}
+
+  /** Read-only static provisioning plan; executable templates are never run by this capability. */
+  async planStaticNote(
+    filePath: string,
+    templatePath: string,
+    title: string,
+  ): Promise<StaticNotePlan> {
+    const basis = await this.captureStaticPlan(filePath, templatePath, title);
+    if (basis === undefined) return { type: 'unsupported-template' };
+    const state: StaticPlanState = {
+      owned: basis.original === null ? undefined : { file: basis.original, content: basis.content },
+      effects: 'unchanged',
+    };
+    const check = (file: object, live: string): boolean =>
+      file instanceof TFile &&
+      state.owned?.file === file &&
+      state.owned.content === live &&
+      this.app.vault.getAbstractFileByPath(basis.path) === file &&
+      this.staticTemplateCurrent(basis);
+    const validate = async (): Promise<boolean> => {
+      if (!(await this.verifyStaticTemplate(basis))) return false;
+      if (state.owned === undefined)
+        return this.app.vault.getAbstractFileByPath(basis.path) === null;
+      return check(state.owned.file, await this.app.vault.read(state.owned.file));
+    };
+    return {
+      type: 'ready',
+      content: basis.content,
+      validate,
+      check,
+      provision: (validateOuter) =>
+        this.provisionStaticPlan(
+          basis,
+          state,
+          async () => (await validateOuter()) && (await validate()),
+        ),
+    };
+  }
+
+  private async captureStaticPlan(
+    filePath: string,
+    templatePath: string,
+    title: string,
+  ): Promise<StaticPlanBasis | undefined> {
+    const path = notePath(filePath);
+    const original = this.app.vault.getAbstractFileByPath(path);
+    if (original !== null && !(original instanceof TFile)) throw new InvalidNotePathError(path);
+    if (original !== null)
+      return {
+        path,
+        original,
+        content: await this.app.vault.read(original),
+        templatePath: '',
+        template: undefined,
+        raw: undefined,
+        stamp: undefined,
+      };
+    const template = this.resolveTemplate(templatePath);
+    const stamp = template === undefined ? undefined : { ...template.stat };
+    const raw = template === undefined ? undefined : await this.app.vault.read(template);
+    if (raw?.includes('<%') === true) return undefined;
+    TemplaterAdapter.fromApp(this.app, true);
+    return {
+      path,
+      original,
+      content: raw === undefined ? '' : renderCoreTemplate(raw, title),
+      templatePath,
+      template,
+      raw,
+      stamp,
+    };
+  }
+
+  private staticTemplateCurrent(basis: StaticPlanBasis): boolean {
+    return (
+      basis.original !== null ||
+      (this.resolveTemplate(basis.templatePath) === basis.template &&
+        sameNoteFileStamp(basis.stamp, basis.template?.stat))
+    );
+  }
+
+  private async verifyStaticTemplate(basis: StaticPlanBasis): Promise<boolean> {
+    return (
+      this.staticTemplateCurrent(basis) &&
+      (basis.template === undefined || (await this.app.vault.read(basis.template)) === basis.raw)
+    );
+  }
+
+  private async provisionStaticPlan(
+    basis: StaticPlanBasis,
+    state: StaticPlanState,
+    validate: () => Promise<boolean>,
+  ): Promise<StaticPlanResult> {
+    const verify = async (): Promise<void> => {
+      if (!(await validate())) throw new StaleStaticNoteError();
+    };
+    try {
+      await verify();
+      if (state.owned !== undefined) return { path: basis.path, effects: state.effects };
+      await this.ensureFolders(basis.path, {
+        check: verify,
+        attempting: () => {
+          if (state.effects === 'unchanged') state.effects = 'unknown';
+        },
+        created: () => {
+          state.effects = 'committed';
+        },
+      });
+      const owned = await this.commitStaticNote(
+        basis.path,
+        basis.content,
+        {
+          check: verify,
+          verifyTemplate: async () => {
+            if (!(await this.verifyStaticTemplate(basis))) throw new StaleStaticNoteError();
+          },
+        },
+        state.effects,
+      );
+      this.acceptStaticPlan(state, owned);
+      if (!(await this.verifyStaticTemplate(basis))) return { effects: state.effects };
+      return { path: basis.path, effects: state.effects };
+    } catch (cause) {
+      this.rejectStaticPlan(state, cause);
+      return { effects: state.effects };
+    }
+  }
+
+  private acceptStaticPlan(state: StaticPlanState, owned: { file: TFile; content: string }): void {
+    state.owned = owned;
+    state.effects = 'committed';
+  }
+
+  private rejectStaticPlan(state: StaticPlanState, cause: unknown): void {
+    if (!(cause instanceof StaticNoteFailure)) return;
+    if (cause.owned !== undefined) state.owned = cause.owned;
+    state.effects = cause.effects === 'partial' ? 'committed' : cause.effects;
+  }
 
   ensureNote(filePath: string, templatePath: string, title: string): Promise<TFile> {
     const path = notePath(filePath);
@@ -194,7 +362,7 @@ export class NoteTemplateService {
   private async commitStaticNote(
     path: string,
     content: string,
-    guard: { check(): void; verifyTemplate(): Promise<void> },
+    guard: { check(): void | Promise<void>; verifyTemplate(): Promise<void> },
     folderEffects: StaticNoteFailure['effects'],
   ): Promise<{ file: TFile; content: string }> {
     let session: TemplaterSession | undefined;
@@ -202,10 +370,10 @@ export class NoteTemplateService {
     let failure: StaticNoteFailure | undefined;
     let attempted = false;
     try {
-      guard.check();
+      await guard.check();
       await guard.verifyTemplate();
       session = TemplaterAdapter.fromApp(this.app, true)?.begin(path);
-      guard.check();
+      await guard.check();
       attempted = true;
       owned = { file: await this.app.vault.create(path, content), content };
     } catch (cause) {
@@ -289,7 +457,7 @@ export class NoteTemplateService {
     let current = '';
     for (const segment of segments) {
       current = current.length === 0 ? segment : `${current}/${segment}`;
-      guard?.check();
+      await guard?.check();
       await this.ensureFolder(current, filePath, guard);
     }
   }
@@ -299,6 +467,7 @@ export class NoteTemplateService {
     if (existing instanceof TFolder) return;
     if (existing !== null) throw new InvalidNotePathError(filePath);
     try {
+      await guard?.check();
       guard?.attempting();
       await this.app.vault.createFolder(path);
       guard?.created();

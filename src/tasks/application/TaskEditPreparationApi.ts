@@ -1,5 +1,5 @@
 import type { TaskCommand, TaskCommandResult } from '../domain/commands';
-import type { TaskSnapshot } from '../domain/types';
+import type { TaskNodeRef, TaskSnapshot } from '../domain/types';
 
 export type PreparedTaskEditCommand = Extract<
   TaskCommand,
@@ -16,6 +16,11 @@ export type PreparedTaskEditCommand = Extract<
   }
 >;
 
+export interface TaskPreparedNodeContinuation {
+  readonly before: TaskNodeRef;
+  readonly after?: TaskNodeRef;
+}
+
 export interface TaskEditPreparationApi {
   prepare(root: TaskSnapshot, commands: readonly PreparedTaskEditCommand[]): TaskEditPreparation;
 }
@@ -24,6 +29,7 @@ export type TaskEditPreparation =
   | {
       readonly type: 'ready';
       readonly before: TaskSnapshot;
+      readonly continuations: readonly TaskPreparedNodeContinuation[];
       readonly after: TaskSnapshot | null;
       /** Immutable continuation; command refs must belong to this preparation's after tree. */
       append(command: PreparedTaskEditCommand): TaskEditPreparation;
