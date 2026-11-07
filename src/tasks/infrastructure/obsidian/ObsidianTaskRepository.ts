@@ -818,6 +818,8 @@ interface RecurrenceStageInput {
 }
 
 interface EditProcessInput {
+  /** Private creation preview context: author status without completion-time side effects. */
+  readonly initialStatus?: true;
   readonly collectNodes?: boolean;
   readonly fileIdentity?: object | undefined;
   readonly prepared: TaskEditRequest | undefined;
@@ -1031,7 +1033,7 @@ export class ObsidianTaskRepository implements TaskRepository {
   ): TaskPreparedRootEdit {
     return new MarkdownTaskEditPreparation({
       apply: (content, previous, command) =>
-        this.previewRootEdit_abyssPrivate(content, previous, command),
+        this.previewRootEdit_abyssPrivate(content, previous, command, true),
       commit: async () => invalidTaskTarget('destination'),
     }).prepare(
       this.versionPreparedSnapshot_abyssPrivate(root),
@@ -2584,6 +2586,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     content: string,
     root: TaskSnapshot,
     command: TaskEditCommand,
+    initialStatus?: true,
   ): EditOutcome {
     const block = this.editor_abyssPrivate
       .rootBlocks(content)
@@ -2593,23 +2596,26 @@ export class ObsidianTaskRepository implements TaskRepository {
       );
     if (block === undefined) return { content, result: invalidTaskTarget('target') };
     const edit = this.applyLocatedEdit_abyssPrivate(
-      { command, rootRef: root.ref, prepared: undefined, collectNodes: true },
+      {
+        command,
+        rootRef: root.ref,
+        prepared: undefined,
+        collectNodes: true,
+        ...(initialStatus === undefined ? {} : { initialStatus }),
+      },
       content,
       block,
     );
-    if (
-      edit.result.type !== 'committed' ||
-      !edit.result.changed ||
-      edit.result.outcome.type !== 'task'
-    )
-      return edit;
+    if (edit.result.type !== 'committed' || edit.result.outcome.type !== 'task') return edit;
     return {
       ...edit,
       result: {
         ...edit.result,
         outcome: {
           type: 'task',
-          task: this.versionPreparedSnapshot_abyssPrivate(edit.result.outcome.task),
+          task: edit.result.changed
+            ? this.versionPreparedSnapshot_abyssPrivate(edit.result.outcome.task)
+            : structuredClone(root),
         },
       },
     };
@@ -3615,7 +3621,7 @@ export class ObsidianTaskRepository implements TaskRepository {
 
   private deleteOnCompletion_abyssPrivate(input: LocatedEditInput): EditOutcome | undefined {
     const { command } = input.process;
-    if (command.type !== 'set-status') return undefined;
+    if (command.type !== 'set-status' || input.process.initialStatus === true) return undefined;
     const target = input.nodeTarget;
     if (target === undefined || !this.isDeleteCompletionStatus_abyssPrivate(command))
       return undefined;

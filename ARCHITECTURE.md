@@ -51,12 +51,13 @@ intent before constructing another preparation.
 [`TaskCreatePreparationApi`](src/tasks/application/TaskCreatePreparationApi.ts) prepares complete
 new trees through the same application normalization, canonical creation codec, editor and snapshot
 projector. Seed children receive native prefix/Inbox policy and initial lifecycle/status fields;
-initial status constructs the task without recurring completion. Descriptions, comments and their
-timestamps are visible before provisioning. Appends retain sealed candidates and expose detached
+initial status constructs the task through the shared line codec without completion-time deletion
+or recurring completion. Descriptions, comments and their timestamps are visible before provisioning. Appends retain sealed candidates and expose detached
 physical node correspondence from the immediately preceding preview, including newly drafted
-children with identical titles. Changing previews have distinct draft revisions; these refs carry no
-accepted mutation authority. A creation starts with no predecessor map; root deletion discards the
-proposal rather than becoming a creation command.
+children with identical titles. Changing previews have distinct draft revisions; unchanged appends
+retain the preceding snapshot and refs. Draft refs carry no accepted mutation authority. A creation
+starts with no predecessor map; root deletion discards the proposal rather than becoming a creation
+command.
 
 Destination planning remains read-only. The sealed plan captures effective behavior/catalog,
 resolved default path/insertion, native file identity and accepted bytes, or a missing note with a

@@ -479,3 +479,118 @@ it.each(['append', 'prepend', 'section'] as const)(
     expect(result.result.outcome.task.source.originalBlock).toBe(p.after.source.originalBlock);
   },
 );
+
+it.each([
+  ['empty patch', false],
+  ['same title', false],
+  ['empty patch', true],
+  ['same title', true],
+] as const)(
+  'keeps draft authority after %s with duplicate children = %s',
+  async (operation, children) => {
+    const source = children ? '- [ ] Same\n\t- [ ] Twin\n\t- [ ] Twin\n' : '- [ ] Same\n';
+    const h = await taskEditPreparationHarness(source, {
+      behavior: () => ({
+        ...behavior(),
+        taskPrefix: '',
+        taskLifecycle: { addCreatedDate: false, addCompletionDate: false },
+      }),
+    });
+    let p = ready(
+      await h.service.prepareCreateTree({ destination: explicit, tree: { markdownTitle: 'Same' } }),
+    );
+    if (children) {
+      for (let index = 0; index < 2; index++)
+        p = ready(
+          p.append({
+            type: 'add-subtask',
+            parent: { type: 'task', ref: p.after.ref },
+            text: 'Twin',
+          }),
+        );
+    }
+    const before = p.after;
+    expect(before.source.originalBlock).toBe(h.root.source.originalBlock);
+    const unchanged = ready(
+      p.append({
+        type: 'patch',
+        target: { type: 'task', ref: before.ref },
+        patch: operation === 'empty patch' ? {} : { markdownTitle: { type: 'set', value: 'Same' } },
+      }),
+    );
+    const result = await h.service.execute({
+      type: 'patch',
+      target: { type: 'task', ref: unchanged.after.ref },
+      patch: { markdownTitle: { type: 'set', value: 'Wrong persisted target' } },
+    });
+    expect(result.type).not.toBe('ok');
+    expect(unchanged.after.ref).toEqual(before.ref);
+    expect(unchanged.continuations).toContainEqual({
+      before: { type: 'task', ref: before.ref },
+      after: { type: 'task', ref: before.ref },
+    });
+    expect(await h.read()).toBe(source);
+    if (children) {
+      for (const child of before.subtasks)
+        expect(unchanged.continuations).toContainEqual({
+          before: { type: 'subtask', ref: child.ref },
+          after: { type: 'subtask', ref: child.ref },
+        });
+      const removed = ready(
+        unchanged.append({
+          type: 'delete-subtask',
+          subtask: expectDefined(unchanged.after.subtasks[0]).ref,
+        }),
+      );
+      expect(removed.continuations).toContainEqual({
+        before: { type: 'subtask', ref: expectDefined(before.subtasks[1]).ref },
+        after: { type: 'subtask', ref: expectDefined(removed.after.subtasks[0]).ref },
+      });
+    }
+  },
+);
+
+it.each(['initial fields', 'authored metadata'] as const)(
+  'constructs a done child with delete-on-completion from %s without completing it',
+  async (metadata) => {
+    const h = await taskEditPreparationHarness('- [ ] Existing\n', { behavior });
+    const done = expectDefined(h.catalog.defaultForType('done'));
+    const p = ready(
+      await h.service.prepareCreateTree({
+        destination: explicit,
+        tree: {
+          markdownTitle: 'Parent',
+          children: [
+            {
+              markdownTitle: metadata === 'authored metadata' ? 'Child 🏁 delete' : 'Child',
+              initial: {
+                status: done,
+                ...(metadata === 'initial fields'
+                  ? { onCompletion: { type: 'set' as const, value: 'delete' as const } }
+                  : {}),
+              },
+              comments: [{ text: 'Retain child comment' }],
+              children: [
+                { markdownTitle: 'Grandchild', comments: [{ text: 'Retain nested comment' }] },
+              ],
+            },
+          ],
+        },
+      }),
+    );
+    expect(h.writes).not.toHaveBeenCalled();
+    const child = expectDefined(p.after.subtasks[0]);
+    expect(child.status).toBe('done');
+    expect(child.onCompletion).toBe('delete');
+    expect(child.planning).toMatchObject({ created: '2026-11-07', completion: '2026-11-07' });
+    expect(child.comments[0]?.text).toBe('Retain child comment');
+    expect(child.subtasks[0]?.title).toBe('Grandchild');
+    expect(child.subtasks[0]?.comments[0]?.text).toBe('Retain nested comment');
+    const result = await p.commit();
+    expect(result).toMatchObject({ result: { type: 'ok' }, destinationEffects: 'unchanged' });
+    if (result.result.type !== 'ok' || result.result.outcome.type !== 'task')
+      throw new Error('Expected created task');
+    expect(result.result.outcome.task.source.originalBlock).toBe(p.after.source.originalBlock);
+    expect(h.index.list()).toHaveLength(2);
+  },
+);
