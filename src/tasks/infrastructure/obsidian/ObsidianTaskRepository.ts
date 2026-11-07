@@ -189,7 +189,13 @@ interface PreparedCreateContext {
   readonly phase: boolean | 'refreshed';
 }
 
+interface PreparedSourceAcquisition {
+  readonly observation: TaskReadObservation;
+  current(): boolean;
+}
+
 interface PreparedRootBasis {
+  readonly acquisition: PreparedSourceAcquisition;
   readonly root: TaskSnapshot;
   readonly content: string;
   readonly file: TFile;
@@ -927,6 +933,7 @@ interface RejectedRollbackContext {
 type TextEditTarget = DescriptionLinkTarget;
 
 interface PreparedCreateBasis {
+  readonly acquisition: PreparedSourceAcquisition;
   readonly sources: ProjectSourceReadApi;
   readonly reads: TaskIntegrationReadStateApi;
   readonly observation: TaskReadObservation;
@@ -972,9 +979,11 @@ export class ObsidianTaskRepository implements TaskRepository {
     destination: TaskDestination,
     draft: TaskDraft,
   ): Promise<TaskPreparedCreateRoot> {
-    if (!(await this.acquirePreparedSource_abyssPrivate(destination.filePath)))
-      return { type: 'invalid', result: this.destinationUnavailable_abyssPrivate() };
-    const basis = this.capturePreparedCreateBasis_abyssPrivate(destination);
+    const acquisition = await this.acquirePreparedSource_abyssPrivate(destination.filePath);
+    const basis =
+      acquisition === undefined
+        ? undefined
+        : this.capturePreparedCreateBasis_abyssPrivate(destination, acquisition);
     if (basis === undefined)
       return { type: 'invalid', result: this.destinationUnavailable_abyssPrivate() };
     const block = this.draftBlock_abyssPrivate(draft);
@@ -986,7 +995,8 @@ export class ObsidianTaskRepository implements TaskRepository {
         : this.snapshotFor_abyssPrivate(destination.filePath, block.content, rootBlock);
     if (root === undefined) return { type: 'invalid', result: invalidTaskSyntax() };
     const candidate = this.prepareDraftCandidate_abyssPrivate(root, block.content);
-    return (await this.validatePreparedCreateBasis_abyssPrivate(basis, destination))
+    return (await this.validatePreparedCreateBasis_abyssPrivate(basis, destination)) &&
+      basis.acquisition.current()
       ? this.wrapPreparedCreate_abyssPrivate(candidate, {
           destination,
           basis,
@@ -1016,7 +1026,10 @@ export class ObsidianTaskRepository implements TaskRepository {
         return initial ? [] : prepared.continuations;
       },
       validateBeforeProvision: async (check, plannedContent) => {
-        if (!(await this.validatePreparedCreateBasis_abyssPrivate(basis, destination)))
+        if (
+          !(await this.validatePreparedCreateBasis_abyssPrivate(basis, destination)) ||
+          !basis.acquisition.current()
+        )
           return false;
         const live = accepted?.content ?? plannedContent ?? '';
         const inserted = this.editor_abyssPrivate.insertRootBlock(
@@ -1070,16 +1083,22 @@ export class ObsidianTaskRepository implements TaskRepository {
     const { destination, basis, family } = context;
     const allowed = (): boolean =>
       !family.attempted && this.preparedCreateCurrent_abyssPrivate(basis);
-    if (!(await this.acquirePreparedSource_abyssPrivate(destination.filePath)))
-      return { type: 'invalid', result: this.destinationUnavailable_abyssPrivate() };
-    const fresh = this.capturePreparedCreateBasis_abyssPrivate(destination);
+    const acquisition = await this.acquirePreparedSource_abyssPrivate(destination.filePath);
+    const fresh =
+      acquisition === undefined
+        ? undefined
+        : this.capturePreparedCreateBasis_abyssPrivate(destination, acquisition);
     if (
       !allowed() ||
       fresh === undefined ||
       !this.preparedCreateIdentity_abyssPrivate(context, fresh, options?.createdDestinationAnchor)
     )
       return { type: 'invalid', result: this.destinationUnavailable_abyssPrivate() };
-    if (!(await this.validatePreparedCreateBasis_abyssPrivate(fresh, destination)) || !allowed())
+    if (
+      !(await this.validatePreparedCreateBasis_abyssPrivate(fresh, destination)) ||
+      !fresh.acquisition.current() ||
+      !allowed()
+    )
       return { type: 'invalid', result: this.destinationUnavailable_abyssPrivate() };
     return this.wrapPreparedCreate_abyssPrivate(prepared, {
       ...context,
@@ -1095,8 +1114,12 @@ export class ObsidianTaskRepository implements TaskRepository {
   ): boolean {
     if (context.basis.file !== null) return fresh.file === context.basis.file;
     if (fresh.file === null) return true;
-    const root = anchor === undefined ? undefined : this.capturePreparedRoot_abyssPrivate(anchor);
-    return root?.file === fresh.file && root.root.ref.filePath === context.destination.filePath;
+    if (anchor?.ref.filePath !== context.destination.filePath) return false;
+    const acquisition = this.capturePreparedSource_abyssPrivate(anchor.ref.filePath);
+    return (
+      acquisition !== undefined &&
+      this.capturePreparedRoot_abyssPrivate(anchor, acquisition)?.file === fresh.file
+    );
   }
 
   private prepareDraftCandidate_abyssPrivate(
@@ -1137,22 +1160,25 @@ export class ObsidianTaskRepository implements TaskRepository {
       native === basis.file &&
       basis.accepted !== undefined &&
       basis.sources.matchesFile(basis.accepted, basis.file) &&
-      (await this.app_abyssPrivate.vault.read(basis.file)) === basis.accepted.content
+      (await this.app_abyssPrivate.vault.read(basis.file)) === basis.accepted.content &&
+      basis.acquisition.current()
     );
   }
 
   private capturePreparedCreateBasis_abyssPrivate(
     destination: TaskDestination,
+    acquisition: PreparedSourceAcquisition,
   ): PreparedCreateBasis | undefined {
+    if (!acquisition.current()) return undefined;
     const sources = this.options_abyssPrivate.preparedRootSources;
     const reads = this.options_abyssPrivate.preparedRootReads;
     if (sources === undefined || reads === undefined) return undefined;
-    const observation = reads.capture();
+    const observation = acquisition.observation;
     const source = sources.get(destination.filePath);
     const file = this.app_abyssPrivate.vault.getAbstractFileByPath(destination.filePath);
     if (source.type !== 'ok' || (file !== null && !(file instanceof TFile))) return undefined;
     if (file !== null && source.value === undefined) return undefined;
-    return { sources, reads, observation, accepted: source.value, file };
+    return { sources, reads, observation, accepted: source.value, file, acquisition };
   }
 
   private draftBlock_abyssPrivate(draft: TaskDraft): ReturnType<typeof createTaskBlock> {
@@ -2707,9 +2733,11 @@ export class ObsidianTaskRepository implements TaskRepository {
   }
 
   async prepareRootEdit(root: TaskSnapshot): Promise<TaskPreparedRootEdit> {
-    if (!(await this.acquirePreparedSource_abyssPrivate(root.ref.filePath)))
-      return { type: 'invalid', result: invalidTaskTarget('target') };
-    const basis = this.capturePreparedRoot_abyssPrivate(root);
+    const acquisition = await this.acquirePreparedSource_abyssPrivate(root.ref.filePath);
+    const basis =
+      acquisition === undefined
+        ? undefined
+        : this.capturePreparedRoot_abyssPrivate(root, acquisition);
     if (basis === undefined) return { type: 'invalid', result: invalidTaskTarget('target') };
     return new MarkdownTaskEditPreparation(this.preparedRootPorts_abyssPrivate(basis)).prepare(
       basis.root,
@@ -2740,17 +2768,19 @@ export class ObsidianTaskRepository implements TaskRepository {
     basis: PreparedRootBasis,
     current: TaskSnapshot,
   ): Promise<PreparedRootBasis | undefined> {
-    if (!(await this.acquirePreparedSource_abyssPrivate(current.ref.filePath))) return undefined;
+    const acquisition = await this.acquirePreparedSource_abyssPrivate(current.ref.filePath);
+    if (acquisition === undefined) return undefined;
     const proven = this.provenPreparedRoot_abyssPrivate(basis.root.ref);
     if (
       proven === undefined ||
       !sameTaskNodeRef({ type: 'task', ref: proven.ref }, { type: 'task', ref: current.ref })
     )
       return undefined;
-    const fresh = this.capturePreparedRoot_abyssPrivate(current);
+    const fresh = this.capturePreparedRoot_abyssPrivate(current, acquisition);
     if (fresh === undefined || !this.samePreparedRootBasis_abyssPrivate(basis, fresh))
       return undefined;
-    return (await this.app_abyssPrivate.vault.read(fresh.file)) === fresh.content
+    return (await this.app_abyssPrivate.vault.read(fresh.file)) === fresh.content &&
+      this.preparedRootCurrent_abyssPrivate(fresh, fresh.content)
       ? fresh
       : undefined;
   }
@@ -2779,6 +2809,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     fresh: PreparedRootBasis,
     candidate: PreparedRootCandidate,
   ): PreparedRootRefresh {
+    if (!this.preparedRootCurrent_abyssPrivate(fresh, fresh.content)) return undefined;
     const block = this.editor_abyssPrivate
       .rootBlocks(fresh.content)
       .find((item) => item.line === fresh.root.ref.line);
@@ -2810,29 +2841,45 @@ export class ObsidianTaskRepository implements TaskRepository {
     return { ports: this.preparedRootPorts_abyssPrivate(fresh), content, after };
   }
 
-  private async acquirePreparedSource_abyssPrivate(path: string): Promise<boolean> {
+  private async acquirePreparedSource_abyssPrivate(
+    path: string,
+  ): Promise<PreparedSourceAcquisition | undefined> {
     const sources = this.options_abyssPrivate.preparedRootSources;
-    const reads = this.options_abyssPrivate.preparedRootReads;
-    if (sources === undefined || reads === undefined) return false;
-    const before = reads.capture();
-    const file = this.app_abyssPrivate.vault.getAbstractFileByPath(path);
-    if (before.lifecycle !== 'ready') return false;
+    const acquisition = this.capturePreparedSource_abyssPrivate(path);
+    if (sources === undefined || acquisition === undefined) return undefined;
     const acquired = await sources.acquire(path);
-    const after = reads.capture();
-    return (
-      acquired.type === 'ok' &&
-      after.lifecycle === 'ready' &&
-      after.scopeRevision === before.scopeRevision &&
-      after.semanticsRevision === before.semanticsRevision &&
-      this.app_abyssPrivate.vault.getAbstractFileByPath(path) === file
-    );
+    return acquired.type === 'ok' && acquisition.current() ? acquisition : undefined;
   }
 
-  private capturePreparedRoot_abyssPrivate(root: TaskSnapshot): PreparedRootBasis | undefined {
+  private capturePreparedSource_abyssPrivate(path: string): PreparedSourceAcquisition | undefined {
+    const reads = this.options_abyssPrivate.preparedRootReads;
+    if (reads === undefined) return undefined;
+    const observation = reads.capture();
+    const file = this.app_abyssPrivate.vault.getAbstractFileByPath(path);
+    if (observation.lifecycle !== 'ready') return undefined;
+    return {
+      observation,
+      current: () => {
+        const after = reads.capture();
+        return (
+          after.lifecycle === 'ready' &&
+          after.scopeRevision === observation.scopeRevision &&
+          after.semanticsRevision === observation.semanticsRevision &&
+          this.app_abyssPrivate.vault.getAbstractFileByPath(path) === file
+        );
+      },
+    };
+  }
+
+  private capturePreparedRoot_abyssPrivate(
+    root: TaskSnapshot,
+    acquisition: PreparedSourceAcquisition,
+  ): PreparedRootBasis | undefined {
+    if (!acquisition.current()) return undefined;
     const sources = this.options_abyssPrivate.preparedRootSources;
     const reads = this.options_abyssPrivate.preparedRootReads;
     if (sources === undefined || reads === undefined) return undefined;
-    const observation = reads.capture();
+    const observation = acquisition.observation;
     const source = sources.get(root.ref.filePath);
     const file = this.app_abyssPrivate.vault.getAbstractFileByPath(root.ref.filePath);
     if (source.type !== 'ok' || source.value === undefined || !(file instanceof TFile))
@@ -2845,6 +2892,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     );
     if (accepted === undefined) return undefined;
     const basis: PreparedRootBasis = {
+      acquisition,
       root: structuredClone(accepted),
       content: source.value.content,
       source: source.value,
@@ -2899,11 +2947,16 @@ export class ObsidianTaskRepository implements TaskRepository {
   }
 
   private preparedRootCurrent_abyssPrivate(basis: PreparedRootBasis, content: string): boolean {
-    const current = this.options_abyssPrivate.preparedRootReads?.capture();
     return (
-      current?.lifecycle === 'ready' &&
-      current.scopeRevision === basis.observation.scopeRevision &&
-      current.semanticsRevision === basis.observation.semanticsRevision &&
+      basis.acquisition.current() && this.preparedRootSourceCurrent_abyssPrivate(basis, content)
+    );
+  }
+
+  private preparedRootSourceCurrent_abyssPrivate(
+    basis: PreparedRootBasis,
+    content: string,
+  ): boolean {
+    return (
       content === basis.content &&
       this.isCurrentFile_abyssPrivate(basis.file, basis.root.ref.filePath) &&
       this.options_abyssPrivate.preparedRootSources?.matchesFile(basis.source, basis.file) ===

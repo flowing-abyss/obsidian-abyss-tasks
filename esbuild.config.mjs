@@ -1,3 +1,5 @@
+// Original acquisition proof through capture/read continuations: 2,438,242 -> 2,438,428 bytes (+186).
+// No new dependencies; existing 2,439,168-byte (2382 KiB) main budget remains enforced.
 // Native preparation acquisition and exact-source echo continuity: 2,436,578 -> 2,438,242 bytes (+1,664).
 // No new dependencies; minimal containing main budget: 2,439,168 bytes (2382 KiB), below the 5,000,000-byte ceiling.
 // Content delivery disclosure and provisional-plan cleanup: 2,434,812 -> 2,436,578 bytes (+1,766).

@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { TFile, type Vault } from 'obsidian';
+import { describe, expect, it, vi } from 'vitest';
 import { ready, taskEditPreparationHarness } from '../support/taskEditPreparationHarness';
 
 async function prepared() {
@@ -98,3 +99,212 @@ describe('strict prepared root commit', () => {
     },
   );
 });
+
+type PreparationHarness = Awaited<ReturnType<typeof taskEditPreparationHarness>>;
+async function preparationRequest(
+  h: PreparationHarness,
+  kind: 'edit' | 'create',
+  refresh: boolean,
+) {
+  if (kind === 'edit') {
+    if (!refresh) return () => h.service.prepare(h.root, []);
+    const previous = ready(await h.service.prepare(h.root, []));
+    return () => previous.refresh(h.root);
+  }
+  const input = {
+    destination: {
+      type: 'explicit' as const,
+      destination: { filePath: 'tasks.md', insertion: { type: 'append' as const } },
+    },
+    tree: { markdownTitle: 'New' },
+  };
+  if (!refresh) return () => h.service.prepareCreateTree(input);
+  const previous = await h.service.prepareCreateTree(input);
+  if (previous.type !== 'ready') throw new Error('Missing creation');
+  return () => previous.refresh();
+}
+
+it.each(['edit', 'create'] as const)(
+  'retains original %s acquisition proof through the caller continuation',
+  async (kind) => {
+    const h = await taskEditPreparationHarness('- [ ] Root\n');
+    const run = await preparationRequest(h, kind, false);
+    const acquire = h.sources.acquire.bind(h.sources);
+    vi.spyOn(h.sources, 'acquire').mockImplementationOnce(async (path) => {
+      const result = await acquire(path);
+      queueMicrotask(() => {
+        queueMicrotask(() => {
+          h.index.updateIntegrationSemantics('review-race');
+        });
+      });
+      return result;
+    });
+    const result = await run();
+    expect(result.type).toBe('invalid');
+    expect(h.writes).not.toHaveBeenCalled();
+    expect(await h.read()).toBe('- [ ] Root\n');
+    h.index.destroy();
+  },
+);
+
+it.each(['edit', 'create'] as const)(
+  'rejects a permitted-scope change after %s acquisition validation',
+  async (kind) => {
+    const h = await taskEditPreparationHarness('- [ ] Root\n');
+    const run = await preparationRequest(h, kind, false);
+    const acquire = h.sources.acquire.bind(h.sources);
+    let changed: Promise<void> | undefined;
+    vi.spyOn(h.sources, 'acquire').mockImplementationOnce(async (path) => {
+      const result = await acquire(path);
+      queueMicrotask(() => {
+        queueMicrotask(() => {
+          changed = h.index.refreshSourceExclusion(() => false);
+        });
+      });
+      return result;
+    });
+    const result = await run();
+    await changed;
+    expect(h.sources.get('tasks.md').type).toBe('ok');
+    expect(result.type).toBe('invalid');
+    expect(h.writes).not.toHaveBeenCalled();
+    expect(await h.read()).toBe('- [ ] Root\n');
+    h.index.destroy();
+  },
+);
+
+it('rejects a post-acquisition same-byte replacement with a current accepted creation source', async () => {
+  const content = '- [ ] Root\n',
+    h = await taskEditPreparationHarness(content);
+  const acquire = h.sources.acquire.bind(h.sources);
+  const replacement = (
+    TFile as unknown as { create__(vault: Vault, path: string): TFile }
+  ).create__(h.app.vault, 'tasks.md');
+  replacement.stat = { ...h.file.stat };
+  let currentProof = false;
+  vi.spyOn(h.sources, 'acquire').mockImplementationOnce(async (path) => {
+    const result = await acquire(path);
+    queueMicrotask(() => {
+      queueMicrotask(() => {
+        // The mock's documented registration hook performs one atomic native-incarnation swap.
+        (
+          h.app.vault as unknown as { setVaultAbstractFile__(path: string, file: TFile): void }
+        ).setVaultAbstractFile__('tasks.md', replacement);
+        h.index.installCommittedContent('tasks.md', content);
+        const accepted = h.sources.get('tasks.md');
+        currentProof =
+          accepted.type === 'ok' &&
+          accepted.value !== undefined &&
+          h.sources.matchesFile(accepted.value, replacement);
+      });
+    });
+    return result;
+  });
+  const run = await preparationRequest(h, 'create', false),
+    result = await run();
+  expect(currentProof).toBe(true);
+  expect(result.type).toBe('invalid');
+  expect(h.writes).not.toHaveBeenCalled();
+  expect(await h.app.vault.read(replacement)).toBe(content);
+  h.index.destroy();
+});
+
+it.each(['edit', 'create'] as const)(
+  'keeps original %s proof across acquisition during refresh',
+  async (kind) => {
+    const h = await taskEditPreparationHarness('- [ ] Root\n');
+    const run = await preparationRequest(h, kind, true),
+      acquire = h.sources.acquire.bind(h.sources);
+    vi.spyOn(h.sources, 'acquire').mockImplementationOnce(async (path) => {
+      const result = await acquire(path);
+      queueMicrotask(() => {
+        queueMicrotask(() => {
+          h.index.updateIntegrationSemantics('refresh-gap');
+        });
+      });
+      return result;
+    });
+    expect((await run()).type).toBe('invalid');
+    expect(h.writes).not.toHaveBeenCalled();
+    expect(await h.read()).toBe('- [ ] Root\n');
+    h.index.destroy();
+  },
+);
+
+it.each([
+  ['create', 'semantics'],
+  ['edit-refresh', 'semantics'],
+  ['create-refresh', 'semantics'],
+  ['create', 'scope'],
+  ['edit-refresh', 'scope'],
+  ['create-refresh', 'scope'],
+] as const)('rechecks %s original %s proof after the last read await', async (kind, change) => {
+  const h = await taskEditPreparationHarness('- [ ] Root\n');
+  const run = await preparationRequest(
+    h,
+    kind === 'edit-refresh' ? 'edit' : 'create',
+    kind !== 'create',
+  );
+  const read = h.app.vault.read.bind(h.app.vault);
+  let changed: Promise<void> | undefined;
+  vi.spyOn(h.app.vault, 'read').mockImplementationOnce(async (file) => {
+    const result = await read(file);
+    queueMicrotask(() => {
+      queueMicrotask(() => {
+        if (change === 'scope') changed = h.index.refreshSourceExclusion(() => false);
+        else h.index.updateIntegrationSemantics('last-read-gap');
+      });
+    });
+    return result;
+  });
+  expect((await run()).type).toBe('invalid');
+  await changed;
+  expect(h.writes).not.toHaveBeenCalled();
+  expect(await h.read()).toBe('- [ ] Root\n');
+  h.index.destroy();
+});
+
+it.each(['edit', 'create'] as const)(
+  'prepares unchanged %s acquisition after the helper continuation',
+  async (kind) => {
+    const h = await taskEditPreparationHarness('- [ ] Root\n');
+    const run = await preparationRequest(h, kind, false),
+      acquire = h.sources.acquire.bind(h.sources);
+    let continued = false;
+    vi.spyOn(h.sources, 'acquire').mockImplementationOnce(async (path) => {
+      const result = await acquire(path);
+      queueMicrotask(() => {
+        queueMicrotask(() => {
+          continued = true;
+        });
+      });
+      return result;
+    });
+    expect((await run()).type).toBe('ready');
+    expect(continued).toBe(true);
+    expect(h.writes).not.toHaveBeenCalled();
+    expect(await h.read()).toBe('- [ ] Root\n');
+    h.index.destroy();
+  },
+);
+
+it.each(['edit', 'create'] as const)(
+  'rejects %s destruction after helper acquisition validation',
+  async (kind) => {
+    const h = await taskEditPreparationHarness('- [ ] Root\n');
+    const run = await preparationRequest(h, kind, false),
+      acquire = h.sources.acquire.bind(h.sources);
+    vi.spyOn(h.sources, 'acquire').mockImplementationOnce(async (path) => {
+      const result = await acquire(path);
+      queueMicrotask(() => {
+        queueMicrotask(() => {
+          h.index.destroy();
+        });
+      });
+      return result;
+    });
+    expect((await run()).type).toBe('invalid');
+    expect(h.writes).not.toHaveBeenCalled();
+    expect(await h.read()).toBe('- [ ] Root\n');
+  },
+);

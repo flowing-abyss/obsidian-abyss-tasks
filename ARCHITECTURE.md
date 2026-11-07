@@ -295,6 +295,10 @@ published. Concurrent visible versions and separately admitted request pins reta
 A mutation consumes the whole plan family, including divergent versions and failed attempts.
 Initial native edit preparation is asynchronous: the existing repository awaits the source owner's
 current acquisition, then rechecks file incarnation, lifecycle, scope, semantics and exact root.
+That acquisition returns its original observation and a current-proof guard; capture checks the guard
+in its own synchronous continuation and retains it in the sealed basis. Creation and refresh recheck
+the same proof after later read awaits and before using or publishing a candidate, so a new observation
+cannot replace the original acquisition evidence across an await.
 The application owner captures settings and commands before the await and rejects changed settings;
 the facade revalidates the accepted caller revision and releases pins on failed preparation. Creation
 and refresh use the same source-acquisition guard. Append remains synchronous over its sealed tree.
