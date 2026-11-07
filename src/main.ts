@@ -206,6 +206,17 @@ export default class TaskCalendarPlugin extends Plugin {
       (filePath) => this.isExcludedDestination(filePath),
       {
         canonicalize: (filePath) => this.canonicalTaskDestinationPath(filePath),
+        readNote: (path) => {
+          const sources = this.taskIndex.projectSources();
+          const source = sources.get(path);
+          const file = this.app.vault.getAbstractFileByPath(path);
+          return source.type === 'ok' &&
+            source.value !== undefined &&
+            file !== null &&
+            sources.matchesFile(source.value, file)
+            ? { file, content: source.value.content }
+            : undefined;
+        },
         planNote: (filePath, templatePath, title) =>
           noteTemplates.planStaticNote(filePath, templatePath, title),
       },
@@ -284,10 +295,11 @@ export default class TaskCalendarPlugin extends Plugin {
 
   private taskPreparationSources(): Pick<
     ConstructorParameters<typeof ObsidianTaskRepository>[1],
-    'snapshotState' | 'preparedRootSources' | 'preparedRootReads'
+    'snapshotState' | 'preparedRootSources' | 'preparedRootReads' | 'preparedRootQueries'
   > {
     return {
       snapshotState: this.taskIndex,
+      preparedRootQueries: this.taskIndex,
       preparedRootSources: this.taskIndex.projectSources(),
       preparedRootReads: this.taskIndex.integrationReads(),
     };

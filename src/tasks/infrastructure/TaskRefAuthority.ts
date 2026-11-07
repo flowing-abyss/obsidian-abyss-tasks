@@ -21,6 +21,8 @@ export interface TaskRefEvidence {
 }
 
 export interface TaskRefTransition {
+  /** Native single-root edits retain these untouched accepted roots by physical position. */
+  readonly retainedRoots?: readonly RootRevisionOverride[];
   readonly occurrences?: readonly TaskOccurrenceWitness[];
   readonly operation?: object;
   readonly filePath: string;
@@ -31,6 +33,7 @@ export interface TaskRefTransition {
 }
 
 export interface TaskRefAuthorityObservation {
+  readonly revokedRevisions?: readonly string[];
   readonly occurrences?: readonly TaskOccurrenceWitness[];
   readonly operation?: object;
   readonly roots: readonly RootRevisionOverride[];
@@ -75,6 +78,8 @@ export type TaskRefStageResult =
   { readonly type: 'staged'; readonly token: object } | { readonly type: 'conflict' };
 
 export interface TaskSnapshotState {
+  /** Capture a generation-guarded source invalidation for unreadable rejected staged writes. */
+  captureRejectedSourceInvalidation?(filePath: string, file: object): () => void;
   /** Defers only evidence publication across a transfer and its recovery awaits. */
   holdStatisticsPublication?(): () => void;
   currentRoots?(filePath: string): readonly RootRevisionOverride[];
@@ -120,6 +125,7 @@ export function hasUnconfirmedCurrentRoot(
 const REVISION_PREFIX = 'task-ref:1:';
 
 interface PendingTransition {
+  readonly revokedRevisions?: readonly string[];
   readonly occurrences?: readonly TaskOccurrenceWitness[];
   readonly operation?: object;
   readonly token: object;
@@ -194,11 +200,12 @@ function sourceLineage(
 }
 
 function occurrenceEvidence(
-  value: Pick<TaskRefAuthorityObservation, 'occurrences' | 'operation'>,
-): Pick<TaskRefAuthorityObservation, 'occurrences' | 'operation'> {
+  value: Pick<TaskRefAuthorityObservation, 'occurrences' | 'operation' | 'revokedRevisions'>,
+): Pick<TaskRefAuthorityObservation, 'occurrences' | 'operation' | 'revokedRevisions'> {
   return {
     ...(value.occurrences === undefined ? {} : { occurrences: value.occurrences }),
     ...(value.operation === undefined ? {} : { operation: value.operation }),
+    ...(value.revokedRevisions === undefined ? {} : { revokedRevisions: value.revokedRevisions }),
   };
 }
 
@@ -265,15 +272,28 @@ export class TaskRefAuthority {
     ) {
       return { type: 'conflict' };
     }
+    const retained = transition.retainedRoots ?? [];
+    if (
+      retained.some(
+        (root) =>
+          root.revision === transition.expectedRevision ||
+          this.evidence(root.revision)?.source !== root.source,
+      ) ||
+      new Set(retained.map((root) => root.revision)).size !== retained.length
+    )
+      return { type: 'conflict' };
     return this.stageTransition(
       {
         ...transition,
-        roots: transition.roots.map((root) => ({
-          ...root,
-          previousRevision: transition.expectedRevision,
-        })),
+        roots: [
+          ...transition.roots.map((root) => ({
+            ...root,
+            previousRevision: transition.expectedRevision,
+          })),
+          ...retained.map((root) => ({ ...root, previousRevision: root.revision })),
+        ],
       },
-      [transition.expectedRevision],
+      [transition.expectedRevision, ...retained.map((root) => root.revision)],
     );
   }
 
@@ -567,7 +587,7 @@ export class TaskRefAuthority {
       restoration.length !== content.length ||
       restoration.fingerprint !== taskRefContentFingerprint(content)
     )
-      return { type: 'conflict' };
+      return this.stageRejectedRetained(pending, content);
     return this.stageContent(
       {
         filePath: pending.filePath,
@@ -579,6 +599,35 @@ export class TaskRefAuthority {
       },
       [],
       true,
+    );
+  }
+
+  /** Revoke speculative sibling provenance only after exact rejected-candidate readback. */
+  private stageRejectedRetained(pending: PendingTransition, content: string): TaskRefStageResult {
+    const retained = pending.transitions.filter((root) => root.previousRevision === root.revision);
+    if (retained.length === 0 || !matches(pending, content)) return { type: 'conflict' };
+    return this.stageContent(
+      {
+        filePath: pending.filePath,
+        candidateFingerprint: pending.candidateFingerprint,
+        candidateLength: pending.candidateLength,
+        roots: retained.map((root) => ({
+          line: root.line,
+          source: root.source,
+          revision: this.mintRevision(root.source),
+        })),
+        revokedRevisions: retained.map((root) => root.revision),
+        occurrences: [],
+      },
+      [],
+    );
+  }
+
+  hasRetainedRoots(token: object): boolean {
+    return (
+      this.activeStaged(token)?.transitions.some(
+        (root) => root.previousRevision === root.revision,
+      ) === true
     );
   }
 
@@ -599,6 +648,7 @@ export class TaskRefAuthority {
   private stageContent(
     transition: Omit<TaskRefBatchTransition, 'roots'> & {
       readonly roots: readonly RootRevisionOverride[];
+      readonly revokedRevisions?: readonly string[];
     },
     transitions: readonly ProvenRootRevisionOverride[],
     restored = false,
@@ -629,6 +679,9 @@ export class TaskRefAuthority {
       phase: 'staged',
       observed: false,
       restored,
+      ...(transition.revokedRevisions === undefined
+        ? {}
+        : { revokedRevisions: Object.freeze([...transition.revokedRevisions]) }),
       ...(transition.occurrences === undefined
         ? {}
         : { occurrences: freezeOccurrenceWitnesses(transition.occurrences) }),

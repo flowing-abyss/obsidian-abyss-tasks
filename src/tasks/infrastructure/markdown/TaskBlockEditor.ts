@@ -1395,6 +1395,51 @@ export class TaskBlockEditor {
     return content.slice(0, from) + content.slice(last.to);
   }
 
+  /** Physical continuations outside a single canonical root replacement. */
+  retainedRootLines(
+    content: string,
+    candidate: string,
+    rootLine: number,
+  ): ReadonlyArray<{ before: TaskRootBlock; after: TaskRootBlock }> | undefined {
+    const roots = this.rootBlocks(content);
+    const target = roots.find((root) => root.line === rootLine);
+    if (target === undefined) return undefined;
+    const lines = sourceLines(content);
+    const first = lines[target.line],
+      last = lines[target.toLine];
+    if (first === undefined || last === undefined) return undefined;
+    const prefix = content.slice(0, first.from),
+      suffix = content.slice(last.to);
+    if (
+      !candidate.startsWith(prefix) ||
+      !candidate.endsWith(suffix) ||
+      candidate.length < prefix.length + suffix.length
+    )
+      return undefined;
+    const delta = sourceLines(candidate).length - lines.length;
+    const current = this.rootBlocks(candidate);
+    const result: Array<{ before: TaskRootBlock; after: TaskRootBlock }> = [];
+    for (const before of roots.filter((root) => root.line !== rootLine)) {
+      const line = before.line < rootLine ? before.line : before.line + delta;
+      const after = current.find((root) => root.line === line && root.source === before.source);
+      if (after === undefined) return undefined;
+      result.push({ before, after });
+    }
+    return result;
+  }
+
+  /** Transplant an already reviewed canonical root without normalizing its sealed bytes. */
+  replaceRootBlock(content: string, block: TaskRootBlock, replacement: string): string | undefined {
+    const captured = sourceLines(replacement);
+    if (!validCapturedBlock(replacement, captured, readTaskRootBlocks(replacement)))
+      return undefined;
+    const lines = sourceLines(content);
+    const first = lines[block.line];
+    const last = lines[block.toLine];
+    if (first === undefined || last === undefined) return undefined;
+    return content.slice(0, first.from) + replacement + last.ending + content.slice(last.to);
+  }
+
   replaceOwnedTaskSubtree(
     content: string,
     block: TaskRootBlock,

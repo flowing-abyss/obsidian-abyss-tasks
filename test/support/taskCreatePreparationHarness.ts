@@ -14,7 +14,7 @@ export async function taskCreatePreparationHarness(
   const h = await taskEditPreparationHarness('- [ ] Existing\n', {
     ...options,
     files: { 'template.md': '# {{title}}\n{{date}} {{time}}\n', ...options.files },
-    destination: (app) => {
+    destination: (app, index) => {
       const notes = new NoteTemplateService(app);
       return new ObsidianTaskDestinationProvider(
         () => configuration,
@@ -22,6 +22,17 @@ export async function taskCreatePreparationHarness(
         () => false,
         {
           canonicalize: (path) => path,
+          readNote: (path) => {
+            const sources = index.projectSources();
+            const source = sources.get(path);
+            const file = app.vault.getAbstractFileByPath(path);
+            return source.type === 'ok' &&
+              source.value !== undefined &&
+              file !== null &&
+              sources.matchesFile(source.value, file)
+              ? { file, content: source.value.content }
+              : undefined;
+          },
           planNote: (path, template, title) => notes.planStaticNote(path, template, title),
         },
       );

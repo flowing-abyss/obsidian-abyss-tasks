@@ -289,6 +289,7 @@ export type TaskPreparedRootEdit =
       readonly continuations: readonly TaskPreparedNodeContinuation[];
       readonly after: TaskSnapshot | null;
       append(command: TaskEditCommand): TaskPreparedRootEdit;
+      refresh(current: TaskSnapshot): Promise<TaskPreparedRootEdit>;
       commit(): Promise<TaskRepositoryResult>;
     }
   | { readonly type: 'invalid'; readonly result: TaskRepositoryResult };
@@ -303,6 +304,9 @@ export type TaskPreparedCreateRoot =
       readonly after: TaskSnapshot;
       readonly continuations: readonly TaskPreparedNodeContinuation[];
       append(command: TaskEditCommand): TaskPreparedCreateRoot;
+      refresh(options?: {
+        readonly createdDestinationAnchor?: TaskSnapshot;
+      }): Promise<TaskPreparedCreateRoot>;
       validateBeforeProvision(
         check?: PreparedTaskCreateGuard['check'],
         plannedContent?: string,

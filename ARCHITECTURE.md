@@ -40,13 +40,38 @@ retains candidate content behind opaque commit closures and invokes the reposito
 canonical codec/editor path in memory. ObsidianTaskRepository borrows accepted source evidence
 through the index read ports. Inside the existing file writer it checks the native file identity,
 accepted source version, original full-file bytes and root revision, scope, semantics, and candidate
-source policy. Any intervening same-file edit rejects the preparation. One commit attempt writes the
+source policy. Any intervening same-file edit rejects that writer basis. One commit attempt writes the
 complete candidate and publishes through the normal transition path; root deletion uses normal
 delete receipts and configured empty-note cleanup. Composite edits carry canonical physical line
 mappings through each append. TaskBlockEditor proves insertion/removal continuity from retained
 source-line objects, including identical-title siblings; missing proof never becomes a continuation. Repeated commit calls retain the first result, including unknown failures;
-recovery reads do not replay the edit. Callers must acquire fresh accepted state and revalidate
-intent before constructing another preparation.
+recovery reads do not replay the edit. An unattempted plan family can instead `refresh` against
+current accepted state. The application and repository require exact or native authority continuation
+of the retained root, unchanged original root bytes, the same native file, and unchanged settings,
+scope and semantics. The canonical block editor transplants the sealed replacement into the fresh
+note, preserving other bytes. Refresh advances a private writer anchor while retaining the original
+reviewed `before`, frozen clock, and composed child map. Any attempt, including an unchanged or
+unknown result, prevents refresh throughout that append/refresh family.
+
+Canonical single-root edits also prove untouched sibling roots from their exact exterior bytes and
+physical line displacement. The repository validates their accepted revisions and passes them through
+the existing TaskRefAuthority transition and occurrence witnesses, including duplicate full blocks and
+children. TaskIndex can use the latest native unchanged-revision witness across missed intermediate
+shifts only for positive, unique, non-recycled generations in the same authority epoch. Generation-zero
+source-derived revisions require refresh after every shifting write. Visual, uncertain and text-only
+relocation results do not grant refresh authority; no historical transition store is retained.
+Same-revision native transitions remain relocation evidence with an explicit authority-transition
+basis, preserving ordinary archive behavior and keeping `authoritySuccessor` limited to changed
+generations. Refresh requires that native basis, never the relocation label alone.
+
+A rejected staged write cannot retain speculative sibling authority. Exact rejected-candidate
+readback remints those sibling revisions without continuations and publishes their invalidation
+through the existing occurrence boundary. Literal restoration ownership remains reserved for the
+original source. If rejection readback is unavailable, the repository captures a native file and
+observation guarded invalidation from TaskSnapshotState. The index revokes speculative task refs,
+marks source acquisition failed, and retires occurrence handles; it does not certify an empty note.
+Later acquisition cannot reuse the revoked refs, and a later accepted observation makes a captured
+invalidation inert.
 
 [`TaskCreatePreparationApi`](src/tasks/application/TaskCreatePreparationApi.ts) prepares complete
 new trees through the same application normalization, canonical creation codec, editor and snapshot
@@ -73,6 +98,19 @@ and note writers. It freezes core template expansion during preparation and reje
 Templater syntax before any writes with `unsupported-template`. Existing destinations need no
 template execution. Ordinary Q capture retains its established eager preparation and Templater
 behavior. No new text-write authority or persisted task metadata is introduced.
+
+Creation refresh coordinates the repository basis with `TaskDestinationPlan.refreshPrepared`, the
+static note owner, and the selected project guard. It keeps path, insertion policy, template bytes and
+expansion, settings and project meaning fixed. Project guards can adopt incidental task-byte revisions
+only while identity, frontmatter, membership/schema semantics and placement remain unchanged.
+A planned missing note can adopt a newly created file only with a current accepted root anchor.
+`sharesDestinationBasis` compares preparations issued by the same application owner through private
+sealed destination/template state; it exposes no template bytes and proves no write success. Its inward
+caller must retain the earlier known successful creation, verify matching destination bases and proven
+current occurrence identity before supplying that receipt's anchor. Native owners validate the anchor's
+accepted reference/path/file; they never infer success from a file appearing. Static note refresh then
+binds the accepted file and makes provisioning a no-op. These capabilities add no public receipt token,
+identity registry, command replay or multi-root transaction.
 
 The opt-in native profiler in [`tooling/performance/native-api.ts`](tooling/performance/native-api.ts)
 is a structural consumer of the external v1 contract, imported only as types from `api.d.ts`.

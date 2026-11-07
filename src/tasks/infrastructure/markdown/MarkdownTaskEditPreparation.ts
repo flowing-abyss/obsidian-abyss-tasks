@@ -14,7 +14,23 @@ interface CanonicalEdit {
   readonly content: string;
   readonly result: TaskRepositoryResult;
 }
+interface SealedCandidate {
+  readonly content: string;
+  readonly after: TaskSnapshot | null;
+  readonly nodeMap: readonly TaskNodeLineMapping[] | undefined;
+}
 interface PreparationPorts {
+  refresh?(
+    current: TaskSnapshot,
+    candidate: SealedCandidate,
+  ): Promise<
+    | {
+        readonly ports: PreparationPorts;
+        readonly content: string;
+        readonly after: TaskSnapshot | null;
+      }
+    | undefined
+  >;
   /** The same canonical edit path used by ordinary repository commands, without publication. */
   apply(content: string, root: TaskSnapshot, command: TaskEditCommand): CanonicalEdit;
   commit(
@@ -75,9 +91,18 @@ function continuations(
   });
 }
 
+export function unchangedPreparedContinuations(
+  root: TaskSnapshot,
+): readonly TaskPreparedNodeContinuation[] {
+  return [...preparedNodes(root).values()].map((node) => ({ before: node, after: node }));
+}
+
 /** Retains sealed candidates; public snapshots never become source or write authority. */
 export class MarkdownTaskEditPreparation {
-  constructor(private readonly ports: PreparationPorts) {}
+  constructor(
+    private readonly ports: PreparationPorts,
+    private readonly family = { attempted: false },
+  ) {}
 
   prepare(
     before: TaskSnapshot,
@@ -145,10 +170,42 @@ export class MarkdownTaskEditPreparation {
           },
         );
       },
+      refresh: (current) => this.refresh(before, { content, after, nodeMap }, current),
       commit: async () => {
+        this.family.attempted = true;
         attempt ??= Promise.resolve().then(() => this.ports.commit(content, after, nodeMap));
         return structuredClone(await attempt);
       },
     };
+  }
+  private async refresh(
+    before: TaskSnapshot,
+    candidate: SealedCandidate,
+    current: TaskSnapshot,
+  ): Promise<TaskPreparedRootEdit> {
+    const allowed = (): boolean => !this.family.attempted;
+    if (!allowed()) return { type: 'invalid', result: invalidTaskTarget('target') };
+    const refreshed = await this.ports.refresh?.(structuredClone(current), candidate);
+    if (refreshed === undefined || !allowed())
+      return { type: 'invalid', result: invalidTaskTarget('target') };
+    return new MarkdownTaskEditPreparation(refreshed.ports, this.family).stage(
+      before,
+      refreshed.content,
+      refreshed.after,
+      {
+        nodeMap: candidate.nodeMap,
+        correspondence:
+          candidate.after === null
+            ? []
+            : continuations(
+                candidate.after,
+                refreshed.after,
+                [...preparedNodes(candidate.after).keys()].map((offset) => ({
+                  beforeOffset: offset,
+                  afterOffset: offset,
+                })),
+              ),
+      },
+    );
   }
 }

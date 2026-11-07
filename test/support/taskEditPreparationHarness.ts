@@ -6,7 +6,7 @@ import { TaskApplicationService } from '../../src/tasks/application/TaskApplicat
 import type { TaskBehaviorSettingsProvider } from '../../src/tasks/application/TaskBehaviorSettings';
 import type { TaskDestinationProvider } from '../../src/tasks/application/TaskDestinationProvider';
 import type { TaskEditPreparation } from '../../src/tasks/application/TaskEditPreparationApi';
-import { clockFrom } from '../../src/tasks/domain/clock';
+import { clockFrom, type Clock } from '../../src/tasks/domain/clock';
 import { StatusCatalog } from '../../src/tasks/domain/StatusCatalog';
 import { TaskBlockEditor } from '../../src/tasks/infrastructure/markdown/TaskBlockEditor';
 import { TaskLocator } from '../../src/tasks/infrastructure/markdown/TaskLocator';
@@ -27,8 +27,9 @@ export async function taskEditPreparationHarness(
   options: {
     index?: Partial<TaskIndexOptions>;
     behavior?: TaskBehaviorSettingsProvider;
+    clock?: Clock;
     files?: Record<string, string>;
-    destination?: (app: App) => TaskDestinationProvider;
+    destination?: (app: App, index: TaskIndex) => TaskDestinationProvider;
   } = {},
 ) {
   const path = 'tasks.md';
@@ -41,6 +42,7 @@ export async function taskEditPreparationHarness(
     ...options.index,
   });
   await index.initialize();
+  const sources = index.projectSources();
   const repository = new ObsidianTaskRepository(app, {
     codec: new TaskMarkdownCodec(catalog),
     editor: new TaskBlockEditor(),
@@ -48,15 +50,16 @@ export async function taskEditPreparationHarness(
     refAuthority: authority,
     snapshotState: index,
     snapshotsFromContent: (path, text) => index.previewContent(path, text),
-    preparedRootSources: index.projectSources(),
+    preparedRootQueries: index,
+    preparedRootSources: sources,
     preparedRootReads: index.integrationReads(),
   });
   const service = new TaskApplicationService(
     index,
     repository,
     catalog,
-    clockFrom(Date.UTC(2026, 10, 7, 12), 0),
-    options.destination?.(app),
+    options.clock ?? clockFrom(Date.UTC(2026, 10, 7, 12), 0),
+    options.destination?.(app, index),
     options.behavior,
   );
   const process = app.vault.process.bind(app.vault);
@@ -70,6 +73,7 @@ export async function taskEditPreparationHarness(
     service,
     catalog,
     repository,
+    sources,
     writes,
     process,
     file,

@@ -132,6 +132,11 @@ export type StaticNotePlan =
   | {
       readonly type: 'ready';
       readonly content: string;
+      sharesBasis(other: StaticNotePlan): boolean;
+      refresh(
+        current?: { readonly file: object; readonly content: string },
+        allowCreated?: boolean,
+      ): Promise<StaticNotePlan | undefined>;
       validate(): Promise<boolean>;
       check(file: object, live: string): boolean;
       provision(validate: () => Promise<boolean>): Promise<{
@@ -141,6 +146,7 @@ export type StaticNotePlan =
     };
 
 export class NoteTemplateService {
+  private readonly staticPlanBases = new WeakMap<object, StaticPlanBasis>();
   constructor(private readonly app: App) {}
 
   /** Read-only static provisioning plan; executable templates are never run by this capability. */
@@ -151,10 +157,13 @@ export class NoteTemplateService {
   ): Promise<StaticNotePlan> {
     const basis = await this.captureStaticPlan(filePath, templatePath, title);
     if (basis === undefined) return { type: 'unsupported-template' };
-    const state: StaticPlanState = {
+    return this.staticPlan(basis, {
       owned: basis.original === null ? undefined : { file: basis.original, content: basis.content },
       effects: 'unchanged',
-    };
+    });
+  }
+
+  private staticPlan(basis: StaticPlanBasis, state: StaticPlanState): StaticNotePlan {
     const check = (file: object, live: string): boolean =>
       file instanceof TFile &&
       state.owned?.file === file &&
@@ -167,9 +176,23 @@ export class NoteTemplateService {
         return this.app.vault.getAbstractFileByPath(basis.path) === null;
       return check(state.owned.file, await this.app.vault.read(state.owned.file));
     };
-    return {
+    const plan: StaticNotePlan = {
       type: 'ready',
-      content: basis.content,
+      content: state.owned?.content ?? basis.content,
+      sharesBasis: (other) => {
+        const peer = this.staticPlanBases.get(other);
+        return (
+          peer?.path === basis.path &&
+          peer.original === basis.original &&
+          peer.content === basis.content &&
+          peer.templatePath === basis.templatePath &&
+          peer.template === basis.template &&
+          peer.raw === basis.raw &&
+          sameNoteFileStamp(peer.stamp, basis.stamp)
+        );
+      },
+      refresh: (current, allowCreated = false) =>
+        this.refreshStaticPlan(basis, state, { current, allowCreated, validate }),
       validate,
       check,
       provision: (validateOuter) =>
@@ -179,6 +202,44 @@ export class NoteTemplateService {
           async () => (await validateOuter()) && (await validate()),
         ),
     };
+    this.staticPlanBases.set(plan, basis);
+    return plan;
+  }
+
+  private async refreshStaticPlan(
+    basis: StaticPlanBasis,
+    state: StaticPlanState,
+    options: {
+      current: { readonly file: object; readonly content: string } | undefined;
+      allowCreated: boolean;
+      validate: () => Promise<boolean>;
+    },
+  ): Promise<StaticNotePlan | undefined> {
+    if (!(await this.verifyStaticTemplate(basis))) return undefined;
+    const { current } = options;
+    if (current === undefined)
+      return (await options.validate()) ? this.staticPlan(basis, { ...state }) : undefined;
+    if (!this.staticRefreshIdentity(basis, state, current.file, options.allowCreated))
+      return undefined;
+    if (
+      this.app.vault.getAbstractFileByPath(basis.path) !== current.file ||
+      (await this.app.vault.read(current.file)) !== current.content
+    )
+      return undefined;
+    return this.staticPlan(basis, {
+      owned: { file: current.file, content: current.content },
+      effects: 'unchanged',
+    });
+  }
+
+  private staticRefreshIdentity(
+    basis: StaticPlanBasis,
+    state: StaticPlanState,
+    file: object,
+    allowCreated: boolean,
+  ): file is TFile {
+    const expected = state.owned?.file ?? basis.original;
+    return file instanceof TFile && (expected === null ? allowCreated : file === expected);
   }
 
   private async captureStaticPlan(

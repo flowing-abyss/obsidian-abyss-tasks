@@ -38,6 +38,10 @@ export type TaskCreatePreparation =
       readonly after: TaskSnapshot;
       readonly continuations: readonly TaskPreparedNodeContinuation[];
       append(command: PreparedTaskEditCommand): TaskCreatePreparation;
+      sharesDestinationBasis(other: TaskCreatePreparation): boolean;
+      refresh(options?: {
+        readonly createdDestinationAnchor?: TaskSnapshot;
+      }): Promise<TaskCreatePreparation>;
       commit(): Promise<TaskCreateCommitResult>;
     }
   | { readonly type: 'invalid'; readonly result: TaskCommandResult };

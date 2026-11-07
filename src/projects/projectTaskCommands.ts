@@ -15,39 +15,73 @@ import type {
 } from './projectApi';
 import { projectTaskInsertion } from './projectTaskInsertion';
 
+function projectDestination(
+  ports: {
+    reads: ProjectIntegrationReads;
+    sources: ProjectSourceReadApi;
+    settings: () => ProjectsSettings;
+  },
+  proof: ProjectReadSummary,
+  action: 'capture' | 'move',
+): ProjectTaskDestination {
+  const { reads, sources, settings } = ports;
+  const insertion = projectTaskInsertion(settings(), action);
+  const accepted = sources.get(proof.path);
+  const original = accepted.type === 'ok' ? accepted.value : undefined;
+  const frontmatter = JSON.stringify(original?.metadata.frontmatter);
+  const originalIdentity = original?.identity;
+  const sameSelection = (): boolean =>
+    originalIdentity === proof.identity &&
+    JSON.stringify(projectTaskInsertion(settings(), action)) === JSON.stringify(insertion);
+  return {
+    filePath: proof.path,
+    insertion,
+    refreshPrepared: () => {
+      const fresh = reads.summary(proof.path);
+      const source = sources.get(proof.path);
+      if (
+        fresh.type !== 'ok' ||
+        fresh.value?.identity !== proof.identity ||
+        fresh.value.semantics !== proof.semantics ||
+        source.type !== 'ok' ||
+        source.value?.identity !== proof.identity ||
+        JSON.stringify(source.value.metadata.frontmatter) !== frontmatter ||
+        !sameSelection()
+      )
+        return undefined;
+      return projectDestination(ports, fresh.value, action);
+    },
+    check: (file, live, candidate) => {
+      if (!reads.matchesFile(proof, file)) return 'stale';
+      const result = reads.guard(proof, live, candidate);
+      return result.type === 'error' ? result.reason : undefined;
+    },
+    checkCopy: (file, content) => {
+      const fresh = reads.summary(proof.path);
+      if (
+        fresh.type === 'error' ||
+        fresh.value?.identity !== proof.identity ||
+        fresh.value.semantics !== proof.semantics
+      )
+        return false;
+      return (
+        reads.matchesFile(fresh.value, file) &&
+        reads.guard(fresh.value, content, content).type === 'ok'
+      );
+    },
+  };
+}
+
 export function createProjectTaskCommands(
   reads: ProjectIntegrationReads,
   sources: ProjectSourceReadApi,
   service: TaskProjectCommands,
   settings: () => ProjectsSettings,
 ): ProjectTaskCommands {
-  function destination(
+  const destination = (
     proof: ProjectReadSummary,
     action: 'capture' | 'move',
-  ): ProjectTaskDestination {
-    return {
-      filePath: proof.path,
-      insertion: projectTaskInsertion(settings(), action),
-      check: (file, live, candidate) => {
-        if (!reads.matchesFile(proof, file)) return 'stale';
-        const result = reads.guard(proof, live, candidate);
-        return result.type === 'error' ? result.reason : undefined;
-      },
-      checkCopy: (file, content) => {
-        const fresh = reads.summary(proof.path);
-        if (
-          fresh.type === 'error' ||
-          fresh.value?.identity !== proof.identity ||
-          fresh.value.semantics !== proof.semantics
-        )
-          return false;
-        return (
-          reads.matchesFile(fresh.value, file) &&
-          reads.guard(fresh.value, content, content).type === 'ok'
-        );
-      },
-    };
-  }
+  ): ProjectTaskDestination => projectDestination({ reads, sources, settings }, proof, action);
   return {
     prepareCreate(proof: ProjectReadSummary, title: string): ProjectTaskExecution {
       return service.prepareProjectCreate(destination(proof, 'capture'), title);

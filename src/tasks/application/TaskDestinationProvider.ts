@@ -1,4 +1,4 @@
-import type { TaskDestination } from '../domain/types';
+import type { TaskDestination, TaskSnapshot } from '../domain/types';
 
 export type TaskDestinationResolution =
   | { readonly type: 'resolved'; readonly destination: TaskDestination }
@@ -10,6 +10,10 @@ interface TaskDestinationCommitResolution {
 }
 export interface TaskDestinationPlan {
   seal?(): Promise<TaskDestinationPlan>;
+  refreshPrepared?(options?: {
+    readonly createdDestinationAnchor?: TaskSnapshot;
+  }): Promise<TaskDestinationPlan | undefined>;
+  sharesPreparedBasis?(other: TaskDestinationPlan): boolean;
   readonly preparedFailure?: 'unsupported-template';
   readonly plannedContent?: string;
   validatePrepared?(): Promise<boolean>;

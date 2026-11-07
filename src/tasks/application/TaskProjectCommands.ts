@@ -22,6 +22,7 @@ export type ProjectTaskGuard = (
 ) => ProjectTaskFailure | undefined;
 export interface ProjectTaskDestination extends TaskDestination {
   readonly check: ProjectTaskGuard;
+  readonly refreshPrepared?: () => ProjectTaskDestination | undefined;
   /** Checks the same incarnation against its newly installed project observation. */
   readonly checkCopy: (file: object, content: string) => boolean;
 }

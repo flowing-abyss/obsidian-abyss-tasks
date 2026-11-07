@@ -624,7 +624,19 @@ function hasEmptyCreationTags(node: TaskCreateTreeNode): boolean {
   );
 }
 
+interface EditPreparationContext {
+  readonly settings: TaskBehaviorSettings;
+  readonly reading: ClockReading | { readonly localDate: ClockReading['localDate'] };
+  readonly current: () => boolean;
+  readonly family: { attempted: boolean };
+  readonly ref: TaskRef;
+}
+
 interface CreatePreparationContext {
+  readonly current: () => boolean;
+  readonly project: ProjectTaskDestination | undefined;
+  readonly family: { attempted: boolean };
+  readonly originalPlan: TaskDestinationPlan;
   readonly settings: TaskBehaviorSettings;
   readonly reading: ClockReading | { readonly localDate: ClockReading['localDate'] };
   readonly plan: TaskDestinationPlan;
@@ -1525,10 +1537,12 @@ export class TaskApplicationService
       filePath: destination.destination.filePath,
       insertion: { ...destination.destination.insertion },
     };
-    return {
+    const plan: TaskDestinationPlan = {
       destination: planned,
+      refreshPrepared: async () => plan,
       prepare: async () => ({ type: 'resolved', destination: planned }),
     };
+    return plan;
   }
 
   private readyCreateSession_abyssPrivate(
@@ -1652,6 +1666,8 @@ export class TaskApplicationService
     };
   }
 
+  private readonly createPreparationPlans_abyssPrivate = new WeakMap<object, TaskDestinationPlan>();
+
   async prepareCreateTree(
     input: Parameters<TaskCreatePreparationApi['prepareCreateTree']>[0],
   ): Promise<TaskCreatePreparation> {
@@ -1705,7 +1721,16 @@ export class TaskApplicationService
       };
       return this.createPreparation_abyssPrivate(
         prepared,
-        { plan, guard, settings, reading },
+        {
+          plan,
+          originalPlan: plan,
+          guard,
+          settings,
+          reading,
+          current,
+          project,
+          family: { attempted: false },
+        },
         true,
       );
     } catch {
@@ -1785,7 +1810,7 @@ export class TaskApplicationService
       };
     const { plan, guard, settings, reading } = context;
     let attempt: Promise<TaskCreateCommitResult> | undefined;
-    return {
+    const result: TaskCreatePreparation = {
       type: 'ready',
       before: null,
       get destination() {
@@ -1810,11 +1835,73 @@ export class TaskApplicationService
           ? { type: 'invalid', result: invalidTaskTarget('target') }
           : this.createPreparation_abyssPrivate(prepared.append(normalized), context);
       },
+      sharesDestinationBasis: (other) => {
+        const otherPlan = this.createPreparationPlans_abyssPrivate.get(other);
+        return (
+          otherPlan !== undefined && context.originalPlan.sharesPreparedBasis?.(otherPlan) === true
+        );
+      },
+      refresh: (options) => this.refreshCreatePreparation_abyssPrivate(prepared, context, options),
       commit: async () => {
+        context.family.attempted = true;
         attempt ??= this.commitCreatePreparation_abyssPrivate(prepared, plan, guard);
         return structuredClone(await attempt);
       },
     };
+    this.createPreparationPlans_abyssPrivate.set(result, context.originalPlan);
+    return result;
+  }
+
+  private async refreshCreatePreparation_abyssPrivate(
+    prepared: Extract<TaskPreparedCreateRoot, { type: 'ready' }>,
+    context: CreatePreparationContext,
+    options?: { readonly createdDestinationAnchor?: TaskSnapshot },
+  ): Promise<TaskCreatePreparation> {
+    const allowed = (): boolean => !context.family.attempted && context.current();
+    try {
+      if (!allowed()) return { type: 'invalid', result: destinationUnavailableResult() };
+      const refreshed = await prepared.refresh(options);
+      if (refreshed.type === 'invalid')
+        return {
+          type: 'invalid',
+          result: this.terminalRepositoryResult_abyssPrivate(refreshed.result),
+        };
+      const next = await this.refreshCreateContext_abyssPrivate(context, options);
+      if (next === undefined || !allowed())
+        return { type: 'invalid', result: destinationUnavailableResult() };
+      if (
+        !(await next.guard.validateBeforeProvision()) ||
+        !(await refreshed.validateBeforeProvision(
+          (file, live, candidate) => next.guard.check(file, live, candidate),
+          next.plan.plannedContent,
+        )) ||
+        !allowed()
+      )
+        return { type: 'invalid', result: destinationUnavailableResult() };
+      return this.createPreparation_abyssPrivate(refreshed, next);
+    } catch {
+      return this.preparationReadFailure_abyssPrivate('create');
+    }
+  }
+
+  private async refreshCreateContext_abyssPrivate(
+    context: CreatePreparationContext,
+    options?: { readonly createdDestinationAnchor?: TaskSnapshot },
+  ): Promise<CreatePreparationContext | undefined> {
+    const plan = await context.plan.refreshPrepared?.(options);
+    const project = context.project?.refreshPrepared?.();
+    if (plan === undefined || (context.project !== undefined && project === undefined))
+      return undefined;
+    const guard: PreparedTaskCreateGuard = {
+      validateBeforeProvision: async () =>
+        context.current() &&
+        (plan.validatePrepared === undefined || (await plan.validatePrepared())),
+      check: (file, live, candidate) =>
+        context.current() &&
+        (plan.checkPrepared?.(file, live) ?? true) &&
+        project?.check(file, live, candidate) === undefined,
+    };
+    return { ...context, plan, project, guard };
   }
 
   private async commitCreatePreparation_abyssPrivate(
@@ -1868,7 +1955,17 @@ export class TaskApplicationService
     if (prepared === undefined) return { type: 'invalid', result: invalidTaskTarget('target') };
     const settings = structuredClone(this.behaviorSettings_abyssPrivate());
     const reading = captureClock(this.clock_abyssPrivate);
-    let result = this.editPreparation_abyssPrivate(prepared, settings, reading);
+    const catalog = JSON.stringify(this.statusCatalog_abyssPrivate.all());
+    const current = (): boolean =>
+      JSON.stringify(this.behaviorSettings_abyssPrivate()) === JSON.stringify(settings) &&
+      JSON.stringify(this.statusCatalog_abyssPrivate.all()) === catalog;
+    let result = this.editPreparation_abyssPrivate(prepared, {
+      settings,
+      reading,
+      current,
+      family: { attempted: false },
+      ref: { ...root.ref },
+    });
     for (const command of commands) {
       if (result.type !== 'ready') break;
       result = result.append(command);
@@ -1878,14 +1975,14 @@ export class TaskApplicationService
 
   private editPreparation_abyssPrivate(
     prepared: TaskPreparedRootEdit,
-    settings: TaskBehaviorSettings,
-    reading: ClockReading | { readonly localDate: ClockReading['localDate'] },
+    context: EditPreparationContext,
   ): TaskEditPreparation {
     if (prepared.type === 'invalid')
       return {
         type: 'invalid',
         result: this.terminalRepositoryResult_abyssPrivate(prepared.result),
       };
+    const { settings, reading, family } = context;
     let attempt: Promise<TaskCommandResult> | undefined;
     return {
       type: 'ready',
@@ -1916,12 +2013,54 @@ export class TaskApplicationService
             type: 'invalid',
             result: 'result' in next ? next.result : invalidTaskTarget('target'),
           };
-        return this.editPreparation_abyssPrivate(prepared.append(next.command), settings, reading);
+        return this.editPreparation_abyssPrivate(prepared.append(next.command), context);
       },
+      refresh: (current) => this.refreshEditPreparation_abyssPrivate(prepared, context, current),
       commit: async () => {
-        attempt ??= this.commitRootPreparation_abyssPrivate(prepared);
+        family.attempted = true;
+        attempt ??= context.current()
+          ? this.commitRootPreparation_abyssPrivate(prepared)
+          : Promise.resolve(invalidTaskTarget('settings'));
         return structuredClone(await attempt);
       },
+    };
+  }
+
+  private async refreshEditPreparation_abyssPrivate(
+    prepared: Extract<TaskPreparedRootEdit, { type: 'ready' }>,
+    context: EditPreparationContext,
+    current: TaskSnapshot,
+  ): Promise<TaskEditPreparation> {
+    const allowed = (): boolean => !context.family.attempted && context.current();
+    try {
+      const resolution = this.queries.resolve(context.ref);
+      let proven: TaskSnapshot | undefined;
+      if (resolution.type === 'exact') proven = resolution.task;
+      if (resolution.type === 'rebased' && resolution.basis.authorityTransition !== undefined)
+        proven = resolution.current;
+      if (
+        !allowed() ||
+        proven === undefined ||
+        !sameTaskNodeRef({ type: 'task', ref: proven.ref }, { type: 'task', ref: current.ref })
+      )
+        return { type: 'invalid', result: invalidTaskTarget('target') };
+      const next = await prepared.refresh(current);
+      return allowed()
+        ? this.editPreparation_abyssPrivate(next, { ...context, ref: { ...proven.ref } })
+        : { type: 'invalid', result: invalidTaskTarget('target') };
+    } catch {
+      return this.preparationReadFailure_abyssPrivate('patch');
+    }
+  }
+
+  private preparationReadFailure_abyssPrivate(operation: 'patch' | 'create'): {
+    type: 'invalid';
+    result: TaskCommandResult;
+  } {
+    this.diagnostics_abyssPrivate({ operation, phase: 'unexpected', cause: 'repository-error' });
+    return {
+      type: 'invalid',
+      result: { type: 'io-error', cause: 'repository-error', contentState: 'unchanged' },
     };
   }
 
