@@ -18,7 +18,7 @@ export class CaptureRevealIntent {
         readonly cancel: () => void;
       }
     | undefined;
-  private input: HTMLInputElement | undefined;
+  private input: HTMLInputElement | HTMLTextAreaElement | undefined;
   private readonly cancellations = new Set<() => void>();
   private readonly revoke = (): void => {
     this.epoch++;
@@ -27,7 +27,7 @@ export class CaptureRevealIntent {
 
   constructor(private readonly authority: CaptureRevealAuthority | undefined) {}
 
-  mount(input: HTMLInputElement): void {
+  mount(input: HTMLInputElement | HTMLTextAreaElement): void {
     if (this.input === input) return;
     this.unmount();
     this.input = input;

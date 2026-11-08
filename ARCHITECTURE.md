@@ -45,6 +45,27 @@ flushes ordinary state at command/lifecycle boundaries and after a 250 ms schedu
 write admission and receipt saves bypass that delay. Storage failures appear as one short surface
 status, with safe diagnostic codes when opened; startup raises no history Notice.
 
+Q mounts `CommandModeSurface` through `CaptureSurface`'s extension port. `CaptureSurface` keeps
+IME, wiki completion, Enter/Shift+Enter, held-key suppression and detached-menu interaction
+ownership. Only Q uses the multiline adapter; ordinary capture removes CR/LF before its existing
+controller receives input. Command input never follows ordinary capture's blur submission path.
+Main retains transient mode/selection/scroll memory and the shared owner; destroying or migrating
+a surface releases its Components and subscriptions without discarding the session. Hide and Stop
+cancel future planning through the owner, while an admitted write settles through its existing
+journal. UI input/submission generations prevent late completion from clearing newer text.
+
+`PanelView` refreshes bounded read-only view/inspector context on activation and submission.
+Accepted saved task navigation uses main's internal `TaskApiProvider.nativeTaskTarget` resolution
+through the existing identity owner, retained revision and current disclosure checks, then the
+native inspector selection path. Automatic Saved feedback updates the inspector in place without
+switching the compact pane. An explicit ready-finish reveal is transient, bound to the verified
+saved target/revision and current turn/session, and must be claimed once and acknowledged by the
+native view before the agent can report completion. Cancellation invalidates late acknowledgements.
+Titles and source coordinates grant no navigation authority.
+Draft checkboxes use the owner's serialized `stageStatus`: new nodes append initial status to the
+exact canonical plan; existing and copied nodes retain a separate lifecycle status intent. Saved
+checkboxes use `applyStatus` and do not commit unrelated proposals.
+
 `CommandSessionStore` owns a version-1 local history envelope through main's synchronous
 `App.loadLocalStorage/saveLocalStorage` port at `abyss-tasks:command-sessions:v1` and an explicit
 clock. Record saves and active selection are separate. `commandRecovery` validates complete
@@ -77,7 +98,9 @@ selects up to five verified entities; omission preserves selection and an empty 
 The session verifies the entire selection before publishing, including exact plan/revision for draft
 nodes. A uniquely owned opaque draft target can resolve its current plan internally; supplied
 node/plan revisions must still match, and ambiguous overlapping plans require an explicit plan.
-Refinement retains selected node identity; saved focus continues only through receipt
+An exact pending-removal subject is verified against the canonical before side of its current
+plan; this retained review selection does not grant mutation authority. Surviving nodes use the
+after side. Refinement retains selected node identity; saved focus continues only through receipt
 correspondence and readback. Deleted or unverified affected selections leave current focus while
 historical entity and journal evidence remains. Project/note readback updates selected revisions.
 
@@ -972,6 +995,42 @@ ready. Replacement/disposal invalidates old callbacks. Editable links require wh
 and exact authored occurrence proof; highlighting and excerpts add no write authority. Shared
 [WikiLinkSuggest](src/ui/WikiLinkSuggest.ts) owns completion UI only for its editor's lifetime;
 existing capture and inspector commands still persist the draft.
+
+[`taskTreeDisplay`](src/ui/taskTreeDisplay.ts) owns the retained structural task/title/description/
+comment rows shared by native search and Q. `TaskSearchTree` adapts native snapshots, evidence,
+excerpt policy and action closures; `CommandTree` adapts canonical public trees and owner actions.
+Neither adapter manufactures the other's identities. Display-only field keys stay inside the
+renderer. Command comments retain keys only through exact current handles, typed preparation
+operations with complete owner-bound sequences, or complete committed task correspondence at the
+accepted revision. Removed accepted content remains inert beneath its owner until save resolves.
+The shared metadata/date primitives preserve native formatting and tag/source chips. Q exposes all
+planning roles and independent native time/duration values, while ordinary cards retain their primary
+date policy. Project context reuses the configured field catalog, native status/date/property text and
+retained Markdown for its description and changed writable fields, without moving related tasks.
+Project paint compares resolved fields within each user iteration, accumulates that iteration's
+changes, and retains the exact accepted-project revision's projection across surface remounts.
+
+Accepted canonical plans and their validated preparation proofs publish in one session snapshot.
+Task-content cleanup source plans use the same tree and inert removal treatment as ordinary edits.
+Main retains only the latest exact proposal/owner revision's paint correspondence for each
+owner-retained session; replaced revisions and removed sessions are pruned, and unload clears it.
+This memory grants no authority and is not persisted. Cold, unproven comment correspondence stays
+neutral. Bounded grapheme-aware text differences decorate native rendered text nodes, preserving
+links and their handlers; old fragments are inert and additions/removals keep static local cues.
+Pending focused-field removal keeps its old DOM but revokes activation; native empty hosts retire
+only after the current asynchronous text preparation settles. Shared activation uses the existing
+IME ownership guard, including legacy composition events.
+A typed finish presentation can show the current proposal's cumulative changes in the same tree;
+the next actual command or verified commit resets that mode. Ordinary display uses the latest
+iteration. Q opts into bounded 150 ms insertion/move/removal motion in the shared retained commit
+path, after focused-removal checks; unchanged row order does not trigger geometry reads. Owning-window
+animations are cancelled on replacement/disposal and skipped for reduced motion. Transient phase
+text coalesces at 150 ms; questions, errors and save feedback remain immediate.
+
+Q intercepts internal links before native missing-note navigation. It uses native link parsing and
+resolution with the field's exact source path; unresolved links show a short creation instruction
+and never call `openLinkText`. Resolved links retain normal navigation. Other surfaces retain their
+existing link behavior.
 
 Each surface uses its owning document/window and retires listeners, observers, timers, frames,
 subscriptions, and Components on hide, disposal, or window migration as appropriate. Retained

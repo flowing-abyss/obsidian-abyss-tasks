@@ -93,6 +93,7 @@ export { sameTaskNodeRef } from './domain/types';
 export type {
   CommentRef,
   DateRange,
+  DurationMinutes,
   LocalDate,
   LocalTime,
   SubtaskRef,
@@ -109,7 +110,7 @@ export type {
   TaskTextTarget,
   TimeEntryRef,
 } from './domain/types';
-export { durationMinutes, localDate, localTime } from './domain/validation';
+export { durationMinutes, formatDurationMinutes, localDate, localTime } from './domain/validation';
 
 export { clampDurationToDay } from './domain/taskDuration';
 

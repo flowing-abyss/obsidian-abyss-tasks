@@ -14,10 +14,14 @@ import {
 } from './renderTaskText';
 import { compactTaskDescriptionExcerpt } from './taskDescriptionExcerpt';
 import type { TaskRenderOutcome } from './taskRenderScope';
+import { decorateTaskTextDifference } from './taskTextDifference';
+
+export type RetainedTextIdentity =
+  TaskTextTarget | { readonly type: 'display'; readonly key: string };
 
 export interface RetainedTaskTextInput {
   readonly source: {
-    readonly target: TaskTextTarget;
+    readonly target: RetainedTextIdentity;
     readonly markdown: string;
     readonly path: string;
     readonly presentation: 'title' | 'markdown' | 'description';
@@ -25,6 +29,7 @@ export interface RetainedTaskTextInput {
   readonly decoration: {
     readonly kind: 'complete' | 'preview' | 'excerpt';
     readonly continuation?: boolean;
+    readonly previousMarkdown?: string;
     readonly query?: PreparedSearchQuery;
     readonly segment?: SearchWordSegmenter;
     readonly destinations?: string;
@@ -61,7 +66,15 @@ function samePreparedTaskQuery(
       }))
   );
 }
-function sameTarget(a: TaskTextTarget, b: TaskTextTarget): boolean {
+export function sameRetainedTextIdentity(
+  a: RetainedTextIdentity,
+  b: RetainedTextIdentity,
+): boolean {
+  if (a.type === 'display' || b.type === 'display')
+    return a.type === 'display' && b.type === 'display' && a.key === b.key;
+  return sameNativeTextIdentity(a, b);
+}
+function sameNativeTextIdentity(a: TaskTextTarget, b: TaskTextTarget): boolean {
   if (a.type === 'comment' && b.type === 'comment')
     return (
       a.ref.relativeLine === b.ref.relativeLine &&
@@ -83,7 +96,7 @@ function sameSource(
     a.markdown === b.markdown &&
     a.path === b.path &&
     a.presentation === b.presentation &&
-    sameTarget(a.target, b.target)
+    sameRetainedTextIdentity(a.target, b.target)
   );
 }
 function sameDecoration(
@@ -92,6 +105,7 @@ function sameDecoration(
 ): boolean {
   return (
     a.kind === b.kind &&
+    a.previousMarkdown === b.previousMarkdown &&
     a.continuation === b.continuation &&
     a.segment === b.segment &&
     a.destinations === b.destinations &&
@@ -106,6 +120,7 @@ interface VisibleField {
 }
 function decorate(element: HTMLElement, field: VisibleField, input: RetainedTaskTextInput): void {
   const { query, segment, kind, continuation } = input.decoration;
+  applyDifference(element, field.input, input);
   if (query !== undefined && segment !== undefined) {
     markSearchText(element, field.projection, query, segment);
     if (kind === 'excerpt')
@@ -124,6 +139,17 @@ function decorate(element: HTMLElement, field: VisibleField, input: RetainedTask
     );
     (blocks[blocks.length - 1] ?? element).append(' …');
   }
+}
+function applyDifference(
+  element: HTMLElement,
+  previous: RetainedTaskTextInput,
+  current: RetainedTaskTextInput,
+): void {
+  if (
+    current.decoration.previousMarkdown !== undefined ||
+    previous.decoration.previousMarkdown !== undefined
+  )
+    decorateTaskTextDifference(element, current.decoration.previousMarkdown);
 }
 function inPlace(
   old: VisibleField | undefined,
@@ -210,8 +236,8 @@ class PreparedField implements PreparedTaskTextUpdate {
           if (this.#direct !== undefined) this.#direct = [...staging.childNodes];
           return !this.#cancelled && this.#current();
         },
-        beforeOpenLink: () =>
-          this.#field.input.callbacks.beforeOpenLink?.() ?? Promise.resolve(true),
+        beforeOpenLink: (link) =>
+          this.#field.input.callbacks.beforeOpenLink?.(link) ?? Promise.resolve(true),
         onRendered: (element) => {
           decorate(element, this.#field, input);
           if (this.#direct !== undefined) this.#direct = [...element.childNodes];

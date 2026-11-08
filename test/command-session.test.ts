@@ -912,3 +912,124 @@ it('keeping a draft after a disposition question retains its original unresolved
   expect(await h.session.resolveTransition('keep')).toBe(true);
   expect(h.saved[0]?.activeQuestion).toBe('Which date should this use?');
 });
+
+it('stages a new-node checkbox in its exact plan and keeps saved-node status as lifecycle intent', async () => {
+  const h = await setup();
+  const plan = ok(
+    await expectDefined(h.api.tasks.prepare)({
+      kind: 'create',
+      destination: { type: 'note', path: 'a.md', insertion: { type: 'append' } },
+      tree: { markdownTitle: 'Draft', children: [{ markdownTitle: 'Child' }] },
+    }),
+  );
+  h.session.stage({ kind: 'task', plan });
+  const child = expectDefined(plan.after?.children[0]);
+  expect(
+    await h.session.stageStatus({
+      target: child.target,
+      revision: child.revision,
+      plan: plan.target,
+      expectedPlanRevision: plan.revision,
+      symbol: 'x',
+    }),
+  ).toBe(true);
+  const staged = h.session.snapshot().proposal.changes[0];
+  expect(staged?.kind === 'task' && staged.plan.after?.children[0]?.statusSymbol).toBe('x');
+  expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+  expect(
+    await h.session.stageStatus({
+      target: child.target,
+      revision: child.revision,
+      plan: plan.target,
+      expectedPlanRevision: plan.revision,
+      symbol: ' ',
+    }),
+  ).toBe(false);
+  const saved = ok(await h.api.tasks.list({})).items[0];
+  const existing = expectDefined(saved);
+  const edit = ok(
+    await expectDefined(h.api.tasks.prepare)({
+      kind: 'edit',
+      target: existing.target,
+      expectedRevision: existing.revision,
+    }),
+  );
+  h.session.stage({ kind: 'task', plan: edit });
+  const current = expectDefined(edit.after);
+  expect(
+    await h.session.stageStatus({
+      target: current.target,
+      revision: current.revision,
+      plan: edit.target,
+      expectedPlanRevision: edit.revision,
+      symbol: 'x',
+    }),
+  ).toBe(true);
+  expect(
+    h.session
+      .snapshot()
+      .proposal.changes.some(
+        (change) =>
+          change.kind === 'status' &&
+          change.target === current.target &&
+          change.plan === edit.target,
+      ),
+  ).toBe(true);
+  expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+});
+it('supplies the latest bounded ambient view hint to each subsequent turn', async () => {
+  const h = await setup();
+  const seen: string[] = [];
+  h.setRun(async ({ session }) => {
+    seen.push(session.context);
+  });
+  h.session.updateContext('View: week');
+  await h.session.submit('Inspect');
+  h.session.updateContext('View: projects');
+  await h.session.submit('Inspect again');
+  expect(seen).toEqual(['View: week', 'View: projects']);
+  h.session.updateContext('x'.repeat(12000));
+  expect(h.session.snapshot().context.length).toBeLessThanOrEqual(8000);
+});
+it('resolves native navigation only from an accepted opaque target and current revision', async () => {
+  const h = await setup();
+  const task = expectDefined(ok(await h.api.tasks.list({})).items[0]);
+  const target = h.provider.nativeTaskTarget(task.target, task.revision);
+  expect(target).toEqual(h.index.listNodes()[0]?.target);
+  expect(h.provider.nativeTaskTarget('Existing', task.revision)).toBeUndefined();
+  expect(h.provider.nativeTaskTarget(task.target, 'old')).toBeUndefined();
+  await h.external('a.md', '- [ ] Replacement\n');
+  expect(h.provider.nativeTaskTarget(task.target, task.revision)).toBeUndefined();
+});
+
+it.each(['target', 'plan', 'revision'])(
+  'rejects mismatched %s while reviewing a saved pending removal',
+  async (mismatch) => {
+    const h = await setup();
+    const original = expectDefined(ok(await h.api.tasks.list()).items[0]);
+    const plan = ok(
+      await expectDefined(h.api.tasks.prepare)({
+        kind: 'edit',
+        target: original.target,
+        expectedRevision: original.revision,
+        operation: { type: 'remove', target: original.target },
+      }),
+    );
+    h.session.stage({ kind: 'task', plan });
+    const focus = {
+      kind: 'task' as const,
+      target: original.target,
+      plan: plan.target,
+      expectedPlanRevision: plan.revision,
+    };
+    const wrong = { ...focus };
+    if (mismatch === 'target') wrong.target = 'unknown';
+    else if (mismatch === 'plan') wrong.plan = 'unrelated';
+    else wrong.expectedPlanRevision = 'stale';
+    expect(await h.session.focus(wrong)).toBe(false);
+    expect(h.session.snapshot().focus).toEqual([]);
+    expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+    expect(await h.session.focus(focus)).toBe(true);
+    expect(h.session.snapshot().focus).toEqual([focus]);
+  },
+);

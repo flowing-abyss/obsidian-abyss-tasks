@@ -16,6 +16,7 @@ import type {
 import { NOTE_LIMITS, type NoteApplicationApi } from '../notes/noteApi';
 import type {
   TaskIntegrationReadApi,
+  TaskNodeRef,
   TaskReadObservation,
   TaskSearchApi,
   TaskStatusMutationApi,
@@ -440,6 +441,7 @@ function getApi(
 export class TaskApiProvider implements TasksApiProviderV1 {
   readonly getApi: (version: number, options: { consumerId: string }) => ApiResultV1<TasksApiV1>;
   readonly dispose: () => void;
+  readonly nativeTaskTarget: (target: string, revision: string) => TaskNodeRef | undefined;
   constructor(options: ProviderOptions) {
     const owner: ProviderOwner = {
       options,
@@ -465,6 +467,19 @@ export class TaskApiProvider implements TasksApiProviderV1 {
       diagnostics: 0,
     };
     this.getApi = (version, input) => getApi(owner, version, input);
+    this.nativeTaskTarget = (target, revision) => {
+      if (owner.closed) return undefined;
+      const found = owner.identities.lookup(target);
+      if (
+        !found.ok ||
+        found.value.state !== 'retained' ||
+        found.value.revision !== revision ||
+        !options.reads.canDisclose(found.value.address)
+      )
+        return undefined;
+      const node = options.reads.node(found.value.address);
+      return node.type === 'ok' ? node.value.value.target : undefined;
+    };
     this.dispose = () => {
       closeProvider(owner);
     };

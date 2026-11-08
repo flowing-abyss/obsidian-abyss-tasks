@@ -12,6 +12,7 @@ import {
   recurrenceLabel,
   sameTaskNodeRef,
   subtreeRunning,
+  type DurationMinutes,
   type LocalDate,
   type PlanningTarget,
   type RecurrenceInputParser,
@@ -44,6 +45,7 @@ import { showTagDropdown } from '../../ui/tagDropdown';
 import { TagPickerModal } from '../../ui/TagPickerModal';
 import { createTaskContextMenu } from '../../ui/taskContextMenu';
 import { type RightPanelDraftState } from '../../ui/taskDraftContinuity';
+import { taskTimeText } from '../../ui/taskMetadataDisplay';
 import { openInFile } from '../../ui/taskNavigation';
 import { taskNodeLine, taskNodeRef } from '../../ui/taskSelection';
 import {
@@ -113,14 +115,14 @@ interface InspectorPlanningSurfacesOptions {
 
 function timeChipPresentation(
   time: string | undefined,
-  duration: number | undefined,
+  duration: DurationMinutes | undefined,
 ): { readonly text: string; readonly label: string } {
   if (time == null) return { text: '⏰ Time', label: 'Set time and duration' };
   if (duration == null) {
     return { text: `⏰ ${time}`, label: `Change time, currently ${time}, no duration` };
   }
   return {
-    text: `⏰ ${time} · ${formatDurationFromMinutes(duration)}`,
+    text: `⏰ ${taskTimeText(time, duration)}`,
     label: `Change time, currently ${time}, duration ${String(duration)} minutes`,
   };
 }

@@ -27,7 +27,9 @@ export interface RenderTaskTextOptions {
   readonly linkEventOwner?: Component;
   interactiveLinks?: boolean;
   onEditLink?: ((occurrenceIndex: number, token: LinkToken) => void) | undefined;
-  beforeOpenLink?: (() => Promise<boolean>) | undefined;
+  beforeOpenLink?:
+    | ((link: { readonly href: string; readonly sourcePath: string }) => Promise<boolean>)
+    | undefined;
   exactLinkLabel?: string | undefined;
 }
 
@@ -187,7 +189,8 @@ function wireLinks(
         const newLeaf = Keymap.isModEvent(e);
         runAsyncAction(
           (async () => {
-            if ((await opts.beforeOpenLink?.()) === false) return;
+            if ((await opts.beforeOpenLink?.({ href, sourcePath: opts.sourcePath })) === false)
+              return;
             await opts.app.workspace.openLinkText(href, opts.sourcePath, newLeaf);
           })(),
           'Could not open task link',

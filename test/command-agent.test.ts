@@ -1,5 +1,6 @@
 import { MockLanguageModelV4 } from 'ai/test';
 import { afterEach, expect, it, vi } from 'vitest';
+import type { TasksApiV1 } from '../api';
 import { CommandAgent } from '../src/ai/CommandAgent';
 import { preserveAuthoredAnnotations } from '../src/ai/commandSchemas';
 import { CommandSession } from '../src/ai/CommandSession';
@@ -40,10 +41,11 @@ function call(
 async function setup(
   files: Record<string, string> = { 'a.md': '- [ ] Existing [unknown:: keep]\n' },
   options: Parameters<typeof publicApiHarness>[1] = {},
+  configureApi: (api: TasksApiV1) => TasksApiV1 = (api) => api,
 ) {
   const h = await publicApiHarness(files, { ...options, provision: true });
   owners.push(h);
-  const api = h.client();
+  const api = configureApi(h.client());
   const scripts: Array<() => Awaited<ReturnType<MockLanguageModelV4['doGenerate']>>> = [];
   const model = new MockLanguageModelV4({
     doGenerate: async () => expectDefined(scripts.shift())(),
@@ -1477,4 +1479,233 @@ it('semantic keep archives a resumable unsaved preview without a source write', 
   await h.session.resumeOwned();
   expect(await h.session.confirm()).toBe(true);
   expect((await h.read('a.md')).match(/- \[ \] New/g)).toHaveLength(1);
+});
+
+it('requires exact native acknowledgement for a typed reveal and allows a repeated request for the same saved task', async () => {
+  const h = await setup();
+  const listed = await h.api.tasks.list({});
+  if (!listed.ok) throw new Error(listed.error.code);
+  const task = expectDefined(listed.value.items[0]);
+  const tokens: string[] = [];
+  for (const text of ['Open that task', 'Show that same task again']) {
+    const completed = h.session
+      .snapshot()
+      .exchanges.filter((exchange) => exchange.text === 'Opened.').length;
+    h.script(interpret(), () =>
+      call('finish', {
+        state: 'ready',
+        message: 'Opened.',
+        reveal: { target: task.target, revision: task.revision },
+      }),
+    );
+    const running = h.session.submit(text);
+    await vi.waitFor(() => {
+      expect(h.session.snapshot().reveal).toMatchObject({
+        target: task.target,
+        revision: task.revision,
+      });
+    });
+    const reveal = expectDefined(h.session.snapshot().reveal);
+    tokens.push(reveal.id);
+    expect(
+      h.session.snapshot().exchanges.filter((exchange) => exchange.text === 'Opened.'),
+    ).toHaveLength(completed);
+    expect(h.session.acknowledgeReveal({ ...reveal, revision: 'stale' }, true)).toBe(false);
+    expect(h.session.claimReveal(reveal)).toBe(true);
+    expect(h.session.claimReveal(reveal)).toBe(false);
+    expect(h.session.acknowledgeReveal(reveal, true)).toBe(true);
+    await running;
+    expect(h.session.snapshot().reveal).toBeUndefined();
+    expect(h.session.snapshot().status).toEqual({ kind: 'ready', message: 'Opened.' });
+  }
+  expect(new Set(tokens).size).toBe(2);
+  expect(await h.read('a.md')).toBe('- [ ] Existing [unknown:: keep]\n');
+});
+
+it('cancels an unacknowledged reveal and refuses its late native acknowledgement', async () => {
+  const h = await setup();
+  const listed = await h.api.tasks.list({});
+  if (!listed.ok) throw new Error(listed.error.code);
+  const task = expectDefined(listed.value.items[0]);
+  h.script(interpret(), () =>
+    call('finish', {
+      state: 'ready',
+      message: 'Opened.',
+      reveal: { target: task.target, revision: task.revision },
+    }),
+  );
+  const running = h.session.submit('Open that task');
+  await vi.waitFor(() => {
+    expect(h.session.snapshot().reveal).toBeDefined();
+  });
+  const reveal = expectDefined(h.session.snapshot().reveal);
+  expect(h.session.claimReveal(reveal)).toBe(true);
+  h.session.cancelTurn();
+  await running;
+  expect(h.session.acknowledgeReveal(reveal, true)).toBe(false);
+  expect(h.session.snapshot().reveal).toBeUndefined();
+  expect(h.session.snapshot().exchanges.some((exchange) => exchange.text === 'Opened.')).toBe(
+    false,
+  );
+  expect(await h.read('a.md')).toBe('- [ ] Existing [unknown:: keep]\n');
+});
+
+it('does not report opened when the exact native reveal fails', async () => {
+  const h = await setup();
+  const listed = await h.api.tasks.list({});
+  if (!listed.ok) throw new Error(listed.error.code);
+  const task = expectDefined(listed.value.items[0]);
+  h.script(
+    interpret(),
+    () =>
+      call('finish', {
+        state: 'ready',
+        message: 'Opened.',
+        reveal: { target: task.target, revision: task.revision },
+      }),
+    () =>
+      call('finish', {
+        state: 'question',
+        message: 'Which task should I open instead?',
+        blockingIssue: {
+          kind: 'missing-information',
+          detail: 'The requested view could not be opened.',
+        },
+      }),
+  );
+  const running = h.session.submit('Open that task');
+  await vi.waitFor(() => {
+    expect(h.session.snapshot().reveal).toBeDefined();
+  });
+  const reveal = expectDefined(h.session.snapshot().reveal);
+  expect(h.session.claimReveal(reveal)).toBe(true);
+  expect(h.session.acknowledgeReveal(reveal, false)).toBe(true);
+  await running;
+  expect(h.session.snapshot().exchanges.some((exchange) => exchange.text === 'Opened.')).toBe(
+    false,
+  );
+  expect(h.session.snapshot().activeQuestion).toBe('Which task should I open instead?');
+});
+
+it.each(['rejected', 'canonical-read', 'aborted-read'])(
+  'publishes no preparation proof for %s work',
+  async (failure) => {
+    const pending = deferred<never>();
+    const read = vi.fn(async () => pending.promise);
+    if (failure === 'canonical-read') read.mockRejectedValue(new Error('Unreadable'));
+    const h = await setup(
+      { 'a.md': '- [ ] Existing\n\t- [ ] Child\n\t\t- 2026-08-01: Detail\n' },
+      {},
+      (api) => ({
+        ...api,
+        tasks: {
+          ...api.tasks,
+          tree: failure === 'rejected' ? expectDefined(api.tasks.tree) : read,
+          prepare:
+            failure === 'rejected'
+              ? async () => {
+                  throw new Error('Rejected');
+                }
+              : expectDefined(api.tasks.prepare),
+        },
+      }),
+    );
+    const listed = await h.api.tasks.list({});
+    if (!listed.ok) throw new Error(listed.error.code);
+    const root = expectDefined(listed.value.items[0]);
+    h.script(
+      interpret(),
+      () =>
+        call('task', {
+          input: { kind: 'edit', target: root.target, expectedRevision: root.revision },
+        }),
+      finish('Which source should I use?', true),
+    );
+    const running = h.session.submit('Prepare edits');
+    if (failure === 'aborted-read') {
+      await vi.waitFor(() => {
+        expect(read).toHaveBeenCalled();
+      });
+      h.session.cancelTurn();
+    }
+    await running;
+    expect(h.session.snapshot().preparations ?? []).toEqual([]);
+    expect(h.session.snapshot().proposal.changes).toEqual([]);
+    expect(await h.read('a.md')).toContain('Detail');
+  },
+);
+
+it('keeps a saved deletion selected after replacing a description preview and commits it exactly once', async () => {
+  const h = await setup();
+  const writes = vi.spyOn(h.app.vault, 'process');
+  h.script(interpret(), create, finish());
+  await h.session.submit('Create a task');
+  await h.session.submit('');
+  expect(writes).toHaveBeenCalledTimes(1);
+  const listed = await h.api.tasks.list({});
+  if (!listed.ok) throw new Error(listed.error.code);
+  const saved = expectDefined(listed.value.items.find((task) => task.title === 'New'));
+  const selectedFinish = () => {
+    const change = h.session.snapshot().proposal.changes[0];
+    if (change?.kind !== 'task') throw new Error('Expected task proposal');
+    return call('finish', {
+      state: 'ready',
+      message: 'Ready.',
+      selection: [
+        {
+          kind: 'task',
+          target: saved.target,
+          plan: change.plan.target,
+          expectedPlanRevision: change.plan.revision,
+        },
+      ],
+    });
+  };
+  h.script(
+    interpret(),
+    () =>
+      call('task', {
+        input: {
+          kind: 'edit',
+          target: saved.target,
+          expectedRevision: saved.revision,
+          operation: {
+            type: 'description',
+            target: saved.target,
+            text: 'Do not save this description',
+          },
+        },
+      }),
+    selectedFinish,
+  );
+  await h.session.submit('Describe the saved task');
+  expect(writes).toHaveBeenCalledTimes(1);
+  h.script(
+    interpret(),
+    () => {
+      const change = h.session.snapshot().proposal.changes[0];
+      if (change?.kind !== 'task') throw new Error('Expected edit proposal');
+      return call('task', {
+        input: {
+          kind: 'append',
+          plan: change.plan.target,
+          expectedPlanRevision: change.plan.revision,
+          operation: { type: 'remove', target: saved.target },
+        },
+      });
+    },
+    selectedFinish,
+  );
+  await h.session.submit('Change my mind: delete this saved task instead');
+  expect(h.session.snapshot().status).toEqual({ kind: 'ready', message: 'Ready.' });
+  expect(h.session.snapshot().focus[0]).toMatchObject({ kind: 'task', target: saved.target });
+  expect(writes).toHaveBeenCalledTimes(1);
+  expect(await h.read('a.md')).toContain('- [ ] New');
+  await h.session.submit('');
+  expect(h.session.snapshot().status.kind).toBe('saved');
+  expect(writes).toHaveBeenCalledTimes(2);
+  expect(await h.read('a.md')).not.toContain('- [ ] New');
+  expect(h.session.snapshot().focus).toEqual([]);
+  await h.session.submit('');
+  expect(writes).toHaveBeenCalledTimes(2);
 });

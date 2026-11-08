@@ -2,10 +2,12 @@ import type { ReadTaskTreeV1, TaskTreePageV1 } from '../../api';
 import type { CommandSession } from './CommandSession';
 import type { CommandPersistenceFailure, CommandSessionStore } from './CommandSessionStore';
 import type { HistoricalCommandSession } from './commandRecovery';
+import type { CommandStatusInput } from './commandTypes';
 import {
   CommandFailure,
   type CommandFocus,
   type CommandJournalPort,
+  type CommandRevealRequest,
   type CommandSessionSnapshot,
   type CommandSessionTransitions,
   type CommandSubmissionBasis,
@@ -123,6 +125,12 @@ export class CommandSessionOwner {
     this.session.cancelTurn();
     await this.flush();
   }
+  async stop(): Promise<void> {
+    if (this.disposed) return;
+    this.acceptance++;
+    this.session.cancelTurn();
+    await this.flush();
+  }
   private schedule(): void {
     if (this.disposed || this.cancelScheduled !== undefined) return;
     this.cancelScheduled = this.options.schedule(() => {
@@ -153,6 +161,27 @@ export class CommandSessionOwner {
       return false;
     }
   }
+  updateContext(context: string): void {
+    if (!this.disposed) this.session.updateContext(context);
+  }
+  stageStatus(input: CommandStatusInput): Promise<boolean> {
+    const basis = this.session.snapshot(),
+      generation = this.acceptance;
+    return this.transition(async () => {
+      await this.session.settle();
+      const current = this.session.snapshot();
+      if (
+        this.disposed ||
+        generation !== this.acceptance ||
+        current.id !== basis.id ||
+        current.proposal.revision !== basis.proposal.revision
+      )
+        return false;
+      const result = await this.session.stageStatus(input);
+      await this.flush();
+      return result;
+    });
+  }
   setInput(text: string): void {
     if (!this.disposed) this.session.setInput(text);
   }
@@ -181,6 +210,12 @@ export class CommandSessionOwner {
       await this.session.settle();
       return this.session.focus(target);
     });
+  }
+  claimReveal(request: CommandRevealRequest): boolean {
+    return !this.disposed && this.session.claimReveal(request);
+  }
+  acknowledgeReveal(request: CommandRevealRequest, accepted: boolean): boolean {
+    return !this.disposed && this.session.acknowledgeReveal(request, accepted);
   }
   readTreePage(query: ReadTaskTreeV1): Promise<TaskTreePageV1> {
     return this.session.readTreePage(query);

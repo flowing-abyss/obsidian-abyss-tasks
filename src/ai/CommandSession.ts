@@ -1,5 +1,6 @@
 import type {
   ApiResultV1,
+  ContentPlanV1,
   NoteReadPageV1,
   ProjectDtoV1,
   ReadTaskTreeV1,
@@ -18,8 +19,10 @@ import {
   type CommandJournalEntry,
   type CommandPendingTransition,
   type CommandPreparation,
+  type CommandRevealRequest,
   type CommandSessionOptions,
   type CommandSessionSnapshot,
+  type CommandStatusInput,
   type CommandStatusKind,
   type CommandSubmissionBasis,
   type CommandTransitionDisposition,
@@ -27,6 +30,9 @@ import {
 import { executeCommandWrites } from './commandWrites';
 import { providerFailure } from './providers/providerFailure';
 
+function statusNodes(tree: TaskTreeV1 | null): TaskTreeV1[] {
+  return tree === null ? [] : [tree, ...tree.children.flatMap(statusNodes)];
+}
 function detached<T>(value: T): T {
   return structuredClone(value);
 }
@@ -144,6 +150,13 @@ type VerifiedFocus =
   | { kind: 'task'; focus: CommandFocus; tree: TaskTreePageV1 }
   | { kind: 'project'; focus: CommandFocus; project: ProjectDtoV1 }
   | { kind: 'note'; focus: CommandFocus; note: NoteReadPageV1 };
+interface PendingReveal {
+  readonly request: CommandRevealRequest;
+  claimed: boolean;
+  readonly turn: AbortController;
+  readonly signal: AbortSignal;
+  settle(accepted: boolean): void;
+}
 export class CommandSession {
   private state: CommandSessionSnapshot;
   private readonly listeners = new Set<(state: CommandSessionSnapshot) => void>();
@@ -154,6 +167,7 @@ export class CommandSession {
   private writeAdmission: AbortController | undefined;
   private disposed = false;
   private focusRun = 0;
+  private pendingReveal: PendingReveal | undefined;
   private acceptance = 0;
   private queuedInput: string | undefined;
   private inputRevision = 0;
@@ -177,8 +191,24 @@ export class CommandSession {
       blocked: false,
     };
   }
+  private presentation: CommandSessionSnapshot['presentation'];
+  private presentationSession = '';
+  showChanges(signal: AbortSignal): void {
+    if (this.turn?.signal !== signal || signal.aborted) return;
+    this.presentationSession = this.state.id;
+    this.presentation = { proposalRevision: this.state.proposal.revision, changes: 'cumulative' };
+    this.publish({});
+  }
   snapshot(): CommandSessionSnapshot {
-    const copy = detached(this.state);
+    const copy = detached({
+      ...this.state,
+      ...(this.presentationSession === this.state.id &&
+      this.presentation?.proposalRevision === this.state.proposal.revision &&
+      this.state.proposal.changes.length > 0
+        ? { presentation: this.presentation }
+        : {}),
+      ...(this.pendingReveal === undefined ? {} : { reveal: this.pendingReveal.request }),
+    });
     freeze(copy);
     return copy;
   }
@@ -187,6 +217,9 @@ export class CommandSession {
     if (this.disposed || this.writing) return false;
     this.focusRun++;
     this.state = detached(snapshot);
+    Reflect.deleteProperty(this.state, 'reveal');
+    Reflect.deleteProperty(this.state, 'presentation');
+    this.presentation = undefined;
     if (historical) {
       const blocked = hasUnresolvedCommandWrites(snapshot);
       this.state = { ...this.state, blocked, recovery: blocked ? 'uncertain' : 'historical' };
@@ -314,6 +347,84 @@ export class CommandSession {
   }
   answer(): void {
     this.publish({ activeQuestion: null });
+  }
+  async requestReveal(
+    input: { target: string; revision: string },
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    const turn = this.turn,
+      id = this.state.id;
+    if (turn === undefined || signal.aborted || this.writing || this.readOnly()) return false;
+    const task = await commandRead(
+      this.options.api,
+      () => this.options.api.tasks.get(input.target),
+      signal,
+      { now: this.options.now, deadline: this.options.now() + 5000 },
+    );
+    if (task.target !== input.target || task.revision !== input.revision)
+      throw new CommandFailure(
+        'REVEAL_STALE',
+        'That task changed. Read it again before opening it.',
+      );
+    if (!this.currentRevealTurn(turn, id, signal)) return false;
+    return this.waitForReveal({ id: this.options.id(), sessionId: id, ...input }, turn, signal);
+  }
+  private waitForReveal(
+    request: CommandRevealRequest,
+    turn: AbortController,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    this.pendingReveal?.settle(false);
+    return new Promise((resolve) => {
+      const abort = (): void => {
+        pending.settle(false);
+      };
+      const pending: PendingReveal = {
+        request,
+        turn,
+        signal,
+        claimed: false,
+        settle: (accepted) => {
+          if (this.pendingReveal !== pending) return;
+          this.pendingReveal = undefined;
+          signal.removeEventListener('abort', abort);
+          resolve(accepted);
+          this.publish({});
+        },
+      };
+      this.pendingReveal = pending;
+      signal.addEventListener('abort', abort, { once: true });
+      this.status('thinking', 'Opening task…');
+    });
+  }
+  claimReveal(request: CommandRevealRequest): boolean {
+    const pending = this.matchingReveal(request);
+    if (pending === undefined || pending.claimed) return false;
+    pending.claimed = true;
+    return true;
+  }
+  private currentRevealTurn(turn: AbortController, id: string, signal: AbortSignal): boolean {
+    return this.current(id) && this.turn === turn && !signal.aborted;
+  }
+  private matchingReveal(request: CommandRevealRequest): PendingReveal | undefined {
+    const pending = this.pendingReveal;
+    if (
+      pending === undefined ||
+      !this.currentRevealTurn(pending.turn, request.sessionId, pending.signal)
+    )
+      return undefined;
+    const expected = pending.request;
+    return expected.id === request.id &&
+      expected.target === request.target &&
+      expected.revision === request.revision
+      ? pending
+      : undefined;
+  }
+  acknowledgeReveal(request: CommandRevealRequest, accepted: boolean): boolean {
+    const pending = this.matchingReveal(request);
+    if (pending?.claimed !== true) return false;
+    pending.settle(accepted);
+    return true;
   }
   async focus(
     target: CommandFocus | readonly CommandFocus[],
@@ -463,13 +574,16 @@ export class CommandSession {
       focus: { kind: 'note', target: note.note.target, revision: note.note.revision },
     };
   }
-  private taskFocusBasis(
-    target: Extract<CommandFocus, { kind: 'task' }>,
-  ): Extract<CommandFocus, { kind: 'task' }> {
+  private taskFocusBasis(target: Extract<CommandFocus, { kind: 'task' }>): {
+    focus: Extract<CommandFocus, { kind: 'task' }>;
+    side: 'before' | 'after';
+  } {
     const matches = this.state.proposal.changes.flatMap((change) => {
-      if (change.kind !== 'task') return [];
-      const node = focusNode(change.plan.after, target.target);
-      return node === undefined ? [] : [{ plan: change.plan, node }];
+      if (change.kind !== 'task' && change.kind !== 'cleanup') return [];
+      const after = focusNode(change.plan.after, target.target);
+      const node = after ?? focusNode(change.plan.before, target.target);
+      const side = after === undefined ? ('before' as const) : ('after' as const);
+      return node === undefined ? [] : [{ plan: change.plan, node, side }];
     });
     const match =
       target.plan === undefined
@@ -480,7 +594,7 @@ export class CommandSession {
       matches.length === 0 &&
       target.expectedPlanRevision === undefined
     )
-      return target;
+      return { focus: target, side: 'after' };
     if (
       match === undefined ||
       (target.plan === undefined && matches.length !== 1) ||
@@ -491,17 +605,20 @@ export class CommandSession {
         'Use the exact current proposal and node for draft selection.',
       );
     return {
-      kind: 'task',
-      target: target.target,
-      plan: match.plan.target,
-      expectedPlanRevision: match.plan.revision,
+      focus: {
+        kind: 'task',
+        target: target.target,
+        plan: match.plan.target,
+        expectedPlanRevision: match.plan.revision,
+      },
+      side: match.side,
     };
   }
   private async verifyTaskFocus(
     requested: Extract<CommandFocus, { kind: 'task' }>,
     read: <T>(work: () => Promise<ApiResultV1<T>>) => Promise<T>,
   ): Promise<VerifiedFocus> {
-    const target = this.taskFocusBasis(requested);
+    const { focus: target, side } = this.taskFocusBasis(requested);
     const acceptedBasis =
       target.revision === undefined ? {} : { expectedRevision: target.revision };
     const tree = await read(() =>
@@ -512,7 +629,7 @@ export class CommandSession {
           : {
               plan: target.plan,
               expectedPlanRevision: required(target.expectedPlanRevision),
-              side: 'after' as const,
+              side,
             }),
         limit: 50,
       }),
@@ -617,6 +734,91 @@ export class CommandSession {
       ),
     });
   }
+  updateContext(context: string): void {
+    if (!this.disposed) this.publish({ context: context.slice(0, 8000) });
+  }
+  async stageStatus(input: CommandStatusInput): Promise<boolean> {
+    const basis = this.state;
+    if (!this.canStageStatus(basis)) return false;
+    const change = basis.proposal.changes.find(
+      (entry) => entry.kind === 'task' && entry.plan.target === input.plan,
+    );
+    if (change?.kind !== 'task' || change.plan.revision !== input.expectedPlanRevision)
+      return false;
+    if (!this.draftStatusMatches(change.plan, input)) return false;
+    try {
+      return await this.applyDraftStatus(change.plan, input, basis);
+    } catch (error) {
+      if (this.current(basis.id))
+        this.status(
+          'error',
+          error instanceof CommandFailure ? error.message : 'Could not change the draft status.',
+        );
+      return false;
+    }
+  }
+  private canStageStatus(basis: CommandSessionSnapshot): boolean {
+    return (
+      this.canApplyStatus(basis) && this.turn === undefined && this.state.pendingTransition == null
+    );
+  }
+  private draftStatusMatches(plan: ContentPlanV1, input: CommandStatusInput): boolean {
+    return (
+      statusNodes(plan.after).find((node) => node.target === input.target)?.revision ===
+      input.revision
+    );
+  }
+  private async applyDraftStatus(
+    current: ContentPlanV1,
+    input: CommandStatusInput,
+    basis: CommandSessionSnapshot,
+  ): Promise<boolean> {
+    const existing =
+      statusNodes(current.before).some((entry) => entry.target === input.target) ||
+      current.copies?.some((copy) =>
+        copy.tasks.some((task) => task.destinationTarget === input.target),
+      ) === true;
+    if (existing) this.stageLifecycleStatus(input);
+    else {
+      const request = {
+        kind: 'append' as const,
+        plan: input.plan,
+        expectedPlanRevision: input.expectedPlanRevision,
+        operation: {
+          type: 'set-initial-status' as const,
+          target: input.target,
+          symbol: input.symbol,
+        },
+      };
+      const result = await required(this.options.api.tasks.prepare)(request);
+      if (!result.ok) throw new CommandFailure(result.error.code, result.error.message);
+      const plan = await canonicalCommandPlan(
+        this.options.api,
+        result.value,
+        new AbortController().signal,
+        { now: this.options.now, deadline: this.options.now() + 5000 },
+      );
+      if (!this.canApplyStatus(basis)) return false;
+      this.stage({ kind: 'task', plan }, 1, [{ kind: 'task', input: request }]);
+    }
+    return true;
+  }
+  stageLifecycleStatus(input: {
+    target: string;
+    revision: string;
+    symbol: string;
+    plan?: string | undefined;
+  }): void {
+    this.stage({
+      kind: 'status',
+      target: input.target,
+      revision: input.revision,
+      symbol: input.symbol,
+      ...(input.plan === undefined ? {} : { plan: input.plan }),
+      nuance:
+        'Status uses ordinary completion, recurrence, deletion, timer and blocker rules after the content is saved.',
+    });
+  }
   setInput(text: string): void {
     this.inputRevision++;
     this.publish({ input: text });
@@ -626,9 +828,12 @@ export class CommandSession {
       exchanges: [...this.state.exchanges, { role, text }],
     });
   }
-  stage(change: CommandChange, operations = 1): void {
-    if (this.disposed || this.writing || this.readOnly() || this.state.pendingTransition != null)
-      throw new CommandFailure('BUSY', 'Resolve the previous write before changing this proposal.');
+  stage(
+    change: CommandChange,
+    operations = 1,
+    preparations: ReadonlyArray<Extract<CommandPreparation, { kind: 'task' }>> = [],
+  ): void {
+    this.requireStageable();
     validateChange(change);
     const changes = [...this.state.proposal.changes];
     const index = changes.findIndex((c) => changeKey(c) === changeKey(change));
@@ -645,6 +850,7 @@ export class CommandSession {
     if (count > 50 || !validOperationBudget(this.state.proposal.operations, operations))
       throw new CommandFailure('BUDGET', 'This proposal is too large. Save or split it first.');
     this.publish({
+      preparations: [...(this.state.preparations ?? []), ...preparations],
       focus:
         change.kind === 'task'
           ? this.state.focus.flatMap((entry): CommandFocus[] => {
@@ -675,6 +881,10 @@ export class CommandSession {
       activeQuestion: null,
       status: { kind: 'ready', message: 'Ready for review.' },
     });
+  }
+  private requireStageable(): void {
+    if (this.disposed || this.writing || this.readOnly() || this.state.pendingTransition != null)
+      throw new CommandFailure('BUSY', 'Resolve the previous write before changing this proposal.');
   }
   async submit(text: string, submittedAgainst?: CommandSubmissionBasis): Promise<void> {
     if (this.disposed) return;
@@ -719,6 +929,7 @@ export class CommandSession {
       this.status('error', 'Finish or reconcile the previous operation first.');
       return;
     }
+    this.presentation = undefined;
     this.setInput(text);
     this.exchange('user', text);
     const controller = new AbortController();
@@ -758,6 +969,7 @@ export class CommandSession {
     }
     const active = this.turn !== undefined;
     this.turn?.abort();
+    this.pendingReveal?.settle(false);
     this.writeAdmission?.abort();
     if (active && !this.writing && this.state.activeQuestion === null)
       this.status('ready', 'Stopped. Your draft is retained.');
@@ -1050,6 +1262,7 @@ export class CommandSession {
     if (this.disposed) return;
     this.disposed = true;
     this.turn?.abort();
+    this.pendingReveal?.settle(false);
     this.writeAdmission?.abort();
     this.listeners.clear();
     if (!this.writing) this.options.api.dispose();

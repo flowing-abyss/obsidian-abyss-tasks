@@ -250,6 +250,10 @@ export const runtimeFamilies = [
 export const taskMetadataColorContract = {
   variable: '--abyss-tag-color',
   producer: 'src/ui/taskMetadataContent.ts',
-  consumers: ['src/panels/center/TaskCardRenderer.ts', 'src/ui/taskCapture/CaptureMetadataRow.ts'],
+  consumers: [
+    'src/panels/center/TaskCardRenderer.ts',
+    'src/ui/taskCapture/CaptureMetadataRow.ts',
+    'src/ui/taskMetadataDisplay.ts',
+  ],
   selector: '.abyss-task-tag--colored',
 };

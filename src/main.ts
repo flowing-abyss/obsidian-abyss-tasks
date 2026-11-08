@@ -113,6 +113,7 @@ import {
   type TaskSourceMetadata,
 } from './tasks/infrastructure/TaskIndex';
 import { TaskRefAuthority } from './tasks/infrastructure/TaskRefAuthority';
+import type { CommandSurfaceMemory } from './ui/commandMode/CommandModeSurface';
 import { presentTaskCommandResult } from './ui/taskCommandResult';
 import { ReminderAudio } from './ui/timeTracking/ReminderAudio';
 import { TimeTrackingReminder } from './ui/timeTracking/TimeTrackingReminder';
@@ -171,6 +172,12 @@ export default class TaskCalendarPlugin extends Plugin {
 
   providerSecrets!: ProviderSecrets;
   providerConnections!: ProviderConnections;
+  private readonly commandSurfaceMemory: CommandSurfaceMemory = {
+    active: false,
+    selectionStart: 0,
+    selectionEnd: 0,
+    scrollTop: 0,
+  };
   private commandSessionOwner: CommandSessionOwner | undefined = undefined;
   private readonly commandRuntimes = new Set<CommandSession>();
 
@@ -498,6 +505,12 @@ export default class TaskCalendarPlugin extends Plugin {
           this.search,
           this.taskStatistics,
           this.taskInputServices,
+          {
+            owner: () => this.getCommandSessionOwner(),
+            memory: this.commandSurfaceMemory,
+            nativeTarget: (target, revision) =>
+              this.taskApiProvider?.nativeTaskTarget(target, revision),
+          },
         ),
     );
   }
@@ -598,6 +611,7 @@ export default class TaskCalendarPlugin extends Plugin {
 
   override onunload(): void {
     this.commandSessionOwner?.dispose();
+    this.commandSurfaceMemory.presentation?.clear();
     this.commandSessionOwner = undefined;
     for (const session of this.commandRuntimes) session.dispose();
     this.commandRuntimes.clear();

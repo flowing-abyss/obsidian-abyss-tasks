@@ -2884,7 +2884,8 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 .abyss-task-card:focus-visible,
-.abyss-search-context .abyss-subtask-row:focus-visible {
+.abyss-search-context .abyss-subtask-row:focus-visible,
+.abyss-command-tree .abyss-subtask-row:focus-visible {
   outline: 1px solid var(--background-modifier-border-focus);
   outline-offset: -1px;
 }
@@ -3100,7 +3101,8 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   margin-top: var(--size-2-1);
 }
 
-.abyss-task-card .abyss-search-context .abyss-task-desc {
+.abyss-task-card .abyss-search-context .abyss-task-desc,
+.abyss-command-tree .abyss-task-card .abyss-task-desc {
   line-height: 1.3;
   white-space: normal;
   overflow-wrap: anywhere;
@@ -3108,28 +3110,35 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
 /* Search children reuse the card marker's baseline strut at the child title's smaller cap
    height. Align to that first title line even when descriptions or semantic chips add rows. */
-.abyss-task-card .abyss-search-context .abyss-subtask-row {
+.abyss-task-card .abyss-search-context .abyss-subtask-row,
+.abyss-command-tree .abyss-task-card .abyss-subtask-row {
   --abyss-task-card-title-line: calc(var(--font-ui-small) * var(--line-height-tight));
 
   align-items: baseline;
 }
 
-.abyss-search-context .abyss-task-body {
+.abyss-search-context .abyss-task-body,
+.abyss-command-tree .abyss-task-body {
   flex: 1 1 auto;
 }
 
-.abyss-search-context .abyss-subtask-title-row {
+.abyss-search-context .abyss-subtask-title-row,
+.abyss-command-tree .abyss-subtask-title-row {
   font-size: var(--font-ui-small);
   line-height: var(--line-height-tight);
 }
 
-.abyss-task-card .abyss-search-context .abyss-status-marker::before {
+.abyss-task-card .abyss-search-context .abyss-status-marker::before,
+.abyss-command-tree .abyss-subtask-row .abyss-status-marker::before {
   block-size: calc(2 * var(--font-ui-small) * var(--abyss-task-card-cap-ratio));
 }
 
 .abyss-task-card .abyss-search-context > .abyss-subtask-content,
 .abyss-task-card .abyss-search-context .abyss-subtask-content > .abyss-subtask-content,
-.abyss-task-card .abyss-search-context .abyss-comment-row {
+.abyss-task-card .abyss-search-context .abyss-comment-row,
+.abyss-command-tree .abyss-task-card > .abyss-subtask-content,
+.abyss-command-tree .abyss-subtask-content > .abyss-subtask-content,
+.abyss-command-tree .abyss-comment-row {
   margin-inline-start: var(--size-4-3);
   margin-top: var(--size-4-1);
 }
@@ -11328,7 +11337,10 @@ button.abyss-statistics-evidence-action:hover {
   pointer-events: none;
 }
 
-.abyss-task-card .abyss-search-context .abyss-comment-row {
+.abyss-task-card .abyss-search-context .abyss-comment-row,
+.abyss-command-tree .abyss-task-card > .abyss-subtask-content,
+.abyss-command-tree .abyss-subtask-content > .abyss-subtask-content,
+.abyss-command-tree .abyss-comment-row {
   border: none;
   background: transparent;
   border-radius: 0;
@@ -12125,4 +12137,209 @@ button.abyss-calendar-date[aria-pressed='true'] {
   line-clamp: 2;
   color: var(--text-muted);
   font-size: var(--font-ui-small);
+}
+
+/* Q keeps the native capture shell and task rows in both capture modes. */
+.abyss-capture-input-shell {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  min-width: 0;
+  border: 1.5px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-primary);
+  box-shadow: var(--shadow-s, none);
+}
+
+.abyss-capture-input-shell:focus-within {
+  border-color: var(--interactive-accent);
+}
+
+.abyss-capture-input-shell .abyss-capture-input {
+  flex: 1 1 15rem;
+  width: auto;
+  min-width: 0;
+  min-height: var(--input-height);
+  max-height: 10rem;
+  resize: none;
+  border: 0;
+  box-shadow: none;
+  font-family: inherit;
+  line-height: var(--line-height-normal);
+}
+
+.abyss-command-toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  margin-inline-start: auto;
+  gap: var(--size-2-1);
+  padding: var(--size-2-1);
+}
+
+.abyss-command-toolbar button[aria-pressed='true'] {
+  color: var(--text-accent);
+  background: var(--background-modifier-hover);
+}
+
+.abyss-command-phase,
+.abyss-command-content {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.abyss-command-phase,
+.abyss-command-latest,
+.abyss-command-question {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  padding-inline: var(--size-4-2);
+}
+
+.abyss-command-content {
+  container-type: inline-size;
+  container-name: abyss-task-list;
+  max-height: min(60vh, 32rem);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.abyss-command-latest,
+.abyss-command-question {
+  margin-block: var(--size-4-2);
+}
+
+.abyss-command-question {
+  color: var(--text-normal);
+}
+
+.abyss-command-tree .abyss-task-card {
+  margin: 0;
+}
+
+.abyss-command-tree [data-change='removed'],
+.abyss-command-projects [data-change='removed'] {
+  color: var(--text-muted);
+  text-decoration: line-through;
+  pointer-events: none;
+}
+
+/* Static cues survive reduced motion and the brief background transition. */
+.abyss-command-tree
+  :is(
+    .abyss-task-title-row,
+    .abyss-subtask-title-row,
+    .abyss-comment-row,
+    .abyss-task-desc
+  )[data-change='added']::before {
+  content: '+';
+  color: var(--text-muted);
+  margin-inline-end: var(--size-2-1);
+}
+
+.abyss-command-tree
+  :is(
+    .abyss-task-title-row,
+    .abyss-subtask-title-row,
+    .abyss-comment-row,
+    .abyss-task-desc
+  )[data-change='removed']::before {
+  content: '−';
+  margin-inline-end: var(--size-2-1);
+}
+
+.abyss-command-tree [data-change='changed'],
+.abyss-command-projects [data-change='changed'],
+.abyss-command-tree ins.abyss-text-difference,
+.abyss-command-projects ins.abyss-text-difference {
+  background-color: var(--background-modifier-hover);
+  text-decoration: none;
+  border-radius: var(--radius-s);
+}
+
+.abyss-command-tree del.abyss-text-difference,
+.abyss-command-projects del.abyss-text-difference {
+  margin-inline-end: var(--size-2-1);
+  color: var(--text-muted);
+  text-decoration: line-through;
+  pointer-events: none;
+}
+
+.abyss-command-tree [data-change='added'],
+.abyss-command-tree [data-change='changed'],
+.abyss-command-projects [data-change='changed'] {
+  animation: abyss-command-change 180ms ease-out;
+}
+
+@keyframes abyss-command-change {
+  from {
+    background-color: var(--background-modifier-hover);
+  }
+
+  to {
+    background-color: transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .abyss-command-tree [data-change],
+  .abyss-command-projects [data-change] {
+    animation: none;
+  }
+}
+
+.abyss-command-tree .abyss-task-card-main-row.is-selected {
+  background: var(--background-modifier-active-hover);
+  border-radius: var(--radius-s);
+}
+
+.abyss-capture-surface--command > :is(.abyss-capture-metadata, .abyss-capture-error),
+.abyss-command-tree .abyss-task-meta-right[hidden] {
+  display: none;
+}
+
+.abyss-command-tree .abyss-task-meta-right > .abyss-task-meta-right {
+  block-size: auto;
+}
+
+.abyss-command-history-menu {
+  max-inline-size: min(32rem, calc(100vw - var(--size-4-4)));
+  max-block-size: calc(100dvh - var(--size-4-4));
+  overflow-y: auto;
+}
+
+.abyss-command-history-menu .menu-item-title {
+  min-inline-size: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.abyss-command-projects .abyss-project-dashboard-property {
+  flex-basis: 100%;
+  min-inline-size: 0;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--size-2-1);
+  font-size: var(--font-ui-small);
+}
+
+.abyss-command-projects .abyss-project-description {
+  margin: 0;
+}
+
+.abyss-command-projects .abyss-project-dashboard-header {
+  flex-wrap: wrap;
+}
+
+.abyss-command-projects :is(.abyss-project-dashboard-status, .abyss-project-dashboard-date) {
+  flex: 0 0 auto;
+  max-inline-size: 100%;
+}
+
+.abyss-command-projects .abyss-project-dashboard-title {
+  flex: 1 1 10rem;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
 }

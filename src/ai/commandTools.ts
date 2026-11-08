@@ -149,10 +149,18 @@ class CommandToolOwner {
       deadline: this.ctx.deadline,
     });
   }
-  private async stageTask(plan: ContentPlanV1, operations = 1): Promise<void> {
+  private async stageTask(
+    plan: ContentPlanV1,
+    operations = 1,
+    preparations: ReadonlyArray<z.infer<typeof prepareSchema>> = [],
+  ): Promise<void> {
     const canonical = await this.canonicalPlan(plan);
     this.ctx.signal.throwIfAborted();
-    this.ctx.session.stage({ kind: 'task', plan: canonical }, operations);
+    this.ctx.session.stage(
+      { kind: 'task', plan: canonical },
+      operations,
+      preparations.map((input) => ({ kind: 'task', input })),
+    );
   }
   private async currentNode(target: string): Promise<TaskTreeV1> {
     for (const tree of this.ctx.session.snapshot().trees) {
@@ -439,8 +447,7 @@ class CommandToolOwner {
           const request = await this.preserveRewrite(original, removeAnnotations);
           const plan = await this.readPublic(() => required(this.ctx.api.tasks.prepare)(request));
           this.ctx.signal.throwIfAborted();
-          await this.stageTask(plan);
-          this.ctx.session.prepared({ kind: 'task', input: prepareSchema.parse(request) });
+          await this.stageTask(plan, 1, [prepareSchema.parse(request)]);
           return planToolOutput(plan);
         }),
     });
@@ -515,10 +522,11 @@ class CommandToolOwner {
     }
     this.ctx.signal.throwIfAborted();
     const plan = required(prepared[prepared.length - 1]);
-    await this.stageTask(plan, operations.length);
-    inputs.forEach((request) => {
-      this.ctx.session.prepared({ kind: 'task', input: prepareSchema.parse(request) });
-    });
+    await this.stageTask(
+      plan,
+      operations.length,
+      inputs.map((request) => prepareSchema.parse(request)),
+    );
     return planToolOutput(plan);
   }
   status(): Tool {
@@ -534,15 +542,7 @@ class CommandToolOwner {
               'REVISION_CONFLICT',
               'The selected task changed. Read it again.',
             );
-          this.ctx.session.stage({
-            kind: 'status',
-            target: input.target,
-            revision: input.revision,
-            symbol: input.symbol,
-            ...(input.plan === undefined ? {} : { plan: input.plan }),
-            nuance:
-              'Status uses ordinary completion, recurrence, deletion, timer and blocker rules after the content is saved.',
-          });
+          this.ctx.session.stageLifecycleStatus(input);
           return { pendingStatus: input.symbol, target: input.target };
         }),
     });
@@ -754,6 +754,8 @@ class CommandToolOwner {
               'The requested selection could not be verified. The earlier focus is retained.',
             );
           }
+          await this.reveal(input);
+
           this.ctx.signal.throwIfAborted();
           this.ctx.done = true;
           this.ctx.session.exchange('agent', input.message);
@@ -770,5 +772,13 @@ class CommandToolOwner {
           return { finished: true };
         }),
     });
+  }
+  private async reveal(input: z.infer<typeof finishSchema>): Promise<void> {
+    if (input.state !== 'ready') return;
+    if (input.presentation === 'cumulative') this.ctx.session.showChanges(this.ctx.signal);
+    if (input.reveal === undefined) return;
+    if (await this.ctx.session.requestReveal(input.reveal, this.ctx.signal)) return;
+    this.ctx.signal.throwIfAborted();
+    throw new CommandFailure('REVEAL', 'Could not open that task in the current view.');
   }
 }

@@ -460,7 +460,10 @@ export type HistoricalCommandReceipt =
 export interface HistoricalCommandJournalEntry extends Omit<CommandJournalEntry, 'receipt'> {
   readonly receipt?: HistoricalCommandReceipt;
 }
-export interface HistoricalCommandSnapshot extends Omit<CommandSessionSnapshot, 'journal'> {
+export interface HistoricalCommandSnapshot extends Omit<
+  CommandSessionSnapshot,
+  'journal' | 'reveal' | 'presentation'
+> {
   readonly journal: readonly HistoricalCommandJournalEntry[];
 }
 

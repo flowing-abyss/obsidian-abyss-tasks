@@ -410,31 +410,34 @@ it('cancellation during archive persistence cannot select an unaccepted new sess
   expect(h.store.activeId()).toBe(id);
 });
 
-it('retains newer unsent input while a hidden admitted write settles exactly once', async () => {
-  const h = await setup();
-  await stageCreate(h);
-  h.owner.setInput('The confirmed command');
-  const admitted = deferred<void>(),
-    finish = deferred<void>();
-  h.aroundCreate(async (write) => {
-    const result = await write();
-    admitted.resolve();
-    await finish.promise;
-    return result;
-  });
-  const writing = h.owner.confirm();
-  await admitted.promise;
-  const unsent = 'Next instruction, still unsent';
-  h.owner.setInput(unsent);
-  await h.owner.hide();
-  finish.resolve();
-  expect(await writing).toBe(true);
-  expect(h.owner.open().input).toBe(unsent);
-  expect(h.owner.snapshot().actual[0]?.title).toBe('Created once');
-  expect((await h.read('a.md')).match(/Created once/g)).toHaveLength(1);
-  const restored = h.createOwner().owner;
-  expect(restored.snapshot().input).toBe(unsent);
-});
+it.each(['hide', 'stop'] as const)(
+  'retains newer unsent input while %s lets an admitted write settle exactly once',
+  async (action) => {
+    const h = await setup();
+    await stageCreate(h);
+    h.owner.setInput('The confirmed command');
+    const admitted = deferred<void>(),
+      finish = deferred<void>();
+    h.aroundCreate(async (write) => {
+      const result = await write();
+      admitted.resolve();
+      await finish.promise;
+      return result;
+    });
+    const writing = h.owner.confirm();
+    await admitted.promise;
+    const unsent = 'Next instruction, still unsent';
+    h.owner.setInput(unsent);
+    await h.owner[action]();
+    finish.resolve();
+    expect(await writing).toBe(true);
+    expect(h.owner.open().input).toBe(unsent);
+    expect(h.owner.snapshot().actual[0]?.title).toBe('Created once');
+    expect((await h.read('a.md')).match(/Created once/g)).toHaveLength(1);
+    const restored = h.createOwner().owner;
+    expect(restored.snapshot().input).toBe(unsent);
+  },
+);
 
 it('retains a submitted follow-up while a menu-confirmed write is still settling', async () => {
   const h = await setup();

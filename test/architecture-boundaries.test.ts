@@ -349,6 +349,8 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
     'src/panels/right/InspectorSections.ts',
   ],
   TaskPlanning: ['src/views/calendarOccurrences.ts', 'src/task-lists/taskNodeMembership.ts'],
+  DurationMinutes: ['src/ui/taskMetadataDisplay.ts'],
+  formatDurationMinutes: ['src/ui/taskMetadataDisplay.ts'],
   TaskStatus: ['src/task-lists/taskNodeMembership.ts'],
   taskNodeSourceLine: [
     'src/ui/timedBlockKeyboardQueue.ts',

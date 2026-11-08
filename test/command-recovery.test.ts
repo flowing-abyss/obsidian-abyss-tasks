@@ -571,3 +571,16 @@ it('a direct origin is restricted to status and never suppresses actual uncertai
     }),
   ).toThrow();
 });
+
+it('never restores a native reveal request from local history', () => {
+  const projected = projectCommandSnapshot({
+    ...emptySnapshot(),
+    reveal: {
+      id: 'old-reveal',
+      sessionId: 'session',
+      target: 'old-target',
+      revision: 'old-revision',
+    },
+  });
+  expect(projected).not.toHaveProperty('reveal');
+});

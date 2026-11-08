@@ -85,6 +85,13 @@ export interface CommandExchange {
   readonly role: 'user' | 'agent';
   readonly text: string;
 }
+export interface CommandStatusInput {
+  readonly target: string;
+  readonly revision: string;
+  readonly symbol: string;
+  readonly plan: string;
+  readonly expectedPlanRevision: string;
+}
 export interface CommandSubmissionBasis {
   readonly sessionId: string;
   readonly proposalRevision: number;
@@ -100,7 +107,15 @@ export type CommandTransitionDisposition = 'save' | 'keep' | 'discard' | 'cancel
 export type CommandPreparation =
   | { readonly kind: 'task'; readonly input: z.output<typeof prepareSchema> }
   | { readonly kind: 'note'; readonly input: z.output<typeof notePrepareSchema> };
+export interface CommandRevealRequest {
+  readonly id: string;
+  readonly sessionId: string;
+  readonly target: string;
+  readonly revision: string;
+}
 export interface CommandSessionSnapshot {
+  readonly reveal?: CommandRevealRequest;
+  readonly presentation?: { readonly proposalRevision: number; readonly changes: 'cumulative' };
   readonly uncertaintyAcknowledged?: boolean;
   readonly recovery?: 'live' | 'historical' | 'reviewing' | 'uncertain';
   readonly preparations?: readonly CommandPreparation[];

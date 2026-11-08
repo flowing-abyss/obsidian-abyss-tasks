@@ -172,7 +172,23 @@ const selection = z
   .max(5)
   .optional();
 export const finishSchema = z.discriminatedUnion('state', [
-  z.strictObject({ state: z.literal('ready'), message: z.string().min(1).max(160), selection }),
+  z.strictObject({
+    state: z.literal('ready'),
+    message: z.string().min(1).max(160),
+    selection,
+    presentation: z
+      .enum(['cumulative'])
+      .optional()
+      .describe(
+        'Only when the user asks to show all changes in the current unsaved proposal; display the cumulative diff in the existing tree.',
+      ),
+    reveal: z
+      .strictObject({ target: handle, revision: handle })
+      .optional()
+      .describe(
+        'Only an explicit user request to open or reveal one saved task in the native inspector. Ordinary working selection does not reveal. The application verifies the target and acknowledges native navigation before completion; never use a draft target.',
+      ),
+  }),
   z.strictObject({
     state: z.literal('question'),
     message: z.string().min(1).max(240),

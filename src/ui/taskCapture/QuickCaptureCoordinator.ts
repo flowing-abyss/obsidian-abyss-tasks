@@ -6,13 +6,18 @@ import type { InteractionOwnershipPort } from '../interactionOwnership';
 import { runAsyncAction } from '../runAsyncAction';
 import { describeTaskCreationResult, type CreationResultDescription } from '../taskCommandResult';
 import { CaptureRevealIntent, type CaptureRevealAuthority } from './CaptureRevealIntent';
-import { CaptureSurface } from './CaptureSurface';
+import { CaptureSurface, type CaptureExtension, type CaptureExtensionHost } from './CaptureSurface';
 import type { CaptureContext, CaptureTarget } from './CaptureTargetResolver';
 import { TaskCaptureController, type CaptureSmartOptions } from './TaskCaptureController';
 
 export type QuickCapturePhase = 'closed' | 'resolving' | 'open';
 
 interface QuickCaptureCoordinatorOptions {
+  readonly command?: {
+    readonly active: () => boolean;
+    readonly mount: (host: CaptureExtensionHost, close: () => void) => CaptureExtension;
+    readonly hide: () => void;
+  };
   readonly app?: App;
   readonly smart?: CaptureSmartOptions;
   readonly getTagColor?: (tag: string) => string | undefined;
@@ -184,9 +189,18 @@ export class QuickCaptureCoordinator {
 
   private mountSurface(controller: TaskCaptureController, generation: number): CaptureSurface {
     const surfaceGeneration = ++this.surfaceGeneration;
+    const command = this.options.command;
     return new CaptureSurface(this.options.host, controller, {
       ...(this.options.app === undefined ? {} : { app: this.options.app }),
       closeOnEmptyBlur: false,
+      ...(command === undefined
+        ? {}
+        : {
+            extend: (host: CaptureExtensionHost) =>
+              command.mount(host, () => {
+                if (this.generation === generation) this.releaseCurrentGeneration(true);
+              }),
+          }),
       ...(this.options.getTagColor === undefined ? {} : { getTagColor: this.options.getTagColor }),
       ...(this.options.formatDate === undefined ? {} : { formatDate: this.options.formatDate }),
       ...(this.options.shouldShowSourceNote === undefined
@@ -222,6 +236,7 @@ export class QuickCaptureCoordinator {
     if (!this.isOutsideCurrentCapture(event, generation)) return;
 
     this.restoreFocusOnClose = false;
+    if (this.options.command?.active() === true) return;
     if (this.currentPhase === 'resolving') {
       this.releaseCurrentGeneration(false);
       return;
@@ -231,11 +246,15 @@ export class QuickCaptureCoordinator {
     const surface = this.surface;
     if (controller == null || surface == null) return;
     const snapshot = controller.snapshot();
-    if (snapshot.phase === 'submitting' || snapshot.draft.trim().length === 0) {
+    if (this.shouldCloseOutside(snapshot)) {
       controller.escape();
     } else if (ownerDocument.activeElement === surface.input) {
       runAsyncAction(controller.submit('blur'), 'Could not add quick-capture task');
     }
+  }
+
+  private shouldCloseOutside(snapshot: ReturnType<TaskCaptureController['snapshot']>): boolean {
+    return snapshot.phase === 'submitting' || snapshot.draft.trim().length === 0;
   }
 
   private isOutsideCurrentCapture(event: Event, generation: number): boolean {
@@ -277,6 +296,7 @@ export class QuickCaptureCoordinator {
     this.revealIntent?.unmount();
     this.revealIntent = null;
     outsidePointerCleanup?.();
+    if (this.options.command?.active() === true) this.options.command.hide();
     surface?.destroy();
     controller?.destroy();
     ownershipToken?.release();

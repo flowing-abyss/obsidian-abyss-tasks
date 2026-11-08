@@ -23,7 +23,7 @@ type DateRole = Extract<TaskInputAction, { type: 'select-date' }>['role'];
 interface MetadataRowOptions {
   readonly boundary: CaptureInteractionBoundary;
   readonly controller: TaskCaptureController;
-  readonly input: HTMLInputElement;
+  readonly input: HTMLInputElement | HTMLTextAreaElement;
   readonly flushInput: () => 'ready' | 'blocked';
   readonly isLive: () => boolean;
   readonly getTagColor?: (tag: string) => string | undefined;
