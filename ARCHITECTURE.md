@@ -110,6 +110,11 @@ model cannot classify remains a cleanup limit. The report is evidence at one can
 transaction or permission to delete: consumers still require a known destination receipt and
 readback before separately guarded source removal.
 
+Cross-file description assessment uses the same strict source-reference scanner as native source
+transfer. Links, embeds, images and unclassified reference syntax hold cleanup without an equivalent
+destination proof; code literals remain ordinary description data. Editable-link parsing grants no
+preservation evidence.
+
 Canonical single-root edits and task insertions also prove untouched sibling roots from their exact exterior bytes and
 physical line displacement. The repository validates their accepted revisions and passes them through
 the existing TaskRefAuthority transition and occurrence witnesses, including duplicate full blocks and

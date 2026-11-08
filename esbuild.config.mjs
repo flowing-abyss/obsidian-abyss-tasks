@@ -1,4 +1,4 @@
-// Prepared initial status, source-copy witnesses and merge inventory: 3,520,640 -> 3,544,336 bytes (+23,696).
+// Prepared initial status, source-copy witnesses and merge inventory: 3,520,640 -> 3,544,410 bytes (+23,770).
 // No new dependencies; measured licensed artifact uses the minimal 3,545,088-byte (3462 KiB) cap, below 5,000,000 bytes.
 // Explicit provider factories and native SecretStorage: 2,478,468 -> 3,520,640 bytes, including installed notices.
 // Minimal containing budget 3,521,536 bytes (3439 KiB), below 5,000,000 bytes.

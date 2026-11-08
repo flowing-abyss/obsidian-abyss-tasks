@@ -1543,3 +1543,43 @@ it.each([true, false])(
     expect(ok(await copy(required(live.comments[0]).target)).copies?.[0]?.state).toBe('retained');
   },
 );
+
+it.each(['![[#Section]]', '![photo](./photo.png)', '[[#Section]]'])(
+  'does not certify cross-file flat merge description reference %s',
+  async (description) => {
+    const sourceText = `- [ ] Same\n\t- > ${description}\n\n# Section\nSource\n`;
+    const targetText = `- [ ] Same\n\t- > ${description}\n\n# Section\nDestination\n`;
+    const h = await publicApiHarness({ 'A/source.md': sourceText, 'B/target.md': targetText });
+    owners.push(h);
+    const c = h.client();
+    const roots = ok(await c.tasks.list()).items;
+    const source = required(roots.find((r) => r.source.path === 'A/source.md'));
+    const target = required(roots.find((r) => r.source.path === 'B/target.md'));
+    const p = ok(
+      await required(c.tasks.prepare)({
+        kind: 'edit',
+        target: target.target,
+        expectedRevision: target.revision,
+      }),
+    );
+    const report = ok(
+      await required(c.tasks.prepare)({
+        kind: 'append',
+        plan: p.target,
+        expectedPlanRevision: p.revision,
+        operation: {
+          type: 'assess-merge',
+          source: source.target,
+          expectedSourceRevision: source.revision,
+          target: required(p.after ?? undefined).target,
+        },
+      }),
+    ).mergePreservation;
+    expect(report?.state).toBe('held');
+    expect(report?.entries).toContainEqual(
+      expect.objectContaining({ kind: 'constraint', field: 'description-links', state: 'held' }),
+    );
+    expect(await h.read('A/source.md')).toBe(sourceText);
+    expect(await h.read('B/target.md')).toBe(targetText);
+  },
+);

@@ -436,3 +436,19 @@ it('holds anchored comment copies whose identity cannot safely be duplicated', a
     ).type,
   ).toBe('invalid');
 });
+
+it.each(['![[#Section]]', '![photo](./photo.png)', '[[#Section]]', '[photo][local]'])(
+  'holds cross-file description reference meaning for %s',
+  async (description) => {
+    const content = `- [ ] Same\n\t- > ${description}\n`;
+    const h = await taskEditPreparationHarness(content, { files: { 'z-source.md': content } });
+    const source = expectDefined(h.index.list({ filePath: 'z-source.md' })[0]);
+    const p = ready(await h.service.prepare(h.root, []));
+    const report = await p.assessMerge({ type: 'task', ref: source.ref });
+    expect(report?.state).toBe('held');
+    expect(report?.entries).toContainEqual(
+      expect.objectContaining({ kind: 'constraint', field: 'description-links', state: 'held' }),
+    );
+    expect(h.writes).not.toHaveBeenCalled();
+  },
+);

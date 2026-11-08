@@ -1,4 +1,4 @@
-import { parseLinks } from '../../../markdown/links';
+import { isSourceReferenceFree } from '../../../markdown/sourceReferences';
 import type {
   TaskMergePreservation,
   TaskMergePreservationEntry,
@@ -312,14 +312,14 @@ export function assessTaskMerge(
   );
   if (
     source.ref.filePath !== destination.ref.filePath &&
-    parseLinks(source.description ?? '').length > 0
+    !isSourceReferenceFree(source.description ?? '')
   )
     entries.push(
       entry(
         'constraint',
         'description-links',
         false,
-        'Cross-file description links have no source-copy proof.',
+        'Cross-file description references or unclassified reference syntax have no preservation proof.',
       ),
     );
   return {
