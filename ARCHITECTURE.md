@@ -21,7 +21,10 @@ format to migrate, and older plugin versions can retain the additive settings.
 The native adapter admits two requests and eight queued requests. Cancellation and a 60-second
 logical deadline reject local acceptance; an active slot remains occupied until `requestUrl`
 settles. Queued cancelled work never starts. JSON requests are capped at 4 MiB and accepted
-buffered responses at 8 MiB. Host buffering occurs before that response check. Streaming is
+buffered responses at 8 MiB. OpenAI transcription alone accepts the pinned SDK multipart shape
+(`gpt-transcribe` and one nonempty file), at most 4 MiB of audio plus 64 KiB of multipart overhead.
+Validated parts are copied before queueing, encoded with the native Fetch boundary, and rechecked
+for cancellation before requestUrl admission. Host buffering occurs before the response check. Streaming is
 rejected. Fixed official initial endpoints prevent arbitrary source-page requests, but the host
 follows redirects and offers no redirect isolation or physical abort. Typed safe failures omit
 raw provider messages, request bodies, and credentials. Search selection can reuse OpenRouter
@@ -47,6 +50,32 @@ most two research calls per turn. Each SDK call permits at most two network retr
 different counts. Output retains at most five validated HTTP(S) sources and 12,000 serialized
 characters, separating generated summary from nullable attributed excerpts and marking truncation.
 Cancellation rejects late output without claiming physical cancellation of host requests.
+
+`ProviderTranscription` uses the pinned OpenAI transcription adapter through that same transport and
+current SecretStorage/preferences. It returns final text only; the SDK exposes no portable confidence
+score. Two SDK network retries share one 45-second transcription lifetime, without resubmitting a
+command. Empty recognition and incomplete capture never enter the command queue.
+
+Each mounted Q owns a `CommandVoiceController` and `NativeVoiceCapture` in its document/window.
+The existing microphone, Enter and send finish one manual utterance. Continuous mode is a semantic
+session choice, retained in local history with manual as the default; selecting/restoring it never
+starts an idle microphone. A deliberate click claims the owner's exclusive capture lifetime. Local
+RMS samples separate utterances after 800 ms of quiet. Silence stays local; five-second quiet
+containers are discarded only after current quiet, preserving speech that starts at the boundary.
+Each segment has a fresh supported WebM/Opus or MP4 recorder/container on the same stream.
+Recording stops at one minute or 4 MiB; at most two segments await recognition. Activity alone does
+not cancel agent work.
+
+Final accepted text uses the existing surface submission token and owner queue. A transient capture
+predicate binds the session, focus identity, transition, and actual composer-edit generation, and
+is checked again after queued work settles. Proposal revision changes retain the captured revision
+for semantic consent checks; proven focus continuations from canonical refinements and receipts
+remain usable. The predicate stops checking after admission so a spoken command may deliberately
+change its own focus. Unsafe text in the same live session is retained after the exact typed input
+with a blank-line separator and one review status; it is never submitted automatically. Audio,
+media activity and those predicates never enter history or model context. Hide, owner/session
+retirement, pagehide, media loss and unload stop tracks, local processing, timers and late results;
+reopening retains the conversation and mode. Typed input remains available on failure.
 
 `CommandSessionOwner` owns visibility, coalesced ordinary persistence, serialized external session
 selection and direct status actions, and disposal. `CommandSession` owns input, focus, proposal,
@@ -191,7 +220,10 @@ does not charge shifted unchanged siblings. Refreshed plans use the same complet
 reviewed-value comparison. Current view context never implies an additional source restriction.
 
 `commandWrites` sequences public facade operations and awaits journal persistence before every
-effect. Known receipts and exact accepted readback precede Saved. Partial or unknown effects stop
+effect. Cancellation is checked again after that save and before dispatch. A dispatched facade
+call uses the run's independent settlement signal, so new input or hide stops only unissued
+operations; native request deadlines, revisions, source checks and disposal still apply.
+Known receipts and exact accepted readback precede Saved. Partial or unknown effects stop
 replay and retain the draft and observed entities. Project-first writes can refresh a dependent
 plan only when its complete reviewed values remain unchanged apart from proved identity/source
 line relocation and observational clock values; source paths remain compared. A refresh drops

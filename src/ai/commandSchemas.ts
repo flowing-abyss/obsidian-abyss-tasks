@@ -146,11 +146,16 @@ export const intentSchema = z.strictObject({
       'save-then-plan',
       'review',
       'acknowledge-uncertainty',
+      'voice-mode',
     ])
     .describe(
       'plan means creating, editing, finding or showing entities in the CURRENT conversation; use it for ordinary task work. confirm accepts the visible proposal. immediate explicitly requests saving now. new-session ONLY means an explicit request to leave this conversation and start a separate session; a new task or topic stays plan.',
     ),
   research: z.boolean(),
+  voiceMode: z
+    .enum(['manual', 'continuous'])
+    .optional()
+    .describe('Only for an explicit request to change voice input mode in this session.'),
   disposition: z
     .enum(['keep', 'discard'])
     .optional()

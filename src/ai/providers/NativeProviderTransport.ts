@@ -14,6 +14,10 @@ interface PendingRequest {
   readonly start: () => void;
   readonly cancel: () => void;
 }
+interface PreparedRequest {
+  readonly params: RequestUrlParam;
+  readonly multipart?: FormData;
+}
 /** requestUrl buffers responses and follows redirects. It cannot physically abort or
  * enforce Fetch redirect policy. Fixed official endpoints are the trust boundary;
  * this transport must never be used to fetch arbitrary research source pages. */
@@ -41,7 +45,7 @@ export class NativeProviderTransport {
   }
 
   private enqueue(
-    params: RequestUrlParam,
+    params: PreparedRequest,
     signal: AbortSignal | null | undefined,
   ): Promise<Response> {
     return new Promise<Response>((resolve, reject) => {
@@ -69,7 +73,7 @@ export class NativeProviderTransport {
         cancel: cancelled,
         start: () => {
           this.#active += 1;
-          void this.dispatch(params)
+          void this.dispatch(params, () => accepting && !this.#disposed)
             .then(
               (response) => {
                 finish(undefined, response);
@@ -94,7 +98,12 @@ export class NativeProviderTransport {
     });
   }
 
-  private async dispatch(params: RequestUrlParam): Promise<Response> {
+  private async dispatch(prepared: PreparedRequest, accepting: () => boolean): Promise<Response> {
+    const params =
+      prepared.multipart === undefined
+        ? prepared.params
+        : await multipartParams(prepared.params, prepared.multipart);
+    if (!accepting()) throw new ProviderFailure('cancelled');
     const result = await this.#request(params);
     if (result.arrayBuffer.byteLength > 8 * 1024 * 1024) throw new ProviderFailure('too-large');
     return new Response(result.arrayBuffer, { status: result.status, headers: result.headers });
@@ -113,19 +122,61 @@ function requestParams(
   provider: CredentialProvider,
   input: RequestInfo | URL,
   init?: RequestInit,
-): RequestUrlParam {
+): PreparedRequest {
   if (typeof input !== 'string' && !(input instanceof URL))
     throw new ProviderFailure('invalid-request');
   const url = typeof input === 'string' ? input : input.href;
   if (!endpoints[provider].includes(url)) throw new ProviderFailure('invalid-request');
-  const body = jsonBody(init?.body);
+  const payload = requestBody(url, init);
   return {
-    url,
-    method: init?.method ?? 'POST',
-    headers: Object.fromEntries(new Headers(init?.headers).entries()),
-    ...(body === undefined ? {} : { body }),
-    throw: false,
+    params: {
+      url,
+      method: init?.method ?? 'POST',
+      headers: Object.fromEntries(new Headers(init?.headers).entries()),
+      ...('body' in payload ? { body: payload.body } : {}),
+      throw: false,
+    },
+    ...('multipart' in payload ? { multipart: payload.multipart } : {}),
   };
+}
+function requestBody(
+  url: string,
+  init: RequestInit | undefined,
+): { body?: string; multipart?: FormData } {
+  const multipart = init?.body instanceof FormData ? init.body : undefined;
+  if (multipart !== undefined) {
+    if (
+      url !== 'https://api.openai.com/v1/audio/transcriptions' ||
+      (init?.method ?? 'POST') !== 'POST'
+    )
+      throw new ProviderFailure('invalid-request');
+    return { multipart: transcriptionBody(multipart) };
+  }
+  const body = jsonBody(init?.body);
+  return body === undefined ? {} : { body };
+}
+function transcriptionBody(form: FormData): FormData {
+  const entries = [...form.entries()];
+  if (entries.length !== 2 || form.get('model') !== 'gpt-transcribe')
+    throw new ProviderFailure('invalid-request');
+  const file = form.get('file');
+  if (file === null || typeof file === 'string') throw new ProviderFailure('invalid-request');
+  if (file.size > 4 * 1024 * 1024) throw new ProviderFailure('too-large');
+  if (file.size === 0) throw new ProviderFailure('invalid-request');
+  const retained = new FormData();
+  for (const [name, value] of form.entries()) retained.append(name, value);
+  return retained;
+}
+async function multipartParams(params: RequestUrlParam, form: FormData): Promise<RequestUrlParam> {
+  const encoded = new Response(form);
+  const body = await encoded.arrayBuffer();
+  if (body.byteLength > 4 * 1024 * 1024 + 65536) throw new ProviderFailure('too-large');
+  const contentType = encoded.headers.get('content-type');
+  if (contentType?.startsWith('multipart/form-data; boundary=') !== true)
+    throw new ProviderFailure('invalid-request');
+  const headers = new Headers(params.headers);
+  headers.set('Content-Type', contentType);
+  return { ...params, headers: Object.fromEntries(headers.entries()), body };
 }
 function jsonBody(body: BodyInit | null | undefined): string | undefined {
   if (body === undefined || body === null) return undefined;

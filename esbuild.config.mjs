@@ -1,3 +1,5 @@
+// Native CommandMode voice and bounded SDK multipart: measured licensed main 3,938,185 bytes.
+// Controller-approved minimum main cap 3,938,304 bytes (3846 KiB); CSS stays 224,256 bytes, strict main ceiling below 5,000,000.
 // CommandMode note review readiness and verified readback: measured licensed main 3,919,454 bytes.
 // Controller-approved minimum caps: main 3,919,872 bytes (3828 KiB), compact note CSS 224,256 bytes (219 KiB; measured 223,384).
 // No new dependencies; strict final raw main ceiling below 5,000,000 remains enforced.

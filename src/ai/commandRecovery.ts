@@ -415,6 +415,7 @@ const preparation = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('note'), input: notePrepareSchema }),
 ]);
 const snapshot: z.ZodType<HistoricalCommandSnapshot> = z.object({
+  voiceMode: z.enum(['manual', 'continuous']).exactOptional(),
   uncertaintyAcknowledged: z.boolean().exactOptional(),
   recovery: z.enum(['live', 'historical', 'reviewing', 'uncertain']).exactOptional(),
   preparations: z.array(preparation).exactOptional(),

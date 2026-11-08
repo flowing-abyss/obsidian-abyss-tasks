@@ -36,7 +36,6 @@ interface WriteContext {
   readonly now: () => number;
   readonly id: () => string;
   readonly cancelled: () => boolean;
-  readonly signal: AbortSignal;
   readonly record: (entry: CommandJournalEntry) => Promise<void>;
   readonly actual: (trees: readonly TaskTreeV1[]) => void;
   readonly invalidateTaskReads: (path: string) => void;
@@ -300,6 +299,7 @@ class CommandWriteRun {
     }
     let result: WriteResult;
     try {
+      // Dispatched commands settle independently; cancellation still stops unissued operations.
       result = checkedWriteResult(await execute());
     } catch {
       this.clearAffectedFocus(entry.change);
@@ -591,7 +591,7 @@ class CommandWriteRun {
             ...(change.statusId === undefined ? {} : { statusId: change.statusId }),
             ...request,
           },
-          { signal: this.ctx.signal },
+          { signal: this.signal },
         );
     return this.statusOperation(change, request);
   }
@@ -625,7 +625,7 @@ class CommandWriteRun {
           symbol: change.symbol,
           ...request,
         },
-        { signal: this.ctx.signal },
+        { signal: this.signal },
       );
   }
   private contentOperation(
@@ -642,12 +642,12 @@ class CommandWriteRun {
     if (change.kind === 'note')
       return () =>
         required(this.ctx.api.notes)[plan.kind === 'create' ? 'create' : 'apply'](input, {
-          signal: this.ctx.signal,
+          signal: this.signal,
         });
     return () =>
       required(plan.kind === 'create' ? this.ctx.api.tasks.create : this.ctx.api.tasks.apply)(
         input,
-        { signal: this.ctx.signal },
+        { signal: this.signal },
       );
   }
 }

@@ -2265,3 +2265,18 @@ it('routes repeated note edits through one current composed plan across user ite
   expect(await h.read('a.md')).toContain('- [ ] Protected');
   expect(await h.read('a.md')).toContain('Revised second');
 });
+
+it('interprets continuous and manual voice modes semantically without mutating a pending tree', async () => {
+  const h = await setup();
+  const before = await h.app.vault.adapter.read('a.md');
+  h.script(() =>
+    call('interpret', { intent: 'voice-mode', voiceMode: 'continuous', research: false }),
+  );
+  await h.session.submit('Listen continuously');
+  expect(h.session.snapshot().voiceMode).toBe('continuous');
+  h.script(() => call('interpret', { intent: 'voice-mode', voiceMode: 'manual', research: false }));
+  await h.session.submit('Send only when I press Enter');
+  expect(h.session.snapshot().voiceMode).toBe('manual');
+  expect(await h.app.vault.adapter.read('a.md')).toBe(before);
+  expect(h.session.snapshot().journal).toEqual([]);
+});

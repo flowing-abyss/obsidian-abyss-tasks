@@ -438,3 +438,22 @@ it.each(unknownResources)(
     ).toEqual(h.snapshot);
   },
 );
+it('retains only the session voice mode across reload, without recording state or audio', async () => {
+  const h = setup();
+  const value = {
+    ...session('voice', { voiceMode: 'continuous', input: 'Retained text' }),
+    recording: true,
+    audio: ['private audio'],
+    pendingTranscription: true,
+  };
+  await h.store.create(value);
+  const reopened = new CommandSessionStore({ storage: h.storage, now: () => 100 });
+  expect(reopened.records()[0]?.snapshot.voiceMode).toBe('continuous');
+  expect(reopened.records()[0]?.snapshot.input).toBe('Retained text');
+  expect(JSON.stringify(h.raw())).not.toContain('private audio');
+  expect(JSON.stringify(h.raw())).not.toContain('recording');
+  await reopened.create(session('manual'));
+  expect(
+    reopened.records().find((record) => record.snapshot.id === 'manual')?.snapshot.voiceMode,
+  ).toBeUndefined();
+});

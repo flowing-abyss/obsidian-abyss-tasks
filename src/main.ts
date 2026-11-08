@@ -22,6 +22,10 @@ import { NativeProviderTransport } from './ai/providers/NativeProviderTransport'
 import { ProviderConnections } from './ai/providers/ProviderConnections';
 import { ProviderResearch } from './ai/providers/ProviderResearch';
 import { ProviderSecrets } from './ai/providers/ProviderSecrets';
+import {
+  ProviderTranscription,
+  type CommandTranscriptionPort,
+} from './ai/voice/ProviderTranscription';
 import { TaskApiProvider } from './integrations/TaskApiProvider';
 import { readError } from './integrations/taskApiReads';
 import { extractMarkdownBodyTags } from './markdown/markdownTagRename';
@@ -174,6 +178,7 @@ export default class TaskCalendarPlugin extends Plugin {
   providerSecrets!: ProviderSecrets;
   providerConnections!: ProviderConnections;
   commandResearch!: CommandResearchPort;
+  commandTranscription!: CommandTranscriptionPort;
   private readonly commandSurfaceMemory: CommandSurfaceMemory = {
     active: false,
     selectionStart: 0,
@@ -194,6 +199,11 @@ export default class TaskCalendarPlugin extends Plugin {
     });
     this.providerConnections = new ProviderConnections(this.providerSecrets, providerTransport);
     this.commandResearch = new ProviderResearch(
+      this.providerSecrets,
+      providerTransport,
+      () => this.settings.commandMode,
+    );
+    this.commandTranscription = new ProviderTranscription(
       this.providerSecrets,
       providerTransport,
       () => this.settings.commandMode,
@@ -517,6 +527,7 @@ export default class TaskCalendarPlugin extends Plugin {
           {
             owner: () => this.getCommandSessionOwner(),
             memory: this.commandSurfaceMemory,
+            transcription: this.commandTranscription,
             nativeTarget: (target, revision) =>
               this.taskApiProvider?.nativeTaskTarget(target, revision),
           },

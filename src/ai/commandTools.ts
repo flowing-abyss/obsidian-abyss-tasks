@@ -248,7 +248,23 @@ class CommandToolOwner {
     }
     return undefined;
   }
+  private voiceIntent(input: z.infer<typeof intentSchema>): unknown {
+    this.ctx.done = true;
+    if (input.voiceMode === undefined) {
+      this.ctx.session.question('Listen continuously, or send each recording with Enter?');
+      return { needsMode: true };
+    }
+    this.ctx.session.setVoiceMode(input.voiceMode);
+    this.ctx.session.status(
+      'ready',
+      input.voiceMode === 'continuous'
+        ? 'Continuous voice selected. Use the microphone to begin.'
+        : 'Voice sends with Enter.',
+    );
+    return { voiceMode: input.voiceMode };
+  }
   private async lifecycleIntent(input: z.infer<typeof intentSchema>): Promise<unknown> {
+    if (input.intent === 'voice-mode') return this.voiceIntent(input);
     if (input.intent === 'acknowledge-uncertainty') {
       this.ctx.done = true;
       return {

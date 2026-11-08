@@ -38,6 +38,22 @@ export class CommandSessionOwner {
   private failureCode: string | undefined;
   private readonly ownedSessions = new Set<string>();
   private readonly noteReviews = new Map<symbol, CommandNoteReview>();
+  private stopCapture: (() => void) | undefined;
+  claimCapture(stop: () => void): () => void {
+    this.stopCapture?.();
+    this.stopCapture = stop;
+    return () => {
+      if (this.stopCapture === stop) this.stopCapture = undefined;
+    };
+  }
+  captureSubmission(): ReturnType<CommandSession['captureSubmission']> {
+    const captured = this.session.captureSubmission(),
+      generation = this.acceptance;
+    return {
+      basis: captured.basis,
+      current: () => !this.disposed && generation === this.acceptance && captured.current(),
+    };
+  }
   constructor(private readonly options: CommandSessionOwnerOptions) {
     this.session = options.createSession(
       { save: (state) => this.save(state) },
@@ -125,6 +141,7 @@ export class CommandSessionOwner {
   async hide(): Promise<void> {
     if (this.disposed) return;
     this.visible = false;
+    this.stopCapture?.();
     this.acceptance++;
     this.session.cancelTurn();
     await this.flush();
@@ -204,16 +221,21 @@ export class CommandSessionOwner {
     return (basis) =>
       !this.disposed && token !== undefined && this.noteReviews.get(token)?.(basis) === true;
   }
-  async submit(text: string, basis?: CommandSubmissionBasis, surface?: symbol): Promise<void> {
+  async submit(
+    text: string,
+    basis?: CommandSubmissionBasis,
+    surface?: symbol,
+    admission?: () => boolean,
+  ): Promise<void> {
     const generation = this.acceptance;
     if (this.changing !== undefined) await this.changing;
-    if (this.isDisposed()) return;
+    if (this.isDisposed() || admission?.() === false) return;
     if (generation !== this.acceptance) {
       this.session.setInput(text);
       await this.flush();
       return;
     }
-    await this.session.submit(text, basis, this.noteReview(surface));
+    await this.session.submit(text, basis, this.noteReview(surface), admission);
     await this.flush();
   }
   async confirm(revision?: number, surface?: symbol): Promise<boolean> {
@@ -264,6 +286,7 @@ export class CommandSessionOwner {
     return this.options.store.records();
   }
   newSession(disposition?: 'keep' | 'discard'): Promise<boolean> {
+    this.stopCapture?.();
     return this.transition(() => this.startSession(disposition));
   }
   private async startSession(disposition?: 'keep' | 'discard'): Promise<boolean> {
@@ -273,6 +296,7 @@ export class CommandSessionOwner {
     return result;
   }
   select(id: string): Promise<boolean> {
+    if (id !== this.session.snapshot().id) this.stopCapture?.();
     const generation = this.acceptance;
     return this.transition(() => this.selectSession(id, generation));
   }
@@ -347,6 +371,7 @@ export class CommandSessionOwner {
   }
   dispose(): void {
     if (this.disposed) return;
+    this.stopCapture?.();
     this.session.cancelTurn();
     // Host storage is synchronous: this flush crosses its boundary before revocation.
     void this.flush().catch(() => {

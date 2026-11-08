@@ -125,6 +125,7 @@ export interface CommandRevealRequest {
   readonly revision: string;
 }
 export interface CommandSessionSnapshot {
+  readonly voiceMode?: 'manual' | 'continuous';
   readonly reveal?: CommandRevealRequest;
   readonly presentation?: { readonly proposalRevision: number; readonly changes: 'cumulative' };
   readonly uncertaintyAcknowledged?: boolean;

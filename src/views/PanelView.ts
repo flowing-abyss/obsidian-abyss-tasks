@@ -1,5 +1,6 @@
 import { ItemView, Notice, Platform, Scope, setIcon, TFile, type WorkspaceLeaf } from 'obsidian';
 import type { CommandSessionOwner } from '../ai/CommandSessionOwner';
+import type { CommandTranscriptionPort } from '../ai/voice/ProviderTranscription';
 import { AppState, type AppStateData } from '../app/AppState';
 import { createBrowserTaskScheduler } from '../browserTaskScheduler';
 import { moment } from '../obsidianMoment';
@@ -135,6 +136,7 @@ interface PanelLayoutElements {
 }
 
 export interface PanelCommandServices {
+  readonly transcription?: CommandTranscriptionPort;
   readonly owner: () => CommandSessionOwner;
   readonly memory: CommandSurfaceMemory;
   readonly nativeTarget: (target: string, revision: string) => TaskNodeRef | undefined;
@@ -1053,6 +1055,9 @@ export class PanelView extends ItemView {
                 new CommandModeSurface(capture, {
                   app: this.app,
                   owner: command.owner,
+                  ...(command.transcription === undefined
+                    ? {}
+                    : { transcription: command.transcription }),
                   memory: command.memory,
                   registry: this.statusRegistry_abyssPrivate,
                   projectSettings: () => this.settings_abyssPrivate.projects,

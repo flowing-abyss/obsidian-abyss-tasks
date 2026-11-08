@@ -383,6 +383,9 @@ it('Escape during the pre-effect journal wait refuses the still-unadmitted write
   release();
   await saving;
   expect(await h.read('a.md')).not.toContain('Should not write');
+  expect(session.snapshot().journal).toMatchObject([
+    { state: 'settled', effects: 'unchanged', error: 'CANCELLED_BEFORE_ADMISSION' },
+  ]);
 });
 it('Escape after native admission lets the real receipt settle and read back', async () => {
   const h = await setup();
@@ -433,6 +436,56 @@ it('Escape after native admission lets the real receipt settle and read back', a
   expect(session.snapshot().status.kind).toBe('saved');
   expect(session.snapshot().actual[0]?.title).toBe('Admitted');
   expect(await h.read('a.md')).toContain('Admitted');
+});
+
+it('cancellation settles a dispatched facade call but never issues the next batch write', async () => {
+  const h = await setup();
+  const native = expectDefined(h.api.tasks.create);
+  const admitted = deferred<void>(),
+    release = deferred<void>();
+  let calls = 0;
+  const api = {
+    ...h.api,
+    tasks: {
+      ...h.api.tasks,
+      create: async (...args: Parameters<typeof native>) => {
+        calls++;
+        admitted.resolve();
+        await release.promise;
+        return native(...args);
+      },
+    },
+  };
+  const session = new CommandSession({
+    api,
+    journal: { save: async () => {} },
+    now: () => Date.UTC(2026, 7, 1, 12),
+    id: (() => {
+      let id = 0;
+      return () => `batch-${++id}`;
+    })(),
+    agent: { run: async () => {} },
+  });
+  for (const markdownTitle of ['Admitted first', 'Unissued second']) {
+    const plan = ok(
+      await expectDefined(api.tasks.prepare)({
+        kind: 'create',
+        destination: { type: 'note', path: 'a.md', insertion: { type: 'append' } },
+        tree: { markdownTitle },
+      }),
+    );
+    session.stage({ kind: 'task', plan });
+  }
+  const saving = session.confirm();
+  await admitted.promise;
+  session.cancelTurn();
+  expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+  release.resolve();
+  expect(await saving).toBe(false);
+  expect(calls).toBe(1);
+  expect(await h.read('a.md')).toBe('- [ ] Existing\n- [ ] Admitted first ➕ 2026-08-01\n');
+  expect(session.snapshot().journal).toMatchObject([{ state: 'settled', effects: 'committed' }]);
+  expect(session.snapshot().actual[0]?.title).toBe('Admitted first');
 });
 
 it('reviewed-value comparison permits source line shifts but never a different source path', async () => {
@@ -1081,3 +1134,47 @@ it.each(['target', 'plan', 'revision'])(
     expect(h.session.snapshot().focus).toEqual([focus]);
   },
 );
+
+it('keeps a voice proposal basis through planning but rejects another focus before queued admission', async () => {
+  const h = await setup();
+  const captured = h.session.captureSubmission();
+  const first = deferred<void>();
+  let calls = 0;
+  h.setRun(async () => {
+    calls++;
+    if (calls === 1) await first.promise;
+  });
+  const planning = h.session.submit('Plan');
+  const queued = h.session.submit('Spoken refinement', captured.basis, undefined, () =>
+    captured.current(),
+  );
+  const plan = ok(
+    await expectDefined(h.api.tasks.prepare)({
+      kind: 'create',
+      destination: { type: 'note', path: 'a.md', insertion: { type: 'append' } },
+      tree: { markdownTitle: 'Another subject' },
+    }),
+  );
+  h.session.stage({ kind: 'task', plan });
+  expect(captured.current()).toBe(true);
+  expect(captured.basis.proposalRevision).toBe(0);
+  await h.session.focus({
+    kind: 'task',
+    target: expectDefined(plan.after).target,
+    plan: plan.target,
+    expectedPlanRevision: plan.revision,
+  });
+  expect(captured.current()).toBe(false);
+  first.resolve();
+  await Promise.all([planning, queued]);
+  expect(calls).toBe(1);
+  expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+});
+it('retires captured speech when a verified write removes its focused object without a successor', async () => {
+  const h = await setup();
+  const task = expectDefined(ok(await h.api.tasks.list({})).items[0]);
+  await h.session.focus({ kind: 'task', target: task.target, revision: task.revision });
+  const captured = h.session.captureSubmission();
+  h.session.remapFocus(new Map([[task.target, null]]));
+  expect(captured.current()).toBe(false);
+});

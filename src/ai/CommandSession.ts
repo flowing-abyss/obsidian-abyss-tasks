@@ -209,6 +209,19 @@ export class CommandSession {
     };
   }
   private presentation: CommandSessionSnapshot['presentation'];
+  private conversationRevision = 0;
+  captureSubmission(): { basis: CommandSubmissionBasis; current(): boolean } {
+    const id = this.state.id,
+      revision = this.conversationRevision;
+    return {
+      basis: { sessionId: id, proposalRevision: this.state.proposal.revision },
+      current: () =>
+        !this.disposed && this.state.id === id && this.conversationRevision === revision,
+    };
+  }
+  setVoiceMode(mode: 'manual' | 'continuous'): void {
+    if (!this.disposed) this.publish({ voiceMode: mode });
+  }
   private presentationSession = '';
   showChanges(signal: AbortSignal): void {
     if (this.turn?.signal !== signal || signal.aborted) return;
@@ -233,6 +246,7 @@ export class CommandSession {
   restore(snapshot: CommandSessionSnapshot, historical = true): boolean {
     if (this.disposed || this.writing) return false;
     this.focusRun++;
+    this.conversationRevision++;
     this.state = detached(snapshot);
     Reflect.deleteProperty(this.state, 'reveal');
     Reflect.deleteProperty(this.state, 'presentation');
@@ -349,7 +363,18 @@ export class CommandSession {
       this.listeners.delete(listener);
     };
   }
-  private publish(patch: Partial<CommandSessionSnapshot>): void {
+  private publish(patch: Partial<CommandSessionSnapshot>, verifiedFocusContinuation = false): void {
+    const identity = (focus: readonly CommandFocus[]): string =>
+      JSON.stringify(focus.map(({ kind, target }) => ({ kind, target })));
+    if (
+      (!verifiedFocusContinuation &&
+        patch.focus !== undefined &&
+        identity(patch.focus) !== identity(this.state.focus)) ||
+      ('pendingTransition' in patch &&
+        JSON.stringify(patch.pendingTransition ?? null) !==
+          JSON.stringify(this.state.pendingTransition ?? null))
+    )
+      this.conversationRevision++;
     this.state = { ...this.state, ...detached(patch) };
     for (const listener of this.listeners) listener(this.snapshot());
   }
@@ -689,13 +714,21 @@ export class CommandSession {
     else this.observeNote(entry.note);
   }
   remapFocus(changes: CommandFocusContinuations): void {
-    this.publish({
-      focus: this.state.focus.flatMap((entry): CommandFocus[] => {
-        if (entry.kind !== 'task' || !changes.has(entry.target)) return [entry];
-        const next = changes.get(entry.target);
-        return next == null ? [] : [{ kind: 'task', target: next.target, revision: next.revision }];
-      }),
-    });
+    const removed = this.state.focus.some(
+      (entry) => entry.kind === 'task' && changes.get(entry.target) === null,
+    );
+    this.publish(
+      {
+        focus: this.state.focus.flatMap((entry): CommandFocus[] => {
+          if (entry.kind !== 'task' || !changes.has(entry.target)) return [entry];
+          const next = changes.get(entry.target);
+          return next == null
+            ? []
+            : [{ kind: 'task', target: next.target, revision: next.revision }];
+        }),
+      },
+      !removed,
+    );
   }
   async readTreePage(query: ReadTaskTreeV1): Promise<TaskTreePageV1> {
     const id = this.state.id,
@@ -925,8 +958,9 @@ export class CommandSession {
     text: string,
     submittedAgainst?: CommandSubmissionBasis,
     review?: CommandNoteReview,
+    admission?: () => boolean,
   ): Promise<void> {
-    if (this.disposed) return;
+    if (!this.admitSubmission(admission)) return;
     if (text.length <= 16000 && text.trim() === '') {
       await this.confirmSubmission(submittedAgainst, review);
       return;
@@ -939,7 +973,7 @@ export class CommandSession {
       await previous;
       if (generation !== this.acceptance) return;
       this.queuedInput = undefined;
-      return this.submit(text, submittedAgainst, review);
+      return this.submit(text, submittedAgainst, review, admission);
     }
     if (text.length > 16000) {
       this.setInput(text);
@@ -956,6 +990,9 @@ export class CommandSession {
     } finally {
       if (this.running === running) this.running = undefined;
     }
+  }
+  private admitSubmission(admission: (() => boolean) | undefined): boolean {
+    return !this.disposed && admission?.() !== false;
   }
   private unavailable(): boolean {
     return this.disposed || this.writing || this.turn !== undefined;
@@ -1197,7 +1234,6 @@ export class CommandSession {
         now: this.options.now,
         id: this.options.id,
         cancelled: () => admission.signal.aborted,
-        signal: admission.signal,
         record: (entry) => this.recordWrite({ ...entry, origin: clear ? 'proposal' : 'direct' }),
         actual: (trees) => {
           this.publish({ actual: trees });
