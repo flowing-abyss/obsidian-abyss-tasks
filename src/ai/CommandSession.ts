@@ -18,6 +18,7 @@ import {
   type CommandFocusContinuations,
   type CommandJournalEntry,
   type CommandNoteRead,
+  type CommandNoteReview,
   type CommandPendingTransition,
   type CommandPreparation,
   type CommandRevealRequest,
@@ -181,6 +182,11 @@ export class CommandSession {
   private acceptance = 0;
   private queuedInput: string | undefined;
   private inputRevision = 0;
+  private noteReviewRequired = false;
+  private turnReview: CommandNoteReview | undefined;
+  requireNoteReview(): void {
+    this.noteReviewRequired = true;
+  }
   constructor(private readonly options: CommandSessionOptions) {
     this.state = this.empty();
   }
@@ -900,10 +906,14 @@ export class CommandSession {
     if (this.disposed || this.writing || this.readOnly() || this.state.pendingTransition != null)
       throw new CommandFailure('BUSY', 'Resolve the previous write before changing this proposal.');
   }
-  async submit(text: string, submittedAgainst?: CommandSubmissionBasis): Promise<void> {
+  async submit(
+    text: string,
+    submittedAgainst?: CommandSubmissionBasis,
+    review?: CommandNoteReview,
+  ): Promise<void> {
     if (this.disposed) return;
     if (text.length <= 16000 && text.trim() === '') {
-      await this.confirm();
+      await this.confirmSubmission(submittedAgainst, review);
       return;
     }
     if (this.running !== undefined || this.pendingWrite !== undefined) {
@@ -914,7 +924,7 @@ export class CommandSession {
       await previous;
       if (generation !== this.acceptance) return;
       this.queuedInput = undefined;
-      return this.submit(text, submittedAgainst);
+      return this.submit(text, submittedAgainst, review);
     }
     if (text.length > 16000) {
       this.setInput(text);
@@ -924,7 +934,7 @@ export class CommandSession {
       );
       return;
     }
-    const running = this.runTurn(text, submittedAgainst);
+    const running = this.runTurn(text, submittedAgainst, review);
     this.running = running;
     try {
       await running;
@@ -935,10 +945,21 @@ export class CommandSession {
   private unavailable(): boolean {
     return this.disposed || this.writing || this.turn !== undefined;
   }
+  private async confirmSubmission(
+    basis?: CommandSubmissionBasis,
+    review?: CommandNoteReview,
+  ): Promise<void> {
+    if (basis !== undefined && basis.sessionId !== this.state.id) return;
+    await this.confirm(basis?.proposalRevision, review);
+  }
   private acceptsTurn(signal: AbortSignal, id: string): boolean {
     return !signal.aborted && this.current(id);
   }
-  private async runTurn(text: string, submittedAgainst?: CommandSubmissionBasis): Promise<void> {
+  private async runTurn(
+    text: string,
+    submittedAgainst?: CommandSubmissionBasis,
+    review?: CommandNoteReview,
+  ): Promise<void> {
     if (this.unavailable()) {
       this.status('error', 'Finish or reconcile the previous operation first.');
       return;
@@ -948,6 +969,7 @@ export class CommandSession {
     this.exchange('user', text);
     const controller = new AbortController();
     this.turn = controller;
+    this.turnReview = review;
     const snapshot = this.snapshot();
     const basis = {
       ...snapshot,
@@ -972,7 +994,10 @@ export class CommandSession {
           cause instanceof CommandFailure ? cause.message : providerFailure(cause).message,
         );
     } finally {
-      if (this.turn === controller) this.turn = undefined;
+      if (this.turn === controller) {
+        this.turn = undefined;
+        this.turnReview = undefined;
+      }
     }
   }
   cancelTurn(retainQueued = true): void {
@@ -993,13 +1018,20 @@ export class CommandSession {
     await this.running;
     await this.pendingWrite;
   }
-  async confirm(revision = this.state.proposal.revision): Promise<boolean> {
+  async confirm(
+    revision = this.state.proposal.revision,
+    review?: CommandNoteReview,
+  ): Promise<boolean> {
     if (this.turn !== undefined) return false;
-    return this.commit(revision);
+    return this.commit(revision, review);
   }
-  async confirmFromTurn(revision: number, signal: AbortSignal): Promise<boolean> {
+  async confirmFromTurn(
+    revision: number,
+    signal: AbortSignal,
+    immediate = false,
+  ): Promise<boolean> {
     if (this.turn?.signal !== signal || signal.aborted) return false;
-    return this.commit(revision);
+    return this.commit(revision, this.turnReview, immediate);
   }
   private canCommit(revision: number): boolean {
     return (
@@ -1013,8 +1045,21 @@ export class CommandSession {
       this.state.proposal.changes.length > 0
     );
   }
-  private async commit(revision: number): Promise<boolean> {
+  private async commit(
+    revision: number,
+    review?: CommandNoteReview,
+    immediate = false,
+  ): Promise<boolean> {
     if (!this.canCommit(revision)) return false;
+    if (
+      !immediate &&
+      this.noteReviewRequired &&
+      this.state.proposal.changes.some((change) => change.kind === 'note') &&
+      review?.({ sessionId: this.state.id, proposalRevision: revision }) !== true
+    ) {
+      this.status('ready', 'The note preview is not ready to save.');
+      return false;
+    }
     return this.writeProposal(detached(this.state.proposal), true);
   }
   async applyStatus(input: { target: string; revision: string; symbol: string }): Promise<boolean> {

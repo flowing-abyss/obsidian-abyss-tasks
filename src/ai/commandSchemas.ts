@@ -3,6 +3,7 @@ import type {
   ContentPlanV1,
   MutationResultV1,
   NoteMutationResultV1,
+  NotePlanV1,
   ProjectMutationResultV1,
   TaskContentMutationResultV1,
   TaskCreateTreeV1,
@@ -13,6 +14,8 @@ import { buildLinkRaw, parseSourceReferences } from '../markdown/links';
 import {
   CommandFailure,
   type CommandChange,
+  type CommandJournalEntry,
+  type CommandNoteRead,
   type CommandPreparation,
   type CommandProposal,
 } from './commandTypes';
@@ -482,6 +485,75 @@ export function checkedWriteResult(
   }
   return value as
     MutationResultV1 | NoteMutationResultV1 | ProjectMutationResultV1 | TaskContentMutationResultV1;
+}
+/** A saved display needs the accepted note and exact post-write selection, not just its path. */
+export function isCommandNoteReadback(
+  entry: CommandJournalEntry,
+  page: CommandNoteRead,
+  scope: 'selection' | 'current' = 'selection',
+): boolean {
+  if (entry.change.kind !== 'note' || entry.state !== 'settled' || entry.effects !== 'committed')
+    return false;
+  const parsed = noteReceipt.safeParse(entry.receipt);
+  if (!parsed.success) return false;
+  const receipt = parsed.data,
+    plan = entry.change.plan;
+  if (!noteReceiptMatches(entry, plan, receipt)) return false;
+  if (!acceptedNoteVersion(receipt, plan, page)) return false;
+  if (scope === 'current') return true;
+  return changedNoteRead(receipt, page) || completeNoteRead(plan, page);
+}
+function acceptedNoteVersion(
+  receipt: z.infer<typeof noteReceipt>,
+  plan: NotePlanV1,
+  page: CommandNoteRead,
+): boolean {
+  const note = receipt.note;
+  return (
+    note?.target === page.note.target &&
+    note.revision === page.note.revision &&
+    receipt.providerEpoch === page.providerEpoch &&
+    page.note.path === plan.path
+  );
+}
+function noteReceiptMatches(
+  entry: CommandJournalEntry,
+  plan: NotePlanV1,
+  receipt: z.infer<typeof noteReceipt>,
+): boolean {
+  return (
+    receipt.plan === plan.target &&
+    receipt.planRevision === plan.revision &&
+    receipt.providerEpoch === plan.providerEpoch &&
+    receipt.requestId === entry.request.requestId
+  );
+}
+function changedNoteRead(receipt: z.infer<typeof noteReceipt>, page: CommandNoteRead): boolean {
+  const selector = page.request?.selector;
+  return (
+    receipt.section !== undefined &&
+    page.selection === 'section' &&
+    selector !== undefined &&
+    'section' in selector &&
+    selector.section === receipt.section
+  );
+}
+function completeNoteRead(plan: NotePlanV1, page: CommandNoteRead): boolean {
+  const selector = page.request?.selector;
+  if (page.selection !== 'note' || selector === undefined) return false;
+  if (plan.kind === 'edit' && (!page.complete || page.truncated || page.continued === true))
+    return false;
+  return fullNoteSelector(selector, page);
+}
+function fullNoteSelector(
+  selector: z.infer<typeof noteReadRequestSchema>['selector'],
+  page: CommandNoteRead,
+): boolean {
+  return 'path' in selector
+    ? selector.path === page.note.path
+    : 'target' in selector &&
+        selector.target === page.note.target &&
+        selector.expectedRevision === page.note.revision;
 }
 /** Native refresh owns identity. This comparison refuses any changed reviewed value or order. */
 export function sameReviewedContent(before: ContentPlanV1, after: ContentPlanV1): boolean {

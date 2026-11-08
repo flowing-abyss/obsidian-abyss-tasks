@@ -45,6 +45,54 @@ async function setup() {
     },
   };
 }
+it('checks the exact note review basis for a bound session but keeps headless confirmation available', async () => {
+  const h = await setup();
+  const notes = expectDefined(h.api.notes);
+  const plan = ok(
+    await notes.prepare({
+      kind: 'create',
+      path: 'Review.md',
+      title: 'Review',
+      text: 'First draft.',
+    }),
+  );
+  h.session.stage({ kind: 'note', plan });
+  const headless = await setup();
+  const other = ok(
+    await expectDefined(headless.api.notes).prepare({
+      kind: 'create',
+      path: 'Headless.md',
+      title: 'Headless',
+      text: 'Explicit client approval.',
+    }),
+  );
+  headless.session.stage({ kind: 'note', plan: other });
+  await headless.session.submit('');
+  expect(headless.session.snapshot().status.kind).toBe('saved');
+  h.session.requireNoteReview();
+  const basis = h.session.snapshot();
+  const reviewed = (value: { sessionId: string; proposalRevision: number }) =>
+    value.sessionId === basis.id && value.proposalRevision === basis.proposal.revision;
+  const refined = ok(
+    await notes.prepare({
+      kind: 'refine',
+      plan: plan.target,
+      expectedPlanRevision: plan.revision,
+      operation: { type: 'replace-body', text: 'Current draft.' },
+    }),
+  );
+  h.session.stage({ kind: 'note', plan: refined });
+  await h.session.submit(
+    '',
+    { sessionId: basis.id, proposalRevision: basis.proposal.revision },
+    () => true,
+  );
+  expect(h.app.vault.getFileByPath('Review.md')).toBeNull();
+  expect(await h.session.confirm(undefined, reviewed)).toBe(false);
+  expect(h.app.vault.getFileByPath('Review.md')).toBeNull();
+  expect(await h.session.confirm(undefined, () => true)).toBe(true);
+  expect(await h.read('Review.md')).toContain('Current draft.');
+});
 it('previews clear creation and empty Enter saves the entire agreed tree after journaling', async () => {
   const h = await setup();
   h.setRun(async () => {

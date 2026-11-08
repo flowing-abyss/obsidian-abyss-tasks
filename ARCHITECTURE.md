@@ -72,6 +72,20 @@ one note card. Pages retain scope, continuation and exact source path across fin
 partial pages never claim to be full notes. Note links share the navigation-only unresolved-link
 guard. Note-only Enter uses the same proposal/journal path, and fresh receipt-bound section reads
 replace edit previews after saving. Task/project rows keep their native identity during note updates.
+Owner-backed note confirmation requires successful rendering of every pending note field on the
+surface that initiated the submission. A disposable surface token binds a runtime predicate to
+that exact submission/turn and session/proposal revision; another surface's readiness cannot
+authorize it. Pending replacements, failed rendering and disposed registrations block Enter,
+Save and semantic confirmation while editing remains available. Only an already interpreted
+immediate-write request bypasses this display requirement. Headless internal sessions keep their
+explicit confirmation contract. These predicates and tokens never enter history or model context.
+Note previews yield to readback only when the accepted receipt matches its plan, revision,
+provider and request, and the page matches the resulting note target/revision and exact selection
+request (including the freshly minted edit section). Continuation retains that request. A later
+requested complete full-note read of that exact accepted version also covers the changed selection;
+partial pages retain their scope labels and cannot replace an edit preview outside that selection. A committed
+write with unavailable readback retains the proposal as unverified evidence; old same-path pages
+never become current merely because a write committed. This uses existing receipt/page fields.
 Hide and Stop
 cancel future planning through the owner, while an admitted write settles through its existing
 journal. UI input/submission generations prevent late completion from clearing newer text.

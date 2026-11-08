@@ -129,6 +129,25 @@ const create = () =>
       },
     },
   });
+it.each(['confirm', 'save-then-plan', 'immediate'])(
+  'requires note review for %s except explicitly interpreted immediate intent',
+  async (intent) => {
+    const h = await setup();
+    h.session.requireNoteReview();
+    const prepared = await expectDefined(h.api.notes).prepare({
+      kind: 'create',
+      path: 'Review.md',
+      title: 'Review',
+      text: 'Explicit draft.',
+    });
+    if (!prepared.ok) throw new Error(prepared.error.code);
+    h.session.stage({ kind: 'note', plan: prepared.value });
+    h.script(interpret(intent), ...(intent === 'immediate' ? [finish()] : []));
+    await h.session.submit('Trusted user intent', undefined, () => false);
+    expect(h.app.vault.getFileByPath('Review.md') !== null).toBe(intent === 'immediate');
+    expect(h.session.snapshot().journal).toHaveLength(intent === 'immediate' ? 1 : 0);
+  },
+);
 it('runs the real SDK over the facade, previews new tasks then contextually confirms okay', async () => {
   const h = await setup();
   h.script(interpret(), create, finish());

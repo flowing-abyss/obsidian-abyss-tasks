@@ -1,6 +1,12 @@
 import { Component, type App } from 'obsidian';
 import type { NotePlanV1, NoteReadPageV1 } from '../../../api';
-import type { CommandSessionSnapshot } from '../../ai/commandTypes';
+import { isCommandNoteReadback } from '../../ai/commandSchemas';
+import type {
+  CommandJournalEntry,
+  CommandNoteRead,
+  CommandSessionSnapshot,
+  CommandSubmissionBasis,
+} from '../../ai/commandTypes';
 import { RetainedTaskText, type PreparedTaskTextUpdate } from '../retainedTaskText';
 
 interface NoteFieldDisplay {
@@ -24,8 +30,12 @@ interface NoteRow {
 interface NoteField {
   readonly body: HTMLElement;
   readonly owner: Component;
-  readonly text: RetainedTaskText;
+  text: RetainedTaskText;
   pending?: PreparedTaskTextUpdate;
+  value?: NoteFieldDisplay;
+  path?: string;
+  ready?: boolean;
+  failed?: boolean;
 }
 function readScope(page: NoteReadPageV1 & { continued?: boolean }): string {
   const part = page.resolvedSubpath ?? (page.selection === 'note' ? 'Note' : 'Selected section');
@@ -42,31 +52,61 @@ function displays(state: CommandSessionSnapshot): NoteDisplay[] {
     result.set(page.note.path, {
       key: page.note.path,
       path: page.note.path,
-      scope: readScope(page),
+      scope: currentReadScope(state, page),
       fields: [{ key: 'read', text: page.segments.map((segment) => segment.text).join('') }],
     });
   }
   for (const change of state.proposal.changes) {
     if (change.kind !== 'note') continue;
     // A verified note receipt supersedes its old proposal even when a later dependent task fails.
-    const saved = state.journal.some(
-      (entry) =>
-        entry.change.kind === 'note' &&
-        entry.change.plan.target === change.plan.target &&
-        entry.effects === 'committed' &&
-        entry.state === 'settled',
-    );
-    if (saved && result.has(change.plan.path)) continue;
+    const written = [...state.journal]
+      .reverse()
+      .find(
+        (entry) =>
+          entry.change.kind === 'note' &&
+          entry.change.plan.target === change.plan.target &&
+          entry.change.plan.revision === change.plan.revision &&
+          entry.effects !== 'unchanged',
+      );
+    if (
+      written !== undefined &&
+      state.entities.notes.some((page) => isCommandNoteReadback(written, page)) &&
+      result.has(change.plan.path)
+    )
+      continue;
     const plan = change.plan;
     result.delete(plan.path);
     result.set(plan.target, {
       key: plan.target,
       path: plan.path,
-      scope: previewScope(state, plan),
+      scope: proposalScope(state, plan, written),
       fields: planFields(plan),
     });
   }
   return [...result.values()];
+}
+function currentReadScope(state: CommandSessionSnapshot, page: CommandNoteRead): string {
+  const written = [...state.journal]
+    .reverse()
+    .find(
+      (entry) =>
+        entry.change.kind === 'note' &&
+        entry.change.plan.path === page.note.path &&
+        entry.effects !== 'unchanged',
+    );
+  return written !== undefined && !isCommandNoteReadback(written, page, 'current')
+    ? 'Historical read · Current content unverified'
+    : readScope(page);
+}
+function proposalScope(
+  state: CommandSessionSnapshot,
+  plan: NotePlanV1,
+  written?: CommandJournalEntry,
+): string {
+  if (written === undefined) return previewScope(state, plan);
+  return written.effects === 'committed'
+    ? 'Written · Current content unverified · Proposed changes'
+    : 'Write outcome unverified · Proposed changes';
 }
 function planFields(plan: NotePlanV1): readonly NoteFieldDisplay[] {
   return (
@@ -80,13 +120,34 @@ function planFields(plan: NotePlanV1): readonly NoteFieldDisplay[] {
 /** Retained native Markdown, in the same Q canvas as task and project review. */
 export class CommandNotes {
   private readonly rows = new Map<string, NoteRow>();
+  private basis: CommandSubmissionBasis | undefined;
+  private reviewKeys: readonly string[] = [];
   constructor(
     private readonly host: HTMLElement,
     private readonly app: App,
     private readonly component: Component,
-    private readonly allowLink: (href: string, path: string) => boolean,
+    private readonly options: {
+      allowLink(href: string, path: string): boolean;
+      changed(): void;
+    },
   ) {}
+  reviewStatus(basis: CommandSubmissionBasis): 'ready' | 'pending' | 'failed' {
+    if (
+      this.basis?.sessionId !== basis.sessionId ||
+      this.basis.proposalRevision !== basis.proposalRevision
+    )
+      return 'pending';
+    const rows = this.reviewKeys.map((key) => this.rows.get(key));
+    if (rows.some((row) => row === undefined || row.fields.size === 0)) return 'pending';
+    const fields = rows.flatMap((row) => [...(row?.fields.values() ?? [])]);
+    if (fields.some((field) => field.failed === true)) return 'failed';
+    return fields.every((field) => field.ready === true) ? 'ready' : 'pending';
+  }
   update(state: CommandSessionSnapshot): void {
+    this.basis = { sessionId: state.id, proposalRevision: state.proposal.revision };
+    this.reviewKeys = state.proposal.changes.flatMap((change) =>
+      change.kind === 'note' ? [change.plan.target] : [],
+    );
     const notes = displays(state);
     const keys = new Set(notes.map((note) => note.key));
     for (const [key, row] of this.rows) if (!keys.has(key)) this.release(key, row);
@@ -103,6 +164,33 @@ export class CommandNotes {
   }
   private renderField(note: NoteDisplay, row: NoteRow, value: NoteFieldDisplay): void {
     const field = this.field(row, value.key);
+    if (
+      field.path === note.path &&
+      field.value?.text === value.text &&
+      field.value.before === value.before
+    )
+      return;
+    // The error body replaced the renderer's visible DOM; its old source cache is no longer proof.
+    if (field.failed === true) {
+      field.text.destroy();
+      field.body.empty();
+      field.text = new RetainedTaskText(field.body, field.owner);
+    }
+    field.value = value;
+    field.path = note.path;
+    field.ready = false;
+    field.failed = false;
+    const current = (): boolean =>
+      this.rows.get(note.key) === row &&
+      row.fields.get(value.key) === field &&
+      field.value === value;
+    const failed = (): void => {
+      if (!current()) return;
+      field.failed = true;
+      field.ready = false;
+      field.body.textContent = 'Could not display note content.';
+      this.options.changed();
+    };
     field.body.dataset['taskSourcePath'] = note.path;
     field.body.dataset['change'] = noteChange(value);
     field.pending = field.text.prepare({
@@ -120,20 +208,18 @@ export class CommandNotes {
       },
       callbacks: {
         app: this.app,
-        isCurrent: () => this.rows.get(note.key) === row && row.fields.get(value.key) === field,
-        beforeOpenLink: async ({ href, sourcePath }) => this.allowLink(href, sourcePath),
-        onRenderFailure: () => {
-          field.body.textContent = 'Could not display note content.';
-        },
+        isCurrent: current,
+        beforeOpenLink: async ({ href, sourcePath }) => this.options.allowLink(href, sourcePath),
+        onRenderFailure: failed,
       },
     });
     const pending = field.pending;
     void pending.ready.then(
       () => {
-        if (field.pending === pending) this.commit(field);
+        if (current() && field.pending === pending) this.commit(field);
       },
       () => {
-        if (field.pending === pending) field.body.textContent = 'Could not display note content.';
+        if (field.pending === pending) failed();
       },
     );
   }
@@ -141,6 +227,10 @@ export class CommandNotes {
     if (field.pending?.commit() !== true) return;
     for (const checkbox of field.body.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))
       checkbox.disabled = true;
+    if (field.ready !== true) {
+      field.ready = true;
+      this.options.changed();
+    }
   }
   private field(row: NoteRow, key: string): NoteField {
     const previous = row.fields.get(key);
@@ -181,6 +271,7 @@ export class CommandNotes {
     row.fields.delete(key);
   }
   destroy(): void {
+    this.basis = undefined;
     for (const [key, row] of this.rows) this.release(key, row);
   }
 }

@@ -1891,19 +1891,463 @@ it('retains exact receipt-section continuation after finish and remount without 
 });
 
 function mockNativeBlocks(): void {
-  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, text, holder) => {
-    for (const block of text.trim().split(/\n\n+/u)) {
-      if (block.startsWith('# ') || block.startsWith('## ')) {
-        const [heading = '', ...rest] = block.split('\n');
-        const level = heading.startsWith('## ') ? 'h2' : 'h1';
-        holder.createEl(level, { text: heading.slice(level === 'h2' ? 3 : 2) });
-        if (rest.length > 0) holder.createEl('p', { text: rest.join('\n') });
-      } else if (block.startsWith('- [ ] '))
-        holder.createEl('ul').createEl('li').createEl('input', { type: 'checkbox' });
-      else holder.createEl('p', { text: block });
-    }
-  });
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(renderNativeBlocks);
 }
+const renderNativeBlocks: typeof MarkdownRenderer.render = async (_app, text, holder) => {
+  for (const block of text.trim().split(/\n\n+/u)) {
+    if (block.startsWith('# ') || block.startsWith('## ')) {
+      const [heading = '', ...rest] = block.split('\n');
+      const level = heading.startsWith('## ') ? 'h2' : 'h1';
+      holder.createEl(level, { text: heading.slice(level === 'h2' ? 3 : 2) });
+      if (rest.length > 0) holder.createEl('p', { text: rest.join('\n') });
+    } else if (block.startsWith('- [ ] '))
+      holder.createEl('ul').createEl('li').createEl('input', { type: 'checkbox' });
+    else holder.createEl('p', { text: block });
+  }
+};
+it.each(['pending', 'failed'] as const)(
+  'blocks Enter and semantic confirmation while the matching note preview is %s',
+  async (fault) => {
+    mockNativeBlocks();
+    const original = '# Original\n\nKeep this.\n';
+    const h = await setup({ 'Note.md': original });
+    const notes = expectDefined(h.api.notes);
+    const page = await notes.read({ selector: { path: 'Note.md' } });
+    if (!page.ok) throw new Error(page.error.code);
+    const plan = await notes.prepare({
+      kind: 'edit',
+      target: page.value.note.target,
+      expectedRevision: page.value.note.revision,
+      operation: {
+        type: 'append',
+        section: expectDefined(page.value.segments.find((part) => part.section.canAppend)).section
+          .target,
+        text: 'More details.',
+      },
+    });
+    if (!plan.ok) throw new Error(plan.error.code);
+    h.session.stage({ kind: 'note', plan: plan.value });
+    const waiting = deferred<void>();
+    const render = renderNativeBlocks;
+    const failed = vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (...args) => {
+      if (fault === 'failed') throw new Error('Native rendering failed');
+      await waiting.promise;
+      return render(...args);
+    });
+    let surface = h.mount();
+    await flushMicrotasks(0);
+    expect(
+      surface.element.querySelector<HTMLButtonElement>('[aria-label="Save proposal"]')?.disabled,
+    ).toBe(true);
+    enter(surface, '');
+    await flushMicrotasks(0);
+    expect(await h.read('Note.md')).toBe(original);
+    expect(h.owner.snapshot().journal).toHaveLength(0);
+    scriptedAgent(h, [{ tool: 'interpret', input: { intent: 'confirm', research: false } }]);
+    enter(surface, 'Yes, save these changes');
+    await vi.waitFor(() => {
+      expect(h.owner.snapshot().status.kind).not.toBe('thinking');
+    });
+    expect(await h.read('Note.md')).toBe(original);
+    expect(h.owner.snapshot().journal).toHaveLength(0);
+    failed.mockRestore();
+    mockNativeBlocks();
+    waiting.resolve();
+    if (fault === 'failed') {
+      surface.destroy();
+      surface = h.mount();
+    }
+    await vi.waitFor(() => {
+      expect(surface.element.querySelector('.abyss-command-note-body')?.textContent).toContain(
+        'More details.',
+      );
+    });
+    enter(surface, '');
+    await vi.waitFor(() => {
+      expect(h.owner.snapshot().status.kind).toBe('saved');
+    });
+    expect(await h.read('Note.md')).toContain('More details.');
+    expect(h.owner.snapshot().journal).toHaveLength(1);
+  },
+);
+
+it.each(['pending', 'failed'] as const)(
+  'keeps a %s replacement unconfirmable despite an older ready surface, and accepts further edits',
+  async (fault) => {
+    mockNativeBlocks();
+    const h = await setup();
+    const notes = expectDefined(h.api.notes);
+    const prepared = await notes.prepare({
+      kind: 'create',
+      path: 'Review.md',
+      title: 'Review',
+      text: '# First draft',
+    });
+    if (!prepared.ok) throw new Error(prepared.error.code);
+    h.session.stage({ kind: 'note', plan: prepared.value });
+    const first = h.mount();
+    await flushMicrotasks(0);
+    expect(first.element.querySelector('.abyss-command-note-body')?.textContent).toContain(
+      'First draft',
+    );
+    const waiting = deferred<void>();
+    const current = deferred<void>();
+    const render = renderNativeBlocks;
+    const renderer = vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (...args) => {
+      if (fault === 'failed' && !args[1].includes('Latest draft'))
+        throw new Error('Native render failed');
+      await (args[1].includes('Latest draft') ? current.promise : waiting.promise);
+      return render(...args);
+    });
+    const second = h.mount();
+    await flushMicrotasks(0);
+    enter(second, '');
+    await flushMicrotasks(0);
+    expect(h.app.vault.getFileByPath('Review.md')).toBeNull();
+    expect(h.owner.snapshot().journal).toHaveLength(0);
+    scriptedAgent(h, [
+      { tool: 'interpret', input: { intent: 'plan', research: false } },
+      {
+        tool: 'note',
+        input: {
+          input: {
+            kind: 'refine',
+            plan: prepared.value.target,
+            expectedPlanRevision: prepared.value.revision,
+            operation: { type: 'replace-body', text: '# Latest draft' },
+          },
+        },
+      },
+      { tool: 'finish', input: { state: 'ready', message: 'Revised.' } },
+    ]);
+    enter(second, 'Replace this with the latest draft');
+    await vi.waitFor(() => {
+      expect(h.owner.snapshot().status.message).toBe('Revised.');
+    });
+    expect(first.element.querySelector('.abyss-command-note-body')?.textContent).toContain(
+      'First draft',
+    );
+    waiting.resolve(); // A stale render may finish, but it cannot authorize the replacement.
+    await flushMicrotasks(0);
+    enter(second, '');
+    await flushMicrotasks(0);
+    expect(h.app.vault.getFileByPath('Review.md')).toBeNull();
+    expect(h.owner.snapshot().journal).toHaveLength(0);
+    first.destroy();
+    renderer.mockRestore();
+    mockNativeBlocks();
+    current.resolve();
+    await vi.waitFor(() => {
+      expect(second.element.querySelector('.abyss-command-note-body')?.textContent).toContain(
+        'Latest draft',
+      );
+    });
+    enter(second, '');
+    await vi.waitFor(() => {
+      expect(h.owner.snapshot().status.kind).toBe('saved');
+    });
+    expect(await h.read('Review.md')).toContain('Latest draft');
+    expect(await h.read('Review.md')).not.toContain('First draft');
+  },
+);
+
+it('keeps receipt-bound note content current when a later task write fails, including remount', async () => {
+  mockNativeBlocks();
+  const h = await setup({}, (api) => ({
+    ...api,
+    tasks: {
+      ...api.tasks,
+      create: async () => {
+        throw new Error('Task write unavailable');
+      },
+    },
+  }));
+  const note = await expectDefined(h.api.notes).prepare({
+    kind: 'create',
+    path: 'Review.md',
+    title: 'Review',
+    text: '# Current body',
+  });
+  if (!note.ok) throw new Error(note.error.code);
+  h.session.stage({ kind: 'note', plan: note.value });
+  const task = await expectDefined(h.api.tasks.prepare)({
+    kind: 'create',
+    destination: { type: 'note', path: 'a.md', insertion: { type: 'append' } },
+    tree: { markdownTitle: 'Pending task' },
+  });
+  if (!task.ok) throw new Error(task.error.code);
+  h.session.stage({ kind: 'task', plan: task.value });
+  let surface = h.mount();
+  await flushMicrotasks(0);
+  enter(surface, '');
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().status.kind).toBe('error');
+  });
+  const check = () => {
+    const card = expectDefined(surface.element.querySelector('.abyss-command-note'));
+    expect(card.querySelector('.abyss-command-note-scope')?.textContent).toBe('Full note');
+    expect(card.textContent).toContain('Current body');
+    expect(card.querySelectorAll('[data-change="added"], ins, del')).toHaveLength(0);
+  };
+  check();
+  await h.owner.flush();
+  surface.destroy();
+  surface = h.mount();
+  await flushMicrotasks(0);
+  check();
+  expect(await h.read('Review.md')).toContain('Current body');
+  expect(await h.read('a.md')).not.toContain('Pending task');
+});
+
+it('waits for every edited note range before enabling confirmation', async () => {
+  mockNativeBlocks();
+  const original = 'First section.\n\n- [ ] Protected\n\nSecond section.\n';
+  const h = await setup({ 'Note.md': original });
+  const notes = expectDefined(h.api.notes);
+  const read = await notes.read({ selector: { path: 'Note.md' } });
+  if (!read.ok) throw new Error(read.error.code);
+  const sections = read.value.segments.filter((segment) => segment.section.canAppend);
+  const prepared = await notes.prepare({
+    kind: 'edit',
+    target: read.value.note.target,
+    expectedRevision: read.value.note.revision,
+    operation: {
+      type: 'append',
+      section: expectDefined(sections[0]).section.target,
+      text: 'First addition.',
+    },
+  });
+  if (!prepared.ok) throw new Error(prepared.error.code);
+  const refined = await notes.prepare({
+    kind: 'refine',
+    plan: prepared.value.target,
+    expectedPlanRevision: prepared.value.revision,
+    operation: {
+      type: 'append',
+      section: expectDefined(sections[1]).section.target,
+      text: 'Second addition.',
+    },
+  });
+  if (!refined.ok) throw new Error(refined.error.code);
+  h.session.stage({ kind: 'note', plan: refined.value });
+  const waiting = deferred<void>();
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (...args) => {
+    if (args[1].includes('Second addition')) await waiting.promise;
+    return renderNativeBlocks(...args);
+  });
+  const surface = h.mount();
+  await flushMicrotasks(0);
+  expect(surface.element.querySelector('.abyss-command-note-body')?.textContent).toContain(
+    'First addition',
+  );
+  enter(surface, '');
+  await flushMicrotasks(0);
+  expect(await h.read('Note.md')).toBe(original);
+  expect(h.owner.snapshot().journal).toHaveLength(0);
+  waiting.resolve();
+  await flushMicrotasks(0);
+  enter(surface, '');
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().status.kind).toBe('saved');
+  });
+  expect(await h.read('Note.md')).toContain('First addition.');
+  expect(await h.read('Note.md')).toContain('Second addition.');
+  expect(await h.read('Note.md')).toContain('- [ ] Protected');
+  expect(h.owner.snapshot().journal).toHaveLength(1);
+});
+
+it('renders the earlier source again when refinement returns to it after a failed replacement', async () => {
+  mockNativeBlocks();
+  const h = await setup();
+  const notes = expectDefined(h.api.notes);
+  const created = await notes.prepare({
+    kind: 'create',
+    path: 'Review.md',
+    title: 'Review',
+    text: '# First draft',
+  });
+  if (!created.ok) throw new Error(created.error.code);
+  h.session.stage({ kind: 'note', plan: created.value });
+  const surface = h.mount();
+  await flushMicrotasks(0);
+  expect(surface.element.querySelector('.abyss-command-note-body')?.textContent).toContain(
+    'First draft',
+  );
+  vi.spyOn(MarkdownRenderer, 'render').mockRejectedValue(new Error('Native rendering failed'));
+  const changed = await notes.prepare({
+    kind: 'refine',
+    plan: created.value.target,
+    expectedPlanRevision: created.value.revision,
+    operation: { type: 'replace-body', text: '# Failed draft' },
+  });
+  if (!changed.ok) throw new Error(changed.error.code);
+  h.session.stage({ kind: 'note', plan: changed.value });
+  await flushMicrotasks(0);
+  expect(surface.element.querySelector('.abyss-command-note-body')?.textContent).toBe(
+    'Could not display note content.',
+  );
+  mockNativeBlocks();
+  const restored = await notes.prepare({
+    kind: 'refine',
+    plan: changed.value.target,
+    expectedPlanRevision: changed.value.revision,
+    operation: { type: 'replace-body', text: '# First draft' },
+  });
+  if (!restored.ok) throw new Error(restored.error.code);
+  h.session.stage({ kind: 'note', plan: restored.value });
+  await flushMicrotasks(0);
+  expect(surface.element.querySelector('.abyss-command-note-body')?.textContent).toContain(
+    'First draft',
+  );
+  enter(surface, '');
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().status.kind).toBe('saved');
+  });
+  expect(await h.read('Review.md')).toContain('First draft');
+  expect(await h.read('Review.md')).not.toContain('Failed draft');
+});
+
+it.each(['failed', 'concurrent'] as const)(
+  'does not present the retained full note as current after %s readback, including remount',
+  async (fault) => {
+    mockNativeBlocks();
+    const original = '# Original\n\nKeep this.\n';
+    let wrote = false;
+    const h = await setup({ 'Note.md': original }, (api) => ({
+      ...api,
+      notes: {
+        ...expectDefined(api.notes),
+        read: async (input, options) => {
+          if (wrote && fault === 'failed') throw new Error('Readback unavailable');
+          return expectDefined(api.notes).read(input, options);
+        },
+      },
+    }));
+    const notes = expectDefined(h.api.notes);
+    const page = await notes.read({ selector: { path: 'Note.md' } });
+    if (!page.ok) throw new Error(page.error.code);
+    await h.owner.focus({
+      kind: 'note',
+      target: page.value.note.target,
+      revision: page.value.note.revision,
+    });
+    const plan = await notes.prepare({
+      kind: 'edit',
+      target: page.value.note.target,
+      expectedRevision: page.value.note.revision,
+      operation: {
+        type: 'append',
+        section: expectDefined(page.value.segments.find((part) => part.section.canAppend)).section
+          .target,
+        text: 'More details.',
+      },
+    });
+    if (!plan.ok) throw new Error(plan.error.code);
+    h.session.stage({ kind: 'note', plan: plan.value });
+    const process = h.app.vault.process.bind(h.app.vault);
+    vi.spyOn(h.app.vault, 'process').mockImplementationOnce(async (file, callback) => {
+      const result = await process(file, callback);
+      wrote = true;
+      if (fault === 'concurrent') await h.app.vault.modify(file, 'Concurrent content\n');
+      return result;
+    });
+    let surface = h.mount();
+    await flushMicrotasks(0);
+    enter(surface, '');
+    await vi.waitFor(() => {
+      expect(h.owner.snapshot().status.kind).toBe('error');
+    });
+    expect(h.owner.snapshot().journal[0]?.effects).toBe('committed');
+    const check = () => {
+      const card = expectDefined(surface.element.querySelector('.abyss-command-note'));
+      expect(card.querySelector('.abyss-command-note-scope')?.textContent).toContain('unverified');
+      expect(card.textContent).not.toContain('Full note');
+      expect(card.textContent).toContain('More details.');
+    };
+    check();
+    await h.owner.flush();
+    surface.destroy();
+    surface = h.mount();
+    await flushMicrotasks(0);
+    check();
+    enter(surface, '');
+    await flushMicrotasks(0);
+    expect(h.owner.snapshot().journal).toHaveLength(1);
+    expect(await h.read('Note.md')).toBe(
+      fault === 'concurrent' ? 'Concurrent content\n' : '# Original\n\nKeep this.\nMore details.',
+    );
+  },
+);
+
+it.each([false, true])(
+  'shows a later complete current read once receipt readback failed=%s without duplicate cards',
+  async (failReadback) => {
+    mockNativeBlocks();
+    let rejectReadback = failReadback;
+    const h = await setup({ 'Note.md': '# Original\n\nKeep this.\n' }, (api) => ({
+      ...api,
+      notes: {
+        ...expectDefined(api.notes),
+        read: async (input, options) => {
+          if (rejectReadback && 'section' in input.selector)
+            throw new Error('Readback unavailable');
+          return expectDefined(api.notes).read(input, options);
+        },
+      },
+    }));
+    const notes = expectDefined(h.api.notes);
+    const read = await notes.read({ selector: { path: 'Note.md' } });
+    if (!read.ok) throw new Error(read.error.code);
+    h.session.observeNote(read.value);
+    const prepared = await notes.prepare({
+      kind: 'edit',
+      target: read.value.note.target,
+      expectedRevision: read.value.note.revision,
+      operation: {
+        type: 'append',
+        section: expectDefined(read.value.segments.find((segment) => segment.section.canAppend))
+          .section.target,
+        text: 'Added detail.',
+      },
+    });
+    if (!prepared.ok) throw new Error(prepared.error.code);
+    h.session.stage({ kind: 'note', plan: prepared.value });
+    let surface = h.mount();
+    await flushMicrotasks(0);
+    enter(surface, '');
+    await vi.waitFor(() => {
+      expect(h.owner.snapshot().status.kind).toBe(failReadback ? 'error' : 'saved');
+    });
+    rejectReadback = false;
+    scriptedAgent(h, [
+      { tool: 'interpret', input: { intent: 'plan', research: false } },
+      { tool: 'read', input: { input: { kind: 'note', selector: { path: 'Note.md' } } } },
+      { tool: 'finish', input: { state: 'ready', message: 'Read current note.' } },
+    ]);
+    enter(surface, 'Read the full current note');
+    await vi.waitFor(() => {
+      expect(h.owner.snapshot().status.message).toBe('Read current note.');
+    });
+    const check = () => {
+      expect(surface.element.querySelectorAll('.abyss-command-note')).toHaveLength(1);
+      expect(surface.element.querySelector('.abyss-command-note-scope')?.textContent).toBe(
+        'Full note',
+      );
+      expect(surface.element.querySelector('.abyss-command-note-body')?.textContent).toContain(
+        'Added detail.',
+      );
+    };
+    check();
+    surface.destroy();
+    surface = h.mount();
+    await flushMicrotasks(0);
+    check();
+    enter(surface, '');
+    await flushMicrotasks(0);
+    expect(h.owner.snapshot().journal).toHaveLength(1);
+  },
+);
+
 it('shows a note display error when the prior Markdown comparison fails', async () => {
   mockNativeBlocks();
   const original = '# Original\n\nKeep this.\n';

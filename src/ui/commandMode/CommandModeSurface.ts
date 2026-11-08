@@ -81,6 +81,7 @@ export class CommandModeSurface implements CaptureExtension {
   private readonly notes: CommandNotes;
   private tree: CommandTree | undefined;
   private owner: CommandSessionOwner | undefined;
+  private noteReview: ReturnType<CommandSessionOwner['registerNoteReview']> | undefined;
   private unsubscribe: (() => void) | undefined;
   private menu: Menu | undefined;
   private releaseMenu = (): void => {};
@@ -120,7 +121,15 @@ export class CommandModeSurface implements CaptureExtension {
       this.content.createDiv({ cls: 'abyss-command-notes' }),
       options.app,
       this.component,
-      (href, path) => this.allowLink(href, path),
+      {
+        allowLink: (href, path) => this.allowLink(href, path),
+        changed: () => {
+          if (!this.live || !this.active() || this.owner === undefined) return;
+          const state = this.owner.snapshot();
+          this.renderPrimary(state);
+          this.renderPhase(state, busy(state));
+        },
+      },
     );
     this.latest = this.content.createDiv({ cls: 'abyss-command-latest' });
     this.question = this.content.createDiv({ cls: 'abyss-command-question' });
@@ -180,6 +189,7 @@ export class CommandModeSurface implements CaptureExtension {
     this.content.hidden = !active;
     if (active) {
       this.owner ??= this.options.owner();
+      this.bindNoteReview();
       this.owner.updateContext(this.options.context());
       this.owner.open();
       this.options.memory.presentation ??= new Map();
@@ -207,6 +217,7 @@ export class CommandModeSurface implements CaptureExtension {
       );
       this.content.scrollTop = this.options.memory.scrollTop;
     } else {
+      this.releaseNoteReview();
       this.unsubscribe?.();
       this.unsubscribe = undefined;
       if (this.owner !== undefined)
@@ -222,6 +233,15 @@ export class CommandModeSurface implements CaptureExtension {
     this.owner?.setInput(text);
     this.remember();
   }
+  private bindNoteReview(): void {
+    this.noteReview ??= this.owner?.registerNoteReview(
+      (basis) => this.live && this.active() && this.notes.reviewStatus(basis) === 'ready',
+    );
+  }
+  private releaseNoteReview(): void {
+    this.noteReview?.dispose();
+    this.noteReview = undefined;
+  }
   submit(): void {
     const owner = this.owner;
     if (!this.active() || owner === undefined || !this.live) return;
@@ -232,10 +252,14 @@ export class CommandModeSurface implements CaptureExtension {
       generation = ++this.inputGeneration;
     runAsyncAction(
       (async () => {
-        await owner.submit(text, {
-          sessionId: basis.id,
-          proposalRevision: basis.proposal.revision,
-        });
+        await owner.submit(
+          text,
+          {
+            sessionId: basis.id,
+            proposalRevision: basis.proposal.revision,
+          },
+          this.noteReview?.token,
+        );
         const next = owner.snapshot();
         if (
           this.live &&
@@ -279,7 +303,7 @@ export class CommandModeSurface implements CaptureExtension {
       return;
     }
     if (busy(state)) this.setPrimary('stop', false);
-    else if (readyToSave(state)) this.setPrimary('save', false);
+    else if (readyToSave(state)) this.setPrimary('save', this.noteReviewStatus(state) !== 'ready');
     else this.setPrimary('send', true);
   }
   escape(): void {
@@ -302,6 +326,7 @@ export class CommandModeSurface implements CaptureExtension {
     if (!this.live || !this.active()) return;
     if (this.capture.input.value !== state.input) this.capture.input.value = state.input;
     const isBusy = busy(state);
+    this.notes.update(state);
     this.renderPrimary(state);
     this.capture.input.setAttribute('aria-busy', String(isBusy));
     this.capture.input.setAttribute('aria-invalid', String(state.status.kind === 'error'));
@@ -312,7 +337,6 @@ export class CommandModeSurface implements CaptureExtension {
     this.question.textContent = state.activeQuestion ?? '';
     this.question.hidden = state.activeQuestion === null;
     this.projects.update(state);
-    this.notes.update(state);
     this.tree?.update(state);
     this.navigateSaved(state);
     this.reveal(state);
@@ -321,7 +345,8 @@ export class CommandModeSurface implements CaptureExtension {
     const waiting = state.activeQuestion !== null && !isBusy && state.status.kind !== 'error';
     let message = state.status.message;
     if (waiting) message = 'Needs your answer.';
-    else if (state.input.trim() === '' && readyToSave(state)) message = 'Ready. Enter to save.';
+    else if (state.input.trim() === '' && readyToSave(state))
+      message = this.noteReviewMessage(state);
     if (!isBusy) {
       this.clearPhaseTimer();
       this.phase.textContent = message;
@@ -333,6 +358,19 @@ export class CommandModeSurface implements CaptureExtension {
       this.phaseTimer = undefined;
       if (this.live && this.active()) this.phase.textContent = this.pendingPhase;
     }, 150);
+  }
+  private noteReviewStatus(state: CommandSessionSnapshot): 'ready' | 'pending' | 'failed' {
+    return this.notes.reviewStatus({
+      sessionId: state.id,
+      proposalRevision: state.proposal.revision,
+    });
+  }
+  private noteReviewMessage(state: CommandSessionSnapshot): string {
+    const review = this.noteReviewStatus(state);
+    if (review === 'ready') return 'Ready. Enter to save.';
+    if (review === 'failed')
+      return 'Could not display the note preview. Edit it or reopen CommandMode to retry.';
+    return 'Loading note preview…';
   }
   private clearPhaseTimer(): void {
     this.phase.win.clearTimeout(this.phaseTimer);
@@ -489,6 +527,7 @@ export class CommandModeSurface implements CaptureExtension {
     this.menu?.hide();
     this.releaseMenu();
     this.unsubscribe?.();
+    this.releaseNoteReview();
     this.tree?.destroy();
     this.projects.destroy();
     this.notes.destroy();

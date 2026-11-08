@@ -837,6 +837,7 @@ class CommandToolOwner {
               await this.ctx.session.confirmFromTurn(
                 this.ctx.session.snapshot().proposal.revision,
                 this.ctx.signal,
+                true,
               );
             else this.ctx.session.status('ready', input.message);
           }

@@ -115,6 +115,84 @@ async function setup(initial?: unknown) {
     },
   };
 }
+it('binds note confirmation to its initiating live surface and never persists the review capability', async () => {
+  const h = await setup();
+  h.owner.open();
+  const notes = expectDefined(h.api().notes);
+  const prepared = await notes.prepare({
+    kind: 'create',
+    path: 'Review.md',
+    title: 'Review',
+    text: 'Inspect this.',
+  });
+  if (!prepared.ok) throw new Error(prepared.error.code);
+  h.session().stage({ kind: 'note', plan: prepared.value });
+  const snapshot = h.owner.snapshot();
+  const basis = { sessionId: snapshot.id, proposalRevision: snapshot.proposal.revision };
+  const ready = h.owner.registerNoteReview(
+    (value) =>
+      value.sessionId === basis.sessionId && value.proposalRevision === basis.proposalRevision,
+  );
+  const unavailable = h.owner.registerNoteReview(() => false);
+  expect(await h.owner.confirm()).toBe(false);
+  expect(await h.owner.confirm(basis.proposalRevision, unavailable.token)).toBe(false);
+  expect(h.app.vault.getFileByPath('Review.md')).toBeNull();
+  ready.dispose();
+  expect(await h.owner.confirm(basis.proposalRevision, ready.token)).toBe(false);
+  const current = h.owner.registerNoteReview(() => true);
+  await h.owner.flush();
+  expect(JSON.stringify(h.raw())).not.toContain('noteReview');
+  expect(await h.owner.confirm(basis.proposalRevision, current.token)).toBe(true);
+  expect(await h.read('Review.md')).toContain('Inspect this.');
+});
+it.each(['session', 'revision'] as const)(
+  'rejects an empty submission against an older %s even when the initiating surface is now ready',
+  async (stale) => {
+    const h = await setup();
+    h.owner.open();
+    const notes = expectDefined(h.api().notes);
+    const prepared = await notes.prepare({
+      kind: 'create',
+      path: 'Review.md',
+      title: 'Review',
+      text: 'First draft.',
+    });
+    if (!prepared.ok) throw new Error(prepared.error.code);
+    h.session().stage({ kind: 'note', plan: prepared.value });
+    const previous = h.owner.snapshot();
+    const refined = await notes.prepare({
+      kind: 'refine',
+      plan: prepared.value.target,
+      expectedPlanRevision: prepared.value.revision,
+      operation: { type: 'replace-body', text: 'Current draft.' },
+    });
+    if (!refined.ok) throw new Error(refined.error.code);
+    h.session().stage({ kind: 'note', plan: refined.value });
+    const current = h.owner.snapshot();
+    const registration = h.owner.registerNoteReview(
+      (basis) =>
+        basis.sessionId === current.id && basis.proposalRevision === current.proposal.revision,
+    );
+    await h.owner.submit(
+      '',
+      {
+        sessionId: stale === 'session' ? 'previous-session' : current.id,
+        proposalRevision:
+          stale === 'revision' ? previous.proposal.revision : current.proposal.revision,
+      },
+      registration.token,
+    );
+    expect(h.app.vault.getFileByPath('Review.md')).toBeNull();
+    expect(h.owner.snapshot().journal).toHaveLength(0);
+    await h.owner.submit(
+      '',
+      { sessionId: current.id, proposalRevision: current.proposal.revision },
+      registration.token,
+    );
+    expect(await h.read('Review.md')).toContain('Current draft.');
+    expect(h.owner.snapshot().journal).toHaveLength(1);
+  },
+);
 it('retains the same runtime and exact unsent state through hide and reopen, with coalesced typing writes', async () => {
   const h = await setup();
   h.owner.open();

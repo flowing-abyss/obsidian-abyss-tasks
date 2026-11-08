@@ -7,6 +7,7 @@ import {
   CommandFailure,
   type CommandFocus,
   type CommandJournalPort,
+  type CommandNoteReview,
   type CommandRevealRequest,
   type CommandSessionSnapshot,
   type CommandSessionTransitions,
@@ -35,6 +36,7 @@ export class CommandSessionOwner {
   private acceptance = 0;
   private failureCode: string | undefined;
   private readonly ownedSessions = new Set<string>();
+  private readonly noteReviews = new Map<symbol, CommandNoteReview>();
   constructor(private readonly options: CommandSessionOwnerOptions) {
     this.session = options.createSession(
       { save: (state) => this.save(state) },
@@ -51,6 +53,7 @@ export class CommandSessionOwner {
       },
     );
     this.ownedSessions.add(this.session.snapshot().id);
+    this.session.requireNoteReview();
     const active = options.store
       .records()
       .find((record) => record.snapshot.id === options.store.activeId());
@@ -185,7 +188,22 @@ export class CommandSessionOwner {
   setInput(text: string): void {
     if (!this.disposed) this.session.setInput(text);
   }
-  async submit(text: string, basis?: CommandSubmissionBasis): Promise<void> {
+  registerNoteReview(review: CommandNoteReview): { token: symbol; dispose(): void } {
+    this.assertLive();
+    const token = Symbol();
+    this.noteReviews.set(token, review);
+    return {
+      token,
+      dispose: () => {
+        this.noteReviews.delete(token);
+      },
+    };
+  }
+  private noteReview(token?: symbol): CommandNoteReview {
+    return (basis) =>
+      !this.disposed && token !== undefined && this.noteReviews.get(token)?.(basis) === true;
+  }
+  async submit(text: string, basis?: CommandSubmissionBasis, surface?: symbol): Promise<void> {
     const generation = this.acceptance;
     if (this.changing !== undefined) await this.changing;
     if (this.isDisposed()) return;
@@ -194,14 +212,17 @@ export class CommandSessionOwner {
       await this.flush();
       return;
     }
-    await this.session.submit(text, basis);
+    await this.session.submit(text, basis, this.noteReview(surface));
     await this.flush();
   }
-  async confirm(revision?: number): Promise<boolean> {
+  async confirm(revision?: number, surface?: symbol): Promise<boolean> {
     const basis = this.session.snapshot();
     if (this.changing !== undefined) await this.changing;
     if (this.isDisposed() || this.session.snapshot().id !== basis.id) return false;
-    const result = await this.session.confirm(revision ?? basis.proposal.revision);
+    const result = await this.session.confirm(
+      revision ?? basis.proposal.revision,
+      this.noteReview(surface),
+    );
     await this.flush();
     return result;
   }
@@ -314,6 +335,7 @@ export class CommandSessionOwner {
       this.emit();
     });
     this.disposed = true;
+    this.noteReviews.clear();
     this.cancelScheduled?.();
     this.cancelScheduled = undefined;
     this.unsubscribe();

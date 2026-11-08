@@ -102,6 +102,8 @@ export interface CommandSubmissionBasis {
   readonly sessionId: string;
   readonly proposalRevision: number;
 }
+/** Runtime-only proof from the surface that initiated this submission. */
+export type CommandNoteReview = (basis: CommandSubmissionBasis) => boolean;
 export type CommandPendingTransition =
   | {
       readonly kind: 'focus';
