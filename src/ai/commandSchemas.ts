@@ -190,7 +190,7 @@ export const intentSchema = z
       .enum(['save', 'keep', 'discard', 'cancel'])
       .optional()
       .describe(
-        'save writes the reviewed changes to source; keep switches while retaining the complete unsaved draft for later; discard switches and abandons the draft ONLY on explicit abandonment; cancel stays here. If the intended disposition is ambiguous, omit this field: the application retains the draft and asks. Never infer discard from leaving work unsaved.',
+        'save writes the reviewed changes; keep LEAVES this session and archives the unsaved draft; discard switches and abandons it ONLY on explicit abandonment; cancel stays here. To return to a pending project-move root and keep the SAME active proposal, use plan and omit this field, then finish.selection. Unsaved does not mean leave or discard. If ambiguous, omit this field and retain the issue.',
       ),
   })
   .superRefine((input, context) => {

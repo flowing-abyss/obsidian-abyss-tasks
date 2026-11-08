@@ -16,7 +16,12 @@ import type {
   TaskTreePageV1,
   TaskTreeV1,
 } from '../../api';
-import { sameCommandProjectSchema, validateCommandProject } from './commandProjects';
+import {
+  projectMoveFocusMessage,
+  projectMoveWithDescendantFocus,
+  sameCommandProjectSchema,
+  validateCommandProject,
+} from './commandProjects';
 import { canonicalCommandPlan, commandRead } from './commandReads';
 import { hasUnknownCommandResourceEffects } from './commandRecovery';
 import {
@@ -125,6 +130,7 @@ class CommandWriteRun {
   }
   async run(): Promise<void> {
     validateCommandLinks(this.ctx.proposal, this.ctx.now());
+    this.requireProjectMoveFocus(this.ctx.proposal.changes);
     for (const change of [...this.ctx.proposal.changes].sort((a, b) => order(a) - order(b))) {
       if (this.ctx.cancelled())
         throw new CommandFailure(
@@ -140,6 +146,10 @@ class CommandWriteRun {
       const current = await this.read(() => required(this.ctx.api.projects).get(project.target));
       this.ctx.observeProject(current);
     }
+  }
+  private requireProjectMoveFocus(changes: readonly CommandChange[]): void {
+    if (projectMoveWithDescendantFocus(changes, this.ctx.focus()) !== undefined)
+      throw new CommandFailure('PROJECT_MOVE_FOCUS', projectMoveFocusMessage);
   }
   private async refreshSelectedTasks(): Promise<void> {
     for (const selection of this.ctx.focus()) {
@@ -301,6 +311,7 @@ class CommandWriteRun {
       state: 'admitted',
     };
     const execute = await this.operation(change, entry.request);
+    this.requireProjectMoveFocus([change]);
     await this.ctx.record(entry);
     if (this.ctx.cancelled()) {
       await this.ctx.record({

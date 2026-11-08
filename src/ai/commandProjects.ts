@@ -1,7 +1,24 @@
 import type { ProjectDtoV1, ProjectFieldAssignmentV1, ProjectSchemaV1 } from '../../api';
 import { parseProjectDate } from '../projects/projectDateValue';
 import { fieldCompatible } from '../projects/projectMetadataPolicy';
-import { CommandFailure } from './commandTypes';
+import { CommandFailure, type CommandChange, type CommandFocus } from './commandTypes';
+
+export const projectMoveFocusMessage =
+  'Select the saved root task before moving it. The previous focus and proposal are retained.';
+export function projectMoveWithDescendantFocus(
+  changes: readonly CommandChange[],
+  focus: readonly CommandFocus[],
+): Extract<CommandChange, { kind: 'project-move' }> | undefined {
+  const selected = new Set(
+    focus.filter((entry) => entry.kind === 'task').map((entry) => entry.target),
+  );
+  const contains = (tree: Extract<CommandChange, { kind: 'project-move' }>['before']): boolean =>
+    tree.children.some((child) => selected.has(child.target) || contains(child));
+  return changes.find(
+    (change): change is Extract<CommandChange, { kind: 'project-move' }> =>
+      change.kind === 'project-move' && contains(change.before),
+  );
+}
 
 export function validateCommandProject(
   schema: ProjectSchemaV1,

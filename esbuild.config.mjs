@@ -1,3 +1,7 @@
+// Same-session project-move root return versus keep-and-leave guidance: measured main 3,978,554 bytes.
+// No dependencies added; approved minimum main budget 3,979,264 bytes (3886 KiB), below 5,000,000.
+// Enforced project-move focus through admission and exact comment-helper aliases: measured main 3,978,134 bytes.
+// No dependencies added; approved minimum main budget 3,978,240 bytes (3885 KiB), below 5,000,000.
 // Turn-local typed references, bounded repair/read continuation and native hierarchy review: measured main 3,976,377 bytes.
 // No dependencies added; approved minimal containing main budget 3,977,216 bytes (3884 KiB), below 5,000,000.
 // CommandMode diagnostic, paging, current-reference and billing fixes: measured licensed main 3,969,786 bytes.

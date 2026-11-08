@@ -67,6 +67,8 @@ fields, status and date ranges; dispatch rechecks the captured schema and invoke
 readback establishes the saved project and current focus. Explicit project membership moves use
 `ProjectsApiV1.moveTask` with a reviewed complete root and destination header. Its receipt proves root
 continuation only, so selected descendants or overlapping pending edits retain a concise conflict.
+Late descendant selection retains that conflict through confirmation; selecting the exact moved root
+resolves it. The write owner rechecks current focus before admission, independently of preparation.
 Both operations use the shared admission journal and unknown-effect replay prohibition.
 
 `ProviderTranscription` uses the pinned OpenAI transcription adapter through that same transport and

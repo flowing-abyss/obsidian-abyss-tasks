@@ -17,7 +17,12 @@ import type {
   TasksApiV1,
 } from '../../api';
 import { buildLinkRaw } from '../markdown/links';
-import { sameCommandProjectSchema, validateCommandProject } from './commandProjects';
+import {
+  projectMoveFocusMessage,
+  projectMoveWithDescendantFocus,
+  sameCommandProjectSchema,
+  validateCommandProject,
+} from './commandProjects';
 import { canonicalCommandPlan, canonicalCommandTree, commandRead } from './commandReads';
 import type { CommandReferenceBook } from './CommandReferenceBook';
 import { commandReferences } from './commandReferences';
@@ -268,13 +273,8 @@ class CommandToolOwner {
           if (lifecycle !== undefined) return lifecycle;
           if (!(await this.continueTransition(input)))
             return { resolved: false, continuation: false };
-          if (this.ctx.session.snapshot().pendingTransition != null) {
-            this.ctx.done = true;
-            this.ctx.session.question(
-              'Save these changes, keep them for later, discard them, or stay here?',
-            );
-            return { needsDisposition: true };
-          }
+          const transition = this.pendingTransition();
+          if (transition !== undefined) return transition;
           if (input.intent === 'save-then-plan') {
             const saved = await this.ctx.session.confirmFromTurn(
               this.ctx.basis.proposal.revision,
@@ -291,6 +291,23 @@ class CommandToolOwner {
           return { intent: input.intent, preview: !this.ctx.immediate };
         }),
     });
+  }
+  private pendingTransition(): unknown {
+    const snapshot = this.ctx.session.snapshot(),
+      pending = snapshot.pendingTransition;
+    if (pending == null) return undefined;
+    if (
+      pending.kind === 'focus' &&
+      projectMoveWithDescendantFocus(snapshot.proposal.changes, pending.target) !== undefined
+    ) {
+      this.ctx.session.question(projectMoveFocusMessage);
+      return { needsRootContext: true };
+    }
+    this.ctx.done = true;
+    this.ctx.session.question(
+      'Save these changes, keep them for later, discard them, or stay here?',
+    );
+    return { needsDisposition: true };
   }
   private async continueTransition(input: z.infer<typeof intentSchema>): Promise<boolean> {
     if (input.intent !== 'plan' || input.transitionDisposition === undefined) return true;
@@ -836,21 +853,13 @@ class CommandToolOwner {
       deadline: this.ctx.deadline,
     });
     this.ctx.signal.throwIfAborted();
-    const descendants = (node: TaskTreeV1): string[] =>
-      node.children.flatMap((child) => [child.target, ...descendants(child)]);
-    const childTargets = new Set(descendants(full.tree));
-    if (
-      this.ctx.session.snapshot().focus.some((f) => f.kind === 'task' && childTargets.has(f.target))
-    )
-      throw new CommandFailure(
-        'PROJECT_MOVE_FOCUS',
-        'Select the saved root task before moving it. The current subtask context is retained.',
-      );
     const change = {
       kind: 'project-move' as const,
       before: full.tree,
       destination: before,
     };
+    if (projectMoveWithDescendantFocus([change], this.ctx.session.snapshot().focus) !== undefined)
+      throw new CommandFailure('PROJECT_MOVE_FOCUS', projectMoveFocusMessage);
     this.ctx.session.stage(change);
     return change;
   }
@@ -1084,18 +1093,11 @@ class CommandToolOwner {
               'UNRESOLVED',
               'An operation still needs repair. Do not report a completed request.',
             );
-          if (
-            input.selection !== undefined &&
-            !(await this.ctx.session.focus(input.selection, this.ctx.signal))
-          ) {
-            if (this.ctx.session.snapshot().pendingTransition != null) {
-              this.ctx.done = true;
-              return { needsDisposition: true };
-            }
-            throw new CommandFailure(
-              'FOCUS',
-              'The requested selection could not be verified. The earlier focus is retained.',
-            );
+          if (!(await this.finishSelection(input.selection))) return { needsDisposition: true };
+          const transition = this.pendingTransition();
+          if (transition !== undefined) {
+            this.ctx.done = true;
+            return transition;
           }
           await this.reveal(input);
 
@@ -1116,6 +1118,20 @@ class CommandToolOwner {
           return { finished: true };
         }),
     });
+  }
+  private async finishSelection(
+    selection: z.infer<typeof finishSchema>['selection'],
+  ): Promise<boolean> {
+    if (selection === undefined || (await this.ctx.session.focus(selection, this.ctx.signal)))
+      return true;
+    if (this.ctx.session.snapshot().pendingTransition != null) {
+      this.ctx.done = true;
+      return false;
+    }
+    throw new CommandFailure(
+      'FOCUS',
+      'The requested selection could not be verified. The earlier focus is retained.',
+    );
   }
   private async reveal(input: z.infer<typeof finishSchema>): Promise<void> {
     if (input.state !== 'ready') return;

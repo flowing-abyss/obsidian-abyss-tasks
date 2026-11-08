@@ -7,6 +7,7 @@ import type {
   TaskTreePageV1,
   TaskTreeV1,
 } from '../../api';
+import { projectMoveFocusMessage, projectMoveWithDescendantFocus } from './commandProjects';
 import { canonicalCommandPlan, commandRead } from './commandReads';
 import { hasUnresolvedCommandWrites } from './commandRecovery';
 import {
@@ -605,13 +606,7 @@ export class CommandSession {
       const verified: VerifiedFocus[] = [];
       for (const entry of requested) verified.push(await this.verifyFocus(entry, read));
       if (!current()) return false;
-      if (this.needsFocusDisposition(requested)) {
-        this.requestTransition(
-          { kind: 'focus', target: requested },
-          'Save these changes, keep them for later, discard them, or stay here?',
-        );
-        return false;
-      }
+      if (this.retainFocusTransition(requested)) return false;
       for (const entry of verified) this.observeFocus(entry);
       this.publish({ focus: verified.map((entry) => entry.focus) });
       return true;
@@ -619,6 +614,17 @@ export class CommandSession {
       if (current()) this.status('error', focusError(cause));
       return false;
     }
+  }
+  private retainFocusTransition(requested: readonly CommandFocus[]): boolean {
+    if (this.readOnly()) return false;
+    if (this.retainProjectMoveFocus(requested)) return true;
+    this.restoreProjectMoveRoot(requested);
+    if (!this.needsFocusDisposition(requested)) return false;
+    this.requestTransition(
+      { kind: 'focus', target: requested },
+      'Save these changes, keep them for later, discard them, or stay here?',
+    );
+    return true;
   }
   private requestTransition(pending: CommandPendingTransition, question: string): void {
     const requested = { ...pending, previousQuestion: this.previousQuestion() };
@@ -634,6 +640,35 @@ export class CommandSession {
       ? this.state.activeQuestion
       : (this.state.pendingTransition.previousQuestion ?? null);
   }
+  private retainProjectMoveFocus(requested: readonly CommandFocus[]): boolean {
+    if (projectMoveWithDescendantFocus(this.state.proposal.changes, requested) === undefined)
+      return false;
+    this.requestTransition({ kind: 'focus', target: requested }, projectMoveFocusMessage);
+    return true;
+  }
+  private pendingProjectMoveFocus(): Extract<CommandChange, { kind: 'project-move' }> | undefined {
+    const pending = this.state.pendingTransition;
+    return pending?.kind === 'focus'
+      ? projectMoveWithDescendantFocus(this.state.proposal.changes, pending.target)
+      : undefined;
+  }
+  private restoreProjectMoveRoot(requested: readonly CommandFocus[]): void {
+    const pending = this.pendingProjectMoveFocus();
+    if (
+      pending === undefined ||
+      !requested.some((entry) => entry.kind === 'task' && entry.target === pending.before.target)
+    )
+      return;
+    const question = this.previousQuestion();
+    this.publish({
+      pendingTransition: null,
+      activeQuestion: question,
+      status: {
+        kind: question === null ? 'ready' : 'question',
+        message: question ?? 'Ready for review.',
+      },
+    });
+  }
   private needsFocusDisposition(requested: readonly CommandFocus[]): boolean {
     if (this.readOnly() || this.state.proposal.changes.length === 0) return false;
     if (
@@ -646,8 +681,7 @@ export class CommandSession {
         if (change.kind === 'project-create') return false;
         if (change.kind === 'project-move')
           return (
-            entry.target === change.destination.target ||
-            focusNode(change.before, entry.target) !== undefined
+            entry.target === change.destination.target || entry.target === change.before.target
           );
         if (change.kind === 'note') return entry.target === change.plan.target;
         if (change.kind === 'status') return entry.target === change.target;
@@ -680,13 +714,21 @@ export class CommandSession {
       });
       return true;
     }
-    if (pending.kind === 'new-session')
-      return disposition === 'save'
-        ? this.saveAndFocus(undefined, signal, review)
-        : this.newSession(disposition, signal);
-    if (disposition === 'save') return this.saveAndFocus(pending.target, signal, review);
+    if (disposition === 'save') return this.saveTransition(pending, signal, review);
+    if (pending.kind === 'new-session') return this.newSession(disposition, signal);
     if (!(await this.newSession(disposition, signal))) return false;
     return this.focus(pending.target, signal);
+  }
+  private saveTransition(
+    pending: CommandPendingTransition,
+    signal: AbortSignal | undefined,
+    review: CommandNoteReview | undefined,
+  ): Promise<boolean> {
+    if (this.pendingProjectMoveFocus() !== undefined) {
+      this.question(projectMoveFocusMessage);
+      return Promise.resolve(false);
+    }
+    return this.saveAndFocus(pending.kind === 'focus' ? pending.target : undefined, signal, review);
   }
   private currentTransition(basis?: CommandTransitionBasis): boolean {
     return (
@@ -1249,6 +1291,10 @@ export class CommandSession {
     review?: CommandNoteReview,
     immediate = false,
   ): Promise<boolean> {
+    if (this.pendingProjectMoveFocus() !== undefined) {
+      this.question(projectMoveFocusMessage);
+      return false;
+    }
     if (!this.canCommit(revision)) return false;
     if (
       !immediate &&
@@ -1435,6 +1481,8 @@ export class CommandSession {
               : 'Could not save or record the result. Review the retained write journal before continuing.',
         },
       });
+      if (!unsettled && cause instanceof CommandFailure && cause.code === 'PROJECT_MOVE_FOCUS')
+        this.retainProjectMoveFocus(this.state.focus);
       return false;
     } finally {
       this.writing = false;

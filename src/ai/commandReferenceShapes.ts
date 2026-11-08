@@ -161,6 +161,8 @@ export function outputReferenceKind(
   value: Record<string, unknown>,
   parent: string,
 ): CommandReferenceKind | undefined {
+  if (key === 'target' && parent === 'rewriteOperation' && value['type'] === 'update-comment')
+    return 'c';
   if (key === 'target') return entityKind(value, parent);
   if (key === 'plan') return value['kind'] === 'refine' ? 'nd' : 'd';
   if (key === 'id' && value['kind'] === 'project-create') return 'pd';

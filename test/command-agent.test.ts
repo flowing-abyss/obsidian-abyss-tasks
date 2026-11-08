@@ -2,6 +2,7 @@ import { MockLanguageModelV4 } from 'ai/test';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { ContentPlanV1, PrepareTaskContentV1, TasksApiV1, TaskTreeV1 } from '../api';
 import { CommandAgent } from '../src/ai/CommandAgent';
+import { CommandReferenceBook } from '../src/ai/CommandReferenceBook';
 import { commandReferences } from '../src/ai/commandReferences';
 import { preserveAuthoredAnnotations } from '../src/ai/commandSchemas';
 import { CommandSession } from '../src/ai/CommandSession';
@@ -2539,7 +2540,8 @@ it('reads a complete nested tree in one bounded SDK read and retains exact comme
   await h.session.submit('Shorten that existing comment');
   const input = JSON.stringify(h.model.doGenerateCalls[3]?.prompt);
   expect(input).toContain('commentReferences');
-  expect(input).toContain(deep.comments[0]?.target);
+  expect(input).not.toContain(deep.comments[0]?.target);
+  expect(input).toMatch(/@\w+:c\d+/u);
   expect(input).toContain('update-comment');
 });
 
@@ -3083,4 +3085,44 @@ it('rejects a previous model turn alias even when the saved task is still curren
   expect(h.session.snapshot().entities.tasks).toHaveLength(1);
   expect((await h.api.tasks.get(task.target)).ok).toBe(true);
   expect(await h.read('a.md')).toBe('- [ ] Existing [unknown:: keep]\n');
+});
+
+it('round-trips the comment catalog rewrite helper with its exact typed alias and authored text', async () => {
+  const authored = '@fix:c1 and [[Guide]] remain exact';
+  const h = await setup({ 'a.md': `- [ ] Root\n  - ${authored}\n` });
+  const listed = await h.api.tasks.list();
+  if (!listed.ok) throw new Error('list');
+  const root = expectDefined(listed.value.items[0]);
+  const page = await h.session.readTreePage({ target: root.target });
+  const comment = expectDefined(page.tree.comments[0]);
+  const book = new CommandReferenceBook('fix');
+  const catalog = book.project(commandReferences(h.session.snapshot())) as {
+    commentReferences: Array<{
+      target: string;
+      text: string;
+      rewriteOperation: { type: 'update-comment'; target: string };
+      editBasis: { kind: 'edit'; target: string; expectedRevision: string };
+    }>;
+  };
+  const projected = expectDefined(catalog.commentReferences[0]);
+  expect(projected.target).toMatch(/^@fix:c\d+$/u);
+  expect(projected.rewriteOperation.target).toBe(projected.target);
+  expect(projected.text).toBe(authored);
+  expect(
+    book.input('task', {
+      input: {
+        ...projected.editBasis,
+        operation: { ...projected.rewriteOperation, text: authored },
+      },
+    }),
+  ).toEqual({
+    input: {
+      kind: 'edit',
+      target: root.target,
+      expectedRevision: page.tree.revision,
+      operation: { type: 'update-comment', target: comment.target, text: authored },
+    },
+  });
+  expect(h.session.snapshot().entities.tasks[0]?.tree.comments[0]?.target).toBe(comment.target);
+  expect(await h.read('a.md')).toBe(`- [ ] Root\n  - ${authored}\n`);
 });
