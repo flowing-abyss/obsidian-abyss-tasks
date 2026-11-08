@@ -46,7 +46,7 @@ function secrets() {
 
 describe('provider connections', () => {
   it('defaults to explicit OpenRouter and reuses only supported research billing providers', () => {
-    const settings = parseProviderSettings(undefined);
+    const settings = defaultProviderSettings();
     expect(settings).toEqual({
       provider: 'openrouter',
       model: 'openai/gpt-6-luna',

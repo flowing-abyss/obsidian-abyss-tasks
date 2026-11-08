@@ -127,6 +127,9 @@ export class CalendarSettingsTab extends PluginSettingTab {
     if (plugin_abyssPrivate.providerSecrets !== undefined) {
       this.#providers = new ProviderSettingsSection({
         settings: () => plugin_abyssPrivate.settings.commandMode,
+        setSettings: (value) => {
+          plugin_abyssPrivate.settings.commandMode = value;
+        },
         save: () => plugin_abyssPrivate.saveSettings(),
         secrets: plugin_abyssPrivate.providerSecrets,
       });

@@ -67,6 +67,7 @@ interface WorkspaceLike {
 }
 
 interface PluginLike {
+  readonly providerConnections: TaskCalendarPlugin['providerConnections'];
   readonly search: TaskCalendarPlugin['search'];
   app: {
     workspace: WorkspaceLike;
@@ -1916,6 +1917,32 @@ it('publishes project semantics on save while ignoring preset presentation chang
     expect(events).toHaveLength(before + 1);
     expect(events[events.length - 1]?.generation).toBeGreaterThan(events[0]?.generation ?? -1);
     expect(events[events.length - 1]?.semanticsRevision).toBe(events[0]?.semanticsRevision);
+  } finally {
+    plugin.onunload();
+  }
+});
+
+it('starts ordinary task services and settings with unsupported provider preferences intact', async () => {
+  const commandMode = {
+    provider: 'gateway',
+    model: '',
+    search: 'future',
+    voice: 'future',
+    extra: { keep: true },
+  };
+  const plugin = makePlugin({ commandMode, taskPrefix: '#existing' });
+  await plugin.onload();
+  try {
+    expect(plugin.settings.commandMode).toEqual(commandMode);
+    const { parseProviderSettings } = await import('../src/ai/providers/providerSettings');
+    expect(() =>
+      plugin.providerConnections.model(parseProviderSettings(plugin.settings.commandMode)),
+    ).toThrow(expect.objectContaining({ code: 'invalid-request' }));
+    expect(plugin.settingTabs__).toHaveLength(1);
+    expect(plugin.views__.has(PANEL_VIEW_TYPE)).toBe(true);
+    plugin.settings.taskPrefix = '#changed';
+    await plugin.saveSettings();
+    expect(plugin.data__).toMatchObject({ commandMode, taskPrefix: '#changed' });
   } finally {
     plugin.onunload();
   }

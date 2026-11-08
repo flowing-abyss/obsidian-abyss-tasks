@@ -16,7 +16,7 @@ export function defaultProviderSettings(): ProviderSettings {
   return parseProviderSettings({});
 }
 export function parseProviderSettings(value: unknown): ProviderSettings {
-  const result = providerSettingsSchema.safeParse(value ?? {});
+  const result = providerSettingsSchema.safeParse(value);
   if (!result.success) throw new ProviderFailure('invalid-request');
   if (typeof value === 'object' && value !== null && !('model' in value)) {
     result.data.model = DEFAULT_MODELS[result.data.provider];

@@ -1,5 +1,5 @@
-// Explicit provider factories and native SecretStorage: 2,478,468 -> 3,519,742 bytes, including installed notices.
-// Minimal containing budget 3,520,512 bytes (3438 KiB), below 5,000,000 bytes.
+// Explicit provider factories and native SecretStorage: 2,478,468 -> 3,520,640 bytes, including installed notices.
+// Minimal containing budget 3,521,536 bytes (3439 KiB), below 5,000,000 bytes.
 // Guarded note search, sections and static creation: 2,438,428 -> 2,478,468 bytes (+40,040).
 // No new dependencies; minimal containing budget 2,479,104 bytes (2421 KiB), below 5,000,000 bytes.
 // Original acquisition proof through capture/read continuations: 2,438,242 -> 2,438,428 bytes (+186).

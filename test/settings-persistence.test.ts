@@ -1,3 +1,4 @@
+import { parseProviderSettings } from '../src/ai/providers/providerSettings';
 // @vitest-environment jsdom
 import type * as ObsidianModule from 'obsidian';
 import { Notice, Platform } from 'obsidian';
@@ -258,8 +259,10 @@ describe('SettingsPersistenceCoordinator migration', () => {
       const staticBefore = structuredClone(port.staticData);
       port.writes.length = 0;
       settings.shortcuts.openStatistics = 'Alt 9';
-      settings.sectionCollapse.tags = true;
-      await coordinator.saveViewState(settings);
+      await coordinator.saveViewState({
+        ...settings,
+        sectionCollapse: { ...settings.sectionCollapse, tags: true },
+      });
       expect(port.writes).toEqual([STATE_PATH]);
       expect(port.staticData).toEqual(staticBefore);
       expect(port.stateText).not.toContain('shortcuts');
@@ -3007,8 +3010,11 @@ describe('provider settings ownership', () => {
       search: 'agent',
       voice: 'disabled',
     });
-    settings.commandMode.search = 'tavily';
-    settings.commandMode['futureProviderOption'] = { keep: true };
+    settings.commandMode = {
+      ...parseProviderSettings(settings.commandMode),
+      search: 'tavily',
+      futureProviderOption: { keep: true },
+    };
     await coordinator.saveSettings(settings);
     expect(port.staticData).toMatchObject({
       commandMode: { search: 'tavily', futureProviderOption: { keep: true } },
@@ -3025,4 +3031,191 @@ describe('provider settings ownership', () => {
       futureProviderOption: { keep: true },
     });
   });
+});
+
+describe('unsupported provider configuration recovery', () => {
+  it.each(
+    [
+      { provider: 'gateway', extension: { keep: true } },
+      { provider: 'openai', model: '', extension: { keep: true } },
+      { provider: 'openai', search: 'future-search', extension: { keep: true } },
+      { provider: 'openrouter', voice: 'future-voice', extension: { keep: true } },
+      ['future-configuration'],
+      null,
+      42,
+      true,
+      'future-configuration',
+    ].map((commandMode) => ({ commandMode })),
+  )(
+    'preserves unsupported %j through ordinary static and view saves while execution stays blocked',
+    async ({ commandMode }) => {
+      const { ProviderConnections } = await import('../src/ai/providers/ProviderConnections');
+      const { ProviderSecrets } = await import('../src/ai/providers/ProviderSecrets');
+      const { NativeProviderTransport } =
+        await import('../src/ai/providers/NativeProviderTransport');
+      const getSecret = vi.fn(() => 'synthetic-key');
+      const request = vi.fn(async () => {
+        throw new Error('No request expected');
+      });
+      const transport = new NativeProviderTransport(request, () => () => undefined);
+      const connections = new ProviderConnections(
+        new ProviderSecrets({ getSecret, setSecret: () => undefined }),
+        transport,
+      );
+      const port = memoryPort(
+        markedStatic({ commandMode, taskPrefix: '#existing' }),
+        stateEnvelope(),
+      );
+      const coordinator = new SettingsPersistenceCoordinator(port);
+      const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+      expect(settings.taskPrefix).toBe('#existing');
+      expect(settings.commandMode).toEqual(commandMode);
+      expect(() => connections.model(parseProviderSettings(settings.commandMode))).toThrow(
+        expect.objectContaining({ code: 'invalid-request' }),
+      );
+      expect(getSecret).not.toHaveBeenCalled();
+      expect(request).not.toHaveBeenCalled();
+      transport.dispose();
+      settings.taskPrefix = '#changed';
+      await coordinator.saveSettings(settings);
+      await coordinator.saveViewState({
+        ...settings,
+        sectionCollapse: { ...settings.sectionCollapse, tags: true },
+      });
+      expect(port.staticData).toMatchObject({ commandMode, taskPrefix: '#changed' });
+      expect(
+        (await new SettingsPersistenceCoordinator(port).loadSettings(DEFAULT_SETTINGS)).settings
+          .commandMode,
+      ).toEqual(commandMode);
+    },
+  );
+});
+
+it('repairs only explicitly selected provider fields and retains unsupported siblings and extensions', async () => {
+  const { ProviderSettingsSection } =
+    await import('../src/settings/sections/ProviderSettingsSection');
+  const { ProviderSecrets } = await import('../src/ai/providers/ProviderSecrets');
+  const commandMode = {
+    provider: 'gateway',
+    model: '',
+    search: 'future-search',
+    voice: 'future-voice',
+    future: { keep: true },
+  };
+  const port = memoryPort(markedStatic({ commandMode }), stateEnvelope());
+  const coordinator = new SettingsPersistenceCoordinator(port);
+  const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+  const section = new ProviderSettingsSection({
+    settings: () => settings.commandMode,
+    setSettings: (value) => {
+      settings.commandMode = value;
+    },
+    save: () => coordinator.saveSettings(settings),
+    secrets: new ProviderSecrets({ getSecret: () => null, setSecret: () => undefined }),
+  });
+  const container = createDiv();
+  section.render(container);
+  const change = (label: string, value: string): void => {
+    const select = expectDefined(
+      container.querySelector<HTMLSelectElement>(`select[aria-label="${label}"]`),
+    );
+    select.value = value;
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+  expect(container.textContent).toContain('Provider settings need attention.');
+  expect(
+    container.querySelector<HTMLSelectElement>('select[aria-label="Agent provider"]')?.value,
+  ).toBe('');
+  expect(container.querySelector('input[type=password]')).toBeNull();
+  change('Agent provider', 'openai');
+  expect(settings.commandMode).toEqual({ ...commandMode, provider: 'openai', model: 'gpt-6-luna' });
+  expect(() => parseProviderSettings(settings.commandMode)).toThrow();
+  change('Search provider', 'openai');
+  expect(() => parseProviderSettings(settings.commandMode)).toThrow();
+  change('Voice provider', 'disabled');
+  expect(parseProviderSettings(settings.commandMode)).toMatchObject({
+    provider: 'openai',
+    model: 'gpt-6-luna',
+    search: 'openai',
+    voice: 'disabled',
+    future: { keep: true },
+  });
+  await coordinator.saveSettings(settings);
+  expect(
+    (await new SettingsPersistenceCoordinator(port).loadSettings(DEFAULT_SETTINGS)).settings
+      .commandMode,
+  ).toEqual(settings.commandMode);
+  expect(container.textContent).not.toContain('Provider settings need attention.');
+  section.dispose();
+});
+
+it('keeps malformed provider data until an explicit provider selection replaces it', async () => {
+  const { ProviderSettingsSection } =
+    await import('../src/settings/sections/ProviderSettingsSection');
+  const { ProviderSecrets } = await import('../src/ai/providers/ProviderSecrets');
+  const port = memoryPort(markedStatic({ commandMode: null }), stateEnvelope());
+  const coordinator = new SettingsPersistenceCoordinator(port);
+  const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+  const section = new ProviderSettingsSection({
+    settings: () => settings.commandMode,
+    setSettings: (value) => {
+      settings.commandMode = value;
+    },
+    save: () => coordinator.saveSettings(settings),
+    secrets: new ProviderSecrets({ getSecret: () => null, setSecret: () => undefined }),
+  });
+  const container = createDiv();
+  section.render(container);
+  expect(settings.commandMode).toBeNull();
+  expect(
+    container.querySelector<HTMLInputElement>('input[aria-label="Agent model"]')?.disabled,
+  ).toBe(true);
+  const select = expectDefined(
+    container.querySelector<HTMLSelectElement>('select[aria-label="Agent provider"]'),
+  );
+  select.value = 'anthropic';
+  select.dispatchEvent(new Event('change', { bubbles: true }));
+  expect(parseProviderSettings(settings.commandMode)).toMatchObject({
+    provider: 'anthropic',
+    model: 'claude-haiku-5-5',
+  });
+  await coordinator.saveSettings(settings);
+  expect(port.staticData).toMatchObject({ commandMode: { provider: 'anthropic' } });
+  section.dispose();
+});
+
+it('corrects an invalid model without replacing the selected billing provider or extensions', async () => {
+  const { ProviderSettingsSection } =
+    await import('../src/settings/sections/ProviderSettingsSection');
+  const { ProviderSecrets } = await import('../src/ai/providers/ProviderSecrets');
+  const port = memoryPort(
+    markedStatic({
+      commandMode: { provider: 'openai', model: '', search: 'agent', voice: 'disabled', future: 7 },
+    }),
+    stateEnvelope(),
+  );
+  const coordinator = new SettingsPersistenceCoordinator(port);
+  const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+  const section = new ProviderSettingsSection({
+    settings: () => settings.commandMode,
+    setSettings: (value) => {
+      settings.commandMode = value;
+    },
+    save: () => coordinator.saveSettings(settings),
+    secrets: new ProviderSecrets({ getSecret: () => null, setSecret: () => undefined }),
+  });
+  const container = createDiv();
+  section.render(container);
+  const model = expectDefined(
+    container.querySelector<HTMLInputElement>('input[aria-label="Agent model"]'),
+  );
+  model.value = 'gpt-6-luna';
+  model.dispatchEvent(new Event('blur'));
+  expect(parseProviderSettings(settings.commandMode)).toMatchObject({
+    provider: 'openai',
+    model: 'gpt-6-luna',
+    future: 7,
+  });
+  expect(container.textContent).not.toContain('Provider settings need attention.');
+  section.dispose();
 });

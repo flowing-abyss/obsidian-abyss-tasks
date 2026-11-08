@@ -12,7 +12,10 @@ host's vault-scoped SecretStorage under four fixed plugin IDs. The settings sect
 masked, initially empty inputs on Enter or blur, clears successful submissions, and reports key
 presence without claiming connectivity. Neither rendering settings nor constructing a model sends
 a request. `commandMode` holds only static provider/model/search/voice preferences; unknown
-extensions remain intact through the ordinary settings coordinator. There is no prior AI data
+extensions remain intact through the ordinary settings coordinator. Persisted preferences remain
+unvalidated `unknown` data until `parseProviderSettings` succeeds at the provider-use boundary.
+Unsupported values do not block calendar startup; settings retain them until an explicit field
+correction. Only an absent setting receives composition defaults. There is no prior AI data
 format to migrate, and older plugin versions can retain the additive settings.
 
 The native adapter admits two requests and eight queued requests. Cancellation and a 60-second

@@ -1,4 +1,3 @@
-import { parseProviderSettings } from '../ai/providers/providerSettings';
 import { normalizeTag, type TagRenameChange } from '../markdown/tagSyntax';
 import {
   isMalformedProjectKanbanSettings,
@@ -505,7 +504,6 @@ function composeSettings(
   stripMovedFields(staticData);
   const migration = migrateSettings(staticData);
   const settings = Object.assign(detached(defaults), staticData) as CalendarSettings;
-  settings.commandMode = parseProviderSettings(staticData['commandMode']);
   settings.firstDayOfWeek = normalizeFirstDayOfWeek(
     staticData['firstDayOfWeek'],
     defaults.firstDayOfWeek,

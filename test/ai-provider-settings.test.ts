@@ -15,6 +15,9 @@ it('keeps masked edits usable and never prefills or renders a stored key', () =>
   const settings = defaultProviderSettings();
   const section = new ProviderSettingsSection({
     settings: () => settings,
+    setSettings: (value) => {
+      Object.assign(settings, value);
+    },
     save: async () => undefined,
     secrets,
   });
@@ -45,6 +48,9 @@ describe('provider connection settings', () => {
     };
     const section = new ProviderSettingsSection({
       settings: () => settings,
+      setSettings: (value) => {
+        Object.assign(settings, value);
+      },
       save: async () => undefined,
       secrets: new ProviderSecrets({ getSecret: () => null, setSecret: () => undefined }),
     });
@@ -64,6 +70,9 @@ it('preserves a failed masked submission and reports only a safe storage error',
   const settings = defaultProviderSettings();
   const section = new ProviderSettingsSection({
     settings: () => settings,
+    setSettings: (value) => {
+      Object.assign(settings, value);
+    },
     save: async () => undefined,
     secrets: new ProviderSecrets({
       getSecret: () => null,
@@ -98,6 +107,9 @@ it('commits the masked draft to its captured provider before changing selection'
   const settings = defaultProviderSettings();
   const section = new ProviderSettingsSection({
     settings: () => settings,
+    setSettings: (value) => {
+      Object.assign(settings, value);
+    },
     save: async () => undefined,
     secrets: owner,
   });
@@ -124,6 +136,9 @@ it('keeps the key field available when host secret reads fail', () => {
   const settings = defaultProviderSettings();
   const section = new ProviderSettingsSection({
     settings: () => settings,
+    setSettings: (value) => {
+      Object.assign(settings, value);
+    },
     save: async () => undefined,
     secrets: new ProviderSecrets({
       getSecret: () => {
@@ -155,6 +170,9 @@ it('preserves an active masked draft through the existing settings render contex
   const settings = defaultProviderSettings();
   const section = new ProviderSettingsSection({
     settings: () => settings,
+    setSettings: (value) => {
+      Object.assign(settings, value);
+    },
     save: async () => undefined,
     secrets,
   });
