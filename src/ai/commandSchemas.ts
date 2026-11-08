@@ -9,8 +9,8 @@ import type {
   TaskTreeV1,
 } from '../../api';
 import { inlineCodeRanges } from '../markdown/inlineCode';
-import { parseSourceReferences } from '../markdown/links';
-import { CommandFailure } from './commandTypes';
+import { buildLinkRaw, parseSourceReferences } from '../markdown/links';
+import { CommandFailure, type CommandChange, type CommandProposal } from './commandTypes';
 const handle = z.string().min(1).max(512);
 const text = z.string().max(16000);
 const field = (value: z.ZodType): z.ZodType =>
@@ -551,4 +551,84 @@ function unionFields(branches: readonly z.ZodObject[]): Map<string, z.ZodType[]>
 
 function objectShape(schema: z.ZodObject): Readonly<Record<string, z.ZodType>> {
   return schema.shape;
+}
+
+type CommandLink = Extract<CommandChange, { kind: 'link' }>;
+function linkedNode(tree: TaskTreeV1 | null, target: string): TaskTreeV1 | undefined {
+  if (tree === null) return undefined;
+  if (tree.target === target) return tree;
+  for (const child of tree.children) {
+    const found = linkedNode(child, target);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+function sameLinkPlan(link: CommandLink, plan: ContentPlanV1): boolean {
+  return (
+    plan.target === link.plan.target &&
+    plan.providerEpoch === link.plan.providerEpoch &&
+    plan.before?.target === link.plan.before?.target
+  );
+}
+function linkedText(link: CommandLink, plan: ContentPlanV1): string {
+  const node = linkedNode(plan.after, link.target);
+  const text = node?.[link.field];
+  if (
+    node === undefined ||
+    typeof text !== 'string' ||
+    !sameLinkPlan(link, plan) ||
+    (plan.destination?.path ?? node.source?.path) !== link.sourcePath
+  )
+    throw new CommandFailure(
+      'LINK_DEPENDENCY',
+      'The linked task destination or identity changed. Review the note link before saving.',
+    );
+  return text;
+}
+/** Only carry the already reviewed fixed link through a proven same-plan refinement. */
+export function reconcileCommandLink(link: CommandLink, plan: ContentPlanV1): CommandLink {
+  validateCommandLink(link, link.plan);
+  const text = linkedText(link, plan);
+  if (text.split(link.placeholder).length !== 2 || text.includes('{{link}}'))
+    throw new CommandFailure(
+      'LINK_DEPENDENCY',
+      'The linked field changed. Review its note link before preparing this refinement.',
+    );
+  return { ...link, plan, template: text.replace(link.placeholder, '{{link}}') };
+}
+function validateCommandLink(link: CommandLink, plan: ContentPlanV1): void {
+  if (
+    link.plan.revision !== plan.revision ||
+    link.placeholder.length === 0 ||
+    link.template.split('{{link}}').length !== 2 ||
+    linkedText(link, plan) !== link.template.replace('{{link}}', link.placeholder)
+  )
+    throw new CommandFailure(
+      'LINK_DEPENDENCY',
+      'The note link no longer matches the reviewed task. Review it before saving.',
+    );
+}
+/** Deterministic proposal dependency checks run before the first effect is admitted. */
+export function validateCommandLinks(proposal: CommandProposal, now: number): void {
+  for (const link of proposal.changes) {
+    if (link.kind !== 'link') continue;
+    const task = proposal.changes.find(
+      (change) => change.kind === 'task' && change.plan.target === link.plan.target,
+    );
+    const note = proposal.changes.find(
+      (change) => change.kind === 'note' && change.plan.target === link.notePlan,
+    );
+    if (
+      task?.kind !== 'task' ||
+      note?.kind !== 'note' ||
+      task.plan.expiresAt <= now ||
+      note.plan.expiresAt <= now ||
+      link.placeholder !== buildLinkRaw('wiki', note.plan.path, link.alias, '|')
+    )
+      throw new CommandFailure(
+        'LINK_DEPENDENCY',
+        'The linked note and task previews need renewed review before saving.',
+      );
+    validateCommandLink(link, task.plan);
+  }
 }

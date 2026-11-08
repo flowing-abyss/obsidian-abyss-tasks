@@ -44,7 +44,9 @@ current proposal deterministically. Model confirmation is bound to the session a
 saw, before any external reads; delayed submissions can carry the same explicit basis. A ready
 preview needs no question. Only missing information or a conflicting instruction blocks confirmation.
 Task creation previews by default, and persisted status uses the ordinary guarded lifecycle.
-Saved-row status actions leave unrelated content proposals pending.
+Saved-row status actions leave unrelated content proposals pending. Project refinements merge field
+assignments by field ID and retain omitted status/fields; explicit null clears remain distinct.
+The original accepted project revision remains guarded across those refinements.
 
 Explicit working selection is separate from background reads. Optional typed `finish.selection`
 selects up to five verified entities; omission preserves selection and an empty list clears it.
@@ -84,7 +86,16 @@ line relocation and observational clock values; source paths remain compared. A 
 merge preservation; dependent cleanup
 then needs renewed review. Source cleanup otherwise requires the exact covered assessment and a
 known destination receipt/readback. Linked note creation freezes the path, task field and template;
-after the note receipt, only a host-generated exact-destination link fills that dependency.
+after the note receipt, only a host-generated exact-destination link fills that dependency. Same-plan
+refinement carries a link only through the verified original target/field/path and retained exact
+placeholder, preserving newly reviewed surrounding text. Deterministic dependency checks precede
+every effect batch; incompatible refinements need renewed review before any note is created.
+Current task readbacks are keyed by verified root identity. Lifecycle deletion removes the old root;
+retained/recurring nodes and affected ancestors are reread through accepted parent handles.
+Known write paths retire older observed task pages, preserving unrelated-source reads; selected
+peers from an affected source are refreshed through their accepted handles before Saved. An
+unverifiable selected continuation is reported unavailable, not presented as current metadata.
+Intermediate plans and receipts remain in the journal, not appended as current task versions.
 
 Cancellation retains state and stops new admission. An already admitted native write settles and
 is read back even after planning is cancelled. Disposal waits for that settlement before releasing

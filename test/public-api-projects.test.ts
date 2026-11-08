@@ -1,5 +1,7 @@
+import { MockLanguageModelV4 } from 'ai/test';
 import { afterEach, expect, it, vi } from 'vitest';
-import type { ApiResultV1, ProjectMutationResultV1 } from '../api';
+import type { ApiResultV1, ProjectMutationResultV1, TasksApiV1 } from '../api';
+import { CommandAgent } from '../src/ai/CommandAgent';
 import { canonicalCommandPlan } from '../src/ai/commandReads';
 import { CommandSession } from '../src/ai/CommandSession';
 import TaskCalendarPlugin from '../src/main';
@@ -904,6 +906,158 @@ it('holds a reviewed deep edit when a descendant changes after the project recei
     expect(text).toContain('budget: 7');
     expect(text).toContain('External deep');
     expect(text).not.toContain('Reviewed root');
+  } finally {
+    plugin.onunload();
+  }
+});
+
+function projectCommandSession(api: TasksApiV1) {
+  const steps: Array<{ toolName: string; input: unknown }> = [];
+  const model = new MockLanguageModelV4({
+    doGenerate: async () => {
+      const step = expectDefined(steps.shift());
+      return {
+        content: [
+          {
+            type: 'tool-call',
+            toolCallId: crypto.randomUUID(),
+            toolName: step.toolName,
+            input: JSON.stringify(step.input),
+          },
+        ],
+        finishReason: { unified: 'tool-calls', raw: 'tool_calls' },
+        usage: {
+          inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
+          outputTokens: { total: 1, text: 1, reasoning: 0 },
+        },
+        warnings: [],
+      };
+    },
+  });
+  const session: CommandSession = new CommandSession({
+    api,
+    journal: { save: async () => {} },
+    agent: { run: async (input) => agent.run(input) },
+    now: () => Date.now(),
+    id: () => crypto.randomUUID(),
+  });
+  const agent: CommandAgent = new CommandAgent({
+    api,
+    session,
+    connections: { model: () => model },
+    settings: () => ({}),
+    now: () => Date.now(),
+  });
+  return {
+    session,
+    turn: (input: unknown) =>
+      steps.push(
+        { toolName: 'interpret', input: { intent: 'plan', research: false } },
+        { toolName: 'project', input },
+        { toolName: 'finish', input: { state: 'ready', message: 'Ready.' } },
+      ),
+  };
+}
+
+it('composes project fields and status over two real SDK turns before one guarded commit', async () => {
+  const path = 'projects/Compose.md';
+  const { app, plugin, first } = await setup({ [path]: '- [ ] Existing\n' });
+  try {
+    const projects = expectDefined(first.projects);
+    const project = expectDefined(
+      value(await projects.list()).items.find((item) => item.path === path),
+    );
+    const before = value(await projects.get(project.target));
+    const status = expectDefined(value(await projects.schema()).statuses[1]);
+    const { session, turn } = projectCommandSession(first);
+    turn({ ...basis(before), fields: [{ fieldId: 'start', value: '2026-11-09' }] });
+    await session.submit('Set its start date');
+    expect(session.snapshot().status.kind).toBe('ready');
+    turn({
+      ...basis(before),
+      fields: [{ fieldId: 'property:budget', value: 7 }],
+      statusId: status.id,
+    });
+    await session.submit('Also change its status');
+    expect(session.snapshot().status.kind).toBe('ready');
+    expect(session.snapshot().proposal.changes).toEqual([
+      {
+        kind: 'project',
+        before,
+        fields: [
+          { fieldId: 'start', value: '2026-11-09' },
+          { fieldId: 'property:budget', value: 7 },
+        ],
+        statusId: status.id,
+      },
+    ]);
+    expect(await app.vault.read(expectDefined(app.vault.getFileByPath(path)))).toBe(
+      '- [ ] Existing\n',
+    );
+    expect(await session.confirm()).toBe(true);
+    const current = value(await projects.get(before.target));
+    expect(current.fields).toContainEqual({ fieldId: 'property:budget', state: 'value', value: 7 });
+    expect(current.fields).toContainEqual({
+      fieldId: 'start',
+      state: 'value',
+      value: '2026-11-09',
+    });
+    expect(current.status).toEqual({ state: 'configured', id: status.id });
+  } finally {
+    plugin.onunload();
+  }
+});
+
+it('composes explicit project clears and refuses a changed accepted basis without dropping pending edits', async () => {
+  const { plugin, first } = await setup();
+  try {
+    const projects = expectDefined(first.projects);
+    const before = value(
+      await projects.get(expectDefined(value(await projects.list()).items[0]).target),
+    );
+    const status = expectDefined(value(await projects.schema()).statuses[1]);
+    const { session } = projectCommandSession(first);
+    session.stage({
+      kind: 'project',
+      before,
+      fields: [{ fieldId: 'property:budget', value: 7 }],
+      statusId: status.id,
+    });
+    session.stage({
+      kind: 'project',
+      before,
+      fields: [{ fieldId: 'property:budget', value: null }],
+    });
+    expect(session.snapshot().proposal.changes).toEqual([
+      {
+        kind: 'project',
+        before,
+        fields: [{ fieldId: 'property:budget', value: null }],
+        statusId: status.id,
+      },
+    ]);
+    session.stage({ kind: 'project', before, statusId: null });
+    const pending = session.snapshot().proposal;
+    expect(pending.changes).toEqual([
+      {
+        kind: 'project',
+        before,
+        fields: [{ fieldId: 'property:budget', value: null }],
+        statusId: null,
+      },
+    ]);
+    receipt(
+      await projects.update({
+        ...basis(before),
+        ...request('external'),
+        fields: [{ fieldId: 'property:budget', value: 12 }],
+      }),
+    );
+    const newer = value(await projects.get(before.target));
+    expect(() => {
+      session.stage({ kind: 'project', before: newer, statusId: status.id });
+    }).toThrow('changed');
+    expect(session.snapshot().proposal).toEqual(pending);
   } finally {
     plugin.onunload();
   }

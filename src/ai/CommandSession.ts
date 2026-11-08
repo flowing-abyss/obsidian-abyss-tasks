@@ -7,7 +7,7 @@ import type {
   TaskTreeV1,
 } from '../../api';
 import { commandRead } from './commandReads';
-import { validatePlanOutput } from './commandSchemas';
+import { reconcileCommandLink, validatePlanOutput } from './commandSchemas';
 import {
   CommandFailure,
   required,
@@ -88,6 +88,27 @@ function changeKey(c: CommandChange): string {
   if (c.kind === 'status') return `status:${c.target}`;
   if (c.kind === 'task' && c.plan.before !== null) return `task:${c.plan.before.target}`;
   return `${c.kind}:${c.plan.target}`;
+}
+function composeProjectChange(previous: CommandChange, next: CommandChange): CommandChange {
+  if (previous.kind !== 'project' || next.kind !== 'project') return next;
+  if (
+    previous.before.revision !== next.before.revision ||
+    previous.before.target !== next.before.target
+  )
+    throw new CommandFailure(
+      'REVISION_CONFLICT',
+      'The project changed while its earlier edits were pending. Review them before continuing.',
+    );
+  const fields = new Map((previous.fields ?? []).map((field) => [field.fieldId, field]));
+  for (const field of next.fields ?? []) fields.set(field.fieldId, field);
+  return {
+    ...previous,
+    ...next,
+    before: previous.before,
+    ...(previous.fields === undefined && next.fields === undefined
+      ? {}
+      : { fields: [...fields.values()] }),
+  };
 }
 function focusNode(tree: TaskTreeV1 | null, target: string): TaskTreeV1 | undefined {
   if (tree === null) return undefined;
@@ -403,10 +424,14 @@ export class CommandSession {
     const changes = [...this.state.proposal.changes];
     const index = changes.findIndex((c) => changeKey(c) === changeKey(change));
     if (index < 0) changes.push(change);
-    else changes[index] = change;
-    const retained = changes.filter(
-      (c) => !(c.kind === 'task' && c.plan.before === null && c.plan.after === null),
-    );
+    else changes[index] = composeProjectChange(required(changes[index]), change);
+    const retained = changes
+      .filter((c) => !(c.kind === 'task' && c.plan.before === null && c.plan.after === null))
+      .map((entry) =>
+        entry.kind === 'link' && change.kind === 'task' && entry.plan.target === change.plan.target
+          ? reconcileCommandLink(entry, change.plan)
+          : entry,
+      );
     const count = affectedNodes(retained);
     if (count > 50 || !validOperationBudget(this.state.proposal.operations, operations))
       throw new CommandFailure('BUDGET', 'This proposal is too large. Save or split it first.');
@@ -536,6 +561,23 @@ export class CommandSession {
       false,
     );
   }
+  private invalidateTaskReads(path: string): void {
+    const draftTargets = new Set<string>();
+    for (const change of this.state.proposal.changes) {
+      if (change.kind !== 'task') continue;
+      if ((change.plan.destination?.path ?? change.plan.before?.source?.path) !== path) continue;
+      for (const target of nodeValues(change.plan.after).keys()) draftTargets.add(target);
+      for (const target of nodeValues(change.plan.before).keys()) draftTargets.add(target);
+    }
+    this.publish({
+      entities: {
+        ...this.state.entities,
+        tasks: this.state.entities.tasks.filter(
+          (page) => page.tree.source?.path !== path && !draftTargets.has(page.tree.target),
+        ),
+      },
+    });
+  }
   private async recordWrite(entry: CommandJournalEntry): Promise<void> {
     const journal = [...this.state.journal];
     const index = journal.findIndex((j) => j.id === entry.id);
@@ -543,6 +585,27 @@ export class CommandSession {
     else journal[index] = entry;
     this.publish({ journal });
     await this.options.journal.save(this.snapshot());
+  }
+  private async completeWrite(
+    proposal: CommandSessionSnapshot['proposal'],
+    clear: boolean,
+  ): Promise<void> {
+    const completed: CommandSessionSnapshot = {
+      ...this.snapshot(),
+      ...(clear
+        ? {
+            proposal: { revision: proposal.revision + 1, operations: 0, changes: [] },
+            trees: [],
+            input: '',
+          }
+        : {}),
+      status: {
+        kind: clear ? 'saved' : 'ready',
+        message: clear ? 'Saved.' : 'Status saved. Pending content is retained for review.',
+      },
+    };
+    await this.options.journal.save(completed);
+    this.publish(completed);
   }
   private async writeProposal(
     proposal: CommandSessionSnapshot['proposal'],
@@ -566,6 +629,12 @@ export class CommandSession {
           this.publish({ actual: trees });
         },
         projects: this.state.entities.projects,
+        invalidateTaskReads: (path) => {
+          this.invalidateTaskReads(path);
+        },
+        observeTree: (page) => {
+          this.observeTree(page);
+        },
         focus: () => this.state.focus,
         focusChanges: (changes) => {
           this.remapFocus(changes);
@@ -577,22 +646,7 @@ export class CommandSession {
           this.observeNote(note);
         },
       });
-      const completed: CommandSessionSnapshot = {
-        ...this.snapshot(),
-        ...(clear
-          ? {
-              proposal: { revision: proposal.revision + 1, operations: 0, changes: [] },
-              trees: [],
-              input: '',
-            }
-          : {}),
-        status: {
-          kind: clear ? 'saved' : 'ready',
-          message: clear ? 'Saved.' : 'Status saved. Pending content is retained for review.',
-        },
-      };
-      await this.options.journal.save(completed);
-      this.publish(completed);
+      await this.completeWrite(proposal, clear);
       return true;
     } catch (cause) {
       const unsettled = this.state.journal

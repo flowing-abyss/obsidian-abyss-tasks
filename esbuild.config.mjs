@@ -1,5 +1,5 @@
 // Semantic command core with the real SDK runtime and native continuity/link formatting: 3,544,410 -> 3,793,056 bytes.
-// Licensed artifact fits the measured 3,802,112-byte (3713 KiB) cap; the hard 5,000,000-byte ceiling remains.
+// Licensed artifact fits the measured 3,807,232-byte (3718 KiB) cap; the hard 5,000,000-byte ceiling remains.
 // Prepared initial status, source-copy witnesses and merge inventory: 3,520,640 -> 3,544,410 bytes (+23,770).
 // No new dependencies; measured licensed artifact uses the minimal 3,545,088-byte (3462 KiB) cap, below 5,000,000 bytes.
 // Explicit provider factories and native SecretStorage: 2,478,468 -> 3,520,640 bytes, including installed notices.

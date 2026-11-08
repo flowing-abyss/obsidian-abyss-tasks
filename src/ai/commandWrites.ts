@@ -9,11 +9,13 @@ import type {
   ProjectMutationResultV1,
   TaskContentMutationResultV1,
   TaskContentReceiptV1,
-  TaskTreeV1,
+  TaskDtoV1,
   TasksApiV1,
+  TaskTreePageV1,
+  TaskTreeV1,
 } from '../../api';
 import { canonicalCommandPlan, commandRead } from './commandReads';
-import { checkedWriteResult, sameReviewedContent } from './commandSchemas';
+import { checkedWriteResult, sameReviewedContent, validateCommandLinks } from './commandSchemas';
 import {
   CommandFailure,
   required,
@@ -34,6 +36,8 @@ interface WriteContext {
   readonly signal: AbortSignal;
   readonly record: (entry: CommandJournalEntry) => Promise<void>;
   readonly actual: (trees: readonly TaskTreeV1[]) => void;
+  readonly invalidateTaskReads: (path: string) => void;
+  readonly observeTree: (page: TaskTreePageV1) => void;
   readonly projects: readonly ProjectDtoV1[];
   readonly focus: () => readonly CommandFocus[];
   readonly focusChanges: (changes: CommandFocusContinuations) => void;
@@ -79,7 +83,9 @@ class CommandWriteRun {
   private readonly verified = new Set<string>();
   private readonly notes = new Map<string, { target: string; revision: string }>();
   private readonly materialized = new Map<string, ContentPlanV1>();
-  private readonly actual: TaskTreeV1[] = [];
+  private readonly actual = new Map<string, TaskTreeV1>();
+  private readonly statusRoots = new Map<string, TaskDtoV1>();
+  private readonly statusFocus = new Map<string, readonly string[]>();
   private readonly changedPaths = new Set<string>();
   private readonly projects = new Map<string, ProjectDtoV1>();
   private readonly signal = new AbortController().signal;
@@ -93,6 +99,7 @@ class CommandWriteRun {
     });
   }
   async run(): Promise<void> {
+    validateCommandLinks(this.ctx.proposal, this.ctx.now());
     for (const change of [...this.ctx.proposal.changes].sort((a, b) => order(a) - order(b))) {
       if (this.ctx.cancelled())
         throw new CommandFailure(
@@ -101,6 +108,7 @@ class CommandWriteRun {
         );
       await this.processChange(change);
     }
+    for (const root of [...this.actual.keys()]) await this.readTree(root);
     await this.refreshSelectedTasks();
     for (const project of this.projects.values()) {
       if (!this.changedPaths.has(project.path)) continue;
@@ -112,6 +120,7 @@ class CommandWriteRun {
     for (const selection of this.ctx.focus()) {
       if (selection.kind !== 'task' || selection.plan !== undefined) continue;
       try {
+        await this.readTree(selection.target);
         const current = await this.read(() => this.ctx.api.tasks.get(selection.target));
         this.ctx.focusChanges(
           new Map([[selection.target, { target: current.target, revision: current.revision }]]),
@@ -119,6 +128,10 @@ class CommandWriteRun {
       } catch {
         // Historical entity evidence remains; an unverified continuation is not current focus.
         this.ctx.focusChanges(new Map([[selection.target, null]]));
+        throw new CommandFailure(
+          'READBACK',
+          'The write settled, but a selected task is unavailable. Review the current result.',
+        );
       }
     }
   }
@@ -257,7 +270,7 @@ class CommandWriteRun {
       request: { requestId: this.ctx.id(), expiresAt: this.ctx.now() + 60000 },
       state: 'admitted',
     };
-    const execute = this.operation(change, entry.request);
+    const execute = await this.operation(change, entry.request);
     await this.ctx.record(entry);
     if (this.ctx.cancelled()) {
       await this.ctx.record({
@@ -331,8 +344,22 @@ class CommandWriteRun {
       this.clearAffectedFocus(entry.change);
       await this.observeUncertain(entry.change);
     }
-    if (receipt !== undefined && (result.ok || effects !== 'unchanged'))
+    if (receipt !== undefined && (result.ok || effects !== 'unchanged')) {
+      this.invalidateTaskReads(entry.change, receipt);
       await this.readback(receipt, entry.change);
+    }
+  }
+  private invalidateTaskReads(
+    change: CommandChange,
+    receipt: NonNullable<WriteResult['receipt']>,
+  ): void {
+    let path: string | undefined;
+    if (change.kind === 'project') path = change.before.path;
+    else if (change.kind === 'note') path = change.plan.path;
+    else if (change.kind === 'task' || change.kind === 'cleanup') path = planPath(change.plan);
+    else if ('original' in receipt)
+      path = this.statusRoots.get(receipt.original.target)?.source.path;
+    if (path !== undefined) this.ctx.invalidateTaskReads(path);
   }
   private async observeUncertain(change: CommandChange): Promise<void> {
     if (change.kind !== 'task' && change.kind !== 'cleanup') return;
@@ -344,7 +371,7 @@ class CommandWriteRun {
         await this.readTree(node.target, node.revision);
     } catch {
       // The durable unknown receipt remains authoritative; read failure never permits replay.
-      this.ctx.actual(this.actual);
+      this.ctx.actual([...this.actual.values()]);
     }
   }
   private async readback(
@@ -402,7 +429,7 @@ class CommandWriteRun {
     );
     const root = correspondence.root;
     if (root !== null) await this.readTree(root.target, root.revision);
-    else this.ctx.actual(this.actual);
+    else this.ctx.actual([...this.actual.values()]);
     const affected = this.affectedFocus(change);
     const continuations = new Map<string, { target: string; revision: string } | null>();
     for (const selected of affected) {
@@ -441,6 +468,17 @@ class CommandWriteRun {
     this.ctx.focusChanges(new Map(this.affectedFocus(change).map((entry) => [entry.target, null])));
   }
   private async readStatus(receipt: MutationReceiptV1): Promise<void> {
+    const root = required(this.statusRoots.get(receipt.original.target)).target;
+    this.actual.delete(root);
+    this.ctx.actual([...this.actual.values()]);
+    if (receipt.original.state !== 'retained')
+      this.ctx.focusChanges(
+        new Map(
+          [receipt.original.target, ...(this.statusFocus.get(receipt.original.target) ?? [])].map(
+            (target) => [target, null],
+          ),
+        ),
+      );
     if (receipt.original.state === 'unproven')
       throw new CommandFailure(
         'READBACK',
@@ -454,26 +492,62 @@ class CommandWriteRun {
           [receipt.original.target, { target: current.target, revision: current.revision }],
         ]),
       );
-    } else this.ctx.focusChanges(new Map([[receipt.original.target, null]]));
+    } else {
+      this.ctx.focusChanges(new Map([[receipt.original.target, null]]));
+      if (root !== receipt.original.target) await this.readTree(root);
+    }
     if (receipt.next !== undefined) await this.readTree(receipt.next.target);
-    this.ctx.actual(this.actual);
+    this.ctx.actual([...this.actual.values()]);
+  }
+  private async taskAncestry(
+    target: string,
+    expectedRevision?: string,
+  ): Promise<readonly TaskDtoV1[]> {
+    const timing = { now: this.ctx.now, deadline: this.ctx.now() + 5000 };
+    const get = (handle: string): Promise<TaskDtoV1> =>
+      commandRead(this.ctx.api, () => this.ctx.api.tasks.get(handle), this.signal, timing);
+    let node = await get(target);
+    if (expectedRevision !== undefined && node.revision !== expectedRevision)
+      throw new CommandFailure(
+        'READBACK',
+        'The task changed before its current tree could be verified.',
+      );
+    const seen = new Set<string>();
+    const ancestry = [node];
+    while (node.parentTarget !== undefined) {
+      if (seen.has(node.target) || seen.size >= 4000)
+        throw new CommandFailure(
+          'READBACK',
+          'The task ancestry could not be verified within its limit.',
+        );
+      seen.add(node.target);
+      node = await get(node.parentTarget);
+      ancestry.push(node);
+    }
+    return ancestry;
+  }
+  private async rootReference(target: string, expectedRevision?: string): Promise<TaskDtoV1> {
+    const ancestry = await this.taskAncestry(target, expectedRevision);
+    return required(ancestry[ancestry.length - 1]);
   }
   private async readTree(target: string, expectedRevision?: string): Promise<void> {
+    const root = await this.rootReference(target, expectedRevision);
     const page = await this.read(() =>
       required(this.ctx.api.tasks.tree)({
-        target,
-        ...(expectedRevision === undefined ? {} : { expectedRevision }),
+        target: root.target,
+        expectedRevision: root.revision,
         limit: 500,
       }),
     );
     if (page.tree.source !== undefined) this.changedPaths.add(page.tree.source.path);
-    this.actual.push(page.tree);
-    this.ctx.actual(this.actual);
+    this.actual.set(page.tree.target, page.tree);
+    this.ctx.observeTree(page);
+    this.ctx.actual([...this.actual.values()]);
   }
-  private operation(
+  private async operation(
     change: Exclude<CommandChange, { kind: 'link' }>,
     request: { requestId: string; expiresAt: number },
-  ): () => Promise<WriteResult> {
+  ): Promise<() => Promise<WriteResult>> {
     if (change.kind === 'task' || change.kind === 'cleanup' || change.kind === 'note')
       return this.contentOperation(change, request);
     if (change.kind === 'project')
@@ -488,6 +562,12 @@ class CommandWriteRun {
           },
           { signal: this.ctx.signal },
         );
+    return this.statusOperation(change, request);
+  }
+  private async statusOperation(
+    change: Extract<CommandChange, { kind: 'status' }>,
+    request: { requestId: string; expiresAt: number },
+  ): Promise<() => Promise<WriteResult>> {
     const target =
       change.plan === undefined
         ? { target: change.target, revision: change.revision }
@@ -497,6 +577,15 @@ class CommandWriteRun {
         'CORRESPONDENCE',
         'The saved task has no exact correspondence. Review its status separately.',
       );
+    const root = await this.rootReference(target.target, target.revision);
+    this.statusRoots.set(target.target, root);
+    const affectedFocus: string[] = [];
+    for (const selection of this.ctx.focus()) {
+      if (selection.kind !== 'task' || selection.plan !== undefined) continue;
+      if ((await this.taskAncestry(selection.target)).some((node) => node.target === target.target))
+        affectedFocus.push(selection.target);
+    }
+    this.statusFocus.set(target.target, affectedFocus);
     return () =>
       this.ctx.api.tasks.setStatus(
         {

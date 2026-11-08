@@ -4,6 +4,7 @@ import { CommandAgent } from '../src/ai/CommandAgent';
 import { preserveAuthoredAnnotations } from '../src/ai/commandSchemas';
 import { CommandSession } from '../src/ai/CommandSession';
 import { ProviderFailure } from '../src/ai/providers/providerFailure';
+import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { deferred, expectDefined } from './helpers';
 import { publicApiHarness, type PublicApiHarness } from './support/publicApiHarness';
 const owners: PublicApiHarness[] = [];
@@ -37,8 +38,9 @@ function call(
 }
 async function setup(
   files: Record<string, string> = { 'a.md': '- [ ] Existing [unknown:: keep]\n' },
+  options: Parameters<typeof publicApiHarness>[1] = {},
 ) {
-  const h = await publicApiHarness(files, { provision: true });
+  const h = await publicApiHarness(files, { ...options, provision: true });
   owners.push(h);
   const api = h.client();
   const scripts: Array<() => Awaited<ReturnType<MockLanguageModelV4['doGenerate']>>> = [];
@@ -221,63 +223,139 @@ it('cancels obsolete planning after Escape and retains the prior draft', async (
   expect(h.session.snapshot().proposal.changes).toHaveLength(1);
   expect(await h.read('a.md')).not.toContain('Obsolete');
 });
-it('confirms a frozen research note link when the new task source does not exist', async () => {
-  const h = await setup();
-  vi.spyOn(h.app.fileManager, 'generateMarkdownLink').mockImplementation(
-    (file, _from, _fragment, alias) => `[[${file.path}|${alias ?? file.basename}]]`,
-  );
-  vi.spyOn(h.app.metadataCache, 'getFirstLinkpathDest').mockImplementation((path) =>
-    h.app.vault.getFileByPath(path.endsWith('.md') ? path : `${path}.md`),
-  );
-  h.script(
-    interpret(),
-    () =>
-      call('note', {
-        kind: 'create',
-        path: 'Research.md',
-        title: 'Research',
-        text: 'Verified finding',
-      }),
-    () =>
-      call('task', {
-        input: {
+it.each(['unchanged', 'rename', 'description', 'stale', 'changed-link'] as const)(
+  'confirms a frozen research note link after %s refinement',
+  async (refinement) => {
+    const h = await setup();
+    vi.spyOn(h.app.fileManager, 'generateMarkdownLink').mockImplementation(
+      (file, _from, _fragment, alias) => `[[${file.path}|${alias ?? file.basename}]]`,
+    );
+    vi.spyOn(h.app.metadataCache, 'getFirstLinkpathDest').mockImplementation((path) =>
+      h.app.vault.getFileByPath(path.endsWith('.md') ? path : `${path}.md`),
+    );
+    h.script(
+      interpret(),
+      () =>
+        call('note', {
           kind: 'create',
-          destination: {
-            type: 'note',
-            path: 'NewTasks.md',
-            insertion: { type: 'append' },
-            provision: 'if-missing',
+          path: 'Research.md',
+          title: 'Research',
+          text: 'Verified finding',
+        }),
+      () =>
+        call('task', {
+          input: {
+            kind: 'create',
+            destination: {
+              type: 'note',
+              path: 'NewTasks.md',
+              insertion: { type: 'append' },
+              provision: 'if-missing',
+            },
+            tree: { markdownTitle: 'Act on finding' },
           },
-          tree: { markdownTitle: 'Act on finding' },
+        }),
+      () => {
+        const changes = h.session.snapshot().proposal.changes;
+        const note = changes.find((c) => c.kind === 'note');
+        const task = changes.find((c) => c.kind === 'task');
+        if (note?.kind !== 'note' || task?.kind !== 'task' || task.plan.after === null)
+          throw new Error('Missing dependency plans');
+        return call('link', {
+          notePlan: note.plan.target,
+          taskPlan: task.plan.target,
+          taskRevision: task.plan.revision,
+          target: task.plan.after.target,
+          field: 'description',
+          template: 'Read {{link}} before acting.',
+          alias: 'Finding',
+        });
+      },
+      finish(),
+    );
+    await h.session.submit('Draft a research note and link it from a new task');
+    expect(h.session.snapshot().status).toEqual({ kind: 'ready', message: 'Ready.' });
+    expect(h.app.vault.getAbstractFileByPath('Research.md')).toBeNull();
+    expect(h.app.vault.getAbstractFileByPath('NewTasks.md')).toBeNull();
+    if (refinement === 'changed-link') {
+      const before = h.session.snapshot().proposal;
+      const task = expectDefined(before.changes.find((change) => change.kind === 'task'));
+      if (task.plan.after === null) throw new Error('task');
+      const prepared = await expectDefined(h.api.tasks.prepare)({
+        kind: 'append',
+        plan: task.plan.target,
+        expectedPlanRevision: task.plan.revision,
+        operation: {
+          type: 'description',
+          target: task.plan.after.target,
+          text: 'Replacement without the reviewed link',
         },
-      }),
-    () => {
-      const changes = h.session.snapshot().proposal.changes;
-      const note = changes.find((c) => c.kind === 'note');
-      const task = changes.find((c) => c.kind === 'task');
-      if (note?.kind !== 'note' || task?.kind !== 'task' || task.plan.after === null)
-        throw new Error('Missing dependency plans');
-      return call('link', {
-        notePlan: note.plan.target,
-        taskPlan: task.plan.target,
-        taskRevision: task.plan.revision,
-        target: task.plan.after.target,
-        field: 'description',
-        template: 'Read {{link}} before acting.',
-        alias: 'Finding',
       });
-    },
-    finish(),
-  );
-  await h.session.submit('Draft a research note and link it from a new task');
-  expect(h.session.snapshot().status).toEqual({ kind: 'ready', message: 'Ready.' });
-  expect(h.app.vault.getAbstractFileByPath('Research.md')).toBeNull();
-  expect(h.app.vault.getAbstractFileByPath('NewTasks.md')).toBeNull();
-  await h.session.confirm();
-  expect(h.session.snapshot().status.kind).toBe('saved');
-  expect(await h.read('Research.md')).toContain('Verified finding');
-  expect(await h.read('NewTasks.md')).toContain('Read [[Research.md|Finding]] before acting.');
-});
+      if (!prepared.ok) throw new Error(prepared.error.code);
+      expect(() => {
+        h.session.stage({ kind: 'task', plan: prepared.value });
+      }).toThrow('Review its note link');
+      expect(h.session.snapshot().proposal).toEqual(before);
+      expect(h.app.vault.getAbstractFileByPath('Research.md')).toBeNull();
+      expect(h.app.vault.getAbstractFileByPath('NewTasks.md')).toBeNull();
+      return;
+    }
+    if (refinement !== 'unchanged') {
+      const previous = expectDefined(
+        h.session.snapshot().proposal.changes.find((c) => c.kind === 'link'),
+      );
+      h.script(
+        interpret(),
+        () => {
+          const change = expectDefined(
+            h.session.snapshot().proposal.changes.find((c) => c.kind === 'task'),
+          );
+          if (change.plan.after === null) throw new Error('task');
+          return call('task', {
+            input: {
+              kind: 'append',
+              plan: change.plan.target,
+              expectedPlanRevision: change.plan.revision,
+              operation:
+                refinement === 'description'
+                  ? {
+                      type: 'description',
+                      target: change.plan.after.target,
+                      text: `Updated ${change.plan.after.description ?? ''} Add a careful check.`,
+                    }
+                  : {
+                      type: 'patch',
+                      target: change.plan.after.target,
+                      patch: { markdownTitle: { type: 'set', value: 'Renamed after link' } },
+                    },
+            },
+          });
+        },
+        finish(),
+      );
+      await h.session.submit('Refine this linked task');
+      expect(h.session.snapshot().status.kind).toBe('ready');
+      if (refinement === 'stale') {
+        h.session.stage(previous);
+        expect(await h.session.confirm()).toBe(false);
+        expect(h.session.snapshot().journal).toEqual([]);
+        expect(h.app.vault.getAbstractFileByPath('Research.md')).toBeNull();
+        expect(h.app.vault.getAbstractFileByPath('NewTasks.md')).toBeNull();
+        return;
+      }
+    }
+    await h.session.confirm();
+    expect(h.session.snapshot().status.kind).toBe('saved');
+    if (refinement === 'rename')
+      expect(await h.read('NewTasks.md')).toContain('Renamed after link');
+    if (refinement === 'description')
+      expect(await h.read('NewTasks.md')).toContain(
+        'Updated Read [[Research.md|Finding]] before acting. Add a careful check.',
+      );
+    expect(await h.read('Research.md')).toContain('Verified finding');
+    expect(await h.read('NewTasks.md')).toContain('Read [[Research.md|Finding]] before acting.');
+  },
+);
 it('create then edit then delete of an unsaved root cancels the draft without effects', async () => {
   const h = await setup();
   h.script(interpret(), create, finish());
@@ -392,11 +470,43 @@ it('separates two provider retries from model/schema repair and refuses a fourth
   expect(h.session.snapshot().status.kind).toBe('error');
   expect(h.session.snapshot().proposal.changes).toHaveLength(0);
 });
-it('stages persisted status after content and follows exact accepted correspondence', async () => {
-  const h = await setup();
+it.each([
+  { name: 'retained root', suffix: '', child: false },
+  { name: 'deleted root', suffix: ' 🏁 delete', child: false, selectChild: true },
+  { name: 'recurring root keep', suffix: ' 🔁 every day 📅 2026-08-01 🏁 keep', child: false },
+  { name: 'recurring root delete', suffix: ' 🔁 every day 📅 2026-08-01 🏁 delete', child: false },
+  { name: 'retained child', suffix: '', child: true },
+  { name: 'deleted child', suffix: ' 🏁 delete', child: true },
+  { name: 'recurring child', suffix: ' 🔁 every day 📅 2026-08-01 🏁 keep', child: true },
+])('publishes current actual trees after content and $name status', async (config) => {
+  const { suffix, child } = config;
+  const selectChild = config.selectChild === true;
+  const descendant = selectChild ? '  - [ ] Selected descendant\n' : '';
+  const h = await setup(
+    {
+      'a.md': child
+        ? `- [ ] Existing\n  - [ ] Child${suffix}\n`
+        : `- [ ] Existing${suffix}\n${descendant}`,
+    },
+    { behaviorSettings: () => DEFAULT_SETTINGS },
+  );
   const result = await h.api.tasks.list();
   if (!result.ok) throw new Error('list');
-  const original = expectDefined(result.value.items[0]);
+  const original = expectDefined(
+    result.value.items.find((item) => item.parentTarget === undefined),
+  );
+  if (selectChild) {
+    const selected = expectDefined(
+      result.value.items.find((item) => item.parentTarget === original.target),
+    );
+    expect(
+      await h.session.focus({
+        kind: 'task',
+        target: selected.target,
+        revision: selected.revision,
+      }),
+    ).toBe(true);
+  }
   h.script(
     interpret(),
     () =>
@@ -415,9 +525,10 @@ it('stages persisted status after content and follows exact accepted corresponde
     () => {
       const c = h.session.snapshot().proposal.changes[0];
       if (c?.kind !== 'task' || c.plan.after === null) throw new Error('plan');
+      const target = child ? expectDefined(c.plan.after.children[0]) : c.plan.after;
       return call('status', {
-        target: c.plan.after.target,
-        revision: c.plan.after.revision,
+        target: target.target,
+        revision: target.revision,
         symbol: 'x',
         plan: c.plan.target,
       });
@@ -426,9 +537,22 @@ it('stages persisted status after content and follows exact accepted corresponde
   );
   await h.session.submit('Rename and complete');
   expect(await h.read('a.md')).toContain('- [ ] Existing');
-  await h.session.confirm();
+  expect(await h.session.confirm()).toBe(true);
   expect(h.session.snapshot().status.kind).toBe('saved');
-  expect(await h.read('a.md')).toContain('- [x] Refined [unknown:: keep]');
+  const accepted = await h.api.tasks.list();
+  if (!accepted.ok) throw new Error('list');
+  const roots = accepted.value.items.filter((item) => item.parentTarget === undefined);
+  const actual = h.session.snapshot().actual;
+  expect(actual.map((item) => item.target).sort((a, b) => a.localeCompare(b))).toEqual(
+    roots.map((item) => item.target).sort((a, b) => a.localeCompare(b)),
+  );
+  for (const root of roots) {
+    const tree = await expectDefined(h.api.tasks.tree)({ target: root.target, limit: 500 });
+    if (!tree.ok) throw new Error('tree');
+    expect(actual.find((item) => item.target === root.target)).toEqual(tree.value.tree);
+  }
+  expect(h.session.snapshot().journal).toHaveLength(2);
+  if (selectChild) expect(h.session.snapshot().focus).toEqual([]);
 });
 it('merges using a current preservation assessment and removes the source only after destination readback', async () => {
   const h = await setup({ 'a.md': '- [ ] Source\n- [ ] Destination\n' });
@@ -1037,4 +1161,77 @@ it('keeps background reads separate from explicit finish selection of a draft ch
     h.session.snapshot().entities.tasks[h.session.snapshot().entities.tasks.length - 1]?.tree.title,
   ).toBe('Child B');
   expect(await h.read('a.md')).not.toContain('- [ ] New');
+});
+
+it('retires stale child read pages before the next model turn and refreshes selected peers from that source', async () => {
+  const h = await setup(
+    {
+      'a.md': '- [ ] Root\n  - [ ] Child 🏁 delete\n- [ ] Selected peer\n',
+      'b.md': '- [ ] Unrelated source\n',
+    },
+    { behaviorSettings: () => DEFAULT_SETTINGS },
+  );
+  const listed = await h.api.tasks.list();
+  if (!listed.ok) throw new Error('list');
+  const root = expectDefined(listed.value.items.find((task) => task.title === 'Root'));
+  const child = expectDefined(listed.value.items.find((task) => task.title === 'Child'));
+  const peer = expectDefined(listed.value.items.find((task) => task.title === 'Selected peer'));
+  const unrelated = expectDefined(
+    listed.value.items.find((task) => task.title === 'Unrelated source'),
+  );
+  await h.session.readTreePage({ target: child.target });
+  await h.session.readTreePage({ target: unrelated.target });
+  expect(
+    await h.session.focus({ kind: 'task', target: peer.target, revision: peer.revision }),
+  ).toBe(true);
+  h.script(
+    interpret(),
+    () =>
+      call('task', {
+        input: {
+          kind: 'edit',
+          target: root.target,
+          expectedRevision: root.revision,
+          operation: {
+            type: 'patch',
+            target: root.target,
+            patch: { markdownTitle: { type: 'set', value: 'Refined root' } },
+          },
+        },
+      }),
+    () => {
+      const plan = expectDefined(
+        h.session.snapshot().proposal.changes.find((change) => change.kind === 'task'),
+      ).plan;
+      const current = expectDefined(plan.after?.children[0]);
+      return call('status', {
+        target: current.target,
+        revision: current.revision,
+        symbol: 'x',
+        plan: plan.target,
+      });
+    },
+    finish(),
+  );
+  await h.session.submit('Rename root and complete its child');
+  expect(await h.session.confirm()).toBe(true);
+  const next = h.model.doGenerateCalls.length;
+  h.script(interpret(), finish());
+  await h.session.submit('Show the current work');
+  const prompt = JSON.stringify(h.model.doGenerateCalls[next]?.prompt);
+  expect(prompt).not.toContain(child.revision);
+  expect(prompt).toContain(unrelated.revision);
+  const currentPeer = await h.api.tasks.get(peer.target);
+  if (!currentPeer.ok) throw new Error('peer');
+  expect(h.session.snapshot().focus).toEqual([
+    { kind: 'task', target: peer.target, revision: currentPeer.value.revision },
+  ]);
+  expect(
+    h.session
+      .snapshot()
+      .entities.tasks.some(
+        (page) =>
+          page.tree.target === peer.target && page.tree.revision === currentPeer.value.revision,
+      ),
+  ).toBe(true);
 });
