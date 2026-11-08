@@ -410,11 +410,11 @@ export class CommandSession {
     });
   }
   setInput(text: string): void {
-    this.publish({ input: text.slice(0, 16000) });
+    this.publish({ input: text });
   }
   exchange(role: 'user' | 'agent', text: string): void {
     this.publish({
-      exchanges: [...this.state.exchanges, { role, text: text.slice(0, 4000) }].slice(-16),
+      exchanges: [...this.state.exchanges, { role, text }],
     });
   }
   stage(change: CommandChange, operations = 1): void {
@@ -468,6 +468,14 @@ export class CommandSession {
     });
   }
   async submit(text: string, submittedAgainst?: CommandSubmissionBasis): Promise<void> {
+    if (text.length > 16000) {
+      this.setInput(text);
+      this.status(
+        'error',
+        'This command is too long. Shorten it before sending; your full input is retained.',
+      );
+      return;
+    }
     if (text.trim() === '') {
       await this.confirm();
       return;

@@ -166,8 +166,14 @@ export class CommandAgent implements CommandAgentPort {
     const actual = new Map(snapshot.actual.map((tree) => [tree.target, tree]));
     const pages = new Map(snapshot.entities.tasks.map((page) => [page.tree.target, page]));
     for (const target of actual.keys()) pages.delete(target);
+    const recentReplies = new Set(
+      snapshot.exchanges.filter((entry) => entry.role === 'agent').slice(-16),
+    );
     return {
       ...snapshot,
+      exchanges: snapshot.exchanges.filter(
+        (entry) => entry.role === 'user' || recentReplies.has(entry),
+      ),
       submissionBasis: undefined,
       journal: undefined,
       trees: undefined,

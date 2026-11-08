@@ -1235,3 +1235,18 @@ it('retires stale child read pages before the next model turn and refreshes sele
       ),
   ).toBe(true);
 });
+it('bounds model replies without dropping earlier user constraints from durable history', async () => {
+  const h = await setup();
+  h.session.exchange('user', 'Keep the original project membership.');
+  for (let index = 0; index < 20; index++)
+    h.session.exchange('agent', `Historical reply ${index}.`);
+  h.script(interpret(), finish());
+  await h.session.submit('Show the current task');
+  const prompt = JSON.stringify(h.model.doGenerateCalls[0]?.prompt);
+  expect(prompt).toContain('Keep the original project membership.');
+  expect(prompt).not.toContain('Historical reply 0.');
+  expect(prompt).toContain('Historical reply 19.');
+  expect(h.session.snapshot().exchanges.some((entry) => entry.text === 'Historical reply 0.')).toBe(
+    true,
+  );
+});

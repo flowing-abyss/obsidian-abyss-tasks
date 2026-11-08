@@ -666,3 +666,32 @@ it('requires an explicit plan when the same accepted node is present in two curr
     }),
   ).toBe(true);
 });
+it('retains original intent and every visible exchange beyond the model working window', async () => {
+  const h = await setup();
+  h.session.exchange('user', 'Never move the original task out of its project.');
+  for (let index = 0; index < 20; index++) h.session.exchange('agent', `Revision ${index}`);
+  expect(h.session.snapshot().exchanges).toHaveLength(21);
+  expect(h.session.snapshot().exchanges[0]?.text).toBe(
+    'Never move the original task out of its project.',
+  );
+});
+it('retains trailing constraints in an accepted long user command', async () => {
+  const h = await setup();
+  const text = `${'a'.repeat(4100)} Keep the original destination.`;
+  await h.session.submit(text);
+  expect(h.session.snapshot().exchanges[0]?.text).toBe(text);
+  expect(h.session.snapshot().input).toBe(text);
+});
+it('rejects oversized commands before interpretation and retains the complete input', async () => {
+  const h = await setup();
+  let interpreted = false;
+  h.setRun(async () => {
+    interpreted = true;
+  });
+  const text = `${'a'.repeat(16000)} Keep this final constraint.`;
+  await h.session.submit(text);
+  expect(interpreted).toBe(false);
+  expect(h.session.snapshot().input).toBe(text);
+  expect(h.session.snapshot().exchanges).toHaveLength(0);
+  expect(h.session.snapshot().status.kind).toBe('error');
+});
