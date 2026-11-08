@@ -1407,6 +1407,37 @@ it('a normal dirty focus question finishes without schema repair or a ready over
   expect(h.session.snapshot().pendingTransition).toBeNull();
   expect(h.session.snapshot().proposal.changes).toHaveLength(1);
 });
+it.each([false, true])(
+  'semantic focus-transition save retains its turn-bound note review predicate (%s)',
+  async (reviewed) => {
+    const h = await setup();
+    h.session.requireNoteReview();
+    const prepared = await expectDefined(h.api.notes).prepare({
+      kind: 'create',
+      path: 'Review.md',
+      title: 'Review',
+      text: 'Agreed note.',
+    });
+    if (!prepared.ok) throw new Error(prepared.error.code);
+    h.session.stage({ kind: 'note', plan: prepared.value });
+    const listed = await h.api.tasks.list();
+    if (!listed.ok) throw new Error(listed.error.code);
+    const target = expectDefined(listed.value.items[0]);
+    await h.session.focus({ kind: 'task', target: target.target, revision: target.revision });
+    h.script(() =>
+      call('interpret', {
+        intent: 'resolve-transition',
+        research: false,
+        transitionDisposition: 'save',
+      }),
+    );
+    await h.session.submit('Save the note and continue there', undefined, () => reviewed);
+    expect(h.app.vault.getFileByPath('Review.md') !== null).toBe(reviewed);
+    expect(h.session.snapshot().journal).toHaveLength(reviewed ? 1 : 0);
+    if (reviewed) expect(h.session.snapshot().focus[0]?.target).toBe(target.target);
+    else expect(h.session.snapshot().pendingTransition?.kind).toBe('focus');
+  },
+);
 it('semantic save-current then prepare-another renews the preview without saving the new tree', async () => {
   const h = await setup();
   h.script(interpret(), create, finish());

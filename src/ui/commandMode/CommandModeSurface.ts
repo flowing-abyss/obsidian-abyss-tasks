@@ -455,6 +455,12 @@ export class CommandModeSurface implements CaptureExtension {
   private populateMenu(menu: Menu, owner: CommandSessionOwner): void {
     const snapshot = owner.snapshot();
     if (snapshot.pendingTransition != null) {
+      const basis = {
+        sessionId: snapshot.id,
+        proposalRevision: snapshot.proposal.revision,
+        pendingTransition: snapshot.pendingTransition,
+      };
+      const surface = this.noteReview?.token;
       for (const [label, value] of [
         ['Save and continue', 'save'],
         ['Keep for later', 'keep'],
@@ -463,7 +469,10 @@ export class CommandModeSurface implements CaptureExtension {
       ] as const)
         menu.addItem((item) =>
           item.setTitle(label).onClick(() => {
-            runAsyncAction(owner.resolveTransition(value), 'Could not change session');
+            runAsyncAction(
+              owner.resolveTransition(value, basis, surface),
+              'Could not change session',
+            );
           }),
         );
     }

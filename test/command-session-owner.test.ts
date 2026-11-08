@@ -206,6 +206,67 @@ it('retains the same runtime and exact unsent state through hide and reopen, wit
   const reloaded = h.createOwner().owner;
   expect(reloaded.snapshot().input).toBe('Unsent 99');
 });
+it('checks transition basis after queued focus work settles and requires its own live note review token', async () => {
+  const h = await setup();
+  h.owner.open();
+  await h.external('a.md', '- [ ] First\n- [ ] Second\n');
+  const listed = await h.api().tasks.list();
+  if (!listed.ok) throw new Error(listed.error.code);
+  const first = expectDefined(listed.value.items[0]),
+    second = expectDefined(listed.value.items[1]);
+  const prepared = await expectDefined(h.api().notes).prepare({
+    kind: 'create',
+    path: 'Review.md',
+    title: 'Review',
+    text: 'Pending note.',
+  });
+  if (!prepared.ok) throw new Error(prepared.error.code);
+  h.session().stage({ kind: 'note', plan: prepared.value });
+  await h.owner.focus({ kind: 'task', target: first.target, revision: first.revision });
+  const state = h.owner.snapshot();
+  if (state.pendingTransition == null) throw new Error('Missing transition');
+  const basis = {
+    sessionId: state.id,
+    proposalRevision: state.proposal.revision,
+    pendingTransition: state.pendingTransition,
+  };
+  const ready = h.owner.registerNoteReview(() => true);
+  expect(await h.owner.resolveTransition('save', basis)).toBe(false);
+  expect(
+    await h.owner.resolveTransition(
+      'save',
+      {
+        ...basis,
+        pendingTransition: {
+          kind: 'focus',
+          target: [{ kind: 'task', target: second.target, revision: second.revision }],
+        },
+      },
+      ready.token,
+    ),
+  ).toBe(false);
+  expect(h.app.vault.getFileByPath('Review.md')).toBeNull();
+  const gate = deferred<void>();
+  h.run(async () => {
+    await gate.promise;
+  });
+  const turn = h.owner.submit('Wait');
+  const moving = h.owner.focus({ kind: 'task', target: second.target, revision: second.revision });
+  const saving = h.owner.resolveTransition('save', basis, ready.token);
+  gate.resolve();
+  await turn;
+  await moving;
+  expect(await saving).toBe(false);
+  expect(h.app.vault.getFileByPath('Review.md')).toBeNull();
+  expect(h.owner.snapshot().journal).toHaveLength(0);
+  expect(h.owner.snapshot().pendingTransition).toMatchObject({
+    kind: 'focus',
+    target: [{ target: second.target }],
+  });
+  expect(await h.owner.resolveTransition('save', undefined, ready.token)).toBe(true);
+  expect(h.owner.snapshot().focus[0]?.target).toBe(second.target);
+  expect(h.owner.snapshot().journal).toHaveLength(1);
+});
 it('persists every normal command and retains the current runtime when a required transition save fails', async () => {
   const h = await setup();
   h.owner.open();

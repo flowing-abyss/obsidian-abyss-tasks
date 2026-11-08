@@ -27,6 +27,7 @@ import {
   type CommandStatusInput,
   type CommandStatusKind,
   type CommandSubmissionBasis,
+  type CommandTransitionBasis,
   type CommandTransitionDisposition,
 } from './commandTypes';
 import { executeCommandWrites } from './commandWrites';
@@ -512,8 +513,10 @@ export class CommandSession {
   async resolveTransition(
     disposition: CommandTransitionDisposition,
     signal?: AbortSignal,
+    basis?: CommandTransitionBasis,
+    review?: CommandNoteReview,
   ): Promise<boolean> {
-    if (!(await this.transitionAllowed(signal))) return false;
+    if (!(await this.transitionAllowed(signal, basis))) return false;
     const pending = this.state.pendingTransition;
     if (pending == null) return false;
     if (disposition === 'cancel') {
@@ -530,13 +533,22 @@ export class CommandSession {
     }
     if (pending.kind === 'new-session')
       return disposition === 'save' ? false : this.newSession(disposition, signal);
-    if (disposition === 'save') return this.saveAndFocus(pending.target, signal);
+    if (disposition === 'save') return this.saveAndFocus(pending.target, signal, review);
     if (!(await this.newSession(disposition, signal))) return false;
     return this.focus(pending.target, signal);
+  }
+  private currentTransition(basis?: CommandTransitionBasis): boolean {
+    return (
+      basis === undefined ||
+      (basis.sessionId === this.state.id &&
+        basis.proposalRevision === this.state.proposal.revision &&
+        JSON.stringify(basis.pendingTransition) === JSON.stringify(this.state.pendingTransition))
+    );
   }
   private async saveAndFocus(
     target: readonly CommandFocus[],
     signal?: AbortSignal,
+    review?: CommandNoteReview,
   ): Promise<boolean> {
     const question = this.previousQuestion();
     if (question !== null) {
@@ -546,7 +558,7 @@ export class CommandSession {
     this.publish({ activeQuestion: null, status: { kind: 'ready', message: '' } });
     const saved =
       signal === undefined
-        ? await this.confirm()
+        ? await this.confirm(this.state.proposal.revision, review)
         : await this.confirmFromTurn(this.state.proposal.revision, signal);
     if (!saved) return false;
     this.publish({ pendingTransition: null });
@@ -555,10 +567,13 @@ export class CommandSession {
       signal,
     );
   }
-  private async transitionAllowed(signal?: AbortSignal): Promise<boolean> {
+  private async transitionAllowed(
+    signal?: AbortSignal,
+    basis?: CommandTransitionBasis,
+  ): Promise<boolean> {
     if (signal === undefined) await this.settle();
     else if (this.turn?.signal !== signal || signal.aborted) return false;
-    return !this.disposed && !this.writing;
+    return !this.disposed && !this.writing && this.currentTransition(basis);
   }
   private async verifyFocus(
     target: CommandFocus,

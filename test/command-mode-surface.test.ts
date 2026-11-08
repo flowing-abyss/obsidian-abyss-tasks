@@ -429,6 +429,153 @@ it('offers new session through the compact history menu and retains a dirty tree
   expect(h.owner.recent().some((record) => record.snapshot.proposal.changes.length > 0)).toBe(true);
 });
 
+async function noteFocusTransition() {
+  mockNativeBlocks();
+  const h = await setup({ 'a.md': '- [ ] First focus\n- [ ] Other focus\n' });
+  const notes = expectDefined(h.api.notes);
+  const prepared = await notes.prepare({
+    kind: 'create',
+    path: 'Review.md',
+    title: 'Review',
+    text: '# Agreed note',
+  });
+  if (!prepared.ok) throw new Error(prepared.error.code);
+  h.session.stage({ kind: 'note', plan: prepared.value });
+  const listed = await h.api.tasks.list();
+  if (!listed.ok) throw new Error(listed.error.code);
+  const target = expectDefined(listed.value.items[0]);
+  const other = expectDefined(listed.value.items[1]);
+  await h.owner.focus({ kind: 'task', target: target.target, revision: target.revision });
+  return { ...h, notes, plan: prepared.value, target, other };
+}
+function historyMenu(surface: CaptureSurface, shown: ReturnType<typeof captureMenus>) {
+  expectDefined(surface.element.querySelector<HTMLButtonElement>('[aria-label="History"]')).click();
+  return expectDefined(shown[shown.length - 1]);
+}
+it('saves a rendered note and changes focus through the actual Save and continue menu once', async () => {
+  const h = await noteFocusTransition();
+  const shown = captureMenus();
+  const surface = h.mount();
+  await flushMicrotasks(0);
+  expect(surface.element.querySelector('.abyss-command-note-body')?.textContent).toContain(
+    'Agreed note',
+  );
+  const menu = historyMenu(surface, shown);
+  menu.pick('Save and continue');
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().focus[0]?.target).toBe(h.target.target);
+  });
+  expect(await h.read('Review.md')).toContain('Agreed note');
+  expect(h.owner.snapshot().pendingTransition).toBeNull();
+  expect(h.owner.snapshot().proposal.changes).toHaveLength(0);
+  expect(h.owner.snapshot().journal).toHaveLength(1);
+  menu.pick('Save and continue');
+  await flushMicrotasks(0);
+  expect(h.owner.snapshot().journal).toHaveLength(1);
+});
+it.each(['pending', 'failed'] as const)(
+  'rejects Save and continue from a %s note surface even if another surface is ready',
+  async (fault) => {
+    const h = await noteFocusTransition();
+    const shown = captureMenus();
+    h.mount();
+    await flushMicrotasks(0);
+    const waiting = deferred<void>();
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (...args) => {
+      if (fault === 'failed') throw new Error('Native rendering failed');
+      await waiting.promise;
+      return renderNativeBlocks(...args);
+    });
+    let surface = h.mount();
+    await flushMicrotasks(0);
+    historyMenu(surface, shown).pick('Save and continue');
+    await flushMicrotasks(0);
+    expect(h.app.vault.getFileByPath('Review.md')).toBeNull();
+    expect(h.owner.snapshot().journal).toHaveLength(0);
+    expect(h.owner.snapshot().pendingTransition?.kind).toBe('focus');
+    mockNativeBlocks();
+    waiting.resolve();
+    if (fault === 'failed') {
+      surface.destroy();
+      surface = h.mount();
+    }
+    await flushMicrotasks(0);
+    historyMenu(surface, shown).pick('Save and continue');
+    await vi.waitFor(() => {
+      expect(h.owner.snapshot().focus[0]?.target).toBe(h.target.target);
+    });
+    expect(h.owner.snapshot().journal).toHaveLength(1);
+  },
+);
+it('rejects a retired surface menu even when a new surface displays the same note proposal', async () => {
+  const h = await noteFocusTransition();
+  const shown = captureMenus();
+  const original = h.mount();
+  await flushMicrotasks(0);
+  const retired = historyMenu(original, shown);
+  original.destroy();
+  const current = h.mount();
+  await flushMicrotasks(0);
+  retired.pick('Save and continue');
+  await flushMicrotasks(0);
+  expect(h.app.vault.getFileByPath('Review.md')).toBeNull();
+  expect(h.owner.snapshot().journal).toHaveLength(0);
+  historyMenu(current, shown).pick('Save and continue');
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().focus[0]?.target).toBe(h.target.target);
+  });
+  expect(h.owner.snapshot().journal).toHaveLength(1);
+});
+it.each(['proposal', 'session', 'transition'] as const)(
+  'rejects a menu captured before the %s changed and permits a new deliberate menu action',
+  async (stale) => {
+    const h = await noteFocusTransition();
+    const shown = captureMenus();
+    const surface = h.mount();
+    await flushMicrotasks(0);
+    const old = historyMenu(surface, shown);
+    if (stale === 'session') {
+      await h.owner.newSession('keep');
+      const created = await h.notes.prepare({
+        kind: 'create',
+        path: 'Review.md',
+        title: 'Review',
+        text: '# Current note',
+      });
+      if (!created.ok) throw new Error(created.error.code);
+      h.session.stage({ kind: 'note', plan: created.value });
+    } else if (stale === 'proposal') {
+      await h.owner.resolveTransition('cancel');
+      const refined = await h.notes.prepare({
+        kind: 'refine',
+        plan: h.plan.target,
+        expectedPlanRevision: h.plan.revision,
+        operation: { type: 'replace-body', text: '# Current note' },
+      });
+      if (!refined.ok) throw new Error(refined.error.code);
+      h.session.stage({ kind: 'note', plan: refined.value });
+    }
+    await h.owner.focus({ kind: 'task', target: h.other.target, revision: h.other.revision });
+    await flushMicrotasks(0);
+    old.pick('Save and continue');
+    await flushMicrotasks(0);
+    expect(h.app.vault.getFileByPath('Review.md')).toBeNull();
+    expect(h.owner.snapshot().journal).toHaveLength(0);
+    expect(h.owner.snapshot().pendingTransition).toMatchObject({
+      kind: 'focus',
+      target: [{ target: h.other.target }],
+    });
+    historyMenu(surface, shown).pick('Save and continue');
+    await vi.waitFor(() => {
+      expect(h.owner.snapshot().focus[0]?.target).toBe(h.other.target);
+    });
+    expect(h.owner.snapshot().journal).toHaveLength(1);
+    expect(await h.read('Review.md')).toContain(
+      stale === 'transition' ? 'Agreed note' : 'Current note',
+    );
+  },
+);
+
 it('marks exact saved-child comment edits and retains removed description/comment until save', async () => {
   const h = await setup();
   await h.external(

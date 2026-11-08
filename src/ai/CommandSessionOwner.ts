@@ -12,6 +12,7 @@ import {
   type CommandSessionSnapshot,
   type CommandSessionTransitions,
   type CommandSubmissionBasis,
+  type CommandTransitionBasis,
   type CommandTransitionDisposition,
 } from './commandTypes';
 
@@ -313,8 +314,25 @@ export class CommandSessionOwner {
       return this.session.newSession('keep', undefined, true);
     });
   }
-  resolveTransition(disposition: CommandTransitionDisposition): Promise<boolean> {
-    return this.transition(() => this.session.resolveTransition(disposition));
+  resolveTransition(
+    disposition: CommandTransitionDisposition,
+    basis?: CommandTransitionBasis,
+    surface?: symbol,
+  ): Promise<boolean> {
+    const expected = basis ?? this.transitionBasis();
+    if (expected === undefined) return Promise.resolve(false);
+    return this.transition(() =>
+      this.session.resolveTransition(disposition, undefined, expected, this.noteReview(surface)),
+    );
+  }
+  private transitionBasis(): CommandTransitionBasis | undefined {
+    const state = this.session.snapshot();
+    if (state.pendingTransition == null) return undefined;
+    return {
+      sessionId: state.id,
+      proposalRevision: state.proposal.revision,
+      pendingTransition: state.pendingTransition,
+    };
   }
   async clearCompleted(): Promise<boolean> {
     if (!(await this.flush())) return false;

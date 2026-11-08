@@ -79,6 +79,11 @@ authorize it. Pending replacements, failed rendering and disposed registrations 
 Save and semantic confirmation while editing remains available. Only an already interpreted
 immediate-write request bypasses this display requirement. Headless internal sessions keep their
 explicit confirmation contract. These predicates and tokens never enter history or model context.
+The focus-transition menu captures its initiating token, session/proposal revision and exact pending
+transition when opened. Its Save and continue action checks that basis after queued work settles
+and passes the same note-review predicate through the existing save-and-focus route. A retired or
+stale menu cannot approve a different proposal or destination; semantic transition saves retain
+their turn-bound predicate.
 Note previews yield to readback only when the accepted receipt matches its plan, revision,
 provider and request, and the page matches the resulting note target/revision and exact selection
 request (including the freshly minted edit section). Continuation retains that request. A later

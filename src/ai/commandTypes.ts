@@ -112,6 +112,9 @@ export type CommandPendingTransition =
     }
   | { readonly kind: 'new-session'; readonly previousQuestion?: string | null };
 export type CommandTransitionDisposition = 'save' | 'keep' | 'discard' | 'cancel';
+export interface CommandTransitionBasis extends CommandSubmissionBasis {
+  readonly pendingTransition: CommandPendingTransition;
+}
 export type CommandPreparation =
   | { readonly kind: 'task'; readonly input: z.output<typeof prepareSchema> }
   | { readonly kind: 'note'; readonly input: z.output<typeof notePrepareSchema> };
