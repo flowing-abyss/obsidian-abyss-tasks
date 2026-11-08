@@ -468,15 +468,8 @@ export class CommandSession {
     });
   }
   async submit(text: string, submittedAgainst?: CommandSubmissionBasis): Promise<void> {
-    if (text.length > 16000) {
-      this.setInput(text);
-      this.status(
-        'error',
-        'This command is too long. Shorten it before sending; your full input is retained.',
-      );
-      return;
-    }
-    if (text.trim() === '') {
+    if (this.disposed) return;
+    if (text.length <= 16000 && text.trim() === '') {
       await this.confirm();
       return;
     }
@@ -484,6 +477,14 @@ export class CommandSession {
       this.cancelTurn();
       await this.running;
       return this.submit(text, submittedAgainst);
+    }
+    if (text.length > 16000) {
+      this.setInput(text);
+      this.status(
+        'error',
+        'This command is too long. Shorten it before sending; your full input is retained.',
+      );
+      return;
     }
     const running = this.runTurn(text, submittedAgainst);
     this.running = running;

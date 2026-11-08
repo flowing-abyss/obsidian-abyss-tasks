@@ -3,7 +3,7 @@ import type { ApiResultV1 } from '../api';
 import { sameReviewedContent } from '../src/ai/commandSchemas';
 import { CommandSession } from '../src/ai/CommandSession';
 import type { CommandAgentPort, CommandSessionSnapshot } from '../src/ai/commandTypes';
-import { expectDefined } from './helpers';
+import { deferred, expectDefined } from './helpers';
 import { publicApiHarness, type PublicApiHarness } from './support/publicApiHarness';
 const owners: PublicApiHarness[] = [];
 afterEach(() => {
@@ -694,4 +694,101 @@ it('rejects oversized commands before interpretation and retains the complete in
   expect(h.session.snapshot().input).toBe(text);
   expect(h.session.snapshot().exchanges).toHaveLength(0);
   expect(h.session.snapshot().status.kind).toBe('error');
+});
+
+it.each([false, true])(
+  'drains prior planning before retaining oversized input (queued=%s)',
+  async (queued) => {
+    const h = await setup();
+    const first = deferred<void>();
+    const calls: string[] = [];
+    let priorSignal: AbortSignal | undefined;
+    h.setRun(async ({ text, signal }) => {
+      calls.push(text);
+      if (text === 'First') {
+        priorSignal = signal;
+        await first.promise;
+      }
+      h.session.status('ready', `Finished ${text}`);
+    });
+    const pending = h.session.submit('First');
+    const next = queued ? h.session.submit('Second') : Promise.resolve();
+    const text = 'x'.repeat(16001);
+    const rejected = h.session.submit(text);
+    const cancelled = priorSignal?.aborted;
+    first.resolve();
+    await Promise.all([pending, next, rejected]);
+    expect(cancelled).toBe(true);
+    expect(h.session.snapshot().input).toBe(text);
+    expect(h.session.snapshot().status.kind).toBe('error');
+    expect(calls).not.toContain(text);
+    expect(h.session.snapshot().exchanges.some((entry) => entry.text === text)).toBe(false);
+  },
+);
+it('does not publish rejected input after disposal while draining a previous turn', async () => {
+  const h = await setup();
+  const first = deferred<void>();
+  h.setRun(async () => {
+    await first.promise;
+  });
+  const pending = h.session.submit('First');
+  const rejected = h.session.submit('x'.repeat(16001));
+  h.session.dispose();
+  first.resolve();
+  await Promise.all([pending, rejected]);
+  expect(h.session.snapshot().input).toBe('First');
+});
+it('retains oversized input after a cancelled planning turn settles its admitted write', async () => {
+  const h = await setup();
+  const native = expectDefined(h.api.tasks.create);
+  const admitted = deferred<void>();
+  const release = deferred<void>();
+  let writes = 0;
+  const api = {
+    ...h.api,
+    tasks: {
+      ...h.api.tasks,
+      create: async (...args: Parameters<typeof native>) => {
+        writes++;
+        const result = await native(...args);
+        admitted.resolve();
+        await release.promise;
+        return result;
+      },
+    },
+  };
+  const session: CommandSession = new CommandSession({
+    api,
+    journal: { save: async () => {} },
+    now: () => Date.UTC(2026, 7, 1, 12),
+    id: (() => {
+      let id = 0;
+      return () => `reject-admitted-${++id}`;
+    })(),
+    agent: {
+      run: async ({ signal }) => {
+        await session.confirmFromTurn(session.snapshot().proposal.revision, signal);
+      },
+    },
+  });
+  const plan = ok(
+    await expectDefined(api.tasks.prepare)({
+      kind: 'create',
+      destination: { type: 'note', path: 'a.md', insertion: { type: 'append' } },
+      tree: { markdownTitle: 'Admitted once' },
+    }),
+  );
+  session.stage({ kind: 'task', plan });
+  const saving = session.submit('Save this');
+  await admitted.promise;
+  const text = 'x'.repeat(16001);
+  const rejected = session.submit(text);
+  release.resolve();
+  await Promise.all([saving, rejected]);
+  expect(writes).toBe(1);
+  expect(session.snapshot().journal[0]?.state).toBe('settled');
+  expect(session.snapshot().actual[0]?.title).toBe('Admitted once');
+  expect(session.snapshot().input).toBe(text);
+  expect(session.snapshot().status.kind).toBe('error');
+  expect(await h.read('a.md')).toContain('Admitted once');
 });
