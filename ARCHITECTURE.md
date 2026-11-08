@@ -29,6 +29,68 @@ or OpenAI, or select independent OpenAI/Tavily billing; Anthropic has no implici
 Voice defaults to disabled and has an explicit OpenAI connection preference. These settings do
 not start research, transcription, or an agent session.
 
+## Command sessions
+
+Main's internal `createCommandSession(journal, research?)` factory gives each active session its
+own disposable public client and composes the real provider-backed `CommandAgent`. Construction
+does not parse provider settings or send requests. The caller must supply an awaited
+`CommandJournalPort`; there is no default persistence implementation. Research is an optional
+typed port. This core does not register a command surface or retain local history itself.
+
+`CommandSession` publishes detached immutable state: input, focused entities, canonical trees,
+proposal revision, recent exchanges, question, status, actual readback and write journal.
+Every nonempty submission goes through semantic interpretation. Empty submission confirms the
+current proposal deterministically. Model confirmation is bound to the session and proposal it
+saw, before any external reads; delayed submissions can carry the same explicit basis. A ready
+preview needs no question. Only missing information or a conflicting instruction blocks confirmation.
+Task creation previews by default, and persisted status uses the ordinary guarded lifecycle.
+Saved-row status actions leave unrelated content proposals pending.
+
+Explicit working selection is separate from background reads. Optional typed `finish.selection`
+selects up to five verified entities; omission preserves selection and an empty list clears it.
+The session verifies the entire selection before publishing, including exact plan/revision for draft
+nodes. A uniquely owned opaque draft target can resolve its current plan internally; supplied
+node/plan revisions must still match, and ambiguous overlapping plans require an explicit plan.
+Refinement retains selected node identity; saved focus continues only through receipt
+correspondence and readback. Deleted or unverified affected selections leave current focus while
+historical entity and journal evidence remains. Project/note readback updates selected revisions.
+
+`CommandAgent` runs the SDK tool loop with generic required tool calls, serial execution, bounded
+steps and generation deadlines. Active tools enforce the interpretation phase; a typed finish
+is the only accepted terminal ready/question result. The loop has
+application-owned network retries and separate schema/domain repair limits. Provider-facing schemas
+use explicit object roots with nested discriminated requests; branch requirements and extra-field
+rejection remain enforced during execution. Ready/question finish uses a small explicit object
+with the original union validation. Main supplies local
+civil time and timezone. `commandSchemas` validates executable arguments and outputs, preserves
+unrequested authored title annotations, and bounds model-facing projections. `commandReads`
+recovers only typed incomplete readonly coverage through bounded publication waits. Full-tree
+pages remain separate from the changed-node proposal budget. Model context excludes the durable
+write journal and duplicate historical trees; current plans retain their exact native refinement
+basis. Same-plan batches prepare at most 20 operations against concrete nodes present at the
+initial revision, then stage the whole validated result and count every operation. Failed
+preparation retains the earlier committable plan. Version-scoped comment edits remain separate.
+Canonical before/after capture is bounded at five seconds, 4,000 nodes, 512 pages and 4 MiB of
+projected scalar text across both sides. Incomplete capture leaves the earlier proposal intact.
+Changed-node accounting matches retained native handles, includes cleanup/link dependencies and
+does not charge shifted unchanged siblings. Refreshed plans use the same complete capture before
+reviewed-value comparison. Current view context never implies an additional source restriction.
+
+`commandWrites` sequences public facade operations and awaits journal persistence before every
+effect. Known receipts and exact accepted readback precede Saved. Partial or unknown effects stop
+replay and retain the draft and observed entities. Project-first writes can refresh a dependent
+plan only when its complete reviewed values remain unchanged apart from proved identity/source
+line relocation and observational clock values; source paths remain compared. A refresh drops
+merge preservation; dependent cleanup
+then needs renewed review. Source cleanup otherwise requires the exact covered assessment and a
+known destination receipt/readback. Linked note creation freezes the path, task field and template;
+after the note receipt, only a host-generated exact-destination link fills that dependency.
+
+Cancellation retains state and stops new admission. An already admitted native write settles and
+is read back even after planning is cancelled. Disposal waits for that settlement before releasing
+the session's public client. These modules consume the public facade and do not acquire native
+storage writers or introduce an additional transaction engine.
+
 ## System at a glance
 
 ```mermaid
@@ -256,9 +318,8 @@ The contract does not prescribe an Obsidian plugin registry. Register client dis
 subscription's unsubscribe function with the consumer's own lifecycle. Read capabilities and limits
 from `client.info`; they describe supported operations and bounded resources, not permissions.
 
-External plugins and future AI or MCP consumers use this client boundary. No AI or MCP adapter,
-transport, or SDK is implemented. `src/main.ts` alone composes the provider with the real index and
-application service. `src/integrations/` imports inward contracts through `src/tasks` and the narrow
+External plugins and the command agent use this client boundary. MCP is not implemented.
+`src/main.ts` alone composes the provider with the real index and application service. `src/integrations/` imports inward contracts through `src/tasks` and the narrow
 [`projectApi`](src/projects/projectApi.ts) port; the task domain,
 application and infrastructure layers do not depend on the external declaration or facade.
 
@@ -287,7 +348,12 @@ The project reader extends that same contract. Zero-task notes participate in so
 and coverage. Opaque note and section handles retain identities and source ranges; write plans
 retain their sealed bytes within bounded budgets. All mutations share `TaskRequestRegistry`,
 including request IDs, admission, replay and retained receipts. Each delivery rechecks current
-disclosure while receipts retain historical storage effects.
+disclosure while receipts retain historical storage effects. `ReadNoteV1.linkFor` accepts either
+an existing accepted source handle/revision or a mutually exclusive `fromPath` formatting context.
+The latter validates a vault-relative Markdown path without looking up, reading or provisioning
+that source. Destination permission and accepted-note checks still apply. Host-generated links
+are parsed through the shared source-reference grammar and resolved natively to verify the exact
+destination, including headings, blocks and Markdown-link preferences.
 
 Note search uses the host's `prepareSimpleSearch` against whole accepted sources in canonical
 path order. Its per-call character target is 262,144, with one oversized source permitted up to
@@ -329,6 +395,10 @@ ProjectStore and the adapter share root statistics through the pure project stat
 Headless project updates run through ProjectManager's per-app metadata queue. The manager checks
 the accepted file, source bytes, field bindings and status meaning inside the single-note write.
 It validates membership and exclusion on the candidate before returning it to the vault.
+Main also supplies the existing canonical task-protection authority. The frontmatter writer
+reserves and settles a structural mutation only for an exact unchanged task body and population,
+preserving duplicate-root identities through the metadata displacement. It remains the sole
+project metadata writer and uses the existing continuation/rejection paths.
 When a note has frontmatter, TaskIndex and the writer require a YAML mapping and verify its
 boundaries against Obsidian after accounting for a leading byte-order mark.
 For headless creation, NoteTemplateService prepares the configured static template and the manager

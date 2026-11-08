@@ -1,5 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import type { ApiResultV1, ProjectMutationResultV1 } from '../api';
+import { canonicalCommandPlan } from '../src/ai/commandReads';
+import { CommandSession } from '../src/ai/CommandSession';
 import TaskCalendarPlugin from '../src/main';
 import * as projectIntegration from '../src/projects/projectIntegration';
 import { PANEL_VIEW_TYPE } from '../src/views/PanelView';
@@ -727,6 +729,181 @@ it('prepares structured project task trees through the existing guarded destinat
       }),
     ).toMatchObject({ ok: false });
     expect(app.vault.getAbstractFileByPath(empty)).toBeDefined();
+  } finally {
+    plugin.onunload();
+  }
+});
+
+it.each([false, true])(
+  'sequences a reviewed duplicate-root task edit after project metadata; external race=%s',
+  async (race) => {
+    const path = 'projects/Duplicates.md',
+      body = '- [ ] Same\n  - [ ] Child\n- [ ] Same\n  - [ ] Child\n';
+    const { app, plugin, first } = await setup({ [path]: body });
+    try {
+      const projects = expectDefined(first.projects),
+        project = expectDefined(value(await projects.list()).items.find((p) => p.path === path));
+      const before = value(await projects.get(project.target));
+      const roots = value(await first.tasks.list({ path })).items.filter(
+        (t) => t.parentTarget === undefined,
+      );
+      const second = expectDefined(roots[1]);
+      const tree = value(await expectDefined(first.tasks.tree)({ target: second.target }));
+      const child = expectDefined(tree.tree.children[0]);
+      const plan = value(
+        await expectDefined(first.tasks.prepare)({
+          kind: 'edit',
+          target: second.target,
+          expectedRevision: second.revision,
+          operation: {
+            type: 'patch',
+            target: child.target,
+            patch: { markdownTitle: { type: 'set', value: 'Only second' } },
+          },
+        }),
+      );
+      const api = {
+        ...first,
+        projects: {
+          ...projects,
+          update: async (input: Parameters<typeof projects.update>[0]) => {
+            const result = await projects.update(input);
+            if (race) {
+              const file = expectDefined(app.vault.getFileByPath(path));
+              const text = (await app.vault.read(file)).replace(
+                '  - [ ] Child',
+                '  - [ ] External',
+              );
+              await app.vault.modify(file, text);
+              metadataChangedEmitter(app)(file, text, {});
+              await flushMicrotasks();
+            }
+            return result;
+          },
+        },
+      };
+      const session = new CommandSession({
+        api,
+        agent: { run: async () => {} },
+        journal: { save: async () => {} },
+        now: () => Date.now(),
+        id: () => crypto.randomUUID(),
+      });
+      expect(
+        await session.focus([
+          { kind: 'project', target: before.target, revision: before.revision },
+          { kind: 'task', target: child.target, revision: child.revision },
+        ]),
+      ).toBe(true);
+      expect(await app.vault.read(expectDefined(app.vault.getFileByPath(path)))).toBe(body);
+      session.stage({ kind: 'task', plan });
+      session.stage({
+        kind: 'project',
+        before,
+        fields: [{ fieldId: 'property:budget', value: 7 }],
+      });
+      await session.confirm();
+      const content = await app.vault.read(expectDefined(app.vault.getFileByPath(path)));
+      expect(content).toContain('budget: 7');
+      if (race) {
+        expect(content).toContain('External');
+        expect(content).not.toContain('Only second');
+        expect(session.snapshot().status.kind).toBe('error');
+      } else {
+        expect(content).toContain('- [ ] Same\n  - [ ] Child\n- [ ] Same\n  - [ ] Only second');
+        expect(session.snapshot().status.kind).toBe('saved');
+        expect(session.snapshot().focus).toEqual([
+          {
+            kind: 'project',
+            target: before.target,
+            revision: value(await projects.get(before.target)).revision,
+          },
+          {
+            kind: 'task',
+            target: child.target,
+            revision: value(await first.tasks.get(child.target)).revision,
+          },
+        ]);
+        expect(
+          session.snapshot().entities.projects.find((p) => p.target === before.target),
+        ).toEqual(value(await projects.get(before.target)));
+      }
+    } finally {
+      plugin.onunload();
+    }
+  },
+);
+
+it('holds a reviewed deep edit when a descendant changes after the project receipt', async () => {
+  const path = 'projects/Deep.md';
+  const { app, plugin, first } = await setup({
+    [path]: '- [ ] Root\n  - [ ] Child\n    - [ ] Deep\n',
+  });
+  try {
+    const projects = expectDefined(first.projects),
+      project = expectDefined(value(await projects.list()).items.find((p) => p.path === path)),
+      before = value(await projects.get(project.target)),
+      root = expectDefined(
+        value(await first.tasks.list({ path })).items.find((t) => t.title === 'Root'),
+      ),
+      prepare = expectDefined(first.tasks.prepare);
+    const plan = value(
+      await prepare({
+        kind: 'edit',
+        target: root.target,
+        expectedRevision: root.revision,
+        operation: {
+          type: 'patch',
+          target: root.target,
+          patch: { markdownTitle: { type: 'set', value: 'Reviewed root' } },
+        },
+      }),
+    );
+    const canonical = await canonicalCommandPlan(first, plan, new AbortController().signal, {
+      now: () => Date.now(),
+      deadline: Date.now() + 5000,
+    });
+    let injected = false;
+    const api = {
+      ...first,
+      tasks: {
+        ...first.tasks,
+        prepare: async (...args: Parameters<typeof prepare>) => {
+          if (args[0].kind === 'refresh' && !injected) {
+            injected = true;
+            const file = expectDefined(app.vault.getFileByPath(path));
+            const text = (await app.vault.read(file)).replace(
+              '    - [ ] Deep',
+              '    - [ ] External deep',
+            );
+            await app.vault.modify(file, text);
+            metadataChangedEmitter(app)(file, text, {});
+            await flushMicrotasks();
+          }
+          return prepare(...args);
+        },
+      },
+    };
+    const session = new CommandSession({
+      api,
+      agent: { run: async () => {} },
+      journal: { save: async () => {} },
+      now: () => Date.now(),
+      id: () => crypto.randomUUID(),
+    });
+    session.stage({ kind: 'task', plan: canonical });
+    session.stage({ kind: 'project', before, fields: [{ fieldId: 'property:budget', value: 7 }] });
+    expect(await session.confirm()).toBe(false);
+    expect(injected).toBe(true);
+    expect(session.snapshot().status.kind).toBe('error');
+    expect(session.snapshot().proposal.changes.find((change) => change.kind === 'task')).toEqual({
+      kind: 'task',
+      plan: canonical,
+    });
+    const text = await app.vault.read(expectDefined(app.vault.getFileByPath(path)));
+    expect(text).toContain('budget: 7');
+    expect(text).toContain('External deep');
+    expect(text).not.toContain('Reviewed root');
   } finally {
     plugin.onunload();
   }

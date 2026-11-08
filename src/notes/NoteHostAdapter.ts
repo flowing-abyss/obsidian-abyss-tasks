@@ -8,6 +8,7 @@ import {
   type CachedMetadata,
   type HeadingCache,
 } from 'obsidian';
+import { markdownLinkTargetParts } from '../markdown/linkTarget';
 import { parseLinks } from '../markdown/links';
 import type { AcceptedNoteSource, NoteSourceReadApi } from './NoteSourceApi';
 import { NoteFailure, type NoteRange, type NoteSelection } from './noteApi';
@@ -145,5 +146,27 @@ export class NoteHostAdapter {
       selection.subpath,
       alias,
     );
+  }
+  linkFromPath(selection: NoteSelection, fromPath: string, alias?: string): string {
+    const destination = this.file(selection.source);
+    const result = this.app.fileManager.generateMarkdownLink(
+      destination,
+      fromPath,
+      selection.subpath,
+      alias,
+    );
+    const links = parseLinks(result),
+      token = links[0];
+    if (links.length !== 1 || token?.raw !== result || token.index !== 0)
+      throw new NoteFailure('INVALID_LINK');
+    const parts = markdownLinkTargetParts(token);
+    if (
+      parts.externalTarget !== undefined ||
+      parts.subpath !== (selection.subpath ?? '') ||
+      this.app.metadataCache.getFirstLinkpathDest(parts.resolverTarget, fromPath) !== destination
+    )
+      throw new NoteFailure('INVALID_LINK');
+    this.file(selection.source);
+    return result;
   }
 }

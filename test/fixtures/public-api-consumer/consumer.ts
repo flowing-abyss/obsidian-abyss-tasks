@@ -268,6 +268,10 @@ export async function noteWorkflow(client: TasksApiV1, deadline: number): Promis
     selector: { target: note.target, expectedRevision: note.revision },
   });
   if (!read.ok) return;
+  await notes.read({
+    selector: { target: note.target, expectedRevision: note.revision },
+    linkFor: { fromPath: 'tasks/not-created-yet.md', alias: 'Contact' },
+  });
   const section = read.value.segments.find((segment) => segment.section.canAppend)?.section;
   if (section === undefined) return;
   const plan = await notes.prepare({

@@ -59,6 +59,7 @@ export interface NoteApplicationApi {
   sections(source: AcceptedNoteSource): readonly NoteRange[];
   resolve(from: AcceptedNoteSource, wikiLink: string): Promise<NoteSelection>;
   link(selection: NoteSelection, from: AcceptedNoteSource, alias?: string): string;
+  linkFromPath(selection: NoteSelection, fromPath: string, alias?: string): string;
   matcher(
     query: string,
   ): (text: string) => { readonly matches: ReadonlyArray<readonly [number, number]> } | null;

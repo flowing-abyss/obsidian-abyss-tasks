@@ -4,6 +4,7 @@ import { NoteTemplateService } from '../src/notes/NoteTemplateService';
 import { ProjectManager } from '../src/projects/ProjectManager';
 import { createProjectIntegrationReads } from '../src/projects/projectIntegration';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
+import { CanonicalNoteTaskProtection } from '../src/tasks/infrastructure/obsidian/NoteTaskProtection';
 import { expectDefined, useRealMoment } from './helpers';
 import { publicApiHarness } from './support/publicApiHarness';
 
@@ -37,7 +38,11 @@ async function harness(files: Record<string, string> = { [path]: original }) {
   const sources = h.index.projectSources();
   const reads = createProjectIntegrationReads(sources, () => projects);
   const manager = new ProjectManager(h.app, settings, new NoteTemplateService(h.app), h.service);
-  const writes = manager.integrationWrites(reads, sources);
+  const writes = manager.integrationWrites(
+    reads,
+    sources,
+    new CanonicalNoteTaskProtection(h.app, h.index, h.authority),
+  );
   function proof() {
     const result = reads.summary(path);
     if (result.type !== 'ok') throw new Error(result.reason);
@@ -644,6 +649,55 @@ it('preserves task exclusion for an unverified legacy closer without authorizing
   try {
     expect(await h.client().tasks.list({ path })).toMatchObject({ ok: true, value: { items: [] } });
     expect(h.reads.summary(path)).toMatchObject({ type: 'error', reason: 'incomplete' });
+  } finally {
+    h.dispose();
+  }
+});
+
+it('keeps the second duplicate root and pending child plan after frontmatter insertion', async () => {
+  const body = '#project\n- [ ] Same\n  - [ ] Child\n- [ ] Same\n  - [ ] Child\n';
+  const h = await harness({ [path]: body });
+  try {
+    const api = h.client();
+    const listed = await api.tasks.list();
+    if (!listed.ok) throw new Error(listed.error.code);
+    const second = expectDefined(
+      listed.value.items.filter((item) => item.parentTarget === undefined)[1],
+    );
+    const tree = await expectDefined(api.tasks.tree)({ target: second.target });
+    if (!tree.ok) throw new Error(tree.error.code);
+    const child = expectDefined(tree.value.tree.children[0]);
+    const plan = await expectDefined(api.tasks.prepare)({
+      kind: 'edit',
+      target: second.target,
+      expectedRevision: second.revision,
+      operation: {
+        type: 'patch',
+        target: child.target,
+        patch: { markdownTitle: { type: 'set', value: 'Only second' } },
+      },
+    });
+    if (!plan.ok) throw new Error(plan.error.code);
+    expect(
+      await h.writes.update(h.proof(), { fields: [{ fieldId: 'start', value: '2026-11-08' }] }),
+    ).toMatchObject({ effects: 'committed' });
+    expect(await api.tasks.get(second.target)).toMatchObject({ ok: true });
+    const refreshed = await expectDefined(api.tasks.prepare)({
+      kind: 'refresh',
+      plan: plan.value.target,
+      expectedPlanRevision: plan.value.revision,
+    });
+    if (!refreshed.ok) throw new Error(refreshed.error.code);
+    const receipt = await expectDefined(api.tasks.apply)({
+      plan: refreshed.value.target,
+      expectedPlanRevision: refreshed.value.revision,
+      requestId: 'project-child',
+      expiresAt: Date.UTC(2026, 7, 1, 12, 1),
+    });
+    expect(receipt).toMatchObject({ ok: true, receipt: { effects: 'committed' } });
+    expect(await h.read(path)).toContain(
+      '- [ ] Same\n  - [ ] Child\n- [ ] Same\n  - [ ] Only second',
+    );
   } finally {
     h.dispose();
   }

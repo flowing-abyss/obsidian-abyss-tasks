@@ -3,6 +3,7 @@ import type { TasksApiV1 } from '../../api';
 import { TaskApiProvider } from '../../src/integrations/TaskApiProvider';
 import { NoteApplicationService } from '../../src/notes/NoteApplicationService';
 import { NoteHostAdapter } from '../../src/notes/NoteHostAdapter';
+import { NoteTemplateService } from '../../src/notes/NoteTemplateService';
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
 import { toStatusRules } from '../../src/settings/statusCatalogAdapter';
 import { TaskApplicationService } from '../../src/tasks/application/TaskApplicationService';
@@ -16,6 +17,7 @@ import { TaskBlockEditor } from '../../src/tasks/infrastructure/markdown/TaskBlo
 import { TaskLocator } from '../../src/tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from '../../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { CanonicalNoteTaskProtection } from '../../src/tasks/infrastructure/obsidian/NoteTaskProtection';
+import { ObsidianTaskDestinationProvider } from '../../src/tasks/infrastructure/obsidian/ObsidianTaskDestinationProvider';
 import { ObsidianTaskRepository } from '../../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
 import { runTaskFileMutation } from '../../src/tasks/infrastructure/obsidian/taskFileMutationQueue';
 import { createMiniSearchTaskEngine } from '../../src/tasks/infrastructure/search/MiniSearchTaskEngine';
@@ -47,6 +49,7 @@ export async function publicApiHarness(
   files: Readonly<Record<string, string>>,
   options: {
     readonly initialize?: boolean;
+    readonly provision?: boolean;
     readonly index?: Partial<TaskIndexOptions>;
     readonly behaviorSettings?: TaskBehaviorSettingsProvider;
   } = {},
@@ -75,12 +78,41 @@ export async function publicApiHarness(
     preparedRootSources: index.projectSources(),
     preparedRootReads: index.integrationReads(),
   });
+  const templates = new NoteTemplateService(app);
+  const destinations =
+    options.provision === true
+      ? new ObsidianTaskDestinationProvider(
+          () => ({
+            taskFilePath: 'a.md',
+            taskTemplatePath: '',
+            capturedToday: '2026-08-01',
+            insertion: { type: 'append' },
+          }),
+          (path, template, title) => templates.ensureNote(path, template, title),
+          () => false,
+          {
+            canonicalize: (path) => path,
+            readNote: (path) => {
+              const sources = index.projectSources(),
+                source = sources.get(path),
+                file = app.vault.getFileByPath(path);
+              return source.type === 'ok' &&
+                source.value !== undefined &&
+                file !== null &&
+                sources.matchesFile(source.value, file)
+                ? { file, content: source.value.content }
+                : undefined;
+            },
+            planNote: (path, template, title) => templates.planStaticNote(path, template, title),
+          },
+        )
+      : undefined;
   const service = new TaskApplicationService(
     index,
     repository,
     statusCatalog,
     { read: () => clockFrom(now, 0).read() },
-    undefined,
+    destinations,
     options.behaviorSettings,
     undefined,
     undefined,

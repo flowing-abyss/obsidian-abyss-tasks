@@ -68,6 +68,7 @@ export class NoteApiReads {
     for (const origin of origins)
       if (
         origin !== undefined &&
+        'from' in origin &&
         !this.registry.available(origin.from, origin.expectedFromRevision)
       )
         throw new NoteFailure('TARGET_UNAVAILABLE');
@@ -100,11 +101,19 @@ export class NoteApiReads {
     const selected = await this.selection(query);
     let markdownLink: string | undefined;
     if (query.linkFor !== undefined) {
-      const origin = await this.registry.acquire(
-        query.linkFor.from,
-        query.linkFor.expectedFromRevision,
-      );
-      markdownLink = this.registry.port.link(selected, origin, query.linkFor.alias);
+      if ('fromPath' in query.linkFor)
+        markdownLink = this.registry.port.linkFromPath(
+          selected,
+          query.linkFor.fromPath,
+          query.linkFor.alias,
+        );
+      else {
+        const origin = await this.registry.acquire(
+          query.linkFor.from,
+          query.linkFor.expectedFromRevision,
+        );
+        markdownLink = this.registry.port.link(selected, origin, query.linkFor.alias);
+      }
     }
     const state = this.position(query);
     const page = noteSegments(this.registry, selected, {

@@ -75,7 +75,15 @@ export function validateNoteRead(value: unknown): ApiResultV1<ReadNoteV1> {
       ...optional(r, 'limitCharacters', (v) => integer(v, 2, NOTE_LIMITS.maxPageCharacters)),
       ...optional(r, 'limitSections', (v) => integer(v, 1, NOTE_LIMITS.maxSectionsPerPage)),
       ...optional(r, 'cursor', token),
-      ...optional(r, 'linkFor', (v) => origin(v, true)),
+      ...optional(r, 'linkFor', (v) => {
+        const context = record(v, ['from', 'expectedFromRevision', 'fromPath', 'alias']);
+        if (context['fromPath'] === undefined) return origin(v, true);
+        record(v, ['fromPath', 'alias']);
+        return {
+          fromPath: notePath(context['fromPath']),
+          ...optional(context, 'alias', (a) => text(a, 4096)),
+        };
+      }),
     };
   });
 }

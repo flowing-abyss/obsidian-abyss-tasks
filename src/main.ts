@@ -9,6 +9,9 @@ import {
   type TAbstractFile,
 } from 'obsidian';
 import type { ApiResultV1, TasksApiV1 } from '../api';
+import { CommandAgent } from './ai/CommandAgent';
+import { CommandSession } from './ai/CommandSession';
+import type { CommandJournalPort, CommandResearchPort } from './ai/commandTypes';
 import { NativeProviderTransport } from './ai/providers/NativeProviderTransport';
 import { ProviderConnections } from './ai/providers/ProviderConnections';
 import { ProviderSecrets } from './ai/providers/ProviderSecrets';
@@ -19,6 +22,7 @@ import { compileNotePathPattern, type NotePathPattern } from './markdown/notePat
 import { NoteApplicationService } from './notes/NoteApplicationService';
 import { NoteHostAdapter } from './notes/NoteHostAdapter';
 import { NoteTemplateService } from './notes/NoteTemplateService';
+import { moment } from './obsidianMoment';
 import { initializeProjectPropertyDefinitions } from './projects/initializeProjectPropertyDefinitions';
 import {
   ObsidianProjectProperties,
@@ -334,6 +338,37 @@ export default class TaskCalendarPlugin extends Plugin {
     };
   }
 
+  createCommandSession(
+    journal: CommandJournalPort,
+    research?: CommandResearchPort,
+  ): CommandSession {
+    const id = (): string => crypto.randomUUID();
+    if (this.taskApiProvider === undefined) throw new Error('Task API is unavailable.');
+    const result = this.taskApiProvider.getApi(1, { consumerId: `command-mode:${id()}` });
+    if (!result.ok) throw new Error(result.error.message);
+    const session: CommandSession = new CommandSession({
+      api: result.value,
+      journal,
+      now: () => Date.now(),
+      id,
+      agent: { run: async (input) => agent.run(input) },
+    });
+    const agent: CommandAgent = new CommandAgent({
+      api: result.value,
+      session,
+      connections: this.providerConnections,
+      settings: () => this.settings.commandMode,
+      temporalContext: () =>
+        `Local date/time: ${moment().format('YYYY-MM-DD HH:mm Z')}; time zone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}`,
+      now: () => Date.now(),
+      ...(research === undefined ? {} : { research }),
+    });
+    this.register(() => {
+      session.dispose();
+    });
+    return session;
+  }
+
   private initializeTaskApi(tasks: TaskApplicationService, authority: TaskRefAuthority): void {
     this.tasks = tasks;
     this.queries = tasks.queries;
@@ -355,7 +390,11 @@ export default class TaskCalendarPlugin extends Plugin {
       content: { edits: tasks, creates: tasks, statuses: () => this.statusCatalog.all() },
       projects: {
         reads,
-        writes: this.projectManager.integrationWrites(reads, sources),
+        writes: this.projectManager.integrationWrites(
+          reads,
+          sources,
+          new CanonicalNoteTaskProtection(this.app, this.taskIndex, authority),
+        ),
         tasks: createProjectTaskCommands(reads, sources, tasks, settings),
       },
       pluginVersion: this.manifest.version,

@@ -224,3 +224,51 @@ it.each(['dispose', 'abort'])('rejects the final read projection after %s', asyn
     await notes.read({ selector: { path: 'a.md' } }, { signal: controller.signal }),
   ).toMatchObject({ ok: false, error: { code: action === 'dispose' ? 'DISPOSED' : 'ABORTED' } });
 });
+
+it.each([['[[A/Research|Finding]]'], ['[Finding](A/Research.md)']])(
+  'formats a host link from an absent source without reading or creating that source: %s',
+  async (link) => {
+    const h = await setup({ 'A/Research.md': 'Result', 'B/Research.md': 'Other' });
+    const target = ok(await h.notes.read({ selector: { path: 'A/Research.md' } })).note;
+    const reads = vi.spyOn(h.app.vault, 'read');
+    const creates = vi.spyOn(h.app.vault, 'create');
+    vi.spyOn(h.app.fileManager, 'generateMarkdownLink').mockReturnValue(link);
+    vi.spyOn(h.app.metadataCache, 'getFirstLinkpathDest').mockImplementation((path) =>
+      h.app.vault.getFileByPath(path.endsWith('.md') ? path : `${path}.md`),
+    );
+    const result = await h.notes.read({
+      selector: { target: target.target, expectedRevision: target.revision },
+      linkFor: { fromPath: 'B/Unwritten.md', alias: 'Finding' },
+    });
+    expect(result).toMatchObject({ ok: true, value: { markdownLink: link } });
+    expect(reads.mock.calls.some(([file]) => file.path === 'B/Unwritten.md')).toBe(false);
+    expect(creates).not.toHaveBeenCalled();
+    expect(h.app.vault.getAbstractFileByPath('B/Unwritten.md')).toBeNull();
+  },
+);
+it.each([
+  { fromPath: '../escape.md' },
+  { fromPath: '/absolute.md' },
+  { fromPath: 'file:///private.md' },
+  { fromPath: 'okay.md', from: 'mixed', expectedFromRevision: 'mixed' },
+  { fromPath: 'okay.md', extra: true },
+])('rejects invalid formatting context %j', async (linkFor) => {
+  const h = await setup({ 'a.md': 'Result' });
+  expect(await h.notes.read({ selector: { path: 'a.md' }, linkFor })).toMatchObject({
+    ok: false,
+    error: { code: 'INVALID_ARGUMENT' },
+  });
+});
+it('rejects a generated link that resolves to a different destination', async () => {
+  const h = await setup({ 'a.md': 'Result', 'b.md': 'Wrong' });
+  vi.spyOn(h.app.fileManager, 'generateMarkdownLink').mockReturnValue('[[b]]');
+  vi.spyOn(h.app.metadataCache, 'getFirstLinkpathDest').mockReturnValue(
+    h.app.vault.getFileByPath('b.md'),
+  );
+  expect(
+    await h.notes.read({
+      selector: { path: 'a.md' },
+      linkFor: { fromPath: 'missing.md' },
+    }),
+  ).toMatchObject({ ok: false });
+});

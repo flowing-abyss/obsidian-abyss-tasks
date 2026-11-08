@@ -9,9 +9,12 @@ import {
   TFolder,
   type App,
 } from 'obsidian';
+import { frontmatterRange } from '../markdown/frontmatterRange';
 import { sameNoteFileStamp } from '../markdown/noteFileStamp';
 import { parseMarkdownFrontmatter } from '../markdown/readFrontmatter';
 import { readVaultText } from '../markdown/readVaultText';
+import type { NoteTaskProtection, NoteTaskStage } from '../notes/noteApi';
+import type { AcceptedNoteSource } from '../notes/NoteSourceApi';
 import {
   CreatedNoteTemplateError,
   ExecutableTemplateError,
@@ -89,6 +92,7 @@ export interface ProjectNoteCreator {
 interface WriteContext {
   readonly reads: ProjectIntegrationReads;
   readonly sources: ProjectSourceReadApi;
+  readonly protection: NoteTaskProtection;
 }
 class ProjectGuardFailure extends Error {
   constructor(readonly reason: ProjectWriteReason) {
@@ -188,6 +192,52 @@ async function reconcileProject(
     return proof !== undefined && ctx.reads.matchesFile(proof, file) ? proof : undefined;
   } catch {
     return undefined;
+  }
+}
+
+function stageProjectMetadata(
+  ctx: WriteContext,
+  source: AcceptedNoteSource,
+  next: string,
+): NoteTaskStage {
+  const live = source.content,
+    prefix = live.startsWith('\uFEFF') ? 1 : 0;
+  const from = frontmatterRange(live)?.bodyFrom ?? prefix,
+    to = frontmatterRange(next)?.bodyFrom ?? 0;
+  if (live.slice(from) !== next.slice(to)) staleProject();
+  const stage = ctx.protection.stage(
+    source,
+    next,
+    { from: prefix, to: from, kind: 'frontmatter', editable: false },
+    next.slice(prefix, to),
+  );
+  if (stage?.forward(live) !== next) staleProject();
+  return stage;
+}
+async function finishProjectUpdate(
+  ctx: WriteContext,
+  file: TFile,
+  evidence: {
+    path: string;
+    original: string | undefined;
+    offered: string | undefined;
+    stage: NoteTaskStage | undefined;
+  },
+): Promise<ProjectWriteResult> {
+  const { path, original, offered, stage } = evidence;
+  try {
+    if (offered === undefined) return { outcome: 'failed', effects: 'unknown', reason: 'io' };
+    if (stage !== undefined && !(await stage.install(file))) {
+      await stage.reject(file);
+      return { outcome: 'changed', effects: 'committed' };
+    }
+    const project = await reconcileProject(ctx, path, file, offered),
+      reference = project === undefined ? {} : { project };
+    return offered === original
+      ? { outcome: 'noop', effects: 'unchanged', ...reference }
+      : { outcome: 'changed', effects: 'committed', ...reference };
+  } finally {
+    stage?.release();
   }
 }
 
@@ -613,8 +663,9 @@ export class ProjectManager {
   integrationWrites(
     reads: ProjectIntegrationReads,
     sources: ProjectSourceReadApi,
+    protection: NoteTaskProtection,
   ): ProjectIntegrationWrites {
-    const ctx = { reads, sources };
+    const ctx = { reads, sources, protection };
     return {
       update: (proof, input) =>
         coordinateMetadataOperation(this.app, () =>
@@ -659,6 +710,7 @@ export class ProjectManager {
       return { outcome: 'failed', effects: 'unchanged', reason: 'stale' };
     let original: string | undefined;
     let offered: string | undefined;
+    let stage: NoteTaskStage | undefined;
     try {
       if (!ctx.reads.matchesFile(proof, file)) staleProject();
       const accepted = checked(ctx.sources.get(path));
@@ -671,20 +723,21 @@ export class ProjectManager {
         checked(ctx.reads.guard(proof, live, live));
         const next = this.applyProjectAssignments(input, live);
         checked(ctx.reads.guard(proof, live, next));
+        if (next !== live) stage = stageProjectMetadata(ctx, accepted, next);
         offered = next;
         return next;
       });
     } catch (cause) {
-      if (offered === undefined || offered === original)
-        return { outcome: 'failed', effects: 'unchanged', reason: failureReason(cause) };
-      return this.rejectedProjectUpdate(ctx, file, { path, original, offered });
+      try {
+        await stage?.reject(file);
+        if (offered === undefined || offered === original)
+          return { outcome: 'failed', effects: 'unchanged', reason: failureReason(cause) };
+        return await this.rejectedProjectUpdate(ctx, file, { path, original, offered });
+      } finally {
+        stage?.release();
+      }
     }
-    if (offered === undefined) return { outcome: 'failed', effects: 'unknown', reason: 'io' };
-    const project = await reconcileProject(ctx, path, file, offered);
-    const reference = project === undefined ? {} : { project };
-    return offered === original
-      ? { outcome: 'noop', effects: 'unchanged', ...reference }
-      : { outcome: 'changed', effects: 'committed', ...reference };
+    return await finishProjectUpdate(ctx, file, { path, original, offered, stage });
   }
 
   private async rejectedProjectUpdate(

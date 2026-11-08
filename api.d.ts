@@ -976,11 +976,17 @@ export interface ReadNoteV1 {
   readonly limitCharacters?: number;
   readonly limitSections?: number;
   readonly cursor?: string;
-  readonly linkFor?: {
-    readonly from: NoteTargetV1;
-    readonly expectedFromRevision: NoteRevisionV1;
-    readonly alias?: string;
-  };
+  readonly linkFor?:
+    | {
+        readonly from: NoteTargetV1;
+        readonly expectedFromRevision: NoteRevisionV1;
+        readonly alias?: string;
+      }
+    | {
+        /** Formatting context only: never reads, creates, or authorizes writes to this path. */
+        readonly fromPath: string;
+        readonly alias?: string;
+      };
 }
 export interface NoteSectionV1 {
   readonly target: NoteSectionTargetV1;

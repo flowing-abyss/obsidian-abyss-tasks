@@ -108,6 +108,8 @@ export class NoteApplicationService implements NoteApplicationApi {
     this.dependencies.host.resolve(from, link);
   readonly link: NoteApplicationApi['link'] = (selection, from, alias) =>
     this.dependencies.host.link(selection, from, alias);
+  readonly linkFromPath: NoteApplicationApi['linkFromPath'] = (selection, fromPath, alias) =>
+    this.dependencies.host.linkFromPath(selection, fromPath, alias);
   sections(source: AcceptedNoteSource): readonly NoteRange[] {
     this.current(source);
     const protectedRanges = [
