@@ -68,7 +68,12 @@ not cancel agent work.
 
 Final accepted text uses the existing surface submission token and owner queue. A transient capture
 predicate binds the session, focus identity, transition, and actual composer-edit generation, and
-is checked again after queued work settles. Proposal revision changes retain the captured revision
+is checked again after queued work settles. Composer edit/draft provenance belongs to the shared
+session and is exposed through its owner. Every explicit edit invalidates earlier input captures,
+including identical bytes from another surface; accepted turns and internal clears do not.
+Restoration derives draft state from retained input and retires captures even for the same session
+ID. Post-submit clearing uses that same shared predicate so it cannot erase another surface's edit.
+Proposal revision changes retain the captured revision
 for semantic consent checks; proven focus continuations from canonical refinements and receipts
 remain usable. The predicate stops checking after admission so a spoken command may deliberately
 change its own focus. Unsafe text in the same live session is retained after the exact typed input

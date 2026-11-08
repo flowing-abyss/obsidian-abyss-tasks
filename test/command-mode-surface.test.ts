@@ -2854,6 +2854,87 @@ it('retains both exact typed input and late voice text without submitting the co
     /review before sending/i,
   );
 });
+it("retains another surface's exact draft when held voice recognition finishes", async () => {
+  const h = await setup();
+  const media = voiceMediaHarness(window);
+  const result = deferred<string>();
+  const origin = h.mount({ available: () => {}, transcribe: () => result.promise });
+  const other = h.mount();
+  await spoken(origin, media);
+  other.input.value = '  Unsent text from the other Q  ';
+  other.input.dispatchEvent(new Event('input', { bubbles: true }));
+  result.resolve('Spoken command');
+  await flushMicrotasks(0);
+  expect(origin.input.value).toBe('  Unsent text from the other Q  \n\nSpoken command');
+  expect(other.input.value).toBe(origin.input.value);
+  expect(h.owner.snapshot().exchanges).toEqual([]);
+  expect(h.owner.snapshot().journal).toEqual([]);
+  expect(origin.element.querySelector('.abyss-command-phase')?.textContent).toMatch(
+    /review before sending/i,
+  );
+  expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+});
+it('an identical-byte edit in another surface invalidates pending voice and protects late clearing', async () => {
+  const h = await setup();
+  const media = voiceMediaHarness(window);
+  const result = deferred<string>(),
+    finish = deferred<void>();
+  h.setRun(async () => finish.promise);
+  const origin = h.mount({ available: () => {}, transcribe: () => result.promise });
+  const other = h.mount();
+  enter(origin, 'Same command');
+  await spoken(origin, media);
+  expect(other.input.value).toBe('Same command');
+  other.input.dispatchEvent(new Event('input', { bubbles: true }));
+  finish.resolve();
+  await flushMicrotasks(0);
+  expect(other.input.value).toBe('Same command');
+  result.resolve('Spoken refinement');
+  await flushMicrotasks(0);
+  expect(origin.input.value).toBe('Same command\n\nSpoken refinement');
+  expect(h.owner.snapshot().exchanges.filter((entry) => entry.role === 'user')).toEqual([
+    { role: 'user', text: 'Same command' },
+  ]);
+  expect(h.owner.snapshot().journal).toEqual([]);
+});
+it('voice preserves retained nonempty input selected from history in an already mounted surface', async () => {
+  const h = await setup();
+  const media = voiceMediaHarness(window);
+  const surface = h.mount({ available: () => {}, transcribe: async () => 'Spoken command' });
+  const original = h.owner.snapshot().id;
+  surface.input.value = '  Retained draft  ';
+  surface.input.dispatchEvent(new Event('input', { bubbles: true }));
+  expect(await h.owner.newSession()).toBe(true);
+  h.setRun(async () => {});
+  enter(surface, 'Accepted command');
+  await flushMicrotasks(0);
+  expect(surface.input.value).toBe('');
+  expect(await h.owner.select(original)).toBe(true);
+  expect(surface.input.value).toBe('  Retained draft  ');
+  await spoken(surface, media);
+  expect(surface.input.value).toBe('  Retained draft  \n\nSpoken command');
+  expect(h.owner.snapshot().exchanges).toEqual([]);
+  expect(h.owner.snapshot().journal).toEqual([]);
+});
+it("voice in a new empty session submits normally after another session's unsent draft", async () => {
+  const h = await setup();
+  const media = voiceMediaHarness(window);
+  const surface = h.mount({ available: () => {}, transcribe: async () => 'Create parent' });
+  surface.input.value = 'Prior unsent draft';
+  surface.input.dispatchEvent(new Event('input', { bubbles: true }));
+  expect(await h.owner.newSession()).toBe(true);
+  expect(surface.input.value).toBe('');
+  expect(media.getUserMedia).not.toHaveBeenCalled();
+  await spoken(surface, media);
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().exchanges.filter((entry) => entry.role === 'user')).toEqual([
+      { role: 'user', text: 'Create parent' },
+    ]);
+  });
+  expect(h.owner.snapshot().proposal.changes).toHaveLength(1);
+  expect(h.owner.snapshot().journal).toEqual([]);
+  expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+});
 it('preserves a changed focus and proposal when a final acknowledgement was captured for another subject', async () => {
   const h = await setup();
   const media = voiceMediaHarness(window);

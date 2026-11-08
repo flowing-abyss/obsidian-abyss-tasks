@@ -81,8 +81,6 @@ export class CommandModeSurface implements CaptureExtension {
   private readonly primary: HTMLButtonElement;
   private readonly microphone: HTMLButtonElement;
   private voice: CommandVoiceController | undefined;
-  private editGeneration = 0;
-  private draft = false;
   private primaryAction: PrimaryAction = 'send';
   private readonly projects: CommandProjects;
   private readonly notes: CommandNotes;
@@ -243,13 +241,10 @@ export class CommandModeSurface implements CaptureExtension {
   private activateOwner(): CommandSessionOwner {
     this.owner ??= this.options.owner();
     this.bindVoice();
-    this.draft = this.owner.snapshot().input !== '' && !busy(this.owner.snapshot());
     return this.owner;
   }
   input(text: string): void {
     this.inputGeneration++;
-    this.editGeneration++;
-    this.draft = text !== '';
     this.voice?.clearMessage();
     this.owner?.setInput(text);
     this.remember();
@@ -276,11 +271,8 @@ export class CommandModeSurface implements CaptureExtension {
       owner: this.owner,
       window: win,
       transcription: this.options.transcription,
-      edits: () => this.editGeneration,
-      dirty: () => this.draft,
       retain: (text) => {
         this.inputGeneration++;
-        this.draft = true;
         this.owner?.setInput(text);
       },
       submit: (text, basis, admission) => this.submitText(text, basis, admission),
@@ -314,7 +306,6 @@ export class CommandModeSurface implements CaptureExtension {
     if (this.finishVoice()) return;
     if (this.capture.input.value.trim() === '' && busy(owner.snapshot())) return;
     const state = owner.snapshot();
-    this.draft = false;
     this.voice?.clearMessage();
     runAsyncAction(
       this.submitText(this.capture.input.value, {
@@ -339,18 +330,20 @@ export class CommandModeSurface implements CaptureExtension {
     const owner = this.owner;
     if (owner === undefined) return;
     owner.updateContext(this.options.context());
-    const generation = ++this.inputGeneration;
+    const generation = ++this.inputGeneration,
+      input = owner.captureInput();
     await owner.submit(text, basis, this.noteReview?.token, admission);
     const next = owner.snapshot();
     if (
       this.live &&
       this.active() &&
       generation === this.inputGeneration &&
+      input.current() &&
       next.id === basis.sessionId &&
       next.input === text &&
       next.status.kind !== 'error'
     )
-      owner.setInput('');
+      owner.clearInput();
   }
   private activatePrimary(): void {
     if (!this.active()) {

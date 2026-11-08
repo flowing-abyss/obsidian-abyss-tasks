@@ -5,8 +5,7 @@ import { NativeVoiceCapture } from './NativeVoiceCapture';
 import type { CommandTranscriptionPort } from './ProviderTranscription';
 interface VoiceBasis {
   readonly submission: ReturnType<CommandSessionOwner['captureSubmission']>;
-  readonly edits: number;
-  readonly dirty: boolean;
+  readonly input: ReturnType<CommandSessionOwner['captureInput']>;
   readonly lifetime: number;
 }
 interface VoiceJob {
@@ -19,8 +18,6 @@ export interface CommandVoiceOptions {
   readonly owner: CommandSessionOwner;
   readonly window: Window & typeof window;
   readonly transcription: CommandTranscriptionPort;
-  edits(): number;
-  dirty(): boolean;
   retain(text: string): void;
   submit(text: string, basis: CommandSubmissionBasis, admission: () => boolean): Promise<void>;
   changed(): void;
@@ -46,8 +43,7 @@ export class CommandVoiceController {
     this.capture = new NativeVoiceCapture(options.window, {
       begin: () => ({
         submission: options.owner.captureSubmission(),
-        edits: options.edits(),
-        dirty: options.dirty(),
+        input: options.owner.captureInput(),
         lifetime: this.generation,
       }),
       segment: (audio, basis) => {
@@ -141,13 +137,7 @@ export class CommandVoiceController {
     let retained = false;
     const admit = (): boolean => {
       if (!this.alive(basis)) return false;
-      if (
-        basis.submission.current() &&
-        basis.edits === this.options.edits() &&
-        !basis.dirty &&
-        !this.options.dirty()
-      )
-        return true;
+      if (basis.submission.current() && basis.input.current() && !basis.input.dirty) return true;
       if (!retained) {
         retained = true;
         const input = this.options.owner.snapshot().input;

@@ -206,6 +206,29 @@ it('retains the same runtime and exact unsent state through hide and reopen, wit
   const reloaded = h.createOwner().owner;
   expect(reloaded.snapshot().input).toBe('Unsent 99');
 });
+it('retires shared input captures on same-session restoration and treats retained bytes as a draft', async () => {
+  const h = await setup();
+  await h.owner.submit('Retained command');
+  const captured = h.owner.captureInput();
+  expect(captured.dirty).toBe(false);
+  expect(await h.owner.select(h.owner.snapshot().id)).toBe(true);
+  expect(captured.current()).toBe(false);
+  expect(h.owner.captureInput().dirty).toBe(true);
+  expect(h.owner.snapshot().input).toBe('Retained command');
+  expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+});
+it('accepted commands and internal clearing preserve input ownership until an explicit identical edit', async () => {
+  const h = await setup();
+  const captured = h.owner.captureInput();
+  await h.owner.submit('First accepted command');
+  h.owner.clearInput();
+  await h.owner.submit('Next accepted command');
+  expect(captured.current()).toBe(true);
+  expect(h.owner.captureInput().dirty).toBe(false);
+  h.owner.setInput('Next accepted command');
+  expect(captured.current()).toBe(false);
+  expect(h.owner.captureInput().dirty).toBe(true);
+});
 it('checks transition basis after queued focus work settles and requires its own live note review token', async () => {
   const h = await setup();
   h.owner.open();

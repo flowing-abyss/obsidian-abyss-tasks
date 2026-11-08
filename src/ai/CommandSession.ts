@@ -183,6 +183,8 @@ export class CommandSession {
   private acceptance = 0;
   private queuedInput: string | undefined;
   private inputRevision = 0;
+  private editRevision = 0;
+  private inputDraft = false;
   private noteReviewRequired = false;
   private turnReview: CommandNoteReview | undefined;
   requireNoteReview(): void {
@@ -210,6 +212,13 @@ export class CommandSession {
   }
   private presentation: CommandSessionSnapshot['presentation'];
   private conversationRevision = 0;
+  captureInput(): { dirty: boolean; current(): boolean } {
+    const revision = this.editRevision;
+    return {
+      dirty: this.inputDraft,
+      current: () => !this.disposed && this.editRevision === revision,
+    };
+  }
   captureSubmission(): { basis: CommandSubmissionBasis; current(): boolean } {
     const id = this.state.id,
       revision = this.conversationRevision;
@@ -248,6 +257,8 @@ export class CommandSession {
     this.focusRun++;
     this.conversationRevision++;
     this.state = detached(snapshot);
+    this.editRevision++;
+    this.inputDraft = this.state.input !== '';
     Reflect.deleteProperty(this.state, 'reveal');
     Reflect.deleteProperty(this.state, 'presentation');
     this.presentation = undefined;
@@ -887,8 +898,10 @@ export class CommandSession {
         'Status uses ordinary completion, recurrence, deletion, timer and blocker rules after the content is saved.',
     });
   }
-  setInput(text: string): void {
+  setInput(text: string, draft = true): void {
     this.inputRevision++;
+    if (draft) this.editRevision++;
+    this.inputDraft = draft && text !== '';
     this.publish({ input: text });
   }
   exchange(role: 'user' | 'agent', text: string): void {
@@ -966,6 +979,7 @@ export class CommandSession {
       return;
     }
     if (this.running !== undefined || this.pendingWrite !== undefined) {
+      this.inputDraft = false;
       const previous = this.running ?? this.pendingWrite;
       this.cancelTurn(false);
       const generation = this.acceptance;
@@ -1017,7 +1031,7 @@ export class CommandSession {
       return;
     }
     this.presentation = undefined;
-    this.setInput(text);
+    this.setInput(text, false);
     this.exchange('user', text);
     const controller = new AbortController();
     this.turn = controller;

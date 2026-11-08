@@ -206,6 +206,12 @@ export class CommandSessionOwner {
   setInput(text: string): void {
     if (!this.disposed) this.session.setInput(text);
   }
+  captureInput(): ReturnType<CommandSession['captureInput']> {
+    return this.session.captureInput();
+  }
+  clearInput(): void {
+    if (!this.disposed) this.session.setInput('', false);
+  }
   registerNoteReview(review: CommandNoteReview): { token: symbol; dispose(): void } {
     this.assertLive();
     const token = Symbol();
@@ -231,7 +237,7 @@ export class CommandSessionOwner {
     if (this.changing !== undefined) await this.changing;
     if (this.isDisposed() || admission?.() === false) return;
     if (generation !== this.acceptance) {
-      this.session.setInput(text);
+      this.setInput(text);
       await this.flush();
       return;
     }
