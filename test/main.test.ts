@@ -1947,3 +1947,36 @@ it('starts ordinary task services and settings with unsupported provider prefere
     plugin.onunload();
   }
 });
+
+it('shares one command owner and persists its input through only the vault-local host key', async () => {
+  const plugin = makePlugin() as unknown as TaskCalendarPlugin;
+  let raw: unknown = null;
+  const written: string[] = [];
+  vi.spyOn(plugin.app, 'loadLocalStorage').mockImplementation((key) => {
+    expect(key).toBe('abyss-tasks:command-sessions:v1');
+    return structuredClone(raw);
+  });
+  vi.spyOn(plugin.app, 'saveLocalStorage').mockImplementation((key, value) => {
+    written.push(key);
+    raw = structuredClone(value);
+  });
+  await plugin.onload();
+  try {
+    plugin.settings.commandMode = { provider: 'unsupported' };
+    const first = plugin.getCommandSessionOwner();
+    expect(plugin.getCommandSessionOwner()).toBe(first);
+    first.open();
+    first.setInput('Retained locally');
+    await first.flush();
+    expect(written).toEqual(['abyss-tasks:command-sessions:v1']);
+    expect(raw).toMatchObject({
+      version: 1,
+      sessions: [{ snapshot: { input: 'Retained locally' } }],
+    });
+    expect(plugin.settings).not.toHaveProperty('commandSessions');
+    first.dispose();
+  } finally {
+    plugin.onunload();
+    vi.restoreAllMocks();
+  }
+});

@@ -10,6 +10,7 @@ import type {
   TaskContentReceiptV1,
   TaskTreeV1,
 } from '../../api';
+import { notePrepareSchema, prepareSchema } from './commandSchemas';
 import type { CommandChange, CommandJournalEntry, CommandSessionSnapshot } from './commandTypes';
 
 const text = z.string();
@@ -377,7 +378,41 @@ const journalEntry = z
     rejectOtherReceiptFamily(entry.change.kind, receipt);
     return { ...basis, receipt: receiptFor(entry.change.kind).parse(receipt) };
   });
+const focus = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('task'),
+    target: handle,
+    revision: handle.exactOptional(),
+    plan: handle.exactOptional(),
+    expectedPlanRevision: handle.exactOptional(),
+  }),
+  z.object({ kind: z.enum(['project', 'note']), target: handle, revision: handle.exactOptional() }),
+]);
+const proposal = z.object({ revision: count, operations: count, changes: z.array(change) });
+const preparation = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('task'), input: prepareSchema }),
+  z.object({ kind: z.literal('note'), input: notePrepareSchema }),
+]);
 const snapshot: z.ZodType<HistoricalCommandSnapshot> = z.object({
+  recovery: z.enum(['live', 'historical', 'reviewing', 'uncertain']).exactOptional(),
+  preparations: z.array(preparation).exactOptional(),
+  recoveryEvidence: z
+    .object({ proposal, focus: z.array(focus), preparations: z.array(preparation) })
+    .exactOptional(),
+  pendingTransition: z
+    .discriminatedUnion('kind', [
+      z.object({
+        kind: z.literal('focus'),
+        target: z.array(focus),
+        previousQuestion: text.nullable().exactOptional(),
+      }),
+      z.object({
+        kind: z.literal('new-session'),
+        previousQuestion: text.nullable().exactOptional(),
+      }),
+    ])
+    .nullable()
+    .exactOptional(),
   submissionBasis: z.object({ sessionId: handle, proposalRevision: count }).exactOptional(),
   id: handle,
   input: text,
@@ -410,7 +445,7 @@ const snapshot: z.ZodType<HistoricalCommandSnapshot> = z.object({
     kind: z.enum(['thinking', 'searching', 'ready', 'question', 'writing', 'saved', 'error']),
     message: text,
   }),
-  proposal: z.object({ revision: count, operations: count, changes: z.array(change) }),
+  proposal,
   journal: z.array(journalEntry),
   actual: z.array(tree),
   blocked: z.boolean(),
@@ -481,7 +516,7 @@ export function parseCommandHistory(value: unknown): CommandHistoryEnvelope {
   checkCommandStructure(value);
   return envelope.parse(value);
 }
-function hasUnknownResourceEffects(receipt: HistoricalCommandReceipt): boolean {
+export function hasUnknownCommandResourceEffects(receipt: HistoricalCommandReceipt): boolean {
   return (
     ('noteEffects' in receipt && receipt.noteEffects === 'unknown') ||
     ('destinationEffects' in receipt && receipt.destinationEffects === 'unknown') ||
@@ -489,11 +524,45 @@ function hasUnknownResourceEffects(receipt: HistoricalCommandReceipt): boolean {
     ('sourceRemoval' in receipt && receipt.sourceRemoval === 'unknown')
   );
 }
+function hasUnresolvedReceipt(entry: CommandJournalEntry): boolean {
+  if (entry.receipt === undefined) return false;
+  const parsed = receiptFor(entry.change.kind).safeParse(entry.receipt);
+  return (
+    !parsed.success ||
+    parsed.data.effects === 'unknown' ||
+    parsed.data.effects === 'partial' ||
+    parsed.data.recovery !== 'none' ||
+    hasUnknownCommandResourceEffects(parsed.data)
+  );
+}
+/** A crash can precede blocked publication or the final proposal-clear snapshot. */
+export function hasUnresolvedCommandWrites(value: CommandSessionSnapshot): boolean {
+  if (value.blocked) return true;
+  return value.journal.some((entry) => {
+    if (
+      entry.state === 'admitted' ||
+      entry.effects === undefined ||
+      entry.effects === 'unknown' ||
+      entry.effects === 'partial'
+    )
+      return true;
+    if (
+      entry.effects === 'committed' &&
+      entry.proposalRevision === value.proposal.revision &&
+      value.proposal.changes.length > 0
+    )
+      return true;
+    return hasUnresolvedReceipt(entry);
+  });
+}
 /** Pending/uncertain evidence remains protected even when its session is inactive. */
 export function isCompletedCommandSession(value: HistoricalCommandSnapshot): boolean {
   return (
     value.input.length === 0 &&
     value.activeQuestion === null &&
+    value.pendingTransition == null &&
+    value.recovery !== 'reviewing' &&
+    value.recovery !== 'uncertain' &&
     value.proposal.changes.length === 0 &&
     !value.blocked &&
     !['thinking', 'searching', 'writing', 'question', 'error'].includes(value.status.kind) &&
@@ -504,7 +573,7 @@ export function isCompletedCommandSession(value: HistoricalCommandSnapshot): boo
         (entry.receipt === undefined ||
           ((entry.receipt.effects === 'unchanged' || entry.receipt.effects === 'committed') &&
             entry.receipt.recovery === 'none' &&
-            !hasUnknownResourceEffects(entry.receipt))),
+            !hasUnknownCommandResourceEffects(entry.receipt))),
     )
   );
 }

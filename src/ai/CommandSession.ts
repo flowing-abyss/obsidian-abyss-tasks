@@ -6,8 +6,9 @@ import type {
   TaskTreePageV1,
   TaskTreeV1,
 } from '../../api';
-import { commandRead } from './commandReads';
-import { reconcileCommandLink, validatePlanOutput } from './commandSchemas';
+import { canonicalCommandPlan, commandRead } from './commandReads';
+import { hasUnresolvedCommandWrites } from './commandRecovery';
+import { reconcileCommandLink, sameReviewedContent, validatePlanOutput } from './commandSchemas';
 import {
   CommandFailure,
   required,
@@ -15,10 +16,13 @@ import {
   type CommandFocus,
   type CommandFocusContinuations,
   type CommandJournalEntry,
+  type CommandPendingTransition,
+  type CommandPreparation,
   type CommandSessionOptions,
   type CommandSessionSnapshot,
   type CommandStatusKind,
   type CommandSubmissionBasis,
+  type CommandTransitionDisposition,
 } from './commandTypes';
 import { executeCommandWrites } from './commandWrites';
 import { providerFailure } from './providers/providerFailure';
@@ -145,10 +149,14 @@ export class CommandSession {
   private readonly listeners = new Set<(state: CommandSessionSnapshot) => void>();
   private turn: AbortController | undefined;
   private running: Promise<void> | undefined;
+  private pendingWrite: Promise<boolean> | undefined;
   private writing = false;
   private writeAdmission: AbortController | undefined;
   private disposed = false;
   private focusRun = 0;
+  private acceptance = 0;
+  private queuedInput: string | undefined;
+  private inputRevision = 0;
   constructor(private readonly options: CommandSessionOptions) {
     this.state = this.empty();
   }
@@ -173,6 +181,115 @@ export class CommandSession {
     const copy = detached(this.state);
     freeze(copy);
     return copy;
+  }
+  /** The owner calls this only after settling work and persisting selection. */
+  restore(snapshot: CommandSessionSnapshot, historical = true): void {
+    if (this.disposed || this.writing) return;
+    this.focusRun++;
+    this.state = detached(snapshot);
+    if (historical) {
+      const blocked = hasUnresolvedCommandWrites(snapshot);
+      this.state = { ...this.state, blocked, recovery: blocked ? 'uncertain' : 'historical' };
+    }
+    this.publish({});
+  }
+  readOnly(): boolean {
+    return (
+      this.state.blocked ||
+      this.state.recovery === 'historical' ||
+      this.state.recovery === 'uncertain'
+    );
+  }
+  beginReview(): boolean {
+    if (this.disposed || this.writing || this.state.blocked || this.state.recovery === 'uncertain')
+      return false;
+    if (this.state.recovery === 'reviewing') return true;
+    const previous = this.state;
+    this.publish({
+      recovery: 'reviewing',
+      recoveryEvidence: {
+        proposal: previous.proposal,
+        focus: previous.focus,
+        preparations: previous.preparations ?? [],
+      },
+      preparations: [],
+      proposal: { revision: previous.proposal.revision + 1, operations: 0, changes: [] },
+      trees: [],
+      focus: [],
+      entities: { tasks: [], notes: [], projects: [] },
+      actual: [],
+      activeQuestion: null,
+      pendingTransition: null,
+      status: { kind: 'ready', message: 'Prepare a fresh preview from the current source.' },
+    });
+    return true;
+  }
+  finishReview(): void {
+    if (
+      this.state.recovery === 'reviewing' &&
+      this.state.proposal.changes.length > 0 &&
+      this.state.activeQuestion === null
+    )
+      this.publish({ recovery: 'live' });
+  }
+  prepared(value: CommandPreparation): void {
+    if (this.disposed || this.readOnly()) return;
+    this.publish({ preparations: [...(this.state.preparations ?? []), value] });
+  }
+  private current(id: string): boolean {
+    return !this.disposed && this.state.id === id;
+  }
+  private async refreshOwnedChanges(): Promise<Array<Extract<CommandChange, { kind: 'task' }>>> {
+    const signal = new AbortController().signal;
+    const timing = { now: this.options.now, deadline: this.options.now() + 5000 };
+    const changes: Array<Extract<CommandChange, { kind: 'task' }>> = [];
+    for (const change of this.state.proposal.changes) {
+      if (change.kind !== 'task') throw new CommandFailure('REVIEW', 'Review this preview again.');
+      const page = await commandRead(
+        this.options.api,
+        () =>
+          required(this.options.api.tasks.prepare)({
+            kind: 'refresh',
+            plan: change.plan.target,
+            expectedPlanRevision: change.plan.revision,
+          }),
+        signal,
+        timing,
+      );
+      const plan = await canonicalCommandPlan(this.options.api, page, signal, timing);
+      if (!sameReviewedContent(change.plan, plan))
+        throw new CommandFailure('REVIEW', 'The source changed. Review a fresh preview.');
+      changes.push({ kind: 'task', plan });
+    }
+    return changes;
+  }
+  private refreshedFocus(
+    changes: ReadonlyArray<Extract<CommandChange, { kind: 'task' }>>,
+  ): readonly CommandFocus[] {
+    return this.state.focus.map((focus) => {
+      if (focus.kind !== 'task') return focus;
+      const change = changes.find((entry) => entry.plan.target === focus.plan);
+      return change === undefined
+        ? focus
+        : { ...focus, expectedPlanRevision: change.plan.revision };
+    });
+  }
+  /** Only the still-owning client may attempt this proof. Failure leaves historical evidence. */
+  async resumeOwned(): Promise<void> {
+    if (this.disposed || this.state.blocked || this.state.recoveryEvidence !== undefined) return;
+    const id = this.state.id;
+    try {
+      const changes = await this.refreshOwnedChanges();
+      if (!this.current(id)) return;
+      this.publish({
+        recovery: 'live',
+        proposal: { ...this.state.proposal, revision: this.state.proposal.revision + 1, changes },
+        trees: changes.map((change) => ({ before: change.plan.before, after: change.plan.after })),
+        focus: this.refreshedFocus(changes),
+      });
+    } catch {
+      if (this.current(id)) this.publish({ recovery: 'historical' });
+    }
   }
   subscribe(listener: (state: CommandSessionSnapshot) => void): () => void {
     this.listeners.add(listener);
@@ -217,6 +334,13 @@ export class CommandSession {
       const verified: VerifiedFocus[] = [];
       for (const entry of requested) verified.push(await this.verifyFocus(entry, read));
       if (!current()) return false;
+      if (this.needsFocusDisposition(requested)) {
+        this.requestTransition(
+          { kind: 'focus', target: requested },
+          'Save these changes, keep them for later, discard them, or stay here?',
+        );
+        return false;
+      }
       for (const entry of verified) this.observeFocus(entry);
       this.publish({ focus: verified.map((entry) => entry.focus) });
       return true;
@@ -224,6 +348,89 @@ export class CommandSession {
       if (current()) this.status('error', focusError(cause));
       return false;
     }
+  }
+  private requestTransition(pending: CommandPendingTransition, question: string): void {
+    const requested = { ...pending, previousQuestion: this.previousQuestion() };
+    if (JSON.stringify(requested) === JSON.stringify(this.state.pendingTransition)) return;
+    this.publish({
+      pendingTransition: requested,
+      proposal: { ...this.state.proposal, revision: this.state.proposal.revision + 1 },
+    });
+    this.question(question);
+  }
+  private previousQuestion(): string | null {
+    return this.state.pendingTransition == null
+      ? this.state.activeQuestion
+      : (this.state.pendingTransition.previousQuestion ?? null);
+  }
+  private needsFocusDisposition(requested: readonly CommandFocus[]): boolean {
+    if (this.readOnly() || this.state.proposal.changes.length === 0) return false;
+    if (
+      requested.some((entry) => this.state.focus.some((current) => current.target === entry.target))
+    )
+      return false;
+    return !requested.some((entry) =>
+      this.state.proposal.changes.some((change) => {
+        if (change.kind === 'project') return entry.target === change.before.target;
+        if (change.kind === 'note') return entry.target === change.plan.target;
+        if (change.kind === 'status') return entry.target === change.target;
+        return (
+          focusNode(change.plan.after, entry.target) !== undefined ||
+          focusNode(change.plan.before, entry.target) !== undefined
+        );
+      }),
+    );
+  }
+  async resolveTransition(
+    disposition: CommandTransitionDisposition,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    if (!(await this.transitionAllowed(signal))) return false;
+    const pending = this.state.pendingTransition;
+    if (pending == null) return false;
+    if (disposition === 'cancel') {
+      const question = this.previousQuestion();
+      this.publish({
+        pendingTransition: null,
+        activeQuestion: question,
+        status:
+          question === null
+            ? { kind: 'ready', message: 'Current work retained.' }
+            : { kind: 'question', message: question },
+      });
+      return true;
+    }
+    if (pending.kind === 'new-session')
+      return disposition === 'save' ? false : this.newSession(disposition, signal);
+    if (disposition === 'save') return this.saveAndFocus(pending.target, signal);
+    if (!(await this.newSession(disposition, signal))) return false;
+    return this.focus(pending.target, signal);
+  }
+  private async saveAndFocus(
+    target: readonly CommandFocus[],
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    const question = this.previousQuestion();
+    if (question !== null) {
+      this.question(question);
+      return false;
+    }
+    this.publish({ activeQuestion: null, status: { kind: 'ready', message: '' } });
+    const saved =
+      signal === undefined
+        ? await this.confirm()
+        : await this.confirmFromTurn(this.state.proposal.revision, signal);
+    if (!saved) return false;
+    this.publish({ pendingTransition: null });
+    return this.focus(
+      target.map((entry) => ({ kind: entry.kind, target: entry.target })),
+      signal,
+    );
+  }
+  private async transitionAllowed(signal?: AbortSignal): Promise<boolean> {
+    if (signal === undefined) await this.settle();
+    else if (this.turn?.signal !== signal || signal.aborted) return false;
+    return !this.disposed && !this.writing;
   }
   private async verifyFocus(
     target: CommandFocus,
@@ -410,6 +617,7 @@ export class CommandSession {
     });
   }
   setInput(text: string): void {
+    this.inputRevision++;
     this.publish({ input: text });
   }
   exchange(role: 'user' | 'agent', text: string): void {
@@ -418,7 +626,7 @@ export class CommandSession {
     });
   }
   stage(change: CommandChange, operations = 1): void {
-    if (this.disposed || this.writing || this.state.blocked)
+    if (this.disposed || this.writing || this.readOnly() || this.state.pendingTransition != null)
       throw new CommandFailure('BUSY', 'Resolve the previous write before changing this proposal.');
     validateChange(change);
     const changes = [...this.state.proposal.changes];
@@ -473,9 +681,14 @@ export class CommandSession {
       await this.confirm();
       return;
     }
-    if (this.running !== undefined) {
-      this.cancelTurn();
-      await this.running;
+    if (this.running !== undefined || this.pendingWrite !== undefined) {
+      const previous = this.running ?? this.pendingWrite;
+      this.cancelTurn(false);
+      const generation = this.acceptance;
+      this.queuedInput = text;
+      await previous;
+      if (generation !== this.acceptance) return;
+      this.queuedInput = undefined;
       return this.submit(text, submittedAgainst);
     }
     if (text.length > 16000) {
@@ -495,7 +708,10 @@ export class CommandSession {
     }
   }
   private unavailable(): boolean {
-    return this.disposed || this.writing || this.turn !== undefined || this.state.blocked;
+    return this.disposed || this.writing || this.turn !== undefined;
+  }
+  private acceptsTurn(signal: AbortSignal, id: string): boolean {
+    return !signal.aborted && this.current(id);
   }
   private async runTurn(text: string, submittedAgainst?: CommandSubmissionBasis): Promise<void> {
     if (this.unavailable()) {
@@ -517,10 +733,14 @@ export class CommandSession {
     this.status('thinking', 'Working…');
     try {
       await this.options.agent.run({ text, signal: controller.signal, session: basis });
-      if (!controller.signal.aborted && this.state.status.kind === 'thinking')
+      if (
+        !controller.signal.aborted &&
+        this.state.id === snapshot.id &&
+        this.state.status.kind === 'thinking'
+      )
         this.status('ready', 'Ready.');
     } catch (cause) {
-      if (!controller.signal.aborted)
+      if (this.acceptsTurn(controller.signal, snapshot.id))
         this.status(
           'error',
           cause instanceof CommandFailure ? cause.message : providerFailure(cause).message,
@@ -529,10 +749,22 @@ export class CommandSession {
       if (this.turn === controller) this.turn = undefined;
     }
   }
-  cancelTurn(): void {
+  cancelTurn(retainQueued = true): void {
+    this.acceptance++;
+    if (retainQueued && this.queuedInput !== undefined) {
+      this.setInput(this.queuedInput);
+      this.queuedInput = undefined;
+    }
+    const active = this.turn !== undefined;
     this.turn?.abort();
     this.writeAdmission?.abort();
-    if (!this.writing) this.status('ready', 'Stopped. Your draft is retained.');
+    if (active && !this.writing && this.state.activeQuestion === null)
+      this.status('ready', 'Stopped. Your draft is retained.');
+  }
+  async settle(): Promise<void> {
+    this.cancelTurn();
+    await this.running;
+    await this.pendingWrite;
   }
   async confirm(revision = this.state.proposal.revision): Promise<boolean> {
     if (this.turn !== undefined) return false;
@@ -547,6 +779,7 @@ export class CommandSession {
       !this.disposed &&
       !this.writing &&
       !this.state.blocked &&
+      (this.state.recovery === undefined || this.state.recovery === 'live') &&
       this.state.activeQuestion === null &&
       this.state.status.kind !== 'error' &&
       revision === this.state.proposal.revision &&
@@ -558,7 +791,8 @@ export class CommandSession {
     return this.writeProposal(detached(this.state.proposal), true);
   }
   async applyStatus(input: { target: string; revision: string; symbol: string }): Promise<boolean> {
-    if (this.writing || this.state.blocked || this.disposed) return false;
+    if (this.writing || this.readOnly() || this.disposed || this.state.recovery === 'reviewing')
+      return false;
     this.cancelTurn();
     if (this.running !== undefined) await this.running;
     return this.writeProposal(
@@ -593,11 +827,29 @@ export class CommandSession {
     if (index < 0) journal.push(entry);
     else journal[index] = entry;
     this.publish({ journal });
-    await this.options.journal.save(this.snapshot());
+    try {
+      await this.options.journal.save(this.snapshot());
+    } catch (cause) {
+      if (entry.state === 'admitted')
+        this.publish({
+          journal: this.state.journal.map((record) =>
+            record.id === entry.id
+              ? {
+                  ...record,
+                  state: 'settled',
+                  effects: 'unchanged',
+                  error: 'STORAGE_BEFORE_ADMISSION',
+                }
+              : record,
+          ),
+        });
+      throw cause;
+    }
   }
   private async completeWrite(
     proposal: CommandSessionSnapshot['proposal'],
     clear: boolean,
+    inputRevision: number,
   ): Promise<void> {
     const completed: CommandSessionSnapshot = {
       ...this.snapshot(),
@@ -605,7 +857,7 @@ export class CommandSession {
         ? {
             proposal: { revision: proposal.revision + 1, operations: 0, changes: [] },
             trees: [],
-            input: '',
+            input: inputRevision === this.inputRevision ? '' : this.state.input,
           }
         : {}),
       status: {
@@ -614,12 +866,28 @@ export class CommandSession {
       },
     };
     await this.options.journal.save(completed);
-    this.publish(completed);
+    this.publish({
+      ...completed,
+      input: inputRevision === this.inputRevision ? completed.input : this.state.input,
+    });
   }
   private async writeProposal(
     proposal: CommandSessionSnapshot['proposal'],
     clear: boolean,
   ): Promise<boolean> {
+    const pending = this.performWrite(proposal, clear);
+    this.pendingWrite = pending;
+    try {
+      return await pending;
+    } finally {
+      if (this.pendingWrite === pending) this.pendingWrite = undefined;
+    }
+  }
+  private async performWrite(
+    proposal: CommandSessionSnapshot['proposal'],
+    clear: boolean,
+  ): Promise<boolean> {
+    const inputRevision = this.inputRevision;
     const journalStart = this.state.journal.length;
     const admission = new AbortController();
     this.writeAdmission = admission;
@@ -655,7 +923,7 @@ export class CommandSession {
           this.observeNote(note);
         },
       });
-      await this.completeWrite(proposal, clear);
+      await this.completeWrite(proposal, clear, inputRevision);
       return true;
     } catch (cause) {
       const unsettled = this.state.journal
@@ -669,6 +937,7 @@ export class CommandSession {
         );
       this.publish({
         blocked: unsettled,
+        ...this.writeRecovery(unsettled, cause),
         status: {
           kind: 'error',
           message:
@@ -684,28 +953,86 @@ export class CommandSession {
       this.releaseDisposed();
     }
   }
-  async newSession(disposition?: 'keep' | 'discard'): Promise<boolean> {
-    if (this.disposed || this.writing || this.state.blocked) {
-      this.question('Finish the current operation before starting another session.');
+  private writeRecovery(unsettled: boolean, cause: unknown): Partial<CommandSessionSnapshot> {
+    if (unsettled) return { recovery: 'uncertain' };
+    return cause instanceof CommandFailure && cause.code === 'EXPIRED'
+      ? { recovery: 'historical' }
+      : {};
+  }
+  async newSession(
+    disposition?: 'keep' | 'discard',
+    signal?: AbortSignal,
+    acknowledgeUncertainty = false,
+  ): Promise<boolean> {
+    if (!(await this.transitionAllowed(signal))) return false;
+    if (this.state.blocked && !acknowledgeUncertainty) {
+      this.question(
+        'The earlier result is unresolved. Acknowledge it before starting independent work.',
+      );
       return false;
     }
     if (this.state.proposal.changes.length > 0 && disposition === undefined) {
-      this.question('Keep this draft in history or discard it before starting a new session?');
+      this.requestTransition(
+        { kind: 'new-session' },
+        'Keep this draft in history or discard it before starting a new session?',
+      );
       return false;
     }
-    this.cancelTurn();
-    if (disposition !== 'discard') await this.options.journal.save(this.snapshot());
-    this.publish(this.empty());
-    return true;
+    return this.startSession(this.archivedSnapshot(disposition), this.empty(), signal);
+  }
+  private async startSession(
+    archived: CommandSessionSnapshot,
+    next: CommandSessionSnapshot,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    try {
+      if (this.options.transitions !== undefined)
+        await this.options.transitions.start(
+          archived,
+          next,
+          () => this.current(archived.id) && signal?.aborted !== true,
+        );
+      else {
+        await this.options.journal.save(archived);
+        if (signal?.aborted === true) return false;
+      }
+      if (!this.current(archived.id)) return false;
+      this.restore(next, false);
+      return true;
+    } catch {
+      if (signal?.aborted !== true)
+        this.status('error', 'Could not retain this session. Keep it open and try again.');
+      return false;
+    }
+  }
+  private archivedSnapshot(disposition?: 'keep' | 'discard'): CommandSessionSnapshot {
+    const previous = {
+      ...this.snapshot(),
+      pendingTransition: null,
+      activeQuestion: this.previousQuestion(),
+    };
+    return disposition === 'discard' && !previous.blocked
+      ? {
+          ...previous,
+          input: '',
+          recovery: 'live',
+          proposal: { revision: previous.proposal.revision + 1, operations: 0, changes: [] },
+          trees: [],
+          activeQuestion: null,
+          status: { kind: 'ready', message: 'Draft discarded.' },
+        }
+      : previous;
   }
   private releaseDisposed(): void {
     if (this.disposed) this.options.api.dispose();
   }
   dispose(): void {
+    if (this.disposed) return;
     this.disposed = true;
     this.turn?.abort();
     this.writeAdmission?.abort();
     this.listeners.clear();
     if (!this.writing) this.options.api.dispose();
+    this.options.onDispose?.();
   }
 }

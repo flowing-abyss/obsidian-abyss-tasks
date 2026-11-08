@@ -24,6 +24,7 @@ import {
   modelSchema,
   notePrepareSchema,
   planToolOutput,
+  prepareSchema,
   preserveAuthoredAnnotations,
   projectStageSchema,
   readSchema,
@@ -119,6 +120,14 @@ class CommandToolOwner {
         'Interpret this message before reading or changing anything.',
       );
     try {
+      if (
+        this.ctx.session.readOnly() &&
+        !['interpret', 'read', 'research', 'finish'].includes(name)
+      )
+        throw new CommandFailure(
+          'READ_ONLY',
+          'This history needs a fresh review before changes can be prepared.',
+        );
       const output = checkedOutput(await work());
       this.ctx.signal.throwIfAborted();
       this.ctx.errors.delete(name);
@@ -155,10 +164,13 @@ class CommandToolOwner {
   }
   private currentConsentBasis(): boolean {
     const basis = this.ctx.basis.submissionBasis;
+    const current = this.ctx.session.snapshot();
     return (
-      basis === undefined ||
-      (basis.sessionId === this.ctx.basis.id &&
-        basis.proposalRevision === this.ctx.basis.proposal.revision)
+      current.id === this.ctx.basis.id &&
+      current.proposal.revision === this.ctx.basis.proposal.revision &&
+      (basis === undefined ||
+        (basis.sessionId === this.ctx.basis.id &&
+          basis.proposalRevision === this.ctx.basis.proposal.revision))
     );
   }
   interpret(): Tool {
@@ -172,36 +184,87 @@ class CommandToolOwner {
             throw new CommandFailure('PHASE', 'This message was already interpreted.');
           this.ctx.interpreted = true;
           this.ctx.researchMode = input.research;
-          if (
-            (input.intent === 'confirm' || input.intent === 'immediate') &&
-            !this.currentConsentBasis()
-          ) {
+          const confirmation = await this.confirmationIntent(input.intent);
+          if (confirmation !== undefined) return confirmation;
+          const lifecycle = await this.lifecycleIntent(input);
+          if (lifecycle !== undefined) return lifecycle;
+          if (this.ctx.session.snapshot().pendingTransition != null) {
             this.ctx.done = true;
             this.ctx.session.question(
-              'The proposal changed while this input was recorded. Review the current version before confirming.',
+              'Save these changes, keep them for later, discard them, or stay here?',
             );
-            return { needsReview: true };
+            return { needsDisposition: true };
           }
-          if (input.intent === 'confirm') {
-            this.ctx.done = true;
-            return {
-              confirmed:
-                this.ctx.basis.status.kind !== 'error' &&
-                (await this.ctx.session.confirmFromTurn(
-                  this.ctx.basis.proposal.revision,
-                  this.ctx.signal,
-                )),
-            };
+          if (input.intent === 'save-then-plan') {
+            const saved = await this.ctx.session.confirmFromTurn(
+              this.ctx.basis.proposal.revision,
+              this.ctx.signal,
+            );
+            if (!saved) {
+              this.ctx.done = true;
+              return { saved: false, continuation: false };
+            }
           }
-          if (input.intent === 'new-session') {
-            this.ctx.done = true;
-            return { started: await this.ctx.session.newSession(input.disposition) };
-          }
-          this.ctx.immediate = input.intent === 'immediate';
+          this.ctx.immediate =
+            input.intent === 'immediate' && this.ctx.session.snapshot().recovery !== 'reviewing';
           this.ctx.session.answer();
           return { intent: input.intent, preview: !this.ctx.immediate };
         }),
     });
+  }
+  private async confirmationIntent(
+    intent: z.infer<typeof intentSchema>['intent'],
+  ): Promise<unknown> {
+    if (intent !== 'plan' && !this.currentConsentBasis()) {
+      this.ctx.done = true;
+      this.ctx.session.question(
+        'The proposal changed while this input was recorded. Review the current version before confirming.',
+      );
+      return { needsReview: true };
+    }
+    if (intent === 'confirm') {
+      this.ctx.done = true;
+      return {
+        confirmed:
+          this.ctx.basis.status.kind !== 'error' &&
+          (await this.ctx.session.confirmFromTurn(
+            this.ctx.basis.proposal.revision,
+            this.ctx.signal,
+          )),
+      };
+    }
+    return undefined;
+  }
+  private async lifecycleIntent(input: z.infer<typeof intentSchema>): Promise<unknown> {
+    if (input.intent === 'acknowledge-uncertainty') {
+      this.ctx.done = true;
+      return {
+        started:
+          this.ctx.basis.blocked &&
+          (await this.ctx.session.newSession('keep', this.ctx.signal, true)),
+      };
+    }
+    if (input.intent === 'review') {
+      const reviewing = this.ctx.session.beginReview();
+      this.ctx.done = !reviewing;
+      return { reviewing, preview: true };
+    }
+    if (input.intent === 'new-session') {
+      this.ctx.done = true;
+      return {
+        started: await this.ctx.session.newSession(input.disposition, this.ctx.signal),
+      };
+    }
+    if (input.intent === 'resolve-transition') {
+      this.ctx.done = true;
+      return {
+        resolved: await this.ctx.session.resolveTransition(
+          required(input.transitionDisposition),
+          this.ctx.signal,
+        ),
+      };
+    }
+    return undefined;
   }
   read(): Tool {
     return tool({
@@ -352,12 +415,28 @@ class CommandToolOwner {
         this.execute('task', toolCallId, async () => {
           if (input.kind === 'batch') return this.prepareBatch(input, removeAnnotations);
           const original = input as PrepareTaskContentV1;
+          if (
+            (original.kind === 'append' || original.kind === 'refresh') &&
+            !this.ctx.session
+              .snapshot()
+              .proposal.changes.some(
+                (change) =>
+                  change.kind === 'task' &&
+                  change.plan.target === original.plan &&
+                  change.plan.revision === original.expectedPlanRevision,
+              )
+          )
+            throw new CommandFailure(
+              'PLAN_BASIS',
+              'Only the current preview can be refined. Prepare historical work again from fresh source reads.',
+            );
           this.checkEditBasis(original);
           if (this.cancelDraft(original)) return { cancelledDraft: true };
           const request = await this.preserveRewrite(original, removeAnnotations);
           const plan = await this.readPublic(() => required(this.ctx.api.tasks.prepare)(request));
           this.ctx.signal.throwIfAborted();
           await this.stageTask(plan);
+          this.ctx.session.prepared({ kind: 'task', input: prepareSchema.parse(request) });
           return planToolOutput(plan);
         }),
     });
@@ -400,6 +479,7 @@ class CommandToolOwner {
       );
     }
     const prepared = [change.plan];
+    const inputs: PrepareTaskContentV1[] = [];
     for (const operation of operations) {
       const plan = required(prepared[prepared.length - 1]);
       let observed: TaskTreeV1 | undefined;
@@ -427,10 +507,14 @@ class CommandToolOwner {
       );
       const next = await this.readPublic(() => required(this.ctx.api.tasks.prepare)(request));
       prepared.push(next);
+      inputs.push(request);
     }
     this.ctx.signal.throwIfAborted();
     const plan = required(prepared[prepared.length - 1]);
     await this.stageTask(plan, operations.length);
+    inputs.forEach((request) => {
+      this.ctx.session.prepared({ kind: 'task', input: prepareSchema.parse(request) });
+    });
     return planToolOutput(plan);
   }
   status(): Tool {
@@ -472,6 +556,7 @@ class CommandToolOwner {
           checkedOutput(plan);
           this.ctx.signal.throwIfAborted();
           this.ctx.session.stage({ kind: 'note', plan });
+          this.ctx.session.prepared({ kind: 'note', input });
           return plan;
         }),
     });
@@ -655,21 +740,29 @@ class CommandToolOwner {
           if (
             input.selection !== undefined &&
             !(await this.ctx.session.focus(input.selection, this.ctx.signal))
-          )
+          ) {
+            if (this.ctx.session.snapshot().pendingTransition != null) {
+              this.ctx.done = true;
+              return { needsDisposition: true };
+            }
             throw new CommandFailure(
               'FOCUS',
               'The requested selection could not be verified. The earlier focus is retained.',
             );
+          }
           this.ctx.signal.throwIfAborted();
           this.ctx.done = true;
           this.ctx.session.exchange('agent', input.message);
           if (input.state === 'question') this.ctx.session.question(input.message);
-          else if (this.ctx.immediate)
-            await this.ctx.session.confirmFromTurn(
-              this.ctx.session.snapshot().proposal.revision,
-              this.ctx.signal,
-            );
-          else this.ctx.session.status('ready', input.message);
+          else {
+            this.ctx.session.finishReview();
+            if (this.ctx.immediate)
+              await this.ctx.session.confirmFromTurn(
+                this.ctx.session.snapshot().proposal.revision,
+                this.ctx.signal,
+              );
+            else this.ctx.session.status('ready', input.message);
+          }
           return { finished: true };
         }),
     });

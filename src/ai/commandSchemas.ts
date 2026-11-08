@@ -129,12 +129,22 @@ export const batchSchema = z.strictObject({
 export const taskToolSchema = z.discriminatedUnion('kind', [...prepareSchema.options, batchSchema]);
 export const intentSchema = z.strictObject({
   intent: z
-    .enum(['plan', 'confirm', 'immediate', 'new-session'])
+    .enum([
+      'plan',
+      'confirm',
+      'immediate',
+      'new-session',
+      'resolve-transition',
+      'save-then-plan',
+      'review',
+      'acknowledge-uncertainty',
+    ])
     .describe(
       'plan means creating, editing, finding or showing entities in the CURRENT conversation; use it for ordinary task work. confirm accepts the visible proposal. immediate explicitly requests saving now. new-session ONLY means an explicit request to leave this conversation and start a separate session; a new task or topic stays plan.',
     ),
   research: z.boolean(),
   disposition: z.enum(['keep', 'discard']).optional(),
+  transitionDisposition: z.enum(['save', 'keep', 'discard', 'cancel']).optional(),
 });
 const selection = z
   .array(
@@ -430,15 +440,19 @@ export function sameReviewedContent(before: ContentPlanV1, after: ContentPlanV1)
     JSON.stringify([plan.before, plan.after, plan.destination], (key, value: unknown) => {
       if (key === 'source' && typeof value === 'object' && value !== null && 'path' in value)
         return { path: value.path };
-      return [
-        'target',
-        'revision',
-        'parentTarget',
-        'projectRevision',
-        'observedAtMs',
-        'runningMsAtObservation',
-      ].includes(key)
-        ? undefined
+      if (
+        [
+          'target',
+          'revision',
+          'parentTarget',
+          'projectRevision',
+          'observedAtMs',
+          'runningMsAtObservation',
+        ].includes(key)
+      )
+        return undefined;
+      return typeof value === 'object' && value !== null && !Array.isArray(value)
+        ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)))
         : value;
     });
   return values(before) === values(after);

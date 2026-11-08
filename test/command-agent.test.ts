@@ -1250,3 +1250,181 @@ it('bounds model replies without dropping earlier user constraints from durable 
     true,
   );
 });
+
+it('semantic new-session does not wait for the turn that requested it', async () => {
+  const h = await setup();
+  const id = h.session.snapshot().id;
+  h.script(interpret('new-session'));
+  const turn = h.session.submit('Start a separate conversation');
+  await vi.waitFor(
+    () => {
+      expect(h.session.snapshot().id).not.toBe(id);
+    },
+    { timeout: 200 },
+  );
+  await turn;
+  expect(h.session.snapshot().status.kind).toBe('ready');
+});
+it('a normal dirty focus question finishes without schema repair or a ready overwrite', async () => {
+  const h = await setup();
+  h.script(interpret(), create, finish());
+  await h.session.submit('Prepare a new task');
+  const list = await h.api.tasks.list();
+  if (!list.ok) throw new Error('list');
+  const existing = expectDefined(list.value.items[0]);
+  h.script(interpret(), () =>
+    call('finish', {
+      state: 'ready',
+      message: 'Selected.',
+      selection: [{ kind: 'task', target: existing.target, revision: existing.revision }],
+    }),
+  );
+  await h.session.submit('Move to the existing task');
+  expect(h.session.snapshot().status.kind).toBe('question');
+  expect(h.session.snapshot().pendingTransition?.kind).toBe('focus');
+  h.script(() =>
+    call('interpret', {
+      intent: 'resolve-transition',
+      research: false,
+      transitionDisposition: 'cancel',
+    }),
+  );
+  await h.session.submit('Stay with the draft');
+  expect(h.session.snapshot().pendingTransition).toBeNull();
+  expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+});
+it('semantic save-current then prepare-another renews the preview without saving the new tree', async () => {
+  const h = await setup();
+  h.script(interpret(), create, finish());
+  await h.session.submit('Prepare the first');
+  h.script(
+    interpret('save-then-plan'),
+    () =>
+      call('task', {
+        input: {
+          kind: 'create',
+          destination: { type: 'note', path: 'a.md', insertion: { type: 'append' } },
+          tree: { markdownTitle: 'Next draft' },
+        },
+      }),
+    finish(),
+  );
+  await h.session.submit('Save this, then prepare another task');
+  expect(await h.read('a.md')).toContain('- [ ] New');
+  expect(await h.read('a.md')).not.toContain('Next draft');
+  expect(h.session.snapshot().trees[0]?.after?.title).toBe('Next draft');
+  expect(h.session.snapshot().status.kind).toBe('ready');
+});
+
+it('historical mode permits read-only turns and explicit review prepares fresh canonical evidence in the same session', async () => {
+  const h = await setup();
+  h.script(interpret(), create, finish());
+  await h.session.submit('Create original tree');
+  const original = h.session.snapshot();
+  h.session.restore(original);
+  h.script(
+    interpret(),
+    () => call('read', { kind: 'tasks', query: '' }),
+    finish('Current tasks inspected.'),
+  );
+  await h.session.submit('Show what exists now');
+  expect(await h.read('a.md')).not.toContain('- [ ] New');
+  expect(h.session.snapshot().recovery).toBe('historical');
+  h.script(interpret('review'), create, finish());
+  await h.session.submit('Prepare a fresh preview of my original request');
+  expect(h.session.snapshot().id).toBe(original.id);
+  expect(h.session.snapshot().recovery).toBe('live');
+  expect(h.session.snapshot().recoveryEvidence?.proposal).toEqual(original.proposal);
+  expect(h.session.snapshot().preparations).toHaveLength(1);
+  expect(h.session.snapshot().proposal.revision).toBeGreaterThan(original.proposal.revision);
+  expect(await h.read('a.md')).not.toContain('- [ ] New');
+  await h.session.submit('');
+  expect(await h.read('a.md')).toContain('- [ ] New');
+});
+it('fresh review refuses an old plan append even when its original client still owns it', async () => {
+  const h = await setup();
+  h.script(interpret(), create, finish());
+  await h.session.submit('Original');
+  const original = h.session.snapshot();
+  const change = expectDefined(original.proposal.changes[0]);
+  if (change.kind !== 'task') throw new Error('task');
+  h.session.restore(original);
+  h.script(interpret('review'), () =>
+    call('task', {
+      input: {
+        kind: 'append',
+        plan: change.plan.target,
+        expectedPlanRevision: change.plan.revision,
+        operation: {
+          type: 'patch',
+          target: expectDefined(change.plan.after).target,
+          patch: { markdownTitle: { type: 'set', value: 'Stale replay' } },
+        },
+      },
+    }),
+  );
+  await h.session.submit('Rebuild from current source');
+  expect(h.session.snapshot().proposal.changes).toEqual([]);
+  expect(h.session.snapshot().recovery).toBe('reviewing');
+  expect(await h.read('a.md')).not.toContain('Stale replay');
+});
+
+it('delayed save-and-switch is bound to the original pending target as well as the proposal', async () => {
+  const h = await setup({ 'a.md': '- [ ] First\n- [ ] Second\n' });
+  h.script(interpret(), create, finish());
+  await h.session.submit('Prepare pending work');
+  const tasks = await h.api.tasks.list();
+  if (!tasks.ok) throw new Error('list');
+  const first = expectDefined(tasks.value.items[0]),
+    second = expectDefined(tasks.value.items[1]);
+  await h.session.focus({ kind: 'task', target: first.target, revision: first.revision });
+  const recorded = {
+    sessionId: h.session.snapshot().id,
+    proposalRevision: h.session.snapshot().proposal.revision,
+  };
+  await h.session.focus({ kind: 'task', target: second.target, revision: second.revision });
+  h.script(() =>
+    call('interpret', {
+      intent: 'resolve-transition',
+      research: false,
+      transitionDisposition: 'save',
+    }),
+  );
+  await h.session.submit('Save and switch there', recorded);
+  expect(await h.read('a.md')).not.toContain('- [ ] New');
+  expect(h.session.snapshot().pendingTransition).toMatchObject({
+    kind: 'focus',
+    target: [{ target: second.target }],
+  });
+  expect(h.session.snapshot().status.kind).toBe('question');
+});
+it.each(['keep', 'discard'] as const)(
+  'rejects delayed %s new-session disposition after the preview changes',
+  async (disposition) => {
+    const h = await setup();
+    h.script(interpret(), create, finish());
+    await h.session.submit('Original preview');
+    const original = h.session.snapshot();
+    h.script(
+      interpret(),
+      () =>
+        call('task', {
+          input: {
+            kind: 'create',
+            destination: { type: 'configured-default' },
+            tree: { markdownTitle: 'More work' },
+          },
+        }),
+      finish(),
+    );
+    await h.session.submit('Also prepare another task');
+    h.script(() => call('interpret', { intent: 'new-session', research: false, disposition }));
+    await h.session.submit('Start another conversation', {
+      sessionId: original.id,
+      proposalRevision: original.proposal.revision,
+    });
+    expect(h.session.snapshot().id).toBe(original.id);
+    expect(h.session.snapshot().proposal.changes).toHaveLength(2);
+    expect(h.session.snapshot().status.kind).toBe('question');
+  },
+);

@@ -21,6 +21,13 @@ export interface StorageAuthorization {
 // transactions. This adds the raw settings port and resolves the actual APIs.
 export const STORAGE_AUTHORIZATIONS: readonly StorageAuthorization[] = [
   {
+    file: 'src/main.ts',
+    owner: 'TaskCalendarPlugin.commandSessionStorage.save',
+    api: 'App.saveLocalStorage',
+    reason:
+      'Composition-root port stores only the device/vault command-session envelope under abyss-tasks:command-sessions:v1; the store validates and reads it back before native admission.',
+  },
+  {
     file: 'src/ai/providers/ProviderSecrets.ts',
     owner: 'ProviderSecrets.store',
     api: 'SecretStorage.setSecret',
@@ -127,6 +134,7 @@ export const STORAGE_AUTHORIZATIONS: readonly StorageAuthorization[] = [
 ];
 
 const SINKS = new Set([
+  'App.saveLocalStorage',
   'SecretStorage.setSecret',
   'SecretStorage.getSecret',
   'SecretStorage.listSecrets',

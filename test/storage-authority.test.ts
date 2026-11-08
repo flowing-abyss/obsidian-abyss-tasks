@@ -47,6 +47,8 @@ const denied = [
   ["app.secretStorage.setSecret('other', 'value');", 'SecretStorage.setSecret'],
   ["app.secretStorage.getSecret('other');", 'SecretStorage.getSecret'],
   ['app.secretStorage.listSecrets();', 'SecretStorage.listSecrets'],
+  ["app.saveLocalStorage('other', {});", 'App.saveLocalStorage'],
+  ['const { saveLocalStorage: save } = app;', 'App.saveLocalStorage'],
   ['const { trashFile: extracted } = app.fileManager;', 'FileManager.trashFile'],
   ["const { ['trashFile']: extracted } = app.fileManager;", 'FileManager.trashFile'],
 ] as const;
@@ -231,6 +233,9 @@ sourceMap.set(
   repoFile('src/main.ts'),
   `${prelude}
 export class TaskCalendarPlugin extends Plugin {
+  commandSessionStorage() {
+    return { save: (data: unknown) => this.app.saveLocalStorage('abyss-tasks:command-sessions:v1', data) };
+  }
   persistencePort() {
     const adapter = this.app.vault.adapter;
     return {
@@ -325,7 +330,7 @@ describe('resolved Obsidian storage authority', () => {
       const found = [...new Set([...allowed.map(([file]) => file), 'src/main.ts'])].flatMap(
         accesses,
       );
-      expect(found).toHaveLength(16);
+      expect(found).toHaveLength(17);
       expect(storageAuthorityViolations(found, STORAGE_AUTHORIZATIONS)).toEqual([]);
     },
     TYPESCRIPT_PROGRAM_TIMEOUT_MS,
@@ -462,7 +467,7 @@ describe('resolved Obsidian storage authority', () => {
           .map((source) => source.fileName),
       ).toEqual([]);
       const found = collectStorageAccesses(sourceProgram, sourceFiles);
-      expect(found).toHaveLength(16);
+      expect(found).toHaveLength(17);
       expect(storageAuthorityViolations(found, STORAGE_AUTHORIZATIONS)).toEqual([]);
     },
     TYPESCRIPT_PROGRAM_TIMEOUT_MS,

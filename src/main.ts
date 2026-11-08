@@ -11,7 +11,13 @@ import {
 import type { ApiResultV1, TasksApiV1 } from '../api';
 import { CommandAgent } from './ai/CommandAgent';
 import { CommandSession } from './ai/CommandSession';
-import type { CommandJournalPort, CommandResearchPort } from './ai/commandTypes';
+import { CommandSessionOwner } from './ai/CommandSessionOwner';
+import { CommandSessionStore, type CommandSessionStoragePort } from './ai/CommandSessionStore';
+import type {
+  CommandJournalPort,
+  CommandResearchPort,
+  CommandSessionTransitions,
+} from './ai/commandTypes';
 import { NativeProviderTransport } from './ai/providers/NativeProviderTransport';
 import { ProviderConnections } from './ai/providers/ProviderConnections';
 import { ProviderSecrets } from './ai/providers/ProviderSecrets';
@@ -165,6 +171,8 @@ export default class TaskCalendarPlugin extends Plugin {
 
   providerSecrets!: ProviderSecrets;
   providerConnections!: ProviderConnections;
+  private commandSessionOwner: CommandSessionOwner | undefined = undefined;
+  private readonly commandRuntimes = new Set<CommandSession>();
 
   override async onload(): Promise<void> {
     await this.loadSettings();
@@ -341,6 +349,7 @@ export default class TaskCalendarPlugin extends Plugin {
   createCommandSession(
     journal: CommandJournalPort,
     research?: CommandResearchPort,
+    transitions?: CommandSessionTransitions,
   ): CommandSession {
     const id = (): string => crypto.randomUUID();
     if (this.taskApiProvider === undefined) throw new Error('Task API is unavailable.');
@@ -352,6 +361,10 @@ export default class TaskCalendarPlugin extends Plugin {
       now: () => Date.now(),
       id,
       agent: { run: async (input) => agent.run(input) },
+      ...(transitions === undefined ? {} : { transitions }),
+      onDispose: () => {
+        this.commandRuntimes.delete(session);
+      },
     });
     const agent: CommandAgent = new CommandAgent({
       api: result.value,
@@ -363,10 +376,39 @@ export default class TaskCalendarPlugin extends Plugin {
       now: () => Date.now(),
       ...(research === undefined ? {} : { research }),
     });
-    this.register(() => {
-      session.dispose();
-    });
+    this.commandRuntimes.add(session);
     return session;
+  }
+
+  private commandSessionStorage(): CommandSessionStoragePort {
+    const key = 'abyss-tasks:command-sessions:v1';
+    return {
+      load: () => this.app.loadLocalStorage(key) as unknown,
+      save: (value) => {
+        this.app.saveLocalStorage(key, value);
+      },
+    };
+  }
+  getCommandSessionOwner(research?: CommandResearchPort): CommandSessionOwner {
+    if (this.commandSessionOwner === undefined || this.commandSessionOwner.isDisposed())
+      this.commandSessionOwner = new CommandSessionOwner({
+        store: new CommandSessionStore({
+          storage: this.commandSessionStorage(),
+          now: () => Date.now(),
+        }),
+        createSession: (journal, transitions) =>
+          this.createCommandSession(journal, research, transitions),
+        schedule: (callback) => {
+          const timer = window.setTimeout(callback, 250);
+          return () => {
+            window.clearTimeout(timer);
+          };
+        },
+        diagnose: (code) => {
+          console.warn('[abyss-tasks] Command history persistence failed', { code });
+        },
+      });
+    return this.commandSessionOwner;
   }
 
   private initializeTaskApi(tasks: TaskApplicationService, authority: TaskRefAuthority): void {
@@ -555,6 +597,10 @@ export default class TaskCalendarPlugin extends Plugin {
   }
 
   override onunload(): void {
+    this.commandSessionOwner?.dispose();
+    this.commandSessionOwner = undefined;
+    for (const session of this.commandRuntimes) session.dispose();
+    this.commandRuntimes.clear();
     this.timeTrackingReminder?.destroy();
     this.viewStatePaths.flushPendingSave();
     this.taskSearch.dispose();

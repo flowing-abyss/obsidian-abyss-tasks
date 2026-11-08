@@ -1,3 +1,4 @@
+import type { z } from 'zod';
 import type {
   ContentPlanV1,
   EffectStateV1,
@@ -9,6 +10,7 @@ import type {
   TaskTreeV1,
   TasksApiV1,
 } from '../../api';
+import type { notePrepareSchema, prepareSchema } from './commandSchemas';
 
 export type CommandStatusKind =
   'thinking' | 'searching' | 'ready' | 'question' | 'writing' | 'saved' | 'error';
@@ -86,7 +88,26 @@ export interface CommandSubmissionBasis {
   readonly sessionId: string;
   readonly proposalRevision: number;
 }
+export type CommandPendingTransition =
+  | {
+      readonly kind: 'focus';
+      readonly target: readonly CommandFocus[];
+      readonly previousQuestion?: string | null;
+    }
+  | { readonly kind: 'new-session'; readonly previousQuestion?: string | null };
+export type CommandTransitionDisposition = 'save' | 'keep' | 'discard' | 'cancel';
+export type CommandPreparation =
+  | { readonly kind: 'task'; readonly input: z.output<typeof prepareSchema> }
+  | { readonly kind: 'note'; readonly input: z.output<typeof notePrepareSchema> };
 export interface CommandSessionSnapshot {
+  readonly recovery?: 'live' | 'historical' | 'reviewing' | 'uncertain';
+  readonly preparations?: readonly CommandPreparation[];
+  readonly recoveryEvidence?: {
+    readonly proposal: CommandProposal;
+    readonly focus: readonly CommandFocus[];
+    readonly preparations: readonly CommandPreparation[];
+  };
+  readonly pendingTransition?: CommandPendingTransition | null;
   readonly submissionBasis?: CommandSubmissionBasis;
   readonly id: string;
   readonly input: string;
@@ -116,6 +137,13 @@ export interface CommandAgentPort {
 export interface CommandJournalPort {
   save(snapshot: CommandSessionSnapshot): Promise<void>;
 }
+export interface CommandSessionTransitions {
+  start(
+    previous: CommandSessionSnapshot,
+    next: CommandSessionSnapshot,
+    current: () => boolean,
+  ): Promise<void>;
+}
 export interface CommandSessionOptions {
   readonly api: TasksApiV1;
   readonly agent: CommandAgentPort;
@@ -123,6 +151,8 @@ export interface CommandSessionOptions {
   readonly now: () => number;
   readonly id: () => string;
   readonly context?: string;
+  readonly transitions?: CommandSessionTransitions;
+  readonly onDispose?: () => void;
 }
 export interface CommandResearchResult {
   readonly query: string;

@@ -113,6 +113,20 @@ it('refuses new writes if awaited journal persistence fails', async () => {
   await session.confirm();
   expect(await h.read('a.md')).toBe('- [ ] Existing\n');
   expect(session.snapshot().status.kind).toBe('error');
+  expect(session.snapshot().blocked).toBe(false);
+  expect(session.snapshot().journal[0]).toMatchObject({
+    state: 'settled',
+    effects: 'unchanged',
+    error: 'STORAGE_BEFORE_ADMISSION',
+  });
+});
+it('hiding at rest preserves the exact question, input, and proposal', async () => {
+  const h = await setup();
+  h.session.setInput('Unsent detail');
+  h.session.question('Which day?');
+  const before = h.session.snapshot();
+  h.session.cancelTurn();
+  expect(h.session.snapshot()).toEqual(before);
 });
 it('retains dirty work when a new session is requested without a disposition', async () => {
   const h = await setup();
@@ -791,4 +805,110 @@ it('retains oversized input after a cancelled planning turn settles its admitted
   expect(session.snapshot().input).toBe(text);
   expect(session.snapshot().status.kind).toBe('error');
   expect(await h.read('a.md')).toContain('Admitted once');
+});
+
+it('asks once before unrelated focus can hide pending work, then cancels without losing either target', async () => {
+  const h = await setup();
+  const existing = ok(await h.api.tasks.list()).items[0];
+  const plan = ok(
+    await expectDefined(h.api.tasks.prepare)({
+      kind: 'create',
+      destination: { type: 'note', path: 'a.md', insertion: { type: 'append' } },
+      tree: { markdownTitle: 'Pending parent', children: [{ markdownTitle: 'Pending child' }] },
+    }),
+  );
+  h.session.stage({ kind: 'task', plan });
+  await h.session.focus({ kind: 'task', target: expectDefined(plan.after).target });
+  await h.session.focus({ kind: 'task', target: expectDefined(plan.after?.children[0]).target });
+  expect(h.session.snapshot().activeQuestion).toBeNull();
+  const previous = h.session.snapshot().focus;
+  expect(
+    await h.session.focus({
+      kind: 'task',
+      target: expectDefined(existing).target,
+      revision: expectDefined(existing).revision,
+    }),
+  ).toBe(false);
+  expect(h.session.snapshot().pendingTransition).toMatchObject({
+    kind: 'focus',
+    target: [{ target: expectDefined(existing).target }],
+  });
+  expect(h.session.snapshot().focus).toEqual(previous);
+  await h.session.submit('');
+  expect(await h.read('a.md')).not.toContain('Pending parent');
+  expect(await h.session.resolveTransition('cancel')).toBe(true);
+  expect(h.session.snapshot().focus).toEqual(previous);
+  expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+});
+it('save-and-switch commits only the agreed prior scope and leaves the next draft for review', async () => {
+  const h = await setup();
+  const existing = expectDefined(ok(await h.api.tasks.list()).items[0]);
+  const prepare = expectDefined(h.api.tasks.prepare);
+  const first = ok(
+    await prepare({
+      kind: 'create',
+      destination: { type: 'note', path: 'a.md', insertion: { type: 'append' } },
+      tree: { markdownTitle: 'Prior' },
+    }),
+  );
+  h.session.stage({ kind: 'task', plan: first });
+  await h.session.focus({ kind: 'task', target: expectDefined(first.after).target });
+  await h.session.focus({ kind: 'task', target: existing.target, revision: existing.revision });
+  expect(await h.session.resolveTransition('save')).toBe(true);
+  const next = ok(
+    await prepare({
+      kind: 'create',
+      destination: { type: 'note', path: 'a.md', insertion: { type: 'append' } },
+      tree: { markdownTitle: 'Next' },
+    }),
+  );
+  h.session.stage({ kind: 'task', plan: next });
+  expect(await h.read('a.md')).toContain('Prior');
+  expect(await h.read('a.md')).not.toContain('Next');
+  expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+});
+
+it('hide cancels a queued turn as well as the running interpretation while retaining its unsent text', async () => {
+  const h = await setup();
+  const wait = deferred<void>();
+  const accepted: string[] = [];
+  h.setRun(async ({ text }) => {
+    accepted.push(text);
+    await wait.promise;
+  });
+  const first = h.session.submit('First');
+  const queued = h.session.submit('Retain unsent');
+  h.session.cancelTurn();
+  wait.resolve();
+  await Promise.all([first, queued]);
+  expect(accepted).toEqual(['First']);
+  expect(h.session.snapshot().input).toBe('Retain unsent');
+});
+
+it('a late failure from a semantic session switch cannot replace the new session status', async () => {
+  const h = await setup();
+  const original = h.session.snapshot().id;
+  h.setRun(async ({ signal }) => {
+    await h.session.newSession('keep', signal);
+    throw new Error('old turn failed after switching');
+  });
+  await h.session.submit('Separate session');
+  expect(h.session.snapshot().id).not.toBe(original);
+  expect(h.session.snapshot().status.kind).toBe('ready');
+});
+
+it('keeping a draft after a disposition question retains its original unresolved question in history', async () => {
+  const h = await setup();
+  const plan = ok(
+    await expectDefined(h.api.tasks.prepare)({
+      kind: 'create',
+      destination: { type: 'note', path: 'a.md', insertion: { type: 'append' } },
+      tree: { markdownTitle: 'Needs a date' },
+    }),
+  );
+  h.session.stage({ kind: 'task', plan });
+  h.session.question('Which date should this use?');
+  await h.session.newSession();
+  expect(await h.session.resolveTransition('keep')).toBe(true);
+  expect(h.saved[0]?.activeQuestion).toBe('Which date should this use?');
 });

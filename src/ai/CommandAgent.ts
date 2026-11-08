@@ -196,6 +196,11 @@ export class CommandAgent implements CommandAgentPort {
       projection: 'Current working state; full native pages remain available through read(tree).',
     };
   }
+  private activeTools(ctx: CommandToolContext): string[] {
+    if (!ctx.interpreted) return ['interpret'];
+    if (this.options.session.readOnly()) return ['read', 'research', 'finish'];
+    return ['read', 'task', 'status', 'note', 'project', 'link', 'cleanup', 'research', 'finish'];
+  }
   async run(input: Parameters<CommandAgentPort['run']>[0]): Promise<void> {
     const start = this.options.now();
     const ctx = this.context(input, start);
@@ -238,9 +243,7 @@ export class CommandAgent implements CommandAgentPort {
         if (this.options.now() >= ctx.deadline || ctx.done)
           throw new CommandFailure('TIMEOUT', 'This request stopped. Your draft is retained.');
         return {
-          activeTools: ctx.interpreted
-            ? ['read', 'task', 'status', 'note', 'project', 'link', 'cleanup', 'research', 'finish']
-            : ['interpret'],
+          activeTools: this.activeTools(ctx),
           maxOutputTokens: ctx.researchMode ? 8192 : 4096,
           messages: repairMessages(messages, ctx.feedback),
         };

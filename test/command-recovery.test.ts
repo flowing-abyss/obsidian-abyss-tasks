@@ -464,3 +464,48 @@ it('preserves unknown content-destination effects as unresolved despite a commit
   expect(projected).toEqual(value);
   expect(isCompletedCommandSession(projected)).toBe(false);
 });
+
+it('retains typed review evidence and pending disposition while refusing malformed recovery inputs', () => {
+  const preparation = {
+    kind: 'task',
+    input: {
+      kind: 'create',
+      destination: { type: 'configured-default' },
+      tree: { markdownTitle: 'Full intent' },
+    },
+  } as const;
+  const value: CommandSessionSnapshot = {
+    ...emptySnapshot(),
+    recovery: 'reviewing',
+    preparations: [preparation],
+    recoveryEvidence: {
+      proposal: { revision: 3, operations: 0, changes: [] },
+      focus: [{ kind: 'task', target: 'historical' }],
+      preparations: [preparation],
+    },
+    pendingTransition: {
+      kind: 'focus',
+      target: [{ kind: 'note', target: 'note', revision: 'rev' }],
+    },
+  };
+  expect(projectCommandSnapshot(value)).toEqual(value);
+  expect(
+    projectCommandSnapshot({
+      ...value,
+      recoveryEvidence: { ...value.recoveryEvidence, reasoning: 'private' },
+    }),
+  ).toEqual(value);
+  expect(() =>
+    projectCommandSnapshot({
+      ...value,
+      preparations: [{ kind: 'task', input: { kind: 'create' } }],
+    }),
+  ).toThrow();
+  expect(() =>
+    projectCommandSnapshot({
+      ...value,
+      preparations: [{ ...preparation, input: { ...preparation.input, apiKey: 'private' } }],
+    }),
+  ).toThrow();
+  expect(isCompletedCommandSession(projectCommandSnapshot(value))).toBe(false);
+});

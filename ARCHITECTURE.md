@@ -31,20 +31,28 @@ not start research, transcription, or an agent session.
 
 ## Command sessions
 
-Main's internal `createCommandSession(journal, research?)` factory gives each active session its
-own disposable public client and composes the real provider-backed `CommandAgent`. Construction
-does not parse provider settings or send requests. The caller must supply an awaited
-`CommandJournalPort`; there is no default persistence implementation. Research is an optional
-typed port. This core does not register a command surface or retain local history itself.
+Main's `getCommandSessionOwner(research?)` lazily composes one `CommandSessionOwner`, public client,
+provider-backed agent and local store per plugin instance. Panels and popouts share that owner.
+The mandatory-journal `createCommandSession(journal, research?, transitions?)` factory remains
+available for internal integration tests; a main-owned set releases disposed runtimes instead of
+retaining one unload closure per archived conversation. Construction/opening does not parse provider
+preferences or send requests. Research remains an optional typed port.
 
-`CommandSessionStore` owns a version-1 local history envelope through an injected synchronous
-load/save port and explicit clock. It stores detached records with historical handles and separates
-record saves from explicit active selection. `commandRecovery` validates and projects the complete
-snapshot and each public domain DTO/receipt through explicit field allowlists; historical tokens
-never acquire fresh authority. Malformed or future storage pauses persistence without overwriting
-its raw value. Save failures retain validated memory and reject the awaited journal with a short
-typed failure. Writes require exact validated readback; the port provides no transaction guarantee.
-These data modules are not yet composed with main or runtime recovery.
+`CommandSessionOwner` owns visibility, coalesced ordinary persistence, serialized external session
+selection, and disposal. `CommandSession` owns input, focus, proposal, typed pending disposition and
+recovery state. Switching reuses the client; inactive sessions are detached JSON records. The owner
+flushes ordinary state at command/lifecycle boundaries and after a 250 ms scheduler delay. Required
+write admission and receipt saves bypass that delay. Storage failures appear as one short surface
+status, with safe diagnostic codes when opened; startup raises no history Notice.
+
+`CommandSessionStore` owns a version-1 local history envelope through main's synchronous
+`App.loadLocalStorage/saveLocalStorage` port at `abyss-tasks:command-sessions:v1` and an explicit
+clock. Record saves and active selection are separate. `commandRecovery` validates complete
+snapshots, public domain DTOs/receipts, typed preparation inputs and retained review evidence.
+Malformed or future storage pauses persistence without overwriting its raw value. Save failures
+retain validated memory and reject the awaited journal. Writes require exact validated readback;
+the host port provides no crash transaction guarantee. Session history never enters settings or task
+Markdown.
 
 History retains complete exchanges and authored fields. The soft policy is 20 completed sessions
 and 2 MiB of UTF-8 JSON, pruning oldest eligible inactive records only after verified persistence.
@@ -72,6 +80,24 @@ node/plan revisions must still match, and ambiguous overlapping plans require an
 Refinement retains selected node identity; saved focus continues only through receipt
 correspondence and readback. Deleted or unverified affected selections leave current focus while
 historical entity and journal evidence remains. Project/note readback updates selected revisions.
+
+An unrelated focus change with pending work retains a typed target and asks for save, keep, discard
+or cancel. Same-tree focus and added context preserve the existing workflow. Menu and semantic
+session changes share these transitions. Dispositions and confirmations bind to the accepted
+session/proposal revision; changing the pending target advances that revision. Save-and-switch
+awaits the verified previous outcome, and save-then-plan leaves the subsequent tree as a preview.
+Legitimate transition questions terminate normally instead of consuming tool-repair attempts.
+
+Reloaded handles are historical. Opening preserves input, question, exchanges and canonical trees
+without replay. The still-owning runtime can resume task-only plans after public refresh proves
+unchanged canonical values; other or expired plans require explicit fresh review. Review retains the
+logical session ID and original proposal/focus/preparation evidence, clears old executable proposal
+state, advances its revision, and publishes fresh preparation for renewed confirmation. Preparation
+records and historical DTOs are context, never source identity authority. Model tools remain
+read-only for historical or uncertain sessions until the appropriate transition. Unresolved
+admission, partial/unknown resource effects, and a receipt saved before proposal clearance remain
+protected. Explicit acknowledgement can archive uncertainty and start independent work without
+claiming success or allowing replay.
 
 `CommandAgent` runs the SDK tool loop with generic required tool calls, serial execution, bounded
 steps and generation deadlines. Active tools enforce the interpretation phase; a typed finish
@@ -113,9 +139,12 @@ peers from an affected source are refreshed through their accepted handles befor
 unverifiable selected continuation is reported unavailable, not presented as current metadata.
 Intermediate plans and receipts remain in the journal, not appended as current task versions.
 
-Cancellation retains state and stops new admission. An already admitted native write settles and
-is read back even after planning is cancelled. Disposal waits for that settlement before releasing
-the session's public client. These modules consume the public facade and do not acquire native
+Hiding retains input, question and proposal, cancels pending model acceptance and queued turns,
+and stops future admission. Admitted writes settle and are read back, including when receipt
+persistence fails. A storage failure before admission records known unchanged effects locally and
+admits no native write. Disposal flushes the available snapshot and revokes the old owner's storage
+callbacks before releasing its client after admitted work settles. A later receipt may therefore
+remain historical uncertainty across unload; the old owner cannot overwrite a replacement's history. These modules consume the public facade and do not acquire native
 storage writers or introduce an additional transaction engine.
 
 ## System at a glance

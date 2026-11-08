@@ -15,6 +15,7 @@ import type {
   TaskTreeV1,
 } from '../../api';
 import { canonicalCommandPlan, commandRead } from './commandReads';
+import { hasUnknownCommandResourceEffects } from './commandRecovery';
 import { checkedWriteResult, sameReviewedContent, validateCommandLinks } from './commandSchemas';
 import {
   CommandFailure,
@@ -70,7 +71,13 @@ function receiptMatches(
   return true;
 }
 function writeSucceeded(result: WriteResult): boolean {
-  return result.ok && result.receipt.effects !== 'partial' && result.receipt.effects !== 'unknown';
+  return (
+    result.ok &&
+    result.receipt.effects !== 'partial' &&
+    result.receipt.effects !== 'unknown' &&
+    result.receipt.recovery === 'none' &&
+    !hasUnknownCommandResourceEffects(result.receipt)
+  );
 }
 const order = (change: CommandChange): number =>
   ({ project: 0, note: 1, link: 2, task: 3, status: 4, cleanup: 5 })[change.kind];
@@ -318,15 +325,19 @@ class CommandWriteRun {
         'The write receipt could not be verified. Do not repeat the write.',
       );
     }
-    await this.ctx.record({
-      ...entry,
-      state: 'settled',
-      effects,
-      ...(receipt === undefined ? {} : { receipt }),
-      ...(!result.ok ? { error: result.error.code } : {}),
-    });
     try {
-      await this.readResult(entry, result);
+      // A failed receipt save must not skip readback of an already admitted effect.
+      try {
+        await this.ctx.record({
+          ...entry,
+          state: 'settled',
+          effects,
+          ...(receipt === undefined ? {} : { receipt }),
+          ...(!result.ok ? { error: result.error.code } : {}),
+        });
+      } finally {
+        await this.readResult(entry, result);
+      }
     } catch (cause) {
       this.clearAffectedFocus(entry.change);
       throw cause;
