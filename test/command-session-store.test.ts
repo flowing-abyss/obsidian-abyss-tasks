@@ -291,3 +291,150 @@ it('keeps the active selection on failed create/select while retaining newly aut
   expect(h.store.activeId()).toBe('active');
   expect(h.store.records().find((r) => r.snapshot.id === 'new')?.snapshot.input).toBe('new draft');
 });
+
+type UnknownResource =
+  | 'noteEffects'
+  | 'noteDestinationEffects'
+  | 'contentDestinationEffects'
+  | 'destinationCopy'
+  | 'sourceRemoval';
+const unknownResources: readonly UnknownResource[] = [
+  'noteEffects',
+  'noteDestinationEffects',
+  'contentDestinationEffects',
+  'destinationCopy',
+  'sourceRemoval',
+];
+function unknownResourceSession(resource: UnknownResource): CommandSessionSnapshot {
+  const base = {
+    providerEpoch: 'epoch',
+    requestId: 'request',
+    acceptedAt: 10,
+    expiresAt: 100,
+    outcome: 'changed',
+    effects: 'committed',
+    recovery: 'none',
+  } as const;
+  const plan = {
+    providerEpoch: 'epoch',
+    generation: 1,
+    scopeRevision: 1,
+    semanticsRevision: 1,
+    target: 'plan',
+    revision: 'revision',
+    kind: 'edit',
+    expiresAt: 100,
+  } as const;
+  let change: CommandSessionSnapshot['proposal']['changes'][number];
+  let receipt: unknown;
+  if (resource === 'noteEffects' || resource === 'noteDestinationEffects') {
+    change = {
+      kind: 'note',
+      plan: { ...plan, path: 'Note.md', before: null, after: { text: 'Intent', complete: true } },
+    };
+    receipt = {
+      ...base,
+      plan: 'plan',
+      planRevision: 'revision',
+      warnings: [],
+      noteEffects: resource === 'noteEffects' ? 'unknown' : 'committed',
+      destinationEffects: resource === 'noteDestinationEffects' ? 'unknown' : 'committed',
+    };
+  } else if (resource === 'contentDestinationEffects') {
+    change = { kind: 'task', plan: { ...plan, before: null, after: null } };
+    receipt = {
+      ...base,
+      plan: 'plan',
+      planRevision: 'revision',
+      destinationEffects: 'unknown',
+      snapshots: 'unavailable',
+      warnings: [],
+      contentContinuity: {
+        plan: 'plan',
+        planRevision: 'revision',
+        correspondence: { state: 'unavailable' },
+      },
+    };
+  } else {
+    change = {
+      kind: 'project',
+      before: {
+        target: 'project',
+        revision: 'revision',
+        path: 'Project.md',
+        name: 'Project',
+        status: { state: 'configured', id: 'active' },
+        stats: {
+          total: 0,
+          done: 0,
+          cancelled: 0,
+          inProgress: 0,
+          tracked: { closedMs: 0, openStartsMs: [] },
+        },
+        tags: [],
+        fields: [],
+      },
+    };
+    receipt = {
+      ...base,
+      project: { target: 'project', revision: 'revision' },
+      destinationCopy: resource === 'destinationCopy' ? 'unknown' : 'committed',
+      sourceRemoval: resource === 'sourceRemoval' ? 'unknown' : 'committed',
+    };
+  }
+  return session('uncertain', {
+    journal: [
+      {
+        id: 'entry',
+        proposalRevision: 1,
+        change,
+        request: { requestId: 'request', expiresAt: 100 },
+        state: 'settled',
+        effects: 'committed',
+        receipt,
+      },
+    ],
+  });
+}
+function loadedUnknownResource(resource: UnknownResource) {
+  const snapshot = unknownResourceSession(resource);
+  const h = setup({
+    version: 1,
+    activeSessionId: 'active',
+    sessions: [
+      { handles: 'historical', updatedAt: 1, snapshot },
+      { handles: 'historical', updatedAt: 2, snapshot: session('active') },
+    ],
+  });
+  return { ...h, snapshot };
+}
+it.each(unknownResources)(
+  'retains loaded %s uncertainty through explicit clearing',
+  async (resource) => {
+    const h = loadedUnknownResource(resource);
+    expect(h.store.failure()).toBeNull();
+    await h.store.clearCompleted();
+    expect(h.store.records().map((record) => record.snapshot.id)).toEqual(['uncertain', 'active']);
+    const reloaded = new CommandSessionStore({ storage: h.storage, now: () => 100 });
+    expect(
+      reloaded.records().find((record) => record.snapshot.id === 'uncertain')?.snapshot,
+    ).toEqual(h.snapshot);
+  },
+);
+it.each(unknownResources)(
+  'retains loaded %s uncertainty through automatic history pressure',
+  async (resource) => {
+    const h = loadedUnknownResource(resource);
+    expect(h.store.failure()).toBeNull();
+    for (let n = 0; n < 20; n++) await h.store.save(session(`done-${n}`));
+    expect(h.store.records().map((record) => record.snapshot.id)).toEqual([
+      'uncertain',
+      'active',
+      ...Array.from({ length: 19 }, (_, n) => `done-${n + 1}`),
+    ]);
+    const reloaded = new CommandSessionStore({ storage: h.storage, now: () => 100 });
+    expect(
+      reloaded.records().find((record) => record.snapshot.id === 'uncertain')?.snapshot,
+    ).toEqual(h.snapshot);
+  },
+);

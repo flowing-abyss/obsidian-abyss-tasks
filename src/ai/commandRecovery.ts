@@ -481,6 +481,14 @@ export function parseCommandHistory(value: unknown): CommandHistoryEnvelope {
   checkCommandStructure(value);
   return envelope.parse(value);
 }
+function hasUnknownResourceEffects(receipt: HistoricalCommandReceipt): boolean {
+  return (
+    ('noteEffects' in receipt && receipt.noteEffects === 'unknown') ||
+    ('destinationEffects' in receipt && receipt.destinationEffects === 'unknown') ||
+    ('destinationCopy' in receipt && receipt.destinationCopy === 'unknown') ||
+    ('sourceRemoval' in receipt && receipt.sourceRemoval === 'unknown')
+  );
+}
 /** Pending/uncertain evidence remains protected even when its session is inactive. */
 export function isCompletedCommandSession(value: HistoricalCommandSnapshot): boolean {
   return (
@@ -495,7 +503,8 @@ export function isCompletedCommandSession(value: HistoricalCommandSnapshot): boo
         (entry.effects === 'unchanged' || entry.effects === 'committed') &&
         (entry.receipt === undefined ||
           ((entry.receipt.effects === 'unchanged' || entry.receipt.effects === 'committed') &&
-            entry.receipt.recovery === 'none')),
+            entry.receipt.recovery === 'none' &&
+            !hasUnknownResourceEffects(entry.receipt))),
     )
   );
 }

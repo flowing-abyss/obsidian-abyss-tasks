@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { projectCommandSnapshot } from '../src/ai/commandRecovery';
+import { isCompletedCommandSession, projectCommandSnapshot } from '../src/ai/commandRecovery';
 import type { CommandSessionSnapshot } from '../src/ai/commandTypes';
 import { expectDefined } from './helpers';
 import { publicApiHarness } from './support/publicApiHarness';
@@ -411,4 +411,56 @@ it('preserves populated tree metadata, entry order, copy witnesses, links and cl
       actual: [{ ...tree, entries: [{ kind: 'provider', target: 'secret' }] }],
     }),
   ).toThrow();
+});
+
+it('preserves unknown content-destination effects as unresolved despite a committed aggregate', () => {
+  const value: CommandSessionSnapshot = {
+    ...emptySnapshot(),
+    journal: [
+      {
+        id: 'entry',
+        proposalRevision: 1,
+        state: 'settled',
+        effects: 'committed',
+        request: { requestId: 'request', expiresAt: 100 },
+        change: {
+          kind: 'task',
+          plan: {
+            providerEpoch: 'epoch',
+            generation: 1,
+            scopeRevision: 1,
+            semanticsRevision: 1,
+            target: 'plan',
+            revision: 'revision',
+            kind: 'edit',
+            expiresAt: 100,
+            before: null,
+            after: null,
+          },
+        },
+        receipt: {
+          providerEpoch: 'epoch',
+          requestId: 'request',
+          acceptedAt: 10,
+          expiresAt: 100,
+          plan: 'plan',
+          planRevision: 'revision',
+          outcome: 'changed',
+          effects: 'committed',
+          recovery: 'none',
+          destinationEffects: 'unknown',
+          snapshots: 'unavailable',
+          warnings: [],
+          contentContinuity: {
+            plan: 'plan',
+            planRevision: 'revision',
+            correspondence: { state: 'unavailable' },
+          },
+        },
+      },
+    ],
+  };
+  const projected = projectCommandSnapshot(value);
+  expect(projected).toEqual(value);
+  expect(isCompletedCommandSession(projected)).toBe(false);
 });
