@@ -208,7 +208,7 @@ class MetadataDisplay implements TaskMetadataDisplayMount {
     options: TaskMetadataDisplayOptions,
   ) {
     this.host = parent.createDiv({ cls: 'abyss-task-meta-right' });
-    this.dates = this.host.createSpan();
+    this.dates = this.host.createSpan({ cls: 'abyss-task-meta-right' });
     this.source = this.host.createSpan();
     this.options = options;
     this.update(value, options);

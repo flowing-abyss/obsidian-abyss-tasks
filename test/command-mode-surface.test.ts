@@ -3359,3 +3359,97 @@ it('keeps agent phases, readiness, questions and errors visible during continuou
     surface.element.querySelector('[aria-label="Microphone"]')?.getAttribute('aria-pressed'),
   ).toBe('true');
 });
+
+it('renders both native hierarchy roots with one moved child and its retained comment', async () => {
+  const h = await setup({
+    'a.md':
+      '- [ ] Source\n  - [ ] Moving\n    - 2026-08-01: Owned comment\n  - [ ] Staying\n- [ ] Destination\n- [ ] Source\n  - > Unrelated source\n- [ ] Destination\n  - > Unrelated destination\n',
+  });
+  const surface = h.mount();
+  const list = await h.api.tasks.list();
+  if (!list.ok) throw new Error('list');
+  const moving = expectDefined(list.value.items.find((node) => node.title === 'Moving'));
+  const parent = expectDefined(list.value.items.find((node) => node.title === 'Destination'));
+  const result = await expectDefined(h.api.tasks.prepare)({
+    kind: 'hierarchy',
+    operation: {
+      type: 'reparent',
+      source: moving.target,
+      expectedSourceRevision: moving.revision,
+      parent: parent.target,
+      expectedParentRevision: parent.revision,
+    },
+  });
+  if (!result.ok) throw new Error(result.error.code);
+  h.session.stage({
+    kind: 'task',
+    plan: await canonicalCommandPlan(h.api, result.value, new AbortController().signal, {
+      now: () => Date.UTC(2026, 7, 1, 12),
+      deadline: Date.UTC(2026, 7, 1, 12) + 5000,
+    }),
+  });
+  await flushMicrotasks(0);
+  expect(surface.element.textContent).toContain('Source');
+  expect(surface.element.textContent).toContain('Destination');
+  expect(
+    [...surface.element.querySelectorAll('.abyss-task-title')].map(
+      (element) => element.textContent,
+    ),
+  ).toEqual(['Source', 'Destination']);
+  const labels = [...surface.element.querySelectorAll('.abyss-subtask-label')].map(
+    (element) => element.textContent,
+  );
+  expect(labels.filter((label) => label === 'Moving')).toHaveLength(1);
+  expect(labels).toContain('Staying');
+  const comments = [...surface.element.querySelectorAll('.abyss-comment-text')].map(
+    (element) => element.textContent,
+  );
+  expect(comments).toEqual(['Owned comment']);
+});
+
+it('renders requested project creation values in the retained native project header without a saved DTO', async () => {
+  const { h, projects } = await projectSetup();
+  const result = await projects.schema();
+  if (!result.ok) throw new Error(result.error.code);
+  const schema = result.value,
+    status = expectDefined(schema.statuses[1]);
+  scriptedAgent(h, [
+    { tool: 'interpret', input: { intent: 'plan', research: false } },
+    {
+      tool: 'project',
+      input: {
+        kind: 'create',
+        name: 'Preview project',
+        statusId: status.id,
+        fields: [
+          { fieldId: 'start', value: '2026-11-09' },
+          { fieldId: 'end', value: '2026-11-12' },
+        ],
+      },
+    },
+    { tool: 'finish', input: { state: 'ready', message: 'Ready.' } },
+  ]);
+  const surface = h.mount();
+  enter(surface, 'Create this project');
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().status.kind).toBe('ready');
+  });
+  const header = expectDefined(
+    [...surface.element.querySelectorAll('.abyss-project-dashboard-header')].find((e) =>
+      e.textContent.includes('Preview project'),
+    ),
+  );
+  expect(header.querySelector('.abyss-project-dashboard-title')?.textContent).toBe(
+    'New project: Preview project',
+  );
+  expect(header.querySelectorAll('.abyss-project-dashboard-date')).toHaveLength(2);
+  expect(header.querySelector('.abyss-project-dashboard-status')?.textContent).not.toBe(
+    'No status',
+  );
+  expect(h.owner.snapshot().entities.projects.some((p) => p.name === 'Preview project')).toBe(
+    false,
+  );
+  expect(h.owner.snapshot().proposal.changes[0]).not.toHaveProperty('before');
+  surface.destroy();
+  expect(h.mount().element.textContent).toContain('New project: Preview project');
+});

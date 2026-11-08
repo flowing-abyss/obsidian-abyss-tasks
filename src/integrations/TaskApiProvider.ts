@@ -114,7 +114,14 @@ function apiInfo(options: ProviderOptions): ApiInfoV1 {
       ...(options.search === undefined ? [] : ['tasks.search']),
       ...(options.content === undefined
         ? []
-        : ['tasks.tree', 'tasks.prepare', 'tasks.apply', 'tasks.create']),
+        : [
+            'tasks.tree',
+            'tasks.prepare',
+            'tasks.apply',
+            'tasks.create',
+            'tasks.prepare.reorder',
+            ...(options.content.hierarchies === undefined ? [] : ['tasks.prepare.hierarchy']),
+          ]),
       'tasks.resolve',
       'tasks.statuses',
       'tasks.complete',

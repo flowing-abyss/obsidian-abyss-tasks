@@ -86,6 +86,7 @@ import type {
   TaskDestinationProvider,
   TaskDestinationResolution,
 } from './TaskDestinationProvider';
+import type { TaskHierarchyPreparation } from './TaskEditPreparationApi';
 import {
   isPreparedTaskEditCommand,
   type PreparedTaskEditCommand,
@@ -1972,6 +1973,14 @@ export class TaskApplicationService
         destinationEffects: effects,
       };
     }
+  }
+
+  prepareHierarchy(command: TaskHierarchyCommand): Promise<TaskHierarchyPreparation> {
+    return new TaskHierarchyService(
+      this.queries,
+      this.repository_abyssPrivate,
+      this.diagnostics_abyssPrivate,
+    ).prepareHierarchy(command);
   }
 
   async prepare(

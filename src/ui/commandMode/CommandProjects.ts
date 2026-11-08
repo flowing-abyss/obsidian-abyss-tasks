@@ -13,7 +13,46 @@ import { createProjectDateParts } from '../projectDateParts';
 import { projectMetadataText } from '../projectPropertyValuePresentation';
 import { RetainedTaskText, type PreparedTaskTextUpdate } from '../retainedTaskText';
 import type { CommandModeOptions } from './CommandModeSurface';
-type ProjectChange = Extract<CommandChange, { kind: 'project' }>;
+type ProjectChange = Extract<CommandChange, { kind: 'project' | 'project-create' }>;
+interface ProjectPresentation {
+  readonly key: string;
+  readonly basis: string;
+  readonly name: string;
+  readonly sourcePath?: string;
+  readonly status: ProjectStatusV1;
+  readonly fields: ProjectDtoV1['fields'];
+  readonly change?: ProjectChange;
+  readonly label?: 'New project' | 'Move to';
+}
+function savedProject(project: ProjectDtoV1, change?: ProjectChange): ProjectPresentation {
+  return {
+    key: project.target,
+    basis: project.revision,
+    name: project.name,
+    sourcePath: project.path,
+    status: project.status,
+    fields: project.fields,
+    ...(change === undefined ? {} : { change }),
+  };
+}
+function projectProposal(change: CommandChange): ProjectPresentation | undefined {
+  if (change.kind === 'project') return savedProject(change.before, change);
+  if (change.kind === 'project-move')
+    return { ...savedProject(change.destination), label: 'Move to' };
+  if (change.kind !== 'project-create') return undefined;
+  return {
+    key: change.id,
+    basis: change.id,
+    name: change.name,
+    label: 'New project',
+    fields: [],
+    change,
+    status:
+      change.schema.defaultStatusId === undefined
+        ? { state: 'absent' }
+        : { state: 'configured', id: change.schema.defaultStatusId },
+  };
+}
 interface PaintedValue {
   readonly value: string | undefined;
   readonly markdown: string;
@@ -47,7 +86,7 @@ interface ProjectRow {
   readonly dates: Map<string, ProjectDate>;
 }
 function displayedStatus(
-  project: ProjectDtoV1,
+  project: ProjectPresentation,
   change: ProjectChange | undefined,
 ): ProjectStatusV1 {
   if (change?.statusId === undefined) return project.status;
@@ -60,11 +99,14 @@ function statusLabel(value: ProjectStatusV1, configured: ProjectStatus | undefin
   if (value.state === 'unrecognized') return value.value;
   return value.state === 'unsupported' ? 'Unsupported status' : 'No status';
 }
-function fieldValue(project: ProjectDtoV1, id: string): ProjectFieldValueV1 | undefined {
+function fieldValue(project: ProjectPresentation, id: string): ProjectFieldValueV1 | undefined {
   const field = project.fields.find((field) => field.fieldId === id);
   return field?.state === 'value' ? field.value : undefined;
 }
-function values(project: ProjectDtoV1, change?: ProjectChange): ReadonlyMap<string, PaintedValue> {
+function values(
+  project: ProjectPresentation,
+  change?: ProjectChange,
+): ReadonlyMap<string, PaintedValue> {
   const fields = new Map<string, PaintedValue>();
   for (const id of new Set([
     ...project.fields.map((field) => field.fieldId),
@@ -86,7 +128,7 @@ function changedFields(
   );
 }
 function projectFields(
-  project: ProjectDtoV1,
+  project: ProjectPresentation,
   change: ProjectChange,
   iteration: number,
   prior: CommandProjectFields | undefined,
@@ -97,7 +139,7 @@ function projectFields(
   const comparison = sameIteration ? prior.comparison : (prior?.current ?? before);
   const changed = new Set(sameIteration ? prior.changed : []);
   for (const id of changedFields(current, prior?.current ?? before)) changed.add(id);
-  return { revision: project.revision, iteration, current, comparison, changed };
+  return { revision: project.basis, iteration, current, comparison, changed };
 }
 export class CommandProjects {
   private readonly rows = new Map<string, ProjectRow>();
@@ -123,10 +165,9 @@ export class CommandProjects {
       }
     for (const [key, project] of projects) {
       const row = this.row(key);
-      row.title.textContent = project.name;
-      const change = state.proposal.changes.find(
-        (entry): entry is ProjectChange => entry.kind === 'project' && entry.before.target === key,
-      );
+      row.title.textContent =
+        project.label === undefined ? project.name : `${project.label}: ${project.name}`;
+      const change = project.change;
       this.projectChanges(state, project, change, { iteration, next });
       this.status(row, project, change);
       for (const id of ['start', 'end']) this.date(row, project, id, change);
@@ -158,21 +199,21 @@ export class CommandProjects {
   }
   private projectChanges(
     state: CommandSessionSnapshot,
-    project: ProjectDtoV1,
+    project: ProjectPresentation,
     change: ProjectChange | undefined,
     context: { iteration: number; next: Map<string, CommandProjectFields> },
   ): void {
     this.changed = new Set();
     this.comparison = values(project);
     if (change === undefined) return;
-    const previous = this.previous.get(project.target);
+    const previous = this.previous.get(project.key);
     const paint = projectFields(
       project,
       change,
       context.iteration,
-      previous?.revision === project.revision ? previous : undefined,
+      previous?.revision === project.basis ? previous : undefined,
     );
-    context.next.set(project.target, paint);
+    context.next.set(project.key, paint);
     if (state.presentation?.changes === 'cumulative')
       this.changed = changedFields(paint.current, this.comparison);
     else {
@@ -180,13 +221,15 @@ export class CommandProjects {
       this.comparison = paint.comparison;
     }
   }
-  private selected(state: CommandSessionSnapshot): ReadonlyMap<string, ProjectDtoV1> {
-    const projects = new Map<string, ProjectDtoV1>();
+  private selected(state: CommandSessionSnapshot): ReadonlyMap<string, ProjectPresentation> {
+    const projects = new Map<string, ProjectPresentation>();
     for (const project of state.entities.projects)
       if (state.focus.some((focus) => focus.kind === 'project' && focus.target === project.target))
-        projects.set(project.target, project);
-    for (const change of state.proposal.changes)
-      if (change.kind === 'project') projects.set(change.before.target, change.before);
+        projects.set(project.target, savedProject(project));
+    for (const change of state.proposal.changes) {
+      const presentation = projectProposal(change);
+      if (presentation !== undefined) projects.set(presentation.key, presentation);
+    }
     return projects;
   }
   private row(key: string): ProjectRow {
@@ -209,7 +252,7 @@ export class CommandProjects {
   }
   private properties(
     row: ProjectRow,
-    project: ProjectDtoV1,
+    project: ProjectPresentation,
     change: ProjectChange | undefined,
   ): void {
     const ids = new Set(['description', ...(change?.fields ?? []).map((field) => field.fieldId)]);
@@ -219,7 +262,7 @@ export class CommandProjects {
   }
   private property(
     row: ProjectRow,
-    project: ProjectDtoV1,
+    project: ProjectPresentation,
     id: string,
     change: ProjectChange | undefined,
   ): void {
@@ -235,7 +278,7 @@ export class CommandProjects {
     field.label.textContent = findProjectFieldById(catalog, id)?.label ?? 'Unavailable property';
     this.dateChange(field.host, assignment?.value, id);
     field.host.inert = field.host.dataset['change'] === 'removed';
-    field.value.dataset['taskSourcePath'] = project.path;
+    field.value.dataset['taskSourcePath'] = project.sourcePath ?? '';
     this.prepareProperty(field, {
       row,
       project,
@@ -252,7 +295,7 @@ export class CommandProjects {
     field: PropertyRow,
     input: {
       row: ProjectRow;
-      project: ProjectDtoV1;
+      project: ProjectPresentation;
       id: string;
       value: ProjectFieldValueV1 | null | undefined;
       original: ProjectFieldValueV1 | undefined;
@@ -262,9 +305,9 @@ export class CommandProjects {
     const { row, project, id, value, original, previousMarkdown } = input;
     field.pending = field.text.prepare({
       source: {
-        target: { type: 'display', key: `${project.target}:${id}` },
+        target: { type: 'display', key: `${project.key}:${id}` },
         markdown: projectMetadataText(value ?? original),
-        path: project.path,
+        path: project.sourcePath ?? '',
         presentation: id === 'description' ? 'description' : 'markdown',
       },
       decoration: {
@@ -273,8 +316,9 @@ export class CommandProjects {
       },
       callbacks: {
         app: this.options.app,
-        isCurrent: () => this.rows.get(project.target) === row,
-        beforeOpenLink: async ({ href, sourcePath }) => this.allowLink(href, sourcePath),
+        isCurrent: () => this.rows.get(project.key) === row,
+        beforeOpenLink: async ({ href, sourcePath }) =>
+          project.sourcePath !== undefined && this.allowLink(href, sourcePath),
         onRenderFailure: () => {
           field.value.textContent = 'Could not display property.';
         },
@@ -328,20 +372,29 @@ export class CommandProjects {
     this.component.removeChild(row.owner);
     row.host.remove();
   }
-  private status(row: ProjectRow, project: ProjectDtoV1, change: ProjectChange | undefined): void {
+  private status(
+    row: ProjectRow,
+    project: ProjectPresentation,
+    change: ProjectChange | undefined,
+  ): void {
     const value = displayedStatus(project, change);
     const configured =
       value.state === 'configured'
         ? this.options.projectSettings().statuses.find((status) => status.id === value.id)
         : undefined;
     applyProjectStatusPresentation(row.status, configured);
-    row.status.textContent = statusLabel(value, configured);
+    row.status.textContent =
+      change?.kind === 'project-create' &&
+      change.statusId === undefined &&
+      change.schema.defaultStatusId === undefined
+        ? 'Default status'
+        : statusLabel(value, configured);
     row.status.dataset['change'] =
       change?.statusId === undefined || !this.changed.has('status') ? '' : 'changed';
   }
   private date(
     row: ProjectRow,
-    project: ProjectDtoV1,
+    project: ProjectPresentation,
     id: string,
     change: ProjectChange | undefined,
   ): void {

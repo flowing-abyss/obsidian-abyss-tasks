@@ -7,6 +7,7 @@ import type {
   TaskContentReceiptV1,
 } from '../../api';
 import {
+  sameTaskNodeRef,
   taskNodeSourceLine,
   taskTreeNodes,
   type CommentRef,
@@ -25,6 +26,7 @@ export interface ContentReceiptBasis {
   readonly revision: string;
   readonly originalTarget?: string | undefined;
   readonly after: TaskSnapshot | null;
+  readonly affected?: readonly TaskSnapshot[];
 }
 export interface ContentCommitEvidence {
   readonly comments?: ReadonlyMap<string, CommentRef>;
@@ -59,8 +61,14 @@ export function unknownContentReceipt(
     warnings: [],
   };
 }
+function partialEffects(result: Extract<TaskCommandResult, { type: 'partial' }>): EffectStateV1 {
+  return result.operation === 'hierarchy' && result.recovery.state === 'copied-source-remains'
+    ? 'partial'
+    : 'unknown';
+}
 function effects(e: ContentCommitEvidence): EffectStateV1 {
   if (e.result.type === 'ok') return e.result.changed ? 'committed' : 'unchanged';
+  if (e.result.type === 'partial') return partialEffects(e.result);
   if (e.result.type === 'io-error' && e.result.contentState === 'unknown') return 'unknown';
   if (e.destinationEffects === 'committed') return 'partial';
   return e.destinationEffects === 'unknown' ? 'unknown' : 'unchanged';
@@ -178,12 +186,109 @@ function inserted(
     tasks,
   };
 }
+function hierarchyRootCorrespondence(
+  context: TaskApiContext,
+  roots: { accepted: TaskSnapshot; after: TaskSnapshot },
+  e: ContentCommitEvidence,
+  selected: boolean,
+): Correspondence {
+  const { accepted, after } = roots;
+  const address = readNodeFor(context, {
+    root: accepted,
+    node: accepted,
+    target: { type: 'task', ref: accepted.ref },
+    path: [],
+  }).address;
+  const observed = context.reads.node(address);
+  if (
+    observed.type !== 'ok' ||
+    !context.reads.canDisclose(address) ||
+    observed.value.value.root.source.originalBlock !== after.source.originalBlock
+  )
+    return { state: 'unavailable' };
+  const nodes = [...taskTreeNodes(after)];
+  const coverage = new Map(
+    [...e.coverage].filter(([, ref]) => nodes.some((node) => sameTaskNodeRef(node.target, ref))),
+  );
+  const scoped = {
+    ...e,
+    coverage,
+    comments: new Map(
+      [...(e.comments ?? [])].filter(([, ref]) =>
+        nodes.some((node) => sameTaskNodeRef(node.target, ref.parent)),
+      ),
+    ),
+  };
+  if (selected) return inserted(context, roots, scoped);
+  const tasks = pairs(context, roots, coverage, observed.observation.semanticsRevision);
+  const comments = commentPairs(context, roots, scoped);
+  if (tasks === undefined || comments === undefined) return { state: 'unavailable' };
+  return {
+    state: 'complete',
+    coverage: 'issued-plan-tasks',
+    commentCoverage: 'issued-plan-comments',
+    root: null,
+    tasks,
+    comments,
+  };
+}
+function completeHierarchy(maps: readonly Complete[], e: ContentCommitEvidence): Correspondence {
+  const tasks = maps.flatMap((map) => map.tasks),
+    comments = maps.flatMap((map) => map.comments ?? []);
+  const root = maps.find((map) => map.root !== null)?.root;
+  if (
+    root === undefined ||
+    tasks.length !== e.coverage.size ||
+    comments.length !== (e.comments?.size ?? 0)
+  )
+    return { state: 'unavailable' };
+  return {
+    state: 'complete',
+    coverage: 'issued-plan-tasks',
+    commentCoverage: 'issued-plan-comments',
+    root,
+    tasks,
+    comments,
+  };
+}
+function hierarchyCorrespondence(
+  context: TaskApiContext,
+  basis: ContentReceiptBasis,
+  e: ContentCommitEvidence,
+): Correspondence {
+  if (
+    e.result.type !== 'ok' ||
+    e.result.outcome.type !== 'hierarchy' ||
+    basis.affected === undefined ||
+    basis.after === null
+  )
+    return { state: 'unavailable' };
+  const outcome = e.result.outcome,
+    maps: Complete[] = [];
+  for (const after of basis.affected) {
+    const accepted = outcome.affectedRoots.find(
+      (root) =>
+        root.ref.filePath === after.ref.filePath &&
+        root.source.line === after.source.line &&
+        root.source.originalBlock === after.source.originalBlock,
+    );
+    if (accepted === undefined) return { state: 'unavailable' };
+    const selected =
+      after.ref.filePath === basis.after.ref.filePath &&
+      after.source.line === basis.after.source.line;
+    const map = hierarchyRootCorrespondence(context, { accepted, after }, e, selected);
+    if (map.state !== 'complete') return map;
+    maps.push(map);
+  }
+  return completeHierarchy(maps, e);
+}
 function correspondence(
   context: TaskApiContext,
   basis: ContentReceiptBasis,
   e: ContentCommitEvidence,
 ): Correspondence {
   if (e.result.type !== 'ok') return { state: 'unavailable' };
+  if (e.result.outcome.type === 'hierarchy') return hierarchyCorrespondence(context, basis, e);
   if (e.result.outcome.type === 'deleted' && basis.after === null)
     return { state: 'complete', coverage: 'issued-plan-tasks', root: null, tasks: [] };
   if (e.result.outcome.type !== 'task' || basis.after === null) return { state: 'unavailable' };

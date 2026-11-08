@@ -224,6 +224,8 @@ export type {
   PreparedTaskEditCommand,
   TaskEditPreparation,
   TaskEditPreparationApi,
+  TaskHierarchyPreparation,
+  TaskHierarchyPreparationApi,
 } from './application/TaskEditPreparationApi';
 
 export type {

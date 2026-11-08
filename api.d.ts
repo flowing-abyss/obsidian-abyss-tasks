@@ -732,6 +732,12 @@ export interface TaskCreateTreeV1 {
   readonly children?: readonly TaskCreateTreeV1[];
 }
 export type TaskContentOperationV1 =
+  | {
+      readonly type: 'reorder';
+      readonly target: string;
+      readonly relativeTo: string;
+      readonly placement: 'before' | 'after';
+    }
   | { readonly type: 'copy-comment'; readonly source: string; readonly target: string }
   | {
       readonly type: 'copy-subtree';
@@ -771,7 +777,22 @@ export type TaskInsertionV1 =
   | { readonly type: 'append' | 'prepend' }
   | { readonly type: 'section'; readonly heading: string; readonly position?: 'top' | 'bottom' };
 
+/** Advertised by tasks.prepare.hierarchy. Existing edit/create forms remain unchanged. */
+export type TaskHierarchyOperationV1 =
+  | {
+      readonly type: 'reparent';
+      readonly source: TaskTargetV1;
+      readonly expectedSourceRevision: TaskRevisionV1;
+      readonly parent: TaskTargetV1;
+      readonly expectedParentRevision: TaskRevisionV1;
+    }
+  | {
+      readonly type: 'promote';
+      readonly source: TaskTargetV1;
+      readonly expectedSourceRevision: TaskRevisionV1;
+    };
 export type PrepareTaskContentV1 =
+  | { readonly kind: 'hierarchy'; readonly operation: TaskHierarchyOperationV1 }
   | RefreshTaskContentV1
   | {
       readonly kind: 'edit';
@@ -826,7 +847,12 @@ export interface ContentPlanV1 extends Omit<ObservationV1, 'revision'> {
   readonly mergePreservation?: ContentMergePreservationV1;
   readonly target: ContentPlanTargetV1;
   readonly revision: ContentPlanRevisionV1;
-  readonly kind: 'edit' | 'create';
+  readonly kind: 'edit' | 'create' | 'hierarchy';
+  /** Hierarchy plans always include participating roots only; pages expand through tasks.tree. */
+  readonly affected?: {
+    readonly before: readonly TaskTreeV1[];
+    readonly after: readonly TaskTreeV1[];
+  };
   readonly expiresAt: number;
   readonly before: TaskTreeV1 | null;
   readonly after: TaskTreeV1 | null;

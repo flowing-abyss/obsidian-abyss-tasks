@@ -1583,3 +1583,406 @@ it.each(['![[#Section]]', '![photo](./photo.png)', '[[#Section]]'])(
     expect(await h.read('B/target.md')).toBe(targetText);
   },
 );
+
+it('reorders exact duplicate siblings in a retained preparation with descendant and comment correspondence', async () => {
+  const original =
+    '- [ ] Root\r\n  - [ ] Same\r\n    - [ ] First descendant\r\n    - 2026-08-01: First comment\r\n  - [ ] Same\r\n    - [ ] Second descendant\r\n    - 2026-08-01: Second comment\r\n- [ ] Unrelated\r\n';
+  const h = await setup(original);
+  const c = h.client();
+  const root = required(ok(await c.tasks.list()).items[0]);
+  const initial = ok(
+    await required(c.tasks.prepare)({
+      kind: 'edit',
+      target: root.target,
+      expectedRevision: root.revision,
+    }),
+  );
+  const before = ok(
+    await required(c.tasks.tree)({
+      target: root.target,
+      plan: initial.target,
+      expectedPlanRevision: initial.revision,
+      side: 'after',
+      limit: 500,
+    }),
+  ).tree;
+  const first = required(before.children[0]);
+  const second = ok(
+    await required(c.tasks.tree)({
+      target: required(before.children[1]).target,
+      plan: initial.target,
+      expectedPlanRevision: initial.revision,
+      limit: 500,
+    }),
+  ).tree;
+  const reordered = ok(
+    await required(c.tasks.prepare)({
+      kind: 'append',
+      plan: initial.target,
+      expectedPlanRevision: initial.revision,
+      operation: {
+        type: 'reorder',
+        target: second.target,
+        relativeTo: first.target,
+        placement: 'before',
+      },
+    }),
+  );
+  const after = ok(
+    await required(c.tasks.tree)({
+      target: root.target,
+      plan: reordered.target,
+      expectedPlanRevision: reordered.revision,
+      side: 'after',
+      limit: 500,
+    }),
+  ).tree;
+  expect(after.children.map((node) => node.target)).toEqual([second.target, first.target]);
+  const moved = ok(
+    await required(c.tasks.tree)({
+      target: second.target,
+      plan: reordered.target,
+      expectedPlanRevision: reordered.revision,
+      limit: 500,
+    }),
+  ).tree;
+  expect(moved.children[0]?.target).toBe(second.children[0]?.target);
+  expect(moved.comments[0]?.text).toBe('Second comment');
+  expect(await h.read('a.md')).toBe(original);
+  const refined = ok(
+    await required(c.tasks.prepare)({
+      kind: 'append',
+      plan: reordered.target,
+      expectedPlanRevision: reordered.revision,
+      operation: { type: 'description', target: second.target, text: 'Exact moved child' },
+    }),
+  );
+  const result = await required(c.tasks.apply)({
+    plan: refined.target,
+    expectedPlanRevision: refined.revision,
+    requestId: 'reorder-save',
+    expiresAt: Date.UTC(2026, 7, 1, 12) + 60000,
+  });
+  expect(result.ok).toBe(true);
+  expect(result.receipt?.contentContinuity.correspondence.state).toBe('complete');
+  const saved = await h.read('a.md');
+  expect(saved.indexOf('Second descendant')).toBeLessThan(saved.indexOf('First descendant'));
+  expect(saved).toContain('First comment\r\n- [ ] Unrelated\r\n');
+  const current = ok(await required(c.tasks.tree)({ target: root.target })).tree;
+  expect(current.children[0]?.description).toBe('Exact moved child');
+  expect(current.children[1]?.description).toBeUndefined();
+});
+
+it('prepares a multi-root hierarchy through the content facade and maps the exact moved duplicate after commit', async () => {
+  const h = await publicApiHarness({
+    'source.md': '- [ ] Source\n  - [ ] Same\n    - [ ] Kept\n  - [ ] Same\n    - [ ] Moved\n',
+    'target.md': '- [ ] Destination\n  - [ ] Same\n    - [ ] Existing\n',
+  });
+  owners.push(h);
+  const c = h.client();
+  const listed = ok(await c.tasks.list()).items;
+  const children = listed.filter(
+    (node) => node.title === 'Same' && node.source.path === 'source.md',
+  );
+  const source = required(children[1]);
+  const parent = required(listed.find((node) => node.title === 'Destination'));
+  const prepared = ok(
+    await required(c.tasks.prepare)({
+      kind: 'hierarchy',
+      operation: {
+        type: 'reparent',
+        source: source.target,
+        expectedSourceRevision: source.revision,
+        parent: parent.target,
+        expectedParentRevision: parent.revision,
+      },
+    }),
+  );
+  expect(prepared.kind).toBe('hierarchy');
+  expect(prepared.before?.target).toBe(source.target);
+  expect(prepared.after?.target).toBe(source.target);
+  expect(prepared.affected?.before).toHaveLength(2);
+  expect(prepared.affected?.after).toHaveLength(2);
+  const after = ok(
+    await required(c.tasks.tree)({
+      target: source.target,
+      plan: prepared.target,
+      expectedPlanRevision: prepared.revision,
+      limit: 500,
+    }),
+  ).tree;
+  expect(after.children[0]?.title).toBe('Moved');
+  expect(await h.read('source.md')).toContain('    - [ ] Moved');
+  const input = {
+    plan: prepared.target,
+    expectedPlanRevision: prepared.revision,
+    requestId: 'hierarchy',
+    expiresAt: Date.UTC(2026, 7, 1, 12) + 60000,
+  };
+  const saved = await required(c.tasks.apply)(input);
+  expect(saved.ok).toBe(true);
+  expect(saved.receipt?.contentContinuity.correspondence.state).toBe('complete');
+  expect(await required(c.tasks.apply)(input)).toEqual(saved);
+  expect(await h.read('source.md')).toBe('- [ ] Source\n  - [ ] Same\n    - [ ] Kept\n');
+  expect(await h.read('target.md')).toContain('- [ ] Existing\n  - [ ] Same\n    - [ ] Moved');
+});
+
+it.each([
+  { mode: 'same-file', sourceLine: 5, parentPath: 'source.md', parentLine: 11, after: 'both' },
+  { mode: 'cross-file', sourceLine: 5, parentPath: 'target.md', parentLine: 2, after: 'both' },
+  { mode: 'promote', sourceLine: 5, parentPath: 'target.md', parentLine: 2, after: 'promoted' },
+  { mode: 'root', sourceLine: 2, parentPath: 'target.md', parentLine: 2, after: 'destination' },
+] as const)(
+  'limits $mode hierarchy review to exact participating roots while retaining unrelated duplicates',
+  async ({ mode, sourceLine, parentPath, parentLine, after }) => {
+    const sourceText =
+      '- [ ] Duplicate\n  - > Unrelated before\n- [ ] Source\n  - [ ] Same\n    - > First child\n  - [ ] Same\n    - > Second child\n- [ ] Duplicate\n  - > Unrelated after\n';
+    const targetText =
+      '- [ ] Duplicate\n  - > Unrelated target\n- [ ] Destination\n  - [ ] Same\n    - > Existing child\n';
+    const files =
+      mode === 'same-file'
+        ? { 'source.md': sourceText + targetText }
+        : { 'source.md': sourceText, 'target.md': targetText };
+    const h = await publicApiHarness(files);
+    owners.push(h);
+    const c = h.client();
+    const listed = ok(await c.tasks.list()).items;
+    const root = required(
+      listed.find((node) => node.source.path === 'source.md' && node.source.line === 2),
+    );
+    const source = required(
+      listed.find((node) => node.source.path === 'source.md' && node.source.line === sourceLine),
+    );
+    const parent = required(
+      listed.find((node) => node.source.path === parentPath && node.source.line === parentLine),
+    );
+    const plan = ok(
+      await required(c.tasks.prepare)({
+        kind: 'hierarchy',
+        operation:
+          mode === 'promote'
+            ? { type: 'promote', source: source.target, expectedSourceRevision: source.revision }
+            : {
+                type: 'reparent',
+                source: source.target,
+                expectedSourceRevision: source.revision,
+                parent: parent.target,
+                expectedParentRevision: parent.revision,
+              },
+      }),
+    );
+    expect(plan.affected?.before.map((node) => node.target)).toEqual(
+      mode === 'promote' ? [root.target] : [root.target, parent.target],
+    );
+    const afterTargets = {
+      promoted: [root.target, source.target],
+      destination: [parent.target],
+      both: [root.target, parent.target],
+    };
+    expect(new Set(plan.affected?.after.map((node) => node.target))).toEqual(
+      new Set(afterTargets[after]),
+    );
+    expect(plan.after?.target).toBe(source.target);
+    const saved = await required(c.tasks.apply)({
+      plan: plan.target,
+      expectedPlanRevision: plan.revision,
+      requestId: `scoped-${mode}`,
+      expiresAt: Date.UTC(2026, 7, 1, 12) + 60000,
+    });
+    expect(saved.ok).toBe(true);
+    expect(saved.receipt?.contentContinuity.correspondence.state).toBe('complete');
+    const allText = (await Promise.all(Object.keys(files).map((path) => h.read(path)))).join('');
+    for (const text of [
+      'Unrelated before',
+      'Unrelated after',
+      'Unrelated target',
+      'First child',
+      'Second child',
+      'Existing child',
+    ])
+      expect(allText.split(text)).toHaveLength(2);
+  },
+);
+
+it('rejects hierarchy cycles and stale parent revisions while preserving a live review', async () => {
+  const h = await setup('- [ ] Root\n  - [ ] Child\n    - [ ] Deep\n- [ ] Parent\n');
+  const c = h.client(),
+    listed = ok(await c.tasks.list()).items;
+  const root = required(listed.find((n) => n.title === 'Root'));
+  const child = required(listed.find((n) => n.title === 'Child'));
+  const deep = required(listed.find((n) => n.title === 'Deep'));
+  const parent = required(listed.find((n) => n.title === 'Parent'));
+  const prepare = required(c.tasks.prepare);
+  expect(
+    await prepare({
+      kind: 'hierarchy',
+      operation: {
+        type: 'reparent',
+        source: root.target,
+        expectedSourceRevision: root.revision,
+        parent: deep.target,
+        expectedParentRevision: deep.revision,
+      },
+    }),
+  ).toMatchObject({ ok: false });
+  expect(
+    await prepare({
+      kind: 'hierarchy',
+      operation: {
+        type: 'reparent',
+        source: child.target,
+        expectedSourceRevision: child.revision,
+        parent: parent.target,
+        expectedParentRevision: 'stale',
+      },
+    }),
+  ).toMatchObject({ ok: false });
+  const p = ok(
+    await prepare({
+      kind: 'hierarchy',
+      operation: { type: 'promote', source: child.target, expectedSourceRevision: child.revision },
+    }),
+  );
+  expect(p.after?.target).toBe(child.target);
+  expect(p.after?.parentTarget).toBeUndefined();
+  expect(p.affected?.after.map((node) => node.target)).toEqual([root.target, child.target]);
+  expect(
+    await prepare({
+      kind: 'append',
+      plan: p.target,
+      expectedPlanRevision: p.revision,
+      operation: { type: 'description', target: child.target, text: 'Not silently composed' },
+    }),
+  ).toMatchObject({ ok: false, error: { code: 'HIERARCHY_REVIEW' } });
+  const saved = await required(c.tasks.apply)({
+    plan: p.target,
+    expectedPlanRevision: p.revision,
+    requestId: 'promote',
+    expiresAt: Date.UTC(2026, 7, 1, 12) + 60000,
+  });
+  expect(saved.receipt?.contentContinuity.correspondence.state).toBe('complete');
+  expect(await h.read('a.md')).toBe('- [ ] Root\n- [ ] Child\n  - [ ] Deep\n- [ ] Parent\n');
+});
+
+it('retains unknown native hierarchy effects and never replays a failed cross-note movement', async () => {
+  const h = await publicApiHarness({ 'source.md': '- [ ] Move\n', 'target.md': '- [ ] Parent\n' });
+  owners.push(h);
+  const c = h.client(),
+    listed = ok(await c.tasks.list()).items;
+  const source = required(listed.find((n) => n.title === 'Move')),
+    parent = required(listed.find((n) => n.title === 'Parent'));
+  const p = ok(
+    await required(c.tasks.prepare)({
+      kind: 'hierarchy',
+      operation: {
+        type: 'reparent',
+        source: source.target,
+        expectedSourceRevision: source.revision,
+        parent: parent.target,
+        expectedParentRevision: parent.revision,
+      },
+    }),
+  );
+  const process = h.app.vault.process.bind(h.app.vault);
+  let effects = 0;
+  vi.spyOn(h.app.vault, 'process').mockImplementation(async (file, transform, options) => {
+    effects++;
+    if (file.path === 'source.md' || effects > 1)
+      throw new Error('Source failed; compensation unavailable');
+    return process(file, transform, options);
+  });
+  const input = {
+    plan: p.target,
+    expectedPlanRevision: p.revision,
+    requestId: 'uncertain-hierarchy',
+    expiresAt: Date.UTC(2026, 7, 1, 12) + 60000,
+  };
+  const saved = await required(c.tasks.apply)(input);
+  expect(saved).toMatchObject({
+    ok: false,
+    effects: 'unknown',
+    recovery: 'reconcile',
+    receipt: { contentContinuity: { correspondence: { state: 'unavailable' } } },
+  });
+  const count = effects;
+  await required(c.tasks.apply)(input);
+  await required(c.tasks.apply)({ ...input, requestId: 'do-not-repeat' });
+  expect(effects).toBe(count);
+  expect(await h.read('source.md')).toBe('- [ ] Move\n');
+  expect(await h.read('target.md')).toContain('- [ ] Move');
+});
+
+it('previews an already-parented hierarchy as unchanged without reserving or writing', async () => {
+  const h = await setup('- [ ] Root\n  - [ ] Child\n- [ ] Other\n');
+  const c = h.client(),
+    items = ok(await c.tasks.list()).items;
+  const root = required(items.find((n) => n.title === 'Root')),
+    child = required(items.find((n) => n.title === 'Child'));
+  const reserve = vi.spyOn(h.authority, 'reserveStructuralMutation'),
+    write = vi.spyOn(h.app.vault, 'process');
+  const p = ok(
+    await required(c.tasks.prepare)({
+      kind: 'hierarchy',
+      operation: {
+        type: 'reparent',
+        source: child.target,
+        expectedSourceRevision: child.revision,
+        parent: root.target,
+        expectedParentRevision: root.revision,
+      },
+    }),
+  );
+  const result = await required(c.tasks.apply)({
+    plan: p.target,
+    expectedPlanRevision: p.revision,
+    requestId: 'unchanged-hierarchy',
+    expiresAt: Date.UTC(2026, 7, 1, 12) + 60000,
+  });
+  expect(result).toMatchObject({
+    ok: true,
+    receipt: { effects: 'unchanged', contentContinuity: { correspondence: { state: 'complete' } } },
+  });
+  expect(reserve).not.toHaveBeenCalled();
+  expect(write).not.toHaveBeenCalled();
+});
+
+it('withholds every hierarchy view and admission when the destination becomes undisclosable', async () => {
+  const h = await publicApiHarness({ 'source.md': '- [ ] Move\n', 'target.md': '- [ ] Parent\n' });
+  owners.push(h);
+  const c = h.client(),
+    items = ok(await c.tasks.list()).items;
+  const source = required(items.find((n) => n.title === 'Move')),
+    parent = required(items.find((n) => n.title === 'Parent'));
+  const p = ok(
+    await required(c.tasks.prepare)({
+      kind: 'hierarchy',
+      operation: {
+        type: 'reparent',
+        source: source.target,
+        expectedSourceRevision: source.revision,
+        parent: parent.target,
+        expectedParentRevision: parent.revision,
+      },
+    }),
+  );
+  vi.spyOn(h.reads, 'canDisclose').mockImplementation(
+    (address) => address.filePath !== 'target.md',
+  );
+  expect(
+    await required(c.tasks.tree)({
+      target: source.target,
+      plan: p.target,
+      expectedPlanRevision: p.revision,
+    }),
+  ).toMatchObject({ ok: false });
+  expect(
+    await required(c.tasks.apply)({
+      plan: p.target,
+      expectedPlanRevision: p.revision,
+      requestId: 'hidden-hierarchy',
+      expiresAt: Date.UTC(2026, 7, 1, 12) + 60000,
+    }),
+  ).toMatchObject({ ok: false, effects: 'unchanged' });
+  expect(await h.read('source.md')).toBe('- [ ] Move\n');
+  expect(await h.read('target.md')).toBe('- [ ] Parent\n');
+});

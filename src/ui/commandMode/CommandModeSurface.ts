@@ -1,7 +1,11 @@
 import { Component, Menu, parseLinktext, setIcon, setTooltip, type App } from 'obsidian';
 import type { CommandSessionOwner } from '../../ai/CommandSessionOwner';
 import type { HistoricalCommandSession } from '../../ai/commandRecovery';
-import type { CommandSessionSnapshot, CommandSubmissionBasis } from '../../ai/commandTypes';
+import type {
+  CommandChange,
+  CommandSessionSnapshot,
+  CommandSubmissionBasis,
+} from '../../ai/commandTypes';
 import { CommandVoiceController } from '../../ai/voice/CommandVoiceController';
 import type { CommandTranscriptionPort } from '../../ai/voice/ProviderTranscription';
 import type { ProjectsSettings } from '../../settings/types';
@@ -58,7 +62,13 @@ function mainObject(state: HistoricalCommandSession['snapshot']): string | undef
   if (first.kind === 'task')
     return first.plan.after?.markdownTitle ?? first.plan.before?.markdownTitle;
   if (first.kind === 'project') return first.before.name;
+  if (first.kind.startsWith('project-')) return projectObject(first);
   if (first.kind === 'note') return first.plan.path;
+  return undefined;
+}
+function projectObject(change: CommandChange): string | undefined {
+  if (change.kind === 'project-create') return change.name;
+  if (change.kind === 'project-move') return change.before.markdownTitle;
   return undefined;
 }
 function sessionLabel(record: HistoricalCommandSession): string {

@@ -147,6 +147,20 @@ function sourceOperation(value: unknown): TaskContentOperationV1 {
       return invalid();
   }
 }
+function reorderOperation(
+  value: unknown,
+  r: Record<string, unknown>,
+  target: string,
+): TaskContentOperationV1 {
+  record(value, ['type', 'target', 'relativeTo', 'placement']);
+  if (r['placement'] !== 'before' && r['placement'] !== 'after') return invalid();
+  return {
+    type: 'reorder',
+    target,
+    relativeTo: text(r['relativeTo'], 512),
+    placement: r['placement'],
+  };
+}
 function operation(value: unknown): TaskContentOperationV1 {
   const r = record(value, [
     'type',
@@ -157,9 +171,13 @@ function operation(value: unknown): TaskContentOperationV1 {
     'symbol',
     'source',
     'expectedSourceRevision',
+    'relativeTo',
+    'placement',
   ]);
   const target = text(r['target'], 512);
   switch (r['type']) {
+    case 'reorder':
+      return reorderOperation(value, r, target);
     case 'patch':
       record(value, ['type', 'target', 'patch']);
       return { type: 'patch', target, patch: parseContentPatch(r['patch']) };
@@ -268,6 +286,32 @@ function prepare(value: unknown): PrepareTaskContentV1 {
     'expectedPlanRevision',
     'afterRequestId',
   ]);
+  if (r['kind'] === 'hierarchy') {
+    record(value, ['kind', 'operation']);
+    const op = record(r['operation'], [
+      'type',
+      'source',
+      'expectedSourceRevision',
+      'parent',
+      'expectedParentRevision',
+    ]);
+    const source = text(op['source'], 512),
+      expectedSourceRevision = text(op['expectedSourceRevision'], 512);
+    if (op['type'] === 'reparent')
+      return {
+        kind: 'hierarchy',
+        operation: {
+          type: 'reparent',
+          source,
+          expectedSourceRevision,
+          parent: text(op['parent'], 512),
+          expectedParentRevision: text(op['expectedParentRevision'], 512),
+        },
+      };
+    record(r['operation'], ['type', 'source', 'expectedSourceRevision']);
+    if (op['type'] !== 'promote') return invalid();
+    return { kind: 'hierarchy', operation: { type: 'promote', source, expectedSourceRevision } };
+  }
   if (r['kind'] === 'edit') {
     record(value, ['kind', 'target', 'expectedRevision', 'operation']);
     return {

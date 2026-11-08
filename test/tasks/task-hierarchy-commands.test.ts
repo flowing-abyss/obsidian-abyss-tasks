@@ -125,3 +125,43 @@ it('keeps defensive strict rejection out of hierarchy command results', async ()
   });
   h.index.destroy();
 });
+
+it('prepares exact cross-note hierarchy without reserving authority, then commits the reviewed candidates once', async () => {
+  const h = await hierarchyHarness();
+  const beforeSource = await h.read('source.md');
+  const beforeTarget = await h.read('target.md');
+  const reserve = vi.spyOn(h.authority, 'reserveStructuralMutation');
+  const prepared = await h.service.prepareHierarchy(h.command);
+  expect(prepared.type).toBe('ready');
+  if (prepared.type !== 'ready') throw new Error('Expected preparation');
+  expect(reserve).not.toHaveBeenCalled();
+  expect(await h.read('source.md')).toBe(beforeSource);
+  expect(await h.read('target.md')).toBe(beforeTarget);
+  expect(prepared.subjectBefore.type).toBe('task');
+  expect(prepared.subjectAfter.type).toBe('subtask');
+  expect(prepared.after.subtasks[0]?.title).toBe('Move');
+  expect(prepared.after.subtasks[0]?.subtasks[0]?.title).toBe('Child');
+  expect(prepared.continuations).toHaveLength(3);
+  const result = await prepared.commit();
+  expect(result).toMatchObject({ type: 'ok', outcome: { type: 'hierarchy' } });
+  expect(await prepared.commit()).toEqual(result);
+  expect((await h.read('target.md')).match(/\[ \] Move/g)).toHaveLength(1);
+  h.index.destroy();
+});
+
+it.each(['source.md', 'target.md'])(
+  'a prepared hierarchy rejects a later %s edit without moving any content',
+  async (path) => {
+    const h = await hierarchyHarness();
+    const prepared = await h.service.prepareHierarchy(h.command);
+    if (prepared.type !== 'ready') throw new Error('Expected preparation');
+    const file = expectDefined(h.app.vault.getFileByPath(path) ?? undefined);
+    await h.app.vault.modify(file, `${await h.read(path)}External line\n`);
+    const source = await h.read('source.md'),
+      target = await h.read('target.md');
+    expect((await prepared.commit()).type).not.toBe('ok');
+    expect(await h.read('source.md')).toBe(source);
+    expect(await h.read('target.md')).toBe(target);
+    h.index.destroy();
+  },
+);

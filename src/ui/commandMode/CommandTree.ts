@@ -1,6 +1,6 @@
 import type { App, Component } from 'obsidian';
 import type { ContentPlanV1, TaskTreeV1 } from '../../../api';
-import { checkedWriteResult } from '../../ai/commandSchemas';
+import { checkedWriteResult, commandPlanViews } from '../../ai/commandSchemas';
 import type { CommandSessionOwner } from '../../ai/CommandSessionOwner';
 import type { CommandJournalEntry, CommandSessionSnapshot } from '../../ai/commandTypes';
 import type { StatusRegistry } from '../../status/StatusRegistry';
@@ -48,6 +48,7 @@ export interface CommandTreeOptions {
 }
 interface Projection {
   readonly baseline: ReadonlyMap<string, TaskTreeV1>;
+  readonly retainedHierarchy?: ReadonlySet<string>;
   readonly plan?: ContentPlanV1;
   readonly current: Map<string, CommandNodeFields>;
   readonly committed: ReadonlyMap<string, string>;
@@ -235,15 +236,48 @@ export class CommandTree {
   }): TaskDisplayNode[] {
     const roots: TaskDisplayNode[] = [];
     for (const change of this.state.proposal.changes) {
+      if (change.kind === 'project-move') {
+        nodes(change.before).forEach((node) => context.covered.add(node.target));
+        roots.push(
+          this.project(change.before, { ...context, baseline: baseline(change.before) }, false),
+        );
+        continue;
+      }
       if (change.kind !== 'task' && change.kind !== 'cleanup') continue;
-      const tree = change.plan.after ?? change.plan.before;
+      roots.push(...this.planRoots(change.plan, context));
+    }
+    return roots;
+  }
+  private planRoots(
+    plan: ContentPlanV1,
+    context: Pick<Projection, 'current' | 'committed'> & { covered: Set<string> },
+  ): TaskDisplayNode[] {
+    const roots: TaskDisplayNode[] = [];
+    const views = commandPlanViews(plan);
+    const previous = new Map(views.flatMap((view) => [...baseline(view.before)]));
+    const retainedHierarchy =
+      plan.kind === 'hierarchy'
+        ? new Set(
+            views.flatMap((view) =>
+              view.after === null ? [] : nodes(view.after).map((node) => node.target),
+            ),
+          )
+        : undefined;
+    for (const view of views) {
+      const tree = view.after ?? view.before;
       if (tree === null) continue;
       nodes(tree).forEach((node) => context.covered.add(node.target));
+      if (view.after === null && retainedHierarchy?.has(tree.target) === true) continue;
       roots.push(
         this.project(
           tree,
-          { ...context, baseline: baseline(change.plan.before), plan: change.plan },
-          change.plan.after === null,
+          {
+            ...context,
+            baseline: previous,
+            plan,
+            ...(retainedHierarchy === undefined ? {} : { retainedHierarchy }),
+          },
+          view.after === null,
         ),
       );
     }
@@ -421,6 +455,25 @@ export class CommandTree {
       }),
     };
   }
+  private movedElsewhere(
+    node: NodeProjection,
+    children: ReadonlyMap<string, TaskTreeV1>,
+    target: string,
+  ): boolean {
+    return !children.has(target) && node.projection.retainedHierarchy?.has(target) === true;
+  }
+  private childEntry(
+    node: NodeProjection,
+    children: ReadonlyMap<string, TaskTreeV1>,
+    before: ReadonlyMap<string, TaskTreeV1>,
+    key: string,
+  ): TaskDisplayNode | undefined {
+    if (this.movedElsewhere(node, children, key)) return undefined;
+    const child = children.get(key) ?? before.get(key);
+    return child === undefined
+      ? undefined
+      : this.project(child, node.projection, node.removed || !children.has(key));
+  }
   private entries(node: NodeProjection): TaskDisplayNode['entries'] {
     const entries: Array<TaskDisplayNode['entries'][number]> = [];
     const comments = new Map(node.fields.comments.map((field) => [field.key, field]));
@@ -432,11 +485,8 @@ export class CommandTree {
         const field = comments.get(entry.key) ?? removed.get(entry.key);
         if (field !== undefined) entries.push(this.comment(node, field, removed.has(entry.key)));
       } else {
-        const child = children.get(entry.key) ?? before.get(entry.key);
-        if (child !== undefined)
-          entries.push(
-            this.project(child, node.projection, node.removed || !children.has(entry.key)),
-          );
+        const child = this.childEntry(node, children, before, entry.key);
+        if (child !== undefined) entries.push(child);
       }
     }
     return entries;

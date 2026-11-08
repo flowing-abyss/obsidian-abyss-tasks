@@ -288,6 +288,8 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   ],
   MoveRecovery: ['src/ui/TaskMoveRecoveryModal.ts'],
   TaskHierarchyRecovery: ['src/ui/taskCommandResult.ts'],
+  TaskHierarchyPreparation: ['src/integrations/taskContentApi.ts'],
+  TaskHierarchyPreparationApi: ['src/integrations/taskContentApi.ts'],
   hierarchyWouldCycle: ['src/ui/taskHierarchyActions.ts'],
   taskPrefixForSubtask: ['src/panels/RightPanel.ts'],
   isTaskInboxMember: ['src/task-lists/taskNodeMembership.ts'],

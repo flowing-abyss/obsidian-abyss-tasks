@@ -29,6 +29,7 @@ import { sameTaskNodeRef } from '../domain/types';
 import type { TaskIssue } from '../domain/validation';
 import type {
   TaskEditRefreshUnavailable,
+  TaskHierarchyPreview,
   TaskPreparedNodeContinuation,
 } from './TaskEditPreparationApi';
 import type {
@@ -350,6 +351,7 @@ export interface TaskRepository {
   ): Promise<ProjectTaskResult>;
   readonly supportsStrictStatusPreconditions?: true;
   hierarchy(request: TaskHierarchyRequest): Promise<TaskRepositoryResult>;
+  prepareHierarchy?(request: TaskHierarchyRequest): Promise<TaskPreparedHierarchy>;
   /** Production adapters opt in to immutable revision preconditions. */
   readonly supportsRevisionPreconditions?: true;
   edit(request: TaskEditRequest | TaskEditCommand): Promise<TaskRepositoryResult>;
@@ -372,3 +374,7 @@ export interface TaskRepository {
     legacyDestination?: TaskDestination,
   ): Promise<TaskRepositoryResult>;
 }
+
+export type TaskPreparedHierarchy =
+  | ({ readonly type: 'ready'; commit(): Promise<TaskRepositoryResult> } & TaskHierarchyPreview)
+  | { readonly type: 'invalid'; readonly result: TaskRepositoryResult };

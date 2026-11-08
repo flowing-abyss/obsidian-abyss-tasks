@@ -6,6 +6,7 @@ import type {
   NotePlanV1,
   ProjectDtoV1,
   ProjectMutationReceiptV1,
+  ProjectSchemaV1,
   TaskContentReceiptV1,
   TaskTreeV1,
 } from '../../api';
@@ -123,52 +124,62 @@ const insertion = z.union([
     position: z.enum(['top', 'bottom']).exactOptional(),
   }),
 ]);
-const contentPlan: z.ZodType<ContentPlanV1> = z.object({
-  ...observation,
-  ...reference.shape,
-  kind: z.enum(['edit', 'create']),
-  expiresAt: finite,
-  before: tree.nullable(),
-  after: tree.nullable(),
-  destination: z
-    .object({
-      type: z.enum(['configured-default', 'note', 'project']),
-      path: text,
-      insertion,
-      projectTarget: handle.exactOptional(),
-      projectRevision: handle.exactOptional(),
-    })
-    .exactOptional(),
-  copies: z
-    .array(
-      z.object({
-        type: z.enum(['comment', 'subtree']),
-        source: handle,
-        sourceRoot: reference,
-        state: z.enum(['retained', 'unavailable']),
-        tasks: z.array(z.object({ sourceTarget: handle, destinationTarget: handle })),
-        comments: z.array(
-          z.object({ sourceTarget: handle, destinationTarget: handle, destinationParent: handle }),
-        ),
-      }),
-    )
-    .exactOptional(),
-  mergePreservation: z
-    .object({
-      planRevision: handle,
-      sourceRoot: reference,
-      state: z.enum(['covered', 'held']),
-      entries: z.array(
+const contentPlan: z.ZodType<ContentPlanV1> = z
+  .object({
+    ...observation,
+    ...reference.shape,
+    kind: z.enum(['edit', 'create', 'hierarchy']),
+    affected: z.object({ before: z.array(tree), after: z.array(tree) }).exactOptional(),
+    expiresAt: finite,
+    before: tree.nullable(),
+    after: tree.nullable(),
+    destination: z
+      .object({
+        type: z.enum(['configured-default', 'note', 'project']),
+        path: text,
+        insertion,
+        projectTarget: handle.exactOptional(),
+        projectRevision: handle.exactOptional(),
+      })
+      .exactOptional(),
+    copies: z
+      .array(
         z.object({
-          kind: z.enum(['header', 'description', 'comment', 'subtree', 'residual', 'constraint']),
-          field: text,
-          state: z.enum(['retained', 'held']),
-          reason: text.exactOptional(),
+          type: z.enum(['comment', 'subtree']),
+          source: handle,
+          sourceRoot: reference,
+          state: z.enum(['retained', 'unavailable']),
+          tasks: z.array(z.object({ sourceTarget: handle, destinationTarget: handle })),
+          comments: z.array(
+            z.object({
+              sourceTarget: handle,
+              destinationTarget: handle,
+              destinationParent: handle,
+            }),
+          ),
         }),
-      ),
-    })
-    .exactOptional(),
-});
+      )
+      .exactOptional(),
+    mergePreservation: z
+      .object({
+        planRevision: handle,
+        sourceRoot: reference,
+        state: z.enum(['covered', 'held']),
+        entries: z.array(
+          z.object({
+            kind: z.enum(['header', 'description', 'comment', 'subtree', 'residual', 'constraint']),
+            field: text,
+            state: z.enum(['retained', 'held']),
+            reason: text.exactOptional(),
+          }),
+        ),
+      })
+      .exactOptional(),
+  })
+  .superRefine((plan, context) => {
+    if (plan.kind === 'hierarchy' && plan.affected === undefined)
+      context.addIssue({ code: 'custom', message: 'Hierarchy plans require affected roots.' });
+  });
 const notePlan: z.ZodType<NotePlanV1> = z.object({
   ...observation,
   ...reference.shape,
@@ -249,8 +260,59 @@ const project: z.ZodType<ProjectDtoV1> = z.object({
     ]),
   ),
 });
+const fieldType = z.enum(['text', 'number', 'checkbox', 'list', 'tags', 'date', 'datetime']);
+const projectSchema: z.ZodType<ProjectSchemaV1> = z.object({
+  ...observation,
+  revision: count,
+  statuses: z.array(z.object({ id: text, name: text, displayName: text.exactOptional() })),
+  defaultStatusId: text.exactOptional(),
+  fields: z.array(
+    z.discriminatedUnion('kind', [
+      z.object({
+        id: text,
+        label: text,
+        kind: z.literal('field'),
+        type: fieldType,
+        writable: z.boolean(),
+        suggestions: z
+          .array(z.object({ value: projectValue, displayName: text.exactOptional() }))
+          .exactOptional(),
+      }),
+      z.object({
+        id: text,
+        label: text,
+        kind: z.literal('derived'),
+        type: z.enum(['name', 'progress', 'tracking']),
+        writable: z.literal(false),
+      }),
+      z.object({
+        id: text,
+        label: text,
+        kind: z.literal('status'),
+        type: z.literal('status'),
+        writable: z.boolean(),
+      }),
+      z.object({
+        id: text,
+        label: text,
+        kind: z.literal('unavailable'),
+        type: z.union([fieldType, z.literal('status')]),
+        writable: z.literal(false),
+      }),
+    ]),
+  ),
+});
 const change: z.ZodType<CommandChange> = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('task'), plan: contentPlan }),
+  z.object({
+    kind: z.literal('project-create'),
+    id: handle,
+    name: text,
+    schema: projectSchema,
+    fields: z.array(z.object({ fieldId: handle, value: projectValue.nullable() })).exactOptional(),
+    statusId: text.nullable().exactOptional(),
+  }),
+  z.object({ kind: z.literal('project-move'), before: tree, destination: project }),
   z.object({ kind: z.literal('note'), plan: notePlan }),
   z.object({
     kind: z.literal('project'),
@@ -366,6 +428,8 @@ function receiptFor(kind: CommandChange['kind']): z.ZodType<HistoricalCommandRec
     case 'status':
       return statusReceipt;
     case 'project':
+    case 'project-create':
+    case 'project-move':
       return projectReceipt;
     case 'link':
       return z.never();
@@ -377,7 +441,9 @@ function rejectOtherReceiptFamily(kind: CommandChange['kind'], value: unknown): 
   if ('contentContinuity' in value) family = 'task';
   else if ('noteEffects' in value) family = 'note';
   else if ('original' in value) family = 'status';
-  if (family !== (kind === 'cleanup' ? 'task' : kind)) throw new Error('Receipt family mismatch.');
+  const expected = kind === 'cleanup' ? 'task' : kind;
+  const projected = ['project-create', 'project-move'].includes(expected) ? 'project' : expected;
+  if (family !== projected) throw new Error('Receipt family mismatch.');
 }
 const journalEntry = z
   .object({

@@ -1,7 +1,9 @@
 import { APICallError, generateText, isStepCount, wrapLanguageModel, type ModelMessage } from 'ai';
 import type { TasksApiV1 } from '../../api';
+import { CommandReferenceBook } from './CommandReferenceBook';
 import type { CommandSession } from './CommandSession';
 import { commandPrompt } from './commandPrompt';
+import { commandReferences } from './commandReferences';
 import { planToolOutput } from './commandSchemas';
 import { commandTools, type CommandToolContext } from './commandTools';
 import {
@@ -60,17 +62,39 @@ function generationLifetime(
     },
   };
 }
-function schemaRepairMessage(name: string): string {
+function rejectedKind(input: string): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(input);
+    if (parsed === null || typeof parsed !== 'object') return undefined;
+    let nested: unknown = Reflect.get(parsed, 'input');
+    // Inspect only the discriminator for feedback. Never execute a coerced payload.
+    if (typeof nested === 'string') nested = JSON.parse(nested) as unknown;
+    if (nested === null || typeof nested !== 'object') return undefined;
+    const kind: unknown = Reflect.get(nested, 'kind');
+    return typeof kind === 'string' ? kind : undefined;
+  } catch {
+    return undefined;
+  }
+}
+function taskSchemaRepair(input: string): string {
+  const kind = rejectedKind(input),
+    object = 'input must be an object, never a JSON string. ';
+  if (kind === 'create')
+    return `${object}Use input.kind=create, destination and tree. tree contains markdownTitle, optional description/comments/children and tree.initial. Put scheduled/due/start/time/durationMinutes/tags/statusSymbol only in tree.initial; field assignments use {type:set,value} or {type:clear}. Children have that same tree shape. Do not change to append or invent plan references.`;
+  if (kind === 'append' || kind === 'batch')
+    return `${object}Use input.kind=append with ONE operation object, or input.kind=batch with an operations array directly beside plan and expectedPlanRevision. Never put batch inside operation. Use exact opaque plan references.`;
+  return `${object}Keep the intended kind; match its advertised fields. Do not switch to append/batch or invent references. If creating, use destination and tree; metadata belongs in tree.initial. Example: {"input":{"kind":"create","destination":{"type":"configured-default"},"tree":{"markdownTitle":"Task","initial":{"scheduled":{"type":"set","value":"2026-08-02"}}}}}.`;
+}
+function schemaRepairMessage(name: string, input: string): string {
   const common =
     'Arguments were rejected; no operation ran. Repair their format without changing the intended content or target. ';
-  if (name === 'task')
-    return `${
-      common
-    }input must be an object, never a JSON string. Use input.kind=append with ONE operation object, or input.kind=batch with an operations array directly beside plan and expectedPlanRevision. Never put batch inside operation. Use exact opaque plan references.`;
+  if (name === 'task') return common + taskSchemaRepair(input);
+  if (name === 'interpret')
+    return `${common}For new-session use disposition=keep|discard, not transitionDisposition. For a current pendingTransition use resolve-transition and transitionDisposition=save|keep|discard|cancel; use plan with transitionDisposition when resolving and continuing requested work in the same turn. Omit unrelated voiceMode/disposition fields. No pendingTransition means ordinary work uses plan. To cancel an unsaved task in this same session, use plan with no disposition, then task append/batch with a sole remove on its exact draft root.`;
   if (name === 'finish')
     return `${
       common
-    }Use state=ready with message, or state=question with message and blockingIssue {kind:missing-information|conflict, detail}. A ready proposal does not need saving permission.`;
+    }Use state=ready with message, or state=question with message and blockingIssue {kind:missing-information|conflict, detail}. Every selection entry needs kind=task|project|note and its exact returned target/basis; a project is never a task. A ready proposal does not need saving permission.`;
   if (name === 'read' || name === 'note')
     return `${
       common
@@ -96,6 +120,7 @@ function repairMessages(
   });
 }
 export class CommandAgent implements CommandAgentPort {
+  private turnSequence = 0;
   constructor(private readonly options: CommandAgentOptions) {}
   private model(
     ctx: CommandToolContext,
@@ -149,6 +174,7 @@ export class CommandAgent implements CommandAgentPort {
       errors: new Set(),
       feedback: new Map(),
       repairExhausted: false,
+      references: new CommandReferenceBook((++this.turnSequence).toString(36)),
       ...(this.options.research === undefined ? {} : { research: this.options.research }),
       repair: (call) => {
         if (repairs.has(call) || ++repairsUsed > 2) {
@@ -175,6 +201,7 @@ export class CommandAgent implements CommandAgentPort {
       exchanges: snapshot.exchanges.filter(
         (entry) => entry.role === 'user' || recentReplies.has(entry),
       ),
+      references: commandReferences(snapshot),
       submissionBasis: undefined,
       journal: undefined,
       trees: undefined,
@@ -210,7 +237,7 @@ export class CommandAgent implements CommandAgentPort {
     const prompt = JSON.stringify({
       temporalContext: this.options.temporalContext?.() ?? new Date(start).toISOString(),
       userMessage: input.text,
-      visibleSession: this.modelContext(input.session),
+      visibleSession: ctx.references?.project(this.modelContext(input.session)),
     });
     if (prompt.length + commandPrompt.length > 96000)
       throw new CommandFailure(
@@ -250,7 +277,16 @@ export class CommandAgent implements CommandAgentPort {
         };
       },
       repairToolCall: async ({ toolCall }) => {
-        ctx.feedback.set(toolCall.toolCallId, schemaRepairMessage(toolCall.toolName));
+        const kind = rejectedKind(toolCall.input);
+        if (
+          toolCall.toolName === 'task' &&
+          ['append', 'batch', 'edit', 'refresh', 'hierarchy'].includes(kind ?? '')
+        )
+          ctx.unresolvedTaskRefinement = true;
+        ctx.feedback.set(
+          toolCall.toolCallId,
+          schemaRepairMessage(toolCall.toolName, toolCall.input),
+        );
         ctx.repair(toolCall.toolCallId);
         ctx.errors.add(toolCall.toolName);
         return null;
@@ -268,16 +304,18 @@ export class CommandAgent implements CommandAgentPort {
         'REPAIR_LIMIT',
         'The request could not be prepared reliably. Your draft is retained.',
       );
-    if (!ctx.done) {
-      const failed = result.steps.some((step) =>
-        step.content.some((part) => part.type === 'tool-error'),
-      );
-      throw new CommandFailure(
-        failed ? 'TOOL_ERROR' : 'INCOMPLETE',
-        failed
-          ? 'Some requested changes could not be prepared. Your draft is retained.'
-          : 'The request stopped before it was complete. Review the retained draft.',
-      );
-    }
+    this.requireFinished(
+      ctx.done,
+      result.steps.some((step) => step.content.some((part) => part.type === 'tool-error')),
+    );
+  }
+  private requireFinished(done: boolean, failed: boolean): void {
+    if (done) return;
+    throw new CommandFailure(
+      failed ? 'TOOL_ERROR' : 'INCOMPLETE',
+      failed
+        ? 'Some requested changes could not be prepared. Your draft is retained.'
+        : 'The request stopped before it was complete. Review the retained draft.',
+    );
   }
 }

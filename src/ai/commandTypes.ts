@@ -6,6 +6,7 @@ import type {
   NoteReadPageV1,
   ProjectDtoV1,
   ProjectFieldAssignmentV1,
+  ProjectSchemaV1,
   TaskTreePageV1,
   TaskTreeV1,
   TasksApiV1,
@@ -39,6 +40,19 @@ export type CommandFocusContinuations = ReadonlyMap<
 export type CommandChange =
   | { readonly kind: 'task'; readonly plan: ContentPlanV1 }
   | { readonly kind: 'note'; readonly plan: NotePlanV1 }
+  | {
+      readonly kind: 'project-create';
+      readonly id: string;
+      readonly name: string;
+      readonly schema: ProjectSchemaV1;
+      readonly fields?: readonly ProjectFieldAssignmentV1[];
+      readonly statusId?: string | null;
+    }
+  | {
+      readonly kind: 'project-move';
+      readonly before: TaskTreeV1;
+      readonly destination: ProjectDtoV1;
+    }
   | {
       readonly kind: 'project';
       readonly before: ProjectDtoV1;

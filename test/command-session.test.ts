@@ -1,5 +1,6 @@
 import { afterEach, expect, it } from 'vitest';
 import type { ApiResultV1 } from '../api';
+import { canonicalCommandPlan } from '../src/ai/commandReads';
 import { sameReviewedContent } from '../src/ai/commandSchemas';
 import { CommandSession } from '../src/ai/CommandSession';
 import type { CommandAgentPort, CommandSessionSnapshot } from '../src/ai/commandTypes';
@@ -15,8 +16,8 @@ function ok<T>(r: ApiResultV1<T>): T {
   if (!r.ok) throw new Error(r.error.code);
   return r.value;
 }
-async function setup() {
-  const h = await publicApiHarness({ 'a.md': '- [ ] Existing\n' });
+async function setup(files: Record<string, string> = { 'a.md': '- [ ] Existing\n' }) {
+  const h = await publicApiHarness(files);
   owners.push(h);
   const api = h.client();
   const saved: CommandSessionSnapshot[] = [];
@@ -1177,4 +1178,104 @@ it('retires captured speech when a verified write removes its focused object wit
   const captured = h.session.captureSubmission();
   h.session.remapFocus(new Map([[task.target, null]]));
   expect(captured.current()).toBe(false);
+});
+
+it('clears shared draft provenance after whitespace confirmation without clearing later edits', async () => {
+  const h = await setup();
+  const plan = ok(
+    await expectDefined(h.api.tasks.prepare)({
+      kind: 'create',
+      destination: { type: 'note', path: 'a.md', insertion: { type: 'append' } },
+      tree: { markdownTitle: 'Confirmed' },
+    }),
+  );
+  h.session.stage({ kind: 'task', plan });
+  h.session.setInput(' ');
+  expect(h.session.captureInput().dirty).toBe(true);
+  await h.session.submit(' ');
+  expect(h.session.snapshot().status.kind).toBe('saved');
+  expect(h.session.snapshot().input).toBe('');
+  expect(h.session.captureInput().dirty).toBe(false);
+});
+
+it('keeps a retained clarification visible when a semantic turn makes no disposition', async () => {
+  const h = await setup();
+  h.session.question('Which exact task?');
+  await h.session.submit('Continue');
+  expect(h.session.snapshot().activeQuestion).toBe('Which exact task?');
+  expect(h.session.snapshot().status).toEqual({ kind: 'question', message: 'Which exact task?' });
+});
+
+it('saves the reviewed proposal before completing a new-session Save disposition', async () => {
+  const h = await setup();
+  const plan = ok(
+    await expectDefined(h.api.tasks.prepare)({
+      kind: 'create',
+      destination: { type: 'note', path: 'a.md', insertion: { type: 'append' } },
+      tree: { markdownTitle: 'New' },
+    }),
+  );
+  h.session.stage({ kind: 'task', plan });
+  const original = h.session.snapshot().id;
+  expect(await h.session.newSession()).toBe(false);
+  expect(await h.session.resolveTransition('save')).toBe(true);
+  expect(h.session.snapshot().id).not.toBe(original);
+  expect(await h.read('a.md')).toContain('New');
+});
+
+it('keeps hierarchy focus within the exact affected root and follows its saved correspondence', async () => {
+  const source =
+    '- [ ] Workspace\n  - [ ] Same\n    - [ ] First leaf\n  - [ ] Same\n    - [ ] Second leaf\n';
+  const h = await setup({ 'a.md': source });
+  const listed = ok(await h.api.tasks.list()).items;
+  const root = expectDefined(listed.find((node) => node.source.line === 0));
+  const parent = expectDefined(listed.find((node) => node.source.line === 1));
+  const moving = expectDefined(listed.find((node) => node.source.line === 3));
+  const prepared = ok(
+    await expectDefined(h.api.tasks.prepare)({
+      kind: 'hierarchy',
+      operation: {
+        type: 'reparent',
+        source: moving.target,
+        expectedSourceRevision: moving.revision,
+        parent: parent.target,
+        expectedParentRevision: parent.revision,
+      },
+    }),
+  );
+  const plan = await canonicalCommandPlan(h.api, prepared, new AbortController().signal, {
+    now: () => Date.UTC(2026, 7, 1, 12),
+    deadline: Date.UTC(2026, 7, 1, 12) + 5000,
+  });
+  h.session.stage({ kind: 'task', plan });
+  expect(
+    await h.session.focus({
+      kind: 'task',
+      target: moving.target,
+      plan: plan.target,
+      expectedPlanRevision: plan.revision,
+    }),
+  ).toBe(true);
+  expect(
+    await h.session.focus({
+      kind: 'task',
+      target: root.target,
+      plan: plan.target,
+      expectedPlanRevision: plan.revision,
+    }),
+  ).toBe(true);
+  expect(h.session.snapshot().pendingTransition ?? null).toBeNull();
+  expect(h.session.snapshot().activeQuestion).toBeNull();
+  expect(await h.read('a.md')).toBe(source);
+  expect(await h.session.confirm()).toBe(true);
+  const focus = expectDefined(h.session.snapshot().focus[0]);
+  expect(focus.kind).toBe('task');
+  const current = ok(await h.api.tasks.get(focus.target));
+  expect(current.markdownTitle).toBe('Workspace');
+  expect(current.parentTarget).toBeUndefined();
+  expect(focus.revision).toBe(current.revision);
+  expect(h.session.snapshot().journal).toHaveLength(1);
+  expect(await h.read('a.md')).toBe(
+    '- [ ] Workspace\n  - [ ] Same\n    - [ ] First leaf\n    - [ ] Same\n      - [ ] Second leaf\n',
+  );
 });

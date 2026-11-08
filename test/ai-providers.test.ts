@@ -81,6 +81,7 @@ describe('provider connections', () => {
   it('maps unsafe failures to bounded credential-free messages', () => {
     for (const [statusCode, code] of [
       [401, 'authentication'],
+      [402, 'billing'],
       [403, 'authentication'],
       [429, 'rate-limit'],
       [500, 'unavailable'],
@@ -93,6 +94,44 @@ describe('provider connections', () => {
       expect(failure.code).toBe(code);
       expect(JSON.stringify(failure)).not.toContain('SECRET');
       expect(failure.message).not.toContain('SECRET');
+    }
+  });
+
+  it('maps wrapped numeric billing failures without inferring billing from private prose', () => {
+    const failure = providerFailure({
+      cause: { cause: { statusCode: 402, message: 'SECRET insufficient balance' } },
+    });
+    expect(failure.code).toBe('billing');
+    expect(failure.message).toContain('billing');
+    expect(failure.message).not.toContain('SECRET');
+    expect(JSON.stringify(failure)).not.toContain('SECRET');
+    expect(providerFailure({ statusCode: '402', message: 'insufficient credits' }).code).toBe(
+      'unavailable',
+    );
+  });
+
+  it('preserves numeric billing failures through the actual SDK and native adapter boundary', async () => {
+    const { owner } = secrets();
+    owner.store('openrouter', 'synthetic-private-key');
+    let requests = 0;
+    const transport = transportFixture(async () => {
+      requests++;
+      return reply('{"error":{"message":"SECRET insufficient balance","code":402}}', 402);
+    });
+    try {
+      await expect(
+        generateText({
+          model: new ProviderConnections(owner, transport).model(defaultProviderSettings()),
+          prompt: 'Reply OK.',
+          maxOutputTokens: 16,
+          maxRetries: 0,
+        }).catch((error: unknown) => {
+          throw providerFailure(error);
+        }),
+      ).rejects.toMatchObject({ code: 'billing' });
+      expect(requests).toBe(1);
+    } finally {
+      transport.dispose();
     }
   });
 

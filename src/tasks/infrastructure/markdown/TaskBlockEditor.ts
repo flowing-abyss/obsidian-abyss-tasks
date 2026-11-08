@@ -1638,9 +1638,7 @@ export class TaskBlockEditor {
       collectNodes?: boolean,
     ]
   ): TaskBlockEditResult {
-    const supported = !['restore-subtask', 'restore-time-entry', 'reorder-subtask'].includes(
-      edit.type,
-    );
+    const supported = !['restore-subtask', 'restore-time-entry'].includes(edit.type);
     const context = editContext(
       content,
       block,

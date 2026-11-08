@@ -6,6 +6,7 @@ import type {
   NoteMutationReceiptV1,
   NoteMutationResultV1,
   ProjectDtoV1,
+  ProjectMutationReceiptV1,
   ProjectMutationResultV1,
   TaskContentMutationResultV1,
   TaskContentOperationV1,
@@ -15,9 +16,15 @@ import type {
   TaskTreePageV1,
   TaskTreeV1,
 } from '../../api';
+import { sameCommandProjectSchema, validateCommandProject } from './commandProjects';
 import { canonicalCommandPlan, commandRead } from './commandReads';
 import { hasUnknownCommandResourceEffects } from './commandRecovery';
-import { checkedWriteResult, sameReviewedContent, validateCommandLinks } from './commandSchemas';
+import {
+  checkedWriteResult,
+  commandPlanViews,
+  sameReviewedContent,
+  validateCommandLinks,
+} from './commandSchemas';
 import {
   CommandFailure,
   required,
@@ -44,6 +51,7 @@ interface WriteContext {
   readonly focus: () => readonly CommandFocus[];
   readonly focusChanges: (changes: CommandFocusContinuations) => void;
   readonly observeProject: (project: ProjectDtoV1) => void;
+  readonly createdProject: (project: ProjectDtoV1) => void;
   readonly observeNote: (note: CommandNoteRead) => void;
 }
 function treeTargets(tree: TaskTreeV1 | null, targets = new Set<string>()): Set<string> {
@@ -81,7 +89,16 @@ function writeSucceeded(result: WriteResult): boolean {
   );
 }
 const order = (change: CommandChange): number =>
-  ({ project: 0, note: 1, link: 2, task: 3, status: 4, cleanup: 5 })[change.kind];
+  ({
+    project: 0,
+    'project-create': 0,
+    'project-move': 3,
+    note: 1,
+    link: 2,
+    task: 3,
+    status: 4,
+    cleanup: 5,
+  })[change.kind];
 /** Application sequencing of guarded public commands. No native writer, rollback, or blind replay. */
 export async function executeCommandWrites(ctx: WriteContext): Promise<void> {
   await new CommandWriteRun(ctx).run();
@@ -352,7 +369,9 @@ class CommandWriteRun {
     if (!writeSucceeded(result))
       throw new CommandFailure(
         'WRITE_STOPPED',
-        'The request may be partly saved. Review the actual result before continuing.',
+        effects === 'unchanged' && !result.ok
+          ? `This change was not saved. ${result.error.message} Your proposal is retained.`
+          : 'The request may be partly saved. Review the actual result before continuing.',
       );
   }
   private async readResult(entry: CommandJournalEntry, result: WriteResult): Promise<void> {
@@ -371,13 +390,33 @@ class CommandWriteRun {
     change: CommandChange,
     receipt: NonNullable<WriteResult['receipt']>,
   ): void {
-    let path: string | undefined;
-    if (change.kind === 'project') path = change.before.path;
-    else if (change.kind === 'note') path = change.plan.path;
-    else if (change.kind === 'task' || change.kind === 'cleanup') path = planPath(change.plan);
-    else if ('original' in receipt)
-      path = this.statusRoots.get(receipt.original.target)?.source.path;
-    if (path !== undefined) this.ctx.invalidateTaskReads(path);
+    const paths = this.changedTaskPaths(change);
+    if ('original' in receipt)
+      paths.push(this.statusRoots.get(receipt.original.target)?.source.path);
+    for (const path of new Set(paths)) if (path !== undefined) this.ctx.invalidateTaskReads(path);
+  }
+  private changedTaskPaths(change: CommandChange): Array<string | undefined> {
+    switch (change.kind) {
+      case 'project-move':
+        return [change.before.source?.path, change.destination.path];
+      case 'project':
+        return [change.before.path];
+      case 'note':
+        return [change.plan.path];
+      case 'task':
+      case 'cleanup':
+        return [
+          planPath(change.plan),
+          ...commandPlanViews(change.plan).flatMap((v) => [
+            v.before?.source?.path,
+            v.after?.source?.path,
+          ]),
+        ];
+      case 'link':
+      case 'project-create':
+      case 'status':
+        return [];
+    }
   }
   private async observeUncertain(change: CommandChange): Promise<void> {
     if (change.kind !== 'task' && change.kind !== 'cleanup') return;
@@ -416,6 +455,27 @@ class CommandWriteRun {
       );
     this.projects.set(current.target, current);
     this.ctx.observeProject(current);
+    if (change.kind === 'project-create') this.ctx.createdProject(current);
+    if (change.kind === 'project-move') await this.readProjectMove(receipt, change, current);
+  }
+  private async readProjectMove(
+    receipt: ProjectMutationReceiptV1,
+    change: Extract<CommandChange, { kind: 'project-move' }>,
+    current: ProjectDtoV1,
+  ): Promise<void> {
+    if (receipt.task === undefined)
+      throw new CommandFailure(
+        'READBACK',
+        'The moved task could not be identified. Review the source and destination.',
+      );
+    const moved = required(receipt.task);
+    const task = await this.read(() => this.ctx.api.tasks.get(moved.target));
+    if (task.revision !== receipt.task.revision || task.source.path !== current.path)
+      throw new CommandFailure('READBACK', 'The moved task changed before it could be verified.');
+    await this.readTree(task.target, task.revision);
+    this.ctx.focusChanges(
+      new Map([[change.before.target, { target: task.target, revision: task.revision }]]),
+    );
   }
   private async readNote(receipt: NoteMutationReceiptV1, change: CommandChange): Promise<void> {
     const note = receipt.note;
@@ -461,6 +521,7 @@ class CommandWriteRun {
     const root = correspondence.root;
     if (root !== null) await this.readTree(root.target, root.revision);
     else this.ctx.actual([...this.actual.values()]);
+    await this.readAffectedRoots(receipt.plan, change, root?.target);
     const affected = this.affectedFocus(change);
     const continuations = new Map<string, { target: string; revision: string } | null>();
     for (const selected of affected) {
@@ -479,11 +540,28 @@ class CommandWriteRun {
     this.ctx.focusChanges(continuations);
     this.verified.add(receipt.plan);
   }
+  private async readAffectedRoots(
+    plan: string,
+    change: CommandChange,
+    root: string | undefined,
+  ): Promise<void> {
+    if (change.kind !== 'task' || change.plan.affected === undefined) return;
+    for (const after of change.plan.affected.after) {
+      const next = this.accepted.get(plan)?.get(after.target);
+      if (next === undefined)
+        throw new CommandFailure('READBACK', 'An affected hierarchy root could not be verified.');
+      if (next.target !== root) await this.readTree(next.target, next.revision);
+    }
+  }
   private affectedFocus(change: CommandChange): readonly CommandFocus[] {
-    const targets = new Set(change.kind === 'status' ? [change.target] : []);
+    const targets = new Set<string>();
+    if (change.kind === 'status') targets.add(change.target);
+    if (change.kind === 'project-move') targets.add(change.before.target);
     if (change.kind === 'task' || change.kind === 'cleanup') {
-      treeTargets(change.plan.before, targets);
-      treeTargets(change.plan.after, targets);
+      for (const view of commandPlanViews(change.plan)) {
+        treeTargets(view.before, targets);
+        treeTargets(view.after, targets);
+      }
     }
     return this.ctx
       .focus()
@@ -581,6 +659,51 @@ class CommandWriteRun {
   ): Promise<() => Promise<WriteResult>> {
     if (change.kind === 'task' || change.kind === 'cleanup' || change.kind === 'note')
       return this.contentOperation(change, request);
+    if (change.kind === 'project-create')
+      return async () => {
+        try {
+          const schema = await this.read(() => required(this.ctx.api.projects).schema());
+          if (!sameCommandProjectSchema(change.schema, schema))
+            throw new CommandFailure(
+              'PROJECT_SCHEMA',
+              'Project settings changed. Review the retained requested values before saving.',
+            );
+          validateCommandProject(schema, change);
+        } catch (cause) {
+          return {
+            ok: false,
+            effects: 'unchanged',
+            recovery: 'reread',
+            error: {
+              code: 'REVISION_CONFLICT',
+              category: 'conflict',
+              message:
+                cause instanceof Error ? cause.message : 'Project settings could not be checked.',
+            },
+          };
+        }
+        return required(this.ctx.api.projects).create(
+          {
+            name: change.name,
+            ...(change.fields === undefined ? {} : { fields: change.fields }),
+            ...(change.statusId === undefined ? {} : { statusId: change.statusId }),
+            ...request,
+          },
+          { signal: this.signal },
+        );
+      };
+    if (change.kind === 'project-move')
+      return () =>
+        required(this.ctx.api.projects).moveTask(
+          {
+            target: change.destination.target,
+            expectedRevision: change.destination.revision,
+            taskTarget: change.before.target,
+            expectedTaskRevision: change.before.revision,
+            ...request,
+          },
+          { signal: this.signal },
+        );
     if (change.kind === 'project')
       return () =>
         required(this.ctx.api.projects).update(

@@ -2,6 +2,7 @@ export type ProviderFailureCode =
   | 'missing-key'
   | 'secret-storage'
   | 'authentication'
+  | 'billing'
   | 'rate-limit'
   | 'unavailable'
   | 'invalid-response'
@@ -14,6 +15,7 @@ const messages: Record<ProviderFailureCode, string> = {
   'missing-key': 'Save an API key for the selected provider.',
   'secret-storage': 'Could not access the API key in Obsidian secret storage.',
   authentication: 'The provider rejected the API key or its permissions.',
+  billing: 'Check your provider billing or credits before trying again.',
   'rate-limit': 'The provider rate limit was reached. Try again later.',
   unavailable: 'The provider request failed. Check the connection and try again.',
   'invalid-response': 'The provider returned an unreadable response.',
@@ -34,8 +36,8 @@ export function providerFailure(error: unknown, depth = 0): ProviderFailure {
   if (error instanceof ProviderFailure) return error;
   const data = errorRecord(error);
   const status = 'statusCode' in data ? data.statusCode : undefined;
-  if (isAuthentication(status)) return new ProviderFailure('authentication');
-  if (status === 429) return new ProviderFailure('rate-limit');
+  const http = httpFailure(status);
+  if (http !== undefined) return http;
   if (isAbortFailure(data)) return new ProviderFailure('cancelled');
   if (isParseFailure(data)) return new ProviderFailure('invalid-response');
   if ('cause' in data && depth < 4) return providerFailure(data.cause, depth + 1);
@@ -56,6 +58,9 @@ function isAbortFailure(data: object): boolean {
   return 'name' in data && data.name === 'AbortError';
 }
 
-function isAuthentication(status: unknown): boolean {
-  return status === 401 || status === 403;
+function httpFailure(status: unknown): ProviderFailure | undefined {
+  if (status === 401 || status === 403) return new ProviderFailure('authentication');
+  if (status === 402) return new ProviderFailure('billing');
+  if (status === 429) return new ProviderFailure('rate-limit');
+  return undefined;
 }

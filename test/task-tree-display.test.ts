@@ -121,40 +121,44 @@ it('reuses canonical mixed order, updates activation bindings and retires dispos
   expect(h.host.textContent).toBe('');
 });
 
-it('updates only native date metadata while retaining focused tag chips', async () => {
-  const { mountTaskMetadataDisplay } = await import('../src/ui/taskMetadataDisplay');
-  const { localDate } = await import('../src/tasks');
-  const owner = new Component();
-  owner.load();
-  owners.push(owner);
-  const host = document.body.createDiv();
-  const options = {
-    owner,
-    suppressToday: false,
-    formatDate: (date: string) => date,
-    getDateClass: () => '',
-    getTagColor: () => undefined,
-    showSource: () => true,
-  };
-  const mount = mountTaskMetadataDisplay(
-    host,
-    { planning: { scheduled: localDate('2026-11-08') }, tags: ['#stable'], sourcePath: 'a.md' },
-    options,
-  );
-  const tag = expectDefined(host.querySelector<HTMLElement>('.abyss-task-tag'));
-  const source = host.querySelector('.abyss-task-source-note');
-  tag.tabIndex = 0;
-  tag.focus();
-  mount.update(
-    { planning: { scheduled: localDate('2026-11-09') }, tags: ['#stable'], sourcePath: 'a.md' },
-    options,
-  );
-  expect(host.querySelector('.abyss-task-tag')).toBe(tag);
-  expect(host.querySelector('.abyss-task-source-note')).toBe(source);
-  expect(document.activeElement).toBe(tag);
-  expect(host.textContent).toContain('2026-11-09');
-  expect(host.textContent).not.toContain('2026-11-08');
-});
+it.each([false, true])(
+  'updates date metadata while retaining focused tag chips (complete planning: %s)',
+  async (completePlanning) => {
+    const { mountTaskMetadataDisplay } = await import('../src/ui/taskMetadataDisplay');
+    const { localDate } = await import('../src/tasks');
+    const owner = new Component();
+    owner.load();
+    owners.push(owner);
+    const host = document.body.createDiv();
+    const options = {
+      owner,
+      suppressToday: false,
+      completePlanning,
+      formatDate: (date: string) => date,
+      getDateClass: () => '',
+      getTagColor: () => undefined,
+      showSource: () => true,
+    };
+    const mount = mountTaskMetadataDisplay(
+      host,
+      { planning: { scheduled: localDate('2026-11-08') }, tags: ['#stable'], sourcePath: 'a.md' },
+      options,
+    );
+    const tag = expectDefined(host.querySelector<HTMLElement>('.abyss-task-tag'));
+    const source = host.querySelector('.abyss-task-source-note');
+    tag.tabIndex = 0;
+    tag.focus();
+    mount.update(
+      { planning: { scheduled: localDate('2026-11-09') }, tags: ['#stable'], sourcePath: 'a.md' },
+      options,
+    );
+    expect(host.querySelector('.abyss-task-tag')).toBe(tag);
+    expect(host.querySelector('.abyss-task-source-note')).toBe(source);
+    expect(document.activeElement).toBe(tag);
+    expect(host.textContent).toContain('2026-11-09');
+    expect(host.textContent).not.toContain('2026-11-08');
+  },
+);
 
 it('renders changed text beside its inert old fragment without rebuilding a retained title on metadata updates', async () => {
   const title = field('task:title', 'Ship 🧭 safely');

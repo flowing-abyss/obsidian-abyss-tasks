@@ -51,6 +51,24 @@ different counts. Output retains at most five validated HTTP(S) sources and 12,0
 characters, separating generated summary from nullable attributed excerpts and marking truncation.
 Cancellation rejects late output without claiming physical cancellation of host requests.
 
+`CommandAgent` retains the SDK's bounded tool loop. Its model projection includes exact typed task,
+comment, project and note references; these are issued handles, never aliases or fuzzy title matches.
+Reference failures return the current canonical choices without changing the rejected operation.
+A saved-tree read without explicit paging uses the same bounded canonical reader as proposals;
+large results retain paged disclosure. Comment rewrites use the current owner-bound comment handle.
+Intent-specific disposition validation distinguishes continuing work, resolving a pending transition,
+and leaving a session. Archived sessions settle active planning status and clear accepted control
+input while retaining genuinely unsent text and complete exchanges.
+
+Project creation is a typed requested-values proposal. `CommandProjects` projects it into the
+existing native header without manufacturing a saved DTO or path. Public schema checks cover explicit
+fields, status and date ranges; dispatch rechecks the captured schema and invokes only
+`ProjectsApiV1.create`. Templates and unprovided defaults remain native creation behavior. Receipt-bound
+readback establishes the saved project and current focus. Explicit project membership moves use
+`ProjectsApiV1.moveTask` with a reviewed complete root and destination header. Its receipt proves root
+continuation only, so selected descendants or overlapping pending edits retain a concise conflict.
+Both operations use the shared admission journal and unknown-effect replay prohibition.
+
 `ProviderTranscription` uses the pinned OpenAI transcription adapter through that same transport and
 current SecretStorage/preferences. It returns final text only; the SDK exposes no portable confidence
 score. Two SDK network retries share one 45-second transcription lifetime, without resubmitting a
@@ -215,7 +233,17 @@ unrequested authored title annotations, and bounds model-facing projections. `co
 recovers only typed incomplete readonly coverage through bounded publication waits. Full-tree
 pages remain separate from the changed-node proposal budget. Model context excludes the durable
 write journal and duplicate historical trees; current plans retain their exact native refinement
-basis. Same-plan batches prepare at most 20 operations against concrete nodes present at the
+basis. `CommandReferenceBook` projects at most 4,096 short typed references per SDK run and decodes
+only declared reference fields through `commandReferenceShapes`. Authored text stays untouched.
+Unknown, wrong-kind and previous-turn aliases fail before an operation; exact stale revisions still
+reach the native revision checks. Each run owns its book, and session state, history, consent,
+preparation records and writes keep canonical handles. Current observed revisions supersede older
+reference-catalog pages, while same-revision comment pages can be combined.
+An unresolved non-create task failure cannot be cleared by creating a replacement root in that turn.
+Unqualified live draft tree reads reuse the session's exact, uniquely owned proposal basis; explicit
+plan/side/cursor selectors are never replaced. Reads return their declared cursor query, and large
+complete-tree exploration falls back to a truthful bounded page.
+Same-plan batches prepare at most 20 operations against concrete nodes present at the
 initial revision, then stage the whole validated result and count every operation. Failed
 preparation retains the earlier committable plan. Version-scoped comment edits remain separate.
 Canonical before/after capture is bounded at five seconds, 4,000 nodes, 512 pages and 4 MiB of
@@ -675,7 +703,7 @@ token. Current exclusion precedes incomplete health for target reads, while life
 precedence. Source health determines whether a snapshot can be disclosed; identity witnesses determine
 whether an opaque target still names the same occurrence. Either proof can be unavailable independently.
 
-[`taskContentApi`](src/integrations/taskContentApi.ts) composes the native edit and creation
+[`taskContentApi`](src/integrations/taskContentApi.ts) composes the native edit, hierarchy and creation
 preparations into optional public tree, prepare, apply and create capabilities. A client owns bounded,
 expiring immutable plan versions and plan-only draft targets; native preparations retain the source,
 clock, settings and sealed candidate authority. Before trees retain the original reviewed root.
@@ -688,6 +716,18 @@ command. Prepared successors remain unpublished until the final delivery check. 
 releases only its unpublished version; a visible refresh predecessor retires only when a successor is
 published. Concurrent visible versions and separately admitted request pins retain their ownership.
 A mutation consumes the whole plan family, including divergent versions and failed attempts.
+Reorder operations use the existing block editor and exact surviving source-line witnesses.
+The additive hierarchy preparation uses exact source and parent revisions and always supplies
+before/after participating root views. Exact source/parent root continuations and the moved root
+select this review forest; unrelated roots in the same files remain outside the public preview.
+Its focused before/after subject is the same moved occurrence.
+The native hierarchy owner captures candidates and line correspondence without reserving structural
+write authority, retaining full file populations and continuations for proof. Confirmation revalidates the sealed source and candidate bytes before its existing
+reservation, queue, transaction and compensation path. Every affected source must remain disclosable.
+Hierarchy previews cannot be appended to or refreshed as ordinary content edits; callers prepare a
+fresh exact hierarchy after resolving pending work. `CommandTree` renders the affected forest through
+its retained native renderer, and receipt readback uses proven correspondence for every issued node.
+
 Initial native edit preparation is asynchronous: the existing repository awaits the source owner's
 current acquisition, then rechecks file incarnation, lifecycle, scope, semantics and exact root.
 That acquisition returns its original observation and a current-proof guard; capture checks the guard

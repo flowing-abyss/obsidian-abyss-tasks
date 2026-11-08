@@ -2,6 +2,7 @@ import { MockLanguageModelV4 } from 'ai/test';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { ContentPlanV1, PrepareTaskContentV1, TasksApiV1, TaskTreeV1 } from '../api';
 import { CommandAgent } from '../src/ai/CommandAgent';
+import { commandReferences } from '../src/ai/commandReferences';
 import { preserveAuthoredAnnotations } from '../src/ai/commandSchemas';
 import { CommandSession } from '../src/ai/CommandSession';
 import type { CommandSessionSnapshot } from '../src/ai/commandTypes';
@@ -583,6 +584,25 @@ it('separates two provider retries from model/schema repair and refuses a fourth
   expect(requests).toBe(3);
   expect(h.session.snapshot().status.kind).toBe('error');
   expect(h.session.snapshot().proposal.changes).toHaveLength(0);
+});
+it('retains the reviewed proposal and reports wrapped billing failure without retrying', async () => {
+  const h = await setup();
+  h.script(interpret(), create, finish());
+  await h.session.submit('Create a draft');
+  const before = h.session.snapshot().proposal;
+  let requests = 0;
+  h.model.doGenerate = async () => {
+    requests++;
+    throw Object.assign(new Error('SECRET provider response'), { cause: { statusCode: 402 } });
+  };
+  await h.session.submit('Add more detail');
+  expect(requests).toBe(1);
+  expect(h.session.snapshot().status.kind).toBe('error');
+  expect(h.session.snapshot().status.message).toContain('billing');
+  expect(h.session.snapshot().status.message).not.toContain('SECRET');
+  expect(h.session.snapshot().proposal).toEqual(before);
+  expect(h.session.snapshot().journal).toHaveLength(0);
+  expect(await h.read('a.md')).not.toContain('New');
 });
 it.each([
   { name: 'retained root', suffix: '', child: false },
@@ -1334,7 +1354,15 @@ it('retires stale child read pages before the next model turn and refreshes sele
   await h.session.submit('Show the current work');
   const prompt = JSON.stringify(h.model.doGenerateCalls[next]?.prompt);
   expect(prompt).not.toContain(child.revision);
-  expect(prompt).toContain(unrelated.revision);
+  expect(prompt).toContain('Unrelated source');
+  expect(
+    h.session
+      .snapshot()
+      .entities.tasks.some(
+        (page) =>
+          page.tree.target === unrelated.target && page.tree.revision === unrelated.revision,
+      ),
+  ).toBe(true);
   const currentPeer = await h.api.tasks.get(peer.target);
   if (!currentPeer.ok) throw new Error('peer');
   expect(h.session.snapshot().focus).toEqual([
@@ -1609,7 +1637,11 @@ it('semantic keep archives a resumable unsaved preview without a source write', 
   const archived = expectDefined(h.saved.find((snapshot) => snapshot.id === previous.id));
   expect(archived.proposal).toEqual(previous.proposal);
   expect(archived.trees).toEqual(previous.trees);
-  expect(archived.input).toBe('Оставь предыдущую незаписанной, начнём новую.');
+  expect(archived.input).toBe('');
+  expect(archived.exchanges).toContainEqual({
+    role: 'user',
+    text: 'Оставь предыдущую незаписанной, начнём новую.',
+  });
   expect(await h.read('a.md')).not.toContain('- [ ] New');
   expect(h.session.restore(archived)).toBe(true);
   await h.session.resumeOwned();
@@ -2279,4 +2311,776 @@ it('interprets continuous and manual voice modes semantically without mutating a
   expect(h.session.snapshot().voiceMode).toBe('manual');
   expect(await h.app.vault.adapter.read('a.md')).toBe(before);
   expect(h.session.snapshot().journal).toEqual([]);
+});
+
+it('gives create-specific bounded repair for JSON-encoded tree metadata without authorizing the malformed payload', async () => {
+  const h = await setup();
+  h.script(
+    interpret(),
+    () =>
+      call('task', {
+        input: JSON.stringify({
+          kind: 'create',
+          destination: { type: 'configured-default' },
+          tree: { markdownTitle: 'New', scheduled: { type: 'set', value: '2026-08-02' } },
+        }),
+      }),
+    () => {
+      expect(h.session.snapshot().proposal.changes).toHaveLength(0);
+      expect(h.session.snapshot().journal).toHaveLength(0);
+      return create();
+    },
+    finish(),
+  );
+  await h.session.submit('Prepare a task for tomorrow');
+  const retry = JSON.stringify(h.model.doGenerateCalls[2]?.prompt);
+  expect(retry).toContain('tree.initial');
+  expect(retry).toContain('input.kind=create');
+  expect(retry).not.toContain('Use input.kind=append');
+  expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+  expect(await h.read('a.md')).toBe('- [ ] Existing [unknown:: keep]\n');
+});
+
+it.each([
+  '{"kind":"create","destination":{"type":"configured-default"},"tree":{"markdownTitle":"New","scheduled":{"type":"set","value":"2026-08-02"}}}}',
+  'not JSON at all',
+])('keeps unparseable task repair neutral and requires a new valid object: %s', async (input) => {
+  const h = await setup();
+  h.script(
+    interpret(),
+    () => call('task', { input }),
+    () => {
+      expect(h.session.snapshot().proposal.changes).toHaveLength(0);
+      expect(h.session.snapshot().journal).toHaveLength(0);
+      return call('task', {
+        input: {
+          kind: 'create',
+          destination: { type: 'note', path: 'a.md', insertion: { type: 'append' } },
+          tree: {
+            markdownTitle: 'New',
+            initial: { scheduled: { type: 'set', value: '2026-08-02' } },
+          },
+        },
+      });
+    },
+    finish(),
+  );
+  await h.session.submit('Prepare a task for tomorrow');
+  const feedback = JSON.stringify(
+    h.model.doGenerateCalls[2]?.prompt.filter((message) => message.role === 'tool'),
+  );
+  expect(feedback).toContain('input must be an object');
+  expect(feedback).not.toContain('Use input.kind=append');
+  expect(feedback).toContain('tree.initial');
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  const change = expectDefined(h.session.snapshot().proposal.changes[0]);
+  if (change.kind !== 'task') throw new Error('Expected task');
+  expect(change.plan.after?.dates.scheduled).toBe('2026-08-02');
+  expect(await h.read('a.md')).toBe('- [ ] Existing [unknown:: keep]\n');
+});
+
+it('rejects irrelevant new-session disposition before SDK repair and retains the exact unsaved tree', async () => {
+  const h = await setup();
+  h.script(interpret(), create, finish());
+  await h.session.submit('Prepare pending work');
+  const previous = h.session.snapshot();
+  h.script(
+    () =>
+      call('interpret', { intent: 'new-session', research: false, transitionDisposition: 'keep' }),
+    () => {
+      expect(h.session.snapshot().id).toBe(previous.id);
+      expect(h.session.snapshot().proposal).toEqual(previous.proposal);
+      expect(h.session.snapshot().pendingTransition).toBeUndefined();
+      return call('interpret', { intent: 'new-session', research: false, disposition: 'keep' });
+    },
+  );
+  await h.session.submit('Keep this draft and start a new session');
+  expect(h.session.snapshot().id).not.toBe(previous.id);
+  expect(h.saved.find((entry) => entry.id === previous.id)?.proposal).toEqual(previous.proposal);
+  expect(await h.read('a.md')).toBe('- [ ] Existing [unknown:: keep]\n');
+});
+
+it('cancels a pending switch and continues the same semantic refinement without asking for a repeat', async () => {
+  const h = await setup();
+  h.script(interpret(), create, finish());
+  await h.session.submit('Prepare pending work');
+  await h.session.newSession();
+  const id = h.session.snapshot().id;
+  h.script(
+    () => call('interpret', { intent: 'plan', research: false, transitionDisposition: 'cancel' }),
+    () => {
+      const change = expectDefined(h.session.snapshot().proposal.changes[0]);
+      if (change.kind !== 'task') throw new Error('Expected task');
+      return call('task', {
+        input: {
+          kind: 'append',
+          plan: change.plan.target,
+          expectedPlanRevision: change.plan.revision,
+          operation: {
+            type: 'description',
+            target: change.plan.after?.target,
+            text: 'Keep this exact explanation.',
+          },
+        },
+      });
+    },
+    finish(),
+  );
+  await h.session.submit('Stay here and add this explanation');
+  const after = h.session.snapshot();
+  expect(after.id).toBe(id);
+  expect(after.pendingTransition).toBeNull();
+  expect(after.trees[0]?.after?.description).toBe('Keep this exact explanation.');
+  expect(after.status.kind).toBe('ready');
+  expect(await h.read('a.md')).not.toContain('Keep this exact explanation.');
+});
+
+it('repairs a nonexistent transition as ordinary planning instead of inventing a disposition question', async () => {
+  const h = await setup();
+  h.script(
+    () =>
+      call('interpret', {
+        intent: 'resolve-transition',
+        research: false,
+        transitionDisposition: 'cancel',
+      }),
+    interpret(),
+    create,
+    finish(),
+  );
+  await h.session.submit('Prepare new work');
+  expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+  expect(h.session.snapshot().activeQuestion).toBeNull();
+  expect(h.model.doGenerateCalls).toHaveLength(4);
+});
+
+it('stages the exact native hierarchy as affected trees and follows moved focus after one confirmation', async () => {
+  const h = await setup({
+    'a.md':
+      '- [ ] Source\n  - [ ] Same\n    - [ ] First\n  - [ ] Same\n    - [ ] Second\n- [ ] Parent\n',
+  });
+  const listed = await h.api.tasks.list();
+  if (!listed.ok) throw new Error('list');
+  const source = expectDefined(listed.value.items.filter((n) => n.title === 'Same')[1]);
+  const parent = expectDefined(listed.value.items.find((n) => n.title === 'Parent'));
+  h.script(
+    interpret(),
+    () =>
+      call('task', {
+        input: {
+          kind: 'hierarchy',
+          operation: {
+            type: 'reparent',
+            source: source.target,
+            expectedSourceRevision: source.revision,
+            parent: parent.target,
+            expectedParentRevision: parent.revision,
+          },
+        },
+      }),
+    () => {
+      const change = expectDefined(h.session.snapshot().proposal.changes[0]);
+      if (change.kind !== 'task') throw new Error('task');
+      return call('finish', {
+        state: 'ready',
+        message: 'Hierarchy ready.',
+        selection: [
+          {
+            kind: 'task',
+            target: source.target,
+            plan: change.plan.target,
+            expectedPlanRevision: change.plan.revision,
+          },
+        ],
+      });
+    },
+  );
+  await h.session.submit('Move this exact second child under the other parent');
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  expect(h.session.snapshot().trees).toHaveLength(2);
+  const destinationTree = expectDefined(h.session.snapshot().trees[1]?.after ?? undefined);
+  expect(expectDefined(expectDefined(destinationTree.children[0]).children[0]).title).toBe(
+    'Second',
+  );
+  await h.session.submit('');
+  expect(h.session.snapshot().status.kind).toBe('saved');
+  const current = await h.api.tasks.get(expectDefined(h.session.snapshot().focus[0]).target);
+  if (!current.ok) throw new Error('readback');
+  const receipt = h.session.snapshot().journal[0]?.receipt as {
+    contentContinuity?: {
+      correspondence?: { tasks?: Array<{ preparedTarget: string; committedTarget: string }> };
+    };
+  };
+  expect(current.value.parentTarget).toBe(
+    receipt.contentContinuity?.correspondence?.tasks?.find(
+      (entry) => entry.preparedTarget === parent.target,
+    )?.committedTarget,
+  );
+  expect((await h.read('a.md')).match(/Second/g)).toHaveLength(1);
+});
+
+it('reads a complete nested tree in one bounded SDK read and retains exact comment owners next turn', async () => {
+  const h = await setup({
+    'a.md':
+      '- [ ] Parent\n  - [ ] Same\n  - [ ] Same\n    - [ ] Deep\n      - Existing guide [[Guide]]\n',
+  });
+  const listed = await h.api.tasks.list();
+  if (!listed.ok) throw new Error('list');
+  const root = expectDefined(listed.value.items.find((t) => t.parentTarget === undefined));
+  h.script(interpret(), () => call('read', { kind: 'tree', target: root.target }), finish());
+  await h.session.submit('Read the whole task');
+  const page = expectDefined(
+    h.session.snapshot().entities.tasks.find((p) => p.tree.target === root.target),
+  );
+  const deep = expectDefined(page.tree.children[1]?.children[0]);
+  expect(deep.comments).toHaveLength(1);
+  expect(deep.complete).toBe(true);
+  h.script(interpret(), finish());
+  await h.session.submit('Shorten that existing comment');
+  const input = JSON.stringify(h.model.doGenerateCalls[3]?.prompt);
+  expect(input).toContain('commentReferences');
+  expect(input).toContain(deep.comments[0]?.target);
+  expect(input).toContain('update-comment');
+});
+
+it('returns truthful cursor pages when an unqualified tree read exceeds the output budget', async () => {
+  const source = [
+    '- [ ] Root',
+    ...Array.from({ length: 160 }, (_, i) => `  - [ ] Child ${i} ${'detail '.repeat(20)}`),
+    '',
+  ].join('\n');
+  const h = await setup({ 'a.md': source });
+  const listed = await h.api.tasks.list();
+  if (!listed.ok) throw new Error('list');
+  const root = expectDefined(listed.value.items.find((t) => t.parentTarget === undefined));
+  h.script(
+    interpret(),
+    () => call('read', { kind: 'tree', target: root.target }),
+    () => {
+      const first = expectDefined(h.session.snapshot().entities.tasks[0]);
+      expect(first.complete).toBe(false);
+      expect(first.truncated).toBe(true);
+      expect(JSON.stringify(first).length).toBeLessThan(65536);
+      expect(first.tree.children[0]?.title).toContain('Child 0 ');
+      return call('read', {
+        kind: 'tree',
+        target: root.target,
+        cursor: expectDefined(first.nextCursor),
+      });
+    },
+    finish('More children remain.'),
+  );
+  await h.session.submit('Show the first pages of this large tree');
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  const pages = h.session.snapshot().entities.tasks;
+  expect(pages).toHaveLength(2);
+  const first = expectDefined(pages[0]);
+  const second = expectDefined(pages[1]);
+  expect(second.tree.children[0]?.title).toContain(`Child ${first.tree.children.length} `);
+  expect(second.nextCursor).toBeDefined();
+  expect(second.complete).toBe(false);
+  expect(second.truncated).toBe(true);
+  expect(await h.read('a.md')).toBe(source);
+});
+
+it('offers only the latest observed task revision and comment after a native edit outside the session', async () => {
+  const h = await setup({ 'a.md': '- [ ] Root\n  - Old comment\n' });
+  const listed = await h.api.tasks.list();
+  if (!listed.ok) throw new Error('list');
+  const root = expectDefined(listed.value.items[0]);
+  expect(
+    await h.session.focus({ kind: 'task', target: root.target, revision: root.revision }),
+  ).toBe(true);
+  const before = await h.session.readTreePage({ target: root.target });
+  const prepared = await expectDefined(h.api.tasks.prepare)({
+    kind: 'edit',
+    target: root.target,
+    expectedRevision: root.revision,
+    operation: {
+      type: 'update-comment',
+      target: expectDefined(before.tree.comments[0]).target,
+      text: 'Updated comment',
+    },
+  });
+  if (!prepared.ok) throw new Error(prepared.error.code);
+  const applied = await expectDefined(h.api.tasks.apply)({
+    plan: prepared.value.target,
+    expectedPlanRevision: prepared.value.revision,
+    requestId: 'outside-session',
+    expiresAt: Date.UTC(2026, 7, 1, 12) + 60000,
+  });
+  expect(applied.ok).toBe(true);
+  const after = await h.session.readTreePage({ target: root.target });
+  expect(after.tree.target).toBe(before.tree.target);
+  expect(after.tree.revision).not.toBe(before.tree.revision);
+  const comment = expectDefined(after.tree.comments[0]);
+  expect(commandReferences(h.session.snapshot())).toMatchObject({
+    taskReferences: [
+      {
+        target: root.target,
+        revision: after.tree.revision,
+        editBasis: { expectedRevision: after.tree.revision },
+      },
+    ],
+    commentReferences: [
+      {
+        target: comment.target,
+        ownerTarget: root.target,
+        text: 'Updated comment',
+        editBasis: { expectedRevision: after.tree.revision },
+      },
+    ],
+  });
+});
+
+it('retains exact comments from separate pages of the same current task revision', async () => {
+  const h = await setup({ 'a.md': '- [ ] Root\n  - First comment\n  - Second comment\n' });
+  const listed = await h.api.tasks.list();
+  if (!listed.ok) throw new Error('list');
+  const root = expectDefined(listed.value.items[0]);
+  const first = await h.session.readTreePage({ target: root.target, limit: 1 });
+  const second = await h.session.readTreePage({
+    target: root.target,
+    limit: 1,
+    cursor: expectDefined(first.nextCursor),
+  });
+  const references = commandReferences(h.session.snapshot()) as { commentReferences: unknown[] };
+  expect(references.commentReferences).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        target: expectDefined(first.tree.comments[0]).target,
+        text: 'First comment',
+      }),
+      expect.objectContaining({
+        target: expectDefined(second.tree.comments[0]).target,
+        text: 'Second comment',
+      }),
+    ]),
+  );
+});
+
+it('cancels an unsaved root with a sole batch remove without source effects or a new session', async () => {
+  const h = await setup();
+  h.script(interpret(), create, finish());
+  await h.session.submit('Create a draft');
+  const before = h.session.snapshot();
+  const change = expectDefined(before.proposal.changes[0]);
+  if (change.kind !== 'task') throw new Error('task');
+  h.script(
+    interpret(),
+    () =>
+      call('task', {
+        input: {
+          kind: 'batch',
+          plan: change.plan.target,
+          expectedPlanRevision: change.plan.revision,
+          operations: [{ type: 'remove', target: expectDefined(change.plan.after).target }],
+        },
+      }),
+    finish('Draft discarded.'),
+  );
+  await h.session.submit('Discard this new task');
+  expect(h.session.snapshot().proposal.changes).toEqual([]);
+  expect(h.session.snapshot().id).toBe(before.id);
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  expect(await h.read('a.md')).not.toContain('New');
+});
+
+it.each(['canonical', 'alias'] as const)(
+  'returns exact typed current references after a corrupted %s draft plan without repairing by title',
+  async (referenceKind) => {
+    const h = await setup();
+    h.script(interpret(), create, finish());
+    await h.session.submit('Create a draft');
+    const change = expectDefined(h.session.snapshot().proposal.changes[0]);
+    if (change.kind !== 'task') throw new Error('task');
+    h.script(
+      interpret(),
+      () =>
+        call('task', {
+          input: {
+            kind: 'append',
+            plan: referenceKind === 'alias' ? '@missing:d999' : `${change.plan.target}:wrong`,
+            expectedPlanRevision: change.plan.revision,
+            operation: {
+              type: 'description',
+              target: expectDefined(change.plan.after).target,
+              text: 'Detail',
+            },
+          },
+        }),
+      () => {
+        const prompt = expectDefined(
+          h.model.doGenerateCalls[h.model.doGenerateCalls.length - 1],
+        ).prompt;
+        const result = prompt
+          .flatMap((message) => (message.role === 'tool' ? message.content : []))
+          .reverse()
+          .find((part) => part.type === 'tool-result' && part.toolName === 'task');
+        if (result?.type !== 'tool-result' || result.output.type !== 'error-text')
+          throw new Error('feedback');
+        const feedback = result.output.value;
+        expect(feedback).toContain('Current references');
+        const catalog = JSON.parse(feedback.slice(feedback.indexOf('{"taskReferences"'))) as {
+          taskReferences: Array<{
+            target: string;
+            editBasis: { plan: string; expectedPlanRevision: string };
+          }>;
+        };
+        const reference = expectDefined(catalog.taskReferences[0]);
+        return call('task', {
+          input: {
+            kind: 'append',
+            ...reference.editBasis,
+            operation: {
+              type: 'description',
+              target: reference.target,
+              text: 'Detail',
+            },
+          },
+        });
+      },
+      finish(),
+    );
+    await h.session.submit('Add detail');
+    expect(h.session.snapshot().status.kind).toBe('ready');
+    expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+  },
+);
+
+it('uses short turn-local tool references while retaining canonical drafts and authored token-like text', async () => {
+  const h = await setup();
+  let selected: { target: string; plan: string; expectedPlanRevision: string } | undefined;
+  h.script(
+    interpret(),
+    create,
+    () => {
+      const prompt = expectDefined(
+        h.model.doGenerateCalls[h.model.doGenerateCalls.length - 1],
+      ).prompt;
+      const results = prompt.flatMap((message) => (message.role === 'tool' ? message.content : []));
+      results.reverse();
+      const result = results.find(
+        (part) => part.type === 'tool-result' && part.toolName === 'task',
+      );
+      if (result?.type !== 'tool-result' || result.output.type !== 'json')
+        throw new Error('Missing tool result');
+      const value = result.output.value as {
+        selection: { target: string; plan: string; expectedPlanRevision: string };
+      };
+      selected = value.selection;
+      return call('task', {
+        input: {
+          kind: 'append',
+          plan: selected.plan,
+          expectedPlanRevision: selected.expectedPlanRevision,
+          operation: {
+            type: 'description',
+            target: selected.target,
+            text: 'Keep literal @1:t1 and [[Guide]].',
+          },
+        },
+      });
+    },
+    finish(),
+  );
+  await h.session.submit('Create and describe a task');
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  expect(expectDefined(selected).target).toMatch(/^@\w+:t\d+$/u);
+  expect(expectDefined(selected).plan).toMatch(/^@\w+:d\d+$/u);
+  expect(expectDefined(selected).expectedPlanRevision).toMatch(/^@\w+:r\d+$/u);
+  const change = expectDefined(h.session.snapshot().proposal.changes[0]);
+  if (change.kind !== 'task') throw new Error('task');
+  expect(change.plan.after?.description).toBe('Keep literal @1:t1 and [[Guide]].');
+  expect(change.plan.target).not.toBe(expectDefined(selected).plan);
+  expect(change.plan.target).not.toMatch(/^@/u);
+  expect(
+    h.session
+      .snapshot()
+      .preparations?.some((entry) => JSON.stringify(entry).includes(expectDefined(selected).plan)),
+  ).toBe(false);
+  await h.session.submit('');
+  expect(h.session.snapshot().status.kind).toBe('saved');
+  expect(await h.read('a.md')).toContain('Keep literal @1:t1 and [[Guide]].');
+});
+
+it('requires repairing a failed refinement before creating independent work in the same turn', async () => {
+  const h = await setup();
+  h.script(interpret(), create, finish());
+  await h.session.submit('Prepare a draft');
+  const change = expectDefined(h.session.snapshot().proposal.changes[0]);
+  if (change.kind !== 'task') throw new Error('task');
+  const append = (revision: string) =>
+    call('task', {
+      input: {
+        kind: 'append',
+        plan: change.plan.target,
+        expectedPlanRevision: revision,
+        operation: {
+          type: 'description',
+          target: expectDefined(change.plan.after).target,
+          text: 'Repaired refinement',
+        },
+      },
+    });
+  let retainedAfterReplacement = 0;
+  h.script(
+    interpret(),
+    () => append('wrong revision'),
+    create,
+    () => {
+      retainedAfterReplacement = h.session.snapshot().proposal.changes.length;
+      return append(change.plan.revision);
+    },
+    create,
+    finish(),
+  );
+  await h.session.submit('Refine the draft and then prepare independent work');
+  expect(retainedAfterReplacement).toBe(1);
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  expect(h.session.snapshot().proposal.changes).toHaveLength(2);
+  expect(h.session.snapshot().trees[0]?.after?.description).toBe('Repaired refinement');
+  expect(await h.read('a.md')).not.toContain('New');
+});
+
+it('resets unresolved refinement repair at the next trusted user turn without discarding work', async () => {
+  const h = await setup();
+  h.script(interpret(), create, finish());
+  await h.session.submit('Prepare a draft');
+  const change = expectDefined(h.session.snapshot().proposal.changes[0]);
+  if (change.kind !== 'task') throw new Error('task');
+  h.script(
+    interpret(),
+    () =>
+      call('task', {
+        input: {
+          kind: 'append',
+          plan: change.plan.target,
+          expectedPlanRevision: 'wrong revision',
+          operation: {
+            type: 'description',
+            target: expectDefined(change.plan.after).target,
+            text: 'Unprepared',
+          },
+        },
+      }),
+    create,
+    finish(),
+  );
+  await h.session.submit('Refine the current draft');
+  expect(h.session.snapshot().status.kind).toBe('error');
+  expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+  h.script(interpret(), create, finish());
+  await h.session.submit('Leave that refinement unresolved and prepare a separate task');
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  expect(h.session.snapshot().proposal.changes).toHaveLength(2);
+});
+
+it.each([false, true])(
+  'archives a settled resumable draft after semantic keep while preserving genuinely unsent input=%s',
+  async (laterEdit) => {
+    const h = await setup();
+    h.script(interpret(), create, finish());
+    await h.session.submit('Create a draft');
+    const original = h.session.snapshot();
+    h.script(() => {
+      if (laterEdit) h.session.setInput('Unsent next detail');
+      return call('interpret', { intent: 'new-session', research: false, disposition: 'keep' });
+    });
+    await h.session.submit('Keep the prior draft and start a new session');
+    const archived = expectDefined(h.saved.find((s) => s.id === original.id));
+    expect(archived.status.kind).toBe('ready');
+    expect(archived.input).toBe(laterEdit ? 'Unsent next detail' : '');
+    expect(archived.proposal).toEqual(original.proposal);
+    expect(archived.exchanges).toContainEqual({
+      role: 'user',
+      text: 'Keep the prior draft and start a new session',
+    });
+    expect(archived.pendingTransition).toBeNull();
+    expect(h.session.restore(archived, false)).toBe(true);
+    expect(h.session.snapshot().status.kind).toBe('ready');
+  },
+);
+
+it('reads the exact live draft subtree without a supplied plan and retains its declared cursor basis', async () => {
+  const h = await setup();
+  h.script(
+    interpret(),
+    () =>
+      call('task', {
+        input: {
+          kind: 'create',
+          destination: { type: 'configured-default' },
+          tree: {
+            markdownTitle: 'Draft root',
+            children: [
+              { markdownTitle: 'Same', children: [{ markdownTitle: 'First leaf' }] },
+              {
+                markdownTitle: 'Same',
+                children: [{ markdownTitle: 'Second leaf', comments: [{ text: 'Owned detail' }] }],
+              },
+            ],
+          },
+        },
+      }),
+    finish(),
+  );
+  await h.session.submit('Prepare the nested draft');
+  const change = expectDefined(h.session.snapshot().proposal.changes[0]);
+  if (change.kind !== 'task') throw new Error('task');
+  const target = expectDefined(change.plan.after).target;
+  h.script(interpret(), () => call('read', { kind: 'tree', target }), finish());
+  await h.session.submit('Show that complete draft');
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  const page = expectDefined(
+    h.session.snapshot().entities.tasks.find((p) => p.tree.target === target),
+  );
+  expect(page.complete).toBe(true);
+  expect(page.tree.children[1]?.children[0]?.comments[0]?.text).toBe('Owned detail');
+  expect(await h.read('a.md')).not.toContain('Draft root');
+});
+
+it.each([
+  { plan: 'wrong-plan', expectedPlanRevision: 'wrong-revision' },
+  { side: 'before' },
+  { cursor: 'wrong-cursor' },
+])(
+  'does not replace explicit draft tree read selectors with an inferred basis: %j',
+  async (selectors) => {
+    const h = await setup();
+    h.script(interpret(), create, finish());
+    await h.session.submit('Prepare a draft');
+    const change = expectDefined(h.session.snapshot().proposal.changes[0]);
+    if (change.kind !== 'task') throw new Error('task');
+    h.script(
+      interpret(),
+      () =>
+        call('read', {
+          kind: 'tree',
+          target: expectDefined(change.plan.after).target,
+          ...selectors,
+        }),
+      finish(),
+    );
+    await h.session.submit('Read the specified draft view');
+    expect(h.session.snapshot().status.kind).toBe('error');
+    expect(h.session.snapshot().proposal.changes).toEqual([change]);
+    expect(h.session.snapshot().entities.tasks).toHaveLength(0);
+  },
+);
+
+it('continues an inferred draft page using the exact returned aliased query', async () => {
+  const h = await setup();
+  h.script(interpret(), create, finish());
+  await h.session.submit('Prepare a nested draft');
+  const change = expectDefined(h.session.snapshot().proposal.changes[0]);
+  if (change.kind !== 'task') throw new Error('task');
+  let declaredPlan: string | undefined;
+  h.script(
+    interpret(),
+    () => call('read', { kind: 'tree', target: expectDefined(change.plan.after).target, limit: 1 }),
+    () => {
+      const prompt = expectDefined(
+        h.model.doGenerateCalls[h.model.doGenerateCalls.length - 1],
+      ).prompt;
+      const results = prompt.flatMap((message) => (message.role === 'tool' ? message.content : []));
+      results.reverse();
+      const result = results.find(
+        (part) => part.type === 'tool-result' && part.toolName === 'read',
+      );
+      if (result?.type !== 'tool-result' || result.output.type !== 'json')
+        throw new Error('read result');
+      const value = result.output.value as {
+        request: {
+          kind: 'tree';
+          target: string;
+          plan: string;
+          expectedPlanRevision: string;
+          limit: number;
+        };
+        nextCursor: string;
+      };
+      declaredPlan = value.request.plan;
+      return call('read', { ...value.request, cursor: value.nextCursor });
+    },
+    finish(),
+  );
+  await h.session.submit('Show both pages of the draft');
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  expect(declaredPlan).toMatch(/^@\w+:d\d+$/u);
+  expect(h.session.snapshot().entities.tasks.map((page) => page.tree.children[0]?.title)).toEqual([
+    'Child A',
+    'Child B',
+  ]);
+});
+
+it.each(['expired', 'historical'] as const)(
+  'does not infer a writable draft read basis from %s work',
+  async (mode) => {
+    const h = await setup();
+    h.script(interpret(), create, finish());
+    await h.session.submit('Prepare a draft');
+    const before = h.session.snapshot();
+    const change = expectDefined(before.proposal.changes[0]);
+    if (change.kind !== 'task') throw new Error('task');
+    if (mode === 'historical') expect(h.session.restore(before)).toBe(true);
+    else h.clock(Date.UTC(2026, 7, 1, 13));
+    h.script(
+      interpret(),
+      () => call('read', { kind: 'tree', target: expectDefined(change.plan.after).target }),
+      finish(),
+    );
+    await h.session.submit('Read that previous draft');
+    expect(h.session.snapshot().status.kind).toBe('error');
+    expect(h.session.snapshot().proposal.changes).toEqual(before.proposal.changes);
+    expect(h.session.snapshot().entities.tasks).toHaveLength(0);
+    expect(await h.read('a.md')).not.toContain('New');
+  },
+);
+
+it('does not classify an unknown task discriminator as a failed refinement', async () => {
+  const h = await setup();
+  h.script(
+    interpret(),
+    () => call('task', { input: { kind: 'unknown-operation' } }),
+    create,
+    finish(),
+  );
+  await h.session.submit('Prepare a new task');
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+});
+
+it('rejects a previous model turn alias even when the saved task is still current', async () => {
+  const h = await setup();
+  const listed = await h.api.tasks.list();
+  if (!listed.ok) throw new Error('list');
+  const task = expectDefined(listed.value.items[0]);
+  let alias = '';
+  h.script(
+    interpret(),
+    () => call('read', { kind: 'tree', target: task.target }),
+    () => {
+      const prompt = expectDefined(
+        h.model.doGenerateCalls[h.model.doGenerateCalls.length - 1],
+      ).prompt;
+      const results = prompt.flatMap((message) => (message.role === 'tool' ? message.content : []));
+      results.reverse();
+      const result = results.find(
+        (part) => part.type === 'tool-result' && part.toolName === 'read',
+      );
+      if (result?.type !== 'tool-result' || result.output.type !== 'json')
+        throw new Error('read result');
+      alias = (result.output.value as { tree: { target: string } }).tree.target;
+      return finish()();
+    },
+  );
+  await h.session.submit('Read the saved task');
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  h.script(interpret(), () => call('read', { kind: 'tree', target: alias }), finish());
+  await h.session.submit('Read it using an old tool reference');
+  expect(h.session.snapshot().status.kind).toBe('error');
+  expect(h.session.snapshot().entities.tasks).toHaveLength(1);
+  expect((await h.api.tasks.get(task.target)).ok).toBe(true);
+  expect(await h.read('a.md')).toBe('- [ ] Existing [unknown:: keep]\n');
 });

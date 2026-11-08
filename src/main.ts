@@ -455,7 +455,12 @@ export default class TaskCalendarPlugin extends Plugin {
       reads: this.taskIndex.integrationReads(),
       mutations: tasks,
       search: this.taskSearch,
-      content: { edits: tasks, creates: tasks, statuses: () => this.statusCatalog.all() },
+      content: {
+        edits: tasks,
+        creates: tasks,
+        hierarchies: tasks,
+        statuses: () => this.statusCatalog.all(),
+      },
       projects: {
         reads,
         writes: this.projectManager.integrationWrites(

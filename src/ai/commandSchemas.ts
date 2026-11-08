@@ -82,6 +82,12 @@ const destination = z.union([
   z.strictObject({ type: z.literal('project'), target: handle, expectedRevision: handle }),
 ]);
 export const operationSchema = z.discriminatedUnion('type', [
+  z.strictObject({
+    type: z.literal('reorder'),
+    target: handle,
+    relativeTo: handle,
+    placement: z.enum(['before', 'after']),
+  }),
   z.strictObject({ type: z.literal('patch'), target: handle, patch: patchSchema }),
   z.strictObject({ type: z.literal('description'), target: handle, text: text.nullable() }),
   z.strictObject({ type: z.literal('add-child'), target: handle, markdownTitle: text.min(1) }),
@@ -109,6 +115,23 @@ export const operationSchema = z.discriminatedUnion('type', [
   }),
 ]);
 export const prepareSchema = z.discriminatedUnion('kind', [
+  z.strictObject({
+    kind: z.literal('hierarchy'),
+    operation: z.discriminatedUnion('type', [
+      z.strictObject({
+        type: z.literal('reparent'),
+        source: handle,
+        expectedSourceRevision: handle,
+        parent: handle,
+        expectedParentRevision: handle,
+      }),
+      z.strictObject({
+        type: z.literal('promote'),
+        source: handle,
+        expectedSourceRevision: handle,
+      }),
+    ]),
+  }),
   z.strictObject({ kind: z.literal('create'), destination, tree: seed }),
   z.strictObject({
     kind: z.literal('edit'),
@@ -135,40 +158,65 @@ export const batchSchema = z.strictObject({
   operations: z.array(batchOperationSchema).min(1).max(20),
 });
 export const taskToolSchema = z.discriminatedUnion('kind', [...prepareSchema.options, batchSchema]);
-export const intentSchema = z.strictObject({
-  intent: z
-    .enum([
-      'plan',
-      'confirm',
-      'immediate',
-      'new-session',
-      'resolve-transition',
-      'save-then-plan',
-      'review',
-      'acknowledge-uncertainty',
-      'voice-mode',
-    ])
-    .describe(
-      'plan means creating, editing, finding or showing entities in the CURRENT conversation; use it for ordinary task work. confirm accepts the visible proposal. immediate explicitly requests saving now. new-session ONLY means an explicit request to leave this conversation and start a separate session; a new task or topic stays plan.',
-    ),
-  research: z.boolean(),
-  voiceMode: z
-    .enum(['manual', 'continuous'])
-    .optional()
-    .describe('Only for an explicit request to change voice input mode in this session.'),
-  disposition: z
-    .enum(['keep', 'discard'])
-    .optional()
-    .describe(
-      'keep preserves the full pending draft in history, WITHOUT saving it to source. discard permanently abandons the draft ONLY when the user explicitly wants it removed. Not saving to source does not mean discard. If unresolved, omit this field to ask and retain the draft.',
-    ),
-  transitionDisposition: z
-    .enum(['save', 'keep', 'discard', 'cancel'])
-    .optional()
-    .describe(
-      'save writes the reviewed changes to source; keep switches while retaining the complete unsaved draft for later; discard switches and abandons the draft ONLY on explicit abandonment; cancel stays here. If the intended disposition is ambiguous, omit this field: the application retains the draft and asks. Never infer discard from leaving work unsaved.',
-    ),
-});
+export const intentSchema = z
+  .strictObject({
+    intent: z
+      .enum([
+        'plan',
+        'confirm',
+        'immediate',
+        'new-session',
+        'resolve-transition',
+        'save-then-plan',
+        'review',
+        'acknowledge-uncertainty',
+        'voice-mode',
+      ])
+      .describe(
+        'plan means creating, editing, finding or showing entities in the CURRENT conversation; use it for ordinary task work. confirm accepts the visible proposal. immediate explicitly requests saving now. new-session ONLY means an explicit request to leave this conversation and start a separate session; a new task or topic stays plan.',
+      ),
+    research: z.boolean(),
+    voiceMode: z
+      .enum(['manual', 'continuous'])
+      .optional()
+      .describe('Only for an explicit request to change voice input mode in this session.'),
+    disposition: z
+      .enum(['keep', 'discard'])
+      .optional()
+      .describe(
+        'keep preserves the full pending draft in history, WITHOUT saving it to source. discard permanently abandons the draft ONLY when the user explicitly wants it removed. Not saving to source does not mean discard. If unresolved, omit this field to ask and retain the draft.',
+      ),
+    transitionDisposition: z
+      .enum(['save', 'keep', 'discard', 'cancel'])
+      .optional()
+      .describe(
+        'save writes the reviewed changes to source; keep switches while retaining the complete unsaved draft for later; discard switches and abandons the draft ONLY on explicit abandonment; cancel stays here. If the intended disposition is ambiguous, omit this field: the application retains the draft and asks. Never infer discard from leaving work unsaved.',
+      ),
+  })
+  .superRefine((input, context) => {
+    if (input.disposition !== undefined && input.intent !== 'new-session')
+      context.addIssue({
+        code: 'custom',
+        path: ['disposition'],
+        message: 'disposition belongs only to new-session.',
+      });
+    if (
+      input.transitionDisposition !== undefined &&
+      !['plan', 'resolve-transition'].includes(input.intent)
+    )
+      context.addIssue({
+        code: 'custom',
+        path: ['transitionDisposition'],
+        message:
+          'Use disposition for new-session; transitionDisposition resolves an existing transition with plan or resolve-transition.',
+      });
+    if (input.voiceMode !== undefined && input.intent !== 'voice-mode')
+      context.addIssue({
+        code: 'custom',
+        path: ['voiceMode'],
+        message: 'voiceMode belongs only to voice-mode.',
+      });
+  });
 const selection = z
   .array(
     z.union([
@@ -333,12 +381,36 @@ const assignment = z.strictObject({
     .union([z.string(), z.number(), z.boolean(), z.array(z.union([z.string(), z.number()]))])
     .nullable(),
 });
-export const projectStageSchema = z.strictObject({
-  target: handle,
-  expectedRevision: handle,
-  fields: z.array(assignment).max(50).optional(),
+const projectFields = {
+  fields: z.array(assignment).min(1).max(50).optional(),
   statusId: z.string().nullable().optional(),
-});
+};
+export const projectStageSchema = z.union([
+  z.strictObject({
+    kind: z.literal('update').optional(),
+    target: handle,
+    expectedRevision: handle,
+    ...projectFields,
+  }),
+  z.strictObject({
+    kind: z.literal('create'),
+    name: z.string().trim().min(1).max(1000),
+    ...projectFields,
+  }),
+  z.strictObject({
+    kind: z.literal('refine-create'),
+    proposal: handle,
+    name: z.string().trim().min(1).max(1000).optional(),
+    ...projectFields,
+  }),
+  z.strictObject({
+    kind: z.literal('move-task'),
+    target: handle,
+    expectedRevision: handle,
+    taskTarget: handle,
+    expectedTaskRevision: handle,
+  }),
+]);
 export const statusStageSchema = z.strictObject({
   target: handle,
   revision: handle,
@@ -603,7 +675,8 @@ const planOutput = z.looseObject({
   providerEpoch: z.string(),
   target: z.string().min(1),
   revision: z.string().min(1),
-  kind: z.enum(['create', 'edit']),
+  kind: z.enum(['create', 'edit', 'hierarchy']),
+  affected: z.object({ before: z.array(treeOutput), after: z.array(treeOutput) }).optional(),
   expiresAt: z.number(),
   before: treeOutput.nullable(),
   after: treeOutput.nullable(),
@@ -611,6 +684,8 @@ const planOutput = z.looseObject({
 export function validatePlanOutput(plan: ContentPlanV1): void {
   z.json().parse(plan);
   planOutput.parse(plan);
+  if (plan.kind === 'hierarchy' && plan.affected === undefined)
+    throw new CommandFailure('INCOMPLETE_PLAN', 'The hierarchy preview lacks its affected roots.');
 }
 
 /** Keep full canonical trees in the surface; model context uses explicitly paged summaries. */
@@ -645,6 +720,14 @@ export function planToolOutput(plan: ContentPlanV1): ReturnType<typeof checkedOu
     ...selection,
     before: page(plan.before),
     after: page(plan.after),
+    ...(plan.affected === undefined
+      ? {}
+      : {
+          affected: {
+            before: plan.affected.before.map(page),
+            after: plan.affected.after.map(page),
+          },
+        }),
     contextTruncated: true,
     readHint:
       'Use read tree with this plan/revision and returned cursors to expand the canonical tree.',
@@ -841,4 +924,17 @@ function linkedCommentIndex(link: CommandLink, tree: TaskTreeV1 | undefined): nu
       (comment) => comment.target === link.comment && comment.parentTarget === link.target,
     ) ?? -1
   );
+}
+
+/** Complete native root views, paired by issued identity rather than display title/order. */
+export function commandPlanViews(
+  plan: ContentPlanV1,
+): ReadonlyArray<{ before: TaskTreeV1 | null; after: TaskTreeV1 | null }> {
+  if (plan.affected === undefined) return [{ before: plan.before, after: plan.after }];
+  const before = new Map(plan.affected.before.map((root) => [root.target, root]));
+  const after = new Map(plan.affected.after.map((root) => [root.target, root]));
+  return [...new Set([...before.keys(), ...after.keys()])].map((target) => ({
+    before: before.get(target) ?? null,
+    after: after.get(target) ?? null,
+  }));
 }

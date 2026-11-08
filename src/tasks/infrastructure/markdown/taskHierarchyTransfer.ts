@@ -23,6 +23,10 @@ export interface PreparedHierarchyTransfer {
   readonly contents: ReadonlyMap<string, string>;
   readonly moved: { readonly filePath: string; readonly line: number };
   readonly changed: boolean;
+  readonly correspondence: ReadonlyArray<{
+    readonly before: { readonly filePath: string; readonly line: number };
+    readonly after: { readonly filePath: string; readonly line: number };
+  }>;
   readonly survivingRoots: ReadonlyMap<
     string,
     ReadonlyArray<{ readonly beforeLine: number; readonly line: number }>
@@ -33,6 +37,7 @@ interface Line {
   text: string;
   ending: string;
   originalLine?: number;
+  movedLine?: number;
 }
 interface TransferContext {
   readonly input: HierarchyTransferInput;
@@ -195,7 +200,11 @@ function transferSource(context: TransferContext, insertionPrefix: string): Line
       ? adjusted
       : input.rewrite(adjusted, input.source.filePath, destinationPath, new Set(anchors)),
   );
-  const moved = lines(rewritten).map(({ text, ending }) => ({ text, ending }));
+  const moved = lines(rewritten).map(({ text, ending }, index) => ({
+    text,
+    ending,
+    movedLine: from + index,
+  }));
   if (moved.length !== captured.length) throw new InvalidHierarchy();
   return moved;
 }
@@ -240,6 +249,22 @@ function applyTransfer(context: TransferContext): PreparedHierarchyTransfer {
     contents,
     moved: { filePath: destinationPath, line: at },
     changed: true,
+    correspondence: [...contents.keys()].flatMap((path) =>
+      (path === destinationPath ? targetLines : sourceLines).flatMap((line, at) => {
+        const beforeLine = line.movedLine ?? line.originalLine;
+        return beforeLine === undefined
+          ? []
+          : [
+              {
+                before: {
+                  filePath: line.movedLine === undefined ? path : input.source.filePath,
+                  line: beforeLine,
+                },
+                after: { filePath: path, line: at },
+              },
+            ];
+      }),
+    ),
     survivingRoots: survivingRoots(context, contents, targetLines),
   };
 }
@@ -257,7 +282,20 @@ export function prepareHierarchyTransfer(input: HierarchyTransferInput): Hierarc
         contents: input.contents,
         moved: { filePath: input.source.filePath, line: context.from },
         changed: false,
-        survivingRoots: new Map(),
+        correspondence: [...input.contents].flatMap(([filePath, content]) =>
+          lines(content).map((_line, line) => ({
+            before: { filePath, line },
+            after: { filePath, line },
+          })),
+        ),
+        survivingRoots: new Map(
+          [...input.contents].map(([filePath, content]) => [
+            filePath,
+            input.editor
+              .rootBlocks(content)
+              .map((block) => ({ beforeLine: block.line, line: block.line })),
+          ]),
+        ),
       };
     return applyTransfer(context);
   } catch (error) {

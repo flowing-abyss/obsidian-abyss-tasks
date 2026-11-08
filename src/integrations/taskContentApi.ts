@@ -25,6 +25,8 @@ import {
   type TaskCreateTreeNode,
   type TaskEditPreparation,
   type TaskEditPreparationApi,
+  type TaskHierarchyPreparation,
+  type TaskHierarchyPreparationApi,
   type TaskNodeRef,
   type TaskNodeSnapshot,
   type TaskSnapshot,
@@ -68,6 +70,7 @@ import { freezeValue } from './values';
 
 export interface TaskContentPorts {
   readonly edits: TaskEditPreparationApi;
+  readonly hierarchies?: TaskHierarchyPreparationApi;
   readonly creates: TaskCreatePreparationApi;
   readonly statuses: () => readonly TaskStatusRule[];
 }
@@ -81,7 +84,10 @@ export interface ContentContext {
   readonly isDisposed: () => boolean;
   readonly projects?: { ports: ProjectPorts; registry: ProjectReadRegistry };
 }
-type Native = Extract<TaskEditPreparation | TaskCreatePreparation, { type: 'ready' }>;
+type Native = Extract<
+  TaskEditPreparation | TaskCreatePreparation | TaskHierarchyPreparation,
+  { type: 'ready' }
+>;
 interface Family {
   consumed: boolean;
   release: () => void;
@@ -92,7 +98,7 @@ interface Version {
   readonly target: string;
   readonly revision: string;
   readonly expiresAt: number;
-  readonly kind: 'edit' | 'create';
+  readonly kind: 'edit' | 'create' | 'hierarchy';
   readonly native: Native;
   readonly origins: Native['continuations'];
   readonly family: Family;
@@ -152,6 +158,51 @@ function nativePreparationOperation(
     operation.type === 'assess-merge'
   );
 }
+function reorderCommand(
+  operation: Extract<TaskContentOperationV1, { type: 'reorder' }>,
+  tasks: ReadonlyMap<string, TaskNodeRef>,
+  target: TaskNodeRef,
+): PreparedTaskEditCommand | undefined {
+  const relative = tasks.get(operation.relativeTo);
+  if (
+    target.type !== 'subtask' ||
+    relative?.type !== 'subtask' ||
+    !sameTaskNodeRef(target.ref.parent, relative.ref.parent)
+  )
+    return undefined;
+  return {
+    type: 'reorder-subtask',
+    subtask: target.ref,
+    target: relative.ref,
+    placement: operation.placement,
+  };
+}
+type HierarchyOperation = Extract<PrepareTaskContentV1, { kind: 'hierarchy' }>['operation'];
+function hierarchyCommand(
+  ctx: TaskApiContext,
+  op: HierarchyOperation,
+): ApiResultV1<Parameters<TaskHierarchyPreparationApi['prepareHierarchy']>[0]> {
+  const source = currentNode(ctx, {
+    target: op.source,
+    expectedRevision: op.expectedSourceRevision,
+  });
+  if (!source.ok) return source;
+  const target = source.value.node.value.target;
+  if (op.type === 'promote')
+    return target.type === 'subtask'
+      ? { ok: true, value: { type: 'promote-subtask', subtask: target.ref } }
+      : contentFailure('INVALID_ARGUMENT');
+  const parent = currentNode(ctx, {
+    target: op.parent,
+    expectedRevision: op.expectedParentRevision,
+  });
+  return parent.ok
+    ? {
+        ok: true,
+        value: { type: 'reparent-task', source: target, parent: parent.value.node.value.target },
+      }
+    : parent;
+}
 function translate(
   operation: TaskContentOperationV1,
   version: Pick<Version, 'tasks' | 'comments'>,
@@ -159,9 +210,20 @@ function translate(
   if (nativePreparationOperation(operation)) return undefined;
   if (operation.type === 'update-comment' || operation.type === 'remove-comment')
     return commentCommand(operation, version.comments);
-  const target = version.tasks.get(operation.target);
+  return translateNode(operation, version.tasks);
+}
+function translateNode(
+  operation: Exclude<
+    TaskContentOperationV1,
+    NativePreparationOperation | { type: 'update-comment' | 'remove-comment' }
+  >,
+  tasks: Map<string, TaskNodeRef>,
+): PreparedTaskEditCommand | undefined {
+  const target = tasks.get(operation.target);
   if (target === undefined) return undefined;
   switch (operation.type) {
+    case 'reorder':
+      return reorderCommand(operation, tasks, target);
     case 'patch':
       return {
         type: 'patch',
@@ -194,7 +256,7 @@ function commentCommand(
     : { type: 'delete-comment', comment };
 }
 interface PlanInput {
-  readonly kind: 'edit' | 'create';
+  readonly kind: 'edit' | 'create' | 'hierarchy';
   readonly originalTarget?: string;
   readonly release?: () => void;
   readonly destination?: ContentPlanV1['destination'];
@@ -238,7 +300,8 @@ export class TaskContentApi {
     this.clean_abyssPrivate();
     const v = this.versions_abyssPrivate.get(revision);
     if (v?.target !== target || (!v.published && !includeUnpublished)) return contentFailure();
-    if (!v.native.sourceCopiesAvailable()) return readFailure('unavailable');
+    if ('sourceCopiesAvailable' in v.native && !v.native.sourceCopiesAvailable())
+      return readFailure('unavailable');
     const disclosure = this.originalDisclosure_abyssPrivate(v);
     if (disclosure !== undefined) return disclosure;
     return { ok: true, value: v };
@@ -254,6 +317,22 @@ export class TaskContentApi {
       if (!this.ctx_abyssPrivate.api.reads.canDisclose(identity.value.address))
         return readFailure('unavailable');
     }
+    return this.hierarchyDisclosure_abyssPrivate(v);
+  }
+  private hierarchyDisclosure_abyssPrivate(v: Version): ApiResultV1<never> | undefined {
+    if ('subjectBefore' in v.native)
+      for (const root of v.native.affected.before) {
+        const address = readNodeFor(this.ctx_abyssPrivate.api, {
+          root,
+          node: root,
+          target: { type: 'task', ref: root.ref },
+          path: [],
+        }).address;
+        const health = this.ctx_abyssPrivate.api.reads.coverage({ path: address.filePath });
+        if (health.type === 'error') return readFailure(health.reason);
+        if (!this.ctx_abyssPrivate.api.reads.canDisclose(address))
+          return readFailure('unavailable');
+      }
     return undefined;
   }
   private projection_abyssPrivate(v: Version, before = false): TreeProjection {
@@ -318,7 +397,9 @@ export class TaskContentApi {
     );
     if (origin === undefined)
       return { ok: true, value: { target: this.token_abyssPrivate('task'), revision: v.revision } };
-    const node = v.before === null ? undefined : findTreeNode(v.before, origin.before);
+    const node = this.roots_abyssPrivate(v, true)
+      .map((root) => findTreeNode(root, origin.before))
+      .find((node) => node !== undefined);
     if (node === undefined) return contentFailure('STALE_TARGET');
     const identity = this.beforeIdentity_abyssPrivate(v, node);
     if (!identity.ok) return identity;
@@ -328,6 +409,21 @@ export class TaskContentApi {
   }
   private beforeTaskRevision_abyssPrivate(v: Version, target: string): string {
     return v.beforeRevisions.get(target) ?? v.revision;
+  }
+  private hierarchyIdentity_abyssPrivate(
+    value: TaskNodeSnapshot,
+    semanticsRevision: number,
+  ): ReturnType<TreeProjection['task']> {
+    const ctx = this.ctx_abyssPrivate;
+    const projected = readNodeFor(ctx.api, value);
+    const current = ctx.api.reads.node(projected.address);
+    if (
+      current.type !== 'ok' ||
+      current.value.value.root.source.originalBlock !== value.root.source.originalBlock ||
+      !ctx.api.reads.canDisclose(projected.address)
+    )
+      return contentFailure('REVISION_CONFLICT');
+    return ctx.api.identities.project(current.value, semanticsRevision);
   }
   private beforeIdentity_abyssPrivate(
     v: Version,
@@ -340,6 +436,8 @@ export class TaskContentApi {
       state.semanticsRevision !== v.observation.semanticsRevision
     )
       return contentFailure();
+    if ('subjectBefore' in v.native)
+      return this.hierarchyIdentity_abyssPrivate(value, state.semanticsRevision);
     const current = this.current_abyssPrivate(v.originalTarget ?? '');
     if (!current.ok) return current;
     const root = current.value.node.value.root;
@@ -373,6 +471,7 @@ export class TaskContentApi {
       const identity = projection.task(node);
       return identity.ok ? identity.value.target : undefined;
     };
+    if (!('copies' in v.native)) return [];
     return v.native.copies.flatMap((evidence, i) => {
       const origin = v.copyOrigins[i];
       return origin === undefined
@@ -395,6 +494,7 @@ export class TaskContentApi {
             this.projection_abyssPrivate(v, before),
             { now: v.observedAtMs },
           );
+    if ('subjectBefore' in v.native) return this.renderHierarchy_abyssPrivate(v, v.native);
     const before = tree(v.before, true);
     if (!before.ok) return before;
     if (v.tasks.size === 0) this.continueTasks_abyssPrivate(v, v.beforeTasks);
@@ -415,6 +515,64 @@ export class TaskContentApi {
           ? {}
           : { mergePreservation: { ...v.assessment, planRevision: v.revision } }),
         ...(v.destination === undefined ? {} : { destination: v.destination }),
+      },
+    });
+  }
+  private roots_abyssPrivate(v: Version, before: boolean): readonly TaskSnapshot[] {
+    if ('affected' in v.native) return before ? v.native.affected.before : v.native.affected.after;
+    const root = before ? v.before : v.native.after;
+    return root === null ? [] : [root];
+  }
+  private renderHierarchy_abyssPrivate(
+    v: Version,
+    native: Extract<TaskHierarchyPreparation, { type: 'ready' }>,
+  ): ApiResultV1<ContentPlanV1> {
+    const roots = (before: boolean): TaskTreeV1[] | undefined => {
+      const result: TaskTreeV1[] = [];
+      for (const root of this.roots_abyssPrivate(v, before)) {
+        const projected = projectTree(
+          this.ctx_abyssPrivate.api,
+          { root, node: root, target: { type: 'task', ref: root.ref }, path: [] },
+          this.projection_abyssPrivate(v, before),
+          { now: v.observedAtMs },
+        );
+        if (!projected.ok) return undefined;
+        result.push(projected.value);
+      }
+      return result;
+    };
+    const beforeRoots = roots(true);
+    if (beforeRoots === undefined) return contentFailure();
+    this.continueTasks_abyssPrivate(v, v.beforeTasks);
+    const afterRoots = roots(false);
+    if (afterRoots === undefined) return contentFailure();
+    const subject = (
+      root: TaskSnapshot,
+      target: TaskNodeRef,
+      before: boolean,
+    ): ApiResultV1<TaskTreeV1> => {
+      const node = findTreeNode(root, target);
+      return node === undefined
+        ? contentFailure()
+        : projectTree(this.ctx_abyssPrivate.api, node, this.projection_abyssPrivate(v, before), {
+            now: v.observedAtMs,
+          });
+    };
+    const before = subject(native.before, native.subjectBefore, true),
+      after = subject(native.after, native.subjectAfter, false);
+    if (!before.ok) return before;
+    if (!after.ok) return after;
+    return freezeValue({
+      ok: true,
+      value: {
+        ...this.ctx_abyssPrivate.api.observation(v.observation),
+        target: v.target,
+        revision: v.revision,
+        kind: 'hierarchy' as const,
+        expiresAt: v.expiresAt,
+        before: before.value,
+        after: after.value,
+        affected: { before: beforeRoots, after: afterRoots },
       },
     });
   }
@@ -511,7 +669,9 @@ export class TaskContentApi {
     if (this.disposed_abyssPrivate || this.ctx_abyssPrivate.isDisposed())
       return readFailure('disposed');
     this.clean_abyssPrivate();
-    const bytes = new TextEncoder().encode(JSON.stringify([native.before, native.after])).length;
+    const bytes = new TextEncoder().encode(
+      JSON.stringify('affected' in native ? native.affected : [native.before, native.after]),
+    ).length;
     if (
       this.versions_abyssPrivate.size >= 128 ||
       [...this.versions_abyssPrivate.values()].reduce((n, v) => n + v.bytes, bytes) >
@@ -587,6 +747,7 @@ export class TaskContentApi {
   private async prepareValue_abyssPrivate(
     value: PrepareTaskContentV1,
   ): Promise<ApiResultV1<ContentPlanV1>> {
+    if (value.kind === 'hierarchy') return this.hierarchy_abyssPrivate(value);
     if (value.kind === 'edit') return this.edit_abyssPrivate(value);
     if (value.kind === 'create') return await this.create_abyssPrivate(value);
     const found = this.lookup_abyssPrivate(value.plan, value.expectedPlanRevision);
@@ -595,6 +756,53 @@ export class TaskContentApi {
     if (v.family.consumed || v.superseded) return contentFailure('PLAN_CONSUMED');
     if (value.kind === 'refresh') return await this.refresh_abyssPrivate(v, value.afterRequestId);
     return this.append_abyssPrivate(v, value.operation);
+  }
+  private pinHierarchy_abyssPrivate(op: HierarchyOperation): ApiResultV1<() => void> {
+    const pinned: Array<() => void> = [];
+    const release = (): void => {
+      for (const dispose of pinned) dispose();
+    };
+    for (const handle of [op.source, ...(op.type === 'reparent' ? [op.parent] : [])]) {
+      const pin = this.ctx_abyssPrivate.api.identities.pin(handle);
+      if (!pin.ok) {
+        release();
+        return pin;
+      }
+      pinned.push(pin.value);
+    }
+    return { ok: true, value: release };
+  }
+  private async hierarchy_abyssPrivate(
+    input: Extract<PrepareTaskContentV1, { kind: 'hierarchy' }>,
+  ): Promise<ApiResultV1<ContentPlanV1>> {
+    const ctx = this.ctx_abyssPrivate,
+      op = input.operation;
+    if (ctx.ports.hierarchies === undefined)
+      return readError(
+        'unsupported',
+        'UNSUPPORTED_OPERATION',
+        'Hierarchy preparation is unavailable.',
+      );
+    const command = hierarchyCommand(ctx.api, op);
+    if (!command.ok) return command;
+    const pinned = this.pinHierarchy_abyssPrivate(op);
+    if (!pinned.ok) return pinned;
+    let retained = false;
+    try {
+      const native = await ctx.ports.hierarchies.prepareHierarchy(command.value);
+      if (native.type !== 'ready') return commandResultError(native.result);
+      const current = hierarchyCommand(ctx.api, op);
+      if (!current.ok) return current;
+      const result = this.retain_abyssPrivate(native, undefined, {
+        kind: 'hierarchy',
+        originalTarget: op.source,
+        release: pinned.value,
+      });
+      retained = result.ok;
+      return result;
+    } finally {
+      if (!retained) pinned.value();
+    }
   }
   private async edit_abyssPrivate(
     input: Extract<PrepareTaskContentV1, { kind: 'edit' }>,
@@ -687,6 +895,17 @@ export class TaskContentApi {
       )
     )
       found.tasks.set(operation.target, selected.value.node.value.target);
+    if (operation.type === 'reorder') {
+      const relative = this.current_abyssPrivate(operation.relativeTo);
+      if (
+        relative.ok &&
+        sameTaskNodeRef(
+          { type: 'task', ref: relative.value.node.value.root.ref },
+          { type: 'task', ref: root.ref },
+        )
+      )
+        found.tasks.set(operation.relativeTo, relative.value.node.value.target);
+    }
     this.initialComment_abyssPrivate(found, root, operation.target);
   }
   private initialComment_abyssPrivate(found: Version, root: TaskSnapshot, target: string): void {
@@ -701,6 +920,12 @@ export class TaskContentApi {
     v: Version,
     operation: TaskContentOperationV1,
   ): Promise<ApiResultV1<ContentPlanV1>> {
+    if (!('append' in v.native))
+      return readError(
+        'conflict',
+        'HIERARCHY_REVIEW',
+        'Confirm or discard this hierarchy preview before further content edits.',
+      );
     if (operation.type === 'assess-merge') return this.assessMerge_abyssPrivate(v, operation);
     if (operation.type === 'copy-comment' || operation.type === 'copy-subtree')
       return this.copy_abyssPrivate(v, operation);
@@ -728,7 +953,10 @@ export class TaskContentApi {
       this.ctx_abyssPrivate.api,
       this.reader_abyssPrivate.comment(operation.target, true),
     );
-    const comment = source === undefined ? undefined : v.native.continueSourceComment(source);
+    const comment =
+      source === undefined || !('continueSourceComment' in v.native)
+        ? undefined
+        : v.native.continueSourceComment(source);
     return comment === undefined ? undefined : { type: 'delete-comment', comment };
   }
   private async assessMerge_abyssPrivate(
@@ -743,6 +971,7 @@ export class TaskContentApi {
       expectedRevision: operation.expectedSourceRevision,
     });
     if (!source.ok) return source;
+    if (!('append' in v.native)) return contentFailure();
     const native = v.native.append({ type: 'patch', target: parent, patch: {} });
     if (native.type !== 'ready') return commandResultError(native.result);
     const report = await native.assessMerge(source.value.node.value.target);
@@ -755,29 +984,38 @@ export class TaskContentApi {
       },
     });
   }
-  private async copy_abyssPrivate(
+  private copyInput_abyssPrivate(
     v: Version,
     operation: Extract<TaskContentOperationV1, { type: 'copy-comment' | 'copy-subtree' }>,
-  ): Promise<ApiResultV1<ContentPlanV1>> {
+  ): ApiResultV1<TaskSourceCopy> {
     const parent = v.tasks.get(operation.target);
     if (parent === undefined) return contentFailure('STALE_TARGET');
-    let input: TaskSourceCopy;
     if (operation.type === 'copy-comment') {
       const source = acceptedSourceComment(
         this.ctx_abyssPrivate.api,
         this.reader_abyssPrivate.comment(operation.source, true),
       );
       if (source === undefined) return contentFailure('STALE_TARGET');
-      input = { type: 'comment', source, parent };
-    } else {
-      const source = currentNode(this.ctx_abyssPrivate.api, {
-        target: operation.source,
-        expectedRevision: operation.expectedSourceRevision,
-      });
-      if (!source.ok) return source;
-      input = { type: 'subtree', source: source.value.node.value.target, parent };
+      return { ok: true, value: { type: 'comment', source, parent } };
     }
-    const native = await v.native.copySource(input);
+    const source = currentNode(this.ctx_abyssPrivate.api, {
+      target: operation.source,
+      expectedRevision: operation.expectedSourceRevision,
+    });
+    if (!source.ok) return source;
+    return {
+      ok: true,
+      value: { type: 'subtree', source: source.value.node.value.target, parent },
+    };
+  }
+  private async copy_abyssPrivate(
+    v: Version,
+    operation: Extract<TaskContentOperationV1, { type: 'copy-comment' | 'copy-subtree' }>,
+  ): Promise<ApiResultV1<ContentPlanV1>> {
+    if (!('copySource' in v.native)) return contentFailure();
+    const input = this.copyInput_abyssPrivate(v, operation);
+    if (!input.ok) return input;
+    const native = await v.native.copySource(input.value);
     if (native.type !== 'ready')
       return readError(
         'unsupported',
@@ -869,6 +1107,12 @@ export class TaskContentApi {
     let native:
       | Awaited<ReturnType<Extract<TaskEditPreparation, { type: 'ready' }>['refresh']>>
       | TaskCreatePreparation;
+    if (v.kind === 'hierarchy')
+      return readError(
+        'conflict',
+        'HIERARCHY_REVIEW',
+        'Prepare a fresh hierarchy preview from current exact task references.',
+      );
     if (v.kind === 'edit') {
       const found = this.current_abyssPrivate(v.originalTarget ?? '');
       if (!found.ok) return found;
@@ -935,7 +1179,9 @@ export class TaskContentApi {
     if (root === null) return readFailure('missing');
     const target = (before ? v.beforeTasks : v.tasks).get(q.target);
     if (target === undefined) return contentFailure('STALE_TARGET');
-    const node = findTreeNode(root, target);
+    const node = this.roots_abyssPrivate(v, before)
+      .map((candidate) => findTreeNode(candidate, target))
+      .find((node) => node !== undefined);
     return node === undefined
       ? contentFailure('STALE_TARGET')
       : this.reader_abyssPrivate.read(
@@ -1103,6 +1349,7 @@ export class TaskContentApi {
       revision: v.revision,
       originalTarget: v.originalTarget,
       after: v.native.after,
+      ...('affected' in v.native ? { affected: v.native.affected.after } : {}),
     };
   }
 }

@@ -22,6 +22,7 @@ import type {
   PreparedTaskCreateGuard,
   TaskHierarchyRequest,
   TaskPreparedCreateRoot,
+  TaskPreparedHierarchy,
   TaskPreparedRootEdit,
 } from '../../application/TaskRepository';
 import {
@@ -153,7 +154,7 @@ import {
 import { ProjectRootPhase, type ProjectRootEdit } from './projectRootPhase';
 import { reverseDependency } from './reverseDependency';
 import { runTaskFileMutation } from './taskFileMutationQueue';
-import { taskHierarchyTransaction } from './taskHierarchyTransaction';
+import { prepareTaskHierarchy, taskHierarchyTransaction } from './taskHierarchyTransaction';
 
 type LocateResult = ReturnType<TaskLocator['locate']>;
 
@@ -3353,6 +3354,16 @@ export class ObsidianTaskRepository implements TaskRepository {
       (transaction, content) => this.editBatchContent_abyssPrivate(request, transaction, content),
       (file, transaction) => this.rejectBatch_abyssPrivate(file, request, transaction),
     );
+  }
+
+  prepareHierarchy(request: TaskHierarchyRequest): Promise<TaskPreparedHierarchy> {
+    return prepareTaskHierarchy(this.app_abyssPrivate, request, {
+      authority: this.authority_abyssPrivate,
+      state: this.state_abyssPrivate,
+      editor: this.editor_abyssPrivate,
+      parse: this.parse_abyssPrivate,
+      processFile: (file, transform) => this.processFile_abyssPrivate(file, transform),
+    });
   }
 
   hierarchy(request: TaskHierarchyRequest): Promise<TaskRepositoryResult> {

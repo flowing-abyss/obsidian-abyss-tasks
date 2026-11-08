@@ -167,7 +167,7 @@ function compatibleList(value: unknown): value is Array<string | number> {
   );
 }
 export function fieldCompatible(
-  field: ProjectFieldCatalogItem,
+  field: Pick<ProjectFieldCatalogItem, 'id' | 'type'>,
   value: unknown,
 ): value is ProjectFieldValueV1 {
   if (field.id === 'start' || field.id === 'end')

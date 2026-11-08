@@ -10,7 +10,24 @@ import { sameTaskNodeRef, type TaskNodeRef } from '../domain/types';
 import { invalidTaskTarget } from '../domain/validation';
 import type { TaskQueryApi } from './TaskApplicationApi';
 import type { TaskDiagnosticSink } from './TaskDependencyService';
-import type { RevisionPrecondition, TaskHierarchyRequest, TaskRepository } from './TaskRepository';
+import type { TaskHierarchyPreparation } from './TaskEditPreparationApi';
+import type {
+  RevisionPrecondition,
+  TaskHierarchyRequest,
+  TaskRepository,
+  TaskRepositoryResult,
+} from './TaskRepository';
+
+function hasHierarchyCycle(command: TaskHierarchyCommand): boolean {
+  return command.type === 'reparent-task' && hierarchyWouldCycle(command.source, command.parent);
+}
+function preparedResult(result: TaskRepositoryResult): TaskCommandResult {
+  if (result.type === 'strict-rejected') return invalidTaskTarget('target');
+  if (result.type === 'committed') return { ...result, type: 'ok' };
+  if (result.type === 'rebased') return { type: 'conflict', current: result.current };
+  if (result.type === 'uncertain') return { type: 'not-found', target: result.target };
+  return result;
+}
 
 type Resolution =
   { readonly precondition: RevisionPrecondition } | { readonly result: TaskCommandResult };
@@ -34,6 +51,25 @@ export class TaskHierarchyService {
       source: source.precondition,
       ...(parent !== undefined && { parent: parent.precondition }),
     });
+  }
+
+  async prepareHierarchy(command: TaskHierarchyCommand): Promise<TaskHierarchyPreparation> {
+    const source = this.resolve(hierarchySource(command));
+    if ('result' in source) return { type: 'invalid', result: source.result };
+    const parent = command.type === 'reparent-task' ? this.resolve(command.parent) : undefined;
+    if (parent !== undefined && 'result' in parent)
+      return { type: 'invalid', result: parent.result };
+    if (hasHierarchyCycle(command))
+      return { type: 'invalid', result: invalidTaskTarget('hierarchy') };
+    const prepared = await this.repository.prepareHierarchy?.({
+      command: structuredClone(command),
+      source: source.precondition,
+      ...(parent === undefined ? {} : { parent: parent.precondition }),
+    });
+    if (prepared === undefined) return { type: 'invalid', result: invalidTaskTarget('hierarchy') };
+    if (prepared.type !== 'ready')
+      return { type: 'invalid', result: preparedResult(prepared.result) };
+    return { ...prepared, commit: async () => preparedResult(await prepared.commit()) };
   }
 
   private relationResult(

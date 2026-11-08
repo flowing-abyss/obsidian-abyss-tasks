@@ -141,7 +141,12 @@ export async function publicApiHarness(
     search,
     reads,
     mutations: service,
-    content: { edits: service, creates: service, statuses: () => statusCatalog.all() },
+    content: {
+      edits: service,
+      creates: service,
+      hierarchies: service,
+      statuses: () => statusCatalog.all(),
+    },
     pluginVersion: '2.3.2',
     epoch: `test-${++providerEpoch}`,
     now: () => now,

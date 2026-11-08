@@ -1,3 +1,9 @@
+// Turn-local typed references, bounded repair/read continuation and native hierarchy review: measured main 3,976,377 bytes.
+// No dependencies added; approved minimal containing main budget 3,977,216 bytes (3884 KiB), below 5,000,000.
+// CommandMode diagnostic, paging, current-reference and billing fixes: measured licensed main 3,969,786 bytes.
+// No dependencies added; approved minimal containing main budget 3,970,048 bytes (3877 KiB), below 5,000,000.
+// Native hierarchy/project proposals and exact CommandMode references: measured licensed main 3,968,793 bytes.
+// No dependencies added; approved minimal containing main budget 3,969,024 bytes (3876 KiB), below 5,000,000.
 // Native CommandMode voice and shared input ownership: measured licensed main 3,938,348 bytes.
 // Controller-approved minimum main cap 3,939,328 bytes (3847 KiB); CSS stays 224,256 bytes, strict main ceiling below 5,000,000.
 // CommandMode note review readiness and verified readback: measured licensed main 3,919,454 bytes.

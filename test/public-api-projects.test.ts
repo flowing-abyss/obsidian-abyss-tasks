@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import type { ApiResultV1, ProjectMutationResultV1, TasksApiV1 } from '../api';
 import { CommandAgent } from '../src/ai/CommandAgent';
 import { canonicalCommandPlan } from '../src/ai/commandReads';
+import { projectCommandSnapshot } from '../src/ai/commandRecovery';
 import { CommandSession } from '../src/ai/CommandSession';
 import TaskCalendarPlugin from '../src/main';
 import * as projectIntegration from '../src/projects/projectIntegration';
@@ -1058,6 +1059,224 @@ it('composes explicit project clears and refuses a changed accepted basis withou
       session.stage({ kind: 'project', before: newer, statusId: status.id });
     }).toThrow('changed');
     expect(session.snapshot().proposal).toEqual(pending);
+  } finally {
+    plugin.onunload();
+  }
+});
+
+it('previews and refines project creation through the SDK before one native create and exact focus', async () => {
+  const { app, plugin, first } = await setup();
+  try {
+    const projects = expectDefined(first.projects);
+    const create = vi.fn(projects.create);
+    const { session, turn } = projectCommandSession({
+      ...first,
+      projects: { ...projects, create },
+    });
+    turn({ kind: 'create', name: 'Launch', fields: [{ fieldId: 'start', value: '2026-11-09' }] });
+    await session.submit('Create a project');
+    expect(session.snapshot().status.kind).toBe('ready');
+    expect(create).not.toHaveBeenCalled();
+    expect(app.vault.getFileByPath('projects/Launch.md')).toBeNull();
+    const pending = expectDefined(session.snapshot().proposal.changes[0]);
+    expect(pending.kind).toBe('project-create');
+    if (pending.kind !== 'project-create') throw new Error('Missing project proposal');
+    expect(pending).not.toHaveProperty('before');
+    expect(projectCommandSnapshot(session.snapshot())).toEqual(session.snapshot());
+    turn({
+      kind: 'refine-create',
+      proposal: pending.id,
+      fields: [{ fieldId: 'end', value: '2026-11-12' }],
+    });
+    await session.submit('Also set the end date');
+    expect(session.snapshot().status.kind).toBe('ready');
+    expect(await session.confirm()).toBe(true);
+    expect(create).toHaveBeenCalledTimes(1);
+    const current = value(await projects.get(expectDefined(session.snapshot().focus[0]).target));
+    expect(current.name).toBe('Launch');
+    expect(current.fields).toEqual(
+      expect.arrayContaining([
+        { fieldId: 'start', state: 'value', value: '2026-11-09' },
+        { fieldId: 'end', state: 'value', value: '2026-11-12' },
+      ]),
+    );
+    expect(session.snapshot().entities.projects).toContainEqual(current);
+  } finally {
+    plugin.onunload();
+  }
+});
+
+it.each([
+  { fields: [{ fieldId: 'property:budget', value: 'seven' }] },
+  {
+    fields: [
+      { fieldId: 'start', value: '2026-11-12' },
+      { fieldId: 'end', value: '2026-11-09' },
+    ],
+  },
+  { statusId: 'unconfigured' },
+])('rejects invalid project creation before admission: %j', async (invalid) => {
+  const { plugin, first } = await setup();
+  try {
+    const projects = expectDefined(first.projects);
+    const create = vi.fn(projects.create);
+    const { session, turn } = projectCommandSession({
+      ...first,
+      projects: { ...projects, create },
+    });
+    turn({ kind: 'create', name: 'Invalid', ...invalid });
+    await session.submit('Create this project');
+    expect(session.snapshot().status.kind).toBe('error');
+    expect(session.snapshot().proposal.changes).toEqual([]);
+    expect(create).not.toHaveBeenCalled();
+  } finally {
+    plugin.onunload();
+  }
+});
+
+it('previews an explicit project membership move and preserves its complete native subtree', async () => {
+  const authored =
+    '- [ ] Same 📅 2026-11-12\n  - > Description [[Guide]]\n  - [ ] Same\n    - [ ] Deep #kept\n';
+  const { app, plugin, first } = await setup({ [root]: authored });
+  try {
+    const projects = expectDefined(first.projects);
+    const destination = value(
+      await projects.get(
+        expectDefined(value(await projects.list()).items.find((p) => p.path === empty)).target,
+      ),
+    );
+    const source = expectDefined(
+      value(await first.tasks.list({ path: root })).items.find((t) => t.parentTarget === undefined),
+    );
+    const move = vi.fn(projects.moveTask);
+    const { session, turn } = projectCommandSession({
+      ...first,
+      projects: { ...projects, moveTask: move },
+    });
+    await session.focus([{ kind: 'task', target: source.target, revision: source.revision }]);
+    turn({
+      kind: 'move-task',
+      ...basis(destination),
+      taskTarget: source.target,
+      expectedTaskRevision: source.revision,
+    });
+    await session.submit('Move this task into the project');
+    expect(session.snapshot().status.kind).toBe('ready');
+    expect(move).not.toHaveBeenCalled();
+    expect(session.snapshot().proposal.changes[0]?.kind).toBe('project-move');
+    expect(projectCommandSnapshot(session.snapshot())).toEqual(session.snapshot());
+    expect(await app.vault.read(expectDefined(app.vault.getFileByPath(root)))).toBe(authored);
+    expect(await session.confirm()).toBe(true);
+    expect(move).toHaveBeenCalledTimes(1);
+    expect(await app.vault.read(expectDefined(app.vault.getFileByPath(empty)))).toContain(
+      authored.trimEnd(),
+    );
+    const focused = value(await first.tasks.get(expectDefined(session.snapshot().focus[0]).target));
+    expect(focused.source.path).toBe(empty);
+  } finally {
+    plugin.onunload();
+  }
+});
+
+it('retains requested project values on a changed schema with truthful unchanged effects', async () => {
+  const { plugin, first } = await setup();
+  try {
+    const projects = expectDefined(first.projects),
+      create = vi.fn(projects.create);
+    const { session, turn } = projectCommandSession({
+      ...first,
+      projects: { ...projects, create },
+    });
+    turn({ kind: 'create', name: 'Retained', fields: [{ fieldId: 'property:budget', value: 7 }] });
+    await session.submit('Prepare a project');
+    const proposal = session.snapshot().proposal;
+    plugin.settings.projects.defaultStatusId = expectDefined(
+      value(await projects.schema()).statuses[1],
+    ).id;
+    await plugin.saveSettings();
+    expect(await session.confirm()).toBe(false);
+    expect(create).not.toHaveBeenCalled();
+    expect(session.snapshot().proposal).toEqual(proposal);
+    expect(session.snapshot().journal[0]?.effects).toBe('unchanged');
+    expect(session.snapshot().status.message).toContain('not saved');
+    expect(session.snapshot().status.message).not.toContain('partly');
+  } finally {
+    plugin.onunload();
+  }
+});
+
+it('never duplicates project creation after an admitted result is lost', async () => {
+  const { app, plugin, first } = await setup();
+  try {
+    let accepted: ProjectMutationResultV1 | undefined;
+    const projects = expectDefined(first.projects),
+      create = vi.fn(async (...args: Parameters<typeof projects.create>) => {
+        accepted = await projects.create(...args);
+        throw new Error('Lost response after admission');
+      });
+    const { session, turn } = projectCommandSession({
+      ...first,
+      projects: { ...projects, create },
+    });
+    turn({ kind: 'create', name: 'Exactly once' });
+    await session.submit('Prepare a project');
+    expect(await session.confirm()).toBe(false);
+    expect(await session.confirm()).toBe(false);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(session.snapshot().blocked).toBe(true);
+    expect(session.snapshot().journal[0]?.effects).toBe('unknown');
+    expect(session.snapshot().status.kind).toBe('error');
+    expect(accepted).toMatchObject({ ok: true });
+    expect(
+      app.vault.getMarkdownFiles().filter((f) => f.path.includes('Exactly once')),
+    ).toHaveLength(1);
+  } finally {
+    plugin.onunload();
+  }
+});
+
+it('retains selected descendant context and overlapping drafts rather than guessing project-move correspondence', async () => {
+  const { plugin, first } = await setup();
+  try {
+    const projects = expectDefined(first.projects),
+      items = value(await first.tasks.list({ path: root })).items;
+    const source = expectDefined(items.find((t) => t.parentTarget === undefined)),
+      child = expectDefined(items.find((t) => t.parentTarget !== undefined));
+    const destination = value(
+      await projects.get(expectDefined(value(await projects.list()).items[0]).target),
+    );
+    const { session, turn } = projectCommandSession(first);
+    await session.focus({ kind: 'task', target: child.target, revision: child.revision });
+    turn({
+      kind: 'move-task',
+      ...basis(destination),
+      taskTarget: source.target,
+      expectedTaskRevision: source.revision,
+    });
+    await session.submit('Move the root');
+    expect(session.snapshot().status.kind).toBe('error');
+    expect(session.snapshot().focus[0]?.target).toBe(child.target);
+    expect(session.snapshot().proposal.changes).toEqual([]);
+    const pending = value(
+      await expectDefined(first.tasks.prepare)({
+        kind: 'edit',
+        ...basis(source),
+        operation: { type: 'description', target: source.target, text: 'Retained' },
+      }),
+    );
+    session.stage({
+      kind: 'task',
+      plan: await canonicalCommandPlan(first, pending, new AbortController().signal, {
+        now: () => Date.now(),
+        deadline: Date.now() + 5000,
+      }),
+    });
+    const previous = session.snapshot().proposal;
+    const page = value(await expectDefined(first.tasks.tree)({ target: source.target }));
+    expect(() => {
+      session.stage({ kind: 'project-move', before: page.tree, destination });
+    }).toThrow('retained');
+    expect(session.snapshot().proposal).toEqual(previous);
   } finally {
     plugin.onunload();
   }

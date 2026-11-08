@@ -6,6 +6,8 @@ import type {
   NotePlanV1,
   PrepareNoteV1,
   PrepareTaskContentV1,
+  ProjectDtoV1,
+  ProjectSchemaV1,
   ReadTaskTreeV1,
   SearchNotesV1,
   SearchTasksV1,
@@ -15,8 +17,11 @@ import type {
   TasksApiV1,
 } from '../../api';
 import { buildLinkRaw } from '../markdown/links';
-import type { CommandSession } from './CommandSession';
-import { canonicalCommandPlan, commandRead } from './commandReads';
+import { sameCommandProjectSchema, validateCommandProject } from './commandProjects';
+import { canonicalCommandPlan, canonicalCommandTree, commandRead } from './commandReads';
+import type { CommandReferenceBook } from './CommandReferenceBook';
+import { commandReferences } from './commandReferences';
+import { record } from './commandReferenceShapes';
 import {
   checkedOutput,
   finishSchema,
@@ -34,9 +39,11 @@ import {
   taskToolSchema,
   type batchSchema,
 } from './commandSchemas';
+import type { CommandSession } from './CommandSession';
 import {
   CommandFailure,
   required,
+  type CommandChange,
   type CommandResearchPort,
   type CommandSessionSnapshot,
 } from './commandTypes';
@@ -78,6 +85,8 @@ export interface CommandToolContext {
   done: boolean;
   readonly errors: Set<string>;
   readonly feedback: Map<string, string>;
+  readonly references?: CommandReferenceBook;
+  unresolvedTaskRefinement?: boolean;
   repairExhausted: boolean;
   repair(call: string): void;
 }
@@ -92,7 +101,7 @@ function find(tree: TaskTreeV1 | null, target: string): TaskTreeV1 | undefined {
 }
 export function commandTools(ctx: CommandToolContext): ToolSet {
   const owner = new CommandToolOwner(ctx);
-  return {
+  const tools: Record<string, Tool> = {
     interpret: owner.interpret(),
     read: owner.read(),
     task: owner.task(),
@@ -104,9 +113,60 @@ export function commandTools(ctx: CommandToolContext): ToolSet {
     research: owner.research(),
     finish: owner.finish(),
   };
+  return Object.fromEntries(
+    Object.entries(tools).map(([name, definition]) => [name, owner.bind(name, definition)]),
+  );
 }
 class CommandToolOwner {
   constructor(private readonly ctx: CommandToolContext) {}
+  bind(name: string, definition: Tool): Tool {
+    const execute = definition.execute,
+      references = this.ctx.references;
+    if (execute === undefined || references === undefined) return definition;
+    return {
+      ...definition,
+      execute: (input, options) => {
+        let canonical: unknown;
+        try {
+          canonical = references.input(name, input);
+        } catch (cause) {
+          const kind = record(record(input)?.['input'])?.['kind'];
+          if (name === 'task' && typeof kind === 'string' && kind !== 'create')
+            this.ctx.unresolvedTaskRefinement = true;
+          return this.execute(name, options.toolCallId, async () => {
+            throw cause;
+          });
+        }
+        return execute(canonical, options) as unknown;
+      },
+    };
+  }
+  private modelValue(value: unknown): unknown {
+    return this.ctx.references?.project(value) ?? value;
+  }
+  private async taskAttempt<T>(kind: string, work: () => Promise<T>): Promise<T> {
+    if (kind === 'create' && this.ctx.unresolvedTaskRefinement === true)
+      throw new CommandFailure(
+        'REPAIR_KIND',
+        'Repair the failed refinement before creating another task. The current work is retained.',
+      );
+    try {
+      const result = await work();
+      if (kind !== 'create') this.ctx.unresolvedTaskRefinement = false;
+      return result;
+    } catch (cause) {
+      if (kind !== 'create') this.ctx.unresolvedTaskRefinement = true;
+      throw cause;
+    }
+  }
+  private failure(name: string, cause: unknown): CommandFailure {
+    const failure = toolFailure(cause);
+    if (!['read', 'task', 'project', 'link', 'finish'].includes(name)) return failure;
+    return new CommandFailure(
+      failure.code,
+      `${failure.message} Current references (copy the correct kind and exact basis; never use project handles as task targets or paths): ${JSON.stringify(this.modelValue(commandReferences(this.ctx.session.snapshot())))}`,
+    );
+  }
   private readPublic<T>(work: () => Promise<ApiResultV1<T>>): Promise<T> {
     return commandRead(this.ctx.api, work, this.ctx.signal, {
       deadline: this.ctx.deadline,
@@ -138,14 +198,15 @@ class CommandToolOwner {
           'READ_ONLY',
           'This history needs a fresh review before changes can be prepared.',
         );
-      const output = checkedOutput(await work());
+      const result = await work();
+      const output = checkedOutput(this.modelValue(result));
       this.ctx.signal.throwIfAborted();
       this.ctx.errors.delete(name);
       return output;
     } catch (cause) {
       this.ctx.errors.add(name);
       this.ctx.repair(id);
-      throw toolFailure(cause);
+      throw this.failure(name, cause);
     }
   }
   private canonicalPlan(plan: ContentPlanV1): Promise<ContentPlanV1> {
@@ -195,12 +256,18 @@ class CommandToolOwner {
         this.execute('interpret', toolCallId, async () => {
           if (this.ctx.interpreted)
             throw new CommandFailure('PHASE', 'This message was already interpreted.');
+          this.requireTransition(input);
           this.ctx.interpreted = true;
           this.ctx.researchMode = input.research;
-          const confirmation = await this.confirmationIntent(input.intent);
+          const confirmation = await this.confirmationIntent(
+            input.intent,
+            input.transitionDisposition !== undefined,
+          );
           if (confirmation !== undefined) return confirmation;
           const lifecycle = await this.lifecycleIntent(input);
           if (lifecycle !== undefined) return lifecycle;
+          if (!(await this.continueTransition(input)))
+            return { resolved: false, continuation: false };
           if (this.ctx.session.snapshot().pendingTransition != null) {
             this.ctx.done = true;
             this.ctx.session.question(
@@ -225,10 +292,30 @@ class CommandToolOwner {
         }),
     });
   }
+  private async continueTransition(input: z.infer<typeof intentSchema>): Promise<boolean> {
+    if (input.intent !== 'plan' || input.transitionDisposition === undefined) return true;
+    const resolved = await this.ctx.session.resolveTransition(
+      input.transitionDisposition,
+      this.ctx.signal,
+    );
+    if (!resolved) this.ctx.done = true;
+    return resolved;
+  }
+  private requireTransition(input: z.infer<typeof intentSchema>): void {
+    if (
+      (input.intent === 'resolve-transition' || input.transitionDisposition !== undefined) &&
+      this.ctx.session.snapshot().pendingTransition == null
+    )
+      throw new CommandFailure(
+        'NO_TRANSITION',
+        'No transition is pending. Use plan to find, select or refine the requested entity; do not invent a disposition question.',
+      );
+  }
   private async confirmationIntent(
     intent: z.infer<typeof intentSchema>['intent'],
+    hasDisposition: boolean,
   ): Promise<unknown> {
-    if (intent !== 'plan' && !this.currentConsentBasis()) {
+    if ((intent !== 'plan' || hasDisposition) && !this.currentConsentBasis()) {
       this.ctx.done = true;
       this.ctx.session.question(
         'The proposal changed while this input was recorded. Review the current version before confirming.',
@@ -310,19 +397,8 @@ class CommandToolOwner {
           switch (input.kind) {
             case 'tasks':
               return this.readTasks(input);
-            case 'tree': {
-              const query = omitKind(input);
-              const page = await this.readPublic(() =>
-                required(this.ctx.api.tasks.tree)({
-                  ...query,
-                  limit: input.limit ?? 50,
-                } as ReadTaskTreeV1),
-              );
-              checkedOutput(page);
-              this.ctx.signal.throwIfAborted();
-              this.ctx.session.observeTree(page);
-              return page;
-            }
+            case 'tree':
+              return this.readTree(input);
             case 'tags':
               return this.readPublic(() =>
                 required(this.ctx.api.tasks.tags)({
@@ -355,6 +431,34 @@ class CommandToolOwner {
           }
         }),
     });
+  }
+  private async readTree(
+    input: Extract<z.infer<typeof readSchema>, { kind: 'tree' }>,
+  ): Promise<unknown> {
+    const query = this.ctx.session.resolveTreeRead({
+      ...omitKind(input),
+      limit: input.limit ?? 50,
+    } as ReadTaskTreeV1);
+    const page = await this.readPublic(() => required(this.ctx.api.tasks.tree)(query));
+    const full =
+      input.cursor === undefined && input.limit === undefined && input.plan === undefined
+        ? await canonicalCommandTree(this.ctx.api, page, this.ctx.signal, {
+            now: this.ctx.now,
+            deadline: this.ctx.deadline,
+            readCharacters: 48000,
+            ...(query.plan === undefined
+              ? {}
+              : {
+                  plan: { target: query.plan, revision: required(query.expectedPlanRevision) },
+                  side: query.side ?? 'after',
+                }),
+          })
+        : page;
+    const observed = JSON.stringify(full).length <= 48000 ? full : page;
+    checkedOutput(observed);
+    this.ctx.signal.throwIfAborted();
+    this.ctx.session.observeTree(observed);
+    return { ...observed, request: { kind: 'tree', ...query } };
   }
   private async readTasks(
     input: Extract<z.infer<typeof readSchema>, { kind: 'tasks' }>,
@@ -450,32 +554,34 @@ class CommandToolOwner {
         removeAnnotations: z.array(z.string()).max(50).optional(),
       }),
       execute: ({ input, removeAnnotations }, { toolCallId }) =>
-        this.execute('task', toolCallId, async () => {
-          if (input.kind === 'batch') return this.prepareBatch(input, removeAnnotations);
-          const original = input as PrepareTaskContentV1;
-          if (
-            (original.kind === 'append' || original.kind === 'refresh') &&
-            !this.ctx.session
-              .snapshot()
-              .proposal.changes.some(
-                (change) =>
-                  change.kind === 'task' &&
-                  change.plan.target === original.plan &&
-                  change.plan.revision === original.expectedPlanRevision,
-              )
-          )
-            throw new CommandFailure(
-              'PLAN_BASIS',
-              'Only the current preview can be refined. Prepare historical work again from fresh source reads.',
-            );
-          this.checkEditBasis(original);
-          if (this.cancelDraft(original)) return { cancelledDraft: true };
-          const request = await this.preserveRewrite(original, removeAnnotations);
-          const plan = await this.readPublic(() => required(this.ctx.api.tasks.prepare)(request));
-          this.ctx.signal.throwIfAborted();
-          await this.stageTask(plan, 1, [prepareSchema.parse(request)]);
-          return planToolOutput(plan);
-        }),
+        this.execute('task', toolCallId, () =>
+          this.taskAttempt(input.kind, async () => {
+            if (input.kind === 'batch') return this.prepareBatch(input, removeAnnotations);
+            const original = input as PrepareTaskContentV1;
+            if (
+              (original.kind === 'append' || original.kind === 'refresh') &&
+              !this.ctx.session
+                .snapshot()
+                .proposal.changes.some(
+                  (change) =>
+                    change.kind === 'task' &&
+                    change.plan.target === original.plan &&
+                    change.plan.revision === original.expectedPlanRevision,
+                )
+            )
+              throw new CommandFailure(
+                'PLAN_BASIS',
+                'Only the current preview can be refined. Prepare historical work again from fresh source reads.',
+              );
+            this.checkEditBasis(original);
+            if (this.cancelDraft(original)) return { cancelledDraft: true };
+            const request = await this.preserveRewrite(original, removeAnnotations);
+            const plan = await this.readPublic(() => required(this.ctx.api.tasks.prepare)(request));
+            this.ctx.signal.throwIfAborted();
+            await this.stageTask(plan, 1, [prepareSchema.parse(request)]);
+            return planToolOutput(plan);
+          }),
+        ),
     });
   }
   private checkEditBasis(input: PrepareTaskContentV1): void {
@@ -484,20 +590,57 @@ class CommandToolOwner {
       if (change.kind !== 'task' || find(change.plan.after, input.target) === undefined) continue;
       throw new CommandFailure(
         'DRAFT_BASIS',
-        `Use append/batch for this pending node, with plan ${change.plan.target} and expectedPlanRevision ${change.plan.revision}.`,
+        'Use append/batch with the current pending node’s plan and expectedPlanRevision from its editBasis.',
       );
     }
+  }
+  private async rewriteBasis(
+    operation: TaskContentOperationV1,
+    plan: ContentPlanV1,
+  ): Promise<TaskTreeV1 | undefined> {
+    if (operation.type !== 'patch' || operation.patch.markdownTitle?.type !== 'set')
+      return undefined;
+    return (
+      await this.readPublic(() =>
+        required(this.ctx.api.tasks.tree)({
+          target: operation.target,
+          plan: plan.target,
+          expectedPlanRevision: plan.revision,
+          side: 'after',
+          limit: 1,
+        }),
+      )
+    ).tree;
+  }
+  private creationName(
+    name: string | undefined,
+    existing: Extract<CommandChange, { kind: 'project-create' }> | undefined,
+  ): string {
+    return name ?? existing?.name ?? '';
+  }
+  private cancelBatch(input: z.infer<typeof batchSchema>): boolean {
+    const only = input.operations.length === 1 ? input.operations[0] : undefined;
+    return (
+      only?.type === 'remove' &&
+      this.cancelDraft({
+        kind: 'append',
+        plan: input.plan,
+        expectedPlanRevision: input.expectedPlanRevision,
+        operation: only,
+      })
+    );
   }
   private async prepareBatch(
     input: z.infer<typeof batchSchema>,
     removeAnnotations: readonly string[] | undefined,
-  ): Promise<ReturnType<typeof planToolOutput>> {
+  ): Promise<unknown> {
     const snapshot = this.ctx.session.snapshot();
     const change = snapshot.proposal.changes.find(
       (candidate) => candidate.kind === 'task' && candidate.plan.target === input.plan,
     );
     if (change?.kind !== 'task' || change.plan.revision !== input.expectedPlanRevision)
       throw new CommandFailure('BATCH_BASIS', 'Use the exact current task proposal for a batch.');
+    if (this.cancelBatch(input)) return { cancelledDraft: true };
     if (snapshot.proposal.operations + input.operations.length > 100)
       throw new CommandFailure(
         'BUDGET',
@@ -519,19 +662,7 @@ class CommandToolOwner {
     const inputs: PrepareTaskContentV1[] = [];
     for (const operation of operations) {
       const plan = required(prepared[prepared.length - 1]);
-      let observed: TaskTreeV1 | undefined;
-      if (operation.type === 'patch' && operation.patch.markdownTitle?.type === 'set') {
-        const page = await this.readPublic(() =>
-          required(this.ctx.api.tasks.tree)({
-            target: operation.target,
-            plan: plan.target,
-            expectedPlanRevision: plan.revision,
-            side: 'after',
-            limit: 1,
-          }),
-        );
-        observed = page.tree;
-      }
+      const observed = await this.rewriteBasis(operation, plan);
       const request = await this.preserveRewrite(
         {
           kind: 'append',
@@ -612,26 +743,151 @@ class CommandToolOwner {
   }
   project(): Tool {
     return tool({
-      description: 'Stage exact public project fields/status using the native project schema.',
+      description:
+        'Preview project create, refine-create, update, or explicit move-task through the native schema. Creation returns a proposal handle, never a saved project target. Selection alone does not move tasks.',
       inputSchema: projectStageSchema,
       execute: (input, { toolCallId }) =>
-        this.execute('project', toolCallId, async () => {
-          const before = await this.readPublic(() =>
-            required(this.ctx.api.projects).get(input.target),
-          );
-          if (before.revision !== input.expectedRevision)
-            throw new CommandFailure('REVISION_CONFLICT', 'The project changed. Read it again.');
-          this.ctx.signal.throwIfAborted();
-          this.ctx.session.stage({
-            kind: 'project',
-            before,
-            ...(input.fields === undefined ? {} : { fields: input.fields }),
-            ...(input.statusId === undefined ? {} : { statusId: input.statusId }),
-          });
-          return { before, ...input };
-        }),
+        this.execute('project', toolCallId, () => this.prepareProject(input)),
     });
   }
+  private async prepareProject(input: z.infer<typeof projectStageSchema>): Promise<unknown> {
+    if (input.kind === 'create' || input.kind === 'refine-create') return this.createProject(input);
+    const before = await this.readPublic(() => required(this.ctx.api.projects).get(input.target));
+    if (before.revision !== input.expectedRevision)
+      throw new CommandFailure('REVISION_CONFLICT', 'The project changed. Read it again.');
+    if (input.kind === 'move-task') return this.moveProjectTask(input, before);
+    return this.updateProject(input, before);
+  }
+  private creationStatus(
+    next: string | null | undefined,
+    previous: string | null | undefined,
+  ): { statusId?: string | null } {
+    const statusId = next === undefined ? previous : next;
+    return statusId === undefined ? {} : { statusId };
+  }
+  private pendingProjectCreation(
+    input: Extract<z.infer<typeof projectStageSchema>, { kind: 'create' | 'refine-create' }>,
+    schema: ProjectSchemaV1,
+  ): Extract<CommandChange, { kind: 'project-create' }> | undefined {
+    if (input.kind === 'create') return undefined;
+    const existing = this.ctx.session
+      .snapshot()
+      .proposal.changes.find((c) => c.kind === 'project-create' && c.id === input.proposal);
+    if (existing?.kind !== 'project-create')
+      throw new CommandFailure(
+        'PROJECT_PROPOSAL',
+        'Use the exact current project creation proposal handle.',
+      );
+    if (!sameCommandProjectSchema(existing.schema, schema))
+      throw new CommandFailure(
+        'PROJECT_SCHEMA',
+        'Project settings changed. The current proposal is retained for review.',
+      );
+    return existing;
+  }
+  private async createProject(
+    input: Extract<z.infer<typeof projectStageSchema>, { kind: 'create' | 'refine-create' }>,
+  ): Promise<unknown> {
+    const api = required(this.ctx.api.projects);
+    const schema = await this.readPublic(() => api.schema());
+    const existing = this.pendingProjectCreation(input, schema);
+    const fields = new Map((existing?.fields ?? []).map((f) => [f.fieldId, f]));
+    for (const field of input.fields ?? []) fields.set(field.fieldId, field);
+    const change = {
+      kind: 'project-create' as const,
+      id:
+        existing !== undefined
+          ? existing.id
+          : `project-draft:${this.ctx.session.snapshot().id}:${this.ctx.session.snapshot().proposal.revision + 1}`,
+      name: this.creationName(input.name, existing),
+      schema,
+      ...(fields.size === 0 ? {} : { fields: [...fields.values()] }),
+      ...this.creationStatus(input.statusId, existing?.statusId),
+    };
+    validateCommandProject(schema, change);
+    this.ctx.signal.throwIfAborted();
+    this.ctx.session.stage(change);
+    return {
+      ...change,
+      proposal: change.id,
+      saved: false,
+      selection:
+        'Omit selection; this unsaved project is already shown. Use proposal to refine it.',
+    };
+  }
+  private async moveProjectTask(
+    input: Extract<z.infer<typeof projectStageSchema>, { kind: 'move-task' }>,
+    before: ProjectDtoV1,
+  ): Promise<unknown> {
+    const page = await this.readPublic(() =>
+      required(this.ctx.api.tasks.tree)({
+        target: input.taskTarget,
+        expectedRevision: input.expectedTaskRevision,
+        limit: 500,
+      }),
+    );
+    if (page.tree.parentTarget !== undefined)
+      throw new CommandFailure(
+        'PROJECT_MOVE',
+        'Project membership moves require a saved root task. Promote a subtask in a separate reviewed proposal first.',
+      );
+    const full = await canonicalCommandTree(this.ctx.api, page, this.ctx.signal, {
+      now: this.ctx.now,
+      deadline: this.ctx.deadline,
+    });
+    this.ctx.signal.throwIfAborted();
+    const descendants = (node: TaskTreeV1): string[] =>
+      node.children.flatMap((child) => [child.target, ...descendants(child)]);
+    const childTargets = new Set(descendants(full.tree));
+    if (
+      this.ctx.session.snapshot().focus.some((f) => f.kind === 'task' && childTargets.has(f.target))
+    )
+      throw new CommandFailure(
+        'PROJECT_MOVE_FOCUS',
+        'Select the saved root task before moving it. The current subtask context is retained.',
+      );
+    const change = {
+      kind: 'project-move' as const,
+      before: full.tree,
+      destination: before,
+    };
+    this.ctx.session.stage(change);
+    return change;
+  }
+  private async updateProject(
+    input: Exclude<
+      z.infer<typeof projectStageSchema>,
+      { kind: 'create' | 'refine-create' | 'move-task' }
+    >,
+    before: ProjectDtoV1,
+  ): Promise<unknown> {
+    const api = required(this.ctx.api.projects);
+    const schema = await this.readPublic(() => api.schema());
+    const previous = this.ctx.session
+      .snapshot()
+      .proposal.changes.find((c) => c.kind === 'project' && c.before.target === before.target);
+    const fields = new Map(
+      (previous?.kind === 'project' ? (previous.fields ?? []) : []).map((f) => [f.fieldId, f]),
+    );
+    for (const field of input.fields ?? []) fields.set(field.fieldId, field);
+    validateCommandProject(
+      schema,
+      {
+        fields: [...fields.values()],
+        ...(input.statusId === undefined ? {} : { statusId: input.statusId }),
+      },
+      before,
+    );
+    this.ctx.signal.throwIfAborted();
+    this.ctx.session.stage({
+      kind: 'project',
+      before,
+      ...(input.fields === undefined ? {} : { fields: input.fields }),
+      ...(input.statusId === undefined ? {} : { statusId: input.statusId }),
+    });
+    return { before, ...input };
+  }
+
   private linkNote(input: z.infer<typeof linkSchema>): NotePlanV1 {
     const changes = this.ctx.session.snapshot().proposal.changes;
     const note = changes.find((c) => c.kind === 'note' && c.plan.target === input.notePlan);
@@ -904,7 +1160,7 @@ function preparedLinkComment(
 function completeCommentOwners(before: TaskTreeV1, after: TaskTreeV1): boolean {
   return before.complete && after.complete && before.target === after.target;
 }
-function toolFailure(cause: unknown): Error {
+function toolFailure(cause: unknown): CommandFailure | ProviderFailure {
   if (cause instanceof CommandFailure || cause instanceof ProviderFailure) return cause;
   return new CommandFailure(
     'TOOL_FAILED',

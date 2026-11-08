@@ -9,7 +9,12 @@ import type {
 } from '../../api';
 import { canonicalCommandPlan, commandRead } from './commandReads';
 import { hasUnresolvedCommandWrites } from './commandRecovery';
-import { reconcileCommandLink, sameReviewedContent, validatePlanOutput } from './commandSchemas';
+import {
+  commandPlanViews,
+  reconcileCommandLink,
+  sameReviewedContent,
+  validatePlanOutput,
+} from './commandSchemas';
 import {
   CommandFailure,
   required,
@@ -66,8 +71,7 @@ function affectedNodes(changes: readonly CommandChange[]): number {
   for (const change of changes) {
     if (change.kind === 'task' || change.kind === 'cleanup')
       plans.set(change.plan.target, change.plan);
-    else if (change.kind === 'status') keys.add(`task:${change.target}`);
-    else if (change.kind === 'project') keys.add(`project:${change.before.target}`);
+    else collectSimpleChanges(change, keys);
   }
   for (const change of changes)
     if (change.kind === 'link' && !plans.has(change.plan.target))
@@ -75,19 +79,101 @@ function affectedNodes(changes: readonly CommandChange[]): number {
   for (const plan of plans.values()) collectChangedNodes(plan, keys);
   return keys.size;
 }
+function collectSimpleChanges(change: CommandChange, keys: Set<string>): void {
+  if (change.kind === 'status') keys.add(`task:${change.target}`);
+  if (change.kind === 'project') keys.add(`project:${change.before.target}`);
+  if (change.kind === 'project-create') keys.add(`project:${change.id}`);
+  if (change.kind === 'project-move')
+    for (const target of nodeValues(change.before).keys()) keys.add(`task:${target}`);
+}
+function changeViews(change: CommandChange): CommandSessionSnapshot['trees'] {
+  if (change.kind === 'task') return commandPlanViews(change.plan);
+  if (change.kind === 'project-move') return [{ before: change.before, after: change.before }];
+  return [];
+}
+function changePaths(change: CommandChange): ReadonlyArray<string | undefined> {
+  if ('plan' in change && change.kind !== 'status') {
+    if (change.kind === 'note') return [change.plan.path];
+    return [
+      change.plan.destination?.path,
+      ...commandPlanViews(change.plan).flatMap((v) => [
+        v.before?.source?.path,
+        v.after?.source?.path,
+      ]),
+    ];
+  }
+  if (change.kind === 'project-move') return [change.before.source?.path, change.destination.path];
+  if (change.kind === 'project') return [change.before.path];
+  return [];
+}
+function structuralConflict(structural: CommandChange, other: CommandChange): boolean {
+  if (
+    structural.kind !== 'project-move' &&
+    !(structural.kind === 'task' && structural.plan.kind === 'hierarchy')
+  )
+    return false;
+  const paths = new Set(changePaths(structural));
+  if (changePaths(other).some((path) => path !== undefined && paths.has(path))) return true;
+  return (
+    other.kind === 'status' &&
+    changeViews(structural).some(
+      (view) =>
+        nodeValues(view.before).has(other.target) || nodeValues(view.after).has(other.target),
+    )
+  );
+}
+function requireComposable(change: CommandChange, changes: readonly CommandChange[]): void {
+  if (
+    changes.some(
+      (pending) => structuralConflict(change, pending) || structuralConflict(pending, change),
+    )
+  )
+    throw new CommandFailure(
+      'STRUCTURAL_CONFLICT',
+      'Save or discard the pending changes to these notes before moving tasks. All current work is retained.',
+    );
+}
+function planFocus(focus: readonly CommandFocus[], change: CommandChange): readonly CommandFocus[] {
+  if (change.kind !== 'task') return focus;
+  const before = new Set(changeViews(change).flatMap((v) => [...nodeValues(v.before).keys()]));
+  const after = new Set(changeViews(change).flatMap((v) => [...nodeValues(v.after).keys()]));
+  return focus.flatMap((entry): CommandFocus[] => {
+    if (entry.kind !== 'task') return [entry];
+    if (after.has(entry.target))
+      return [
+        {
+          kind: 'task',
+          target: entry.target,
+          plan: change.plan.target,
+          expectedPlanRevision: change.plan.revision,
+        },
+      ];
+    if (entry.plan !== change.plan.target) return [entry];
+    return before.has(entry.target) ? [{ kind: 'task', target: entry.target }] : [];
+  });
+}
 function collectChangedNodes(
   plan: Extract<CommandChange, { kind: 'task' }>['plan'],
   keys: Set<string>,
 ): void {
-  const before = nodeValues(plan.before),
-    after = nodeValues(plan.after);
+  const before = new Map<string, string>(),
+    after = new Map<string, string>();
+  for (const view of commandPlanViews(plan)) {
+    nodeValues(view.before, before);
+    nodeValues(view.after, after);
+  }
+  if (plan.kind === 'hierarchy' && plan.after !== null) keys.add(`task:${plan.after.target}`);
   for (const target of new Set([...before.keys(), ...after.keys()]))
     if (before.get(target) !== after.get(target)) keys.add(`task:${target}`);
 }
 function validateChange(change: CommandChange): void {
   if (change.kind === 'task' || change.kind === 'cleanup' || change.kind === 'link') {
     validatePlanOutput(change.plan);
-    if (change.plan.before?.complete === false || change.plan.after?.complete === false)
+    if (
+      commandPlanViews(change.plan).some(
+        (view) => view.before?.complete === false || view.after?.complete === false,
+      )
+    )
       throw new CommandFailure('INCOMPLETE_PLAN', 'Read the complete task plan before staging it.');
   }
 }
@@ -97,11 +183,31 @@ function validOperationBudget(total: number, increment: number): boolean {
   );
 }
 function changeKey(c: CommandChange): string {
-  if (c.kind === 'project') return `project:${c.before.target}`;
-  if (c.kind === 'note' && c.plan.note !== undefined) return `note:${c.plan.note.target}`;
-  if (c.kind === 'status') return `status:${c.target}`;
-  if (c.kind === 'task' && c.plan.before !== null) return `task:${c.plan.before.target}`;
-  return `${c.kind}:${c.plan.target}`;
+  switch (c.kind) {
+    case 'project-create':
+      return c.id;
+    case 'project-move':
+      return `move:${c.before.target}`;
+    case 'project':
+      return `project:${c.before.target}`;
+    case 'status':
+      return `status:${c.target}`;
+    case 'note':
+      return noteChangeKey(c.plan);
+    case 'task':
+      return taskChangeKey(c.plan);
+    case 'link':
+    case 'cleanup':
+      return `${c.kind}:${c.plan.target}`;
+  }
+}
+function noteChangeKey(plan: Extract<CommandChange, { kind: 'note' }>['plan']): string {
+  return `note:${plan.note?.target ?? plan.target}`;
+}
+function taskChangeKey(plan: Extract<CommandChange, { kind: 'task' }>['plan']): string {
+  return plan.kind === 'hierarchy'
+    ? `hierarchy:${plan.target}`
+    : `task:${plan.before?.target ?? plan.target}`;
 }
 function composeChange(previous: CommandChange, next: CommandChange): CommandChange {
   if (previous.kind === 'note' && next.kind === 'note' && previous.plan.target !== next.plan.target)
@@ -360,7 +466,7 @@ export class CommandSession {
       this.publish({
         recovery: 'live',
         proposal: { ...this.state.proposal, revision: this.state.proposal.revision + 1, changes },
-        trees: changes.map((change) => ({ before: change.plan.before, after: change.plan.after })),
+        trees: changes.flatMap((change) => commandPlanViews(change.plan)),
         focus: this.refreshedFocus(changes),
       });
     } catch {
@@ -537,11 +643,18 @@ export class CommandSession {
     return !requested.some((entry) =>
       this.state.proposal.changes.some((change) => {
         if (change.kind === 'project') return entry.target === change.before.target;
+        if (change.kind === 'project-create') return false;
+        if (change.kind === 'project-move')
+          return (
+            entry.target === change.destination.target ||
+            focusNode(change.before, entry.target) !== undefined
+          );
         if (change.kind === 'note') return entry.target === change.plan.target;
         if (change.kind === 'status') return entry.target === change.target;
-        return (
-          focusNode(change.plan.after, entry.target) !== undefined ||
-          focusNode(change.plan.before, entry.target) !== undefined
+        return commandPlanViews(change.plan).some(
+          (view) =>
+            focusNode(view.after, entry.target) !== undefined ||
+            focusNode(view.before, entry.target) !== undefined,
         );
       }),
     );
@@ -568,7 +681,9 @@ export class CommandSession {
       return true;
     }
     if (pending.kind === 'new-session')
-      return disposition === 'save' ? false : this.newSession(disposition, signal);
+      return disposition === 'save'
+        ? this.saveAndFocus(undefined, signal, review)
+        : this.newSession(disposition, signal);
     if (disposition === 'save') return this.saveAndFocus(pending.target, signal, review);
     if (!(await this.newSession(disposition, signal))) return false;
     return this.focus(pending.target, signal);
@@ -582,7 +697,7 @@ export class CommandSession {
     );
   }
   private async saveAndFocus(
-    target: readonly CommandFocus[],
+    target: readonly CommandFocus[] | undefined,
     signal?: AbortSignal,
     review?: CommandNoteReview,
   ): Promise<boolean> {
@@ -598,6 +713,7 @@ export class CommandSession {
         : await this.confirmFromTurn(this.state.proposal.revision, signal);
     if (!saved) return false;
     this.publish({ pendingTransition: null });
+    if (target === undefined) return this.newSession('keep', signal);
     return this.focus(
       target.map((entry) => ({ kind: entry.kind, target: entry.target })),
       signal,
@@ -651,8 +767,15 @@ export class CommandSession {
   } {
     const matches = this.state.proposal.changes.flatMap((change) => {
       if (change.kind !== 'task' && change.kind !== 'cleanup') return [];
-      const after = focusNode(change.plan.after, target.target);
-      const node = after ?? focusNode(change.plan.before, target.target);
+      const views = commandPlanViews(change.plan);
+      const after = views
+        .map((view) => focusNode(view.after, target.target))
+        .find((node) => node !== undefined);
+      const node =
+        after ??
+        views
+          .map((view) => focusNode(view.before, target.target))
+          .find((node) => node !== undefined);
       const side = after === undefined ? ('before' as const) : ('after' as const);
       return node === undefined ? [] : [{ plan: change.plan, node, side }];
     });
@@ -684,6 +807,28 @@ export class CommandSession {
       },
       side: match.side,
     };
+  }
+  resolveTreeRead(query: ReadTaskTreeV1): ReadTaskTreeV1 {
+    if (
+      this.readOnly() ||
+      [
+        query.plan,
+        query.expectedPlanRevision,
+        query.expectedRevision,
+        query.side,
+        query.cursor,
+      ].some((value) => value !== undefined)
+    )
+      return query;
+    const { focus, side } = this.taskFocusBasis({ kind: 'task', target: query.target });
+    return focus.plan === undefined
+      ? query
+      : {
+          ...query,
+          plan: focus.plan,
+          expectedPlanRevision: required(focus.expectedPlanRevision),
+          side,
+        };
   }
   private async verifyTaskFocus(
     requested: Extract<CommandFocus, { kind: 'task' }>,
@@ -797,7 +942,12 @@ export class CommandSession {
     if (draft?.kind !== 'task' || draft.plan.before !== null || draft.plan.revision !== revision)
       throw new CommandFailure('DRAFT', 'Only the current unsaved root can be discarded.');
     const changes = this.state.proposal.changes.filter((c) =>
-      c.kind === 'status' ? c.plan !== plan : c.kind === 'project' || c.plan.target !== plan,
+      c.kind === 'status'
+        ? c.plan !== plan
+        : c.kind === 'project' ||
+          c.kind === 'project-create' ||
+          c.kind === 'project-move' ||
+          c.plan.target !== plan,
     );
     this.publish({
       proposal: {
@@ -808,9 +958,7 @@ export class CommandSession {
       focus: this.state.focus.filter(
         (entry) => entry.kind !== 'task' || !nodeValues(draft.plan.after).has(entry.target),
       ),
-      trees: changes.flatMap((c) =>
-        c.kind === 'task' ? [{ before: c.plan.before, after: c.plan.after }] : [],
-      ),
+      trees: changes.flatMap(changeViews),
     });
   }
   updateContext(context: string): void {
@@ -917,6 +1065,7 @@ export class CommandSession {
     this.requireStageable();
     validateChange(change);
     const changes = [...this.state.proposal.changes];
+    requireComposable(change, changes);
     const index = changes.findIndex((c) => changeKey(c) === changeKey(change));
     if (index < 0) changes.push(change);
     else changes[index] = composeChange(required(changes[index]), change);
@@ -932,33 +1081,13 @@ export class CommandSession {
       throw new CommandFailure('BUDGET', 'This proposal is too large. Save or split it first.');
     this.publish({
       preparations: [...(this.state.preparations ?? []), ...preparations],
-      focus:
-        change.kind === 'task'
-          ? this.state.focus.flatMap((entry): CommandFocus[] => {
-              if (entry.kind !== 'task') return [entry];
-              if (nodeValues(change.plan.after).has(entry.target))
-                return [
-                  {
-                    kind: 'task',
-                    target: entry.target,
-                    plan: change.plan.target,
-                    expectedPlanRevision: change.plan.revision,
-                  },
-                ];
-              if (entry.plan !== change.plan.target) return [entry];
-              return nodeValues(change.plan.before).has(entry.target)
-                ? [{ kind: 'task', target: entry.target }]
-                : [];
-            })
-          : this.state.focus,
+      focus: planFocus(this.state.focus, change),
       proposal: {
         revision: this.state.proposal.revision + 1,
         operations: this.state.proposal.operations + operations,
         changes: retained,
       },
-      trees: retained.flatMap((c) =>
-        c.kind === 'task' ? [{ before: c.plan.before, after: c.plan.after }] : [],
-      ),
+      trees: retained.flatMap(changeViews),
       activeQuestion: null,
       status: { kind: 'ready', message: 'Ready for review.' },
     });
@@ -1021,6 +1150,10 @@ export class CommandSession {
   private acceptsTurn(signal: AbortSignal, id: string): boolean {
     return !signal.aborted && this.current(id);
   }
+  private restoreQuestionStatus(): void {
+    const question = this.state.activeQuestion;
+    this.status(question === null ? 'ready' : 'question', question ?? 'Ready.');
+  }
   private async runTurn(
     text: string,
     submittedAgainst?: CommandSubmissionBasis,
@@ -1052,7 +1185,7 @@ export class CommandSession {
         this.state.id === snapshot.id &&
         this.state.status.kind === 'thinking'
       )
-        this.status('ready', 'Ready.');
+        this.restoreQuestionStatus();
     } catch (cause) {
       if (this.acceptsTurn(controller.signal, snapshot.id))
         this.status(
@@ -1214,6 +1347,7 @@ export class CommandSession {
       },
     };
     await this.options.journal.save(completed);
+    if (clear && inputRevision === this.inputRevision) this.inputDraft = false;
     this.publish({
       ...completed,
       input: inputRevision === this.inputRevision ? completed.input : this.state.input,
@@ -1262,6 +1396,14 @@ export class CommandSession {
         focus: () => this.state.focus,
         focusChanges: (changes) => {
           this.remapFocus(changes);
+        },
+        createdProject: (project) => {
+          this.publish({
+            focus: [
+              ...this.state.focus.filter((f) => f.target !== project.target),
+              { kind: 'project' as const, target: project.target, revision: project.revision },
+            ].slice(-5),
+          });
         },
         observeProject: (project) => {
           this.observeProject(project);
@@ -1357,6 +1499,16 @@ export class CommandSession {
       return false;
     }
   }
+  private archivedStatus(): CommandSessionSnapshot['status'] {
+    const question = this.previousQuestion();
+    if (question !== null) return { kind: 'question', message: question };
+    if (
+      this.state.pendingTransition != null ||
+      ['thinking', 'searching'].includes(this.state.status.kind)
+    )
+      return { kind: 'ready', message: 'Ready for review.' };
+    return this.state.status;
+  }
   private archivedSnapshot(
     disposition?: 'keep' | 'discard',
     acknowledgeUncertainty = false,
@@ -1365,6 +1517,8 @@ export class CommandSession {
       ...this.snapshot(),
       pendingTransition: null,
       activeQuestion: this.previousQuestion(),
+      input: this.inputDraft ? this.state.input : '',
+      status: this.archivedStatus(),
       ...(acknowledgeUncertainty && this.state.blocked ? { uncertaintyAcknowledged: true } : {}),
     };
     return disposition === 'discard' && !previous.blocked

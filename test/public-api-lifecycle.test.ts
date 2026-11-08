@@ -209,6 +209,8 @@ it('validates runtime inputs and exposes only implemented capabilities', async (
     'tasks.prepare',
     'tasks.apply',
     'tasks.create',
+    'tasks.prepare.reorder',
+    'tasks.prepare.hierarchy',
     'tasks.resolve',
     'tasks.statuses',
     'tasks.complete',
@@ -219,6 +221,44 @@ it('validates runtime inputs and exposes only implemented capabilities', async (
   ]);
   expect(Object.isFrozen(client.info.limits)).toBe(true);
 });
+it.each([false, true])(
+  'does not advertise unavailable hierarchy preparation with content ports=%s',
+  async (content) => {
+    const h = await setup();
+    const { TaskApiProvider } = await import('../src/integrations/TaskApiProvider');
+    const provider = new TaskApiProvider({
+      mutations: h.service,
+      reads: h.reads,
+      epoch: 'without-hierarchy',
+      pluginVersion: '2.3.2',
+      now: () => 0,
+      diagnostic: () => {},
+      ...(content ? { content: { edits: h.service, creates: h.service, statuses: () => [] } } : {}),
+    });
+    try {
+      const client = ok(provider.getApi(1, { consumerId: 'test' }));
+      expect(client.info.capabilities.includes('tasks.prepare.reorder')).toBe(content);
+      expect(client.info.capabilities).not.toContain('tasks.prepare.hierarchy');
+      if (content) {
+        const source = required(ok(await client.tasks.list()).items[0]);
+        expect(
+          await required(client.tasks.prepare)({
+            kind: 'hierarchy',
+            operation: {
+              type: 'promote',
+              source: source.target,
+              expectedSourceRevision: source.revision,
+            },
+          }),
+        ).toMatchObject({ error: { code: 'UNSUPPORTED_OPERATION' } });
+      } else expect(client.tasks.prepare).toBeUndefined();
+      const file = required(h.app.vault.getFiles().find((entry) => entry.path === 'a.md'));
+      expect(await h.app.vault.read(file)).toBe('- [ ] task\n');
+    } finally {
+      provider.dispose();
+    }
+  },
+);
 it('never revives old clients in a new provider epoch', async () => {
   const old = await setup();
   const client = old.client();

@@ -1,8 +1,20 @@
-import type { ApiEventV1, ApiResultV1, ContentPlanV1, TaskTreeV1, TasksApiV1 } from '../../api';
+import type {
+  ApiEventV1,
+  ApiResultV1,
+  ContentPlanV1,
+  TaskTreePageV1,
+  TaskTreeV1,
+  TasksApiV1,
+} from '../../api';
 import { CommandFailure, required } from './commandTypes';
 interface ReadTiming {
   readonly deadline: number;
   readonly now: () => number;
+}
+interface TreeReadTiming extends ReadTiming {
+  readonly readCharacters?: number;
+  readonly plan?: Pick<ContentPlanV1, 'target' | 'revision'>;
+  readonly side?: 'before' | 'after';
 }
 /** Subscribe before the attempt so a publication cannot be missed. Never wraps writes. */
 export async function commandRead<T>(
@@ -143,10 +155,22 @@ export async function canonicalCommandPlan(
     now: timing.now,
     deadline: Math.min(timing.deadline, timing.now() + 5000),
   });
+  const before = await reader.tree(plan.before, 'before'),
+    after = await reader.tree(plan.after, 'after');
+  if (plan.affected === undefined) return { ...plan, before, after };
+  const roots = async (side: 'before' | 'after'): Promise<TaskTreeV1[]> => {
+    const result: TaskTreeV1[] = [];
+    for (const root of plan.affected?.[side] ?? []) {
+      const tree = await reader.tree(root, side);
+      if (tree !== null) result.push(tree);
+    }
+    return result;
+  };
   return {
     ...plan,
-    before: await reader.tree(plan.before, 'before'),
-    after: await reader.tree(plan.after, 'after'),
+    before,
+    after,
+    affected: { before: await roots('before'), after: await roots('after') },
   };
 }
 class CanonicalPlanReader {
@@ -155,12 +179,14 @@ class CanonicalPlanReader {
   private characters = 0;
   constructor(
     private readonly api: TasksApiV1,
-    private readonly plan: ContentPlanV1,
+    private readonly plan: Pick<ContentPlanV1, 'target' | 'revision'> | undefined,
     private readonly signal: AbortSignal,
-    private readonly timing: ReadTiming,
+    private readonly timing: TreeReadTiming,
   ) {}
   private check(): void {
     this.signal.throwIfAborted();
+    if (this.timing.readCharacters !== undefined && this.characters > this.timing.readCharacters)
+      throw new CommandFailure('TREE_READ_LIMIT', 'More task content remains.');
     if (
       this.timing.now() >= this.timing.deadline ||
       this.nodes > 4000 ||
@@ -198,9 +224,13 @@ class CanonicalPlanReader {
         () =>
           required(this.api.tasks.tree)({
             target: seed.target,
-            plan: this.plan.target,
-            expectedPlanRevision: this.plan.revision,
-            side,
+            ...(this.plan === undefined
+              ? { expectedRevision: seed.revision }
+              : {
+                  plan: this.plan.target,
+                  expectedPlanRevision: this.plan.revision,
+                  side,
+                }),
             limit: 500,
             ...(cursor === undefined ? {} : { cursor }),
           }),
@@ -225,5 +255,30 @@ class CanonicalPlanReader {
     )
       throw new CommandFailure('INCOMPLETE_PLAN', 'The task plan was not completely read.');
     return { ...seed, children, comments, timeEntries, entries };
+  }
+}
+
+export async function canonicalCommandTree(
+  api: TasksApiV1,
+  page: TaskTreePageV1,
+  signal: AbortSignal,
+  timing: TreeReadTiming,
+): Promise<TaskTreePageV1> {
+  const reader = new CanonicalPlanReader(api, timing.plan, signal, {
+    ...timing,
+    deadline: Math.min(timing.deadline, timing.now() + 5000),
+  });
+  const base = { ...page };
+  Reflect.deleteProperty(base, 'nextCursor');
+  try {
+    return {
+      ...base,
+      complete: true,
+      truncated: false,
+      tree: required((await reader.tree(page.tree, timing.side ?? 'after')) ?? undefined),
+    };
+  } catch (cause) {
+    if (cause instanceof CommandFailure && cause.code === 'TREE_READ_LIMIT') return page;
+    throw cause;
   }
 }
