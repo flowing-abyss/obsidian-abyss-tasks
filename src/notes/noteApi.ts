@@ -26,7 +26,17 @@ export interface NoteTaskStage {
   reject(file: object): Promise<void>;
   release(): void;
 }
+export interface NoteReplacement {
+  readonly range: NoteRange;
+  readonly replacement: string;
+}
 export interface NoteTaskProtection {
+  preservesAll(before: string, after: string, edits: readonly NoteReplacement[]): boolean;
+  stageAll(
+    source: AcceptedNoteSource,
+    candidate: string,
+    edits: readonly NoteReplacement[],
+  ): NoteTaskStage | undefined;
   ranges(content: string): readonly NoteRange[];
   preserves(before: string, after: string, range: NoteRange, replacement: string): boolean;
   stage(
@@ -42,6 +52,7 @@ export interface NoteCommitOutcome {
   readonly destinationEffects: 'unchanged' | 'committed' | 'unknown';
   readonly source?: AcceptedNoteSource;
   readonly noop?: boolean;
+  readonly section?: NoteRange;
 }
 export interface PreparedNote {
   readonly kind: 'edit' | 'create';
@@ -50,6 +61,13 @@ export interface PreparedNote {
   readonly after: string;
   readonly retainedBytes: number;
   readonly source?: AcceptedNoteSource;
+  readonly sections?: ReadonlyArray<{
+    readonly range: NoteRange;
+    readonly before: string;
+    readonly after: string;
+  }>;
+  readonly refineSection?: (range: NoteRange, text: string, append: boolean) => PreparedNote;
+  readonly refineBody?: (text: string) => PreparedNote;
   validate(): void;
   commit(): Promise<NoteCommitOutcome>;
 }
@@ -73,7 +91,7 @@ export interface NoteApplicationApi {
     path: string,
     title: string,
     text: string,
-    template?: AcceptedNoteSource,
+    options?: { readonly template?: AcceptedNoteSource; readonly collision?: 'reject' | 'suffix' },
   ): Promise<PreparedNote>;
 }
 
@@ -81,6 +99,7 @@ export const NOTE_LIMITS = Object.freeze({
   defaultPageCharacters: 16_384,
   maxPageCharacters: 65_536,
   maxSectionsPerPage: 64,
+  maxEditsPerPlan: 20,
   defaultSearchMatches: 50,
   maxSearchMatches: 100,
   searchSourceCharacterTarget: 262_144,

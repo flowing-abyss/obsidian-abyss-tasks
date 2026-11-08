@@ -115,7 +115,11 @@ export function validateNotePrepare(value: unknown): ApiResultV1<PrepareNoteV1> 
       'text',
       'template',
       'expectedTemplateRevision',
+      'collision',
+      'plan',
+      'expectedPlanRevision',
     ]);
+    if (r['kind'] === 'refine') return refinement(r);
     if (r['kind'] === 'edit') {
       record(value, ['kind', 'target', 'expectedRevision', 'operation']);
       const operation = record(r['operation'], ['type', 'section', 'text']);
@@ -133,7 +137,15 @@ export function validateNotePrepare(value: unknown): ApiResultV1<PrepareNoteV1> 
       };
     }
     if (r['kind'] !== 'create') return invalid();
-    record(value, ['kind', 'path', 'title', 'text', 'template', 'expectedTemplateRevision']);
+    record(value, [
+      'kind',
+      'path',
+      'title',
+      'text',
+      'template',
+      'expectedTemplateRevision',
+      'collision',
+    ]);
     if ((r['template'] === undefined) !== (r['expectedTemplateRevision'] === undefined))
       return invalid();
     return {
@@ -143,6 +155,32 @@ export function validateNotePrepare(value: unknown): ApiResultV1<PrepareNoteV1> 
       text: prose(r['text']),
       ...optional(r, 'template', token),
       ...optional(r, 'expectedTemplateRevision', token),
+      ...optional(r, 'collision', (v) => (v === 'reject' || v === 'suffix' ? v : invalid())),
     };
   });
+}
+
+function refinement(r: Record<string, unknown>): Extract<PrepareNoteV1, { kind: 'refine' }> {
+  record(r, ['kind', 'plan', 'expectedPlanRevision', 'operation']);
+  const operation = record(r['operation'], ['type', 'section', 'text']);
+  if (operation['type'] === 'replace-body') {
+    record(operation, ['type', 'text']);
+    return {
+      kind: 'refine',
+      plan: token(r['plan']),
+      expectedPlanRevision: token(r['expectedPlanRevision']),
+      operation: { type: 'replace-body', text: prose(operation['text']) },
+    };
+  }
+  if (operation['type'] !== 'append' && operation['type'] !== 'replace-section') return invalid();
+  return {
+    kind: 'refine',
+    plan: token(r['plan']),
+    expectedPlanRevision: token(r['expectedPlanRevision']),
+    operation: {
+      type: operation['type'],
+      section: token(operation['section']),
+      text: prose(operation['text']),
+    },
+  };
 }

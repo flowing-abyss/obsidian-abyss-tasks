@@ -8,6 +8,7 @@ import {
   NoteTemplateService,
   StaticNoteFailure,
   type PreparedStaticNoteRequest,
+  type StaticNotePlan,
 } from './NoteTemplateService';
 import {
   NOTE_LIMITS,
@@ -15,6 +16,7 @@ import {
   type NoteApplicationApi,
   type NoteCommitOutcome,
   type NoteRange,
+  type NoteReplacement,
   type NoteTaskProtection,
   type NoteTaskStage,
   type PreparedNote,
@@ -31,17 +33,19 @@ function join(original: string, text: string, newline: string): string {
   if (text === '') return original;
   return original + (original === '' || original.endsWith('\n') ? '' : newline) + text;
 }
-function appendSection(content: string, range: NoteRange, text: string): string {
-  const before = content.slice(range.from, range.to);
+function appendSection(
+  content: string,
+  range: NoteRange,
+  text: string,
+  before = content.slice(range.from, range.to),
+): string {
+  if (text === '') return before;
   const newline = content.includes('\r\n') ? '\r\n' : '\n';
   const appended =
-    range.appendOnly === true && text !== '' && !content.endsWith('\n')
+    range.appendOnly === true && before === '' && !content.endsWith('\n')
       ? newline + text
       : join(before, text, newline);
-  return text !== '' &&
-    range.to < content.length &&
-    before.endsWith('\n') &&
-    !appended.endsWith('\n')
+  return range.to < content.length && before.endsWith('\n') && !appended.endsWith('\n')
     ? appended + newline
     : appended;
 }
@@ -73,6 +77,7 @@ interface EditBasis {
   readonly source: AcceptedNoteSource;
   readonly range: NoteRange;
   readonly replacement: string;
+  readonly edits: readonly NoteReplacement[];
   readonly candidate: string;
   readonly observation: TaskReadObservation;
   readonly file: TFile;
@@ -165,9 +170,7 @@ export class NoteApplicationService implements NoteApplicationApi {
       throw new NoteFailure('REVISION_CONFLICT');
     if (!preservedFrontmatter(live, basis.candidate))
       throw new NoteFailure('FRONTMATTER_REQUIRES_PROPERTY_API');
-    if (
-      !this.dependencies.protection.preserves(live, basis.candidate, basis.range, basis.replacement)
-    )
+    if (!this.dependencies.protection.preservesAll(live, basis.candidate, basis.edits))
       throw new NoteFailure('TASK_CONTENT_REQUIRES_TASK_API');
     if (this.sources.candidate(basis.source, live, basis.candidate).type !== 'ok')
       throw new NoteFailure('TARGET_UNAVAILABLE');
@@ -178,6 +181,14 @@ export class NoteApplicationService implements NoteApplicationApi {
     text: string,
     append: boolean,
   ): PreparedNote {
+    return this.prepareSections(source, [], { range, text, append });
+  }
+  private prepareSections(
+    source: AcceptedNoteSource,
+    previous: readonly NoteReplacement[],
+    operation: { range: NoteRange; text: string; append: boolean },
+  ): PreparedNote {
+    const { range, text, append } = operation;
     this.current(source);
     const owned = this.sections(source).find(
       (part) => part.editable && part.from === range.from && part.to === range.to,
@@ -185,32 +196,76 @@ export class NoteApplicationService implements NoteApplicationApi {
     if (!range.editable || owned === undefined || (!append && owned.appendOnly === true))
       throw new NoteFailure('SECTION_NOT_EDITABLE');
     bounded(text);
-    const before = source.content.slice(range.from, range.to);
-    const replacement = append ? appendSection(source.content, owned, text) : text;
-    bounded(before);
+    const earlier = previous.find(
+      (edit) => edit.range.from === range.from && edit.range.to === range.to,
+    );
+    const replacement = append
+      ? appendSection(source.content, owned, text, earlier?.replacement)
+      : text;
     bounded(replacement);
-    const candidate =
-      source.content.slice(0, range.from) + replacement + source.content.slice(range.to);
+    const edits = [
+      ...previous.filter((edit) => edit !== earlier),
+      { range: { ...owned }, replacement },
+    ].sort((a, b) => a.range.from - b.range.from);
+    if (
+      edits.length > NOTE_LIMITS.maxEditsPerPlan ||
+      edits.some((edit, i) => i > 0 && edit.range.from < (edits[i - 1]?.range.to ?? 0))
+    )
+      throw new NoteFailure('RESOURCE_LIMIT');
+    return this.preparedSections(source, edits);
+  }
+  private preparedSections(
+    source: AcceptedNoteSource,
+    edits: readonly NoteReplacement[],
+  ): PreparedNote {
+    const from = edits[0]?.range.from,
+      to = edits[edits.length - 1]?.range.to;
+    if (from === undefined || to === undefined) throw new NoteFailure('INVALID_ARGUMENT');
+    let candidate = source.content;
+    for (const edit of [...edits].reverse())
+      candidate =
+        candidate.slice(0, edit.range.from) + edit.replacement + candidate.slice(edit.range.to);
+    const delta = candidate.length - source.content.length;
+    const before = source.content.slice(from, to),
+      after = candidate.slice(from, to + delta);
+    bounded(before);
+    bounded(after);
     const basis: EditBasis = {
       source,
-      range: { ...range },
-      replacement,
+      edits,
+      range: { from, to, kind: 'prose', editable: false },
+      replacement: after,
       candidate,
       observation: this.capture(),
       file: this.dependencies.host.file(source),
     };
     this.checkEdit(basis, source.content);
+    const sections = edits.map((edit) => ({
+      range: edit.range,
+      before: edits.length === 1 ? before : source.content.slice(edit.range.from, edit.range.to),
+      after: edits.length === 1 ? after : edit.replacement,
+    }));
     let result: Promise<NoteCommitOutcome> | undefined;
     return {
       kind: 'edit',
+      path: source.path,
+      source,
+      before,
+      after,
+      sections,
       validate: () => {
         this.checkEdit(basis, source.content);
       },
-      path: source.path,
-      before,
-      after: replacement,
-      source,
-      retainedBytes: utf8(source.content) + utf8(candidate) + utf8(before) + utf8(replacement),
+      refineSection: (range, text, append) =>
+        this.prepareSections(source, edits, { range, text, append }),
+      retainedBytes:
+        utf8(source.content) +
+        utf8(candidate) +
+        utf8(before) +
+        utf8(after) +
+        (sections.length === 1
+          ? 0
+          : sections.reduce((sum, section) => sum + utf8(section.before) + utf8(section.after), 0)),
       commit: () =>
         (result ??= this.dependencies.serialize(source.path, () =>
           this.commitPreparedSection(basis),
@@ -230,6 +285,7 @@ export class NoteApplicationService implements NoteApplicationApi {
           noteEffects: 'unchanged',
           destinationEffects: 'unchanged',
           source: basis.source,
+          section: this.editedRange(basis),
           noop: true,
         };
       const written = await this.app.vault.process(basis.file, (live) =>
@@ -248,11 +304,10 @@ export class NoteApplicationService implements NoteApplicationApi {
   private forwardSection(basis: EditBasis, live: string, state: EditAttempt): string {
     try {
       this.checkEdit(basis, live);
-      const stage = this.dependencies.protection.stage(
+      const stage = this.dependencies.protection.stageAll(
         basis.source,
         basis.candidate,
-        basis.range,
-        basis.replacement,
+        basis.edits,
       );
       if (stage === undefined) return live;
       state.stage = stage;
@@ -273,12 +328,34 @@ export class NoteApplicationService implements NoteApplicationApi {
     const installed = await state.stage?.install(basis.file);
     if (installed !== true) await state.stage?.reject(basis.file);
     const read = installed === true ? this.sources.get(basis.source.path) : undefined;
+    const source = read?.type === 'ok' ? read.value : undefined;
     return {
       noteEffects: 'committed',
       destinationEffects: 'unchanged',
-      ...(read?.type === 'ok' && read.value !== undefined
-        ? { source: read.value }
+      ...(this.acceptedEdit(basis, source)
+        ? { source, section: this.editedRange(basis) }
         : { code: 'READBACK_UNAVAILABLE' }),
+    };
+  }
+  private acceptedEdit(
+    basis: EditBasis,
+    source: AcceptedNoteSource | undefined,
+  ): source is AcceptedNoteSource {
+    return (
+      source?.identity === basis.source.identity &&
+      source.content === basis.candidate &&
+      sameMeaning(basis.observation, this.capture()) &&
+      this.app.vault.getAbstractFileByPath(source.path) === basis.file &&
+      this.sources.matchesFile(source, basis.file)
+    );
+  }
+  private editedRange(basis: EditBasis): NoteRange {
+    // This receipt grants readback scope, not new edit authority over merged/split sections.
+    return {
+      from: basis.range.from,
+      to: basis.range.from + basis.replacement.length,
+      kind: 'prose',
+      editable: false,
     };
   }
   private async failedEdit(
@@ -319,19 +396,42 @@ export class NoteApplicationService implements NoteApplicationApi {
       return false;
     }
   }
+  private creationPath(requested: string, collision: 'reject' | 'suffix'): string {
+    if (this.app.vault.getAbstractFileByPath(requested) === null) return requested;
+    if (collision === 'reject') throw new NoteFailure('DESTINATION_EXISTS');
+    const stem = requested.slice(0, -3);
+    for (let suffix = 2; suffix <= 101; suffix++) {
+      const path = `${stem} ${suffix}.md`;
+      if (this.app.vault.getAbstractFileByPath(path) === null) return path;
+    }
+    throw new NoteFailure('RESOURCE_LIMIT');
+  }
   async prepareCreate(
-    path: string,
+    requestedPath: string,
     title: string,
     text: string,
-    template?: AcceptedNoteSource,
+    options: {
+      readonly template?: AcceptedNoteSource;
+      readonly collision?: 'reject' | 'suffix';
+    } = {},
   ): Promise<PreparedNote> {
+    const { template, collision = 'reject' } = options;
+    const path = this.creationPath(requestedPath, collision);
     bounded(text);
     const observation = this.capture();
     if (template !== undefined) this.current(template);
-    if (this.app.vault.getAbstractFileByPath(path) !== null)
-      throw new NoteFailure('DESTINATION_EXISTS');
     const staticPlan = await this.templates.planStaticNote(path, template?.path ?? '', title);
     if (staticPlan.type !== 'ready') throw new NoteFailure('UNSUPPORTED_TEMPLATE');
+    return this.preparedCreation(path, staticPlan, text, { template, observation });
+  }
+  private preparedCreation(
+    path: string,
+    staticPlan: Extract<StaticNotePlan, { type: 'ready' }>,
+    text: string,
+    basis: { template: AcceptedNoteSource | undefined; observation: TaskReadObservation },
+  ): PreparedNote {
+    const { template, observation } = basis;
+    bounded(text);
     const content = join(
       staticPlan.content,
       text,
@@ -354,6 +454,7 @@ export class NoteApplicationService implements NoteApplicationApi {
     let result: Promise<NoteCommitOutcome> | undefined;
     return {
       kind: 'create',
+      refineBody: (body) => this.preparedCreation(path, staticPlan, body, basis),
       validate: check,
       path,
       before: null,

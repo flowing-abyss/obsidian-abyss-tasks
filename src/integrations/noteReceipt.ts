@@ -24,6 +24,7 @@ export function noteReceipt(
     acceptedAt: number;
     input: CommitNoteV1;
     note?: NoteMutationReceiptV1['note'];
+    section?: NoteMutationReceiptV1['section'];
   },
   outcome: NoteCommitOutcome,
 ): NoteMutationResultV1 & { readonly receipt: NoteMutationReceiptV1 } {
@@ -45,6 +46,7 @@ export function noteReceipt(
     noteEffects: outcome.noteEffects,
     destinationEffects: outcome.destinationEffects,
     ...(context.note === undefined ? {} : { note: context.note }),
+    ...(context.section === undefined ? {} : { section: context.section }),
     warnings: [],
   };
   if (success) return { ok: true, receipt };

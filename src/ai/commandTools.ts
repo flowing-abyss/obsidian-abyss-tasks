@@ -6,10 +6,10 @@ import type {
   NotePlanV1,
   PrepareNoteV1,
   PrepareTaskContentV1,
-  ReadNoteV1,
   ReadTaskTreeV1,
   SearchNotesV1,
   SearchTasksV1,
+  TaskCommentV1,
   TaskContentOperationV1,
   TaskTreeV1,
   TasksApiV1,
@@ -40,15 +40,24 @@ import {
   type CommandResearchPort,
   type CommandSessionSnapshot,
 } from './commandTypes';
-const linkSchema = z.strictObject({
+import { ProviderFailure } from './providers/providerFailure';
+const linkFields = {
   notePlan: z.string(),
-  taskPlan: z.string(),
-  taskRevision: z.string(),
   target: z.string(),
-  field: z.enum(['description', 'markdownTitle']),
+  field: z.enum(['description', 'markdownTitle', 'comment']),
+  comment: z
+    .string()
+    .optional()
+    .describe(
+      'For field=comment only: omit to add a new comment; otherwise the exact current comment handle belonging to target, never text or a title.',
+    ),
   template: z.string().max(16000),
   alias: z.string().min(1).max(500),
-});
+};
+const linkSchema = z.union([
+  z.strictObject({ ...linkFields, taskPlan: z.string(), taskRevision: z.string() }),
+  z.strictObject({ ...linkFields, expectedRevision: z.string() }),
+]);
 function omitKind<T extends { kind: string }>(input: T): Omit<T, 'kind'> {
   const result = { ...input };
   Reflect.deleteProperty(result, 'kind');
@@ -63,6 +72,7 @@ export interface CommandToolContext {
   readonly research?: CommandResearchPort;
   deadline: number;
   researchMode: boolean;
+  researchCalls: number;
   interpreted: boolean;
   immediate: boolean;
   done: boolean;
@@ -135,12 +145,7 @@ class CommandToolOwner {
     } catch (cause) {
       this.ctx.errors.add(name);
       this.ctx.repair(id);
-      throw cause instanceof CommandFailure
-        ? cause
-        : new CommandFailure(
-            'TOOL_FAILED',
-            'This operation failed. Review its input and current source.',
-          );
+      throw toolFailure(cause);
     }
   }
   private canonicalPlan(plan: ContentPlanV1): Promise<ContentPlanV1> {
@@ -354,16 +359,21 @@ class CommandToolOwner {
           required(this.ctx.api.notes).search({ ...omitKind(input), limit: 20 } as SearchNotesV1),
         );
       case 'note': {
+        const { cursor, ...request } = {
+          ...omitKind(input),
+          limitCharacters: input.limitCharacters ?? 12000,
+        };
         const page = await this.readPublic(() =>
           required(this.ctx.api.notes).read({
-            ...omitKind(input),
-            limitCharacters: input.limitCharacters ?? 12000,
-          } as ReadNoteV1),
+            ...request,
+            ...(cursor === undefined ? {} : { cursor }),
+          }),
         );
-        checkedOutput(page);
+        const observed = { ...page, request, ...(cursor === undefined ? {} : { continued: true }) };
+        checkedOutput(observed);
         this.ctx.signal.throwIfAborted();
-        this.ctx.session.observeNote(page);
-        return page;
+        this.ctx.session.observeNote(observed);
+        return observed;
       }
     }
   }
@@ -550,20 +560,39 @@ class CommandToolOwner {
   note(): Tool {
     return tool({
       description:
-        'Prepare an exact bounded note create/edit through the public note owner; no write until confirmation.',
+        'Prepare/refine one bounded note proposal; no write until confirmation. Section operations use exact returned opaque handles, never heading text. Append supplies only extra text; replace-section supplies the complete new section. Refine a create plan with replace-body, keeping its frozen path/template.',
       inputSchema: z.strictObject({ input: notePrepareSchema.meta({ type: 'object' }) }),
       execute: ({ input }, { toolCallId }) =>
         this.execute('note', toolCallId, async () => {
-          const plan = await this.readPublic(() =>
-            required(this.ctx.api.notes).prepare(input as PrepareNoteV1),
-          );
+          const request = this.noteRequest(input as PrepareNoteV1);
+          const plan = await this.readPublic(() => required(this.ctx.api.notes).prepare(request));
           checkedOutput(plan);
           this.ctx.signal.throwIfAborted();
           this.ctx.session.stage({ kind: 'note', plan });
-          this.ctx.session.prepared({ kind: 'note', input });
+          this.ctx.session.prepared({ kind: 'note', input: notePrepareSchema.parse(request) });
           return plan;
         }),
     });
+  }
+  private noteRequest(input: PrepareNoteV1): PrepareNoteV1 {
+    if (input.kind !== 'edit') return input;
+    const existing = this.ctx.session
+      .snapshot()
+      .proposal.changes.find(
+        (change) => change.kind === 'note' && change.plan.note?.target === input.target,
+      );
+    if (existing?.kind !== 'note') return input;
+    if (existing.plan.note?.revision !== input.expectedRevision)
+      throw new CommandFailure(
+        'REVISION_CONFLICT',
+        'The pending note has a different source revision. Review it before continuing.',
+      );
+    return {
+      kind: 'refine',
+      plan: existing.plan.target,
+      expectedPlanRevision: existing.plan.revision,
+      operation: input.operation,
+    };
   }
   project(): Tool {
     return tool({
@@ -587,82 +616,114 @@ class CommandToolOwner {
         }),
     });
   }
-  private linkPlans(input: z.infer<typeof linkSchema>): { note: NotePlanV1; task: ContentPlanV1 } {
+  private linkNote(input: z.infer<typeof linkSchema>): NotePlanV1 {
     const changes = this.ctx.session.snapshot().proposal.changes;
     const note = changes.find((c) => c.kind === 'note' && c.plan.target === input.notePlan);
-    const task = changes.find((c) => c.kind === 'task' && c.plan.target === input.taskPlan);
-    if (
-      note?.kind !== 'note' ||
-      task?.kind !== 'task' ||
-      task.plan.revision !== input.taskRevision ||
-      input.template.split('{{link}}').length !== 2
-    )
+    if (note?.kind !== 'note' || input.template.split('{{link}}').length !== 2)
       throw new CommandFailure(
         'LINK_DEPENDENCY',
         'Choose the current note and task preview, with one link position.',
       );
-    return { note: note.plan, task: task.plan };
+    return note.plan;
+  }
+  private requireUnplannedLink(target: string): void {
+    const overlap = this.ctx.session
+      .snapshot()
+      .proposal.changes.some(
+        (change) =>
+          change.kind === 'task' &&
+          (find(change.plan.before, target) !== undefined ||
+            find(change.plan.after, target) !== undefined),
+      );
+    if (overlap)
+      throw new CommandFailure(
+        'LINK_DEPENDENCY',
+        'This task already has a proposal. Use its current plan and revision.',
+      );
+  }
+  private async linkTask(input: z.infer<typeof linkSchema>): Promise<TaskTreeV1> {
+    if ('taskPlan' in input) {
+      const task = this.ctx.session
+        .snapshot()
+        .proposal.changes.find(
+          (change) => change.kind === 'task' && change.plan.target === input.taskPlan,
+        );
+      if (task?.kind !== 'task' || task.plan.revision !== input.taskRevision)
+        throw new CommandFailure(
+          'LINK_DEPENDENCY',
+          'Choose the current task proposal and revision.',
+        );
+      return required(find(task.plan.after, input.target));
+    }
+    this.requireUnplannedLink(input.target);
+    const page = await this.readPublic(() =>
+      required(this.ctx.api.tasks.tree)({ target: input.target, limit: 500 }),
+    );
+    if (page.tree.target !== input.target || page.tree.revision !== input.expectedRevision)
+      throw new CommandFailure('REVISION_CONFLICT', 'The linked task changed. Read it again.');
+    if (!page.tree.complete || page.tree.truncated || page.nextCursor !== undefined)
+      throw new CommandFailure(
+        'INCOMPLETE_READ',
+        'Read the complete linked task before preparing its link.',
+      );
+    checkedOutput(page);
+    this.ctx.signal.throwIfAborted();
+    this.ctx.session.observeTree(page);
+    return page.tree;
   }
   link(): Tool {
     return tool({
       description:
-        'Stage a fixed note-to-task link dependency. Template contains exactly one {{link}}. The application formats that same note/path/alias after its receipt, without model changes.',
-      inputSchema: linkSchema,
+        'Stage a note link directly on an exact saved target+expectedRevision, or use current taskPlan+taskRevision for a pending task. Never stage a dummy comment to obtain a plan. field=comment adds one comment unless comment supplies its exact current owner-bound handle. Template contains exactly one {{link}}; the application formats the actual note path after its receipt.',
+      inputSchema: modelSchema(linkSchema),
       execute: (input, { toolCallId }) =>
         this.execute('link', toolCallId, async () => {
-          const { note, task } = this.linkPlans(input);
-          const node = find(task.after, input.target);
-          if (node === undefined)
-            throw new CommandFailure(
-              'LINK_TARGET',
-              'The linked task is no longer in this proposal.',
-            );
-          const sourcePath = task.destination?.path ?? node.source?.path;
-          if (sourcePath === undefined)
-            throw new CommandFailure('LINK_SOURCE', 'The task destination is unavailable.');
+          const note = this.linkNote(input);
+          const node = await this.linkTask(input);
           const placeholder = buildLinkRaw('wiki', note.path, input.alias, '|');
           const text = input.template.replace('{{link}}', placeholder);
-          const operation: TaskContentOperationV1 =
-            input.field === 'description'
-              ? { type: 'description', target: input.target, text }
+          const operation = linkOperation(input, node, text);
+          const request: PrepareTaskContentV1 =
+            'taskPlan' in input
+              ? {
+                  kind: 'append',
+                  plan: input.taskPlan,
+                  expectedPlanRevision: input.taskRevision,
+                  operation,
+                }
               : {
-                  type: 'patch',
+                  kind: 'edit',
                   target: input.target,
-                  patch: {
-                    markdownTitle: {
-                      type: 'set',
-                      value: preserveAuthoredAnnotations(node.markdownTitle, text),
-                    },
-                  },
+                  expectedRevision: input.expectedRevision,
+                  operation,
                 };
-          const plan = await this.readPublic(() =>
-            required(this.ctx.api.tasks.prepare)({
-              kind: 'append',
-              plan: task.target,
-              expectedPlanRevision: task.revision,
-              operation,
-            }),
-          );
-          const next = find(plan.after, input.target);
+          const plan = await this.readPublic(() => required(this.ctx.api.tasks.prepare)(request));
+          const canonical = await this.canonicalPlan(plan);
+          const next = find(canonical.after, input.target);
           if (next === undefined)
             throw new CommandFailure(
               'LINK_TARGET',
               'The prepared linked task lacks exact continuation.',
             );
-          const canonical = await this.canonicalPlan(plan);
+          const sourcePath = linkedTaskPath(canonical, next);
+          if (sourcePath === undefined)
+            throw new CommandFailure('LINK_SOURCE', 'The task destination is unavailable.');
+          const binding = linkBinding(input, node, next, text);
           this.ctx.signal.throwIfAborted();
+          if (!('taskPlan' in input)) this.requireUnplannedLink(input.target);
           if (this.ctx.session.snapshot().proposal.operations + 2 > 100)
             throw new CommandFailure('BUDGET', 'This proposal has too many operations.');
-          this.ctx.session.stage({ kind: 'task', plan: canonical });
+          this.ctx.session.stage({ kind: 'task', plan: canonical }, 1, [
+            { kind: 'task', input: prepareSchema.parse(request) },
+          ]);
           this.ctx.session.stage({
             kind: 'link',
             plan: canonical,
             notePlan: note.target,
             target: next.target,
             field: input.field,
-            template: required(
-              input.field === 'description' ? next.description : next.markdownTitle,
-            ).replace(placeholder, '{{link}}'),
+            ...binding,
+            template: binding.template.replace(placeholder, '{{link}}'),
             placeholder,
             sourcePath,
             alias: input.alias,
@@ -720,7 +781,17 @@ class CommandToolOwner {
       inputSchema: researchSchema,
       execute: ({ query }, { toolCallId }) =>
         this.execute('research', toolCallId, async () => {
-          this.ctx.researchMode = true;
+          if (!this.ctx.researchMode)
+            throw new CommandFailure(
+              'RESEARCH_INTENT',
+              'Research requires the current user’s research intent.',
+            );
+          if (this.ctx.researchCalls >= 2)
+            throw new CommandFailure(
+              'RESEARCH_LIMIT',
+              'This turn reached its research limit. Continue with another command.',
+            );
+          this.ctx.researchCalls++;
           this.ctx.session.status('searching', 'Researching…');
           const result = researchResultSchema.parse(
             await required(this.ctx.research).search(query, this.ctx.signal),
@@ -781,4 +852,87 @@ class CommandToolOwner {
     this.ctx.signal.throwIfAborted();
     throw new CommandFailure('REVEAL', 'Could not open that task in the current view.');
   }
+}
+
+function preparedLinkComment(
+  before: TaskTreeV1,
+  after: TaskTreeV1,
+  selected: string | undefined,
+  text: string,
+): TaskCommentV1 {
+  const index =
+    selected === undefined
+      ? before.comments.length
+      : before.comments.findIndex((comment) => comment.target === selected);
+  const comment = after.comments[index];
+  const unchanged = (node: TaskTreeV1): unknown =>
+    node.comments
+      .filter((_comment, at) => at !== index)
+      .map((entry) => [entry.text, entry.timestamp]);
+  if (
+    !completeCommentOwners(before, after) ||
+    index < 0 ||
+    comment?.parentTarget !== after.target ||
+    comment.text !== text ||
+    after.comments.length !== before.comments.length + (selected === undefined ? 1 : 0) ||
+    JSON.stringify(unchanged(before)) !== JSON.stringify(unchanged(after))
+  )
+    throw new CommandFailure(
+      'COMMENT_OWNER',
+      'The prepared comment lacks exact owner continuation.',
+    );
+  return comment;
+}
+
+function completeCommentOwners(before: TaskTreeV1, after: TaskTreeV1): boolean {
+  return before.complete && after.complete && before.target === after.target;
+}
+function toolFailure(cause: unknown): Error {
+  if (cause instanceof CommandFailure || cause instanceof ProviderFailure) return cause;
+  return new CommandFailure(
+    'TOOL_FAILED',
+    'This operation failed. Review its input and current source.',
+  );
+}
+function linkOperation(
+  input: z.infer<typeof linkSchema>,
+  node: TaskTreeV1,
+  text: string,
+): TaskContentOperationV1 {
+  if (
+    input.comment !== undefined &&
+    (input.field !== 'comment' ||
+      !node.comments.some(
+        (comment) => comment.target === input.comment && comment.parentTarget === node.target,
+      ))
+  )
+    throw new CommandFailure('COMMENT_OWNER', 'Select an exact current comment under this task.');
+  if (input.field === 'comment')
+    return {
+      type: input.comment === undefined ? 'add-comment' : 'update-comment',
+      target: input.comment ?? input.target,
+      text,
+    };
+  if (input.field === 'description') return { type: 'description', target: input.target, text };
+  return {
+    type: 'patch',
+    target: input.target,
+    patch: {
+      markdownTitle: { type: 'set', value: preserveAuthoredAnnotations(node.markdownTitle, text) },
+    },
+  };
+}
+function linkBinding(
+  input: z.infer<typeof linkSchema>,
+  before: TaskTreeV1,
+  after: TaskTreeV1,
+  text: string,
+): { template: string; comment?: string } {
+  if (input.field !== 'comment') return { template: required(after[input.field]) };
+  const comment = preparedLinkComment(before, after, input.comment, text);
+  return { template: comment.text, comment: comment.target };
+}
+
+function linkedTaskPath(plan: ContentPlanV1, node: TaskTreeV1): string | undefined {
+  return plan.destination?.path ?? plan.before?.source?.path ?? node.source?.path;
 }

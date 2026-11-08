@@ -20,6 +20,7 @@ import type {
 } from './ai/commandTypes';
 import { NativeProviderTransport } from './ai/providers/NativeProviderTransport';
 import { ProviderConnections } from './ai/providers/ProviderConnections';
+import { ProviderResearch } from './ai/providers/ProviderResearch';
 import { ProviderSecrets } from './ai/providers/ProviderSecrets';
 import { TaskApiProvider } from './integrations/TaskApiProvider';
 import { readError } from './integrations/taskApiReads';
@@ -172,6 +173,7 @@ export default class TaskCalendarPlugin extends Plugin {
 
   providerSecrets!: ProviderSecrets;
   providerConnections!: ProviderConnections;
+  commandResearch!: CommandResearchPort;
   private readonly commandSurfaceMemory: CommandSurfaceMemory = {
     active: false,
     selectionStart: 0,
@@ -191,6 +193,11 @@ export default class TaskCalendarPlugin extends Plugin {
       };
     });
     this.providerConnections = new ProviderConnections(this.providerSecrets, providerTransport);
+    this.commandResearch = new ProviderResearch(
+      this.providerSecrets,
+      providerTransport,
+      () => this.settings.commandMode,
+    );
     this.register(() => {
       providerTransport.dispose();
     });
@@ -381,7 +388,9 @@ export default class TaskCalendarPlugin extends Plugin {
       temporalContext: () =>
         `Local date/time: ${moment().format('YYYY-MM-DD HH:mm Z')}; time zone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}`,
       now: () => Date.now(),
-      ...(research === undefined ? {} : { research }),
+      research: research ?? {
+        search: (query, signal) => this.commandResearch.search(query, signal),
+      },
     });
     this.commandRuntimes.add(session);
     return session;

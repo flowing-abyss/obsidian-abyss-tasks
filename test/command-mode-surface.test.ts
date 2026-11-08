@@ -1,4 +1,5 @@
 import { MockLanguageModelV4 } from 'ai/test';
+import { MarkdownRenderer } from 'obsidian';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { ContentPlanV1, ProjectDtoV1, TaskContentOperationV1, TasksApiV1 } from '../api';
 import { CommandAgent } from '../src/ai/CommandAgent';
@@ -914,6 +915,131 @@ it('proves the first saved-comment rewrite through the real tool path and restor
   expect(await h.read('a.md')).not.toContain('blue');
 });
 
+it('marks a direct saved-child link after two note-only turns and retains its iteration cue on remount', async () => {
+  mockReadingView();
+  const original =
+    '- [ ] Parent\n  - [ ] Duplicate\n    - First authored\n  - [ ] Duplicate\n    - Second authored\n    - Keep sibling\n';
+  const h = await setup({ 'a.md': original });
+  const listed = await h.api.tasks.list({ path: 'a.md' });
+  if (!listed.ok) throw new Error(listed.error.code);
+  const root = expectDefined(listed.value.items[0]);
+  const page = await expectDefined(h.api.tasks.tree)({ target: root.target, limit: 500 });
+  if (!page.ok) throw new Error(page.error.code);
+  const child = expectDefined(page.value.tree.children[1]);
+  const calls: Array<{ tool: string; input: unknown }> = [
+    { tool: 'interpret', input: { intent: 'plan', research: false } },
+    {
+      tool: 'note',
+      input: {
+        input: {
+          kind: 'create',
+          path: 'Research.md',
+          title: 'Research',
+          text: 'Long conclusions.',
+        },
+      },
+    },
+    { tool: 'finish', input: { state: 'ready', message: 'Note prepared.' } },
+  ];
+  scriptedAgent(h, calls);
+  let surface = h.mount();
+  enter(surface, 'Prepare a research note');
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().status.message).toBe('Note prepared.');
+  });
+  const note = expectDefined(
+    h.owner.snapshot().proposal.changes.find((change) => change.kind === 'note'),
+  );
+  calls.push(
+    { tool: 'interpret', input: { intent: 'plan', research: false } },
+    {
+      tool: 'note',
+      input: {
+        input: {
+          kind: 'refine',
+          plan: note.plan.target,
+          expectedPlanRevision: note.plan.revision,
+          operation: { type: 'replace-body', text: 'Short conclusions.' },
+        },
+      },
+    },
+    { tool: 'finish', input: { state: 'ready', message: 'Note shortened.' } },
+  );
+  enter(surface, 'Shorten the note');
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().status.message).toBe('Note shortened.');
+  });
+  expect(h.owner.snapshot().entities.tasks).toHaveLength(0);
+  expect(surface.element.querySelectorAll('.abyss-comment-row')).toHaveLength(0);
+  calls.push(
+    { tool: 'interpret', input: { intent: 'plan', research: false } },
+    {
+      tool: 'link',
+      input: {
+        notePlan: note.plan.target,
+        target: child.target,
+        expectedRevision: child.revision,
+        field: 'comment',
+        template: 'Details: {{link}}',
+        alias: 'Comparison',
+      },
+    },
+    {
+      tool: 'finish',
+      input: () => {
+        const task = expectDefined(
+          h.owner.snapshot().proposal.changes.find((change) => change.kind === 'task'),
+        );
+        return {
+          state: 'ready',
+          message: 'Link prepared.',
+          selection: [
+            {
+              kind: 'task',
+              target: expectDefined(task.plan.after).target,
+              plan: task.plan.target,
+              expectedPlanRevision: task.plan.revision,
+            },
+          ],
+        };
+      },
+    },
+  );
+  enter(surface, 'Link the note under the second child');
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().status.message).toBe('Link prepared.');
+  });
+  await flushMicrotasks(0);
+  const rows = [...surface.element.querySelectorAll<HTMLElement>('.abyss-comment-row')];
+  expect(rows.map((row) => row.textContent)).toEqual([
+    'First authored',
+    'Second authored',
+    'Keep sibling',
+    'Details: Comparison',
+  ]);
+  expect(rows.map((row) => row.dataset['change'])).toEqual(['', '', '', 'added']);
+  expect(h.owner.snapshot().focus).toHaveLength(1);
+  surface.destroy();
+  surface = h.mount();
+  await flushMicrotasks(0);
+  expect(surface.element.querySelectorAll('.abyss-comment-row[data-change="added"]')).toHaveLength(
+    1,
+  );
+  calls.push(
+    { tool: 'interpret', input: { intent: 'plan', research: false } },
+    { tool: 'finish', input: { state: 'ready', message: 'Selection retained.' } },
+  );
+  enter(surface, 'Keep this selection');
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().status.message).toBe('Selection retained.');
+  });
+  expect(surface.element.querySelectorAll('.abyss-comment-row[data-change="added"]')).toHaveLength(
+    0,
+  );
+  expect(await h.read('a.md')).toBe(original);
+  expect(h.app.vault.getFileByPath('Research.md')).toBeNull();
+});
+
 it('resolves detached existing-edit child links from the exact write-owner note', async () => {
   mockReadingView();
   const h = await setup({
@@ -1550,4 +1676,469 @@ it('retains every task and comment change in one user iteration while keeping la
   expect(surface.element.querySelector('del, [data-change="changed"]')).toBeNull();
   expect(await h.read('a.md')).toContain('Renamed root');
   expect(await h.read('a.md')).toContain('Final comment');
+});
+
+it.each(['short', 'late'] as const)(
+  'reviews a %s note-only section diff before Enter and retains fresh current note content after save/remount',
+  async (position) => {
+    mockReadingView();
+    const prefix =
+      position === 'late'
+        ? `---\nkeep: original\n---\n${'Unchanged prose. '.repeat(850)}\n- [ ] Earlier protected task\n\n`
+        : '';
+    const h = await setup({
+      'Folder/Research.md': `${prefix}# Findings\nOld choice.\n\n- [ ] Protected\n\n# Keep\nUnrelated text.\n`,
+    });
+    const notes = expectDefined(h.api.notes);
+    const read = await notes.read({ selector: { path: 'Folder/Research.md' } });
+    if (!read.ok) throw new Error(read.error.code);
+    h.session.observeNote(read.value);
+    await h.session.focus([
+      { kind: 'note', target: read.value.note.target, revision: read.value.note.revision },
+    ]);
+    const selected = expectDefined(
+      read.value.segments.find((segment) => segment.text.includes('Old choice')),
+    );
+    const section = selected.section;
+    expect(section.canReplace, JSON.stringify(section)).toBe(true);
+    h.setRun(async () => {
+      const plan = await notes.prepare({
+        kind: 'edit',
+        target: read.value.note.target,
+        expectedRevision: read.value.note.revision,
+        operation: {
+          type: 'replace-section',
+          section: section.target,
+          text: selected.text.replace('Old choice.', 'New choice with [[Details|source]].'),
+        },
+      });
+      if (!plan.ok) throw new Error(plan.error.code);
+      h.session.stage({ kind: 'note', plan: plan.value });
+    });
+    const surface = h.mount();
+    enter(surface, 'Revise the findings');
+    await vi.waitFor(() => {
+      expect(h.owner.snapshot().status.kind).toBe('ready');
+    });
+    const note = expectDefined(surface.element.querySelector<HTMLElement>('.abyss-command-note'));
+    expect(note.textContent).toContain('Folder/Research.md');
+    expect(
+      note.querySelector('.abyss-text-difference-removed')?.textContent ??
+        note.querySelector('del')?.textContent,
+    ).toContain('Old');
+    expect(note.querySelector('ins')?.textContent).toContain('New');
+    expect(note.querySelector('input[type="checkbox"]')).toBeNull();
+    expect(await h.read('Folder/Research.md')).toContain('Old choice');
+    enter(surface, '');
+    await vi.waitFor(() => {
+      expect(h.owner.snapshot().status.kind).toBe('saved');
+    });
+    await flushMicrotasks(0);
+    expect(await h.read('Folder/Research.md')).toContain('New choice');
+    expect((await h.read('Folder/Research.md')).startsWith(prefix)).toBe(true);
+    expect(await h.read('Folder/Research.md')).toContain('# Keep\nUnrelated text.');
+    expect(surface.element.querySelector('.abyss-command-note')?.textContent).toContain(
+      'New choice',
+    );
+    expect(surface.element.querySelector('.abyss-command-note del')).toBeNull();
+    surface.destroy();
+    const resumed = h.mount();
+    await flushMicrotasks(0);
+    expect(resumed.element.querySelector('.abyss-command-note')?.textContent).toContain(
+      'New choice',
+    );
+  },
+);
+it('renders honest focused note excerpts and complete reads with native source-path wiki navigation', async () => {
+  mockReadingView();
+  const h = await setup({
+    'Folder/Research.md': '# Findings\nRead [[Details#Section|source]] and [[Missing]].\n',
+    'Folder/Details.md': '# Section\nRight\n',
+  });
+  const notes = expectDefined(h.api.notes);
+  const first = await notes.read({ selector: { path: 'Folder/Research.md' }, limitCharacters: 10 });
+  if (!first.ok) throw new Error(first.error.code);
+  await h.session.focus([
+    { kind: 'note', target: first.value.note.target, revision: first.value.note.revision },
+  ]);
+  h.session.observeNote(first.value);
+  const surface = h.mount();
+  await flushMicrotasks(0);
+  expect(surface.element.querySelector('.abyss-command-note')?.textContent).toContain(
+    'More content remains',
+  );
+  const full = await notes.read({
+    selector: { path: 'Folder/Research.md' },
+    limitCharacters: 12000,
+  });
+  if (!full.ok) throw new Error(full.error.code);
+  h.session.observeNote(full.value);
+  await flushMicrotasks(0);
+  const note = expectDefined(surface.element.querySelector<HTMLElement>('.abyss-command-note'));
+  expect(note.textContent).toContain('Full note');
+  const resolve = vi
+    .spyOn(h.app.metadataCache, 'getFirstLinkpathDest')
+    .mockImplementation((path, from) =>
+      path === 'Details' && from === 'Folder/Research.md'
+        ? h.app.vault.getFileByPath('Folder/Details.md')
+        : null,
+    );
+  const open = vi.spyOn(h.app.workspace, 'openLinkText').mockResolvedValue();
+  const anchors = note.querySelectorAll<HTMLAnchorElement>('a');
+  expect(anchors).toHaveLength(2);
+  anchors[0]?.click();
+  await flushMicrotasks(0);
+  expect(resolve).toHaveBeenCalledWith('Details', 'Folder/Research.md');
+  expect(open).toHaveBeenCalledWith('Details#Section', 'Folder/Research.md', false);
+  anchors[1]?.click();
+  await flushMicrotasks(0);
+  expect(open).toHaveBeenCalledTimes(1);
+  expect(surface.element.querySelector('.abyss-command-phase')?.textContent).toContain(
+    'does not exist',
+  );
+  expect(h.owner.snapshot().proposal.changes).toEqual([]);
+});
+it('keeps native task DOM while a background research note proposal updates', async () => {
+  const h = await setup();
+  const surface = h.mount();
+  enter(surface, 'Draft task');
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().status.kind).toBe('ready');
+  });
+  const title = expectDefined(surface.element.querySelector('.abyss-task-title'));
+  const child = expectDefined(surface.element.querySelectorAll('.abyss-subtask-label')[1]);
+  const note = await expectDefined(h.api.notes).prepare({
+    kind: 'create',
+    path: 'Research.md',
+    title: 'Research',
+    text: 'Sourced findings',
+  });
+  if (!note.ok) throw new Error(note.error.code);
+  h.session.stage({ kind: 'note', plan: note.value });
+  await flushMicrotasks(0);
+  expect(surface.element.querySelector('.abyss-command-note')?.textContent).toContain(
+    'Sourced findings',
+  );
+  expect(surface.element.querySelector('.abyss-task-title')).toBe(title);
+  expect(surface.element.querySelectorAll('.abyss-subtask-label')[1]).toBe(child);
+  expect(h.app.vault.getFileByPath('Research.md')).toBeNull();
+});
+
+it('retains exact receipt-section continuation after finish and remount without claiming a full note', async () => {
+  mockReadingView();
+  const h = await setup({ 'Long.md': 'Original prose\n\n- [ ] Keep\n' });
+  const notes = expectDefined(h.api.notes);
+  const read = await notes.read({ selector: { path: 'Long.md' } });
+  if (!read.ok) throw new Error(read.error.code);
+  const section = expectDefined(read.value.segments.find((part) => part.section.canReplace));
+  h.setRun(async () => {
+    const plan = await notes.prepare({
+      kind: 'edit',
+      target: read.value.note.target,
+      expectedRevision: read.value.note.revision,
+      operation: {
+        type: 'replace-section',
+        section: section.section.target,
+        text: `New beginning\n${'Review detail. '.repeat(900)}\nFinal addition.\n\n`,
+      },
+    });
+    if (!plan.ok) throw new Error(plan.error.code);
+    h.session.stage({ kind: 'note', plan: plan.value });
+  });
+  let surface = h.mount();
+  enter(surface, 'Expand this section');
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().status.kind).toBe('ready');
+  });
+  expect(surface.element.querySelector('.abyss-command-note')?.textContent).toContain(
+    'Final addition.',
+  );
+  enter(surface, '');
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().status.kind).toBe('saved');
+  });
+  const first = expectDefined(h.owner.snapshot().entities.notes[0]);
+  expect(first.selection).toBe('section');
+  expect(first.complete).toBe(false);
+  const request = expectDefined(first.request);
+  expect(request.selector).toHaveProperty('section');
+  expect(surface.element.querySelector('.abyss-command-note')?.textContent).toContain(
+    'New beginning',
+  );
+  expect(surface.element.querySelector('.abyss-command-note')?.textContent).toContain(
+    'More content remains',
+  );
+  await h.owner.flush();
+  surface.destroy();
+  surface = h.mount();
+  await flushMicrotasks(0);
+  expect(h.owner.snapshot().entities.notes[0]?.request).toEqual(request);
+  h.setRun(async () => {
+    const continued = await notes.read({ ...request, cursor: expectDefined(first.nextCursor) });
+    if (!continued.ok) throw new Error(continued.error.code);
+    h.session.observeNote({ ...continued.value, request, continued: true });
+  });
+  enter(surface, 'Continue this section');
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().status.kind).toBe('ready');
+  });
+  await flushMicrotasks(0);
+  const current = expectDefined(surface.element.querySelector('.abyss-command-note'));
+  expect(current.textContent).toContain('Final addition.');
+  expect(current.textContent).toContain('Continuation · End of selection.');
+  expect(current.textContent).not.toContain('Full note');
+  expect(await h.read('Long.md')).toContain('- [ ] Keep');
+});
+
+function mockNativeBlocks(): void {
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, text, holder) => {
+    for (const block of text.trim().split(/\n\n+/u)) {
+      if (block.startsWith('# ') || block.startsWith('## ')) {
+        const [heading = '', ...rest] = block.split('\n');
+        const level = heading.startsWith('## ') ? 'h2' : 'h1';
+        holder.createEl(level, { text: heading.slice(level === 'h2' ? 3 : 2) });
+        if (rest.length > 0) holder.createEl('p', { text: rest.join('\n') });
+      } else if (block.startsWith('- [ ] '))
+        holder.createEl('ul').createEl('li').createEl('input', { type: 'checkbox' });
+      else holder.createEl('p', { text: block });
+    }
+  });
+}
+it('shows a note display error when the prior Markdown comparison fails', async () => {
+  mockNativeBlocks();
+  const original = '# Original\n\nKeep this.\n';
+  const h = await setup({ 'Note.md': original });
+  const notes = expectDefined(h.api.notes);
+  const page = await notes.read({ selector: { path: 'Note.md' } });
+  if (!page.ok) throw new Error(page.error.code);
+  const plan = await notes.prepare({
+    kind: 'edit',
+    target: page.value.note.target,
+    expectedRevision: page.value.note.revision,
+    operation: {
+      type: 'append',
+      section: expectDefined(page.value.segments.find((part) => part.section.canAppend)).section
+        .target,
+      text: 'More details.',
+    },
+  });
+  if (!plan.ok) throw new Error(plan.error.code);
+  h.session.stage({ kind: 'note', plan: plan.value });
+  vi.spyOn(MarkdownRenderer, 'render').mockRejectedValueOnce(new Error('Native comparison failed'));
+  const surface = h.mount();
+  await flushMicrotasks(0);
+  expect(surface.element.querySelector('.abyss-command-note-body')?.textContent).toBe(
+    'Could not display note content.',
+  );
+  expect(h.owner.snapshot().proposal.changes).toHaveLength(1);
+  expect(await h.read('Note.md')).toBe(original);
+});
+it.each(['description', 'comment'] as const)(
+  'compares native task %s blocks without marking the unchanged heading',
+  async (kind) => {
+    mockNativeBlocks();
+    const original = '- [ ] Existing\n\t- > # Description\n\t- 2026-08-01: # Comment\n';
+    const h = await setup({ 'a.md': original });
+    const listed = await h.api.tasks.list({});
+    if (!listed.ok) throw new Error(listed.error.code);
+    const target = expectDefined(listed.value.items.find((task) => task.title === 'Existing'));
+    const prepared = await expectDefined(h.api.tasks.prepare)({
+      kind: 'edit',
+      target: target.target,
+      expectedRevision: target.revision,
+    });
+    if (!prepared.ok) throw new Error(prepared.error.code);
+    const options = {
+      now: () => Date.UTC(2026, 7, 1, 12),
+      deadline: Date.UTC(2026, 7, 1, 12) + 5000,
+    };
+    const plan = await canonicalCommandPlan(
+      h.api,
+      prepared.value,
+      new AbortController().signal,
+      options,
+    );
+    h.session.stage({ kind: 'task', plan });
+    const surface = h.mount();
+    await flushMicrotasks(0);
+    const node = expectDefined(plan.after);
+    const operation: TaskContentOperationV1 =
+      kind === 'description'
+        ? { type: 'description', target: node.target, text: '# Description\n\nAdded detail.' }
+        : {
+            type: 'update-comment',
+            target: expectDefined(node.comments[0]).target,
+            text: '# Comment\nAdded detail.',
+          };
+    const request = {
+      kind: 'append' as const,
+      plan: plan.target,
+      expectedPlanRevision: plan.revision,
+      operation,
+    };
+    const changed = await expectDefined(h.api.tasks.prepare)(request);
+    if (!changed.ok) throw new Error(changed.error.code);
+    h.session.prepared({ kind: 'task', input: prepareSchema.parse(request) });
+    h.session.stage({
+      kind: 'task',
+      plan: await canonicalCommandPlan(h.api, changed.value, new AbortController().signal, options),
+    });
+    await flushMicrotasks(0);
+    const field = expectDefined(
+      surface.element.querySelector(
+        kind === 'description' ? '.abyss-task-desc' : '.abyss-comment-row',
+      ),
+    );
+    expect(field.querySelector('h1')?.textContent).toBe(
+      kind === 'description' ? 'Description' : 'Comment',
+    );
+    expect(field.querySelector('h1 ins')).toBeNull();
+    expect(field.querySelector('h1 del')).toBeNull();
+    expect(field.querySelector('del')).toBeNull();
+    expect(field.querySelector('ins')?.textContent).toContain('Added detail.');
+    expect(await h.read('a.md')).toBe(original);
+  },
+);
+it('compares native note blocks without raw heading deletion and keeps rendered task inputs readonly', async () => {
+  mockNativeBlocks();
+  const original =
+    '# Contact\n\n## Clinic\n\nPhone 7719.\n\n## Personal\n\nKeep personal.\n\n- [ ] Protected\n';
+  const h = await setup({ 'Contact.md': original });
+  const notes = expectDefined(h.api.notes);
+  const page = await notes.read({ selector: { path: 'Contact.md' } });
+  if (!page.ok) throw new Error(page.error.code);
+  await h.session.focus([
+    { kind: 'note', target: page.value.note.target, revision: page.value.note.revision },
+  ]);
+  let surface = h.mount();
+  await flushMicrotasks(0);
+  const checkbox = expectDefined(
+    surface.element.querySelector<HTMLInputElement>('.abyss-command-note input[type=checkbox]'),
+  );
+  expect(checkbox.disabled).toBe(true);
+  checkbox.click();
+  expect(checkbox.checked).toBe(false);
+  expect(await h.read('Contact.md')).toBe(original);
+  const section = expectDefined(page.value.segments.find((part) => part.section.canReplace));
+  h.setRun(async () => {
+    const appended = await notes.prepare({
+      kind: 'edit',
+      target: page.value.note.target,
+      expectedRevision: page.value.note.revision,
+      operation: {
+        type: 'append',
+        section: section.section.target,
+        text: 'Wrong duplicated content',
+      },
+    });
+    if (!appended.ok) throw new Error(appended.error.code);
+    h.session.stage({ kind: 'note', plan: appended.value });
+    const corrected = await notes.prepare({
+      kind: 'refine',
+      plan: appended.value.target,
+      expectedPlanRevision: appended.value.revision,
+      operation: {
+        type: 'replace-section',
+        section: section.section.target,
+        text: section.text.replace('Phone 7719.', 'Phone 7719.\n\nVisits on Tuesday.'),
+      },
+    });
+    if (!corrected.ok) throw new Error(corrected.error.code);
+    h.session.stage({ kind: 'note', plan: corrected.value });
+  });
+  enter(surface, 'Add Tuesday hours');
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().status.kind).toBe('ready');
+  });
+  await flushMicrotasks(0);
+  expect(h.owner.snapshot().proposal.changes).toHaveLength(1);
+  expect(surface.element.querySelectorAll('.abyss-command-note')).toHaveLength(1);
+  expect(surface.element.querySelector('.abyss-command-note h1 ins')).toBeNull();
+  expect(surface.element.querySelector('.abyss-command-note h1 del')).toBeNull();
+  expect(surface.element.querySelector('.abyss-command-note del')).toBeNull();
+  expect(
+    [...surface.element.querySelectorAll('.abyss-command-note ins')]
+      .map((node) => node.textContent)
+      .join(''),
+  ).toContain('Visits on Tuesday.');
+  surface.destroy();
+  surface = h.mount();
+  await flushMicrotasks(0);
+  expect(surface.element.querySelector('.abyss-command-note h1 ins')).toBeNull();
+  enter(surface, '');
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().status.kind).toBe('saved');
+  });
+  expect(await h.read('Contact.md')).toBe(
+    original.replace('Phone 7719.', 'Phone 7719.\n\nVisits on Tuesday.'),
+  );
+});
+
+it('reviews independent note ranges as fields in one card and commits them together', async () => {
+  mockReadingView();
+  const original = 'First prose\n\n- [ ] Keep task\n\nSecond prose\n';
+  const h = await setup({ 'Note.md': original });
+  const notes = expectDefined(h.api.notes);
+  const read = await notes.read({ selector: { path: 'Note.md' } });
+  if (!read.ok) throw new Error(read.error.code);
+  const first = expectDefined(
+    read.value.segments.find((part) => part.text.includes('First prose')),
+  );
+  const second = expectDefined(
+    read.value.segments.find((part) => part.text.includes('Second prose')),
+  );
+  h.setRun(async () => {
+    const plan = await notes.prepare({
+      kind: 'edit',
+      target: read.value.note.target,
+      expectedRevision: read.value.note.revision,
+      operation: {
+        type: 'replace-section',
+        section: first.section.target,
+        text: first.text.replace('First', 'Changed first'),
+      },
+    });
+    if (!plan.ok) throw new Error(plan.error.code);
+    h.session.stage({ kind: 'note', plan: plan.value });
+    const next = await notes.prepare({
+      kind: 'refine',
+      plan: plan.value.target,
+      expectedPlanRevision: plan.value.revision,
+      operation: {
+        type: 'replace-section',
+        section: second.section.target,
+        text: second.text.replace('Second', 'Changed second'),
+      },
+    });
+    if (!next.ok) throw new Error(next.error.code);
+    h.session.stage({ kind: 'note', plan: next.value });
+  });
+  let surface = h.mount();
+  enter(surface, 'Revise both prose sections');
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().status.kind).toBe('ready');
+  });
+  await flushMicrotasks(0);
+  expect(surface.element.querySelectorAll('.abyss-command-note')).toHaveLength(1);
+  expect(surface.element.querySelectorAll('.abyss-command-note-body')).toHaveLength(2);
+  expect(surface.element.querySelector('.abyss-command-note')?.textContent).toContain(
+    'Changed first',
+  );
+  expect(surface.element.querySelector('.abyss-command-note')?.textContent).toContain(
+    'Changed second',
+  );
+  expect(await h.read('Note.md')).toBe(original);
+  surface.destroy();
+  surface = h.mount();
+  await flushMicrotasks(0);
+  expect(surface.element.querySelectorAll('.abyss-command-note-body')).toHaveLength(2);
+  const write = vi.spyOn(h.app.vault, 'process');
+  enter(surface, '');
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().status.kind).toBe('saved');
+  });
+  expect(write).toHaveBeenCalledTimes(1);
+  expect(await h.read('Note.md')).toBe(
+    original.replace('First', 'Changed first').replace('Second', 'Changed second'),
+  );
 });

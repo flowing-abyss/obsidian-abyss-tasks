@@ -7,6 +7,7 @@ import type { StatusRegistry } from '../../status/StatusRegistry';
 import { showMenuAtMouseEventWithFocus } from '../nativeMenuFocus';
 import { runAsyncAction } from '../runAsyncAction';
 import type { CaptureExtension, CaptureExtensionHost } from '../taskCapture/CaptureSurface';
+import { CommandNotes } from './CommandNotes';
 import { CommandProjects } from './CommandProjects';
 import {
   CommandTree,
@@ -77,6 +78,7 @@ export class CommandModeSurface implements CaptureExtension {
   private readonly primary: HTMLButtonElement;
   private primaryAction: PrimaryAction = 'send';
   private readonly projects: CommandProjects;
+  private readonly notes: CommandNotes;
   private tree: CommandTree | undefined;
   private owner: CommandSessionOwner | undefined;
   private unsubscribe: (() => void) | undefined;
@@ -114,6 +116,12 @@ export class CommandModeSurface implements CaptureExtension {
       this.allowLink(href, path),
     );
     this.treeHost = this.content.createDiv({ cls: 'abyss-command-tree' });
+    this.notes = new CommandNotes(
+      this.content.createDiv({ cls: 'abyss-command-notes' }),
+      options.app,
+      this.component,
+      (href, path) => this.allowLink(href, path),
+    );
     this.latest = this.content.createDiv({ cls: 'abyss-command-latest' });
     this.question = this.content.createDiv({ cls: 'abyss-command-question' });
     this.component.registerDomEvent(history, 'click', (event) => {
@@ -304,6 +312,7 @@ export class CommandModeSurface implements CaptureExtension {
     this.question.textContent = state.activeQuestion ?? '';
     this.question.hidden = state.activeQuestion === null;
     this.projects.update(state);
+    this.notes.update(state);
     this.tree?.update(state);
     this.navigateSaved(state);
     this.reveal(state);
@@ -469,7 +478,7 @@ export class CommandModeSurface implements CaptureExtension {
   private allowLink(href: string, sourcePath: string): boolean {
     const { path } = parseLinktext(href);
     if (this.options.app.metadataCache.getFirstLinkpathDest(path, sourcePath) !== null) return true;
-    this.failure('This note does not exist yet. Ask to create it, then save the proposal.');
+    this.failure('This note does not exist yet.');
     return false;
   }
   destroy(): void {
@@ -482,6 +491,7 @@ export class CommandModeSurface implements CaptureExtension {
     this.unsubscribe?.();
     this.tree?.destroy();
     this.projects.destroy();
+    this.notes.destroy();
     this.component.unload();
     this.toolbar.remove();
     this.phase.remove();

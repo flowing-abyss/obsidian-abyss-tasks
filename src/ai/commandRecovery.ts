@@ -4,14 +4,18 @@ import type {
   MutationReceiptV1,
   NoteMutationReceiptV1,
   NotePlanV1,
-  NoteReadPageV1,
   ProjectDtoV1,
   ProjectMutationReceiptV1,
   TaskContentReceiptV1,
   TaskTreeV1,
 } from '../../api';
-import { notePrepareSchema, prepareSchema } from './commandSchemas';
-import type { CommandChange, CommandJournalEntry, CommandSessionSnapshot } from './commandTypes';
+import { notePrepareSchema, noteReadRequestSchema, prepareSchema } from './commandSchemas';
+import type {
+  CommandChange,
+  CommandJournalEntry,
+  CommandNoteRead,
+  CommandSessionSnapshot,
+} from './commandTypes';
 
 const text = z.string();
 const handle = text.min(1);
@@ -175,6 +179,16 @@ const notePlan: z.ZodType<NotePlanV1> = z.object({
   after: z.object({ text, complete: z.literal(true) }),
   note: reference.exactOptional(),
   section: handle.exactOptional(),
+  sections: z
+    .array(
+      z.object({
+        section: handle,
+        before: z.object({ text, complete: z.literal(true) }),
+        after: z.object({ text, complete: z.literal(true) }),
+      }),
+    )
+    .max(20)
+    .exactOptional(),
 });
 const noteSummary = z.object({
   ...reference.shape,
@@ -182,11 +196,13 @@ const noteSummary = z.object({
   name: text,
   aliases: z.array(text),
 });
-const notePage: z.ZodType<NoteReadPageV1> = z.object({
+const notePage: z.ZodType<CommandNoteRead> = z.object({
   ...observation,
   revision: count,
   note: noteSummary,
   selection: z.enum(['note', 'heading', 'block', 'section']),
+  continued: z.boolean().exactOptional(),
+  request: noteReadRequestSchema.exactOptional(),
   resolvedSubpath: text.exactOptional(),
   segments: z.array(
     z.object({
@@ -255,7 +271,8 @@ const change: z.ZodType<CommandChange> = z.discriminatedUnion('kind', [
     plan: contentPlan,
     notePlan: handle,
     target: handle,
-    field: z.enum(['description', 'markdownTitle']),
+    field: z.enum(['description', 'markdownTitle', 'comment']),
+    comment: handle.exactOptional(),
     template: text,
     placeholder: text,
     sourcePath: text,
@@ -328,6 +345,7 @@ const noteReceipt: z.ZodType<NoteMutationReceiptV1> = z.object({
   noteEffects: storageEffect,
   destinationEffects: storageEffect,
   note: reference.exactOptional(),
+  section: handle.exactOptional(),
   warnings,
 });
 const projectReceipt: z.ZodType<ProjectMutationReceiptV1> = z.object({

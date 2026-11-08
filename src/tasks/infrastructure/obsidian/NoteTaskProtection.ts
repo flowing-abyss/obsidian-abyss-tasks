@@ -1,7 +1,12 @@
 import type { App } from 'obsidian';
 import { sameNoteFileStamp } from '../../../markdown/noteFileStamp';
 import { readVaultText } from '../../../markdown/readVaultText';
-import type { NoteRange, NoteTaskProtection, NoteTaskStage } from '../../../notes/noteApi';
+import type {
+  NoteRange,
+  NoteReplacement,
+  NoteTaskProtection,
+  NoteTaskStage,
+} from '../../../notes/noteApi';
 import type { AcceptedNoteSource, TaskReadObservation } from '../../../notes/NoteSourceApi';
 import { recurrenceOwnedSubtree } from '../../domain/recurrenceIteration';
 import type { TaskOccurrenceWitness } from '../../domain/taskOccurrence';
@@ -14,6 +19,13 @@ function lineStarts(content: string): number[] {
   const result = [0];
   for (let i = content.indexOf('\n'); i >= 0; i = content.indexOf('\n', i + 1)) result.push(i + 1);
   return result;
+}
+function displaced(offset: number, edits: readonly NoteReplacement[]): number {
+  return edits.reduce(
+    (value, { range, replacement }) =>
+      value + (range.to <= offset ? replacement.length - (range.to - range.from) : 0),
+    offset,
+  );
 }
 /** Projects canonical block ownership; it never parses task syntax independently. */
 export class CanonicalNoteTaskProtection implements NoteTaskProtection {
@@ -32,13 +44,15 @@ export class CanonicalNoteTaskProtection implements NoteTaskProtection {
     });
   }
   preserves(before: string, after: string, range: NoteRange, replacement: string): boolean {
+    return this.preservesAll(before, after, [{ range, replacement }]);
+  }
+  preservesAll(before: string, after: string, edits: readonly NoteReplacement[]): boolean {
     const original = this.ranges(before),
       candidate = this.ranges(after);
     if (original.length !== candidate.length) return false;
-    const delta = replacement.length - (range.to - range.from);
     return original.every((block) => {
-      if (block.from < range.to && block.to > range.from) return false;
-      const from = block.from >= range.to ? block.from + delta : block.from;
+      if (edits.some(({ range }) => block.from < range.to && block.to > range.from)) return false;
+      const from = displaced(block.from, edits);
       const found = candidate.find(
         (next) => next.from === from && next.to === from + block.to - block.from,
       );
@@ -54,7 +68,14 @@ export class CanonicalNoteTaskProtection implements NoteTaskProtection {
     range: NoteRange,
     replacement: string,
   ): NoteTaskStage | undefined {
-    if (!this.preserves(source.content, candidate, range, replacement)) return undefined;
+    return this.stageAll(source, candidate, [{ range, replacement }]);
+  }
+  stageAll(
+    source: AcceptedNoteSource,
+    candidate: string,
+    edits: readonly NoteReplacement[],
+  ): NoteTaskStage | undefined {
+    if (!this.preservesAll(source.content, candidate, edits)) return undefined;
     const predecessors = this.index.currentRoots(source.path);
     const beforeBlocks = this.editor.rootBlocks(source.content);
     if (
@@ -65,7 +86,7 @@ export class CanonicalNoteTaskProtection implements NoteTaskProtection {
     )
       return undefined;
     if (predecessors.length === 0) return this.emptyStage(source, candidate);
-    const population = this.continuations(source, candidate, range, replacement);
+    const population = this.continuations(source, candidate, edits);
     if (population === undefined) return undefined;
     const { transitions, occurrences } = population;
     const owner = this.authority.reserveStructuralMutation(
@@ -88,21 +109,19 @@ export class CanonicalNoteTaskProtection implements NoteTaskProtection {
   private continuations(
     source: AcceptedNoteSource,
     candidate: string,
-    range: NoteRange,
-    replacement: string,
+    edits: readonly NoteReplacement[],
   ):
     | { transitions: ProvenRootRevisionOverride[]; occurrences: TaskOccurrenceWitness[] }
     | undefined {
     const predecessors = this.index.currentRoots(source.path);
     const oldLines = lineStarts(source.content),
       newLines = lineStarts(candidate);
-    const delta = replacement.length - (range.to - range.from);
     const transitions: ProvenRootRevisionOverride[] = [];
     const occurrences: TaskOccurrenceWitness[] = [];
     for (const prior of predecessors) {
       const offset = oldLines[prior.line];
       if (offset === undefined) return undefined;
-      const nextOffset = offset >= range.to ? offset + delta : offset;
+      const nextOffset = displaced(offset, edits);
       const line = newLines.indexOf(nextOffset);
       if (line < 0) return undefined;
       const next = { ...prior, line, previousRevision: prior.revision };

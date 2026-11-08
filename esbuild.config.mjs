@@ -1,3 +1,6 @@
+// CommandMode research, owner-composed notes and reviewed saved-task links: measured licensed main 3,914,812 bytes.
+// Controller-approved minimum caps: main 3,915,776 bytes (3824 KiB), compact note CSS 224,256 bytes (219 KiB; measured 223,384).
+// No new dependencies; strict final raw main ceiling below 5,000,000 remains enforced.
 // Native Q command tree and retained proposal corrections: measured licensed main 3,891,356 bytes.
 // Controller-approved containing limit 3,892,224 bytes (3801 KiB); strict final ceiling remains below 5,000,000.
 // Semantic command core with the real SDK runtime and native continuity/link formatting: 3,544,410 -> 3,793,056 bytes.

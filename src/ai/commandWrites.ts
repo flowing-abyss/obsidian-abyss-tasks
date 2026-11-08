@@ -3,11 +3,12 @@ import type {
   ContentPlanV1,
   MutationReceiptV1,
   MutationResultV1,
+  NoteMutationReceiptV1,
   NoteMutationResultV1,
-  NoteReadPageV1,
   ProjectDtoV1,
   ProjectMutationResultV1,
   TaskContentMutationResultV1,
+  TaskContentOperationV1,
   TaskContentReceiptV1,
   TaskDtoV1,
   TasksApiV1,
@@ -24,6 +25,7 @@ import {
   type CommandFocus,
   type CommandFocusContinuations,
   type CommandJournalEntry,
+  type CommandNoteRead,
   type CommandProposal,
 } from './commandTypes';
 type WriteResult =
@@ -43,7 +45,7 @@ interface WriteContext {
   readonly focus: () => readonly CommandFocus[];
   readonly focusChanges: (changes: CommandFocusContinuations) => void;
   readonly observeProject: (project: ProjectDtoV1) => void;
-  readonly observeNote: (note: NoteReadPageV1) => void;
+  readonly observeNote: (note: CommandNoteRead) => void;
 }
 function treeTargets(tree: TaskTreeV1 | null, targets = new Set<string>()): Set<string> {
   if (tree !== null) {
@@ -113,7 +115,7 @@ class CommandWriteRun {
           'CANCELLED',
           'Stopped after the last admitted write. Review the result before continuing.',
         );
-      await this.processChange(change);
+      await this.processRelatedChange(change);
     }
     for (const root of [...this.actual.keys()]) await this.readTree(root);
     await this.refreshSelectedTasks();
@@ -140,6 +142,18 @@ class CommandWriteRun {
           'The write settled, but a selected task is unavailable. Review the current result.',
         );
       }
+    }
+  }
+  private async processRelatedChange(change: CommandChange): Promise<void> {
+    try {
+      await this.processChange(change);
+    } catch (cause) {
+      if (this.notes.size > 0 && this.ctx.proposal.changes.some((entry) => entry.kind === 'link'))
+        throw new CommandFailure(
+          'NOTE_LINK_PARTIAL',
+          'The note was saved; the task link could not be verified. Review the current result.',
+        );
+      throw cause;
     }
   }
   private async processChange(change: CommandChange): Promise<void> {
@@ -216,14 +230,7 @@ class CommandWriteRun {
         kind: 'append',
         plan: change.plan.target,
         expectedPlanRevision: change.plan.revision,
-        operation:
-          change.field === 'description'
-            ? { type: 'description', target: change.target, text }
-            : {
-                type: 'patch',
-                target: change.target,
-                patch: { markdownTitle: { type: 'set', value: text } },
-              },
+        operation: materializedLinkOperation(change, text),
       }),
     );
     const canonical = await canonicalCommandPlan(this.ctx.api, plan, this.signal, {
@@ -397,19 +404,7 @@ class CommandWriteRun {
       await this.readStatus(receipt);
       return;
     }
-    if ('noteEffects' in receipt) {
-      const note = receipt.note;
-      if (note === undefined)
-        throw new CommandFailure('READBACK', 'The note write finished without a verified result.');
-      this.notes.set(receipt.plan, note);
-      const current = await this.read(() =>
-        required(this.ctx.api.notes).read({
-          selector: { target: note.target, expectedRevision: note.revision },
-        }),
-      );
-      this.ctx.observeNote(current);
-      return;
-    }
+    if ('noteEffects' in receipt) return this.readNote(receipt, change);
     const project = receipt.project;
     if (project === undefined)
       throw new CommandFailure('READBACK', 'The project write finished without a verified result.');
@@ -421,6 +416,31 @@ class CommandWriteRun {
       );
     this.projects.set(current.target, current);
     this.ctx.observeProject(current);
+  }
+  private async readNote(receipt: NoteMutationReceiptV1, change: CommandChange): Promise<void> {
+    const note = receipt.note;
+    if (note === undefined)
+      throw new CommandFailure('READBACK', 'The note write finished without a verified result.');
+    this.notes.set(receipt.plan, note);
+    if (change.kind === 'note' && change.plan.kind === 'edit' && receipt.section === undefined)
+      throw new CommandFailure(
+        'READBACK',
+        'The note was written, but its changed section could not be verified. Read the current note before continuing.',
+      );
+    const request = {
+      selector:
+        receipt.section === undefined
+          ? { target: note.target, expectedRevision: note.revision }
+          : { section: receipt.section },
+      limitCharacters: 12000,
+    };
+    const current = await this.read(() => required(this.ctx.api.notes).read(request));
+    if (current.note.target !== note.target || current.note.revision !== note.revision)
+      throw new CommandFailure(
+        'READBACK',
+        'The note changed before its edited section could be verified.',
+      );
+    this.ctx.observeNote({ ...current, request });
   }
   private async readContent(receipt: TaskContentReceiptV1, change: CommandChange): Promise<void> {
     const correspondence = receipt.contentContinuity.correspondence;
@@ -630,4 +650,18 @@ class CommandWriteRun {
         { signal: this.ctx.signal },
       );
   }
+}
+
+function materializedLinkOperation(
+  change: Extract<CommandChange, { kind: 'link' }>,
+  text: string,
+): TaskContentOperationV1 {
+  if (change.field === 'comment')
+    return { type: 'update-comment', target: required(change.comment), text };
+  if (change.field === 'description') return { type: 'description', target: change.target, text };
+  return {
+    type: 'patch',
+    target: change.target,
+    patch: { markdownTitle: { type: 'set', value: text } },
+  };
 }

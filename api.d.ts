@@ -1020,6 +1020,13 @@ export type NoteOperationV1 =
     };
 export type PrepareNoteV1 =
   | {
+      readonly kind: 'refine';
+      readonly plan: NotePlanTargetV1;
+      readonly expectedPlanRevision: NotePlanRevisionV1;
+      readonly operation:
+        NoteOperationV1 | { readonly type: 'replace-body'; readonly text: string };
+    }
+  | {
       readonly kind: 'edit';
       readonly target: NoteTargetV1;
       readonly expectedRevision: NoteRevisionV1;
@@ -1028,6 +1035,8 @@ export type PrepareNoteV1 =
   | {
       readonly kind: 'create';
       readonly path: string;
+      /** Default reject; suffix selects one same-directory path during preparation, never at commit. */
+      readonly collision?: 'reject' | 'suffix';
       readonly title: string;
       readonly text: string;
       readonly template?: NoteTargetV1;
@@ -1043,6 +1052,12 @@ export interface NotePlanV1 extends Omit<ObservationV1, 'revision'> {
   readonly after: { readonly text: string; readonly complete: true };
   readonly note?: { readonly target: NoteTargetV1; readonly revision: NoteRevisionV1 };
   readonly section?: NoteSectionTargetV1;
+  /** Exact original editable ranges retained in an owner-composed edit plan. */
+  readonly sections?: ReadonlyArray<{
+    readonly section: NoteSectionTargetV1;
+    readonly before: { readonly text: string; readonly complete: true };
+    readonly after: { readonly text: string; readonly complete: true };
+  }>;
 }
 export interface CommitNoteV1 {
   readonly plan: NotePlanTargetV1;
@@ -1063,6 +1078,8 @@ export interface NoteMutationReceiptV1 {
   readonly noteEffects: StorageEffectV1;
   readonly destinationEffects: StorageEffectV1;
   readonly note?: { readonly target: NoteTargetV1; readonly revision: NoteRevisionV1 };
+  /** Exact current edited range for readback; absent when its correspondence cannot be verified. */
+  readonly section?: NoteSectionTargetV1;
   readonly warnings: readonly MutationWarningV1[];
 }
 export type NoteMutationResultV1 =

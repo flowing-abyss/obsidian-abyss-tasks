@@ -1980,3 +1980,69 @@ it('shares one command owner and persists its input through only the vault-local
     vi.restoreAllMocks();
   }
 });
+
+it('lets an already-open command owner use research after settings are corrected without startup requests', async () => {
+  const { MockLanguageModelV4 } = await import('ai/test');
+  const plugin = makePlugin() as unknown as TaskCalendarPlugin;
+  await plugin.onload();
+  try {
+    plugin.settings.commandMode = { provider: 'unsupported' };
+    const search = vi.spyOn(plugin.commandResearch, 'search').mockResolvedValue({
+      query: 'Compare two choices',
+      summary: 'Finding',
+      sources: [
+        {
+          url: 'https://example.org/source',
+          title: null,
+          snippet: null,
+          content: null,
+          evidence: 'citation',
+        },
+      ],
+      truncated: false,
+    });
+    const calls = [
+      { toolName: 'interpret', input: { intent: 'plan', research: true } },
+      { toolName: 'research', input: { query: 'Compare two choices' } },
+      { toolName: 'finish', input: { state: 'ready', message: 'Compared.' } },
+    ];
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => {
+        const call = expectDefined(calls.shift());
+        return {
+          content: [
+            {
+              type: 'tool-call',
+              toolCallId: String(calls.length),
+              toolName: call.toolName,
+              input: JSON.stringify(call.input),
+            },
+          ],
+          finishReason: { unified: 'tool-calls', raw: 'tool_calls' },
+          usage: {
+            inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
+            outputTokens: { total: 1, text: 1, reasoning: 0 },
+          },
+          warnings: [],
+        };
+      },
+    });
+    const connection = vi.spyOn(plugin.providerConnections, 'model').mockReturnValue(model);
+    const owner = plugin.getCommandSessionOwner();
+    owner.open();
+    expect(search).not.toHaveBeenCalled();
+    expect(connection).not.toHaveBeenCalled();
+    await owner.submit('Compare choices');
+    expect(owner.snapshot().status.kind).toBe('error');
+    expect(search).not.toHaveBeenCalled();
+    plugin.settings.commandMode = { provider: 'openrouter', search: 'agent' };
+    expect(plugin.getCommandSessionOwner()).toBe(owner);
+    await owner.submit('Compare choices');
+    expect(search).toHaveBeenCalledTimes(1);
+    expect(owner.snapshot().status.message).toBe('Compared.');
+    owner.dispose();
+  } finally {
+    plugin.onunload();
+    vi.restoreAllMocks();
+  }
+});

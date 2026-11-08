@@ -47,7 +47,14 @@ function matchesInitialEdit(
   input: Extract<CommandPreparation, { kind: 'task' }>['input'] & { kind: 'edit' },
   plan: ContentPlanV1,
 ): boolean {
-  return input.target === plan.before?.target && input.expectedRevision === plan.before.revision;
+  const pending = plan.before === null ? [] : [plan.before];
+  while (pending.length > 0) {
+    const node = pending.pop();
+    if (node === undefined) return false;
+    if (node.target === input.target) return node.revision === input.expectedRevision;
+    pending.push(...node.children);
+  }
+  return false;
 }
 
 function matchesAppend(
@@ -300,9 +307,7 @@ function initialFields(input: FieldInput): CommandNodeFields | undefined {
 function initialEdit(input: FieldInput): boolean {
   const preparation = input.state.preparations?.[input.state.preparations.length - 1];
   if (preparation?.kind !== 'task' || preparation.input.kind !== 'edit') return false;
-  const request = preparation.input,
-    root = input.plan?.before;
-  return request.target === root?.target && request.expectedRevision === root.revision;
+  return input.plan !== undefined && matchesInitialEdit(preparation.input, input.plan);
 }
 function comparison(input: FieldInput): TaskTreeV1 | undefined {
   if (input.plan === undefined) return input.tree;

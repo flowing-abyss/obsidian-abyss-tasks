@@ -73,18 +73,29 @@ function wrap(run: TextRun, start: number, end: number): void {
   text.parentNode?.insertBefore(inserted, text);
   inserted.append(text);
 }
+function comparisonText(
+  previous: string,
+  renderedPrevious: string | undefined,
+): { source: string; text: string } {
+  return {
+    source: renderedPrevious ?? previous,
+    text: normalized(renderedPrevious ?? projectSearchText(previous, 'prose').visible.text).text,
+  };
+}
 /** Compare rendered text only. Native Markdown nodes, anchors and their listeners stay owned. */
 export function decorateTaskTextDifference(
   element: HTMLElement,
   previous: string | undefined,
+  renderedPrevious?: string,
 ): void {
   clear(element);
   if (previous === undefined) return;
-  if (previous.length > limit) {
-    showBoundedPrevious(element, previous);
+  const comparison = comparisonText(previous, renderedPrevious);
+  if (comparison.source.length > limit) {
+    showBoundedPrevious(element, comparison.source);
     return;
   }
-  const before = normalized(projectSearchText(previous, 'prose').visible.text).text;
+  const before = comparison.text;
   const rendered = renderedText(element),
     current = normalized(rendered.text);
   if (before === current.text) return;

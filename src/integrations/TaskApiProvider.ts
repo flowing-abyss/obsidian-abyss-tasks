@@ -100,7 +100,16 @@ function apiInfo(options: ProviderOptions): ApiInfoV1 {
       'tasks.read',
       ...(options.notes === undefined
         ? []
-        : ['notes.search', 'notes.read', 'notes.prepare', 'notes.create', 'notes.apply']),
+        : [
+            'notes.search',
+            'notes.read',
+            'notes.prepare',
+            'notes.create',
+            'notes.apply',
+            'notes.create.collision',
+            'notes.apply.section',
+            'notes.prepare.refine',
+          ]),
       'tasks.tags',
       ...(options.search === undefined ? [] : ['tasks.search']),
       ...(options.content === undefined

@@ -36,7 +36,17 @@ provider-backed agent and local store per plugin instance. Panels and popouts sh
 The mandatory-journal `createCommandSession(journal, research?, transitions?)` factory remains
 available for internal integration tests; a main-owned set releases disposed runtimes instead of
 retaining one unload closure per archived conversation. Construction/opening does not parse provider
-preferences or send requests. Research remains an optional typed port.
+preferences or send requests. Main always supplies its `commandResearch` port, backed by
+`ProviderResearch`, through a live delegate; an owner opened before configuration uses corrected
+settings on its next deliberate request. The adapter parses current preferences per call, uses the
+shared native transport and SecretStorage, and sends only the bounded query. OpenRouter requests
+Exa through the pinned SDK plugin; OpenAI explicitly invokes hosted web search; selected Tavily uses
+its fixed search endpoint. No fallback or page-fetching loop runs. Trusted interpretation admits at
+most two research calls per turn. Each SDK call permits at most two network retries inside one
+45-second deadline and the enclosing 180-second turn. Logical invocations and physical retries are
+different counts. Output retains at most five validated HTTP(S) sources and 12,000 serialized
+characters, separating generated summary from nullable attributed excerpts and marking truncation.
+Cancellation rejects late output without claiming physical cancellation of host requests.
 
 `CommandSessionOwner` owns visibility, coalesced ordinary persistence, serialized external session
 selection and direct status actions, and disposal. `CommandSession` owns input, focus, proposal,
@@ -50,7 +60,19 @@ IME, wiki completion, Enter/Shift+Enter, held-key suppression and detached-menu 
 ownership. Only Q uses the multiline adapter; ordinary capture removes CR/LF before its existing
 controller receives input. Command input never follows ordinary capture's blur submission path.
 Main retains transient mode/selection/scroll memory and the shared owner; destroying or migrating
-a surface releases its Components and subscriptions without discarding the session. Hide and Stop
+a surface releases its Components and subscriptions without discarding the session. `CommandNotes`
+adds focused note pages and exact NotePlan before/after ranges to that same retained canvas through
+`RetainedTaskText`. Note and Q description/comment comparisons opt into an owned, hidden native
+rendering of previous Markdown with the same field presentation, then use the same rendered diff.
+Current comparison failures reach the caller's visible failure boundary; cancellation retires the
+temporary owner and suppresses late failure output. Title/search comparison paths are unchanged.
+Note body checkboxes are
+visibly disabled; links keep their exact source context. Multiple edited ranges remain fields inside
+one note card. Pages retain scope, continuation and exact source path across finish/remount;
+partial pages never claim to be full notes. Note links share the navigation-only unresolved-link
+guard. Note-only Enter uses the same proposal/journal path, and fresh receipt-bound section reads
+replace edit previews after saving. Task/project rows keep their native identity during note updates.
+Hide and Stop
 cancel future planning through the owner, while an admitted write settles through its existing
 journal. UI input/submission generations prevent late completion from clearing newer text.
 
@@ -159,7 +181,18 @@ then needs renewed review. Source cleanup otherwise requires the exact covered a
 known destination receipt/readback. Linked note creation freezes the path, task field and template;
 after the note receipt, only a host-generated exact-destination link fills that dependency. Same-plan
 refinement carries a link only through the verified original target/field/path and retained exact
-placeholder, preserving newly reviewed surrounding text. Deterministic dependency checks precede
+placeholder, preserving newly reviewed surrounding text. The link tool accepts either a current
+task plan/revision or an exact saved task target/revision. The saved branch verifies the complete
+current owner, retains that validated read without changing selection, rejects overlap with a pending
+root/child plan, and prepares its single typed edit through the existing task facade. Initial edit
+paint proves the exact requested node and revision inside the canonical before-tree, including child
+targets whose plan is rooted above them. It stages no preliminary comment and preserves authored literal
+placeholder text. Comment links bind a current owner and
+version-scoped comment handle; new comments are proved by canonical owner/order and count. Safe
+same-plan refinements carry that handle only through complete unchanged ordered comment values,
+never a prose match. Materialization uses the current exact comment handle and the host-generated
+link to the actual collision-resolved note path. A later task failure retains the saved note and
+reports the partial outcome without replaying creation. Deterministic dependency checks precede
 every effect batch; incompatible refinements need renewed review before any note is created.
 Current task readbacks are keyed by verified root identity. Lifecycle deletion removes the old root;
 retained/recurring nodes and affected ancestors are reread through accepted parent handles.
@@ -464,6 +497,31 @@ heading/block authority. Append previews include a required existing trailing li
 before a following protected block; commit writes that sealed result.
 
 Prepared note creation freezes the static template and final prose through `NoteTemplateService`.
+The additive create-only `collision: reject | suffix` option defaults to rejection for public callers.
+Opted-in suffix selection checks at most 100 same-directory alternatives during preparation; its
+chosen path is frozen and a later collision rejects commit. CommandMode defaults ordinary new notes
+to suffix, while explicit exact-path intent can select reject. `notes.create.collision` advertises it.
+`notes.prepare.refine` exposes current-plan refinement with the same target and a fresh opaque
+revision. The facade validates the original plan, delivery observation and capacity before publishing
+a successor atomically; failures leave the prior plan current. Edit candidates accumulate at most
+20 disjoint original editable ranges within one accepted note revision. Append extends pending
+section text; replacement corrects that section. `plan.sections` supplies independent complete
+review fields, while top-level before/after contains their bounded enclosing source window. The
+canonical protection owner maps unchanged task blocks through the exact piecewise displacements
+and reserves one structural continuation stage for the sole existing `vault.process` write.
+Frontmatter, scope, source and native-file checks still guard the complete candidate. CommandMode
+routes repeated edits of the same accepted note through its current plan and refuses a separate
+competing edit plan. Create-plan `replace-body` refinement reuses the captured static template,
+title and frozen destination; it never reselects a path. Link dependencies retain the same note plan
+target across revisions. Existing single-operation public forms and all prior resource limits remain.
+Successful exact-range edits can return an optional `section` receipt reference, advertised by
+`notes.apply.section`. The note owner proves accepted bytes, identity, meaning and current file;
+the existing registry binds its known post-edit range to that fresh revision for readback only.
+Unverifiable/concurrent results omit the scope and keep truthful written-but-unverified recovery.
+Receipt redaction removes both note and section references after disclosure or revision loss.
+These additive fields require no persisted migration; older consumers ignore new receipt fields,
+older providers reject unsupported create arguments, and all versions still read ordinary Markdown.
+No prior form is removed.
 Its existing `commitStaticNote` remains the sole static creation sink and checks the final source
 basis synchronously after asynchronous validation. Executable templates and task-containing
 candidates are rejected before provisioning. Folder effects and note effects remain separate;

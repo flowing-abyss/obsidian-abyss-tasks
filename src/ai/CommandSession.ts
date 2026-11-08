@@ -17,6 +17,7 @@ import {
   type CommandFocus,
   type CommandFocusContinuations,
   type CommandJournalEntry,
+  type CommandNoteRead,
   type CommandPendingTransition,
   type CommandPreparation,
   type CommandRevealRequest,
@@ -95,9 +96,18 @@ function validOperationBudget(total: number, increment: number): boolean {
 }
 function changeKey(c: CommandChange): string {
   if (c.kind === 'project') return `project:${c.before.target}`;
+  if (c.kind === 'note' && c.plan.note !== undefined) return `note:${c.plan.note.target}`;
   if (c.kind === 'status') return `status:${c.target}`;
   if (c.kind === 'task' && c.plan.before !== null) return `task:${c.plan.before.target}`;
   return `${c.kind}:${c.plan.target}`;
+}
+function composeChange(previous: CommandChange, next: CommandChange): CommandChange {
+  if (previous.kind === 'note' && next.kind === 'note' && previous.plan.target !== next.plan.target)
+    throw new CommandFailure(
+      'NOTE_REFINEMENT',
+      'Refine the current note proposal to retain its pending sections.',
+    );
+  return composeProjectChange(previous, next);
 }
 function composeProjectChange(previous: CommandChange, next: CommandChange): CommandChange {
   if (previous.kind !== 'project' || next.kind !== 'project') return next;
@@ -570,7 +580,11 @@ export class CommandSession {
     );
     return {
       kind: 'note',
-      note,
+      note:
+        this.state.entities.notes.find(
+          (page) =>
+            page.note.target === note.note.target && page.note.revision === note.note.revision,
+        ) ?? note,
       focus: { kind: 'note', target: note.note.target, revision: note.note.revision },
     };
   }
@@ -695,7 +709,7 @@ export class CommandSession {
       },
     });
   }
-  observeNote(note: NoteReadPageV1): void {
+  observeNote(note: CommandNoteRead): void {
     this.publish({
       focus: this.state.focus.map((entry) =>
         entry.kind === 'note' && entry.target === note.note.target
@@ -838,12 +852,12 @@ export class CommandSession {
     const changes = [...this.state.proposal.changes];
     const index = changes.findIndex((c) => changeKey(c) === changeKey(change));
     if (index < 0) changes.push(change);
-    else changes[index] = composeProjectChange(required(changes[index]), change);
+    else changes[index] = composeChange(required(changes[index]), change);
     const retained = changes
       .filter((c) => !(c.kind === 'task' && c.plan.before === null && c.plan.after === null))
       .map((entry) =>
         entry.kind === 'link' && change.kind === 'task' && entry.plan.target === change.plan.target
-          ? reconcileCommandLink(entry, change.plan)
+          ? reconcileCommandLink(entry, change.plan, preparations)
           : entry,
       );
     const count = affectedNodes(retained);

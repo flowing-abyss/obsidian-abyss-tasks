@@ -12254,14 +12254,16 @@ button.abyss-calendar-date[aria-pressed='true'] {
 .abyss-command-tree [data-change='changed'],
 .abyss-command-projects [data-change='changed'],
 .abyss-command-tree ins.abyss-text-difference,
-.abyss-command-projects ins.abyss-text-difference {
+.abyss-command-projects ins.abyss-text-difference,
+.abyss-command-notes ins.abyss-text-difference {
   background-color: var(--background-modifier-hover);
   text-decoration: none;
   border-radius: var(--radius-s);
 }
 
 .abyss-command-tree del.abyss-text-difference,
-.abyss-command-projects del.abyss-text-difference {
+.abyss-command-projects del.abyss-text-difference,
+.abyss-command-notes del.abyss-text-difference {
   margin-inline-end: var(--size-2-1);
   color: var(--text-muted);
   text-decoration: line-through;
@@ -12342,4 +12344,41 @@ button.abyss-calendar-date[aria-pressed='true'] {
   flex: 1 1 10rem;
   min-inline-size: 0;
   overflow-wrap: anywhere;
+}
+
+.abyss-command-note {
+  padding: var(--size-4-2);
+  overflow-wrap: anywhere;
+}
+
+.abyss-command-note-title {
+  margin-block: var(--size-4-1);
+  font-size: var(--font-ui-medium);
+}
+
+.abyss-command-note-scope {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  margin-block-end: var(--size-4-1);
+}
+
+.abyss-command-note-body {
+  user-select: text;
+}
+
+.abyss-command-note-body :is(p, h1, h2),
+.abyss-command-note-body :is(h3, h4, h5),
+.abyss-command-note-body :is(h6, ul, ol),
+.abyss-command-note-body blockquote {
+  margin-block: var(--size-4-2);
+}
+
+.abyss-command-note-body :is(h1, h2, h3),
+.abyss-command-note-body :is(h4, h5, h6) {
+  font-size: var(--font-ui-medium);
+  line-height: var(--line-height-normal);
+}
+
+.abyss-command-note-body > .abyss-md > :first-child {
+  margin-block-start: 0;
 }

@@ -10,7 +10,12 @@ import type {
 } from '../../api';
 import { inlineCodeRanges } from '../markdown/inlineCode';
 import { buildLinkRaw, parseSourceReferences } from '../markdown/links';
-import { CommandFailure, type CommandChange, type CommandProposal } from './commandTypes';
+import {
+  CommandFailure,
+  type CommandChange,
+  type CommandPreparation,
+  type CommandProposal,
+} from './commandTypes';
 const handle = z.string().min(1).max(512);
 const text = z.string().max(16000);
 const field = (value: z.ZodType): z.ZodType =>
@@ -200,7 +205,7 @@ export const finishSchema = z.discriminatedUnion('state', [
   }),
 ]);
 const noteSelector = z.union([
-  z.strictObject({ target: handle, expectedRevision: handle.optional() }),
+  z.strictObject({ target: handle, expectedRevision: handle.exactOptional() }),
   z.strictObject({ path: z.string().min(1) }),
   z.strictObject({ section: handle }),
   z.strictObject({
@@ -211,6 +216,17 @@ const noteSelector = z.union([
     }),
   }),
 ]);
+export const noteReadRequestSchema = z.strictObject({
+  selector: noteSelector,
+  limitCharacters: z.number().int().min(2).max(12000).exactOptional(),
+  linkFor: z
+    .strictObject({
+      from: handle,
+      expectedFromRevision: handle,
+      alias: z.string().max(500).exactOptional(),
+    })
+    .exactOptional(),
+});
 export const readSchema = z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('tasks'),
@@ -265,22 +281,28 @@ export const readSchema = z.discriminatedUnion('kind', [
   }),
   z.strictObject({
     kind: z.literal('note'),
-    selector: noteSelector,
+    ...noteReadRequestSchema.shape,
     cursor: handle.optional(),
-    limitCharacters: z.number().int().min(2).max(12000).optional(),
-    linkFor: z
-      .strictObject({
-        from: handle,
-        expectedFromRevision: handle,
-        alias: z.string().max(500).optional(),
-      })
-      .optional(),
   }),
 ]);
 export const notePrepareSchema = z.discriminatedUnion('kind', [
   z.strictObject({
+    kind: z.literal('refine'),
+    plan: handle,
+    expectedPlanRevision: handle,
+    operation: z.discriminatedUnion('type', [
+      z.strictObject({ type: z.literal('append'), section: handle, text }),
+      z.strictObject({ type: z.literal('replace-section'), section: handle, text }),
+      z.strictObject({ type: z.literal('replace-body'), text }),
+    ]),
+  }),
+  z.strictObject({
     kind: z.literal('create'),
     path: z.string().min(1),
+    collision: z
+      .enum(['reject', 'suffix'])
+      .default('suffix')
+      .describe('suffix avoids existing names; reject requires exactly the requested path.'),
     title: text,
     text,
     template: handle.optional(),
@@ -429,6 +451,7 @@ const noteReceipt = receiptBase
     noteEffects: z.enum(['unchanged', 'committed', 'unknown']),
     destinationEffects: z.enum(['unchanged', 'committed', 'unknown']),
     note: reference.optional(),
+    section: z.string().min(1).optional(),
   })
   .loose();
 const projectReceipt = receiptBase.extend({ project: reference.optional() }).loose();
@@ -612,12 +635,12 @@ function sameLinkPlan(link: CommandLink, plan: ContentPlanV1): boolean {
 }
 function linkedText(link: CommandLink, plan: ContentPlanV1): string {
   const node = linkedNode(plan.after, link.target);
-  const text = node?.[link.field];
+  const text = commandLinkText(link, node);
   if (
     node === undefined ||
     typeof text !== 'string' ||
     !sameLinkPlan(link, plan) ||
-    (plan.destination?.path ?? node.source?.path) !== link.sourcePath
+    linkSourcePath(plan, node) !== link.sourcePath
   )
     throw new CommandFailure(
       'LINK_DEPENDENCY',
@@ -626,15 +649,23 @@ function linkedText(link: CommandLink, plan: ContentPlanV1): string {
   return text;
 }
 /** Only carry the already reviewed fixed link through a proven same-plan refinement. */
-export function reconcileCommandLink(link: CommandLink, plan: ContentPlanV1): CommandLink {
+export function reconcileCommandLink(
+  link: CommandLink,
+  plan: ContentPlanV1,
+  preparations: ReadonlyArray<Extract<CommandPreparation, { kind: 'task' }>> = [],
+): CommandLink {
   validateCommandLink(link, link.plan);
-  const text = linkedText(link, plan);
+  const continued =
+    link.field === 'comment' && link.plan.revision !== plan.revision
+      ? continueLinkedComment(link, plan, preparations)
+      : link;
+  const text = linkedText(continued, plan);
   if (text.split(link.placeholder).length !== 2 || text.includes('{{link}}'))
     throw new CommandFailure(
       'LINK_DEPENDENCY',
       'The linked field changed. Review its note link before preparing this refinement.',
     );
-  return { ...link, plan, template: text.replace(link.placeholder, '{{link}}') };
+  return { ...continued, plan, template: text.replace(link.placeholder, '{{link}}') };
 }
 function validateCommandLink(link: CommandLink, plan: ContentPlanV1): void {
   if (
@@ -671,4 +702,66 @@ export function validateCommandLinks(proposal: CommandProposal, now: number): vo
       );
     validateCommandLink(link, task.plan);
   }
+}
+
+function continueLinkedComment(
+  link: CommandLink,
+  plan: ContentPlanV1,
+  preparations: ReadonlyArray<Extract<CommandPreparation, { kind: 'task' }>>,
+): CommandLink {
+  const before = linkedNode(link.plan.after, link.target),
+    after = linkedNode(plan.after, link.target);
+  const index = linkedCommentIndex(link, before);
+  const supported = commentSafePreparations(link, plan, preparations);
+  const sequence = (node: TaskTreeV1): string =>
+    JSON.stringify(node.comments.map((comment) => [comment.text, comment.timestamp]));
+  const comment = after?.comments[index];
+  if (
+    !supported ||
+    before?.complete !== true ||
+    after?.complete !== true ||
+    comment?.parentTarget !== link.target ||
+    sequence(before) !== sequence(after)
+  )
+    throw new CommandFailure(
+      'LINK_DEPENDENCY',
+      'The linked comment changed. Review its exact owner and note link before saving.',
+    );
+  return { ...link, comment: comment.target };
+}
+
+function commandLinkText(link: CommandLink, node: TaskTreeV1 | undefined): string | undefined {
+  if (node === undefined) return undefined;
+  if (link.field !== 'comment') return node[link.field];
+  return node.comments.find(
+    (comment) => comment.target === link.comment && comment.parentTarget === node.target,
+  )?.text;
+}
+function linkSourcePath(plan: ContentPlanV1, node: TaskTreeV1): string | undefined {
+  return plan.destination?.path ?? plan.before?.source?.path ?? node.source?.path;
+}
+function commentSafePreparations(
+  link: CommandLink,
+  plan: ContentPlanV1,
+  preparations: ReadonlyArray<Extract<CommandPreparation, { kind: 'task' }>>,
+): boolean {
+  const first = preparations[0]?.input;
+  return (
+    first?.kind === 'append' &&
+    first.expectedPlanRevision === link.plan.revision &&
+    preparations.every(
+      ({ input }) =>
+        input.kind === 'append' &&
+        input.plan === plan.target &&
+        ['patch', 'description', 'set-initial-status', 'add-child'].includes(input.operation.type),
+    )
+  );
+}
+
+function linkedCommentIndex(link: CommandLink, tree: TaskTreeV1 | undefined): number {
+  return (
+    tree?.comments.findIndex(
+      (comment) => comment.target === link.comment && comment.parentTarget === link.target,
+    ) ?? -1
+  );
 }

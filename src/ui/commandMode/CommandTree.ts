@@ -316,7 +316,10 @@ export class CommandTree {
           kind: 'complete',
           ...(input.previousMarkdown === undefined
             ? {}
-            : { previousMarkdown: input.previousMarkdown }),
+            : {
+                previousMarkdown: input.previousMarkdown,
+                compareMarkdown: presentation !== 'title',
+              }),
         },
         callbacks: {
           app: this.options.app,

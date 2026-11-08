@@ -10,7 +10,12 @@ import type {
   TaskTreeV1,
   TasksApiV1,
 } from '../../api';
-import type { notePrepareSchema, prepareSchema } from './commandSchemas';
+import type { notePrepareSchema, noteReadRequestSchema, prepareSchema } from './commandSchemas';
+
+export type CommandNoteRead = NoteReadPageV1 & {
+  readonly continued?: boolean;
+  readonly request?: z.infer<typeof noteReadRequestSchema>;
+};
 
 export type CommandStatusKind =
   'thinking' | 'searching' | 'ready' | 'question' | 'writing' | 'saved' | 'error';
@@ -53,7 +58,8 @@ export type CommandChange =
       readonly plan: ContentPlanV1;
       readonly notePlan: string;
       readonly target: string;
-      readonly field: 'description' | 'markdownTitle';
+      readonly field: 'description' | 'markdownTitle' | 'comment';
+      readonly comment?: string;
       readonly template: string;
       readonly placeholder: string;
       readonly sourcePath: string;
@@ -137,7 +143,7 @@ export interface CommandSessionSnapshot {
   readonly entities: {
     readonly tasks: readonly TaskTreePageV1[];
     readonly projects: readonly ProjectDtoV1[];
-    readonly notes: readonly NoteReadPageV1[];
+    readonly notes: readonly CommandNoteRead[];
   };
   readonly exchanges: readonly CommandExchange[];
   readonly activeQuestion: string | null;

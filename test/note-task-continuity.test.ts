@@ -7,32 +7,47 @@ import nativeEchoCache from './fixtures/note-bom-echo-cache.json';
 import { expectDefined, flushMicrotasks, metadataChangedEmitter } from './helpers';
 import { ready, taskEditPreparationHarness } from './support/taskEditPreparationHarness';
 
-it('retains sealed task refresh through accepted prose displacement of duplicate roots', async () => {
-  const before = 'Contact\n\n- [ ] Same\n  - [ ] Child\n- [ ] Same\n  - [ ] Child\n';
-  const h = await taskEditPreparationHarness(before);
-  try {
-    const second = expectDefined(h.index.list()[1]);
-    const plan = ready(await h.service.prepare(second, []));
-    const notes = new NoteApplicationService(h.app, h.sources, {
-      capture: () => h.index.integrationReads().capture(),
-      host: new NoteHostAdapter(h.app, h.sources, (source) => h.index.noteStructure(source)),
-      protection: new CanonicalNoteTaskProtection(h.app, h.index, h.authority),
-      serialize: (path, work) => runTaskFileMutation(h.app, path, work),
-    });
-    const read = await h.sources.acquire(h.file.path);
-    if (read.type !== 'ok' || read.value === undefined) throw new Error('Missing source');
-    const range = notes.sections(read.value).find((section) => section.editable);
-    if (range === undefined) throw new Error('Missing prose');
-    expect(
-      await notes.prepareEdit(read.value, range, 'Contact\nAddress\n\n', false).commit(),
-    ).toMatchObject({ noteEffects: 'committed' });
-    const moved = h.index.list()[1];
-    if (moved === undefined) throw new Error('Missing displaced root');
-    expect(await plan.refresh(moved)).toMatchObject({ type: 'ready' });
-  } finally {
-    h.index.destroy();
-  }
-});
+it.each([false, true])(
+  'retains sealed task refresh through accepted prose displacement of duplicate roots (composed=%s)',
+  async (composed) => {
+    const before =
+      'Contact\n\n- [ ] Same\n  - [ ] Child\n\nMiddle prose\n\n- [ ] Same\n  - [ ] Child\n';
+    const h = await taskEditPreparationHarness(before);
+    try {
+      const second = expectDefined(h.index.list()[1]);
+      const plan = ready(await h.service.prepare(second, []));
+      const notes = new NoteApplicationService(h.app, h.sources, {
+        capture: () => h.index.integrationReads().capture(),
+        host: new NoteHostAdapter(h.app, h.sources, (source) => h.index.noteStructure(source)),
+        protection: new CanonicalNoteTaskProtection(h.app, h.index, h.authority),
+        serialize: (path, work) => runTaskFileMutation(h.app, path, work),
+      });
+      const read = await h.sources.acquire(h.file.path);
+      if (read.type !== 'ok' || read.value === undefined) throw new Error('Missing source');
+      const range = notes.sections(read.value).find((section) => section.editable);
+      if (range === undefined) throw new Error('Missing prose');
+      let prepared = notes.prepareEdit(read.value, range, 'Contact\nAddress\n\n', false);
+      if (composed) {
+        const middle = expectDefined(
+          notes
+            .sections(read.value)
+            .find(
+              (part) =>
+                part.editable &&
+                read.value?.content.slice(part.from, part.to).includes('Middle prose') === true,
+            ),
+        );
+        prepared = expectDefined(prepared.refineSection)(middle, 'More middle context', true);
+      }
+      expect(await prepared.commit()).toMatchObject({ noteEffects: 'committed' });
+      const moved = h.index.list()[1];
+      if (moved === undefined) throw new Error('Missing displaced root');
+      expect(await plan.refresh(moved)).toMatchObject({ type: 'ready' });
+    } finally {
+      h.index.destroy();
+    }
+  },
+);
 
 it.each(['same', 'competing', 'replacement', 'scope'] as const)(
   'handles normalized native BOM echo during readback: %s',

@@ -36,9 +36,13 @@ interface Plan {
   readonly revision: string;
   readonly expiresAt: number;
   readonly prepared: PreparedNote;
-  readonly section?: string;
   attempted: boolean;
   accepted: boolean;
+}
+interface DeliveryGuards<I, O> {
+  readonly validateInput?: (input: I) => void;
+  readonly validateDelivery?: (value: O) => void;
+  readonly publish?: () => void;
 }
 interface Options {
   readonly api: TaskApiContext;
@@ -72,14 +76,11 @@ export class NoteApi {
           this.reads.search(input, signal),
         ),
       read: (query, readOptions) =>
-        this.run(
-          validateNoteRead(query),
-          readOptions,
-          (input) => this.reads.read(input),
-          (input) => {
+        this.run(validateNoteRead(query), readOptions, (input) => this.reads.read(input), {
+          validateInput: (input) => {
             this.reads.validateOrigins(input);
           },
-        ),
+        }),
       prepare: (input, readOptions) => this.prepare(input, readOptions),
       create: (input, mutationOptions) => this.mutate('notes.create', input, mutationOptions),
       apply: (input, mutationOptions) => this.mutate('notes.apply', input, mutationOptions),
@@ -89,7 +90,7 @@ export class NoteApi {
     input: ApiResultV1<I>,
     opts: ReadOptionsV1 | undefined,
     operation: (input: I, signal?: ApiAbortSignalV1) => Promise<O>,
-    validate?: (input: I) => void,
+    guards?: DeliveryGuards<I, O>,
   ): Promise<ApiResultV1<O>> {
     try {
       if (!input.ok) return input;
@@ -100,22 +101,41 @@ export class NoteApi {
         lifecycleError(this.options.api.reads.capture());
       if (initial !== undefined) return initial;
       const value = await operation(input.value, parsed.value.signal);
-      validate?.(input.value);
-      const failure = this.deliveryFailure(value, parsed.value.signal);
-      if (failure !== undefined) return failure;
-      return freezeValue({ ok: true, value });
+      guards?.validateInput?.(input.value);
+      return this.deliver(value, parsed.value.signal, guards);
     } catch (cause) {
       return cause instanceof NoteFailure ? error(cause) : this.options.api.internal('notes.read');
     }
   }
+  private deliver<I, O extends NoteReadValue>(
+    value: O,
+    signal: ApiAbortSignalV1 | undefined,
+    guards?: DeliveryGuards<I, O>,
+  ): ApiResultV1<O> {
+    const validate = guards?.validateDelivery;
+    const failure = this.deliveryFailure(
+      value,
+      signal,
+      validate === undefined
+        ? undefined
+        : () => {
+            validate(value);
+          },
+    );
+    if (failure !== undefined) return failure;
+    guards?.publish?.();
+    return freezeValue({ ok: true, value });
+  }
   private deliveryFailure(
     value: NoteReadValue,
     signal?: ApiAbortSignalV1,
+    validate?: () => void,
   ): ApiResultV1<never> | undefined {
     const failure =
       this.options.api.check(signal) ?? lifecycleError(this.options.api.reads.capture());
     if (failure !== undefined) return failure;
-    this.validateDelivery(value);
+    if (validate === undefined) this.validateDelivery(value);
+    else validate();
     const current = this.options.api.reads.capture();
     if (
       value.generation !== current.generation ||
@@ -147,35 +167,71 @@ export class NoteApi {
     input: PrepareNoteV1,
     options?: ReadOptionsV1,
   ): Promise<ApiResultV1<NotePlanV1>> {
-    let unpublished: Plan | undefined;
-    const result = await this.run(validateNotePrepare(input), options, async (value) => {
-      this.checkPrepareSize(value);
-      this.clean();
-      const prepared = await this.nativePreparation(value);
-      if (
-        this.plans.size >= NOTE_LIMITS.maxPlans ||
-        this.retainedBytes + prepared.retainedBytes > NOTE_LIMITS.maxRetainedPlanBytes
-      )
-        throw new NoteFailure('RESOURCE_LIMIT');
-      const plan: Plan = {
-        target: this.options.registry.token('note-plan'),
-        revision: this.options.registry.token('note-plan-revision'),
-        expiresAt: this.options.now() + NOTE_LIMITS.planTtlMs,
-        prepared,
-        attempted: false,
-        accepted: false,
-        ...(value.kind === 'edit' ? { section: value.operation.section } : {}),
-      };
-      unpublished = plan;
-      this.plans.set(plan.target, plan);
-      this.retainedBytes += prepared.retainedBytes;
-      return this.projectPlan(plan);
-    });
-    if (!result.ok && unpublished !== undefined) this.remove(unpublished);
-    return result;
+    let next: Plan | undefined;
+    let previous: Plan | undefined;
+    return this.run(
+      validateNotePrepare(input),
+      options,
+      async (value) => {
+        this.checkPrepareSize(value);
+        this.clean();
+        if (value.kind === 'refine') previous = this.refinementPlan(value);
+        const prepared = await this.nativePreparation(value, previous);
+        const plan: Plan = {
+          target: previous?.target ?? this.options.registry.token('note-plan'),
+          revision: this.options.registry.token('note-plan-revision'),
+          expiresAt: previous?.expiresAt ?? this.options.now() + NOTE_LIMITS.planTtlMs,
+          prepared,
+          attempted: false,
+          accepted: false,
+        };
+        next = plan;
+        return this.projectPlan(plan);
+      },
+      {
+        validateDelivery: () => {
+          this.validatePrepared(next, previous);
+        },
+        publish: () => {
+          if (next === undefined) throw new NoteFailure('PLAN_UNAVAILABLE');
+          this.plans.set(next.target, next);
+          this.retainedBytes +=
+            next.prepared.retainedBytes - (previous?.prepared.retainedBytes ?? 0);
+        },
+      },
+    );
+  }
+  private validatePrepared(next: Plan | undefined, previous: Plan | undefined): void {
+    if (next === undefined) throw new NoteFailure('PLAN_UNAVAILABLE');
+    next.prepared.validate();
+    this.validateRefinementCurrent(previous);
+    const retained =
+      this.retainedBytes - (previous?.prepared.retainedBytes ?? 0) + next.prepared.retainedBytes;
+    if (
+      (previous === undefined && this.plans.size >= NOTE_LIMITS.maxPlans) ||
+      retained > NOTE_LIMITS.maxRetainedPlanBytes
+    )
+      throw new NoteFailure('RESOURCE_LIMIT');
+  }
+  private validateRefinementCurrent(previous: Plan | undefined): void {
+    if (
+      previous !== undefined &&
+      (this.plans.get(previous.target) !== previous ||
+        previous.attempted ||
+        previous.expiresAt <= this.options.now())
+    )
+      throw new NoteFailure('REVISION_CONFLICT');
+  }
+  private refinementPlan(input: Extract<PrepareNoteV1, { kind: 'refine' }>): Plan {
+    const plan = this.plans.get(input.plan);
+    if (plan === undefined) throw new NoteFailure('PLAN_UNAVAILABLE');
+    if (plan.revision !== input.expectedPlanRevision || plan.attempted)
+      throw new NoteFailure('REVISION_CONFLICT');
+    plan.prepared.validate();
+    return plan;
   }
   private checkPrepareSize(value: PrepareNoteV1): void {
-    const prose = value.kind === 'edit' ? value.operation.text : value.text;
+    const prose = value.kind === 'create' ? value.text : value.operation.text;
     if (
       prose.length > NOTE_LIMITS.maxInputBytes ||
       new TextEncoder().encode(JSON.stringify(value)).byteLength > NOTE_LIMITS.maxInputBytes
@@ -183,31 +239,54 @@ export class NoteApi {
       throw new NoteFailure('RESOURCE_LIMIT');
   }
 
-  private async nativePreparation(value: PrepareNoteV1): Promise<PreparedNote> {
+  private async nativePreparation(value: PrepareNoteV1, previous?: Plan): Promise<PreparedNote> {
     const port = this.options.registry.port;
-    let prepared: PreparedNote;
-    if (value.kind === 'edit') {
-      const source = await this.options.registry.acquire(value.target, value.expectedRevision);
-      const selected = await this.options.registry.selected(value.operation.section);
-      if (
-        selected.source.identity !== source.identity ||
-        selected.source.version !== source.version
-      )
-        throw new NoteFailure('REVISION_CONFLICT');
-      prepared = port.prepareEdit(
-        source,
-        selected.range,
-        value.operation.text,
-        value.operation.type === 'append',
-      );
-    } else {
-      const template =
-        value.template === undefined
-          ? undefined
-          : await this.options.registry.acquire(value.template, value.expectedTemplateRevision);
-      prepared = await port.prepareCreate(value.path, value.title, value.text, template);
+    if (value.kind === 'refine') return this.refineNative(value, previous);
+    if (value.kind === 'create') return this.prepareCreation(value);
+    const source = await this.options.registry.acquire(value.target, value.expectedRevision);
+    const selected = await this.options.registry.selected(value.operation.section);
+    if (selected.source.identity !== source.identity || selected.source.version !== source.version)
+      throw new NoteFailure('REVISION_CONFLICT');
+    return port.prepareEdit(
+      source,
+      selected.range,
+      value.operation.text,
+      value.operation.type === 'append',
+    );
+  }
+  private async prepareCreation(
+    value: Extract<PrepareNoteV1, { kind: 'create' }>,
+  ): Promise<PreparedNote> {
+    const template =
+      value.template === undefined
+        ? undefined
+        : await this.options.registry.acquire(value.template, value.expectedTemplateRevision);
+    return this.options.registry.port.prepareCreate(value.path, value.title, value.text, {
+      ...(template === undefined ? {} : { template }),
+      ...(value.collision === undefined ? {} : { collision: value.collision }),
+    });
+  }
+  private async refineNative(
+    value: Extract<PrepareNoteV1, { kind: 'refine' }>,
+    previous: Plan | undefined,
+  ): Promise<PreparedNote> {
+    if (previous === undefined) throw new NoteFailure('PLAN_UNAVAILABLE');
+    if (value.operation.type === 'replace-body') {
+      if (previous.prepared.refineBody === undefined) throw new NoteFailure('INVALID_ARGUMENT');
+      return previous.prepared.refineBody(value.operation.text);
     }
-    return prepared;
+    const selected = await this.options.registry.selected(value.operation.section);
+    if (
+      previous.prepared.source?.identity !== selected.source.identity ||
+      previous.prepared.source.version !== selected.source.version
+    )
+      throw new NoteFailure('REVISION_CONFLICT');
+    if (previous.prepared.refineSection === undefined) throw new NoteFailure('INVALID_ARGUMENT');
+    return previous.prepared.refineSection(
+      selected.range,
+      value.operation.text,
+      value.operation.type === 'append',
+    );
   }
   private projectPlan(plan: Plan): NotePlanV1 {
     const prepared = plan.prepared;
@@ -228,8 +307,19 @@ export class NoteApi {
               revision: this.options.registry.revision(prepared.source),
             },
           }),
-      ...(plan.section === undefined ? {} : { section: plan.section }),
+      ...this.projectSections(prepared),
     };
+  }
+  private projectSections(prepared: PreparedNote): Pick<NotePlanV1, 'section' | 'sections'> {
+    const source = prepared.source;
+    if (source === undefined || prepared.sections === undefined) return {};
+    const sections = prepared.sections.map((entry) => ({
+      section: this.options.registry.section(source, entry.range).target,
+      before: { text: entry.before, complete: true as const },
+      after: { text: entry.after, complete: true as const },
+    }));
+    const only = sections.length === 1 ? sections[0] : undefined;
+    return only === undefined ? { sections } : { section: only.section };
   }
   private plan(input: CommitNoteV1, kind: 'create' | 'edit'): Plan {
     this.clean();
@@ -310,6 +400,7 @@ export class NoteApi {
     ) {
       const redacted = { ...receipt };
       delete redacted.note;
+      delete redacted.section;
       return freezeValue({ ...result, receipt: redacted });
     }
     return freezeValue(result);
@@ -321,16 +412,25 @@ export class NoteApi {
     project = this.options.registry.summary.bind(this.options.registry),
   ): NoteMutationResultV1 & { readonly receipt: NoteMutationReceiptV1 } {
     let note: NoteMutationReceiptV1['note'];
+    let section: NoteMutationReceiptV1['section'];
     if (outcome.source !== undefined && !this.options.isDisposed()) {
       try {
         const summary = project(outcome.source);
         note = { target: summary.target, revision: summary.revision };
+        if (outcome.section !== undefined)
+          section = this.options.registry.section(outcome.source, outcome.section).target;
       } catch {
         /* Current identity projection cannot change acknowledged storage effects. */
       }
     }
     return noteReceipt(
-      { epoch: this.options.epoch, acceptedAt, input, ...(note === undefined ? {} : { note }) },
+      {
+        epoch: this.options.epoch,
+        acceptedAt,
+        input,
+        ...(note === undefined ? {} : { note }),
+        ...(section === undefined ? {} : { section }),
+      },
       outcome,
     );
   }

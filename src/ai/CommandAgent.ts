@@ -142,6 +142,7 @@ export class CommandAgent implements CommandAgentPort {
       now: this.options.now,
       deadline: start + 60000,
       researchMode: false,
+      researchCalls: 0,
       interpreted: false,
       immediate: false,
       done: false,
