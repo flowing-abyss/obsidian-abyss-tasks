@@ -591,6 +591,8 @@ export default defineConfig(
       'src/settings/tagViewState.ts',
       'src/settings/tagFilters.ts',
       'src/markdown/tagSyntax.ts',
+      'src/ai/commandRecovery.ts',
+      'src/ai/CommandSessionStore.ts',
     ],
     rules: { 'project-policy/ambient': ['error', 'pure'] },
   },

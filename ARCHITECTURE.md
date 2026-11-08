@@ -37,8 +37,24 @@ does not parse provider settings or send requests. The caller must supply an awa
 `CommandJournalPort`; there is no default persistence implementation. Research is an optional
 typed port. This core does not register a command surface or retain local history itself.
 
+`CommandSessionStore` owns a version-1 local history envelope through an injected synchronous
+load/save port and explicit clock. It stores detached records with historical handles and separates
+record saves from explicit active selection. `commandRecovery` validates and projects the complete
+snapshot and each public domain DTO/receipt through explicit field allowlists; historical tokens
+never acquire fresh authority. Malformed or future storage pauses persistence without overwriting
+its raw value. Save failures retain validated memory and reject the awaited journal with a short
+typed failure. Writes require exact validated readback; the port provides no transaction guarantee.
+These data modules are not yet composed with main or runtime recovery.
+
+History retains complete exchanges and authored fields. The soft policy is 20 completed sessions
+and 2 MiB of UTF-8 JSON, pruning oldest eligible inactive records only after verified persistence.
+Active, pending, uncertain and unverified-save records stay protected, including during explicit
+clearing. Protected overflow fails without truncation. Entity read caches remain separate from
+intent/proposal evidence and are retained exactly; the store does not discard selected evidence
+under pressure or own a live session/client cache.
+
 `CommandSession` publishes detached immutable state: input, focused entities, canonical trees,
-proposal revision, recent exchanges, question, status, actual readback and write journal.
+proposal revision, complete exchanges, question, status, actual readback and write journal.
 Every nonempty submission goes through semantic interpretation. Empty submission confirms the
 current proposal deterministically. Model confirmation is bound to the session and proposal it
 saw, before any external reads; delayed submissions can carry the same explicit basis. A ready
