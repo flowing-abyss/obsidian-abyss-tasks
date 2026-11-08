@@ -73,6 +73,7 @@ export interface CommandProposal {
 export interface CommandJournalEntry {
   readonly id: string;
   readonly proposalRevision: number;
+  readonly origin?: 'proposal' | 'direct';
   readonly change: CommandChange;
   readonly request: { readonly requestId: string; readonly expiresAt: number };
   readonly state: 'admitted' | 'settled';
@@ -100,6 +101,7 @@ export type CommandPreparation =
   | { readonly kind: 'task'; readonly input: z.output<typeof prepareSchema> }
   | { readonly kind: 'note'; readonly input: z.output<typeof notePrepareSchema> };
 export interface CommandSessionSnapshot {
+  readonly uncertaintyAcknowledged?: boolean;
   readonly recovery?: 'live' | 'historical' | 'reviewing' | 'uncertain';
   readonly preparations?: readonly CommandPreparation[];
   readonly recoveryEvidence?: {

@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { CommandAgent } from '../src/ai/CommandAgent';
 import { preserveAuthoredAnnotations } from '../src/ai/commandSchemas';
 import { CommandSession } from '../src/ai/CommandSession';
+import type { CommandSessionSnapshot } from '../src/ai/commandTypes';
 import { ProviderFailure } from '../src/ai/providers/providerFailure';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { deferred, expectDefined } from './helpers';
@@ -47,9 +48,14 @@ async function setup(
   const model = new MockLanguageModelV4({
     doGenerate: async () => expectDefined(scripts.shift())(),
   });
+  const saved: CommandSessionSnapshot[] = [];
   const session: CommandSession = new CommandSession({
     api,
-    journal: { save: async () => {} },
+    journal: {
+      save: async (snapshot) => {
+        saved.push(snapshot);
+      },
+    },
     agent: { run: async (input) => agent.run(input) },
     now: () => Date.UTC(2026, 7, 1, 12),
     id: (() => {
@@ -85,6 +91,7 @@ async function setup(
     ...h,
     api,
     session,
+    saved,
     model,
     script: (...steps: Array<() => Awaited<ReturnType<MockLanguageModelV4['doGenerate']>>>) =>
       scripts.push(...steps),
@@ -1428,3 +1435,46 @@ it.each(['keep', 'discard'] as const)(
     expect(h.session.snapshot().status.kind).toBe('question');
   },
 );
+
+it('an unresolved semantic disposition retains the pending draft and asks without a tool repair', async () => {
+  const h = await setup();
+  h.script(interpret(), create, finish());
+  await h.session.submit('Prepare pending work');
+  await h.session.newSession();
+  const previous = h.session.snapshot();
+  const calls = h.model.doGenerateCalls.length;
+  h.script(() => call('interpret', { intent: 'resolve-transition', research: false }));
+  await h.session.submit('Move on, but I am unsure what to do with this draft');
+  expect(h.session.snapshot().id).toBe(previous.id);
+  expect(h.session.snapshot().proposal).toEqual(previous.proposal);
+  expect(h.session.snapshot().pendingTransition).toEqual(previous.pendingTransition);
+  expect(h.session.snapshot().status.kind).toBe('question');
+  expect(h.model.doGenerateCalls.length - calls).toBe(1);
+  expect(await h.read('a.md')).not.toContain('- [ ] New');
+});
+
+it('semantic keep archives a resumable unsaved preview without a source write', async () => {
+  const h = await setup();
+  h.script(interpret(), create, finish());
+  await h.session.submit('Prepare a task and its children');
+  await h.session.newSession();
+  const previous = h.session.snapshot();
+  h.script(() =>
+    call('interpret', {
+      intent: 'resolve-transition',
+      research: false,
+      transitionDisposition: 'keep',
+    }),
+  );
+  await h.session.submit('Оставь предыдущую незаписанной, начнём новую.');
+  expect(h.session.snapshot().id).not.toBe(previous.id);
+  const archived = expectDefined(h.saved.find((snapshot) => snapshot.id === previous.id));
+  expect(archived.proposal).toEqual(previous.proposal);
+  expect(archived.trees).toEqual(previous.trees);
+  expect(archived.input).toBe('Оставь предыдущую незаписанной, начнём новую.');
+  expect(await h.read('a.md')).not.toContain('- [ ] New');
+  expect(h.session.restore(archived)).toBe(true);
+  await h.session.resumeOwned();
+  expect(await h.session.confirm()).toBe(true);
+  expect((await h.read('a.md')).match(/- \[ \] New/g)).toHaveLength(1);
+});

@@ -1,5 +1,9 @@
 import { expect, it } from 'vitest';
-import { isCompletedCommandSession, projectCommandSnapshot } from '../src/ai/commandRecovery';
+import {
+  hasUnresolvedCommandWrites,
+  isCompletedCommandSession,
+  projectCommandSnapshot,
+} from '../src/ai/commandRecovery';
 import type { CommandSessionSnapshot } from '../src/ai/commandTypes';
 import { expectDefined } from './helpers';
 import { publicApiHarness } from './support/publicApiHarness';
@@ -508,4 +512,62 @@ it('retains typed review evidence and pending disposition while refusing malform
     }),
   ).toThrow();
   expect(isCompletedCommandSession(projectCommandSnapshot(value))).toBe(false);
+});
+
+it('a direct origin is restricted to status and never suppresses actual uncertainty or legacy proposal evidence', () => {
+  const change = {
+    kind: 'status',
+    target: 'task',
+    revision: 'revision',
+    symbol: 'x',
+    nuance: 'Complete',
+  } as const;
+  const entry = {
+    id: 'entry',
+    proposalRevision: 1,
+    origin: 'direct',
+    change,
+    request: { requestId: 'request', expiresAt: 100 },
+    state: 'settled',
+    effects: 'committed',
+  } as const;
+  const value: CommandSessionSnapshot = {
+    ...emptySnapshot(),
+    proposal: { revision: 1, operations: 1, changes: [change] },
+    journal: [entry],
+  };
+  expect(hasUnresolvedCommandWrites(projectCommandSnapshot(value))).toBe(false);
+  const legacy: { origin?: 'proposal' | 'direct' } & Omit<typeof entry, 'origin'> = { ...entry };
+  delete legacy.origin;
+  expect(hasUnresolvedCommandWrites({ ...value, journal: [legacy] })).toBe(true);
+  for (const effects of ['unknown', 'partial'] as const)
+    expect(hasUnresolvedCommandWrites({ ...value, journal: [{ ...entry, effects }] })).toBe(true);
+  expect(hasUnresolvedCommandWrites({ ...value, journal: [{ ...entry, state: 'admitted' }] })).toBe(
+    true,
+  );
+  expect(() =>
+    projectCommandSnapshot({
+      ...value,
+      journal: [
+        {
+          ...entry,
+          change: {
+            kind: 'task',
+            plan: {
+              providerEpoch: 'epoch',
+              generation: 1,
+              scopeRevision: 1,
+              semanticsRevision: 1,
+              target: 'plan',
+              revision: 'pr',
+              kind: 'create',
+              expiresAt: 100,
+              before: null,
+              after: null,
+            },
+          },
+        },
+      ],
+    }),
+  ).toThrow();
 });

@@ -183,8 +183,8 @@ export class CommandSession {
     return copy;
   }
   /** The owner calls this only after settling work and persisting selection. */
-  restore(snapshot: CommandSessionSnapshot, historical = true): void {
-    if (this.disposed || this.writing) return;
+  restore(snapshot: CommandSessionSnapshot, historical = true): boolean {
+    if (this.disposed || this.writing) return false;
     this.focusRun++;
     this.state = detached(snapshot);
     if (historical) {
@@ -192,6 +192,7 @@ export class CommandSession {
       this.state = { ...this.state, blocked, recovery: blocked ? 'uncertain' : 'historical' };
     }
     this.publish({});
+    return true;
   }
   readOnly(): boolean {
     return (
@@ -791,10 +792,11 @@ export class CommandSession {
     return this.writeProposal(detached(this.state.proposal), true);
   }
   async applyStatus(input: { target: string; revision: string; symbol: string }): Promise<boolean> {
-    if (this.writing || this.readOnly() || this.disposed || this.state.recovery === 'reviewing')
-      return false;
+    const basis = this.state;
+    if (!this.canApplyStatus(basis)) return false;
     this.cancelTurn();
     if (this.running !== undefined) await this.running;
+    if (!this.canApplyStatus(basis)) return false;
     return this.writeProposal(
       {
         revision: this.state.proposal.revision,
@@ -802,6 +804,15 @@ export class CommandSession {
         changes: [{ kind: 'status', ...input, nuance: 'Ordinary status lifecycle.' }],
       },
       false,
+    );
+  }
+  private canApplyStatus(basis: CommandSessionSnapshot): boolean {
+    return (
+      this.current(basis.id) &&
+      this.state.proposal.revision === basis.proposal.revision &&
+      !this.writing &&
+      !this.readOnly() &&
+      this.state.recovery !== 'reviewing'
     );
   }
   private invalidateTaskReads(path: string): void {
@@ -901,7 +912,7 @@ export class CommandSession {
         id: this.options.id,
         cancelled: () => admission.signal.aborted,
         signal: admission.signal,
-        record: (entry) => this.recordWrite(entry),
+        record: (entry) => this.recordWrite({ ...entry, origin: clear ? 'proposal' : 'direct' }),
         actual: (trees) => {
           this.publish({ actual: trees });
         },
@@ -959,18 +970,20 @@ export class CommandSession {
       ? { recovery: 'historical' }
       : {};
   }
+  canLeaveUncertainty(): boolean {
+    if (!this.state.blocked || this.state.uncertaintyAcknowledged === true) return true;
+    this.question(
+      'The earlier result is unresolved. Acknowledge it before starting independent work.',
+    );
+    return false;
+  }
   async newSession(
     disposition?: 'keep' | 'discard',
     signal?: AbortSignal,
     acknowledgeUncertainty = false,
   ): Promise<boolean> {
     if (!(await this.transitionAllowed(signal))) return false;
-    if (this.state.blocked && !acknowledgeUncertainty) {
-      this.question(
-        'The earlier result is unresolved. Acknowledge it before starting independent work.',
-      );
-      return false;
-    }
+    if (!acknowledgeUncertainty && !this.canLeaveUncertainty()) return false;
     if (this.state.proposal.changes.length > 0 && disposition === undefined) {
       this.requestTransition(
         { kind: 'new-session' },
@@ -978,7 +991,11 @@ export class CommandSession {
       );
       return false;
     }
-    return this.startSession(this.archivedSnapshot(disposition), this.empty(), signal);
+    return this.startSession(
+      this.archivedSnapshot(disposition, acknowledgeUncertainty),
+      this.empty(),
+      signal,
+    );
   }
   private async startSession(
     archived: CommandSessionSnapshot,
@@ -997,19 +1014,22 @@ export class CommandSession {
         if (signal?.aborted === true) return false;
       }
       if (!this.current(archived.id)) return false;
-      this.restore(next, false);
-      return true;
+      return this.restore(next, false);
     } catch {
       if (signal?.aborted !== true)
         this.status('error', 'Could not retain this session. Keep it open and try again.');
       return false;
     }
   }
-  private archivedSnapshot(disposition?: 'keep' | 'discard'): CommandSessionSnapshot {
+  private archivedSnapshot(
+    disposition?: 'keep' | 'discard',
+    acknowledgeUncertainty = false,
+  ): CommandSessionSnapshot {
     const previous = {
       ...this.snapshot(),
       pendingTransition: null,
       activeQuestion: this.previousQuestion(),
+      ...(acknowledgeUncertainty && this.state.blocked ? { uncertaintyAcknowledged: true } : {}),
     };
     return disposition === 'discard' && !previous.blocked
       ? {

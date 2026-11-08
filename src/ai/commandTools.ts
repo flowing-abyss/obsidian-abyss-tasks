@@ -257,9 +257,13 @@ class CommandToolOwner {
     }
     if (input.intent === 'resolve-transition') {
       this.ctx.done = true;
+      if (input.transitionDisposition === undefined) {
+        this.ctx.session.question('Keep the unsaved draft for later, or abandon it?');
+        return { needsDisposition: true };
+      }
       return {
         resolved: await this.ctx.session.resolveTransition(
-          required(input.transitionDisposition),
+          input.transitionDisposition,
           this.ctx.signal,
         ),
       };

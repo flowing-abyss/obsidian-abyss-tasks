@@ -143,8 +143,18 @@ export const intentSchema = z.strictObject({
       'plan means creating, editing, finding or showing entities in the CURRENT conversation; use it for ordinary task work. confirm accepts the visible proposal. immediate explicitly requests saving now. new-session ONLY means an explicit request to leave this conversation and start a separate session; a new task or topic stays plan.',
     ),
   research: z.boolean(),
-  disposition: z.enum(['keep', 'discard']).optional(),
-  transitionDisposition: z.enum(['save', 'keep', 'discard', 'cancel']).optional(),
+  disposition: z
+    .enum(['keep', 'discard'])
+    .optional()
+    .describe(
+      'keep preserves the full pending draft in history, WITHOUT saving it to source. discard permanently abandons the draft ONLY when the user explicitly wants it removed. Not saving to source does not mean discard. If unresolved, omit this field to ask and retain the draft.',
+    ),
+  transitionDisposition: z
+    .enum(['save', 'keep', 'discard', 'cancel'])
+    .optional()
+    .describe(
+      'save writes the reviewed changes to source; keep switches while retaining the complete unsaved draft for later; discard switches and abandons the draft ONLY on explicit abandonment; cancel stays here. If the intended disposition is ambiguous, omit this field: the application retains the draft and asks. Never infer discard from leaving work unsaved.',
+    ),
 });
 const selection = z
   .array(

@@ -365,6 +365,7 @@ const journalEntry = z
   .object({
     id: handle,
     proposalRevision: count,
+    origin: z.enum(['proposal', 'direct']).exactOptional(),
     change,
     request: z.object({ requestId: handle, expiresAt: finite }),
     state: z.enum(['admitted', 'settled']),
@@ -373,6 +374,8 @@ const journalEntry = z
     error: text.exactOptional(),
   })
   .transform((entry) => {
+    if (entry.origin === 'direct' && entry.change.kind !== 'status')
+      throw new Error('Only status changes have a direct journal origin.');
     const { receipt, ...basis } = entry;
     if (receipt === undefined) return basis;
     rejectOtherReceiptFamily(entry.change.kind, receipt);
@@ -394,6 +397,7 @@ const preparation = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('note'), input: notePrepareSchema }),
 ]);
 const snapshot: z.ZodType<HistoricalCommandSnapshot> = z.object({
+  uncertaintyAcknowledged: z.boolean().exactOptional(),
   recovery: z.enum(['live', 'historical', 'reviewing', 'uncertain']).exactOptional(),
   preparations: z.array(preparation).exactOptional(),
   recoveryEvidence: z
@@ -548,6 +552,7 @@ export function hasUnresolvedCommandWrites(value: CommandSessionSnapshot): boole
       return true;
     if (
       entry.effects === 'committed' &&
+      entry.origin !== 'direct' &&
       entry.proposalRevision === value.proposal.revision &&
       value.proposal.changes.length > 0
     )

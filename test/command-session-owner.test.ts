@@ -460,3 +460,180 @@ it('retains a submitted follow-up while a menu-confirmed write is still settling
   expect(h.owner.snapshot().input).toBe('Follow-up intent');
   expect((await h.read('a.md')).match(/Created once/g)).toHaveLength(1);
 });
+
+it('history cannot bypass uncertainty acknowledgement and acknowledged evidence remains inspectable after reload', async () => {
+  const h = await setup();
+  const first = h.owner.snapshot().id;
+  await h.owner.newSession('keep');
+  await stageCreate(h);
+  h.aroundCreate(async (write) => {
+    await write();
+    return {
+      ok: false,
+      effects: 'unknown',
+      recovery: 'reconcile',
+      error: { category: 'io', code: 'LOST', message: 'Lost' },
+    };
+  });
+  await h.owner.confirm();
+  const uncertain = h.owner.snapshot().id;
+  expect(await h.owner.select(first)).toBe(false);
+  expect(h.owner.snapshot().id).toBe(uncertain);
+  expect(h.store.activeId()).toBe(uncertain);
+  expect(h.owner.snapshot().status.kind).toBe('question');
+  expect(await h.owner.acknowledgeUncertainty()).toBe(true);
+  const independent = h.owner.snapshot().id;
+  expect(await h.owner.select(uncertain)).toBe(true);
+  expect(h.owner.snapshot().blocked).toBe(true);
+  expect(await h.owner.confirm()).toBe(false);
+  h.owner.dispose();
+  const reloaded = h.createOwner().owner;
+  expect(reloaded.snapshot().id).toBe(uncertain);
+  expect(await reloaded.select(independent)).toBe(true);
+  await reloaded.clearCompleted();
+  expect(
+    reloaded.recent().find((record) => record.snapshot.id === uncertain)?.snapshot.blocked,
+  ).toBe(true);
+  expect((await h.read('a.md')).match(/Created once/g)).toHaveLength(1);
+});
+
+it('a verified direct status receipt does not make a separate pending draft uncertain on reload', async () => {
+  const h = await setup();
+  const listed = await h.api().tasks.list();
+  if (!listed.ok) throw new Error('list');
+  const task = expectDefined(listed.value.items[0]);
+  await stageCreate(h, 'Retained draft');
+  expect(
+    await h.owner.applyStatus({ target: task.target, revision: task.revision, symbol: 'x' }),
+  ).toBe(true);
+  expect(await h.read('a.md')).toBe('- [x] Existing ✅ 2026-08-01\n');
+  const retained = h.owner.snapshot().proposal;
+  expect(retained.changes).toHaveLength(1);
+  await h.owner.flush();
+  h.owner.dispose();
+  const reloaded = h.createOwner().owner;
+  expect(reloaded.snapshot().proposal).toEqual(retained);
+  expect(reloaded.snapshot().blocked).toBe(false);
+  expect(reloaded.snapshot().recovery).toBe('historical');
+  expect(await reloaded.confirm()).toBe(false);
+  expect(await reloaded.review()).toBe(true);
+});
+
+it.each([false, true])(
+  'a %s stale status queued after selection cannot change its session or source',
+  async (valid) => {
+    const h = await setup();
+    const first = h.owner.snapshot().id;
+    await h.owner.newSession('keep');
+    const listed = await h.api().tasks.list();
+    if (!listed.ok) throw new Error('list');
+    const task = expectDefined(listed.value.items[0]);
+    const waiting = deferred<void>(),
+      started = deferred<void>();
+    h.run(async () => {
+      started.resolve();
+      await waiting.promise;
+    });
+    const running = h.owner.submit('Wait for a model response');
+    await started.promise;
+    const selection = h.owner.select(first);
+    await Promise.resolve();
+    const status = h.owner.applyStatus({
+      target: task.target,
+      revision: valid ? task.revision : 'stale',
+      symbol: 'x',
+    });
+    waiting.resolve();
+    await running;
+    expect(await selection).toBe(true);
+    expect(await status).toBe(false);
+    expect(h.owner.snapshot().id).toBe(first);
+    expect(h.store.activeId()).toBe(first);
+    expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+  },
+);
+
+it('a real status queued before selection settles in its original session', async () => {
+  const h = await setup();
+  const first = h.owner.snapshot().id;
+  await h.owner.newSession('keep');
+  const original = h.owner.snapshot().id;
+  const listed = await h.api().tasks.list();
+  if (!listed.ok) throw new Error('list');
+  const task = expectDefined(listed.value.items[0]);
+  const waiting = deferred<void>(),
+    started = deferred<void>();
+  h.run(async () => {
+    started.resolve();
+    await waiting.promise;
+  });
+  const running = h.owner.submit('Wait for a model response');
+  await started.promise;
+  const status = h.owner.applyStatus({ target: task.target, revision: task.revision, symbol: 'x' });
+  const selection = h.owner.select(first);
+  waiting.resolve();
+  await running;
+  expect(await status).toBe(true);
+  expect(await selection).toBe(true);
+  expect(h.owner.snapshot().id).toBe(first);
+  expect(h.store.activeId()).toBe(first);
+  expect(
+    h.owner.recent().find((record) => record.snapshot.id === original)?.snapshot.journal[0]
+      ?.effects,
+  ).toBe('committed');
+  expect(await h.read('a.md')).toBe('- [x] Existing ✅ 2026-08-01\n');
+});
+
+it('a refused restore reports failure and restores the live selection after a competing direct write', async () => {
+  const h = await setup();
+  const first = h.owner.snapshot().id;
+  await h.owner.newSession('keep');
+  const active = h.owner.snapshot().id;
+  const listed = await h.api().tasks.list();
+  if (!listed.ok) throw new Error('list');
+  const task = expectDefined(listed.value.items[0]);
+  let writing: Promise<boolean> | undefined;
+  h.afterSave(() => {
+    h.afterSave(() => {
+      writing = h
+        .session()
+        .applyStatus({ target: task.target, revision: task.revision, symbol: 'x' });
+    });
+  });
+  expect(await h.owner.select(first)).toBe(false);
+  expect(await expectDefined(writing)).toBe(true);
+  expect(h.owner.snapshot().id).toBe(active);
+  expect(h.store.activeId()).toBe(active);
+  expect(await h.read('a.md')).toBe('- [x] Existing ✅ 2026-08-01\n');
+});
+
+it('hide cancels queued status and selection before their admission without changing the active record', async () => {
+  const h = await setup();
+  const first = h.owner.snapshot().id;
+  await h.owner.newSession('keep');
+  const active = h.owner.snapshot().id;
+  const listed = await h.api().tasks.list();
+  if (!listed.ok) throw new Error('list');
+  const task = expectDefined(listed.value.items[0]);
+  const waiting = deferred<void>(),
+    started = deferred<void>();
+  h.run(async () => {
+    started.resolve();
+    await waiting.promise;
+  });
+  const running = h.owner.submit('Waiting');
+  await started.promise;
+  const selecting = h.owner.select(first);
+  await Promise.resolve();
+  const status = h.owner.applyStatus({ target: task.target, revision: task.revision, symbol: 'x' });
+  const queuedSelection = h.owner.select(first);
+  await h.owner.hide();
+  waiting.resolve();
+  await running;
+  expect(await selecting).toBe(false);
+  expect(await queuedSelection).toBe(false);
+  expect(await status).toBe(false);
+  expect(h.owner.snapshot().id).toBe(active);
+  expect(h.store.activeId()).toBe(active);
+  expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+});

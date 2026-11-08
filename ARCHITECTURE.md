@@ -39,8 +39,8 @@ retaining one unload closure per archived conversation. Construction/opening doe
 preferences or send requests. Research remains an optional typed port.
 
 `CommandSessionOwner` owns visibility, coalesced ordinary persistence, serialized external session
-selection, and disposal. `CommandSession` owns input, focus, proposal, typed pending disposition and
-recovery state. Switching reuses the client; inactive sessions are detached JSON records. The owner
+selection and direct status actions, and disposal. `CommandSession` owns input, focus, proposal,
+typed pending disposition and recovery state. Switching reuses the client; inactive sessions are detached JSON records. The owner
 flushes ordinary state at command/lifecycle boundaries and after a 250 ms scheduler delay. Required
 write admission and receipt saves bypass that delay. Storage failures appear as one short surface
 status, with safe diagnostic codes when opened; startup raises no history Notice.
@@ -86,7 +86,9 @@ or cancel. Same-tree focus and added context preserve the existing workflow. Men
 session changes share these transitions. Dispositions and confirmations bind to the accepted
 session/proposal revision; changing the pending target advances that revision. Save-and-switch
 awaits the verified previous outcome, and save-then-plan leaves the subsequent tree as a preview.
-Legitimate transition questions terminate normally instead of consuming tool-repair attempts.
+Keep retains the complete unsaved draft in history without a source write; discard requires explicit
+abandonment. Ambiguous disposition retains work and asks a short question. Legitimate transition
+questions terminate normally instead of consuming tool-repair attempts.
 
 Reloaded handles are historical. Opening preserves input, question, exchanges and canonical trees
 without replay. The still-owning runtime can resume task-only plans after public refresh proves
@@ -96,8 +98,12 @@ state, advances its revision, and publishes fresh preparation for renewed confir
 records and historical DTOs are context, never source identity authority. Model tools remain
 read-only for historical or uncertain sessions until the appropriate transition. Unresolved
 admission, partial/unknown resource effects, and a receipt saved before proposal clearance remain
-protected. Explicit acknowledgement can archive uncertainty and start independent work without
-claiming success or allowing replay.
+protected. Journal origin distinguishes direct status actions from proposal admission; older evidence
+without that discriminator remains conservative. A verified direct status change leaves a separate
+pending draft eligible for fresh review. Explicit acknowledgement can archive uncertainty and start
+independent work without claiming success or allowing replay. That acknowledgement is retained with the unresolved record,
+so revisiting its history does not require acknowledging it again; it never changes write blocking or
+pruning protection. History selection checks the same acknowledgement boundary as new-session.
 
 `CommandAgent` runs the SDK tool loop with generic required tool calls, serial execution, bounded
 steps and generation deadlines. Active tools enforce the interpretation phase; a typed finish

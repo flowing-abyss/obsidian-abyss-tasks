@@ -186,7 +186,22 @@ export class CommandSessionOwner {
     return this.session.readTreePage(query);
   }
   applyStatus(input: { target: string; revision: string; symbol: string }): Promise<boolean> {
-    return this.session.applyStatus(input);
+    const basis = this.session.snapshot(),
+      generation = this.acceptance;
+    return this.transition(async () => {
+      await this.session.settle();
+      const current = this.session.snapshot();
+      if (
+        this.disposed ||
+        generation !== this.acceptance ||
+        current.id !== basis.id ||
+        current.proposal.revision !== basis.proposal.revision
+      )
+        return false;
+      const result = await this.session.applyStatus(input);
+      await this.flush();
+      return result;
+    });
   }
   recent(): readonly HistoricalCommandSession[] {
     return this.options.store.records();
@@ -201,24 +216,32 @@ export class CommandSessionOwner {
     return result;
   }
   select(id: string): Promise<boolean> {
-    return this.transition(() => this.selectSession(id));
+    const generation = this.acceptance;
+    return this.transition(() => this.selectSession(id, generation));
   }
-  private async selectSession(id: string): Promise<boolean> {
+  private async selectSession(id: string, generation: number): Promise<boolean> {
     if (this.disposed) return false;
     await this.session.settle();
-    if (!(await this.flush()) || this.isDisposed()) return false;
+    if (id !== this.session.snapshot().id && !this.session.canLeaveUncertainty()) return false;
+    if (!(await this.flush()) || this.isDisposed() || generation !== this.acceptance) return false;
     try {
       await this.options.store.select(id);
-      if (this.isDisposed()) return false;
-      const record = this.recent().find((entry) => entry.snapshot.id === id);
-      if (record === undefined) return false;
-      this.session.restore(record.snapshot);
-      if (this.ownedSessions.has(id)) await this.session.resumeOwned();
-      return true;
+      return await this.restoreSelection(id);
     } catch {
       this.emit();
       return false;
     }
+  }
+  private async restoreSelection(id: string): Promise<boolean> {
+    if (this.disposed) return false;
+    const record = this.recent().find((entry) => entry.snapshot.id === id);
+    if (record === undefined) return false;
+    if (!this.session.restore(record.snapshot)) {
+      await this.options.store.create(this.session.snapshot());
+      return false;
+    }
+    if (this.ownedSessions.has(id)) await this.session.resumeOwned();
+    return this.session.snapshot().id === id && this.options.store.activeId() === id;
   }
   review(): Promise<boolean> {
     return this.transition(() => this.reviewSession());
