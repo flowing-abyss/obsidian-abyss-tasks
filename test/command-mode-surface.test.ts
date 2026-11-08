@@ -262,6 +262,7 @@ it('retains duplicate-child ownership, comment DOM and focus through a date-only
   const comment = expectDefined(surface.element.querySelector<HTMLElement>('.abyss-comment-text'));
   title.tabIndex = 0;
   title.focus();
+  h.session.exchange('user', 'Change only the second child date');
   const request = {
     kind: 'append' as const,
     plan: change.plan.target,
@@ -1160,9 +1161,9 @@ it.each(['stale', 'unknown'])(
   },
 );
 
-it('keeps only this project iteration highlighted across remount and shows cumulative fields on request until verified save', async () => {
+async function projectSetup(source = '---\nEffort: 2\n---\nProject body\n') {
   const app = await createAppWithFiles({
-    'projects/Project.md': '---\nEffort: 2\n---\nProject body\n',
+    'projects/Project.md': source,
   });
   await app.vault.adapter.mkdir(`${app.vault.configDir}/plugins/abyss-tasks`);
   const plugin = new TaskCalendarPlugin(app, {
@@ -1198,6 +1199,11 @@ it('keeps only this project iteration highlighted across remount and shows cumul
   );
   h.projectSettings.propertyDefinitions['property:Effort'] = { type: 'number' };
   await h.owner.focus({ kind: 'project', target: project.target, revision: project.revision });
+  return { h, project, projects };
+}
+
+it('keeps only this project iteration highlighted across remount and shows cumulative fields on request until verified save', async () => {
+  const { h, project, projects } = await projectSetup();
   h.setRun(async ({ text, signal }) => {
     if (text === 'All changes') h.session.showChanges(signal);
     else {
@@ -1269,4 +1275,279 @@ it('keeps only this project iteration highlighted across remount and shows cumul
       expect.objectContaining({ fieldId: 'start', value: '2026-08-03' }),
     ]),
   );
+});
+
+it('retires a verified project description clear before and after remount', async () => {
+  const { h, project, projects } = await projectSetup(
+    '---\ndescription: Accepted description\n---\nProject body\n',
+  );
+  expect(project.fields).toContainEqual({
+    fieldId: 'description',
+    state: 'value',
+    value: 'Accepted description',
+  });
+  scriptedAgent(h, [
+    { tool: 'interpret', input: { intent: 'plan', research: false } },
+    {
+      tool: 'project',
+      input: {
+        target: project.target,
+        expectedRevision: project.revision,
+        fields: [{ fieldId: 'description', value: null }],
+      },
+    },
+    { tool: 'finish', input: { state: 'ready', message: 'Ready.' } },
+  ]);
+  let surface = h.mount();
+  enter(surface, 'Clear the description');
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().status.message).toBe('Ready.');
+  });
+  const removed = expectDefined(
+    surface.element.querySelector<HTMLElement>('[data-project-field="description"]'),
+  );
+  expect(removed.textContent).toContain('Accepted description');
+  expect(removed.dataset['change']).toBe('removed');
+  expect(removed.inert).toBe(true);
+  enter(surface, '');
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().status.kind).toBe('saved');
+  });
+  const saved = await projects.get(project.target);
+  if (!saved.ok) throw new Error(saved.error.code);
+  expect(saved.value.fields).toContainEqual({ fieldId: 'description', state: 'absent' });
+  expect(h.owner.snapshot().proposal.changes).toEqual([]);
+  expect(surface.element.querySelector('[data-project-field="description"]')).toBeNull();
+  expect(removed.isConnected).toBe(false);
+  surface.destroy();
+  surface = h.mount();
+  expect(surface.element.querySelector('[data-project-field="description"]')).toBeNull();
+});
+
+function currentPlan(h: Awaited<ReturnType<typeof setup>>): ContentPlanV1 {
+  const change = h.owner.snapshot().proposal.changes.find((entry) => entry.kind === 'task');
+  if (change?.kind !== 'task') throw new Error('Missing canonical task plan');
+  return change.plan;
+}
+function appendCall(
+  h: Awaited<ReturnType<typeof setup>>,
+  operation: (plan: ContentPlanV1) => TaskContentOperationV1,
+) {
+  return {
+    tool: 'task',
+    input: () => {
+      const plan = currentPlan(h);
+      return {
+        input: {
+          kind: 'append',
+          plan: plan.target,
+          expectedPlanRevision: plan.revision,
+          operation: operation(plan),
+        },
+      };
+    },
+  };
+}
+it.each([
+  ['B', 'A', 'Child C'],
+  ['Child C', 'A', 'B'],
+])(
+  'retains canonical interleaved removal order across preparations and remount (%j)',
+  async (...order) => {
+    const h = await setup({
+      'a.md':
+        '- [ ] Root\n\t- 2026-08-01T10:00:00+00:00 → 2026-08-01T10:30:00+00:00\n\t- 2026-08-01: A\n\t- 2026-08-01: B\n\t- [ ] Child C\n\t- 2026-08-01T11:00:00+00:00 → 2026-08-01T11:30:00+00:00\n\t- 2026-08-01: D\n\t- [ ] Child E\n\t\t- 2026-08-01: A\n',
+    });
+    const listed = await h.api.tasks.list();
+    if (!listed.ok) throw new Error(listed.error.code);
+    const root = expectDefined(listed.value.items[0]);
+    await h.owner.focus({ kind: 'task', target: root.target, revision: root.revision });
+    scriptedAgent(h, [
+      { tool: 'interpret', input: { intent: 'plan', research: false } },
+      {
+        tool: 'task',
+        input: { input: { kind: 'edit', target: root.target, expectedRevision: root.revision } },
+      },
+      ...order.map((label) =>
+        appendCall(h, (plan) =>
+          label === 'Child C'
+            ? {
+                type: 'remove',
+                target: expectDefined(
+                  plan.after?.children.find((child) => child.markdownTitle === label),
+                ).target,
+              }
+            : {
+                type: 'remove-comment',
+                target: expectDefined(
+                  plan.after?.comments.find((comment) => comment.text === label),
+                ).target,
+              },
+        ),
+      ),
+      { tool: 'finish', input: { state: 'ready', message: 'Ready.' } },
+    ]);
+    let surface = h.mount();
+    enter(surface, 'Remove these exact comments and child');
+    await vi.waitFor(() => {
+      expect(h.owner.snapshot().status.message).toBe('Ready.');
+    });
+    const display = () => {
+      const host = expectDefined(
+        surface.element.querySelector('.abyss-command-tree > .abyss-task-card'),
+      );
+      return [...host.children]
+        .filter((element) => element.matches('.abyss-comment-row, .abyss-subtask-content'))
+        .map((element) => ({
+          text: element.matches('.abyss-comment-row')
+            ? element.textContent
+            : element.querySelector('.abyss-subtask-label')?.textContent,
+          removed: element.getAttribute('data-change') === 'removed',
+        }));
+    };
+    const expected = [
+      { text: 'A', removed: true },
+      { text: 'B', removed: true },
+      { text: 'Child C', removed: true },
+      { text: 'D', removed: false },
+      { text: 'Child E', removed: false },
+    ];
+    expect(display()).toEqual(expected);
+    const nested = expectDefined(
+      surface.element.querySelector('.abyss-subtask-content:last-child .abyss-comment-row'),
+    );
+    expect(nested.textContent).toBe('A');
+    expect(nested.getAttribute('data-change')).not.toBe('removed');
+    surface.destroy();
+    surface = h.mount();
+    await flushMicrotasks(0);
+    expect(display()).toEqual(expected);
+    enter(surface, '');
+    await vi.waitFor(() => {
+      expect(h.owner.snapshot().status.kind).toBe('saved');
+    });
+    const saved = await expectDefined(h.api.tasks.tree)({ target: root.target, limit: 500 });
+    if (!saved.ok) throw new Error(saved.error.code);
+    expect(saved.value.tree.comments.map((comment) => comment.text)).toEqual(['D']);
+    expect(saved.value.tree.children.map((child) => child.markdownTitle)).toEqual(['Child E']);
+    expect(saved.value.tree.timeEntries).toHaveLength(2);
+  },
+);
+
+it('retains every task and comment change in one user iteration while keeping latest and cumulative review separate', async () => {
+  const h = await setup({ 'a.md': '- [ ] Original root\n\t- 2026-08-01: Original comment\n' });
+  const listed = await h.api.tasks.list();
+  if (!listed.ok) throw new Error(listed.error.code);
+  const root = expectDefined(listed.value.items[0]);
+  await h.owner.focus({ kind: 'task', target: root.target, revision: root.revision });
+  const calls: Array<{ tool: string; input: unknown }> = [
+    { tool: 'interpret', input: { intent: 'plan', research: false } },
+    {
+      tool: 'task',
+      input: {
+        input: {
+          kind: 'edit',
+          target: root.target,
+          expectedRevision: root.revision,
+          operation: {
+            type: 'patch',
+            target: root.target,
+            patch: { markdownTitle: { type: 'set', value: 'Renamed root' } },
+          },
+        },
+      },
+    },
+    appendCall(h, (plan) => ({
+      type: 'update-comment',
+      target: expectDefined(plan.after?.comments[0]).target,
+      text: 'Changed comment',
+    })),
+    appendCall(h, (plan) => ({
+      type: 'patch',
+      target: expectDefined(plan.after).target,
+      patch: { due: { type: 'set', value: '2026-08-03' } },
+    })),
+    appendCall(h, (plan) => ({
+      type: 'update-comment',
+      target: expectDefined(plan.after?.comments[0]).target,
+      text: 'Final comment',
+    })),
+    { tool: 'finish', input: { state: 'ready', message: 'Ready.' } },
+  ];
+  scriptedAgent(h, calls);
+  let surface = h.mount();
+  const title = () => expectDefined(surface.element.querySelector('.abyss-task-title'));
+  const comment = () => expectDefined(surface.element.querySelector('.abyss-comment-row'));
+  const checkFirst = () => {
+    expect(title().querySelector('del')?.textContent).toBe('Original');
+    expect(title().querySelector('ins')?.textContent).toBe('Renamed');
+    expect(comment().getAttribute('data-change')).toBe('changed');
+    expect(comment().querySelector('del')?.textContent).toBe('Original');
+    expect(comment().querySelector('ins')?.textContent).toBe('Final');
+    expect(surface.element.querySelector('[aria-label^="due:"]')?.getAttribute('data-change')).toBe(
+      'changed',
+    );
+  };
+  enter(surface, 'Rename, rewrite comment, and set the date');
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().status.message).toBe('Ready.');
+  });
+  checkFirst();
+  surface.destroy();
+  surface = h.mount();
+  await flushMicrotasks(0);
+  checkFirst();
+  calls.push(
+    { tool: 'interpret', input: { intent: 'plan', research: false } },
+    appendCall(h, (plan) => ({
+      type: 'patch',
+      target: expectDefined(plan.after).target,
+      patch: { time: { type: 'set', value: '10:00' } },
+    })),
+    { tool: 'finish', input: { state: 'ready', message: 'Only time.' } },
+  );
+  enter(surface, 'Change only time');
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().status.message).toBe('Only time.');
+  });
+  const checkLatest = () => {
+    expect(title().textContent).toBe('Renamed root');
+    expect(comment().textContent).toBe('Final comment');
+    expect(comment().getAttribute('data-change')).toBe('');
+    expect(surface.element.querySelector('del')).toBeNull();
+    expect(surface.element.querySelector('[aria-label^="due:"]')?.getAttribute('data-change')).toBe(
+      '',
+    );
+    expect(
+      surface.element.querySelector('.abyss-task-time-part')?.getAttribute('data-change'),
+    ).toBe('changed');
+  };
+  checkLatest();
+  surface.destroy();
+  surface = h.mount();
+  await flushMicrotasks(0);
+  checkLatest();
+  calls.push(
+    { tool: 'interpret', input: { intent: 'plan', research: false } },
+    {
+      tool: 'finish',
+      input: { state: 'ready', message: 'All changes.', presentation: 'cumulative' },
+    },
+  );
+  enter(surface, 'Show cumulative changes');
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().status.message).toBe('All changes.');
+  });
+  checkFirst();
+  surface.destroy();
+  surface = h.mount();
+  await flushMicrotasks(0);
+  checkFirst();
+  enter(surface, '');
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().status.kind).toBe('saved');
+  });
+  expect(surface.element.querySelector('del, [data-change="changed"]')).toBeNull();
+  expect(await h.read('a.md')).toContain('Renamed root');
+  expect(await h.read('a.md')).toContain('Final comment');
 });

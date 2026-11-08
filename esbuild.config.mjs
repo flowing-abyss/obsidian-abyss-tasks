@@ -1,5 +1,5 @@
-// Native Q command tree and shared retained task display: measured licensed main 3,890,732 bytes.
-// Controller-approved containing limit 3,891,200 bytes (3800 KiB); strict final ceiling remains below 5,000,000.
+// Native Q command tree and retained proposal corrections: measured licensed main 3,891,356 bytes.
+// Controller-approved containing limit 3,892,224 bytes (3801 KiB); strict final ceiling remains below 5,000,000.
 // Semantic command core with the real SDK runtime and native continuity/link formatting: 3,544,410 -> 3,793,056 bytes.
 // Licensed artifact fits the measured 3,807,232-byte (3718 KiB) cap; the hard 5,000,000-byte ceiling remains.
 // Prepared initial status, source-copy witnesses and merge inventory: 3,520,640 -> 3,544,410 bytes (+23,770).

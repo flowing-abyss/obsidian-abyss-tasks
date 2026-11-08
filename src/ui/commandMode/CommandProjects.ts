@@ -30,6 +30,7 @@ interface ProjectDate {
   readonly label: HTMLElement;
 }
 interface PropertyRow {
+  readonly owner: Component;
   readonly host: HTMLElement;
   readonly value: HTMLElement;
   readonly label: HTMLElement;
@@ -213,12 +214,7 @@ export class CommandProjects {
   ): void {
     const ids = new Set(['description', ...(change?.fields ?? []).map((field) => field.fieldId)]);
     for (const id of ['start', 'end']) ids.delete(id);
-    for (const [id, field] of row.properties)
-      if (!ids.has(id)) {
-        field.text.destroy();
-        field.host.remove();
-        row.properties.delete(id);
-      }
+    for (const id of row.properties.keys()) if (!ids.has(id)) this.removeProperty(row, id);
     for (const id of ids) this.property(row, project, id, change);
   }
   private property(
@@ -230,7 +226,10 @@ export class CommandProjects {
     const assignment = change?.fields?.find((field) => field.fieldId === id);
     const original = fieldValue(project, id);
     const value = assignment === undefined ? original : assignment.value;
-    if (value == null && original === undefined) return;
+    if (value == null && original === undefined) {
+      this.removeProperty(row, id);
+      return;
+    }
     const catalog = buildConfiguredProjectFieldCatalog(this.options.projectSettings());
     const field = this.propertyRow(row, id);
     field.label.textContent = findProjectFieldById(catalog, id)?.label ?? 'Unavailable property';
@@ -298,14 +297,31 @@ export class CommandProjects {
     host.dataset['projectField'] = id;
     const label = host.createSpan({ cls: 'abyss-project-dashboard-property-label' });
     const value = host.createDiv({ cls: id === 'description' ? 'abyss-project-description' : '' });
-    const field: PropertyRow = { host, label, value, text: new RetainedTaskText(value, row.owner) };
-    row.owner.registerDomEvent(value, 'focusout', () => {
+    const owner = row.owner.addChild(new Component());
+    const field: PropertyRow = {
+      host,
+      label,
+      value,
+      owner,
+      text: new RetainedTaskText(value, owner),
+    };
+    owner.registerDomEvent(value, 'focusout', () => {
       value.win.queueMicrotask(() => {
         field.pending?.commit();
       });
     });
     row.properties.set(id, field);
     return field;
+  }
+  private removeProperty(row: ProjectRow, id: string): void {
+    const field = row.properties.get(id);
+    if (field === undefined) return;
+    field.pending?.cancel();
+    delete field.pending;
+    field.text.destroy();
+    row.owner.removeChild(field.owner);
+    field.host.remove();
+    row.properties.delete(id);
   }
   private release(row: ProjectRow): void {
     for (const field of row.properties.values()) field.text.destroy();

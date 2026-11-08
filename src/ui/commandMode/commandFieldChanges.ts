@@ -5,7 +5,7 @@ type PreparedOperation = Extract<
   Extract<CommandPreparation, { kind: 'task' }>['input'],
   { kind: 'append' }
 >['operation'];
-interface CommentField {
+export interface CommentField {
   readonly comment: TaskCommentV1;
   readonly key: string;
   readonly accepted: boolean;
@@ -13,14 +13,14 @@ interface CommentField {
   readonly previousMarkdown?: string | undefined;
   readonly change?: TaskDisplayField['change'];
 }
-interface RemovedComment {
-  readonly field: CommentField;
-  readonly index: number;
-}
+type DisplayEntry =
+  | { readonly kind: 'comment'; readonly key: string }
+  | { readonly kind: 'child'; readonly key: string };
 export interface CommandNodeFields {
   readonly tree: TaskTreeV1;
   readonly comments: readonly CommentField[];
-  readonly removed: readonly RemovedComment[];
+  readonly removed: readonly CommentField[];
+  readonly order: readonly DisplayEntry[];
   readonly planRevision?: string;
   readonly iteration: number;
   readonly comparison?: TaskTreeV1 | undefined;
@@ -132,6 +132,7 @@ export function commandNodeFields(input: FieldInput): CommandNodeFields {
     tree,
     comments,
     removed,
+    order: displayOrder(resolved, comments, removed),
     iteration: iteration(state),
     added: before === undefined && plan !== undefined && (previous === undefined || previous.added),
     comparison: comparison(resolved),
@@ -155,10 +156,9 @@ function commentChange(
 ): TaskDisplayField['change'] {
   const { input } = context;
   if (input.plan === undefined) return undefined;
-  if (input.state.presentation?.changes === 'cumulative') return cumulativeChange(retained);
   if (input.previous?.planRevision === input.plan.revision)
     return retainedIterationChange(input, retained);
-  return newCommentChange(index, retained, context);
+  return newCommentChange(index, retained, context) ?? retainedIterationChange(input, retained);
 }
 function newCommentChange(
   index: number,
@@ -183,8 +183,8 @@ function buildComment(comment: TaskCommentV1, index: number, context: FieldConte
   return {
     comment,
     key: retained?.key ?? `${context.input.key}:comment:${comment.target}`,
-    accepted: retained?.accepted ?? context.accepted,
-    original: originalText(retained, comment, context.accepted),
+    accepted: context.input.plan === undefined || (retained?.accepted ?? context.accepted),
+    original: originalText(retained, comment, context),
     previousMarkdown: previousCommentText(retained, change, context),
     ...(change === undefined ? {} : { change }),
   };
@@ -192,10 +192,11 @@ function buildComment(comment: TaskCommentV1, index: number, context: FieldConte
 function originalText(
   retained: CommentField | undefined,
   comment: TaskCommentV1,
-  accepted: boolean,
+  context: FieldContext,
 ): string | undefined {
+  if (context.input.plan === undefined) return comment.text;
   if (retained?.original !== undefined) return retained.original;
-  return accepted ? comment.text : undefined;
+  return context.accepted ? comment.text : undefined;
 }
 function retainedIterationChange(
   input: FieldInput,
@@ -203,16 +204,61 @@ function retainedIterationChange(
 ): TaskDisplayField['change'] {
   return input.previous?.iteration === iteration(input.state) ? retained?.change : undefined;
 }
-function removedComments(context: FieldContext): readonly RemovedComment[] {
+function removedComments(context: FieldContext): readonly CommentField[] {
   const { input, edit, changedIndex } = context;
   if (input.plan === undefined) return [];
   const removed = [...(input.previous?.removed ?? [])];
   if (edit?.type !== 'remove-comment' || changedIndex === undefined || input.previous === undefined)
     return removed;
   const field = input.previous.comments[changedIndex];
-  const index = input.previous.tree.entries.findIndex((entry) => entry.target === edit.target);
-  if (field?.accepted === true) removed.push({ field: { ...field, change: 'removed' }, index });
+  if (field?.accepted === true) removed.push({ ...field, change: 'removed' });
   return removed;
+}
+function treeOrder(tree: TaskTreeV1, comments: readonly CommentField[]): DisplayEntry[] {
+  const keys = new Map(comments.map((field) => [field.comment.target, field.key]));
+  return tree.entries.flatMap((entry): DisplayEntry[] => {
+    if (entry.kind === 'child') return [{ kind: 'child', key: entry.target }];
+    const key = entry.kind === 'comment' ? keys.get(entry.target) : undefined;
+    return key === undefined ? [] : [{ kind: 'comment', key }];
+  });
+}
+/** Merge ghosts around surviving neighbors in one owner-bound, activity-free sequence. */
+function displayOrder(
+  input: FieldInput,
+  comments: readonly CommentField[],
+  removed: readonly CommentField[],
+): readonly DisplayEntry[] {
+  const current = treeOrder(input.tree, comments);
+  if (input.plan === undefined) return current;
+  const pending = new Set([
+    ...removed.map((field) => field.key),
+    ...(input.before?.children.map((child) => child.target) ?? []),
+  ]);
+  const basis =
+    input.previous?.order ?? (input.before === undefined ? [] : treeOrder(input.before, comments));
+  const present = new Set(current.map((entry) => entry.key));
+  const preceding = removalAnchors(basis, present, pending);
+  return [
+    ...current.flatMap((entry) => [...(preceding.get(entry.key)?.reverse() ?? []), entry]),
+    ...(preceding.get(undefined)?.reverse() ?? []),
+  ];
+}
+function removalAnchors(
+  basis: readonly DisplayEntry[],
+  present: ReadonlySet<string>,
+  pending: ReadonlySet<string>,
+): ReadonlyMap<string | undefined, DisplayEntry[]> {
+  const preceding = new Map<string | undefined, DisplayEntry[]>();
+  let anchor: string | undefined;
+  for (const entry of [...basis].reverse()) {
+    if (present.has(entry.key)) anchor = entry.key;
+    else if (pending.has(entry.key)) {
+      const group = preceding.get(anchor) ?? [];
+      group.push(entry);
+      preceding.set(anchor, group);
+    }
+  }
+  return preceding;
 }
 function iteration(state: CommandSessionSnapshot): number {
   return state.exchanges.filter((exchange) => exchange.role === 'user').length;
@@ -236,14 +282,16 @@ function initialFields(input: FieldInput): CommandNodeFields | undefined {
         sequence(tree.comments) === sequence(before.comments),
     );
   if (source === undefined) return undefined;
+  const comments = source.comments.map((comment, index) => ({
+    comment,
+    key: input.previous?.comments[index]?.key ?? `${input.key}:comment:${comment.target}`,
+    accepted: true,
+    original: comment.text,
+  }));
   return {
     tree: source,
-    comments: source.comments.map((comment, index) => ({
-      comment,
-      key: input.previous?.comments[index]?.key ?? `${input.key}:comment:${comment.target}`,
-      accepted: true,
-      original: comment.text,
-    })),
+    comments,
+    order: treeOrder(source, comments),
     removed: [],
     added: false,
     iteration: iteration(input.state),
@@ -257,8 +305,8 @@ function initialEdit(input: FieldInput): boolean {
   return request.target === root?.target && request.expectedRevision === root.revision;
 }
 function comparison(input: FieldInput): TaskTreeV1 | undefined {
-  if (input.state.presentation?.changes === 'cumulative') return input.before;
-  if (input.previous?.planRevision === input.plan?.revision && input.previous !== undefined) {
+  if (input.plan === undefined) return input.tree;
+  if (input.previous?.planRevision !== undefined) {
     return input.previous.iteration === iteration(input.state)
       ? input.previous.comparison
       : input.previous.tree;
@@ -278,8 +326,20 @@ function previousCommentText(
   context: FieldContext,
 ): string | undefined {
   if (change !== 'changed') return undefined;
-  if (context.input.state.presentation?.changes === 'cumulative') return field?.original;
-  return context.input.previous?.planRevision === context.input.plan?.revision
-    ? field?.previousMarkdown
+  return context.input.previous?.iteration === iteration(context.input.state)
+    ? (field?.previousMarkdown ?? field?.comment.text)
     : field?.comment.text;
+}
+/** Cumulative paint never replaces the latest iteration's retained comparison. */
+export function commandCommentDisplay(
+  field: CommentField,
+  cumulative: boolean,
+): {
+  change: TaskDisplayField['change'];
+  previousMarkdown: string | undefined;
+} {
+  const change = cumulative ? cumulativeChange(field) : field.change;
+  let previousMarkdown = field.previousMarkdown;
+  if (cumulative) previousMarkdown = change === 'changed' ? field.original : undefined;
+  return { change, previousMarkdown };
 }

@@ -11,7 +11,12 @@ import {
   type TaskDisplayNode,
   type TaskTreeDisplayMount,
 } from '../taskTreeDisplay';
-import { commandNodeFields, type CommandNodeFields } from './commandFieldChanges';
+import {
+  commandCommentDisplay,
+  commandNodeFields,
+  type CommandNodeFields,
+  type CommentField,
+} from './commandFieldChanges';
 import type { CommandProjectFields } from './CommandProjects';
 import { CommandTreeHeader, type CommandTaskBinding } from './CommandTreeHeader';
 import { CommandTreeReader } from './CommandTreeReader';
@@ -347,7 +352,7 @@ export class CommandTree {
       tree,
       key,
       before,
-      comparison: fields.comparison,
+      comparison: this.state.presentation?.changes === 'cumulative' ? before : fields.comparison,
       path: this.sourcePath(tree, projection.plan),
       fields,
       removed,
@@ -415,72 +420,41 @@ export class CommandTree {
   }
   private entries(node: NodeProjection): TaskDisplayNode['entries'] {
     const entries: Array<TaskDisplayNode['entries'][number]> = [];
-    for (const entry of node.tree.entries) {
-      if (entry.kind === 'child') {
-        const child = node.tree.children.find((child) => child.target === entry.target);
-        if (child !== undefined) entries.push(this.project(child, node.projection, node.removed));
-      } else if (entry.kind === 'comment') this.comment(node, entry.target, entries);
+    const comments = new Map(node.fields.comments.map((field) => [field.key, field]));
+    const removed = new Map(node.fields.removed.map((field) => [field.key, field]));
+    const children = new Map(node.tree.children.map((child) => [child.target, child]));
+    const before = new Map(node.before?.children.map((child) => [child.target, child]));
+    for (const entry of node.fields.order) {
+      if (entry.kind === 'comment') {
+        const field = comments.get(entry.key) ?? removed.get(entry.key);
+        if (field !== undefined) entries.push(this.comment(node, field, removed.has(entry.key)));
+      } else {
+        const child = children.get(entry.key) ?? before.get(entry.key);
+        if (child !== undefined)
+          entries.push(
+            this.project(child, node.projection, node.removed || !children.has(entry.key)),
+          );
+      }
     }
-    this.removedComments(node, entries);
-    this.removedChildren(node, entries);
     return entries;
   }
   private comment(
     node: NodeProjection,
-    target: string,
-    entries: Array<TaskDisplayNode['entries'][number]>,
-  ): void {
-    const field = node.fields.comments.find((field) => field.comment.target === target);
-    if (field === undefined) return;
-    entries.push({
+    field: CommentField,
+    removed: boolean,
+  ): TaskDisplayNode['entries'][number] {
+    const display = commandCommentDisplay(field, this.state.presentation?.changes === 'cumulative');
+    return {
       kind: 'comment',
       key: field.key,
       field: this.field(node, {
         key: field.key,
         markdown: field.comment.text,
         presentation: 'markdown',
-        change: node.removed ? 'removed' : field.change,
-        previousMarkdown: field.previousMarkdown,
+        change: node.removed || removed ? 'removed' : display.change,
+        previousMarkdown: removed ? undefined : display.previousMarkdown,
       }),
-    });
-  }
-  private removedComments(
-    node: NodeProjection,
-    entries: Array<TaskDisplayNode['entries'][number]>,
-  ): void {
-    for (const removal of node.fields.removed) {
-      const field = removal.field;
-      entries.splice(Math.max(0, Math.min(removal.index, entries.length)), 0, {
-        kind: 'comment',
-        key: field.key,
-        field: this.field(node, {
-          key: field.key,
-          markdown: field.comment.text,
-          presentation: 'markdown',
-          change: 'removed',
-        }),
-      });
-    }
-  }
-  private removedChildren(
-    node: NodeProjection,
-    entries: Array<TaskDisplayNode['entries'][number]>,
-  ): void {
-    if (node.before === undefined || node.projection.plan === undefined || node.removed) return;
-    for (const [index, entry] of node.before.entries.entries()) {
-      if (
-        entry.kind !== 'child' ||
-        node.tree.children.some((child) => child.target === entry.target)
-      )
-        continue;
-      const deleted = node.before.children.find((child) => child.target === entry.target);
-      if (deleted !== undefined)
-        entries.splice(
-          Math.min(index, entries.length),
-          0,
-          this.project(deleted, node.projection, true),
-        );
-    }
+    };
   }
   private focus(key: string): void {
     const binding = this.bindings.get(key);
