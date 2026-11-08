@@ -78,6 +78,38 @@ note, preserving other bytes. Refresh advances a private writer anchor while ret
 reviewed `before`, frozen clock, and composed child map. Any attempt, including an unchanged or
 unknown result, prevents refresh throughout that append/refresh family.
 
+Preparation-only `refineInitialStatus` uses the frozen application clock, settings and status
+catalog. The native owner certifies authored nodes from canonical creation or a complete, injective
+single-child insertion map and carries that provenance through physical correspondence. Original
+and copied historical nodes cannot use construction status. Accepted status commands retain their
+ordinary recurrence, tracking and completion-deletion lifecycle.
+
+[`TaskSourceCopyApi`](src/tasks/application/TaskSourceCopyApi.ts) adds source-selected comment and
+subtree copies to sealed root preparations. Copy and assessment await the existing guarded source
+acquisition, then capture an exact accepted source; a task tree alone need not retain full note bytes.
+[`preparedSourceGraft`](src/tasks/infrastructure/markdown/preparedSourceGraft.ts) reuses canonical
+comment ownership and hierarchy extraction, prefix adjustment and strict cross-file reference
+rebasing. Callers supply refs, never Markdown or timestamps. Copied tasks receive fresh draft
+identities and separate captured-source provenance. Whole-source bytes remain frozen through an
+eligible destination refresh even when an unrelated source sibling changes.
+
+The canonical editor supplies original physical line maps for copy preservation and exact original
+comment continuation. Later edits retain a witness only while its captured range and ownership
+remain proved. Same-root comment removal can use that continuation after copying, including
+identical comments; cross-root removal remains an independently guarded command. Scope and
+semantics are checked when preparing, delivering and committing copies. Source freshness is a
+separate cleanup condition, so a changed source does not erase a valid reviewed destination copy.
+
+[`taskMergePreservation`](src/tasks/infrastructure/markdown/taskMergePreservation.ts) inventories
+canonical source header spans and owned body regions against the candidate. Simple flat merges
+require retained title/description and header values, intact comment/child copies in source order,
+and complete region coverage. Unknown fields/body data, conflicting lifecycle values, recurrence,
+tracking and source identities hold cleanup with reasons. Anchored comments and unproved container
+or cross-file reference transformations cannot be copied. Source title metadata that the canonical
+model cannot classify remains a cleanup limit. The report is evidence at one candidate, not a
+transaction or permission to delete: consumers still require a known destination receipt and
+readback before separately guarded source removal.
+
 Canonical single-root edits and task insertions also prove untouched sibling roots from their exact exterior bytes and
 physical line displacement. The repository validates their accepted revisions and passes them through
 the existing TaskRefAuthority transition and occurrence witnesses, including duplicate full blocks and
@@ -224,6 +256,25 @@ transport, or SDK is implemented. `src/main.ts` alone composes the provider with
 application service. `src/integrations/` imports inward contracts through `src/tasks` and the narrow
 [`projectApi`](src/projects/projectApi.ts) port; the task domain,
 application and infrastructure layers do not depend on the external declaration or facade.
+
+Content preparation exposes `set-initial-status`, revision-selected `copy-subtree`, exact accepted
+`copy-comment`, and read-only `assess-merge` operations through the existing facade. Plans return
+source/destination task and comment correspondence. Complete commit receipts map issued plan
+comments as well as tasks through exact accepted candidate readback; historical replay does not
+renew those handles. Comment handles identify an issued owner/revision-bound capability, so later
+reads may issue different strings for the same comment. Copy evidence keeps the caller's selected
+handle in `source` and separately issues exact source/destination pairs. A comment selection has
+one pair. Receipt comment-handle capacity failure makes correspondence unavailable while retaining
+the known storage effects. Assessments name their source basis and exact plan revision; every later
+append or refresh drops the assessment. Model assertions cannot supply preservation coverage.
+
+Optional `info.contentLimits` publishes actual accounting scopes: 128 retained versions per client,
+a derived provider ceiling of 16,384 versions across 128 clients, five-minute family TTL, and 8 MiB
+of UTF-8 JSON before/after snapshot accounting per client. A validated preparation input above
+1 MiB of UTF-8 JSON is rejected before native preparation. Reads keep complete scalars. Task-handle
+maps are capped at 50,000 per version side; each client tree reader shares 50,000 comment/time-entry
+handles with 60-second expiry and pages cap at 500 entries. These snapshot and input limits do not
+bound captured native source heap, and there is no new shared reservation registry.
 
 The optional `notes.search/read/prepare/create/apply` facade uses the neutral
 [`NoteSourceReadApi`](src/notes/NoteSourceApi.ts) over TaskIndex's existing accepted source store.

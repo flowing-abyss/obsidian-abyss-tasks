@@ -28,6 +28,7 @@ import { ProjectReadRegistry } from './ProjectReadRegistry';
 import { createTaskApiMutations } from './taskApiMutations';
 import { createTaskApiReads, lifecycleError, readError } from './taskApiReads';
 import { TaskContentApi, type TaskContentPorts } from './taskContentApi';
+import { CONTENT_LIMITS } from './taskContentValidation';
 import { TaskCursorRegistry } from './TaskCursorRegistry';
 import { TaskIdentityRegistry } from './TaskIdentityRegistry';
 import { TaskRequestRegistry } from './TaskRequestRegistry';
@@ -135,6 +136,7 @@ function apiInfo(options: ProviderOptions): ApiInfoV1 {
           },
         }),
     ...(options.notes === undefined ? {} : { noteLimits: NOTE_LIMITS }),
+    ...(options.content === undefined ? {} : { contentLimits: CONTENT_LIMITS }),
     limits: {
       defaultPageSize: 100,
       maxPageSize: 500,

@@ -15,6 +15,7 @@ import type { TaskHierarchyCommand, TaskHierarchyRecovery } from '../domain/task
 import { isTaskDependencyId } from '../domain/taskLineSourceModel';
 import type { RebaseEvidence, RootReconciliationBasis } from '../domain/taskReconciliation';
 import type {
+  CommentRef,
   LocalDate,
   SubtaskSnapshot,
   TaskDestination,
@@ -35,6 +36,11 @@ import type {
   ProjectTaskResult,
   ProjectTaskSource,
 } from './TaskProjectCommands';
+import type {
+  TaskMergePreservation,
+  TaskSourceCopy,
+  TaskSourceCopyEvidence,
+} from './TaskSourceCopyApi';
 import type { TaskStrictStatusFailure, TaskStrictStatusGuard } from './TaskStatusMutationApi';
 
 type AddSubtaskLifecycle =
@@ -292,6 +298,11 @@ export type TaskPreparedRootEdit =
       readonly continuations: readonly TaskPreparedNodeContinuation[];
       readonly after: TaskSnapshot | null;
       append(command: TaskEditCommand): TaskPreparedRootEdit;
+      readonly copies: readonly TaskSourceCopyEvidence[];
+      sourceCopiesAvailable(): boolean;
+      continueSourceComment(source: CommentRef): CommentRef | undefined;
+      assessMerge(source: TaskNodeRef): Promise<TaskMergePreservation | undefined>;
+      copySource(input: TaskSourceCopy): Promise<TaskPreparedRootEdit>;
       refresh(current: TaskSnapshot): Promise<TaskPreparedRootEdit | TaskEditRefreshUnavailable>;
       commit(): Promise<TaskRepositoryResult>;
     }
@@ -307,6 +318,11 @@ export type TaskPreparedCreateRoot =
       readonly after: TaskSnapshot;
       readonly continuations: readonly TaskPreparedNodeContinuation[];
       append(command: TaskEditCommand): TaskPreparedCreateRoot;
+      readonly copies: readonly TaskSourceCopyEvidence[];
+      sourceCopiesAvailable(): boolean;
+      continueSourceComment(source: CommentRef): CommentRef | undefined;
+      assessMerge(source: TaskNodeRef): Promise<TaskMergePreservation | undefined>;
+      copySource(input: TaskSourceCopy): Promise<TaskPreparedCreateRoot>;
       refresh(options?: {
         readonly createdDestinationAnchor?: TaskSnapshot;
       }): Promise<TaskPreparedCreateRoot>;

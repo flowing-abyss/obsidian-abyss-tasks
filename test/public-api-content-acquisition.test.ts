@@ -6,6 +6,108 @@ import { deferred, flushMicrotasks, metadataChangedEmitter } from './helpers';
 import { publicApiHarness, type PublicApiHarness } from './support/publicApiHarness';
 
 const owners: PublicApiHarness[] = [];
+it.each(['copy-comment', 'copy-subtree', 'assess-merge'] as const)(
+  'awaits selected source acquisition for %s without a source edit preparation',
+  async (type) => {
+    const content = '- [ ] Source\n  - 2021-01-02: Saved\n';
+    const h = await publicApiHarness({ 'a.md': content, 'b.md': '- [ ] Target\n' });
+    owners.push(h);
+    const file = required(h.app.vault.getFileByPath('a.md'));
+    const sourceRead = deferred<string>();
+    vi.spyOn(h.app.vault, 'read').mockImplementationOnce(() => sourceRead.promise);
+    metadataChangedEmitter(h.app)(file, content, {});
+    const c = h.client();
+    const roots = ok(await c.tasks.list()).items;
+    const source = required(roots.find((r) => r.source.path === 'a.md'));
+    const target = required(roots.find((r) => r.source.path === 'b.md'));
+    const tree = ok(await required(c.tasks.tree)({ target: source.target })).tree;
+    const p = ok(
+      await required(c.tasks.prepare)({
+        kind: 'edit',
+        target: target.target,
+        expectedRevision: target.revision,
+      }),
+    );
+    const writes = vi.spyOn(h.app.vault, 'process');
+    let settled = false;
+    const pending = required(c.tasks.prepare)({
+      kind: 'append',
+      plan: p.target,
+      expectedPlanRevision: p.revision,
+      operation:
+        type === 'copy-comment'
+          ? { type, source: required(tree.comments[0]).target, target: required(p.after).target }
+          : {
+              type,
+              source: source.target,
+              expectedSourceRevision: source.revision,
+              target: required(p.after).target,
+            },
+    }).then((result) => {
+      settled = true;
+      return result;
+    });
+    await flushMicrotasks();
+    expect(settled).toBe(false);
+    sourceRead.resolve(content);
+    const result = ok(await pending);
+    if (type === 'copy-comment') expect(result.after?.comments[0]?.text).toBe('Saved');
+    else if (type === 'copy-subtree') expect(result.copies?.[0]?.state).toBe('retained');
+    else expect(result.mergePreservation?.sourceRoot.target).toBe(source.target);
+    expect(writes).not.toHaveBeenCalled();
+  },
+);
+it.each(['settings', 'semantics', 'replacement', 'source-change'] as const)(
+  'rejects a selected source copy when %s changes during acquisition',
+  async (change) => {
+    let settings = structuredClone(DEFAULT_SETTINGS);
+    const content = '- [ ] Source\n  - Saved\n';
+    const h = await publicApiHarness(
+      { 'a.md': content, 'b.md': '- [ ] Target\n' },
+      { behaviorSettings: () => settings },
+    );
+    owners.push(h);
+    const file = required(h.app.vault.getFileByPath('a.md'));
+    const sourceRead = deferred<string>();
+    vi.spyOn(h.app.vault, 'read').mockImplementationOnce(() => sourceRead.promise);
+    metadataChangedEmitter(h.app)(file, content, {});
+    const c = h.client();
+    const roots = ok(await c.tasks.list()).items;
+    const source = required(roots.find((r) => r.source.path === 'a.md'));
+    const target = required(roots.find((r) => r.source.path === 'b.md'));
+    const p = ok(
+      await required(c.tasks.prepare)({
+        kind: 'edit',
+        target: target.target,
+        expectedRevision: target.revision,
+      }),
+    );
+    const writes = vi.spyOn(h.app.vault, 'process');
+    const pending = required(c.tasks.prepare)({
+      kind: 'append',
+      plan: p.target,
+      expectedPlanRevision: p.revision,
+      operation: {
+        type: 'copy-subtree',
+        source: source.target,
+        expectedSourceRevision: source.revision,
+        target: required(p.after).target,
+      },
+    });
+    await flushMicrotasks();
+    if (change === 'settings') settings = { ...settings, taskPrefix: '#changed' };
+    else if (change === 'semantics') h.index.updateIntegrationSemantics('changed');
+    else if (change === 'replacement') {
+      await h.app.vault.rename(file, 'old.md');
+      const replacement = await h.app.vault.create('a.md', content);
+      metadataChangedEmitter(h.app)(replacement, content, {});
+    } else await h.external('a.md', '- [ ] Changed\n');
+    sourceRead.resolve(content);
+    expect((await pending).ok).toBe(false);
+    expect(writes).not.toHaveBeenCalled();
+  },
+);
+
 afterEach(() => {
   owners.splice(0).forEach((owner) => {
     owner.dispose();

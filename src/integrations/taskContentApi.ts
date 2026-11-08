@@ -1,7 +1,9 @@
 import type {
   ApiResultV1,
   ApplyTaskContentV1,
+  ContentMergePreservationV1,
   ContentPlanV1,
+  ContentSourceCopyV1,
   PrepareTaskContentV1,
   ReadTaskTreeV1,
   TaskContentMutationResultV1,
@@ -26,6 +28,7 @@ import {
   type TaskNodeRef,
   type TaskNodeSnapshot,
   type TaskSnapshot,
+  type TaskSourceCopy,
   type TaskStatusRule,
 } from '../tasks';
 import type { ProjectReadRegistry } from './ProjectReadRegistry';
@@ -34,6 +37,12 @@ import type { TaskRequestRegistry } from './TaskRequestRegistry';
 import type { ProjectPorts } from './projectApiMutations';
 import { currentNode } from './taskApiMutations';
 import { readError, readFailure } from './taskApiReads';
+import {
+  acceptedSourceComment,
+  copyOrigin,
+  projectSourceCopy,
+  type ContentCopyOrigin,
+} from './taskContentCopies';
 import {
   contentReceipt,
   redactContentMutationResult,
@@ -78,6 +87,8 @@ interface Family {
   release: () => void;
 }
 interface Version {
+  readonly assessment?: Omit<ContentMergePreservationV1, 'planRevision'>;
+  readonly copyOrigins: readonly ContentCopyOrigin[];
   readonly target: string;
   readonly revision: string;
   readonly expiresAt: number;
@@ -127,10 +138,25 @@ function nativeTree(tree: TaskCreateTreeV1, ports: TaskContentPorts): TaskCreate
     ...(children === undefined ? {} : { children: children.map((c) => nativeTree(c, ports)) }),
   };
 }
+type NativePreparationOperation = Extract<
+  TaskContentOperationV1,
+  { type: 'set-initial-status' | 'copy-comment' | 'copy-subtree' | 'assess-merge' }
+>;
+function nativePreparationOperation(
+  operation: TaskContentOperationV1,
+): operation is NativePreparationOperation {
+  return (
+    operation.type === 'set-initial-status' ||
+    operation.type === 'copy-comment' ||
+    operation.type === 'copy-subtree' ||
+    operation.type === 'assess-merge'
+  );
+}
 function translate(
   operation: TaskContentOperationV1,
   version: Pick<Version, 'tasks' | 'comments'>,
 ): PreparedTaskEditCommand | undefined {
+  if (nativePreparationOperation(operation)) return undefined;
   if (operation.type === 'update-comment' || operation.type === 'remove-comment')
     return commentCommand(operation, version.comments);
   const target = version.tasks.get(operation.target);
@@ -149,10 +175,13 @@ function translate(
     case 'add-comment':
       return { type: 'add-comment', parent: target, text: operation.text };
     case 'remove':
-      return target.type === 'task'
-        ? { type: 'delete', ref: target.ref }
-        : { type: 'delete-subtask', subtask: target.ref };
+      return removeCommand(target);
   }
+}
+function removeCommand(target: TaskNodeRef): PreparedTaskEditCommand {
+  return target.type === 'task'
+    ? { type: 'delete', ref: target.ref }
+    : { type: 'delete-subtask', subtask: target.ref };
 }
 function commentCommand(
   operation: Extract<TaskContentOperationV1, { type: 'update-comment' | 'remove-comment' }>,
@@ -209,6 +238,12 @@ export class TaskContentApi {
     this.clean_abyssPrivate();
     const v = this.versions_abyssPrivate.get(revision);
     if (v?.target !== target || (!v.published && !includeUnpublished)) return contentFailure();
+    if (!v.native.sourceCopiesAvailable()) return readFailure('unavailable');
+    const disclosure = this.originalDisclosure_abyssPrivate(v);
+    if (disclosure !== undefined) return disclosure;
+    return { ok: true, value: v };
+  }
+  private originalDisclosure_abyssPrivate(v: Version): ApiResultV1<never> | undefined {
     if (v.originalTarget !== undefined) {
       const identity = this.ctx_abyssPrivate.api.identities.lookup(v.originalTarget);
       if (!identity.ok) return identity;
@@ -219,7 +254,7 @@ export class TaskContentApi {
       if (!this.ctx_abyssPrivate.api.reads.canDisclose(identity.value.address))
         return readFailure('unavailable');
     }
-    return { ok: true, value: v };
+    return undefined;
   }
   private projection_abyssPrivate(v: Version, before = false): TreeProjection {
     const tasks = before ? v.beforeTasks : v.tasks,
@@ -232,6 +267,7 @@ export class TaskContentApi {
           kind,
           `${v.revision}:${before ? 'before' : 'after'}:${parent}`,
           ref,
+          true,
         );
         if (kind === 'comment' && !before && root !== null)
           v.comments.set(target, ref as CommentRef);
@@ -327,6 +363,28 @@ export class TaskContentApi {
     }
     return {};
   }
+  private copies_abyssPrivate(v: Version): readonly ContentSourceCopyV1[] {
+    const root = v.native.after;
+    if (root === null) return [];
+    const projection = this.projection_abyssPrivate(v);
+    const task = (ref: TaskNodeRef): string | undefined => {
+      const node = findTreeNode(root, ref);
+      if (node === undefined) return undefined;
+      const identity = projection.task(node);
+      return identity.ok ? identity.value.target : undefined;
+    };
+    return v.native.copies.flatMap((evidence, i) => {
+      const origin = v.copyOrigins[i];
+      return origin === undefined
+        ? []
+        : [
+            projectSourceCopy(evidence, origin, task, (ref) => {
+              const parent = task(ref.parent);
+              return parent === undefined ? undefined : projection.entry('comment', parent, ref);
+            }),
+          ];
+    });
+  }
   private render_abyssPrivate(v: Version): ApiResultV1<ContentPlanV1> {
     const tree = (root: TaskSnapshot | null, before: boolean): ApiResultV1<TaskTreeV1 | null> =>
       root === null
@@ -352,6 +410,10 @@ export class TaskContentApi {
         expiresAt: v.expiresAt,
         before: before.value,
         after: after.value,
+        copies: this.copies_abyssPrivate(v),
+        ...(v.assessment === undefined
+          ? {}
+          : { mergePreservation: { ...v.assessment, planRevision: v.revision } }),
         ...(v.destination === undefined ? {} : { destination: v.destination }),
       },
     });
@@ -423,10 +485,28 @@ export class TaskContentApi {
       return { before: origin.before, ...(next?.after === undefined ? {} : { after: next.after }) };
     });
   }
+  private copyMetadata_abyssPrivate(
+    previous: Version | undefined,
+    evidence?: {
+      copy?: ContentCopyOrigin;
+      assessment?: Omit<ContentMergePreservationV1, 'planRevision'>;
+    },
+  ): Pick<Version, 'copyOrigins' | 'assessment'> {
+    const copyOrigins = [...(previous?.copyOrigins ?? [])];
+    if (evidence?.copy !== undefined) copyOrigins.push(evidence.copy);
+    return {
+      copyOrigins,
+      ...(evidence?.assessment === undefined ? {} : { assessment: evidence.assessment }),
+    };
+  }
   private retain_abyssPrivate(
     native: Native,
     previous?: Version,
     input?: PlanInput,
+    evidence?: {
+      copy?: ContentCopyOrigin;
+      assessment?: Omit<ContentMergePreservationV1, 'planRevision'>;
+    },
   ): ApiResultV1<ContentPlanV1> {
     if (this.disposed_abyssPrivate || this.ctx_abyssPrivate.isDisposed())
       return readFailure('disposed');
@@ -442,6 +522,7 @@ export class TaskContentApi {
       ...this.metadata_abyssPrivate(native, previous, input),
       revision: this.token_abyssPrivate('revision'),
       native,
+      ...this.copyMetadata_abyssPrivate(previous, evidence),
       origins: this.originalContinuations_abyssPrivate(native, previous),
       tasks: new Map<string, TaskNodeRef>(),
       comments: new Map<string, CommentRef>(),
@@ -549,7 +630,7 @@ export class TaskContentApi {
         release: pinned.value,
       });
       retained = initial.ok;
-      return this.finishInitialEdit_abyssPrivate(
+      return await this.finishInitialEdit_abyssPrivate(
         initial,
         input,
         root,
@@ -559,12 +640,12 @@ export class TaskContentApi {
       if (!retained) pinned.value();
     }
   }
-  private finishInitialEdit_abyssPrivate(
+  private async finishInitialEdit_abyssPrivate(
     initial: ApiResultV1<ContentPlanV1>,
     input: Extract<PrepareTaskContentV1, { kind: 'edit' }>,
     root: TaskSnapshot,
     selected: TaskNodeRef,
-  ): ApiResultV1<ContentPlanV1> {
+  ): Promise<ApiResultV1<ContentPlanV1>> {
     if (!initial.ok) return initial;
     const found = this.versions_abyssPrivate.get(initial.value.revision);
     if (found === undefined) throw new Error('Missing retained plan');
@@ -575,16 +656,16 @@ export class TaskContentApi {
     return this.firstAppend_abyssPrivate(found, root, input.operation);
   }
 
-  private firstAppend_abyssPrivate(
+  private async firstAppend_abyssPrivate(
     found: Version,
     root: TaskSnapshot,
     operation: TaskContentOperationV1,
-  ): ApiResultV1<ContentPlanV1> {
+  ): Promise<ApiResultV1<ContentPlanV1>> {
     let retained = false;
     try {
       for (const [target, ref] of found.beforeTasks) found.tasks.set(target, ref);
       this.initialOperationTargets_abyssPrivate(found, root, operation);
-      const result = this.append_abyssPrivate(found, operation);
+      const result = await this.append_abyssPrivate(found, operation);
       retained = result.ok;
       return result;
     } finally {
@@ -616,15 +697,104 @@ export class TaskContentApi {
           if (JSON.stringify(c.ref) === JSON.stringify(comment)) found.comments.set(target, c.ref);
     }
   }
-  private append_abyssPrivate(
+  private async append_abyssPrivate(
     v: Version,
     operation: TaskContentOperationV1,
-  ): ApiResultV1<ContentPlanV1> {
-    const command = translate(operation, v);
+  ): Promise<ApiResultV1<ContentPlanV1>> {
+    if (operation.type === 'assess-merge') return this.assessMerge_abyssPrivate(v, operation);
+    if (operation.type === 'copy-comment' || operation.type === 'copy-subtree')
+      return this.copy_abyssPrivate(v, operation);
+    if (operation.type === 'set-initial-status') {
+      const target = v.tasks.get(operation.target);
+      if (target === undefined) return contentFailure('STALE_TARGET');
+      const native = v.native.refineInitialStatus({ target, symbol: operation.symbol });
+      return native.type === 'ready'
+        ? this.retain_abyssPrivate(native, v)
+        : commandResultError(native.result);
+    }
+    const command = this.translate_abyssPrivate(v, operation);
     if (command === undefined) return contentFailure('STALE_TARGET');
     const native = v.native.append(command);
     if (native.type !== 'ready') return commandResultError(native.result);
     return this.retain_abyssPrivate(native, v);
+  }
+  private translate_abyssPrivate(
+    v: Version,
+    operation: TaskContentOperationV1,
+  ): PreparedTaskEditCommand | undefined {
+    const command = translate(operation, v);
+    if (command !== undefined || operation.type !== 'remove-comment') return command;
+    const source = acceptedSourceComment(
+      this.ctx_abyssPrivate.api,
+      this.reader_abyssPrivate.comment(operation.target, true),
+    );
+    const comment = source === undefined ? undefined : v.native.continueSourceComment(source);
+    return comment === undefined ? undefined : { type: 'delete-comment', comment };
+  }
+  private async assessMerge_abyssPrivate(
+    v: Version,
+    operation: Extract<TaskContentOperationV1, { expectedSourceRevision: string }>,
+  ): Promise<ApiResultV1<ContentPlanV1>> {
+    const parent = v.tasks.get(operation.target);
+    if (parent?.type !== 'task' || v.originalTarget === operation.source)
+      return contentFailure('STALE_TARGET');
+    const source = currentNode(this.ctx_abyssPrivate.api, {
+      target: operation.source,
+      expectedRevision: operation.expectedSourceRevision,
+    });
+    if (!source.ok) return source;
+    const native = v.native.append({ type: 'patch', target: parent, patch: {} });
+    if (native.type !== 'ready') return commandResultError(native.result);
+    const report = await native.assessMerge(source.value.node.value.target);
+    if (report === undefined) return contentFailure('STALE_TARGET');
+    return this.retain_abyssPrivate(native, v, undefined, {
+      assessment: {
+        sourceRoot: { target: operation.source, revision: operation.expectedSourceRevision },
+        state: report.state,
+        entries: report.entries,
+      },
+    });
+  }
+  private async copy_abyssPrivate(
+    v: Version,
+    operation: Extract<TaskContentOperationV1, { type: 'copy-comment' | 'copy-subtree' }>,
+  ): Promise<ApiResultV1<ContentPlanV1>> {
+    const parent = v.tasks.get(operation.target);
+    if (parent === undefined) return contentFailure('STALE_TARGET');
+    let input: TaskSourceCopy;
+    if (operation.type === 'copy-comment') {
+      const source = acceptedSourceComment(
+        this.ctx_abyssPrivate.api,
+        this.reader_abyssPrivate.comment(operation.source, true),
+      );
+      if (source === undefined) return contentFailure('STALE_TARGET');
+      input = { type: 'comment', source, parent };
+    } else {
+      const source = currentNode(this.ctx_abyssPrivate.api, {
+        target: operation.source,
+        expectedRevision: operation.expectedSourceRevision,
+      });
+      if (!source.ok) return source;
+      input = { type: 'subtree', source: source.value.node.value.target, parent };
+    }
+    const native = await v.native.copySource(input);
+    if (native.type !== 'ready')
+      return readError(
+        'unsupported',
+        'SOURCE_COPY_UNPROVEN',
+        'Source ownership, container or reference preservation could not be proved.',
+      );
+    const evidence = native.copies[native.copies.length - 1];
+    if (evidence === undefined) return contentFailure();
+    const origin = copyOrigin(
+      this.ctx_abyssPrivate.api,
+      evidence,
+      operation.source,
+      (kind, parent, ref) => this.reader_abyssPrivate.entry(kind, parent, ref),
+    );
+    return origin.ok
+      ? this.retain_abyssPrivate(native, v, undefined, { copy: origin.value })
+      : origin;
   }
   private async create_abyssPrivate(
     input: Extract<PrepareTaskContentV1, { kind: 'create' }>,
@@ -842,6 +1012,7 @@ export class TaskContentApi {
       return pinned;
     }
     const coverage = new Map(v.tasks);
+    const comments = new Map(v.comments);
     return {
       ok: true,
       value: {
@@ -856,6 +1027,7 @@ export class TaskContentApi {
         execute: (acceptedAt) =>
           this.execute_abyssPrivate(v, input, {
             coverage,
+            comments,
             reservation: reservation.value,
             acceptedAt,
           }),
@@ -879,6 +1051,7 @@ export class TaskContentApi {
     input: ApplyTaskContentV1,
     admission: {
       coverage: Map<string, TaskNodeRef>;
+      comments: Map<string, CommentRef>;
       reservation: Parameters<ContentContext['api']['identities']['claimNext']>[0];
       acceptedAt: number;
     },
@@ -897,6 +1070,8 @@ export class TaskContentApi {
       {
         result,
         coverage,
+        comments: admission.comments,
+        commentHandle: (parent, ref) => this.reader_abyssPrivate.entry('comment', parent, ref),
         reservation,
         ...(destinationEffects === undefined ? {} : { destinationEffects }),
       },

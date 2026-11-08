@@ -1,8 +1,55 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import type { ApiResultV1 } from '../api';
+import { TaskTreeReader } from '../src/integrations/taskTreeApi';
 import { deferred, metadataChangedEmitter } from './helpers';
 import { publicApiHarness, type PublicApiHarness } from './support/publicApiHarness';
 const owners: PublicApiHarness[] = [];
+it('copies an accepted cross-file root comment after a prepared description with preambles', async () => {
+  const h = await publicApiHarness({
+    'A/source.md':
+      '# Перенос\n\n- [ ] Исходная задача\n  - > Исходное описание.\n  - 2021-01-02: Важный комментарий.\n  - [ ] Проверить результат\n',
+    'B/target.md': '# Итог\n\n- [ ] Итог\n',
+  });
+  owners.push(h);
+  const c = h.client();
+  const roots = ok(await c.tasks.list()).items;
+  const source = required(roots.find((r) => r.source.path === 'A/source.md'));
+  const target = required(roots.find((r) => r.source.path === 'B/target.md'));
+  const tree = ok(await required(c.tasks.tree)({ target: source.target })).tree;
+  let p = ok(
+    await required(c.tasks.prepare)({
+      kind: 'edit',
+      target: target.target,
+      expectedRevision: target.revision,
+    }),
+  );
+  p = ok(
+    await required(c.tasks.prepare)({
+      kind: 'append',
+      plan: p.target,
+      expectedPlanRevision: p.revision,
+      operation: {
+        type: 'description',
+        target: required(p.after ?? undefined).target,
+        text: 'Исходная задача\nИсходное описание.',
+      },
+    }),
+  );
+  p = ok(
+    await required(c.tasks.prepare)({
+      kind: 'append',
+      plan: p.target,
+      expectedPlanRevision: p.revision,
+      operation: {
+        type: 'copy-comment',
+        source: required(tree.comments[0]).target,
+        target: required(p.after ?? undefined).target,
+      },
+    }),
+  );
+  expect(p.after?.comments[0]?.text).toBe('Важный комментарий.');
+  expect(p.copies?.[0]?.state).toBe('retained');
+});
 afterEach(() => {
   owners.splice(0).forEach((h) => {
     h.dispose();
@@ -1207,3 +1254,292 @@ it('retains a refresh predecessor while BOM metadata coverage settles through a 
   expect(refused).toMatchObject({ ok: false, error: { code: 'INCOMPLETE_READ' } });
   unsubscribe();
 });
+
+it('refines initial status through opaque current plan handles', async () => {
+  const h = await setup('- [ ] Existing\n');
+  const c = h.client();
+  const p = ok(
+    await required(c.tasks.prepare)({
+      kind: 'create',
+      destination: { type: 'note', path: 'a.md', insertion: { type: 'append' } },
+      tree: { markdownTitle: 'New' },
+    }),
+  );
+  const next = ok(
+    await required(c.tasks.prepare)({
+      kind: 'append',
+      plan: p.target,
+      expectedPlanRevision: p.revision,
+      operation: {
+        type: 'set-initial-status',
+        target: required(p.after ?? undefined).target,
+        symbol: 'x',
+      },
+    }),
+  );
+  expect(next.after?.status).toBe('done');
+  expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+});
+it('admits UTF-8 preparation input at the advertised cap and rejects one byte above before native work', async () => {
+  const h = await setup('- [ ] Existing\n');
+  const c = h.client();
+  const cap = required(c.info.contentLimits).maxPreparationInputBytes;
+  const input = {
+    kind: 'create' as const,
+    destination: { type: 'note' as const, path: 'a.md', insertion: { type: 'append' as const } },
+    tree: { markdownTitle: 'New', description: '' },
+  };
+  const overhead = new TextEncoder().encode(JSON.stringify(input)).length;
+  input.tree.description =
+    'é'.repeat(Math.floor((cap - overhead) / 2)) + 'a'.repeat((cap - overhead) % 2);
+  const native = vi.spyOn(h.service, 'prepareCreateTree');
+  expect((await required(c.tasks.prepare)(input)).ok).toBe(true);
+  expect(native).toHaveBeenCalledTimes(1);
+  input.tree.description += 'a';
+  expect(await required(c.tasks.prepare)(input)).toMatchObject({
+    ok: false,
+    error: { code: 'INVALID_ARGUMENT' },
+  });
+  expect(native).toHaveBeenCalledTimes(1);
+});
+it('copies a revision-selected source subtree and returns exact fresh task/comment correspondence', async () => {
+  const h = await setup(
+    '- [ ] Target\n- [x] Source [unknown:: keep]\n  - 2020-01-02: Old\n  - [ ] Same\n  - [ ] Same\n',
+  );
+  const c = h.client();
+  const roots = ok(await c.tasks.list()).items;
+  const target = required(roots[0]),
+    source = required(roots[1]);
+  const p = ok(
+    await required(c.tasks.prepare)({
+      kind: 'edit',
+      target: target.target,
+      expectedRevision: target.revision,
+    }),
+  );
+  const copied = ok(
+    await required(c.tasks.prepare)({
+      kind: 'append',
+      plan: p.target,
+      expectedPlanRevision: p.revision,
+      operation: {
+        type: 'copy-subtree',
+        source: source.target,
+        expectedSourceRevision: source.revision,
+        target: required(p.after ?? undefined).target,
+      },
+    }),
+  );
+  const evidence = required(copied.copies?.[0]);
+  expect(evidence.state).toBe('retained');
+  expect(evidence.tasks).toHaveLength(3);
+  expect(evidence.comments).toHaveLength(1);
+  expect(new Set(evidence.tasks.map((t) => t.destinationTarget)).size).toBe(3);
+  expect(evidence.tasks[0]?.destinationTarget).not.toBe(source.target);
+  expect(
+    await required(c.tasks.prepare)({
+      kind: 'append',
+      plan: p.target,
+      expectedPlanRevision: p.revision,
+      operation: {
+        type: 'copy-subtree',
+        source: source.target,
+        expectedSourceRevision: 'old',
+        target: required(p.after ?? undefined).target,
+      },
+    }),
+  ).toMatchObject({ ok: false, error: { code: 'REVISION_CONFLICT' } });
+  const saved = await required(c.tasks.apply)({
+    plan: copied.target,
+    expectedPlanRevision: copied.revision,
+    requestId: 'copy',
+    expiresAt: Date.UTC(2026, 7, 1, 12) + 60000,
+  });
+  expect(saved.ok).toBe(true);
+  expect(saved.receipt?.contentContinuity.correspondence.state).toBe('complete');
+  const map = saved.receipt?.contentContinuity.correspondence;
+  expect(map?.state === 'complete' ? map.comments : undefined).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ preparedTarget: evidence.comments[0]?.destinationTarget }),
+    ]),
+  );
+});
+it('binds merge coverage to one plan revision and clears it on a later edit', async () => {
+  const h = await setup('- [ ] Target\n  - > Source\n- [ ] Source\n');
+  const c = h.client();
+  const roots = ok(await c.tasks.list()).items;
+  const target = required(roots[0]),
+    source = required(roots[1]);
+  const p = ok(
+    await required(c.tasks.prepare)({
+      kind: 'edit',
+      target: target.target,
+      expectedRevision: target.revision,
+    }),
+  );
+  const assessed = ok(
+    await required(c.tasks.prepare)({
+      kind: 'append',
+      plan: p.target,
+      expectedPlanRevision: p.revision,
+      operation: {
+        type: 'assess-merge',
+        source: source.target,
+        expectedSourceRevision: source.revision,
+        target: required(p.after ?? undefined).target,
+      },
+    }),
+  );
+  expect(assessed.mergePreservation).toMatchObject({
+    state: 'covered',
+    sourceRoot: { target: source.target, revision: source.revision },
+    planRevision: assessed.revision,
+  });
+  const edited = ok(
+    await required(c.tasks.prepare)({
+      kind: 'append',
+      plan: assessed.target,
+      expectedPlanRevision: assessed.revision,
+      operation: {
+        type: 'description',
+        target: required(assessed.after ?? undefined).target,
+        text: null,
+      },
+    }),
+  );
+  expect(edited.mergePreservation).toBeUndefined();
+  expect(await h.read('a.md')).toBe('- [ ] Target\n  - > Source\n- [ ] Source\n');
+});
+it('moves one selected same-root duplicate comment through copy and exact original-source continuation', async () => {
+  const h = await setup('- [ ] Root\r\n  - Same\r\n  - Same\r\n  - [ ] Child\r\n');
+  const c = h.client();
+  const root = required(ok(await c.tasks.list()).items[0]);
+  const tree = ok(await required(c.tasks.tree)({ target: root.target })).tree;
+  const selected = required(tree.comments[0]);
+  let p = ok(
+    await required(c.tasks.prepare)({
+      kind: 'edit',
+      target: root.target,
+      expectedRevision: root.revision,
+    }),
+  );
+  p = ok(
+    await required(c.tasks.prepare)({
+      kind: 'append',
+      plan: p.target,
+      expectedPlanRevision: p.revision,
+      operation: {
+        type: 'copy-comment',
+        source: selected.target,
+        target: required(p.after?.children[0]).target,
+      },
+    }),
+  );
+  p = ok(
+    await required(c.tasks.prepare)({
+      kind: 'append',
+      plan: p.target,
+      expectedPlanRevision: p.revision,
+      operation: { type: 'remove-comment', target: selected.target },
+    }),
+  );
+  expect(p.after?.comments).toHaveLength(1);
+  const child = ok(
+    await required(c.tasks.tree)({
+      plan: p.target,
+      expectedPlanRevision: p.revision,
+      target: required(p.after?.children[0]).target,
+    }),
+  ).tree;
+  expect(child.comments).toHaveLength(1);
+  expect(await h.read('a.md')).toBe('- [ ] Root\r\n  - Same\r\n  - Same\r\n  - [ ] Child\r\n');
+  expect(
+    (
+      await required(c.tasks.apply)({
+        plan: p.target,
+        expectedPlanRevision: p.revision,
+        requestId: 'move-comment',
+        expiresAt: Date.UTC(2026, 7, 1, 12) + 60000,
+      })
+    ).ok,
+  ).toBe(true);
+});
+it('preserves known commit effects when comment receipt allocation is unavailable', async () => {
+  const h = await setup('- [ ] Root\n');
+  const c = h.client();
+  const root = required(ok(await c.tasks.list()).items[0]);
+  const p = ok(
+    await required(c.tasks.prepare)({
+      kind: 'edit',
+      target: root.target,
+      expectedRevision: root.revision,
+      operation: { type: 'add-comment', target: root.target, text: 'Saved' },
+    }),
+  );
+  const allocation = vi.spyOn(TaskTreeReader.prototype, 'entry').mockImplementationOnce(() => {
+    throw new Error('Content entry capacity exhausted');
+  });
+  const input = {
+    plan: p.target,
+    expectedPlanRevision: p.revision,
+    requestId: 'comment-proof-unavailable',
+    expiresAt: Date.UTC(2026, 7, 1, 12) + 60000,
+  };
+  const result = await required(c.tasks.apply)(input);
+  allocation.mockRestore();
+  expect(result).toMatchObject({
+    ok: true,
+    receipt: {
+      effects: 'committed',
+      snapshots: 'unavailable',
+      contentContinuity: { correspondence: { state: 'unavailable' } },
+    },
+  });
+  expect(await required(c.tasks.apply)(input)).toEqual(result);
+  expect((await h.read('a.md')).match(/Saved/gu)).toHaveLength(1);
+});
+
+it.each([true, false])(
+  'separates accepted and unchanged draft comment capabilities (accepted first: %s)',
+  async (acceptedFirst) => {
+    const h = await setup('- [ ] Source\n  - Saved\n- [ ] Target\n');
+    const c = h.client();
+    const roots = ok(await c.tasks.list()).items;
+    const source = required(roots[0]),
+      target = required(roots[1]);
+    const accepted = acceptedFirst
+      ? ok(await required(c.tasks.tree)({ target: source.target })).tree
+      : undefined;
+    const draft = ok(
+      await required(c.tasks.prepare)({
+        kind: 'edit',
+        target: source.target,
+        expectedRevision: source.revision,
+      }),
+    );
+    const live = accepted ?? ok(await required(c.tasks.tree)({ target: source.target })).tree;
+    const destination = ok(
+      await required(c.tasks.prepare)({
+        kind: 'edit',
+        target: target.target,
+        expectedRevision: target.revision,
+      }),
+    );
+    const copy = (handle: string) =>
+      required(c.tasks.prepare)({
+        kind: 'append',
+        plan: destination.target,
+        expectedPlanRevision: destination.revision,
+        operation: {
+          type: 'copy-comment',
+          source: handle,
+          target: required(destination.after ?? undefined).target,
+        },
+      });
+    expect(await copy(required(draft.after?.comments[0]).target)).toMatchObject({
+      ok: false,
+      error: { code: 'STALE_TARGET' },
+    });
+    expect(ok(await copy(required(live.comments[0]).target)).copies?.[0]?.state).toBe('retained');
+  },
+);

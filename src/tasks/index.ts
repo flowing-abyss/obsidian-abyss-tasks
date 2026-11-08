@@ -45,7 +45,7 @@ export {
   type RecurrenceParseResult,
   type RecurrencePolicy,
 } from './domain/recurrence';
-export { taskCommandRootRef } from './domain/taskCommandTargets';
+export { taskCommandRootRef, taskNodeRootRef } from './domain/taskCommandTargets';
 export type {
   DependencyDirection,
   TaskDependencyEligibility,
@@ -235,3 +235,5 @@ export type {
 export { addEntryToTotal } from './domain/timeTracking';
 
 export type { TaskStatusRule } from './domain/types';
+
+export type { TaskSourceCopy, TaskSourceCopyEvidence } from './application/TaskSourceCopyApi';

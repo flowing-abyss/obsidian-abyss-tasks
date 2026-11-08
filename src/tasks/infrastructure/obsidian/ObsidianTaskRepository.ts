@@ -2,6 +2,7 @@ import { TFile, type App } from 'obsidian';
 import { sameNoteFileStamp } from '../../../markdown/noteFileStamp';
 import { compileNotePathPattern } from '../../../markdown/notePathPattern';
 import { readVaultText } from '../../../markdown/readVaultText';
+import { rebaseMarkdownSourceReferences } from '../../../markdown/sourceReferences';
 import type { TaskQueryApi } from '../../application/TaskApplicationApi';
 import type { TaskDiagnosticSink } from '../../application/TaskDependencyService';
 import type { TaskEditRefreshUnavailable } from '../../application/TaskEditPreparationApi';
@@ -42,6 +43,11 @@ import {
   type TaskRepository,
   type TaskRepositoryResult,
 } from '../../application/TaskRepository';
+import type {
+  TaskMergePreservation,
+  TaskSourceCopy,
+  TaskSourceCopyEvidence,
+} from '../../application/TaskSourceCopyApi';
 import type { TaskStrictWriteContext } from '../../application/TaskStatusMutationApi';
 import type {
   ArchiveRecovery,
@@ -99,6 +105,7 @@ import {
   MarkdownTaskEditPreparation,
   unchangedPreparedContinuations,
 } from '../markdown/MarkdownTaskEditPreparation';
+import { graftPreparedSource, graftedRootBlock } from '../markdown/preparedSourceGraft';
 import {
   recoverSubtaskRemoval,
   withSubtaskRemovalRecovery,
@@ -114,6 +121,7 @@ import { type TaskBlockEditor } from '../markdown/TaskBlockEditor';
 import { parseMarkdownFrontmatter } from '../markdown/taskBlockSyntax';
 import { type TaskLocator } from '../markdown/TaskLocator';
 import { type TaskMarkdownCodec } from '../markdown/TaskMarkdownCodec';
+import { assessTaskMerge } from '../markdown/taskMergePreservation';
 import {
   recoverTimeEntryRemoval,
   withTimeEntryRemovalRecovery,
@@ -880,6 +888,7 @@ interface LocatedEditInput {
 }
 
 interface EditOutcome {
+  readonly lineMap?: readonly TaskNodeLineMapping[];
   readonly nodeMap?: readonly TaskNodeLineMapping[];
   readonly result: TaskRepositoryResult;
   readonly content: string;
@@ -1027,6 +1036,17 @@ export class ObsidianTaskRepository implements TaskRepository {
         if (initial === 'refreshed') return unchangedPreparedContinuations(after);
         return initial ? [] : prepared.continuations;
       },
+      get copies() {
+        return prepared.copies;
+      },
+      sourceCopiesAvailable: () => prepared.sourceCopiesAvailable(),
+      continueSourceComment: (source) => prepared.continueSourceComment(source),
+      assessMerge: (source) => prepared.assessMerge(source),
+      copySource: async (input) =>
+        this.wrapPreparedCreate_abyssPrivate(await prepared.copySource(input), {
+          ...context,
+          phase: false,
+        }),
       validateBeforeProvision: async (check, plannedContent) => {
         if (
           !(await this.validatePreparedCreateBasis_abyssPrivate(basis, destination)) ||
@@ -1061,6 +1081,7 @@ export class ObsidianTaskRepository implements TaskRepository {
           return this.createInFile_abyssPrivate(native, destination, after.source.originalBlock, {
             validateBeforeProvision: () => guard.validateBeforeProvision(),
             check: (identity, live, content) =>
+              prepared.sourceCopiesAvailable() &&
               this.preparedCreateCurrent_abyssPrivate(basis) &&
               guard.check(identity, live, content) &&
               (accepted === undefined
@@ -1129,6 +1150,10 @@ export class ObsidianTaskRepository implements TaskRepository {
     content: string,
   ): TaskPreparedRootEdit {
     return new MarkdownTaskEditPreparation({
+      assessMerge: (root, source, copies) =>
+        this.assessPreparedMerge_abyssPrivate(root, source, copies, true),
+      copy: (content, root, input) =>
+        this.copyPreparedSource_abyssPrivate(content, root, input, true),
       apply: (content, previous, command) =>
         this.previewRootEdit_abyssPrivate(content, previous, command, true),
       commit: async () => invalidTaskTarget('destination'),
@@ -1139,6 +1164,7 @@ export class ObsidianTaskRepository implements TaskRepository {
         beforeOffset: offset,
         afterOffset: offset,
       })),
+      true,
     );
   }
 
@@ -2765,8 +2791,16 @@ export class ObsidianTaskRepository implements TaskRepository {
 
   private preparedRootPorts_abyssPrivate(basis: PreparedRootBasis): PreparedRootPorts {
     return {
+      assessMerge: (root, source, copies) =>
+        this.assessPreparedMerge_abyssPrivate(root, source, copies),
+      copy: (content, root, input) => this.copyPreparedSource_abyssPrivate(content, root, input),
       apply: (content, current, command) =>
-        this.previewRootEdit_abyssPrivate(content, current, command),
+        this.previewRootEdit_abyssPrivate(
+          content,
+          current,
+          command,
+          command.type === 'set-status' ? true : undefined,
+        ),
       commit: (content, after, nodeMap) =>
         this.commitPreparedRoot_abyssPrivate(basis, { content, after, nodeMap }),
       refresh: async (current, candidate) => {
@@ -2931,6 +2965,114 @@ export class ObsidianTaskRepository implements TaskRepository {
       observation,
     };
     return this.preparedRootCurrent_abyssPrivate(basis, basis.content) ? basis : undefined;
+  }
+
+  private async assessPreparedMerge_abyssPrivate(
+    root: TaskSnapshot,
+    source: TaskNodeRef,
+    copies: readonly TaskSourceCopyEvidence[],
+    creating = false,
+  ): Promise<TaskMergePreservation | undefined> {
+    if (source.type !== 'task') return undefined;
+    if (!creating && source.ref.filePath === root.ref.filePath && source.ref.line === root.ref.line)
+      return undefined;
+    const basis = await this.copySourceBasis_abyssPrivate({
+      type: 'subtree',
+      source,
+      parent: { type: 'task', ref: root.ref },
+    });
+    return basis === undefined
+      ? undefined
+      : assessTaskMerge(basis.root, root, copies, this.editor_abyssPrivate);
+  }
+
+  private rewritePreparedCopy_abyssPrivate(
+    text: string,
+    from: string,
+    to: string,
+    anchors: ReadonlySet<string>,
+  ): string | undefined {
+    if (from === to) return text;
+    return rebaseMarkdownSourceReferences(text, {
+      sourcePath: from,
+      destinationPath: to,
+      movedAnchors: anchors,
+      resolver: {
+        resolve: (target, sourcePath) =>
+          this.app_abyssPrivate.metadataCache.getFirstLinkpathDest(target, sourcePath)?.path,
+        linktext: (path, destinationPath) => {
+          const file = this.app_abyssPrivate.vault.getAbstractFileByPath(path);
+          if (!(file instanceof TFile)) throw new Error('Source reference disappeared during copy');
+          return this.app_abyssPrivate.metadataCache.fileToLinktext(file, destinationPath, true);
+        },
+      },
+    });
+  }
+  private async copySourceBasis_abyssPrivate(
+    input: TaskSourceCopy,
+  ): Promise<PreparedRootBasis | undefined> {
+    const target = input.type === 'comment' ? input.source.parent : input.source;
+    const ref = rootRefOf(target);
+    const resolution = this.options_abyssPrivate.preparedRootQueries?.resolve(ref);
+    const acquisition = await this.acquirePreparedSource_abyssPrivate(ref.filePath);
+    return resolution?.type !== 'exact' || acquisition === undefined
+      ? undefined
+      : this.capturePreparedRoot_abyssPrivate(resolution.task, acquisition);
+  }
+  private async copyPreparedSource_abyssPrivate(
+    content: string,
+    root: TaskSnapshot,
+    input: TaskSourceCopy,
+    creating = false,
+  ): ReturnType<NonNullable<PreparedRootPorts['copy']>> {
+    const basis = await this.copySourceBasis_abyssPrivate(input);
+    if (basis === undefined) return undefined;
+    const copied = graftPreparedSource({
+      source: basis,
+      destination: { content, root, creating },
+      selection: input,
+      editor: this.editor_abyssPrivate,
+      rewrite: (text, from, to, anchors) =>
+        this.rewritePreparedCopy_abyssPrivate(text, from, to, anchors),
+    });
+    if (copied === undefined) return undefined;
+    const block = graftedRootBlock(this.editor_abyssPrivate, copied.content, root);
+    const projected =
+      block === undefined
+        ? undefined
+        : this.snapshotFor_abyssPrivate(root.ref.filePath, copied.content, block);
+    if (projected === undefined) return undefined;
+    const after = this.versionPreparedSnapshot_abyssPrivate(projected);
+    const originalNodes = new Set(
+      this.editor_abyssPrivate.ownedTaskSubtree(root.source.originalBlock, 0)?.taskLines ?? [],
+    );
+    return {
+      content: copied.content,
+      lineMap: copied.lineMap,
+      nodeMap: copied.lineMap.filter((e) => originalNodes.has(e.beforeOffset)),
+      result: committedTask(after, true),
+      copy: {
+        selection: input,
+        sourceRoot: basis.root,
+        sourceFrom: copied.sourceFrom,
+        from: copied.from,
+        count: copied.count,
+        text: after.source.originalBlock
+          .split('\n')
+          .slice(copied.from, copied.from + copied.count)
+          .join('\n'),
+        retained: true,
+        permitted: () => this.preparedCopyDisclosure_abyssPrivate(basis.observation),
+      },
+    };
+  }
+  private preparedCopyDisclosure_abyssPrivate(observation: TaskReadObservation): boolean {
+    const now = this.options_abyssPrivate.preparedRootReads?.capture();
+    return (
+      now?.lifecycle === 'ready' &&
+      now.scopeRevision === observation.scopeRevision &&
+      now.semanticsRevision === observation.semanticsRevision
+    );
   }
 
   private previewRootEdit_abyssPrivate(
@@ -3603,6 +3745,7 @@ export class ObsidianTaskRepository implements TaskRepository {
           result: committedTask(task, true),
           content: replaced.content,
           ...(replaced.nodeMap === undefined ? {} : { nodeMap: replaced.nodeMap }),
+          ...(replaced.lineMap === undefined ? {} : { lineMap: replaced.lineMap }),
         };
   }
 
@@ -4033,6 +4176,7 @@ export class ObsidianTaskRepository implements TaskRepository {
           result: committedTask(task, true),
           content: edited.content,
           ...(edited.nodeMap === undefined ? {} : { nodeMap: edited.nodeMap }),
+          ...(edited.lineMap === undefined ? {} : { lineMap: edited.lineMap }),
         }
       : {
           result: invalidTaskSyntax(),
@@ -4301,6 +4445,7 @@ export class ObsidianTaskRepository implements TaskRepository {
           result: committedTask(task, true),
           content: replaced.content,
           ...(replaced.nodeMap === undefined ? {} : { nodeMap: replaced.nodeMap }),
+          ...(replaced.lineMap === undefined ? {} : { lineMap: replaced.lineMap }),
         }
       : {
           result: invalidTaskSyntax(),

@@ -9,6 +9,7 @@ import type {
 import {
   taskNodeSourceLine,
   taskTreeNodes,
+  type CommentRef,
   type TaskCommandResult,
   type TaskNodeRef,
   type TaskSnapshot,
@@ -26,6 +27,8 @@ export interface ContentReceiptBasis {
   readonly after: TaskSnapshot | null;
 }
 export interface ContentCommitEvidence {
+  readonly comments?: ReadonlyMap<string, CommentRef>;
+  readonly commentHandle?: (parent: string, ref: CommentRef) => string;
   readonly result: TaskCommandResult;
   readonly coverage: ReadonlyMap<string, TaskNodeRef>;
   readonly reservation: TaskIdentityReservation;
@@ -88,6 +91,54 @@ function pairs(
   }
   return result;
 }
+function allocatedComment(
+  e: ContentCommitEvidence,
+  parent: string,
+  ref: CommentRef,
+): string | undefined {
+  try {
+    return e.commentHandle?.(parent, ref);
+  } catch {
+    // A bounded read-handle allocation cannot change an already-known storage outcome.
+    return undefined;
+  }
+}
+function commentPairs(
+  context: TaskApiContext,
+  roots: { accepted: TaskSnapshot; after: TaskSnapshot },
+  e: ContentCommitEvidence,
+): Complete['comments'] | undefined {
+  const result: Array<NonNullable<Complete['comments']>[number]> = [];
+  const owners = new Map(
+    [...taskTreeNodes(roots.accepted)].map((n) => [
+      taskNodeSourceLine(n.target) - roots.accepted.ref.line,
+      n,
+    ]),
+  );
+  for (const [preparedTarget, ref] of e.comments ?? []) {
+    const owner = owners.get(taskNodeSourceLine(ref.parent) - roots.after.ref.line);
+    const comment = owner?.node.comments.find(
+      (c) =>
+        c.ref.relativeLine === ref.relativeLine && c.ref.originalMarkdown === ref.originalMarkdown,
+    );
+    if (owner === undefined || comment === undefined || e.commentHandle === undefined)
+      return undefined;
+    const parent = context.identities.project(
+      readNodeFor(context, owner),
+      context.reads.capture().semanticsRevision,
+    );
+    if (!parent.ok) return undefined;
+    const committedTarget = allocatedComment(e, parent.value.target, comment.ref);
+    if (committedTarget === undefined) return undefined;
+    result.push({
+      preparedTarget,
+      committedTarget,
+      committedParent: parent.value.target,
+      committedRevision: parent.value.revision,
+    });
+  }
+  return result;
+}
 function inserted(
   context: TaskApiContext,
   roots: { accepted: TaskSnapshot; after: TaskSnapshot },
@@ -116,10 +167,13 @@ function inserted(
   const root = context.identities.project(read.value, read.observation.semanticsRevision);
   if (!root.ok || root.value.target !== claimed.target) return { state: 'unavailable' };
   const tasks = pairs(context, roots, e.coverage, read.observation.semanticsRevision);
-  if (tasks === undefined) return { state: 'unavailable' };
+  const comments = commentPairs(context, roots, e);
+  if (tasks === undefined || comments === undefined) return { state: 'unavailable' };
   return {
     state: 'complete',
     coverage: 'issued-plan-tasks',
+    commentCoverage: 'issued-plan-comments',
+    comments,
     root: { target: root.value.target, revision: root.value.revision },
     tasks,
   };
@@ -184,7 +238,10 @@ function disclosedTarget(context: TaskApiContext, target: string): boolean {
 function disclosedCorrespondence(context: TaskApiContext, map: Correspondence): boolean {
   if (map.state !== 'complete') return true;
   if (map.root !== null && !disclosedTarget(context, map.root.target)) return false;
-  return map.tasks.every((pair) => disclosedTarget(context, pair.committedTarget));
+  return (
+    map.tasks.every((pair) => disclosedTarget(context, pair.committedTarget)) &&
+    (map.comments ?? []).every((pair) => disclosedTarget(context, pair.committedParent))
+  );
 }
 function disclosedOriginal(
   context: TaskApiContext,

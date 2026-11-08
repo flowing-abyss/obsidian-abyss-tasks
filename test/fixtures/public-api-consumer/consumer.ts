@@ -1,6 +1,7 @@
 import type {
   ApiAbortSignalV1,
   ApiResultV1,
+  ContentPlanV1,
   MutationResultV1,
   ProjectDtoV1,
   ProjectRequestV1,
@@ -295,4 +296,81 @@ export async function noteWorkflow(client: TasksApiV1, deadline: number): Promis
       requestId: 'note-create',
       expiresAt: deadline,
     });
+}
+
+export async function preparedRefinements(
+  client: TasksApiV1,
+  source: string,
+  sourceRevision: string,
+  comment: string,
+): Promise<ContentPlanV1 | undefined> {
+  const prepare = client.tasks.prepare;
+  if (prepare === undefined) return;
+  const made = await prepare({
+    kind: 'create',
+    destination: { type: 'configured-default' },
+    tree: { markdownTitle: 'New' },
+  });
+  if (!made.ok || made.value.after === null) return;
+  const next = await prepare({
+    kind: 'append',
+    plan: made.value.target,
+    expectedPlanRevision: made.value.revision,
+    operation: { type: 'set-initial-status', target: made.value.after.target, symbol: 'x' },
+  });
+  if (!next.ok || next.value.after === null) return;
+  const copied = await prepare({
+    kind: 'append',
+    plan: next.value.target,
+    expectedPlanRevision: next.value.revision,
+    operation: {
+      type: 'copy-subtree',
+      target: next.value.after.target,
+      source,
+      expectedSourceRevision: sourceRevision,
+    },
+  });
+  if (!copied.ok || copied.value.after === null) return;
+  await prepare({
+    kind: 'append',
+    plan: copied.value.target,
+    expectedPlanRevision: copied.value.revision,
+    operation: { type: 'copy-comment', target: copied.value.after.target, source: comment },
+  });
+  const assessed = await prepare({
+    kind: 'append',
+    plan: copied.value.target,
+    expectedPlanRevision: copied.value.revision,
+    operation: {
+      type: 'assess-merge',
+      target: copied.value.after.target,
+      source,
+      expectedSourceRevision: sourceRevision,
+    },
+  });
+  return assessed.ok ? assessed.value : undefined;
+}
+export function contentLimitShape(client: TasksApiV1): readonly number[] | undefined {
+  const limits = client.info.contentLimits;
+  if (limits !== undefined) {
+    const inputCap: number = limits.maxPreparationInputBytes;
+    const snapshotBudget: number = limits.maxSnapshotAccountingBytesPerClient;
+    const versions: number = limits.maxVersionsPerProvider;
+    return [
+      inputCap,
+      snapshotBudget,
+      versions,
+      limits.familyTtlMs,
+      limits.maxEntryHandlesPerReader,
+      limits.entryHandleTtlMs,
+      limits.maxIssuedTaskHandlesPerVersionSide,
+      limits.maxPageEntries,
+    ];
+  }
+  return undefined;
+}
+export function preservationShape(plan: ContentPlanV1): ReadonlyArray<string | undefined> {
+  const state: 'covered' | 'held' | undefined = plan.mergePreservation?.state;
+  const retained: string | undefined = plan.copies?.[0]?.comments[0]?.destinationParent;
+  return [state, retained];
 }

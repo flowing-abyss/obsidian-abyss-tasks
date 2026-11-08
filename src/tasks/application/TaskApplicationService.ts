@@ -1836,6 +1836,29 @@ export class TaskApplicationService
           ? { type: 'invalid', result: invalidTaskTarget('target') }
           : this.createPreparation_abyssPrivate(prepared.append(normalized), context);
       },
+      get copies() {
+        return prepared.copies;
+      },
+      sourceCopiesAvailable: () => prepared.sourceCopiesAvailable(),
+      continueSourceComment: (source) => prepared.continueSourceComment(source),
+      assessMerge: async (source) => {
+        if (!context.current()) return undefined;
+        const report = await prepared.assessMerge(source);
+        return context.current() ? report : undefined;
+      },
+      copySource: async (input) => {
+        if (!context.current()) return { type: 'invalid', result: invalidTaskTarget('settings') };
+        const copied = await prepared.copySource(input);
+        return context.current()
+          ? this.createPreparation_abyssPrivate(copied, context)
+          : { type: 'invalid', result: invalidTaskTarget('settings') };
+      },
+      refineInitialStatus: (input) => {
+        const command = this.initialStatusRefinement_abyssPrivate(input, prepared.after, context);
+        return command === undefined
+          ? { type: 'invalid', result: invalidTaskTarget('status') }
+          : this.createPreparation_abyssPrivate(prepared.append(command), context);
+      },
       sharesDestinationBasis: (other) => {
         const otherPlan = this.createPreparationPlans_abyssPrivate.get(other);
         return (
@@ -2027,6 +2050,29 @@ export class TaskApplicationService
           };
         return this.editPreparation_abyssPrivate(prepared.append(next.command), context);
       },
+      get copies() {
+        return prepared.copies;
+      },
+      sourceCopiesAvailable: () => prepared.sourceCopiesAvailable(),
+      continueSourceComment: (source) => prepared.continueSourceComment(source),
+      assessMerge: async (source) => {
+        if (!context.current()) return undefined;
+        const report = await prepared.assessMerge(source);
+        return context.current() ? report : undefined;
+      },
+      copySource: async (input) => {
+        if (!context.current()) return { type: 'invalid', result: invalidTaskTarget('settings') };
+        const copied = await prepared.copySource(input);
+        return context.current()
+          ? this.editPreparation_abyssPrivate(copied, context)
+          : { type: 'invalid', result: invalidTaskTarget('settings') };
+      },
+      refineInitialStatus: (input) => {
+        const command = this.initialStatusRefinement_abyssPrivate(input, prepared.after, context);
+        return command === undefined
+          ? { type: 'invalid', result: invalidTaskTarget('status') }
+          : this.editPreparation_abyssPrivate(prepared.append(command), context);
+      },
       refresh: (current) => this.refreshEditPreparation_abyssPrivate(prepared, context, current),
       commit: async () => {
         family.attempted = true;
@@ -2036,6 +2082,28 @@ export class TaskApplicationService
         return structuredClone(await attempt);
       },
     };
+  }
+
+  private initialStatusRefinement_abyssPrivate(
+    input: { readonly target: TaskNodeRef; readonly symbol: string },
+    root: TaskSnapshot | null,
+    context: EditPreparationContext | CreatePreparationContext,
+  ): Extract<TaskEditCommand, { type: 'set-status' }> | undefined {
+    if (root === null || !context.current()) return undefined;
+    const current = snapshotForTarget(root, input.target);
+    const rule = this.statusCatalog_abyssPrivate.ruleForSymbol(input.symbol);
+    if (current === undefined || rule === undefined) return undefined;
+    const currentRule = this.statusCatalog_abyssPrivate.ruleForSymbol(current.statusSymbol);
+    const result = this.preparedStatusEdit_abyssPrivate(
+      input.target,
+      current,
+      currentRule,
+      this.statusCatalog_abyssPrivate.statusForSymbol(current.statusSymbol),
+      rule,
+      context.settings,
+      context.reading,
+    );
+    return 'command' in result && result.command.type === 'set-status' ? result.command : undefined;
   }
 
   private async refreshEditPreparation_abyssPrivate(

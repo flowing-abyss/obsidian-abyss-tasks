@@ -1,6 +1,7 @@
 import type {
   ApiResultV1,
   ApplyTaskContentV1,
+  ContentLimitsV1,
   ListTaskTagsV1,
   PrepareTaskContentV1,
   ReadTaskTreeV1,
@@ -29,6 +30,17 @@ import {
   validated,
   validateList,
 } from './validation';
+export const CONTENT_LIMITS: ContentLimitsV1 = {
+  maxVersionsPerClient: 128,
+  maxVersionsPerProvider: 16384,
+  maxSnapshotAccountingBytesPerClient: 8 * 1024 * 1024,
+  familyTtlMs: 300000,
+  maxPreparationInputBytes: 1024 * 1024,
+  maxIssuedTaskHandlesPerVersionSide: 50000,
+  maxEntryHandlesPerReader: 50000,
+  entryHandleTtlMs: 60000,
+  maxPageEntries: 500,
+};
 function optional<T>(
   input: Record<string, unknown>,
   key: string,
@@ -112,8 +124,40 @@ export function nativePatch(value: TaskPatchV1): TaskPatch {
   // Branded dates and durations have already passed the domain constructors above.
   return { ...rest, ...(duration === undefined ? {} : { duration }) } as TaskPatch;
 }
+function sourceOperation(value: unknown): TaskContentOperationV1 {
+  const r = record(value, ['type', 'target', 'source', 'expectedSourceRevision', 'symbol']);
+  const target = text(r['target'], 512);
+  switch (r['type']) {
+    case 'copy-comment':
+      record(value, ['type', 'target', 'source']);
+      return { type: 'copy-comment', target, source: text(r['source'], 512) };
+    case 'copy-subtree':
+    case 'assess-merge':
+      record(value, ['type', 'target', 'source', 'expectedSourceRevision']);
+      return {
+        type: r['type'],
+        target,
+        source: text(r['source'], 512),
+        expectedSourceRevision: text(r['expectedSourceRevision'], 512),
+      };
+    case 'set-initial-status':
+      record(value, ['type', 'target', 'symbol']);
+      return { type: 'set-initial-status', target, symbol: text(r['symbol'], 1) };
+    default:
+      return invalid();
+  }
+}
 function operation(value: unknown): TaskContentOperationV1 {
-  const r = record(value, ['type', 'target', 'patch', 'text', 'markdownTitle']);
+  const r = record(value, [
+    'type',
+    'target',
+    'patch',
+    'text',
+    'markdownTitle',
+    'symbol',
+    'source',
+    'expectedSourceRevision',
+  ]);
   const target = text(r['target'], 512);
   switch (r['type']) {
     case 'patch':
@@ -134,7 +178,7 @@ function operation(value: unknown): TaskContentOperationV1 {
       record(value, ['type', 'target', 'text']);
       return { type: r['type'], target, text: scalar(r['text']) };
     default:
-      return invalid();
+      return sourceOperation(value);
   }
 }
 function tree(value: unknown, remaining: { nodes: number }): TaskCreateTreeV1 {
@@ -260,7 +304,15 @@ function prepare(value: unknown): PrepareTaskContentV1 {
   };
 }
 export function validateContentPrepare(value: unknown): ApiResultV1<PrepareTaskContentV1> {
-  return validated(() => prepare(value));
+  return validated(() => {
+    const parsed = prepare(value);
+    if (
+      new TextEncoder().encode(JSON.stringify(parsed)).length >
+      CONTENT_LIMITS.maxPreparationInputBytes
+    )
+      return invalid();
+    return parsed;
+  });
 }
 export function validateContentApply(value: unknown): ApiResultV1<ApplyTaskContentV1> {
   return validated<ApplyTaskContentV1>(() => {

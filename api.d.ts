@@ -97,7 +97,24 @@ export interface ObservationV1 {
  * while preserving guarantees for accepted in-flight requests. Initial limits are
  * documented on each property below. Capability strings describe operations, not permissions.
  */
+export interface ContentLimitsV1 {
+  readonly maxVersionsPerClient: number;
+  /** Derived from maxClients × maxVersionsPerClient; no shared reservation. */
+  readonly maxVersionsPerProvider: number;
+  /** UTF-8 JSON of retained [before, after] snapshots per client; excludes captured source heap. */
+  readonly maxSnapshotAccountingBytesPerClient: number;
+  /** Measured from family creation; appending/refreshing does not extend it. */
+  readonly familyTtlMs: number;
+  /** UTF-8 JSON of the validated prepare input, before invoking native preparation. */
+  readonly maxPreparationInputBytes: number;
+  readonly maxIssuedTaskHandlesPerVersionSide: number;
+  /** Shared comment and time-entry handle allocation per client tree reader. */
+  readonly maxEntryHandlesPerReader: number;
+  readonly entryHandleTtlMs: number;
+  readonly maxPageEntries: number;
+}
 export interface ApiInfoV1 {
+  readonly contentLimits?: ContentLimitsV1;
   readonly noteLimits?: {
     readonly defaultPageCharacters: number;
     readonly maxPageCharacters: number;
@@ -715,6 +732,20 @@ export interface TaskCreateTreeV1 {
   readonly children?: readonly TaskCreateTreeV1[];
 }
 export type TaskContentOperationV1 =
+  | { readonly type: 'copy-comment'; readonly source: string; readonly target: string }
+  | {
+      readonly type: 'copy-subtree';
+      readonly source: TaskTargetV1;
+      readonly expectedSourceRevision: TaskRevisionV1;
+      readonly target: string;
+    }
+  | {
+      readonly type: 'assess-merge';
+      readonly source: TaskTargetV1;
+      readonly expectedSourceRevision: TaskRevisionV1;
+      readonly target: string;
+    }
+  | { readonly type: 'set-initial-status'; readonly target: string; readonly symbol: string }
   | { readonly type: 'patch'; readonly target: string; readonly patch: TaskPatchV1 }
   | { readonly type: 'description'; readonly target: string; readonly text: string | null }
   | { readonly type: 'add-child'; readonly target: string; readonly markdownTitle: string }
@@ -759,8 +790,40 @@ export type PrepareTaskContentV1 =
       readonly expectedPlanRevision: ContentPlanRevisionV1;
       readonly operation: TaskContentOperationV1;
     };
+export interface ContentMergePreservationV1 {
+  readonly planRevision: ContentPlanRevisionV1;
+  readonly sourceRoot: { readonly target: TaskTargetV1; readonly revision: TaskRevisionV1 };
+  readonly state: 'covered' | 'held';
+  /** Covered inventories still require confirmed destination readback and guarded source cleanup. */
+  readonly entries: ReadonlyArray<{
+    readonly kind: 'header' | 'description' | 'comment' | 'subtree' | 'residual' | 'constraint';
+    readonly field: string;
+    readonly state: 'retained' | 'held';
+    readonly reason?: string;
+  }>;
+}
+export interface ContentSourceCopyV1 {
+  readonly type: 'comment' | 'subtree';
+  /** Original caller-selected source handle. */
+  readonly source: string;
+  readonly sourceRoot: { readonly target: TaskTargetV1; readonly revision: TaskRevisionV1 };
+  readonly state: 'retained' | 'unavailable';
+  readonly tasks: ReadonlyArray<{
+    readonly sourceTarget: TaskTargetV1;
+    readonly destinationTarget: string;
+  }>;
+  readonly comments: ReadonlyArray<{
+    /** Fresh owner/revision-bound source handle; not string-identical to earlier tree handles. */
+    readonly sourceTarget: string;
+    readonly destinationTarget: string;
+    readonly destinationParent: string;
+  }>;
+}
 /** revision is an opaque plan version; it replaces the numeric observation revision. */
 export interface ContentPlanV1 extends Omit<ObservationV1, 'revision'> {
+  /** Native copy witnesses for this exact plan revision; not source deletion permission. */
+  readonly copies?: readonly ContentSourceCopyV1[];
+  readonly mergePreservation?: ContentMergePreservationV1;
   readonly target: ContentPlanTargetV1;
   readonly revision: ContentPlanRevisionV1;
   readonly kind: 'edit' | 'create';
@@ -812,6 +875,14 @@ export interface ContentCommitTaskContinuityV1 {
     | {
         readonly state: 'complete';
         readonly coverage: 'issued-plan-tasks';
+        readonly commentCoverage?: 'issued-plan-comments';
+        readonly comments?: ReadonlyArray<{
+          readonly preparedTarget: string;
+          /** Accepted owner/revision-bound capability; a later read may issue a different handle. */
+          readonly committedTarget: string;
+          readonly committedParent: TaskTargetV1;
+          readonly committedRevision: TaskRevisionV1;
+        }>;
         readonly root: {
           readonly target: TaskTargetV1;
           readonly revision: TaskRevisionV1;

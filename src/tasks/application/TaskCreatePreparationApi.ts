@@ -1,11 +1,17 @@
 import type { TaskCommandResult } from '../domain/commands';
-import type { TaskDestination, TaskSnapshot } from '../domain/types';
+import type { CommentRef, TaskDestination, TaskNodeRef, TaskSnapshot } from '../domain/types';
 import type { CreateTaskCommandDestination, CreateTaskCommandInitial } from './TaskApplicationApi';
 import type {
   PreparedTaskEditCommand,
+  TaskInitialStatusRefinement,
   TaskPreparedNodeContinuation,
 } from './TaskEditPreparationApi';
 import type { ProjectTaskDestination } from './TaskProjectCommands';
+import type {
+  TaskMergePreservation,
+  TaskSourceCopy,
+  TaskSourceCopyEvidence,
+} from './TaskSourceCopyApi';
 
 export interface TaskCreateTreeNode {
   readonly markdownTitle: string;
@@ -38,6 +44,12 @@ export type TaskCreatePreparation =
       readonly after: TaskSnapshot;
       readonly continuations: readonly TaskPreparedNodeContinuation[];
       append(command: PreparedTaskEditCommand): TaskCreatePreparation;
+      refineInitialStatus(input: TaskInitialStatusRefinement): TaskCreatePreparation;
+      readonly copies: readonly TaskSourceCopyEvidence[];
+      sourceCopiesAvailable(): boolean;
+      continueSourceComment(source: CommentRef): CommentRef | undefined;
+      assessMerge(source: TaskNodeRef): Promise<TaskMergePreservation | undefined>;
+      copySource(input: TaskSourceCopy): Promise<TaskCreatePreparation>;
       sharesDestinationBasis(other: TaskCreatePreparation): boolean;
       refresh(options?: {
         readonly createdDestinationAnchor?: TaskSnapshot;

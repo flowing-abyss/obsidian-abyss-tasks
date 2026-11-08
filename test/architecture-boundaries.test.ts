@@ -90,6 +90,9 @@ const ALLOWED_WRITER_CALLS: Record<string, AllowedWriter> = {
 };
 
 const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
+  taskNodeRootRef: ['src/integrations/taskContentCopies.ts'],
+  TaskSourceCopy: ['src/integrations/taskContentApi.ts'],
+  TaskSourceCopyEvidence: ['src/integrations/taskContentCopies.ts'],
   TaskAcceptedOccurrenceChange: ['src/integrations/TaskIdentityRegistry.ts'],
   TaskIntegrationReadApi: [
     'src/integrations/TaskApiProvider.ts',

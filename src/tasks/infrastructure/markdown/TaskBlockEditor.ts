@@ -179,6 +179,7 @@ export type TaskBlockEditResult =
   | {
       readonly type: 'changed';
       readonly nodeMap?: readonly TaskNodeLineMapping[];
+      readonly lineMap?: readonly TaskNodeLineMapping[];
       readonly content: string;
       readonly block: TaskRootBlock;
       readonly removedSubtask?: { readonly markdown: string; readonly lineEnding?: '\n' | '\r\n' };
@@ -330,6 +331,7 @@ function isConfirmedTarget(
 
 interface BlockEditContext {
   readonly originalNodes?: ReadonlyMap<SourceLine, number>;
+  readonly originalLines?: ReadonlyMap<SourceLine, number>;
   readonly indentUnit: TaskIndentUnit;
   readonly lines: SourceLine[];
   readonly content: string;
@@ -1063,6 +1065,26 @@ function commentLines(text: string, headPrefix: string, continuationPrefix: stri
     .map((line, index) => `${index === 0 ? headPrefix : continuationPrefix}${line}`);
 }
 
+function copiedCommentLines(
+  source: CommentSource,
+  prefix: string,
+  rewrite: (source: string) => string | undefined,
+): SourceLine[] | undefined {
+  const originalPrefix = /^[\t >]*/u.exec(source.originalMarkdown)?.[0] ?? '';
+  const captured = sourceLines(source.originalMarkdown.replace(/\r$/u, '\r\n'));
+  if (captured.some((line) => !line.text.startsWith(originalPrefix))) return undefined;
+  const adjusted = captured
+    .map((line) => prefix + line.text.slice(originalPrefix.length) + line.ending)
+    .join('');
+  const rewritten = rewrite(adjusted);
+  if (rewritten === undefined) return undefined;
+  const additions = sourceLines(rewritten);
+  const parsed = readCommentBlock(rewritten.split('\n'), 0);
+  if (parsed?.toExclusive !== additions.length || parsed.timestamp?.raw !== source.timestamp?.raw)
+    return undefined;
+  return additions;
+}
+
 function addComment(
   context: BlockEditContext,
   edit: Extract<TaskBlockEdit, { readonly type: 'add-comment' }>,
@@ -1275,6 +1297,14 @@ function survivingNodeLines(context: BlockEditContext): readonly TaskNodeLineMap
   });
 }
 
+function survivingSourceLines(context: BlockEditContext): readonly TaskNodeLineMapping[] {
+  const positions = new Map(context.lines.map((line, index) => [line, index - context.block.line]));
+  return [...(context.originalLines ?? [])].map(([line, beforeOffset]) => {
+    const afterOffset = positions.get(line);
+    return { beforeOffset, ...(afterOffset === undefined ? {} : { afterOffset }) };
+  });
+}
+
 function editedResult(context: BlockEditContext): TaskBlockEditResult {
   const next = serializeLines(context.lines, context.hadFinalEnding, context.ending);
   if (next === context.content) {
@@ -1288,7 +1318,9 @@ function editedResult(context: BlockEditContext): TaskBlockEditResult {
         type: 'changed',
         content: next,
         block: updated,
-        ...(context.originalNodes === undefined ? {} : { nodeMap: survivingNodeLines(context) }),
+        ...(context.originalNodes === undefined
+          ? {}
+          : { nodeMap: survivingNodeLines(context), lineMap: survivingSourceLines(context) }),
       }
     : { type: 'conflict' };
 }
@@ -1312,6 +1344,9 @@ function editContext(
   return {
     ...(collectNodes
       ? {
+          originalLines: new Map(
+            lines.slice(block.line, block.toLine + 1).map((line, offset) => [line, offset]),
+          ),
           originalNodes: new Map(
             (recurrenceOwnedSubtree(block.source, 0)?.taskLines ?? []).flatMap((offset) => {
               const line = lines[block.line + offset];
@@ -1334,6 +1369,33 @@ function editContext(
 
 export class TaskBlockEditor {
   constructor(private readonly indentUnit_abyssPrivate: () => TaskIndentUnit = () => '\t') {}
+
+  captureComment(
+    content: string,
+    block: TaskRootBlock,
+    target: TaskBlockTarget,
+    comment: CommentRef,
+  ): CommentSource | undefined {
+    return ownedComment(content, block, target, comment);
+  }
+
+  copyComment(
+    content: string,
+    block: TaskRootBlock,
+    target: TaskBlockTarget,
+    captured: { source: CommentSource; rewrite: (source: string) => string | undefined },
+  ):
+    | { readonly edit: TaskBlockEditResult; readonly from: number; readonly count: number }
+    | undefined {
+    const { source, rewrite } = captured;
+    const context = editContext(content, block, target, this.indentUnit_abyssPrivate(), true);
+    if (context === undefined) return undefined;
+    const additions = copiedCommentLines(source, nestedLinePrefix(context), rewrite);
+    if (additions === undefined) return undefined;
+    const at = trailingEntryRunStart(context);
+    insertAt(context.lines, at, additions, context.ending);
+    return { edit: editedResult(context), from: at - block.line, count: additions.length };
+  }
 
   hierarchyInsertion(
     content: string,
@@ -1500,6 +1562,7 @@ export class TaskBlockEditor {
     readonly content: string;
     readonly block: TaskRootBlock;
     readonly nodeMap?: readonly TaskNodeLineMapping[];
+    readonly lineMap?: readonly TaskNodeLineMapping[];
   } {
     const lines = sourceLines(content);
     const absoluteLine = block.line + relativeLine;
@@ -1514,6 +1577,9 @@ export class TaskBlockEditor {
       block: updated,
       ...(collectNodes && !LINE_BREAK_RE.test(replacement)
         ? {
+            lineMap: lines
+              .slice(block.line, block.toLine + 1)
+              .map((_, offset) => ({ beforeOffset: offset, afterOffset: offset })),
             nodeMap: (recurrenceOwnedSubtree(block.source, 0)?.taskLines ?? []).map((offset) => ({
               beforeOffset: offset,
               afterOffset: offset,

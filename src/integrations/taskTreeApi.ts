@@ -266,14 +266,14 @@ export class TaskTreeReader {
   private readonly cursors_abyssPrivate = new Map<string, TreeCursor>();
   private readonly entries_abyssPrivate = new Map<
     string,
-    { target: string; ref: object; expires: number }
+    { target: string; ref: object; expires: number; draft: boolean }
   >();
   constructor(
     private readonly context_abyssPrivate: TaskApiContext,
     private readonly now_abyssPrivate: () => number,
     private readonly epoch_abyssPrivate: string,
   ) {}
-  entry(kind: 'comment' | 'time-entry', parent: string, ref: object): string {
+  entry(kind: 'comment' | 'time-entry', parent: string, ref: object, draft = false): string {
     this.clean();
     const key = JSON.stringify([kind, parent, ref]);
     const old = this.entries_abyssPrivate.get(key);
@@ -281,13 +281,23 @@ export class TaskTreeReader {
     if (this.entries_abyssPrivate.size >= 50000)
       throw new Error('Content entry capacity exhausted');
     const target = `${this.epoch_abyssPrivate}:e:${++this.sequence_abyssPrivate}`;
-    this.entries_abyssPrivate.set(key, { target, ref, expires: this.now_abyssPrivate() + 60000 });
+    this.entries_abyssPrivate.set(key, {
+      target,
+      ref,
+      expires: this.now_abyssPrivate() + 60000,
+      draft,
+    });
     return target;
   }
-  comment(target: string): object | undefined {
+  comment(target: string, acceptedOnly = false): object | undefined {
     this.clean();
     for (const [key, value] of this.entries_abyssPrivate)
-      if (value.target === target && key.startsWith('["comment"')) return value.ref;
+      if (
+        value.target === target &&
+        key.startsWith('["comment"') &&
+        (!acceptedOnly || !value.draft)
+      )
+        return value.ref;
     return undefined;
   }
   clean(): void {

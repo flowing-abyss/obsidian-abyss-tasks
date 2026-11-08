@@ -1,5 +1,10 @@
 import type { TaskCommand, TaskCommandResult } from '../domain/commands';
-import type { TaskNodeRef, TaskSnapshot } from '../domain/types';
+import type { CommentRef, TaskNodeRef, TaskSnapshot } from '../domain/types';
+import type {
+  TaskMergePreservation,
+  TaskSourceCopy,
+  TaskSourceCopyEvidence,
+} from './TaskSourceCopyApi';
 
 export type PreparedTaskEditCommand = Extract<
   TaskCommand,
@@ -15,6 +20,11 @@ export type PreparedTaskEditCommand = Extract<
       | 'delete';
   }
 >;
+
+export interface TaskInitialStatusRefinement {
+  readonly target: TaskNodeRef;
+  readonly symbol: string;
+}
 
 export interface TaskPreparedNodeContinuation {
   readonly before: TaskNodeRef;
@@ -41,6 +51,12 @@ export type TaskEditPreparation =
       readonly after: TaskSnapshot | null;
       /** Immutable continuation; command refs must belong to this preparation's after tree. */
       append(command: PreparedTaskEditCommand): TaskEditPreparation;
+      refineInitialStatus(input: TaskInitialStatusRefinement): TaskEditPreparation;
+      readonly copies: readonly TaskSourceCopyEvidence[];
+      sourceCopiesAvailable(): boolean;
+      continueSourceComment(source: CommentRef): CommentRef | undefined;
+      assessMerge(source: TaskNodeRef): Promise<TaskMergePreservation | undefined>;
+      copySource(input: TaskSourceCopy): Promise<TaskEditPreparation>;
       refresh(current: TaskSnapshot): Promise<TaskEditPreparation | TaskEditRefreshUnavailable>;
       /** One attempt, with the same detached receipt on subsequent calls, including failures. */
       commit(): Promise<TaskCommandResult>;

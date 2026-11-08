@@ -43,6 +43,7 @@ interface TransferContext {
   readonly from: number;
   readonly to: number;
   readonly sameFile: boolean;
+  readonly copying?: boolean;
   readonly parentLine: number | undefined;
 }
 class InvalidHierarchy extends Error {}
@@ -120,6 +121,9 @@ function anchorsIn(text: string): string[] {
   }
   return result;
 }
+export function hasSourceAnchors(text: string): boolean {
+  return anchorsIn(text).length > 0;
+}
 function contextFor(input: HierarchyTransferInput): TransferContext {
   const { source, parent, editor } = input;
   if (!exactEndpoint(input, source) || (parent !== undefined && !exactEndpoint(input, parent)))
@@ -168,9 +172,10 @@ function transferSource(context: TransferContext, insertionPrefix: string): Line
   const captured = sourceLines.slice(from, to + 1);
   const originalPrefix = prefix(captured[0]?.text ?? '');
   const anchors = anchorsIn(captured.map((line) => line.text).join('\n'));
-  const remaining = sameFile
-    ? sourceLines.filter((_, at) => at < from || at > to)
-    : lines(destination);
+  const remaining =
+    sameFile && context.copying !== true
+      ? sourceLines.filter((_, at) => at < from || at > to)
+      : lines(destination);
   if (
     new Set(anchors).size !== anchors.length ||
     anchorsIn(remaining.map((line) => line.text).join('\n')).some((anchor) =>
@@ -257,6 +262,83 @@ export function prepareHierarchyTransfer(input: HierarchyTransferInput): Hierarc
     return applyTransfer(context);
   } catch (error) {
     if (error instanceof InvalidHierarchy) return { type: 'invalid' };
+    throw error;
+  }
+}
+
+/** Copy into an already sealed root; extraction/rebasing is shared with native hierarchy movement. */
+export function prepareSubtreeCopy(input: {
+  readonly sourceContent: string;
+  readonly destinationContent: string;
+  readonly source: HierarchyEndpoint;
+  readonly parent: HierarchyEndpoint;
+  readonly editor: TaskBlockEditor;
+  readonly rewrite: HierarchyTransferInput['rewrite'];
+}):
+  | {
+      readonly content: string;
+      readonly from: number;
+      readonly count: number;
+      readonly lineMap: ReadonlyArray<{
+        readonly beforeOffset: number;
+        readonly afterOffset: number;
+      }>;
+    }
+  | undefined {
+  try {
+    const { source, parent, editor, sourceContent, destinationContent } = input;
+    const owned = requireValue(
+      editor.ownedTaskSubtree(source.block.source, source.target.relativeLine),
+    );
+    if (owned.toLine - owned.fromLine + 1 !== source.target.lineCount) return undefined;
+    const contents = new Map([[source.filePath, sourceContent]]);
+    if (
+      !exactEndpoint({ ...input, contents }, source) ||
+      !exactEndpoint(
+        { ...input, contents: new Map([[parent.filePath, destinationContent]]) },
+        parent,
+      )
+    )
+      return undefined;
+    const context: TransferContext = {
+      input: { ...input, contents },
+      before: sourceContent,
+      destination: destinationContent,
+      destinationPath: parent.filePath,
+      sourceLines: lines(sourceContent),
+      from: source.block.line + owned.fromLine,
+      to: source.block.line + owned.toLine,
+      sameFile: source.filePath === parent.filePath,
+      copying: true,
+      parentLine: parent.block.line + parent.target.relativeLine,
+    };
+    const insertion = insertionFor(context);
+    const captured = transferSource(context, insertion.prefix);
+    const destination = lines(destinationContent);
+    destination.splice(insertion.line, 0, ...captured);
+    const content = serialize(destination, destinationContent);
+    const block = requireValue(
+      editor.rootBlocks(content).find((b) => b.line === parent.block.line),
+    );
+    const inserted = requireValue(
+      editor.ownedTaskSubtree(block.source, insertion.line - block.line),
+    );
+    if (inserted.toLine - inserted.fromLine + 1 !== captured.length) return undefined;
+    const lineMap = destination.flatMap((line, offset) =>
+      line.originalLine === undefined ||
+      line.originalLine < parent.block.line ||
+      line.originalLine > parent.block.toLine
+        ? []
+        : [
+            {
+              beforeOffset: line.originalLine - parent.block.line,
+              afterOffset: offset - parent.block.line,
+            },
+          ],
+    );
+    return { content, from: insertion.line - block.line, count: captured.length, lineMap };
+  } catch (error) {
+    if (error instanceof InvalidHierarchy) return undefined;
     throw error;
   }
 }
