@@ -24,6 +24,7 @@ export interface CommandSessionOwnerOptions {
   ) => CommandSession;
   readonly schedule: (callback: () => void) => () => void;
   readonly diagnose?: (code: string) => void;
+  readonly notify?: (state: CommandSessionSnapshot) => void;
 }
 /** One runtime/client across surfaces. Inactive sessions remain detached store records. */
 export class CommandSessionOwner {
@@ -33,8 +34,10 @@ export class CommandSessionOwner {
   private cancelScheduled: (() => void) | undefined;
   private disposed = false;
   private visible = false;
+  private readonly surfaces = new Set<symbol>();
   private changing: Promise<void> | undefined;
   private acceptance = 0;
+  private submitted = 0;
   private failureCode: string | undefined;
   private readonly ownedSessions = new Set<string>();
   private readonly noteReviews = new Map<symbol, CommandNoteReview>();
@@ -111,14 +114,18 @@ export class CommandSessionOwner {
   private emit(): void {
     if (this.disposed) return;
     const failure = this.persistenceFailure();
-    if (failure !== null && this.visible && failure.code !== this.failureCode) {
+    if (failure !== null && this.isVisible() && failure.code !== this.failureCode) {
       this.failureCode = failure.code;
       this.options.diagnose?.(failure.code);
     } else if (failure === null) this.failureCode = undefined;
     for (const listener of this.listeners) listener(this.snapshot());
   }
-  open(): CommandSessionSnapshot {
-    this.visible = true;
+  private isVisible(): boolean {
+    return this.visible || this.surfaces.size > 0;
+  }
+  open(surface?: symbol): CommandSessionSnapshot {
+    if (surface === undefined) this.visible = true;
+    else this.surfaces.add(surface);
     this.emit();
     return this.snapshot();
   }
@@ -138,16 +145,17 @@ export class CommandSessionOwner {
       });
     return pending;
   }
-  async hide(): Promise<void> {
+  async hide(surface?: symbol): Promise<void> {
     if (this.disposed) return;
-    this.visible = false;
+    if (surface === undefined) this.visible = false;
+    else this.surfaces.delete(surface);
     this.stopCapture?.();
     this.acceptance++;
-    this.session.cancelTurn();
     await this.flush();
   }
   async stop(): Promise<void> {
     if (this.disposed) return;
+    this.submitted++;
     this.acceptance++;
     this.session.cancelTurn();
     await this.flush();
@@ -233,7 +241,8 @@ export class CommandSessionOwner {
     surface?: symbol,
     admission?: () => boolean,
   ): Promise<void> {
-    const generation = this.acceptance;
+    const generation = this.acceptance,
+      submitted = ++this.submitted;
     if (this.changing !== undefined) await this.changing;
     if (this.isDisposed() || admission?.() === false) return;
     if (generation !== this.acceptance) {
@@ -243,6 +252,59 @@ export class CommandSessionOwner {
     }
     await this.session.submit(text, basis, this.noteReview(surface), admission);
     await this.flush();
+    this.notifyCompletion(submitted);
+  }
+  private notifyCompletion(submitted: number): void {
+    if (
+      !this.disposed &&
+      !this.isVisible() &&
+      submitted === this.submitted &&
+      !['thinking', 'searching', 'writing'].includes(this.snapshot().status.kind)
+    )
+      this.options.notify?.(this.snapshot());
+  }
+  confirmAndStart(revision?: number, surface?: symbol): Promise<boolean> {
+    const basis = this.session.snapshot(),
+      input = this.session.captureInput(),
+      generation = this.acceptance,
+      expectedRevision = revision ?? basis.proposal.revision;
+    const current = (): boolean =>
+      !this.disposed &&
+      generation === this.acceptance &&
+      input.current() &&
+      this.session.snapshot().id === basis.id &&
+      this.session.snapshot().input.trim() === '';
+    return this.transition(async () => {
+      const state = this.session.snapshot();
+      if (
+        !current() ||
+        state.proposal.revision !== expectedRevision ||
+        !this.canFinishSession(state)
+      )
+        return false;
+      if (
+        state.proposal.changes.length > 0 &&
+        !(await this.session.confirm(expectedRevision, this.noteReview(surface)))
+      ) {
+        await this.flush();
+        return false;
+      }
+      await this.flush();
+      const next = this.session.snapshot();
+      if (!current() || next.proposal.changes.length !== 0 || !this.canFinishSession(next))
+        return false;
+      this.stopCapture?.();
+      return this.startSession();
+    });
+  }
+  private canFinishSession(state: CommandSessionSnapshot): boolean {
+    return (
+      !state.blocked &&
+      state.activeQuestion === null &&
+      state.pendingTransition == null &&
+      (state.recovery ?? 'live') === 'live' &&
+      ['ready', 'saved'].includes(state.status.kind)
+    );
   }
   async confirm(revision?: number, surface?: symbol): Promise<boolean> {
     const basis = this.session.snapshot();

@@ -3,7 +3,7 @@ import type { TasksApiV1 } from '../api';
 import { CommandSession } from '../src/ai/CommandSession';
 import { CommandSessionOwner } from '../src/ai/CommandSessionOwner';
 import { CommandSessionStore } from '../src/ai/CommandSessionStore';
-import type { CommandAgentPort } from '../src/ai/commandTypes';
+import type { CommandAgentPort, CommandSessionSnapshot } from '../src/ai/commandTypes';
 import { deferred, expectDefined } from './helpers';
 import { publicApiHarness, type PublicApiHarness } from './support/publicApiHarness';
 
@@ -32,6 +32,7 @@ async function setup(initial?: unknown) {
   let aroundCreate = async (write: () => Promise<CreateResult>) => write();
   let run: CommandAgentPort['run'] = async () => {};
   const timers = new Set<() => void>();
+  const notifications: CommandSessionSnapshot[] = [];
   let afterSave: (() => void) | undefined;
   const storage = {
     load: () => structuredClone(raw),
@@ -48,6 +49,9 @@ async function setup(initial?: unknown) {
     const store = new CommandSessionStore({ storage, now: () => now });
     const owner = new CommandSessionOwner({
       store,
+      notify: (state) => {
+        notifications.push(state);
+      },
       schedule: (callback) => {
         timers.add(callback);
         return () => {
@@ -83,6 +87,7 @@ async function setup(initial?: unknown) {
   return {
     ...h,
     owner,
+    notifications,
     store,
     createOwner,
     session: () => live,
@@ -115,6 +120,107 @@ async function setup(initial?: unknown) {
     },
   };
 }
+it('continues a hidden turn and notifies once after its final preview is retained', async () => {
+  const h = await setup();
+  h.owner.open();
+  const started = deferred<void>(),
+    release = deferred<void>();
+  let cancelled = false;
+  h.run(async ({ signal }) => {
+    started.resolve();
+    await release.promise;
+    cancelled = signal.aborted;
+    if (!signal.aborted) await stageCreate(h);
+  });
+  const pending = h.owner.submit('Prepare a task');
+  await started.promise;
+  await h.owner.hide();
+  release.resolve();
+  await pending;
+  expect(cancelled).toBe(false);
+  expect(h.owner.snapshot().proposal.changes).toHaveLength(1);
+  expect(h.notifications).toHaveLength(1);
+  expect(h.notifications[0]?.status.kind).toBe('ready');
+  expect(h.owner.open().proposal.changes).toHaveLength(1);
+  expect(h.notifications).toHaveLength(1);
+  expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+});
+it.each(['reopen', 'stop', 'dispose'] as const)(
+  'does not notify a hidden turn after %s',
+  async (action) => {
+    const h = await setup();
+    h.owner.open();
+    const started = deferred<void>(),
+      release = deferred<void>();
+    h.run(async () => {
+      started.resolve();
+      await release.promise;
+    });
+    const pending = h.owner.submit('Working');
+    await started.promise;
+    await h.owner.hide();
+    if (action === 'reopen') h.owner.open();
+    if (action === 'stop') await h.owner.stop();
+    if (action === 'dispose') h.owner.dispose();
+    release.resolve();
+    await pending;
+    expect(h.notifications).toHaveLength(0);
+  },
+);
+it('does not notify while another mounted Q still displays the same owner', async () => {
+  const h = await setup();
+  const first = Symbol(),
+    second = Symbol();
+  h.owner.open(first);
+  h.owner.open(second);
+  const started = deferred<void>(),
+    release = deferred<void>();
+  h.run(async () => {
+    started.resolve();
+    await release.promise;
+  });
+  const pending = h.owner.submit('Prepare');
+  await started.promise;
+  await h.owner.hide(first);
+  release.resolve();
+  await pending;
+  expect(h.notifications).toHaveLength(0);
+  await h.owner.hide(second);
+});
+it('starts a new session only after the complete confirmed proposal is saved in history', async () => {
+  const h = await setup();
+  const plan = await stageCreate(h);
+  const before = h.owner.snapshot();
+  expect(await h.owner.confirmAndStart(before.proposal.revision)).toBe(true);
+  expect(h.owner.snapshot().id).not.toBe(before.id);
+  expect(h.owner.snapshot().proposal.changes).toHaveLength(0);
+  expect(
+    h.owner.recent().find((r) => r.snapshot.id === before.id)?.snapshot.actual[0]?.markdownTitle,
+  ).toBe(plan.after?.markdownTitle);
+  expect((await h.read('a.md')).match(/Created once/g)).toHaveLength(1);
+});
+it.each(['question', 'failure', 'new-input'] as const)(
+  'retains the current session after save/new encounters %s',
+  async (reason) => {
+    const h = await setup();
+    await stageCreate(h);
+    const before = h.owner.snapshot();
+    if (reason === 'question') h.session().question('Which destination?');
+    if (reason === 'failure') h.fail(true);
+    if (reason === 'new-input')
+      h.aroundCreate(async (write) => {
+        const result = await write();
+        h.owner.setInput('One more thing');
+        return result;
+      });
+    expect(await h.owner.confirmAndStart(before.proposal.revision)).toBe(false);
+    expect(h.owner.snapshot().id).toBe(before.id);
+    if (reason === 'new-input') {
+      expect(h.owner.snapshot().input).toBe('One more thing');
+      expect((await h.read('a.md')).match(/Created once/g)).toHaveLength(1);
+    } else expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+  },
+);
 it('binds note confirmation to its initiating live surface and never persists the review capability', async () => {
   const h = await setup();
   h.owner.open();

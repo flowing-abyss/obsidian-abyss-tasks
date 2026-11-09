@@ -1,5 +1,11 @@
 /** Fixed CommandMode chrome only. main supplies the host language; Node consumers default to English. */
 const russian = {
+  'Command needs attention. Press Q to continue.':
+    'Нужно ваше внимание. Нажмите Q, чтобы продолжить.',
+  'Command is waiting for your answer. Press Q to continue.':
+    'Агент ждёт ответа. Нажмите Q, чтобы продолжить.',
+  'Changes saved. Press Q to continue.': 'Изменения сохранены. Нажмите Q, чтобы продолжить.',
+  'Command ready. Press Q to review.': 'Результат готов. Нажмите Q, чтобы посмотреть.',
   'Saved.': 'Сохранено.',
   'Saving…': 'Сохраняю…',
   'Working…': 'Думаю…',

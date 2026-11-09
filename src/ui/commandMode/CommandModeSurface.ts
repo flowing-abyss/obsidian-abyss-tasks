@@ -58,6 +58,14 @@ function readyToSave(state: CommandSessionSnapshot): boolean {
     (state.recovery ?? 'live') === 'live'
   );
 }
+function needsResolution(state: CommandSessionSnapshot): boolean {
+  return (
+    state.activeQuestion !== null ||
+    state.status.kind === 'error' ||
+    state.blocked ||
+    state.pendingTransition != null
+  );
+}
 function mainObject(state: HistoricalCommandSession['snapshot']): string | undefined {
   const first = state.proposal.changes[0];
   if (first === undefined) return state.actual[0]?.markdownTitle;
@@ -103,6 +111,7 @@ export class CommandModeSurface implements CaptureExtension {
   private menu: Menu | undefined;
   private releaseMenu = (): void => {};
   private live = true;
+  private readonly visibility = Symbol();
   private readonly initializing: boolean = true;
   private inputGeneration = 0;
   private navigated = '';
@@ -239,7 +248,7 @@ export class CommandModeSurface implements CaptureExtension {
       const owner = this.activateOwner();
       this.bindNoteReview();
       owner.updateContext(this.options.context());
-      owner.open();
+      owner.open(this.visibility);
       this.options.memory.presentation ??= new Map();
       this.tree ??= new CommandTree(this.treeHost, {
         ...this.options,
@@ -270,7 +279,10 @@ export class CommandModeSurface implements CaptureExtension {
       this.unsubscribe?.();
       this.unsubscribe = undefined;
       if (this.owner !== undefined)
-        runAsyncAction(this.owner.hide(), commandMessage('Could not retain command session'));
+        runAsyncAction(
+          this.owner.hide(this.visibility),
+          commandMessage('Could not retain command session'),
+        );
       this.capture.input.setAttribute('aria-label', commandMessage('Add task'));
       this.capture.input.placeholder = commandMessage('Task name…');
       this.setPrimary('send', false);
@@ -374,11 +386,11 @@ export class CommandModeSurface implements CaptureExtension {
     owner.updateContext(this.options.context());
     const generation = ++this.inputGeneration,
       input = owner.captureInput();
-    await owner.submit(text, basis, this.noteReview?.token, admission);
+    if (text.trim() === '')
+      await owner.confirmAndStart(basis.proposalRevision, this.noteReview?.token);
+    else await owner.submit(text, basis, this.noteReview?.token, admission);
     const next = owner.snapshot();
     if (
-      this.live &&
-      this.active() &&
       generation === this.inputGeneration &&
       input.current() &&
       next.id === basis.sessionId &&
@@ -430,13 +442,16 @@ export class CommandModeSurface implements CaptureExtension {
     }
     if (busy(state)) this.setPrimary('stop', false);
     else if (readyToSave(state)) this.setPrimary('save', this.noteReviewStatus(state) !== 'ready');
-    else this.setPrimary('send', true);
+    else this.setPrimary('send', needsResolution(state));
   }
   escape(): void {
     this.voice?.stop();
     this.remember();
     if (this.owner !== undefined)
-      runAsyncAction(this.owner.hide(), commandMessage('Could not retain command session'));
+      runAsyncAction(
+        this.owner.hide(this.visibility),
+        commandMessage('Could not retain command session'),
+      );
     this.options.close();
   }
   private remember(): void {
@@ -698,6 +713,11 @@ export class CommandModeSurface implements CaptureExtension {
     if (!this.live) return;
     this.remember();
     this.live = false;
+    if (this.owner !== undefined)
+      runAsyncAction(
+        this.owner.hide(this.visibility),
+        commandMessage('Could not retain command session'),
+      );
     this.voice?.dispose();
     this.clearPhaseTimer();
     this.menu?.hide();

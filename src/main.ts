@@ -11,7 +11,7 @@ import {
 } from 'obsidian';
 import type { ApiResultV1, TasksApiV1 } from '../api';
 import { CommandAgent } from './ai/CommandAgent';
-import { configureCommandLocale } from './ai/commandMessages';
+import { commandMessage, configureCommandLocale } from './ai/commandMessages';
 import { CommandSession } from './ai/CommandSession';
 import { CommandSessionOwner } from './ai/CommandSessionOwner';
 import { CommandSessionStore, type CommandSessionStoragePort } from './ai/CommandSessionStore';
@@ -435,6 +435,19 @@ export default class TaskCalendarPlugin extends Plugin {
         },
         diagnose: (code) => {
           console.warn('[abyss-tasks] Command history persistence failed', { code });
+        },
+        notify: (state) => {
+          let message: Parameters<typeof commandMessage>[0] = 'Command ready. Press Q to review.';
+          if (state.status.kind === 'error')
+            console.warn('[abyss-tasks] Background command stopped', {
+              message: state.status.message,
+            });
+          if (state.status.kind === 'error')
+            message = 'Command needs attention. Press Q to continue.';
+          else if (state.activeQuestion !== null)
+            message = 'Command is waiting for your answer. Press Q to continue.';
+          else if (state.status.kind === 'saved') message = 'Changes saved. Press Q to continue.';
+          new Notice(commandMessage(message));
         },
       });
     return this.commandSessionOwner;

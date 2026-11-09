@@ -252,6 +252,15 @@ async function setup(
     resolveOwner,
     mount,
     navigate,
+    confirmInSession: (surface: CaptureSurface) => {
+      const previous = override;
+      // Simulate a semantic confirmation while exercising the real surface review token and writer.
+      override = async ({ session: basis, signal }) => {
+        override = previous;
+        await session.confirmFromTurn(basis.proposal.revision, signal);
+      };
+      enter(surface, 'Save the current proposal');
+    },
     setRun: (run: CommandAgentPort['run']) => {
       override = run;
     },
@@ -285,10 +294,16 @@ it('orders the four native toolbar controls and renders one canonical owner tree
   expect(children[1]?.textContent).toContain('Second child only');
   expect(await h.read('a.md')).toBe('- [ ] Existing\n');
   expect(surface.input.value).toBe('');
+  const completedSession = h.owner.snapshot().id;
   enter(surface, '');
   await new Promise((resolve) => window.setTimeout(resolve, 30));
   expect(await h.read('a.md')).toContain('Parent');
-  expect(surface.element.querySelector('.abyss-command-phase')?.textContent).toContain('Saved');
+  expect(h.owner.snapshot().id).not.toBe(completedSession);
+  expect(surface.element.querySelector('.abyss-command-tree')?.textContent).toBe('');
+  expect(
+    h.owner.recent().find((record) => record.snapshot.id === completedSession)?.snapshot.status
+      .kind,
+  ).toBe('saved');
 });
 it('hides unavailable agent and voice controls without opening the command owner in ordinary capture', async () => {
   const h = await setup();
@@ -347,7 +362,7 @@ it('restores unsent input and selection after Escape/Q while unresolved question
 });
 
 it.each(['hide', 'retype'])(
-  'retains command input after a late turn settles following %s',
+  'clears accepted input after hidden work and preserves an explicit retype following %s',
   async (action) => {
     const h = await setup();
     const hold = deferred<void>();
@@ -367,7 +382,7 @@ it.each(['hide', 'retype'])(
     }
     hold.resolve();
     await flushMicrotasks(0);
-    expect(h.owner.snapshot().input).toBe('Same command');
+    expect(h.owner.snapshot().input).toBe(action === 'hide' ? '' : 'Same command');
   },
 );
 
@@ -426,7 +441,7 @@ it('retains duplicate-child ownership, comment DOM and focus through a date-only
     expectedPlanRevision: latest.plan.revision,
   });
   surface.input.focus();
-  enter(surface, '');
+  h.confirmInSession(surface);
   await vi.waitFor(() => {
     expect(h.owner.snapshot().status.kind).toBe('saved');
   });
@@ -947,7 +962,7 @@ it('renders configured project status, absent/unknown values and authored dates 
   expect(await h.read('a.md')).toBe('- [ ] Existing\n');
 });
 
-it('retains selection and scroll when the active surface remounts without hiding its owner', async () => {
+it('retains selection and scroll when the active surface remounts', async () => {
   const h = await setup();
   const first = h.mount();
   first.input.value = 'Retained command';
@@ -955,11 +970,9 @@ it('retains selection and scroll when the active surface remounts without hiding
   first.input.setSelectionRange(3, 7);
   const content = expectDefined(first.element.querySelector<HTMLElement>('.abyss-command-content'));
   content.scrollTop = 41;
-  const hide = vi.spyOn(h.owner, 'hide');
   first.destroy();
   const second = h.mount();
   second.focus();
-  expect(hide).not.toHaveBeenCalled();
   expect(second.input.value).toBe('Retained command');
   expect(second.input.selectionStart).toBe(3);
   expect(second.input.selectionEnd).toBe(7);
@@ -1652,7 +1665,7 @@ it('keeps only this project iteration highlighted across remount and shows cumul
   surface = h.mount();
   expect(field().getAttribute('data-change')).toBe('changed');
   expect(start().getAttribute('data-change')).toBe('changed');
-  enter(surface, '');
+  h.confirmInSession(surface);
   await vi.waitFor(() => {
     expect(h.owner.snapshot().status.kind, h.owner.snapshot().status.message).toBe('saved');
   });
@@ -1704,7 +1717,7 @@ it('retires a verified project description clear before and after remount', asyn
   expect(removed.textContent).toContain('Accepted description');
   expect(removed.dataset['change']).toBe('removed');
   expect(removed.inert).toBe(true);
-  enter(surface, '');
+  h.confirmInSession(surface);
   await vi.waitFor(() => {
     expect(h.owner.snapshot().status.kind).toBe('saved');
   });
@@ -1817,7 +1830,7 @@ it.each([
     surface = h.mount();
     await flushMicrotasks(0);
     expect(display()).toEqual(expected);
-    enter(surface, '');
+    h.confirmInSession(surface);
     await vi.waitFor(() => {
       expect(h.owner.snapshot().status.kind).toBe('saved');
     });
@@ -1938,7 +1951,7 @@ it('retains every task and comment change in one user iteration while keeping la
   surface = h.mount();
   await flushMicrotasks(0);
   checkFirst();
-  enter(surface, '');
+  h.confirmInSession(surface);
   await vi.waitFor(() => {
     expect(h.owner.snapshot().status.kind).toBe('saved');
   });
@@ -1948,7 +1961,7 @@ it('retains every task and comment change in one user iteration while keeping la
 });
 
 it.each(['short', 'late'] as const)(
-  'reviews a %s note-only section diff before Enter and retains fresh current note content after save/remount',
+  'reviews a %s note-only section diff before confirmation and retains fresh current note content after save/remount',
   async (position) => {
     mockReadingView();
     const prefix =
@@ -1998,7 +2011,7 @@ it.each(['short', 'late'] as const)(
     expect(note.querySelector('ins')?.textContent).toContain('New');
     expect(note.querySelector('input[type="checkbox"]')).toBeNull();
     expect(await h.read('Folder/Research.md')).toContain('Old choice');
-    enter(surface, '');
+    h.confirmInSession(surface);
     await vi.waitFor(() => {
       expect(h.owner.snapshot().status.kind).toBe('saved');
     });
@@ -2122,7 +2135,7 @@ it('retains exact receipt-section continuation after finish and remount without 
   expect(surface.element.querySelector('.abyss-command-note')?.textContent).toContain(
     'Final addition.',
   );
-  enter(surface, '');
+  h.confirmInSession(surface);
   await vi.waitFor(() => {
     expect(h.owner.snapshot().status.kind).toBe('saved');
   });
@@ -2231,7 +2244,7 @@ it.each(['pending', 'failed'] as const)(
         'More details.',
       );
     });
-    enter(surface, '');
+    h.confirmInSession(surface);
     await vi.waitFor(() => {
       expect(h.owner.snapshot().status.kind).toBe('saved');
     });
@@ -2311,7 +2324,7 @@ it.each(['pending', 'failed'] as const)(
         'Latest draft',
       );
     });
-    enter(second, '');
+    h.confirmInSession(second);
     await vi.waitFor(() => {
       expect(h.owner.snapshot().status.kind).toBe('saved');
     });
@@ -2415,7 +2428,7 @@ it('waits for every edited note range before enabling confirmation', async () =>
   expect(h.owner.snapshot().journal).toHaveLength(0);
   waiting.resolve();
   await flushMicrotasks(0);
-  enter(surface, '');
+  h.confirmInSession(surface);
   await vi.waitFor(() => {
     expect(h.owner.snapshot().status.kind).toBe('saved');
   });
@@ -2468,7 +2481,7 @@ it('renders the earlier source again when refinement returns to it after a faile
   expect(surface.element.querySelector('.abyss-command-note-body')?.textContent).toContain(
     'First draft',
   );
-  enter(surface, '');
+  h.confirmInSession(surface);
   await vi.waitFor(() => {
     expect(h.owner.snapshot().status.kind).toBe('saved');
   });
@@ -2539,9 +2552,13 @@ it.each(['failed', 'concurrent'] as const)(
     surface = h.mount();
     await flushMicrotasks(0);
     check();
+    const completed = h.owner.snapshot();
     enter(surface, '');
     await flushMicrotasks(0);
-    expect(h.owner.snapshot().journal).toHaveLength(1);
+    const retained = h.owner
+      .recent()
+      .find((record) => record.snapshot.id === completed.id)?.snapshot;
+    expect(retained?.journal).toHaveLength(1);
     expect(await h.read('Note.md')).toBe(
       fault === 'concurrent' ? 'Concurrent content\n' : '# Original\n\nKeep this.\nMore details.',
     );
@@ -2583,7 +2600,7 @@ it.each([false, true])(
     h.session.stage({ kind: 'note', plan: prepared.value });
     let surface = h.mount();
     await flushMicrotasks(0);
-    enter(surface, '');
+    h.confirmInSession(surface);
     await vi.waitFor(() => {
       expect(h.owner.snapshot().status.kind).toBe(failReadback ? 'error' : 'saved');
     });
@@ -2611,9 +2628,12 @@ it.each([false, true])(
     surface = h.mount();
     await flushMicrotasks(0);
     check();
+    const completedSession = h.owner.snapshot().id;
     enter(surface, '');
     await flushMicrotasks(0);
-    expect(h.owner.snapshot().journal).toHaveLength(1);
+    expect(
+      h.owner.recent().find((record) => record.snapshot.id === completedSession)?.snapshot.journal,
+    ).toHaveLength(1);
   },
 );
 
@@ -2778,7 +2798,7 @@ it('compares native note blocks without raw heading deletion and keeps rendered 
   surface = h.mount();
   await flushMicrotasks(0);
   expect(surface.element.querySelector('.abyss-command-note h1 ins')).toBeNull();
-  enter(surface, '');
+  h.confirmInSession(surface);
   await vi.waitFor(() => {
     expect(h.owner.snapshot().status.kind).toBe('saved');
   });
@@ -2846,7 +2866,7 @@ it('reviews independent note ranges as fields in one card and commits them toget
   await flushMicrotasks(0);
   expect(surface.element.querySelectorAll('.abyss-command-note-body')).toHaveLength(2);
   const write = vi.spyOn(h.app.vault, 'process');
-  enter(surface, '');
+  h.confirmInSession(surface);
   await vi.waitFor(() => {
     expect(h.owner.snapshot().status.kind).toBe('saved');
   });
@@ -3240,7 +3260,7 @@ it('final voice waits for an admitted write and follows its verified focus mappi
     plan: change.plan.target,
     expectedPlanRevision: change.plan.revision,
   });
-  enter(surface, '');
+  h.confirmInSession(surface);
   await admitted.promise;
   let interpreted: CommandSessionSnapshot | undefined;
   h.setRun(async ({ session }) => {
@@ -3312,7 +3332,7 @@ it('final voice waits for a dispatched apply before its source effect, then prev
     if (!next.ok) throw new Error(next.error.code);
     h.session.stage({ kind: 'task', plan: next.value });
   });
-  enter(surface, '');
+  h.confirmInSession(surface);
   await admitted.promise;
   expect(h.owner.snapshot().journal[0]?.state).toBe('admitted');
   await spoken(surface, media);
@@ -3328,9 +3348,14 @@ it('final voice waits for a dispatched apply before its source effect, then prev
   expect(calls).toBe(1);
   expect(interpreted?.focus[0]?.target).toBe(h.owner.snapshot().actual[0]?.target);
   expect(interpreted?.submissionBasis?.proposalRevision).toBe(1);
-  expect(h.owner.snapshot().exchanges.filter((entry) => entry.role === 'user')).toHaveLength(1);
+  expect(
+    h.owner
+      .snapshot()
+      .exchanges.filter((entry) => entry.role === 'user')
+      .map((entry) => entry.text),
+  ).toEqual(['Save the current proposal', 'Set twenty minutes']);
   expect(await h.read('a.md')).toBe('- [ ] Saved first\n');
-  enter(surface, '');
+  h.confirmInSession(surface);
   await vi.waitFor(() => {
     expect(h.owner.snapshot().status.kind).toBe('saved');
   });

@@ -66,8 +66,10 @@ changes and existing-node fields before admission; unsaved-parent and linked-ope
 retain a question. Field selection uses the public `select-fields` preparation. The selected plans
 use the existing journal, writer and settled readback; successful receipt-authorized refresh leaves
 a freshly based remainder in the same tree. Failed remainder proof retains the committed receipt
-and unresolved proposal under existing recovery. Empty Enter and unqualified confirmation still
-save the whole proposal. Multi-root creation retains the latest successful, read-back creation
+and unresolved proposal under existing recovery. Empty Enter and unqualified confirmation save the whole proposal. The surface routes empty Enter
+through the owner’s serialized confirm-and-start action: only complete verified saving, an unchanged
+composer and no question/recovery state can start a new session. Semantic confirmation stays in the
+current session. The send button owns the New session context menu. Multi-root creation retains the latest successful, read-back creation
 request as a candidate refresh anchor; the public facade independently verifies its destination basis.
 
 `commandMessages` owns the limited English/Russian vocabulary for fixed CommandMode chrome and
@@ -126,7 +128,9 @@ status, with safe diagnostic codes when opened; startup raises no history Notice
 
 Q mounts `CommandModeSurface` through `CaptureSurface`'s extension port. `CaptureSurface` keeps
 IME, wiki completion, Enter/Shift+Enter, held-key suppression and detached-menu interaction
-ownership. Only Q uses the multiline adapter; ordinary capture removes CR/LF before its existing
+ownership. Only Q uses the multiline adapter; main supplies credential-presence availability without network
+checks so unavailable agent/voice controls remain hidden. Status occupies the ordinary metadata row’s
+position, with the shared tree and a separated last-command line below. ordinary capture removes CR/LF before its existing
 controller receives input. Command input never follows ordinary capture's blur submission path.
 Main retains transient mode/selection/scroll memory and the shared owner; destroying or migrating
 a surface releases its Components and subscriptions without discarding the session. `CommandNotes`
@@ -160,9 +164,10 @@ requested complete full-note read of that exact accepted version also covers the
 partial pages retain their scope labels and cannot replace an edit preview outside that selection. A committed
 write with unavailable readback retains the proposal as unverified evidence; old same-path pages
 never become current merely because a write committed. This uses existing receipt/page fields.
-Hide and Stop
-cancel future planning through the owner, while an admitted write settles through its existing
-journal. UI input/submission generations prevent late completion from clearing newer text.
+Stop cancels future planning through the owner, while an admitted write settles through its existing
+journal. Hiding leaves the active agent turn running and stops microphone capture; the owner emits
+one completion/attention notification through main only if the latest submitted work settles while
+hidden. Reopening suppresses that notification. UI input/submission generations prevent late completion from clearing newer text.
 
 `PanelView` refreshes bounded read-only view/inspector context on activation and submission.
 Accepted saved task navigation uses main's internal `TaskApiProvider.nativeTaskTarget` resolution
@@ -271,7 +276,7 @@ reviewed-value comparison. Current view context never implies an additional sour
 
 `commandWrites` sequences public facade operations and awaits journal persistence before every
 effect. Cancellation is checked again after that save and before dispatch. A dispatched facade
-call uses the run's independent settlement signal, so new input or hide stops only unissued
+call uses the run's independent settlement signal, so explicit Stop or superseding input stops only unissued
 operations; native request deadlines, revisions, source checks and disposal still apply.
 Known receipts and exact accepted readback precede Saved. Partial or unknown effects stop
 replay and retain the draft and observed entities. Project-first writes can refresh a dependent
@@ -302,8 +307,8 @@ peers from an affected source are refreshed through their accepted handles befor
 unverifiable selected continuation is reported unavailable, not presented as current metadata.
 Intermediate plans and receipts remain in the journal, not appended as current task versions.
 
-Hiding retains input, question and proposal, cancels pending model acceptance and queued turns,
-and stops future admission. Admitted writes settle and are read back, including when receipt
+Hiding retains input, question and proposal and continues the active agent turn. It retires queued
+UI gestures and media acceptance without cancelling already running preparation or authorized writes. Admitted writes settle and are read back, including when receipt
 persistence fails. A storage failure before admission records known unchanged effects locally and
 admits no native write. Disposal flushes the available snapshot and revokes the old owner's storage
 callbacks before releasing its client after admitted work settles. A later receipt may therefore
