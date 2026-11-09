@@ -577,6 +577,113 @@ it.each([
     expect(await h.session.confirm()).toBe(false);
   },
 );
+it.each([false, true])(
+  'selects fields after a whole sibling save shifts the retained plan, with copied duplicates: %s',
+  async (withCopies) => {
+    const h = await setup({
+      'a.md': `- [ ] One\n- [ ] Two\n${withCopies ? '\t- [ ] Same\n\t\t- Child comment\n\t- [ ] Same\n' : ''}`,
+      'copy.md': '- [ ] Copy\n\t- Copied comment\n',
+    });
+    const roots = ok(await h.api.tasks.list({ path: 'a.md' })).items.filter(
+      (root) => root.parentTarget === undefined,
+    );
+    const one = expectDefined(roots[0]),
+      two = expectDefined(roots[1]);
+    const prepare = expectDefined(h.api.tasks.prepare);
+    const first = ok(
+      await prepare({
+        kind: 'edit',
+        target: one.target,
+        expectedRevision: one.revision,
+        operation: { type: 'description', target: one.target, text: 'Added description' },
+      }),
+    );
+    let pending = ok(
+      await prepare({
+        kind: 'edit',
+        target: two.target,
+        expectedRevision: two.revision,
+        operation: {
+          type: 'patch',
+          target: two.target,
+          patch: {
+            markdownTitle: { type: 'set', value: 'Two pending' },
+            scheduled: { type: 'set', value: '2026-08-02' },
+          },
+        },
+      }),
+    );
+    if (withCopies) {
+      const source = expectDefined(ok(await h.api.tasks.list({ path: 'copy.md' })).items[0]);
+      pending = ok(
+        await prepare({
+          kind: 'append',
+          plan: pending.target,
+          expectedPlanRevision: pending.revision,
+          operation: {
+            type: 'copy-subtree',
+            source: source.target,
+            expectedSourceRevision: source.revision,
+            target: expectDefined(pending.after).target,
+          },
+        }),
+      );
+    }
+    pending = await canonicalCommandPlan(h.api, pending, new AbortController().signal, {
+      now: () => Date.UTC(2026, 7, 1, 12),
+      deadline: Date.UTC(2026, 7, 1, 12) + 5000,
+    });
+    h.session.stage({ kind: 'task', plan: first });
+    h.session.stage({ kind: 'task', plan: pending });
+    let fieldsOnly = false;
+    h.setRun(async ({ signal, session }) => {
+      const change = expectDefined(session.proposal.changes[0]);
+      if (change.kind !== 'task') throw new Error('Expected retained task');
+      await h.session.confirmFromTurn(session.proposal.revision, signal, false, {
+        proposalRevision: session.proposal.revision,
+        changes: fieldsOnly
+          ? [
+              {
+                kind: 'task-fields',
+                index: 0,
+                plan: change.plan.target,
+                expectedPlanRevision: change.plan.revision,
+                target: expectDefined(change.plan.after).target,
+                fields: ['scheduled'],
+              },
+            ]
+          : [{ kind: 'change', index: 0 }],
+      });
+    });
+    await h.session.submit('Save only the first whole change');
+    expect(h.session.snapshot()).toMatchObject({ blocked: false, status: { kind: 'ready' } });
+    expect(h.session.snapshot().journal).toHaveLength(1);
+    const refreshed = expectDefined(h.session.snapshot().proposal.changes[0]);
+    if (refreshed.kind !== 'task') throw new Error('Expected refreshed task');
+    expect(refreshed.plan.before?.source).toEqual(pending.before?.source);
+    expect(ok(await h.api.tasks.get(two.target)).source.line).toBeGreaterThan(two.source.line);
+    fieldsOnly = true;
+    await h.session.submit('Save only its date');
+    expect(h.session.snapshot()).toMatchObject({ blocked: false, status: { kind: 'ready' } });
+    expect(h.session.snapshot().journal).toHaveLength(2);
+    expect(await h.read('a.md')).toContain('- [ ] Two ⏳ 2026-08-02');
+    expect(await h.read('a.md')).not.toContain('Two pending');
+    expect(await h.read('a.md')).not.toContain('Copied comment');
+    const remainder = expectDefined(h.session.snapshot().proposal.changes[0]);
+    if (remainder.kind !== 'task') throw new Error('Expected remaining title');
+    if (withCopies) expect(remainder.plan.copies).toHaveLength(1);
+    expect(await h.session.confirm()).toBe(true);
+    expect(h.session.snapshot().journal).toHaveLength(3);
+    expect(h.session.snapshot().status.kind).toBe('saved');
+    expect(await h.read('a.md')).toContain('Added description');
+    expect(await h.read('a.md')).toContain('- [ ] Two pending ⏳ 2026-08-02');
+    if (withCopies) {
+      expect((await h.read('a.md')).match(/- \[ \] Same/g)).toHaveLength(2);
+      expect((await h.read('a.md')).match(/Copied comment/g)).toHaveLength(1);
+      expect((await h.read('a.md')).match(/Child comment/g)).toHaveLength(1);
+    }
+  },
+);
 it('refuses new writes if awaited journal persistence fails', async () => {
   const h = await setup();
   const session = new CommandSession({

@@ -358,6 +358,9 @@ scope and semantics. The canonical block editor transplants the sealed replaceme
 note, preserving other bytes. Refresh advances a private writer anchor while retaining the original
 reviewed `before`, frozen clock, and composed child map. Any attempt, including an unchanged or
 unknown result, prevents refresh throughout that append/refresh family.
+The native owner pairs current full-file bytes with the exact root snapshot supplied to the guarded
+refresh. A later field partition starts from that current source pair, retaining relative node/line
+maps and requiring the same root block as the historical reviewed `before`.
 
 `partitionFields` derives selected existing-node fields from the sealed native before/after trees.
 Its separate selected preparation uses the same canonical editor; its owner retains the native line,

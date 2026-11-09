@@ -330,7 +330,7 @@ function retainSelectionLineage(
 
 /** Retains sealed candidates; public snapshots never become source or write authority. */
 export class MarkdownTaskEditPreparation {
-  private originalContent = '';
+  private originalSource: { readonly content: string; readonly root: TaskSnapshot } | undefined;
   constructor(
     private readonly ports: PreparationPorts,
     private readonly family = { attempted: false },
@@ -342,7 +342,7 @@ export class MarkdownTaskEditPreparation {
     nodeMap: readonly TaskNodeLineMapping[],
     newlyAuthored = false,
   ): TaskPreparedRootEdit {
-    this.originalContent = content;
+    this.originalSource = { content, root: structuredClone(before) };
     return this.stage(structuredClone(before), content, structuredClone(before), {
       nodeMap,
       sourceMap: before.source.originalBlock
@@ -409,16 +409,25 @@ export class MarkdownTaskEditPreparation {
     maps: PreparationMaps,
     selections: readonly TaskFieldSelection[],
   ): ReturnType<Extract<TaskPreparedRootEdit, { type: 'ready' }>['partitionFields']> {
-    if (this.family.attempted || candidate.after === null || selections.length === 0)
+    const source = this.originalSource;
+    if (
+      this.family.attempted ||
+      candidate.after === null ||
+      selections.length === 0 ||
+      source?.root.source.originalBlock !== before.source.originalBlock
+    )
       return undefined;
-    const chosen = this.partitionEdits({ before, candidate, maps }, selections);
+    const chosen = this.partitionEdits(
+      { before: source.root, content: source.content, candidate, maps },
+      selections,
+    );
     if (chosen === undefined || chosen.after.source.originalBlock === before.source.originalBlock)
       return undefined;
     const selectedOwner = new MarkdownTaskEditPreparation(this.ports);
-    selectedOwner.originalContent = this.originalContent;
-    const selected = selectedOwner.stage(before, chosen.content, chosen.after, {
+    selectedOwner.originalSource = source;
+    const selected = selectedOwner.stage(source.root, chosen.content, chosen.after, {
       ...chosen,
-      correspondence: continuations(before, chosen.after, chosen.nodeMap),
+      correspondence: continuations(source.root, chosen.after, chosen.nodeMap),
       copies: [],
       authored: new Set(),
     });
@@ -445,13 +454,18 @@ export class MarkdownTaskEditPreparation {
     };
   }
   private partitionEdits(
-    basis: { before: TaskSnapshot; candidate: SealedCandidate; maps: PreparationMaps },
+    basis: {
+      before: TaskSnapshot;
+      content: string;
+      candidate: SealedCandidate;
+      maps: PreparationMaps;
+    },
     selections: readonly TaskFieldSelection[],
   ): PartitionCandidate | undefined {
-    const { before, candidate, maps } = basis;
+    const { before, content, candidate, maps } = basis;
     if (candidate.after === null) return undefined;
     let selected: PartitionCandidate = {
-      content: this.originalContent,
+      content,
       after: before,
       nodeMap: identityMap(before),
       sourceMap: identityLines(before),
@@ -503,15 +517,16 @@ export class MarkdownTaskEditPreparation {
     current: TaskSnapshot,
   ): Promise<TaskPreparedRootEdit | TaskEditRefreshUnavailable> {
     const { candidate, maps, chosen, committed } = basis;
-    const refreshed = await this.ports.refresh?.(current, candidate, committed);
+    const captured = structuredClone(current);
+    const refreshed = await this.ports.refresh?.(captured, candidate, committed);
     if (refreshed === undefined) return { type: 'invalid', result: invalidTaskTarget('target') };
     if ('type' in refreshed) return refreshed;
     if (this.family.attempted || !maps.copies.every((copy) => copy.permitted()))
       return { type: 'invalid', result: invalidTaskTarget('target') };
     const nodeMap = composeNodeMaps(invertMap(chosen.nodeMap), maps.nodeMap);
     const owner = new MarkdownTaskEditPreparation(refreshed.ports, this.family);
-    owner.originalContent = refreshed.beforeContent;
-    const rebased = owner.stage(current, refreshed.content, refreshed.after, {
+    owner.originalSource = { content: refreshed.beforeContent, root: captured };
+    const rebased = owner.stage(captured, refreshed.content, refreshed.after, {
       ...maps,
       nodeMap,
       sourceMap: composeNodeMaps(invertMap(chosen.sourceMap), maps.sourceMap),
@@ -522,7 +537,7 @@ export class MarkdownTaskEditPreparation {
     });
     return rebased.type !== 'ready'
       ? rebased
-      : { ...rebased, sourceContinuations: continuations(current, refreshed.after, nodeMap) };
+      : { ...rebased, sourceContinuations: continuations(captured, refreshed.after, nodeMap) };
   }
   private async copy(
     before: TaskSnapshot,
@@ -596,12 +611,13 @@ export class MarkdownTaskEditPreparation {
     const allowed = (): boolean =>
       !this.family.attempted && copies.every((copy) => copy.permitted());
     if (!allowed()) return { type: 'invalid', result: invalidTaskTarget('target') };
-    const refreshed = await this.ports.refresh?.(structuredClone(current), candidate);
+    const captured = structuredClone(current);
+    const refreshed = await this.ports.refresh?.(captured, candidate);
     if (refreshed === undefined || !allowed())
       return { type: 'invalid', result: invalidTaskTarget('target') };
     if ('type' in refreshed) return refreshed;
     const owner = new MarkdownTaskEditPreparation(refreshed.ports, this.family);
-    owner.originalContent = refreshed.beforeContent;
+    owner.originalSource = { content: refreshed.beforeContent, root: captured };
     return owner.stage(before, refreshed.content, refreshed.after, {
       nodeMap: candidate.nodeMap,
       sourceMap: maps.sourceMap,

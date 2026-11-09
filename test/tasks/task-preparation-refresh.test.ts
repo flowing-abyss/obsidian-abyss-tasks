@@ -21,6 +21,63 @@ const destination = {
 };
 
 describe('sealed preparation refresh', () => {
+  it('partitions a shifted duplicate child from the current source while retaining the reviewed before tree', async () => {
+    const h = await taskEditPreparationHarness(
+      '- [ ] One\n- [ ] Two\n\t- [ ] Same\n\t- [ ] Same\n',
+    );
+    h.index.integrationReads().activateOccurrences();
+    const root = expectDefined(h.index.list()[1]),
+      child = expectDefined(root.subtasks[1]);
+    const initial = ready(
+      await h.service.prepare(root, [
+        {
+          type: 'patch',
+          target: { type: 'subtask', ref: child.ref },
+          patch: { scheduled: { type: 'set', value: localDate('2026-08-02') } },
+        },
+      ]),
+    );
+    const full = ready(
+      initial.append({
+        type: 'patch',
+        target: { type: 'task', ref: expectDefined(initial.after).ref },
+        patch: { markdownTitle: { type: 'set', value: 'Two pending' } },
+      }),
+    );
+    expect(
+      (
+        await h.service.execute({
+          type: 'set-description',
+          target: { type: 'task', ref: h.root.ref },
+          text: 'Added description',
+        })
+      ).type,
+    ).toBe('ok');
+    const current = expectDefined(h.index.list()[1]);
+    const refreshed = ready(await full.refresh(current));
+    expect(refreshed.before).toEqual(root);
+    const partition = expectDefined(
+      refreshed.partitionFields([
+        {
+          target: { type: 'subtask', ref: expectDefined(refreshed.after?.subtasks[1]).ref },
+          fields: ['scheduled'],
+        },
+      ]),
+    );
+    const selected = ready(partition.selected);
+    expect(selected.before).toEqual(current);
+    expect((await selected.commit()).type).toBe('ok');
+    expect(h.index.list()[1]?.subtasks.map((node) => node.planning.scheduled)).toEqual([
+      undefined,
+      localDate('2026-08-02'),
+    ]);
+    expect(h.index.list()[1]?.title).toBe('Two');
+    const remainder = ready(await partition.rebase(expectDefined(h.index.list()[1])));
+    expect((await remainder.commit()).type).toBe('ok');
+    expect(h.index.list()[1]?.title).toBe('Two pending');
+    expect(await h.read()).toContain('Added description');
+    expect(refreshed.before).toEqual(root);
+  });
   it.each(['refreshed selection', 'later sibling write'] as const)(
     'retains selected commit proof across %s',
     async (mode) => {
@@ -598,7 +655,15 @@ it.each(['original', 'refreshed'] as const)(
 
 it('keeps the native anchor when caller evidence mutates during refresh readback', async () => {
   const h = await taskEditPreparationHarness('- [ ] Root\n');
-  const p = ready(await h.service.prepare(h.root, []));
+  const p = ready(
+    await h.service.prepare(h.root, [
+      {
+        type: 'patch',
+        target: { type: 'task', ref: h.root.ref },
+        patch: { scheduled: { type: 'set', value: localDate('2026-08-02') } },
+      },
+    ]),
+  );
   const supplied = structuredClone(h.root);
   const read = h.app.vault.read.bind(h.app.vault);
   vi.spyOn(h.app.vault, 'read').mockImplementationOnce(async (file) => {
@@ -607,6 +672,14 @@ it('keeps the native anchor when caller evidence mutates during refresh readback
   });
   const refreshed = ready(await p.refresh(supplied));
   expect((await refreshed.refresh(h.root)).type).toBe('ready');
+  const partition = expectDefined(
+    refreshed.partitionFields([
+      { target: { type: 'task', ref: expectDefined(refreshed.after).ref }, fields: ['scheduled'] },
+    ]),
+  );
+  const selected = ready(partition.selected);
+  expect(selected.before.ref).toEqual(h.root.ref);
+  expect((await selected.commit()).type).toBe('ok');
 });
 
 it.each(['shift', 'same-line'] as const)(
