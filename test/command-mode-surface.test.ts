@@ -3,6 +3,7 @@ import { MarkdownRenderer } from 'obsidian';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { ContentPlanV1, ProjectDtoV1, TaskContentOperationV1, TasksApiV1 } from '../api';
 import { CommandAgent } from '../src/ai/CommandAgent';
+import { configureCommandLocale } from '../src/ai/commandMessages';
 import { canonicalCommandPlan } from '../src/ai/commandReads';
 import { prepareSchema } from '../src/ai/commandSchemas';
 import { CommandSession } from '../src/ai/CommandSession';
@@ -25,7 +26,71 @@ import { captureMenus, mockReadingView } from './support/linkEditHarness';
 import { publicApiHarness, type PublicApiHarness } from './support/publicApiHarness';
 import { voiceMediaHarness } from './support/voiceMediaHarness';
 const cleanups: Array<() => void> = [];
+it('grows the shared composer for retained multiline text and width changes without moving selection', async () => {
+  let resized: ResizeObserverCallback | undefined;
+  const disconnect = vi.fn();
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      constructor(callback: ResizeObserverCallback) {
+        resized = callback;
+      }
+      observe() {}
+      unobserve() {}
+      disconnect = disconnect;
+    },
+  );
+  const h = await setup();
+  const surface = h.mount();
+  await flushMicrotasks();
+  const input = surface.input as HTMLTextAreaElement;
+  let height = 72;
+  Object.defineProperty(input, 'scrollHeight', { configurable: true, get: () => height });
+  vi.spyOn(input.win, 'getComputedStyle').mockReturnValue({
+    lineHeight: '24px',
+    fontSize: '16px',
+    paddingTop: '0px',
+    paddingBottom: '0px',
+  } as CSSStyleDeclaration);
+  h.owner.setInput('Retained draft');
+  input.setSelectionRange(2, 6);
+  h.owner.setInput('Retained draft\nRecognized first line\nRecognized second line');
+  expect(input.rows).toBe(3);
+  expect([input.selectionStart, input.selectionEnd]).toEqual([2, 6]);
+  height = 240;
+  resized?.([], {} as ResizeObserver);
+  expect(input.rows).toBe(6);
+  expect(input.value).toBe('Retained draft\nRecognized first line\nRecognized second line');
+  surface.destroy();
+  expect(disconnect).toHaveBeenCalled();
+});
+
+it('keeps duplicate note basenames compact and visibly attributes each exact nested path', async () => {
+  const paths = ['Long/Nested/First/Research.md', 'Other/Deeper/Research.md'];
+  const h = await setup(Object.fromEntries(paths.map((path) => [path, 'Body'])));
+  const surface = h.mount();
+  await flushMicrotasks();
+  for (const path of paths) {
+    const page = await expectDefined(h.api.notes).read({ selector: { path } });
+    if (!page.ok) throw new Error(page.error.code);
+    h.session.observeNote(page.value);
+  }
+  await h.session.focus(
+    h.session.snapshot().entities.notes.map((page) => ({
+      kind: 'note',
+      target: page.note.target,
+      revision: page.note.revision,
+    })),
+  );
+  expect(
+    [...surface.element.querySelectorAll('.abyss-command-note-title')].map((el) => el.textContent),
+  ).toEqual(['Research', 'Research']);
+  expect(
+    [...surface.element.querySelectorAll('.abyss-command-note-path')].map((el) => el.textContent),
+  ).toEqual(paths);
+});
 afterEach(() => {
+  configureCommandLocale('en');
   cleanups
     .splice(0)
     .reverse()
@@ -36,6 +101,20 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.useRealTimers();
+});
+it('localizes fixed Russian chrome while preserving the exact agent and user text', async () => {
+  configureCommandLocale('ru');
+  const h = await setup();
+  const surface = h.mount();
+  await flushMicrotasks();
+  expect(surface.element.querySelector('[aria-label="История"]')).not.toBeNull();
+  expect(surface.input.getAttribute('aria-label')).toBe('Команда');
+  h.owner.setInput('Ready for review.');
+  h.session.status('ready', 'Model supplied English phrase.');
+  expect(surface.input.value).toBe('Ready for review.');
+  expect(surface.element.querySelector('.abyss-command-phase')?.textContent).toBe(
+    'Model supplied English phrase.',
+  );
 });
 async function setup(
   files: Record<string, string> = {},

@@ -206,6 +206,7 @@ export class CommandAgent implements CommandAgentPort {
       journal: undefined,
       trees: undefined,
       proposal: {
+        revision: snapshot.proposal.revision,
         operations: snapshot.proposal.operations,
         changes: snapshot.proposal.changes.map((change) => {
           if (change.kind !== 'task') return change;

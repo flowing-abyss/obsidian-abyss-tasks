@@ -1,5 +1,6 @@
 import { Component, type App } from 'obsidian';
 import type { NotePlanV1, NoteReadPageV1 } from '../../../api';
+import { commandMessage } from '../../ai/commandMessages';
 import { isCommandNoteReadback } from '../../ai/commandSchemas';
 import type {
   CommandJournalEntry,
@@ -23,6 +24,7 @@ interface NoteDisplay {
 interface NoteRow {
   readonly host: HTMLElement;
   readonly title: HTMLElement;
+  readonly path: HTMLElement;
   readonly scope: HTMLElement;
   readonly owner: Component;
   readonly fields: Map<string, NoteField>;
@@ -38,12 +40,23 @@ interface NoteField {
   failed?: boolean;
 }
 function readScope(page: NoteReadPageV1 & { continued?: boolean }): string {
-  const part = page.resolvedSubpath ?? (page.selection === 'note' ? 'Note' : 'Selected section');
+  const part =
+    page.resolvedSubpath ??
+    (page.selection === 'note' ? commandMessage('Note') : commandMessage('Selected section'));
   if (page.continued === true)
-    return `Continuation · ${page.complete ? 'End of selection.' : 'More content remains; ask to continue.'}`;
+    return commandMessage('Continuation · {detail}', {
+      detail: page.complete
+        ? commandMessage('End of selection.')
+        : commandMessage('More content remains; ask to continue.'),
+    });
   if (!page.complete || page.truncated)
-    return `${part} excerpt · More content remains; ask to continue or read the full note.`;
-  return page.selection === 'note' ? 'Full note' : `${part} · Complete selection`;
+    return commandMessage(
+      '{part} excerpt · More content remains; ask to continue or read the full note.',
+      { part },
+    );
+  return page.selection === 'note'
+    ? commandMessage('Full note')
+    : commandMessage('{part} · Complete selection', { part });
 }
 function displays(state: CommandSessionSnapshot): NoteDisplay[] {
   const result = new Map<string, NoteDisplay>();
@@ -95,7 +108,7 @@ function currentReadScope(state: CommandSessionSnapshot, page: CommandNoteRead):
         entry.effects !== 'unchanged',
     );
   return written !== undefined && !isCommandNoteReadback(written, page, 'current')
-    ? 'Historical read · Current content unverified'
+    ? commandMessage('Historical read · Current content unverified')
     : readScope(page);
 }
 function proposalScope(
@@ -105,8 +118,8 @@ function proposalScope(
 ): string {
   if (written === undefined) return previewScope(state, plan);
   return written.effects === 'committed'
-    ? 'Written · Current content unverified · Proposed changes'
-    : 'Write outcome unverified · Proposed changes';
+    ? commandMessage('Written · Current content unverified · Proposed changes')
+    : commandMessage('Write outcome unverified · Proposed changes');
 }
 function planFields(plan: NotePlanV1): readonly NoteFieldDisplay[] {
   return (
@@ -156,7 +169,9 @@ export class CommandNotes {
   }
   private render(note: NoteDisplay): void {
     const row = this.row(note.key);
-    row.title.textContent = note.path;
+    row.title.textContent = note.path.split('/').pop()?.replace(/\.md$/i, '') ?? note.path;
+    row.path.textContent = note.path;
+    row.path.setAttribute('title', note.path);
     row.scope.textContent = note.scope;
     const keys = new Set(note.fields.map((field) => field.key));
     for (const [key, field] of row.fields) if (!keys.has(key)) this.releaseField(row, key, field);
@@ -188,7 +203,7 @@ export class CommandNotes {
       if (!current()) return;
       field.failed = true;
       field.ready = false;
-      field.body.textContent = 'Could not display note content.';
+      field.body.textContent = commandMessage('Could not display note content.');
       this.options.changed();
     };
     field.body.dataset['taskSourcePath'] = note.path;
@@ -251,9 +266,10 @@ export class CommandNotes {
     if (previous !== undefined) return previous;
     const host = this.host.createEl('section', { cls: 'abyss-command-note' });
     const title = host.createEl('h3', { cls: 'abyss-command-note-title' });
+    const path = host.createDiv({ cls: 'abyss-command-note-path' });
     const scope = host.createDiv({ cls: 'abyss-command-note-scope' });
     const owner = this.component.addChild(new Component());
-    const row = { host, title, scope, owner, fields: new Map<string, NoteField>() };
+    const row = { host, title, path, scope, owner, fields: new Map<string, NoteField>() };
     this.rows.set(key, row);
     return row;
   }
@@ -288,13 +304,17 @@ function showRead(state: CommandSessionSnapshot, page: NoteReadPageV1): boolean 
   );
 }
 function previewScope(state: CommandSessionSnapshot, plan: NotePlanV1): string {
-  if (plan.kind === 'create') return 'New note · Complete preview';
-  if ((plan.sections?.length ?? 0) > 1) return 'Changed sections · Complete preview';
+  if (plan.kind === 'create') return commandMessage('New note · Complete preview');
+  if ((plan.sections?.length ?? 0) > 1)
+    return commandMessage('Changed sections · Complete preview');
   const label = state.entities.notes
     .flatMap((page) => page.segments)
     .find((segment) => segment.section.target === plan.section)?.section.label;
-  const scope = label === undefined ? 'Changed section' : `Changed section · ${label}`;
-  return `${scope} · Complete preview`;
+  const scope =
+    label === undefined
+      ? commandMessage('Changed section')
+      : commandMessage('Changed section · {label}', { label });
+  return commandMessage('{scope} · Complete preview', { scope });
 }
 function noteChange(note: NoteFieldDisplay): string {
   if (note.before === undefined) return '';

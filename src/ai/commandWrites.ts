@@ -16,6 +16,7 @@ import type {
   TaskTreePageV1,
   TaskTreeV1,
 } from '../../api';
+import { commandMessage } from './commandMessages';
 import {
   projectMoveFocusMessage,
   projectMoveWithDescendantFocus,
@@ -117,6 +118,7 @@ class CommandWriteRun {
   private readonly statusRoots = new Map<string, TaskDtoV1>();
   private readonly statusFocus = new Map<string, readonly string[]>();
   private readonly changedPaths = new Set<string>();
+  private readonly creationReceipts = new Map<string, string>();
   private readonly projects = new Map<string, ProjectDtoV1>();
   private readonly signal = new AbortController().signal;
   constructor(private readonly ctx: WriteContext) {
@@ -135,7 +137,9 @@ class CommandWriteRun {
       if (this.ctx.cancelled())
         throw new CommandFailure(
           'CANCELLED',
-          'Stopped after the last admitted write. Review the result before continuing.',
+          commandMessage(
+            'Stopped after the last admitted write. Review the result before continuing.',
+          ),
         );
       await this.processRelatedChange(change);
     }
@@ -165,7 +169,9 @@ class CommandWriteRun {
         this.ctx.focusChanges(new Map([[selection.target, null]]));
         throw new CommandFailure(
           'READBACK',
-          'The write settled, but a selected task is unavailable. Review the current result.',
+          commandMessage(
+            'The write settled, but a selected task is unavailable. Review the current result.',
+          ),
         );
       }
     }
@@ -177,7 +183,9 @@ class CommandWriteRun {
       if (this.notes.size > 0 && this.ctx.proposal.changes.some((entry) => entry.kind === 'link'))
         throw new CommandFailure(
           'NOTE_LINK_PARTIAL',
-          'The note was saved; the task link could not be verified. Review the current result.',
+          commandMessage(
+            'The note was saved; the task link could not be verified. Review the current result.',
+          ),
         );
       throw cause;
     }
@@ -206,6 +214,9 @@ class CommandWriteRun {
         kind: 'refresh',
         plan: plan.target,
         expectedPlanRevision: plan.revision,
+        ...(plan.kind === 'create' && this.creationReceipts.has(path)
+          ? { afterRequestId: required(this.creationReceipts.get(path)) }
+          : {}),
       }),
     );
     const refreshed = await canonicalCommandPlan(this.ctx.api, refreshedPage, this.signal, {
@@ -215,7 +226,9 @@ class CommandWriteRun {
     if (!sameReviewedContent(plan, refreshed))
       throw new CommandFailure(
         'REVIEW_REQUIRED',
-        'Related content changed after the earlier write. Review the remaining proposal before saving.',
+        commandMessage(
+          'Related content changed after the earlier write. Review the remaining proposal before saving.',
+        ),
       );
     if (
       change.kind === 'task' &&
@@ -225,7 +238,9 @@ class CommandWriteRun {
     )
       throw new CommandFailure(
         'PRESERVATION_EXPIRED',
-        'The earlier write invalidated the merge assessment. The source is retained for a fresh review.',
+        commandMessage(
+          'The earlier write invalidated the merge assessment. The source is retained for a fresh review.',
+        ),
       );
     return { ...change, plan: refreshed };
   }
@@ -237,7 +252,7 @@ class CommandWriteRun {
     if (note === undefined || task?.kind !== 'task' || task.plan.revision !== change.plan.revision)
       throw new CommandFailure(
         'LINK_DEPENDENCY',
-        'The note was saved, but the reviewed task link no longer matches.',
+        commandMessage('The note was saved, but the reviewed task link no longer matches.'),
       );
     const page = await this.read(() =>
       required(this.ctx.api.notes).read({
@@ -248,7 +263,7 @@ class CommandWriteRun {
     if (page.markdownLink === undefined)
       throw new CommandFailure(
         'LINK_READBACK',
-        'The note was saved, but its link could not be verified.',
+        commandMessage('The note was saved, but its link could not be verified.'),
       );
     const text = change.template.replace('{{link}}', page.markdownLink);
     const plan = await this.read(() =>
@@ -274,13 +289,16 @@ class CommandWriteRun {
     )
       throw new CommandFailure(
         'CLEANUP_HELD',
-        'The copied content needs review before removing its source.',
+        commandMessage('The copied content needs review before removing its source.'),
       );
     const destination = this.ctx.proposal.changes.find(
       (c) => c.kind === 'task' && c.plan.target === change.destinationPlan,
     );
     if (destination?.kind !== 'task')
-      throw new CommandFailure('CLEANUP_HELD', 'The reviewed destination is unavailable.');
+      throw new CommandFailure(
+        'CLEANUP_HELD',
+        commandMessage('The reviewed destination is unavailable.'),
+      );
     this.checkAssessment(destination.plan, change);
   }
   private checkAssessment(
@@ -298,7 +316,7 @@ class CommandWriteRun {
     )
       throw new CommandFailure(
         'CLEANUP_HELD',
-        'The source preservation check no longer matches this proposal.',
+        commandMessage('The source preservation check no longer matches this proposal.'),
       );
   }
   private async write(change: Exclude<CommandChange, { kind: 'link' }>): Promise<void> {
@@ -322,7 +340,7 @@ class CommandWriteRun {
       });
       throw new CommandFailure(
         'CANCELLED',
-        'Stopped before the write was admitted. Your draft is retained.',
+        commandMessage('Stopped before the write was admitted. Your draft is retained.'),
       );
     }
     let result: WriteResult;
@@ -339,7 +357,7 @@ class CommandWriteRun {
       });
       throw new CommandFailure(
         'UNKNOWN_WRITE',
-        'The write result is unknown. Check the actual note before retrying.',
+        commandMessage('The write result is unknown. Check the actual note before retrying.'),
       );
     }
     await this.settle(entry, result);
@@ -357,7 +375,7 @@ class CommandWriteRun {
       });
       throw new CommandFailure(
         'INVALID_RECEIPT',
-        'The write receipt could not be verified. Do not repeat the write.',
+        commandMessage('The write receipt could not be verified. Do not repeat the write.'),
       );
     }
     try {
@@ -381,9 +399,26 @@ class CommandWriteRun {
       throw new CommandFailure(
         'WRITE_STOPPED',
         effects === 'unchanged' && !result.ok
-          ? `This change was not saved. ${result.error.message} Your proposal is retained.`
-          : 'The request may be partly saved. Review the actual result before continuing.',
+          ? commandMessage('This change was not saved. {detail} Your proposal is retained.', {
+              detail: result.error.message,
+            })
+          : commandMessage(
+              'The request may be partly saved. Review the actual result before continuing.',
+            ),
       );
+    this.retainCreationReceipt(entry, receipt);
+  }
+  private retainCreationReceipt(entry: CommandJournalEntry, receipt: WriteResult['receipt']): void {
+    if (
+      entry.change.kind === 'task' &&
+      entry.change.plan.kind === 'create' &&
+      receipt !== undefined
+    ) {
+      const path = planPath(entry.change.plan);
+      // The facade verifies this same-consumer receipt's sealed destination basis and live anchor.
+      // Retain the latest read-back creation so a third root continues the current source version.
+      if (path !== undefined) this.creationReceipts.set(path, receipt.requestId);
+    }
   }
   private async readResult(entry: CommandJournalEntry, result: WriteResult): Promise<void> {
     const receipt = result.receipt,
@@ -457,12 +492,15 @@ class CommandWriteRun {
     if ('noteEffects' in receipt) return this.readNote(receipt, change);
     const project = receipt.project;
     if (project === undefined)
-      throw new CommandFailure('READBACK', 'The project write finished without a verified result.');
+      throw new CommandFailure(
+        'READBACK',
+        commandMessage('The project write finished without a verified result.'),
+      );
     const current = await this.read(() => required(this.ctx.api.projects).get(project.target));
     if (current.revision !== project.revision)
       throw new CommandFailure(
         'READBACK',
-        'The project changed again before it could be verified.',
+        commandMessage('The project changed again before it could be verified.'),
       );
     this.projects.set(current.target, current);
     this.ctx.observeProject(current);
@@ -477,12 +515,17 @@ class CommandWriteRun {
     if (receipt.task === undefined)
       throw new CommandFailure(
         'READBACK',
-        'The moved task could not be identified. Review the source and destination.',
+        commandMessage(
+          'The moved task could not be identified. Review the source and destination.',
+        ),
       );
     const moved = required(receipt.task);
     const task = await this.read(() => this.ctx.api.tasks.get(moved.target));
     if (task.revision !== receipt.task.revision || task.source.path !== current.path)
-      throw new CommandFailure('READBACK', 'The moved task changed before it could be verified.');
+      throw new CommandFailure(
+        'READBACK',
+        commandMessage('The moved task changed before it could be verified.'),
+      );
     await this.readTree(task.target, task.revision);
     this.ctx.focusChanges(
       new Map([[change.before.target, { target: task.target, revision: task.revision }]]),
@@ -491,12 +534,17 @@ class CommandWriteRun {
   private async readNote(receipt: NoteMutationReceiptV1, change: CommandChange): Promise<void> {
     const note = receipt.note;
     if (note === undefined)
-      throw new CommandFailure('READBACK', 'The note write finished without a verified result.');
+      throw new CommandFailure(
+        'READBACK',
+        commandMessage('The note write finished without a verified result.'),
+      );
     this.notes.set(receipt.plan, note);
     if (change.kind === 'note' && change.plan.kind === 'edit' && receipt.section === undefined)
       throw new CommandFailure(
         'READBACK',
-        'The note was written, but its changed section could not be verified. Read the current note before continuing.',
+        commandMessage(
+          'The note was written, but its changed section could not be verified. Read the current note before continuing.',
+        ),
       );
     const request = {
       selector:
@@ -509,7 +557,7 @@ class CommandWriteRun {
     if (current.note.target !== note.target || current.note.revision !== note.revision)
       throw new CommandFailure(
         'READBACK',
-        'The note changed before its edited section could be verified.',
+        commandMessage('The note changed before its edited section could be verified.'),
       );
     this.ctx.observeNote({ ...current, request });
   }
@@ -518,7 +566,9 @@ class CommandWriteRun {
     if (correspondence.state !== 'complete')
       throw new CommandFailure(
         'READBACK',
-        'The write finished, but its resulting tasks could not be identified. Review the note.',
+        commandMessage(
+          'The write finished, but its resulting tasks could not be identified. Review the note.',
+        ),
       );
     this.accepted.set(
       receipt.plan,
@@ -543,7 +593,7 @@ class CommandWriteRun {
         if (current.revision !== next.revision)
           throw new CommandFailure(
             'READBACK',
-            'The selected task changed before it could be verified.',
+            commandMessage('The selected task changed before it could be verified.'),
           );
         continuations.set(selected.target, next);
       }
@@ -560,7 +610,10 @@ class CommandWriteRun {
     for (const after of change.plan.affected.after) {
       const next = this.accepted.get(plan)?.get(after.target);
       if (next === undefined)
-        throw new CommandFailure('READBACK', 'An affected hierarchy root could not be verified.');
+        throw new CommandFailure(
+          'READBACK',
+          commandMessage('An affected hierarchy root could not be verified.'),
+        );
       if (next.target !== root) await this.readTree(next.target, next.revision);
     }
   }
@@ -602,7 +655,7 @@ class CommandWriteRun {
     if (receipt.original.state === 'unproven')
       throw new CommandFailure(
         'READBACK',
-        'The task changed, but its final state could not be verified.',
+        commandMessage('The task changed, but its final state could not be verified.'),
       );
     if (receipt.original.state === 'retained') {
       await this.readTree(receipt.original.target);
@@ -630,7 +683,7 @@ class CommandWriteRun {
     if (expectedRevision !== undefined && node.revision !== expectedRevision)
       throw new CommandFailure(
         'READBACK',
-        'The task changed before its current tree could be verified.',
+        commandMessage('The task changed before its current tree could be verified.'),
       );
     const seen = new Set<string>();
     const ancestry = [node];
@@ -638,7 +691,7 @@ class CommandWriteRun {
       if (seen.has(node.target) || seen.size >= 4000)
         throw new CommandFailure(
           'READBACK',
-          'The task ancestry could not be verified within its limit.',
+          commandMessage('The task ancestry could not be verified within its limit.'),
         );
       seen.add(node.target);
       node = await get(node.parentTarget);
@@ -677,7 +730,9 @@ class CommandWriteRun {
           if (!sameCommandProjectSchema(change.schema, schema))
             throw new CommandFailure(
               'PROJECT_SCHEMA',
-              'Project settings changed. Review the retained requested values before saving.',
+              commandMessage(
+                'Project settings changed. Review the retained requested values before saving.',
+              ),
             );
           validateCommandProject(schema, change);
         } catch (cause) {
@@ -689,7 +744,9 @@ class CommandWriteRun {
               code: 'REVISION_CONFLICT',
               category: 'conflict',
               message:
-                cause instanceof Error ? cause.message : 'Project settings could not be checked.',
+                cause instanceof Error
+                  ? cause.message
+                  : commandMessage('Project settings could not be checked.'),
             },
           };
         }
@@ -740,7 +797,7 @@ class CommandWriteRun {
     if (target === undefined)
       throw new CommandFailure(
         'CORRESPONDENCE',
-        'The saved task has no exact correspondence. Review its status separately.',
+        commandMessage('The saved task has no exact correspondence. Review its status separately.'),
       );
     const root = await this.rootReference(target.target, target.revision);
     this.statusRoots.set(target.target, root);
@@ -770,7 +827,7 @@ class CommandWriteRun {
     if (plan.expiresAt <= this.ctx.now())
       throw new CommandFailure(
         'EXPIRED',
-        'This preview expired. Review a refreshed proposal before saving.',
+        commandMessage('This preview expired. Review a refreshed proposal before saving.'),
       );
     const input = { plan: plan.target, expectedPlanRevision: plan.revision, ...request };
     if (change.kind === 'note')

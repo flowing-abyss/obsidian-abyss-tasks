@@ -60,6 +60,21 @@ Intent-specific disposition validation distinguishes continuing work, resolving 
 and leaving a session. Archived sessions settle active planning status and clear accepted control
 input while retaining genuinely unsent text and complete exchanges.
 
+Explicit limited confirmation carries a typed scope from the trusted turn, bound to the exact
+proposal revision and issued task plan references. `commandSelection` validates independent whole
+changes and existing-node fields before admission; unsaved-parent and linked-operation dependencies
+retain a question. Field selection uses the public `select-fields` preparation. The selected plans
+use the existing journal, writer and settled readback; successful receipt-authorized refresh leaves
+a freshly based remainder in the same tree. Failed remainder proof retains the committed receipt
+and unresolved proposal under existing recovery. Empty Enter and unqualified confirmation still
+save the whole proposal. Multi-root creation retains the latest successful, read-back creation
+request as a candidate refresh anchor; the public facade independently verifies its destination basis.
+
+`commandMessages` owns the limited English/Russian vocabulary for fixed CommandMode chrome and
+application diagnostics. Main selects it from the host's `getLanguage()` result; other languages
+fall back to English. The catalog has no host imports, so settings and Node tooling retain their
+existing dependency boundary. User/model text, source values and error codes are unchanged.
+
 Project creation is a typed requested-values proposal. `CommandProjects` projects it into the
 existing native header without manufacturing a saved DTO or path. Public schema checks cover explicit
 fields, status and date ranges; dispatch rechecks the captured schema and invokes only
@@ -343,6 +358,14 @@ scope and semantics. The canonical block editor transplants the sealed replaceme
 note, preserving other bytes. Refresh advances a private writer anchor while retaining the original
 reviewed `before`, frozen clock, and composed child map. Any attempt, including an unchanged or
 unknown result, prevents refresh throughout that append/refresh family.
+
+`partitionFields` derives selected existing-node fields from the sealed native before/after trees.
+Its separate selected preparation uses the same canonical editor; its owner retains the native line,
+node, authored-node and copy witnesses for the remainder. After a successful selected commit, its
+rebase closure requires the exact selected-after root, original file identity, and unchanged scope,
+semantics and settings. It transplants the original sealed candidate into current unrelated file
+bytes and rebases the source maps and reviewed before tree. Ordinary refresh still requires
+unchanged original root bytes. Draft descendants cannot be selected without their unsaved parent.
 
 Preparation-only `refineInitialStatus` uses the frozen application clock, settings and status
 catalog. The native owner certifies authored nodes from canonical creation or a complete, injective
@@ -746,6 +769,16 @@ command. Prepared successors remain unpublished until the final delivery check. 
 releases only its unpublished version; a visible refresh predecessor retires only when a successor is
 published. Concurrent visible versions and separately admitted request pins retain their ownership.
 A mutation consumes the whole plan family, including divergent versions and failed attempts.
+The additive `tasks.prepare.select-fields` capability accepts only field names and issued node
+handles for an exact edit-plan revision. Its selected Version retains the source revision and native
+rebase closure. The request registry retains successful selection evidence separately from creation
+anchors. `refresh(afterRequestId)` admits an edit remainder only from the same consumer's successful
+selection receipt for that exact source plan revision; foreign, expired and unrelated receipts fail.
+Edit plans expose optional `hasChanges` evidence from exact sealed native before/after root bytes.
+After authorized rebase, CommandMode retires a remainder only when this evidence is explicitly false.
+Create and hierarchy plans omit it; absence remains unknown. Structural and opaque source-byte
+differences keep an edit pending even when its displayed scalar fields match.
+
 Reorder operations use the existing block editor and exact surviving source-line witnesses.
 The additive hierarchy preparation uses exact source and parent revisions and always supplies
 before/after participating root views. Exact source/parent root continuations and the moved root

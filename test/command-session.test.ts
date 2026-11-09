@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
-import type { ApiResultV1 } from '../api';
+import type { ApiResultV1, TasksApiV1 } from '../api';
 import { canonicalCommandPlan } from '../src/ai/commandReads';
 import { sameReviewedContent } from '../src/ai/commandSchemas';
 import { CommandSession } from '../src/ai/CommandSession';
@@ -16,10 +16,13 @@ function ok<T>(r: ApiResultV1<T>): T {
   if (!r.ok) throw new Error(r.error.code);
   return r.value;
 }
-async function setup(files: Record<string, string> = { 'a.md': '- [ ] Existing\n' }) {
+async function setup(
+  files: Record<string, string> = { 'a.md': '- [ ] Existing\n' },
+  configure: (api: TasksApiV1) => TasksApiV1 = (api) => api,
+) {
   const h = await publicApiHarness(files);
   owners.push(h);
-  const api = h.client();
+  const api = configure(h.client());
   const saved: CommandSessionSnapshot[] = [];
   let run: CommandAgentPort['run'] = async () => {};
   const session = new CommandSession({
@@ -46,6 +49,176 @@ async function setup(files: Record<string, string> = { 'a.md': '- [ ] Existing\n
     },
   };
 }
+it('cancels selected preparation without admitting a write or replacing the stopped status', async () => {
+  const entered = deferred<void>(),
+    release = deferred<void>();
+  const h = await setup(undefined, (api) => ({
+    ...api,
+    tasks: {
+      ...api.tasks,
+      prepare: async (input, options) => {
+        if (input.kind === 'select-fields') {
+          entered.resolve();
+          await release.promise;
+        }
+        return expectDefined(api.tasks.prepare)(input, options);
+      },
+    },
+  }));
+  const root = expectDefined(ok(await h.api.tasks.list()).items[0]);
+  const plan = ok(
+    await expectDefined(h.api.tasks.prepare)({
+      kind: 'edit',
+      target: root.target,
+      expectedRevision: root.revision,
+      operation: {
+        type: 'patch',
+        target: root.target,
+        patch: { scheduled: { type: 'set', value: '2026-08-02' } },
+      },
+    }),
+  );
+  h.session.stage({ kind: 'task', plan });
+  h.setRun(async ({ signal, session }) => {
+    await h.session.confirmFromTurn(session.proposal.revision, signal, false, {
+      proposalRevision: session.proposal.revision,
+      changes: [
+        {
+          kind: 'task-fields',
+          index: 0,
+          plan: plan.target,
+          expectedPlanRevision: plan.revision,
+          target: expectDefined(plan.after).target,
+          fields: ['scheduled'],
+        },
+      ],
+    });
+  });
+  const pending = h.session.submit('Save the date only');
+  await entered.promise;
+  h.session.cancelTurn();
+  release.resolve();
+  await pending;
+  expect(h.session.snapshot().status).toEqual({
+    kind: 'ready',
+    message: 'Stopped. Your draft is retained.',
+  });
+  expect(h.session.snapshot().journal).toHaveLength(0);
+  expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+});
+it('retains successful selected receipts and blocks replay when remainder refresh fails', async () => {
+  const h = await setup(undefined, (api) => ({
+    ...api,
+    tasks: {
+      ...api.tasks,
+      prepare: async (input, options) => {
+        if (input.kind === 'refresh' && input.afterRequestId !== undefined)
+          return {
+            ok: false,
+            error: { category: 'conflict', code: 'REFRESH_REJECTED', message: 'Source changed' },
+          };
+        return expectDefined(api.tasks.prepare)(input, options);
+      },
+    },
+  }));
+  const root = expectDefined(ok(await h.api.tasks.list()).items[0]);
+  const plan = ok(
+    await expectDefined(h.api.tasks.prepare)({
+      kind: 'edit',
+      target: root.target,
+      expectedRevision: root.revision,
+      operation: {
+        type: 'patch',
+        target: root.target,
+        patch: {
+          markdownTitle: { type: 'set', value: 'Pending' },
+          scheduled: { type: 'set', value: '2026-08-02' },
+        },
+      },
+    }),
+  );
+  h.session.stage({ kind: 'task', plan });
+  h.setRun(async ({ signal, session }) => {
+    await h.session.confirmFromTurn(session.proposal.revision, signal, false, {
+      proposalRevision: session.proposal.revision,
+      changes: [
+        {
+          kind: 'task-fields',
+          index: 0,
+          plan: plan.target,
+          expectedPlanRevision: plan.revision,
+          target: expectDefined(plan.after).target,
+          fields: ['scheduled'],
+        },
+      ],
+    });
+  });
+  await h.session.submit('Save only the date');
+  expect(await h.read('a.md')).toBe('- [ ] Existing ⏳ 2026-08-02\n');
+  expect(h.session.snapshot()).toMatchObject({
+    blocked: true,
+    recovery: 'uncertain',
+    status: { kind: 'error' },
+  });
+  expect(h.session.snapshot().journal).toMatchObject([{ state: 'settled', effects: 'committed' }]);
+  expect(h.session.snapshot().proposal.changes).toEqual([{ kind: 'task', plan }]);
+  await h.session.submit('');
+  expect(h.session.snapshot().journal).toHaveLength(1);
+  expect(await h.read('a.md')).not.toContain('Pending');
+});
+it.each([false, true])(
+  'retires only a canonically proven empty remainder with other pending work: %s',
+  async (otherPending) => {
+    const h = await setup();
+    const root = expectDefined(ok(await h.api.tasks.list()).items[0]);
+    const plan = ok(
+      await expectDefined(h.api.tasks.prepare)({
+        kind: 'edit',
+        target: root.target,
+        expectedRevision: root.revision,
+        operation: {
+          type: 'patch',
+          target: root.target,
+          patch: { scheduled: { type: 'set', value: '2026-08-02' } },
+        },
+      }),
+    );
+    h.session.stage({ kind: 'task', plan });
+    const other = otherPending
+      ? ok(
+          await expectDefined(h.api.notes).prepare({
+            kind: 'create',
+            path: 'Other.md',
+            title: 'Other',
+            text: 'Pending note',
+          }),
+        )
+      : undefined;
+    if (other !== undefined) h.session.stage({ kind: 'note', plan: other });
+    h.setRun(async ({ signal, session }) => {
+      await h.session.confirmFromTurn(session.proposal.revision, signal, false, {
+        proposalRevision: session.proposal.revision,
+        changes: [
+          {
+            kind: 'task-fields',
+            index: 0,
+            plan: plan.target,
+            expectedPlanRevision: plan.revision,
+            target: expectDefined(plan.after).target,
+            fields: ['scheduled'],
+          },
+        ],
+      });
+    });
+    await h.session.submit('Save only the date');
+    expect(h.session.snapshot().status.kind).toBe(otherPending ? 'ready' : 'saved');
+    expect(h.session.snapshot().proposal.changes).toEqual(
+      other === undefined ? [] : [{ kind: 'note', plan: other }],
+    );
+    expect(h.app.vault.getFileByPath('Other.md')).toBeNull();
+    expect(h.session.snapshot().journal).toHaveLength(1);
+  },
+);
 it('checks the exact note review basis for a bound session but keeps headless confirmation available', async () => {
   const h = await setup();
   const notes = expectDefined(h.api.notes);
@@ -128,6 +301,94 @@ it('never commits an active question with empty Enter or stale semantic consent'
   expect(await h.session.confirm(999)).toBe(false);
   expect(await h.read('a.md')).toBe('- [ ] Existing\n');
 });
+it('applies note review admission only to the explicitly selected work', async () => {
+  const h = await setup();
+  const plan = ok(
+    await expectDefined(h.api.tasks.prepare)({
+      kind: 'create',
+      destination: { type: 'note', path: 'a.md', insertion: { type: 'append' } },
+      tree: { markdownTitle: 'Selected task' },
+    }),
+  );
+  const note = ok(
+    await expectDefined(h.api.notes).prepare({
+      kind: 'create',
+      path: 'Pending.md',
+      title: 'Pending',
+      text: 'Still awaiting render',
+    }),
+  );
+  h.session.stage({ kind: 'task', plan });
+  h.session.stage({ kind: 'note', plan: note });
+  h.session.requireNoteReview();
+  h.setRun(async ({ signal, session }) => {
+    await h.session.confirmFromTurn(session.proposal.revision, signal, false, {
+      proposalRevision: session.proposal.revision,
+      changes: [{ kind: 'change', index: 0 }],
+    });
+  });
+  await h.session.submit('Save only the task');
+  expect(await h.read('a.md')).toContain('Selected task');
+  expect(h.app.vault.getFileByPath('Pending.md')).toBeNull();
+  expect(h.session.snapshot().proposal.changes).toEqual([{ kind: 'note', plan: note }]);
+});
+it('saves semantically selected date fields while retaining the title and child for later whole confirmation', async () => {
+  const h = await setup();
+  const root = expectDefined(ok(await h.api.tasks.list()).items[0]);
+  const prepare = expectDefined(h.api.tasks.prepare);
+  const initial = ok(
+    await prepare({
+      kind: 'edit',
+      target: root.target,
+      expectedRevision: root.revision,
+      operation: {
+        type: 'patch',
+        target: root.target,
+        patch: {
+          markdownTitle: { type: 'set', value: 'Pending title' },
+          scheduled: { type: 'set', value: '2026-08-02' },
+        },
+      },
+    }),
+  );
+  const plan = ok(
+    await prepare({
+      kind: 'append',
+      plan: initial.target,
+      expectedPlanRevision: initial.revision,
+      operation: {
+        type: 'add-child',
+        target: expectDefined(initial.after).target,
+        markdownTitle: 'Pending child',
+      },
+    }),
+  );
+  h.session.stage({ kind: 'task', plan });
+  h.setRun(async ({ signal, session }) => {
+    await h.session.confirmFromTurn(session.proposal.revision, signal, false, {
+      proposalRevision: session.proposal.revision,
+      changes: [
+        {
+          kind: 'task-fields',
+          index: 0,
+          plan: plan.target,
+          expectedPlanRevision: plan.revision,
+          target: expectDefined(plan.after).target,
+          fields: ['scheduled'],
+        },
+      ],
+    });
+  });
+  await h.session.submit('Save only the date; keep the rest pending');
+  expect(await h.read('a.md')).toBe('- [ ] Existing ⏳ 2026-08-02\n');
+  expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  expect(h.session.snapshot().status.message).not.toBe('Saved.');
+  await h.session.submit('');
+  expect(await h.read('a.md')).toContain('Pending title ⏳ 2026-08-02');
+  expect((await h.read('a.md')).match(/Pending child/g)).toHaveLength(1);
+  expect(h.session.snapshot().status.kind).toBe('saved');
+});
 it('routes nonempty input through semantic reasoning regardless of confirmation spelling', async () => {
   const h = await setup();
   const received: string[] = [];
@@ -137,6 +398,88 @@ it('routes nonempty input through semantic reasoning regardless of confirmation 
   await h.session.submit('okay');
   await h.session.submit('да');
   expect(received).toEqual(['okay', 'да']);
+});
+it.each(['stale scope', 'unknown change', 'unsaved child'])(
+  'rejects %s before admitting a limited write',
+  async (reason) => {
+    const h = await setup();
+    const plan = ok(
+      await expectDefined(h.api.tasks.prepare)({
+        kind: 'create',
+        destination: { type: 'note', path: 'a.md', insertion: { type: 'append' } },
+        tree: { markdownTitle: 'Parent', children: [{ markdownTitle: 'Child' }] },
+      }),
+    );
+    h.session.stage({ kind: 'task', plan });
+    h.setRun(async ({ signal, session }) => {
+      await h.session.confirmFromTurn(session.proposal.revision, signal, false, {
+        proposalRevision: session.proposal.revision + (reason === 'stale scope' ? 1 : 0),
+        changes:
+          reason === 'unsaved child'
+            ? [
+                {
+                  kind: 'task-fields',
+                  index: 0,
+                  plan: plan.target,
+                  expectedPlanRevision: plan.revision,
+                  target: expectDefined(plan.after?.children[0]).target,
+                  fields: ['markdownTitle'],
+                },
+              ]
+            : [{ kind: 'change', index: reason === 'unknown change' ? 99 : 0 }],
+      });
+    });
+    await h.session.submit('Save only this part');
+    expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+    expect(h.session.snapshot().journal).toHaveLength(0);
+    expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+    expect(h.session.snapshot().status.kind).toBe(
+      reason === 'unsaved child' ? 'question' : 'error',
+    );
+  },
+);
+it('asks before selecting content while a saved-node lifecycle change remains pending', async () => {
+  const h = await setup();
+  const root = expectDefined(ok(await h.api.tasks.list()).items[0]);
+  const plan = ok(
+    await expectDefined(h.api.tasks.prepare)({
+      kind: 'edit',
+      target: root.target,
+      expectedRevision: root.revision,
+      operation: {
+        type: 'patch',
+        target: root.target,
+        patch: { scheduled: { type: 'set', value: '2026-08-02' } },
+      },
+    }),
+  );
+  h.session.stage({ kind: 'task', plan });
+  h.session.stage({
+    kind: 'status',
+    target: root.target,
+    revision: root.revision,
+    symbol: 'x',
+    nuance: 'Complete with normal lifecycle',
+  });
+  h.setRun(async ({ signal, session }) => {
+    await h.session.confirmFromTurn(session.proposal.revision, signal, false, {
+      proposalRevision: session.proposal.revision,
+      changes: [
+        {
+          kind: 'task-fields',
+          index: 0,
+          plan: plan.target,
+          expectedPlanRevision: plan.revision,
+          target: expectDefined(plan.after).target,
+          fields: ['scheduled'],
+        },
+      ],
+    });
+  });
+  await h.session.submit('Save only the date');
+  expect(h.session.snapshot().status.kind).toBe('question');
+  expect(h.session.snapshot().journal).toHaveLength(0);
+  expect(await h.read('a.md')).toBe('- [ ] Existing\n');
 });
 it('refuses new writes if awaited journal persistence fails', async () => {
   const h = await setup();

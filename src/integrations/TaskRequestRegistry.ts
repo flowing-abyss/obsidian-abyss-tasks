@@ -13,7 +13,7 @@ import type {
   StatusMutationV1,
   TaskContentMutationResultV1,
 } from '../../api';
-import type { TaskCreatePreparation } from '../tasks';
+import type { TaskCreatePreparation, TaskEditPartition } from '../tasks';
 import {
   validateProjectMutation,
   type ProjectMutationInput,
@@ -31,6 +31,11 @@ type Result =
 interface ContentEvidence {
   readonly target: string;
   readonly preparation: Extract<TaskCreatePreparation, { type: 'ready' }>;
+}
+export interface SelectedContentEvidence {
+  readonly sourcePlan: string;
+  readonly sourceRevision: string;
+  readonly rebase: TaskEditPartition['rebase'];
 }
 interface AdmissionTicket<T extends Result = MutationResultV1> {
   readonly retainedBytes?: number;
@@ -77,6 +82,7 @@ interface RequestRecord {
   release: (() => void) | undefined;
   pending: boolean;
   contentEvidence?: ContentEvidence;
+  selectedContentEvidence?: SelectedContentEvidence;
 }
 interface RequestContext {
   readonly consumerId: string;
@@ -331,6 +337,28 @@ export class TaskRequestRegistry {
   retainContentEvidence(consumerId: string, requestId: string, evidence: ContentEvidence): void {
     const record = this.records_abyssPrivate.get(JSON.stringify([consumerId, requestId]));
     if (record?.pending === true) record.contentEvidence = evidence;
+  }
+  retainSelectedContentEvidence(
+    consumerId: string,
+    requestId: string,
+    evidence: SelectedContentEvidence,
+  ): void {
+    const record = this.records_abyssPrivate.get(JSON.stringify([consumerId, requestId]));
+    if (record?.pending === true) record.selectedContentEvidence = evidence;
+  }
+  async selectedContentEvidence(
+    consumerId: string,
+    requestId: string,
+  ): Promise<SelectedContentEvidence | undefined> {
+    this.reclaim_abyssPrivate(this.time_abyssPrivate());
+    const record = this.records_abyssPrivate.get(JSON.stringify([consumerId, requestId]));
+    if (record === undefined || record.pending) return undefined;
+    const result = await record.promise;
+    return result.ok &&
+      result.receipt.effects === 'committed' &&
+      record.expiresAt > this.time_abyssPrivate()
+      ? record.selectedContentEvidence
+      : undefined;
   }
   async contentEvidence(
     consumerId: string,

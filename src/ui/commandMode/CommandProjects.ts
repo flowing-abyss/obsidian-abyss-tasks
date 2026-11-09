@@ -1,5 +1,6 @@
 import { Component } from 'obsidian';
 import type { ProjectDtoV1, ProjectFieldValueV1, ProjectStatusV1 } from '../../../api';
+import { commandMessage } from '../../ai/commandMessages';
 import type { CommandChange, CommandSessionSnapshot } from '../../ai/commandTypes';
 import { formatProjectPrettyDate } from '../../panels/projects/projectDatePresentation';
 import { applyProjectStatusPresentation } from '../../panels/projects/projectStatusPresentation';
@@ -22,7 +23,7 @@ interface ProjectPresentation {
   readonly status: ProjectStatusV1;
   readonly fields: ProjectDtoV1['fields'];
   readonly change?: ProjectChange;
-  readonly label?: 'New project' | 'Move to';
+  readonly label?: string;
 }
 function savedProject(project: ProjectDtoV1, change?: ProjectChange): ProjectPresentation {
   return {
@@ -38,13 +39,13 @@ function savedProject(project: ProjectDtoV1, change?: ProjectChange): ProjectPre
 function projectProposal(change: CommandChange): ProjectPresentation | undefined {
   if (change.kind === 'project') return savedProject(change.before, change);
   if (change.kind === 'project-move')
-    return { ...savedProject(change.destination), label: 'Move to' };
+    return { ...savedProject(change.destination), label: commandMessage('Move to') };
   if (change.kind !== 'project-create') return undefined;
   return {
     key: change.id,
     basis: change.id,
     name: change.name,
-    label: 'New project',
+    label: commandMessage('New project'),
     fields: [],
     change,
     status:
@@ -97,7 +98,9 @@ function displayedStatus(
 function statusLabel(value: ProjectStatusV1, configured: ProjectStatus | undefined): string {
   if (configured !== undefined) return projectStatusDisplayName(configured);
   if (value.state === 'unrecognized') return value.value;
-  return value.state === 'unsupported' ? 'Unsupported status' : 'No status';
+  return value.state === 'unsupported'
+    ? commandMessage('Unsupported status')
+    : commandMessage('No status');
 }
 function fieldValue(project: ProjectPresentation, id: string): ProjectFieldValueV1 | undefined {
   const field = project.fields.find((field) => field.fieldId === id);
@@ -275,7 +278,8 @@ export class CommandProjects {
     }
     const catalog = buildConfiguredProjectFieldCatalog(this.options.projectSettings());
     const field = this.propertyRow(row, id);
-    field.label.textContent = findProjectFieldById(catalog, id)?.label ?? 'Unavailable property';
+    field.label.textContent =
+      findProjectFieldById(catalog, id)?.label ?? commandMessage('Unavailable property');
     this.dateChange(field.host, assignment?.value, id);
     field.host.inert = field.host.dataset['change'] === 'removed';
     field.value.dataset['taskSourcePath'] = project.sourcePath ?? '';
@@ -320,7 +324,7 @@ export class CommandProjects {
         beforeOpenLink: async ({ href, sourcePath }) =>
           project.sourcePath !== undefined && this.allowLink(href, sourcePath),
         onRenderFailure: () => {
-          field.value.textContent = 'Could not display property.';
+          field.value.textContent = commandMessage('Could not display property.');
         },
       },
     });
@@ -330,7 +334,8 @@ export class CommandProjects {
         if (field.pending === pending) pending.commit();
       },
       () => {
-        if (field.pending === pending) field.value.textContent = 'Could not display property.';
+        if (field.pending === pending)
+          field.value.textContent = commandMessage('Could not display property.');
       },
     );
   }
@@ -387,7 +392,7 @@ export class CommandProjects {
       change?.kind === 'project-create' &&
       change.statusId === undefined &&
       change.schema.defaultStatusId === undefined
-        ? 'Default status'
+        ? commandMessage('Default status')
         : statusLabel(value, configured);
     row.status.dataset['change'] =
       change?.statusId === undefined || !this.changed.has('status') ? '' : 'changed';
@@ -410,7 +415,10 @@ export class CommandProjects {
     const date = row.dates.get(id) ?? this.createDate(row, id);
     const text = this.dateText(displayed);
     date.label.textContent = text;
-    date.element.setAttribute('aria-label', `${id === 'start' ? 'Start' : 'End'}: ${text}`);
+    date.element.setAttribute(
+      'aria-label',
+      `${id === 'start' ? commandMessage('Start') : commandMessage('End')}: ${text}`,
+    );
     this.dateChange(date.element, assignment?.value, id);
   }
   private createDate(row: ProjectRow, id: string): ProjectDate {

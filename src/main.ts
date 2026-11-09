@@ -1,6 +1,7 @@
 import taskSearchWorkerSource from 'abyss-task-search-worker';
 import {
   getAllTags,
+  getLanguage,
   normalizePath,
   Notice,
   Plugin,
@@ -10,6 +11,7 @@ import {
 } from 'obsidian';
 import type { ApiResultV1, TasksApiV1 } from '../api';
 import { CommandAgent } from './ai/CommandAgent';
+import { configureCommandLocale } from './ai/commandMessages';
 import { CommandSession } from './ai/CommandSession';
 import { CommandSessionOwner } from './ai/CommandSessionOwner';
 import { CommandSessionStore, type CommandSessionStoragePort } from './ai/CommandSessionStore';
@@ -189,6 +191,7 @@ export default class TaskCalendarPlugin extends Plugin {
   private readonly commandRuntimes = new Set<CommandSession>();
 
   override async onload(): Promise<void> {
+    configureCommandLocale(getLanguage());
     await this.loadSettings();
     this.providerSecrets = new ProviderSecrets(this.app.secretStorage);
     const providerTransport = new NativeProviderTransport(requestUrl, (callback, delayMs) => {

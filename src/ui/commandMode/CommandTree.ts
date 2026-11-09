@@ -1,5 +1,6 @@
 import type { App, Component } from 'obsidian';
 import type { ContentPlanV1, TaskTreeV1 } from '../../../api';
+import { commandMessage } from '../../ai/commandMessages';
 import { checkedWriteResult, commandPlanViews } from '../../ai/commandSchemas';
 import type { CommandSessionOwner } from '../../ai/CommandSessionOwner';
 import type { CommandJournalEntry, CommandSessionSnapshot } from '../../ai/commandTypes';
@@ -189,7 +190,7 @@ export class CommandTree {
       motion: true,
       isCurrent: () => this.live && this.options.isCurrent(),
       onRenderFailure: () => {
-        this.options.failure('Could not render the task text.');
+        this.options.failure(commandMessage('Could not render the task text.'));
       },
     });
   }
@@ -359,7 +360,7 @@ export class CommandTree {
           app: this.options.app,
           isCurrent: () => this.live && this.options.isCurrent(),
           onRenderFailure: () => {
-            this.options.failure('Could not render the task text.');
+            this.options.failure(commandMessage('Could not render the task text.'));
           },
           beforeOpenLink: async ({ href, sourcePath }) => this.options.allowLink(href, sourcePath),
         },
@@ -520,7 +521,7 @@ export class CommandTree {
           ? { revision: binding.tree.revision }
           : { plan: binding.plan.target, expectedPlanRevision: binding.plan.revision }),
       }),
-      'Could not focus this task',
+      commandMessage('Could not focus this task'),
     );
   }
   private expand(seed: TaskTreeV1): void {
@@ -537,7 +538,8 @@ export class CommandTree {
         this.update(this.options.owner.snapshot());
       },
       () => {
-        if (current()) this.options.failure('Could not expand the complete task tree.');
+        if (current())
+          this.options.failure(commandMessage('Could not expand the complete task tree.'));
       },
     );
   }

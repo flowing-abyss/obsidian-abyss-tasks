@@ -29,6 +29,7 @@ import { sameTaskNodeRef } from '../domain/types';
 import type { TaskIssue } from '../domain/validation';
 import type {
   TaskEditRefreshUnavailable,
+  TaskFieldSelection,
   TaskHierarchyPreview,
   TaskPreparedNodeContinuation,
 } from './TaskEditPreparationApi';
@@ -297,6 +298,7 @@ export type TaskPreparedRootEdit =
       readonly type: 'ready';
       readonly before: TaskSnapshot;
       readonly continuations: readonly TaskPreparedNodeContinuation[];
+      readonly sourceContinuations?: readonly TaskPreparedNodeContinuation[];
       readonly after: TaskSnapshot | null;
       append(command: TaskEditCommand): TaskPreparedRootEdit;
       readonly copies: readonly TaskSourceCopyEvidence[];
@@ -304,6 +306,14 @@ export type TaskPreparedRootEdit =
       continueSourceComment(source: CommentRef): CommentRef | undefined;
       assessMerge(source: TaskNodeRef): Promise<TaskMergePreservation | undefined>;
       copySource(input: TaskSourceCopy): Promise<TaskPreparedRootEdit>;
+      partitionFields(selections: readonly TaskFieldSelection[]):
+        | {
+            readonly selected: TaskPreparedRootEdit;
+            rebase(
+              current: TaskSnapshot,
+            ): Promise<TaskPreparedRootEdit | TaskEditRefreshUnavailable>;
+          }
+        | undefined;
       refresh(current: TaskSnapshot): Promise<TaskPreparedRootEdit | TaskEditRefreshUnavailable>;
       commit(): Promise<TaskRepositoryResult>;
     }

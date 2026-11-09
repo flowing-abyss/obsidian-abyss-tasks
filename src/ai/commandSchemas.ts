@@ -158,8 +158,49 @@ export const batchSchema = z.strictObject({
   operations: z.array(batchOperationSchema).min(1).max(20),
 });
 export const taskToolSchema = z.discriminatedUnion('kind', [...prepareSchema.options, batchSchema]);
+const saveScopeSchema = z.strictObject({
+  proposalRevision: z.number().int().nonnegative(),
+  changes: z
+    .array(
+      z.discriminatedUnion('kind', [
+        z.strictObject({ kind: z.literal('change'), index: z.number().int().nonnegative() }),
+        z.strictObject({
+          kind: z.literal('task-fields'),
+          index: z.number().int().nonnegative(),
+          plan: handle,
+          expectedPlanRevision: handle,
+          target: handle,
+          fields: z
+            .array(
+              z.enum([
+                'markdownTitle',
+                'priority',
+                'due',
+                'scheduled',
+                'start',
+                'time',
+                'durationMinutes',
+                'recurrence',
+                'onCompletion',
+                'tags',
+                'description',
+              ]),
+            )
+            .min(1)
+            .max(11),
+        }),
+      ]),
+    )
+    .min(1)
+    .max(50),
+});
 export const intentSchema = z
   .strictObject({
+    scope: saveScopeSchema
+      .optional()
+      .describe(
+        'Only for explicit limited confirmation of the current proposal: select exact change indexes or existing task fields. Omit for whole-proposal confirmation. Never widen a child or linked-note dependency.',
+      ),
     intent: z
       .enum([
         'plan',
@@ -194,6 +235,12 @@ export const intentSchema = z
       ),
   })
   .superRefine((input, context) => {
+    if (input.scope !== undefined && !['confirm', 'immediate'].includes(input.intent))
+      context.addIssue({
+        code: 'custom',
+        path: ['scope'],
+        message: 'scope belongs only to confirmation of the current proposal.',
+      });
     if (input.disposition !== undefined && input.intent !== 'new-session')
       context.addIssue({
         code: 'custom',

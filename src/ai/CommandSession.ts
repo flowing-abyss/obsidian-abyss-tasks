@@ -7,6 +7,7 @@ import type {
   TaskTreePageV1,
   TaskTreeV1,
 } from '../../api';
+import { commandDiagnostic, commandMessage } from './commandMessages';
 import { projectMoveFocusMessage, projectMoveWithDescendantFocus } from './commandProjects';
 import { canonicalCommandPlan, commandRead } from './commandReads';
 import { hasUnresolvedCommandWrites } from './commandRecovery';
@@ -16,6 +17,12 @@ import {
   sameReviewedContent,
   validatePlanOutput,
 } from './commandSchemas';
+import {
+  rebaseCommandRemainder,
+  selectCommandWrite,
+  type CommandSelectedWrite,
+} from './commandSelection';
+import type { CommandSaveScope } from './commandTypes';
 import {
   CommandFailure,
   required,
@@ -131,7 +138,9 @@ function requireComposable(change: CommandChange, changes: readonly CommandChang
   )
     throw new CommandFailure(
       'STRUCTURAL_CONFLICT',
-      'Save or discard the pending changes to these notes before moving tasks. All current work is retained.',
+      commandMessage(
+        'Save or discard the pending changes to these notes before moving tasks. All current work is retained.',
+      ),
     );
 }
 function planFocus(focus: readonly CommandFocus[], change: CommandChange): readonly CommandFocus[] {
@@ -175,7 +184,10 @@ function validateChange(change: CommandChange): void {
         (view) => view.before?.complete === false || view.after?.complete === false,
       )
     )
-      throw new CommandFailure('INCOMPLETE_PLAN', 'Read the complete task plan before staging it.');
+      throw new CommandFailure(
+        'INCOMPLETE_PLAN',
+        commandMessage('Read the complete task plan before staging it.'),
+      );
   }
 }
 function validOperationBudget(total: number, increment: number): boolean {
@@ -214,7 +226,7 @@ function composeChange(previous: CommandChange, next: CommandChange): CommandCha
   if (previous.kind === 'note' && next.kind === 'note' && previous.plan.target !== next.plan.target)
     throw new CommandFailure(
       'NOTE_REFINEMENT',
-      'Refine the current note proposal to retain its pending sections.',
+      commandMessage('Refine the current note proposal to retain its pending sections.'),
     );
   return composeProjectChange(previous, next);
 }
@@ -226,7 +238,9 @@ function composeProjectChange(previous: CommandChange, next: CommandChange): Com
   )
     throw new CommandFailure(
       'REVISION_CONFLICT',
-      'The project changed while its earlier edits were pending. Review them before continuing.',
+      commandMessage(
+        'The project changed while its earlier edits were pending. Review them before continuing.',
+      ),
     );
   const fields = new Map((previous.fields ?? []).map((field) => [field.fieldId, field]));
   for (const field of next.fields ?? []) fields.set(field.fieldId, field);
@@ -263,7 +277,7 @@ function matchesFocusRevision(
 function focusError(cause: unknown): string {
   return cause instanceof CommandFailure
     ? cause.message
-    : 'Could not verify the requested selection.';
+    : commandMessage('Could not verify the requested selection.');
 }
 type VerifiedFocus =
   | { kind: 'task'; focus: CommandFocus; tree: TaskTreePageV1 }
@@ -403,7 +417,10 @@ export class CommandSession {
       actual: [],
       activeQuestion: null,
       pendingTransition: null,
-      status: { kind: 'ready', message: 'Prepare a fresh preview from the current source.' },
+      status: {
+        kind: 'ready',
+        message: commandMessage('Prepare a fresh preview from the current source.'),
+      },
     });
     return true;
   }
@@ -427,7 +444,8 @@ export class CommandSession {
     const timing = { now: this.options.now, deadline: this.options.now() + 5000 };
     const changes: Array<Extract<CommandChange, { kind: 'task' }>> = [];
     for (const change of this.state.proposal.changes) {
-      if (change.kind !== 'task') throw new CommandFailure('REVIEW', 'Review this preview again.');
+      if (change.kind !== 'task')
+        throw new CommandFailure('REVIEW', commandMessage('Review this preview again.'));
       const page = await commandRead(
         this.options.api,
         () =>
@@ -441,7 +459,10 @@ export class CommandSession {
       );
       const plan = await canonicalCommandPlan(this.options.api, page, signal, timing);
       if (!sameReviewedContent(change.plan, plan))
-        throw new CommandFailure('REVIEW', 'The source changed. Review a fresh preview.');
+        throw new CommandFailure(
+          'REVIEW',
+          commandMessage('The source changed. Review a fresh preview.'),
+        );
       changes.push({ kind: 'task', plan });
     }
     return changes;
@@ -524,7 +545,7 @@ export class CommandSession {
     if (task.target !== input.target || task.revision !== input.revision)
       throw new CommandFailure(
         'REVEAL_STALE',
-        'That task changed. Read it again before opening it.',
+        commandMessage('That task changed. Read it again before opening it.'),
       );
     if (!this.currentRevealTurn(turn, id, signal)) return false;
     return this.waitForReveal({ id: this.options.id(), sessionId: id, ...input }, turn, signal);
@@ -554,7 +575,7 @@ export class CommandSession {
       };
       this.pendingReveal = pending;
       signal.addEventListener('abort', abort, { once: true });
-      this.status('thinking', 'Opening task…');
+      this.status('thinking', commandMessage('Opening task…'));
     });
   }
   claimReveal(request: CommandRevealRequest): boolean {
@@ -602,7 +623,10 @@ export class CommandSession {
       commandRead(this.options.api, work, signal, { deadline, now: this.options.now });
     try {
       if (requested.length > 5)
-        throw new CommandFailure('FOCUS_LIMIT', 'Choose at most five working entities.');
+        throw new CommandFailure(
+          'FOCUS_LIMIT',
+          commandMessage('Choose at most five working entities.'),
+        );
       const verified: VerifiedFocus[] = [];
       for (const entry of requested) verified.push(await this.verifyFocus(entry, read));
       if (!current()) return false;
@@ -622,7 +646,7 @@ export class CommandSession {
     if (!this.needsFocusDisposition(requested)) return false;
     this.requestTransition(
       { kind: 'focus', target: requested },
-      'Save these changes, keep them for later, discard them, or stay here?',
+      commandMessage('Save these changes, keep them for later, discard them, or stay here?'),
     );
     return true;
   }
@@ -665,7 +689,7 @@ export class CommandSession {
       activeQuestion: question,
       status: {
         kind: question === null ? 'ready' : 'question',
-        message: question ?? 'Ready for review.',
+        message: question ?? commandMessage('Ready for review.'),
       },
     });
   }
@@ -709,7 +733,7 @@ export class CommandSession {
         activeQuestion: question,
         status:
           question === null
-            ? { kind: 'ready', message: 'Current work retained.' }
+            ? { kind: 'ready', message: commandMessage('Current work retained.') }
             : { kind: 'question', message: question },
       });
       return true;
@@ -725,7 +749,7 @@ export class CommandSession {
     review: CommandNoteReview | undefined,
   ): Promise<boolean> {
     if (this.pendingProjectMoveFocus() !== undefined) {
-      this.question(projectMoveFocusMessage);
+      this.question(commandDiagnostic(projectMoveFocusMessage));
       return Promise.resolve(false);
     }
     return this.saveAndFocus(pending.kind === 'focus' ? pending.target : undefined, signal, review);
@@ -777,7 +801,10 @@ export class CommandSession {
     if (target.kind === 'project') {
       const project = await read(() => required(this.options.api.projects).get(target.target));
       if (target.revision !== undefined && project.revision !== target.revision)
-        throw new CommandFailure('STALE_FOCUS', 'The project changed before it could be selected.');
+        throw new CommandFailure(
+          'STALE_FOCUS',
+          commandMessage('The project changed before it could be selected.'),
+        );
       return {
         kind: 'project',
         project,
@@ -838,7 +865,7 @@ export class CommandSession {
     )
       throw new CommandFailure(
         'STALE_FOCUS',
-        'Use the exact current proposal and node for draft selection.',
+        commandMessage('Use the exact current proposal and node for draft selection.'),
       );
     return {
       focus: {
@@ -982,7 +1009,10 @@ export class CommandSession {
       (c) => c.kind === 'task' && c.plan.target === plan,
     );
     if (draft?.kind !== 'task' || draft.plan.before !== null || draft.plan.revision !== revision)
-      throw new CommandFailure('DRAFT', 'Only the current unsaved root can be discarded.');
+      throw new CommandFailure(
+        'DRAFT',
+        commandMessage('Only the current unsaved root can be discarded.'),
+      );
     const changes = this.state.proposal.changes.filter((c) =>
       c.kind === 'status'
         ? c.plan !== plan
@@ -1021,7 +1051,9 @@ export class CommandSession {
       if (this.current(basis.id))
         this.status(
           'error',
-          error instanceof CommandFailure ? error.message : 'Could not change the draft status.',
+          error instanceof CommandFailure
+            ? error.message
+            : commandMessage('Could not change the draft status.'),
         );
       return false;
     }
@@ -1084,8 +1116,9 @@ export class CommandSession {
       revision: input.revision,
       symbol: input.symbol,
       ...(input.plan === undefined ? {} : { plan: input.plan }),
-      nuance:
+      nuance: commandMessage(
         'Status uses ordinary completion, recurrence, deletion, timer and blocker rules after the content is saved.',
+      ),
     });
   }
   setInput(text: string, draft = true): void {
@@ -1120,7 +1153,10 @@ export class CommandSession {
       );
     const count = affectedNodes(retained);
     if (count > 50 || !validOperationBudget(this.state.proposal.operations, operations))
-      throw new CommandFailure('BUDGET', 'This proposal is too large. Save or split it first.');
+      throw new CommandFailure(
+        'BUDGET',
+        commandMessage('This proposal is too large. Save or split it first.'),
+      );
     this.publish({
       preparations: [...(this.state.preparations ?? []), ...preparations],
       focus: planFocus(this.state.focus, change),
@@ -1131,12 +1167,15 @@ export class CommandSession {
       },
       trees: retained.flatMap(changeViews),
       activeQuestion: null,
-      status: { kind: 'ready', message: 'Ready for review.' },
+      status: { kind: 'ready', message: commandMessage('Ready for review.') },
     });
   }
   private requireStageable(): void {
     if (this.disposed || this.writing || this.readOnly() || this.state.pendingTransition != null)
-      throw new CommandFailure('BUSY', 'Resolve the previous write before changing this proposal.');
+      throw new CommandFailure(
+        'BUSY',
+        commandMessage('Resolve the previous write before changing this proposal.'),
+      );
   }
   async submit(
     text: string,
@@ -1164,7 +1203,9 @@ export class CommandSession {
       this.setInput(text);
       this.status(
         'error',
-        'This command is too long. Shorten it before sending; your full input is retained.',
+        commandMessage(
+          'This command is too long. Shorten it before sending; your full input is retained.',
+        ),
       );
       return;
     }
@@ -1194,7 +1235,7 @@ export class CommandSession {
   }
   private restoreQuestionStatus(): void {
     const question = this.state.activeQuestion;
-    this.status(question === null ? 'ready' : 'question', question ?? 'Ready.');
+    this.status(question === null ? 'ready' : 'question', question ?? commandMessage('Ready.'));
   }
   private async runTurn(
     text: string,
@@ -1202,7 +1243,7 @@ export class CommandSession {
     review?: CommandNoteReview,
   ): Promise<void> {
     if (this.unavailable()) {
-      this.status('error', 'Finish or reconcile the previous operation first.');
+      this.status('error', commandMessage('Finish or reconcile the previous operation first.'));
       return;
     }
     this.presentation = undefined;
@@ -1219,7 +1260,7 @@ export class CommandSession {
         proposalRevision: snapshot.proposal.revision,
       },
     };
-    this.status('thinking', 'Working…');
+    this.status('thinking', commandMessage('Working…'));
     try {
       await this.options.agent.run({ text, signal: controller.signal, session: basis });
       if (
@@ -1252,7 +1293,7 @@ export class CommandSession {
     this.pendingReveal?.settle(false);
     this.writeAdmission?.abort();
     if (active && !this.writing && this.state.activeQuestion === null)
-      this.status('ready', 'Stopped. Your draft is retained.');
+      this.status('ready', commandMessage('Stopped. Your draft is retained.'));
   }
   async settle(): Promise<void> {
     this.cancelTurn();
@@ -1270,9 +1311,10 @@ export class CommandSession {
     revision: number,
     signal: AbortSignal,
     immediate = false,
+    scope?: CommandSaveScope,
   ): Promise<boolean> {
     if (this.turn?.signal !== signal || signal.aborted) return false;
-    return this.commit(revision, this.turnReview, immediate);
+    return this.commit(revision, this.turnReview, immediate, scope);
   }
   private canCommit(revision: number): boolean {
     return (
@@ -1290,22 +1332,69 @@ export class CommandSession {
     revision: number,
     review?: CommandNoteReview,
     immediate = false,
+    scope?: CommandSaveScope,
   ): Promise<boolean> {
-    if (this.pendingProjectMoveFocus() !== undefined) {
-      this.question(projectMoveFocusMessage);
-      return false;
-    }
-    if (!this.canCommit(revision)) return false;
     if (
-      !immediate &&
-      this.noteReviewRequired &&
-      this.state.proposal.changes.some((change) => change.kind === 'note') &&
-      review?.({ sessionId: this.state.id, proposalRevision: revision }) !== true
-    ) {
-      this.status('ready', 'The note preview is not ready to save.');
+      !this.canCommit(revision) ||
+      !this.reviewedSelection({ revision, immediate, scope }, review)
+    )
+      return false;
+    if (scope === undefined) return this.writeProposal(detached(this.state.proposal), true);
+    return this.commitSelection(revision, scope);
+  }
+  private reviewedSelection(
+    basis: { revision: number; immediate: boolean; scope: CommandSaveScope | undefined },
+    review?: CommandNoteReview,
+  ): boolean {
+    const changes =
+      basis.scope === undefined
+        ? this.state.proposal.changes
+        : basis.scope.changes.flatMap((selection) => {
+            const change = this.state.proposal.changes[selection.index];
+            return change === undefined ? [] : [change];
+          });
+    if (projectMoveWithDescendantFocus(changes, this.state.focus) !== undefined) {
+      this.question(commandDiagnostic(projectMoveFocusMessage));
       return false;
     }
-    return this.writeProposal(detached(this.state.proposal), true);
+    if (
+      !basis.immediate &&
+      this.noteReviewRequired &&
+      changes.some((change) => change.kind === 'note') &&
+      review?.({ sessionId: this.state.id, proposalRevision: basis.revision }) !== true
+    ) {
+      this.status('ready', commandMessage('The note preview is not ready to save.'));
+      return false;
+    }
+    return true;
+  }
+  private async commitSelection(revision: number, scope: CommandSaveScope): Promise<boolean> {
+    const signal = required(this.turn).signal;
+    try {
+      const selection = await selectCommandWrite(
+        this.options.api,
+        detached(this.state.proposal),
+        scope,
+        { signal, now: this.options.now },
+      );
+      if (signal.aborted || !this.canCommit(revision)) return false;
+      return this.writeProposal(selection.proposal, true, selection);
+    } catch (cause) {
+      if (signal.aborted || this.turn?.signal !== signal) return false;
+      this.selectionFailed(cause);
+      return false;
+    }
+  }
+  private selectionFailed(cause: unknown): void {
+    if (cause instanceof CommandFailure && cause.code === 'SELECTION_DEPENDENCY')
+      this.question(cause.message);
+    else
+      this.status(
+        'error',
+        cause instanceof CommandFailure
+          ? cause.message
+          : commandMessage('Could not prepare the selected changes. Your proposal is retained.'),
+      );
   }
   async applyStatus(input: { target: string; revision: string; symbol: string }): Promise<boolean> {
     const basis = this.state;
@@ -1377,20 +1466,12 @@ export class CommandSession {
     proposal: CommandSessionSnapshot['proposal'],
     clear: boolean,
     inputRevision: number,
+    remainder?: readonly CommandChange[],
   ): Promise<void> {
     const completed: CommandSessionSnapshot = {
       ...this.snapshot(),
-      ...(clear
-        ? {
-            proposal: { revision: proposal.revision + 1, operations: 0, changes: [] },
-            trees: [],
-            input: inputRevision === this.inputRevision ? '' : this.state.input,
-          }
-        : {}),
-      status: {
-        kind: clear ? 'saved' : 'ready',
-        message: clear ? 'Saved.' : 'Status saved. Pending content is retained for review.',
-      },
+      ...(clear ? this.completedProposal(proposal, inputRevision, remainder ?? []) : {}),
+      status: this.completedStatus(clear, remainder ?? []),
     };
     await this.options.journal.save(completed);
     if (clear && inputRevision === this.inputRevision) this.inputDraft = false;
@@ -1399,11 +1480,42 @@ export class CommandSession {
       input: inputRevision === this.inputRevision ? completed.input : this.state.input,
     });
   }
+  private completedStatus(
+    clear: boolean,
+    remainder: readonly CommandChange[],
+  ): CommandSessionSnapshot['status'] {
+    if (remainder.length > 0)
+      return {
+        kind: 'ready',
+        message: commandMessage('Selected changes saved. The rest is pending.'),
+      };
+    return clear
+      ? { kind: 'saved', message: commandMessage('Saved.') }
+      : {
+          kind: 'ready',
+          message: commandMessage('Status saved. Pending content is retained for review.'),
+        };
+  }
+  private completedProposal(
+    proposal: CommandSessionSnapshot['proposal'],
+    inputRevision: number,
+    changes: readonly CommandChange[],
+  ): Partial<CommandSessionSnapshot> {
+    return {
+      proposal: { revision: proposal.revision + 1, operations: changes.length, changes },
+      trees: changes.flatMap((change) =>
+        change.kind === 'task' ? commandPlanViews(change.plan) : [],
+      ),
+      focus: this.refreshedFocus(changes.filter((change) => change.kind === 'task')),
+      input: inputRevision === this.inputRevision ? '' : this.state.input,
+    };
+  }
   private async writeProposal(
     proposal: CommandSessionSnapshot['proposal'],
     clear: boolean,
+    selection?: CommandSelectedWrite,
   ): Promise<boolean> {
-    const pending = this.performWrite(proposal, clear);
+    const pending = this.performWrite(proposal, clear, selection);
     this.pendingWrite = pending;
     try {
       return await pending;
@@ -1414,13 +1526,14 @@ export class CommandSession {
   private async performWrite(
     proposal: CommandSessionSnapshot['proposal'],
     clear: boolean,
+    selection?: CommandSelectedWrite,
   ): Promise<boolean> {
     const inputRevision = this.inputRevision;
     const journalStart = this.state.journal.length;
     const admission = new AbortController();
     this.writeAdmission = admission;
     this.writing = true;
-    this.status('writing', 'Saving…');
+    this.status('writing', commandMessage('Saving…'));
     try {
       await executeCommandWrites({
         api: this.options.api,
@@ -1458,37 +1571,51 @@ export class CommandSession {
           this.observeNote(note);
         },
       });
-      await this.completeWrite(proposal, clear, inputRevision);
+      const remainder =
+        selection === undefined
+          ? undefined
+          : await rebaseCommandRemainder(
+              this.options.api,
+              selection,
+              this.state.journal.slice(journalStart),
+              this.options.now,
+            );
+      await this.completeWrite(proposal, clear, inputRevision, remainder);
       return true;
     } catch (cause) {
-      const unsettled = this.state.journal
-        .slice(journalStart)
-        .some(
-          (j) =>
-            j.state === 'admitted' ||
-            j.effects === 'unknown' ||
-            j.effects === 'partial' ||
-            j.effects === 'committed',
-        );
-      this.publish({
-        blocked: unsettled,
-        ...this.writeRecovery(unsettled, cause),
-        status: {
-          kind: 'error',
-          message:
-            cause instanceof CommandFailure
-              ? cause.message
-              : 'Could not save or record the result. Review the retained write journal before continuing.',
-        },
-      });
-      if (!unsettled && cause instanceof CommandFailure && cause.code === 'PROJECT_MOVE_FOCUS')
-        this.retainProjectMoveFocus(this.state.focus);
+      this.failedWrite(cause, journalStart);
       return false;
     } finally {
       this.writing = false;
       this.writeAdmission = undefined;
       this.releaseDisposed();
     }
+  }
+  private failedWrite(cause: unknown, journalStart: number): void {
+    const unsettled = this.state.journal
+      .slice(journalStart)
+      .some(
+        (j) =>
+          j.state === 'admitted' ||
+          j.effects === 'unknown' ||
+          j.effects === 'partial' ||
+          j.effects === 'committed',
+      );
+    this.publish({
+      blocked: unsettled,
+      ...this.writeRecovery(unsettled, cause),
+      status: {
+        kind: 'error',
+        message:
+          cause instanceof CommandFailure
+            ? cause.message
+            : commandMessage(
+                'Could not save or record the result. Review the retained write journal before continuing.',
+              ),
+      },
+    });
+    if (!unsettled && cause instanceof CommandFailure && cause.code === 'PROJECT_MOVE_FOCUS')
+      this.retainProjectMoveFocus(this.state.focus);
   }
   private writeRecovery(unsettled: boolean, cause: unknown): Partial<CommandSessionSnapshot> {
     if (unsettled) return { recovery: 'uncertain' };
@@ -1499,7 +1626,9 @@ export class CommandSession {
   canLeaveUncertainty(): boolean {
     if (!this.state.blocked || this.state.uncertaintyAcknowledged === true) return true;
     this.question(
-      'The earlier result is unresolved. Acknowledge it before starting independent work.',
+      commandMessage(
+        'The earlier result is unresolved. Acknowledge it before starting independent work.',
+      ),
     );
     return false;
   }
@@ -1513,7 +1642,7 @@ export class CommandSession {
     if (this.state.proposal.changes.length > 0 && disposition === undefined) {
       this.requestTransition(
         { kind: 'new-session' },
-        'Keep this draft in history or discard it before starting a new session?',
+        commandMessage('Keep this draft in history or discard it before starting a new session?'),
       );
       return false;
     }
@@ -1543,7 +1672,10 @@ export class CommandSession {
       return this.restore(next, false);
     } catch {
       if (signal?.aborted !== true)
-        this.status('error', 'Could not retain this session. Keep it open and try again.');
+        this.status(
+          'error',
+          commandMessage('Could not retain this session. Keep it open and try again.'),
+        );
       return false;
     }
   }
@@ -1554,7 +1686,7 @@ export class CommandSession {
       this.state.pendingTransition != null ||
       ['thinking', 'searching'].includes(this.state.status.kind)
     )
-      return { kind: 'ready', message: 'Ready for review.' };
+      return { kind: 'ready', message: commandMessage('Ready for review.') };
     return this.state.status;
   }
   private archivedSnapshot(
@@ -1577,7 +1709,7 @@ export class CommandSession {
           proposal: { revision: previous.proposal.revision + 1, operations: 0, changes: [] },
           trees: [],
           activeQuestion: null,
-          status: { kind: 'ready', message: 'Draft discarded.' },
+          status: { kind: 'ready', message: commandMessage('Draft discarded.') },
         }
       : previous;
   }

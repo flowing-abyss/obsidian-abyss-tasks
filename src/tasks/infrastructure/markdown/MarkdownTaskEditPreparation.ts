@@ -1,5 +1,6 @@
 import type {
   TaskEditRefreshUnavailable,
+  TaskFieldSelection,
   TaskPreparedNodeContinuation,
 } from '../../application/TaskEditPreparationApi';
 import type {
@@ -13,6 +14,8 @@ import type {
   TaskSourceCopy,
   TaskSourceCopyEvidence,
 } from '../../application/TaskSourceCopyApi';
+import type { TaskPatch } from '../../domain/commands';
+import { taskTreeNodes } from '../../domain/taskSearchProjection';
 import { sameTaskNodeRef, type TaskNodeRef, type TaskSnapshot } from '../../domain/types';
 import { invalidTaskTarget } from '../../domain/validation';
 import {
@@ -49,9 +52,11 @@ interface PreparationPorts {
   refresh?(
     current: TaskSnapshot,
     candidate: SealedCandidate,
+    selected?: TaskSnapshot,
   ): Promise<
     | {
         readonly ports: PreparationPorts;
+        readonly beforeContent: string;
         readonly content: string;
         readonly after: TaskSnapshot | null;
       }
@@ -198,8 +203,117 @@ function allowsPreparedCommand(
     ) && allowsStatus(command, after, authored)
   );
 }
+interface PartitionCandidate {
+  readonly content: string;
+  readonly after: TaskSnapshot;
+  readonly nodeMap: readonly TaskNodeLineMapping[];
+  readonly sourceMap: readonly TaskNodeLineMapping[];
+}
+type SelectedNode = TaskSnapshot | TaskSnapshot['subtasks'][number];
+interface SelectedNodePair {
+  readonly origin: TaskNodeRef;
+  readonly before: SelectedNode;
+  readonly after: SelectedNode;
+}
+function selectedNodePair(
+  before: TaskSnapshot,
+  after: TaskSnapshot,
+  map: PreparationMaps['nodeMap'],
+  selection: TaskFieldSelection,
+): SelectedNodePair | undefined {
+  const next = [...taskTreeNodes(after)].find((node) =>
+    sameTaskNodeRef(node.target, selection.target),
+  );
+  const origin = continuations(before, after, map).find(
+    (pair) => pair.after !== undefined && sameTaskNodeRef(pair.after, selection.target),
+  );
+  if (next === undefined || origin === undefined) return undefined;
+  const previous = [...taskTreeNodes(before)].find((node) =>
+    sameTaskNodeRef(node.target, origin.before),
+  );
+  return previous === undefined
+    ? undefined
+    : { origin: origin.before, before: previous.node, after: next.node };
+}
+function uniqueFields(
+  selection: TaskFieldSelection,
+  origin: TaskNodeRef,
+  seen: Set<string>,
+): boolean {
+  if (selection.fields.length === 0) return false;
+  for (const field of selection.fields) {
+    const key = `${JSON.stringify(origin)}:${field}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+  }
+  return true;
+}
+function selectedPatchCommand(target: TaskNodeRef, patch: TaskPatch): TaskEditCommand {
+  if (target.type === 'task') return { type: 'patch', target, patch };
+  return { type: 'patch', target, patch };
+}
+function selectedValue<T>(value: T | undefined): { type: 'set'; value: T } | { type: 'clear' } {
+  return value === undefined ? { type: 'clear' } : { type: 'set', value };
+}
+function isPlanningField(
+  field: keyof TaskPatch,
+): field is 'due' | 'scheduled' | 'start' | 'time' | 'duration' {
+  return ['due', 'scheduled', 'start', 'time', 'duration'].includes(field);
+}
+function selectedPatch(
+  before: SelectedNode,
+  after: SelectedNode,
+  field: keyof TaskPatch,
+): TaskPatch {
+  if (isPlanningField(field)) return { [field]: selectedValue(after.planning[field]) };
+  switch (field) {
+    case 'markdownTitle':
+      return { markdownTitle: selectedValue(after.markdownTitle) };
+    case 'priority':
+      return { priority: selectedValue(after.priority) };
+    case 'recurrence':
+      return { recurrence: selectedValue(after.recurrence) };
+    case 'onCompletion':
+      return {
+        onCompletion: selectedValue(after.onCompletionExplicit ? after.onCompletion : undefined),
+      };
+    case 'tags':
+      return {
+        tags: {
+          add: after.tags.filter((tag) => !before.tags.includes(tag)),
+          remove: before.tags.filter((tag) => !after.tags.includes(tag)),
+        },
+      };
+  }
+}
+function identityLines(root: TaskSnapshot): readonly TaskNodeLineMapping[] {
+  return root.source.originalBlock
+    .split('\n')
+    .map((_, offset) => ({ beforeOffset: offset, afterOffset: offset }));
+}
+function invertMap(mapping: readonly TaskNodeLineMapping[]): readonly TaskNodeLineMapping[] {
+  return mapping.flatMap((entry) =>
+    entry.afterOffset === undefined
+      ? []
+      : [{ beforeOffset: entry.afterOffset, afterOffset: entry.beforeOffset }],
+  );
+}
+function advancePartition(
+  before: PartitionCandidate,
+  edited: CanonicalEdit,
+): PartitionCandidate | undefined {
+  if (edited.result.type !== 'committed' || edited.result.outcome.type !== 'task') return undefined;
+  if (!edited.result.changed) return before;
+  const nodeMap = composeNodeMaps(before.nodeMap, edited.nodeMap),
+    sourceMap = composeNodeMaps(before.sourceMap, edited.lineMap);
+  return nodeMap === undefined || sourceMap === undefined
+    ? undefined
+    : { content: edited.content, after: edited.result.outcome.task, nodeMap, sourceMap };
+}
+
 /** Retains sealed candidates; public snapshots never become source or write authority. */
 export class MarkdownTaskEditPreparation {
+  private originalContent = '';
   constructor(
     private readonly ports: PreparationPorts,
     private readonly family = { attempted: false },
@@ -211,6 +325,7 @@ export class MarkdownTaskEditPreparation {
     nodeMap: readonly TaskNodeLineMapping[],
     newlyAuthored = false,
   ): TaskPreparedRootEdit {
+    this.originalContent = content;
     return this.stage(structuredClone(before), content, structuredClone(before), {
       nodeMap,
       sourceMap: before.source.originalBlock
@@ -257,6 +372,8 @@ export class MarkdownTaskEditPreparation {
         return structuredClone(after);
       },
       append: (command) => this.append(before, { content, after, nodeMap }, maps, command),
+      partitionFields: (selections) =>
+        this.partition(before, { content, after, nodeMap }, maps, selections),
       refresh: (current) => this.refresh(before, { content, after, nodeMap }, current, maps),
       commit: async () => {
         this.family.attempted = true;
@@ -268,6 +385,118 @@ export class MarkdownTaskEditPreparation {
         return structuredClone(await attempt);
       },
     };
+  }
+  private partition(
+    before: TaskSnapshot,
+    candidate: SealedCandidate,
+    maps: PreparationMaps,
+    selections: readonly TaskFieldSelection[],
+  ): ReturnType<Extract<TaskPreparedRootEdit, { type: 'ready' }>['partitionFields']> {
+    if (this.family.attempted || candidate.after === null || selections.length === 0)
+      return undefined;
+    const chosen = this.partitionEdits({ before, candidate, maps }, selections);
+    if (chosen === undefined || chosen.after.source.originalBlock === before.source.originalBlock)
+      return undefined;
+    const selectedOwner = new MarkdownTaskEditPreparation(this.ports);
+    selectedOwner.originalContent = this.originalContent;
+    const selected = selectedOwner.stage(before, chosen.content, chosen.after, {
+      ...chosen,
+      correspondence: continuations(before, chosen.after, chosen.nodeMap),
+      copies: [],
+      authored: new Set(),
+    });
+    if (selected.type !== 'ready') return undefined;
+    let committed = false;
+    return {
+      selected: {
+        ...selected,
+        commit: async () => {
+          const result = await selected.commit();
+          committed = result.type === 'committed';
+          return result;
+        },
+      },
+      rebase: async (current) => {
+        if (!committed || this.family.attempted || !maps.copies.every((copy) => copy.permitted()))
+          return { type: 'invalid', result: invalidTaskTarget('target') };
+        return this.rebasePartition({ candidate, maps, chosen }, current);
+      },
+    };
+  }
+  private partitionEdits(
+    basis: { before: TaskSnapshot; candidate: SealedCandidate; maps: PreparationMaps },
+    selections: readonly TaskFieldSelection[],
+  ): PartitionCandidate | undefined {
+    const { before, candidate, maps } = basis;
+    if (candidate.after === null) return undefined;
+    let selected: PartitionCandidate = {
+      content: this.originalContent,
+      after: before,
+      nodeMap: identityMap(before),
+      sourceMap: identityLines(before),
+    };
+    const selectedFields = new Set<string>();
+    for (const selection of selections) {
+      const pair = selectedNodePair(before, candidate.after, maps.nodeMap, selection);
+      if (pair === undefined || !uniqueFields(selection, pair.origin, selectedFields))
+        return undefined;
+      const next = this.applySelectedFields(
+        selected,
+        { ...pair, fields: selection.fields },
+        before,
+      );
+      if (next === undefined) return undefined;
+      selected = next;
+    }
+    return selected;
+  }
+  private applySelectedFields(
+    candidate: PartitionCandidate,
+    selection: SelectedNodePair & { fields: TaskFieldSelection['fields'] },
+    before: TaskSnapshot,
+  ): PartitionCandidate | undefined {
+    let selected = candidate;
+    for (const field of selection.fields) {
+      const target = continuations(before, selected.after, selected.nodeMap).find((pair) =>
+        sameTaskNodeRef(pair.before, selection.origin),
+      )?.after;
+      if (target === undefined) return undefined;
+      const command =
+        field === 'description'
+          ? { type: 'set-description' as const, target, text: selection.after.description ?? null }
+          : selectedPatchCommand(target, selectedPatch(selection.before, selection.after, field));
+      const edited = this.ports.apply(selected.content, selected.after, command);
+      const next = advancePartition(selected, edited);
+      if (next === undefined) return undefined;
+      selected = next;
+    }
+    return selected;
+  }
+  private async rebasePartition(
+    basis: { candidate: SealedCandidate; maps: PreparationMaps; chosen: PartitionCandidate },
+    current: TaskSnapshot,
+  ): Promise<TaskPreparedRootEdit | TaskEditRefreshUnavailable> {
+    const { candidate, maps, chosen } = basis;
+    const refreshed = await this.ports.refresh?.(current, candidate, chosen.after);
+    if (refreshed === undefined) return { type: 'invalid', result: invalidTaskTarget('target') };
+    if ('type' in refreshed) return refreshed;
+    if (this.family.attempted || !maps.copies.every((copy) => copy.permitted()))
+      return { type: 'invalid', result: invalidTaskTarget('target') };
+    const nodeMap = composeNodeMaps(invertMap(chosen.nodeMap), maps.nodeMap);
+    const owner = new MarkdownTaskEditPreparation(refreshed.ports, this.family);
+    owner.originalContent = refreshed.beforeContent;
+    const rebased = owner.stage(current, refreshed.content, refreshed.after, {
+      ...maps,
+      nodeMap,
+      sourceMap: composeNodeMaps(invertMap(chosen.sourceMap), maps.sourceMap),
+      correspondence:
+        candidate.after === null
+          ? []
+          : continuations(candidate.after, refreshed.after, identityMap(candidate.after)),
+    });
+    return rebased.type !== 'ready'
+      ? rebased
+      : { ...rebased, sourceContinuations: continuations(current, refreshed.after, nodeMap) };
   }
   private async copy(
     before: TaskSnapshot,
@@ -345,27 +574,24 @@ export class MarkdownTaskEditPreparation {
     if (refreshed === undefined || !allowed())
       return { type: 'invalid', result: invalidTaskTarget('target') };
     if ('type' in refreshed) return refreshed;
-    return new MarkdownTaskEditPreparation(refreshed.ports, this.family).stage(
-      before,
-      refreshed.content,
-      refreshed.after,
-      {
-        nodeMap: candidate.nodeMap,
-        sourceMap: maps.sourceMap,
-        authored,
-        copies,
-        correspondence:
-          candidate.after === null
-            ? []
-            : continuations(
-                candidate.after,
-                refreshed.after,
-                [...preparedNodes(candidate.after).keys()].map((offset) => ({
-                  beforeOffset: offset,
-                  afterOffset: offset,
-                })),
-              ),
-      },
-    );
+    const owner = new MarkdownTaskEditPreparation(refreshed.ports, this.family);
+    owner.originalContent = refreshed.beforeContent;
+    return owner.stage(before, refreshed.content, refreshed.after, {
+      nodeMap: candidate.nodeMap,
+      sourceMap: maps.sourceMap,
+      authored,
+      copies,
+      correspondence:
+        candidate.after === null
+          ? []
+          : continuations(
+              candidate.after,
+              refreshed.after,
+              [...preparedNodes(candidate.after).keys()].map((offset) => ({
+                beforeOffset: offset,
+                afterOffset: offset,
+              })),
+            ),
+    });
   }
 }

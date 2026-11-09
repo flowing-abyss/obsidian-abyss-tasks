@@ -1,4 +1,4 @@
-import type { TaskCommand, TaskCommandResult } from '../domain/commands';
+import type { TaskCommand, TaskCommandResult, TaskPatch } from '../domain/commands';
 import type { TaskHierarchyCommand } from '../domain/taskHierarchy';
 import type { CommentRef, TaskNodeRef, TaskSnapshot } from '../domain/types';
 import type {
@@ -32,6 +32,14 @@ export interface TaskPreparedNodeContinuation {
   readonly before: TaskNodeRef;
   readonly after?: TaskNodeRef;
 }
+export interface TaskFieldSelection {
+  readonly target: TaskNodeRef;
+  readonly fields: ReadonlyArray<keyof TaskPatch | 'description'>;
+}
+export interface TaskEditPartition {
+  readonly selected: TaskEditPreparation;
+  rebase(current: TaskSnapshot): Promise<TaskEditPreparation | TaskEditRefreshUnavailable>;
+}
 
 export interface TaskEditPreparationApi {
   prepare(
@@ -50,6 +58,7 @@ export type TaskEditPreparation =
       readonly type: 'ready';
       readonly before: TaskSnapshot;
       readonly continuations: readonly TaskPreparedNodeContinuation[];
+      readonly sourceContinuations?: readonly TaskPreparedNodeContinuation[];
       readonly after: TaskSnapshot | null;
       /** Immutable continuation; command refs must belong to this preparation's after tree. */
       append(command: PreparedTaskEditCommand): TaskEditPreparation;
@@ -59,6 +68,7 @@ export type TaskEditPreparation =
       continueSourceComment(source: CommentRef): CommentRef | undefined;
       assessMerge(source: TaskNodeRef): Promise<TaskMergePreservation | undefined>;
       copySource(input: TaskSourceCopy): Promise<TaskEditPreparation>;
+      partitionFields(selections: readonly TaskFieldSelection[]): TaskEditPartition | undefined;
       refresh(current: TaskSnapshot): Promise<TaskEditPreparation | TaskEditRefreshUnavailable>;
       /** One attempt, with the same detached receipt on subsequent calls, including failures. */
       commit(): Promise<TaskCommandResult>;

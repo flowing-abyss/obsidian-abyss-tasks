@@ -1,3 +1,4 @@
+import { commandMessage } from '../commandMessages';
 export interface VoiceCaptureEvents<B> {
   begin(): B;
   segment(audio: Blob, basis: B): void;
@@ -66,11 +67,11 @@ export class NativeVoiceCapture<B> {
       for (const track of stream.getTracks())
         for (const event of ['ended', 'mute'])
           this.listen(track, event, () => {
-            this.fail('Microphone unavailable. Try the microphone again.');
+            this.fail(commandMessage('Microphone unavailable. Try the microphone again.'));
           });
       this.listen(this.context, 'statechange', () => {
         if (this.context?.state !== 'running')
-          this.fail('Voice input paused. Try the microphone again.');
+          this.fail(commandMessage('Voice input paused. Try the microphone again.'));
       });
       this.listen(this.win, 'pagehide', () => {
         this.stop();
@@ -84,13 +85,13 @@ export class NativeVoiceCapture<B> {
         try {
           this.sample(samples);
         } catch {
-          this.fail('Voice processing failed. Try the microphone again.');
+          this.fail(commandMessage('Voice processing failed. Try the microphone again.'));
         }
       }, 50);
       this.events.changed();
     } catch {
       if (generation === this.generation)
-        this.fail('Could not use the microphone. Check permission and try again.');
+        this.fail(commandMessage('Could not use the microphone. Check permission and try again.'));
     }
   }
   private supportedMime(): string {
@@ -147,7 +148,7 @@ export class NativeVoiceCapture<B> {
       if (this.recording !== item) return;
       item.bytes += event.data.size;
       if (item.bytes > 4 * 1024 * 1024) {
-        this.fail('Recording is too large. Try a shorter command.');
+        this.fail(commandMessage('Recording is too large. Try a shorter command.'));
         return;
       }
       if (event.data.size > 0) item.chunks.push(event.data);
@@ -156,7 +157,7 @@ export class NativeVoiceCapture<B> {
       this.recorded(item);
     };
     const failed = (): void => {
-      this.fail('Recording failed. Try the microphone again.');
+      this.fail(commandMessage('Recording failed. Try the microphone again.'));
     };
     recorder.addEventListener('dataavailable', data);
     recorder.addEventListener('stop', stopped);
@@ -177,7 +178,7 @@ export class NativeVoiceCapture<B> {
       item.quietTicks = 0;
     } else item.quietTicks++;
     if (age >= 60000) {
-      this.fail('Recording reached one minute. Try a shorter command.');
+      this.fail(commandMessage('Recording reached one minute. Try a shorter command.'));
       return;
     }
     this.segmentPause(item, age);
@@ -194,7 +195,7 @@ export class NativeVoiceCapture<B> {
     try {
       item.recorder.stop();
     } catch {
-      this.fail('Recording could not finish. Try the microphone again.');
+      this.fail(commandMessage('Recording could not finish. Try the microphone again.'));
     }
   }
   private recorded(item: Recording<B>): void {
@@ -209,7 +210,9 @@ export class NativeVoiceCapture<B> {
     this.restart(item.recorder.mimeType);
     if (audio !== undefined && item.basis !== undefined) this.events.segment(audio, item.basis);
     else if (item.complete)
-      this.events.failure('No clear speech captured. Try again or type your command.');
+      this.events.failure(
+        commandMessage('No clear speech captured. Try again or type your command.'),
+      );
     this.events.changed();
   }
   private restart(mime: string): void {
@@ -217,7 +220,7 @@ export class NativeVoiceCapture<B> {
     try {
       this.beginRecording(mime);
     } catch {
-      this.fail('Recording could not restart. Try the microphone again.');
+      this.fail(commandMessage('Recording could not restart. Try the microphone again.'));
     }
   }
   finish(): void {
@@ -249,7 +252,9 @@ export class NativeVoiceCapture<B> {
     this.context = undefined;
     if (context !== undefined)
       void context.close().catch(() => {
-        this.events.failure('Could not release voice processing. Reopen CommandMode.');
+        this.events.failure(
+          commandMessage('Could not release voice processing. Reopen CommandMode.'),
+        );
       });
   }
   private fail(message: string): void {
@@ -267,7 +272,9 @@ export class NativeVoiceCapture<B> {
         try {
           item.recorder.stop();
         } catch {
-          this.events.failure('Could not finish the recorder. Audio was discarded.');
+          this.events.failure(
+            commandMessage('Could not finish the recorder. Audio was discarded.'),
+          );
         }
       }
     }

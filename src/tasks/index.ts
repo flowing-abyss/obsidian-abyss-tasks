@@ -222,8 +222,10 @@ export type { TaskOccurrenceAddress } from './domain/taskOccurrence';
 
 export type {
   PreparedTaskEditCommand,
+  TaskEditPartition,
   TaskEditPreparation,
   TaskEditPreparationApi,
+  TaskFieldSelection,
   TaskHierarchyPreparation,
   TaskHierarchyPreparationApi,
 } from './application/TaskEditPreparationApi';

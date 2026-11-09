@@ -86,7 +86,11 @@ import type {
   TaskDestinationProvider,
   TaskDestinationResolution,
 } from './TaskDestinationProvider';
-import type { TaskHierarchyPreparation } from './TaskEditPreparationApi';
+import type {
+  TaskEditPartition,
+  TaskFieldSelection,
+  TaskHierarchyPreparation,
+} from './TaskEditPreparationApi';
 import {
   isPreparedTaskEditCommand,
   type PreparedTaskEditCommand,
@@ -2033,6 +2037,9 @@ export class TaskApplicationService
       get continuations() {
         return prepared.continuations;
       },
+      ...(prepared.sourceContinuations === undefined
+        ? {}
+        : { sourceContinuations: prepared.sourceContinuations }),
       get before() {
         return prepared.before;
       },
@@ -2083,6 +2090,8 @@ export class TaskApplicationService
           : this.editPreparation_abyssPrivate(prepared.append(command), context);
       },
       refresh: (current) => this.refreshEditPreparation_abyssPrivate(prepared, context, current),
+      partitionFields: (selections) =>
+        this.partitionEdit_abyssPrivate(prepared, context, selections),
       commit: async () => {
         family.attempted = true;
         attempt ??= context.current()
@@ -2093,6 +2102,29 @@ export class TaskApplicationService
     };
   }
 
+  private partitionEdit_abyssPrivate(
+    prepared: Extract<TaskPreparedRootEdit, { type: 'ready' }>,
+    context: EditPreparationContext,
+    selections: readonly TaskFieldSelection[],
+  ): TaskEditPartition | undefined {
+    const allowed = (): boolean => !context.family.attempted && context.current();
+    if (!allowed()) return undefined;
+    const partition = prepared.partitionFields(selections);
+    if (partition === undefined) return undefined;
+    return {
+      selected: this.editPreparation_abyssPrivate(partition.selected, {
+        ...context,
+        family: { attempted: false },
+      }),
+      rebase: async (current) => {
+        if (!allowed()) return { type: 'invalid', result: invalidTaskTarget('settings') };
+        const next = await partition.rebase(current);
+        if (next.type === 'unavailable') return next;
+        if (!allowed()) return { type: 'invalid', result: invalidTaskTarget('settings') };
+        return this.editPreparation_abyssPrivate(next, { ...context, ref: { ...current.ref } });
+      },
+    };
+  }
   private initialStatusRefinement_abyssPrivate(
     input: { readonly target: TaskNodeRef; readonly symbol: string },
     root: TaskSnapshot | null,

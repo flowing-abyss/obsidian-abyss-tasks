@@ -1,3 +1,4 @@
+import { commandMessage, type CommandMessage } from '../commandMessages';
 export type ProviderFailureCode =
   | 'missing-key'
   | 'secret-storage'
@@ -11,7 +12,7 @@ export type ProviderFailureCode =
   | 'timeout'
   | 'busy'
   | 'too-large';
-const messages: Record<ProviderFailureCode, string> = {
+const messages: Record<ProviderFailureCode, CommandMessage> = {
   'missing-key': 'Save an API key for the selected provider.',
   'secret-storage': 'Could not access the API key in Obsidian secret storage.',
   authentication: 'The provider rejected the API key or its permissions.',
@@ -28,7 +29,7 @@ const messages: Record<ProviderFailureCode, string> = {
 /** Only this safe error crosses into UI, diagnostics or session state. */
 export class ProviderFailure extends Error {
   constructor(readonly code: ProviderFailureCode) {
-    super(messages[code]);
+    super(commandMessage(messages[code]));
     this.name = 'ProviderFailure';
   }
 }

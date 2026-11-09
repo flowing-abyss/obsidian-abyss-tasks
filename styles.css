@@ -11350,12 +11350,14 @@ button.abyss-statistics-evidence-action:hover {
   gap: var(--size-4-1);
 }
 
-.abyss-task-card .abyss-search-context .abyss-comment-row::before {
+.abyss-task-card .abyss-search-context .abyss-comment-row::before,
+.abyss-command-tree .abyss-comment-row::before {
   content: '-';
   flex: none;
 }
 
-.abyss-task-card .abyss-search-context .abyss-comment-text {
+.abyss-task-card .abyss-search-context .abyss-comment-text,
+.abyss-command-tree .abyss-comment-text {
   min-width: 0;
 }
 
@@ -12162,6 +12164,7 @@ button.abyss-calendar-date[aria-pressed='true'] {
   min-width: 0;
   min-height: var(--input-height);
   max-height: 10rem;
+  overflow-y: auto;
   resize: none;
   border: 0;
   box-shadow: none;
@@ -12360,6 +12363,14 @@ button.abyss-calendar-date[aria-pressed='true'] {
   color: var(--text-muted);
   font-size: var(--font-ui-small);
   margin-block-end: var(--size-4-1);
+}
+
+.abyss-command-note-path {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .abyss-command-note-body {

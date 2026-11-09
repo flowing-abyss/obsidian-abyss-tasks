@@ -285,6 +285,7 @@ function prepare(value: unknown): PrepareTaskContentV1 {
     'plan',
     'expectedPlanRevision',
     'afterRequestId',
+    'selections',
   ]);
   if (r['kind'] === 'hierarchy') {
     record(value, ['kind', 'operation']);
@@ -338,6 +339,7 @@ function prepare(value: unknown): PrepareTaskContentV1 {
       operation: operation(r['operation']),
     };
   }
+  if (r['kind'] === 'select-fields') return selectedFields(value, r);
   if (r['kind'] !== 'refresh') return invalid();
   record(value, ['kind', 'plan', 'expectedPlanRevision', 'afterRequestId']);
   return {
@@ -345,6 +347,43 @@ function prepare(value: unknown): PrepareTaskContentV1 {
     plan: text(r['plan'], 512),
     expectedPlanRevision: text(r['expectedPlanRevision'], 512),
     ...optional(r, 'afterRequestId', namespace),
+  };
+}
+function selectedFields(
+  value: unknown,
+  r: Record<string, unknown>,
+): Extract<PrepareTaskContentV1, { kind: 'select-fields' }> {
+  record(value, ['kind', 'plan', 'expectedPlanRevision', 'selections']);
+  return {
+    kind: 'select-fields',
+    plan: text(r['plan'], 512),
+    expectedPlanRevision: text(r['expectedPlanRevision'], 512),
+    selections: boundedArray(r['selections'], 50).map((selection) => {
+      const item = record(selection, ['target', 'fields']);
+      return {
+        target: text(item['target'], 512),
+        fields: boundedArray(item['fields'], 12).map((field) => {
+          if (
+            typeof field !== 'string' ||
+            ![
+              'markdownTitle',
+              'priority',
+              'due',
+              'scheduled',
+              'start',
+              'time',
+              'durationMinutes',
+              'recurrence',
+              'onCompletion',
+              'tags',
+              'description',
+            ].includes(field)
+          )
+            return invalid();
+          return field as keyof TaskPatchV1 | 'description';
+        }),
+      };
+    }),
   };
 }
 export function validateContentPrepare(value: unknown): ApiResultV1<PrepareTaskContentV1> {

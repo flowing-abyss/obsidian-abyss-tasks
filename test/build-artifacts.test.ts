@@ -312,6 +312,7 @@ describe('production JavaScript artifact', () => {
     };
     expect(buildStatus, buildError).toBe(0);
     expect(Buffer.byteLength(code)).toBeLessThanOrEqual(pkg.release.mainJsBudgetBytes);
+    expect(Buffer.byteLength(code)).toBeLessThan(5_000_000);
     expect(code).not.toContain(suffix);
   });
   it('ships the exact installed license texts for the approved runtime inventory', () => {

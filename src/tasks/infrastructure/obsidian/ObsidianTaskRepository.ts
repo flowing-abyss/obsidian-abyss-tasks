@@ -2816,8 +2816,8 @@ export class ObsidianTaskRepository implements TaskRepository {
         ),
       commit: (content, after, nodeMap) =>
         this.commitPreparedRoot_abyssPrivate(basis, { content, after, nodeMap }),
-      refresh: async (current, candidate) => {
-        const fresh = await this.refreshPreparedRootBasis_abyssPrivate(basis, current);
+      refresh: async (current, candidate, selected) => {
+        const fresh = await this.refreshPreparedRootBasis_abyssPrivate(basis, current, selected);
         if (fresh === undefined || 'type' in fresh) return fresh;
         return this.transplantPreparedRoot_abyssPrivate(fresh, candidate);
       },
@@ -2827,6 +2827,7 @@ export class ObsidianTaskRepository implements TaskRepository {
   private async refreshPreparedRootBasis_abyssPrivate(
     basis: PreparedRootBasis,
     current: TaskSnapshot,
+    selected?: TaskSnapshot,
   ): Promise<PreparedRootBasis | TaskEditRefreshUnavailable | undefined> {
     const acquisition = await this.acquirePreparedSource_abyssPrivate(current.ref.filePath);
     if (acquisition === undefined) return undefined;
@@ -2837,7 +2838,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     )
       return undefined;
     const fresh = this.capturePreparedRoot_abyssPrivate(current, acquisition);
-    if (fresh === undefined || !this.samePreparedRootBasis_abyssPrivate(basis, fresh))
+    if (fresh === undefined || !this.samePreparedRootBasis_abyssPrivate(basis, fresh, selected))
       return undefined;
     const stamp = { ...fresh.file.stat };
     if ((await readVaultText(this.app_abyssPrivate.vault, fresh.file)) !== fresh.content)
@@ -2874,10 +2875,11 @@ export class ObsidianTaskRepository implements TaskRepository {
   private samePreparedRootBasis_abyssPrivate(
     basis: PreparedRootBasis,
     fresh: PreparedRootBasis,
+    selected?: TaskSnapshot,
   ): boolean {
     return (
       fresh.file === basis.file &&
-      fresh.root.source.originalBlock === basis.root.source.originalBlock &&
+      fresh.root.source.originalBlock === (selected ?? basis.root).source.originalBlock &&
       fresh.observation.scopeRevision === basis.observation.scopeRevision &&
       fresh.observation.semanticsRevision === basis.observation.semanticsRevision
     );
@@ -2916,7 +2918,12 @@ export class ObsidianTaskRepository implements TaskRepository {
       if (projected === undefined) return undefined;
       after = this.versionPreparedSnapshot_abyssPrivate(projected);
     }
-    return { ports: this.preparedRootPorts_abyssPrivate(fresh), content, after };
+    return {
+      ports: this.preparedRootPorts_abyssPrivate(fresh),
+      beforeContent: fresh.content,
+      content,
+      after,
+    };
   }
 
   private async acquirePreparedSource_abyssPrivate(

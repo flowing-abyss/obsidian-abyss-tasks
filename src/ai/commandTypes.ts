@@ -7,10 +7,12 @@ import type {
   ProjectDtoV1,
   ProjectFieldAssignmentV1,
   ProjectSchemaV1,
+  TaskPatchV1,
+  TasksApiV1,
   TaskTreePageV1,
   TaskTreeV1,
-  TasksApiV1,
 } from '../../api';
+import { commandDiagnostic } from './commandMessages';
 import type { notePrepareSchema, noteReadRequestSchema, prepareSchema } from './commandSchemas';
 
 export type CommandNoteRead = NoteReadPageV1 & {
@@ -89,6 +91,20 @@ export interface CommandProposal {
   readonly revision: number;
   readonly operations: number;
   readonly changes: readonly CommandChange[];
+}
+export interface CommandSaveScope {
+  readonly proposalRevision: number;
+  readonly changes: ReadonlyArray<
+    | { readonly kind: 'change'; readonly index: number }
+    | {
+        readonly kind: 'task-fields';
+        readonly index: number;
+        readonly plan: string;
+        readonly expectedPlanRevision: string;
+        readonly target: string;
+        readonly fields: ReadonlyArray<keyof TaskPatchV1 | 'description'>;
+      }
+  >;
 }
 export interface CommandJournalEntry {
   readonly id: string;
@@ -217,7 +233,7 @@ export class CommandFailure extends Error {
     readonly code: string,
     message: string,
   ) {
-    super(message);
+    super(commandDiagnostic(message));
     this.name = 'CommandFailure';
   }
 }

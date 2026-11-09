@@ -1,3 +1,4 @@
+import { commandMessage } from '../commandMessages';
 import type { CommandSessionOwner } from '../CommandSessionOwner';
 import { CommandFailure, type CommandSubmissionBasis } from '../commandTypes';
 import { providerFailure } from '../providers/providerFailure';
@@ -76,8 +77,9 @@ export class CommandVoiceController {
   }
   status(): { kind: 'attention' | 'recognizing' | 'listening'; message: string } | undefined {
     if (this.message !== '') return { kind: 'attention', message: this.message };
-    if (this.pending()) return { kind: 'recognizing', message: 'Recognizing speech…' };
-    return this.active() ? { kind: 'listening', message: 'Listening…' } : undefined;
+    if (this.pending())
+      return { kind: 'recognizing', message: commandMessage('Recognizing speech…') };
+    return this.active() ? { kind: 'listening', message: commandMessage('Listening…') } : undefined;
   }
   async toggle(): Promise<void> {
     if (this.disposed) return;
@@ -110,7 +112,7 @@ export class CommandVoiceController {
     if (this.disposed || basis.lifetime !== this.generation) return;
     if (this.jobs.length >= 2) {
       this.capture.stop();
-      this.message = 'Voice is catching up. Wait, then use the microphone again.';
+      this.message = commandMessage('Voice is catching up. Wait, then use the microphone again.');
       this.options.changed();
       return;
     }
@@ -142,7 +144,7 @@ export class CommandVoiceController {
         retained = true;
         const input = this.options.owner.snapshot().input;
         this.options.retain(input === '' ? text : `${input}\n\n${text}`);
-        this.message = 'Voice kept as text. Review before sending.';
+        this.message = commandMessage('Voice kept as text. Review before sending.');
         this.options.changed();
       }
       return false;
@@ -152,7 +154,7 @@ export class CommandVoiceController {
   private deliver(job: VoiceJob, text: string): void {
     if (!this.alive(job.basis) || job.abort.signal.aborted) return;
     if (text === '') {
-      this.message = 'No clear speech recognized. Try again or type your command.';
+      this.message = commandMessage('No clear speech recognized. Try again or type your command.');
       return;
     }
     const admit = this.admission(job.basis, text);
@@ -183,7 +185,7 @@ export class CommandVoiceController {
     } catch (cause) {
       if (this.alive(job.basis))
         this.message = deadline.expired
-          ? 'Voice recognition took too long. Try the microphone again.'
+          ? commandMessage('Voice recognition took too long. Try the microphone again.')
           : providerFailure(cause).message;
     } finally {
       job.audio = undefined;

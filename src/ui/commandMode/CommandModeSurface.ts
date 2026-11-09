@@ -1,5 +1,6 @@
 import { Component, Menu, parseLinktext, setIcon, setTooltip, type App } from 'obsidian';
 import type { CommandSessionOwner } from '../../ai/CommandSessionOwner';
+import { commandMessage } from '../../ai/commandMessages';
 import type { HistoricalCommandSession } from '../../ai/commandRecovery';
 import type {
   CommandChange,
@@ -76,7 +77,7 @@ function sessionLabel(record: HistoricalCommandSession): string {
   const label =
     mainObject(state) ??
     state.exchanges.find((entry) => entry.role === 'user')?.text ??
-    'Untitled session';
+    commandMessage('Untitled session');
   return `${label.slice(0, 80)} · ${new Date(record.updatedAt).toLocaleString()}`;
 }
 export class CommandModeSurface implements CaptureExtension {
@@ -113,18 +114,18 @@ export class CommandModeSurface implements CaptureExtension {
     this.component.load();
     this.toolbar = capture.shell.createDiv({
       cls: 'abyss-command-toolbar',
-      attr: { role: 'toolbar', 'aria-label': 'Quick capture controls' },
+      attr: { role: 'toolbar', 'aria-label': commandMessage('Quick capture controls') },
     });
-    const history = this.button('History', 'history');
-    this.toggle = this.button('CommandMode', 'sparkles');
-    this.microphone = this.button('Microphone', 'mic');
+    const history = this.button(commandMessage('History'), 'history');
+    this.toggle = this.button(commandMessage('CommandMode'), 'sparkles');
+    this.microphone = this.button(commandMessage('Microphone'), 'mic');
     this.microphone.disabled = options.transcription === undefined;
     this.component.registerDomEvent(this.microphone, 'click', () => {
       if (!this.active()) this.setActive(true);
       if (this.voice !== undefined)
-        runAsyncAction(this.voice.toggle(), 'Could not start voice input');
+        runAsyncAction(this.voice.toggle(), commandMessage('Could not start voice input'));
     });
-    this.primary = this.button('Send', 'arrow-up');
+    this.primary = this.button(commandMessage('Send'), 'arrow-up');
     this.phase = capture.element.createDiv({
       cls: 'abyss-command-phase',
       attr: { role: 'status' },
@@ -182,8 +183,28 @@ export class CommandModeSurface implements CaptureExtension {
     this.component.registerDomEvent(capture.input, 'select', () => {
       this.remember();
     });
+    this.bindInputSizing();
     this.setActive(options.memory.active);
     this.initializing = false;
+  }
+  private bindInputSizing(): void {
+    const win = this.capture.input.win as Window & { ResizeObserver?: typeof ResizeObserver };
+    if (typeof win.ResizeObserver === 'function') {
+      let width = -1;
+      const observer = new win.ResizeObserver(() => {
+        const next = this.capture.input.clientWidth;
+        if (width === next) return;
+        width = next;
+        this.sizeInput();
+      });
+      observer.observe(this.capture.input);
+      this.component.register(() => {
+        observer.disconnect();
+      });
+    }
+    this.component.registerDomEvent(this.capture.input, 'input', () => {
+      this.sizeInput();
+    });
   }
   private button(label: string, icon: string): HTMLButtonElement {
     const button = this.toolbar.createEl('button', {
@@ -226,8 +247,8 @@ export class CommandModeSurface implements CaptureExtension {
       this.unsubscribe ??= owner.subscribe((state) => {
         this.render(state);
       });
-      this.capture.input.setAttribute('aria-label', 'Command');
-      this.capture.input.placeholder = 'What would you like to do?';
+      this.capture.input.setAttribute('aria-label', commandMessage('Command'));
+      this.capture.input.placeholder = commandMessage('What would you like to do?');
       this.capture.input.readOnly = false;
       this.capture.input.setAttribute('aria-describedby', this.phase.id);
       this.capture.input.setSelectionRange(
@@ -241,9 +262,9 @@ export class CommandModeSurface implements CaptureExtension {
       this.unsubscribe?.();
       this.unsubscribe = undefined;
       if (this.owner !== undefined)
-        runAsyncAction(this.owner.hide(), 'Could not retain command session');
-      this.capture.input.setAttribute('aria-label', 'Add task');
-      this.capture.input.placeholder = 'Task name…';
+        runAsyncAction(this.owner.hide(), commandMessage('Could not retain command session'));
+      this.capture.input.setAttribute('aria-label', commandMessage('Add task'));
+      this.capture.input.placeholder = commandMessage('Task name…');
       this.setPrimary('send', false);
     }
     if (!this.initializing) this.capture.refresh();
@@ -300,14 +321,17 @@ export class CommandModeSurface implements CaptureExtension {
     if (this.microphone.dataset['voiceMode'] !== mode) {
       this.microphone.dataset['voiceMode'] = mode;
       setIcon(this.microphone, mode === 'continuous' ? 'radio' : 'mic');
-      setTooltip(this.microphone, mode === 'continuous' ? 'Continuous voice' : 'Microphone');
+      setTooltip(
+        this.microphone,
+        mode === 'continuous' ? commandMessage('Continuous voice') : commandMessage('Microphone'),
+      );
     }
     this.microphone.setAttribute('aria-pressed', String(this.voice?.active() === true));
     this.microphone.setAttribute(
       'aria-description',
       mode === 'continuous'
-        ? 'Continuous voice. Click to start or stop listening.'
-        : 'Manual voice. Enter, send, or click again to submit.',
+        ? commandMessage('Continuous voice. Click to start or stop listening.')
+        : commandMessage('Manual voice. Enter, send, or click again to submit.'),
     );
   }
   submit(): void {
@@ -322,7 +346,7 @@ export class CommandModeSurface implements CaptureExtension {
         sessionId: state.id,
         proposalRevision: state.proposal.revision,
       }),
-      'Could not run command',
+      commandMessage('Could not run command'),
     );
   }
   private finishVoice(): boolean {
@@ -365,10 +389,15 @@ export class CommandModeSurface implements CaptureExtension {
       return;
     }
     this.inputGeneration++;
-    if (this.owner !== undefined) runAsyncAction(this.owner.stop(), 'Could not stop command');
+    if (this.owner !== undefined)
+      runAsyncAction(this.owner.stop(), commandMessage('Could not stop command'));
   }
   private setPrimary(action: PrimaryAction, disabled: boolean): void {
-    const labels = { send: 'Send', save: 'Save proposal', stop: 'Stop' };
+    const labels = {
+      send: commandMessage('Send'),
+      save: commandMessage('Save proposal'),
+      stop: commandMessage('Stop'),
+    };
     const icons = { send: 'arrow-up', save: 'check', stop: 'square' };
     if (this.primary.getAttribute('aria-label') !== labels[action]) {
       setIcon(this.primary, icons[action]);
@@ -399,7 +428,7 @@ export class CommandModeSurface implements CaptureExtension {
     this.voice?.stop();
     this.remember();
     if (this.owner !== undefined)
-      runAsyncAction(this.owner.hide(), 'Could not retain command session');
+      runAsyncAction(this.owner.hide(), commandMessage('Could not retain command session'));
     this.options.close();
   }
   private remember(): void {
@@ -414,7 +443,14 @@ export class CommandModeSurface implements CaptureExtension {
   }
   private render(state: CommandSessionSnapshot): void {
     if (!this.live || !this.active()) return;
-    if (this.capture.input.value !== state.input) this.capture.input.value = state.input;
+    const input = this.capture.input;
+    if (input.value !== state.input) {
+      const start = input.selectionStart ?? 0,
+        end = input.selectionEnd ?? start;
+      input.value = state.input;
+      input.setSelectionRange(start, end);
+    }
+    this.sizeInput();
     const isBusy = busy(state);
     this.notes.update(state);
     this.renderPrimary(state);
@@ -431,11 +467,23 @@ export class CommandModeSurface implements CaptureExtension {
     this.navigateSaved(state);
     this.reveal(state);
   }
+  private sizeInput(): void {
+    const input = this.capture.input;
+    if (!this.live || input.tagName !== 'TEXTAREA') return;
+    const textarea = input as HTMLTextAreaElement;
+    const style = input.win.getComputedStyle(input);
+    const line = cssPixels(style.lineHeight, cssPixels(style.fontSize, 16) * 1.5);
+    const padding = cssPixels(style.paddingTop, 0) + cssPixels(style.paddingBottom, 0);
+    const scroll = textarea.scrollTop;
+    textarea.rows = 1;
+    textarea.rows = Math.max(1, Math.min(6, Math.ceil((textarea.scrollHeight - padding) / line)));
+    textarea.scrollTop = scroll;
+  }
   private renderPhase(state: CommandSessionSnapshot, isBusy: boolean): void {
     const waiting = state.activeQuestion !== null && !isBusy && state.status.kind !== 'error';
     if (this.renderVoicePhase(state)) return;
     let message = state.status.message;
-    if (waiting) message = 'Needs your answer.';
+    if (waiting) message = commandMessage('Needs your answer.');
     else if (state.input.trim() === '' && readyToSave(state))
       message = this.noteReviewMessage(state);
     if (!isBusy) {
@@ -467,10 +515,12 @@ export class CommandModeSurface implements CaptureExtension {
   }
   private noteReviewMessage(state: CommandSessionSnapshot): string {
     const review = this.noteReviewStatus(state);
-    if (review === 'ready') return 'Ready. Enter to save.';
+    if (review === 'ready') return commandMessage('Ready. Enter to save.');
     if (review === 'failed')
-      return 'Could not display the note preview. Edit it or reopen CommandMode to retry.';
-    return 'Loading note preview…';
+      return commandMessage(
+        'Could not display the note preview. Edit it or reopen CommandMode to retry.',
+      );
+    return commandMessage('Loading note preview…');
   }
   private clearPhaseTimer(): void {
     this.phase.win.clearTimeout(this.phaseTimer);
@@ -502,7 +552,7 @@ export class CommandModeSurface implements CaptureExtension {
           owner.acknowledgeReveal(request, accepted);
         }
       }),
-      'Could not open task',
+      commandMessage('Could not open task'),
     );
   }
   private openMenu(trigger: HTMLElement, event?: MouseEvent): void {
@@ -515,11 +565,11 @@ export class CommandModeSurface implements CaptureExtension {
     trigger.setAttribute('aria-haspopup', 'menu');
     menu.addItem((item) =>
       item
-        .setTitle('New session')
+        .setTitle(commandMessage('New session'))
         .setIcon('plus')
         .onClick(() => {
           this.setActive(true);
-          runAsyncAction(owner.newSession(), 'Could not start a new session');
+          runAsyncAction(owner.newSession(), commandMessage('Could not start a new session'));
         }),
     );
     this.populateMenu(menu, owner);
@@ -562,30 +612,33 @@ export class CommandModeSurface implements CaptureExtension {
       };
       const surface = this.noteReview?.token;
       for (const [label, value] of [
-        ['Save and continue', 'save'],
-        ['Keep for later', 'keep'],
-        ['Discard draft', 'discard'],
-        ['Cancel', 'cancel'],
+        [commandMessage('Save and continue'), 'save'],
+        [commandMessage('Keep for later'), 'keep'],
+        [commandMessage('Discard draft'), 'discard'],
+        [commandMessage('Cancel'), 'cancel'],
       ] as const)
         menu.addItem((item) =>
           item.setTitle(label).onClick(() => {
             runAsyncAction(
               owner.resolveTransition(value, basis, surface),
-              'Could not change session',
+              commandMessage('Could not change session'),
             );
           }),
         );
     }
     if (snapshot.recovery === 'historical')
       menu.addItem((item) =>
-        item.setTitle('Review current source').onClick(() => {
-          runAsyncAction(owner.review(), 'Could not review session');
+        item.setTitle(commandMessage('Review current source')).onClick(() => {
+          runAsyncAction(owner.review(), commandMessage('Could not review session'));
         }),
       );
     if (snapshot.blocked)
       menu.addItem((item) =>
-        item.setTitle('Acknowledge uncertain result and start new').onClick(() => {
-          runAsyncAction(owner.acknowledgeUncertainty(), 'Could not retain uncertain result');
+        item.setTitle(commandMessage('Acknowledge uncertain result and start new')).onClick(() => {
+          runAsyncAction(
+            owner.acknowledgeUncertainty(),
+            commandMessage('Could not retain uncertain result'),
+          );
         }),
       );
     menu.addSeparator();
@@ -596,7 +649,10 @@ export class CommandModeSurface implements CaptureExtension {
           .setChecked(record.snapshot.id === snapshot.id)
           .onClick(() => {
             this.setActive(true);
-            runAsyncAction(owner.select(record.snapshot.id), 'Could not open session');
+            runAsyncAction(
+              owner.select(record.snapshot.id),
+              commandMessage('Could not open session'),
+            );
           }),
       );
     }
@@ -605,7 +661,9 @@ export class CommandModeSurface implements CaptureExtension {
       for (const exchange of snapshot.exchanges)
         menu.addItem((item) =>
           item
-            .setTitle(`${exchange.role === 'user' ? 'You' : 'Assistant'}: ${exchange.text}`)
+            .setTitle(
+              `${exchange.role === 'user' ? commandMessage('You') : commandMessage('Assistant')}: ${exchange.text}`,
+            )
             .setDisabled(true),
         );
     }
@@ -625,7 +683,7 @@ export class CommandModeSurface implements CaptureExtension {
   private allowLink(href: string, sourcePath: string): boolean {
     const { path } = parseLinktext(href);
     if (this.options.app.metadataCache.getFirstLinkpathDest(path, sourcePath) !== null) return true;
-    this.failure('This note does not exist yet.');
+    this.failure(commandMessage('This note does not exist yet.'));
     return false;
   }
   destroy(): void {
@@ -648,3 +706,8 @@ export class CommandModeSurface implements CaptureExtension {
   }
 }
 let nextSurface = 0;
+
+function cssPixels(value: string, fallback: number): number {
+  const pixels = Number.parseFloat(value);
+  return Number.isFinite(pixels) ? pixels : fallback;
+}

@@ -8,6 +8,7 @@ import type {
   ReadTaskTreeV1,
   TaskContentMutationResultV1,
   TaskContentOperationV1,
+  TaskContentReceiptV1,
   TaskCreateTreeV1,
   TaskTreePageV1,
   TaskTreeV1,
@@ -23,8 +24,10 @@ import {
   type TaskCreatePreparationApi,
   type TaskCreatePreparationDestination,
   type TaskCreateTreeNode,
+  type TaskEditPartition,
   type TaskEditPreparation,
   type TaskEditPreparationApi,
+  type TaskFieldSelection,
   type TaskHierarchyPreparation,
   type TaskHierarchyPreparationApi,
   type TaskNodeRef,
@@ -35,7 +38,7 @@ import {
 } from '../tasks';
 import type { ProjectReadRegistry } from './ProjectReadRegistry';
 import type { TaskApiContext } from './TaskApiProvider';
-import type { TaskRequestRegistry } from './TaskRequestRegistry';
+import type { SelectedContentEvidence, TaskRequestRegistry } from './TaskRequestRegistry';
 import type { ProjectPorts } from './projectApiMutations';
 import { currentNode } from './taskApiMutations';
 import { readError, readFailure } from './taskApiReads';
@@ -93,6 +96,7 @@ interface Family {
   release: () => void;
 }
 interface Version {
+  readonly selection?: SelectedContentEvidence;
   readonly assessment?: Omit<ContentMergePreservationV1, 'planRevision'>;
   readonly copyOrigins: readonly ContentCopyOrigin[];
   readonly target: string;
@@ -507,6 +511,9 @@ export class TaskContentApi {
         target: v.target,
         revision: v.revision,
         kind: v.kind,
+        ...(v.kind === 'edit'
+          ? { hasChanges: v.before?.source.originalBlock !== v.native.after?.source.originalBlock }
+          : {}),
         expiresAt: v.expiresAt,
         before: before.value,
         after: after.value,
@@ -635,6 +642,7 @@ export class TaskContentApi {
     native: Native,
     previous?: Version,
   ): Native['continuations'] {
+    if ('sourceContinuations' in native) return native.sourceContinuations;
     if (previous === undefined) return native.before === null ? [] : native.continuations;
     return previous.origins.map((origin) => {
       const preceding = origin.after;
@@ -755,7 +763,63 @@ export class TaskContentApi {
     const v = found.value;
     if (v.family.consumed || v.superseded) return contentFailure('PLAN_CONSUMED');
     if (value.kind === 'refresh') return await this.refresh_abyssPrivate(v, value.afterRequestId);
+    if (value.kind === 'select-fields') return this.selectFields_abyssPrivate(v, value);
     return this.append_abyssPrivate(v, value.operation);
+  }
+  private selectFields_abyssPrivate(
+    v: Version,
+    input: Extract<PrepareTaskContentV1, { kind: 'select-fields' }>,
+  ): ApiResultV1<ContentPlanV1> {
+    if (v.kind !== 'edit' || !('partitionFields' in v.native))
+      return contentFailure('SELECTION_DEPENDENCY');
+    const selections = this.fieldSelections_abyssPrivate(v, input);
+    if (selections === undefined) return contentFailure('STALE_TARGET');
+    const partition = v.native.partitionFields(selections);
+    if (partition?.selected.type !== 'ready') return contentFailure('SELECTION_DEPENDENCY');
+    const pinned = this.ctx_abyssPrivate.api.identities.pin(v.originalTarget ?? '');
+    if (!pinned.ok) return pinned;
+    const result = this.retain_abyssPrivate(partition.selected, undefined, {
+      kind: 'edit',
+      originalTarget: v.originalTarget ?? '',
+      release: pinned.value,
+    });
+    if (!result.ok) {
+      pinned.value();
+      return result;
+    }
+    this.retainSelection_abyssPrivate(result.value.revision, v, partition);
+    return result;
+  }
+  private retainSelection_abyssPrivate(
+    revision: string,
+    source: Version,
+    partition: TaskEditPartition,
+  ): void {
+    const selected = this.versions_abyssPrivate.get(revision);
+    if (selected === undefined) throw new Error('Missing selected version');
+    this.versions_abyssPrivate.set(revision, {
+      ...selected,
+      selection: {
+        sourcePlan: source.target,
+        sourceRevision: source.revision,
+        rebase: (current) => partition.rebase(current),
+      },
+    });
+  }
+  private fieldSelections_abyssPrivate(
+    v: Version,
+    input: Extract<PrepareTaskContentV1, { kind: 'select-fields' }>,
+  ): readonly TaskFieldSelection[] | undefined {
+    const selections: TaskFieldSelection[] = [];
+    for (const selection of input.selections) {
+      const target = v.tasks.get(selection.target);
+      if (target === undefined) return undefined;
+      selections.push({
+        target,
+        fields: selection.fields.map((field) => (field === 'durationMinutes' ? 'duration' : field)),
+      });
+    }
+    return selections;
   }
   private pinHierarchy_abyssPrivate(op: HierarchyOperation): ApiResultV1<() => void> {
     const pinned: Array<() => void> = [];
@@ -1104,30 +1168,56 @@ export class TaskContentApi {
     v: Version,
     afterRequestId?: string,
   ): Promise<ApiResultV1<ContentPlanV1>> {
-    let native:
-      | Awaited<ReturnType<Extract<TaskEditPreparation, { type: 'ready' }>['refresh']>>
-      | TaskCreatePreparation;
-    if (v.kind === 'hierarchy')
+    const refreshed =
+      v.kind === 'create'
+        ? await this.refreshCreate_abyssPrivate(v, afterRequestId)
+        : await this.refreshEdit_abyssPrivate(v, afterRequestId);
+    if (!refreshed.ok) return refreshed;
+    const native = refreshed.value;
+    if (native.type === 'unavailable') return readFailure('incomplete');
+    if (native.type !== 'ready') return commandResultError(native.result);
+    const result = this.retain_abyssPrivate(
+      native,
+      v.kind === 'edit' && afterRequestId !== undefined
+        ? {
+            ...v,
+            before: native.before,
+            beforeTasks: new Map(),
+            beforeRevisions: new Map(),
+            observation: this.ctx_abyssPrivate.api.reads.capture(),
+            observedAtMs: this.ctx_abyssPrivate.now(),
+          }
+        : v,
+    );
+    return result;
+  }
+  private async refreshEdit_abyssPrivate(
+    v: Version,
+    afterRequestId?: string,
+  ): Promise<
+    ApiResultV1<Awaited<ReturnType<Extract<TaskEditPreparation, { type: 'ready' }>['refresh']>>>
+  > {
+    if (v.kind !== 'edit')
       return readError(
         'conflict',
         'HIERARCHY_REVIEW',
         'Prepare a fresh hierarchy preview from current exact task references.',
       );
-    if (v.kind === 'edit') {
-      const found = this.current_abyssPrivate(v.originalTarget ?? '');
-      if (!found.ok) return found;
-      native = await (v.native as Extract<TaskEditPreparation, { type: 'ready' }>).refresh(
-        found.value.node.value.root,
-      );
-    } else {
-      const refreshed = await this.refreshCreate_abyssPrivate(v, afterRequestId);
-      if (!refreshed.ok) return refreshed;
-      native = refreshed.value;
-    }
-    if (native.type === 'unavailable') return readFailure('incomplete');
-    if (native.type !== 'ready') return commandResultError(native.result);
-    const result = this.retain_abyssPrivate(native, v);
-    return result;
+    const found = this.current_abyssPrivate(v.originalTarget ?? '');
+    if (!found.ok) return found;
+    const current = found.value.node.value.root;
+    if (afterRequestId === undefined)
+      return {
+        ok: true,
+        value: await (v.native as Extract<TaskEditPreparation, { type: 'ready' }>).refresh(current),
+      };
+    const evidence = await this.ctx_abyssPrivate.requests.selectedContentEvidence(
+      this.ctx_abyssPrivate.consumerId,
+      afterRequestId,
+    );
+    if (evidence?.sourcePlan !== v.target || evidence.sourceRevision !== v.revision)
+      return contentFailure('INVALID_SELECTION_RECEIPT');
+    return { ok: true, value: await evidence.rebase(current) };
   }
   private async refreshCreate_abyssPrivate(
     v: Version,
@@ -1322,16 +1412,7 @@ export class TaskContentApi {
         ...(destinationEffects === undefined ? {} : { destinationEffects }),
       },
     );
-    if (
-      v.kind === 'create' &&
-      receipt.outcome === 'changed' &&
-      receipt.effects === 'committed' &&
-      receipt.task !== undefined
-    )
-      ctx.requests.retainContentEvidence(ctx.consumerId, input.requestId, {
-        target: receipt.task.target,
-        preparation: v.native as Extract<TaskCreatePreparation, { type: 'ready' }>,
-      });
+    this.retainWriteEvidence_abyssPrivate(v, input, receipt, result);
     if (result.type === 'ok') return { ok: true, receipt };
     const error = commandResultError(result);
     if (error.ok) throw new Error('Missing command error');
@@ -1342,6 +1423,26 @@ export class TaskContentApi {
       recovery: receipt.recovery,
       receipt,
     };
+  }
+  private retainWriteEvidence_abyssPrivate(
+    v: Version,
+    input: ApplyTaskContentV1,
+    receipt: TaskContentReceiptV1,
+    result: TaskCommandResult,
+  ): void {
+    const ctx = this.ctx_abyssPrivate;
+    if (
+      v.kind === 'create' &&
+      receipt.outcome === 'changed' &&
+      receipt.effects === 'committed' &&
+      receipt.task !== undefined
+    )
+      ctx.requests.retainContentEvidence(ctx.consumerId, input.requestId, {
+        target: receipt.task.target,
+        preparation: v.native as Extract<TaskCreatePreparation, { type: 'ready' }>,
+      });
+    if (v.selection !== undefined && receipt.effects === 'committed' && result.type === 'ok')
+      ctx.requests.retainSelectedContentEvidence(ctx.consumerId, input.requestId, v.selection);
   }
   private receiptBasis_abyssPrivate(v: Version): ContentReceiptBasis {
     return {

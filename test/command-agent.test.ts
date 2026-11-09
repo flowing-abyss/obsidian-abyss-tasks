@@ -19,6 +19,52 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 let callId = 0;
+it('carries trusted limited confirmation through interpret and keeps the unselected title pending', async () => {
+  const h = await setup({ 'a.md': '- [ ] Original\n' });
+  const listed = await h.api.tasks.list();
+  if (!listed.ok) throw new Error(listed.error.code);
+  const root = expectDefined(listed.value.items[0]);
+  const plan = await expectDefined(h.api.tasks.prepare)({
+    kind: 'edit',
+    target: root.target,
+    expectedRevision: root.revision,
+    operation: {
+      type: 'patch',
+      target: root.target,
+      patch: {
+        markdownTitle: { type: 'set', value: 'Pending title' },
+        scheduled: { type: 'set', value: '2026-08-02' },
+      },
+    },
+  });
+  if (!plan.ok) throw new Error(plan.error.code);
+  h.session.stage({ kind: 'task', plan: plan.value });
+  h.script(() =>
+    call('interpret', {
+      intent: 'confirm',
+      research: false,
+      scope: {
+        proposalRevision: h.session.snapshot().proposal.revision,
+        changes: [
+          {
+            kind: 'task-fields',
+            index: 0,
+            plan: plan.value.target,
+            expectedPlanRevision: plan.value.revision,
+            target: expectDefined(plan.value.after).target,
+            fields: ['scheduled'],
+          },
+        ],
+      },
+    }),
+  );
+  await h.session.submit('Save only the date; leave the title pending');
+  expect(await h.read('a.md')).toBe('- [ ] Original ⏳ 2026-08-02\n');
+  expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+  h.script(interpret('confirm'));
+  await h.session.submit('Save the remaining changes');
+  expect(await h.read('a.md')).toBe('- [ ] Pending title ⏳ 2026-08-02\n');
+});
 function call(
   toolName: string,
   input: unknown,

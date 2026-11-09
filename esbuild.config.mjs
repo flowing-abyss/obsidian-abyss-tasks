@@ -1,3 +1,5 @@
+// Selective confirmation, receipt-based remainder and fixed CommandMode locale vocabulary: licensed main 4,049,731 bytes.
+// No dependencies added; approved minimum main budget 4,049,920 bytes (3955 KiB), below 5,000,000.
 // Exact note ranges, owned search yields and physical-root lookups: licensed main 3,980,577 bytes.
 // No dependencies added; approved minimum main budget 3,981,312 bytes (3888 KiB), below 5,000,000.
 // Enforced project-move focus through admission and exact comment-helper aliases: measured main 3,978,134 bytes.

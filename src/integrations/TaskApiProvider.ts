@@ -120,6 +120,7 @@ function apiInfo(options: ProviderOptions): ApiInfoV1 {
             'tasks.apply',
             'tasks.create',
             'tasks.prepare.reorder',
+            'tasks.prepare.select-fields',
             ...(options.content.hierarchies === undefined ? [] : ['tasks.prepare.hierarchy']),
           ]),
       'tasks.resolve',

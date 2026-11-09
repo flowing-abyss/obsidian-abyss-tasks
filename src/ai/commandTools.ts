@@ -17,6 +17,7 @@ import type {
   TasksApiV1,
 } from '../../api';
 import { buildLinkRaw } from '../markdown/links';
+import { commandDiagnostic, commandMessage } from './commandMessages';
 import {
   projectMoveFocusMessage,
   projectMoveWithDescendantFocus,
@@ -267,6 +268,7 @@ class CommandToolOwner {
           const confirmation = await this.confirmationIntent(
             input.intent,
             input.transitionDisposition !== undefined,
+            input.scope,
           );
           if (confirmation !== undefined) return confirmation;
           const lifecycle = await this.lifecycleIntent(input);
@@ -300,12 +302,12 @@ class CommandToolOwner {
       pending.kind === 'focus' &&
       projectMoveWithDescendantFocus(snapshot.proposal.changes, pending.target) !== undefined
     ) {
-      this.ctx.session.question(projectMoveFocusMessage);
+      this.ctx.session.question(commandDiagnostic(projectMoveFocusMessage));
       return { needsRootContext: true };
     }
     this.ctx.done = true;
     this.ctx.session.question(
-      'Save these changes, keep them for later, discard them, or stay here?',
+      commandMessage('Save these changes, keep them for later, discard them, or stay here?'),
     );
     return { needsDisposition: true };
   }
@@ -331,15 +333,18 @@ class CommandToolOwner {
   private async confirmationIntent(
     intent: z.infer<typeof intentSchema>['intent'],
     hasDisposition: boolean,
+    scope?: z.infer<typeof intentSchema>['scope'],
   ): Promise<unknown> {
     if ((intent !== 'plan' || hasDisposition) && !this.currentConsentBasis()) {
       this.ctx.done = true;
       this.ctx.session.question(
-        'The proposal changed while this input was recorded. Review the current version before confirming.',
+        commandMessage(
+          'The proposal changed while this input was recorded. Review the current version before confirming.',
+        ),
       );
       return { needsReview: true };
     }
-    if (intent === 'confirm') {
+    if (intent === 'confirm' || (intent === 'immediate' && scope !== undefined)) {
       this.ctx.done = true;
       return {
         confirmed:
@@ -347,6 +352,8 @@ class CommandToolOwner {
           (await this.ctx.session.confirmFromTurn(
             this.ctx.basis.proposal.revision,
             this.ctx.signal,
+            intent === 'immediate',
+            scope,
           )),
       };
     }
@@ -355,15 +362,17 @@ class CommandToolOwner {
   private voiceIntent(input: z.infer<typeof intentSchema>): unknown {
     this.ctx.done = true;
     if (input.voiceMode === undefined) {
-      this.ctx.session.question('Listen continuously, or send each recording with Enter?');
+      this.ctx.session.question(
+        commandMessage('Listen continuously, or send each recording with Enter?'),
+      );
       return { needsMode: true };
     }
     this.ctx.session.setVoiceMode(input.voiceMode);
     this.ctx.session.status(
       'ready',
       input.voiceMode === 'continuous'
-        ? 'Continuous voice selected. Use the microphone to begin.'
-        : 'Voice sends with Enter.',
+        ? commandMessage('Continuous voice selected. Use the microphone to begin.')
+        : commandMessage('Voice sends with Enter.'),
     );
     return { voiceMode: input.voiceMode };
   }
@@ -391,7 +400,9 @@ class CommandToolOwner {
     if (input.intent === 'resolve-transition') {
       this.ctx.done = true;
       if (input.transitionDisposition === undefined) {
-        this.ctx.session.question('Keep the unsaved draft for later, or abandon it?');
+        this.ctx.session.question(
+          commandMessage('Keep the unsaved draft for later, or abandon it?'),
+        );
         return { needsDisposition: true };
       }
       return {
@@ -410,7 +421,7 @@ class CommandToolOwner {
       inputSchema: z.strictObject({ input: readSchema.meta({ type: 'object' }) }),
       execute: ({ input }, { toolCallId }) =>
         this.execute('read', toolCallId, async () => {
-          this.ctx.session.status('searching', 'Looking up the requested content…');
+          this.ctx.session.status('searching', commandMessage('Looking up the requested content…'));
           switch (input.kind) {
             case 'tasks':
               return this.readTasks(input);
@@ -1073,7 +1084,7 @@ class CommandToolOwner {
               'This turn reached its research limit. Continue with another command.',
             );
           this.ctx.researchCalls++;
-          this.ctx.session.status('searching', 'Researching…');
+          this.ctx.session.status('searching', commandMessage('Researching…'));
           const result = researchResultSchema.parse(
             await required(this.ctx.research).search(query, this.ctx.signal),
           );

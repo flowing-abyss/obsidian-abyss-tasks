@@ -634,6 +634,7 @@ export type RefreshTaskContentV1 = {
   readonly kind: 'refresh';
   readonly plan: ContentPlanTargetV1;
   readonly expectedPlanRevision: ContentPlanRevisionV1;
+  /** Same-consumer creation anchor, or successful select-fields receipt for this exact edit plan. */
   readonly afterRequestId?: string;
 };
 export type TaskCommentTargetV1 = string;
@@ -792,6 +793,16 @@ export type TaskHierarchyOperationV1 =
       readonly expectedSourceRevision: TaskRevisionV1;
     };
 export type PrepareTaskContentV1 =
+  /** Select canonical values from an exact edit plan; never supplies replacement text. */
+  | {
+      readonly kind: 'select-fields';
+      readonly plan: ContentPlanTargetV1;
+      readonly expectedPlanRevision: ContentPlanRevisionV1;
+      readonly selections: ReadonlyArray<{
+        readonly target: TaskTargetV1;
+        readonly fields: ReadonlyArray<keyof TaskPatchV1 | 'description'>;
+      }>;
+    }
   | { readonly kind: 'hierarchy'; readonly operation: TaskHierarchyOperationV1 }
   | RefreshTaskContentV1
   | {
@@ -848,6 +859,8 @@ export interface ContentPlanV1 extends Omit<ObservationV1, 'revision'> {
   readonly target: ContentPlanTargetV1;
   readonly revision: ContentPlanRevisionV1;
   readonly kind: 'edit' | 'create' | 'hierarchy';
+  /** Edit-only proof from exact sealed before/after root bytes; absent means unknown. */
+  readonly hasChanges?: boolean;
   /** Hierarchy plans always include participating roots only; pages expand through tasks.tree. */
   readonly affected?: {
     readonly before: readonly TaskTreeV1[];
