@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { generateText } from 'ai';
+import { generateText, jsonSchema } from 'ai';
 import type { RequestUrlParam, RequestUrlResponse } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { NativeProviderTransport } from '../src/ai/providers/NativeProviderTransport';
@@ -355,3 +355,86 @@ it('uses provider-specific defaults and maps aborted SDK work without raw causes
   expect(parseProviderSettings({ provider: 'anthropic' }).model).toBe('claude-haiku-5-5');
   expect(providerFailure({ name: 'AbortError', message: 'private prompt' }).code).toBe('cancelled');
 });
+
+it.each([
+  {
+    provider: 'groq',
+    model: 'openai/gpt-oss-120b',
+    url: 'https://api.groq.com/openai/v1/chat/completions',
+  },
+  {
+    provider: 'cerebras',
+    model: 'qwen-3.8-27b',
+    url: 'https://api.cerebras.ai/v1/chat/completions',
+  },
+] as const)(
+  'connects $provider tool calls through the fixed native endpoint without search fallback',
+  async ({ provider, model, url }) => {
+    const { owner, values } = secrets();
+    const settings = parseProviderSettings({ provider, extension: { keep: true } });
+    expect(settings.model).toBe(model);
+    expect(settings['extension']).toEqual({ keep: true });
+    expect(researchProvider(settings)).toBeNull();
+    expect(researchProvider({ ...settings, search: 'tavily' })).toBe('tavily');
+    owner.store(provider, 'synthetic-groq-key');
+    expect([...values.keys()]).toEqual([`abyss-tasks-${provider}-api-key`]);
+    const native = vi.fn<ConstructorParameters<typeof NativeProviderTransport>[0]>(async () =>
+      reply(
+        JSON.stringify({
+          id: 'completion-1',
+          object: 'chat.completion',
+          created: 1,
+          model: settings.model,
+          choices: [
+            {
+              index: 0,
+              message: {
+                role: 'assistant',
+                content: null,
+                tool_calls: [
+                  {
+                    id: 'tool-1',
+                    type: 'function',
+                    function: { name: 'inspect', arguments: '{"target":"example"}' },
+                  },
+                ],
+              },
+              finish_reason: 'tool_calls',
+            },
+          ],
+          usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+        }),
+      ),
+    );
+    const transport = transportFixture(native),
+      connections = new ProviderConnections(owner, transport);
+    const result = await generateText({
+      model: connections.model(settings),
+      prompt: 'Inspect the task.',
+      maxRetries: 0,
+      tools: {
+        inspect: {
+          inputSchema: jsonSchema<{ target: string }>({
+            type: 'object',
+            properties: { target: { type: 'string' } },
+            required: ['target'],
+            additionalProperties: false,
+          }),
+        },
+      },
+    });
+    expect(result.toolCalls).toMatchObject([{ toolName: 'inspect', input: { target: 'example' } }]);
+    expect(native).toHaveBeenCalledOnce();
+    expect(native.mock.calls[0]?.[0]).toMatchObject({
+      url,
+      throw: false,
+    });
+    await expect(
+      transport.fetchFor(provider)(url.replace('/chat/completions', '/models')),
+    ).rejects.toMatchObject({ code: 'invalid-request' });
+    expect(native).toHaveBeenCalledOnce();
+    owner.store(provider, '');
+    expect(connections.availability(settings).agent).toBe(false);
+    transport.dispose();
+  },
+);

@@ -908,3 +908,33 @@ it('hide cancels queued status and selection before their admission without chan
   expect(h.store.activeId()).toBe(active);
   expect(await h.read('a.md')).toBe('- [ ] Existing\n');
 });
+
+it.each([false, true])(
+  'hide retires a queued command behind writing and preserves newer input=%s',
+  async (newer) => {
+    const h = await setup();
+    await stageCreate(h);
+    const admitted = deferred<void>(),
+      finish = deferred<void>();
+    h.aroundCreate(async (write) => {
+      const result = await write();
+      admitted.resolve();
+      await finish.promise;
+      return result;
+    });
+    const received: string[] = [];
+    h.run(async ({ text }) => {
+      received.push(text);
+    });
+    const writing = h.owner.confirm();
+    await admitted.promise;
+    const next = h.owner.submit('Queued command');
+    if (newer) h.owner.setInput('New unsent text');
+    await h.owner.hide();
+    finish.resolve();
+    await Promise.all([writing, next]);
+    expect(received).toEqual([]);
+    expect(h.owner.open().input).toBe(newer ? 'New unsent text' : 'Queued command');
+    expect((await h.read('a.md')).match(/Created once/g)).toHaveLength(1);
+  },
+);

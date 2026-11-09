@@ -81,7 +81,7 @@ const destination = z.union([
   }),
   z.strictObject({ type: z.literal('project'), target: handle, expectedRevision: handle }),
 ]);
-const operationSchema = z.discriminatedUnion('type', [
+const operationVariants = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('reorder'),
     target: handle,
@@ -114,6 +114,7 @@ const operationSchema = z.discriminatedUnion('type', [
     target: handle,
   }),
 ]);
+const operationSchema = modelSchema(operationVariants);
 export const prepareSchema = z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('hierarchy'),
@@ -147,17 +148,35 @@ export const prepareSchema = z.discriminatedUnion('kind', [
   }),
   z.strictObject({ kind: z.literal('refresh'), plan: handle, expectedPlanRevision: handle }),
 ]);
-const batchOptions = operationSchema.options.filter(
+const batchOptions = operationVariants.options.filter(
   (option) => !['update-comment', 'remove-comment'].includes(option.shape.type.value),
-) as [(typeof operationSchema.options)[number], ...Array<(typeof operationSchema.options)[number]>];
+) as [
+  (typeof operationVariants.options)[number],
+  ...Array<(typeof operationVariants.options)[number]>,
+];
 const batchOperationSchema = z.discriminatedUnion('type', batchOptions);
 export const batchSchema = z.strictObject({
   kind: z.literal('batch'),
   plan: handle,
   expectedPlanRevision: handle,
-  operations: z.array(batchOperationSchema).min(1).max(20),
+  operations: z.array(modelSchema(batchOperationSchema)).min(1).max(20),
 });
-export const taskToolSchema = z.discriminatedUnion('kind', [...prepareSchema.options, batchSchema]);
+const taskToolSchema = z.discriminatedUnion('kind', [...prepareSchema.options, batchSchema]);
+export const taskArgumentsSchema = z.strictObject({
+  input: modelSchema(taskToolSchema).describe(
+    'A JSON object, never an encoded string. Use each target’s own editBasis. edit addresses saved targets; append/batch only refine their exact pending plan.',
+  ),
+  removeAnnotations: z.array(z.string()).max(50).optional(),
+});
+const preparedWorkSchema = z.strictObject({
+  task: taskArgumentsSchema,
+  message: z.string().min(1).max(160),
+  focus: handle
+    .optional()
+    .describe(
+      'Optional existing task handle within this prepared tree. Omit to select its resulting root. Never invent handles for new children.',
+    ),
+});
 const saveScopeSchema = z.strictObject({
   proposalRevision: z.number().int().nonnegative(),
   changes: z
@@ -196,6 +215,11 @@ const saveScopeSchema = z.strictObject({
 });
 export const intentSchema = z
   .strictObject({
+    work: preparedWorkSchema
+      .optional()
+      .describe(
+        'Complete one self-contained task proposal in this answer when all operands are known. Same canonical task tool, followed by ready completion. Omit when a read, research, transition, project or note operation is needed first.',
+      ),
     scope: saveScopeSchema
       .optional()
       .describe(
@@ -216,7 +240,11 @@ export const intentSchema = z
       .describe(
         'plan means creating, editing, finding or showing entities in the CURRENT conversation; use it for ordinary task work. confirm saves already-previewed edits: the whole proposal by default, or an explicitly authorized subset with scope. immediate explicitly requests saving now. new-session ONLY means an explicit request to leave this conversation and start a separate session; a new task or topic stays plan.',
       ),
-    research: z.boolean(),
+    research: z
+      .boolean()
+      .describe(
+        'Whether this whole trusted user request authorizes web research. Set true for requested online research or verification, even if local discovery must happen first. False for purely local work. This permission is fixed before reading external content; later tools cannot enable it.',
+      ),
     voiceMode: z
       .enum(['manual', 'continuous'])
       .optional()
@@ -234,6 +262,20 @@ export const intentSchema = z
         'save writes the reviewed changes; keep LEAVES this session and archives the unsaved draft; discard switches and abandons it ONLY on explicit abandonment; cancel stays here. To return to a pending project-move root and keep the SAME active proposal, use plan and omit this field, then finish.selection. Unsaved does not mean leave or discard. If ambiguous, omit this field and retain the issue.',
       ),
   })
+  .refine(
+    (input) =>
+      input.work === undefined ||
+      (['plan', 'immediate'].includes(input.intent) &&
+        !input.research &&
+        input.scope === undefined &&
+        input.disposition === undefined &&
+        input.transitionDisposition === undefined),
+    {
+      path: ['work'],
+      message:
+        'work requires plan or immediate, research=false and no confirmation scope or transition disposition.',
+    },
+  )
   .superRefine((input, context) => {
     if (input.scope !== undefined && !['confirm', 'immediate'].includes(input.intent))
       context.addIssue({
@@ -789,23 +831,51 @@ export function modelSchema<T>(
   const shape: Record<string, z.ZodType> = {};
   const fields = unionFields(schema.options);
   for (const [key, variants] of fields) {
-    const field = variants.length === 1 ? variants[0] : z.union(variants);
+    const field = modelField(variants);
     if (field === undefined) continue;
     const required = schema.options.every(
       (branch) => objectShape(branch)[key]?.safeParse(undefined).success === false,
     );
     shape[key] = required ? field : field.optional();
   }
-  return z.strictObject(shape).superRefine((value, context) => {
+  return z.strictObject(shape).transform((value, context) => {
     const parsed = schema.safeParse(value);
-    if (!parsed.success)
-      for (const issue of parsed.error.issues)
-        context.addIssue({
-          code: 'custom',
-          path: issue.path,
-          message: hint === '' ? issue.message : `${issue.message} ${hint}`,
-        });
-  }) as z.ZodType<T>;
+    if (parsed.success) return parsed.data;
+    for (const issue of parsed.error.issues)
+      context.addIssue({
+        ...issue,
+        message: hint === '' ? issue.message : `${issue.message} ${hint}`,
+      });
+    return z.NEVER;
+  });
+}
+function modelField(variants: z.ZodType[]): z.ZodType | undefined {
+  const fields = [...new Set(variants.flatMap(modelVariants))];
+  if (fields.length === 1) return fields[0];
+  const literals = fields.flatMap((field) => {
+    if (field instanceof z.ZodLiteral) return [...field.values];
+    if (field instanceof z.ZodEnum) return field.options;
+    return [];
+  });
+  if (
+    fields.every((field) => field instanceof z.ZodLiteral || field instanceof z.ZodEnum) &&
+    literals.every((value) => typeof value === 'string')
+  )
+    return z.enum([...new Set(literals)]);
+  if (fields.every((field) => field instanceof z.ZodString)) return z.string();
+  if (fields.every((field) => field instanceof z.ZodObject))
+    return modelSchema(z.union(fields as [z.ZodObject, z.ZodObject, ...z.ZodObject[]]));
+  return z.union(fields);
+}
+function modelVariants(field: z.ZodType): z.ZodType[] {
+  // Only the advertised shape is broadened. The original branch validates and
+  // supplies defaults afterward, so another branch's optional/default cannot leak.
+  if (field instanceof z.ZodOptional || field instanceof z.ZodDefault)
+    return modelVariants(field.unwrap() as z.ZodType);
+  if (field instanceof z.ZodPipe) return modelVariants(field.in as z.ZodType);
+  if (field instanceof z.ZodUnion)
+    return field.options.flatMap((option) => modelVariants(option as z.ZodType));
+  return [field];
 }
 function unionFields(branches: readonly z.ZodObject[]): Map<string, z.ZodType[]> {
   const fields = new Map<string, z.ZodType[]>();

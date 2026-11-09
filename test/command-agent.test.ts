@@ -1,3 +1,4 @@
+import { APICallError } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { ContentPlanV1, PrepareTaskContentV1, TasksApiV1, TaskTreeV1 } from '../api';
@@ -632,6 +633,75 @@ it('separates two provider retries from model/schema repair and refuses a fourth
   expect(h.session.snapshot().status.kind).toBe('error');
   expect(h.session.snapshot().proposal.changes).toHaveLength(0);
 });
+function cerebrasGenerationError(
+  overrides: Partial<ConstructorParameters<typeof APICallError>[0]> = {},
+) {
+  return new APICallError({
+    message: 'Provider could not generate tool calls',
+    url: 'https://api.cerebras.ai/v1/chat/completions',
+    requestBodyValues: {},
+    statusCode: 400,
+    responseBody: JSON.stringify({ error: { type: 'generation_error', code: 'parser_error' } }),
+    isRetryable: false,
+    ...overrides,
+  });
+}
+it('retries a Cerebras generation parser failure without replaying the already staged tree', async () => {
+  const h = await setup();
+  h.script(
+    interpret(),
+    create,
+    () => {
+      throw cerebrasGenerationError();
+    },
+    finish(),
+  );
+  await h.session.submit('Prepare a new task');
+  expect(h.model.doGenerateCalls).toHaveLength(4);
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+  expect(await h.read('a.md')).toBe('- [ ] Existing [unknown:: keep]\n');
+  await h.session.confirm();
+  expect((await h.read('a.md')).match(/- \[ \] New/g)).toHaveLength(1);
+});
+it('bounds Cerebras parser retries and retains the exact previously reviewed proposal', async () => {
+  const h = await setup();
+  h.script(interpret(), create, finish());
+  await h.session.submit('Prepare a new task');
+  const proposal = h.session.snapshot().proposal;
+  let requests = 0;
+  h.model.doGenerate = async () => {
+    requests++;
+    throw cerebrasGenerationError();
+  };
+  await h.session.submit('Refine it');
+  expect(requests).toBe(3);
+  expect(h.session.snapshot().status.kind).toBe('error');
+  expect(h.session.snapshot().proposal).toEqual(proposal);
+  expect(await h.read('a.md')).toBe('- [ ] Existing [unknown:: keep]\n');
+});
+it.each([
+  { url: 'https://api.groq.com/openai/v1/chat/completions' },
+  { statusCode: 401 },
+  { responseBody: '{invalid json' },
+  {
+    responseBody: JSON.stringify({
+      error: { type: 'invalid_request_error', code: 'parser_error' },
+    }),
+  },
+  { responseBody: JSON.stringify({ error: { type: 'generation_error', code: 'invalid_model' } }) },
+])('does not widen generation retry to unrelated HTTP failures: %j', async (override) => {
+  const h = await setup();
+  let requests = 0;
+  h.model.doGenerate = async () => {
+    requests++;
+    throw cerebrasGenerationError(override);
+  };
+  await h.session.submit('Create');
+  expect(requests).toBe(1);
+  expect(h.session.snapshot().status.kind).toBe('error');
+  expect(h.session.snapshot().proposal.changes).toHaveLength(0);
+});
 it('retains the reviewed proposal and reports wrapped billing failure without retrying', async () => {
   const h = await setup();
   h.script(interpret(), create, finish());
@@ -788,6 +858,52 @@ it('merges using a current preservation assessment and removes the source only a
   expect(await h.read('a.md')).not.toContain('- [ ] Source');
   expect(await h.read('a.md')).toContain('- > Source');
 });
+it('groups saved roots through native hierarchy while preserving distinct durations and tracked history', async () => {
+  const original =
+    '- [ ] Parent ⏱️ 40m\n\t- 2026-07-30T10:00:00+00:00 → 2026-07-30T10:25:00+00:00\n- [ ] Source #mobile ⏱️ 20m\n\t- > Source details\n\t- 2026-07-30T11:00:00+00:00: Source comment\n\t- [ ] Child\n';
+  const h = await setup({ 'a.md': original });
+  const listed = await h.api.tasks.list();
+  if (!listed.ok) throw new Error(listed.error.code);
+  const source = expectDefined(listed.value.items.find((item) => item.title === 'Source'));
+  const parent = expectDefined(listed.value.items.find((item) => item.title === 'Parent'));
+  h.script(
+    interpret(),
+    () =>
+      call('task', {
+        input: {
+          kind: 'hierarchy',
+          operation: {
+            type: 'reparent',
+            source: source.target,
+            expectedSourceRevision: source.revision,
+            parent: parent.target,
+            expectedParentRevision: parent.revision,
+          },
+        },
+      }),
+    finish(),
+  );
+  await h.session.submit('Combine these tasks, retaining all their details');
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  expect(await h.read('a.md')).toBe(original);
+  expect(await h.session.confirm()).toBe(true);
+  const result = await h.api.tasks.list();
+  if (!result.ok) throw new Error(result.error.code);
+  expect(
+    result.value.items.filter((item) => item.parentTarget === undefined).map((item) => item.title),
+  ).toEqual(['Parent']);
+  const written = await h.read('a.md');
+  for (const content of [
+    '⏱️ 40m',
+    '⏱️ 20m',
+    '#mobile',
+    'Source details',
+    'Source comment',
+    'Child',
+    '2026-07-30T10:00:00+00:00 → 2026-07-30T10:25:00+00:00',
+  ])
+    expect(written).toContain(content);
+});
 it('binds delayed contextual confirmation to the proposal the utterance actually saw', async () => {
   const h = await setup();
   h.script(interpret(), create, finish());
@@ -890,10 +1006,19 @@ it('publishes explicit object schemas to providers while retaining strict union 
     'object',
   );
   expect(tools?.find((candidate) => candidate.name === 'read')).toHaveProperty(
-    'inputSchema.properties.input.oneOf',
+    'inputSchema.properties.input.properties.query',
   );
   expect(tools?.find((candidate) => candidate.name === 'task')).toHaveProperty(
-    'inputSchema.properties.input.oneOf',
+    'inputSchema.properties.input.properties.expectedRevision.type',
+    'string',
+  );
+  expect(tools?.find((candidate) => candidate.name === 'task')).toHaveProperty(
+    'inputSchema.properties.input.properties.target.type',
+    'string',
+  );
+  expect(tools?.find((candidate) => candidate.name === 'task')).toHaveProperty(
+    'inputSchema.properties.input.properties.kind.enum',
+    expect.arrayContaining(['edit', 'append', 'create']),
   );
   h.script(interpret(), () => call('finish', { state: 'question', message: 'Save?' }), finish());
   await h.session.submit('Show the preview');
@@ -3456,4 +3581,348 @@ it('keeps append schema repair scoped to the target’s own plan without executi
   );
   expect(feedback).toContain('Use each target’s own exact editBasis');
   expect(feedback).toContain('never combine independent roots');
+});
+
+async function setupCountedPreparation() {
+  let preparations = 0;
+  const h = await setup(undefined, {}, (api) => ({
+    ...api,
+    tasks: {
+      ...api.tasks,
+      prepare: async (...args: Parameters<NonNullable<TasksApiV1['tasks']['prepare']>>) => {
+        preparations++;
+        return expectDefined(api.tasks.prepare)(...args);
+      },
+    },
+  }));
+  return { ...h, preparations: () => preparations };
+}
+function preparedWork(
+  task: unknown,
+  options: { intent?: string; focus?: string; research?: boolean } = {},
+) {
+  return () =>
+    call('interpret', {
+      intent: options.intent ?? 'plan',
+      research: options.research ?? false,
+      work: {
+        task: { input: task },
+        message: 'Ready.',
+        ...(options.focus === undefined ? {} : { focus: options.focus }),
+      },
+    });
+}
+const readyCreation = {
+  kind: 'create',
+  destination: { type: 'note', path: 'a.md', insertion: { type: 'append' } },
+  tree: {
+    markdownTitle: 'Plan the appointment',
+    initial: { scheduled: { type: 'set', value: '2026-08-02' }, tags: { add: ['#health'] } },
+    children: [
+      {
+        markdownTitle: 'Call the clinic',
+        comments: [{ text: 'Keep literal @t1 in authored text' }],
+      },
+    ],
+  },
+};
+it.each(['plan', 'immediate'])(
+  'prepares a complete canonical task in one model answer with %s consent',
+  async (intent) => {
+    const h = await setup();
+    h.script(preparedWork(readyCreation, { intent }));
+    await h.session.submit(
+      intent === 'plan'
+        ? 'Plan the appointment tomorrow, tag health, with the child and comment.'
+        : 'Create and save the appointment now with those details.',
+    );
+    expect(h.model.doGenerateCalls).toHaveLength(1);
+    const state = h.session.snapshot();
+    expect(state.status.kind).toBe(intent === 'plan' ? 'ready' : 'saved');
+    if (intent === 'plan') {
+      expect(state.proposal.changes).toHaveLength(1);
+      const change = state.proposal.changes[0];
+      if (change?.kind !== 'task') throw Error('No task');
+      const tree = expectDefined(change.plan.after);
+      expect(tree.dates.scheduled).toBe('2026-08-02');
+      expect(expectDefined(expectDefined(tree.children[0]).comments[0]).text).toBe(
+        'Keep literal @t1 in authored text',
+      );
+      expect(expectDefined(state.focus[0]).target).toBe(tree.target);
+      expect(await h.read('a.md')).toBe('- [ ] Existing [unknown:: keep]\n');
+    } else {
+      expect(state.proposal.changes).toHaveLength(0);
+      expect((await h.read('a.md')).match(/Plan the appointment/g)).toHaveLength(1);
+      expect(state.journal.every((entry) => entry.effects === 'committed')).toBe(true);
+    }
+  },
+);
+it('refines an existing child in one answer with exact current plan references', async () => {
+  const h = await setup();
+  h.script(interpret(), create, finish());
+  await h.session.submit('Create a task with children');
+  const change = h.session.snapshot().proposal.changes[0];
+  if (change?.kind !== 'task' || change.plan.after === null) throw Error('No task');
+  const child = expectDefined(change.plan.after.children[1]);
+  h.script(
+    preparedWork(
+      {
+        kind: 'append',
+        plan: change.plan.target,
+        expectedPlanRevision: change.plan.revision,
+        operation: { type: 'add-comment', target: child.target, text: 'Exact child, literal @d1' },
+      },
+      { focus: child.target },
+    ),
+  );
+  const before = h.model.doGenerateCalls.length;
+  await h.session.submit('Add this comment to the second child.');
+  expect(h.model.doGenerateCalls.length - before).toBe(1);
+  const after = h.session.snapshot();
+  expect(after.status.kind).toBe('ready');
+  expect(after.focus[0]?.target).toBe(child.target);
+  const revised = after.proposal.changes[0];
+  if (revised?.kind !== 'task') throw Error('No task');
+  expect(revised.plan.after?.children[1]?.comments.map((c) => c.text)).toEqual([
+    'Exact child, literal @d1',
+  ]);
+  expect(revised.plan.after?.comments).toHaveLength(0);
+  expect(await h.read('a.md')).toBe('- [ ] Existing [unknown:: keep]\n');
+});
+it('repairs a nested preparation failure through task without poisoning interpret or duplicating the result', async () => {
+  const h = await setupCountedPreparation();
+  h.script(
+    preparedWork({
+      ...readyCreation,
+      tree: {
+        ...readyCreation.tree,
+        initial: { ...readyCreation.tree.initial, scheduled: { type: 'set', value: '2026-02-31' } },
+      },
+    }),
+    () => call('task', { input: readyCreation }),
+    finish(),
+  );
+  await h.session.submit('Prepare the appointment');
+  expect(h.model.doGenerateCalls).toHaveLength(3);
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+  expect(h.preparations()).toBe(2);
+  expect(await h.read('a.md')).toBe('- [ ] Existing [unknown:: keep]\n');
+});
+it('repairs nested finish selection without replaying a successful preparation', async () => {
+  const h = await setupCountedPreparation();
+  const listed = await h.api.tasks.list();
+  if (!listed.ok) throw Error('list');
+  const outside = expectDefined(listed.value.items[0]);
+  h.script(preparedWork(readyCreation, { focus: outside.target }), () => {
+    const change = h.session.snapshot().proposal.changes[0];
+    if (change?.kind !== 'task' || change.plan.after === null) throw Error('No prepared task');
+    return call('finish', {
+      state: 'ready',
+      message: 'Ready.',
+      selection: [
+        {
+          kind: 'task',
+          target: change.plan.after.target,
+          plan: change.plan.target,
+          expectedPlanRevision: change.plan.revision,
+        },
+      ],
+    });
+  });
+  await h.session.submit('Prepare a task');
+  expect(h.model.doGenerateCalls).toHaveLength(2);
+  expect(h.preparations()).toBe(1);
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+});
+it.each(['confirm', 'new-session', 'review', 'save-then-plan'])(
+  'rejects bundled work with %s before preparing or saving anything',
+  async (intent) => {
+    const h = await setupCountedPreparation();
+    h.script(
+      preparedWork(readyCreation, { intent }),
+      preparedWork(readyCreation, { intent }),
+      preparedWork(readyCreation, { intent }),
+    );
+    await h.session.submit('A conflicting instruction');
+    expect(h.preparations()).toBe(0);
+    expect(h.session.snapshot().proposal.changes).toHaveLength(0);
+    expect(await h.read('a.md')).toBe('- [ ] Existing [unknown:: keep]\n');
+  },
+);
+it('keeps historical work read-only when a first-answer task is attempted', async () => {
+  const h = await setupCountedPreparation();
+  h.session.restore(h.session.snapshot());
+  h.script(
+    preparedWork(readyCreation),
+    () => call('task', { input: readyCreation }),
+    () => call('task', { input: readyCreation }),
+  );
+  await h.session.submit('Change this historical task');
+  expect(h.preparations()).toBe(0);
+  expect(h.session.snapshot().proposal.changes).toHaveLength(0);
+  expect(await h.read('a.md')).toBe('- [ ] Existing [unknown:: keep]\n');
+});
+it('advertises first-answer intent fields inline for providers that omit reference-only properties', async () => {
+  const h = await setup();
+  h.script(preparedWork(readyCreation));
+  await h.session.submit('Prepare a task');
+  const schema = h.model.doGenerateCalls[0]?.tools?.[0];
+  expect(schema).toHaveProperty(
+    'inputSchema.properties.intent.enum',
+    expect.arrayContaining(['plan', 'confirm', 'immediate']),
+  );
+  expect(schema).toHaveProperty('inputSchema.properties.research.type', 'boolean');
+  expect(schema).toHaveProperty('inputSchema.properties.work.properties.message.type', 'string');
+});
+it('advertises operation fields and scalar search queries without opaque union wrappers', async () => {
+  const h = await setup();
+  h.script(interpret(), finish());
+  await h.session.submit('Inspect the available content');
+  const advertised = expectDefined(h.model.doGenerateCalls[1]).tools;
+  const task = expectDefined(advertised?.find((definition) => definition.name === 'task'));
+  const read = expectDefined(advertised?.find((definition) => definition.name === 'read'));
+  const project = expectDefined(advertised?.find((definition) => definition.name === 'project'));
+  expect(task).toHaveProperty('inputSchema.properties.input.properties.operation.type', 'object');
+  expect(task).toHaveProperty(
+    'inputSchema.properties.input.properties.operation.properties.type.enum',
+    expect.arrayContaining(['patch', 'description', 'remove', 'add-child', 'reparent']),
+  );
+  expect(task).toHaveProperty(
+    'inputSchema.properties.input.properties.operation.properties.target.type',
+    'string',
+  );
+  expect(read).toHaveProperty('inputSchema.properties.input.properties.query.type', 'string');
+  expect(read).toHaveProperty('inputSchema.properties.input.properties.selector.type', 'object');
+  expect(project).toHaveProperty('inputSchema.type', 'object');
+  expect(project).toHaveProperty(
+    'inputSchema.properties.kind.enum',
+    expect.arrayContaining(['update', 'create', 'move-task']),
+  );
+});
+it('finishes a valid local discovery sequence beyond six model answers without writing', async () => {
+  const h = await setup();
+  const listed = await h.api.tasks.list();
+  if (!listed.ok) throw new Error(listed.error.code);
+  const root = expectDefined(listed.value.items[0]);
+  h.script(
+    interpret(),
+    () => call('read', { kind: 'tasks', query: 'Existing' }),
+    () => call('read', { kind: 'tree', target: root.target }),
+    () => call('read', { kind: 'tags' }),
+    () => call('read', { kind: 'statuses' }),
+    () => call('read', { kind: 'notes', query: 'Existing' }),
+    () => call('read', { kind: 'note', selector: { path: 'a.md' } }),
+    finish('Context checked.'),
+  );
+  await h.session.submit('Inspect this task, its tags, statuses and source note');
+  expect(h.session.snapshot().status).toEqual({ kind: 'ready', message: 'Context checked.' });
+  expect(h.model.doGenerateCalls).toHaveLength(8);
+  expect(await h.read('a.md')).toBe('- [ ] Existing [unknown:: keep]\n');
+});
+it('retains refinement provenance when bundled schema repair tries to create a replacement', async () => {
+  const h = await setup();
+  h.script(interpret(), create, finish());
+  await h.session.submit('Prepare a tree');
+  const before = h.session.snapshot().proposal;
+  h.script(
+    preparedWork({
+      kind: 'append',
+      plan: 'missing',
+      expectedPlanRevision: 'missing',
+      operation: { type: 'patch', target: 'missing', patch: { unknown: true } },
+    }),
+    interpret(),
+    () => call('task', { input: readyCreation }),
+    finish(),
+  );
+  await h.session.submit('Correct the existing child');
+  expect(h.session.snapshot().proposal).toEqual(before);
+  expect(await h.read('a.md')).toBe('- [ ] Existing [unknown:: keep]\n');
+  expect(
+    JSON.stringify(h.model.doGenerateCalls[h.model.doGenerateCalls.length - 1]?.prompt),
+  ).toContain('Repair the failed refinement');
+});
+
+it('returns bounded validation paths so malformed first-answer envelopes can be repaired precisely', async () => {
+  const h = await setup();
+  h.script(
+    () => call('interpret', { work: { task: { input: readyCreation, message: 'Misplaced' } } }),
+    preparedWork(readyCreation),
+  );
+  await h.session.submit('Prepare a task');
+  const feedback = JSON.stringify(
+    expectDefined(h.model.doGenerateCalls[1]).prompt.filter((message) => message.role === 'tool'),
+  );
+  expect(feedback).toContain('work.message: invalid_type');
+  expect(feedback).toContain('research: invalid_type');
+  expect(feedback).toContain('intent: invalid_value');
+  expect(feedback).toContain('work.task: unrecognized_keys');
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+  expect(await h.read('a.md')).toBe('- [ ] Existing [unknown:: keep]\n');
+});
+it('returns the project field contract after a task-shaped project edit without executing it', async () => {
+  const h = await setup();
+  const malformed = () =>
+    call('project', { action: 'edit', target: 'project', patch: '{"start":"2026-08-02"}' });
+  h.script(interpret(), malformed, malformed, malformed);
+  await h.session.submit('Set the project start date');
+  const feedback = JSON.stringify(
+    expectDefined(h.model.doGenerateCalls[2]).prompt.filter((message) => message.role === 'tool'),
+  );
+  expect(feedback).toContain('project-schema');
+  expect(feedback).toContain('fieldId');
+  expect(feedback).toContain('expectedRevision');
+  expect(h.session.snapshot().proposal.changes).toHaveLength(0);
+  expect(await h.read('a.md')).toBe('- [ ] Existing [unknown:: keep]\n');
+});
+it('repairs note creation missing its path without rewriting the title or body', async () => {
+  const h = await setup();
+  const note = { kind: 'create', title: 'Findings', text: 'Verified finding with its source.' };
+  h.script(
+    interpret(),
+    () => call('note', note),
+    () => call('note', { ...note, path: 'Findings.md' }),
+    finish(),
+  );
+  await h.session.submit('Put these details in a separate note');
+  const feedback = JSON.stringify(
+    expectDefined(h.model.doGenerateCalls[2]).prompt.filter((message) => message.role === 'tool'),
+  );
+  expect(feedback).toContain('kind:create');
+  expect(feedback).toContain('path,title,text');
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+  expect(await h.read('a.md')).toBe('- [ ] Existing [unknown:: keep]\n');
+  await h.session.confirm();
+  expect(await h.read('Findings.md')).toContain(note.text);
+});
+it('names extra operation fields in bounded repair feedback without echoing their values', async () => {
+  const h = await setup();
+  const malformed = () =>
+    call('task', {
+      input: {
+        kind: 'edit',
+        target: 'task',
+        expectedRevision: 'revision',
+        operation: {
+          type: 'copy-comment',
+          source: 'comment',
+          target: 'task',
+          expectedSourceRevision: 'PRIVATE_VALUE_NOT_FOR_FEEDBACK',
+        },
+      },
+    });
+  h.script(interpret(), malformed, malformed, malformed);
+  await h.session.submit('Copy that comment');
+  const feedback = JSON.stringify(
+    expectDefined(h.model.doGenerateCalls[2]).prompt.filter((message) => message.role === 'tool'),
+  );
+  expect(feedback).toContain('input.operation: unrecognized_keys');
+  expect(feedback).toContain('remove keys: expectedSourceRevision');
+  expect(feedback).not.toContain('PRIVATE_VALUE_NOT_FOR_FEEDBACK');
+  expect(h.session.snapshot().proposal.changes).toHaveLength(0);
+  expect(await h.read('a.md')).toBe('- [ ] Existing [unknown:: keep]\n');
 });

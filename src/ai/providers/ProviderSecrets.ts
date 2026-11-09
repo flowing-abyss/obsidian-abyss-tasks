@@ -6,9 +6,11 @@ const secretIds: Record<CredentialProvider, string> = {
   openrouter: 'abyss-tasks-openrouter-api-key',
   openai: 'abyss-tasks-openai-api-key',
   anthropic: 'abyss-tasks-anthropic-api-key',
+  groq: 'abyss-tasks-groq-api-key',
+  cerebras: 'abyss-tasks-cerebras-api-key',
   tavily: 'abyss-tasks-tavily-api-key',
 };
-/** Sole owner of the four plugin credentials; never enumerates host secrets. */
+/** Sole owner of the fixed plugin credentials; never enumerates host secrets. */
 export class ProviderSecrets {
   readonly #storage: Pick<SecretStorage, 'getSecret' | 'setSecret'>;
   constructor(storage: Pick<SecretStorage, 'getSecret' | 'setSecret'>) {

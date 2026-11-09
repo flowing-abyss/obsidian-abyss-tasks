@@ -7,8 +7,8 @@ the vault and writes user changes through application commands.
 ## Provider connections
 
 Main owns `ProviderSecrets`, `ProviderConnections`, and one `NativeProviderTransport` shared
-by the explicit OpenRouter, OpenAI, and Anthropic SDK factories. Credentials live only in the
-host's vault-scoped SecretStorage under four fixed plugin IDs. The settings section submits
+by the explicit OpenRouter, OpenAI, Anthropic, Groq and Cerebras SDK factories. Credentials live only in the
+host's vault-scoped SecretStorage under six fixed plugin IDs. The settings section submits
 masked, initially empty inputs on Enter or blur, clears successful submissions, and reports key
 presence without claiming connectivity. Neither rendering settings nor constructing a model sends
 a request. `commandMode` holds only static provider/model/search/voice preferences; unknown
@@ -28,9 +28,14 @@ for cancellation before requestUrl admission. Host buffering occurs before the r
 rejected. Fixed official initial endpoints prevent arbitrary source-page requests, but the host
 follows redirects and offers no redirect isolation or physical abort. Typed safe failures omit
 raw provider messages, request bodies, and credentials. Search selection can reuse OpenRouter
-or OpenAI, or select independent OpenAI/Tavily billing; Anthropic has no implicit fallback.
+or OpenAI, or select independent OpenAI/Tavily billing; Anthropic, Groq and Cerebras have no implicit fallback.
 Voice defaults to disabled and has an explicit OpenAI connection preference. These settings do
 not start research, transcription, or an agent session.
+
+Groq and Cerebras use their pinned AI SDK adapters and fixed native chat-completions endpoints. Each key has a
+separate SecretStorage ID; model IDs remain user-selected. Same-agent web research is available only
+through the OpenAI/OpenRouter adapters; Groq, Cerebras and Anthropic require an explicitly selected search
+provider. No provider fallback changes the billing destination.
 
 ## Command sessions
 
@@ -42,7 +47,8 @@ retaining one unload closure per archived conversation. Construction/opening doe
 preferences or send requests. Main always supplies its `commandResearch` port, backed by
 `ProviderResearch`, through a live delegate; an owner opened before configuration uses corrected
 settings on its next deliberate request. The adapter parses current preferences per call, uses the
-shared native transport and SecretStorage, and sends only the bounded query. OpenRouter requests
+shared native transport and SecretStorage, and sends only the bounded query. Generated search reserves output space for reasoning and marks
+provider token exhaustion as incomplete evidence alongside local result truncation. OpenRouter requests
 Exa through the pinned SDK plugin; OpenAI explicitly invokes hosted web search; selected Tavily uses
 its fixed search endpoint. No fallback or page-fetching loop runs. Trusted interpretation admits at
 most two research calls per turn. Each SDK call permits at most two network retries inside one
@@ -51,7 +57,14 @@ different counts. Output retains at most five validated HTTP(S) sources and 12,0
 characters, separating generated summary from nullable attributed excerpts and marking truncation.
 Cancellation rejects late output without claiming physical cancellation of host requests.
 
-`CommandAgent` retains the SDK's bounded tool loop. Its model projection includes exact typed task,
+`CommandAgent` retains the SDK's bounded tool loop. Trusted interpretation may carry one complete
+`work` proposal (canonical task arguments, concise message and optional issued focus). It is
+admitted only for planning or explicitly immediate saving without dependent reads or transitions.
+Preparation and ready completion reuse the ordinary task/finish boundaries, sequentially after
+interpretation succeeds. Nested failure keeps its own repair key and refinement provenance;
+failed focus does not replay an already-staged edit. Unqualified planning still only previews.
+Tool arguments use the SDK’s default inline schema representation; recursive tree references
+remain supported. Canonical Zod validation is unchanged. Its model projection includes exact typed task,
 comment, project and note references; these are issued handles, never aliases or fuzzy title matches.
 Reference failures return the current canonical choices without changing the rejected operation.
 A saved-tree read without explicit paging uses the same bounded canonical reader as proposals;
@@ -140,7 +153,10 @@ controller receives input. Command input never follows ordinary capture's blur s
 Main retains transient mode/selection/scroll memory and the shared owner; destroying or migrating
 a surface releases its Components and subscriptions without discarding the session. `CommandNotes`
 adds focused note pages and exact NotePlan before/after ranges to that same retained canvas through
-`RetainedTaskText`. Note and Q description/comment comparisons opt into an owned, hidden native
+`RetainedTaskText`. Related notes use native disclosures so task work stays compact; note-only and
+explicitly focused note work opens their retained content. Full preparation and render-failure checks
+still precede confirmation even while a disclosure is closed. Newly created notes use a row marker
+instead of marking every word as an insertion. Note and Q description/comment comparisons opt into an owned, hidden native
 rendering of previous Markdown with the same field presentation, then use the same rendered diff.
 Current comparison failures reach the caller's visible failure boundary; cancellation retires the
 temporary owner and suppresses late failure output. Title/search comparison paths are unchanged.
@@ -248,12 +264,16 @@ independent work without claiming success or allowing replay. That acknowledgeme
 so revisiting its history does not require acknowledging it again; it never changes write blocking or
 pruning protection. History selection checks the same acknowledgement boundary as new-session.
 
-`CommandAgent` runs the SDK tool loop with generic required tool calls, serial execution, bounded
-steps and generation deadlines. Active tools enforce the interpretation phase; a typed finish
+`CommandAgent` runs the SDK tool loop with generic required tool calls, serial execution, at most
+12 steps and generation deadlines. Local multi-read workflows use the same step ceiling as research;
+local and research time budgets remain separate. Active tools enforce the interpretation phase; a typed finish
 is the only accepted terminal ready/question result. The loop has
-application-owned network retries and separate schema/domain repair limits. Provider-facing schemas
-use explicit object roots with nested discriminated requests; branch requirements and extra-field
-rejection remain enforced during execution. Ready/question finish uses a small explicit object
+application-owned network retries and separate schema/domain repair limits. The provider boundary also
+classifies Cerebras HTTP 400 generation/parser failures for the same bounded generation retry; other
+nonretryable HTTP errors stay terminal. Retrying generation cannot replay a tool already executed. Provider-facing schemas
+use explicit object roots and inline operation fields so provider templates can expose their
+arguments. Optional/default wrappers and object unions are projected without changing canonical
+acceptance: the original strict branch parses again, rejects extra fields and supplies its own defaults. Ready/question finish uses a small explicit object
 with the original union validation. Main supplies local
 civil time and timezone. `commandSchemas` validates executable arguments and outputs, preserves
 unrequested authored title annotations, and bounds model-facing projections. `commandReads`

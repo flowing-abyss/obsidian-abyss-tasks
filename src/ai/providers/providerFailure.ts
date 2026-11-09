@@ -1,3 +1,4 @@
+import { APICallError } from 'ai';
 import { commandMessage, type CommandMessage } from '../commandMessages';
 export type ProviderFailureCode =
   | 'missing-key'
@@ -31,6 +32,31 @@ export class ProviderFailure extends Error {
   constructor(readonly code: ProviderFailureCode) {
     super(commandMessage(messages[code]));
     this.name = 'ProviderFailure';
+  }
+}
+/** Retry only generation, before any returned tool call can execute. */
+export function providerRetryable(cause: unknown): boolean {
+  if (!APICallError.isInstance(cause))
+    return cause instanceof ProviderFailure && ['unavailable', 'rate-limit'].includes(cause.code);
+  if (cause.isRetryable) return true;
+  if (cause.statusCode !== 400 || cause.url !== 'https://api.cerebras.ai/v1/chat/completions')
+    return false;
+  const parserFailure = (value: unknown): boolean => {
+    const envelope = errorRecord(value);
+    const error = errorRecord('error' in envelope ? envelope.error : envelope);
+    return (
+      'type' in error &&
+      error.type === 'generation_error' &&
+      'code' in error &&
+      error.code === 'parser_error'
+    );
+  };
+  if (parserFailure(cause.data)) return true;
+  if (cause.responseBody === undefined || cause.responseBody.length > 65536) return false;
+  try {
+    return parserFailure(JSON.parse(cause.responseBody) as unknown);
+  } catch {
+    return false;
   }
 }
 export function providerFailure(error: unknown, depth = 0): ProviderFailure {

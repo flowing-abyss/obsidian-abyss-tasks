@@ -245,6 +245,43 @@ it('uses only the selected Tavily endpoint and reports provider snippets without
     sources: [{ snippet: 'Extract', content: null, evidence: 'provider-excerpt' }],
   });
 });
+it('marks a token-exhausted search incomplete even when its discovered URLs fit the result budget', async () => {
+  const h = fixture(async () =>
+    reply({
+      id: 'resp_incomplete',
+      created_at: 1,
+      model: 'gpt-6-luna',
+      status: 'incomplete',
+      incomplete_details: { reason: 'max_output_tokens' },
+      output: [
+        {
+          type: 'web_search_call',
+          id: 'ws_incomplete',
+          status: 'completed',
+          action: {
+            type: 'search',
+            query: 'Compare',
+            sources: [{ type: 'url', url: 'https://example.org/source' }],
+          },
+        },
+      ],
+    }),
+  );
+  h.settings({ provider: 'cerebras', search: 'openai' });
+  h.secrets.store('openai', 'synthetic-key');
+  const result = await h.research.search('Compare', signal());
+  expect(result.summary).toBe('');
+  expect(result.truncated).toBe(true);
+  expect(result.sources).toEqual([
+    {
+      url: 'https://example.org/source',
+      title: null,
+      snippet: null,
+      content: null,
+      evidence: 'retrieved-url',
+    },
+  ]);
+});
 it.each(
   [
     [],

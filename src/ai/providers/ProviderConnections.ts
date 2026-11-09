@@ -1,4 +1,6 @@
 import { createAnthropic } from '@ai-sdk/anthropic';
+import { createCerebras } from '@ai-sdk/cerebras';
+import { createGroq } from '@ai-sdk/groq';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import type { LanguageModel } from 'ai';
@@ -43,6 +45,10 @@ export class ProviderConnections {
         return createOpenAI({ apiKey, fetch }).responses(selection.model);
       case 'anthropic':
         return createAnthropic({ apiKey, fetch })(selection.model);
+      case 'groq':
+        return createGroq({ apiKey, fetch })(selection.model);
+      case 'cerebras':
+        return createCerebras({ apiKey, fetch })(selection.model);
     }
   }
 }

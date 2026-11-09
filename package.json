@@ -57,8 +57,8 @@
     ]
   },
   "release": {
-    "mainJsBudgetBytes": 4051968,
-    "stylesCssBudgetBytes": 224256
+    "mainJsBudgetBytes": 4116480,
+    "stylesCssBudgetBytes": 226304
   },
   "keywords": [
     "obsidian",
@@ -79,6 +79,8 @@
   },
   "dependencies": {
     "@ai-sdk/anthropic": "4.0.98",
+    "@ai-sdk/cerebras": "3.0.86",
+    "@ai-sdk/groq": "4.0.77",
     "@ai-sdk/openai": "4.0.110",
     "@openrouter/ai-sdk-provider": "3.1.0",
     "@tanstack/charts": "1.1.0",

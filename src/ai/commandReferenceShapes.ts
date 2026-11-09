@@ -41,7 +41,7 @@ function selection(value: Record<string, unknown>): Fields {
   return { target: value['kind'] === 'project' ? 'p' : 'n', revision: 'r' };
 }
 export const commandReferenceInputs: Readonly<Record<string, ReferenceShape>> = {
-  interpret: { scope: { changes: taskBasis } },
+  interpret: { scope: { changes: taskBasis }, work: { task: { input: task }, focus: 't' } },
   task: { input: task },
   read: { input: read },
   status: taskBasis,

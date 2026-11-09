@@ -588,3 +588,42 @@ it('projects note continuation selectors and link contexts through the same exac
     },
   });
 });
+it('decodes nested first-answer task operands while preserving authored literals', () => {
+  const book = new CommandReferenceBook('work'),
+    r = book.project(canonical) as typeof canonical;
+  const input = {
+    intent: 'plan',
+    research: false,
+    work: {
+      task: {
+        input: {
+          kind: 'append',
+          plan: r.taskPlan.target,
+          expectedPlanRevision: r.taskPlan.revision,
+          operation: { type: 'add-comment', target: r.task.target, text: r.peer.target },
+        },
+      },
+      message: r.project.target,
+      focus: r.task.target,
+    },
+  };
+  expect(book.input('interpret', input)).toEqual({
+    intent: 'plan',
+    research: false,
+    work: {
+      task: {
+        input: {
+          kind: 'append',
+          plan: 'canonical-task-plan',
+          expectedPlanRevision: 'task-plan-revision',
+          operation: { type: 'add-comment', target: 'canonical-task', text: r.peer.target },
+        },
+      },
+      message: r.project.target,
+      focus: 'canonical-task',
+    },
+  });
+  expect(() =>
+    book.input('interpret', { ...input, work: { ...input.work, focus: r.project.target } }),
+  ).toThrow();
+});

@@ -242,17 +242,31 @@ export class CommandSessionOwner {
     admission?: () => boolean,
   ): Promise<void> {
     const generation = this.acceptance,
-      submitted = ++this.submitted;
+      submitted = ++this.submitted,
+      input = this.session.captureInput();
     if (this.changing !== undefined) await this.changing;
     if (this.isDisposed() || admission?.() === false) return;
     if (generation !== this.acceptance) {
-      this.setInput(text);
+      this.retainUnadmitted(text, input, admission);
       await this.flush();
       return;
     }
-    await this.session.submit(text, basis, this.noteReview(surface), admission);
+    const acceptance = { retired: false };
+    await this.session.submit(text, basis, this.noteReview(surface), () => {
+      const current = generation === this.acceptance;
+      acceptance.retired ||= !current;
+      return current && admission?.() !== false;
+    });
+    if (acceptance.retired) this.retainUnadmitted(text, input, admission);
     await this.flush();
     this.notifyCompletion(submitted);
+  }
+  private retainUnadmitted(
+    text: string,
+    input: ReturnType<CommandSession['captureInput']>,
+    admission: (() => boolean) | undefined,
+  ): void {
+    if (admission?.() !== false && input.current()) this.setInput(text);
   }
   private notifyCompletion(submitted: number): void {
     if (

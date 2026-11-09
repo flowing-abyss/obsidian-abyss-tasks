@@ -10,6 +10,7 @@ const russian = {
   'Saving…': 'Сохраняю…',
   'Working…': 'Думаю…',
   'Ready.': 'Готово.',
+  'Waiting for your command.': 'Жду вашу команду.',
   'Ready for review.': 'Готово к проверке.',
   'Ready. Enter to save.': 'Готово. Enter — сохранить.',
   'Selected changes saved. The rest is pending.':

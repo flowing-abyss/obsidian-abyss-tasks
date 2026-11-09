@@ -12190,6 +12190,10 @@ button.abyss-calendar-date[aria-pressed='true'] {
   padding: var(--size-4-1);
 }
 
+.abyss-command-toolbar button[hidden] {
+  display: none;
+}
+
 .abyss-command-toolbar button[aria-pressed='true'] {
   color: var(--text-accent);
   background: var(--background-modifier-hover);
@@ -12226,7 +12230,7 @@ button.abyss-calendar-date[aria-pressed='true'] {
   overscroll-behavior: contain;
 }
 
-.abyss-command-content:has(.abyss-task-card, .abyss-project-dashboard-header, .abyss-command-note) {
+.abyss-command-content--populated {
   border-block-start: 1px solid var(--background-modifier-border);
   margin-block-start: var(--size-4-2);
   padding-block-start: var(--size-4-2);
@@ -12392,6 +12396,27 @@ button.abyss-calendar-date[aria-pressed='true'] {
 .abyss-command-note-title {
   margin-block: var(--size-4-1);
   font-size: var(--font-ui-medium);
+  font-weight: var(--font-normal);
+  cursor: pointer;
+  border-radius: var(--radius-s);
+  padding-inline: var(--size-4-2);
+}
+
+.abyss-command-note-title:hover {
+  background: var(--background-modifier-hover);
+}
+
+.abyss-command-note-title:focus-visible {
+  outline: 2px solid var(--background-modifier-border-focus);
+}
+
+.abyss-command-note[data-change='added'] > .abyss-command-note-title {
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--color-green) 65%, transparent);
+  background: color-mix(in srgb, var(--color-green) 5%, transparent);
+}
+
+.abyss-command-note[data-change='changed'] > .abyss-command-note-title {
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--text-accent) 55%, transparent);
 }
 
 .abyss-command-note-scope {

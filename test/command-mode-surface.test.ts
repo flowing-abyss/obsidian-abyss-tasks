@@ -29,6 +29,12 @@ const cleanups: Array<() => void> = [];
 it('grows the shared composer for retained multiline text and width changes without moving selection', async () => {
   let resized: ResizeObserverCallback | undefined;
   const disconnect = vi.fn();
+  let frame: FrameRequestCallback | undefined;
+  vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+    frame = callback;
+    return 7;
+  });
+  const cancelFrame = vi.spyOn(window, 'cancelAnimationFrame');
   vi.stubGlobal(
     'ResizeObserver',
     class {
@@ -59,10 +65,15 @@ it('grows the shared composer for retained multiline text and width changes with
   expect([input.selectionStart, input.selectionEnd]).toEqual([2, 6]);
   height = 240;
   resized?.([], {} as ResizeObserver);
+  expect(input.rows).toBe(3);
+  frame?.(0);
   expect(input.rows).toBe(6);
   expect(input.value).toBe('Retained draft\nRecognized first line\nRecognized second line');
+  Object.defineProperty(input, 'clientWidth', { configurable: true, value: 390 });
+  resized?.([], {} as ResizeObserver);
   surface.destroy();
   expect(disconnect).toHaveBeenCalled();
+  expect(cancelFrame).toHaveBeenCalledWith(7);
 });
 
 it('keeps duplicate note basenames compact and visibly attributes each exact nested path', async () => {
@@ -2007,6 +2018,7 @@ it.each(['short', 'late'] as const)(
       expect(h.owner.snapshot().status.kind).toBe('ready');
     });
     const note = expectDefined(surface.element.querySelector<HTMLElement>('.abyss-command-note'));
+    expect((note as HTMLDetailsElement).open).toBe(true);
     expect(note.textContent).toContain('Folder/Research.md');
     expect(
       note.querySelector('.abyss-text-difference-removed')?.textContent ??
@@ -2108,6 +2120,62 @@ it('keeps native task DOM while a background research note proposal updates', as
   expect(surface.element.querySelector('.abyss-task-title')).toBe(title);
   expect(surface.element.querySelectorAll('.abyss-subtask-label')[1]).toBe(child);
   expect(h.app.vault.getFileByPath('Research.md')).toBeNull();
+  const disclosure = expectDefined(
+    surface.element.querySelector<HTMLDetailsElement>('.abyss-command-note'),
+  );
+  expect(disclosure.tagName).toBe('DETAILS');
+  expect(disclosure.open).toBe(false);
+  expect(disclosure.querySelector('ins')).toBeNull();
+  expect(disclosure.dataset['change']).toBe('added');
+  expectDefined(disclosure.querySelector('summary')).click();
+  expect(disclosure.open).toBe(true);
+  expect(disclosure.textContent).toContain('Sourced findings');
+  const refined = await expectDefined(h.api.notes).prepare({
+    kind: 'refine',
+    plan: note.value.target,
+    expectedPlanRevision: note.value.revision,
+    operation: { type: 'replace-body', text: 'Updated sourced findings' },
+  });
+  if (!refined.ok) throw new Error(refined.error.code);
+  h.session.stage({ kind: 'note', plan: refined.value });
+  await flushMicrotasks(0);
+  expect(surface.element.querySelector('.abyss-command-note')).toBe(disclosure);
+  expect(disclosure.open).toBe(true);
+  expect(disclosure.textContent).toContain('Updated sourced findings');
+  expect(surface.element.querySelector('.abyss-task-title')).toBe(title);
+});
+it('collapses an initially note-only proposal when its related task arrives later', async () => {
+  mockReadingView();
+  const h = await setup({ 'Tasks.md': '- [ ] Existing\n' });
+  const prepared = await expectDefined(h.api.notes).prepare({
+    kind: 'create',
+    path: 'Details.md',
+    title: 'Details',
+    text: 'Full details',
+  });
+  if (!prepared.ok) throw new Error(prepared.error.code);
+  h.session.stage({ kind: 'note', plan: prepared.value });
+  const surface = h.mount();
+  await flushMicrotasks(0);
+  const row = expectDefined(
+    surface.element.querySelector<HTMLDetailsElement>('.abyss-command-note'),
+  );
+  expect(row.open).toBe(true);
+  const listed = await h.api.tasks.list();
+  if (!listed.ok) throw new Error(listed.error.code);
+  const root = expectDefined(listed.value.items[0]);
+  const task = await expectDefined(h.api.tasks.prepare)({
+    kind: 'edit',
+    target: root.target,
+    expectedRevision: root.revision,
+    operation: { type: 'add-comment', target: root.target, text: 'Conclusion [[Details]]' },
+  });
+  if (!task.ok) throw new Error(task.error.code);
+  h.session.stage({ kind: 'task', plan: task.value });
+  await flushMicrotasks(0);
+  expect(surface.element.querySelector('.abyss-command-note')).toBe(row);
+  expect(row.open).toBe(false);
+  expect(row.textContent).toContain('Full details');
 });
 
 it('retains exact receipt-section continuation after finish and remount without claiming a full note', async () => {
@@ -3706,4 +3774,31 @@ it('does not write ordinary input on departure while dictation is recording or r
   expect(surface.input.value).toBe('Typed preface Dictated continuation');
   expect(h.owner.snapshot().exchanges).toEqual([]);
   expect(h.ordinaryExecute).not.toHaveBeenCalled();
+});
+it('keeps one textarea row when integer scrollHeight rounds a fractional line height upward', async () => {
+  const h = await setup(),
+    surface = h.mount(),
+    input = surface.input as HTMLTextAreaElement;
+  Object.defineProperty(input, 'scrollHeight', { configurable: true, value: 36 });
+  vi.spyOn(input.win, 'getComputedStyle').mockReturnValue({
+    lineHeight: '19.6px',
+    fontSize: '14px',
+    paddingTop: '8px',
+    paddingBottom: '8px',
+  } as CSSStyleDeclaration);
+  h.owner.setInput('Single line');
+  expect(input.rows).toBe(1);
+});
+
+it('restores ordinary capture when retained command mode loses its provider', async () => {
+  const h = await setup();
+  h.owner.setInput('Retained command draft');
+  const surface = h.mount(undefined, () => ({ agent: false, voice: false }));
+  expect(surface.input.getAttribute('aria-label')).toBe('Add task');
+  expect(h.memory.active).toBe(false);
+  expect(
+    surface.element.querySelector<HTMLButtonElement>('[aria-label="CommandMode"]')?.hidden,
+  ).toBe(true);
+  expect(h.owner.snapshot().input).toBe('Retained command draft');
+  expect(h.resolveOwner).not.toHaveBeenCalled();
 });

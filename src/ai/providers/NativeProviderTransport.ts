@@ -8,6 +8,8 @@ const endpoints: Record<CredentialProvider, readonly string[]> = {
   openrouter: ['https://openrouter.ai/api/v1/chat/completions'],
   openai: ['https://api.openai.com/v1/responses', 'https://api.openai.com/v1/audio/transcriptions'],
   anthropic: ['https://api.anthropic.com/v1/messages'],
+  groq: ['https://api.groq.com/openai/v1/chat/completions'],
+  cerebras: ['https://api.cerebras.ai/v1/chat/completions'],
   tavily: ['https://api.tavily.com/search'],
 };
 interface PendingRequest {

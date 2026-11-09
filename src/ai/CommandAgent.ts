@@ -1,10 +1,11 @@
-import { APICallError, generateText, isStepCount, wrapLanguageModel, type ModelMessage } from 'ai';
+import { generateText, isStepCount, wrapLanguageModel, type ModelMessage } from 'ai';
 import type { TasksApiV1 } from '../../api';
-import { CommandReferenceBook } from './CommandReferenceBook';
-import type { CommandSession } from './CommandSession';
 import { commandPrompt } from './commandPrompt';
+import { CommandReferenceBook } from './CommandReferenceBook';
 import { commandReferences } from './commandReferences';
+import { record } from './commandReferenceShapes';
 import { planToolOutput } from './commandSchemas';
+import type { CommandSession } from './CommandSession';
 import { commandTools, type CommandToolContext } from './commandTools';
 import {
   CommandFailure,
@@ -13,7 +14,7 @@ import {
   type CommandSessionSnapshot,
 } from './commandTypes';
 import type { ProviderConnections } from './providers/ProviderConnections';
-import { ProviderFailure } from './providers/providerFailure';
+import { providerRetryable } from './providers/providerFailure';
 import { parseProviderSettings } from './providers/providerSettings';
 
 export interface CommandAgentOptions {
@@ -24,10 +25,6 @@ export interface CommandAgentOptions {
   readonly now: () => number;
   readonly research?: CommandResearchPort;
   readonly temporalContext?: () => string;
-}
-function retryable(cause: unknown): boolean {
-  if (APICallError.isInstance(cause)) return cause.isRetryable;
-  return cause instanceof ProviderFailure && ['unavailable', 'rate-limit'].includes(cause.code);
 }
 function generationLifetime(
   parent: AbortSignal | undefined,
@@ -65,12 +62,11 @@ function generationLifetime(
 function rejectedKind(input: string): string | undefined {
   try {
     const parsed: unknown = JSON.parse(input);
-    if (parsed === null || typeof parsed !== 'object') return undefined;
-    let nested: unknown = Reflect.get(parsed, 'input');
+    const payload = record(record(parsed)?.['work'])?.['task'] ?? parsed;
+    let nested: unknown = record(payload)?.['input'];
     // Inspect only the discriminator for feedback. Never execute a coerced payload.
     if (typeof nested === 'string') nested = JSON.parse(nested) as unknown;
-    if (nested === null || typeof nested !== 'object') return undefined;
-    const kind: unknown = Reflect.get(nested, 'kind');
+    const kind = record(nested)?.['kind'];
     return typeof kind === 'string' ? kind : undefined;
   } catch {
     return undefined;
@@ -83,22 +79,65 @@ function taskSchemaRepair(input: string): string {
     return `${object}Use input.kind=create, destination and tree. tree contains markdownTitle, optional description/comments/children and tree.initial. Put scheduled/due/start/time/durationMinutes/tags/statusSymbol only in tree.initial; field assignments use {type:set,value} or {type:clear}. Children have that same tree shape. Do not change to append or invent plan references.`;
   if (kind === 'append' || kind === 'batch')
     return `${object}Use input.kind=append with ONE operation object, or input.kind=batch with an operations array directly beside plan and expectedPlanRevision. Never put batch inside operation. Use each target’s own exact editBasis; append/batch can only refine nodes in that one plan, never combine independent roots.`;
+  if (kind === 'edit')
+    return `${object}Use {kind:"edit",target:"issued task",expectedRevision:"its revision",operation:{type:"...",target:"issued node",...}}. target and expectedRevision belong beside kind, not inside operation. Description uses operation {type:"description",target,text}; it is not a patch field or a comment. Keep the requested operation and use the exact current editBasis.`;
   return `${object}Keep the intended kind; match its advertised fields. Do not switch to append/batch or invent references. If creating, use destination and tree; metadata belongs in tree.initial. Example: {"input":{"kind":"create","destination":{"type":"configured-default"},"tree":{"markdownTitle":"Task","initial":{"scheduled":{"type":"set","value":"2026-08-02"}}}}}.`;
 }
-function schemaRepairMessage(name: string, input: string): string {
-  const common =
-    'Arguments were rejected; no operation ran. Repair their format without changing the intended content or target. ';
+function validationIssue(value: unknown): string {
+  const issue = record(value);
+  if (!Array.isArray(issue?.['path']) || typeof issue['code'] !== 'string') return '';
+  const path = issue['path']
+    .filter((part) => typeof part === 'string' || typeof part === 'number')
+    .join('.')
+    .slice(0, 160);
+  const expected = typeof issue['expected'] === 'string' ? ` (${issue['expected']})` : '';
+  const keys =
+    issue['code'] === 'unrecognized_keys' && Array.isArray(issue['keys'])
+      ? issue['keys']
+          .filter(
+            (key): key is string =>
+              typeof key === 'string' && /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/.test(key),
+          )
+          .slice(0, 8)
+          .join(', ')
+      : '';
+  const removed = keys === '' ? '' : `; remove keys: ${keys}`;
+  return `${path === '' ? 'arguments' : path}: ${issue['code']}${expected}${removed}`;
+}
+function validationHint(error: unknown): string {
+  let cause = error;
+  for (let depth = 0; depth < 4; depth += 1) {
+    const value = record(cause);
+    if (Array.isArray(value?.['issues']))
+      return value['issues']
+        .slice(0, 8)
+        .map(validationIssue)
+        .filter(Boolean)
+        .join('; ')
+        .slice(0, 1200);
+    cause = value?.['cause'];
+  }
+  return '';
+}
+function schemaRepairMessage(name: string, input: string, error: unknown): string {
+  const common = `Arguments were rejected; no operation ran. Repair their format without changing the intended content or target. ${validationHint(error)} `;
   if (name === 'task') return common + taskSchemaRepair(input);
+  if (name === 'interpret' && rejectedKind(input) !== undefined)
+    return `${common}Required envelope: {intent:"plan",research:false,work:{task:{input:...},message:"..."}}. message belongs to work, not task. Use immediate only with explicit consent; no scope/disposition. Repair work.task: ${taskSchemaRepair(input)} If more reads are needed, omit work, then repair with task; never create a replacement for a failed refinement.`;
   if (name === 'interpret')
     return `${common}For new-session use disposition=keep|discard, not transitionDisposition. For a current pendingTransition use resolve-transition and transitionDisposition=save|keep|discard|cancel; use plan with transitionDisposition when resolving and continuing requested work in the same turn. Omit unrelated voiceMode/disposition fields. No pendingTransition means ordinary work uses plan. To cancel an unsaved task in this same session, use plan with no disposition, then task append/batch with a sole remove on its exact draft root.`;
   if (name === 'finish')
     return `${
       common
     }Use state=ready with message, or state=question with message and blockingIssue {kind:missing-information|conflict, detail}. Every selection entry needs kind=task|project|note and its exact returned target/basis; a project is never a task. A ready proposal does not need saving permission.`;
-  if (name === 'read' || name === 'note')
+  if (name === 'note')
+    return `${common}Use object input. Create requires {kind:create,path,title,text}; path is a vault-relative .md path, normally beside the working task. Edit uses {kind:edit,target,expectedRevision,operation:{type:append|replace-section,section,text}}. Refine uses {kind:refine,plan,expectedPlanRevision,operation}; replace-body applies to a new-note plan. Preserve the requested title, body and frozen creation path.`;
+  if (name === 'read')
     return `${
       common
     }Use an object input. Match one advertised kind and only its fields; tree selects an opaque target, while note selectors can use a path. Never encode input as a string.`;
+  if (name === 'project')
+    return `${common}Read project-schema for writable field IDs and status IDs. Update with {kind:"update",target,expectedRevision,fields:[{fieldId,value}],statusId?}. Each field value is the native scalar or null, not a task patch assignment. Omit unchanged fields/statusId. No action or patch property. Preserve the requested project; never replace an update with creation.`;
   return `${common}Follow this tool’s exact object schema; do not add undeclared fields.`;
 }
 function repairMessages(
@@ -143,7 +182,8 @@ export class CommandAgent implements CommandAgentPort {
                 return await underlying.doGenerate({ ...params, abortSignal: lifetime.signal });
               } catch (cause) {
                 lifetime.checkDeadline();
-                if (attempt >= 2 || lifetime.signal.aborted || !retryable(cause)) throw cause;
+                if (attempt >= 2 || lifetime.signal.aborted || !providerRetryable(cause))
+                  throw cause;
               }
             }
           } finally {
@@ -256,11 +296,7 @@ export class CommandAgent implements CommandAgentPort {
       maxOutputTokens: 4096,
       abortSignal: input.signal,
       timeout: { totalMs: 180000, stepMs: 45000 },
-      stopWhen: [
-        isStepCount(12),
-        ({ steps }) =>
-          ctx.done || ctx.repairExhausted || steps.length >= (ctx.researchMode ? 12 : 6),
-      ],
+      stopWhen: [isStepCount(12), () => ctx.done || ctx.repairExhausted],
       prepareStep: ({ messages }) => {
         input.signal.throwIfAborted();
         if (ctx.repairExhausted)
@@ -277,16 +313,16 @@ export class CommandAgent implements CommandAgentPort {
           messages: repairMessages(messages, ctx.feedback),
         };
       },
-      repairToolCall: async ({ toolCall }) => {
+      repairToolCall: async ({ toolCall, error }) => {
         const kind = rejectedKind(toolCall.input);
         if (
-          toolCall.toolName === 'task' &&
+          (toolCall.toolName === 'task' || toolCall.toolName === 'interpret') &&
           ['append', 'batch', 'edit', 'refresh', 'hierarchy'].includes(kind ?? '')
         )
           ctx.unresolvedTaskRefinement = true;
         ctx.feedback.set(
           toolCall.toolCallId,
-          schemaRepairMessage(toolCall.toolName, toolCall.input),
+          schemaRepairMessage(toolCall.toolName, toolCall.input, error),
         );
         ctx.repair(toolCall.toolCallId);
         ctx.errors.add(toolCall.toolName);

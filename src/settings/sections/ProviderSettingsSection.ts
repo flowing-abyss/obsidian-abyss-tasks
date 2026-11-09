@@ -20,6 +20,8 @@ const labels: Record<CredentialProvider, string> = {
   openrouter: 'OpenRouter',
   openai: 'OpenAI',
   anthropic: 'Anthropic',
+  groq: 'Groq',
+  cerebras: 'Cerebras',
   tavily: 'Tavily',
 };
 /** Settings own input drafts only. Saving a credential never claims connectivity. */
@@ -45,7 +47,13 @@ export class ProviderSettingsSection {
         dropdown.selectEl.setAttribute('aria-label', 'Agent provider');
         if (provider === undefined) dropdown.addOption('', 'Choose…');
         dropdown
-          .addOptions({ openrouter: 'OpenRouter', openai: 'OpenAI', anthropic: 'Anthropic' })
+          .addOptions({
+            openrouter: 'OpenRouter',
+            openai: 'OpenAI',
+            anthropic: 'Anthropic',
+            groq: 'Groq',
+            cerebras: 'Cerebras',
+          })
           .setValue(provider ?? '')
           .onChange((value) => {
             const provider = providerSchema.parse(value);
@@ -57,8 +65,8 @@ export class ProviderSettingsSection {
     const search = new Setting(container)
       .setName('Search provider')
       .setDesc(
-        searchValue === 'agent' && provider === 'anthropic'
-          ? 'Choose OpenAI or Tavily for search with Anthropic.'
+        searchValue === 'agent' && searchProvider === null
+          ? 'Choose OpenAI or Tavily for web research with this provider.'
           : 'Used for web research.',
       );
     search.addDropdown((dropdown) => {

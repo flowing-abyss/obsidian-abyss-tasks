@@ -42,6 +42,8 @@ describe('README', () => {
   it('keeps the exact approved runtime package roster', () => {
     expect(Object.keys(readManifest('package.json').dependencies ?? {})).toEqual([
       '@ai-sdk/anthropic',
+      '@ai-sdk/cerebras',
+      '@ai-sdk/groq',
       '@ai-sdk/openai',
       '@openrouter/ai-sdk-provider',
       '@tanstack/charts',

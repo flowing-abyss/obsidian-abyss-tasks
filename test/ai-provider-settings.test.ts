@@ -40,29 +40,32 @@ it('keeps masked edits usable and never prefills or renders a stored key', () =>
 });
 
 describe('provider connection settings', () => {
-  it('requires explicit voice selection and does not fallback from unsupported same-agent research', () => {
-    const settings = {
-      ...defaultProviderSettings(),
-      provider: 'anthropic' as const,
-      model: 'claude-haiku-5-5',
-    };
-    const section = new ProviderSettingsSection({
-      settings: () => settings,
-      setSettings: (value) => {
-        Object.assign(settings, value);
-      },
-      save: async () => undefined,
-      secrets: new ProviderSecrets({ getSecret: () => null, setSecret: () => undefined }),
-    });
-    const container = createDiv();
-    section.render(container);
-    expect(container.textContent).toContain('Choose OpenAI or Tavily');
-    const voice = expectDefined(
-      container.querySelector<HTMLSelectElement>('select[aria-label="Voice provider"]'),
-    );
-    expect(voice.value).toBe('disabled');
-    section.dispose();
-  });
+  it.each(['anthropic', 'groq', 'cerebras'] as const)(
+    'requires explicit voice selection and does not fallback from unsupported %s research',
+    (provider) => {
+      const settings = {
+        ...defaultProviderSettings(),
+        provider,
+        model: 'claude-haiku-5-5',
+      };
+      const section = new ProviderSettingsSection({
+        settings: () => settings,
+        setSettings: (value) => {
+          Object.assign(settings, value);
+        },
+        save: async () => undefined,
+        secrets: new ProviderSecrets({ getSecret: () => null, setSecret: () => undefined }),
+      });
+      const container = createDiv();
+      section.render(container);
+      expect(container.textContent).toContain('Choose OpenAI or Tavily');
+      const voice = expectDefined(
+        container.querySelector<HTMLSelectElement>('select[aria-label="Voice provider"]'),
+      );
+      expect(voice.value).toBe('disabled');
+      section.dispose();
+    },
+  );
 });
 
 it('preserves a failed masked submission and reports only a safe storage error', () => {
@@ -204,3 +207,49 @@ it('preserves an active masked draft through the existing settings render contex
     host.remove();
   }
 });
+
+it.each([
+  { provider: 'groq', label: 'Groq', model: 'openai/gpt-oss-120b' },
+  { provider: 'cerebras', label: 'Cerebras', model: 'qwen-3.8-27b' },
+])(
+  'selects $provider with its own masked credential and model while preserving extensions',
+  ({ provider: selected, label, model }) => {
+    const values = new Map<string, string>(),
+      settings = { ...defaultProviderSettings(), extension: { keep: true } };
+    const section = new ProviderSettingsSection({
+      settings: () => settings,
+      setSettings: (value) => {
+        Object.assign(settings, value);
+      },
+      save: async () => undefined,
+      secrets: new ProviderSecrets({
+        getSecret: (id) => values.get(id) ?? null,
+        setSecret: (id, value) => {
+          values.set(id, value);
+        },
+      }),
+    });
+    const container = createDiv();
+    section.render(container);
+    const provider = expectDefined(
+      container.querySelector<HTMLSelectElement>('select[aria-label="Agent provider"]'),
+    );
+    provider.value = selected;
+    provider.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(settings).toMatchObject({
+      provider: selected,
+      model,
+      extension: { keep: true },
+    });
+    const key = expectDefined(
+      container.querySelector<HTMLInputElement>(`[aria-label="${label} API key"]`),
+    );
+    key.value = 'synthetic-secret';
+    key.dispatchEvent(new Event('input', { bubbles: true }));
+    key.dispatchEvent(new Event('blur'));
+    expect(values.get(`abyss-tasks-${selected}-api-key`)).toBe('synthetic-secret');
+    expect(key.value).toBe('');
+    expect(container.textContent).not.toContain('synthetic-secret');
+    section.dispose();
+  },
+);

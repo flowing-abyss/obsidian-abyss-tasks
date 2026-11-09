@@ -20,14 +20,17 @@ interface NoteDisplay {
   readonly path: string;
   readonly scope: string;
   readonly fields: readonly NoteFieldDisplay[];
+  readonly expanded: boolean;
+  readonly change: string;
 }
 interface NoteRow {
-  readonly host: HTMLElement;
+  readonly host: HTMLDetailsElement;
   readonly title: HTMLElement;
   readonly path: HTMLElement;
   readonly scope: HTMLElement;
   readonly owner: Component;
   readonly fields: Map<string, NoteField>;
+  expanded: boolean;
 }
 interface NoteField {
   readonly body: HTMLElement;
@@ -39,6 +42,7 @@ interface NoteField {
   ready?: boolean;
   failed?: boolean;
 }
+const noteChanges = { create: 'added', edit: 'changed' } as const;
 function readScope(page: NoteReadPageV1 & { continued?: boolean }): string {
   const part =
     page.resolvedSubpath ??
@@ -58,6 +62,12 @@ function readScope(page: NoteReadPageV1 & { continued?: boolean }): string {
     ? commandMessage('Full note')
     : commandMessage('{part} · Complete selection', { part });
 }
+function expandedNote(state: CommandSessionSnapshot, target: string | undefined): boolean {
+  const related =
+    state.focus.some((focus) => focus.kind !== 'note') ||
+    state.proposal.changes.some((change) => change.kind !== 'note');
+  return state.focus.some((focus) => focus.kind === 'note' && focus.target === target) || !related;
+}
 function displays(state: CommandSessionSnapshot): NoteDisplay[] {
   const result = new Map<string, NoteDisplay>();
   for (const page of state.entities.notes) {
@@ -67,6 +77,8 @@ function displays(state: CommandSessionSnapshot): NoteDisplay[] {
       path: page.note.path,
       scope: currentReadScope(state, page),
       fields: [{ key: 'read', text: page.segments.map((segment) => segment.text).join('') }],
+      expanded: expandedNote(state, page.note.target),
+      change: '',
     });
   }
   for (const change of state.proposal.changes) {
@@ -94,6 +106,8 @@ function displays(state: CommandSessionSnapshot): NoteDisplay[] {
       path: plan.path,
       scope: proposalScope(state, plan, written),
       fields: planFields(plan),
+      expanded: expandedNote(state, plan.note?.target),
+      change: noteChanges[plan.kind],
     });
   }
   return [...result.values()];
@@ -169,7 +183,11 @@ export class CommandNotes {
   }
   private render(note: NoteDisplay): void {
     const row = this.row(note.key);
+    if (note.expanded !== row.expanded) row.host.open = note.expanded;
+    row.expanded = note.expanded;
+    row.host.dataset['change'] = note.change;
     row.title.textContent = note.path.split('/').pop()?.replace(/\.md$/i, '') ?? note.path;
+    row.title.setAttribute('title', note.path);
     row.path.textContent = note.path;
     row.path.setAttribute('title', note.path);
     row.scope.textContent = note.scope;
@@ -217,7 +235,7 @@ export class CommandNotes {
       },
       decoration: {
         kind: 'complete',
-        ...(value.before === undefined
+        ...(value.before === undefined || value.before === ''
           ? {}
           : { previousMarkdown: value.before, compareMarkdown: true }),
       },
@@ -264,12 +282,20 @@ export class CommandNotes {
   private row(key: string): NoteRow {
     const previous = this.rows.get(key);
     if (previous !== undefined) return previous;
-    const host = this.host.createEl('section', { cls: 'abyss-command-note' });
-    const title = host.createEl('h3', { cls: 'abyss-command-note-title' });
+    const host = this.host.createEl('details', { cls: 'abyss-command-note' });
+    const title = host.createEl('summary', { cls: 'abyss-command-note-title' });
     const path = host.createDiv({ cls: 'abyss-command-note-path' });
     const scope = host.createDiv({ cls: 'abyss-command-note-scope' });
     const owner = this.component.addChild(new Component());
-    const row = { host, title, path, scope, owner, fields: new Map<string, NoteField>() };
+    const row = {
+      host,
+      title,
+      path,
+      scope,
+      owner,
+      fields: new Map<string, NoteField>(),
+      expanded: false,
+    };
     this.rows.set(key, row);
     return row;
   }

@@ -207,16 +207,21 @@ export class CommandModeSurface implements CaptureExtension {
   private bindInputSizing(): void {
     const win = this.capture.input.win as Window & { ResizeObserver?: typeof ResizeObserver };
     if (typeof win.ResizeObserver === 'function') {
-      let width = -1;
+      let width = -1,
+        frame: number | undefined;
       const observer = new win.ResizeObserver(() => {
         const next = this.capture.input.clientWidth;
         if (width === next) return;
         width = next;
-        this.sizeInput();
+        frame ??= win.requestAnimationFrame(() => {
+          frame = undefined;
+          this.sizeInput();
+        });
       });
       observer.observe(this.capture.input);
       this.component.register(() => {
         observer.disconnect();
+        if (frame !== undefined) win.cancelAnimationFrame(frame);
       });
     }
     this.component.registerDomEvent(this.capture.input, 'input', () => {
@@ -235,7 +240,11 @@ export class CommandModeSurface implements CaptureExtension {
   active(): boolean {
     return this.options.memory.active;
   }
-  private setActive(active: boolean): void {
+  private configuredActive(requested: boolean): boolean {
+    return requested && this.toggle.hidden === false;
+  }
+  private setActive(requested: boolean): void {
+    const active = this.configuredActive(requested);
     if (!active) {
       this.inputGeneration++;
       this.clearPhaseTimer();
@@ -533,6 +542,12 @@ export class CommandModeSurface implements CaptureExtension {
     this.question.hidden = state.activeQuestion === null;
     this.projects.update(state);
     this.tree?.update(state);
+    this.content.classList.toggle(
+      'abyss-command-content--populated',
+      this.content.querySelector(
+        '.abyss-task-card, .abyss-project-dashboard-header, .abyss-command-note',
+      ) !== null,
+    );
     this.navigateSaved(state);
     this.reveal(state);
   }
@@ -545,13 +560,16 @@ export class CommandModeSurface implements CaptureExtension {
     const padding = cssPixels(style.paddingTop, 0) + cssPixels(style.paddingBottom, 0);
     const scroll = textarea.scrollTop;
     textarea.rows = 1;
-    textarea.rows = Math.max(1, Math.min(6, Math.ceil((textarea.scrollHeight - padding) / line)));
+    textarea.rows = Math.max(
+      1,
+      Math.min(6, Math.ceil((textarea.scrollHeight - padding - 1) / line)),
+    );
     textarea.scrollTop = scroll;
   }
   private renderPhase(state: CommandSessionSnapshot, isBusy: boolean): void {
     const waiting = state.activeQuestion !== null && !isBusy && state.status.kind !== 'error';
     if (this.renderVoicePhase(state)) return;
-    let message = state.status.message;
+    let message = phaseMessage(state.status.message);
     if (waiting) message = commandMessage('Needs your answer.');
     else if (state.input.trim() === '' && readyToSave(state))
       message = this.noteReviewMessage(state);
@@ -784,4 +802,8 @@ let nextSurface = 0;
 function cssPixels(value: string, fallback: number): number {
   const pixels = Number.parseFloat(value);
   return Number.isFinite(pixels) ? pixels : fallback;
+}
+
+function phaseMessage(message: string): string {
+  return message === '' ? commandMessage('Waiting for your command.') : message;
 }

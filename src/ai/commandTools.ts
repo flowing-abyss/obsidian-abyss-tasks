@@ -42,7 +42,7 @@ import {
   researchResultSchema,
   researchSchema,
   statusStageSchema,
-  taskToolSchema,
+  taskArgumentsSchema,
   type batchSchema,
 } from './commandSchemas';
 import type { CommandSession } from './CommandSession';
@@ -136,9 +136,7 @@ class CommandToolOwner {
         try {
           canonical = references.input(name, input);
         } catch (cause) {
-          const kind = record(record(input)?.['input'])?.['kind'];
-          if (name === 'task' && typeof kind === 'string' && kind !== 'create')
-            this.ctx.unresolvedTaskRefinement = true;
+          this.markFailedRefinement(name, input);
           return this.execute(name, options.toolCallId, async () => {
             throw cause;
           });
@@ -146,6 +144,13 @@ class CommandToolOwner {
         return execute(canonical, options) as unknown;
       },
     };
+  }
+  private markFailedRefinement(name: string, input: unknown): void {
+    const payload: unknown =
+      name === 'interpret' ? record(record(input)?.['work'])?.['task'] : input;
+    const kind = record(record(payload)?.['input'])?.['kind'];
+    if ((name === 'task' || name === 'interpret') && typeof kind === 'string' && kind !== 'create')
+      this.ctx.unresolvedTaskRefinement = true;
   }
   private modelValue(value: unknown): unknown {
     return this.ctx.references?.project(value) ?? value;
@@ -256,43 +261,106 @@ class CommandToolOwner {
   interpret(): Tool {
     return tool({
       description:
-        'Interpret trusted user intent before using new external material. confirm saves the visible proposal or its explicitly authorized subset with scope; the application partitions existing combined plans and retains unselected edits. No separate field-only preview is needed. Confirmation is bound to the visible proposal revision.',
+        'Interpret trusted intent; work completes a known task proposal. confirm saves the visible revision/scope; the application partitions existing combined plans and retains unselected edits.',
       inputSchema: intentSchema,
-      execute: (input, { toolCallId }) =>
-        this.execute('interpret', toolCallId, async () => {
-          if (this.ctx.interpreted)
-            throw new CommandFailure('PHASE', 'This message was already interpreted.');
-          this.requireTransition(input);
-          this.ctx.interpreted = true;
-          this.ctx.researchMode = input.research;
-          const confirmation = await this.confirmationIntent(
-            input.intent,
-            input.transitionDisposition !== undefined,
-            input.scope,
-          );
-          if (confirmation !== undefined) return confirmation;
-          const lifecycle = await this.lifecycleIntent(input);
-          if (lifecycle !== undefined) return lifecycle;
-          if (!(await this.continueTransition(input)))
-            return { resolved: false, continuation: false };
-          const transition = this.pendingTransition();
-          if (transition !== undefined) return transition;
-          if (input.intent === 'save-then-plan') {
-            const saved = await this.ctx.session.confirmFromTurn(
-              this.ctx.basis.proposal.revision,
-              this.ctx.signal,
-            );
-            if (!saved) {
-              this.ctx.done = true;
-              return { saved: false, continuation: false };
-            }
-          }
-          this.ctx.immediate =
-            input.intent === 'immediate' && this.ctx.session.snapshot().recovery !== 'reviewing';
-          this.ctx.session.answer();
-          return { intent: input.intent, preview: !this.ctx.immediate };
-        }),
+      execute: async (input, { toolCallId }) => {
+        const interpreted = await this.execute('interpret', toolCallId, () =>
+          this.interpretIntent(input),
+        );
+        if (input.work === undefined || this.ctx.done) return interpreted;
+        return this.preparedWork(input.work, toolCallId, interpreted);
+      },
     });
+  }
+  private async interpretIntent(input: z.infer<typeof intentSchema>): Promise<unknown> {
+    if (this.ctx.interpreted)
+      throw new CommandFailure('PHASE', 'This message was already interpreted.');
+    this.requireTransition(input);
+    this.ctx.interpreted = true;
+    this.ctx.researchMode = input.research;
+    const confirmation = await this.confirmationIntent(
+      input.intent,
+      input.transitionDisposition !== undefined,
+      input.scope,
+    );
+    if (confirmation !== undefined) return confirmation;
+    const lifecycle = await this.lifecycleIntent(input);
+    if (lifecycle !== undefined) return lifecycle;
+    if (!(await this.continueTransition(input))) return { resolved: false, continuation: false };
+    const transition = this.pendingTransition();
+    if (transition !== undefined) return transition;
+    if (input.intent === 'save-then-plan') {
+      const saved = await this.ctx.session.confirmFromTurn(
+        this.ctx.basis.proposal.revision,
+        this.ctx.signal,
+      );
+      if (!saved) {
+        this.ctx.done = true;
+        return { saved: false, continuation: false };
+      }
+    }
+    this.ctx.immediate =
+      input.intent === 'immediate' && this.ctx.session.snapshot().recovery !== 'reviewing';
+    this.ctx.session.answer();
+    return { intent: input.intent, preview: !this.ctx.immediate };
+  }
+  private async preparedWork(
+    work: NonNullable<z.infer<typeof intentSchema>['work']>,
+    id: string,
+    interpreted: unknown,
+  ): Promise<ReturnType<typeof checkedOutput>> {
+    let operation = 'task';
+    try {
+      let prepared: unknown;
+      await this.execute('task', `${id}:task`, async () => {
+        prepared = await this.prepareTask(work.task);
+        return prepared;
+      });
+      operation = 'finish';
+      return await this.execute('finish', `${id}:finish`, () =>
+        this.finishResult({
+          state: 'ready',
+          message: work.message,
+          selection: this.preparedSelection(prepared, work.focus),
+        }),
+      );
+    } catch (cause) {
+      this.ctx.signal.throwIfAborted();
+      const failure = toolFailure(cause);
+      return checkedOutput({ interpreted, failed: operation, error: failure.message });
+    }
+  }
+  private preparedSelection(
+    result: unknown,
+    focus: string | undefined,
+  ): z.infer<typeof finishSchema>['selection'] {
+    const value = record(result);
+    const change = this.ctx.session
+      .snapshot()
+      .proposal.changes.find(
+        (candidate) =>
+          candidate.kind === 'task' &&
+          candidate.plan.target === value?.['target'] &&
+          candidate.plan.revision === value['revision'],
+      );
+    if (change?.kind !== 'task' || change.plan.after === null) {
+      if (focus === undefined) return undefined;
+      throw new CommandFailure('FOCUS', 'This operation has no remaining prepared task to select.');
+    }
+    const target = focus ?? change.plan.after.target;
+    if (find(change.plan.after, target) === undefined)
+      throw new CommandFailure(
+        'FOCUS',
+        'Select a task within the prepared tree, or finish without changing focus.',
+      );
+    return [
+      {
+        kind: 'task',
+        target,
+        plan: change.plan.target,
+        expectedPlanRevision: change.plan.revision,
+      },
+    ];
   }
   private pendingTransition(): unknown {
     const snapshot = this.ctx.session.snapshot(),
@@ -415,8 +483,8 @@ class CommandToolOwner {
   read(): Tool {
     return tool({
       description:
-        'Read public task trees/search/tags/catalog/projects or note sections. Omit path unless user explicitly restricts search; continue returned cursors for full trees.',
-      inputSchema: z.strictObject({ input: readSchema.meta({ type: 'object' }) }),
+        'Read the vault, not just the current view. input.kind=tasks or notes requires a string query; projects lists projects without a query. tree reads a task by target (no expectedRevision); project reads a project by target; project-schema returns writable field/status IDs. note reads selector:{path} or selector:{target}, never a top-level path/target. tags/statuses list catalogs. Omit search path unless the user restricts scope; continue returned cursors.',
+      inputSchema: z.strictObject({ input: modelSchema(readSchema) }),
       execute: ({ input }, { toolCallId }) =>
         this.execute('read', toolCallId, async () => {
           this.ctx.session.status('searching', commandMessage('Looking up the requested content…'));
@@ -570,44 +638,41 @@ class CommandToolOwner {
   task(): Tool {
     return tool({
       description:
-        'Prepare canonical task creation or refinement, never write. New children are returned with concrete handles. Initial-status applies only to newly authored nodes. A create/edit plan covers one captured task tree; the session can hold multiple plans. Use each target’s own editBasis; saved roots without pending plans need separate edit calls. batch refines ONE current plan with up to20 operations on concrete node handles already present in it; newly added children and version-scoped comment edits require a later call. A batch stages only after every preparation succeeds.',
-      inputSchema: z.strictObject({
-        input: taskToolSchema
-          .meta({ type: 'object' })
-          .describe(
-            'A JSON object, never an encoded string. Use each target’s own editBasis: edit for saved targets without a pending plan; append/batch only within that exact current plan. Never mix branch fields.',
-          ),
-        removeAnnotations: z.array(z.string()).max(50).optional(),
-      }),
-      execute: ({ input, removeAnnotations }, { toolCallId }) =>
-        this.execute('task', toolCallId, () =>
-          this.taskAttempt(input.kind, async () => {
-            if (input.kind === 'batch') return this.prepareBatch(input, removeAnnotations);
-            const original = input as PrepareTaskContentV1;
-            if (
-              (original.kind === 'append' || original.kind === 'refresh') &&
-              !this.ctx.session
-                .snapshot()
-                .proposal.changes.some(
-                  (change) =>
-                    change.kind === 'task' &&
-                    change.plan.target === original.plan &&
-                    change.plan.revision === original.expectedPlanRevision,
-                )
-            )
-              throw new CommandFailure(
-                'PLAN_BASIS',
-                'Only the current preview can be refined. Prepare historical work again from fresh source reads.',
-              );
-            this.checkEditBasis(original);
-            if (this.cancelDraft(original)) return { cancelledDraft: true };
-            const request = await this.preserveRewrite(original, removeAnnotations);
-            const plan = await this.readPublic(() => required(this.ctx.api.tasks.prepare)(request));
-            this.ctx.signal.throwIfAborted();
-            await this.stageTask(plan, 1, [prepareSchema.parse(request)]);
-            return planToolOutput(plan);
-          }),
-        ),
+        'Prepare canonical task creation or refinement, never write. Group existing tasks with input {kind:hierarchy,operation:{type:reparent,source,expectedSourceRevision,parent,expectedParentRevision}}; this moves the intact source under the parent, including metadata/history, with no separate deletion. New children are returned with concrete handles. Initial-status applies only to newly authored nodes. A create/edit plan covers one captured task tree; the session can hold multiple plans. Use each target’s own editBasis; saved roots without pending plans need separate edit calls. batch refines ONE current plan with up to20 operations on concrete node handles already present in it; newly added children and version-scoped comment edits require a later call. A batch stages only after every preparation succeeds.',
+      inputSchema: taskArgumentsSchema,
+      execute: (input, { toolCallId }) =>
+        this.execute('task', toolCallId, () => this.prepareTask(input)),
+    });
+  }
+  private prepareTask({
+    input,
+    removeAnnotations,
+  }: z.infer<typeof taskArgumentsSchema>): Promise<unknown> {
+    return this.taskAttempt(input.kind, async () => {
+      if (input.kind === 'batch') return this.prepareBatch(input, removeAnnotations);
+      const original = input as PrepareTaskContentV1;
+      if (
+        (original.kind === 'append' || original.kind === 'refresh') &&
+        !this.ctx.session
+          .snapshot()
+          .proposal.changes.some(
+            (change) =>
+              change.kind === 'task' &&
+              change.plan.target === original.plan &&
+              change.plan.revision === original.expectedPlanRevision,
+          )
+      )
+        throw new CommandFailure(
+          'PLAN_BASIS',
+          'Only the current preview can be refined. Prepare historical work again from fresh source reads.',
+        );
+      this.checkEditBasis(original);
+      if (this.cancelDraft(original)) return { cancelledDraft: true };
+      const request = await this.preserveRewrite(original, removeAnnotations);
+      const plan = await this.readPublic(() => required(this.ctx.api.tasks.prepare)(request));
+      this.ctx.signal.throwIfAborted();
+      await this.stageTask(plan, 1, [prepareSchema.parse(request)]);
+      return planToolOutput(plan);
     });
   }
   private checkEditBasis(input: PrepareTaskContentV1): void {
@@ -733,8 +798,8 @@ class CommandToolOwner {
   note(): Tool {
     return tool({
       description:
-        'Prepare/refine one bounded note proposal; no write until confirmation. Section operations use exact returned opaque handles, never heading text. Append supplies only extra text; replace-section supplies the complete new section. Refine a create plan with replace-body, keeping its frozen path/template.',
-      inputSchema: z.strictObject({ input: notePrepareSchema.meta({ type: 'object' }) }),
+        'Prepare/refine one bounded note proposal; no write until confirmation. Create requires input {kind:create,path,title,text}; path is vault-relative and ends in .md. Section operations use exact returned opaque handles, never heading text. Append supplies only extra text; replace-section supplies the complete new section. Refine a create plan with replace-body, keeping its frozen path/template.',
+      inputSchema: z.strictObject({ input: modelSchema(notePrepareSchema) }),
       execute: ({ input }, { toolCallId }) =>
         this.execute('note', toolCallId, async () => {
           const request = this.noteRequest(input as PrepareNoteV1);
@@ -770,8 +835,8 @@ class CommandToolOwner {
   project(): Tool {
     return tool({
       description:
-        'Preview project create, refine-create, update, or explicit move-task through the native schema. Creation returns a proposal handle, never a saved project target. Selection alone does not move tasks.',
-      inputSchema: projectStageSchema,
+        'Preview project changes. Read project-schema for writable field/status IDs. Update: {kind:"update",target,expectedRevision,fields:[{fieldId,value}],statusId?}. Values are native scalars or null, not task patch assignments. Omit unchanged fields/status. create uses name; refine-create uses its proposal handle; move-task explicitly moves a saved task. Creation is not a saved project target; selection alone never moves tasks.',
+      inputSchema: modelSchema(projectStageSchema),
       execute: (input, { toolCallId }) =>
         this.execute('project', toolCallId, () => this.prepareProject(input)),
     });
@@ -1025,7 +1090,7 @@ class CommandToolOwner {
   cleanup(): Tool {
     return tool({
       description:
-        'Stage source-root removal only with exact covered merge assessment of the final destination proposal. Destination must save/read back first.',
+        'After assess-merge reports covered, call cleanup now to PREVIEW source-root removal alongside the final destination proposal. This does not write. On confirmation the application saves and verifies the destination first, then removes the source.',
       inputSchema: z.strictObject({ destinationPlan: z.string(), destinationRevision: z.string() }),
       execute: (input, { toolCallId }) =>
         this.execute('cleanup', toolCallId, async () => {
@@ -1093,40 +1158,41 @@ class CommandToolOwner {
   finish(): Tool {
     return tool({
       description:
-        'Return ready when the requested preview is complete. Never ask permission to save: Enter already confirms the ready proposal. question is ONLY a concrete missing fact or conflicting instruction that prevents preparation; provide that issue. Keep the message short and do not repeat rendered task metadata. The application alone reports Saved.',
+        'Return ready when the requested preview is complete. selection uses kind=project for project targets, kind=note for notes, kind=task for tasks; copy the issued target and revision/basis. Never ask permission to save: Enter confirms. question is ONLY a concrete missing fact or conflict preventing preparation. Keep the message short; the application alone reports Saved.',
       inputSchema: modelSchema(finishSchema),
       execute: (input, { toolCallId }) =>
-        this.execute('finish', toolCallId, async () => {
-          if ([...this.ctx.errors].some((name) => name !== 'finish'))
-            throw new CommandFailure(
-              'UNRESOLVED',
-              'An operation still needs repair. Do not report a completed request.',
-            );
-          if (!(await this.finishSelection(input.selection))) return { needsDisposition: true };
-          const transition = this.pendingTransition();
-          if (transition !== undefined) {
-            this.ctx.done = true;
-            return transition;
-          }
-          await this.reveal(input);
-
-          this.ctx.signal.throwIfAborted();
-          this.ctx.done = true;
-          this.ctx.session.exchange('agent', input.message);
-          if (input.state === 'question') this.ctx.session.question(input.message);
-          else {
-            this.ctx.session.finishReview();
-            if (this.ctx.immediate)
-              await this.ctx.session.confirmFromTurn(
-                this.ctx.session.snapshot().proposal.revision,
-                this.ctx.signal,
-                true,
-              );
-            else this.ctx.session.status('ready', input.message);
-          }
-          return { finished: true };
-        }),
+        this.execute('finish', toolCallId, () => this.finishResult(input)),
     });
+  }
+  private async finishResult(input: z.infer<typeof finishSchema>): Promise<unknown> {
+    if ([...this.ctx.errors].some((name) => name !== 'finish'))
+      throw new CommandFailure(
+        'UNRESOLVED',
+        'An operation still needs repair. Do not report a completed request.',
+      );
+    if (!(await this.finishSelection(input.selection))) return { needsDisposition: true };
+    const transition = this.pendingTransition();
+    if (transition !== undefined) {
+      this.ctx.done = true;
+      return transition;
+    }
+    await this.reveal(input);
+
+    this.ctx.signal.throwIfAborted();
+    this.ctx.done = true;
+    this.ctx.session.exchange('agent', input.message);
+    if (input.state === 'question') this.ctx.session.question(input.message);
+    else {
+      this.ctx.session.finishReview();
+      if (this.ctx.immediate)
+        await this.ctx.session.confirmFromTurn(
+          this.ctx.session.snapshot().proposal.revision,
+          this.ctx.signal,
+          true,
+        );
+      else this.ctx.session.status('ready', input.message);
+    }
+    return { finished: true };
   }
   private async finishSelection(
     selection: z.infer<typeof finishSchema>['selection'],

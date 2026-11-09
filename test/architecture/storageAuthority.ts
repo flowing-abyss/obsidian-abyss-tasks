@@ -32,7 +32,7 @@ export const STORAGE_AUTHORIZATIONS: readonly StorageAuthorization[] = [
     owner: 'ProviderSecrets.store',
     api: 'SecretStorage.setSecret',
     reason:
-      'Stores or clears only the four fixed plugin credential IDs through vault-scoped host secret storage.',
+      'Stores or clears only the six fixed plugin credential IDs through vault-scoped host secret storage.',
   },
   {
     file: 'src/ai/providers/ProviderSecrets.ts',

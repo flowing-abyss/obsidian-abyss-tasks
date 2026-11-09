@@ -3013,11 +3013,18 @@ describe('provider settings ownership', () => {
     settings.commandMode = {
       ...parseProviderSettings(settings.commandMode),
       search: 'tavily',
+      provider: 'groq',
+      model: 'qwen/qwen3.8-27b',
       futureProviderOption: { keep: true },
     };
     await coordinator.saveSettings(settings);
     expect(port.staticData).toMatchObject({
-      commandMode: { search: 'tavily', futureProviderOption: { keep: true } },
+      commandMode: {
+        provider: 'groq',
+        model: 'qwen/qwen3.8-27b',
+        search: 'tavily',
+        futureProviderOption: { keep: true },
+      },
       futureExtension: { keep: true },
     });
     const writes = port.writes.length;

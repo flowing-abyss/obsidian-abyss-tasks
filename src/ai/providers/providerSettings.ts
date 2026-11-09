@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { ProviderFailure } from './providerFailure';
 
-export const providerSchema = z.enum(['openrouter', 'openai', 'anthropic']);
+export const providerSchema = z.enum(['openrouter', 'openai', 'anthropic', 'groq', 'cerebras']);
 export type AgentProvider = z.infer<typeof providerSchema>;
 export type CredentialProvider = AgentProvider | 'tavily';
 const providerSettingsSchema = z.looseObject({
@@ -27,10 +27,14 @@ export function researchProvider(
   settings: ProviderSettings,
 ): 'openrouter' | 'openai' | 'tavily' | null {
   if (settings.search !== 'agent') return settings.search;
-  return settings.provider === 'anthropic' ? null : settings.provider;
+  return settings.provider === 'openai' || settings.provider === 'openrouter'
+    ? settings.provider
+    : null;
 }
 export const DEFAULT_MODELS: Record<AgentProvider, string> = {
   openrouter: 'openai/gpt-6-luna',
   openai: 'gpt-6-luna',
   anthropic: 'claude-haiku-5-5',
+  groq: 'openai/gpt-oss-120b',
+  cerebras: 'qwen-3.8-27b',
 };
