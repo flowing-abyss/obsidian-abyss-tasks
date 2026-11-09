@@ -199,7 +199,7 @@ export const intentSchema = z
     scope: saveScopeSchema
       .optional()
       .describe(
-        'Only for explicit limited confirmation of the current proposal: select exact change indexes or existing task fields. Omit for whole-proposal confirmation. Never widen a child or linked-note dependency.',
+        'For explicit limited confirmation, use confirm with scope to select exact change indexes or existing task fields across current plans. The application partitions combined plans and retains unselected edits; no separate field-only preview is needed. Omit for whole-proposal confirmation. Never widen a child or linked-note dependency.',
       ),
     intent: z
       .enum([
@@ -214,7 +214,7 @@ export const intentSchema = z
         'voice-mode',
       ])
       .describe(
-        'plan means creating, editing, finding or showing entities in the CURRENT conversation; use it for ordinary task work. confirm accepts the visible proposal. immediate explicitly requests saving now. new-session ONLY means an explicit request to leave this conversation and start a separate session; a new task or topic stays plan.',
+        'plan means creating, editing, finding or showing entities in the CURRENT conversation; use it for ordinary task work. confirm saves already-previewed edits: the whole proposal by default, or an explicitly authorized subset with scope. immediate explicitly requests saving now. new-session ONLY means an explicit request to leave this conversation and start a separate session; a new task or topic stays plan.',
       ),
     research: z.boolean(),
     voiceMode: z

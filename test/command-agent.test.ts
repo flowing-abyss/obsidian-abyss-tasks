@@ -3321,26 +3321,50 @@ it.each(['own basis', 'wrong batch'] as const)(
     expect(h.session.snapshot().status.kind).toBe('ready');
     const proposal = h.session.snapshot().proposal;
     expect(proposal.changes).toHaveLength(2);
-    const changes = proposal.changes.map((change, index) => {
-      if (change.kind !== 'task') throw new Error('task plan');
-      return {
-        kind: 'task-fields',
-        index,
-        plan: change.plan.target,
-        expectedPlanRevision: change.plan.revision,
-        target: expectDefined(change.plan.after).target,
-        fields: ['scheduled'],
+    h.script(() => {
+      const firstStep = currentCall();
+      expect(firstStep.tools?.map((definition) => definition.name)).toEqual(['interpret']);
+      const text = expectDefined(
+        firstStep.prompt
+          .flatMap((message) => (message.role === 'user' ? message.content : []))
+          .find((part) => part.type === 'text'),
+      );
+      const { visibleSession } = JSON.parse(text.text) as {
+        visibleSession: {
+          proposal: {
+            revision: number;
+            changes: Array<{
+              plan: ContentPlanV1;
+              planBasis: { plan: string; expectedPlanRevision: string };
+            }>;
+          };
+        };
       };
-    });
-    expect(new Set(changes.map((change) => change.plan)).size).toBe(2);
-    h.script(() =>
-      call('interpret', {
+      expect(visibleSession.proposal.revision).toBe(proposal.revision);
+      const changes = visibleSession.proposal.changes.map(({ plan, planBasis }, index) => {
+        const target = expectDefined(plan.after);
+        expect(planBasis).toEqual({ plan: plan.target, expectedPlanRevision: plan.revision });
+        expect(plan.target).toMatch(/^@\w+:d\d+$/u);
+        expect(target.target).toMatch(/^@\w+:t\d+$/u);
+        expect(target.markdownTitle).toContain('pending');
+        expect(target.dates.scheduled).toBe('2026-08-02');
+        return {
+          kind: 'task-fields',
+          index,
+          ...planBasis,
+          target: target.target,
+          fields: ['scheduled'],
+        };
+      });
+      expect(new Set(changes.map((change) => change.plan)).size).toBe(2);
+      return call('interpret', {
         intent: 'confirm',
         research: false,
-        scope: { proposalRevision: proposal.revision, changes },
-      }),
-    );
+        scope: { proposalRevision: visibleSession.proposal.revision, changes },
+      });
+    });
     await h.session.submit('Save only both dates; retain both titles for later.');
+    expect(h.model.doGenerateCalls).toHaveLength(7);
     const dates = original
       .replace('One [unknown:: keep]', 'One [unknown:: keep] ⏳ 2026-08-02')
       .replace('- [ ] Two\n', '- [ ] Two ⏳ 2026-08-02\n');
@@ -3357,6 +3381,25 @@ it.each(['own basis', 'wrong batch'] as const)(
     expect(h.session.snapshot().journal).toHaveLength(4);
     expect(h.session.snapshot().proposal.changes).toEqual([]);
     expect(h.session.snapshot().status.kind).toBe('saved');
+    const confirmationStep = expectDefined(h.model.doGenerateCalls[6]);
+    const confirmationTool = expectDefined(confirmationStep.tools?.[0]);
+    expect(confirmationTool).toHaveProperty(
+      'description',
+      expect.stringContaining('application partitions existing combined plans'),
+    );
+    expect(confirmationTool).toHaveProperty(
+      'inputSchema.properties.intent.description',
+      expect.stringContaining('explicitly authorized subset with scope'),
+    );
+    expect(confirmationTool).toHaveProperty(
+      'inputSchema.properties.scope.description',
+      expect.stringContaining('no separate field-only preview is needed'),
+    );
+    expect(
+      JSON.stringify(confirmationStep.prompt.filter((message) => message.role === 'system')),
+    ).toContain(
+      'Saving an explicitly authorized subset of already-previewed edits uses confirm with scope',
+    );
     for (const message of feedback) {
       expect(message).toContain('Choose the operation target’s own current editBasis below.');
       expect(message).toContain('Switching append to batch does not change plan scope.');

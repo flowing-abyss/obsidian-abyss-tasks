@@ -256,7 +256,7 @@ class CommandToolOwner {
   interpret(): Tool {
     return tool({
       description:
-        'Interpret trusted user intent before using new external material. Confirmation is bound to the visible proposal revision.',
+        'Interpret trusted user intent before using new external material. confirm saves the visible proposal or its explicitly authorized subset with scope; the application partitions existing combined plans and retains unselected edits. No separate field-only preview is needed. Confirmation is bound to the visible proposal revision.',
       inputSchema: intentSchema,
       execute: (input, { toolCallId }) =>
         this.execute('interpret', toolCallId, async () => {
