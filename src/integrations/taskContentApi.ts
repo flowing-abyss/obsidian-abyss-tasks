@@ -24,7 +24,6 @@ import {
   type TaskCreatePreparationApi,
   type TaskCreatePreparationDestination,
   type TaskCreateTreeNode,
-  type TaskEditPartition,
   type TaskEditPreparation,
   type TaskEditPreparationApi,
   type TaskFieldSelection,
@@ -787,23 +786,19 @@ export class TaskContentApi {
       pinned.value();
       return result;
     }
-    this.retainSelection_abyssPrivate(result.value.revision, v, partition);
+    this.retainSelection_abyssPrivate(result.value.revision, {
+      sourcePlan: v.target,
+      sourceRevision: v.revision,
+      rebase: (current) => partition.rebase(current),
+    });
     return result;
   }
-  private retainSelection_abyssPrivate(
-    revision: string,
-    source: Version,
-    partition: TaskEditPartition,
-  ): void {
+  private retainSelection_abyssPrivate(revision: string, selection: SelectedContentEvidence): void {
     const selected = this.versions_abyssPrivate.get(revision);
     if (selected === undefined) throw new Error('Missing selected version');
     this.versions_abyssPrivate.set(revision, {
       ...selected,
-      selection: {
-        sourcePlan: source.target,
-        sourceRevision: source.revision,
-        rebase: (current) => partition.rebase(current),
-      },
+      selection,
     });
   }
   private fieldSelections_abyssPrivate(
@@ -1189,6 +1184,8 @@ export class TaskContentApi {
           }
         : v,
     );
+    if (result.ok && afterRequestId === undefined && v.selection !== undefined)
+      this.retainSelection_abyssPrivate(result.value.revision, v.selection);
     return result;
   }
   private async refreshEdit_abyssPrivate(

@@ -958,6 +958,20 @@ function projectCommandSession(api: TasksApiV1) {
   return {
     session,
     saved,
+    confirmLimited: async () => {
+      steps.push({
+        toolName: 'interpret',
+        input: {
+          intent: 'confirm',
+          research: false,
+          scope: {
+            proposalRevision: session.snapshot().proposal.revision,
+            changes: [{ kind: 'change', index: 0 }],
+          },
+        },
+      });
+      await session.submit('Save only this move');
+    },
     select: (selection: unknown, transitionDisposition?: 'keep') =>
       steps.push(
         {
@@ -1319,7 +1333,7 @@ it.each(['single', 'mixed', 'sdk'] as const)(
       const rootFocus = { kind: 'task' as const, target: source.target, revision: source.revision };
       const childFocus = { kind: 'task' as const, target: child.target, revision: child.revision };
       const move = vi.fn(projects.moveTask);
-      const { session, turn, select, saved } = projectCommandSession({
+      const { session, turn, select, saved, confirmLimited } = projectCommandSession({
         ...first,
         projects: { ...projects, moveTask: move },
       });
@@ -1351,6 +1365,10 @@ it.each(['single', 'mixed', 'sdk'] as const)(
       session.answer();
       session.status('ready', 'Attempted generic answer');
       expect(await session.confirm()).toBe(false);
+      session.answer();
+      session.status('ready', 'Attempted limited answer');
+      await confirmLimited();
+      expect(session.snapshot().status.kind).toBe('question');
       expect(move).not.toHaveBeenCalled();
       expect(session.snapshot().journal).toEqual([]);
       expect(await app.vault.read(expectDefined(app.vault.getFileByPath(root)))).toBe(authored);
@@ -1384,48 +1402,55 @@ it.each(['single', 'mixed', 'sdk'] as const)(
   },
 );
 
-it('rechecks current project-move descendant focus before write admission', async () => {
-  const authored = '- [ ] Root\n  - [ ] Child\n';
-  const { app, plugin, first } = await setup({ [root]: authored });
-  try {
-    const projects = expectDefined(first.projects);
-    const destination = value(
-      await projects.get(
-        expectDefined(value(await projects.list()).items.find((p) => p.path === empty)).target,
-      ),
-    );
-    const source = expectDefined(
-      value(await first.tasks.list({ path: root })).items.find((t) => t.parentTarget === undefined),
-    );
-    const tree = value(await expectDefined(first.tasks.tree)({ target: source.target })).tree;
-    const child = expectDefined(tree.children[0]);
-    const move = vi.fn(projects.moveTask);
-    const { session } = projectCommandSession({
-      ...first,
-      projects: { ...projects, moveTask: move },
-    });
-    expect(
-      await session.focus({ kind: 'task', target: child.target, revision: child.revision }),
-    ).toBe(true);
-    session.stage({ kind: 'project-move', before: tree, destination });
-    const changes = session.snapshot().proposal.changes;
-    expect(await session.confirm()).toBe(false);
-    expect(move).not.toHaveBeenCalled();
-    expect(session.snapshot().journal).toEqual([]);
-    expect(session.snapshot().blocked).toBe(false);
-    expect(session.snapshot().proposal.changes).toEqual(changes);
-    expect(session.snapshot().focus[0]?.target).toBe(child.target);
-    expect(await app.vault.read(expectDefined(app.vault.getFileByPath(root)))).toBe(authored);
-    expect(
-      await session.focus({ kind: 'task', target: source.target, revision: source.revision }),
-    ).toBe(true);
-    expect(await session.confirm()).toBe(true);
-    expect(move).toHaveBeenCalledTimes(1);
-    expect(session.snapshot().status.kind).toBe('saved');
-  } finally {
-    plugin.onunload();
-  }
-});
+it.each(['whole', 'limited'] as const)(
+  'rechecks current project-move descendant focus before %s write admission',
+  async (mode) => {
+    const authored = '- [ ] Root\n  - [ ] Child\n';
+    const { app, plugin, first } = await setup({ [root]: authored });
+    try {
+      const projects = expectDefined(first.projects);
+      const destination = value(
+        await projects.get(
+          expectDefined(value(await projects.list()).items.find((p) => p.path === empty)).target,
+        ),
+      );
+      const source = expectDefined(
+        value(await first.tasks.list({ path: root })).items.find(
+          (t) => t.parentTarget === undefined,
+        ),
+      );
+      const tree = value(await expectDefined(first.tasks.tree)({ target: source.target })).tree;
+      const child = expectDefined(tree.children[0]);
+      const move = vi.fn(projects.moveTask);
+      const { session, confirmLimited } = projectCommandSession({
+        ...first,
+        projects: { ...projects, moveTask: move },
+      });
+      expect(
+        await session.focus({ kind: 'task', target: child.target, revision: child.revision }),
+      ).toBe(true);
+      session.stage({ kind: 'project-move', before: tree, destination });
+      const changes = session.snapshot().proposal.changes;
+      if (mode === 'whole') expect(await session.confirm()).toBe(false);
+      else await confirmLimited();
+      expect(move).not.toHaveBeenCalled();
+      expect(session.snapshot().journal).toEqual([]);
+      expect(session.snapshot().blocked).toBe(false);
+      expect(session.snapshot().proposal.changes).toEqual(changes);
+      expect(session.snapshot().focus[0]?.target).toBe(child.target);
+      expect(await app.vault.read(expectDefined(app.vault.getFileByPath(root)))).toBe(authored);
+      expect(
+        await session.focus({ kind: 'task', target: source.target, revision: source.revision }),
+      ).toBe(true);
+      if (mode === 'whole') expect(await session.confirm()).toBe(true);
+      else await confirmLimited();
+      expect(move).toHaveBeenCalledTimes(1);
+      expect(session.snapshot().status.kind).toBe('saved');
+    } finally {
+      plugin.onunload();
+    }
+  },
+);
 
 it.each(['cancel', 'keep', 'discard'] as const)(
   'keeps project-move conflict disposition %s usable without saving',

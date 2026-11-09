@@ -667,7 +667,10 @@ export class CommandSession {
   private retainProjectMoveFocus(requested: readonly CommandFocus[]): boolean {
     if (projectMoveWithDescendantFocus(this.state.proposal.changes, requested) === undefined)
       return false;
-    this.requestTransition({ kind: 'focus', target: requested }, projectMoveFocusMessage);
+    this.requestTransition(
+      { kind: 'focus', target: requested },
+      commandDiagnostic(projectMoveFocusMessage),
+    );
     return true;
   }
   private pendingProjectMoveFocus(): Extract<CommandChange, { kind: 'project-move' }> | undefined {
@@ -1334,6 +1337,10 @@ export class CommandSession {
     immediate = false,
     scope?: CommandSaveScope,
   ): Promise<boolean> {
+    if (this.pendingProjectMoveFocus() !== undefined) {
+      this.question(commandDiagnostic(projectMoveFocusMessage));
+      return false;
+    }
     if (
       !this.canCommit(revision) ||
       !this.reviewedSelection({ revision, immediate, scope }, review)
@@ -1354,7 +1361,7 @@ export class CommandSession {
             return change === undefined ? [] : [change];
           });
     if (projectMoveWithDescendantFocus(changes, this.state.focus) !== undefined) {
-      this.question(commandDiagnostic(projectMoveFocusMessage));
+      this.retainProjectMoveFocus(this.state.focus);
       return false;
     }
     if (

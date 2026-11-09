@@ -92,6 +92,98 @@ it('selects only the date and rebases the sealed structural remainder after exac
   expect(await h.read('a.md')).toContain('Pending title ⏳ 2026-08-02');
   expect((await h.read('a.md')).match(/Pending child/g)).toHaveLength(1);
 });
+it('retains exact selection receipt lineage through an ordinary refresh', async () => {
+  const h = await setup();
+  const selected = ok(
+    await h.prepare({
+      kind: 'select-fields',
+      plan: h.plan.target,
+      expectedPlanRevision: h.plan.revision,
+      selections: [{ target: expectDefined(h.plan.after).target, fields: ['scheduled'] }],
+    }),
+  );
+  const refreshed = ok(
+    await h.prepare({
+      kind: 'refresh',
+      plan: selected.target,
+      expectedPlanRevision: selected.revision,
+    }),
+  );
+  expect(
+    (await expectDefined(h.api.tasks.apply)(request(refreshed, 'refreshed-selection'))).ok,
+  ).toBe(true);
+  const remainder = ok(
+    await h.prepare({
+      kind: 'refresh',
+      plan: h.plan.target,
+      expectedPlanRevision: h.plan.revision,
+      afterRequestId: 'refreshed-selection',
+    }),
+  );
+  expect(remainder.after?.markdownTitle).toBe('Pending title');
+  expect(remainder.before?.dates.scheduled).toBe('2026-08-02');
+});
+it.each(['append', 'copy', 'external root'] as const)(
+  'refuses refreshed selection privilege after %s',
+  async (mode) => {
+    const h = await setup();
+    const selected = ok(
+      await h.prepare({
+        kind: 'select-fields',
+        plan: h.plan.target,
+        expectedPlanRevision: h.plan.revision,
+        selections: [{ target: expectDefined(h.plan.after).target, fields: ['scheduled'] }],
+      }),
+    );
+    let refreshed = ok(
+      await h.prepare({
+        kind: 'refresh',
+        plan: selected.target,
+        expectedPlanRevision: selected.revision,
+      }),
+    );
+    if (mode !== 'external root') {
+      const source = expectDefined(
+        ok(await h.api.tasks.list()).items.find((task) => task.source.path === 'copy.md'),
+      );
+      refreshed = ok(
+        await h.prepare({
+          kind: 'append',
+          plan: refreshed.target,
+          expectedPlanRevision: refreshed.revision,
+          operation:
+            mode === 'copy'
+              ? {
+                  type: 'copy-subtree',
+                  source: source.target,
+                  expectedSourceRevision: source.revision,
+                  target: expectDefined(refreshed.after).target,
+                }
+              : {
+                  type: 'add-comment',
+                  target: expectDefined(refreshed.after).target,
+                  text: 'Independent refinement',
+                },
+        }),
+      );
+    }
+    expect(
+      (await expectDefined(h.api.tasks.apply)(request(refreshed, 'refreshed-selection'))).ok,
+    ).toBe(true);
+    if (mode === 'external root')
+      await h.external('a.md', (await h.read('a.md')).replace('Original', 'External'));
+    const result = await h.prepare({
+      kind: 'refresh',
+      plan: h.plan.target,
+      expectedPlanRevision: h.plan.revision,
+      afterRequestId: 'refreshed-selection',
+    });
+    expect(result.ok).toBe(false);
+    if (mode !== 'external root')
+      expect(result).toMatchObject({ error: { code: 'INVALID_SELECTION_RECEIPT' } });
+    expect(await h.read('a.md')).not.toContain('Pending title');
+  },
+);
 it('keeps structural remainder pending after every scalar change was selected', async () => {
   const h = await setup();
   const selected = ok(

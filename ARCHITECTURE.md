@@ -366,6 +366,11 @@ rebase closure requires the exact selected-after root, original file identity, a
 semantics and settings. It transplants the original sealed candidate into current unrelated file
 bytes and rebases the source maps and reviewed before tree. Ordinary refresh still requires
 unchanged original root bytes. Draft descendants cannot be selected without their unsaved parent.
+Ordinary refresh successors of a selected preparation retain its commit witness and exact source-plan
+receipt lineage; append and copy successors do not. Rebase uses a defensive copy of the actual
+successful selected outcome as its root anchor. The existing positive native generation and retained
+authority transition prove that anchor across later sibling edits, including line shifts. The original
+file, scope, semantics and selected root bytes remain checked; visual relocation is never sufficient.
 
 Preparation-only `refineInitialStatus` uses the frozen application clock, settings and status
 catalog. The native owner certifies authored nodes from canonical creation or a complete, injective

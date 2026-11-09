@@ -310,6 +310,23 @@ function advancePartition(
     ? undefined
     : { content: edited.content, after: edited.result.outcome.task, nodeMap, sourceMap };
 }
+function retainSelectionLineage(
+  selected: Extract<TaskPreparedRootEdit, { type: 'ready' }>,
+  settled: (result: TaskRepositoryResult) => void,
+): Extract<TaskPreparedRootEdit, { type: 'ready' }> {
+  return {
+    ...selected,
+    refresh: async (current) => {
+      const refreshed = await selected.refresh(current);
+      return refreshed.type === 'ready' ? retainSelectionLineage(refreshed, settled) : refreshed;
+    },
+    commit: async () => {
+      const result = await selected.commit();
+      settled(result);
+      return result;
+    },
+  };
+}
 
 /** Retains sealed candidates; public snapshots never become source or write authority. */
 export class MarkdownTaskEditPreparation {
@@ -406,20 +423,24 @@ export class MarkdownTaskEditPreparation {
       authored: new Set(),
     });
     if (selected.type !== 'ready') return undefined;
-    let committed = false;
+    let committed: TaskSnapshot | undefined;
     return {
-      selected: {
-        ...selected,
-        commit: async () => {
-          const result = await selected.commit();
-          committed = result.type === 'committed';
-          return result;
-        },
-      },
+      selected: retainSelectionLineage(selected, (result) => {
+        if (
+          result.type === 'committed' &&
+          result.outcome.type === 'task' &&
+          result.outcome.task.source.originalBlock === chosen.after.source.originalBlock
+        )
+          committed = structuredClone(result.outcome.task);
+      }),
       rebase: async (current) => {
-        if (!committed || this.family.attempted || !maps.copies.every((copy) => copy.permitted()))
+        if (
+          committed === undefined ||
+          this.family.attempted ||
+          !maps.copies.every((copy) => copy.permitted())
+        )
           return { type: 'invalid', result: invalidTaskTarget('target') };
-        return this.rebasePartition({ candidate, maps, chosen }, current);
+        return this.rebasePartition({ candidate, maps, chosen, committed }, current);
       },
     };
   }
@@ -473,11 +494,16 @@ export class MarkdownTaskEditPreparation {
     return selected;
   }
   private async rebasePartition(
-    basis: { candidate: SealedCandidate; maps: PreparationMaps; chosen: PartitionCandidate },
+    basis: {
+      candidate: SealedCandidate;
+      maps: PreparationMaps;
+      chosen: PartitionCandidate;
+      committed: TaskSnapshot;
+    },
     current: TaskSnapshot,
   ): Promise<TaskPreparedRootEdit | TaskEditRefreshUnavailable> {
-    const { candidate, maps, chosen } = basis;
-    const refreshed = await this.ports.refresh?.(current, candidate, chosen.after);
+    const { candidate, maps, chosen, committed } = basis;
+    const refreshed = await this.ports.refresh?.(current, candidate, committed);
     if (refreshed === undefined) return { type: 'invalid', result: invalidTaskTarget('target') };
     if ('type' in refreshed) return refreshed;
     if (this.family.attempted || !maps.copies.every((copy) => copy.permitted()))

@@ -210,6 +210,7 @@ it('validates runtime inputs and exposes only implemented capabilities', async (
     'tasks.apply',
     'tasks.create',
     'tasks.prepare.reorder',
+    'tasks.prepare.select-fields',
     'tasks.prepare.hierarchy',
     'tasks.resolve',
     'tasks.statuses',

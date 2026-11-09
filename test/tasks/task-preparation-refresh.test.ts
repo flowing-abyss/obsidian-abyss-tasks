@@ -4,6 +4,7 @@ import { createProjectTaskCommands } from '../../src/projects/projectTaskCommand
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
 import type { TaskCreatePreparation } from '../../src/tasks/application/TaskCreatePreparationApi';
 import { clockFrom } from '../../src/tasks/domain/clock';
+import { localDate } from '../../src/tasks/domain/validation';
 import { expectDefined, useRealMoment } from '../helpers';
 import { taskCreatePreparationHarness } from '../support/taskCreatePreparationHarness';
 import { ready, taskEditPreparationHarness } from '../support/taskEditPreparationHarness';
@@ -20,6 +21,58 @@ const destination = {
 };
 
 describe('sealed preparation refresh', () => {
+  it.each(['refreshed selection', 'later sibling write'] as const)(
+    'retains selected commit proof across %s',
+    async (mode) => {
+      const h = await taskEditPreparationHarness('- [ ] One\n- [ ] Two\n- [ ] Three\n- [ ] Four\n');
+      h.index.integrationReads().activateOccurrences();
+      const full = ready(
+        await h.service.prepare(h.root, [
+          {
+            type: 'patch',
+            target: { type: 'task', ref: h.root.ref },
+            patch: {
+              markdownTitle: { type: 'set', value: 'Pending' },
+              scheduled: { type: 'set', value: localDate('2026-08-02') },
+            },
+          },
+        ]),
+      );
+      const partition = expectDefined(
+        full.partitionFields([
+          { target: { type: 'task', ref: expectDefined(full.after).ref }, fields: ['scheduled'] },
+        ]),
+      );
+      const selected = ready(partition.selected);
+      const writer =
+        mode === 'refreshed selection' ? ready(await selected.refresh(h.root)) : selected;
+      const outcome = await writer.commit();
+      expect(outcome.type).toBe('ok');
+      const committed = expectDefined(h.index.list()[0]);
+      if (mode === 'later sibling write') {
+        for (let index = 1; index < 4; index++) {
+          const sibling = expectDefined(h.index.list()[index]);
+          expect(
+            (
+              await h.service.execute({
+                type: 'set-description',
+                target: { type: 'task', ref: sibling.ref },
+                text: 'Unrelated sibling',
+              })
+            ).type,
+          ).toBe('ok');
+          expect(h.index.resolve(committed.ref)).toMatchObject({
+            type: 'exact',
+            task: { ref: committed.ref },
+          });
+        }
+      }
+      const remainder = ready(await partition.rebase(expectDefined(h.index.list()[0])));
+      expect((await remainder.commit()).type).toBe('ok');
+      expect(h.index.list()[0]?.title).toBe('Pending');
+      if (mode === 'later sibling write') expect(await h.read()).toContain('Unrelated sibling');
+    },
+  );
   it('preserves a pending deletion identity after merging into a duplicate root above it', async () => {
     const h = await taskEditPreparationHarness('- [ ] Same\n- [ ] Same\n');
     h.index.integrationReads().activateOccurrences();

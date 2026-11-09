@@ -2831,7 +2831,7 @@ export class ObsidianTaskRepository implements TaskRepository {
   ): Promise<PreparedRootBasis | TaskEditRefreshUnavailable | undefined> {
     const acquisition = await this.acquirePreparedSource_abyssPrivate(current.ref.filePath);
     if (acquisition === undefined) return undefined;
-    const proven = this.provenPreparedRoot_abyssPrivate(basis.root.ref);
+    const proven = this.provenPreparedRoot_abyssPrivate((selected ?? basis.root).ref);
     if (
       proven === undefined ||
       !sameTaskNodeRef({ type: 'task', ref: proven.ref }, { type: 'task', ref: current.ref })

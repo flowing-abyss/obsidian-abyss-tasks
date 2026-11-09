@@ -481,6 +481,102 @@ it('asks before selecting content while a saved-node lifecycle change remains pe
   expect(h.session.snapshot().journal).toHaveLength(0);
   expect(await h.read('a.md')).toBe('- [ ] Existing\n');
 });
+it.each([
+  { count: 2, reversed: false },
+  { count: 4, reversed: false },
+  { count: 4, reversed: true },
+])(
+  'retains $count same-note partial plans, reverse multiline order: $reversed',
+  async ({ count, reversed }) => {
+    const names = ['One', 'Two', 'Three', 'Four'].slice(0, count);
+    const h = await setup({ 'a.md': names.map((name) => `- [ ] ${name}\n`).join('') });
+    const roots = ok(await h.api.tasks.list()).items;
+    const ordered = reversed ? [...roots].reverse() : roots;
+    for (const root of ordered) {
+      let plan = ok(
+        await expectDefined(h.api.tasks.prepare)({
+          kind: 'edit',
+          target: root.target,
+          expectedRevision: root.revision,
+          operation: {
+            type: 'patch',
+            target: root.target,
+            patch: {
+              markdownTitle: { type: 'set', value: `${root.markdownTitle} pending` },
+              scheduled: { type: 'set', value: '2026-08-02' },
+              due: { type: 'set', value: '2026-08-03' },
+            },
+          },
+        }),
+      );
+      if (reversed)
+        plan = ok(
+          await expectDefined(h.api.tasks.prepare)({
+            kind: 'append',
+            plan: plan.target,
+            expectedPlanRevision: plan.revision,
+            operation: {
+              type: 'description',
+              target: expectDefined(plan.after).target,
+              text: `First ${root.markdownTitle}\nSecond ${root.markdownTitle}`,
+            },
+          }),
+        );
+      h.session.stage({ kind: 'task', plan });
+    }
+    let second = false;
+    h.setRun(async ({ signal, session }) => {
+      await h.session.confirmFromTurn(session.proposal.revision, signal, false, {
+        proposalRevision: session.proposal.revision,
+        changes: session.proposal.changes.flatMap((change, index) =>
+          change.kind !== 'task'
+            ? []
+            : [
+                {
+                  kind: 'task-fields',
+                  index,
+                  plan: change.plan.target,
+                  expectedPlanRevision: change.plan.revision,
+                  target: expectDefined(change.plan.after).target,
+                  fields: second ? ['scheduled', 'due'] : [reversed ? 'description' : 'scheduled'],
+                },
+              ],
+        ),
+      });
+    });
+    await h.session.submit('Save selected fields; keep all other changes pending');
+    expect(h.session.snapshot()).toMatchObject({ blocked: false, status: { kind: 'ready' } });
+    expect(h.session.snapshot().proposal.changes).toHaveLength(count);
+    expect(h.session.snapshot().journal).toHaveLength(count);
+    expect(ok(await h.api.tasks.list()).items.map((root) => root.markdownTitle)).toEqual(names);
+    if (reversed) for (const name of names) expect(await h.read('a.md')).toContain(`First ${name}`);
+    else
+      expect(await h.read('a.md')).toBe(
+        names.map((name) => `- [ ] ${name} ⏳ 2026-08-02\n`).join(''),
+      );
+    second = true;
+    await h.session.submit('Save the dates; keep titles pending');
+    expect(h.session.snapshot()).toMatchObject({ blocked: false, status: { kind: 'ready' } });
+    expect(h.session.snapshot().journal).toHaveLength(count * 2);
+    expect(ok(await h.api.tasks.list()).items.map((root) => root.markdownTitle)).toEqual(names);
+    expect(await h.session.confirm()).toBe(true);
+    const saved = ok(await h.api.tasks.list()).items;
+    expect(saved.map((root) => root.markdownTitle)).toEqual(names.map((name) => `${name} pending`));
+    expect(
+      saved.every(
+        (root) => root.dates.scheduled === '2026-08-02' && root.dates.due === '2026-08-03',
+      ),
+    ).toBe(true);
+    if (reversed)
+      for (const name of names) {
+        expect(await h.read('a.md')).toContain(`First ${name}`);
+        expect(await h.read('a.md')).toContain(`Second ${name}`);
+      }
+    expect(h.session.snapshot().journal).toHaveLength(count * 3);
+    expect(h.session.snapshot().status.kind).toBe('saved');
+    expect(await h.session.confirm()).toBe(false);
+  },
+);
 it('refuses new writes if awaited journal persistence fails', async () => {
   const h = await setup();
   const session = new CommandSession({

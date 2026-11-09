@@ -322,10 +322,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   TaskCaptureApplicationApi: ['src/main.ts'],
   PreparedTaskEditCommand: ['src/integrations/taskContentApi.ts'],
   TaskEditPreparation: ['src/integrations/taskContentApi.ts'],
-  TaskEditPartition: [
-    'src/integrations/taskContentApi.ts',
-    'src/integrations/TaskRequestRegistry.ts',
-  ],
+  TaskEditPartition: ['src/integrations/TaskRequestRegistry.ts'],
   TaskFieldSelection: ['src/integrations/taskContentApi.ts'],
   TaskCreatePreparation: ['src/integrations/taskContentApi.ts'],
   TaskCreatePreparationDestination: ['src/integrations/taskContentApi.ts'],
