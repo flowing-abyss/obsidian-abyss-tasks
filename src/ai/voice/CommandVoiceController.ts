@@ -5,6 +5,7 @@ import { providerFailure } from '../providers/providerFailure';
 import { NativeVoiceCapture } from './NativeVoiceCapture';
 import type { CommandTranscriptionPort } from './ProviderTranscription';
 interface VoiceBasis {
+  readonly mode: 'manual' | 'continuous';
   readonly submission: ReturnType<CommandSessionOwner['captureSubmission']>;
   readonly input: ReturnType<CommandSessionOwner['captureInput']>;
   readonly lifetime: number;
@@ -19,6 +20,8 @@ export interface CommandVoiceOptions {
   readonly owner: CommandSessionOwner;
   readonly window: Window & typeof window;
   readonly transcription: CommandTranscriptionPort;
+  mode(): 'manual' | 'continuous';
+  input(): string;
   retain(text: string): void;
   submit(text: string, basis: CommandSubmissionBasis, admission: () => boolean): Promise<void>;
   changed(): void;
@@ -43,6 +46,7 @@ export class CommandVoiceController {
     this.sessionId = options.owner.snapshot().id;
     this.capture = new NativeVoiceCapture(options.window, {
       begin: () => ({
+        mode: options.mode(),
         submission: options.owner.captureSubmission(),
         input: options.owner.captureInput(),
         lifetime: this.generation,
@@ -61,16 +65,29 @@ export class CommandVoiceController {
     });
     options.window.addEventListener('pagehide', this.pagehide);
     options.window.document.addEventListener('visibilitychange', this.visibility);
+    let previousMode = options.mode();
     this.unsubscribe = options.owner.subscribe((state) => {
-      if (state.id !== this.sessionId) {
+      const changedSession = state.id !== this.sessionId;
+      if (changedSession) {
         this.stop();
         this.sessionId = state.id;
       }
-      this.capture.setMode(state.voiceMode ?? 'manual');
+      const mode = options.mode(),
+        changedMode = mode !== previousMode;
+      previousMode = mode;
+      this.capture.setMode(mode);
+      if (!changedSession && changedMode)
+        void this.startContinuous().catch((cause) => {
+          this.message = providerFailure(cause).message;
+          options.changed();
+        });
     });
   }
   active(): boolean {
     return this.capture.active();
+  }
+  speaking(): boolean {
+    return this.capture.speaking();
   }
   pending(): boolean {
     return this.jobs.length > 0;
@@ -83,16 +100,19 @@ export class CommandVoiceController {
   }
   async toggle(): Promise<void> {
     if (this.disposed) return;
-    const mode = this.options.owner.snapshot().voiceMode ?? 'manual';
+    const mode = this.options.mode();
     if (this.active()) {
       if (mode === 'continuous') this.stop();
       else this.finish();
       return;
     }
-    this.stop();
+    await this.startCapture(mode);
+  }
+  private async startCapture(mode: 'manual' | 'continuous'): Promise<void> {
+    this.message = '';
     try {
       this.options.transcription.available();
-      this.releaseClaim = this.options.owner.claimCapture(() => {
+      this.releaseClaim ??= this.options.owner.claimCapture(() => {
         this.stop();
       });
       await this.capture.start(mode);
@@ -101,6 +121,10 @@ export class CommandVoiceController {
         cause instanceof CommandFailure ? cause.message : providerFailure(cause).message;
       this.options.changed();
     }
+  }
+  async startContinuous(): Promise<void> {
+    if (!this.disposed && this.options.mode() === 'continuous' && !this.active())
+      await this.startCapture('continuous');
   }
   finish(): void {
     this.capture.finish();
@@ -142,8 +166,7 @@ export class CommandVoiceController {
       if (basis.submission.current() && basis.input.current() && !basis.input.dirty) return true;
       if (!retained) {
         retained = true;
-        const input = this.options.owner.snapshot().input;
-        this.options.retain(input === '' ? text : `${input}\n\n${text}`);
+        this.retainText(text);
         this.message = commandMessage('Voice kept as text. Review before sending.');
         this.options.changed();
       }
@@ -157,6 +180,10 @@ export class CommandVoiceController {
       this.message = commandMessage('No clear speech recognized. Try again or type your command.');
       return;
     }
+    if (job.basis.mode === 'manual' || this.options.mode() !== job.basis.mode) {
+      this.retainText(text);
+      return;
+    }
     const admit = this.admission(job.basis, text);
     if (admit())
       void this.options.submit(text, job.basis.submission.basis, admit).catch((cause) => {
@@ -165,6 +192,10 @@ export class CommandVoiceController {
           this.options.changed();
         }
       });
+  }
+  private retainText(text: string): void {
+    const input = this.options.input();
+    this.options.retain(input === '' ? text : `${input}\n\n${text}`);
   }
   private async recognize(): Promise<void> {
     const job = this.jobs[0];

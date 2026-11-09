@@ -131,7 +131,7 @@ export class CommandModeSurface implements CaptureExtension {
     this.microphone = this.button(commandMessage('Microphone'), 'mic');
     this.updateAvailability();
     this.component.registerDomEvent(this.microphone, 'click', () => {
-      if (!this.active()) this.setActive(true);
+      this.activateOwner();
       if (this.voice !== undefined)
         runAsyncAction(this.voice.toggle(), commandMessage('Could not start voice input'));
     });
@@ -241,6 +241,7 @@ export class CommandModeSurface implements CaptureExtension {
       this.clearPhaseTimer();
     }
     this.options.memory.active = active;
+    this.capture.element.classList.remove('abyss-capture-surface--voice');
     this.toggle.setAttribute('aria-pressed', String(active));
     this.phase.hidden = !active;
     this.content.hidden = !active;
@@ -264,15 +265,8 @@ export class CommandModeSurface implements CaptureExtension {
       this.unsubscribe ??= owner.subscribe((state) => {
         this.render(state);
       });
-      this.capture.input.setAttribute('aria-label', commandMessage('Command'));
-      this.capture.input.placeholder = commandMessage('What would you like to do?');
-      this.capture.input.readOnly = false;
-      this.capture.input.setAttribute('aria-describedby', this.phase.id);
-      this.capture.input.setSelectionRange(
-        this.options.memory.selectionStart,
-        this.options.memory.selectionEnd,
-      );
-      this.content.scrollTop = this.options.memory.scrollTop;
+      this.restoreCommandInput();
+      this.startContinuous();
     } else {
       this.voice?.stop();
       this.releaseNoteReview();
@@ -288,6 +282,17 @@ export class CommandModeSurface implements CaptureExtension {
       this.setPrimary('send', false);
     }
     if (!this.initializing) this.capture.refresh();
+  }
+  private restoreCommandInput(): void {
+    this.capture.input.setAttribute('aria-label', commandMessage('Command'));
+    this.capture.input.placeholder = commandMessage('What would you like to do?');
+    this.capture.input.readOnly = false;
+    this.capture.input.setAttribute('aria-describedby', this.phase.id);
+    this.capture.input.setSelectionRange(
+      this.options.memory.selectionStart,
+      this.options.memory.selectionEnd,
+    );
+    this.content.scrollTop = this.options.memory.scrollTop;
   }
   private activateOwner(): CommandSessionOwner {
     this.owner ??= this.options.owner();
@@ -322,42 +327,82 @@ export class CommandModeSurface implements CaptureExtension {
       owner: this.owner,
       window: win,
       transcription: this.options.transcription,
+      mode: () => this.voiceMode(),
+      input: () => this.capture.input.value,
       retain: (text) => {
         this.inputGeneration++;
-        this.owner?.setInput(text);
+        if (this.active()) this.owner?.setInput(text);
+        else this.capture.replaceOrdinaryInput(text);
       },
       submit: (text, basis, admission) => this.submitText(text, basis, admission),
       changed: () => {
-        if (!this.live || !this.active() || this.owner === undefined) return;
+        if (!this.live || this.owner === undefined) return;
+        if (!this.active()) {
+          this.renderOrdinaryVoice();
+          return;
+        }
         const state = this.owner.snapshot();
         this.renderPrimary(state);
         this.renderPhase(state, busy(state));
-        this.renderMicrophone(state);
+        this.renderMicrophone();
       },
     });
   }
-  private renderMicrophone(state: CommandSessionSnapshot): void {
-    const mode = state.voiceMode ?? 'manual';
-    if (this.microphone.dataset['voiceMode'] !== mode) {
-      this.microphone.dataset['voiceMode'] = mode;
-      setIcon(this.microphone, mode === 'continuous' ? 'radio' : 'mic');
+  private startContinuous(): void {
+    if (
+      this.microphone.hidden === false &&
+      this.toggle.hidden === false &&
+      this.voice !== undefined
+    )
+      runAsyncAction(this.voice.startContinuous(), commandMessage('Could not start voice input'));
+  }
+  private voiceMode(): 'manual' | 'continuous' {
+    return this.active() && this.toggle.hidden === false && this.microphone.hidden === false
+      ? (this.owner?.snapshot().voiceMode ?? 'manual')
+      : 'manual';
+  }
+  private renderOrdinaryVoice(): void {
+    const status = this.voice?.status();
+    this.phase.hidden = status === undefined;
+    this.capture.element.classList.toggle('abyss-capture-surface--voice', status !== undefined);
+    if (status !== undefined) this.phase.textContent = status.message;
+    if (this.owner !== undefined) this.renderMicrophone();
+  }
+  pendingInput(): boolean {
+    return this.voice?.active() === true || this.voice?.pending() === true;
+  }
+  private renderMicrophone(): void {
+    const mode = this.voiceMode(),
+      active = this.voice?.active() === true;
+    const idleIcon = mode === 'continuous' ? 'radio' : 'mic';
+    const icon = active ? 'audio-lines' : idleIcon;
+    if (this.microphone.dataset['voiceIcon'] !== icon) {
+      this.microphone.dataset['voiceIcon'] = icon;
+      setIcon(this.microphone, icon);
       setTooltip(
         this.microphone,
-        mode === 'continuous' ? commandMessage('Continuous voice') : commandMessage('Microphone'),
+        active && mode === 'continuous' ? commandMessage('Stop') : commandMessage('Microphone'),
       );
     }
-    this.microphone.setAttribute('aria-pressed', String(this.voice?.active() === true));
+    this.microphone.dataset['voiceMode'] = mode;
+    this.microphone.dataset['speaking'] = String(this.voice?.speaking() === true);
+    this.microphone.setAttribute('aria-pressed', String(active));
     this.microphone.setAttribute(
       'aria-description',
       mode === 'continuous'
         ? commandMessage('Continuous voice. Click to start or stop listening.')
-        : commandMessage('Manual voice. Enter, send, or click again to submit.'),
+        : commandMessage('Finish recording, then edit and send the text.'),
     );
   }
   submit(): void {
     const owner = this.owner;
-    if (!this.active() || owner === undefined || !this.live) return;
+    if (!this.live) return;
     if (this.finishVoice()) return;
+    if (!this.active()) {
+      this.capture.submitOrdinary();
+      return;
+    }
+    if (owner === undefined) return;
     if (this.capture.input.value.trim() === '' && busy(owner.snapshot())) return;
     const state = owner.snapshot();
     this.voice?.clearMessage();
@@ -400,6 +445,7 @@ export class CommandModeSurface implements CaptureExtension {
       owner.clearInput();
   }
   private activatePrimary(): void {
+    if (!this.active() && this.finishVoice()) return;
     if (!this.active()) {
       this.capture.submitOrdinary();
       return;

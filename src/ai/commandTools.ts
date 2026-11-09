@@ -362,17 +362,15 @@ class CommandToolOwner {
   private voiceIntent(input: z.infer<typeof intentSchema>): unknown {
     this.ctx.done = true;
     if (input.voiceMode === undefined) {
-      this.ctx.session.question(
-        commandMessage('Listen continuously, or send each recording with Enter?'),
-      );
+      this.ctx.session.question(commandMessage('Listen continuously, or transcribe for editing?'));
       return { needsMode: true };
     }
     this.ctx.session.setVoiceMode(input.voiceMode);
     this.ctx.session.status(
       'ready',
       input.voiceMode === 'continuous'
-        ? commandMessage('Continuous voice selected. Use the microphone to begin.')
-        : commandMessage('Voice sends with Enter.'),
+        ? commandMessage('Continuous voice selected. Use the microphone to stop.')
+        : commandMessage('Dictation stays in the input for editing.'),
     );
     return { voiceMode: input.voiceMode };
   }

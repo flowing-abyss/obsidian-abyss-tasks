@@ -195,6 +195,9 @@ async function setup(
     (target: string, revision: string, intent: 'feedback' | 'reveal') => boolean
   >(() => true);
   const resolveOwner = vi.fn(() => owner);
+  const ordinaryExecute = vi.fn(async () => {
+    throw new Error('Ordinary capture leaked');
+  });
   const mount = (
     transcription?: CommandTranscriptionPort,
     availability?: () => { agent: boolean; voice: boolean },
@@ -209,9 +212,7 @@ async function setup(
           type: 'ready',
           destination: { filePath: 'a.md', insertion: { type: 'append' } },
           preview: () => ({ type: 'unavailable', cause: 'preview-capability' }),
-          execute: async () => {
-            throw new Error('Ordinary capture leaked');
-          },
+          execute: ordinaryExecute,
         },
       },
       describe: describeTaskCreationResult,
@@ -246,10 +247,13 @@ async function setup(
     ...h,
     api,
     owner,
-    session,
+    get session() {
+      return session;
+    },
     memory,
     projectSettings,
     resolveOwner,
+    ordinaryExecute,
     mount,
     navigate,
     confirmInSession: (surface: CaptureSurface) => {
@@ -2877,7 +2881,7 @@ it('reviews independent note ranges as fields in one card and commits them toget
 });
 
 it.each(['enter', 'send', 'microphone'])(
-  'final manual voice uses the real Q %s submission path once',
+  'manual voice finished with %s stays editable until the user sends it',
   async (action) => {
     const h = await setup();
     const media = voiceMediaHarness(window);
@@ -2903,6 +2907,12 @@ it.each(['enter', 'send', 'microphone'])(
         new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
       );
     await vi.waitFor(() => {
+      expect(surface.input.value).toBe('Recognized command');
+    });
+    expect(h.owner.snapshot().proposal.changes).toHaveLength(0);
+    expect(h.owner.snapshot().exchanges).toHaveLength(0);
+    enter(surface, 'Recognized command, edited');
+    await vi.waitFor(() => {
       expect(h.owner.snapshot().proposal.changes).toHaveLength(1);
     });
     expect(
@@ -2910,9 +2920,9 @@ it.each(['enter', 'send', 'microphone'])(
         .snapshot()
         .exchanges.filter((e) => e.role === 'user')
         .map((e) => e.text),
-    ).toEqual(['Recognized command']);
+    ).toEqual(['Recognized command, edited']);
     expect(surface.element.querySelector('.abyss-command-latest')?.textContent).toBe(
-      'Recognized command',
+      'Recognized command, edited',
     );
     expect(media.tracks[0]?.stop).toHaveBeenCalledOnce();
     expect(await h.read('a.md')).toBe('- [ ] Existing\n');
@@ -2923,6 +2933,21 @@ async function spoken(surface: CaptureSurface, media: ReturnType<typeof voiceMed
   expectDefined(
     surface.element.querySelector<HTMLButtonElement>('[aria-label="Microphone"]'),
   ).click();
+  await finishSpoken(surface, media);
+}
+async function spokenCommand(
+  h: Awaited<ReturnType<typeof setup>>,
+  surface: CaptureSurface,
+  media: ReturnType<typeof voiceMediaHarness>,
+) {
+  h.session.setVoiceMode('continuous');
+  const microphone = expectDefined(
+    surface.element.querySelector<HTMLButtonElement>('[aria-label="Microphone"]'),
+  );
+  if (microphone.getAttribute('aria-pressed') !== 'true') microphone.click();
+  await finishSpoken(surface, media);
+}
+async function finishSpoken(surface: CaptureSurface, media: ReturnType<typeof voiceMediaHarness>) {
   await flushMicrotasks(0);
   media.level(0.1);
   await new Promise((resolve) => window.setTimeout(resolve, 220));
@@ -2978,7 +3003,7 @@ it('retains both exact typed input and late voice text without submitting the co
   const media = voiceMediaHarness(window);
   const result = deferred<string>();
   const surface = h.mount({ available: () => {}, transcribe: () => result.promise });
-  await spoken(surface, media);
+  await spokenCommand(h, surface, media);
   surface.input.value = '  My unsent text  ';
   surface.input.dispatchEvent(new Event('input', { bubbles: true }));
   result.resolve('Spoken command');
@@ -2995,7 +3020,7 @@ it("retains another surface's exact draft when held voice recognition finishes",
   const result = deferred<string>();
   const origin = h.mount({ available: () => {}, transcribe: () => result.promise });
   const other = h.mount();
-  await spoken(origin, media);
+  await spokenCommand(h, origin, media);
   other.input.value = '  Unsent text from the other Q  ';
   other.input.dispatchEvent(new Event('input', { bubbles: true }));
   result.resolve('Spoken command');
@@ -3018,7 +3043,7 @@ it('an identical-byte edit in another surface invalidates pending voice and prot
   const origin = h.mount({ available: () => {}, transcribe: () => result.promise });
   const other = h.mount();
   enter(origin, 'Same command');
-  await spoken(origin, media);
+  await spokenCommand(h, origin, media);
   expect(other.input.value).toBe('Same command');
   other.input.dispatchEvent(new Event('input', { bubbles: true }));
   finish.resolve();
@@ -3046,7 +3071,7 @@ it('voice preserves retained nonempty input selected from history in an already 
   expect(surface.input.value).toBe('');
   expect(await h.owner.select(original)).toBe(true);
   expect(surface.input.value).toBe('  Retained draft  ');
-  await spoken(surface, media);
+  await spokenCommand(h, surface, media);
   expect(surface.input.value).toBe('  Retained draft  \n\nSpoken command');
   expect(h.owner.snapshot().exchanges).toEqual([]);
   expect(h.owner.snapshot().journal).toEqual([]);
@@ -3060,7 +3085,7 @@ it("voice in a new empty session submits normally after another session's unsent
   expect(await h.owner.newSession()).toBe(true);
   expect(surface.input.value).toBe('');
   expect(media.getUserMedia).not.toHaveBeenCalled();
-  await spoken(surface, media);
+  await spokenCommand(h, surface, media);
   await vi.waitFor(() => {
     expect(h.owner.snapshot().exchanges.filter((entry) => entry.role === 'user')).toEqual([
       { role: 'user', text: 'Create parent' },
@@ -3082,7 +3107,7 @@ it('preserves a changed focus and proposal when a final acknowledgement was capt
   const change = h.owner.snapshot().proposal.changes[0];
   if (change?.kind !== 'task' || change.plan.after === null) throw new Error('Missing task');
   const child = expectDefined(change.plan.after.children[1]);
-  await spoken(surface, media);
+  await spokenCommand(h, surface, media);
   await h.owner.focus({
     kind: 'task',
     target: child.target,
@@ -3116,14 +3141,11 @@ it('final continuous speech steers planning; activity alone leaves the current t
       });
   });
   const texts = ['First voice command', 'Second voice refinement'];
-  const surface = h.mount({
+  h.mount({
     available: () => {},
     transcribe: async () => expectDefined(texts.shift()),
   });
   h.session.setVoiceMode('continuous');
-  expectDefined(
-    surface.element.querySelector<HTMLButtonElement>('[aria-label="Microphone"]'),
-  ).click();
   await flushMicrotasks(0);
   for (let index = 0; index < 2; index++) {
     media.level(0.1);
@@ -3191,7 +3213,7 @@ it.each(['ready', 'pending'])(
       });
     const surface = h.mount({ available: () => {}, transcribe: async () => 'Yes, save it' });
     scriptedAgent(h, [{ tool: 'interpret', input: { intent: 'confirm', research: false } }]);
-    await spoken(surface, media);
+    await spokenCommand(h, surface, media);
     await vi.waitFor(() => {
       expect(h.owner.snapshot().exchanges.filter((e) => e.role === 'user')).toHaveLength(1);
     });
@@ -3217,7 +3239,7 @@ it('speech captured before a proposal revision change cannot confirm the newer p
   await vi.waitFor(() => {
     expect(h.owner.snapshot().proposal.changes).toHaveLength(1);
   });
-  await spoken(surface, media);
+  await spokenCommand(h, surface, media);
   const original = h.owner.snapshot().proposal.changes[0];
   if (original?.kind !== 'task') throw new Error('No plan');
   h.session.stage(original);
@@ -3266,7 +3288,7 @@ it('final voice waits for an admitted write and follows its verified focus mappi
   h.setRun(async ({ session }) => {
     interpreted = session;
   });
-  await spoken(surface, media);
+  await spokenCommand(h, surface, media);
   expect(interpreted).toBeUndefined();
   expect(writes).toBe(1);
   release.resolve();
@@ -3335,7 +3357,7 @@ it('final voice waits for a dispatched apply before its source effect, then prev
   h.confirmInSession(surface);
   await admitted.promise;
   expect(h.owner.snapshot().journal[0]?.state).toBe('admitted');
-  await spoken(surface, media);
+  await spokenCommand(h, surface, media);
   expect(interpreted).toBeUndefined();
   expect(await h.read('a.md')).toBe('- [ ] Existing\n');
   release.resolve();
@@ -3454,27 +3476,45 @@ it('ends the owned transcription deadline without clearing the typed composer or
   expect(h.owner.snapshot().journal).toEqual([]);
   expect(vi.getTimerCount()).toBe(0);
 });
-it('restores continuous mode without opening media when Q remounts', async () => {
+it('starts the selected continuous mode once on Q open and releases it before reopening', async () => {
   const h = await setup();
   const media = voiceMediaHarness(window);
   h.session.setVoiceMode('continuous');
   const surface = h.mount({ available: () => {}, transcribe: async () => '' });
+  await flushMicrotasks(0);
+  expect(media.getUserMedia).toHaveBeenCalledOnce();
   surface.destroy();
+  expect(media.tracks[0]?.stop).toHaveBeenCalledOnce();
   const reopened = h.mount({ available: () => {}, transcribe: async () => '' });
-  expect(media.getUserMedia).not.toHaveBeenCalled();
+  await flushMicrotasks(0);
+  expect(media.getUserMedia).toHaveBeenCalledTimes(2);
   expect(h.owner.snapshot().voiceMode).toBe('continuous');
   expect(
     reopened.element.querySelector('[aria-label="Microphone"]')?.getAttribute('aria-description'),
   ).toMatch(/continuous/i);
+});
+it('transcribes in ordinary Q without an agent connection or switching capture mode', async () => {
+  const h = await setup();
+  h.memory.active = false;
+  const media = voiceMediaHarness(window);
+  const surface = h.mount(
+    { available: () => {}, transcribe: async () => 'Ordinary dictation' },
+    () => ({ agent: false, voice: true }),
+  );
+  await spoken(surface, media);
+  await vi.waitFor(() => {
+    expect(surface.input.value).toBe('Ordinary dictation');
+  });
+  expect(h.memory.active).toBe(false);
+  expect(surface.input.getAttribute('aria-label')).toBe('Add task');
+  expect(h.owner.snapshot().exchanges).toHaveLength(0);
+  expect(await h.read('a.md')).toBe('- [ ] Existing\n');
 });
 it('keeps agent phases, readiness, questions and errors visible during continuous listening', async () => {
   const h = await setup();
   const media = voiceMediaHarness(window);
   const surface = h.mount({ available: () => {}, transcribe: async () => '' });
   h.session.setVoiceMode('continuous');
-  expectDefined(
-    surface.element.querySelector<HTMLButtonElement>('[aria-label="Microphone"]'),
-  ).click();
   await flushMicrotasks(0);
   const phase = expectDefined(surface.element.querySelector('.abyss-command-phase'));
   for (const [kind, message] of [
@@ -3592,4 +3632,78 @@ it('renders requested project creation values in the retained native project hea
   expect(h.owner.snapshot().proposal.changes[0]).not.toHaveProperty('before');
   surface.destroy();
   expect(h.mount().element.textContent).toContain('New project: Preview project');
+});
+
+it('keeps a pending manual transcript editable when continuous mode is selected meanwhile', async () => {
+  const h = await setup();
+  const media = voiceMediaHarness(window),
+    result = deferred<string>();
+  const surface = h.mount({ available: () => {}, transcribe: () => result.promise });
+  await spoken(surface, media);
+  h.session.setVoiceMode('continuous');
+  result.resolve('Keep this for editing');
+  await flushMicrotasks(0);
+  expect(surface.input.value).toBe('Keep this for editing');
+  expect(h.owner.snapshot().exchanges).toEqual([]);
+  expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+});
+it.each([
+  { agent: false, voice: true },
+  { agent: true, voice: false },
+])('does not auto-start continuous capture with unavailable controls %j', async (availability) => {
+  const h = await setup(),
+    media = voiceMediaHarness(window);
+  const available = vi.fn();
+  h.mount({ available, transcribe: async () => '' }, () => availability);
+  h.session.setVoiceMode('continuous');
+  await flushMicrotasks(0);
+  expect(media.getUserMedia).not.toHaveBeenCalled();
+  expect(available).not.toHaveBeenCalled();
+});
+it('stops continuous listening with the microphone and reports speech activity without extra controls', async () => {
+  const h = await setup(),
+    media = voiceMediaHarness(window);
+  h.session.setVoiceMode('continuous');
+  const surface = h.mount({ available: () => {}, transcribe: async () => '' });
+  const microphone = expectDefined(
+    surface.element.querySelector<HTMLButtonElement>('[aria-label="Microphone"]'),
+  );
+  await flushMicrotasks(0);
+  media.level(0.1);
+  await vi.waitFor(() => {
+    expect(microphone.dataset['speaking']).toBe('true');
+  });
+  microphone.click();
+  await flushMicrotasks(0);
+  expect(microphone.getAttribute('aria-pressed')).toBe('false');
+  expect(microphone.dataset['speaking']).toBe('false');
+  expect(media.tracks[0]?.stop).toHaveBeenCalledOnce();
+  expect(h.owner.snapshot().exchanges).toEqual([]);
+});
+
+it('does not write ordinary input on departure while dictation is recording or recognizing', async () => {
+  const h = await setup(),
+    media = voiceMediaHarness(window),
+    result = deferred<string>();
+  h.memory.active = false;
+  const surface = h.mount({ available: () => {}, transcribe: () => result.promise });
+  surface.input.value = 'Typed preface';
+  surface.input.dispatchEvent(new Event('input', { bubbles: true }));
+  expectDefined(
+    surface.element.querySelector<HTMLButtonElement>('[aria-label="Microphone"]'),
+  ).click();
+  await flushMicrotasks(0);
+  const outside = document.body.createEl('button');
+  outside.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+  await flushMicrotasks(0);
+  expect(h.ordinaryExecute).not.toHaveBeenCalled();
+  await finishSpoken(surface, media);
+  outside.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+  await flushMicrotasks(0);
+  expect(h.ordinaryExecute).not.toHaveBeenCalled();
+  result.resolve('Dictated continuation');
+  await flushMicrotasks(0);
+  expect(surface.input.value).toBe('Typed preface Dictated continuation');
+  expect(h.owner.snapshot().exchanges).toEqual([]);
+  expect(h.ordinaryExecute).not.toHaveBeenCalled();
 });

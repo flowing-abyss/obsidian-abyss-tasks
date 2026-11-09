@@ -94,16 +94,21 @@ score. Two SDK network retries share one 45-second transcription lifetime, witho
 command. Empty recognition and incomplete capture never enter the command queue.
 
 Each mounted Q owns a `CommandVoiceController` and `NativeVoiceCapture` in its document/window.
-The existing microphone, Enter and send finish one manual utterance. Continuous mode is a semantic
-session choice, retained in local history with manual as the default; selecting/restoring it never
-starts an idle microphone. A deliberate click claims the owner's exclusive capture lifetime. Local
+The microphone, Enter and send finish manual dictation into editable input, in ordinary Q or
+CommandMode. It does not submit an agent command. Continuous mode is a semantic session choice,
+retained in local history with manual as the default. Selecting it in an open configured CommandMode
+or deliberately reopening Q starts capture once; restoring history alone does not. A capture claims
+the owner's exclusive media lifetime. The microphone stops continuous listening. Speech activity
+updates that same control without adding another surface. Local
 RMS samples separate utterances after 800 ms of quiet. Silence stays local; five-second quiet
 containers are discarded only after current quiet, preserving speech that starts at the boundary.
 Each segment has a fresh supported WebM/Opus or MP4 recorder/container on the same stream.
 Recording stops at one minute or 4 MiB; at most two segments await recognition. Activity alone does
 not cancel agent work.
 
-Final accepted text uses the existing surface submission token and owner queue. A transient capture
+Each recording retains its mode at capture time. Manual recognition remains editable even if the
+mode changes while recognition is pending. Continuous accepted text uses the existing surface
+submission token and owner queue. Ordinary capture departure cannot write while audio is pending. A transient capture
 predicate binds the session, focus identity, transition, and actual composer-edit generation, and
 is checked again after queued work settles. Composer edit/draft provenance belongs to the shared
 session and is exposed through its owner. Every explicit edit invalidates earlier input captures,

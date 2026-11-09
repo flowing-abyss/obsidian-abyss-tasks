@@ -26,6 +26,7 @@ export class NativeVoiceCapture<B> {
   private timer: number | undefined;
   private generation = 0;
   private starting = false;
+  private speech = false;
   private disposed = false;
   private readonly releases: Array<() => void> = [];
   private mode: 'manual' | 'continuous' = 'manual';
@@ -35,6 +36,9 @@ export class NativeVoiceCapture<B> {
   ) {}
   active(): boolean {
     return this.starting || this.stream !== undefined || this.recording !== undefined;
+  }
+  speaking(): boolean {
+    return this.speech;
   }
   setMode(mode: 'manual' | 'continuous'): void {
     this.mode = mode;
@@ -172,16 +176,25 @@ export class NativeVoiceCapture<B> {
     let energy = 0;
     for (const value of samples) energy += value * value;
     const age = this.win.performance.now() - item.startedAt;
-    if (Math.sqrt(energy / samples.length) >= 0.012) {
+    const speaking = Math.sqrt(energy / samples.length) >= 0.012;
+    if (speaking) {
       item.basis ??= this.events.begin();
       item.speechTicks++;
       item.quietTicks = 0;
     } else item.quietTicks++;
+    this.updateSpeech(speaking, item.quietTicks);
     if (age >= 60000) {
       this.fail(commandMessage('Recording reached one minute. Try a shorter command.'));
       return;
     }
     this.segmentPause(item, age);
+  }
+  private updateSpeech(speaking: boolean, quietTicks: number): void {
+    const active = speaking || (this.speech && quietTicks < 3);
+    if (active !== this.speech) {
+      this.speech = active;
+      this.events.changed();
+    }
   }
   private segmentPause(item: Recording<B>, age: number): void {
     if (this.mode === 'manual') return;
@@ -235,6 +248,7 @@ export class NativeVoiceCapture<B> {
   }
   private releaseMedia(): void {
     this.starting = false;
+    this.speech = false;
     this.win.clearInterval(this.timer);
     this.timer = undefined;
     this.releases.splice(0).forEach((release) => {

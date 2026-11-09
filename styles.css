@@ -12335,6 +12335,7 @@ button.abyss-calendar-date[aria-pressed='true'] {
   border-radius: var(--radius-s);
 }
 
+.abyss-capture-surface--voice > .abyss-capture-metadata,
 .abyss-capture-surface--command > :is(.abyss-capture-metadata, .abyss-capture-error),
 .abyss-command-tree .abyss-task-meta-right[hidden] {
   display: none;
@@ -12426,4 +12427,9 @@ button.abyss-calendar-date[aria-pressed='true'] {
 
 .abyss-command-note-body > .abyss-md > :first-child {
   margin-block-start: 0;
+}
+
+.abyss-command-toolbar [data-speaking='true'] {
+  color: var(--text-accent);
+  background: var(--background-modifier-hover);
 }

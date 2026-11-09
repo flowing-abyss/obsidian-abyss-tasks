@@ -115,8 +115,8 @@ const russian = {
   'Continuous voice': 'Непрерывный голосовой ввод',
   'Continuous voice. Click to start or stop listening.':
     'Непрерывный ввод. Нажмите, чтобы начать или остановить запись.',
-  'Manual voice. Enter, send, or click again to submit.':
-    'Ручной ввод. Enter, кнопка отправки или повторное нажатие — отправить.',
+  'Finish recording, then edit and send the text.':
+    'Завершите запись, затем отредактируйте и отправьте текст.',
   'Could not run command': 'Не удалось выполнить команду',
   'Could not stop command': 'Не удалось остановить команду',
   'Save proposal': 'Сохранить предложение',
@@ -180,11 +180,11 @@ const russian = {
     'Перед переносом выберите сохранённую корневую задачу. Предыдущий выбор и предложение сохранены.',
   'The proposal changed while this input was recorded. Review the current version before confirming.':
     'Предложение изменилось во время записи. Проверьте текущую версию перед подтверждением.',
-  'Listen continuously, or send each recording with Enter?':
-    'Слушать непрерывно или отправлять каждую запись клавишей Enter?',
-  'Continuous voice selected. Use the microphone to begin.':
-    'Выбран непрерывный ввод. Включите микрофон, чтобы начать.',
-  'Voice sends with Enter.': 'Голосовая запись отправляется клавишей Enter.',
+  'Listen continuously, or transcribe for editing?':
+    'Слушать непрерывно или записывать текст для редактирования?',
+  'Continuous voice selected. Use the microphone to stop.':
+    'Выбран непрерывный ввод. Микрофон останавливает запись.',
+  'Dictation stays in the input for editing.': 'Диктовка остаётся в поле для редактирования.',
   'Keep the unsaved draft for later, or abandon it?':
     'Оставить несохранённый черновик на потом или удалить?',
   'Looking up the requested content…': 'Ищу нужное содержимое…',

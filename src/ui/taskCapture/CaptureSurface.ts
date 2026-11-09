@@ -13,6 +13,7 @@ export interface CaptureExtension {
   active(): boolean;
   input(text: string): void;
   submit(): void;
+  pendingInput?(): boolean;
   escape(): void;
   destroy(): void;
 }
@@ -23,6 +24,7 @@ export interface CaptureExtensionHost {
   readonly registerSurface: (surface: HTMLElement) => () => void;
   readonly refresh: () => void;
   readonly submitOrdinary: () => void;
+  readonly replaceOrdinaryInput: (text: string) => void;
 }
 export interface CaptureSurfaceOptions {
   readonly extend?: (host: CaptureExtensionHost) => CaptureExtension;
@@ -114,6 +116,11 @@ export class CaptureSurface {
         this.render_abyssPrivate(this.controller_abyssPrivate.snapshot());
       },
       submitOrdinary: () => this.boundary_abyssPrivate?.requestSubmit(),
+      replaceOrdinaryInput: (text) => {
+        this.controller_abyssPrivate.setDraft(text.replaceAll(/[\r\n]+/gu, ' '), {
+          editKind: 'paste',
+        });
+      },
     });
     this.links_abyssPrivate = this.mountLinks_abyssPrivate(options);
     this.bindInput_abyssPrivate(options);
@@ -192,7 +199,10 @@ export class CaptureSurface {
       flushInput: () => this.flushInput_abyssPrivate(),
       isLive: () => !this.destroyed_abyssPrivate && (options.isLive?.() ?? true),
       submit: (trigger) => {
-        if (!this.commandActive_abyssPrivate())
+        if (
+          !this.commandActive_abyssPrivate() &&
+          this.extension_abyssPrivate?.pendingInput?.() !== true
+        )
           runAsyncAction(this.controller_abyssPrivate.submit(trigger), 'Could not add task');
       },
     });
@@ -244,7 +254,11 @@ export class CaptureSurface {
     };
     const onBlur = (raw: Event): void => {
       const event = raw as FocusEvent;
-      if (this.commandActive_abyssPrivate()) return;
+      if (
+        this.commandActive_abyssPrivate() ||
+        this.extension_abyssPrivate?.pendingInput?.() === true
+      )
+        return;
       if (this.boundary_abyssPrivate !== undefined) {
         this.boundary_abyssPrivate.requestExit({
           type: 'focus',
@@ -314,11 +328,12 @@ export class CaptureSurface {
     if (command && event.shiftKey) return;
     event.preventDefault();
     event.stopPropagation();
-    if (command && event.repeat) return;
+    if ((command || this.extension_abyssPrivate?.pendingInput?.() === true) && event.repeat) return;
     this.submit_abyssPrivate();
   }
   private submit_abyssPrivate(): void {
-    if (this.commandActive_abyssPrivate()) this.extension_abyssPrivate?.submit();
+    if (this.commandActive_abyssPrivate() || this.extension_abyssPrivate?.pendingInput?.() === true)
+      this.extension_abyssPrivate?.submit();
     else if (this.boundary_abyssPrivate !== undefined) this.boundary_abyssPrivate.requestSubmit();
     else if (this.flushInput_abyssPrivate() === 'ready')
       runAsyncAction(this.controller_abyssPrivate.submit('enter'), 'Could not add task');
