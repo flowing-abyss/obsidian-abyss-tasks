@@ -3,6 +3,7 @@ import { exactSourceMetadata } from '../../markdown/exactSourceMetadata';
 import { sameNoteFileStamp, type NoteFileStamp } from '../../markdown/noteFileStamp';
 import { NoteSourceChangedError, readVaultText } from '../../markdown/readVaultText';
 import { sameTag } from '../../markdown/tagSyntax';
+import type { AcceptedNoteSource } from '../../notes/NoteSourceApi';
 import type {
   CalendarProjectionSources,
   CalendarTaskSource,
@@ -143,6 +144,10 @@ interface PreparedObservation {
   readonly cache: CachedMetadata;
   readonly metadata: TaskSourceMetadata;
   readonly validFrontmatter: boolean;
+}
+interface CurrentRootLookup {
+  readonly sources: ReadonlyMap<string, readonly TaskSnapshot[]>;
+  readonly lines: ReadonlyMap<number, TaskSnapshot>;
 }
 
 /** Use the host random source already used by TaskRefAuthority, including mobile runtimes. */
@@ -945,6 +950,10 @@ export class TaskIndex
     string,
     AcceptedStatisticsSource
   >();
+  private readonly priorMetadataDeferrals_abyssPrivate = new Map<
+    string,
+    (file: TFile, content: string) => boolean
+  >();
   private readonly statisticsReadFailures_abyssPrivate = new Map<
     string,
     { readonly reason: TaskStatisticsSourceIssue['reason']; readonly error: unknown }
@@ -976,6 +985,7 @@ export class TaskIndex
     TaskSearchSourceNode & { readonly version: number; readonly rootOrdinal: number }
   >();
   private readonly taskMap_abyssPrivate = new Map<string, readonly TaskSnapshot[]>();
+  private readonly currentRootLookups_abyssPrivate = new Map<string, CurrentRootLookup>();
   private readonly timeEntryIndex_abyssPrivate = new TimeEntryIndex();
   private readonly calendarDateIndex_abyssPrivate = new TaskDateIndex<CalendarTaskSource>(
     (source) => calendarDatesForPlanning(source.node.planning),
@@ -1087,6 +1097,8 @@ export class TaskIndex
   }
 
   private clearIntegrationSources_abyssPrivate(): void {
+    this.currentRootLookups_abyssPrivate.clear();
+    this.priorMetadataDeferrals_abyssPrivate.clear();
     this.coverageProofPaths_abyssPrivate.clear();
     this.acceptedStatisticsSources_abyssPrivate.clear();
     this.integrationPaths_abyssPrivate.length = 0;
@@ -1327,6 +1339,45 @@ export class TaskIndex
     if (install === undefined) this.installCommittedContent(path, content);
     else install();
     return true;
+  }
+
+  /** A staged prose writer may defer an unchanged prewrite echo, never accept new source bytes. */
+  deferOwnedPriorMetadata(
+    proof: AcceptedNoteSource,
+    file: TFile,
+    owns: () => boolean,
+  ): (() => void) | undefined {
+    const source = this.acceptedStatisticsSources_abyssPrivate.get(proof.path);
+    const basis = this.observe_abyssPrivate(file, proof.path);
+    if (
+      source?.fileIdentity !== file ||
+      source.revision !== proof.version ||
+      source.content !== proof.content ||
+      this.projectIdentity_abyssPrivate(file) !== proof.identity ||
+      !source.projectVerified ||
+      basis === undefined
+    )
+      return undefined;
+    const meaning = this.integrationReadState_abyssPrivate.capture();
+    const current = (): boolean =>
+      source.stamp !== undefined &&
+      sameNoteFileStamp(source.stamp, file.stat) &&
+      this.integrationReadState_abyssPrivate.capture().lifecycle === 'ready' &&
+      this.reconciliationReadCurrent_abyssPrivate(basis, meaning) &&
+      this.acceptedStatisticsSources_abyssPrivate.get(proof.path) === source &&
+      owns();
+    if (!current()) return undefined;
+    const release = (): void => {
+      if (this.priorMetadataDeferrals_abyssPrivate.get(proof.path) === defer)
+        this.priorMetadataDeferrals_abyssPrivate.delete(proof.path);
+    };
+    const defer = (observedFile: TFile, content: string): boolean => {
+      if (observedFile === file && content === source.content && current()) return true;
+      release();
+      return false;
+    };
+    this.priorMetadataDeferrals_abyssPrivate.set(proof.path, defer);
+    return release;
   }
 
   private async readReconciliationSource_abyssPrivate(file: TFile): Promise<string | undefined> {
@@ -3060,14 +3111,29 @@ export class TaskIndex
     source: string,
     sourceLines?: readonly number[],
   ): TaskRef | undefined {
-    const tasks = this.taskMap_abyssPrivate.get(filePath) ?? [];
-    const sourceMatches = tasks.filter((task) => task.source.originalBlock === source);
+    const lookup = this.currentRootLookup_abyssPrivate(filePath);
+    const sourceMatches = lookup.sources.get(source) ?? [];
     if (mismatchedDuplicatePopulation(sourceMatches, sourceLines)) return undefined;
-    const hinted = tasks.find((task) => task.source.line === line);
+    const hinted = lookup.lines.get(line);
     if (hinted?.source.originalBlock === source) return { ...hinted.ref };
     if (sourceMatches.length > 1) return undefined;
     const current = sourceMatches[0] ?? hinted;
     return current != null ? { ...current.ref } : undefined;
+  }
+
+  private currentRootLookup_abyssPrivate(path: string): CurrentRootLookup {
+    // Keyed source/ref fields are readonly; installation, removal and disposal retire this view.
+    const cached = this.currentRootLookups_abyssPrivate.get(path);
+    if (cached !== undefined) return cached;
+    const tasks = this.taskMap_abyssPrivate.get(path) ?? [];
+    const sources = priorTasksBySource(tasks),
+      lines = new Map<number, TaskSnapshot>();
+    for (const root of tasks) {
+      if (!lines.has(root.source.line)) lines.set(root.source.line, root);
+    }
+    const lookup = { sources, lines };
+    if (this.taskMap_abyssPrivate.has(path)) this.currentRootLookups_abyssPrivate.set(path, lookup);
+    return lookup;
   }
 
   captureRejectedSourceInvalidation(
@@ -3548,6 +3614,7 @@ export class TaskIndex
   }
 
   private installFileTasks_abyssPrivate(filePath: string, tasks: readonly TaskSnapshot[]): void {
+    this.currentRootLookups_abyssPrivate.delete(filePath);
     if (tasks.length > 0) this.taskMap_abyssPrivate.set(filePath, tasks);
     else this.taskMap_abyssPrivate.delete(filePath);
     this.invalidateDependencies_abyssPrivate();
@@ -3598,6 +3665,7 @@ export class TaskIndex
     cache: CachedMetadata,
   ): void {
     const path = file.path;
+    if (this.priorMetadataDeferrals_abyssPrivate.get(path)?.(file, data) === true) return;
     if (
       file.extension !== 'md' ||
       this.destroyed_abyssPrivate ||
@@ -3959,6 +4027,7 @@ export class TaskIndex
   }
 
   private removeFile_abyssPrivate(filePath: string): void {
+    this.currentRootLookups_abyssPrivate.delete(filePath);
     this.acceptedStatisticsSources_abyssPrivate.delete(filePath);
     const integrationPath = this.integrationPaths_abyssPrivate.indexOf(filePath);
     if (integrationPath >= 0) this.integrationPaths_abyssPrivate.splice(integrationPath, 1);

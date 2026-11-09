@@ -20,6 +20,7 @@ interface Cursor {
 }
 export class NoteApiReads {
   private readonly cursors = new Map<string, Cursor>();
+  private readonly pending = new Set<AbortController>();
   constructor(
     private readonly context: TaskApiContext,
     private readonly registry: NoteReadRegistry,
@@ -136,11 +137,12 @@ export class NoteApiReads {
   }
   async search(query: SearchNotesV1, signal?: ApiAbortSignalV1): Promise<NoteSearchPageV1> {
     const state = this.position(query);
-    const scan = await scanNotes(this.registry.port, query, state.position, () => {
+    const check = (): void => {
       const failure = this.context.check(signal);
       if (failure !== undefined && !failure.ok) throw new NoteFailure(failure.error.code);
       this.stable(state.observation);
-    });
+    };
+    const scan = await this.scan(query, state.position, check, signal);
     this.stable(state.observation);
     const items = scan.matches.map((match) =>
       searchItem(match, this.registry.summary(match.source)),
@@ -154,7 +156,38 @@ export class NoteApiReads {
       ...(scan.complete ? {} : { nextCursor: this.cursor(state, scan.position) }),
     };
   }
+  private async scan(
+    query: SearchNotesV1,
+    position: number,
+    check: () => void,
+    signal?: ApiAbortSignalV1,
+  ): ReturnType<typeof scanNotes> {
+    const run = new AbortController(),
+      abort = (): void => {
+        run.abort();
+      };
+    this.pending.add(run);
+    try {
+      signal?.addEventListener('abort', abort, { once: true });
+      check();
+      return await scanNotes(this.registry.port, query, position, {
+        check,
+        yield: () => this.registry.port.yield(run.signal),
+      });
+    } catch (error) {
+      check();
+      throw error;
+    } finally {
+      try {
+        signal?.removeEventListener('abort', abort);
+      } finally {
+        this.pending.delete(run);
+        run.abort();
+      }
+    }
+  }
   dispose(): void {
+    for (const run of this.pending) run.abort();
     this.cursors.clear();
   }
 }

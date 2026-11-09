@@ -2,10 +2,26 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { TasksApiV1 } from '../api';
 import { createFixture } from '../tooling/performance/fixture.mts';
 import { apiScenarios } from '../tooling/performance/native-api';
+import {
+  commandFeatureScenarios,
+  commandStressScenarios,
+  denseCommandScenario,
+} from '../tooling/performance/native-command';
+import {
+  notePagingScenario,
+  noteProjectSearchScenario,
+  noteScenarios,
+  noteSearchScenarios,
+  type SearchCallSample,
+} from '../tooling/performance/native-note-search';
 import type { Measure } from '../tooling/performance/native-scenarios';
 import type { Host, NativeOptions } from '../tooling/performance/native-types';
 import { expectDefined, flushMicrotasks } from './helpers';
 import { publicApiHarness, type PublicApiHarness } from './support/publicApiHarness';
+import {
+  CONCENTRATED_NOTE_AUDIT_TIMEOUT_MS,
+  FULL_SOURCE_NOTE_SEARCH_AUDIT_TIMEOUT_MS,
+} from './support/timeouts';
 
 const harnesses: PublicApiHarness[] = [];
 const folder = '__abyss_profile_fixture_v1__';
@@ -226,6 +242,452 @@ function corruptPage(failure: string, pages: number, page: Page) {
 }
 
 describe('canonical public API performance spans', () => {
+  it.each(['receipt-only', 'contrary-source', 'contrary-target', 'unavailable-target'])(
+    'reports failed note receipt predicates and independent source/handle evidence without replay (%s)',
+    async (failure) => {
+      // Small source isolates observer behavior; the dense workload tests below retain 4,000 roots.
+      const densePath = `${folder}/projects/Project-000.md`;
+      const s = await setup(6, {
+        [densePath]: `# Prose\nProfile editable prose.\n\n# Tasks\n- [ ] Profile root 🆔 profile-0\n  - [ ] Child\n${'- [ ] Duplicate profile root\n  - [ ] Duplicate profile child\n'.repeat(2)}`,
+      });
+      const notes = expectDefined(s.client.notes);
+      const process = vi.spyOn(s.h.app.vault, 'process');
+      let contraryRead = false;
+      if (failure === 'contrary-source') {
+        const read = s.h.app.vault.read.bind(s.h.app.vault);
+        vi.spyOn(s.h.app.vault, 'read').mockImplementation(async (file) => {
+          const text = await read(file);
+          return contraryRead ? `${text}contrary` : text;
+        });
+      }
+      const originals = {
+        read: Object.getOwnPropertyDescriptor(s.h.app.vault, 'read'),
+        reconcile: Object.getOwnPropertyDescriptor(s.h.index, 'reconcileCommittedSource'),
+        install: Object.getOwnPropertyDescriptor(s.h.index, 'installCommittedBatch'),
+      };
+      const apply = vi.fn(async (...args: Parameters<typeof notes.apply>) => {
+        expect(Object.getOwnPropertyDescriptor(s.h.app.vault, 'read')).toEqual(originals.read);
+        expect(Object.getOwnPropertyDescriptor(s.h.index, 'reconcileCommittedSource')).toEqual(
+          originals.reconcile,
+        );
+        expect(Object.getOwnPropertyDescriptor(s.h.index, 'installCommittedBatch')).toEqual(
+          originals.install,
+        );
+        const result = await notes.apply(...args);
+        if (!result.ok) throw new Error('Diagnostic control did not commit');
+        const receipt = { ...result.receipt };
+        delete receipt.note;
+        if (failure === 'contrary-source') {
+          contraryRead = true;
+        }
+        if (failure === 'contrary-target') {
+          const get = s.client.tasks.get;
+          vi.spyOn(s.client.tasks, 'get').mockImplementation(async (...getArgs) => {
+            const found = await get(...getArgs);
+            return found.ok
+              ? {
+                  ...found,
+                  value: {
+                    ...found.value,
+                    source: { ...found.value.source, line: found.value.source.line + 1 },
+                  },
+                }
+              : found;
+          });
+        }
+        if (failure === 'unavailable-target') {
+          vi.spyOn(s.client.tasks, 'get').mockResolvedValue({
+            ok: false,
+            error: { code: 'STALE_TARGET', category: 'unavailable', message: 'Control refusal' },
+          });
+        }
+        return { ...result, receipt };
+      });
+      const client = { ...s.client, notes: { ...notes, apply } };
+      s.getApi.mockReturnValue({ ok: true, value: client });
+      const observe = vi.fn<(evidence: unknown) => void>();
+      await expect(
+        commandFeatureScenarios(
+          s.host,
+          {
+            ...s.options,
+            fixtureKind: 'single-note',
+            expectedRoots: 3,
+            expectedNodes: 6,
+          },
+          s.measure,
+          { failure: observe },
+        ),
+      ).rejects.toThrow('Note apply did not prove commit');
+      expect(observe).toHaveBeenCalledOnce();
+      expect(observe.mock.calls[0]?.[0]).toMatchObject({
+        receipt: {
+          effects: 'committed',
+          outcome: 'changed',
+          hasNote: false,
+          warnings: [],
+        },
+        source: { conserved: failure !== 'contrary-source' },
+        retained: Array.from({ length: 4 }, (_, index) => ({
+          index,
+          matches: !['contrary-target', 'unavailable-target'].includes(failure),
+          ...(failure === 'unavailable-target'
+            ? { errorCode: 'STALE_TARGET' }
+            : {
+                checks: {
+                  target: true,
+                  parent: true,
+                  title: true,
+                  path: true,
+                  line: failure !== 'contrary-target',
+                },
+              }),
+        })),
+      });
+      expect(apply).toHaveBeenCalledOnce();
+      expect(process).toHaveBeenCalledTimes(2);
+      expect(s.client.dispose).toHaveBeenCalledOnce();
+      expect(s.off).toHaveBeenCalledOnce();
+    },
+  );
+  async function stressSetup(includeSearch = false) {
+    const fixture = createFixture('2026-08-01', 'single-note');
+    const files = includeSearch
+      ? fixture.files
+      : Object.fromEntries(
+          Object.entries(fixture.files).filter(([path]) => !path.includes('/search/')),
+        );
+    const h = await publicApiHarness(files, {
+      index: { excludeSource: (source) => source.filePath.endsWith('/archive.md') },
+    });
+    harnesses.push(h);
+    vi.spyOn(Date, 'now').mockReturnValue(now);
+    const real = h.client('abyss-performance-command');
+    const dispose = vi.fn(real.dispose);
+    const client: TasksApiV1 = { ...real, tasks: { ...real.tasks }, dispose };
+    const host = {
+      vault: h.app.vault,
+      metadataCache: h.app.metadataCache,
+      plugins: {
+        plugins: {
+          'abyss-tasks': {
+            getApi: () => ({ ok: true, value: client }),
+            tasks: h.service,
+            queries: h.index,
+          },
+        },
+      },
+    } as unknown as Host;
+    const options: NativeOptions = {
+      vault: 'dev-vault-tasks',
+      fixtureFolder: folder,
+      anchor: fixture.anchor,
+      fixtureKind: 'single-note',
+      expectedRoots: 4000,
+      expectedNodes: 6000,
+      startup: false,
+      command: 'feature',
+      viewport: '1024x768',
+      sourceSizes: fixture.sourceSizes,
+    };
+    const facts: Record<string, unknown> = {};
+    const measure: Measure = async (id, action, prepare) => {
+      await prepare?.();
+      facts[id] = await action();
+    };
+    return { h, fixture, client, dispose, host, options, facts, measure };
+  }
+  it.each([false, true])(
+    'edits a dense root through a native command with exact bytes and retained siblings (shift=%s)',
+    async (shift) => {
+      const s = await stressSetup();
+      await denseCommandScenario(s.host, { ...s.options, command: 'stress' }, s.measure, shift);
+      const id = shift ? 'command.dense-line-shift' : 'command.dense-edit';
+      expect(Object.keys(s.facts)).toEqual([id]);
+      expect(s.facts[id]).toMatchObject({
+        roots: 4000,
+        nodes: 6000,
+        writes: 1,
+        retainedRoots: 3999,
+        lineShift: shift ? 1 : 0,
+        exactBytes: true,
+      });
+    },
+    CONCENTRATED_NOTE_AUDIT_TIMEOUT_MS,
+  );
+  it(
+    'prepares without writes and applies sealed task and prose plans with complete source conservation',
+    async () => {
+      const s = await stressSetup();
+      const process = vi.spyOn(s.h.app.vault, 'process');
+      const measure: Measure = async (id, action, prepare) => {
+        await prepare?.();
+        const before = process.mock.calls.length;
+        s.facts[id] = await action();
+        expect(process.mock.calls.length - before).toBe(id.endsWith('.apply') ? 1 : 0);
+      };
+      await commandFeatureScenarios(s.host, s.options, measure);
+      expect(s.facts['content.prepare']).toMatchObject({
+        writes: 0,
+        exactBytes: true,
+        complete: true,
+      });
+      expect(s.facts['notes.apply']).toMatchObject({
+        writes: 1,
+        roots: 4000,
+        nodes: 6000,
+        retainedRoots: 4000,
+        lineShift: 1,
+        exactBytes: true,
+      });
+      expect(s.dispose).toHaveBeenCalledOnce();
+    },
+    CONCENTRATED_NOTE_AUDIT_TIMEOUT_MS,
+  );
+  it(
+    'drains whole-source searches, proves continuation and refuses an over-ceiling source while allowing reads',
+    async () => {
+      const s = await stressSetup(true);
+      await noteSearchScenarios(s.client, s.options, s.measure, {
+        signal: new AbortController().signal,
+      });
+      expect(s.facts['notes.search.ceiling.hit']).toMatchObject({
+        characters: 4194304,
+        results: 1,
+        complete: true,
+        coverage: 'complete',
+      });
+      expect(s.facts['notes.search.ceiling.absent']).toMatchObject({
+        characters: 4194304,
+        results: 0,
+        complete: true,
+      });
+      expect(s.facts['notes.search.continuation.complete']).toMatchObject({
+        sources: 2,
+        results: 2,
+        complete: true,
+      });
+      expect(s.facts['notes.search.over-ceiling']).toMatchObject({
+        code: 'RESOURCE_LIMIT',
+        certifiedComplete: false,
+        readable: true,
+      });
+      const pause = vi.spyOn(s.h.noteService, 'yield');
+      await noteProjectSearchScenario(s.client, s.options, s.measure, {
+        signal: new AbortController().signal,
+      });
+      expect(s.facts['notes.search.projects.absent']).toMatchObject({
+        sources: 100,
+        zeroTaskSources: 99,
+        results: 0,
+        complete: true,
+        coverage: 'complete',
+      });
+      expect(pause.mock.calls.length).toBeGreaterThanOrEqual(12);
+    },
+    CONCENTRATED_NOTE_AUDIT_TIMEOUT_MS,
+  );
+  async function runFullSourceNoteSearchAudit() {
+    const fixture = createFixture('2026-08-01', 'single-note');
+    const files = Object.fromEntries(
+      Object.entries(fixture.files).filter(([path]) => path.includes('/search/')),
+    );
+    for (let i = 0; i < 260; i++) files[`!prefix-${String(i).padStart(3, '0')}.md`] = 'Unrelated\n';
+    const s = await setup(0, files);
+    const calls: SearchCallSample[] = [];
+    await noteSearchScenarios(
+      s.client,
+      { ...s.options, sourceSizes: fixture.sourceSizes },
+      s.measure,
+      {
+        signal: new AbortController().signal,
+        record: (call) => calls.push(call),
+      },
+    );
+    for (const id of ['notes.search.continuation.first', 'notes.search.over-ceiling']) {
+      const actual = calls.filter((call) => call.scenario === id);
+      expect(actual.length).toBeGreaterThan(2);
+      expect(
+        actual.slice(0, -1).every((call) => call.results === 0 && call.complete === false),
+      ).toBe(true);
+      expect(s.facts[id]).toMatchObject({
+        pages: actual.length,
+        emptyPrefixPages: actual.length - 1,
+      });
+    }
+    expect(s.facts['notes.search.continuation.next']).toMatchObject({
+      sources: 1,
+      results: 1,
+      complete: true,
+    });
+    expect(s.facts['notes.search.continuation.complete']).toMatchObject({
+      sources: 2,
+      results: 2,
+      complete: true,
+    });
+    expect(s.facts['notes.search.over-ceiling']).toMatchObject({
+      code: 'RESOURCE_LIMIT',
+      certifiedComplete: false,
+      readable: true,
+    });
+  }
+  it(
+    'drains more than 128 unrelated source paths before continuation matches and ceiling refusal',
+    runFullSourceNoteSearchAudit,
+    FULL_SOURCE_NOTE_SEARCH_AUDIT_TIMEOUT_MS,
+  );
+  it.each(
+    ['first', 'over-ceiling'].flatMap((kind) =>
+      ['complete', 'result', 'observation', 'error'].map((fault) => ({ kind, fault })),
+    ),
+  )('rejects invalid empty search prefixes ($kind/$fault)', async ({ kind, fault }) => {
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 260; i++) files[`!prefix-${String(i).padStart(3, '0')}.md`] = 'Unrelated\n';
+    const s = await setup(0, files);
+    const notes = expectDefined(s.client.notes);
+    const note = await notes.read({ selector: { path: '!prefix-000.md' } });
+    if (!note.ok) throw new Error('Missing diagnostic note');
+    let calls = 0;
+    const client: TasksApiV1 = {
+      ...s.client,
+      notes: {
+        ...notes,
+        search: async (...args) => {
+          const result = await notes.search(...args);
+          calls++;
+          if (!result.ok) return result;
+          if (fault === 'error')
+            return {
+              ok: false,
+              error: {
+                code: 'INCOMPLETE_READ',
+                category: 'unavailable',
+                message: 'Controlled refusal',
+              },
+            };
+          if (fault === 'complete') {
+            const page = { ...result.value, complete: true };
+            delete page.nextCursor;
+            return { ok: true, value: page };
+          }
+          if (fault === 'result')
+            return {
+              ok: true,
+              value: {
+                ...result.value,
+                items: [
+                  {
+                    note: note.value.note,
+                    matchedIn: ['body'],
+                    snippet: 'wrong',
+                    snippetTruncated: false,
+                  },
+                ],
+              },
+            };
+          return {
+            ok: true,
+            value: { ...result.value, generation: result.value.generation + (calls === 2 ? 1 : 0) },
+          };
+        },
+      },
+    };
+    const id = kind === 'first' ? 'notes.search.continuation.first' : 'notes.search.over-ceiling';
+    await expect(
+      noteSearchScenarios(
+        client,
+        s.options,
+        async (scenario, action) => {
+          if (scenario === id) await action();
+        },
+        { signal: new AbortController().signal },
+      ),
+    ).rejects.toThrow();
+  });
+  it(
+    'rejects unsupported feature capabilities and wrong dense population before a write',
+    async () => {
+      const s = await stressSetup();
+      await expect(
+        commandStressScenarios(s.host, { ...s.options, expectedRoots: 3999 }, s.measure),
+      ).rejects.toThrow(/population/iu);
+      Object.defineProperty(s.client, 'info', { value: { ...s.client.info, capabilities: [] } });
+      await expect(commandFeatureScenarios(s.host, s.options, s.measure)).rejects.toThrow(
+        /capabilit/iu,
+      );
+      expect(s.dispose).toHaveBeenCalledOnce();
+    },
+    CONCENTRATED_NOTE_AUDIT_TIMEOUT_MS,
+  );
+  it('drains exact CRLF and surrogate-safe native paging without a write', async () => {
+    const fixture = createFixture('2026-08-01', 'single-note');
+    const path = `${folder}/paging.md`;
+    const s = await setup(0, { [path]: expectDefined(fixture.files[path]) });
+    const writes = vi.spyOn(s.h.app.vault, 'process');
+    await notePagingScenario(
+      s.client,
+      { ...s.options, sourceSizes: fixture.sourceSizes },
+      s.measure,
+      new AbortController().signal,
+    );
+    expect(s.facts['notes.read-pages']).toMatchObject({
+      characters: 120027,
+      bytes: 140029,
+      complete: true,
+      pageCharacters: 127,
+    });
+    expect(writes).not.toHaveBeenCalled();
+  });
+  it('aborts and disposes the note client when the enclosing measurement is cancelled', async () => {
+    const s = await setup(0);
+    const ready = vi.spyOn(s.client, 'ready');
+    await expect(
+      noteScenarios(
+        s.host,
+        s.options,
+        async () => {
+          throw new Error('Profile cancelled');
+        },
+        { record: () => {} },
+      ),
+    ).rejects.toThrow('Profile cancelled');
+    expect(ready.mock.calls[0]?.[0]?.signal?.aborted).toBe(true);
+    expect(s.off).toHaveBeenCalledOnce();
+    expect(s.client.dispose).toHaveBeenCalledOnce();
+  });
+  it.each(['duplicate', 'coverage', 'missed', 'name'] as const)(
+    'rejects incorrect note search completed-work proof (%s)',
+    async (fault) => {
+      const fixture = createFixture('2026-08-01', 'single-note');
+      const path = `${folder}/search/target/body.md`;
+      const s = await setup(0, { [path]: expectDefined(fixture.files[path]) });
+      const realNotes = expectDefined(s.client.notes);
+      const client: TasksApiV1 = {
+        ...s.client,
+        notes: {
+          ...realNotes,
+          search: async (...args) => {
+            const result = await realNotes.search(...args);
+            if (!result.ok) return result;
+            const page = result.value,
+              item = expectDefined(page.items[0]);
+            if (fault === 'duplicate')
+              return { ...result, value: { ...page, items: [item, item] } };
+            if (fault === 'coverage')
+              return { ...result, value: { ...page, coverage: 'incomplete' } };
+            if (fault === 'missed') return { ...result, value: { ...page, items: [] } };
+            return { ...result, value: { ...page, items: [{ ...item, matchedIn: ['name'] }] } };
+          },
+        },
+      };
+      await expect(
+        noteSearchScenarios(client, { ...s.options, sourceSizes: fixture.sourceSizes }, s.measure, {
+          signal: new AbortController().signal,
+        }),
+      ).rejects.toThrow();
+      expect(s.facts).toEqual({});
+    },
+  );
   it.each(['held', 'wrong-content', 'other-file'] as const)(
     'waits for matching creation metadata before timing completion (%s)',
     async (kind) => {

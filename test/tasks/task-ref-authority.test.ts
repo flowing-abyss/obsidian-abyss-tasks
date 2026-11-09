@@ -33,6 +33,24 @@ function sources(authority: TaskRefAuthority) {
 }
 
 describe('owned exact-source transaction', () => {
+  it('binds positive forwarded ownership to this reservation, including release and replacement', () => {
+    const authority = new TaskRefAuthority('transaction');
+    const input = sources(authority);
+    const first = expectDefined(input[0]);
+    const owner = expectDefined(authority.reserveMutation(input));
+    expect(owner.ownsForwardedSource('a.md', first.after)).toBe(false);
+    expect(owner.forward('a.md', first.before)).toBe(first.after);
+    expect(owner.ownsForwardedSource('a.md', first.after)).toBe(true);
+    expect(owner.ownsForwardedSource('a.md', first.before)).toBe(false);
+    owner.release();
+    const next = expectDefined(authority.reserveMutation(input));
+    expect(next.forward('a.md', first.before)).toBe(first.after);
+    expect(owner.ownsForwardedSource('a.md', first.after)).toBe(false);
+    expect(next.ownsForwardedSource('a.md', first.after)).toBe(true);
+    authority.observeTransition('a.md', first.before);
+    expect(next.ownsForwardedSource('a.md', first.after)).toBe(false);
+    next.release();
+  });
   it.each([
     ['forward', '- [ ] External\r\n'],
     ['restore', '- [ ] External\r\n'],

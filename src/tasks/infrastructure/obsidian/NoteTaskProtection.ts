@@ -1,4 +1,4 @@
-import type { App } from 'obsidian';
+import type { App, TFile } from 'obsidian';
 import { sameNoteFileStamp } from '../../../markdown/noteFileStamp';
 import { readVaultText } from '../../../markdown/readVaultText';
 import type {
@@ -30,18 +30,23 @@ function displaced(offset: number, edits: readonly NoteReplacement[]): number {
 /** Projects canonical block ownership; it never parses task syntax independently. */
 export class CanonicalNoteTaskProtection implements NoteTaskProtection {
   private readonly editor = new TaskBlockEditor();
+  private lastRanges:
+    { readonly content: string; readonly ranges: readonly NoteRange[] } | undefined;
   constructor(
     private readonly app: App,
     private readonly index: TaskIndex,
     private readonly authority: TaskRefAuthority,
   ) {}
   ranges(content: string): readonly NoteRange[] {
+    if (this.lastRanges?.content === content) return this.lastRanges.ranges;
     const lines = lineStarts(content);
-    return this.editor.rootBlocks(content).map((block) => {
+    const ranges = this.editor.rootBlocks(content).map((block): NoteRange => {
       const from = lines[block.line];
       if (from === undefined) throw new Error('Invalid canonical block range');
-      return { from, to: from + block.source.length, kind: 'task', editable: false };
+      return Object.freeze({ from, to: from + block.source.length, kind: 'task', editable: false });
     });
+    this.lastRanges = { content, ranges: Object.freeze(ranges) };
+    return this.lastRanges.ranges;
   }
   preserves(before: string, after: string, range: NoteRange, replacement: string): boolean {
     return this.preservesAll(before, after, [{ range, replacement }]);
@@ -50,15 +55,14 @@ export class CanonicalNoteTaskProtection implements NoteTaskProtection {
     const original = this.ranges(before),
       candidate = this.ranges(after);
     if (original.length !== candidate.length) return false;
+    const intervals = new Set(candidate.map(({ from, to }) => `${from}:${to}`));
     return original.every((block) => {
       if (edits.some(({ range }) => block.from < range.to && block.to > range.from)) return false;
       const from = displaced(block.from, edits);
-      const found = candidate.find(
-        (next) => next.from === from && next.to === from + block.to - block.from,
-      );
+      const to = from + block.to - block.from;
       return (
-        found !== undefined &&
-        before.slice(block.from, block.to) === after.slice(found.from, found.to)
+        intervals.has(`${from}:${to}`) &&
+        before.slice(block.from, block.to) === after.slice(from, to)
       );
     });
   }
@@ -175,9 +179,27 @@ export class CanonicalNoteTaskProtection implements NoteTaskProtection {
   ): NoteTaskStage {
     const native = this.app.vault.getFileByPath(source.path);
     const meaning = this.index.integrationReads().capture();
+    let releasePriorMetadata: (() => void) | undefined;
+    const retire = (): void => {
+      releasePriorMetadata?.();
+      releasePriorMetadata = undefined;
+    };
     return {
-      forward: (live) => owner.forward(source.path, live),
+      forward: (live) => {
+        retire();
+        if (
+          native === null ||
+          !this.stageMeaningCurrent(meaning) ||
+          owner.forward(source.path, live) !== candidate
+        )
+          return undefined;
+        releasePriorMetadata = this.index.deferOwnedPriorMetadata(source, native, () =>
+          owner.ownsForwardedSource(source.path, candidate),
+        );
+        return releasePriorMetadata === undefined ? undefined : candidate;
+      },
       install: async (file) => {
+        retire();
         if (!this.stageMeaningCurrent(meaning)) return false;
         return await this.index.reconcileCommittedSource(source.path, file, candidate, () => {
           if (!this.stageMeaningCurrent(meaning))
@@ -189,46 +211,50 @@ export class CanonicalNoteTaskProtection implements NoteTaskProtection {
         });
       },
       reject: async (file) => {
-        const invalidate = this.index.captureRejectedSourceInvalidation(
-          source.path,
-          file,
-          candidate,
-        );
-        try {
-          if (
-            native === null ||
-            native !== file ||
-            this.app.vault.getAbstractFileByPath(source.path) !== native
-          )
-            throw new Error('Preserved task source was replaced.');
-          const stamp = { ...native.stat };
-          const live = await readVaultText(this.app.vault, native);
-          if (
-            this.app.vault.getAbstractFileByPath(source.path) !== native ||
-            !sameNoteFileStamp(stamp, native.stat)
-          )
-            throw new Error('Preserved task source changed during readback.');
-          const accepted = await this.index.reconcileCommittedSource(
-            source.path,
-            native,
-            live,
-            () => {
-              owner.rejectSource(source.path, live);
-              this.index.installCommittedContent(source.path, live);
-            },
-          );
-          if (!accepted) {
-            owner.rejectSource(source.path);
-            invalidate();
-          }
-        } catch {
-          owner.rejectSource(source.path);
-          invalidate();
-        }
+        retire();
+        await this.rejectOwnedStage({ path: source.path, candidate, native }, file, owner);
       },
       release: () => {
+        retire();
         owner.release();
       },
     };
+  }
+  private async rejectOwnedStage(
+    {
+      path,
+      candidate,
+      native,
+    }: { readonly path: string; readonly candidate: string; readonly native: TFile | null },
+    file: object,
+    owner: OwnedSourceMutation,
+  ): Promise<void> {
+    const invalidate = this.index.captureRejectedSourceInvalidation(path, file, candidate);
+    try {
+      if (
+        native === null ||
+        native !== file ||
+        this.app.vault.getAbstractFileByPath(path) !== native
+      )
+        throw new Error('Preserved task source was replaced.');
+      const stamp = { ...native.stat };
+      const live = await readVaultText(this.app.vault, native);
+      if (
+        this.app.vault.getAbstractFileByPath(path) !== native ||
+        !sameNoteFileStamp(stamp, native.stat)
+      )
+        throw new Error('Preserved task source changed during readback.');
+      const accepted = await this.index.reconcileCommittedSource(path, native, live, () => {
+        owner.rejectSource(path, live);
+        this.index.installCommittedContent(path, live);
+      });
+      if (!accepted) {
+        owner.rejectSource(path);
+        invalidate();
+      }
+    } catch {
+      owner.rejectSource(path);
+      invalidate();
+    }
   }
 }

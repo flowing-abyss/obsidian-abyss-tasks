@@ -17,6 +17,7 @@ it.each([false, true])(
       const second = expectDefined(h.index.list()[1]);
       const plan = ready(await h.service.prepare(second, []));
       const notes = new NoteApplicationService(h.app, h.sources, {
+        yield: async () => {},
         capture: () => h.index.integrationReads().capture(),
         host: new NoteHostAdapter(h.app, h.sources, (source) => h.index.noteStructure(source)),
         protection: new CanonicalNoteTaskProtection(h.app, h.index, h.authority),
@@ -59,6 +60,7 @@ it.each(['same', 'competing', 'replacement', 'scope'] as const)(
       const second = expectDefined(h.index.list()[1]);
       const plan = ready(await h.service.prepare(second, []));
       const notes = new NoteApplicationService(h.app, h.sources, {
+        yield: async () => {},
         capture: () => h.index.integrationReads().capture(),
         host: new NoteHostAdapter(h.app, h.sources, (source) => h.index.noteStructure(source)),
         protection: new CanonicalNoteTaskProtection(h.app, h.index, h.authority),

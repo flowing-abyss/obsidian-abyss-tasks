@@ -52,6 +52,7 @@ export async function publicApiHarness(
     readonly provision?: boolean;
     readonly index?: Partial<TaskIndexOptions>;
     readonly behaviorSettings?: TaskBehaviorSettingsProvider;
+    readonly noteYield?: (signal: AbortSignal) => Promise<void>;
   } = {},
 ): Promise<PublicApiHarness> {
   const app = await createAppWithFiles({ ...files });
@@ -131,6 +132,7 @@ export async function publicApiHarness(
   });
   const noteSources = index.projectSources();
   const noteService = new NoteApplicationService(app, noteSources, {
+    yield: options.noteYield ?? (async () => {}),
     capture: () => reads.capture(),
     host: new NoteHostAdapter(app, noteSources, (source) => index.noteStructure(source)),
     protection: new CanonicalNoteTaskProtection(app, index, authority),

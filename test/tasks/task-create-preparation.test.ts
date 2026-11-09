@@ -162,3 +162,192 @@ it('rejects candidate source exclusions before creating its destination', async 
   });
   expect(h.app.vault.getAbstractFileByPath('draft')).toBeNull();
 });
+
+it.each(['description-cr', 'empty-comment', 'invalid-child'])(
+  'rejects an invalid complete-tree %s without publishing or writing a partial tree',
+  async (fault) => {
+    const before = '- [ ] Existing\n';
+    const h = await taskEditPreparationHarness(before);
+    try {
+      const p = await h.service.prepareCreateTree({
+        destination: {
+          type: 'explicit',
+          destination: { filePath: 'tasks.md', insertion: { type: 'append' } },
+        },
+        tree: {
+          markdownTitle: 'New',
+          ...(fault === 'description-cr' ? { description: 'Bad\rdescription' } : {}),
+          ...(fault === 'empty-comment' ? { comments: [{ text: '   ' }] } : {}),
+          children: [
+            { markdownTitle: fault === 'invalid-child' ? 'Bad\nchild' : 'Must not be created' },
+          ],
+        },
+      });
+      expect(p).toMatchObject({
+        type: 'invalid',
+        result: { type: 'invalid', issues: [{ field: 'tree' }] },
+      });
+      expect(h.writes).not.toHaveBeenCalled();
+      expect(await h.read()).toBe(before);
+      expect(h.index.list()).toHaveLength(1);
+    } finally {
+      h.index.destroy();
+    }
+  },
+);
+
+it.each(['missing-port', 'rejected-port', 'invalid-candidate'])(
+  'preserves the destination when creation preparation has %s',
+  async (fault) => {
+    const before = '- [ ] Existing\n';
+    const h = await taskEditPreparationHarness(before);
+    try {
+      if (fault === 'missing-port')
+        Object.defineProperty(h.repository, 'prepareCreateRoot', { value: undefined });
+      if (fault === 'rejected-port')
+        vi.spyOn(h.repository, 'prepareCreateRoot').mockRejectedValue(new Error('Unavailable'));
+      if (fault === 'invalid-candidate')
+        vi.spyOn(h.repository, 'prepareCreateRoot').mockResolvedValue({
+          type: 'invalid',
+          result: { type: 'strict-rejected', reason: 'unsupported-precondition' },
+        });
+      const p = await h.service.prepareCreateTree({
+        destination: {
+          type: 'explicit',
+          destination: { filePath: 'tasks.md', insertion: { type: 'append' } },
+        },
+        tree: { markdownTitle: 'New' },
+      });
+      expect(p).toMatchObject({
+        type: 'invalid',
+        result: { type: fault === 'rejected-port' ? 'io-error' : 'invalid' },
+      });
+      if (fault === 'rejected-port')
+        expect(p).toMatchObject({ result: { contentState: 'unchanged' } });
+      expect(h.writes).not.toHaveBeenCalled();
+      expect(await h.read()).toBe(before);
+    } finally {
+      h.index.destroy();
+    }
+  },
+);
+
+it.each(['missing-owner', 'extra-child', 'rejected-append'])(
+  'rejects repository tree correspondence with %s instead of guessing child identity',
+  async (fault) => {
+    const before = '- [ ] Existing\n';
+    const h = await taskEditPreparationHarness(before);
+    try {
+      const prepare = h.repository.prepareCreateRoot.bind(h.repository);
+      vi.spyOn(h.repository, 'prepareCreateRoot').mockImplementation(async (...args) => {
+        const prepared = await prepare(...args);
+        if (prepared.type !== 'ready') return prepared;
+        return {
+          ...prepared,
+          append: (command) => {
+            if (fault === 'rejected-append')
+              return {
+                type: 'invalid',
+                result: { type: 'strict-rejected', reason: 'unsupported-precondition' },
+              };
+            const next = prepared.append(command);
+            if (next.type !== 'ready') return next;
+            if (fault === 'missing-owner') return { ...next, continuations: [] };
+            return {
+              ...next,
+              after: { ...next.after, subtasks: [...next.after.subtasks, ...next.after.subtasks] },
+            };
+          },
+        };
+      });
+      const p = await h.service.prepareCreateTree({
+        destination: {
+          type: 'explicit',
+          destination: { filePath: 'tasks.md', insertion: { type: 'append' } },
+        },
+        tree: {
+          markdownTitle: 'New',
+          children: [{ markdownTitle: 'Same' }, { markdownTitle: 'Same' }],
+        },
+      });
+      expect(p).toMatchObject({ type: 'invalid', result: { type: 'invalid' } });
+      expect(h.writes).not.toHaveBeenCalled();
+      expect(await h.read()).toBe(before);
+    } finally {
+      h.index.destroy();
+    }
+  },
+);
+
+it('rejects an initial status whose catalog meaning changed before tree preparation', async () => {
+  const before = '- [ ] Existing\n';
+  const h = await taskEditPreparationHarness(before);
+  try {
+    const status = expectDefined(h.catalog.defaultForType('done'));
+    h.catalog.replace(
+      h.catalog
+        .all()
+        .map((rule) => (rule.id === status.id ? { ...rule, type: 'cancelled' } : rule)),
+    );
+    const prepare = vi.spyOn(h.repository, 'prepareCreateRoot');
+    const p = await h.service.prepareCreateTree({
+      destination: {
+        type: 'explicit',
+        destination: { filePath: 'tasks.md', insertion: { type: 'append' } },
+      },
+      tree: { markdownTitle: 'New', initial: { status }, children: [{ markdownTitle: 'Child' }] },
+    });
+    expect(p).toEqual({
+      type: 'invalid',
+      result: { type: 'invalid', issues: [{ code: 'invalid-target', field: 'tree' }] },
+    });
+    expect(prepare).not.toHaveBeenCalled();
+    expect(h.writes).not.toHaveBeenCalled();
+    expect(await h.read()).toBe(before);
+    expect(h.index.list()).toHaveLength(1);
+  } finally {
+    h.index.destroy();
+  }
+});
+
+it.each(['empty-comment', 'invalid-tag'])(
+  'rejects a prepared-tree %s append while keeping the earlier reviewed tree committable',
+  async (fault) => {
+    const before = '- [ ] Existing\n';
+    const h = await taskEditPreparationHarness(before);
+    try {
+      const p = await h.service.prepareCreateTree({
+        destination: {
+          type: 'explicit',
+          destination: { filePath: 'tasks.md', insertion: { type: 'append' } },
+        },
+        tree: { markdownTitle: 'New #keep', children: [{ markdownTitle: 'Child' }] },
+      });
+      if (p.type !== 'ready') throw new Error('Missing creation');
+      const candidate = p.after.source.originalBlock;
+      const target = { type: 'task' as const, ref: p.after.ref };
+      const refused =
+        fault === 'empty-comment'
+          ? p.append({ type: 'add-comment', parent: target, text: '   ' })
+          : p.append({ type: 'patch', target, patch: { tags: { add: ['#valid', '#bad!'] } } });
+      expect(refused).toEqual({
+        type: 'invalid',
+        result: { type: 'invalid', issues: [{ code: 'invalid-target', field: 'target' }] },
+      });
+      expect(p.after.source.originalBlock).toBe(candidate);
+      expect(p.after.comments).toEqual([]);
+      expect(p.after.tags).toEqual(['#keep']);
+      expect(h.writes).not.toHaveBeenCalled();
+      expect(await h.read()).toBe(before);
+      expect(await p.commit()).toMatchObject({
+        result: { type: 'ok', changed: true },
+        destinationEffects: 'unchanged',
+      });
+      expect(h.writes).toHaveBeenCalledOnce();
+      expect(await h.read()).toBe(`${before}${candidate}\n`);
+      expect(h.index.list()[1]?.source.originalBlock).toBe(candidate);
+    } finally {
+      h.index.destroy();
+    }
+  },
+);

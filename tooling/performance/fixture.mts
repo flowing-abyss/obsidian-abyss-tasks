@@ -14,6 +14,9 @@ export interface Fixture {
   projects: number;
   maxChildrenPerRoot: number;
   largestRootBytes: number;
+  rootsPerFile: Record<string, number>;
+  maxRootsPerFile: number;
+  sourceSizes: Record<string, { characters: number; bytes: number }>;
   settings: Record<string, unknown>;
 }
 
@@ -39,6 +42,11 @@ function wideChildren(kind: FixtureKind, id: number, date: string): string[] {
 }
 
 function taskBlock(anchor: string, id: number, kind: FixtureKind): string {
+  if (kind === 'single-note' && (id === 3996 || id === 3998))
+    return '- [ ] Duplicate profile root\n  - [ ] Duplicate profile child';
+  return ordinaryTaskBlock(anchor, id, kind);
+}
+function ordinaryTaskBlock(anchor: string, id: number, kind: FixtureKind): string {
   const symbol = [' ', '/', 'x', '-'][id % 4] ?? ' ';
   const offset = symbol === 'x' || symbol === '-' ? -(id % 300) - 1 : (id % 365) - 300;
   const date = dateAt(anchor, offset);
@@ -79,7 +87,10 @@ function projectFile(anchor: string, project: number, kind: FixtureKind): string
     '---',
     '# Tasks',
   ];
-  for (let i = 0; i < 40; i++) lines.push(taskBlock(anchor, project * 40 + i, kind));
+  if (kind === 'single-note') {
+    lines.splice(-1, 1, '# Prose', 'Profile editable prose.\n', '# Tasks');
+    if (project === 0) for (let i = 0; i < 4000; i++) lines.push(taskBlock(anchor, i, kind));
+  } else for (let i = 0; i < 40; i++) lines.push(taskBlock(anchor, project * 40 + i, kind));
   return `${lines.join('\n')}\n`;
 }
 
@@ -103,7 +114,16 @@ export function createFixture(anchor: string, kind: FixtureKind = 'standard'): F
       `- [x] Archived ${i} #profile/archive ➕ ${dateAt(anchor, -180)} ✅ ${dateAt(anchor, -i % 90)}\n  - ${dateAt(anchor, -i % 90)}T10:00:00Z → ${dateAt(anchor, -i % 90)}T10:30:00Z`,
   ).join('\n');
   files[`${FIXTURE_FOLDER}/inbox.md`] = '# Performance command sandbox\n';
+  if (kind === 'single-note') addSearchSources(files);
   const blocks = Array.from({ length: 4000 }, (_, id) => taskBlock(anchor, id, kind));
+  const rootsPerFile = Object.fromEntries(
+    Object.entries(files)
+      .filter(([name]) => !name.endsWith('/archive.md'))
+      .map(([name, content]) => [
+        name,
+        content.split('\n').filter((line) => line.startsWith('- [')).length,
+      ]),
+  );
   return {
     version: 1,
     anchor,
@@ -116,6 +136,14 @@ export function createFixture(anchor: string, kind: FixtureKind = 'standard'): F
       ...blocks.map((block) => block.split('\n').filter((line) => line.startsWith('  - [')).length),
     ),
     largestRootBytes: Math.max(...blocks.map((block) => Buffer.byteLength(block, 'utf8'))),
+    rootsPerFile,
+    maxRootsPerFile: Math.max(...Object.values(rootsPerFile)),
+    sourceSizes: Object.fromEntries(
+      Object.entries(files).map(([name, content]) => [
+        name,
+        { characters: content.length, bytes: Buffer.byteLength(content, 'utf8') },
+      ]),
+    ),
     archiveRoots: 300,
     projects: 100,
     settings: {
@@ -136,4 +164,23 @@ export function createFixture(anchor: string, kind: FixtureKind = 'standard'): F
       },
     },
   };
+}
+
+function addSearchSources(files: Record<string, string>): void {
+  const body = (size: number): string => {
+    const start = 'quartzneedle 😀 ',
+      end = ' amberneedle\n';
+    return start + 'z'.repeat(size - start.length - end.length) + end;
+  };
+  for (const [name, size] of [
+    ['target', 262144],
+    ['over-target', 262145],
+    ['ceiling', 4194304],
+    ['over-ceiling', 4194305],
+  ] as const)
+    files[`${FIXTURE_FOLDER}/search/${name}/body.md`] = body(size);
+  files[`${FIXTURE_FOLDER}/search/continuation/00.md`] = 'quartzneedle amberneedle\n';
+  files[`${FIXTURE_FOLDER}/search/continuation/01.md`] = body(262145);
+  files[`${FIXTURE_FOLDER}/paging.md`] =
+    `\uFEFF---\r\naliases: [Ada]\r\n---\r\n${'Contact 🙂\r\n'.repeat(10000)}`;
 }

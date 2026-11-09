@@ -54,6 +54,149 @@ it('permits fenced task examples only when canonical ownership remains unchanged
   const h = await setup();
   expect((await h.prepare('```md\n- [ ] Example\n```\n\n')).ok).toBe(true);
 });
+it('retains duplicate task handles when exact owned candidate metadata arrives during reconciliation read', async () => {
+  const h = await setup();
+  const retained = [];
+  for (const line of [2, 3, 4, 5]) {
+    const resolved = ok(await h.client.tasks.resolve({ source: { path: 'a.md', line } }));
+    if (resolved.type !== 'found') throw new Error('Missing occurrence');
+    retained.push(resolved.task);
+  }
+  expect(retained).toHaveLength(4);
+  const plan = ok(await h.prepare('Contact\nShift\n\n'));
+  const read = h.app.vault.read.bind(h.app.vault);
+  const process = h.app.vault.process.bind(h.app.vault);
+  let injected = false;
+  const writes = vi.spyOn(h.app.vault, 'process').mockImplementationOnce(async (file, callback) => {
+    const candidate = await process(file, callback);
+    vi.spyOn(h.app.vault, 'read').mockImplementationOnce(async (reading) => {
+      expect(reading).toBe(file);
+      metadataChangedEmitter(h.app)(file, candidate, {});
+      await flushMicrotasks();
+      injected = true;
+      return read(reading);
+    });
+    return candidate;
+  });
+  const result = await h.notes.apply(h.commit(plan));
+  expect(injected).toBe(true);
+  expect(writes).toHaveBeenCalledOnce();
+  expect(await h.read('a.md')).toBe(
+    'Contact\nShift\n\n- [ ] Same\n  - [ ] Child\n- [ ] Same\n  - [ ] Child\n',
+  );
+  expect(result).toMatchObject({
+    ok: true,
+    receipt: { effects: 'committed', outcome: 'changed', note: { target: h.page.note.target } },
+  });
+  for (const before of retained) {
+    const after = ok(await h.client.tasks.get(before.target));
+    expect(after.parentTarget).toBe(before.parentTarget);
+    expect(after).toMatchObject({
+      target: before.target,
+      title: before.title,
+      source: { path: 'a.md', line: before.source.line + 1 },
+    });
+  }
+});
+it.each(['before-forward', 'before-write', 'before-stamp', 'after-process'] as const)(
+  'retains duplicate task handles through a delayed prior metadata echo: %s',
+  async (timing) => {
+    const h = await setup();
+    const file = h.app.vault.getFileByPath('a.md');
+    if (file === null) throw new Error('Missing source');
+    const prior = await h.read('a.md');
+    const priorStamp = { mtime: file.stat.mtime, size: file.stat.size };
+    const retained = [];
+    for (const line of [2, 3, 4, 5]) {
+      const found = ok(await h.client.tasks.resolve({ source: { path: 'a.md', line } }));
+      if (found.type !== 'found') throw new Error('Missing retained task');
+      retained.push(found.task);
+    }
+    const plan = ok(await h.prepare('Contact\nShift\n\n'));
+    const candidate = 'Contact\nShift\n\n- [ ] Same\n  - [ ] Child\n- [ ] Same\n  - [ ] Child\n';
+    const ownership: Array<Record<string, boolean | number>> = [];
+    const freshReads = vi.spyOn(h.app.vault, 'read');
+    const samePriorStamp = () =>
+      file.stat.mtime === priorStamp.mtime && file.stat.size === priorStamp.size;
+    const emit = () => {
+      const before = h.authority.ownsForwardedSource(file.path, candidate);
+      const sizeBefore = file.stat.size,
+        priorStampBefore = samePriorStamp(),
+        readsBefore = freshReads.mock.calls.length;
+      metadataChangedEmitter(h.app)(file, prior, {});
+      ownership.push({
+        before,
+        after: h.authority.ownsForwardedSource(file.path, candidate),
+        sizeBefore,
+        sizeAfter: file.stat.size,
+        priorStampBefore,
+        priorStampAfter: samePriorStamp(),
+        readsDuringEmit: freshReads.mock.calls.length - readsBefore,
+      });
+    };
+    const adapter = h.app.vault.adapter;
+    const read = adapter.read.bind(adapter),
+      write = adapter.write.bind(adapter);
+    const process = h.app.vault.process.bind(h.app.vault);
+    const writes = vi.spyOn(adapter, 'write').mockImplementationOnce(async (...args) => {
+      if (timing === 'before-write') emit();
+      await write(...args);
+      if (timing === 'before-stamp') emit();
+    });
+    vi.spyOn(adapter, 'read').mockImplementationOnce(async (...args) => {
+      const text = await read(...args);
+      if (timing === 'before-forward') emit();
+      return text;
+    });
+    vi.spyOn(h.app.vault, 'process').mockImplementationOnce(async (...args) => {
+      const result = await process(...args);
+      if (timing === 'after-process') emit();
+      return result;
+    });
+    const result = await h.notes.apply(h.commit(plan));
+    expect.soft(ownership, `${timing}: ${JSON.stringify(ownership)}`).toMatchObject([
+      {
+        before: timing !== 'before-forward',
+        after: timing !== 'before-forward',
+        priorStampBefore: timing !== 'after-process',
+        priorStampAfter: timing !== 'after-process',
+      },
+    ]);
+    expect(writes).toHaveBeenCalledOnce();
+    expect(await h.read('a.md')).toBe(
+      'Contact\nShift\n\n- [ ] Same\n  - [ ] Child\n- [ ] Same\n  - [ ] Child\n',
+    );
+    expect.soft(result).toMatchObject({
+      ok: true,
+      receipt: { effects: 'committed', outcome: 'changed', note: { target: h.page.note.target } },
+    });
+    const reads = await Promise.all(retained.map((before) => h.client.tasks.get(before.target)));
+    expect(
+      reads,
+      JSON.stringify(reads.map((read) => (read.ok ? 'retained' : read.error.code))),
+    ).toMatchObject(
+      retained.map((before) => ({
+        ok: true,
+        value: {
+          target: before.target,
+          title: before.title,
+          source: { path: 'a.md', line: before.source.line + 1 },
+        },
+      })),
+    );
+    for (const [position, before] of retained.entries()) {
+      const found = reads[position];
+      if (found === undefined) throw new Error('Missing retained readback');
+      const after = ok(found);
+      expect(after.parentTarget).toBe(before.parentTarget);
+      expect(after).toMatchObject({
+        target: before.target,
+        title: before.title,
+        source: { path: 'a.md', line: before.source.line + 1 },
+      });
+    }
+  },
+);
 it('rejects a competing source inside the actual writer without mutating it', async () => {
   const h = await setup();
   const plan = ok(await h.prepare('Changed\n\n'));

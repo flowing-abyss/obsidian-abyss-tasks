@@ -83,6 +83,7 @@ interface EditBasis {
   readonly file: TFile;
 }
 interface NoteServiceDependencies {
+  readonly yield: (signal: AbortSignal) => Promise<void>;
   readonly capture: () => TaskReadObservation;
   readonly host: NoteHostAdapter;
   readonly protection: NoteTaskProtection;
@@ -109,6 +110,7 @@ export class NoteApplicationService implements NoteApplicationApi {
   }
   readonly matcher: NoteApplicationApi['matcher'] = (query) =>
     this.dependencies.host.matcher(query);
+  readonly yield: NoteApplicationApi['yield'] = (signal) => this.dependencies.yield(signal);
   readonly resolve: NoteApplicationApi['resolve'] = (from, link) =>
     this.dependencies.host.resolve(from, link);
   readonly link: NoteApplicationApi['link'] = (selection, from, alias) =>

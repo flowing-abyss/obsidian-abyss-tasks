@@ -67,6 +67,7 @@ export interface StructuralSourceMutation extends Omit<ExactSourceMutation, 'roo
 
 export interface OwnedSourceMutation {
   forward(path: string, current: string): string | undefined;
+  ownsForwardedSource(path: string, content: string): boolean;
   restore(path: string, current: string): string | undefined;
   complete(contents: ReadonlyMap<string, string>): boolean;
   completeRestoration(contents: ReadonlyMap<string, string>): boolean;
@@ -447,6 +448,8 @@ export class TaskRefAuthority {
       owned.size > 0 &&
       [...owned.values()].every(({ token }) => hasForwardOwnership(this.activeStaged(token)));
     return {
+      ownsForwardedSource: (path, content) =>
+        forwardOwned() && this.ownsForwardedMutation(owned.get(path), content),
       forward: (path, current) => {
         const entry = owned.get(path);
         if (
@@ -499,6 +502,11 @@ export class TaskRefAuthority {
       },
       release,
     };
+  }
+
+  private ownsForwardedMutation(entry: OwnedSource | undefined, content: string): boolean {
+    const pending = entry === undefined ? undefined : this.activeStaged(entry.token);
+    return pending?.exactSource?.forwarded === true && pending.exactSource.after === content;
   }
 
   private stageMutationSources<T extends Omit<ExactSourceMutation, 'roots'>>(

@@ -143,19 +143,33 @@ describe('performance build artifact provenance', () => {
         path.join(root, 'tooling/performance/native-api.ts'),
         await readFile(path.join(process.cwd(), 'tooling/performance/native-api.ts')),
       );
+      for (const name of [
+        'native-command.ts',
+        'native-note-search.ts',
+        'native-observation.ts',
+        'profiler.ts',
+      ])
+        await writeFile(
+          path.join(root, 'tooling/performance', name),
+          await readFile(path.join(process.cwd(), 'tooling/performance', name)),
+        );
       await writeFile(
         path.join(root, 'tooling/performance/native-helpers.ts'),
         'export function plugin(host) { return host.plugin; } export async function waitFor(read) { return read(); }',
       );
       await writeFile(
         path.join(root, 'tooling/performance/native.ts'),
-        "export { apiScenarios } from './native-api.ts';",
+        "export { apiScenarios } from './native-api.ts'; export { commandStressScenarios, commandFeatureScenarios } from './native-command.ts'; export { noteScenarios } from './native-note-search.ts';",
       );
       const before = await protocolHash(root);
       await prepareBuild(root, output);
       const native = await readFile(path.join(output, 'native.js'), 'utf8');
       expect(native).toContain('Unsupported API profile');
       expect(native).not.toContain('TaskApiProvider');
+      expect(native).toContain('Dense native command failed');
+      expect(native).toContain('Above-ceiling search falsely certified coverage');
+      expect(native).not.toContain('NoteApplicationService');
+      expect(native).not.toContain('CommandSessionOwner');
       await writeFile(
         path.join(root, 'tooling/performance/native-api.ts'),
         '// changed API workload',

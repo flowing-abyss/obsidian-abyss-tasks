@@ -158,6 +158,18 @@ import { prepareTaskHierarchy, taskHierarchyTransaction } from './taskHierarchyT
 
 type LocateResult = ReturnType<TaskLocator['locate']>;
 
+function rootLinesBySource(
+  blocks: readonly TaskRootBlock[],
+): ReadonlyMap<string, readonly number[]> {
+  const populations = new Map<string, number[]>();
+  for (const block of blocks) {
+    const lines = populations.get(block.source) ?? [];
+    lines.push(block.line);
+    populations.set(block.source, lines);
+  }
+  return populations;
+}
+
 function notFound(
   target: TaskMutationTarget,
 ): Extract<TaskRepositoryResult, { readonly type: 'not-found' }> {
@@ -4739,11 +4751,11 @@ export class ObsidianTaskRepository implements TaskRepository {
     const state = this.state_abyssPrivate;
     if (authority === undefined || state === undefined) return undefined;
     const blocks = this.editor_abyssPrivate.rootBlocks(content);
+    const populations = rootLinesBySource(blocks);
     const roots: RootRevisionOverride[] = [];
     for (const block of blocks) {
-      const population = blocks
-        .filter((candidate) => candidate.source === block.source)
-        .map(({ line }) => line);
+      const population = populations.get(block.source);
+      if (population === undefined) return undefined;
       const current = state.currentRoot(path, block.line, block.source, population);
       if (
         current?.line !== block.line ||

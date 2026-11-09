@@ -122,7 +122,7 @@ export async function scanNotes(
   port: NoteApplicationApi,
   query: SearchNotesV1,
   position: number,
-  check: () => void,
+  work: { readonly check: () => void; readonly yield: () => Promise<void> },
 ): Promise<{
   readonly matches: readonly Match[];
   readonly position: number;
@@ -130,6 +130,7 @@ export async function scanNotes(
 }> {
   if (port.sources.coverage(query).type === 'error') throw new NoteFailure('INCOMPLETE_READ');
   const paths = port.sources.paths();
+  const check = work.check;
   const state: ScanState = { position, characters: 0, scanned: 0, matches: [] },
     matcher = port.matcher(query.query);
   while (within(state, query, paths)) {
@@ -137,8 +138,7 @@ export async function scanNotes(
     const path = scanPath(paths, state, query);
     if (path === undefined) continue;
     if (!(await scanSource({ port, query, matcher, check }, path, state))) break;
-    if (state.scanned % 8 === 0)
-      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    if (state.scanned % 8 === 0) await work.yield();
   }
   check();
   if (port.sources.coverage(query).type === 'error') throw new NoteFailure('INCOMPLETE_READ');

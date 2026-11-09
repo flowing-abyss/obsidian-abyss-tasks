@@ -91,6 +91,8 @@ const FIXTURE_LIMITS = [
   'export const CHILD_PROCESS_TIMEOUT_MS = 20_000;',
   'export const VIRTUAL_SURFACE_AUDIT_TIMEOUT_MS = 220_000;',
   'export const CANONICAL_SEARCH_SCALE_AUDIT_TIMEOUT_MS = 45_000;',
+  'export const CONCENTRATED_NOTE_AUDIT_TIMEOUT_MS = 275_000;',
+  'export const FULL_SOURCE_NOTE_SEARCH_AUDIT_TIMEOUT_MS = 45_000;',
 ];
 const PROGRAM_WORK = 'program work needs TYPESCRIPT_PROGRAM_TIMEOUT_MS';
 const CHILD_WORK = 'child process work needs CHILD_PROCESS_TIMEOUT_MS';
@@ -277,6 +279,82 @@ describe('test time limits', () => {
         on(14, "row 'plain work cannot borrow': a limit on light work"),
         on(15, `row 'wrong kind': ${work}, not CHILD_PROCESS_TIMEOUT_MS`),
         on(16, `row 'literal limit': ${work} from test/support/timeouts.ts, not a number`),
+      ]);
+    },
+    TYPESCRIPT_PROGRAM_TIMEOUT_MS,
+  );
+
+  it.each([
+    {
+      module: 'performance-public-api.test',
+      name: 'stressSetup',
+      limit: 'CONCENTRATED_NOTE_AUDIT_TIMEOUT_MS',
+      work: 'concentrated note audit',
+    },
+    {
+      module: 'performance-fixture.test',
+      name: 'runConcentratedNoteFixtureAudit',
+      limit: 'CONCENTRATED_NOTE_AUDIT_TIMEOUT_MS',
+      work: 'concentrated note audit',
+    },
+    {
+      module: 'performance-public-api.test',
+      name: 'runFullSourceNoteSearchAudit',
+      limit: 'FULL_SOURCE_NOTE_SEARCH_AUDIT_TIMEOUT_MS',
+      work: 'full-source note search audit',
+    },
+  ])(
+    'classifies only the exact profiler workload declaration $module:$name',
+    ({ module, name, limit, work }) => {
+      const required = `${work} work needs ${limit}`;
+      expect(
+        findings(
+          [
+            "import { it } from 'vitest';",
+            `import { ${name} as audit, cheap, setup } from './${module}';`,
+            "import { forwarded } from './support/profileAuditBridge';",
+            `import { ${name} as other } from './support/otherAudit';`,
+            `import { ${limit}, CHILD_PROCESS_TIMEOUT_MS } from './support/timeouts';`,
+            "it('missing limit', async () => { await audit(); });",
+            `it('exact declaration alias', async () => { await audit(); }, ${limit});`,
+            `it('re-exported declaration', async () => { await forwarded(); }, ${limit});`,
+            "it('other module stays light', async () => { await other(); });",
+            `it('other module cannot borrow', async () => { await other(); }, ${limit});`,
+            "it('cheap same-file helper stays light', async () => { await cheap(); });",
+            `it('cheap same-file helper cannot borrow', async () => { await cheap(); }, ${limit});`,
+            `it('local same-name stays light', async () => { async function ${name}() {} await ${name}(); });`,
+            `it('plain work cannot borrow', () => {}, ${limit});`,
+            "it('wrong kind', async () => { await audit(); }, CHILD_PROCESS_TIMEOUT_MS);",
+            "it('literal limit', async () => { await audit(); }, 275_000);",
+            `it('ordinary setup cannot borrow', async () => { await setup(); }, ${limit});`,
+            "it('small prefix stays light', () => { Array.from({ length: 260 }, () => 'Unrelated'); });",
+            `it('small prefix cannot borrow', () => { Array.from({ length: 260 }, () => 'Unrelated'); }, ${limit});`,
+            `it.each([false, true])('table alias %s', async (search) => { await audit(search); }, ${limit});`,
+          ],
+          {
+            [`test/${module}.ts`]: [
+              "import { it } from 'vitest';",
+              `import { ${limit} } from './support/timeouts';`,
+              `export async function ${name}() { await Promise.resolve(); }`,
+              'export async function cheap() {}',
+              'export async function setup() {}',
+              `it('direct fixed audit callback', ${name}, ${limit});`,
+            ],
+            'test/support/profileAuditBridge.ts': [
+              `export { ${name} as forwarded } from '../${module}';`,
+            ],
+            'test/support/otherAudit.ts': [`export async function ${name}() {}`],
+          },
+        ),
+      ).toEqual([
+        on(6, `row 'missing limit': ${required}`),
+        on(10, "row 'other module cannot borrow': a limit on light work"),
+        on(12, "row 'cheap same-file helper cannot borrow': a limit on light work"),
+        on(14, "row 'plain work cannot borrow': a limit on light work"),
+        on(15, `row 'wrong kind': ${required}, not CHILD_PROCESS_TIMEOUT_MS`),
+        on(16, `row 'literal limit': ${required} from test/support/timeouts.ts, not a number`),
+        on(17, "row 'ordinary setup cannot borrow': a limit on light work"),
+        on(19, "row 'small prefix cannot borrow': a limit on light work"),
       ]);
     },
     TYPESCRIPT_PROGRAM_TIMEOUT_MS,
@@ -864,6 +942,8 @@ describe('gate time limits', () => {
       CHILD_PROCESS_TIMEOUT_MS: 20_000,
       VIRTUAL_SURFACE_AUDIT_TIMEOUT_MS: 220_000,
       CANONICAL_SEARCH_SCALE_AUDIT_TIMEOUT_MS: 45_000,
+      CONCENTRATED_NOTE_AUDIT_TIMEOUT_MS: 275_000,
+      FULL_SOURCE_NOTE_SEARCH_AUDIT_TIMEOUT_MS: 45_000,
     });
     const light = Math.max(...Object.keys(GATE_OPTIONS).map(lightLimit));
     expect(Object.entries(limits).filter(([, limit]) => limit <= light)).toEqual([]);

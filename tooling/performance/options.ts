@@ -1,5 +1,5 @@
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
-import type { FixtureKind } from './types.ts';
+import type { CommandProfile, FixtureKind } from './types.ts';
 
 export interface Options {
   runs: number;
@@ -7,6 +7,7 @@ export interface Options {
   width?: number;
   startup: boolean;
   api: boolean;
+  command: CommandProfile;
   diagnostics: boolean;
   out?: string;
   baseline?: string;
@@ -19,13 +20,21 @@ export interface Options {
 }
 
 function fixtureKind(value: string): FixtureKind {
-  if (value !== 'standard' && value !== 'wide-tree')
-    throw new Error('--fixture must be standard or wide-tree');
+  if (value !== 'standard' && value !== 'wide-tree' && value !== 'single-note')
+    throw new Error('--fixture must be standard, wide-tree or single-note');
   return value;
 }
 
 function applyOption(options: Options, args: string[], index: number): number {
   const arg = args[index];
+  const command = new Map([
+    ['--command-mode', 'feature'],
+    ['--command-stress', 'stress'],
+  ] as const).get(arg as '--command-mode');
+  if (command !== undefined) {
+    setCommand(options, command);
+    return index;
+  }
   if (arg === '--fixture') {
     options.fixture = fixtureKind(argument(args, index + 1));
     return index + 1;
@@ -69,6 +78,7 @@ export function parseOptions(args: string[]): Options {
     runs: 10,
     startup: false,
     api: false,
+    command: 'none',
     diagnostics: true,
     help: false,
   };
@@ -82,6 +92,7 @@ export function parseOptions(args: string[]): Options {
   }
   validateLimits(options);
   if (options.api && options.startup) throw new Error('--api cannot be combined with --startup');
+  validateSelection(options);
   const modes = ['--compare', '--recover', '--recover-offline'].filter((mode) => seen.has(mode));
   if (modes.length > 1 || (modes.length === 1 && seen.size !== 1))
     throw new Error('Comparison and recovery modes cannot be combined with other options');
@@ -131,4 +142,19 @@ export function settings(patch: Record<string, unknown>): unknown {
       propertyDefinitionsVersion: 1,
     },
   };
+}
+
+function setCommand(options: Options, command: CommandProfile): void {
+  if (options.command !== 'none')
+    throw new Error('Command profile selections are mutually exclusive');
+  options.command = command;
+}
+function validateSelection(options: Options): void {
+  if (options.command === 'none') {
+    if (options.fixture === 'single-note')
+      throw new Error('single-note requires a command profile');
+    return;
+  }
+  if (options.fixture !== 'single-note' || options.api || options.startup)
+    throw new Error('Command profile requires single-note without --api or --startup');
 }

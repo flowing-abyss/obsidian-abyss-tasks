@@ -354,7 +354,7 @@ export default class TaskCalendarPlugin extends Plugin {
       tasks,
       this.projectProperties,
     );
-    this.initializeTaskApi(tasks, refAuthority);
+    this.initializeTaskApi(tasks, refAuthority, scheduler);
     this.initializeTagManager();
   }
 
@@ -437,7 +437,11 @@ export default class TaskCalendarPlugin extends Plugin {
     return this.commandSessionOwner;
   }
 
-  private initializeTaskApi(tasks: TaskApplicationService, authority: TaskRefAuthority): void {
+  private initializeTaskApi(
+    tasks: TaskApplicationService,
+    authority: TaskRefAuthority,
+    scheduler: TaskSearchScheduler,
+  ): void {
     this.tasks = tasks;
     this.queries = tasks.queries;
     const sources = this.taskIndex.projectSources();
@@ -445,6 +449,7 @@ export default class TaskCalendarPlugin extends Plugin {
     const reads = createProjectIntegrationReads(sources, settings);
     this.taskApiProvider = new TaskApiProvider({
       notes: new NoteApplicationService(this.app, sources, {
+        yield: (signal) => scheduler.yield(signal),
         capture: () => this.taskIndex.integrationReads().capture(),
         host: new NoteHostAdapter(this.app, sources, (source) =>
           this.taskIndex.noteStructure(source),

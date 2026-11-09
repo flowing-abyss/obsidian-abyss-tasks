@@ -1,5 +1,6 @@
 import { apiScenarios } from './native-api.ts';
 import { NativeCdp } from './native-cdp.ts';
+import { commandFeatureScenarios, commandStressScenarios } from './native-command.ts';
 import {
   assertRoots,
   assertViewport,
@@ -12,7 +13,8 @@ import {
   plugin,
   waitFor,
 } from './native-helpers.ts';
-import { NativeObservation } from './native-observation.ts';
+import { noteScenarios, type SearchCallSample } from './native-note-search.ts';
+import { HiddenWindowObservation, NativeObservation } from './native-observation.ts';
 import {
   calendarScenarios,
   commandScenarios,
@@ -31,11 +33,19 @@ import { AbyssProfiler, bounded, PendingWork } from './profiler.ts';
 import { FIXTURE_FOLDER, type Sample } from './types.ts';
 
 export { settings } from './options.ts';
+type FixtureHost = Pick<Host, 'vault' | 'metadataCache'>;
+type ResetObserver = (diagnostic: Record<string, unknown>) => void;
+interface ResetOptions {
+  force: boolean;
+  isActive(): boolean;
+  observe?: ResetObserver;
+}
 
 export async function fixtureReady(
   host: Pick<Host, 'vault' | 'metadataCache'>,
   contents: Record<string, string>,
   isActive = (): boolean => true,
+  observe?: ResetObserver,
 ): Promise<void> {
   await waitFor(
     () => {
@@ -47,7 +57,11 @@ export async function fixtureReady(
   );
   // A prior run may still have entries in the host cache after filesystem cleanup.
   // Force one host-owned write/event per initial file, even when bytes match.
-  await resetFixture(host, contents, true, isActive);
+  await resetFiles(host, contents, {
+    force: true,
+    isActive,
+    ...(observe === undefined ? {} : { observe }),
+  });
 }
 
 export async function resetFixture(
@@ -56,31 +70,148 @@ export async function resetFixture(
   force = false,
   isActive = (): boolean => true,
 ): Promise<void> {
-  for (const [path, expected] of Object.entries(contents)) {
-    if (!isActive()) throw new Error('Profile harness stopped');
-    if (!path.startsWith(`${FIXTURE_FOLDER}/`) || path.split('/').includes('..'))
-      throw new Error('Reset is restricted to generated fixture files');
-    const file = host.vault.getFileByPath(path);
-    if (file === null) throw new Error(`Reset file missing: ${path}`);
-    const matches = async (): Promise<boolean> =>
-      (await host.vault.read(file)) === expected &&
-      (await host.vault.cachedRead(file)) === expected;
-    if (!force && (await matches())) continue;
-    let changed = false;
-    const ref = host.metadataCache.on('changed', (updated, content) => {
-      if (updated.path === path && content === expected) changed = true;
-    });
-    try {
-      await host.vault.modify(file, expected);
-      await waitFor(
-        async () => changed && (await matches()),
-        `reset contents and metadata: ${path}`,
-        30000,
-      );
-    } finally {
-      host.metadataCache.offref(ref);
+  await resetFiles(host, contents, { force, isActive });
+}
+
+async function resetFiles(
+  host: FixtureHost,
+  contents: Record<string, string>,
+  options: ResetOptions,
+): Promise<void> {
+  for (const entry of Object.entries(contents)) await resetFile(host, entry, options);
+}
+async function resetFile(
+  host: FixtureHost,
+  [path, expected]: [string, string],
+  options: ResetOptions,
+): Promise<void> {
+  if (!options.isActive()) throw new Error('Profile harness stopped');
+  if (!path.startsWith(`${FIXTURE_FOLDER}/`) || path.split('/').includes('..'))
+    throw new Error('Reset is restricted to generated fixture files');
+  const file = host.vault.getFileByPath(path);
+  if (file === null) throw new Error(`Reset file missing: ${path}`);
+  const matches = (): Promise<boolean> => fixtureMatches(host, { path, file, expected });
+  if (!options.force && (await matches())) return;
+  let metadataEvents = 0,
+    metadata: string | undefined;
+  const ref = host.metadataCache.on('changed', (updated, content) => {
+    if (updated === file && updated.path === path) {
+      metadataEvents++;
+      metadata = content;
     }
+  });
+  try {
+    await host.vault.modify(file, expected);
+    await waitFor(
+      async () =>
+        metadata !== undefined && observedFixtureText(metadata, expected) && (await matches()),
+      `reset contents and metadata: ${path}`,
+      30000,
+    );
+  } catch (error) {
+    await reportResetFailure(
+      host,
+      { path, file, expected, metadataEvents, metadataExact: metadata === expected, metadata },
+      { error, observe: options.observe },
+    );
+    throw error;
+  } finally {
+    host.metadataCache.offref(ref);
   }
+}
+
+function observedFixtureText(observed: string, expected: string): boolean {
+  return observed === expected || expected === `\uFEFF${observed}`;
+}
+async function fixtureMatches(
+  host: FixtureHost,
+  source: {
+    path: string;
+    file: NonNullable<ReturnType<Host['vault']['getFileByPath']>>;
+    expected: string;
+  },
+): Promise<boolean> {
+  const { path, file, expected } = source,
+    stamp = { ...file.stat };
+  const current = (): boolean =>
+    file.path === path &&
+    host.vault.getFileByPath(path) === file &&
+    JSON.stringify(stamp) === JSON.stringify(file.stat);
+  if (!current()) return false;
+  const fresh = await host.vault.read(file);
+  if (!current() || !observedFixtureText(fresh, expected)) return false;
+  const cached = await host.vault.cachedRead(file);
+  if (!current() || !observedFixtureText(cached, expected)) return false;
+  const bytes = await host.vault.readBinary(file);
+  if (!current()) return false;
+  return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes) === expected;
+}
+
+function textDifference(text: string, expected: string): Record<string, number | boolean> {
+  let index = 0;
+  while (index < Math.min(text.length, expected.length) && text[index] === expected[index]) index++;
+  return {
+    characters: text.length,
+    bytes: new TextEncoder().encode(text).length,
+    firstCodePoint: text.codePointAt(0) ?? -1,
+    exact: text === expected,
+    leadingBomOnly: expected === `\uFEFF${text}`,
+    crlfEquivalent: text.replace(/\r\n/gu, '\n') === expected.replace(/\r\n/gu, '\n'),
+    firstDifference: text === expected ? -1 : index,
+  };
+}
+async function readDifference(
+  read: () => Promise<string>,
+  expected: string,
+): Promise<Record<string, unknown>> {
+  try {
+    return textDifference(await read(), expected);
+  } catch (error) {
+    return { readError: String(error) };
+  }
+}
+async function resetFailure(
+  host: FixtureHost,
+  state: {
+    path: string;
+    file: NonNullable<ReturnType<Host['vault']['getFileByPath']>>;
+    expected: string;
+    metadataEvents: number;
+    metadataExact: boolean;
+    metadata: string | undefined;
+  },
+): Promise<Record<string, unknown>> {
+  const { file, expected } = state,
+    path = state.path,
+    stamp = { ...file.stat };
+  const sameFile = (): boolean => file.path === path && host.vault.getFileByPath(path) === file;
+  const sameFileBefore = sameFile();
+  const read = <T>(operation: () => Promise<T>): Promise<T> => {
+    if (!sameFile()) return Promise.reject(new Error('Generated fixture file identity changed'));
+    return operation();
+  };
+  const fresh = await readDifference(() => read(() => host.vault.read(file)), expected);
+  const cached = await readDifference(() => read(() => host.vault.cachedRead(file)), expected);
+  // Diagnostic reads only the already-validated generated file; it grants no readiness authority.
+  const binary = await readDifference(
+    async () =>
+      new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
+        await read(() => host.vault.readBinary(file)),
+      ),
+    expected,
+  );
+  return {
+    path,
+    metadataEvents: state.metadataEvents,
+    metadataExact: state.metadataExact,
+    expected: textDifference(expected, expected),
+    metadata: state.metadata === undefined ? null : textDifference(state.metadata, expected),
+    fresh,
+    cached,
+    binary,
+    sameFile: sameFileBefore && sameFile(),
+    sameStamp: JSON.stringify(stamp) === JSON.stringify(file.stat),
+  };
 }
 
 interface MeasurementContext {
@@ -219,9 +350,16 @@ export function install(host: Host, bridge: NativeBridge, options: NativeOptions
   if (host.vault.getName() !== 'dev-vault-tasks') throw new Error('Wrong vault');
   const resources = new Map<string, NativeCdp>();
   const pending = new PendingWork();
+  const hidden =
+    bridge.window === undefined
+      ? undefined
+      : new HiddenWindowObservation(bridge.window, document, (evidence) => {
+          bridge.save('hidden-window.json', evidence);
+        });
   let active = true;
   const cleanup = async (): Promise<void> => {
     active = false;
+    await hidden?.restore();
     await pending.settle();
     await resources.get('cdp')?.close();
     resources.delete('cdp');
@@ -257,7 +395,10 @@ export function install(host: Host, bridge: NativeBridge, options: NativeOptions
     const nodes = plugin(host).queries.listNodes().length;
     if (nodes !== options.expectedNodes)
       throw new Error(`Fixture nodes: expected ${options.expectedNodes}, received ${nodes}`);
-    if (options.api === true) await apiScenarios(host, options, measure);
+    if (options.command === 'stress') await commandStressScenarios(host, options, measure);
+    else if (options.command === 'feature') {
+      await featureScenarios(host, options, measure, { bridge, diagnostic, iteration, hidden });
+    } else if (options.api === true) await apiScenarios(host, options, measure);
     else if (!options.startup)
       await suite(host, options, measure, { cdp: resources.get('cdp'), bridge });
     const cdp = resources.get('cdp');
@@ -270,10 +411,40 @@ export function install(host: Host, bridge: NativeBridge, options: NativeOptions
   };
   return {
     cycle: (iteration, diagnostic) => pending.track(runCycle(iteration, diagnostic)),
-    prepareFixture: (contents) => pending.track(fixtureReady(host, contents, () => active)),
-    resetFixture: (contents) => pending.track(resetFixture(host, contents, false, () => active)),
+    ...fixtureHarness(host, bridge, pending, () => active),
     cleanup,
   };
+}
+
+async function featureScenarios(
+  host: Host,
+  options: NativeOptions,
+  measure: Measure,
+  context: {
+    bridge: NativeBridge;
+    diagnostic: boolean;
+    iteration: number;
+    hidden: HiddenWindowObservation | undefined;
+  },
+): Promise<void> {
+  const { bridge, diagnostic, iteration, hidden } = context;
+  if (diagnostic && hidden === undefined) throw new Error('Native window bridge unavailable');
+  await commandFeatureScenarios(host, options, measure, {
+    failure: (evidence) => {
+      bridge.save('note-apply-failure.json', evidence);
+    },
+  });
+  const calls: SearchCallSample[] = [];
+  await noteScenarios(host, options, measure, {
+    record: (sample) => {
+      calls.push(sample);
+      bridge.save(
+        diagnostic ? 'diagnostic-search-calls.json' : `search-calls-${iteration}.json`,
+        calls,
+      );
+    },
+    ...(diagnostic && hidden !== undefined ? { hidden } : {}),
+  });
 }
 
 async function suite(
@@ -309,4 +480,36 @@ async function suite(
   // A ready service does not imply a terminated shared Worker after panel close.
   await plugin(host).search.prepare(new AbortController().signal);
   await cdp?.memory('panel-closed');
+}
+
+function fixtureHarness(
+  host: FixtureHost,
+  bridge: NativeBridge,
+  pending: PendingWork,
+  isActive: () => boolean,
+): Pick<NativeHarness, 'prepareFixture' | 'resetFixture'> {
+  const observe: ResetObserver = (diagnostic) => {
+    bridge.save('fixture-reset-failure.json', diagnostic);
+  };
+  return {
+    prepareFixture: (contents) => pending.track(fixtureReady(host, contents, isActive, observe)),
+    resetFixture: (contents) =>
+      pending.track(resetFiles(host, contents, { force: false, isActive, observe })),
+  };
+}
+
+async function reportResetFailure(
+  host: FixtureHost,
+  state: Parameters<typeof resetFailure>[1],
+  failure: { error: unknown; observe: ResetObserver | undefined },
+): Promise<void> {
+  if (failure.observe === undefined) return;
+  try {
+    failure.observe(await resetFailure(host, state));
+  } catch (diagnosticError) {
+    throw new AggregateError(
+      [failure.error, diagnosticError],
+      'Fixture readiness and diagnosis failed',
+    );
+  }
 }

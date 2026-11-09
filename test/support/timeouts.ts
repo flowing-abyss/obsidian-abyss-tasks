@@ -9,7 +9,7 @@
  * to 5 s. The original four kinds cover heavy files at 30 busy loops on the gate's forks pool
  * (with coverage, lint:store without), sizing rounds under the same load, CI's Node 22 and 24
  * runners, and SP1o's gate durations at load 38 for stopped rows (lower bounds). The lifecycle
- * audit and canonical search scale-audit kinds follow the same formula with their separate
+ * audit, canonical search and profiler correctness kinds follow the same formula with separate
  * measurements documented below. When a sizing round puts a row or hook above half its limit,
  * its kind re-sizes once: to two and a half times the kind's slowest time with every sizing round
  * so far included,
@@ -65,3 +65,22 @@ export const VIRTUAL_SURFACE_AUDIT_TIMEOUT_MS = 220_000;
  * exact fixed-scale function in task-search-navigation.test.ts owns this kind.
  */
 export const CANONICAL_SEARCH_SCALE_AUDIT_TIMEOUT_MS = 45_000;
+
+/**
+ * The six exact concentrated-note correctness audits: real indexing of one 4,000-root/6,000-node
+ * note, with complete fixture, mutation, conservation or search assertions. Twice the combined
+ * task/prose row's 135.129 s completed 2026-11-09 diagnostic on Node 26.13.0/Vitest 5.0.5 with V8
+ * coverage and thirty owned busy CPU workers, rounded up to 5 s. All 64 profiler tests completed;
+ * the six eligible rows took 40.809–135.129 s. Only the exact stressSetup and concentrated fixture
+ * audit declarations own this kind. This sizes correctness work, not native product latency.
+ */
+export const CONCENTRATED_NOTE_AUDIT_TIMEOUT_MS = 275_000;
+
+/**
+ * The exact full-source note-search audit over the large search fixtures and 260 unrelated
+ * prefix paths, retaining complete continuation/refusal assertions. Its 2026-11-09 diagnostic
+ * completed in 15.810 s under the same thirty-worker V8 coverage contention; the retained full
+ * gate stopped it at 20.787 s. Twice that larger lower bound, rounded up to 5 s. Only the exact
+ * runFullSourceNoteSearchAudit declaration owns this kind; small prefix controls stay light.
+ */
+export const FULL_SOURCE_NOTE_SEARCH_AUDIT_TIMEOUT_MS = 45_000;

@@ -15,7 +15,7 @@ export interface TaskDisplayField {
   readonly input: RetainedTaskTextInput;
   readonly change?: 'added' | 'changed' | 'removed';
 }
-export interface TaskDisplayComment {
+interface TaskDisplayComment {
   readonly kind: 'comment';
   readonly key: string;
   readonly field: TaskDisplayField;
@@ -71,10 +71,7 @@ export function createTaskRow(
   const title = titleRow.createSpan({ cls: root ? 'abyss-task-title' : 'abyss-subtask-label' });
   return { row, body, titleRow, title };
 }
-export function reconcileTaskElements(
-  container: HTMLElement,
-  elements: readonly HTMLElement[],
-): void {
+function reconcileTaskElements(container: HTMLElement, elements: readonly HTMLElement[]): void {
   const desired = new Set(elements);
   for (const child of [...container.children])
     if (!desired.has(child as HTMLElement)) child.remove();

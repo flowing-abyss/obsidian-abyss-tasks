@@ -452,3 +452,111 @@ it.each(['![[#Section]]', '![photo](./photo.png)', '[[#Section]]', '[photo][loca
     expect(h.writes).not.toHaveBeenCalled();
   },
 );
+
+it('keeps historical copies and merge proof separate from new-tree comment authority', async () => {
+  const before = '- [ ] Source #work\n\t- 2020-01-02: history\n\t- [ ] Child\n';
+  const h = await taskEditPreparationHarness(before);
+  try {
+    const source = h.root;
+    const comment = expectDefined(source.comments[0]);
+    let p = await h.service.prepareCreateTree({
+      destination: {
+        type: 'explicit',
+        destination: { filePath: 'tasks.md', insertion: { type: 'append' } },
+      },
+      tree: { markdownTitle: 'Target #work', description: 'Source' },
+    });
+    if (p.type !== 'ready') throw new Error('Missing creation');
+    expect(p.sourceCopiesAvailable()).toBe(true);
+    p = await p.copySource({
+      type: 'comment',
+      source: comment.ref,
+      parent: { type: 'task', ref: p.after.ref },
+    });
+    if (p.type !== 'ready') throw new Error('Missing comment copy');
+    p = await p.copySource({
+      type: 'subtree',
+      source: { type: 'subtask', ref: expectDefined(source.subtasks[0]).ref },
+      parent: { type: 'task', ref: p.after.ref },
+    });
+    if (p.type !== 'ready') throw new Error('Missing subtree copy');
+    expect(p.sourceCopiesAvailable()).toBe(true);
+    expect(p.continueSourceComment(comment.ref)).toBeUndefined();
+    expect(p.after.comments[0]?.ref.originalMarkdown).toBe(comment.ref.originalMarkdown);
+    expect((await p.assessMerge({ type: 'task', ref: source.ref }))?.state).toBe('covered');
+    expect(h.writes).not.toHaveBeenCalled();
+    const candidate = p.after.source.originalBlock;
+    expect(await p.commit()).toMatchObject({
+      result: { type: 'ok' },
+      destinationEffects: 'unchanged',
+    });
+    expect(h.writes).toHaveBeenCalledOnce();
+    expect(h.index.list()[0]?.source.originalBlock).toBe(source.source.originalBlock);
+    expect(h.index.list()[1]?.source.originalBlock).toBe(candidate);
+    expect(await h.read()).toBe(`${before}${candidate}\n`);
+  } finally {
+    h.index.destroy();
+  }
+});
+
+it.each(['before-assess', 'during-assess', 'before-copy', 'during-copy'])(
+  'withholds new-tree source evidence after catalog changes %s',
+  async (phase) => {
+    const before = '- [ ] Source\n\t- 2020-01-02: history\n';
+    const h = await taskEditPreparationHarness(before);
+    try {
+      const prepare = h.repository.prepareCreateRoot.bind(h.repository);
+      const assess = vi.fn();
+      const copy = vi.fn();
+      vi.spyOn(h.repository, 'prepareCreateRoot').mockImplementation(async (...args) => {
+        const prepared = await prepare(...args);
+        if (prepared.type !== 'ready') return prepared;
+        return {
+          ...prepared,
+          assessMerge: async (source) => {
+            assess();
+            const result = await prepared.assessMerge(source);
+            if (phase === 'during-assess') h.catalog.replace([]);
+            return result;
+          },
+          copySource: async (input) => {
+            copy();
+            const result = await prepared.copySource(input);
+            if (phase === 'during-copy') h.catalog.replace([]);
+            return result;
+          },
+        };
+      });
+      const p = await h.service.prepareCreateTree({
+        destination: {
+          type: 'explicit',
+          destination: { filePath: 'tasks.md', insertion: { type: 'append' } },
+        },
+        tree: { markdownTitle: 'New' },
+      });
+      if (p.type !== 'ready') throw new Error('Missing creation');
+      if (phase.startsWith('before')) h.catalog.replace([]);
+      if (phase.endsWith('assess')) {
+        expect(await p.assessMerge({ type: 'task', ref: h.root.ref })).toBeUndefined();
+        expect(assess).toHaveBeenCalledTimes(phase.startsWith('before') ? 0 : 1);
+      } else {
+        expect(
+          await p.copySource({
+            type: 'comment',
+            source: expectDefined(h.root.comments[0]).ref,
+            parent: { type: 'task', ref: p.after.ref },
+          }),
+        ).toMatchObject({
+          type: 'invalid',
+          result: { type: 'invalid', issues: [{ field: 'settings' }] },
+        });
+        expect(copy).toHaveBeenCalledTimes(phase.startsWith('before') ? 0 : 1);
+      }
+      expect(p.after.comments).toEqual([]);
+      expect(h.writes).not.toHaveBeenCalled();
+      expect(await h.read()).toBe(before);
+    } finally {
+      h.index.destroy();
+    }
+  },
+);

@@ -542,7 +542,7 @@ const snapshot: z.ZodType<HistoricalCommandSnapshot> = z.object({
 
 export type HistoricalCommandReceipt =
   MutationReceiptV1 | TaskContentReceiptV1 | NoteMutationReceiptV1 | ProjectMutationReceiptV1;
-export interface HistoricalCommandJournalEntry extends Omit<CommandJournalEntry, 'receipt'> {
+interface HistoricalCommandJournalEntry extends Omit<CommandJournalEntry, 'receipt'> {
   readonly receipt?: HistoricalCommandReceipt;
 }
 export interface HistoricalCommandSnapshot extends Omit<

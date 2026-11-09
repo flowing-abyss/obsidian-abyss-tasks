@@ -26,7 +26,7 @@ const field = (value: z.ZodType): z.ZodType =>
     z.strictObject({ type: z.literal('set'), value }),
     z.strictObject({ type: z.literal('clear') }),
   ]);
-export const patchSchema = z.strictObject({
+const patchSchema = z.strictObject({
   markdownTitle: field(text).optional(),
   priority: field(z.enum(['A', 'B', 'C', 'D', 'E', 'F'])).optional(),
   due: field(z.string())
@@ -81,7 +81,7 @@ const destination = z.union([
   }),
   z.strictObject({ type: z.literal('project'), target: handle, expectedRevision: handle }),
 ]);
-export const operationSchema = z.discriminatedUnion('type', [
+const operationSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('reorder'),
     target: handle,

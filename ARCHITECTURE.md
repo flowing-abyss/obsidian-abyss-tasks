@@ -462,6 +462,21 @@ the sandbox read basis without reserving coverage against later host events. Ord
 discovers the provider. Both selections use the same profiler, pending-work drain, cycle reset, and
 transaction restoration; the API client and listener belong to one cycle.
 
+The profiler's opt-in `single-note` fixture supports separate common-command and feature-facade
+rosters. `native-command.ts` uses existing application commands for the former and type-only public
+contracts for sealed preparation/apply and prose-section measurements. `native-note-search.ts`
+measures complete-source search, cursor continuation, resource refusal and exact paged reads through
+the same facade. Feature modules acquire no product source adapters or session-history owner;
+ordinary and original-product profiling can bundle the final tooling without candidate runtime
+imports. The existing native observation, pending-work and transaction owners cover these spans.
+The diagnostic window observation borrows only the captured renderer's native window, proves its
+hidden state, and restores it before pending work drains. Renderer CPU attribution binds sampled
+script identities and coordinates to an exact full-bundle interval read through the owned CDP
+session. Evidence records the debugger source URL and captured CPU resource URL separately;
+only the latter is used for mapping. A script URL alone cannot authorize source mapping.
+Failed note receipts collect source conservation and retained-target outcomes through the existing
+facade after failure. Measured operations do not replace product read or reconciliation methods.
+
 ## Sources of truth
 
 | Concern                                                 | Authoritative source                                         | Derived or temporary state            |
@@ -510,7 +525,13 @@ for prepared prose sections. Main supplies the existing per-file task queue and 
 protection. The writer checks the native file, full accepted bytes, source scope and semantics,
 frontmatter, and the complete task population before returning its sealed candidate. Its native
 adapter uses `TaskRefAuthority.reserveStructuralMutation` to preserve roots and children only
-through an exact prose-range displacement. Rejected or unreadable writes retire speculative
+through an exact prose-range displacement. After forwarding that exact candidate, the adapter
+temporarily defers prior metadata echoes through TaskIndex only while the accepted source instance,
+native file and prior stamp, scope, semantics, and original reservation still agree. A different
+metadata value or failed proof retires the deferral. Install, rejection, and release retire it
+synchronously before readback; fresh candidate reconciliation remains required. This covers delayed
+prewrite metadata without granting authority to external reversions or replacement owners.
+Rejected or unreadable writes retire speculative
 continuations through the existing restoration and invalidation paths.
 
 ## Portable integration contract
@@ -558,6 +579,13 @@ The latter validates a vault-relative Markdown path without looking up, reading 
 that source. Destination permission and accepted-note checks still apply. Host-generated links
 are parsed through the shared source-reference grammar and resolved natively to verify the exact
 destination, including headings, blocks and Markdown-link preferences.
+
+Canonical prose protection retains one immutable task-range result for the last exact content
+string. Each section read still validates the accepted source and obtains fresh host heading/block
+anchors. Note search receives the existing explicit-window scheduler from main through its internal
+note port. Each client read owns cancellation for pending yields; caller abort or client/provider
+disposal releases the scheduler resources and prevents late results. Source-count, character and
+cursor limits and complete-source matching remain at the same scan boundaries.
 
 Note search uses the host's `prepareSimpleSearch` against whole accepted sources in canonical
 path order. Its per-call character target is 262,144, with one oversized source permitted up to
@@ -858,6 +886,12 @@ canonical [`TaskMarkdownCodec`](src/tasks/infrastructure/markdown/TaskMarkdownCo
 list-item metadata enriches discovery; omissions cannot remove authored tasks. Source exclusions
 apply before public projections, while excluded content remains available for repository proof.
 Host-cache frontmatter supplies presentation values, with authored frontmatter as fallback.
+
+Physical-root lookups derive source populations and first-line indexes from the installed roots.
+TaskIndex retires these derived maps on installation, removal and disposal; they grant no identity
+or continuation authority. Internal readers treat root source/ref fields as readonly, while public
+projections and rename operations construct copies. Repository rollback captures its source-to-line
+population map once per operation and retains the existing duplicate order/count checks.
 
 Initial discovery starts after layout readiness. Vault reads remain concurrent, while each
 initialization attempt owns a cancellable queue for accepting their results. The queue yields

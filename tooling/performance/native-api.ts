@@ -3,7 +3,7 @@ import { plugin, waitFor } from './native-helpers.ts';
 import type { Measure } from './native-scenarios.ts';
 import type { Host, NativeOptions } from './native-types.ts';
 
-function connect(host: Host): TasksApiV1 {
+export function connect(host: Host): TasksApiV1 {
   const candidate: unknown = plugin(host);
   if (
     candidate === null ||
@@ -19,7 +19,7 @@ function connect(host: Host): TasksApiV1 {
   return result.value;
 }
 
-function assertMatchingObservation(expected: ObservationV1, actual: ObservationV1): void {
+export function assertMatchingObservation(expected: ObservationV1, actual: ObservationV1): void {
   if (
     expected.providerEpoch !== actual.providerEpoch ||
     expected.revision !== actual.revision ||

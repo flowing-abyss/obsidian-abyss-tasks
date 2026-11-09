@@ -73,6 +73,7 @@ export interface PreparedNote {
 }
 export interface NoteApplicationApi {
   readonly sources: NoteSourceReadApi;
+  yield(signal: AbortSignal): Promise<void>;
   capture(): TaskReadObservation;
   sections(source: AcceptedNoteSource): readonly NoteRange[];
   resolve(from: AcceptedNoteSource, wikiLink: string): Promise<NoteSelection>;

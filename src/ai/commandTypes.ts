@@ -20,7 +20,7 @@ export type CommandNoteRead = NoteReadPageV1 & {
 
 export type CommandStatusKind =
   'thinking' | 'searching' | 'ready' | 'question' | 'writing' | 'saved' | 'error';
-export interface CommandStatus {
+interface CommandStatus {
   readonly kind: CommandStatusKind;
   readonly message: string;
 }
@@ -101,7 +101,7 @@ export interface CommandJournalEntry {
   readonly receipt?: unknown;
   readonly error?: string;
 }
-export interface CommandExchange {
+interface CommandExchange {
   readonly role: 'user' | 'agent';
   readonly text: string;
 }
