@@ -34,6 +34,7 @@ export interface CommandModeOptions extends Pick<
   'formatDate' | 'getDateClass' | 'getTagColor' | 'showSource'
 > {
   readonly app: App;
+  readonly availability?: () => { agent: boolean; voice: boolean };
   readonly transcription?: CommandTranscriptionPort;
   readonly owner: () => CommandSessionOwner;
   readonly memory: CommandSurfaceMemory;
@@ -119,7 +120,7 @@ export class CommandModeSurface implements CaptureExtension {
     const history = this.button(commandMessage('History'), 'history');
     this.toggle = this.button(commandMessage('CommandMode'), 'sparkles');
     this.microphone = this.button(commandMessage('Microphone'), 'mic');
-    this.microphone.disabled = options.transcription === undefined;
+    this.updateAvailability();
     this.component.registerDomEvent(this.microphone, 'click', () => {
       if (!this.active()) this.setActive(true);
       if (this.voice !== undefined)
@@ -159,14 +160,14 @@ export class CommandModeSurface implements CaptureExtension {
     this.component.registerDomEvent(this.toggle, 'click', () => {
       this.setActive(!this.active());
     });
-    this.component.registerDomEvent(this.toggle, 'contextmenu', (event) => {
+    this.component.registerDomEvent(this.primary, 'contextmenu', (event) => {
       event.preventDefault();
-      this.openMenu(this.toggle, event);
+      this.openMenu(this.primary, event);
     });
-    this.component.registerDomEvent(this.toggle, 'keydown', (event) => {
+    this.component.registerDomEvent(this.primary, 'keydown', (event) => {
       if (event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)) {
         event.preventDefault();
-        this.openMenu(this.toggle);
+        this.openMenu(this.primary);
       }
     });
     this.component.registerDomEvent(this.primary, 'click', () => {
@@ -186,6 +187,13 @@ export class CommandModeSurface implements CaptureExtension {
     this.bindInputSizing();
     this.setActive(options.memory.active);
     this.initializing = false;
+  }
+  private updateAvailability(): void {
+    const availability = this.options.availability?.();
+    this.toggle.hidden = availability?.agent === false;
+    this.microphone.hidden =
+      availability?.voice === false || this.options.transcription === undefined;
+    this.microphone.disabled = this.options.transcription === undefined;
   }
   private bindInputSizing(): void {
     const win = this.capture.input.win as Window & { ResizeObserver?: typeof ResizeObserver };

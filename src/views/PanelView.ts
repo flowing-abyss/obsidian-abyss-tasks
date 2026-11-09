@@ -136,6 +136,7 @@ interface PanelLayoutElements {
 }
 
 export interface PanelCommandServices {
+  readonly availability?: () => { agent: boolean; voice: boolean };
   readonly transcription?: CommandTranscriptionPort;
   readonly owner: () => CommandSessionOwner;
   readonly memory: CommandSurfaceMemory;
@@ -1055,6 +1056,9 @@ export class PanelView extends ItemView {
                 new CommandModeSurface(capture, {
                   app: this.app,
                   owner: command.owner,
+                  ...(command.availability === undefined
+                    ? {}
+                    : { availability: command.availability }),
                   ...(command.transcription === undefined
                     ? {}
                     : { transcription: command.transcription }),

@@ -45,6 +45,23 @@ function secrets() {
 }
 
 describe('provider connections', () => {
+  it('reports configured controls from current preferences and key presence without a request', () => {
+    const { owner } = secrets();
+    const request = vi.fn(async () => reply());
+    const connections = new ProviderConnections(owner, transportFixture(request));
+    expect(connections.availability({})).toEqual({ agent: false, voice: false });
+    owner.store('openrouter', 'synthetic-agent-key');
+    owner.store('openai', 'synthetic-voice-key');
+    expect(connections.availability({})).toEqual({ agent: true, voice: false });
+    expect(connections.availability({ voice: 'openai' })).toEqual({ agent: true, voice: true });
+    owner.store('openrouter', '');
+    expect(connections.availability({ voice: 'openai' })).toEqual({ agent: false, voice: true });
+    expect(connections.availability({ provider: 'unsupported' })).toEqual({
+      agent: false,
+      voice: false,
+    });
+    expect(request).not.toHaveBeenCalled();
+  });
   it('defaults to explicit OpenRouter and reuses only supported research billing providers', () => {
     const settings = defaultProviderSettings();
     expect(settings).toEqual({

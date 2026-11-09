@@ -5,7 +5,7 @@ import type { LanguageModel } from 'ai';
 import type { NativeProviderTransport } from './NativeProviderTransport';
 import type { ProviderSecrets } from './ProviderSecrets';
 import { ProviderFailure } from './providerFailure';
-import { providerSchema, type ModelSelection } from './providerSettings';
+import { parseProviderSettings, providerSchema, type ModelSelection } from './providerSettings';
 
 /** Explicit BYOK only. Constructing a model does not perform a network request. */
 export class ProviderConnections {
@@ -14,6 +14,18 @@ export class ProviderConnections {
   constructor(secrets: ProviderSecrets, transport: NativeProviderTransport) {
     this.#secrets = secrets;
     this.#transport = transport;
+  }
+  availability(settings: unknown): { agent: boolean; voice: boolean } {
+    try {
+      const selected = parseProviderSettings(settings);
+      return {
+        agent: this.#secrets.has(selected.provider),
+        voice: selected.voice === 'openai' && this.#secrets.has('openai'),
+      };
+    } catch {
+      // Invalid preferences or unavailable secrets remain editable in settings.
+      return { agent: false, voice: false };
+    }
   }
   model(selection: ModelSelection): Exclude<LanguageModel, string> {
     if (

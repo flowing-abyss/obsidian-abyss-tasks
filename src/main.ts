@@ -539,6 +539,7 @@ export default class TaskCalendarPlugin extends Plugin {
           this.taskInputServices,
           {
             owner: () => this.getCommandSessionOwner(),
+            availability: () => this.providerConnections.availability(this.settings.commandMode),
             memory: this.commandSurfaceMemory,
             transcription: this.commandTranscription,
             nativeTarget: (target, revision) =>

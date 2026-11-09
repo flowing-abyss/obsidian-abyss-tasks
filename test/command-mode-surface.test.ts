@@ -195,7 +195,10 @@ async function setup(
     (target: string, revision: string, intent: 'feedback' | 'reveal') => boolean
   >(() => true);
   const resolveOwner = vi.fn(() => owner);
-  const mount = (transcription?: CommandTranscriptionPort) => {
+  const mount = (
+    transcription?: CommandTranscriptionPort,
+    availability?: () => { agent: boolean; voice: boolean },
+  ) => {
     const controller = new TaskCaptureController({
       target: {
         label: 'Inbox',
@@ -220,6 +223,7 @@ async function setup(
         new CommandModeSurface(capture, {
           app: h.app,
           ...(transcription === undefined ? {} : { transcription }),
+          ...(availability === undefined ? {} : { availability }),
           owner: resolveOwner,
           memory,
           context: () => 'Tasks view',
@@ -285,6 +289,38 @@ it('orders the four native toolbar controls and renders one canonical owner tree
   await new Promise((resolve) => window.setTimeout(resolve, 30));
   expect(await h.read('a.md')).toContain('Parent');
   expect(surface.element.querySelector('.abyss-command-phase')?.textContent).toContain('Saved');
+});
+it('hides unavailable agent and voice controls without opening the command owner in ordinary capture', async () => {
+  const h = await setup();
+  h.memory.active = false;
+  const surface = h.mount(undefined, () => ({ agent: false, voice: false }));
+  expect(
+    surface.element.querySelector<HTMLButtonElement>('[aria-label="CommandMode"]')?.hidden,
+  ).toBe(true);
+  expect(
+    surface.element.querySelector<HTMLButtonElement>('[aria-label="Microphone"]')?.hidden,
+  ).toBe(true);
+  expect(h.resolveOwner).not.toHaveBeenCalled();
+  expect(surface.input.getAttribute('aria-label')).toBe('Add task');
+  expect(surface.element.querySelector<HTMLButtonElement>('[aria-label="Send"]')?.hidden).toBe(
+    false,
+  );
+});
+it('opens New session from the send context menu and keeps the command toggle a plain toggle', async () => {
+  const h = await setup();
+  const shown = captureMenus();
+  const surface = h.mount();
+  const previous = h.owner.snapshot().id;
+  expectDefined(surface.element.querySelector('[aria-label="CommandMode"]')).dispatchEvent(
+    new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+  );
+  expect(shown).toHaveLength(0);
+  expectDefined(surface.element.querySelector('[aria-label="Send"]')).dispatchEvent(
+    new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+  );
+  expectDefined(shown[0]).pick('New session');
+  await flushMicrotasks(0);
+  expect(h.owner.snapshot().id).not.toBe(previous);
 });
 it('restores unsent input and selection after Escape/Q while unresolved questions block empty confirmation', async () => {
   const h = await setup();
