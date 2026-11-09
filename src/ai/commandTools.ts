@@ -170,7 +170,7 @@ class CommandToolOwner {
     if (!['read', 'task', 'project', 'link', 'finish'].includes(name)) return failure;
     return new CommandFailure(
       failure.code,
-      `${failure.message} Current references (copy the correct kind and exact basis; never use project handles as task targets or paths): ${JSON.stringify(this.modelValue(commandReferences(this.ctx.session.snapshot())))}`,
+      `${failure.message} ${name === 'task' ? 'Choose the operation target’s own current editBasis below. Saved roots without pending plans need separate edit calls; append/batch cannot edit a different saved root through this plan. Switching append to batch does not change plan scope. ' : ''}Current references (copy the correct kind and exact basis; never use project handles as task targets or paths): ${JSON.stringify(this.modelValue(commandReferences(this.ctx.session.snapshot())))}`,
     );
   }
   private readPublic<T>(work: () => Promise<ApiResultV1<T>>): Promise<T> {
@@ -572,12 +572,12 @@ class CommandToolOwner {
   task(): Tool {
     return tool({
       description:
-        'Prepare canonical task creation or refinement, never write. New children are returned with concrete handles. Initial-status applies only to newly authored nodes. batch refines the current plan with up to20 operations on concrete node handles already present at its start; newly added children and version-scoped comment edits require a later call. A batch stages only after every preparation succeeds.',
+        'Prepare canonical task creation or refinement, never write. New children are returned with concrete handles. Initial-status applies only to newly authored nodes. A create/edit plan covers one captured task tree; the session can hold multiple plans. Use each target’s own editBasis; saved roots without pending plans need separate edit calls. batch refines ONE current plan with up to20 operations on concrete node handles already present in it; newly added children and version-scoped comment edits require a later call. A batch stages only after every preparation succeeds.',
       inputSchema: z.strictObject({
         input: taskToolSchema
           .meta({ type: 'object' })
           .describe(
-            'A JSON object, never an encoded string. Pending tasks use append/batch and exact opaque plan revision; edit is only for saved native targets. Never mix branch fields.',
+            'A JSON object, never an encoded string. Use each target’s own editBasis: edit for saved targets without a pending plan; append/batch only within that exact current plan. Never mix branch fields.',
           ),
         removeAnnotations: z.array(z.string()).max(50).optional(),
       }),

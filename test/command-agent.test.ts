@@ -3172,3 +3172,245 @@ it('round-trips the comment catalog rewrite helper with its exact typed alias an
   expect(h.session.snapshot().entities.tasks[0]?.tree.comments[0]?.target).toBe(comment.target);
   expect(await h.read('a.md')).toBe(`- [ ] Root\n  - ${authored}\n`);
 });
+
+it.each(['own basis', 'wrong batch'] as const)(
+  'handles independent-root plan recovery with %s',
+  async (repair) => {
+    const original =
+      '- [ ] One [unknown:: keep]\n\t- > Keep description\n\t- 2026-07-01T10:00:00Z: Keep comment\n\t- [ ] Child\n\t\t- Child comment\n- [ ] Two\n';
+    const h = await setup({ 'a.md': original });
+    const listed = await h.api.tasks.list();
+    if (!listed.ok) throw new Error('list');
+    for (const title of ['One', 'Two']) {
+      const root = expectDefined(listed.value.items.find((node) => node.title.startsWith(title)));
+      await h.session.readTreePage({ target: root.target });
+    }
+    type Reference = {
+      target: string;
+      markdownTitle: string;
+      parentTarget?: string;
+      editBasis:
+        | { kind: 'edit'; target: string; expectedRevision: string }
+        | { kind: 'append'; plan: string; expectedPlanRevision: string };
+    };
+    type Catalog = { taskReferences: Reference[] };
+    const feedback: string[] = [];
+    const currentCall = () =>
+      expectDefined(h.model.doGenerateCalls[h.model.doGenerateCalls.length - 1]);
+    const currentResult = () => {
+      const result = currentCall()
+        .prompt.flatMap((message) => (message.role === 'tool' ? message.content : []))
+        .reverse()
+        .find((part) => part.type === 'tool-result' && part.toolName === 'task');
+      if (result?.type !== 'tool-result') throw new Error('task result');
+      return result.output;
+    };
+    const currentCatalog = (): Catalog => {
+      const output = currentResult();
+      if (output.type !== 'error-text') throw new Error('task feedback');
+      feedback.push(output.value);
+      return JSON.parse(output.value.slice(output.value.indexOf('{"taskReferences"'))) as Catalog;
+    };
+    const patch = (target: string, title: string) => ({
+      type: 'patch',
+      target,
+      patch: {
+        markdownTitle: { type: 'set', value: title },
+        scheduled: { type: 'set', value: '2026-08-02' },
+      },
+    });
+    let second: Reference | undefined;
+    let firstPlan: { plan: string; expectedPlanRevision: string } | undefined;
+    h.script(
+      interpret(),
+      () => {
+        const text = expectDefined(
+          currentCall()
+            .prompt.flatMap((message) => (message.role === 'user' ? message.content : []))
+            .find((part) => part.type === 'text'),
+        );
+        const context = JSON.parse(text.text) as { visibleSession: { references: Catalog } };
+        const roots = context.visibleSession.references.taskReferences.filter(
+          (node) => node.parentTarget === undefined,
+        );
+        const one = expectDefined(roots.find((node) => node.markdownTitle.startsWith('One')));
+        second = expectDefined(roots.find((node) => node.markdownTitle === 'Two'));
+        return call('task', {
+          input: {
+            kind: 'batch',
+            plan: '@1:proposal',
+            expectedPlanRevision: '@1:proposalRevision',
+            operations: [patch(one.target, 'One pending'), patch(second.target, 'Two pending')],
+          },
+        });
+      },
+      () => {
+        const catalog = currentCatalog();
+        const one = expectDefined(
+          catalog.taskReferences.find((node) => node.markdownTitle.startsWith('One')),
+        );
+        expect(one.editBasis.kind).toBe('edit');
+        expect(catalog.taskReferences.every((node) => node.editBasis.kind === 'edit')).toBe(true);
+        return call('task', {
+          input: { ...one.editBasis, operation: patch(one.target, 'One pending') },
+        });
+      },
+      () => {
+        const output = currentResult();
+        if (output.type !== 'json') throw new Error('prepared plan');
+        const { plan, expectedPlanRevision } = (
+          output.value as { selection: { plan: string; expectedPlanRevision: string } }
+        ).selection;
+        firstPlan = { plan, expectedPlanRevision };
+        return call('task', {
+          input: {
+            kind: 'append',
+            ...firstPlan,
+            operation: patch(expectDefined(second).target, 'Two pending'),
+          },
+        });
+      },
+      () => {
+        const catalog = currentCatalog();
+        const one = expectDefined(
+          catalog.taskReferences.find((node) => node.markdownTitle.startsWith('One pending')),
+        );
+        const child = expectDefined(
+          catalog.taskReferences.find((node) => node.parentTarget !== undefined),
+        );
+        const two = expectDefined(
+          catalog.taskReferences.find((node) => node.markdownTitle === 'Two'),
+        );
+        expect(one.editBasis).toEqual({ kind: 'append', ...firstPlan });
+        expect(child.editBasis).toEqual(one.editBasis);
+        expect(child.parentTarget).toBe(one.target);
+        expect(two.editBasis).toEqual(expectDefined(second).editBasis);
+        expect(two.editBasis.kind).toBe('edit');
+        expect(two.target).toMatch(/^@\w+:t\d+$/u);
+        expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+        expect(h.session.snapshot().journal).toEqual([]);
+        return call('task', {
+          input:
+            repair === 'own basis'
+              ? { ...two.editBasis, operation: patch(two.target, 'Two pending') }
+              : {
+                  kind: 'batch',
+                  ...firstPlan,
+                  operations: [patch(two.target, 'Two pending')],
+                },
+        });
+      },
+      ...(repair === 'own basis' ? [finish()] : []),
+    );
+    await h.session.submit('Rename both tasks and plan both for tomorrow. Preview only.');
+    expect(feedback).toHaveLength(2);
+    expect(await h.read('a.md')).toBe(original);
+    expect(h.session.snapshot().journal).toEqual([]);
+    if (repair === 'wrong batch') {
+      expect(h.model.doGenerateCalls).toHaveLength(5);
+      expect(h.session.snapshot().status.kind).toBe('error');
+      expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+      const retained = h.session.snapshot().proposal;
+      await h.session.submit('');
+      expect(h.session.snapshot().proposal).toEqual(retained);
+      expect(h.session.snapshot().journal).toEqual([]);
+      expect(await h.read('a.md')).toBe(original);
+      return;
+    }
+    expect(h.model.doGenerateCalls).toHaveLength(6);
+    expect(h.session.snapshot().status.kind).toBe('ready');
+    const proposal = h.session.snapshot().proposal;
+    expect(proposal.changes).toHaveLength(2);
+    const changes = proposal.changes.map((change, index) => {
+      if (change.kind !== 'task') throw new Error('task plan');
+      return {
+        kind: 'task-fields',
+        index,
+        plan: change.plan.target,
+        expectedPlanRevision: change.plan.revision,
+        target: expectDefined(change.plan.after).target,
+        fields: ['scheduled'],
+      };
+    });
+    expect(new Set(changes.map((change) => change.plan)).size).toBe(2);
+    h.script(() =>
+      call('interpret', {
+        intent: 'confirm',
+        research: false,
+        scope: { proposalRevision: proposal.revision, changes },
+      }),
+    );
+    await h.session.submit('Save only both dates; retain both titles for later.');
+    const dates = original
+      .replace('One [unknown:: keep]', 'One [unknown:: keep] ⏳ 2026-08-02')
+      .replace('- [ ] Two\n', '- [ ] Two ⏳ 2026-08-02\n');
+    expect(await h.read('a.md')).toBe(dates);
+    expect(h.session.snapshot().proposal.changes).toHaveLength(2);
+    expect(h.session.snapshot().journal).toHaveLength(2);
+    expect(h.session.snapshot().status.kind).toBe('ready');
+    await h.session.submit('');
+    expect(await h.read('a.md')).toBe(
+      dates
+        .replace('One [unknown:: keep]', 'One pending [unknown:: keep]')
+        .replace('Two ⏳', 'Two pending ⏳'),
+    );
+    expect(h.session.snapshot().journal).toHaveLength(4);
+    expect(h.session.snapshot().proposal.changes).toEqual([]);
+    expect(h.session.snapshot().status.kind).toBe('saved');
+    for (const message of feedback) {
+      expect(message).toContain('Choose the operation target’s own current editBasis below.');
+      expect(message).toContain('Switching append to batch does not change plan scope.');
+    }
+    const advertised = expectDefined(h.model.doGenerateCalls[1]);
+    const task = expectDefined(advertised.tools?.find((definition) => definition.name === 'task'));
+    expect(task).toHaveProperty('description', expect.stringContaining('one captured task tree'));
+    expect(task).toHaveProperty(
+      'inputSchema.properties.input.description',
+      expect.stringContaining('each target’s own editBasis'),
+    );
+    const system = advertised.prompt.filter((message) => message.role === 'system');
+    expect(JSON.stringify(system)).toContain('one retained command session');
+    expect(JSON.stringify(system)).toContain(
+      'scope.changes may select fields from several independent plans',
+    );
+    expect(JSON.stringify(system)).toContain('saved roots without pending plans');
+  },
+);
+
+it('keeps append schema repair scoped to the target’s own plan without executing malformed input', async () => {
+  const h = await setup();
+  h.script(interpret(), create, finish());
+  await h.session.submit('Prepare a draft');
+  const before = h.session.snapshot().proposal;
+  const change = expectDefined(before.changes[0]);
+  if (change.kind !== 'task') throw new Error('task');
+  const input = {
+    kind: 'append',
+    plan: change.plan.target,
+    expectedPlanRevision: change.plan.revision,
+    operation: {
+      type: 'description',
+      target: expectDefined(change.plan.after).target,
+      text: 'Detail',
+    },
+  };
+  h.script(
+    interpret(),
+    () => call('task', { input: JSON.stringify(input) }),
+    () => {
+      expect(h.session.snapshot().proposal).toEqual(before);
+      expect(h.session.snapshot().journal).toEqual([]);
+      return call('task', { input });
+    },
+    finish(),
+  );
+  await h.session.submit('Add detail');
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  expect(h.session.snapshot().trees[0]?.after?.description).toBe('Detail');
+  expect(h.session.snapshot().journal).toEqual([]);
+  const feedback = JSON.stringify(
+    h.model.doGenerateCalls[5]?.prompt.filter((message) => message.role === 'tool'),
+  );
+  expect(feedback).toContain('Use each target’s own exact editBasis');
+  expect(feedback).toContain('never combine independent roots');
+});

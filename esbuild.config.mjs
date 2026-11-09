@@ -1,3 +1,5 @@
+// Target-owned task-plan guidance and bounded repair feedback: licensed main 4,051,191 bytes.
+// No dependencies added; approved minimum main budget 4,051,968 bytes (3957 KiB), below 5,000,000.
 // Restored project-focus admission and selected lineage across sibling writes: licensed main 4,050,205 bytes.
 // No dependencies added; approved minimum main budget 4,050,944 bytes (3956 KiB), below 5,000,000.
 // Selective confirmation, receipt-based remainder and fixed CommandMode locale vocabulary: licensed main 4,049,731 bytes.
