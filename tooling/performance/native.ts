@@ -353,9 +353,14 @@ export function install(host: Host, bridge: NativeBridge, options: NativeOptions
   const hidden =
     bridge.window === undefined
       ? undefined
-      : new HiddenWindowObservation(bridge.window, document, (evidence) => {
-          bridge.save('hidden-window.json', evidence);
-        });
+      : new HiddenWindowObservation(
+          bridge.window,
+          document,
+          (evidence) => {
+            bridge.save('hidden-window.json', evidence);
+          },
+          pending,
+        );
   let active = true;
   const cleanup = async (): Promise<void> => {
     active = false;

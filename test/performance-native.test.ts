@@ -726,7 +726,7 @@ describe('native profile boundaries', () => {
       expect(listener).toBeUndefined();
     },
   );
-  it.each(['success', 'rejection', 'timeout', 'cleanup', 'refusal'])(
+  it.each(['success', 'rejection', 'cleanup', 'refusal'])(
     'restores the exact native window before hidden work settles (%s)',
     async (mode) => {
       vi.useFakeTimers();
@@ -744,13 +744,13 @@ describe('native profile boundaries', () => {
         document.dispatchEvent(new Event('visibilitychange'));
       });
       const saved = vi.fn<(value: unknown) => void>();
-      const owner = new HiddenWindowObservation({ state, hide, show }, document, saved);
+      const pending = new PendingWork();
+      const owner = new HiddenWindowObservation({ state, hide, show }, document, saved, pending);
       let started = false;
       const action = vi.fn(async (signal: AbortSignal) => {
         expect(document.visibilityState).toBe('hidden');
         started = true;
         if (mode === 'rejection') throw new Error('Controlled search refusal');
-        if (mode === 'timeout') return await new Promise<never>(() => {});
         if (mode === 'cleanup')
           return await new Promise<never>((_resolve, reject) => {
             signal.addEventListener(
@@ -769,15 +769,19 @@ describe('native profile boundaries', () => {
           ? expect(result).resolves.toEqual({ complete: true })
           : expect(result).rejects.toThrow();
       try {
-        await vi.advanceTimersByTimeAsync(mode === 'timeout' ? 30000 : 0);
+        await vi.advanceTimersByTimeAsync(0);
         if (mode === 'cleanup') {
           expect(started).toBe(true);
           await owner.restore();
         }
         await outcome;
+        await pending.settle();
         expect(visible).toBe(true);
-        if (mode === 'refusal') expect(hide).not.toHaveBeenCalled();
-        else {
+        if (mode === 'refusal') {
+          expect(hide).not.toHaveBeenCalled();
+          expect(action).not.toHaveBeenCalled();
+          expect(saved).not.toHaveBeenCalled();
+        } else {
           expect(show).toHaveBeenCalledOnce();
           expect(saved.mock.calls[0]?.[0]).toMatchObject({
             before: { id: 42, visible: true, documentVisibility: 'visible' },
@@ -787,6 +791,103 @@ describe('native profile boundaries', () => {
           });
         }
       } finally {
+        await owner.restore();
+        await Promise.allSettled([result, outcome]);
+        await pending.settle();
+        visibility.mockRestore();
+        vi.useRealTimers();
+      }
+    },
+  );
+  it.each(['fulfillment', 'rejection', 'abort', 'drain-timeout'] as const)(
+    'keeps hidden search cleanup pending until the delayed read settles (%s)',
+    async (mode) => {
+      vi.useFakeTimers();
+      let visible = true;
+      const visibility = vi
+        .spyOn(document, 'visibilityState', 'get')
+        .mockImplementation(() => (visible ? 'visible' : 'hidden'));
+      const state = () => ({ id: 42, visible, focused: visible, minimized: false });
+      const hide = vi.fn(() => {
+        visible = false;
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      const show = vi.fn(() => {
+        visible = true;
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      const saved = vi.fn<(value: unknown) => void>();
+      const pending = new PendingWork();
+      const owner = new HiddenWindowObservation({ state, hide, show }, document, saved, pending);
+      let release = (): void => {};
+      const read = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let signal: AbortSignal | undefined;
+      let actual: Promise<Sample['facts']> | undefined;
+      const action = vi.fn((abort: AbortSignal) => {
+        signal = abort;
+        actual = read.then(() => {
+          if (mode === 'rejection') throw new Error('Delayed source read rejected');
+          if (mode === 'abort') {
+            expect(abort.aborted).toBe(true);
+            throw new Error('Delayed source read aborted');
+          }
+          return { complete: true };
+        });
+        return actual;
+      });
+      const result = pending.track(owner.run(action)).then(
+        () => 'complete',
+        (error: unknown) => String(error),
+      );
+      let cleanup: Promise<string> | undefined;
+      try {
+        await vi.advanceTimersByTimeAsync(mode === 'abort' ? 0 : 30000);
+        expect(action).toHaveBeenCalledOnce();
+        if (mode !== 'abort')
+          expect(await result).toContain('Timed out: hidden note search (30000 ms)');
+        await owner.restore();
+        expect(signal?.aborted).toBe(true);
+        expect(state()).toEqual({ id: 42, visible: true, focused: true, minimized: false });
+        expect(hide).toHaveBeenCalledOnce();
+        expect(show).toHaveBeenCalledOnce();
+        let clean = false;
+        cleanup = pending.settle().then(
+          () => {
+            clean = true;
+            return 'clean';
+          },
+          (error: unknown) => String(error),
+        );
+        await vi.advanceTimersByTimeAsync(29999);
+        expect(clean).toBe(false);
+        if (mode === 'drain-timeout') {
+          await vi.advanceTimersByTimeAsync(1);
+          expect(await cleanup).toContain(
+            'Timed out: native operations drained before restoration (30000 ms)',
+          );
+          expect(clean).toBe(false);
+        }
+        release();
+        if (mode === 'abort') expect(await result).toContain('Delayed source read aborted');
+        if (mode !== 'drain-timeout') expect(await cleanup).toBe('clean');
+        await pending.settle();
+        if (mode === 'rejection')
+          await expect(actual).rejects.toThrow('Delayed source read rejected');
+        else if (mode === 'abort')
+          await expect(actual).rejects.toThrow('Delayed source read aborted');
+        else await expect(actual).resolves.toEqual({ complete: true });
+        expect(saved).toHaveBeenCalledOnce();
+        const finalEvidence = JSON.stringify(saved.mock.calls);
+        await vi.advanceTimersByTimeAsync(30001);
+        expect(JSON.stringify(saved.mock.calls)).toBe(finalEvidence);
+        expect(action).toHaveBeenCalledOnce();
+      } finally {
+        release();
+        await owner.restore();
+        await Promise.allSettled([actual, result, cleanup]);
+        await pending.settle();
         visibility.mockRestore();
         vi.useRealTimers();
       }

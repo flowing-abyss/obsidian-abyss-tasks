@@ -1,5 +1,5 @@
 import type { NativeWindow, NativeWindowState } from './native-types.ts';
-import { bounded } from './profiler.ts';
+import { bounded, type PendingWork } from './profiler.ts';
 import type { Sample } from './types.ts';
 
 type WindowEvidence = NativeWindowState & { documentVisibility: DocumentVisibilityState };
@@ -17,6 +17,7 @@ export class HiddenWindowObservation {
     private readonly native: NativeWindow,
     private readonly owner: Document,
     private readonly save: (evidence: HiddenEvidence) => void,
+    private readonly pending: PendingWork,
   ) {}
   private state(): WindowEvidence {
     return { ...this.native.state(), documentVisibility: this.owner.visibilityState };
@@ -44,7 +45,11 @@ export class HiddenWindowObservation {
         controller.signal,
       );
       evidence.hidden = this.hidden(before.id);
-      const facts = await bounded(action(controller.signal), 30000, 'hidden note search');
+      const facts = await bounded(
+        this.pending.track(action(controller.signal)),
+        30000,
+        'hidden note search',
+      );
       evidence.hiddenEnd = this.hidden(before.id);
       return facts;
     } finally {
