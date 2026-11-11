@@ -1,3 +1,9 @@
+import type { ProjectsSettings } from '../settings/types';
+
+export function defaultProjectCreationStatus(settings: ProjectsSettings): string | undefined {
+  return settings.defaultStatusId.length > 0 ? settings.defaultStatusId : settings.statuses[0]?.id;
+}
+
 export interface ProjectCreateOptions {
   readonly statusId?: string;
 }

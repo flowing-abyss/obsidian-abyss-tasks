@@ -37,3 +37,11 @@ export function projectPropertyValuePresentations(
 export function projectTagLabel(value: string): string {
   return value.startsWith('#') ? value : `#${value}`;
 }
+
+/** Native project property text shared by dashboard and read-only projections. */
+export function projectMetadataText(value: unknown): string {
+  if (Array.isArray(value)) return value.map(projectMetadataText).filter(Boolean).join(', ');
+  if (typeof value === 'string' || typeof value === 'number') return String(value);
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  return '';
+}

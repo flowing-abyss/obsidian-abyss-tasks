@@ -41,6 +41,21 @@ const privateOwners = new Set([
   'AnchoredRecurrenceEditorController',
   'LeftPanel',
   'TaskIndex',
+  // Integration health exposes methods and immutable observations, never private source/listener state.
+  'TaskIntegrationReadState',
+  // Operation-owned lease fields are never reflected, serialized, or spread.
+  'TaskStatusReadLeaseOwner',
+  // Registry internals are accessed only through methods, never reflected, serialized, or spread.
+  'TaskIdentityRegistry',
+  'TaskCursorRegistry',
+  // Client-owned plan/cursor state is accessed through methods, never reflection or spreading.
+  'TaskContentApi',
+  'TaskTreeReader',
+  'TaskSearchReads',
+  // Project registry state is accessed through methods and is never reflected or serialized.
+  'ProjectReadRegistry',
+  // Request records and admission tickets are never reflected, serialized, or spread from the owner.
+  'TaskRequestRegistry',
   'MiniSearchTaskEngine',
   'TaskApplicationService',
   'TimeTrackingService',
@@ -106,6 +121,14 @@ const privateOwners = new Set([
   'TaskSearch',
   'TaskSearchService',
   'TaskSearchRuntime',
+  // Research exposes search results; its private connections and helpers are never reflected or serialized.
+  'ProviderResearch',
+  // Settings expose render/dispose; private ports, lifecycle and rendering helpers stay behind methods.
+  'ProviderSettingsSection',
+  // Tool tables capture the owner through callbacks; only tool definitions/results are spread or serialized.
+  'CommandToolOwner',
+  // Evidence exposes accepted facts through methods; private query/mutation helpers have no string dispatch.
+  'CommandEvidence',
 ]);
 
 function privateOwner(node: ts.Node): string | undefined {
@@ -297,6 +320,7 @@ describe('production JavaScript artifact', () => {
     };
     expect(buildStatus, buildError).toBe(0);
     expect(Buffer.byteLength(code)).toBeLessThanOrEqual(pkg.release.mainJsBudgetBytes);
+    expect(Buffer.byteLength(code)).toBeLessThan(5_000_000);
     expect(code).not.toContain(suffix);
   });
   it('ships the exact installed license texts for the approved runtime inventory', () => {
@@ -308,7 +332,19 @@ describe('production JavaScript artifact', () => {
       'node_modules/.pnpm/internmap@2.0.3/node_modules/internmap/LICENSE',
       'node_modules/minisearch/LICENSE.txt',
       'node_modules/chrono-node/LICENSE.txt',
+      'node_modules/jose/LICENSE.md',
       'node_modules/rrule/LICENCE',
+      'node_modules/@ai-sdk/openai/LICENSE',
+      'node_modules/@ai-sdk/anthropic/LICENSE',
+      'node_modules/@ai-sdk/groq/LICENSE',
+      'node_modules/@ai-sdk/cerebras/LICENSE',
+      'node_modules/.pnpm/@ai-sdk+openai-compatible@3.0.86_zod@4.6.7/node_modules/@ai-sdk/openai-compatible/LICENSE',
+      'node_modules/@openrouter/ai-sdk-provider/LICENSE',
+      'node_modules/zod/LICENSE',
+      'node_modules/ai/LICENSE',
+      'node_modules/.pnpm/@ai-sdk+provider@4.0.36/node_modules/@ai-sdk/provider/LICENSE',
+      'node_modules/.pnpm/eventsource-parser@3.1.1/node_modules/eventsource-parser/LICENSE',
+      'node_modules/.pnpm/@workflow+serde@4.1.0/node_modules/@workflow/serde/LICENSE.md',
     ])
       expect(code.includes(readFileSync(path.join(root, file), 'utf8').trim()), file).toBe(true);
     expect([...code.matchAll(/^Package: (.+)$/gm)].map((match) => match[1])).toEqual([
@@ -319,7 +355,19 @@ describe('production JavaScript artifact', () => {
       'internmap@2.0.3',
       'minisearch@7.2.0',
       'chrono-node@2.10.3',
+      'jose@6.2.17',
       'rrule@2.8.1',
+      '@ai-sdk/openai@4.0.110',
+      '@ai-sdk/anthropic@4.0.98',
+      '@ai-sdk/groq@4.0.77',
+      '@ai-sdk/cerebras@3.0.86',
+      '@ai-sdk/openai-compatible@3.0.86',
+      '@ai-sdk/provider@4.0.36',
+      '@ai-sdk/provider-utils@5.0.75',
+      '@openrouter/ai-sdk-provider@3.1.0',
+      'zod@4.6.7',
+      'eventsource-parser@3.1.1',
+      '@workflow/serde@4.1.0',
     ]);
     const policy = obsidian.parseYaml(
       readFileSync(path.join(root, 'pnpm-workspace.yaml'), 'utf8'),

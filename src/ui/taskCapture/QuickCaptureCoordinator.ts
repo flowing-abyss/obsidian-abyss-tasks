@@ -2,17 +2,24 @@ import type { App } from 'obsidian';
 import type { ShortcutActionId } from '../../settings/shortcuts';
 import type { TaskCommandResult } from '../../tasks';
 import type { CreationRevealAuthority } from '../creation/CreationPresentationController';
+import { isImeOwnedEvent } from '../ime';
 import type { InteractionOwnershipPort } from '../interactionOwnership';
 import { runAsyncAction } from '../runAsyncAction';
 import { describeTaskCreationResult, type CreationResultDescription } from '../taskCommandResult';
 import { CaptureRevealIntent, type CaptureRevealAuthority } from './CaptureRevealIntent';
-import { CaptureSurface } from './CaptureSurface';
+import { CaptureSurface, type CaptureExtension, type CaptureExtensionHost } from './CaptureSurface';
 import type { CaptureContext, CaptureTarget } from './CaptureTargetResolver';
 import { TaskCaptureController, type CaptureSmartOptions } from './TaskCaptureController';
 
 export type QuickCapturePhase = 'closed' | 'resolving' | 'open';
 
 interface QuickCaptureCoordinatorOptions {
+  readonly command?: {
+    readonly mount: (
+      host: CaptureExtensionHost,
+      close: (restoreFocus?: boolean) => void,
+    ) => CaptureExtension;
+  };
   readonly app?: App;
   readonly smart?: CaptureSmartOptions;
   readonly getTagColor?: (tag: string) => string | undefined;
@@ -184,9 +191,18 @@ export class QuickCaptureCoordinator {
 
   private mountSurface(controller: TaskCaptureController, generation: number): CaptureSurface {
     const surfaceGeneration = ++this.surfaceGeneration;
+    const command = this.options.command;
     return new CaptureSurface(this.options.host, controller, {
       ...(this.options.app === undefined ? {} : { app: this.options.app }),
       closeOnEmptyBlur: false,
+      ...(command === undefined
+        ? {}
+        : {
+            extend: (host: CaptureExtensionHost) =>
+              command.mount(host, (restoreFocus = true) => {
+                if (this.generation === generation) this.releaseCurrentGeneration(restoreFocus);
+              }),
+          }),
       ...(this.options.getTagColor === undefined ? {} : { getTagColor: this.options.getTagColor }),
       ...(this.options.formatDate === undefined ? {} : { formatDate: this.options.formatDate }),
       ...(this.options.shouldShowSourceNote === undefined
@@ -212,9 +228,24 @@ export class QuickCaptureCoordinator {
     const onOutsidePointerDown = (event: Event): void => {
       this.handleOutsidePointer(event, generation, ownerDocument);
     };
+    const onEscape = (event: KeyboardEvent): void => {
+      if (
+        this.generation !== generation ||
+        event.defaultPrevented ||
+        event.key !== 'Escape' ||
+        isImeOwnedEvent(event)
+      )
+        return;
+      if (this.surface?.escape() === true) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }
+    };
+    ownerDocument.addEventListener('keydown', onEscape);
     ownerDocument.addEventListener('pointerdown', onOutsidePointerDown, true);
     this.outsidePointerCleanup = () => {
       ownerDocument.removeEventListener('pointerdown', onOutsidePointerDown, true);
+      ownerDocument.removeEventListener('keydown', onEscape);
     };
   }
 
@@ -226,16 +257,20 @@ export class QuickCaptureCoordinator {
       this.releaseCurrentGeneration(false);
       return;
     }
-    if (this.options.smart !== undefined) return;
+    if (this.options.smart !== undefined || this.options.command !== undefined) return;
     const controller = this.controller;
     const surface = this.surface;
     if (controller == null || surface == null) return;
     const snapshot = controller.snapshot();
-    if (snapshot.phase === 'submitting' || snapshot.draft.trim().length === 0) {
+    if (this.shouldCloseOutside(snapshot)) {
       controller.escape();
     } else if (ownerDocument.activeElement === surface.input) {
       runAsyncAction(controller.submit('blur'), 'Could not add quick-capture task');
     }
+  }
+
+  private shouldCloseOutside(snapshot: ReturnType<TaskCaptureController['snapshot']>): boolean {
+    return snapshot.phase === 'submitting' || snapshot.draft.trim().length === 0;
   }
 
   private isOutsideCurrentCapture(event: Event, generation: number): boolean {

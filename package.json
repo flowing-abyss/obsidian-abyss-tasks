@@ -41,7 +41,8 @@
     "ci": "node tooling/verify-changes.mjs",
     "prepare": "husky && node .ai/setup.mjs && pnpm run codegraph:setup",
     "lint:css:artifact": "node tooling/check-css.mjs --artifact dist/styles.css",
-    "codegraph:setup": "node .ai/setup-codegraph.mjs"
+    "codegraph:setup": "node .ai/setup-codegraph.mjs",
+    "command:eval": "node tooling/command-eval.mjs"
   },
   "nano-staged": {
     "*.{ts,cts,mts,tsx,js,cjs,mjs,jsx}": [
@@ -57,8 +58,8 @@
     ]
   },
   "release": {
-    "mainJsBudgetBytes": 2250752,
-    "stylesCssBudgetBytes": 218112
+    "mainJsBudgetBytes": 4194304,
+    "stylesCssBudgetBytes": 226304
   },
   "keywords": [
     "obsidian",
@@ -78,10 +79,18 @@
     "pnpm": ">=12"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "4.0.98",
+    "@ai-sdk/cerebras": "3.0.86",
+    "@ai-sdk/groq": "4.0.77",
+    "@ai-sdk/openai": "4.0.110",
+    "@openrouter/ai-sdk-provider": "3.1.0",
     "@tanstack/charts": "1.1.0",
+    "ai": "7.0.164",
     "chrono-node": "2.10.3",
+    "jose": "6.2.17",
     "minisearch": "7.2.0",
-    "rrule": "2.8.1"
+    "rrule": "2.8.1",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@colbymchenry/codegraph": "1.6.2",

@@ -1,0 +1,66 @@
+diff --git a/dist/index.js b/dist/index.js
+index 00ced03ce48e0a77fff23e5969cf3b92c4e107f7..690147b21f4e447c17879fd61624cefa23410e11 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -1988,6 +1988,10 @@ function stringifyRegExpWithFlags(regex, refs) {
+   if (!refs.applyRegexFlags || !regex.flags) {
+     return regex.source;
+   }
++  // Abyss Tasks compatibility patch: older mobile WebViews cannot compile lookbehind.
++  if (regex.flags.includes("m")) {
++    throw new Error("Multiline regex flag expansion is unsupported");
++  }
+   const flags = {
+     i: regex.flags.includes("i"),
+     // Case-insensitive
+@@ -2027,17 +2031,6 @@ function stringifyRegExpWithFlags(regex, refs) {
+         continue;
+       }
+     }
+-    if (flags.m) {
+-      if (source[i] === "^") {
+-        pattern += `(^|(?<=[\r
+-]))`;
+-        continue;
+-      } else if (source[i] === "$") {
+-        pattern += `($|(?=[\r
+-]))`;
+-        continue;
+-      }
+-    }
+     if (flags.s && source[i] === ".") {
+       pattern += inCharGroup ? `${source[i]}\r
+ ` : `[${source[i]}\r
+diff --git a/dist/internal/index.js b/dist/internal/index.js
+index 5598f8d295ea0d3759d1b3ce31c4e651fa01b08e..2050205fdfa00d0ecf63dca64764ecd6175fdce7 100644
+--- a/dist/internal/index.js
++++ b/dist/internal/index.js
+@@ -1956,6 +1956,10 @@ function stringifyRegExpWithFlags(regex, refs) {
+   if (!refs.applyRegexFlags || !regex.flags) {
+     return regex.source;
+   }
++  // Abyss Tasks compatibility patch: older mobile WebViews cannot compile lookbehind.
++  if (regex.flags.includes("m")) {
++    throw new Error("Multiline regex flag expansion is unsupported");
++  }
+   const flags = {
+     i: regex.flags.includes("i"),
+     // Case-insensitive
+@@ -1995,17 +1999,6 @@ function stringifyRegExpWithFlags(regex, refs) {
+         continue;
+       }
+     }
+-    if (flags.m) {
+-      if (source[i] === "^") {
+-        pattern += `(^|(?<=[\r
+-]))`;
+-        continue;
+-      } else if (source[i] === "$") {
+-        pattern += `($|(?=[\r
+-]))`;
+-        continue;
+-      }
+-    }
+     if (flags.s && source[i] === ".") {
+       pattern += inCharGroup ? `${source[i]}\r
+ ` : `[${source[i]}\r

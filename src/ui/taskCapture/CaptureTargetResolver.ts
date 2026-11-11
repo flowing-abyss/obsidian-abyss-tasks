@@ -1,4 +1,5 @@
 import type { ListSelection } from '../../app/AppState';
+import { projectTaskInsertion } from '../../projects/projectTaskInsertion';
 import { DEFAULT_SETTINGS } from '../../settings/defaults';
 import type { CalendarSettings } from '../../settings/types';
 import { effectiveGroupCaptureTag, resolveEffectiveTagGroups } from '../../tags/effectiveTagGroups';
@@ -6,13 +7,13 @@ import { collectTaskNodeTags } from '../../tags/taskTagCatalog';
 import {
   localDate,
   normalizeTaskTagInput,
+  resolveInboxCreationPolicy,
   shiftLocalDate,
   type CreateTaskCommandInitial,
   type LocalDate,
   type TaskCaptureApplicationApi,
   type TaskCommandResult,
   type TaskCreateSession,
-  type TaskInsertionPolicy,
   type TaskNodeSnapshot,
 } from '../../tasks';
 
@@ -78,18 +79,6 @@ function cloneContext(context: CaptureContext): CaptureContext {
 function normalizedTag(value: string): string {
   const tags = normalizeTaskTagInput(value);
   return tags?.length === 1 ? (tags[0] ?? '') : '';
-}
-
-function projectInsertion(settings: CalendarSettings['projects']): TaskInsertionPolicy {
-  if (settings.taskInsertionMode === 'section' && settings.taskInsertionSection.trim().length > 0) {
-    return {
-      type: 'section',
-      heading: settings.taskInsertionSection,
-      position: settings.taskInsertionSectionPosition,
-    };
-  }
-  if (settings.taskInsertionMode === 'prepend') return { type: 'prepend' };
-  return { type: 'append' };
 }
 
 export class CaptureTargetResolver {
@@ -161,11 +150,11 @@ export class CaptureTargetResolver {
   private async inboxTarget_abyssPrivate(
     context: Extract<CaptureContext, { type: 'list' }>,
   ): Promise<CaptureTarget> {
-    const tagged = this.settings_abyssPrivate.inbox.mode !== 'untagged';
-    const tag = tagged ? normalizedTag(this.settings_abyssPrivate.inbox.tag) : '';
-    if (tagged && tag.length === 0) {
+    const policy = resolveInboxCreationPolicy(this.settings_abyssPrivate, 'inbox');
+    if (policy === undefined) {
       return unavailableTarget(context, 'Inbox · unavailable');
     }
+    const tag = policy.serviceTag ?? '';
     return {
       label: tag.length > 0 ? `Inbox · ${tag}` : 'Inbox · untagged',
       context,
@@ -239,7 +228,7 @@ export class CaptureTargetResolver {
     context: CaptureContext,
     path: string,
   ): Promise<CaptureTarget> {
-    const insertion = projectInsertion(this.settings_abyssPrivate.projects);
+    const insertion = projectTaskInsertion(this.settings_abyssPrivate.projects, 'capture');
     return {
       label: path,
       context,

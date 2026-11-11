@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { TaskApplicationService } from '../../src/tasks/application/TaskApplicationService';
 import { TaskHierarchyService } from '../../src/tasks/application/TaskHierarchyService';
+import type { TaskRepositoryResult } from '../../src/tasks/application/TaskRepository';
 import { clockFrom } from '../../src/tasks/domain/clock';
 import type { TaskCommandResult } from '../../src/tasks/domain/commands';
 import { TaskBlockEditor } from '../../src/tasks/infrastructure/markdown/TaskBlockEditor';
@@ -111,4 +112,185 @@ describe('hierarchy application commands', () => {
     expect(repository.content('source.md')).toBe('');
     expect(repository.content('target.md')).toBe('- [ ] Parent\n    - [ ] Move\n');
   });
+});
+
+it('keeps defensive strict rejection out of hierarchy command results', async () => {
+  const h = await hierarchyHarness();
+  vi.spyOn(h.repository, 'hierarchy').mockResolvedValue({
+    type: 'strict-rejected',
+    reason: 'unsupported-precondition',
+  });
+  expect(await h.service.execute(h.command)).toEqual({
+    type: 'invalid',
+    issues: [{ code: 'invalid-target', field: 'target' }],
+  });
+  h.index.destroy();
+});
+
+it('prepares exact cross-note hierarchy without reserving authority, then commits the reviewed candidates once', async () => {
+  const h = await hierarchyHarness();
+  const beforeSource = await h.read('source.md');
+  const beforeTarget = await h.read('target.md');
+  const reserve = vi.spyOn(h.authority, 'reserveStructuralMutation');
+  const prepared = await h.service.prepareHierarchy(h.command);
+  expect(prepared.type).toBe('ready');
+  if (prepared.type !== 'ready') throw new Error('Expected preparation');
+  expect(reserve).not.toHaveBeenCalled();
+  expect(await h.read('source.md')).toBe(beforeSource);
+  expect(await h.read('target.md')).toBe(beforeTarget);
+  expect(prepared.subjectBefore.type).toBe('task');
+  expect(prepared.subjectAfter.type).toBe('subtask');
+  expect(prepared.after.subtasks[0]?.title).toBe('Move');
+  expect(prepared.after.subtasks[0]?.subtasks[0]?.title).toBe('Child');
+  expect(prepared.continuations).toHaveLength(3);
+  const result = await prepared.commit();
+  expect(result).toMatchObject({ type: 'ok', outcome: { type: 'hierarchy' } });
+  expect(await prepared.commit()).toEqual(result);
+  expect((await h.read('target.md')).match(/\[ \] Move/g)).toHaveLength(1);
+  h.index.destroy();
+});
+
+it.each(['source.md', 'target.md'])(
+  'a prepared hierarchy rejects a later %s edit without moving any content',
+  async (path) => {
+    const h = await hierarchyHarness();
+    const prepared = await h.service.prepareHierarchy(h.command);
+    if (prepared.type !== 'ready') throw new Error('Expected preparation');
+    const file = expectDefined(h.app.vault.getFileByPath(path) ?? undefined);
+    await h.app.vault.modify(file, `${await h.read(path)}External line\n`);
+    const source = await h.read('source.md'),
+      target = await h.read('target.md');
+    expect((await prepared.commit()).type).not.toBe('ok');
+    expect(await h.read('source.md')).toBe(source);
+    expect(await h.read('target.md')).toBe(target);
+    h.index.destroy();
+  },
+);
+
+it.each(['strict-rejected', 'rebased', 'uncertain'] as const)(
+  'preserves the meaning of %s at both prepared-hierarchy repository boundaries',
+  async (kind) => {
+    const h = await hierarchyHarness();
+    try {
+      const source = await h.read('source.md');
+      const target = await h.read('target.md');
+      const process = vi.spyOn(h.app.vault, 'process');
+      let result: TaskRepositoryResult;
+      let expected: TaskCommandResult;
+      if (kind === 'strict-rejected') {
+        result = { type: kind, reason: 'unsupported-precondition' };
+        expected = { type: 'invalid', issues: [{ code: 'invalid-target', field: 'target' }] };
+      } else if (kind === 'rebased') {
+        result = {
+          type: kind,
+          previous: h.source,
+          current: h.source,
+          evidence: 'byte-identical-relocation',
+        };
+        expected = { type: 'conflict', current: h.source };
+      } else {
+        result = { type: kind, target: { type: 'task', ref: h.source.ref } };
+        expected = { type: 'not-found', target: { type: 'task', ref: h.source.ref } };
+      }
+      const prepare = h.repository.prepareHierarchy.bind(h.repository);
+      const preparation = vi.spyOn(h.repository, 'prepareHierarchy');
+      preparation.mockResolvedValueOnce({ type: 'invalid', result });
+      expect(await h.service.prepareHierarchy(h.command)).toEqual({
+        type: 'invalid',
+        result: expected,
+      });
+      const commit = vi.fn(async () => result);
+      preparation.mockImplementationOnce(async (...args) => {
+        const prepared = await prepare(...args);
+        if (prepared.type !== 'ready') throw new Error('Missing hierarchy preparation');
+        return { ...prepared, commit };
+      });
+      const prepared = await h.service.prepareHierarchy(h.command);
+      if (prepared.type !== 'ready') throw new Error('Missing hierarchy preparation');
+      expect(await prepared.commit()).toEqual(expected);
+      expect(commit).toHaveBeenCalledOnce();
+      expect(preparation).toHaveBeenCalledTimes(2);
+      expect(process).not.toHaveBeenCalled();
+      expect(await h.read('source.md')).toBe(source);
+      expect(await h.read('target.md')).toBe(target);
+    } finally {
+      h.index.destroy();
+    }
+  },
+);
+
+it.each(['source.md', 'target.md'])(
+  'refuses to prepare a stale indexed hierarchy endpoint in %s',
+  async (path) => {
+    const h = await hierarchyHarness();
+    try {
+      const source = await h.read('source.md');
+      const target = await h.read('target.md');
+      h.index.installCommittedContent(path, '- [ ] Changed\n');
+      const prepare = vi.spyOn(h.repository, 'prepareHierarchy');
+      const process = vi.spyOn(h.app.vault, 'process');
+      expect(await h.service.prepareHierarchy(h.command)).toMatchObject({
+        type: 'invalid',
+        result: { type: 'conflict', current: { title: 'Changed' } },
+      });
+      expect(prepare).not.toHaveBeenCalled();
+      expect(process).not.toHaveBeenCalled();
+      expect(await h.read('source.md')).toBe(source);
+      expect(await h.read('target.md')).toBe(target);
+    } finally {
+      h.index.destroy();
+    }
+  },
+);
+
+it('refuses to prepare self or descendant cycles before acquiring repository work', async () => {
+  const h = await hierarchyHarness();
+  try {
+    const source = await h.read('source.md');
+    const target = await h.read('target.md');
+    const prepare = vi.spyOn(h.repository, 'prepareHierarchy');
+    const process = vi.spyOn(h.app.vault, 'process');
+    for (const parent of [
+      { type: 'task' as const, ref: h.source.ref },
+      { type: 'subtask' as const, ref: expectDefined(h.source.subtasks[0]).ref },
+    ]) {
+      expect(
+        await h.service.prepareHierarchy({
+          type: 'reparent-task',
+          source: { type: 'task', ref: h.source.ref },
+          parent,
+        }),
+      ).toEqual({
+        type: 'invalid',
+        result: { type: 'invalid', issues: [{ code: 'invalid-target', field: 'hierarchy' }] },
+      });
+    }
+    expect(prepare).not.toHaveBeenCalled();
+    expect(process).not.toHaveBeenCalled();
+    expect(await h.read('source.md')).toBe(source);
+    expect(await h.read('target.md')).toBe(target);
+  } finally {
+    h.index.destroy();
+  }
+});
+
+it('refuses unsupported hierarchy preparation without falling back to an immediate write', async () => {
+  const h = await hierarchyHarness();
+  try {
+    const source = await h.read('source.md');
+    const target = await h.read('target.md');
+    Object.defineProperty(h.repository, 'prepareHierarchy', { value: undefined });
+    const hierarchy = vi.spyOn(h.repository, 'hierarchy');
+    const process = vi.spyOn(h.app.vault, 'process');
+    expect(await h.service.prepareHierarchy(h.command)).toEqual({
+      type: 'invalid',
+      result: { type: 'invalid', issues: [{ code: 'invalid-target', field: 'hierarchy' }] },
+    });
+    expect(hierarchy).not.toHaveBeenCalled();
+    expect(process).not.toHaveBeenCalled();
+    expect(await h.read('source.md')).toBe(source);
+    expect(await h.read('target.md')).toBe(target);
+  } finally {
+    h.index.destroy();
+  }
 });

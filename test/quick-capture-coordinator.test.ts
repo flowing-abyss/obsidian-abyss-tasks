@@ -206,6 +206,22 @@ describe('QuickCaptureCoordinator', () => {
     );
   });
 
+  it('keeps the hovered Q input on the menu surface with a visible focus ring', () => {
+    expect(declarationsFor('.abyss-capture-input-shell')).toContain('background: inherit');
+    expect(declarationsFor('.abyss-capture-input-shell .abyss-capture-input')).toContain(
+      'background: inherit',
+    );
+    expect(declarationsFor('.abyss-capture-input-shell:focus-within')).toContain(
+      'box-shadow: 0 0 0 2px var(--background-modifier-border-focus)',
+    );
+  });
+
+  it('hides the caret only on a recording Q input that is still empty', () => {
+    expect(declarationsFor('.abyss-capture-input[data-recording]:placeholder-shown')).toContain(
+      'caret-color: transparent',
+    );
+  });
+
   it('owns one closed → resolving → open transition and focuses the mounted surface', async () => {
     const pending = deferred<CaptureTarget>();
     const h = harness(() => pending.promise);

@@ -178,6 +178,8 @@ export const contracts = {
   runtime: {
     // Exact native spacer producer/consumer is exercised by css-policy.test.ts.
     produced: [
+      // Transient tree depth offsets the session mark into one root-aligned gutter.
+      '--abyss-command-task-depth',
       // PanelView's desktop shell measures the actual floating host status-bar overlap.
       '--abyss-shell-bottom-inset',
       // The task-text mirror copies the active field's content width; tested against its source.
@@ -250,6 +252,10 @@ export const runtimeFamilies = [
 export const taskMetadataColorContract = {
   variable: '--abyss-tag-color',
   producer: 'src/ui/taskMetadataContent.ts',
-  consumers: ['src/panels/center/TaskCardRenderer.ts', 'src/ui/taskCapture/CaptureMetadataRow.ts'],
+  consumers: [
+    'src/panels/center/TaskCardRenderer.ts',
+    'src/ui/taskCapture/CaptureMetadataRow.ts',
+    'src/ui/taskMetadataDisplay.ts',
+  ],
   selector: '.abyss-task-tag--colored',
 };

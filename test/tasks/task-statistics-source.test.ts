@@ -16,6 +16,7 @@ import {
   flushMicrotasks,
   metadataChangedEmitter,
   seedTaskCache,
+  setVaultSource,
 } from '../helpers';
 import { work } from '../helpers/statisticsFixtures';
 
@@ -55,6 +56,7 @@ async function harness(
     return found;
   };
   const changed = (path: string, content: string, cache: CachedMetadata = {}) => {
+    setVaultSource(app, path, content);
     metadataChangedEmitter(app)(file(path), content, cache);
   };
   return { app, index, refAuthority, statusCatalog, file, changed };

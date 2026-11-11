@@ -28,13 +28,16 @@ import type {
   TaskCreateInboxPreview,
   TaskCreatePreview,
 } from '../domain/taskInputTypes';
+import { parseTaskLineSourceModel } from '../domain/taskLineSourceModel';
 import { reconcileTaskNodeRef, type TaskResolution } from '../domain/taskReconciliation';
 import {
   applyTaskCreationTagPolicy,
   isTaskInboxMember,
   normalizeTaskTagInput,
+  resolveInboxCreationPolicy,
   sameTag,
   tagComparisonKey,
+  taskCreationPrefixTags,
   taskPrefixForSubtask,
 } from '../domain/taskTags';
 import type {
@@ -65,7 +68,15 @@ import type {
   TimeTrackingQueryApi,
 } from './TaskApplicationApi';
 import type { TaskBehaviorSettings, TaskBehaviorSettingsProvider } from './TaskBehaviorSettings';
+import type {
+  TaskCreateCommitResult,
+  TaskCreatePreparation,
+  TaskCreatePreparationApi,
+  TaskCreatePreparationDestination,
+  TaskCreateTreeNode,
+} from './TaskCreatePreparationApi';
 import type { TaskCreatePreviewPort } from './TaskCreatePreviewPort';
+import { buildPreparedCreateTree } from './TaskCreateTreeBuilder';
 import {
   DependencyCompletionConflict,
   nextTaskDependencyId,
@@ -77,13 +88,36 @@ import type {
   TaskDestinationProvider,
   TaskDestinationResolution,
 } from './TaskDestinationProvider';
-import { TaskHierarchyService } from './TaskHierarchyService';
 import type {
+  TaskEditPartition,
+  TaskFieldSelection,
+  TaskHierarchyPreparation,
+} from './TaskEditPreparationApi';
+import {
+  isPreparedTaskEditCommand,
+  type PreparedTaskEditCommand,
+  type TaskEditPreparation,
+  type TaskEditPreparationApi,
+  type TaskEditRefreshUnavailable,
+} from './TaskEditPreparationApi';
+import { TaskHierarchyService } from './TaskHierarchyService';
+import {
+  projectTaskFailure,
+  type ProjectTaskDestination,
+  type ProjectTaskExecution,
+  type ProjectTaskResult,
+  type ProjectTaskSource,
+} from './TaskProjectCommands';
+import type {
+  PreparedTaskCreateGuard,
   RecurrenceCompletionRequest,
   RecurrenceCompletionRevisionRequest,
+  TaskDraft,
   TaskEditCommand,
   TaskEditRequest,
   TaskMoveRequest,
+  TaskPreparedCreateRoot,
+  TaskPreparedRootEdit,
   TaskRepository,
   TaskRepositoryResult,
 } from './TaskRepository';
@@ -97,7 +131,55 @@ import {
   type RetryPolicy,
 } from './taskRetryPolicy';
 import type { TaskReadProjectionApi } from './TaskSearchApi';
+import type {
+  CompletionFollowUpDetails,
+  TaskStatusMutationApi,
+  TaskStatusMutationOutcome,
+  TaskStatusMutationRequest,
+  TaskStatusReadBasisApi,
+  TaskStatusReadLease,
+  TaskStrictStatusFailure,
+} from './TaskStatusMutationApi';
 import { TimeTrackingService } from './TimeTrackingService';
+
+function runningEntryCount(node: TaskSnapshot | SubtaskSnapshot): number {
+  return (
+    node.timeEntries.filter((entry) => entry.state === 'running').length +
+    node.subtasks.reduce((count, child) => count + runningEntryCount(child), 0)
+  );
+}
+
+function pendingCompletionTracking(
+  request: TaskStatusMutationRequest,
+  prepared: PreparedMutation,
+): CompletionFollowUpDetails | undefined {
+  if (prepared.validateCurrent === undefined || !('atom' in prepared.clock)) return undefined;
+  const current = snapshotForTarget(request.root, request.target);
+  const unclosed = current === undefined ? 0 : runningEntryCount(current);
+  return unclosed > 0
+    ? { closed: 0, unclosed, discardedShortEntry: false, state: 'partial' }
+    : undefined;
+}
+
+function trackingAfterDispatch(
+  result: TaskCommandResult,
+  pending: CompletionFollowUpDetails | undefined,
+): CompletionFollowUpDetails | undefined {
+  // Once a successful dispatch starts the pass, an unexpected exception cannot establish
+  // timer effects. A failed dispatch instead leaves required tracking known to be skipped.
+  return result.type === 'ok' && result.changed && pending !== undefined
+    ? { ...pending, state: 'unknown' }
+    : pending;
+}
+
+function confirmedPendingTracking(
+  lease: TaskStatusReadLease,
+  pending: CompletionFollowUpDetails | undefined,
+): CompletionFollowUpDetails | undefined {
+  // A removed original has no remaining completion subtree to close. Unknown main writes
+  // cannot establish that the captured completion plan became applicable.
+  return lease.occurrences().original.state === 'retained' ? pending : undefined;
+}
 
 function uniqueInOrder(values: readonly string[]): string[] {
   const seen = new Set<string>();
@@ -225,6 +307,12 @@ type PreparedTaskCommand =
   | { readonly command: TaskEditCommand }
   | { readonly recurrence: RecurrenceCompletionRequest }
   | { readonly result: TaskCommandResult };
+interface StrictTrackingContext {
+  readonly lease: TaskStatusReadLease;
+  readonly settings: TaskBehaviorSettings;
+  readonly reading: ClockReading | { readonly localDate: ClockReading['localDate'] };
+}
+
 interface RecentOutcome {
   readonly task: TaskSnapshot;
   readonly permittedTarget?: TaskNodeRef;
@@ -397,6 +485,58 @@ function ownedDescendants(task: TaskSnapshot | SubtaskSnapshot): string {
   return newline < 0 ? '' : block.slice(newline);
 }
 
+function unsupportedInboxDestination(
+  input: Parameters<TaskCreatePreparationApi['prepareCreateTree']>[0],
+): boolean {
+  return (
+    input.intent === 'inbox' &&
+    input.destination.type !== 'configured-default' &&
+    input.destination.type !== 'explicit'
+  );
+}
+function inboxCreationMismatch(
+  intent: 'inbox' | undefined,
+  prepared: TaskPreparedCreateRoot,
+  settings: TaskBehaviorSettings,
+): boolean {
+  return (
+    intent === 'inbox' &&
+    prepared.type === 'ready' &&
+    !createInboxPreview(prepared.after.tags, settings).member
+  );
+}
+function creationProject(
+  destination: TaskCreatePreparationDestination,
+): ProjectTaskDestination | undefined {
+  return destination.type === 'project' ? { ...destination.destination } : undefined;
+}
+function creationPlanFailure(
+  plan: TaskDestinationPlan | undefined,
+): TaskCreatePreparation | undefined {
+  if (plan?.preparedFailure === undefined) return undefined;
+  return {
+    type: 'invalid',
+    result: { type: 'invalid', issues: [{ code: plan.preparedFailure, field: 'template' }] },
+  };
+}
+function creationTreePolicy(
+  input: Parameters<TaskCreatePreparationApi['prepareCreateTree']>[0],
+  snapshot: TaskBehaviorSettings,
+): { tree: TaskCreateTreeNode; settings: TaskBehaviorSettings } | undefined {
+  const policy = resolveInboxCreationPolicy(snapshot, input.intent);
+  if (policy === undefined || unsupportedInboxDestination(input)) return undefined;
+  let tree = structuredClone(input.tree);
+  const serviceTag = policy.serviceTag;
+  const tags = tree.initial?.tags;
+  if (serviceTag !== undefined && tags?.remove?.some((tag) => sameTag(tag, serviceTag)) !== true) {
+    tree = {
+      ...tree,
+      initial: { ...tree.initial, tags: { ...tags, add: [...(tags?.add ?? []), serviceTag] } },
+    };
+  }
+  return { tree, settings: { ...snapshot, taskPrefix: policy.prefix } };
+}
+
 function snapshotBehaviorSettings(provider: TaskBehaviorSettingsProvider): TaskBehaviorSettings {
   const settings = provider();
   return {
@@ -524,13 +664,53 @@ type TaskApplicationServiceDependencies = [
   dependencies?: TaskDependencyService,
   diagnostics?: TaskDiagnosticSink,
   previewPort?: TaskCreatePreviewPort,
+  statusReadBasis?: TaskStatusReadBasisApi,
 ];
 
 type ArchiveDestinationResolution =
   | { readonly type: 'ready'; readonly destination: TaskDestination }
   | { readonly type: 'result'; readonly result: TaskCommandResult };
 
-export class TaskApplicationService implements TaskApplicationApi, TaskCaptureApplicationApi {
+function creationNeedsProvision(destination: TaskCreatePreparationDestination): boolean {
+  return (
+    destination.type === 'configured-default' ||
+    (destination.type === 'explicit' && destination.provision !== undefined)
+  );
+}
+
+function hasEmptyCreationTags(node: TaskCreateTreeNode): boolean {
+  return [...(node.initial?.tags?.add ?? []), ...(node.initial?.tags?.remove ?? [])].some(
+    (tag) => tag.trim().length === 0,
+  );
+}
+
+interface EditPreparationContext {
+  readonly settings: TaskBehaviorSettings;
+  readonly reading: ClockReading | { readonly localDate: ClockReading['localDate'] };
+  readonly current: () => boolean;
+  readonly family: { attempted: boolean };
+  readonly ref: TaskRef;
+}
+
+interface CreatePreparationContext {
+  readonly current: () => boolean;
+  readonly project: ProjectTaskDestination | undefined;
+  readonly family: { attempted: boolean };
+  readonly originalPlan: TaskDestinationPlan;
+  readonly settings: TaskBehaviorSettings;
+  readonly reading: ClockReading | { readonly localDate: ClockReading['localDate'] };
+  readonly plan: TaskDestinationPlan;
+  readonly guard: PreparedTaskCreateGuard;
+}
+
+export class TaskApplicationService
+  implements
+    TaskApplicationApi,
+    TaskCaptureApplicationApi,
+    TaskStatusMutationApi,
+    TaskEditPreparationApi,
+    TaskCreatePreparationApi
+{
   // Bridges the index-event lag only for exact refs returned by this service. The cache shares the
   // service lifetime and is bounded so revision churn cannot retain an unbounded snapshot history.
   private readonly recentOutcomes_abyssPrivate = new Map<string, RecentOutcome>();
@@ -541,6 +721,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     TaskReadProjectionApi;
   private readonly dependencies_abyssPrivate: TaskDependencyService;
   private readonly tracking_abyssPrivate: TimeTrackingService;
+  private readonly statusReadBasis_abyssPrivate: TaskStatusReadBasisApi | undefined;
   private readonly previewPort_abyssPrivate: TaskCreatePreviewPort | undefined;
   private readonly diagnostics_abyssPrivate: TaskDiagnosticSink;
   private readonly repository_abyssPrivate: TaskRepository;
@@ -560,7 +741,9 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
       dependencyService,
       diagnostics = () => {},
       previewPort,
+      statusReadBasis,
     ] = dependencies;
+    this.statusReadBasis_abyssPrivate = statusReadBasis;
     this.previewPort_abyssPrivate = previewPort;
     this.queries = queries;
     this.repository_abyssPrivate = repository;
@@ -584,12 +767,77 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     });
   }
 
+  prepareProjectCreate(destination: ProjectTaskDestination, title: string): ProjectTaskExecution {
+    if (!isSingleLineText(title) || title.trim().length === 0)
+      return async () => projectTaskFailure('invalid');
+    const settings = snapshotBehaviorSettings(this.behaviorSettings_abyssPrivate);
+    const key = (current: TaskBehaviorSettings): string =>
+      JSON.stringify([
+        current.taskPrefix,
+        current.inbox,
+        current.taskLifecycle,
+        this.statusCatalog_abyssPrivate.all(),
+      ]);
+    const accepted = key(settings);
+    const draft = this.creationDraft_abyssPrivate(
+      { markdownBody: title.trim() },
+      { type: 'valid' },
+      settings,
+      captureClock(this.clock_abyssPrivate),
+    );
+    if (!isSingleLineText(draft.markdownBody)) return async () => projectTaskFailure('invalid');
+    const guarded: ProjectTaskDestination = {
+      ...destination,
+      check: (file, live, candidate) =>
+        key(snapshotBehaviorSettings(this.behaviorSettings_abyssPrivate)) === accepted
+          ? destination.check(file, live, candidate)
+          : 'stale',
+    };
+    return async () =>
+      (await this.repository_abyssPrivate.createProjectRoot?.(guarded, draft)) ??
+      projectTaskFailure('unsupported');
+  }
+
+  async moveProjectRoot(
+    destination: ProjectTaskDestination,
+    source: ProjectTaskSource,
+  ): Promise<ProjectTaskResult> {
+    return await this.dependencies_abyssPrivate.serializeMutation(
+      async () =>
+        (await this.repository_abyssPrivate.moveProjectRoot?.(destination, source)) ??
+        projectTaskFailure('unsupported'),
+    );
+  }
+
+  creationPolicy(): {
+    readonly taskPrefix: string;
+    readonly defaultTags: readonly string[];
+    readonly inbox: {
+      readonly mode: TaskBehaviorSettings['inbox']['mode'];
+      readonly serviceTag?: string;
+      readonly removeTagOnAssign: boolean;
+    };
+  } {
+    const settings = snapshotBehaviorSettings(this.behaviorSettings_abyssPrivate);
+    const serviceTag = resolveInboxCreationPolicy(settings, 'inbox')?.serviceTag;
+    return {
+      taskPrefix: settings.taskPrefix,
+      defaultTags: taskCreationPrefixTags(settings.taskPrefix),
+      inbox: {
+        mode: settings.inbox.mode,
+        removeTagOnAssign: settings.inbox.removeTagOnAssign,
+        ...(serviceTag === undefined ? {} : { serviceTag }),
+      },
+    };
+  }
+
   async planCreate(
     destination: CreateTaskCommandDestination,
     options?: TaskCreatePlanOptions,
   ): Promise<TaskCreateSession> {
     const snapshot = snapshotBehaviorSettings(this.behaviorSettings_abyssPrivate);
-    const settings = options?.intent === 'inbox' ? { ...snapshot, taskPrefix: '' } : snapshot;
+    const policy = resolveInboxCreationPolicy(snapshot, options?.intent);
+    const settings = { ...snapshot, taskPrefix: policy?.prefix ?? '' };
     const reading = captureClock(this.clock_abyssPrivate);
     try {
       const plan = await this.destinationPlan_abyssPrivate(destination);
@@ -660,6 +908,217 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     }
   }
 
+  async mutateStatus(request: TaskStatusMutationRequest): Promise<TaskStatusMutationOutcome> {
+    const basis = this.statusReadBasis_abyssPrivate;
+    if (
+      basis === undefined ||
+      this.repository_abyssPrivate.supportsStrictStatusPreconditions !== true ||
+      this.repository_abyssPrivate.supportsRevisionPreconditions !== true
+    )
+      return { type: 'rejected', reason: 'unsupported-precondition' };
+    return await this.dependencies_abyssPrivate.serializeMutation(async () => {
+      const admission = basis.lease(request.root, request.target, request.observation);
+      if (admission.type === 'rejected') return admission;
+      try {
+        return await this.executeStrictStatus_abyssPrivate(request, admission.lease);
+      } finally {
+        admission.lease.dispose();
+      }
+    });
+  }
+
+  private strictRule_abyssPrivate(
+    request: TaskStatusMutationRequest,
+    semantic: TaskStatus,
+    currentRule: TaskStatusRule | undefined,
+  ): TaskStatusRule | undefined {
+    if (request.intent.type === 'set-status')
+      return this.statusCatalog_abyssPrivate.ruleForSymbol(request.intent.symbol);
+    if (request.intent.type === 'complete' && semantic === 'done') return currentRule;
+    const type =
+      request.intent.type === 'toggle-completion' && semantic === 'done' ? 'todo' : 'done';
+    return this.statusCatalog_abyssPrivate.defaultForType(type);
+  }
+
+  private strictSemantic_abyssPrivate(current: TaskSnapshot | SubtaskSnapshot): TaskStatus {
+    const source =
+      'source' in current
+        ? current.source.originalMarkdown
+        : (current.ref.originalBlock.split(/\r?\n/u)[0] ?? '');
+    const cancelled = parseTaskLineSourceModel(source)?.planning.cancelled;
+    return cancelled !== undefined && cancelled.length > 0
+      ? 'cancelled'
+      : this.statusCatalog_abyssPrivate.statusForSymbol(current.statusSymbol);
+  }
+
+  private strictSelection_abyssPrivate(request: TaskStatusMutationRequest):
+    | {
+        readonly type: 'selection';
+        readonly current: TaskSnapshot | SubtaskSnapshot;
+        readonly semantic: TaskStatus;
+        readonly currentRule: TaskStatusRule | undefined;
+        readonly rule: TaskStatusRule;
+        readonly noop: boolean;
+      }
+    | Extract<TaskStatusMutationOutcome, { readonly type: 'rejected' }> {
+    const current = snapshotForTarget(request.root, request.target);
+    if (current === undefined) return { type: 'rejected', reason: 'revision-changed' };
+    const semantic = this.strictSemantic_abyssPrivate(current);
+    const currentRule = this.statusCatalog_abyssPrivate.ruleForSymbol(current.statusSymbol);
+    const rule = this.strictRule_abyssPrivate(request, semantic, currentRule);
+    if (rule === undefined)
+      return {
+        type: 'rejected',
+        reason:
+          request.intent.type === 'set-status' ? 'unsupported-status' : 'missing-default-status',
+      };
+    const noop =
+      (request.intent.type === 'complete' && semantic === 'done') ||
+      (request.intent.type === 'set-status' && currentRule?.symbol === rule.symbol);
+    return { type: 'selection', current, semantic, currentRule, rule, noop };
+  }
+
+  private strictTransition_abyssPrivate(
+    operation: Exclude<PreparedTaskCommand, { readonly result: TaskCommandResult }>,
+    request: TaskStatusMutationRequest,
+    selection: {
+      readonly noop: boolean;
+      readonly semantic: TaskStatus;
+      readonly currentRule: TaskStatusRule | undefined;
+    },
+  ): Exclude<PreparedTaskCommand, { readonly result: TaskCommandResult }> {
+    if (
+      selection.noop ||
+      selection.semantic !== 'cancelled' ||
+      selection.currentRule?.type !== 'done'
+    )
+      return operation;
+    if ('recurrence' in operation)
+      return { recurrence: { ...operation.recurrence, semanticTransition: true } };
+    if (request.intent.type !== 'set-status' && operation.command.type === 'set-status')
+      return { command: { ...operation.command, semanticTransition: true } };
+    return operation;
+  }
+
+  private prepareStrictStatus_abyssPrivate(
+    request: TaskStatusMutationRequest,
+    lease: TaskStatusReadLease,
+  ): PreparedMutation | TaskStatusMutationOutcome {
+    const selection = this.strictSelection_abyssPrivate(request);
+    if (selection.type === 'rejected') return selection;
+    const { current, semantic, rule, noop } = selection;
+    const settings = snapshotBehaviorSettings(this.behaviorSettings_abyssPrivate);
+    const reading = captureClock(this.clock_abyssPrivate);
+    const resolution: ProvenResolution = {
+      type: 'exact',
+      task: request.root,
+      basis: { observed: request.root },
+    };
+    const command: StatusCommand = {
+      type: 'set-status',
+      target: request.target,
+      symbol: rule.symbol,
+    };
+    let operation: PreparedTaskCommand = noop
+      ? { command: { ...command, symbol: current.statusSymbol } }
+      : this.prepareStatusCommand_abyssPrivate(command, settings, reading, {
+          resolution,
+          semanticOverride: semantic,
+        });
+    if ('result' in operation) {
+      if (operation.result.type === 'invalid')
+        return { type: 'rejected', reason: 'missing-default-status' };
+      return { type: 'result', result: operation.result, occurrences: lease.occurrences() };
+    }
+    operation = this.strictTransition_abyssPrivate(operation, request, selection);
+    const repoRequest = this.repositoryRequest_abyssPrivate(
+      operation,
+      request.root,
+      request.target,
+      resolution,
+    );
+    const validateCurrent = noop
+      ? undefined
+      : this.completionValidation_abyssPrivate(operation, request.target, request.root);
+    return {
+      repositoryRequest: {
+        ...repoRequest,
+        strictStatus: lease.guard(request.root, request.target),
+      },
+      base: request.root,
+      targetBase: request.target,
+      clock: reading,
+      settings,
+      retry: 'never',
+      ...(validateCurrent === undefined ? {} : { validateCurrent }),
+    };
+  }
+
+  private async executeStrictStatus_abyssPrivate(
+    request: TaskStatusMutationRequest,
+    lease: TaskStatusReadLease,
+  ): Promise<TaskStatusMutationOutcome> {
+    let pendingTracking: CompletionFollowUpDetails | undefined;
+    try {
+      const prepared = this.prepareStrictStatus_abyssPrivate(request, lease);
+      if ('type' in prepared) return prepared;
+      const strict: { rejection?: TaskStrictStatusFailure } = {};
+      const completionConfirmed = prepared.validateCurrent !== undefined;
+      pendingTracking = pendingCompletionTracking(request, prepared);
+      const result = await this.dispatchPrepared_abyssPrivate(prepared, undefined, strict);
+      if (strict.rejection !== undefined) return { type: 'rejected', reason: strict.rejection };
+      if (result.type === 'io-error' && result.contentState === 'unknown') lease.markMainUnknown();
+      pendingTracking = trackingAfterDispatch(result, pendingTracking);
+      const followUp =
+        result.type === 'io-error' && result.contentState === 'unknown'
+          ? confirmedPendingTracking(lease, pendingTracking)
+          : await this.closeStrictTracking_abyssPrivate(request, result, {
+              lease,
+              settings: prepared.settings,
+              reading: prepared.clock,
+              completionConfirmed,
+            });
+      return {
+        type: 'result',
+        result,
+        occurrences: lease.occurrences(),
+        ...(followUp === undefined ? {} : { followUp }),
+      };
+    } catch {
+      lease.markMainUnknown();
+      const followUp = confirmedPendingTracking(lease, pendingTracking);
+      return {
+        type: 'result',
+        result: { type: 'io-error', cause: 'repository-error', contentState: 'unknown' },
+        occurrences: lease.occurrences(),
+        ...(followUp === undefined ? {} : { followUp }),
+      };
+    }
+  }
+
+  private async closeStrictTracking_abyssPrivate(
+    request: TaskStatusMutationRequest,
+    result: TaskCommandResult,
+    context: StrictTrackingContext & { readonly completionConfirmed: boolean },
+  ): Promise<CompletionFollowUpDetails | undefined> {
+    if (result.type !== 'ok' || !result.changed || !('atom' in context.reading)) return undefined;
+    const outcome = result.outcome;
+    if (outcome.type !== 'task' && outcome.type !== 'recurrence') return undefined;
+    const follow =
+      outcome.type === 'task' ? { root: outcome.task, target: request.target } : outcome.completed;
+    if (follow === undefined) return undefined;
+    return await this.tracking_abyssPrivate.closeAfterCompletion(
+      follow.root,
+      follow.target,
+      context.reading,
+      {
+        edit: (command) => this.executeTrackingEdit_abyssPrivate(command, context),
+        stopOnFailure: true,
+        completionConfirmed: context.completionConfirmed,
+      },
+    );
+  }
+
   async execute(
     command: TaskCommand,
     options?: Parameters<TaskApplicationApi['execute']>[1],
@@ -728,7 +1187,10 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
   /** Writes one internal tracking edit through the resolution, retry and outcome path of a command. */
   private async executeTrackingEdit_abyssPrivate(
     command: TaskEditCommand,
+    strictContext?: StrictTrackingContext,
   ): Promise<TaskCommandResult> {
+    if (strictContext !== undefined)
+      return await this.executeStrictTrackingEdit_abyssPrivate(command, strictContext);
     const settings = snapshotBehaviorSettings(this.behaviorSettings_abyssPrivate);
     const reading = captureClock(this.clock_abyssPrivate);
     const targetBase = taskEditMutationTarget(command);
@@ -752,6 +1214,31 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
       clock: reading,
       settings,
       retry: retryPolicy(command),
+    });
+  }
+
+  private async executeStrictTrackingEdit_abyssPrivate(
+    command: TaskEditCommand,
+    context: StrictTrackingContext,
+  ): Promise<TaskCommandResult> {
+    if (context.lease.failure() !== undefined) return invalidTaskTarget('target');
+    const target = taskMutationNodeRef(taskEditMutationTarget(command));
+    const resolution = this.queries.resolve(rootRefOf(target));
+    if (resolution.type !== 'exact') return invalidTaskTarget('target');
+    const root = resolution.task;
+    return await this.dispatchPrepared_abyssPrivate({
+      repositoryRequest: {
+        command,
+        baseRoot: root,
+        baseTarget: target,
+        reconciliation: { observed: root },
+        strictStatus: context.lease.guard(root, target),
+      },
+      base: root,
+      targetBase: target,
+      clock: context.reading,
+      settings: context.settings,
+      retry: 'never',
     });
   }
 
@@ -895,6 +1382,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
   private async dispatchPrepared_abyssPrivate(
     prepared: PreparedMutation,
     options?: Parameters<TaskApplicationApi['execute']>[1],
+    strict?: { rejection?: TaskStrictStatusFailure },
   ): Promise<TaskCommandResult> {
     const invalidCurrent = this.validateCompletion_abyssPrivate(
       prepared,
@@ -902,11 +1390,9 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     );
     if (invalidCurrent !== undefined) return invalidCurrent;
     this.notifyPreparedPatch_abyssPrivate(prepared.repositoryRequest, options);
-    return await this.finishPrepared_abyssPrivate(
-      prepared,
-      await this.dispatch_abyssPrivate(prepared.repositoryRequest),
-      options,
-    );
+    const result = await this.dispatch_abyssPrivate(prepared.repositoryRequest);
+    if (strict !== undefined && result.type === 'strict-rejected') strict.rejection = result.reason;
+    return await this.finishPrepared_abyssPrivate(prepared, result, options);
   }
 
   private completionValidation_abyssPrivate(
@@ -1097,16 +1583,25 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     if (preparedInitial.type === 'invalid') {
       return invalidTaskTarget(preparedInitial.field);
     }
-    const draft = preparedCreateDraft(request, preparedInitial, settings);
-    const result = await this.repository_abyssPrivate.create(resolution.destination, {
-      ...draft,
-      today: reading.localDate,
-      addCreatedDate: settings.taskLifecycle.addCreatedDate,
-      addCompletionDate: settings.taskLifecycle.addCompletionDate,
-    });
+    const draft = this.creationDraft_abyssPrivate(request, preparedInitial, settings, reading);
+    const result = await this.repository_abyssPrivate.create(resolution.destination, draft);
     if (result.type !== 'committed') return this.terminalRepositoryResult_abyssPrivate(result);
     if (result.outcome.type === 'task') this.remember_abyssPrivate(result.outcome.task);
     return { type: 'ok', outcome: result.outcome, changed: result.changed };
+  }
+
+  private creationDraft_abyssPrivate(
+    request: TaskCreateRequest,
+    initial: Extract<PreparedCreateInitial, { type: 'valid' }>,
+    settings: TaskBehaviorSettings,
+    reading: Pick<ClockReading, 'localDate'>,
+  ): TaskDraft {
+    return {
+      ...preparedCreateDraft(request, initial, settings),
+      today: reading.localDate,
+      addCreatedDate: settings.taskLifecycle.addCreatedDate,
+      addCompletionDate: settings.taskLifecycle.addCompletionDate,
+    };
   }
 
   private async destinationPlan_abyssPrivate(
@@ -1125,10 +1620,12 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
       filePath: destination.destination.filePath,
       insertion: { ...destination.destination.insertion },
     };
-    return {
+    const plan: TaskDestinationPlan = {
       destination: planned,
+      refreshPrepared: async () => plan,
       prepare: async () => ({ type: 'resolved', destination: planned }),
     };
+    return plan;
   }
 
   private readyCreateSession_abyssPrivate(
@@ -1252,6 +1749,549 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     };
   }
 
+  private readonly createPreparationPlans_abyssPrivate = new WeakMap<object, TaskDestinationPlan>();
+
+  async prepareCreateTree(
+    input: Parameters<TaskCreatePreparationApi['prepareCreateTree']>[0],
+  ): Promise<TaskCreatePreparation> {
+    const snapshot = structuredClone(this.behaviorSettings_abyssPrivate());
+    const resolved = creationTreePolicy(input, snapshot);
+    if (resolved === undefined) return { type: 'invalid', result: invalidTaskTarget('settings') };
+    const { tree, settings } = resolved;
+    const reading = captureClock(this.clock_abyssPrivate);
+    const catalog = JSON.stringify(this.statusCatalog_abyssPrivate.all());
+    const current = (): boolean =>
+      JSON.stringify(this.behaviorSettings_abyssPrivate()) === JSON.stringify(snapshot) &&
+      JSON.stringify(this.statusCatalog_abyssPrivate.all()) === catalog;
+    try {
+      const project = creationProject(input.destination);
+      const plan = await this.sealedDestinationPlan_abyssPrivate(input.destination);
+      const failure = creationPlanFailure(plan);
+      if (failure !== undefined) return failure;
+      if (plan === undefined) return { type: 'invalid', result: destinationUnavailableResult() };
+      const draft = this.treeDraft_abyssPrivate(tree, settings, reading);
+      if (draft === undefined) return { type: 'invalid', result: invalidTaskTarget('tree') };
+      const root = await this.repository_abyssPrivate.prepareCreateRoot?.(plan.destination, draft);
+      if (root === undefined) return { type: 'invalid', result: destinationUnavailableResult() };
+      const prepared = this.buildCreationTree_abyssPrivate(root, tree, settings, reading);
+      if (inboxCreationMismatch(input.intent, prepared, settings))
+        return { type: 'invalid', result: invalidTaskTarget('tags') };
+      if (!current()) return { type: 'invalid', result: invalidTaskTarget('settings') };
+      const guard: PreparedTaskCreateGuard = {
+        validateBeforeProvision: async () =>
+          current() && (plan.validatePrepared === undefined || (await plan.validatePrepared())),
+        check: (file, live, candidate) =>
+          current() &&
+          (plan.checkPrepared?.(file, live) ?? true) &&
+          project?.check(file, live, candidate) === undefined,
+      };
+      return this.createPreparation_abyssPrivate(
+        prepared,
+        {
+          plan,
+          originalPlan: plan,
+          guard,
+          settings,
+          reading,
+          current,
+          project,
+          family: { attempted: false },
+        },
+        true,
+      );
+    } catch {
+      this.diagnostics_abyssPrivate({
+        operation: 'create',
+        phase: 'unexpected',
+        cause: 'repository-error',
+      });
+      return {
+        type: 'invalid',
+        result: { type: 'io-error', cause: 'repository-error', contentState: 'unchanged' },
+      };
+    }
+  }
+
+  private buildCreationTree_abyssPrivate(
+    root: TaskPreparedCreateRoot,
+    tree: TaskCreateTreeNode,
+    settings: TaskBehaviorSettings,
+    reading: ClockReading | { readonly localDate: ClockReading['localDate'] },
+  ): TaskPreparedCreateRoot {
+    return buildPreparedCreateTree(root, tree, {
+      draft: (node, parent) =>
+        this.treeDraft_abyssPrivate(
+          node,
+          {
+            ...settings,
+            taskPrefix: taskPrefixForSubtask(
+              settings.taskPrefix,
+              settings.applyTaskPrefixToSubtasks,
+              parent.tags,
+              settings.inbox,
+            ),
+          },
+          reading,
+        ),
+      normalize: (command, snapshot) =>
+        this.normalizeTreeCommand_abyssPrivate(command, snapshot, settings, reading),
+    });
+  }
+
+  private async sealedDestinationPlan_abyssPrivate(
+    destination: TaskCreatePreparationDestination,
+  ): Promise<TaskDestinationPlan | undefined> {
+    const selected = await this.destinationPlan_abyssPrivate(
+      destination.type === 'project'
+        ? { type: 'explicit', destination: destination.destination }
+        : destination,
+    );
+    const plan = (await selected?.seal?.()) ?? selected;
+    const needsProvision = creationNeedsProvision(destination);
+    if (!needsProvision || plan?.preparedFailure !== undefined) return plan;
+    return plan?.prepareGuarded === undefined ? undefined : plan;
+  }
+
+  private treeDraft_abyssPrivate(
+    node: TaskCreateTreeNode,
+    settings: TaskBehaviorSettings,
+    reading: Pick<ClockReading, 'localDate'>,
+  ): TaskDraft | undefined {
+    if (!isSingleLineText(node.markdownTitle) || node.markdownTitle.trim().length === 0)
+      return undefined;
+    if (hasEmptyCreationTags(node)) return undefined;
+    const request = {
+      markdownBody: node.markdownTitle,
+      ...(node.initial === undefined ? {} : { initial: structuredClone(node.initial) }),
+    };
+    const initial = prepareCreateInitial(request, settings, this.statusCatalog_abyssPrivate);
+    return initial.type === 'invalid'
+      ? undefined
+      : this.creationDraft_abyssPrivate(request, initial, settings, reading);
+  }
+
+  private normalizeTreeCommand_abyssPrivate(
+    command: PreparedTaskEditCommand | Extract<TaskEditCommand, { type: 'set-status' }>,
+    root: TaskSnapshot,
+    settings: TaskBehaviorSettings,
+    reading: ClockReading | { readonly localDate: ClockReading['localDate'] },
+  ): TaskEditCommand | undefined {
+    if (command.type === 'set-status') return command;
+    if (!isPreparedTaskEditCommand(command)) return undefined;
+    const editable = command;
+    if (multilineInputIssue(editable) !== undefined) return undefined;
+    const normalized = prepareCommentCommand(structuredClone(editable));
+    if (normalized.type === 'invalid' || !isPreparedTaskEditCommand(normalized)) return undefined;
+    const next = this.prepareNonStatusCommand_abyssPrivate(normalized, settings, reading, {
+      type: 'exact',
+      task: root,
+      basis: { observed: root },
+    });
+    return 'command' in next ? next.command : undefined;
+  }
+
+  private createPreparation_abyssPrivate(
+    prepared: TaskPreparedCreateRoot,
+    context: CreatePreparationContext,
+    initial = false,
+  ): TaskCreatePreparation {
+    if (prepared.type === 'invalid')
+      return {
+        type: 'invalid',
+        result: this.terminalRepositoryResult_abyssPrivate(prepared.result),
+      };
+    const { plan, guard, settings, reading } = context;
+    let attempt: Promise<TaskCreateCommitResult> | undefined;
+    const result: TaskCreatePreparation = {
+      type: 'ready',
+      before: null,
+      get destination() {
+        return structuredClone(plan.destination);
+      },
+      get after() {
+        return prepared.after;
+      },
+      get continuations() {
+        return initial ? [] : prepared.continuations;
+      },
+      append: (command) => {
+        if (command.type === 'delete')
+          return { type: 'invalid', result: invalidTaskTarget('target') };
+        const normalized = this.normalizeTreeCommand_abyssPrivate(
+          command,
+          prepared.after,
+          settings,
+          reading,
+        );
+        return normalized === undefined
+          ? { type: 'invalid', result: invalidTaskTarget('target') }
+          : this.createPreparation_abyssPrivate(prepared.append(normalized), context);
+      },
+      get copies() {
+        return prepared.copies;
+      },
+      sourceCopiesAvailable: () => prepared.sourceCopiesAvailable(),
+      continueSourceComment: (source) => prepared.continueSourceComment(source),
+      assessMerge: async (source) => {
+        if (!context.current()) return undefined;
+        const report = await prepared.assessMerge(source);
+        return context.current() ? report : undefined;
+      },
+      copySource: async (input) => {
+        if (!context.current()) return { type: 'invalid', result: invalidTaskTarget('settings') };
+        const copied = await prepared.copySource(input);
+        return context.current()
+          ? this.createPreparation_abyssPrivate(copied, context)
+          : { type: 'invalid', result: invalidTaskTarget('settings') };
+      },
+      refineInitialStatus: (input) => {
+        const command = this.initialStatusRefinement_abyssPrivate(input, prepared.after, context);
+        return command === undefined
+          ? { type: 'invalid', result: invalidTaskTarget('status') }
+          : this.createPreparation_abyssPrivate(prepared.append(command), context);
+      },
+      sharesDestinationBasis: (other) => {
+        const otherPlan = this.createPreparationPlans_abyssPrivate.get(other);
+        return (
+          otherPlan !== undefined && context.originalPlan.sharesPreparedBasis?.(otherPlan) === true
+        );
+      },
+      refresh: (options) => this.refreshCreatePreparation_abyssPrivate(prepared, context, options),
+      commit: async () => {
+        context.family.attempted = true;
+        attempt ??= this.commitCreatePreparation_abyssPrivate(prepared, plan, guard);
+        return structuredClone(await attempt);
+      },
+    };
+    this.createPreparationPlans_abyssPrivate.set(result, context.originalPlan);
+    return result;
+  }
+
+  private async refreshCreatePreparation_abyssPrivate(
+    prepared: Extract<TaskPreparedCreateRoot, { type: 'ready' }>,
+    context: CreatePreparationContext,
+    options?: { readonly createdDestinationAnchor?: TaskSnapshot },
+  ): Promise<TaskCreatePreparation> {
+    const allowed = (): boolean => !context.family.attempted && context.current();
+    try {
+      if (!allowed()) return { type: 'invalid', result: destinationUnavailableResult() };
+      const refreshed = await prepared.refresh(options);
+      if (refreshed.type === 'invalid')
+        return {
+          type: 'invalid',
+          result: this.terminalRepositoryResult_abyssPrivate(refreshed.result),
+        };
+      const next = await this.refreshCreateContext_abyssPrivate(context, options);
+      if (next === undefined || !allowed())
+        return { type: 'invalid', result: destinationUnavailableResult() };
+      if (
+        !(await next.guard.validateBeforeProvision()) ||
+        !(await refreshed.validateBeforeProvision(
+          (file, live, candidate) => next.guard.check(file, live, candidate),
+          next.plan.plannedContent,
+        )) ||
+        !allowed()
+      )
+        return { type: 'invalid', result: destinationUnavailableResult() };
+      return this.createPreparation_abyssPrivate(refreshed, next);
+    } catch {
+      return this.preparationReadFailure_abyssPrivate('create');
+    }
+  }
+
+  private async refreshCreateContext_abyssPrivate(
+    context: CreatePreparationContext,
+    options?: { readonly createdDestinationAnchor?: TaskSnapshot },
+  ): Promise<CreatePreparationContext | undefined> {
+    const plan = await context.plan.refreshPrepared?.(options);
+    const project = context.project?.refreshPrepared?.();
+    if (plan === undefined || (context.project !== undefined && project === undefined))
+      return undefined;
+    const guard: PreparedTaskCreateGuard = {
+      validateBeforeProvision: async () =>
+        context.current() &&
+        (plan.validatePrepared === undefined || (await plan.validatePrepared())),
+      check: (file, live, candidate) =>
+        context.current() &&
+        (plan.checkPrepared?.(file, live) ?? true) &&
+        project?.check(file, live, candidate) === undefined,
+    };
+    return { ...context, plan, project, guard };
+  }
+
+  private async commitCreatePreparation_abyssPrivate(
+    prepared: Extract<TaskPreparedCreateRoot, { type: 'ready' }>,
+    plan: TaskDestinationPlan,
+    guard: PreparedTaskCreateGuard,
+  ): Promise<TaskCreateCommitResult> {
+    let effects: TaskCreateCommitResult['destinationEffects'] = 'unchanged';
+    try {
+      const validate = async (): Promise<boolean> =>
+        (await guard.validateBeforeProvision()) &&
+        (await prepared.validateBeforeProvision(
+          (file, live, candidate) => guard.check(file, live, candidate),
+          plan.plannedContent,
+        ));
+      if (!(await validate()))
+        return { result: destinationUnavailableResult(), destinationEffects: effects };
+      if (plan.prepareGuarded !== undefined) {
+        const provision = await plan.prepareGuarded(validate);
+        effects = provision.effects;
+        if (
+          provision.resolution.type !== 'resolved' ||
+          JSON.stringify(provision.resolution.destination) !== JSON.stringify(plan.destination)
+        )
+          return { result: destinationUnavailableResult(), destinationEffects: effects };
+      }
+      if (!(await guard.validateBeforeProvision()))
+        return { result: destinationUnavailableResult(), destinationEffects: effects };
+      const result = await prepared.commit(guard);
+      if (result.type === 'committed' && result.outcome.type === 'task')
+        this.remember_abyssPrivate(result.outcome.task);
+      return {
+        result: this.terminalRepositoryResult_abyssPrivate(result),
+        destinationEffects: effects,
+      };
+    } catch {
+      this.diagnostics_abyssPrivate({
+        operation: 'create',
+        phase: 'unexpected',
+        cause: 'repository-error',
+      });
+      return {
+        result: { type: 'io-error', cause: 'repository-error', contentState: 'unknown' },
+        destinationEffects: effects,
+      };
+    }
+  }
+
+  prepareHierarchy(command: TaskHierarchyCommand): Promise<TaskHierarchyPreparation> {
+    return new TaskHierarchyService(
+      this.queries,
+      this.repository_abyssPrivate,
+      this.diagnostics_abyssPrivate,
+    ).prepareHierarchy(command);
+  }
+
+  async prepare(
+    root: TaskSnapshot,
+    commands: readonly PreparedTaskEditCommand[],
+  ): Promise<TaskEditPreparation> {
+    const target = structuredClone(root);
+    const operations = structuredClone(commands);
+    const settings = structuredClone(this.behaviorSettings_abyssPrivate());
+    const reading = captureClock(this.clock_abyssPrivate);
+    const catalog = JSON.stringify(this.statusCatalog_abyssPrivate.all());
+    const current = (): boolean =>
+      JSON.stringify(this.behaviorSettings_abyssPrivate()) === JSON.stringify(settings) &&
+      JSON.stringify(this.statusCatalog_abyssPrivate.all()) === catalog;
+    let prepared: TaskPreparedRootEdit | undefined;
+    try {
+      prepared = await this.repository_abyssPrivate.prepareRootEdit?.(target);
+    } catch {
+      return this.preparationReadFailure_abyssPrivate('patch');
+    }
+    if (prepared === undefined) return { type: 'invalid', result: invalidTaskTarget('target') };
+    if (!current()) return { type: 'invalid', result: invalidTaskTarget('settings') };
+    let result = this.editPreparation_abyssPrivate(prepared, {
+      settings,
+      reading,
+      current,
+      family: { attempted: false },
+      ref: { ...target.ref },
+    });
+    for (const command of operations) {
+      if (result.type !== 'ready') break;
+      result = result.append(command);
+    }
+    return result;
+  }
+
+  private editPreparation_abyssPrivate(
+    prepared: TaskPreparedRootEdit,
+    context: EditPreparationContext,
+  ): TaskEditPreparation {
+    if (prepared.type === 'invalid')
+      return {
+        type: 'invalid',
+        result: this.terminalRepositoryResult_abyssPrivate(prepared.result),
+      };
+    const { settings, reading, family } = context;
+    let attempt: Promise<TaskCommandResult> | undefined;
+    return {
+      type: 'ready',
+      get continuations() {
+        return prepared.continuations;
+      },
+      ...(prepared.sourceContinuations === undefined
+        ? {}
+        : { sourceContinuations: prepared.sourceContinuations }),
+      get before() {
+        return prepared.before;
+      },
+      get after() {
+        return prepared.after;
+      },
+      append: (command) => {
+        const current = prepared.after;
+        const issue = multilineInputIssue(command);
+        if (issue !== undefined) return { type: 'invalid', result: issue };
+        const normalized = prepareCommentCommand(structuredClone(command));
+        if (normalized.type === 'invalid') return { type: 'invalid', result: normalized };
+        if (current === null || !isPreparedTaskEditCommand(normalized))
+          return { type: 'invalid', result: invalidTaskTarget('target') };
+        const next = this.prepareNonStatusCommand_abyssPrivate(normalized, settings, reading, {
+          type: 'exact',
+          task: current,
+          basis: { observed: current },
+        });
+        if (!('command' in next))
+          return {
+            type: 'invalid',
+            result: 'result' in next ? next.result : invalidTaskTarget('target'),
+          };
+        return this.editPreparation_abyssPrivate(prepared.append(next.command), context);
+      },
+      get copies() {
+        return prepared.copies;
+      },
+      sourceCopiesAvailable: () => prepared.sourceCopiesAvailable(),
+      continueSourceComment: (source) => prepared.continueSourceComment(source),
+      assessMerge: async (source) => {
+        if (!context.current()) return undefined;
+        const report = await prepared.assessMerge(source);
+        return context.current() ? report : undefined;
+      },
+      copySource: async (input) => {
+        if (!context.current()) return { type: 'invalid', result: invalidTaskTarget('settings') };
+        const copied = await prepared.copySource(input);
+        return context.current()
+          ? this.editPreparation_abyssPrivate(copied, context)
+          : { type: 'invalid', result: invalidTaskTarget('settings') };
+      },
+      refineInitialStatus: (input) => {
+        const command = this.initialStatusRefinement_abyssPrivate(input, prepared.after, context);
+        return command === undefined
+          ? { type: 'invalid', result: invalidTaskTarget('status') }
+          : this.editPreparation_abyssPrivate(prepared.append(command), context);
+      },
+      refresh: (current) => this.refreshEditPreparation_abyssPrivate(prepared, context, current),
+      partitionFields: (selections) =>
+        this.partitionEdit_abyssPrivate(prepared, context, selections),
+      commit: async () => {
+        family.attempted = true;
+        attempt ??= context.current()
+          ? this.commitRootPreparation_abyssPrivate(prepared)
+          : Promise.resolve(invalidTaskTarget('settings'));
+        return structuredClone(await attempt);
+      },
+    };
+  }
+
+  private partitionEdit_abyssPrivate(
+    prepared: Extract<TaskPreparedRootEdit, { type: 'ready' }>,
+    context: EditPreparationContext,
+    selections: readonly TaskFieldSelection[],
+  ): TaskEditPartition | undefined {
+    const allowed = (): boolean => !context.family.attempted && context.current();
+    if (!allowed()) return undefined;
+    const partition = prepared.partitionFields(selections);
+    if (partition === undefined) return undefined;
+    return {
+      selected: this.editPreparation_abyssPrivate(partition.selected, {
+        ...context,
+        family: { attempted: false },
+      }),
+      rebase: async (current) => {
+        if (!allowed()) return { type: 'invalid', result: invalidTaskTarget('settings') };
+        const next = await partition.rebase(current);
+        if (next.type === 'unavailable') return next;
+        if (!allowed()) return { type: 'invalid', result: invalidTaskTarget('settings') };
+        return this.editPreparation_abyssPrivate(next, { ...context, ref: { ...current.ref } });
+      },
+    };
+  }
+  private initialStatusRefinement_abyssPrivate(
+    input: { readonly target: TaskNodeRef; readonly symbol: string },
+    root: TaskSnapshot | null,
+    context: EditPreparationContext | CreatePreparationContext,
+  ): Extract<TaskEditCommand, { type: 'set-status' }> | undefined {
+    if (root === null || !context.current()) return undefined;
+    const current = snapshotForTarget(root, input.target);
+    const rule = this.statusCatalog_abyssPrivate.ruleForSymbol(input.symbol);
+    if (current === undefined || rule === undefined) return undefined;
+    const currentRule = this.statusCatalog_abyssPrivate.ruleForSymbol(current.statusSymbol);
+    const result = this.preparedStatusEdit_abyssPrivate(
+      input.target,
+      current,
+      currentRule,
+      this.statusCatalog_abyssPrivate.statusForSymbol(current.statusSymbol),
+      rule,
+      context.settings,
+      context.reading,
+    );
+    return 'command' in result && result.command.type === 'set-status' ? result.command : undefined;
+  }
+
+  private async refreshEditPreparation_abyssPrivate(
+    prepared: Extract<TaskPreparedRootEdit, { type: 'ready' }>,
+    context: EditPreparationContext,
+    current: TaskSnapshot,
+  ): Promise<TaskEditPreparation | TaskEditRefreshUnavailable> {
+    const allowed = (): boolean => !context.family.attempted && context.current();
+    try {
+      const resolution = this.queries.resolve(context.ref);
+      let proven: TaskSnapshot | undefined;
+      if (resolution.type === 'exact') proven = resolution.task;
+      if (resolution.type === 'rebased' && resolution.basis.authorityTransition !== undefined)
+        proven = resolution.current;
+      if (
+        !allowed() ||
+        proven === undefined ||
+        !sameTaskNodeRef({ type: 'task', ref: proven.ref }, { type: 'task', ref: current.ref })
+      )
+        return { type: 'invalid', result: invalidTaskTarget('target') };
+      const next = await prepared.refresh(current);
+      if (!allowed()) return { type: 'invalid', result: invalidTaskTarget('target') };
+      return next.type === 'unavailable'
+        ? next
+        : this.editPreparation_abyssPrivate(next, { ...context, ref: { ...proven.ref } });
+    } catch {
+      return this.preparationReadFailure_abyssPrivate('patch');
+    }
+  }
+
+  private preparationReadFailure_abyssPrivate(operation: 'patch' | 'create'): {
+    type: 'invalid';
+    result: TaskCommandResult;
+  } {
+    this.diagnostics_abyssPrivate({ operation, phase: 'unexpected', cause: 'repository-error' });
+    return {
+      type: 'invalid',
+      result: { type: 'io-error', cause: 'repository-error', contentState: 'unchanged' },
+    };
+  }
+
+  private async commitRootPreparation_abyssPrivate(
+    prepared: Extract<TaskPreparedRootEdit, { type: 'ready' }>,
+  ): Promise<TaskCommandResult> {
+    try {
+      const result = await prepared.commit();
+      if (result.type === 'committed') {
+        if (result.outcome.type === 'task') this.remember_abyssPrivate(result.outcome.task);
+        if (result.outcome.type === 'deleted') this.forget_abyssPrivate(prepared.before.ref);
+      }
+      return this.terminalRepositoryResult_abyssPrivate(result);
+    } catch {
+      this.diagnostics_abyssPrivate({
+        operation: 'patch',
+        phase: 'unexpected',
+        cause: 'repository-error',
+      });
+      return { type: 'io-error', cause: 'repository-error', contentState: 'unknown' };
+    }
+  }
+
   private prepare_abyssPrivate(
     command: EditableTaskCommand,
     settings: TaskBehaviorSettings,
@@ -1259,7 +2299,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     resolution: ProvenResolution,
   ): PreparedTaskCommand {
     return isStatusCommand(command)
-      ? this.prepareStatusCommand_abyssPrivate(command, settings, reading, resolution)
+      ? this.prepareStatusCommand_abyssPrivate(command, settings, reading, { resolution })
       : this.prepareNonStatusCommand_abyssPrivate(command, settings, reading, resolution);
   }
 
@@ -1313,16 +2353,18 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     command: StatusCommand,
     settings: TaskBehaviorSettings,
     reading: ClockReading | { readonly localDate: ClockReading['localDate'] },
-    resolution: ProvenResolution,
+    context: { readonly resolution: ProvenResolution; readonly semanticOverride?: TaskStatus },
   ): PreparedTaskCommand {
+    const { resolution, semanticOverride } = context;
     const resolved = resolvedStatusSelection(resolution, command.target);
     if (resolved.current == null) return { result: { type: 'conflict', current: resolved.root } };
     const current = resolved.current;
     const currentRule = this.statusCatalog_abyssPrivate.ruleForSymbol(current.statusSymbol);
     const currentSemanticStatus =
-      currentRule == null
+      semanticOverride ??
+      (currentRule == null
         ? this.statusCatalog_abyssPrivate.statusForSymbol(current.statusSymbol)
-        : statusForRuleType(currentRule.type);
+        : statusForRuleType(currentRule.type));
     const rule = this.requestedStatusRule_abyssPrivate(command, currentSemanticStatus);
     if (rule === undefined) return invalidStatusResult();
     const recurrence = this.prepareRecurrenceCompletion_abyssPrivate({
@@ -1533,21 +2575,12 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
   }
 
   private terminalRepositoryResult_abyssPrivate(result: TaskRepositoryResult): TaskCommandResult {
-    switch (result.type) {
-      case 'committed':
-        return { type: 'ok', outcome: result.outcome, changed: result.changed };
-      case 'rebased':
-        return { type: 'conflict', current: result.current };
-      case 'uncertain':
-        return { type: 'not-found', target: result.target };
-      case 'partial':
-      case 'invalid':
-      case 'not-found':
-      case 'ambiguous':
-      case 'conflict':
-      case 'io-error':
-        return result;
-    }
+    if (result.type === 'strict-rejected') return invalidTaskTarget('target');
+    if (result.type === 'committed')
+      return { type: 'ok', outcome: result.outcome, changed: result.changed };
+    if (result.type === 'rebased') return { type: 'conflict', current: result.current };
+    if (result.type === 'uncertain') return { type: 'not-found', target: result.target };
+    return result;
   }
 
   private async finishPrepared_abyssPrivate(

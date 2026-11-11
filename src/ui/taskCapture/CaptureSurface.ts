@@ -9,7 +9,27 @@ import type { CaptureSnapshot, TaskCaptureController } from './TaskCaptureContro
 
 export type CapturePresentation = 'default' | 'inline';
 
+export interface CaptureExtension {
+  active(): boolean;
+  input(text: string): void;
+  edited?(): void;
+  submit(): void;
+  pendingInput?(): boolean;
+  escape(restoreFocus?: boolean): void;
+  destroy(): void;
+}
+export interface CaptureExtensionHost {
+  readonly interactionOwnership?: InteractionOwnershipPort;
+  readonly element: HTMLElement;
+  readonly shell: HTMLElement;
+  readonly input: HTMLTextAreaElement | HTMLInputElement;
+  readonly registerSurface: (surface: HTMLElement) => () => void;
+  readonly refresh: () => void;
+  readonly submitOrdinary: () => void;
+  readonly replaceOrdinaryInput: (text: string) => void;
+}
 export interface CaptureSurfaceOptions {
+  readonly extend?: (host: CaptureExtensionHost) => CaptureExtension;
   readonly app?: App;
   readonly inputLabel?: string;
   readonly getTagColor?: (tag: string) => string | undefined;
@@ -31,8 +51,9 @@ let nextCaptureSurfaceId = 0;
 
 export class CaptureSurface {
   readonly element: HTMLElement;
-  readonly input: HTMLInputElement;
+  readonly input: HTMLInputElement | HTMLTextAreaElement;
 
+  private readonly extension_abyssPrivate: CaptureExtension | undefined;
   private readonly destination_abyssPrivate: HTMLElement;
   private readonly pending_abyssPrivate: HTMLElement;
   private readonly error_abyssPrivate: HTMLElement;
@@ -47,6 +68,7 @@ export class CaptureSurface {
   private composing_abyssPrivate = false;
   private readonly timerWindow_abyssPrivate: Window;
   private readonly links_abyssPrivate: WikiLinkSuggest | undefined;
+  private readonly onEscape_abyssPrivate: (() => void) | undefined;
 
   constructor(
     host: HTMLElement,
@@ -54,6 +76,7 @@ export class CaptureSurface {
     options: CaptureSurfaceOptions = {},
   ) {
     const id = ++nextCaptureSurfaceId;
+    this.onEscape_abyssPrivate = options.onEscape;
     this.timerWindow_abyssPrivate = host.win;
     this.feedbackHost_abyssPrivate = options.feedbackHost;
     this.presentation_abyssPrivate = options.presentation ?? 'default';
@@ -66,11 +89,8 @@ export class CaptureSurface {
       this.presentation_abyssPrivate === 'inline',
     );
 
-    this.input = this.element.createEl('input', { attr: { enterkeyhint: 'enter' } });
-    this.input.className = 'abyss-capture-input abyss-quick-capture-input';
-    this.input.type = 'text';
-    this.input.placeholder = options.placeholder ?? 'Task name…';
-    this.input.setAttribute('aria-label', options.inputLabel ?? 'Add task');
+    const { shell, input } = this.createInput_abyssPrivate(options);
+    this.input = input;
 
     this.destination_abyssPrivate = this.element.createSpan();
     this.destination_abyssPrivate.className = 'abyss-capture-destination';
@@ -87,14 +107,54 @@ export class CaptureSurface {
 
     this.attachFeedback_abyssPrivate();
     const smart = this.mountSmart_abyssPrivate(options);
-    this.boundary_abyssPrivate = smart?.boundary;
+    this.boundary_abyssPrivate =
+      smart?.boundary ??
+      (options.extend === undefined ? undefined : this.createBoundary_abyssPrivate(options));
     this.metadataRow_abyssPrivate = smart?.row;
+    this.extension_abyssPrivate = options.extend?.({
+      ...(options.interactionOwnership === undefined
+        ? {}
+        : { interactionOwnership: options.interactionOwnership }),
+      element: this.element,
+      shell,
+      input: this.input,
+      registerSurface: (surface) => this.boundary_abyssPrivate?.register(surface) ?? (() => {}),
+      refresh: () => {
+        this.render_abyssPrivate(this.controller_abyssPrivate.snapshot());
+      },
+      submitOrdinary: () => this.boundary_abyssPrivate?.requestSubmit(),
+      replaceOrdinaryInput: (text) => {
+        this.controller_abyssPrivate.setDraft(text.replaceAll(/[\r\n]+/gu, ' '), {
+          editKind: 'paste',
+        });
+      },
+    });
     this.links_abyssPrivate = this.mountLinks_abyssPrivate(options);
     this.bindInput_abyssPrivate(options);
 
     this.subscribe_abyssPrivate();
   }
 
+  private createInput_abyssPrivate(
+    options: CaptureSurfaceOptions,
+  ): Pick<CaptureExtensionHost, 'shell' | 'input'> {
+    const shell =
+      options.extend === undefined
+        ? this.element
+        : this.element.createDiv({ cls: 'abyss-capture-input-shell' });
+    const input =
+      options.extend === undefined
+        ? shell.createEl('input', { type: 'text', attr: { enterkeyhint: 'enter' } })
+        : shell.createEl('textarea', { attr: { enterkeyhint: 'enter', rows: '1' } });
+    input.className = 'abyss-capture-input abyss-quick-capture-input';
+    input.placeholder = options.placeholder ?? 'Task name…';
+    input.setAttribute('aria-label', options.inputLabel ?? 'Add task');
+
+    return { shell, input };
+  }
+  private commandActive_abyssPrivate(): boolean {
+    return this.extension_abyssPrivate?.active() === true;
+  }
   private subscribe_abyssPrivate(): void {
     const subscription = this.controller_abyssPrivate.subscribe((snapshot) => {
       this.render_abyssPrivate(snapshot);
@@ -127,13 +187,7 @@ export class CaptureSurface {
     if (controller.snapshot().metadata === undefined) return undefined;
     {
       const isLive = (): boolean => !this.destroyed_abyssPrivate && (options.isLive?.() ?? true);
-      const boundary = new CaptureInteractionBoundary(this.element, {
-        flushInput: () => this.flushInput_abyssPrivate(),
-        isLive,
-        submit: (trigger) => {
-          runAsyncAction(controller.submit(trigger), 'Could not add task');
-        },
-      });
+      const boundary = this.createBoundary_abyssPrivate(options);
       const row = new CaptureMetadataRow(this.element, {
         ...options,
         boundary,
@@ -147,6 +201,21 @@ export class CaptureSurface {
     }
   }
 
+  private createBoundary_abyssPrivate(options: CaptureSurfaceOptions): CaptureInteractionBoundary {
+    return new CaptureInteractionBoundary(this.element, {
+      flushInput: () => this.flushInput_abyssPrivate(),
+      depart: () => this.depart_abyssPrivate(),
+      isLive: () => !this.destroyed_abyssPrivate && (options.isLive?.() ?? true),
+      submit: (trigger) => {
+        if (
+          !this.commandActive_abyssPrivate() &&
+          this.extension_abyssPrivate?.pendingInput?.() !== true
+        )
+          runAsyncAction(this.controller_abyssPrivate.submit(trigger), 'Could not add task');
+      },
+    });
+  }
+
   private attachFeedback_abyssPrivate(): void {
     const feedbackHost = this.feedbackHost_abyssPrivate ?? this.element;
     if (feedbackHost !== this.element) feedbackHost.classList.add('abyss-capture-feedback-layer');
@@ -157,8 +226,24 @@ export class CaptureSurface {
     );
   }
 
+  private sanitizeSingleLine_abyssPrivate(): void {
+    const value = this.input.value;
+    const singleLine = value.replaceAll(/[\r\n]/gu, '');
+    if (singleLine === value) return;
+    const start = value.slice(0, this.input.selectionStart ?? 0).replaceAll(/[\r\n]/gu, '').length;
+    const end = value.slice(0, this.input.selectionEnd ?? 0).replaceAll(/[\r\n]/gu, '').length;
+    this.input.value = singleLine;
+    this.input.setSelectionRange(start, end);
+  }
+
   private bindInput_abyssPrivate(options: CaptureSurfaceOptions): void {
     const onInput = (event: Event): void => {
+      this.extension_abyssPrivate?.edited?.();
+      if (this.commandActive_abyssPrivate()) {
+        this.extension_abyssPrivate?.input(this.input.value);
+        return;
+      }
+      this.sanitizeSingleLine_abyssPrivate();
       if (this.boundary_abyssPrivate === undefined)
         this.controller_abyssPrivate.setDraft(this.input.value);
       else {
@@ -173,22 +258,16 @@ export class CaptureSurface {
       }
     };
     this.bindComposition_abyssPrivate();
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (isImeOwnedEvent(event) || this.composing_abyssPrivate) return;
-      if (event.key === 'Enter') {
-        event.preventDefault();
-        event.stopPropagation();
-        if (this.boundary_abyssPrivate !== undefined) this.boundary_abyssPrivate.requestSubmit();
-        else if (this.flushInput_abyssPrivate() === 'ready')
-          runAsyncAction(this.controller_abyssPrivate.submit('enter'), 'Could not add task');
-      } else if (event.key === 'Escape') {
-        event.preventDefault();
-        event.stopPropagation();
-        options.onEscape?.();
-        this.controller_abyssPrivate.escape();
-      }
+    const onKeyDown = (event: Event): void => {
+      this.keyDown_abyssPrivate(event);
     };
-    const onBlur = (event: FocusEvent): void => {
+    const onBlur = (raw: Event): void => {
+      const event = raw as FocusEvent;
+      if (
+        this.commandActive_abyssPrivate() ||
+        this.extension_abyssPrivate?.pendingInput?.() === true
+      )
+        return;
       if (this.boundary_abyssPrivate !== undefined) {
         this.boundary_abyssPrivate.requestExit({
           type: 'focus',
@@ -206,11 +285,16 @@ export class CaptureSurface {
     };
 
     const onSurfaceKeyDown = (event: KeyboardEvent): void => {
-      if (event.target === this.input || event.key !== 'Escape' || isImeOwnedEvent(event)) return;
+      if (
+        event.defaultPrevented ||
+        event.target === this.input ||
+        event.key !== 'Escape' ||
+        isImeOwnedEvent(event)
+      )
+        return;
       event.preventDefault();
       event.stopPropagation();
-      options.onEscape?.();
-      this.controller_abyssPrivate.escape();
+      this.escape();
     };
     this.element.addEventListener('keydown', onSurfaceKeyDown);
     this.cleanup_abyssPrivate.push(() => {
@@ -232,6 +316,51 @@ export class CaptureSurface {
     );
   }
 
+  private depart_abyssPrivate(): boolean {
+    if (
+      !this.commandActive_abyssPrivate() &&
+      this.extension_abyssPrivate?.pendingInput?.() !== true
+    )
+      return false;
+    this.extension_abyssPrivate?.escape(false);
+    return true;
+  }
+  escape(): boolean {
+    if (this.destroyed_abyssPrivate || this.composing_abyssPrivate) return false;
+    if (this.commandActive_abyssPrivate() || this.extension_abyssPrivate?.pendingInput?.() === true)
+      this.extension_abyssPrivate?.escape();
+    else {
+      this.onEscape_abyssPrivate?.();
+      this.controller_abyssPrivate.escape();
+    }
+    return true;
+  }
+  private keyDown_abyssPrivate(raw: Event): void {
+    const event = raw as KeyboardEvent;
+    if (event.defaultPrevented || isImeOwnedEvent(event) || this.composing_abyssPrivate) return;
+    if (event.key === 'Enter') {
+      this.enter_abyssPrivate(event);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      this.escape();
+    }
+  }
+  private enter_abyssPrivate(event: KeyboardEvent): void {
+    const command = this.commandActive_abyssPrivate();
+    if (command && event.shiftKey) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if ((command || this.extension_abyssPrivate?.pendingInput?.() === true) && event.repeat) return;
+    this.submit_abyssPrivate();
+  }
+  private submit_abyssPrivate(): void {
+    if (this.commandActive_abyssPrivate() || this.extension_abyssPrivate?.pendingInput?.() === true)
+      this.extension_abyssPrivate?.submit();
+    else if (this.boundary_abyssPrivate !== undefined) this.boundary_abyssPrivate.requestSubmit();
+    else if (this.flushInput_abyssPrivate() === 'ready')
+      runAsyncAction(this.controller_abyssPrivate.submit('enter'), 'Could not add task');
+  }
   private bindComposition_abyssPrivate(): void {
     const onCompositionStart = (): void => {
       if (this.boundary_abyssPrivate === undefined) return;
@@ -278,6 +407,7 @@ export class CaptureSurface {
   private flushInput_abyssPrivate(): 'ready' | 'blocked' {
     if (this.destroyed_abyssPrivate || this.composing_abyssPrivate) return 'blocked';
     this.clearRecognitionTimer_abyssPrivate();
+    if (this.commandActive_abyssPrivate()) return 'blocked';
     this.controller_abyssPrivate.setDraft(this.input.value, { deferRecognition: true });
     this.controller_abyssPrivate.flushRecognition();
     return 'ready';
@@ -291,13 +421,18 @@ export class CaptureSurface {
   }
 
   ownsInteraction(target: EventTarget | null): boolean {
-    return this.links_abyssPrivate?.owns(target) ?? false;
+    return (
+      !this.destroyed_abyssPrivate &&
+      (this.boundary_abyssPrivate?.owns(target) === true ||
+        this.links_abyssPrivate?.owns(target) === true)
+    );
   }
 
   destroy(): void {
     if (this.destroyed_abyssPrivate) return;
     this.destroyed_abyssPrivate = true;
     this.clearRecognitionTimer_abyssPrivate();
+    this.extension_abyssPrivate?.destroy();
     this.links_abyssPrivate?.destroy();
     this.boundary_abyssPrivate?.destroy();
     this.metadataRow_abyssPrivate?.destroy();
@@ -319,8 +454,23 @@ export class CaptureSurface {
         this.metadataRow_abyssPrivate?.destinationDescription() ?? '';
     }
   }
+  private renderCommand_abyssPrivate(): boolean {
+    const command = this.commandActive_abyssPrivate() === true;
+    this.element.classList.toggle('abyss-capture-surface--command', command);
+    if (this.metadataRow_abyssPrivate !== undefined)
+      this.metadataRow_abyssPrivate.element.hidden = command;
+    if (command) {
+      this.destination_abyssPrivate.hidden = true;
+      this.pending_abyssPrivate.hidden = true;
+      this.error_abyssPrivate.hidden = true;
+      return true;
+    }
+    if (this.metadataRow_abyssPrivate === undefined) this.destination_abyssPrivate.hidden = false;
+    return false;
+  }
   private render_abyssPrivate(snapshot: CaptureSnapshot): void {
     if (this.destroyed_abyssPrivate) return;
+    if (this.renderCommand_abyssPrivate()) return;
     if (this.input.value !== snapshot.draft) this.input.value = snapshot.draft;
     this.input.readOnly = snapshot.readonly;
     this.input.setAttribute('aria-busy', String(snapshot.ariaBusy));

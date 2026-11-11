@@ -15,6 +15,8 @@ import { effectiveProjectTableDateDisplay } from '../../projects/projectTableSet
 import type { Project } from '../../projects/types';
 import { openAnchoredPopover, type AnchoredPopover } from '../../ui/anchoredPopover';
 import { localSearchSurfaceIsVisible } from '../../ui/localSearchKeys';
+import { createProjectDateParts } from '../../ui/projectDateParts';
+import { projectMetadataText } from '../../ui/projectPropertyValuePresentation';
 import { runAsyncAction } from '../../ui/runAsyncAction';
 import {
   mountProjectCellEditor,
@@ -25,13 +27,6 @@ import { mountProjectCellEditorPosition } from './projectCellEditorPosition';
 import { formatProjectPrettyDate } from './projectDatePresentation';
 import { renderProjectTableCell } from './projectTableCells';
 import type { ProjectsDashboardContext } from './viewContext';
-
-function metadataText(value: unknown): string {
-  if (Array.isArray(value)) return value.map(metadataText).filter(Boolean).join(', ');
-  if (typeof value === 'string' || typeof value === 'number') return String(value);
-  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
-  return '';
-}
 
 interface DateControl {
   readonly button: HTMLButtonElement;
@@ -123,7 +118,7 @@ export class ProjectDashboardProperties {
   #refreshDates(): void {
     const visible = new Set<string>();
     for (const field of this.#fields().filter(({ id }) => id === 'start' || id === 'end')) {
-      if (metadataText(this.#value(field)) === '') continue;
+      if (projectMetadataText(this.#value(field)) === '') continue;
       visible.add(field.id);
       this.#patchDate(field);
     }
@@ -140,8 +135,7 @@ export class ProjectDashboardProperties {
     if (control === undefined) {
       const button = this.#dates.createEl('button', { cls: 'abyss-project-dashboard-date' });
       button.dataset['projectField'] = field.id;
-      setIcon(button.createSpan(), field.id === 'start' ? 'calendar-arrow-up' : 'calendar-check');
-      const created = { button, field, label: button.createSpan() };
+      const created = { button, field, label: createProjectDateParts(button, field.id) };
       button.addEventListener('click', () => {
         this.#edit(created.field, button);
       });
@@ -173,7 +167,7 @@ export class ProjectDashboardProperties {
             value,
             this.owner.ownerDocument.defaultView?.navigator.language ?? 'en',
           )
-        : undefined) ?? metadataText(value)
+        : undefined) ?? projectMetadataText(value)
     );
   }
   #toggle(): void {

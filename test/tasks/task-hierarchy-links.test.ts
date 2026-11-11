@@ -1,6 +1,9 @@
 import { expect, it } from 'vitest';
 import { parseLinks, parseSourceReferences } from '../../src/markdown/links';
-import { rebaseMarkdownSourceReferences } from '../../src/markdown/sourceReferences';
+import {
+  isSourceReferenceFree,
+  rebaseMarkdownSourceReferences,
+} from '../../src/markdown/sourceReferences';
 
 const references = {
   resolve: (target: string, source: string) =>
@@ -135,4 +138,18 @@ it.each([
       resolver: references,
     }),
   ).toBe(expected);
+});
+
+it.each([
+  ['![[#Section]]', false],
+  ['![photo](./photo.png)', false],
+  ['![](./photo.png)', false],
+  ['[[#Section]]', false],
+  ['[photo][local]', false],
+  ['<img src="./photo.png">', false],
+  ['Plain authored description.', true],
+  ['`![[#Section]]` and `![photo](./photo.png)`', true],
+  ['```md\n![[#Section]]\n![photo](./photo.png)\n```', true],
+])('proves absence of source references in %s: %s', (text, expected) => {
+  expect(isSourceReferenceFree(text)).toBe(expected);
 });

@@ -99,6 +99,40 @@ it('retires an uncommitted first render before preparing the same source again',
     h.close();
   }
 });
+it('retires a cancelled prior comparison without reporting a late host failure', async () => {
+  const h = harness();
+  const held = deferred<void>();
+  const failure = vi.fn();
+  let holder: HTMLElement | undefined;
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementationOnce((_app, _source, element) => {
+    holder = element;
+    return held.promise.then(() => {
+      throw new Error('Late host comparison failure');
+    });
+  });
+  try {
+    const input = h.input();
+    const first = h.field.prepare({
+      ...input,
+      source: { ...input.source, presentation: 'markdown' },
+      decoration: { kind: 'complete', previousMarkdown: '# Before', compareMarkdown: true },
+      callbacks: { ...input.callbacks, onRenderFailure: failure },
+    });
+    const second = h.field.prepare(h.input('Current'));
+    expect(await first.ready).toEqual({ type: 'cancelled' });
+    expect(await second.ready).toEqual({ type: 'ready' });
+    expect(second.commit()).toBe(true);
+    expect(holder?.isConnected).toBe(false);
+    held.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(failure).not.toHaveBeenCalled();
+    expect(h.host.textContent).toBe('Current');
+    expect(first.commit()).toBe(false);
+  } finally {
+    h.close();
+  }
+});
 it.each([true, false])(
   'stages first Markdown until its renderer finishes (connected: %s)',
   async (connected) => {
@@ -473,29 +507,42 @@ it.each([
   }
 });
 
-it('reports a current failed replacement once while keeping settled text and releasing staging', async () => {
-  const h = harness();
-  const failure = vi.fn();
-  try {
-    const first = h.field.prepare(h.input());
-    await first.ready;
-    first.commit();
-    const anchor = expectDefined(h.host.querySelector('a'));
-    vi.spyOn(MarkdownRenderer, 'render').mockRejectedValueOnce(new Error('host failed'));
-    const input = h.input('[other](https://example.com)');
-    const pending = h.field.prepare({
-      ...input,
-      callbacks: { ...input.callbacks, onRenderFailure: failure },
-    });
-    expect((await pending.ready).type).toBe('failed');
-    expect(failure).toHaveBeenCalledTimes(1);
-    expect(h.host.querySelector('a')).toBe(anchor);
-    h.close();
-    expect(document.querySelector('[inert]')).toBeNull();
-  } finally {
-    h.close();
-  }
-});
+it.each([false, true])(
+  'reports a current failed replacement once while keeping settled text and releasing staging (prior comparison: %s)',
+  async (compareMarkdown) => {
+    const h = harness();
+    const failure = vi.fn();
+    try {
+      const first = h.field.prepare(h.input());
+      await first.ready;
+      first.commit();
+      const anchor = expectDefined(h.host.querySelector('a'));
+      vi.spyOn(MarkdownRenderer, 'render').mockRejectedValueOnce(new Error('host failed'));
+      const input = h.input('[other](https://example.com)');
+      const pending = h.field.prepare({
+        ...input,
+        source: { ...input.source, presentation: compareMarkdown ? 'markdown' : 'title' },
+        ...(compareMarkdown
+          ? {
+              decoration: {
+                kind: 'complete' as const,
+                compareMarkdown: true,
+                previousMarkdown: '# Prior heading',
+              },
+            }
+          : {}),
+        callbacks: { ...input.callbacks, onRenderFailure: failure },
+      });
+      expect((await pending.ready).type).toBe('failed');
+      expect(failure).toHaveBeenCalledTimes(1);
+      expect(h.host.querySelector('a')).toBe(anchor);
+      h.close();
+      expect(document.querySelector('[inert]')).toBeNull();
+    } finally {
+      h.close();
+    }
+  },
+);
 
 it('keeps an opened link edit callback bound to its original occurrence after query refresh', async () => {
   const h = harness();

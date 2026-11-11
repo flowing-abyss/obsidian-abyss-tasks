@@ -10,7 +10,13 @@ import { recoverOffline } from './recovery.mts';
 import { parseRun, renderComparison, renderReport } from './report.ts';
 import { compareRuns, sampleProblems, summarize } from './statistics.ts';
 import { canonicalPath, sha256, VaultTransaction } from './transaction.mts';
-import { FIXTURE_FOLDER, scenarioIds, type ProfileRun, type Sample } from './types.ts';
+import {
+  FIXTURE_FOLDER,
+  scenarioIds,
+  type CommandProfile,
+  type ProfileRun,
+  type Sample,
+} from './types.ts';
 
 let stopRequested = false;
 function requestStop(): void {
@@ -23,15 +29,19 @@ function checkCancellation(): void {
   if (stopRequested) throw new Error('Profile cancelled');
 }
 
-const HELP = `pnpm run profile [--runs 10] [--startup] [--anchor YYYY-MM-DD] [--out DIR] [--baseline DIR]
-             [--vault-path PATH] [--width 420] [--fixture standard|wide-tree] [--no-diagnostics]
+const HELP = `pnpm run profile [--runs 10] [--startup | --api] [--anchor YYYY-MM-DD] [--out DIR] [--baseline DIR]
+             [--vault-path PATH] [--width 420] [--fixture standard|wide-tree|single-note] [--no-diagnostics]
+             [--command-stress | --command-mode] (requires single-note; excludes startup/api)
 pnpm profile:startup [--runs 10]
+pnpm run profile --api --out <fresh-output>
 pnpm profile:compare BEFORE_DIR AFTER_DIR
 pnpm run profile --recover RUN_DIR
 pnpm run profile --recover-offline RUN_DIR  (Obsidian must be fully closed)
 
 Uses the running dev-vault-tasks only. Keep that window foreground and do not edit the dev vault during a run.
 Artifacts and recovery backups stay local under docs/performance by default. Startup is a warm-host plugin restart.
+API mode measures startup, a coherent full scan, and status receipt replay with final hydration.
+It requires getApi(1), prepares the client and sandbox outside timing, and cannot combine with --startup.
 `;
 
 async function json(file: string, value: unknown): Promise<void> {
@@ -53,7 +63,7 @@ async function inject(
   output: string,
   before: HostBefore,
   fixture: Fixture,
-  mode: { startup: boolean; viewport: string },
+  mode: { startup: boolean; api: boolean; command: CommandProfile; viewport: string },
 ): Promise<void> {
   await evaluate(
     `window.__abyssProfileModule=(0,eval)(require('fs').readFileSync(${JSON.stringify(path.join(output, 'native.js'))},'utf8')+'\\n__abyssProfileModule;');return true;`,
@@ -65,12 +75,17 @@ async function inject(
     fixtureKind: fixture.kind,
     expectedRoots: fixture.roots,
     expectedNodes: fixture.nodes,
+    sourceSizes: fixture.sourceSizes,
     ...mode,
   };
   await evaluate(`const fs=require('fs'),path=require('path'),out=${JSON.stringify(output)};
+    const nativeWindow=require('electron').remote.getCurrentWebContents().getOwnerBrowserWindow();
+    if(!nativeWindow)throw Error('Profile window unavailable');
     const bridge={debugger:require('electron').remote.getCurrentWebContents().debugger,
+      window:{state:()=>({id:nativeWindow.id,visible:nativeWindow.isVisible(),focused:nativeWindow.isFocused(),minimized:nativeWindow.isMinimized()}),hide:()=>nativeWindow.hide(),show:()=>{nativeWindow.show();nativeWindow.focus();}},
 
       matchesWorkerSource:(source)=>source==='/* abyss-task-search-worker */'+fs.readFileSync(path.join(out,'search-worker.js'),'utf8'),
+      mainSource:()=>{const text=fs.readFileSync(path.join(out,'main.js'),'utf8');return {text,sha256:require('crypto').createHash('sha256').update(text).digest('hex')};},
       save:(name,data)=>{if(path.basename(name)!==name)throw Error('Invalid artifact name');fs.writeFileSync(path.join(out,name),JSON.stringify(data));},
       saveImage:(name,data)=>fs.writeFileSync(path.join(out,name),Buffer.from(data,'base64'))};
     window.__abyssProfile=window.__abyssProfileModule.install(app,bridge,${JSON.stringify(options)});return true;`);
@@ -292,6 +307,8 @@ async function runSuite(root: string, options: Options): Promise<void> {
     await configureViewport(options, before, run);
     await inject(output, before, fixture, {
       startup: options.startup,
+      api: options.api,
+      command: options.command,
       viewport: String(run.identity['viewport']),
     });
     await prepareVault(tx, before, output, fixture);
@@ -341,16 +358,21 @@ async function newRun(input: {
       fixtureNodes: fixture.nodes,
       maxChildrenPerRoot: fixture.maxChildrenPerRoot,
       largestRootBytes: fixture.largestRootBytes,
+      maxRootsPerFile: fixture.maxRootsPerFile,
+      rootsPerFile: JSON.stringify(fixture.rootsPerFile),
+      sourceSizes: JSON.stringify(fixture.sourceSizes),
       settings: sha256(JSON.stringify(effectiveSettings(fixture.settings))),
       protocol: await protocolHash(root),
       cpu: cpus()[0]?.model ?? 'unknown',
       memory: totalmem(),
       platform: platform(),
       startupOnly: options.startup,
+      apiOnly: options.api,
+      commandProfile: options.command,
       preexistingDebugger: before.debugger,
       viewportOverride: options.width !== undefined,
     },
-    expectedScenarios: scenarioIds(fixture.kind, options.startup),
+    expectedScenarios: scenarioIds(fixture.kind, options.startup, options.api, options.command),
     samples: [],
     errors: [],
     diagnostics: [],

@@ -25,6 +25,9 @@ const prelude =
 const denied = [
   ["await app.vault.adapter.write('a.md', 'text');", 'DataAdapter.write'],
   ["await app.vault.adapter.append('a.md', 'text');", 'DataAdapter.append'],
+  ["await app.vault.adapter.process('a.md', text => text);", 'DataAdapter.process'],
+  ["await app.vault.adapter.remove('a.md');", 'DataAdapter.remove'],
+  ["await app.vault.adapter.mkdir('folder');", 'DataAdapter.mkdir'],
   ['await app.fileManager.processFrontMatter(file, () => {});', 'FileManager.processFrontMatter'],
   ["const writer: NoteVault = app.vault; await writer.create('a.md', '- [ ] x');", 'Vault.create'],
   ["await app.vault['modify'](file, 'text');", 'Vault.modify'],
@@ -44,6 +47,11 @@ const denied = [
   ["await app.fileManager['trashFile'](file);", 'FileManager.trashFile'],
   ['const extracted = app.fileManager.trashFile;', 'FileManager.trashFile'],
   ['const bound = app.fileManager.trashFile.bind(app.fileManager);', 'FileManager.trashFile'],
+  ["app.secretStorage.setSecret('other', 'value');", 'SecretStorage.setSecret'],
+  ["app.secretStorage.getSecret('other');", 'SecretStorage.getSecret'],
+  ['app.secretStorage.listSecrets();', 'SecretStorage.listSecrets'],
+  ["app.saveLocalStorage('other', {});", 'App.saveLocalStorage'],
+  ['const { saveLocalStorage: save } = app;', 'App.saveLocalStorage'],
   ['const { trashFile: extracted } = app.fileManager;', 'FileManager.trashFile'],
   ["const { ['trashFile']: extracted } = app.fileManager;", 'FileManager.trashFile'],
 ] as const;
@@ -87,12 +95,24 @@ void ordinaryObject;
 `;
 // These source-shaped fixtures independently enumerate the audited operation owners.
 const allowed = [
+  ['src/ai/providers/ChatGptPlan.ts', 'ChatGptPlan', 'write', 'SecretStorage.setSecret'],
+  ['src/ai/providers/ChatGptPlan.ts', 'ChatGptPlan', 'read', 'SecretStorage.getSecret'],
+  ['src/ai/providers/ProviderSecrets.ts', 'ProviderSecrets', 'store', 'SecretStorage.setSecret'],
+  ['src/ai/providers/ProviderSecrets.ts', 'ProviderSecrets', 'read', 'SecretStorage.getSecret'],
   [
     'src/tasks/infrastructure/obsidian/ObsidianTaskRepository.ts',
     'ObsidianTaskRepository',
     'cleanupEmptyTaskNote_abyssPrivate',
     'FileManager.trashFile',
   ],
+  [
+    'src/notes/NoteApplicationService.ts',
+    'NoteApplicationService',
+    'commitPreparedSection',
+    'Vault.process',
+  ],
+  ['src/projects/ProjectManager.ts', 'ProjectManager', 'updateIntegrationProject', 'Vault.process'],
+  ['src/notes/NoteTemplateService.ts', 'NoteTemplateService', 'commitStaticNote', 'Vault.create'],
   ['src/projects/ProjectManager.ts', 'ProjectManager', 'applyEditsGuarded', 'Vault.process'],
   ['src/projects/ProjectManager.ts', 'ProjectManager', 'createProjectFile', 'Vault.process'],
   ['src/projects/ProjectManager.ts', 'ProjectManager', 'writeStatusRename', 'Vault.process'],
@@ -198,6 +218,9 @@ for (const [file, className] of allowed) {
     .filter(([candidate]) => candidate === file)
     .map(([, , method, api]) => {
       const statements = {
+        'SecretStorage.setSecret':
+          "app.secretStorage.setSecret('abyss-tasks-openai-api-key', 'synthetic');",
+        'SecretStorage.getSecret': "app.secretStorage.getSecret('abyss-tasks-openai-api-key');",
         'FileManager.trashFile': 'await app.fileManager.trashFile(file);',
         'Vault.create': "await app.vault.create('a.md', '');",
         'Vault.process': 'await app.vault.process(file, text => text);',
@@ -215,6 +238,15 @@ sourceMap.set(
   repoFile('src/main.ts'),
   `${prelude}
 export class TaskCalendarPlugin extends Plugin {
+  commandSessionStorage() {
+    const adapter = this.app.vault.adapter;
+    const ensureDirectory = async () => { await adapter.mkdir('sessions'); };
+    return {
+      write: async () => { await ensureDirectory(); await adapter.write('session.json', '{}'); await adapter.process('session.json', text => text); },
+      remove: async () => { await adapter.remove('session.json'); },
+      clearLegacy: () => this.app.saveLocalStorage('abyss-tasks:command-sessions:v1', null),
+    };
+  }
   persistencePort() {
     const adapter = this.app.vault.adapter;
     return {
@@ -309,7 +341,7 @@ describe('resolved Obsidian storage authority', () => {
       const found = [...new Set([...allowed.map(([file]) => file), 'src/main.ts'])].flatMap(
         accesses,
       );
-      expect(found).toHaveLength(11);
+      expect(found).toHaveLength(23);
       expect(storageAuthorityViolations(found, STORAGE_AUTHORIZATIONS)).toEqual([]);
     },
     TYPESCRIPT_PROGRAM_TIMEOUT_MS,
@@ -348,6 +380,44 @@ describe('resolved Obsidian storage authority', () => {
       ),
     ).toHaveLength(2);
   });
+
+  it.each([
+    [
+      'src/notes/NoteApplicationService.ts',
+      'otherSection',
+      'await app.vault.process(file, text => text);',
+    ],
+    [
+      'src/notes/NoteApplicationService.ts',
+      'commitPreparedSection',
+      "await app.vault.modify(file, 'whole note');",
+    ],
+    [
+      'src/notes/NoteApplicationService.ts',
+      'otherSection',
+      'const extracted = app.vault.process; void extracted;',
+    ],
+    [
+      'src/integrations/noteApi.ts',
+      'commitPreparedSection',
+      'await app.vault.process(file, text => text);',
+    ],
+  ])(
+    'rejects adjacent note authority %s#%s',
+    (path, method, statement) => {
+      const source = `${prelude}class NoteApplicationService { async ${method}(): Promise<void> { ${statement} } }`;
+      const candidate = fixtureProgram(new Map([[repoFile(path), source]]));
+      const sourceFile = candidate.getSourceFile(repoFile(path));
+      if (sourceFile === undefined) throw new Error('Missing fixture');
+      const found = collectStorageAccesses(candidate, [sourceFile]);
+      expect(
+        storageAuthorityViolations(found, STORAGE_AUTHORIZATIONS).filter((message) =>
+          message.startsWith('storage/unauthorized'),
+        ),
+      ).not.toEqual([]);
+    },
+    TYPESCRIPT_PROGRAM_TIMEOUT_MS,
+  );
 
   it(
     'fails fixture setup on unresolved types or malformed syntax',
@@ -408,7 +478,7 @@ describe('resolved Obsidian storage authority', () => {
           .map((source) => source.fileName),
       ).toEqual([]);
       const found = collectStorageAccesses(sourceProgram, sourceFiles);
-      expect(found).toHaveLength(11);
+      expect(found).toHaveLength(23);
       expect(storageAuthorityViolations(found, STORAGE_AUTHORIZATIONS)).toEqual([]);
     },
     TYPESCRIPT_PROGRAM_TIMEOUT_MS,

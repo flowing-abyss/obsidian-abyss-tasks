@@ -8,6 +8,9 @@ import {
   Setting,
   type SettingDefinitionItem,
 } from 'obsidian';
+import type { ChatGptPlan } from '../ai/providers/ChatGptPlan';
+import type { ProviderModelCatalog } from '../ai/providers/ProviderModelCatalog';
+import type { ProviderSecrets } from '../ai/providers/ProviderSecrets';
 import { extractMarkdownBodyTags } from '../markdown/markdownTagRename';
 import {
   ObsidianProjectProperties,
@@ -23,6 +26,7 @@ import { normalizeTaskTagInput, type TaskDependencyQueryApi } from '../tasks';
 import { runAsyncAction } from '../ui/runAsyncAction';
 import { renderProjectTableSettings } from './projectTableSettings';
 import { type ProjectValueRowControls, renderProjectValueRow } from './projectValueRow';
+import { ProviderSettingsSection } from './sections/ProviderSettingsSection';
 import { ShortcutSettings } from './sections/ShortcutSettings';
 import { TaskStatusSettings } from './sections/TaskStatusSettings';
 import { type CardListOptions, renderSettingsCard } from './settingsCard';
@@ -42,6 +46,9 @@ const IGNORED_SOURCE_DESCRIPTION =
   'Exclude note paths, tags, or frontmatter from all task views. Example: archive/ OR #private.';
 
 interface TaskCalendarPlugin extends Plugin {
+  chatGptPlan?: ChatGptPlan;
+  providerSecrets?: ProviderSecrets;
+  providerModels?: ProviderModelCatalog;
   settings: CalendarSettings;
   tagManager?: TagManager;
   queries?: Pick<TaskDependencyQueryApi, 'listNodes'>;
@@ -97,6 +104,7 @@ let nextSettingsTabScope = 0;
 export class CalendarSettingsTab extends PluginSettingTab {
   /** Ids of cards (statuses / tag groups) currently expanded — persists across re-renders. */
   private readonly expandedCards_abyssPrivate = new Set<string>();
+  readonly #providers: ProviderSettingsSection | undefined;
   readonly #shortcuts: ShortcutSettings;
   readonly #taskStatuses: TaskStatusSettings;
   private readonly openSections_abyssPrivate = new Set<string>();
@@ -120,6 +128,23 @@ export class CalendarSettingsTab extends PluginSettingTab {
   ) {
     super(app, plugin_abyssPrivate);
     this.containerEl.addClass('abyss-settings-tab');
+    if (plugin_abyssPrivate.providerSecrets !== undefined) {
+      this.#providers = new ProviderSettingsSection({
+        app,
+        ...(plugin_abyssPrivate.chatGptPlan === undefined
+          ? {}
+          : { plan: plugin_abyssPrivate.chatGptPlan }),
+        ...(plugin_abyssPrivate.providerModels === undefined
+          ? {}
+          : { models: plugin_abyssPrivate.providerModels }),
+        settings: () => plugin_abyssPrivate.settings.commandMode,
+        setSettings: (value) => {
+          plugin_abyssPrivate.settings.commandMode = value;
+        },
+        save: () => plugin_abyssPrivate.saveSettings(),
+        secrets: plugin_abyssPrivate.providerSecrets,
+      });
+    }
     this.#shortcuts = new ShortcutSettings({
       shortcuts: () => this.plugin_abyssPrivate.settings.shortcuts,
       save: () => this.plugin_abyssPrivate.saveSettings(),
@@ -284,6 +309,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
   }
 
   override hide(): void {
+    this.#providers?.dispose();
     this.settingsVisible_abyssPrivate = false;
     const valueCommit = this.settingsValueCommit_abyssPrivate;
     this.settingsValueCommit_abyssPrivate = undefined;
@@ -325,6 +351,9 @@ export class CalendarSettingsTab extends PluginSettingTab {
     });
     this.addSection_abyssPrivate(nextContainer, 'Custom statuses', 'list-checks', (body) => {
       this.#taskStatuses.render(body);
+    });
+    this.addSection_abyssPrivate(nextContainer, 'Command mode', 'sparkles', (body) => {
+      this.#providers?.render(body);
     });
     this.addSection_abyssPrivate(nextContainer, 'Hotkeys', 'keyboard', (body) => {
       this.#shortcuts.render(body);

@@ -350,9 +350,9 @@
   {
     "finding": {
       "file": "src/tasks/infrastructure/markdown/TaskMarkdownCodec.ts",
-      "line": 271,
+      "line": 272,
       "column": 20,
-      "endLine": 271,
+      "endLine": 272,
       "endColumn": 48,
       "ruleId": "redos/no-vulnerable",
       "messageId": "",
@@ -360,7 +360,7 @@
       "raw": "const MD_LINK_RE = /\\[([^[\\]]+)\\]\\(([^)]+)\\)/gu;",
       "unproven": false
     },
-    "sourceHash": "945bd9a14f9d10a77a13599d2fee34f16ec90fc5b3ee49e2d84b2b90190f12f7",
+    "sourceHash": "f56d9e6c08771b5012d8a62daf2795ace394c18d4da3dcf2af44ca649a5e6faf",
     "guards": {
       "test/regex-audit.test.ts": "444d5f8576f2cb61692ad9135c209b7a428bd6248402fac4d74fceaeeaa89afe",
       "src/tasks/domain/taskLineSourceModel.ts": "0931ca69e8606a7ba79fc4b09e2adfe1a534d9d491b000eda1591e745fb63e44",
@@ -385,7 +385,7 @@
       }
     },
     "disposition": "context-protected",
-    "reason": "Private collapseMarkdownLinks bounds MD_LINK_RE to the prefix ending at the last literal closing parenthesis, appending the untouched suffix. The public codec reaches it after the canonical source model. With no closer the regex receives an empty string, and bracket labels exclude competing nested openers. Direct codec output and actual-module CPU evidence cover the malformed-link family; no blanket parser safety is asserted. The killable public probe independently fingerprints its actual bounded process owner. The Kanban change adds only matchesStatusRule; the regex, its bounded input, and link call sites are unchanged.",
+    "reason": "Private collapseMarkdownLinks bounds MD_LINK_RE to the prefix ending at the last literal closing parenthesis, appending the untouched suffix. The public codec reaches it after the canonical source model. With no closer the regex receives an empty string, and bracket labels exclude competing nested openers. Direct codec output and actual-module CPU evidence cover the malformed-link family; no blanket parser safety is asserted. The killable public probe independently fingerprints its actual bounded process owner. The public API adds a transient semanticTransition option and adjusts prepared status-transition handling; the regex, its bounded input, and link call sites are unchanged.",
     "tests": {
       "accepting": [
         "test/regex-audit.test.ts > accepts closed Markdown links through all audited public paths"

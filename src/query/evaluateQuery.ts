@@ -260,6 +260,51 @@ export function compileQuery(query: string): CompiledQuery {
   }
 }
 
+/** True only when the query matches independently of unknown authored tags/frontmatter. */
+export function compileQueryPathProof(query: string): (path: string) => boolean {
+  try {
+    const evaluate = compilePathProofNode(parseQuery(query));
+    return (path) => evaluate(path) === true;
+  } catch {
+    return () => false;
+  }
+}
+
+type PathProof = (path: string) => boolean | undefined;
+
+function compilePathProofNode(node: QueryNode): PathProof {
+  switch (node.type) {
+    case 'and':
+    case 'or': {
+      const left = compilePathProofNode(node.left);
+      const right = compilePathProofNode(node.right);
+      return (path) => {
+        const a = left(path);
+        const b = right(path);
+        if (node.type === 'and') {
+          if (a === false || b === false) return false;
+          return a === true && b === true ? true : undefined;
+        }
+        if (a === true || b === true) return true;
+        return a === false && b === false ? false : undefined;
+      };
+    }
+    case 'not': {
+      const child = compilePathProofNode(node.child);
+      return (path) => {
+        const result = child(path);
+        return result === undefined ? undefined : !result;
+      };
+    }
+    case 'path':
+      return compilePath(node.value);
+    case 'atom': {
+      if (node.value.startsWith('#') || node.value.includes('=')) return () => undefined;
+      return node.value.endsWith('/') ? compileFolder(node.value) : () => false;
+    }
+  }
+}
+
 export function evaluateQuery(
   query: string,
   filePath: string,
@@ -292,12 +337,12 @@ function compileNode(node: QueryNode): CompiledQuery {
   }
 }
 
-function compileFolder(pattern: string): CompiledQuery {
+function compileFolder(pattern: string): (path: string) => boolean {
   const prefix = pattern.toLocaleLowerCase();
   return (filePath) => filePath.toLocaleLowerCase().startsWith(prefix);
 }
 
-function compilePath(pattern: string): CompiledQuery {
+function compilePath(pattern: string): (path: string) => boolean {
   if (pattern.endsWith('/')) return compileFolder(pattern);
   try {
     const matcher = compileNotePathPattern(pattern);

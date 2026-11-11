@@ -981,6 +981,7 @@ it.each([
 ])(
   'keeps a selected Sunday inside the configured week ($firstDay)',
   ({ firstDay, start, next }) => {
+    vi.spyOn(Date, 'now').mockReturnValue(Date.UTC(2026, 9, 1, 12));
     const h = harness({}, firstDay);
     vi.spyOn(h.root, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 360, 700));
     h.mode['date_abyssPrivate'] = moment('2026-10-01');

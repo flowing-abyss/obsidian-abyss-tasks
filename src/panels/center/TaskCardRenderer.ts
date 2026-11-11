@@ -12,7 +12,6 @@ import {
   subtreeTotal,
   taskNodeAddress,
   taskNodeSourceLine,
-  taskOccupiedDates,
   totalMs,
   type LocalDate,
   type PreparedSearchQuery,
@@ -48,6 +47,12 @@ import {
   type TaskDependencyLookup,
 } from '../../ui/taskDependencyPresentation';
 import { renderTaskTagContent } from '../../ui/taskMetadataContent';
+import {
+  renderDateFilterPart,
+  renderTaskDateMetadata,
+  renderTimeFilterPart,
+  taskDisplayDates,
+} from '../../ui/taskMetadataDisplay';
 import { renderTaskDescriptionText } from '../../ui/taskNodeText';
 import { renderTaskParentButton } from '../../ui/taskParentButton';
 import {
@@ -56,6 +61,7 @@ import {
 } from '../../ui/taskPresentationIdentity';
 import type { TaskRenderOutcome, TaskRenderScope, TaskTextRender } from '../../ui/taskRenderScope';
 import { taskNodeRef, type TaskSelectionNode } from '../../ui/taskSelection';
+import { createTaskRow } from '../../ui/taskTreeDisplay';
 import type { TrackingTickerState } from '../../ui/timeTracking/TrackingTicker';
 import { formatTrackedDuration } from '../../ui/timeTracking/formatTracked';
 import { isForecastCalendarTask } from '../../views/calendarOccurrences';
@@ -223,19 +229,6 @@ function cardMetadataNode(
   return options.calendar?.kind === 'forecast'
     ? { ...node, planning: options.calendar.planning }
     : node;
-}
-function cardDates(
-  planning: TaskSelectionNode['planning'],
-  occurrence?: TaskOccurrencePresentation,
-): {
-  readonly date: LocalDate | undefined;
-  readonly interval: TaskOccurrencePresentation['interval'];
-} {
-  const date = occurrence?.displayDate ?? planning.due ?? planning.scheduled ?? planning.start;
-  if (occurrence?.interval !== undefined) return { date, interval: occurrence.interval };
-  if (occurrence?.dateRoles !== undefined) return { date, interval: undefined };
-  const occupied = taskOccupiedDates(planning);
-  return { date, interval: occupied.kind === 'interval' ? occupied : undefined };
 }
 function cardDescription(
   task: TaskSnapshot,
@@ -489,11 +482,8 @@ export class TaskCardRenderer {
   }
 
   #mountContents(card: HTMLElement, context: CardContentContext): CardContents {
-    const mainRow = card.createDiv({ cls: 'abyss-task-card-main-row' });
+    const { row: mainRow, body, titleRow, title } = createTaskRow(card, true);
     const status = this.#retainedStatus(mainRow, context);
-    const body = mainRow.createDiv({ cls: 'abyss-task-body' });
-    const titleRow = body.createDiv({ cls: 'abyss-task-title-row' });
-    const title = titleRow.createSpan({ cls: 'abyss-task-title' });
     const description = body.createDiv({ cls: 'abyss-task-desc' });
     const searchContexts = card.createDiv({ cls: 'abyss-search-contexts' });
     searchContexts.remove();
@@ -1352,10 +1342,22 @@ export class TaskCardRenderer {
       wrapper.addClass('abyss-task-date');
       const dateClass = this.#host.getDateClass(date);
       if (dateClass !== '') wrapper.addClass(dateClass);
-      this.#renderDateFilterPart(wrapper, date);
+      renderDateFilterPart(wrapper, date, {
+        formatDate: (value) => this.#host.formatDate(value),
+        getDateClass: (value) => this.#host.getDateClass(value),
+        onDate: (value) => {
+          this.#listControls.addPropertyFilter({ type: 'date', value });
+        },
+      });
       this.#markFormattedSemanticValue(wrapper, '.abyss-task-date-part > span:last-child', value);
     } else if (value.keys.includes('time') && node.planning.time !== undefined) {
-      this.#renderTimeFilterPart(wrapper, node.planning.time, 'abyss-task-date');
+      renderTimeFilterPart(wrapper, node.planning.time, 'abyss-task-date', {
+        formatDate: (value) => this.#host.formatDate(value),
+        getDateClass: (value) => this.#host.getDateClass(value),
+        onTime: (value) => {
+          this.#listControls.addPropertyFilter({ type: 'time', value });
+        },
+      });
       this.#markFormattedSemanticValue(wrapper, '.abyss-task-date > span:last-child', value);
     } else {
       if (
@@ -1393,11 +1395,21 @@ export class TaskCardRenderer {
   ): { readonly host: HTMLElement; readonly values: ReadonlyMap<string, HTMLElement> } | undefined {
     const node = cardMetadataNode(task, options);
     const currentTask = (): TaskSelectionNode => node;
-    const dates = cardDates(node.planning, options.occurrence);
+    const dates = taskDisplayDates(node.planning, options.occurrence);
     const tags = node.tags;
     const suppressToday = options.search?.mode !== 'search' && this.#suppressTodayMetadata(node);
     const metaRight = mainRow.createDiv({ cls: 'abyss-task-meta-right' });
-    const values = this.#renderDateMetadata(metaRight, node, dates, suppressToday);
+    const values = renderTaskDateMetadata(metaRight, node, dates, {
+      suppressToday,
+      formatDate: (date) => this.#host.formatDate(date),
+      getDateClass: (date) => this.#host.getDateClass(date),
+      onDate: (date) => {
+        this.#listControls.addPropertyFilter({ type: 'date', value: date });
+      },
+      onTime: (time) => {
+        this.#listControls.addPropertyFilter({ type: 'time', value: time });
+      },
+    });
     if ('source' in task) this.#renderSourceMetadata(metaRight, task);
     for (const tag of tags) {
       const element = this.#renderTagMetadata(metaRight, tag, tagGroups, {
@@ -1447,85 +1459,6 @@ export class TaskCardRenderer {
       renderSourceNoteChip(host, task, (filePath) => {
         this.#listControls.addPropertyFilter({ type: 'file', filePath });
       });
-  }
-
-  #renderDateMetadata(
-    host: HTMLElement,
-    task: TaskSelectionNode,
-    dates: ReturnType<typeof cardDates>,
-    suppressToday: boolean,
-  ): ReadonlyMap<string, HTMLElement> {
-    const values = new Map<string, HTMLElement>();
-    const { date, interval } = dates;
-    const time = task.planning.time;
-    const renderDate = (host: HTMLElement, value: LocalDate, showIcon = true): void => {
-      const element = this.#renderDateFilterPart(host, value, showIcon);
-      for (const key of ['due', 'scheduled', 'start'] as const)
-        if (task.planning[key] === value) values.set(`${key}:${value}`, element);
-    };
-    const renderTime = (host: HTMLElement, value: string, className: string): void => {
-      values.set(`time:${value}`, this.#renderTimeFilterPart(host, value, className));
-    };
-    if (interval !== undefined) {
-      const dateElement = host.createSpan({ cls: 'abyss-task-date' });
-      const icon = dateElement.createSpan({
-        cls: 'abyss-date-icon',
-        attr: { 'aria-hidden': 'true' },
-      });
-      const glyph = icon.createSvg('svg', {
-        attr: {
-          viewBox: '0 0 24 24',
-          width: '16',
-          height: '16',
-          fill: 'none',
-          stroke: 'currentColor',
-          'stroke-width': '1',
-          'aria-hidden': 'true',
-        },
-      });
-      glyph.createSvg('path', { attr: { d: 'M4 6v12M4 12h16M20 6v12' } });
-      renderDate(dateElement, interval.start, false);
-      dateElement.createSpan({ text: '–' });
-      renderDate(dateElement, interval.due, false);
-      if (time != null) renderTime(dateElement, time, 'abyss-task-time-part');
-      return values;
-    }
-    if (date != null && !suppressToday) {
-      const dateElement = host.createSpan({
-        cls: `abyss-task-date ${this.#host.getDateClass(date)}`.trim(),
-      });
-      renderDate(dateElement, date);
-      if (time != null) renderTime(dateElement, time, 'abyss-task-time-part');
-      return values;
-    }
-    if (time != null) renderTime(host, time, 'abyss-task-date');
-    return values;
-  }
-
-  #renderDateFilterPart(host: HTMLElement, date: LocalDate, showIcon = true): HTMLElement {
-    const part = host.createSpan({ cls: 'abyss-task-date-part abyss-cursor-pointer' });
-    if (showIcon) {
-      const icon = part.createSpan({ cls: 'abyss-date-icon' });
-      setIcon(icon, 'calendar');
-    }
-    part.createSpan({ text: this.#host.formatDate(date) });
-    part.addEventListener('click', (event) => {
-      event.stopPropagation();
-      this.#listControls.addPropertyFilter({ type: 'date', value: date });
-    });
-    return part;
-  }
-
-  #renderTimeFilterPart(host: HTMLElement, time: string, className: string): HTMLElement {
-    const part = host.createSpan({ cls: `${className} abyss-cursor-pointer` });
-    const icon = part.createSpan({ cls: 'abyss-date-icon' });
-    setIcon(icon, 'clock');
-    part.createSpan({ text: time });
-    part.addEventListener('click', (event) => {
-      event.stopPropagation();
-      this.#listControls.addPropertyFilter({ type: 'time', value: time });
-    });
-    return part;
   }
 
   #renderTagMetadata(

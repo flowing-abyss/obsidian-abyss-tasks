@@ -18,6 +18,28 @@ if (typeof Document === 'function') {
   };
   Object.defineProperty(document, 'fonts', { value: new EventTarget(), configurable: true });
 }
+const obsidian = await import('obsidian-test-mocks/obsidian');
+// The upstream text adapter records UTF-16 length and cannot read text as binary.
+// Native Vault.stat.size and readBinary describe UTF-8 bytes, including the BOM.
+const method = <T extends object, K extends keyof T>(owner: T, key: K): T[K] => owner[key];
+const refreshStat__ = method(obsidian.Vault.prototype, 'refreshStat__');
+const readBinary = method(obsidian.Vault.prototype, 'readBinary');
+obsidian.Vault.prototype.refreshStat__ = function (file) {
+  refreshStat__.call(this, file);
+  try {
+    file.stat.size = new TextEncoder().encode(this.readSync__(file)).byteLength;
+  } catch {
+    // Binary fixtures keep their original native byte size.
+  }
+};
+obsidian.Vault.prototype.readBinary = function (file) {
+  try {
+    return Promise.resolve(new TextEncoder().encode(this.readSync__(file)).buffer);
+  } catch {
+    return readBinary.call(this, file);
+  }
+};
+
 vi.mock('obsidian', async () => {
   const obsidian = await import('obsidian-test-mocks/obsidian');
   const { InspectorModalMock } = await import('../support/inspectorModalMock');

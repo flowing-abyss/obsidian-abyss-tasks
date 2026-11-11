@@ -214,7 +214,10 @@ function addAuthorityTransitions(
     const previous = context.previousRoots[previousIndex];
     if (previous === undefined) continue;
     addResolvedTransition(context, previousIndex, currentIndex, {
-      evidence: 'authority-transition',
+      evidence:
+        transition.previousRevision === transition.revision
+          ? 'byte-identical-relocation'
+          : 'authority-transition',
       basis: {
         observed: previous,
         authorityTransition: {

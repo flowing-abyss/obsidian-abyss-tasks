@@ -26,15 +26,36 @@ const RECURRENCE_EDITOR_WRITE_CONSUMERS = [
 
 interface AllowedWriter {
   readonly mutation:
+    | 'note prose mutation'
     | 'single-task transaction'
     | 'destination provisioning'
     | 'project creation scaffold'
     | 'project metadata'
-    | 'vault-wide tag rename';
+    | 'vault-wide tag rename'
+    | 'command history persistence';
   readonly reason: string;
 }
 
 const ALLOWED_WRITER_CALLS: Record<string, AllowedWriter> = {
+  'src/main.ts#TaskCalendarPlugin.commandSessionStorage#process#1': {
+    mutation: 'command history persistence',
+    reason:
+      'Composition-root history port compares exact previous bytes before replacing a scoped session or control file.',
+  },
+  'src/notes/NoteApplicationService.ts#NoteApplicationService.commitPreparedSection#process#1': {
+    mutation: 'note prose mutation',
+    reason:
+      'Changes one sealed prose section after exact file, accepted bytes, scope and canonical frontmatter/task ownership validation.',
+  },
+  'src/projects/ProjectManager.ts#ProjectManager.updateIntegrationProject#process#1': {
+    mutation: 'project metadata',
+    reason: 'Rechecks a pinned project and all proposed metadata in one note transaction.',
+  },
+  'src/notes/NoteTemplateService.ts#NoteTemplateService.commitStaticNote#vault.create#1': {
+    mutation: 'destination provisioning',
+    reason:
+      'Creates final static note bytes only after checking the original template, settings and candidate scope.',
+  },
   'src/projects/ProjectManager.ts#ProjectManager.applyEditsGuarded#process#1': {
     mutation: 'project metadata',
     reason:
@@ -75,6 +96,50 @@ const ALLOWED_WRITER_CALLS: Record<string, AllowedWriter> = {
 };
 
 const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
+  taskNodeRootRef: ['src/integrations/taskContentCopies.ts'],
+  TaskSourceCopy: ['src/integrations/taskContentApi.ts'],
+  TaskSourceCopyEvidence: ['src/integrations/taskContentCopies.ts'],
+  TaskAcceptedOccurrenceChange: ['src/integrations/TaskIdentityRegistry.ts'],
+  TaskNodeReadQuery: ['src/integrations/taskSearchApi.ts'],
+  TaskIntegrationReadApi: [
+    'src/integrations/TaskApiProvider.ts',
+    'src/integrations/taskApiMutations.ts',
+  ],
+  TaskStatusMutationApi: [
+    'src/integrations/TaskApiProvider.ts',
+    'src/integrations/taskApiMutations.ts',
+  ],
+  TaskStatusMutationRequest: ['src/integrations/taskApiMutations.ts'],
+  TaskStatusMutationOutcome: ['src/integrations/taskApiMutations.ts'],
+  ProjectSourceReadApi: ['src/projects/projectIntegration.ts'],
+  ProjectTaskDestination: ['src/projects/projectTaskCommands.ts'],
+  ProjectTaskExecution: ['src/projects/projectTaskCommands.ts'],
+  TaskProjectCommands: ['src/projects/projectTaskCommands.ts'],
+  projectTaskFailure: ['src/projects/projectTaskCommands.ts'],
+  TaskReadResult: [
+    'src/integrations/taskApiReads.ts',
+    'src/projects/projectApi.ts',
+    'src/projects/projectIntegration.ts',
+  ],
+  TaskReadNode: [
+    'src/integrations/taskApiMutations.ts',
+    'src/integrations/TaskIdentityRegistry.ts',
+    'src/integrations/taskApiReads.ts',
+    'src/integrations/taskDto.ts',
+  ],
+  TaskReadObservation: [
+    'src/integrations/taskApiMutations.ts',
+    'src/integrations/TaskCursorRegistry.ts',
+    'src/integrations/TaskApiProvider.ts',
+    'src/integrations/taskApiReads.ts',
+    'src/integrations/projectApiReads.ts',
+    'src/integrations/ProjectReadRegistry.ts',
+  ],
+  TaskOccurrenceAddress: ['src/integrations/TaskIdentityRegistry.ts'],
+  TaskStatusOccurrenceContinuation: [
+    'src/integrations/TaskIdentityRegistry.ts',
+    'src/integrations/taskApiMutations.ts',
+  ],
   TaskCreateRequest: ['src/ui/taskCapture/TaskCaptureController.ts'],
   TaskCreatePreview: ['src/ui/taskCapture/TaskCaptureController.ts'],
   TaskCreateContextPreview: [
@@ -230,11 +295,16 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   ],
   MoveRecovery: ['src/ui/TaskMoveRecoveryModal.ts'],
   TaskHierarchyRecovery: ['src/ui/taskCommandResult.ts'],
+  TaskHierarchyPreparation: ['src/integrations/taskContentApi.ts'],
+  TaskHierarchyPreparationApi: ['src/integrations/taskContentApi.ts'],
   hierarchyWouldCycle: ['src/ui/taskHierarchyActions.ts'],
   taskPrefixForSubtask: ['src/panels/RightPanel.ts'],
   isTaskInboxMember: ['src/task-lists/taskNodeMembership.ts'],
-  sameTag: ['src/ui/taskCapture/CaptureMetadataRow.ts'],
+  matchesInboxPolicy: ['src/integrations/taskSearchApi.ts'],
+  resolveInboxCreationPolicy: ['src/ui/taskCapture/CaptureTargetResolver.ts'],
+  sameTag: ['src/ui/taskCapture/CaptureMetadataRow.ts', 'src/integrations/validation.ts'],
   normalizeTaskTagInput: [
+    'src/integrations/validation.ts',
     'src/settings/SettingsTab.ts',
     'src/task-lists/taskNodeMembership.ts',
     'src/ui/tagDropdown.ts',
@@ -259,6 +329,19 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   TaskApplicationApi: ['src/main.ts', 'src/panels/RightPanel.ts'],
   TaskArchiveSession: ['src/panels/center/TaskCommands.ts'],
   TaskCaptureApplicationApi: ['src/main.ts'],
+  PreparedTaskEditCommand: ['src/integrations/taskContentApi.ts'],
+  TaskEditPreparation: ['src/integrations/taskContentApi.ts'],
+  TaskEditPartition: ['src/integrations/TaskRequestRegistry.ts'],
+  TaskFieldSelection: ['src/integrations/taskContentApi.ts'],
+  TaskCreatePreparation: ['src/integrations/taskContentApi.ts'],
+  TaskCreatePreparationDestination: ['src/integrations/taskContentApi.ts'],
+  TaskCreateTreeNode: ['src/integrations/taskContentApi.ts'],
+  TaskSearchCursor: ['src/integrations/taskSearchApi.ts'],
+  observedTaskTags: ['src/integrations/taskSearchApi.ts'],
+  TaskStatusRule: ['src/integrations/taskContentApi.ts'],
+  addEntryToTotal: ['src/integrations/taskTreeApi.ts'],
+  TaskEditPreparationApi: ['src/main.ts', 'src/integrations/taskContentApi.ts'],
+  TaskCreatePreparationApi: ['src/main.ts', 'src/integrations/taskContentApi.ts'],
   TaskCommand: ['src/panels/RightPanel.ts', 'src/panels/right/InspectorDependencies.ts'],
   TaskCommandResult: [
     'src/projects/ProjectManager.ts',
@@ -279,6 +362,8 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
     'src/panels/right/InspectorSections.ts',
   ],
   TaskPlanning: ['src/views/calendarOccurrences.ts', 'src/task-lists/taskNodeMembership.ts'],
+  DurationMinutes: ['src/ui/taskMetadataDisplay.ts'],
+  formatDurationMinutes: ['src/ui/taskMetadataDisplay.ts'],
   TaskStatus: ['src/task-lists/taskNodeMembership.ts'],
   taskNodeSourceLine: [
     'src/ui/timedBlockKeyboardQueue.ts',
@@ -395,6 +480,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   formatTrackedDurationWithSeconds: ['src/ui/timeTracking/TimeEntriesPopover.ts'],
   groupTrackedDays: ['src/ui/timeTracking/RailTrackingWidget.ts'],
   localDate: [
+    'src/integrations/validation.ts',
     'src/ui/taskCapture/CaptureMetadataRow.ts',
     'src/statistics/statisticsCalendar.ts',
     'src/statistics/statisticsDataset.ts',

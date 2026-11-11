@@ -49,7 +49,11 @@ function query(value: unknown): boolean {
 function request(value: unknown): boolean {
   return (
     record(value) &&
-    validTaskSearchMatchScope({ kind: value['kind'], matchScope: value['matchScope'] }) &&
+    validTaskSearchMatchScope({
+      kind: value['kind'],
+      matchScope: value['matchScope'],
+      fields: value['fields'],
+    }) &&
     typeof value['includeSourcePath'] === 'boolean' &&
     query(value['query']) &&
     ['filePath', 'preferFilePath'].every((key) => value[key] === undefined || string(value[key]))

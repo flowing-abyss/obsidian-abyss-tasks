@@ -15,6 +15,7 @@ import type { TaskHierarchyCommand, TaskHierarchyRecovery } from '../domain/task
 import { isTaskDependencyId } from '../domain/taskLineSourceModel';
 import type { RebaseEvidence, RootReconciliationBasis } from '../domain/taskReconciliation';
 import type {
+  CommentRef,
   LocalDate,
   SubtaskSnapshot,
   TaskDestination,
@@ -26,6 +27,23 @@ import type {
 } from '../domain/types';
 import { sameTaskNodeRef } from '../domain/types';
 import type { TaskIssue } from '../domain/validation';
+import type {
+  TaskEditRefreshUnavailable,
+  TaskFieldSelection,
+  TaskHierarchyPreview,
+  TaskPreparedNodeContinuation,
+} from './TaskEditPreparationApi';
+import type {
+  ProjectTaskDestination,
+  ProjectTaskResult,
+  ProjectTaskSource,
+} from './TaskProjectCommands';
+import type {
+  TaskMergePreservation,
+  TaskSourceCopy,
+  TaskSourceCopyEvidence,
+} from './TaskSourceCopyApi';
+import type { TaskStrictStatusFailure, TaskStrictStatusGuard } from './TaskStatusMutationApi';
 
 type AddSubtaskLifecycle =
   | { readonly today: LocalDate; readonly addCreatedDate: true }
@@ -53,6 +71,7 @@ export type TaskEditCommand =
       readonly symbol: string;
       readonly stamp?: LocalDate;
       readonly addCompletionDate?: boolean;
+      readonly semanticTransition?: boolean;
     }
   | {
       readonly type: 'add-comment';
@@ -166,6 +185,7 @@ export interface TaskDraft {
 export interface RecurrenceCompletionRequest {
   readonly target: TaskStatusTarget;
   readonly doneSymbol: string;
+  readonly semanticTransition?: boolean;
   readonly today: LocalDate;
   readonly todoSymbol: string;
   readonly addCreatedDate: boolean;
@@ -175,6 +195,7 @@ export interface RecurrenceCompletionRequest {
 }
 
 export interface RevisionPrecondition {
+  readonly strictStatus?: TaskStrictStatusGuard;
   readonly baseRoot: TaskSnapshot;
   readonly baseTarget: TaskMutationTarget;
   readonly reconciliation: RootReconciliationBasis;
@@ -250,6 +271,7 @@ export type RepositoryRevisionResult =
   | { readonly type: 'ambiguous'; readonly candidates: readonly TaskResolutionCandidate[] };
 
 export type TaskRepositoryResult =
+  | { readonly type: 'strict-rejected'; readonly reason: TaskStrictStatusFailure }
   | { readonly type: 'committed'; readonly outcome: TaskCommandOutcome; readonly changed: boolean }
   | { readonly type: 'conflict'; readonly current: TaskSnapshot }
   | RepositoryRevisionResult
@@ -270,8 +292,76 @@ export type TaskRepositoryResult =
       readonly contentState: 'unchanged' | 'unknown';
     };
 
+/** Normalized commands only; content and source authority stay behind the opaque session. */
+export type TaskPreparedRootEdit =
+  | {
+      readonly type: 'ready';
+      readonly before: TaskSnapshot;
+      readonly continuations: readonly TaskPreparedNodeContinuation[];
+      readonly sourceContinuations?: readonly TaskPreparedNodeContinuation[];
+      readonly after: TaskSnapshot | null;
+      append(command: TaskEditCommand): TaskPreparedRootEdit;
+      readonly copies: readonly TaskSourceCopyEvidence[];
+      sourceCopiesAvailable(): boolean;
+      continueSourceComment(source: CommentRef): CommentRef | undefined;
+      assessMerge(source: TaskNodeRef): Promise<TaskMergePreservation | undefined>;
+      copySource(input: TaskSourceCopy): Promise<TaskPreparedRootEdit>;
+      partitionFields(selections: readonly TaskFieldSelection[]):
+        | {
+            readonly selected: TaskPreparedRootEdit;
+            rebase(
+              current: TaskSnapshot,
+            ): Promise<TaskPreparedRootEdit | TaskEditRefreshUnavailable>;
+          }
+        | undefined;
+      refresh(current: TaskSnapshot): Promise<TaskPreparedRootEdit | TaskEditRefreshUnavailable>;
+      commit(): Promise<TaskRepositoryResult>;
+    }
+  | { readonly type: 'invalid'; readonly result: TaskRepositoryResult };
+
+export interface PreparedTaskCreateGuard {
+  validateBeforeProvision(): Promise<boolean>;
+  check(file: object, live: string, candidate: string): boolean;
+}
+export type TaskPreparedCreateRoot =
+  | {
+      readonly type: 'ready';
+      readonly after: TaskSnapshot;
+      readonly continuations: readonly TaskPreparedNodeContinuation[];
+      append(command: TaskEditCommand): TaskPreparedCreateRoot;
+      readonly copies: readonly TaskSourceCopyEvidence[];
+      sourceCopiesAvailable(): boolean;
+      continueSourceComment(source: CommentRef): CommentRef | undefined;
+      assessMerge(source: TaskNodeRef): Promise<TaskMergePreservation | undefined>;
+      copySource(input: TaskSourceCopy): Promise<TaskPreparedCreateRoot>;
+      refresh(options?: {
+        readonly createdDestinationAnchor?: TaskSnapshot;
+      }): Promise<TaskPreparedCreateRoot>;
+      validateBeforeProvision(
+        check?: PreparedTaskCreateGuard['check'],
+        plannedContent?: string,
+      ): Promise<boolean>;
+      commit(guard: PreparedTaskCreateGuard): Promise<TaskRepositoryResult>;
+    }
+  | { readonly type: 'invalid'; readonly result: TaskRepositoryResult };
+
 export interface TaskRepository {
+  prepareCreateRoot?(
+    destination: TaskDestination,
+    draft: TaskDraft,
+  ): Promise<TaskPreparedCreateRoot>;
+  prepareRootEdit?(root: TaskSnapshot): Promise<TaskPreparedRootEdit>;
+  createProjectRoot?(
+    destination: ProjectTaskDestination,
+    draft: TaskDraft,
+  ): Promise<ProjectTaskResult>;
+  moveProjectRoot?(
+    destination: ProjectTaskDestination,
+    source: ProjectTaskSource,
+  ): Promise<ProjectTaskResult>;
+  readonly supportsStrictStatusPreconditions?: true;
   hierarchy(request: TaskHierarchyRequest): Promise<TaskRepositoryResult>;
+  prepareHierarchy?(request: TaskHierarchyRequest): Promise<TaskPreparedHierarchy>;
   /** Production adapters opt in to immutable revision preconditions. */
   readonly supportsRevisionPreconditions?: true;
   edit(request: TaskEditRequest | TaskEditCommand): Promise<TaskRepositoryResult>;
@@ -294,3 +384,7 @@ export interface TaskRepository {
     legacyDestination?: TaskDestination,
   ): Promise<TaskRepositoryResult>;
 }
+
+export type TaskPreparedHierarchy =
+  | ({ readonly type: 'ready'; commit(): Promise<TaskRepositoryResult> } & TaskHierarchyPreview)
+  | { readonly type: 'invalid'; readonly result: TaskRepositoryResult };

@@ -1,5 +1,8 @@
 import type { ProjectsSettings } from '../settings/types';
-import { resolveConfiguredProjectField } from './projectPropertyDefinitions';
+import {
+  configuredProjectCustomFields,
+  resolveConfiguredProjectField,
+} from './projectPropertyDefinitions';
 import { sameProjectPropertyName } from './projectPropertyNames';
 import type { Project } from './types';
 
@@ -126,11 +129,10 @@ function appendCustomField(
   );
 }
 
-export function buildProjectFieldCatalog(
+export function buildCuratedProjectFieldCatalog(
   settings: ProjectsSettings,
-  properties: readonly ProjectPropertyInfo[] | null,
 ): ProjectFieldCatalogItem[] {
-  const fields: ProjectFieldCatalogItem[] = [
+  return [
     NAME_FIELD,
     resolveConfiguredProjectField(settings, 'status') ?? {
       id: 'status',
@@ -159,6 +161,13 @@ export function buildProjectFieldCatalog(
       type: null,
     },
   ];
+}
+
+export function buildProjectFieldCatalog(
+  settings: ProjectsSettings,
+  properties: readonly ProjectPropertyInfo[] | null,
+): ProjectFieldCatalogItem[] {
+  const fields = buildCuratedProjectFieldCatalog(settings);
   const seen = new Set<string>();
   for (const fieldId of customFieldIds(settings, properties ?? [])) {
     appendCustomField(fields, seen, settings, fieldId);
@@ -168,15 +177,10 @@ export function buildProjectFieldCatalog(
 
 /** Configured choices have no dependency on native discovery or saved view membership. */
 export function buildConfiguredProjectFieldCatalog(projects: ProjectsSettings): ProjectField[] {
-  const curated = buildProjectFieldCatalog(projects, null).filter(
-    (field): field is ProjectField =>
-      !field.id.startsWith('property:') && isAvailableProjectField(field),
-  );
-  const custom = configuredCustomFieldIds(projects).flatMap((id) => {
-    const field = resolveConfiguredProjectField(projects, id);
-    return field !== undefined && isAvailableProjectField(field) ? [field] : [];
-  });
-  return [...curated, ...custom];
+  return [
+    ...buildCuratedProjectFieldCatalog(projects).filter(isAvailableProjectField),
+    ...configuredProjectCustomFields(projects),
+  ];
 }
 
 export function isAvailableProjectField(field: ProjectFieldCatalogItem): field is ProjectField {

@@ -1,4 +1,6 @@
 import { ItemView, Notice, Platform, Scope, setIcon, TFile, type WorkspaceLeaf } from 'obsidian';
+import type { CommandSessionOwner } from '../ai/CommandSessionOwner';
+import type { CommandTranscriptionPort } from '../ai/voice/ProviderTranscription';
 import { AppState, type AppStateData } from '../app/AppState';
 import { createBrowserTaskScheduler } from '../browserTaskScheduler';
 import { moment } from '../obsidianMoment';
@@ -9,6 +11,7 @@ import { RightPanel } from '../panels/RightPanel';
 import { initialCalendarView } from '../panels/calendar/calendarPolicy';
 import { ProjectManager } from '../projects/ProjectManager';
 import { ProjectStore } from '../projects/ProjectStore';
+import { latestSettingsSaveRevision } from '../settings/settingsSaveRevision';
 import type { ShortcutActionId } from '../settings/shortcuts';
 import type { CalendarSettings } from '../settings/types';
 import {
@@ -50,6 +53,10 @@ import {
   type TaskDependencySearchProvider,
 } from '../ui/TaskDependencySearchProvider';
 import {
+  CommandModeSurface,
+  type CommandSurfaceMemory,
+} from '../ui/commandMode/CommandModeSurface';
+import {
   CreationPresentationController,
   type CreationRevealAuthority,
 } from '../ui/creation/CreationPresentationController';
@@ -72,6 +79,7 @@ import {
   rootTaskNodeRef,
   rootTaskRef,
   selectedRootResolution,
+  taskNodeRef,
   type TaskSelectionNode,
 } from '../ui/taskSelection';
 import {
@@ -127,6 +135,13 @@ interface PanelLayoutElements {
   readonly quickCaptureHost: HTMLElement;
 }
 
+export interface PanelCommandServices {
+  readonly availability?: () => { agent: boolean; voice: boolean };
+  readonly transcription?: CommandTranscriptionPort;
+  readonly owner: () => CommandSessionOwner | Promise<CommandSessionOwner>;
+  readonly memory: CommandSurfaceMemory;
+  readonly nativeTarget: (target: string, revision: string) => TaskNodeRef | undefined;
+}
 type PanelViewDependencies = [
   settings: CalendarSettings,
   tagManager: TagManager,
@@ -140,6 +155,7 @@ type PanelViewDependencies = [
   search?: TaskSearchApi,
   statisticsSource?: TaskStatisticsSource,
   taskInputServices?: TaskInputServices,
+  command?: PanelCommandServices,
 ];
 
 function hasFinitePositiveBounds(bounds: DOMRect): boolean {
@@ -238,6 +254,8 @@ export class PanelView extends ItemView {
 
   private readonly statisticsSource_abyssPrivate: TaskStatisticsSource | undefined;
 
+  private readonly command_abyssPrivate: PanelCommandServices | undefined;
+
   private readonly taskInputServices_abyssPrivate: TaskInputServices | undefined;
 
   constructor(leaf: WorkspaceLeaf, ...dependencies: PanelViewDependencies) {
@@ -255,7 +273,9 @@ export class PanelView extends ItemView {
       search,
       statisticsSource,
       taskInputServices,
+      command,
     ] = dependencies;
+    this.command_abyssPrivate = command;
     this.statisticsSource_abyssPrivate = statisticsSource;
     this.taskInputServices_abyssPrivate = taskInputServices;
     this.settings_abyssPrivate = settings;
@@ -996,6 +1016,81 @@ export class PanelView extends ItemView {
     this.compactPaneAccess_abyssPrivate.open('right', false);
   }
 
+  private commandTaskNavigation_abyssPrivate(
+    command: PanelCommandServices,
+    accepted: { target: string; revision: string },
+    intent: 'feedback' | 'reveal',
+  ): boolean {
+    const native = command.nativeTarget(accepted.target, accepted.revision);
+    if (native === undefined) return false;
+    const node = this.tasks_abyssPrivate.queries
+      .listNodes({ filePath: rootTaskNodeRef(native).filePath })
+      .find((candidate) => taskNodeAddress(candidate.target) === taskNodeAddress(native));
+    if (node === undefined) return false;
+    if (intent === 'reveal') this.openTrackedTask_abyssPrivate(native);
+    else
+      this.state_abyssPrivate.batch(() => {
+        this.state_abyssPrivate.set('inspectorBackStack', []);
+        this.state_abyssPrivate.updateInspectorSelection([node.root, ...node.path]);
+      });
+    const selected = this.state_abyssPrivate.get('taskStack');
+    const last = selected[selected.length - 1];
+    return last !== undefined && taskNodeAddress(taskNodeRef(last)) === taskNodeAddress(native);
+  }
+
+  private commandCaptureOptions_abyssPrivate(): Pick<
+    ConstructorParameters<typeof QuickCaptureCoordinator>[0],
+    'command'
+  > {
+    const command = this.command_abyssPrivate;
+    return {
+      ...(command === undefined
+        ? {}
+        : {
+            command: {
+              mount: (capture, close) =>
+                new CommandModeSurface(capture, {
+                  app: this.app,
+                  owner: command.owner,
+                  availabilityRevision: () =>
+                    latestSettingsSaveRevision(this.settings_abyssPrivate),
+                  ...(command.availability === undefined
+                    ? {}
+                    : { availability: command.availability }),
+                  ...(command.transcription === undefined
+                    ? {}
+                    : { transcription: command.transcription }),
+                  memory: command.memory,
+                  registry: this.statusRegistry_abyssPrivate,
+                  projectSettings: () => this.settings_abyssPrivate.projects,
+                  context: () =>
+                    JSON.stringify({
+                      hint: 'Current view is read-only context, not write authority.',
+                      mode: this.state_abyssPrivate.get('mode'),
+                      list: this.state_abyssPrivate.get('selectedList'),
+                      projects: this.state_abyssPrivate.get('projectsPanel'),
+                      inspector: this.state_abyssPrivate
+                        .get('taskStack')
+                        .map((task) => ({ title: task.title })),
+                    }),
+                  close,
+                  navigate: (target, revision, intent) =>
+                    this.commandTaskNavigation_abyssPrivate(command, { target, revision }, intent),
+                  getTagColor: (tag) => colorForTag(tag, this.settings_abyssPrivate.tagGroups),
+                  formatDate: (date) => this.center_abyssPrivate.formatDateForCapture(date),
+                  getDateClass: (date) => this.center_abyssPrivate.getDateClassForCapture(date),
+                  showSource: (path) =>
+                    shouldShowSourcePath(
+                      path,
+                      this.settings_abyssPrivate.sourceNoteDisplay,
+                      this.settings_abyssPrivate.taskFilePath,
+                    ),
+                }),
+            },
+          }),
+    };
+  }
+
   private initializeCapture_abyssPrivate(
     elements: PanelLayoutElements,
     selectionTasks: TaskApplicationApi & TaskCaptureApplicationApi,
@@ -1011,6 +1106,7 @@ export class PanelView extends ItemView {
     );
     let ownsSelection = this.center_abyssPrivate.captureCreationSelection();
     this.quickCapture_abyssPrivate = new QuickCaptureCoordinator({
+      ...this.commandCaptureOptions_abyssPrivate(),
       app: this.app,
       host: elements.quickCaptureHost,
       getTagColor: (tag) => colorForTag(tag, this.settings_abyssPrivate.tagGroups),

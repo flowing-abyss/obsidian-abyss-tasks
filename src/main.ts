@@ -1,15 +1,61 @@
 import taskSearchWorkerSource from 'abyss-task-search-worker';
-import { getAllTags, normalizePath, Notice, Plugin, TFile, type TAbstractFile } from 'obsidian';
+import {
+  getAllTags,
+  getLanguage,
+  normalizePath,
+  Notice,
+  Plugin,
+  requestUrl,
+  TFile,
+  type DataAdapter,
+  type TAbstractFile,
+} from 'obsidian';
+import type { ApiResultV1, TasksApiV1 } from '../api';
+import { CommandAgent } from './ai/CommandAgent';
+import { commandMessage, configureCommandLocale } from './ai/commandMessages';
+import { CommandSession } from './ai/CommandSession';
+import { CommandSessionOwner } from './ai/CommandSessionOwner';
+import {
+  CommandSessionStore,
+  isCommandSessionFileId,
+  type CommandHistoryFileKey,
+  type CommandSessionStoragePort,
+} from './ai/CommandSessionStore';
+import type {
+  CommandJournalPort,
+  CommandResearchPort,
+  CommandSessionTransitions,
+} from './ai/commandTypes';
+import { CommandFailure } from './ai/commandTypes';
+import { desktopChatGptSignIn } from './ai/providers/chatGptLoopback';
+import { ChatGptPlan } from './ai/providers/ChatGptPlan';
+import { NativeProviderTransport } from './ai/providers/NativeProviderTransport';
+import { ProviderConnections } from './ai/providers/ProviderConnections';
+import { ProviderModelCatalog } from './ai/providers/ProviderModelCatalog';
+import { ProviderResearch } from './ai/providers/ProviderResearch';
+import { ProviderSecrets } from './ai/providers/ProviderSecrets';
+import { providerSecretBindings, providerVoiceMode } from './ai/providers/providerSettings';
+import {
+  ProviderTranscription,
+  type CommandTranscriptionPort,
+} from './ai/voice/ProviderTranscription';
+import { TaskApiProvider } from './integrations/TaskApiProvider';
+import { readError } from './integrations/taskApiReads';
 import { extractMarkdownBodyTags } from './markdown/markdownTagRename';
 import { compileNotePathPattern, type NotePathPattern } from './markdown/notePathPattern';
+import { NoteApplicationService } from './notes/NoteApplicationService';
+import { NoteHostAdapter } from './notes/NoteHostAdapter';
 import { NoteTemplateService } from './notes/NoteTemplateService';
+import { moment } from './obsidianMoment';
 import { initializeProjectPropertyDefinitions } from './projects/initializeProjectPropertyDefinitions';
 import {
   ObsidianProjectProperties,
   type ProjectPropertyCatalog,
 } from './projects/ObsidianProjectProperties';
+import { createProjectIntegrationReads, projectSemantics } from './projects/projectIntegration';
 import { ProjectManager } from './projects/ProjectManager';
-import { compileQuery, type CompiledQuery } from './query/evaluateQuery';
+import { createProjectTaskCommands } from './projects/projectTaskCommands';
+import { compileQuery, compileQueryPathProof, type CompiledQuery } from './query/evaluateQuery';
 import { DEFAULT_SETTINGS } from './settings/defaults';
 import {
   isViewStateWritesSuspended,
@@ -37,7 +83,9 @@ import {
   taskInputReference,
   type TaskApplicationApi,
   type TaskCaptureApplicationApi,
+  type TaskCreatePreparationApi,
   type TaskDependencyQueryApi,
+  type TaskEditPreparationApi,
   type TaskInputServices,
   type TaskInsertionPolicy,
   type TaskQueryApi,
@@ -65,8 +113,10 @@ import { parseMarkdownFrontmatter } from './tasks/infrastructure/markdown/taskBl
 import { TaskLocator } from './tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from './tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { nativeTaskIndentUnit } from './tasks/infrastructure/obsidian/nativeTaskIndentation';
+import { CanonicalNoteTaskProtection } from './tasks/infrastructure/obsidian/NoteTaskProtection';
 import { ObsidianTaskDestinationProvider } from './tasks/infrastructure/obsidian/ObsidianTaskDestinationProvider';
 import { ObsidianTaskRepository } from './tasks/infrastructure/obsidian/ObsidianTaskRepository';
+import { runTaskFileMutation } from './tasks/infrastructure/obsidian/taskFileMutationQueue';
 import {
   BrowserTaskSearchBackend,
   createBrowserSearchScheduler,
@@ -75,8 +125,13 @@ import { createMiniSearchTaskEngine } from './tasks/infrastructure/search/MiniSe
 import { createSearchWordSegmenter } from './tasks/infrastructure/search/searchWordSegmenter';
 import { TaskSearchRuntime } from './tasks/infrastructure/search/TaskSearchRuntime';
 import { TaskSearchService } from './tasks/infrastructure/search/TaskSearchService';
-import { TaskIndex, type TaskSourceMetadata } from './tasks/infrastructure/TaskIndex';
+import {
+  TaskIndex,
+  type TaskIndexOptions,
+  type TaskSourceMetadata,
+} from './tasks/infrastructure/TaskIndex';
 import { TaskRefAuthority } from './tasks/infrastructure/TaskRefAuthority';
+import type { CommandSurfaceMemory } from './ui/commandMode/CommandModeSurface';
 import { presentTaskCommandResult } from './ui/taskCommandResult';
 import { ReminderAudio } from './ui/timeTracking/ReminderAudio';
 import { TimeTrackingReminder } from './ui/timeTracking/TimeTrackingReminder';
@@ -96,17 +151,30 @@ function configuredTaskInsertion(settings: CalendarSettings): TaskInsertionPolic
 }
 const NO_RESUME_TARGET = 'There is no recent task to resume';
 const DEVICE_OFFSET_AT = (epochMs: number): number => -new Date(epochMs).getTimezoneOffset();
+// The host reloads the bundle while native writes from the retired instance can still be pending.
+const COMMAND_HISTORY_OPENINGS = Symbol.for('abyss-tasks.command-history-openings');
 
 export default class TaskCalendarPlugin extends Plugin {
   override settings!: CalendarSettings;
   tagManager!: TagManager;
   queries!: TaskQueryApi & TaskDependencyQueryApi & TimeTrackingQueryApi;
-  tasks!: TaskApplicationApi & TaskCaptureApplicationApi;
+  tasks!: TaskApplicationApi &
+    TaskCaptureApplicationApi &
+    TaskEditPreparationApi &
+    TaskCreatePreparationApi;
   private taskIndex!: TaskIndex;
+  private taskApiProvider: TaskApiProvider | undefined = undefined;
+  getApi(version: number, options: { readonly consumerId: string }): ApiResultV1<TasksApiV1> {
+    return (
+      this.taskApiProvider?.getApi(version, options) ??
+      readError('lifecycle', 'NOT_READY', 'Task API is initializing.')
+    );
+  }
   taskStatistics!: TaskStatisticsSource;
   private taskInputServices!: TaskInputServices;
   private statisticsArchivePattern!: NotePathPattern;
   private taskSourcePolicy!: CompiledQuery;
+  private taskSourcePathPolicy!: (path: string) => boolean;
   private taskIgnorePolicy!: CompiledQuery;
   private taskSearch!: TaskSearchService;
   get search(): TaskSearchApi {
@@ -122,8 +190,61 @@ export default class TaskCalendarPlugin extends Plugin {
   private projectPropertyCaptureQueue: Promise<void> = Promise.resolve();
   private timeTrackingReminder: TimeTrackingReminder | undefined = undefined;
 
+  chatGptPlan!: ChatGptPlan;
+  providerSecrets!: ProviderSecrets;
+  providerConnections!: ProviderConnections;
+  providerModels!: ProviderModelCatalog;
+  commandResearch!: CommandResearchPort;
+  commandTranscription!: CommandTranscriptionPort;
+  private readonly commandSurfaceMemory: CommandSurfaceMemory = {
+    active: false,
+    selectionStart: 0,
+    selectionEnd: 0,
+    scrollTop: 0,
+  };
+  private commandSessionOpening: Promise<CommandSessionOwner> | undefined = undefined;
+  private commandModeClosed = true;
+  private commandModeRetired = false;
+  private commandSessionOwner: CommandSessionOwner | undefined = undefined;
+  private readonly commandRuntimes = new Set<CommandSession>();
+
   override async onload(): Promise<void> {
+    configureCommandLocale(getLanguage());
     await this.loadSettings();
+    this.providerSecrets = new ProviderSecrets(this.app.secretStorage, () =>
+      providerSecretBindings(this.settings.commandMode),
+    );
+    const providerTransport = new NativeProviderTransport(requestUrl, (callback, delayMs) => {
+      const timer = window.setTimeout(callback, delayMs);
+      return () => {
+        window.clearTimeout(timer);
+      };
+    });
+    this.chatGptPlan = new ChatGptPlan(
+      this.app.secretStorage,
+      providerTransport.chatGptFetch(),
+      desktopChatGptSignIn(),
+    );
+    this.providerConnections = new ProviderConnections(
+      this.providerSecrets,
+      providerTransport,
+      this.chatGptPlan,
+    );
+    this.providerModels = new ProviderModelCatalog(this.providerSecrets, providerTransport);
+    this.commandResearch = new ProviderResearch(
+      this.providerSecrets,
+      providerTransport,
+      () => this.settings.commandMode,
+    );
+    this.commandTranscription = new ProviderTranscription(
+      this.providerSecrets,
+      providerTransport,
+      () => this.settings.commandMode,
+    );
+    this.register(() => {
+      this.chatGptPlan.dispose();
+      providerTransport.dispose();
+    });
     for (const ref of this.viewStatePaths.listen(this.app.vault)) this.registerEvent(ref);
     this.projectProperties = new ObsidianProjectProperties(this.app);
     this.registerProjectPropertyCaptureOpportunities();
@@ -146,6 +267,8 @@ export default class TaskCalendarPlugin extends Plugin {
     });
     this.timeTrackingReminder.setInterval(this.settings.timeTrackingReminderMinutes);
     const commentTimeContext: CommentTimeContextProvider = systemCommentTimeContext;
+    if (this.commandModeRetired) return;
+    this.commandModeClosed = false;
     this.registerPanel(commentTimeContext);
     this.registerCommands();
     this.addSettingTab(new CalendarSettingsTab(this.app, this));
@@ -169,6 +292,38 @@ export default class TaskCalendarPlugin extends Plugin {
     });
   }
 
+  private taskDestinationProvider(
+    noteTemplates: NoteTemplateService,
+  ): ObsidianTaskDestinationProvider {
+    return new ObsidianTaskDestinationProvider(
+      () => ({
+        taskFilePath: this.settings.taskFilePath,
+        taskArchivePath: this.effectiveTaskStorage.taskArchivePath,
+        taskTemplatePath: this.settings.taskTemplatePath,
+        capturedToday: window.moment().format('YYYY-MM-DD'),
+        insertion: configuredTaskInsertion(this.settings),
+      }),
+      (filePath, templatePath, title) => noteTemplates.ensureNote(filePath, templatePath, title),
+      (filePath) => this.isExcludedDestination(filePath),
+      {
+        canonicalize: (filePath) => this.canonicalTaskDestinationPath(filePath),
+        readNote: (path) => {
+          const sources = this.taskIndex.projectSources();
+          const source = sources.get(path);
+          const file = this.app.vault.getAbstractFileByPath(path);
+          return source.type === 'ok' &&
+            source.value !== undefined &&
+            file !== null &&
+            sources.matchesFile(source.value, file)
+            ? { file, content: source.value.content }
+            : undefined;
+        },
+        planNote: (filePath, templatePath, title) =>
+          noteTemplates.planStaticNote(filePath, templatePath, title),
+      },
+    );
+  }
+
   private initializeTaskServices(): void {
     this.statusCatalog = new StatusCatalog(toStatusRules(this.settings.taskStatuses));
     this.statusRegistry = new StatusRegistry(this.settings.taskStatuses);
@@ -178,7 +333,7 @@ export default class TaskCalendarPlugin extends Plugin {
     this.taskIndex = new TaskIndex(this.app, {
       statusCatalog: this.statusCatalog,
       refAuthority,
-      excludeSource: (source) => this.isTaskSourceExcluded(source),
+      ...this.taskSourceExclusion(),
       statisticsFileKind: (path, tags, frontmatter) =>
         this.taskStatisticsFileKind(path, tags, frontmatter),
       readYield: (signal) => scheduler.yield(signal),
@@ -195,25 +350,14 @@ export default class TaskCalendarPlugin extends Plugin {
       locator: new TaskLocator(refAuthority),
       snapshotsFromContent: (path, content) => this.taskIndex.snapshotsFromContent(path, content),
       refAuthority,
-      snapshotState: this.taskIndex,
+      ...this.taskPreparationSources(),
       configuredTaskNotePath: () => this.settings.taskFilePath,
       diagnostics,
     });
     const noteTemplates = new NoteTemplateService(this.app);
-    const destinationProvider = new ObsidianTaskDestinationProvider(
-      () => ({
-        taskFilePath: this.settings.taskFilePath,
-        taskArchivePath: this.effectiveTaskStorage.taskArchivePath,
-        taskTemplatePath: this.settings.taskTemplatePath,
-        capturedToday: window.moment().format('YYYY-MM-DD'),
-        insertion: configuredTaskInsertion(this.settings),
-      }),
-      (filePath, templatePath, title) => noteTemplates.ensureNote(filePath, templatePath, title),
-      (filePath) => this.isExcludedDestination(filePath),
-      (filePath) => this.canonicalTaskDestinationPath(filePath),
-    );
+    const destinationProvider = this.taskDestinationProvider(noteTemplates);
     const clock = this.initializeTaskInputServices();
-    this.tasks = new TaskApplicationService(
+    const tasks = new TaskApplicationService(
       this.taskIndex,
       repository,
       this.statusCatalog,
@@ -237,16 +381,286 @@ export default class TaskCalendarPlugin extends Plugin {
       ),
       diagnostics,
       new MarkdownTaskCreatePreview(codec),
+      this.taskIndex.statusReadBasis(),
     );
-    this.queries = this.tasks.queries;
     this.projectManager = new ProjectManager(
       this.app,
       this.settings,
       noteTemplates,
-      this.tasks,
+      tasks,
       this.projectProperties,
     );
+    this.initializeTaskApi(tasks, refAuthority, scheduler);
     this.initializeTagManager();
+  }
+
+  private taskPreparationSources(): Pick<
+    ConstructorParameters<typeof ObsidianTaskRepository>[1],
+    'snapshotState' | 'preparedRootSources' | 'preparedRootReads' | 'preparedRootQueries'
+  > {
+    return {
+      snapshotState: this.taskIndex,
+      preparedRootQueries: this.taskIndex,
+      preparedRootSources: this.taskIndex.projectSources(),
+      preparedRootReads: this.taskIndex.integrationReads(),
+    };
+  }
+
+  createCommandSession(
+    journal: CommandJournalPort,
+    research?: CommandResearchPort,
+    transitions?: CommandSessionTransitions,
+  ): CommandSession {
+    const id = (): string => crypto.randomUUID();
+    if (this.taskApiProvider === undefined) throw new Error('Task API is unavailable.');
+    const result = this.taskApiProvider.getApi(1, { consumerId: `command-mode:${id()}` });
+    if (!result.ok) throw new Error(result.error.message);
+    const session: CommandSession = new CommandSession({
+      api: result.value,
+      defaultVoiceMode: () => providerVoiceMode(this.settings.commandMode),
+      journal,
+      now: () => Date.now(),
+      id,
+      agent: { run: async (input) => agent.run(input) },
+      ...(transitions === undefined ? {} : { transitions }),
+      onDispose: () => {
+        this.commandRuntimes.delete(session);
+      },
+    });
+    const agent: CommandAgent = new CommandAgent({
+      api: result.value,
+      session,
+      connections: this.providerConnections,
+      settings: () => this.settings.commandMode,
+      temporalContext: () =>
+        `Local date/time: ${moment().format('YYYY-MM-DD HH:mm Z')}; time zone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}`,
+      now: () => Date.now(),
+      research: research ?? {
+        search: (query, signal) => this.commandResearch.search(query, signal),
+      },
+    });
+    this.commandRuntimes.add(session);
+    return session;
+  }
+
+  private commandSessionStorage(checkOpening: () => void = () => {}): CommandSessionStoragePort {
+    const legacyKey = 'abyss-tasks:command-sessions:v1';
+    const directory = normalizePath(
+      this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`,
+    );
+    const sessions = normalizePath(`${directory}/sessions`),
+      adapter = this.app.vault.adapter;
+    const path = (key: CommandHistoryFileKey): string => {
+      if (key.kind === 'state') return normalizePath(`${directory}/command-session-state.json`);
+      if (!isCommandSessionFileId(key.fileId)) throw new Error('Invalid history file ID');
+      return normalizePath(`${sessions}/${key.fileId}.json`);
+    };
+    const exists = (file: string): Promise<boolean> => {
+      checkOpening();
+      return adapter.exists(file);
+    };
+    const ensureDirectory = async (): Promise<void> => {
+      if (await exists(sessions)) return;
+      checkOpening();
+      await adapter.mkdir(sessions);
+    };
+    return {
+      listSessions: async () => {
+        if (!(await exists(sessions))) return [];
+        checkOpening();
+        const listed = await adapter.list(sessions);
+        checkOpening();
+        return listed.files.map((file) => {
+          const prefix = `${sessions}/`;
+          if (!file.startsWith(prefix) || !file.endsWith('.json'))
+            throw new Error('Invalid history entry');
+          const fileId = file.slice(prefix.length, -5);
+          if (!isCommandSessionFileId(fileId)) throw new Error('Invalid history entry');
+          return fileId;
+        });
+      },
+      read: async (key) => {
+        const file = path(key);
+        if (!(await exists(file))) return null;
+        checkOpening();
+        const value = await adapter.read(file);
+        checkOpening();
+        return value;
+      },
+      write: async (key, text, previous) => {
+        const file = path(key);
+        await ensureDirectory();
+        checkOpening();
+        if (previous === null) {
+          if (await exists(file)) throw new Error('History file already exists');
+          checkOpening();
+          // The public adapter has no atomic create-if-absent or fsync contract.
+          await adapter.write(file, text);
+        } else {
+          await adapter.process(file, (current) => {
+            checkOpening();
+            if (current !== previous) throw new Error('History changed outside this writer');
+            return text;
+          });
+        }
+      },
+      remove: async (fileId, previous) => {
+        const file = path({ kind: 'session', fileId });
+        if (!(await exists(file))) return;
+        checkOpening();
+        const bytes = await adapter.readBinary(file);
+        const current = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
+        if (current !== previous) throw new Error('History changed outside this writer');
+        checkOpening();
+        await adapter.remove(file);
+      },
+      loadLegacy: () => {
+        checkOpening();
+        return this.app.loadLocalStorage(legacyKey) as unknown;
+      },
+      clearLegacy: () => {
+        checkOpening();
+        this.app.saveLocalStorage(legacyKey, null);
+      },
+    };
+  }
+  getCommandSessionOwner(
+    research?: CommandResearchPort,
+  ): CommandSessionOwner | Promise<CommandSessionOwner> {
+    if (this.commandModeClosed || this.commandSessionOwner?.isDisposed() === true)
+      throw new CommandFailure('CLOSED', 'This session owner has closed.');
+    if (this.commandSessionOwner !== undefined) return this.commandSessionOwner;
+    this.commandSessionOpening ??= this.queueCommandSessionOpen(research);
+    return this.commandSessionOpening;
+  }
+
+  private queueCommandSessionOpen(research?: CommandResearchPort): Promise<CommandSessionOwner> {
+    const workspaceWindow = this.app.workspace.containerEl.win as Window & {
+      [COMMAND_HISTORY_OPENINGS]?: Map<DataAdapter, Promise<void>>;
+    };
+    const openings =
+      workspaceWindow[COMMAND_HISTORY_OPENINGS] ?? new Map<DataAdapter, Promise<void>>();
+    workspaceWindow[COMMAND_HISTORY_OPENINGS] = openings;
+    const adapter = this.app.vault.adapter;
+    const previous = openings.get(adapter) ?? Promise.resolve();
+    const current = previous.then(() => this.openCommandSessionOwner(research));
+    const drained = current.then(
+      () => {},
+      () => {},
+    );
+    openings.set(adapter, drained);
+    return current.finally(() => {
+      if (openings.get(adapter) === drained) openings.delete(adapter);
+      if (openings.size === 0) delete workspaceWindow[COMMAND_HISTORY_OPENINGS];
+      this.commandSessionOpening = undefined;
+    });
+  }
+
+  private async openCommandSessionOwner(
+    research?: CommandResearchPort,
+  ): Promise<CommandSessionOwner> {
+    let opening = true;
+    const checkOpening = (): void => {
+      if (opening && this.commandModeClosed)
+        throw new CommandFailure('CLOSED', 'This session owner has closed.');
+    };
+    const store = await CommandSessionStore.open(
+      {
+        storage: this.commandSessionStorage(checkOpening),
+        now: () => Date.now(),
+        fileId: () => crypto.randomUUID(),
+      },
+      checkOpening,
+    );
+    checkOpening();
+    // Once acquired, the owner's admitted journal and final save must drain through unload.
+    opening = false;
+    this.commandSessionOwner = this.createCommandSessionOwner(store, research);
+    return this.commandSessionOwner;
+  }
+
+  private createCommandSessionOwner(
+    store: CommandSessionStore,
+    research?: CommandResearchPort,
+  ): CommandSessionOwner {
+    return new CommandSessionOwner({
+      store,
+      createSession: (journal, transitions) =>
+        this.createCommandSession(journal, research, transitions),
+      schedule: (callback) => {
+        const timer = window.setTimeout(callback, 250);
+        return () => {
+          window.clearTimeout(timer);
+        };
+      },
+      diagnose: (code) => {
+        console.warn('[abyss-tasks] Command history persistence failed', { code });
+      },
+      notify: (state) => {
+        let message: Parameters<typeof commandMessage>[0] = 'Command ready. Press Q to review.';
+        if (state.status.kind === 'error')
+          console.warn('[abyss-tasks] Background command stopped', {
+            message: state.status.message,
+          });
+        if (state.status.kind === 'error')
+          message = 'Command needs attention. Press Q to continue.';
+        else if (state.activeQuestion !== null)
+          message = 'Command is waiting for your answer. Press Q to continue.';
+        else if (state.status.kind === 'saved') message = 'Changes saved. Press Q to continue.';
+        new Notice(commandMessage(message));
+      },
+    });
+  }
+
+  private initializeTaskApi(
+    tasks: TaskApplicationService,
+    authority: TaskRefAuthority,
+    scheduler: TaskSearchScheduler,
+  ): void {
+    this.tasks = tasks;
+    this.queries = tasks.queries;
+    const sources = this.taskIndex.projectSources();
+    const settings = (): CalendarSettings['projects'] => this.settings.projects;
+    const reads = createProjectIntegrationReads(sources, settings);
+    this.taskApiProvider = new TaskApiProvider({
+      notes: new NoteApplicationService(this.app, sources, {
+        yield: (signal) => scheduler.yield(signal),
+        capture: () => this.taskIndex.integrationReads().capture(),
+        host: new NoteHostAdapter(this.app, sources, (source) =>
+          this.taskIndex.noteStructure(source),
+        ),
+        protection: new CanonicalNoteTaskProtection(this.app, this.taskIndex, authority),
+        serialize: (path, work) => runTaskFileMutation(this.app, path, work),
+      }),
+      reads: this.taskIndex.integrationReads(),
+      creationPolicy: () => tasks.creationPolicy(),
+      mutations: tasks,
+      search: this.taskSearch,
+      content: {
+        edits: tasks,
+        creates: tasks,
+        hierarchies: tasks,
+        statuses: () => this.statusCatalog.all(),
+      },
+      projects: {
+        reads,
+        writes: this.projectManager.integrationWrites(
+          reads,
+          sources,
+          new CanonicalNoteTaskProtection(this.app, this.taskIndex, authority),
+        ),
+        tasks: createProjectTaskCommands(reads, sources, tasks, settings),
+      },
+      pluginVersion: this.manifest.version,
+      epoch: Array.from(crypto.getRandomValues(new Uint8Array(16)), (value) =>
+        value.toString(16).padStart(2, '0'),
+      ).join(''),
+      now: () => Date.now(),
+      diagnostic: (operation, code, diagnosticId) => {
+        console.error('[abyss-tasks] API operation failed', { operation, code, diagnosticId });
+      },
+    });
+    this.updateTaskApiSemantics();
   }
 
   private initializeTagManager(): void {
@@ -296,6 +710,14 @@ export default class TaskCalendarPlugin extends Plugin {
           this.search,
           this.taskStatistics,
           this.taskInputServices,
+          {
+            owner: () => this.getCommandSessionOwner(),
+            availability: () => this.providerConnections.availability(this.settings.commandMode),
+            memory: this.commandSurfaceMemory,
+            transcription: this.commandTranscription,
+            nativeTarget: (target, revision) =>
+              this.taskApiProvider?.nativeTaskTarget(target, revision),
+          },
         ),
     );
   }
@@ -395,9 +817,19 @@ export default class TaskCalendarPlugin extends Plugin {
   }
 
   override onunload(): void {
+    // Retire Q acquisition before callbacks and runtimes; host unload owns view registrations.
+    this.commandModeClosed = true;
+    this.commandModeRetired = true;
+    this.commandSurfaceMemory.active = false;
+    this.commandSessionOwner?.dispose();
+    this.commandSurfaceMemory.presentation?.clear();
+    this.commandSessionOwner = undefined;
+    for (const session of this.commandRuntimes) session.dispose();
+    this.commandRuntimes.clear();
     this.timeTrackingReminder?.destroy();
     this.viewStatePaths.flushPendingSave();
     this.taskSearch.dispose();
+    this.taskApiProvider?.dispose();
     this.taskIndex.destroy();
   }
 
@@ -429,6 +861,7 @@ export default class TaskCalendarPlugin extends Plugin {
   }
 
   async saveSettings(): Promise<void> {
+    this.updateTaskApiSemantics();
     beginSettingsSave(this.settings);
     await this.settingsPersistence.saveSettings(this.settings);
     this.timeTrackingReminder?.setInterval(this.settings.timeTrackingReminderMinutes);
@@ -462,7 +895,8 @@ export default class TaskCalendarPlugin extends Plugin {
     }
     this.effectiveTaskStorage = { ...validated.settings };
     this.compileTaskSourcePolicy();
-    await this.taskIndex.refreshSourceExclusion((source) => this.isTaskSourceExcluded(source));
+    const { excludeSource, excludePath } = this.taskSourceExclusion();
+    await this.taskIndex.refreshSourceExclusion(excludeSource, excludePath);
   }
 
   private initializeTaskStatisticsPolicy(): void {
@@ -477,8 +911,17 @@ export default class TaskCalendarPlugin extends Plugin {
     this.statisticsArchivePattern = compileNotePathPattern(
       this.effectiveTaskStorage.taskArchivePath,
     );
-    this.taskSourcePolicy = compileQuery(taskSourceIgnoreQuery(this.effectiveTaskStorage));
+    const query = taskSourceIgnoreQuery(this.effectiveTaskStorage);
+    this.taskSourcePolicy = compileQuery(query);
+    this.taskSourcePathPolicy = compileQueryPathProof(query);
     this.taskIgnorePolicy = compileQuery(this.effectiveTaskStorage.taskIgnoreQuery);
+  }
+
+  private taskSourceExclusion(): Pick<TaskIndexOptions, 'excludeSource' | 'excludePath'> {
+    return {
+      excludeSource: (source) => this.isTaskSourceExcluded(source),
+      excludePath: (path) => this.taskSourcePathPolicy(path),
+    };
   }
 
   private isTaskSourceExcluded(source: TaskSourceMetadata): boolean {
@@ -502,7 +945,7 @@ export default class TaskCalendarPlugin extends Plugin {
       return this.isTaskSourceExcluded({ filePath, tags: [], frontmatter: {} });
     }
     const content = await this.app.vault.cachedRead(actual);
-    const parsed = parseMarkdownFrontmatter(content.split(/\r?\n/u));
+    const parsed = parseMarkdownFrontmatter(content);
     const frontmatter = parsed.type === 'valid' ? (parsed.value ?? {}) : {};
     const frontmatterTags = getAllTags({ frontmatter }) ?? [];
     return this.isTaskSourceExcluded({
@@ -569,10 +1012,29 @@ export default class TaskCalendarPlugin extends Plugin {
     );
   }
 
+  private updateTaskApiSemantics(): void {
+    if (this.taskApiProvider === undefined) return;
+    this.taskIndex.updateProjectIntegrationSemantics(projectSemantics(this.settings.projects));
+    this.taskIndex.updateIntegrationSemantics(
+      JSON.stringify({
+        statuses: this.statusCatalog.all(),
+        taskLifecycle: {
+          addCreatedDate: this.settings.taskLifecycle.addCreatedDate,
+          addCompletionDate: this.settings.taskLifecycle.addCompletionDate,
+        },
+        recurrence: {
+          newOccurrencePlacement: this.settings.recurrence.newOccurrencePlacement,
+          removeScheduledDate: this.settings.recurrence.removeScheduledDate,
+        },
+      }),
+    );
+  }
+
   rebuildTaskStatusSemantics(): void {
     this.statusCatalog.replace(toStatusRules(this.settings.taskStatuses));
     this.statusRegistry.replace(this.settings.taskStatuses);
     this.taskIndex.setStatusCatalog(this.statusCatalog);
+    this.updateTaskApiSemantics();
   }
 
   private async openPanel(): Promise<void> {

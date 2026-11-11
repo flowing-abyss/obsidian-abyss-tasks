@@ -1,5 +1,6 @@
 import { App, Notice } from 'obsidian';
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest';
+import type { CommandSessionStoragePort } from '../src/ai/CommandSessionStore';
 import type { AppState } from '../src/app/AppState';
 import TaskCalendarPlugin from '../src/main';
 import { buildDefaultProjectKanbanSettings } from '../src/projects/projectKanbanSettings';
@@ -42,6 +43,7 @@ const STATE_PATH = '.test-config/plugins/abyss-tasks/state.json';
 interface StateAdapterLike {
   readonly exists: Mock<(path: string) => Promise<boolean>>;
   readonly read: Mock<(path: string) => Promise<string>>;
+  readonly readBinary: Mock<(path: string) => Promise<ArrayBuffer>>;
   readonly write: Mock<(path: string, value: string) => Promise<void>>;
   readonly trashSystem: Mock<(path: string) => Promise<boolean>>;
   readonly rename: Mock<(from: string, to: string) => Promise<void>>;
@@ -67,6 +69,7 @@ interface WorkspaceLike {
 }
 
 interface PluginLike {
+  readonly providerConnections: TaskCalendarPlugin['providerConnections'];
   readonly search: TaskCalendarPlugin['search'];
   app: {
     workspace: WorkspaceLike;
@@ -108,12 +111,37 @@ function makePlugin(data: Record<string, unknown> | null = null): PluginLike {
   // Keep layout NOT ready so onLayoutReady queues callbacks (lets onload finish before initialize fires)
   workspace.layoutReady = false;
   const stateFiles = new Map<string, string>();
+  const directories = new Set<string>();
   const adapter = {
-    exists: vi.fn(async (path: string) => stateFiles.has(path)),
+    mkdir: vi.fn(async (path: string) => {
+      directories.add(path);
+    }),
+    list: vi.fn(async (path: string) => ({
+      files: [...stateFiles.keys()].filter(
+        (name) => name.startsWith(`${path}/`) && !name.slice(path.length + 1).includes('/'),
+      ),
+      folders: [],
+    })),
+    remove: vi.fn(async (path: string) => {
+      stateFiles.delete(path);
+    }),
+    process: vi.fn(async (path: string, transform: (value: string) => string) => {
+      const previous = stateFiles.get(path);
+      if (previous === undefined) throw new Error('Missing file');
+      const next = transform(previous);
+      stateFiles.set(path, next);
+      return next;
+    }),
+    exists: vi.fn(async (path: string) => stateFiles.has(path) || directories.has(path)),
     read: vi.fn(async (path: string) => {
       const value = stateFiles.get(path);
       if (value === undefined) throw new Error(`Missing ${path}`);
       return value;
+    }),
+    readBinary: vi.fn(async (path: string) => {
+      const value = stateFiles.get(path);
+      if (value === undefined) throw new Error(`Missing ${path}`);
+      return new TextEncoder().encode(value).buffer;
     }),
     write: vi.fn(async (path: string, value: string) => {
       stateFiles.set(path, value);
@@ -127,6 +155,13 @@ function makePlugin(data: Record<string, unknown> | null = null): PluginLike {
     }),
   };
   Object.assign(app.vault, { adapter, configDir: '.test-config' });
+  // This state-store adapter bypasses the package's in-memory stat implementation.
+  Object.assign(app.vault, {
+    refreshStat__(file: { path: string; stat: { size: number } }) {
+      const content = stateFiles.get(file.path);
+      if (content !== undefined) file.stat.size = new TextEncoder().encode(content).byteLength;
+    },
+  });
 
   const plugin = new TaskCalendarPlugin(app, MANIFEST) as unknown as PluginLike;
   // loadData() returns this.data__; seed it so loadSettings merges persisted values.
@@ -504,6 +539,40 @@ describe('TaskCalendarPlugin saveSettings', () => {
     expect(plugin.settings.taskIgnoreQuery).toBe('(#private) OR ("tasks/archive.md")');
     expect(refresh).toHaveBeenCalledOnce();
   });
+
+  it.each([true, false])(
+    'wires path-only integration coverage through storage policy, excluded at startup=%s',
+    async (excludedAtStartup) => {
+      const plugin = makePlugin({
+        taskArchivePath: excludedAtStartup ? 'hidden.md' : 'archive.md',
+      });
+      await plugin.app.vault.create('tasks.md', '- [ ] Allowed');
+      await plugin.app.vault.create('hidden.md', '- [ ] Secret');
+      const read = plugin.app.vault.cachedRead.bind(plugin.app.vault);
+      vi.spyOn(plugin.app.vault, 'cachedRead').mockImplementation(async (file) => {
+        if (file.path === 'hidden.md') throw new Error('unreadable');
+        return read(file);
+      });
+      try {
+        await plugin.onload();
+        const index = plugin.taskIndex as TaskIndex;
+        await index.initialize();
+        if (!excludedAtStartup) {
+          expect(index.integrationReads().coverage()).toMatchObject({ reason: 'incomplete' });
+          await plugin.saveTaskStorageSettings({
+            taskArchivePath: 'archive.md',
+            taskIgnoreQuery: '"hidden.md"',
+          });
+        }
+        expect(index.integrationReads().page({}, 10)).toMatchObject({
+          type: 'ok',
+          value: { nodes: [{ value: { node: { title: 'Allowed' } } }] },
+        });
+      } finally {
+        plugin.onunload();
+      }
+    },
+  );
 
   it('retains ordinary and Statistics policy when the real settings write rejects', async () => {
     const plugin = makePlugin({ taskArchivePath: 'old.md', taskIgnoreQuery: '#old-ignore' });
@@ -1705,4 +1774,533 @@ it('plugin load and canonical workspace bootstrap alone leave search backend col
     plugin.onunload();
     vi.unstubAllGlobals();
   }
+});
+
+it('discovers the public API before initialization, replaces epochs on reload and retires old clients', async () => {
+  const plugin = makePlugin() as unknown as TaskCalendarPlugin;
+  expect(plugin.getApi(1, { consumerId: 'test' })).toMatchObject({
+    ok: false,
+    error: { code: 'NOT_READY' },
+  });
+  await plugin.onload();
+  const result = plugin.getApi(1, { consumerId: 'test' });
+  if (!result.ok) throw new Error('Missing API');
+  expect(await result.value.tasks.list()).toMatchObject({ error: { code: 'NOT_READY' } });
+  plugin.onunload();
+  expect(await result.value.ready()).toMatchObject({ error: { code: 'DISPOSED' } });
+  const reloaded = makePlugin() as unknown as TaskCalendarPlugin;
+  await reloaded.onload();
+  try {
+    const replacement = reloaded.getApi(1, { consumerId: 'test' });
+    if (!replacement.ok) throw new Error('Missing replacement');
+    expect(replacement.value.info.providerEpoch).not.toBe(result.value.info.providerEpoch);
+  } finally {
+    reloaded.onunload();
+  }
+});
+
+it('advances effective public semantics synchronously before settings persistence', async () => {
+  const plugin = makePlugin() as unknown as TaskCalendarPlugin;
+  await plugin.onload();
+  try {
+    const result = plugin.getApi(1, { consumerId: 'test' });
+    if (!result.ok) throw new Error('Missing API');
+    const revisions: number[] = [];
+    result.value.subscribe((event) => {
+      revisions.push(event.semanticsRevision);
+    });
+    const before = revisions[revisions.length - 1];
+    plugin.settings.recurrence.newOccurrencePlacement =
+      plugin.settings.recurrence.newOccurrencePlacement === 'before' ? 'after' : 'before';
+    const saved = plugin.saveSettings();
+    expect(revisions[revisions.length - 1]).toBeGreaterThan(before ?? -1);
+    await saved;
+    const after = revisions[revisions.length - 1];
+    plugin.settings.recurrence = {
+      removeScheduledDate: plugin.settings.recurrence.removeScheduledDate,
+      newOccurrencePlacement: plugin.settings.recurrence.newOccurrencePlacement,
+    };
+    plugin.settings.taskLifecycle = {
+      addCompletionDate: plugin.settings.taskLifecycle.addCompletionDate,
+      addCreatedDate: plugin.settings.taskLifecycle.addCreatedDate,
+    };
+    await plugin.saveSettings();
+    expect(revisions[revisions.length - 1]).toBe(after);
+    plugin.settings.taskPrefix = '#unrelated';
+    await plugin.saveSettings();
+    expect(revisions[revisions.length - 1]).toBe(after);
+  } finally {
+    plugin.onunload();
+  }
+});
+
+it.each(['keep', 'delete'] as const)(
+  'settles accepted recurring %s work truthfully after real plugin unload',
+  async (mode) => {
+    const plugin = makePlugin() as unknown as TaskCalendarPlugin;
+    await plugin.onload();
+    const entered = deferred<void>();
+    const resume = deferred<void>();
+    const index = (plugin as unknown as { taskIndex: TaskIndex }).taskIndex;
+    try {
+      await plugin.app.vault.create(
+        'repeat.md',
+        `- [ ] Repeat 🔁 every day 📅 2026-08-01 🏁 ${mode}\n`,
+      );
+      await index.initialize();
+      const api = plugin.getApi(1, { consumerId: 'unload' });
+      if (!api.ok) throw new Error('Missing API');
+      const found = await api.value.tasks.resolve({ source: { path: 'repeat.md', line: 0 } });
+      if (!found.ok || found.value.type !== 'found') throw new Error('Missing repeat task');
+      const changed = vi.fn();
+      api.value.subscribe(changed);
+      vi.spyOn(plugin.app.vault, 'process').mockImplementation(async (file, transform) => {
+        const candidate = transform(await plugin.app.vault.read(file));
+        entered.resolve();
+        await resume.promise;
+        await plugin.app.vault.modify(file, candidate);
+        return candidate;
+      });
+      const pending = api.value.tasks.complete({
+        target: found.value.task.target,
+        expectedRevision: found.value.task.revision,
+        requestId: 'unload:1',
+        expiresAt: Date.now() + 300_000,
+      });
+      await entered.promise;
+      plugin.onunload();
+      const callbacks = changed.mock.calls.length;
+      resume.resolve();
+      const result = await pending;
+      expect(result).toMatchObject({
+        ok: true,
+        receipt: {
+          effects: 'committed',
+          original: { state: mode === 'delete' ? 'removed' : 'retained' },
+          snapshots: 'unavailable',
+        },
+      });
+      expect(result.receipt?.next?.target).toBeTypeOf('string');
+      expect(result.receipt?.original.task).toBeUndefined();
+      expect(result.receipt?.next?.task).toBeUndefined();
+      expect(changed).toHaveBeenCalledTimes(callbacks);
+    } finally {
+      resume.resolve();
+      plugin.onunload();
+      vi.restoreAllMocks();
+    }
+  },
+);
+
+it('exposes index initialization failure through the production provider', async () => {
+  const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
+  const plugin = makePlugin() as unknown as TaskCalendarPlugin;
+  await plugin.onload();
+  const failed = vi.spyOn(plugin.app.vault, 'getMarkdownFiles').mockImplementationOnce(() => {
+    throw new Error('startup');
+  });
+  try {
+    const api = plugin.getApi(1, { consumerId: 'startup' });
+    if (!api.ok) throw new Error('Missing API');
+    const waiting = api.value.ready();
+    const index = (plugin as unknown as { taskIndex: TaskIndex }).taskIndex;
+    await expect(index.initialize()).rejects.toThrow('startup');
+    expect(await waiting).toMatchObject({ ok: false, error: { code: 'INITIALIZATION_FAILED' } });
+    expect(diagnostic).toHaveBeenCalled();
+  } finally {
+    diagnostic.mockRestore();
+    failed.mockRestore();
+    plugin.onunload();
+  }
+});
+
+it('publishes project semantics on save while ignoring preset presentation changes', async () => {
+  const plugin = makePlugin() as unknown as TaskCalendarPlugin;
+  await plugin.onload();
+  try {
+    plugin.settings.projects.propertyDefinitionsVersion = 1;
+    plugin.settings.projects.propertyDefinitions = {
+      'property:color': { type: 'text', presets: [{ value: 'red', color: '#fff' }] },
+    };
+    await plugin.saveSettings();
+    const result = plugin.getApi(1, { consumerId: 'project-settings-test' });
+    if (!result.ok) throw new Error('Missing API');
+    const events: Array<{ generation: number; semanticsRevision: number }> = [];
+    result.value.subscribe((event) => events.push(event));
+    const before = events.length;
+    plugin.settings.projects.propertyDefinitions['property:color'] = {
+      type: 'text',
+      presets: [{ value: 'red', color: '#000', display: 'dot' }],
+    };
+    Reflect.set(
+      plugin.settings.projects.propertyDefinitions['property:color'] ?? {},
+      'presetsEnabled',
+      false,
+    );
+    await plugin.saveSettings();
+    expect(events).toHaveLength(before);
+    plugin.settings.projects.taskInsertionSection = 'New section';
+    await plugin.saveSettings();
+    expect(events).toHaveLength(before + 1);
+    expect(events[events.length - 1]?.generation).toBeGreaterThan(events[0]?.generation ?? -1);
+    expect(events[events.length - 1]?.semanticsRevision).toBe(events[0]?.semanticsRevision);
+  } finally {
+    plugin.onunload();
+  }
+});
+
+it('starts ordinary task services and settings with unsupported provider preferences intact', async () => {
+  const commandMode = {
+    provider: 'gateway',
+    model: '',
+    search: 'future',
+    voice: 'future',
+    extra: { keep: true },
+  };
+  const plugin = makePlugin({ commandMode, taskPrefix: '#existing' });
+  await plugin.onload();
+  try {
+    expect(plugin.settings.commandMode).toEqual(commandMode);
+    const { parseProviderSettings } = await import('../src/ai/providers/providerSettings');
+    expect(() =>
+      plugin.providerConnections.model(parseProviderSettings(plugin.settings.commandMode)),
+    ).toThrow(expect.objectContaining({ code: 'invalid-request' }));
+    expect(plugin.settingTabs__).toHaveLength(1);
+    expect(plugin.views__.has(PANEL_VIEW_TYPE)).toBe(true);
+    plugin.settings.taskPrefix = '#changed';
+    await plugin.saveSettings();
+    expect(plugin.data__).toMatchObject({ commandMode, taskPrefix: '#changed' });
+  } finally {
+    plugin.onunload();
+  }
+});
+
+it('shares one lazy command owner and persists input in scoped JSON outside settings', async () => {
+  const plugin = makePlugin() as unknown as TaskCalendarPlugin;
+  let raw: unknown = null;
+  const written: string[] = [];
+  vi.spyOn(plugin.app, 'loadLocalStorage').mockImplementation((key) => {
+    expect(key).toBe('abyss-tasks:command-sessions:v1');
+    return structuredClone(raw);
+  });
+  vi.spyOn(plugin.app, 'saveLocalStorage').mockImplementation((key, value) => {
+    written.push(key);
+    raw = structuredClone(value);
+  });
+  await plugin.onload();
+  try {
+    plugin.settings.commandMode = { provider: 'unsupported' };
+    const first = await plugin.getCommandSessionOwner();
+    expect(plugin.getCommandSessionOwner()).toBe(first);
+    expect(first.snapshot().voiceMode).toBe('manual');
+    plugin.settings.commandMode = { provider: 'unsupported', voiceInputMode: 'continuous' };
+    expect(first.snapshot().voiceMode).toBe('manual');
+    first.open();
+    first.setInput('Retained locally');
+    await first.flush();
+    expect(written).toEqual([]);
+    const files = (plugin as unknown as PluginLike).stateFiles__;
+    const sessionFiles = [...files].filter(([path]) => path.includes('/sessions/'));
+    expect(sessionFiles).toHaveLength(1);
+    expect(JSON.parse(expectDefined(sessionFiles[0])[1])).toMatchObject({
+      version: 1,
+      snapshot: { input: 'Retained locally' },
+    });
+    expect(files.has('.test-config/plugins/abyss-tasks/command-session-state.json')).toBe(true);
+    expect(plugin.settings).not.toHaveProperty('commandSessions');
+    await first.newSession();
+    expect(first.snapshot().voiceMode).toBe('continuous');
+    first.dispose();
+  } finally {
+    plugin.onunload();
+    vi.restoreAllMocks();
+  }
+});
+
+it('lets an already-open command owner use research after settings are corrected without startup requests', async () => {
+  const { MockLanguageModelV4 } = await import('ai/test');
+  const plugin = makePlugin() as unknown as TaskCalendarPlugin;
+  await plugin.onload();
+  try {
+    plugin.settings.commandMode = { provider: 'unsupported' };
+    const search = vi.spyOn(plugin.commandResearch, 'search').mockResolvedValue({
+      query: 'Compare two choices',
+      summary: 'Finding',
+      sources: [
+        {
+          url: 'https://example.org/source',
+          title: null,
+          snippet: null,
+          content: null,
+          evidence: 'citation',
+        },
+      ],
+      truncated: false,
+    });
+    const calls = [
+      { toolName: 'interpret', input: { intent: 'plan', research: true } },
+      { toolName: 'expand', input: { capabilities: ['research'] } },
+      { toolName: 'research', input: { query: 'Compare two choices' } },
+      { toolName: 'finish', input: { state: 'ready', message: 'Compared.' } },
+    ];
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => {
+        const call = expectDefined(calls.shift());
+        return {
+          content: [
+            {
+              type: 'tool-call',
+              toolCallId: String(calls.length),
+              toolName: call.toolName,
+              input: JSON.stringify(call.input),
+            },
+          ],
+          finishReason: { unified: 'tool-calls', raw: 'tool_calls' },
+          usage: {
+            inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
+            outputTokens: { total: 1, text: 1, reasoning: 0 },
+          },
+          warnings: [],
+        };
+      },
+    });
+    const connection = vi.spyOn(plugin.providerConnections, 'model').mockReturnValue(model);
+    const owner = await plugin.getCommandSessionOwner();
+    owner.open();
+    expect(search).not.toHaveBeenCalled();
+    expect(connection).not.toHaveBeenCalled();
+    await owner.submit('Compare choices');
+    expect(owner.snapshot().status.kind).toBe('error');
+    expect(search).not.toHaveBeenCalled();
+    plugin.settings.commandMode = { provider: 'openrouter', search: 'agent' };
+    expect(plugin.getCommandSessionOwner()).toBe(owner);
+    await owner.submit('Compare choices');
+    expect(search).toHaveBeenCalledTimes(1);
+    expect(owner.snapshot().status).toEqual({ kind: 'ready', message: 'Ready.' });
+    owner.dispose();
+  } finally {
+    plugin.onunload();
+    vi.restoreAllMocks();
+  }
+});
+
+it('leaves the calendar usable with malformed JSON history and never recreates an owner after unload', async () => {
+  const plugin = makePlugin();
+  const historyPath = '.test-config/plugins/abyss-tasks/command-session-state.json';
+  plugin.stateFiles__.set(historyPath, '{"version":99}');
+  await plugin.onload();
+  const concrete = plugin as unknown as TaskCalendarPlugin;
+  expect(plugin.views__.has(PANEL_VIEW_TYPE)).toBe(true);
+  const owner = await concrete.getCommandSessionOwner();
+  expect(owner.persistenceFailure()?.code).toBe('UNREADABLE_HISTORY');
+  owner.setInput('Retain in memory');
+  expect(await owner.flush()).toBe(false);
+  expect(plugin.stateFiles__.get(historyPath)).toBe('{"version":99}');
+  plugin.onunload();
+  await owner.drained();
+  expect(() => concrete.getCommandSessionOwner()).toThrow(
+    expect.objectContaining({ code: 'CLOSED' }),
+  );
+});
+it('scopes native history paths to the actual plugin directory and rejects unsafe file IDs', async () => {
+  const plugin = makePlugin() as unknown as TaskCalendarPlugin;
+  plugin.manifest = { ...plugin.manifest, dir: 'custom-config/plugins/actual-plugin' };
+  const port = (
+    plugin as unknown as {
+      commandSessionStorage(): CommandSessionStoragePort;
+    }
+  ).commandSessionStorage();
+  await expect(port.write({ kind: 'session', fileId: '../../note' }, '{}', null)).rejects.toThrow(
+    'Invalid history file ID',
+  );
+  const key = { kind: 'session' as const, fileId: '00000000-0000-4000-8000-000000000001' };
+  await port.write(key, 'original', null);
+  expect(
+    (plugin as unknown as PluginLike).stateFiles__.get(
+      'custom-config/plugins/actual-plugin/sessions/00000000-0000-4000-8000-000000000001.json',
+    ),
+  ).toBe('original');
+  await expect(port.write(key, 'overwrite', null)).rejects.toThrow('already exists');
+  await expect(port.write(key, 'overwrite', 'stale')).rejects.toThrow('changed outside');
+  expect(await port.read(key)).toBe('original');
+  await port.write(key, 'verified', 'original');
+  expect(await port.read(key)).toBe('verified');
+  await expect(port.remove(key.fileId, 'original')).rejects.toThrow('changed outside');
+  expect(await port.read(key)).toBe('verified');
+  await port.remove(key.fileId, 'verified');
+  expect(await port.read(key)).toBeNull();
+  await port.write(key, '\uFFFD', null);
+  (plugin as unknown as PluginLike).stateAdapter__.readBinary.mockResolvedValueOnce(
+    new Uint8Array([0xff]).buffer,
+  );
+  await expect(port.remove(key.fileId, '\uFFFD')).rejects.toThrow();
+  expect(await port.read(key)).toBe('\uFFFD');
+});
+
+it('registers the calendar without reading command history and retires an in-flight first open on unload', async () => {
+  const plugin = makePlugin();
+  const control = '.test-config/plugins/abyss-tasks/command-session-state.json';
+  const fileId = '00000000-0000-4000-8000-000000000001';
+  const tombstone = `.test-config/plugins/abyss-tasks/sessions/${fileId}.json`;
+  plugin.stateFiles__.set(tombstone, 'Pending cleanup');
+  const raw = JSON.stringify({
+    version: 3,
+    activeSessionId: null,
+    legacyImported: true,
+    deletedFiles: [fileId],
+    deletedSessions: { [fileId]: 'old session' },
+    deletedFileDigests: {
+      [fileId]: '3aeb3283ab7a7ea688816c651c5024e24cdf89af4e120f57502ffef503f7a242',
+    },
+  });
+  plugin.stateFiles__.set(control, raw);
+  const started = deferred<void>(),
+    release = deferred<void>();
+  const read = plugin.stateAdapter__.read.getMockImplementation();
+  plugin.stateAdapter__.read.mockImplementation(async (path) => {
+    if (path === control) {
+      started.resolve();
+      await release.promise;
+    }
+    return expectDefined(read)(path);
+  });
+  const concrete = plugin as unknown as TaskCalendarPlugin;
+  const startup = plugin.onload();
+  const first = await Promise.race([
+    startup.then(() => 'calendar'),
+    started.promise.then(() => 'history'),
+  ]);
+  if (first === 'history') release.resolve();
+  await startup;
+  expect(first).toBe('calendar');
+  expect(plugin.views__.has(PANEL_VIEW_TYPE)).toBe(true);
+  expect(plugin.stateAdapter__.read).not.toHaveBeenCalledWith(control);
+  const opening = concrete.getCommandSessionOwner();
+  expect(concrete.getCommandSessionOwner()).toBe(opening);
+  await started.promise;
+  expect(plugin.stateAdapter__.read.mock.calls.filter(([path]) => path === control)).toHaveLength(
+    1,
+  );
+  plugin.onunload();
+  release.resolve();
+  await expect(opening).rejects.toMatchObject({ code: 'CLOSED' });
+  expect(plugin.stateFiles__.get(tombstone)).toBe('Pending cleanup');
+  expect(plugin.stateAdapter__.exists).not.toHaveBeenCalledWith(tombstone);
+  expect(() => (plugin as unknown as TaskCalendarPlugin).getCommandSessionOwner()).toThrow(
+    expect.objectContaining({ code: 'CLOSED' }),
+  );
+  const next = makePlugin() as unknown as TaskCalendarPlugin;
+  Object.assign(next.app.vault, { adapter: concrete.app.vault.adapter });
+  try {
+    await next.onload();
+    await next.getCommandSessionOwner();
+    expect(plugin.stateFiles__.has(tombstone)).toBe(false);
+  } finally {
+    next.onunload();
+  }
+});
+
+it.each(['before', 'after'] as const)(
+  'finishes legacy import once when reloaded %s its first native write becomes visible',
+  async (when) => {
+    const host = makePlugin();
+    const first = host as unknown as TaskCalendarPlugin;
+    await first.onload();
+    const session = first.createCommandSession({ save: async () => {} });
+    session.setInput('First draft');
+    const saved = session.snapshot();
+    session.dispose();
+    let legacy: unknown = {
+      version: 1,
+      activeSessionId: saved.id,
+      sessions: [saved, { ...saved, id: 'another', input: 'Second draft' }].map((snapshot) => ({
+        handles: 'historical',
+        updatedAt: 1,
+        snapshot,
+      })),
+    };
+    vi.spyOn(first.app, 'loadLocalStorage').mockImplementation(() => structuredClone(legacy));
+    const clear = vi.spyOn(first.app, 'saveLocalStorage').mockImplementation((_key, value) => {
+      legacy = value;
+    });
+    const started = deferred<{ path: string; data: string }>(),
+      release = deferred<void>();
+    const write = expectDefined(host.stateAdapter__.write.getMockImplementation());
+    let hold = true;
+    host.stateAdapter__.write.mockImplementation(async (path, value) => {
+      if (hold && path.includes('/sessions/')) {
+        hold = false;
+        if (when === 'after') await write(path, value);
+        started.resolve({ path, data: value });
+        await release.promise;
+        if (when === 'after') return;
+      }
+      await write(path, value);
+    });
+    const retired = expect(first.getCommandSessionOwner()).rejects.toMatchObject({
+      code: 'CLOSED',
+    });
+    const original = await started.promise;
+    first.onunload();
+    const next = makePlugin() as unknown as TaskCalendarPlugin;
+    Object.assign(next.app.vault, { adapter: first.app.vault.adapter });
+    vi.spyOn(next.app, 'loadLocalStorage').mockImplementation(() => structuredClone(legacy));
+    vi.spyOn(next.app, 'saveLocalStorage').mockImplementation((key, value) => {
+      first.app.saveLocalStorage(key, value);
+    });
+    try {
+      await next.onload();
+      const reopened = next.getCommandSessionOwner();
+      await flushMicrotasks(0);
+      release.resolve();
+      const owner = await reopened;
+      await retired;
+      expect(owner.snapshot().input).toBe('First draft');
+      expect(new Set(owner.recent().map((row) => row.snapshot.input))).toEqual(
+        new Set(['First draft', 'Second draft']),
+      );
+      expect(host.stateFiles__.get(original.path)).toBe(original.data);
+      expect(
+        [...host.stateFiles__.keys()].filter((file) => file.includes('/sessions/')),
+      ).toHaveLength(2);
+      expect(clear).toHaveBeenCalledOnce();
+    } finally {
+      release.resolve();
+      next.onunload();
+    }
+  },
+);
+
+it('finishes an already admitted history write when its plugin unloads', async () => {
+  const host = makePlugin();
+  const plugin = host as unknown as TaskCalendarPlugin;
+  await plugin.onload();
+  const owner = await plugin.getCommandSessionOwner();
+  const started = deferred<void>(),
+    release = deferred<void>();
+  const write = expectDefined(host.stateAdapter__.write.getMockImplementation());
+  host.stateAdapter__.write.mockImplementation(async (path, data) => {
+    if (path.includes('/sessions/')) {
+      started.resolve();
+      await release.promise;
+    }
+    await write(path, data);
+  });
+  owner.setInput('Keep my journal');
+  const saving = owner.flush();
+  await started.promise;
+  plugin.onunload();
+  release.resolve();
+  await Promise.all([saving, owner.drained()]);
+  const entry = expectDefined([...host.stateFiles__].find(([path]) => path.includes('/sessions/')));
+  expect(JSON.parse(entry[1])).toMatchObject({
+    snapshot: { id: owner.snapshot().id, input: 'Keep my journal' },
+  });
+  expect(
+    JSON.parse(
+      expectDefined(
+        host.stateFiles__.get('.test-config/plugins/abyss-tasks/command-session-state.json'),
+      ),
+    ),
+  ).toMatchObject({ activeSessionId: owner.snapshot().id });
 });

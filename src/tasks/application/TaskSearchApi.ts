@@ -28,6 +28,7 @@ export type TaskSearchRequest =
   | {
       readonly kind: 'roots';
       readonly query: string;
+      readonly fields?: 'title' | 'body' | 'all';
       readonly includeSourcePath?: boolean;
       readonly filePath?: string;
     }
@@ -35,6 +36,7 @@ export type TaskSearchRequest =
       readonly kind: 'nodes';
       readonly matchScope?: 'node' | 'subtree';
       readonly query: string;
+      readonly fields?: 'title' | 'body' | 'all';
       readonly includeSourcePath?: boolean;
       readonly preferFilePath?: string;
       readonly filePath?: string;

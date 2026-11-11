@@ -243,6 +243,7 @@ function basicPlan(command: TaskEditCommand): CommandPlan | undefined {
       {
         type: 'set-status',
         symbol: command.symbol,
+        ...(command.semanticTransition === true && { semanticTransition: true }),
         ...(command.stamp !== undefined && { today: command.stamp }),
         ...(command.addCompletionDate !== undefined && {
           addCompletionDate: command.addCompletionDate,

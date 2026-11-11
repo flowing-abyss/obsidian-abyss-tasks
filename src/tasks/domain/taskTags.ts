@@ -52,6 +52,11 @@ function tagOccurrences(source: string, rootLine: boolean): readonly TagOccurren
   }));
 }
 
+/** Tags authored by the ordinary creation prefix, in source order. */
+export function taskCreationPrefixTags(prefix: string): readonly string[] {
+  return [...new Set(tagOccurrences(prefix, true).map((item) => item.tag))];
+}
+
 function removeOccurrences(source: string, occurrences: readonly TagOccurrence[]): string {
   let result = source;
   for (const occurrence of [...occurrences].reverse()) {
@@ -70,6 +75,21 @@ export interface TaskInboxTagPolicy {
   readonly removeTagOnAssign: boolean;
 }
 
+/** Resolves the native Inbox creation prefix and optional service tag. */
+export function resolveInboxCreationPolicy(
+  settings: {
+    readonly taskPrefix: string;
+    readonly inbox: TaskInboxTagPolicy;
+  },
+  intent?: 'inbox',
+): { readonly prefix: string; readonly serviceTag?: string } | undefined {
+  if (intent === undefined) return { prefix: settings.taskPrefix };
+  if (settings.inbox.mode === 'untagged') return { prefix: '' };
+  const tags = normalizeTaskTagInput(settings.inbox.tag);
+  if (tags?.length !== 1 || tags[0] === undefined) return undefined;
+  return { prefix: '', serviceTag: tags[0] };
+}
+
 /** Final Inbox classification after callers have matched the exact configured tag. */
 export function isTaskInboxMember(input: {
   readonly mode: TaskInboxTagPolicy['mode'];
@@ -80,6 +100,26 @@ export function isTaskInboxMember(input: {
   return (
     (input.mode !== 'untagged' && input.hasInboxTag) ||
     (input.mode !== 'tag' && input.depth === 0 && input.tagCount === 0)
+  );
+}
+
+export function matchesInboxPolicy(
+  tags: readonly string[],
+  depth: number,
+  policy: {
+    readonly mode: TaskInboxTagPolicy['mode'];
+    readonly serviceTag?: string;
+    readonly member: boolean;
+  },
+): boolean {
+  const serviceTag = policy.serviceTag;
+  return (
+    isTaskInboxMember({
+      mode: policy.mode,
+      hasInboxTag: serviceTag !== undefined && tags.some((tag) => sameTag(tag, serviceTag)),
+      tagCount: tags.length,
+      depth,
+    }) === policy.member
   );
 }
 

@@ -12,12 +12,16 @@ import {
   taskTextNeedsMarkdown,
   type RenderTaskTextOptions,
 } from './renderTaskText';
-import { compactTaskDescriptionExcerpt } from './taskDescriptionExcerpt';
+import { compactTaskDescriptionExcerpt, renderedText } from './taskDescriptionExcerpt';
 import type { TaskRenderOutcome } from './taskRenderScope';
+import { decorateTaskTextDifference } from './taskTextDifference';
+
+export type RetainedTextIdentity =
+  TaskTextTarget | { readonly type: 'display'; readonly key: string };
 
 export interface RetainedTaskTextInput {
   readonly source: {
-    readonly target: TaskTextTarget;
+    readonly target: RetainedTextIdentity;
     readonly markdown: string;
     readonly path: string;
     readonly presentation: 'title' | 'markdown' | 'description';
@@ -25,6 +29,9 @@ export interface RetainedTaskTextInput {
   readonly decoration: {
     readonly kind: 'complete' | 'preview' | 'excerpt';
     readonly continuation?: boolean;
+    readonly previousMarkdown?: string;
+    readonly removed?: boolean;
+    readonly compareMarkdown?: boolean;
     readonly query?: PreparedSearchQuery;
     readonly segment?: SearchWordSegmenter;
     readonly destinations?: string;
@@ -61,7 +68,15 @@ function samePreparedTaskQuery(
       }))
   );
 }
-function sameTarget(a: TaskTextTarget, b: TaskTextTarget): boolean {
+export function sameRetainedTextIdentity(
+  a: RetainedTextIdentity,
+  b: RetainedTextIdentity,
+): boolean {
+  if (a.type === 'display' || b.type === 'display')
+    return a.type === 'display' && b.type === 'display' && a.key === b.key;
+  return sameNativeTextIdentity(a, b);
+}
+function sameNativeTextIdentity(a: TaskTextTarget, b: TaskTextTarget): boolean {
   if (a.type === 'comment' && b.type === 'comment')
     return (
       a.ref.relativeLine === b.ref.relativeLine &&
@@ -83,7 +98,7 @@ function sameSource(
     a.markdown === b.markdown &&
     a.path === b.path &&
     a.presentation === b.presentation &&
-    sameTarget(a.target, b.target)
+    sameRetainedTextIdentity(a.target, b.target)
   );
 }
 function sameDecoration(
@@ -92,6 +107,9 @@ function sameDecoration(
 ): boolean {
   return (
     a.kind === b.kind &&
+    a.previousMarkdown === b.previousMarkdown &&
+    a.removed === b.removed &&
+    a.compareMarkdown === b.compareMarkdown &&
     a.continuation === b.continuation &&
     a.segment === b.segment &&
     a.destinations === b.destinations &&
@@ -99,6 +117,8 @@ function sameDecoration(
   );
 }
 interface VisibleField {
+  rendered?: string;
+  comparison?: { readonly markdown: string; readonly text: string };
   input: RetainedTaskTextInput;
   readonly owner: Component;
   readonly document: Document;
@@ -106,6 +126,7 @@ interface VisibleField {
 }
 function decorate(element: HTMLElement, field: VisibleField, input: RetainedTaskTextInput): void {
   const { query, segment, kind, continuation } = input.decoration;
+  applyDifference(element, field, input);
   if (query !== undefined && segment !== undefined) {
     markSearchText(element, field.projection, query, segment);
     if (kind === 'excerpt')
@@ -125,6 +146,27 @@ function decorate(element: HTMLElement, field: VisibleField, input: RetainedTask
     (blocks[blocks.length - 1] ?? element).append(' …');
   }
 }
+function applyDifference(
+  element: HTMLElement,
+  previous: VisibleField,
+  current: RetainedTaskTextInput,
+): void {
+  if (
+    current.decoration.removed === true ||
+    previous.input.decoration.removed === true ||
+    current.decoration.previousMarkdown !== undefined ||
+    previous.input.decoration.previousMarkdown !== undefined
+  )
+    decorateTaskTextDifference(
+      element,
+      current.decoration.previousMarkdown,
+      current.decoration.compareMarkdown === true &&
+        previous.comparison?.markdown === current.decoration.previousMarkdown
+        ? previous.comparison?.text
+        : undefined,
+      current.decoration.removed,
+    );
+}
 function inPlace(
   old: VisibleField | undefined,
   input: RetainedTaskTextInput,
@@ -143,13 +185,14 @@ class PreparedField implements PreparedTaskTextUpdate {
   #cancelled = false;
   #committed = false;
   #render: ReturnType<typeof renderTaskText> | undefined;
-  readonly #staging: HTMLElement | undefined;
+  #staging: HTMLElement | undefined;
   #direct: readonly ChildNode[] | undefined;
   readonly #input: RetainedTaskTextInput;
   readonly #field: VisibleField;
   readonly #host: HTMLElement;
   readonly #publish: (field: VisibleField) => void;
   readonly #release: (field: VisibleField) => void;
+  readonly #replace: boolean;
   constructor(
     host: HTMLElement,
     input: RetainedTaskTextInput,
@@ -168,10 +211,23 @@ class PreparedField implements PreparedTaskTextUpdate {
     this.#field = field;
     this.#publish = options.publish;
     this.#release = options.release;
+    this.#replace = options.replace;
     this.ready = new Promise((resolve) => {
       this.#resolve = resolve;
     });
-    if (!options.replace) {
+    const prior = input.decoration.previousMarkdown;
+    if (
+      input.decoration.compareMarkdown === true &&
+      prior !== undefined &&
+      field.comparison?.markdown !== prior
+    )
+      this.#compare(prior, options.replace, options.stagingHost);
+    else this.#start(options.replace, options.stagingHost);
+  }
+  #start(replace: boolean, stagingHost: HTMLElement): void {
+    const host = this.#host,
+      field = this.#field;
+    if (!replace) {
       this.#finish({ type: 'ready' });
       return;
     }
@@ -184,12 +240,50 @@ class PreparedField implements PreparedTaskTextUpdate {
     this.#staging.hidden = true;
     this.#staging.inert = true;
     this.#staging.setAttribute('aria-hidden', 'true');
-    options.stagingHost.append(this.#staging);
+    stagingHost.append(this.#staging);
     const staging = this.#staging;
     field.owner.register(() => {
       staging.remove();
     });
     this.#renderReplacement(staging);
+  }
+  #compare(markdown: string, replace: boolean, stagingHost: HTMLElement): void {
+    const holder = stagingHost.createDiv();
+    holder.hidden = true;
+    holder.inert = true;
+    holder.setAttribute('aria-hidden', 'true');
+    const owner = this.#field.owner.addChild(new Component());
+    owner.register(() => {
+      holder.remove();
+    });
+    try {
+      this.#render = renderTaskText(holder, markdown, {
+        app: this.#input.callbacks.app,
+        sourcePath: this.#input.source.path,
+        presentation: this.#input.source.presentation,
+        component: owner,
+        interactiveLinks: false,
+        isCurrent: () => this.#current(),
+        onRenderFailure: () => {},
+      });
+      void this.#render.settled.then(
+        (outcome) => {
+          if (outcome.type === 'ready' && this.#current())
+            this.#field.comparison = { markdown, text: renderedText(holder).text };
+          this.#field.owner.removeChild(owner);
+          if (outcome.type === 'ready' && this.#current()) this.#start(replace, stagingHost);
+          else if (outcome.type === 'failed' && this.#current()) this.#failed(outcome.error);
+          else this.#finish(outcome);
+        },
+        (error) => {
+          this.#field.owner.removeChild(owner);
+          this.#failed(error);
+        },
+      );
+    } catch (error) {
+      this.#field.owner.removeChild(owner);
+      this.#failed(error);
+    }
   }
   #finish(outcome: TaskRenderOutcome): void {
     if (this.#outcome !== undefined) return;
@@ -210,9 +304,10 @@ class PreparedField implements PreparedTaskTextUpdate {
           if (this.#direct !== undefined) this.#direct = [...staging.childNodes];
           return !this.#cancelled && this.#current();
         },
-        beforeOpenLink: () =>
-          this.#field.input.callbacks.beforeOpenLink?.() ?? Promise.resolve(true),
+        beforeOpenLink: (link) =>
+          this.#field.input.callbacks.beforeOpenLink?.(link) ?? Promise.resolve(true),
         onRendered: (element) => {
+          this.#field.rendered = renderedText(element).text;
           decorate(element, this.#field, input);
           if (this.#direct !== undefined) this.#direct = [...element.childNodes];
           this.#finish({ type: 'ready' });
@@ -282,7 +377,7 @@ class PreparedField implements PreparedTaskTextUpdate {
       if (node.ownerDocument === this.#field.document && node.parentNode === this.#host)
         node.remove();
     });
-    if (this.#direct !== undefined || this.#staging !== undefined) this.#release(this.#field);
+    if (this.#replace) this.#release(this.#field);
     this.#finish({ type: 'cancelled' });
   }
 }
@@ -315,6 +410,7 @@ export class RetainedTaskText {
     const old = this.#visible;
     const reuse = inPlace(old, input, this.#host.ownerDocument);
     const field = reuse ? old : this.#create(input);
+    retainComparison(field, old, input);
     if (reuse) field.input = { ...field.input, callbacks: input.callbacks };
     const update = new PreparedField(this.#host, input, field, {
       replace: !reuse,
@@ -356,4 +452,18 @@ export class RetainedTaskText {
     if (this.#visible !== undefined) this.#parent.removeChild(this.#visible.owner);
     this.#visible = undefined;
   }
+}
+function retainComparison(
+  field: VisibleField,
+  old: VisibleField | undefined,
+  input: RetainedTaskTextInput,
+): void {
+  if (old?.rendered === undefined || old.document !== field.document) return;
+  if (
+    old.input.source.path !== input.source.path ||
+    old.input.source.presentation !== input.source.presentation
+  )
+    return;
+  if (old.input.source.markdown === input.decoration.previousMarkdown)
+    field.comparison = { markdown: old.input.source.markdown, text: old.rendered };
 }

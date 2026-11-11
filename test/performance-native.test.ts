@@ -12,7 +12,11 @@ import {
   calendarPopulation,
   scrollRange,
 } from '../tooling/performance/native-helpers';
-import { activityMetrics, NativeObservation } from '../tooling/performance/native-observation';
+import {
+  activityMetrics,
+  HiddenWindowObservation,
+  NativeObservation,
+} from '../tooling/performance/native-observation';
 import * as scenarios from '../tooling/performance/native-scenarios';
 import {
   queryScenarios,
@@ -30,6 +34,83 @@ import { AbyssProfiler, bounded, PendingWork } from '../tooling/performance/prof
 import type { Sample } from '../tooling/performance/types';
 import { canonicalStatusCatalog, createAppWithFiles, seedTaskCache } from './helpers';
 
+function expectedParsedProvenance(failure: string, url: string): Record<string, unknown> {
+  const present = failure !== 'missing-event';
+  return {
+    ownedSession: 'renderer',
+    events: {
+      total: present ? 1 : 0,
+      owned: present && failure !== 'event-session' ? 1 : 0,
+      admitted: present && !['event-session', 'event-fields'].includes(failure) ? 1 : 0,
+    },
+    candidates: present
+      ? [
+          {
+            scriptId: failure === 'wrong-id' ? '8' : '7',
+            url,
+            receivedSession: failure === 'event-session' ? 'other-session' : 'renderer',
+            fieldTypes: { hash: failure === 'event-fields' ? 'number' : 'string' },
+          },
+        ]
+      : [],
+  };
+}
+
+const originalStandardRoster = [
+  'startup.index',
+  'query.roots',
+  'query.nodes',
+  'query.dependencies',
+  'query.time',
+  'query.project',
+  'query.tag',
+  'query.project-tag',
+  'query.nodes-no-tag',
+  'search.cold',
+  'search.warm',
+  'search.no-results',
+  'search.subtree',
+  'panel.first-open',
+  'ui.search',
+  'ui.scroll',
+  'ui.inspector',
+  'ui.inspector.link-input',
+  'ui.calendar.day',
+  'ui.calendar.week',
+  'ui.calendar.month',
+  'ui.tasks.kanban',
+  'ui.tasks.kanban-scroll',
+  'ui.tasks.timeline',
+  'ui.tasks.timeline-scroll',
+  'ui.projects.table',
+  'ui.projects.kanban',
+  'ui.projects.timeline',
+  'ui.projects.timeline-scroll',
+  'statistics.acquire',
+  ...[
+    'rhythm',
+    'completion',
+    'deadlines',
+    'cohorts',
+    'allocation',
+    'timeline',
+    'sessions',
+    'patterns',
+    'movement',
+    'aging',
+    'dependencies',
+  ].map((id) => `ui.analysis.${id}`),
+  'search.edit-to-query',
+  'command.create',
+  'command.edit',
+  'command.complete',
+  'command.comment',
+  'command.tracking',
+  'command.recurrence',
+  'index.external-edit',
+  'panel.close',
+];
+
 const loadClock = async () => {
   if (!Platform.isDesktop) throw new Error('Native clock test requires desktop');
   return (await import('node:perf_hooks')).performance;
@@ -37,6 +118,31 @@ const loadClock = async () => {
 const performance = await loadClock();
 
 describe('native profile boundaries', () => {
+  it('selects finite common and feature stress workloads without changing ordinary rosters', () => {
+    expect(parseOptions(['--fixture', 'single-note', '--command-stress'])).toMatchObject({
+      fixture: 'single-note',
+      command: 'stress',
+    });
+    expect(parseOptions(['--fixture', 'single-note', '--command-mode'])).toMatchObject({
+      fixture: 'single-note',
+      command: 'feature',
+    });
+    expect(scenarioIds('single-note', false, false, 'stress')).toEqual([
+      'startup.index',
+      'command.dense-edit',
+      'command.dense-line-shift',
+    ]);
+    for (const args of [
+      ['--fixture', 'single-note'],
+      ['--command-mode'],
+      ['--command-stress'],
+      ['--fixture', 'single-note', '--command-mode', '--api'],
+      ['--fixture', 'single-note', '--command-stress', '--startup'],
+      ['--fixture', 'single-note', '--command-mode', '--command-stress'],
+    ])
+      expect(() => parseOptions(args)).toThrow();
+    expect(scenarioIds('standard', false)).toEqual(originalStandardRoster);
+  });
   it('waits for updated link results before typing the next prefix and cancels the draft', async () => {
     const input = document.body.createEl('textarea');
     input.value = 'Original task';
@@ -97,7 +203,14 @@ describe('native profile boundaries', () => {
       save: () => {},
       saveImage: () => {},
       matchesWorkerSource: () => false,
+      mainSource: () => ({ text: 'compiled', sha256: 'main' }),
+      window: {
+        state: () => ({ id: 42, visible: true, focused: true, minimized: false }),
+        hide: () => {},
+        show: () => {},
+      },
     };
+    const restoreWindow = vi.spyOn(HiddenWindowObservation.prototype, 'restore');
     const harness = install(app as Host, bridge, {
       vault: 'dev-vault-tasks',
       fixtureFolder: folder,
@@ -121,6 +234,7 @@ describe('native profile boundaries', () => {
       });
       await Promise.resolve();
       expect(clean).toBe(false);
+      expect(restoreWindow).toHaveBeenCalledOnce();
       release();
       app.metadataCache.trigger(
         'changed',
@@ -135,8 +249,79 @@ describe('native profile boundaries', () => {
     } finally {
       getName.mockRestore();
       modify.mockRestore();
+      restoreWindow.mockRestore();
     }
   });
+  it.each([undefined, false, true])(
+    'keeps provider discovery exclusive to API mode (%s)',
+    async (api) => {
+      const app = await createAppWithFiles({});
+      const candidate = {
+        queries: { initialize: () => Promise.resolve(), list: () => [], listNodes: () => [] },
+        search: { prepare: () => Promise.resolve() },
+      };
+      const discovery = vi.fn(() => {
+        throw new Error('Unexpected provider discovery');
+      });
+      if (api !== true) Object.defineProperty(candidate, 'getApi', { get: discovery });
+      Object.defineProperty(app, 'plugins', {
+        value: {
+          plugins: { 'abyss-tasks': candidate },
+          disablePlugin: () => Promise.resolve(),
+          enablePlugin: () => Promise.resolve(),
+        },
+      });
+      const name = vi.spyOn(app.vault, 'getName').mockReturnValue('dev-vault-tasks');
+      const ordinary = (
+        [
+          'queryScenarios',
+          'panelScenarios',
+          'calendarScenarios',
+          'taskBoardScenarios',
+          'taskTimelineScenarios',
+          'projectScenarios',
+          'statisticsScenarios',
+          'indexScenarios',
+          'searchEditScenario',
+          'commandScenarios',
+        ] as const
+      ).map((name) => vi.spyOn(scenarios, name).mockResolvedValue(undefined));
+      const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) =>
+        window.setTimeout(() => {
+          callback(0);
+        }, 0),
+      );
+      const bridge = { save: () => {} } as unknown as NativeBridge;
+      const h = install(app as Host, bridge, {
+        vault: 'dev-vault-tasks',
+        fixtureFolder: '__abyss_profile_fixture_v1__',
+        anchor: '2026-08-01',
+        fixtureKind: 'standard',
+        expectedRoots: 0,
+        expectedNodes: 0,
+        startup: false,
+        ...(api === undefined ? {} : { api }),
+        viewport: `${window.innerWidth}x${window.innerHeight}`,
+      });
+      try {
+        if (api === true)
+          await expect(h.cycle(0, false)).rejects.toThrow('Unsupported API profile');
+        else
+          expect((await h.cycle(0, false)).map((sample) => sample.scenario)).toEqual([
+            'startup.index',
+            'panel.close',
+          ]);
+        expect(discovery).not.toHaveBeenCalled();
+        for (const scenario of ordinary)
+          expect(scenario).toHaveBeenCalledTimes(api === true ? 0 : 1);
+      } finally {
+        await h.cleanup();
+        name.mockRestore();
+        for (const scenario of ordinary) scenario.mockRestore();
+        raf.mockRestore();
+      }
+    },
+  );
   it('rejects a viewport that changes after preflight', () => {
     expect(() => {
       assertViewport(`${window.innerWidth}x${window.innerHeight}`);
@@ -162,6 +347,9 @@ describe('native profile boundaries', () => {
       const cachedRead = vi
         .spyOn(app.vault, 'cachedRead')
         .mockImplementation(() => Promise.resolve(content.cached));
+      const binary = vi
+        .spyOn(app.vault, 'readBinary')
+        .mockImplementation(async () => new TextEncoder().encode(content.disk).buffer);
       const modify = vi.spyOn(app.vault, 'modify').mockImplementation((_file, value) => {
         content.disk = value;
         return Promise.resolve();
@@ -184,10 +372,149 @@ describe('native profile boundaries', () => {
       } finally {
         read.mockRestore();
         cachedRead.mockRestore();
+        binary.mockRestore();
         modify.mockRestore();
       }
     },
   );
+  it('diagnoses a BOM-only host fixture mismatch without accepting contrary raw bytes', async () => {
+    const path = '__abyss_profile_fixture_v1__/paging.md';
+    const expected = '\uFEFF---\r\naliases: [Ada]\r\n---\r\nContact 🙂\r\n';
+    const app = await createAppWithFiles({ [path]: expected });
+    const file = app.vault.getFileByPath(path);
+    if (file === null) throw new Error('Missing fixture');
+    const normalized = expected.slice(1);
+    const read = vi.spyOn(app.vault, 'read').mockResolvedValue(normalized);
+    const cache = vi.spyOn(app.vault, 'cachedRead').mockResolvedValue(normalized);
+    const binary = vi
+      .spyOn(app.vault, 'readBinary')
+      .mockResolvedValue(new TextEncoder().encode(`${expected}contrary`).buffer);
+    const modify = vi.spyOn(app.vault, 'modify').mockImplementation(async () => {
+      app.metadataCache.trigger('changed', file, normalized, {});
+    });
+    const off = vi.spyOn(app.metadataCache, 'offref');
+    const diagnose = vi.fn();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+    const pending = fixtureReady(app, { [path]: expected }, () => true, diagnose).then(
+      () => 'accepted',
+      (error: unknown) => String(error),
+    );
+    try {
+      await vi.advanceTimersByTimeAsync(30010);
+      expect(await pending).toContain('Readiness timed out: reset contents and metadata');
+      expect(diagnose).toHaveBeenCalledOnce();
+      expect(diagnose.mock.calls[0]?.[0]).toMatchObject({
+        path,
+        metadataEvents: 1,
+        metadataExact: false,
+        metadata: { exact: false, leadingBomOnly: true, firstDifference: 0 },
+        fresh: { exact: false, leadingBomOnly: true },
+        cached: { exact: false, leadingBomOnly: true },
+        binary: { exact: false, leadingBomOnly: false, firstDifference: expected.length },
+        sameFile: true,
+        sameStamp: true,
+      });
+      expect(off).toHaveBeenCalledOnce();
+      expect(binary).toHaveBeenCalledWith(file);
+      expect(modify).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+      read.mockRestore();
+      cache.mockRestore();
+      binary.mockRestore();
+      modify.mockRestore();
+      off.mockRestore();
+    }
+  });
+  it.each(['exact', 'bom', 'metadata', 'fresh', 'cache', 'crlf', 'raw', 'file', 'stamp'] as const)(
+    'requires exact fixture binary authority for host observations (%s)',
+    async (kind) => {
+      const path = '__abyss_profile_fixture_v1__/paging.md';
+      const expected = '\uFEFF---\r\nkey: value\r\n---\r\nContact 🙂\r\n';
+      const app = await createAppWithFiles({ [path]: expected });
+      const file = app.vault.getFileByPath(path);
+      if (file === null) throw new Error('Missing fixture');
+      const observed = kind === 'exact' ? expected : expected.slice(1);
+      const read = vi
+        .spyOn(app.vault, 'read')
+        .mockResolvedValue(kind === 'fresh' ? 'contrary' : observed);
+      const cached = vi
+        .spyOn(app.vault, 'cachedRead')
+        .mockResolvedValue(kind === 'cache' ? 'contrary' : observed);
+      const binary = vi.spyOn(app.vault, 'readBinary').mockImplementation(async () => {
+        if (kind === 'stamp') file.stat.mtime++;
+        return new TextEncoder().encode(kind === 'raw' ? expected.slice(1) : expected).buffer;
+      });
+      const getFile = vi.spyOn(app.vault, 'getFileByPath');
+      const modify = vi.spyOn(app.vault, 'modify').mockImplementation(async () => {
+        const metadata = kind === 'crlf' ? observed.replaceAll('\r\n', '\n') : observed;
+        app.metadataCache.trigger('changed', file, kind === 'metadata' ? 'contrary' : metadata, {});
+        if (kind === 'file') getFile.mockReturnValue(null);
+      });
+      const off = vi.spyOn(app.metadataCache, 'offref');
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+      const pending = fixtureReady(app, { [path]: expected }).then(
+        () => 'accepted',
+        (error: unknown) => String(error),
+      );
+      try {
+        await vi.advanceTimersByTimeAsync(30010);
+        if (kind === 'exact' || kind === 'bom') {
+          expect(await pending).toBe('accepted');
+          expect(binary).toHaveBeenCalledWith(file);
+        } else expect(await pending).toContain('Readiness timed out');
+        expect(off).toHaveBeenCalledOnce();
+      } finally {
+        vi.useRealTimers();
+        read.mockRestore();
+        cached.mockRestore();
+        binary.mockRestore();
+        getFile.mockRestore();
+        modify.mockRestore();
+        off.mockRestore();
+      }
+    },
+  );
+  it('refuses diagnostic reads after the generated fixture file identity changes', async () => {
+    const path = '__abyss_profile_fixture_v1__/paging.md';
+    const app = await createAppWithFiles({ [path]: 'expected' });
+    const file = app.vault.getFileByPath(path);
+    if (file === null) throw new Error('Missing fixture');
+    const getFile = vi.spyOn(app.vault, 'getFileByPath');
+    const fresh = vi.spyOn(app.vault, 'read');
+    const cached = vi.spyOn(app.vault, 'cachedRead');
+    const binary = vi.spyOn(app.vault, 'readBinary');
+    const modify = vi.spyOn(app.vault, 'modify').mockImplementation(async () => {
+      getFile.mockReturnValue(null);
+    });
+    const diagnose = vi.fn();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+    const pending = fixtureReady(app, { [path]: 'expected' }, () => true, diagnose).catch(
+      (error: unknown) => String(error),
+    );
+    try {
+      await vi.advanceTimersByTimeAsync(30010);
+      expect(await pending).toContain('Readiness timed out');
+      expect(diagnose.mock.calls[0]?.[0]).toMatchObject({
+        path,
+        sameFile: false,
+        metadataEvents: 0,
+        fresh: { readError: 'Error: Generated fixture file identity changed' },
+        cached: { readError: 'Error: Generated fixture file identity changed' },
+        binary: { readError: 'Error: Generated fixture file identity changed' },
+      });
+      expect(fresh).not.toHaveBeenCalled();
+      expect(cached).not.toHaveBeenCalled();
+      expect(binary).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      getFile.mockRestore();
+      fresh.mockRestore();
+      cached.mockRestore();
+      binary.mockRestore();
+      modify.mockRestore();
+    }
+  });
   it.each([true, false])(
     'only owned Worker failures are fatal; always detach (disconnect=%s)',
     async (disconnected) => {
@@ -219,6 +546,7 @@ describe('native profile boundaries', () => {
           },
         },
         matchesWorkerSource: () => true,
+        mainSource: () => ({ text: 'compiled', sha256: 'main' }),
         save: (name, value) => {
           saved.set(name, value);
         },
@@ -273,6 +601,298 @@ describe('native profile boundaries', () => {
       expect(listener).toBeUndefined();
     },
   );
+  it.each([
+    'exact',
+    'two-url',
+    'contrary',
+    'nonunique',
+    'wrong-id',
+    'identity',
+    'sample-identity',
+    'unavailable',
+    'missing-event',
+    'event-session',
+    'event-fields',
+  ])(
+    'binds sampled renderer sources to the owned CDP session and saved main (%s)',
+    async (failure) => {
+      const url =
+        'app://obsidian.md/_plugin/host/profile-config%2Fplugins%2Fabyss-tasks?id=abyss-tasks';
+      let listener: CdpListener | undefined;
+      const commands: string[] = [],
+        saved = new Map<string, unknown>();
+      const frame = { scriptId: '7', url };
+      const parsedUrls: Record<string, string> = {
+        identity: 'plugin:other',
+        'two-url': 'plugin:abyss-tasks',
+      };
+      const parsedUrl = parsedUrls[failure] ?? url;
+      const nodes =
+        failure === 'sample-identity'
+          ? [{ callFrame: frame }, { callFrame: { ...frame, url: 'plugin:other' } }]
+          : [{ callFrame: frame }];
+      const scriptSource = (): { scriptSource: string } => {
+        if (failure === 'unavailable') throw new Error('Source unavailable');
+        const sources: Record<string, string> = {
+          contrary: 'other',
+          nonunique: 'compiled\ncompiled',
+        };
+        return { scriptSource: sources[failure] ?? '(function(){\ncompiled\n})' };
+      };
+      const emitParsed = (): void => {
+        if (failure === 'missing-event') return;
+        listener?.(
+          undefined,
+          'Debugger.scriptParsed',
+          {
+            ...frame,
+            scriptId: failure === 'wrong-id' ? '8' : '7',
+            url: parsedUrl,
+            startLine: 0,
+            startColumn: 0,
+            hash: failure === 'event-fields' ? 42 : 'runtime',
+            ignoredPrivateField: 'MUST NOT BE LOGGED',
+          },
+          failure === 'event-session' ? 'other-session' : 'renderer',
+        );
+      };
+      const bridge: NativeBridge = {
+        mainSource: () => ({ text: 'compiled', sha256: 'main' }),
+        matchesWorkerSource: () => false,
+        saveImage: () => {},
+        save: (name, value) => {
+          saved.set(name, value);
+        },
+        debugger: {
+          isAttached: () => true,
+          on: (_event, handler) => {
+            listener = handler;
+          },
+          removeListener: () => {
+            listener = undefined;
+          },
+          sendCommand: async (method, params, session) => {
+            commands.push(`${session ?? 'root'}:${method}`);
+            if (method === 'Target.getTargetInfo') return { targetInfo: { targetId: 'page' } };
+            if (method === 'Target.attachToTarget') return { sessionId: 'renderer' };
+            if (method === 'Debugger.enable') {
+              emitParsed();
+            }
+            if (method === 'Tracing.end')
+              listener?.(undefined, 'Tracing.tracingComplete', {}, 'renderer');
+            if (method === 'Profiler.stop') return { profile: { nodes } };
+            if (method === 'Debugger.getScriptSource') {
+              expect(session).toBe('renderer');
+              expect(params).toEqual({ scriptId: '7' });
+              return scriptSource();
+            }
+            return {};
+          },
+        },
+      };
+      const cdp = new NativeCdp(bridge);
+      try {
+        await cdp.open();
+        await cdp.start();
+        if (['exact', 'two-url'].includes(failure)) await cdp.stop();
+        else await expect(cdp.stop()).rejects.toThrow();
+      } finally {
+        await cdp.close();
+      }
+      expect(saved.has('renderer.cpuprofile')).toBe(true);
+      expect(saved.get('renderer-sources.json')).toMatchObject({
+        provenance: expectedParsedProvenance(failure, parsedUrl),
+      });
+      expect(JSON.stringify(saved.get('renderer-sources.json'))).not.toContain(
+        'MUST NOT BE LOGGED',
+      );
+      if (['exact', 'two-url'].includes(failure))
+        expect(saved.get('renderer-sources.json')).toMatchObject({
+          scripts: [
+            {
+              scriptId: '7',
+              url,
+              debuggerUrl: parsedUrl,
+              startLine: 1,
+              startColumn: 0,
+              mainSha256: 'main',
+            },
+          ],
+          unmapped: [],
+        });
+      else expect(saved.get('renderer-sources.json')).toMatchObject({ scripts: [] });
+      expect(commands).toContain('renderer:Debugger.disable');
+      expect(commands[commands.length - 1]).toBe('root:Target.detachFromTarget');
+      expect(listener).toBeUndefined();
+    },
+  );
+  it.each(['success', 'rejection', 'cleanup', 'refusal'])(
+    'restores the exact native window before hidden work settles (%s)',
+    async (mode) => {
+      vi.useFakeTimers();
+      let visible = true;
+      const visibility = vi
+        .spyOn(document, 'visibilityState', 'get')
+        .mockImplementation(() => (visible ? 'visible' : 'hidden'));
+      const state = () => ({ id: 42, visible, focused: visible, minimized: mode === 'refusal' });
+      const hide = vi.fn(() => {
+        visible = false;
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      const show = vi.fn(() => {
+        visible = true;
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      const saved = vi.fn<(value: unknown) => void>();
+      const pending = new PendingWork();
+      const owner = new HiddenWindowObservation({ state, hide, show }, document, saved, pending);
+      let started = false;
+      const action = vi.fn(async (signal: AbortSignal) => {
+        expect(document.visibilityState).toBe('hidden');
+        started = true;
+        if (mode === 'rejection') throw new Error('Controlled search refusal');
+        if (mode === 'cleanup')
+          return await new Promise<never>((_resolve, reject) => {
+            signal.addEventListener(
+              'abort',
+              () => {
+                reject(new Error('Controlled abort'));
+              },
+              { once: true },
+            );
+          });
+        return { complete: true };
+      });
+      const result = owner.run(action);
+      const outcome =
+        mode === 'success'
+          ? expect(result).resolves.toEqual({ complete: true })
+          : expect(result).rejects.toThrow();
+      try {
+        await vi.advanceTimersByTimeAsync(0);
+        if (mode === 'cleanup') {
+          expect(started).toBe(true);
+          await owner.restore();
+        }
+        await outcome;
+        await pending.settle();
+        expect(visible).toBe(true);
+        if (mode === 'refusal') {
+          expect(hide).not.toHaveBeenCalled();
+          expect(action).not.toHaveBeenCalled();
+          expect(saved).not.toHaveBeenCalled();
+        } else {
+          expect(show).toHaveBeenCalledOnce();
+          expect(saved.mock.calls[0]?.[0]).toMatchObject({
+            before: { id: 42, visible: true, documentVisibility: 'visible' },
+            hidden: { id: 42, visible: false, documentVisibility: 'hidden' },
+            restored: { id: 42, visible: true, documentVisibility: 'visible' },
+            frameGapIsIntentional: true,
+          });
+        }
+      } finally {
+        await owner.restore();
+        await Promise.allSettled([result, outcome]);
+        await pending.settle();
+        visibility.mockRestore();
+        vi.useRealTimers();
+      }
+    },
+  );
+  it.each(['fulfillment', 'rejection', 'abort', 'drain-timeout'] as const)(
+    'keeps hidden search cleanup pending until the delayed read settles (%s)',
+    async (mode) => {
+      vi.useFakeTimers();
+      let visible = true;
+      const visibility = vi
+        .spyOn(document, 'visibilityState', 'get')
+        .mockImplementation(() => (visible ? 'visible' : 'hidden'));
+      const state = () => ({ id: 42, visible, focused: visible, minimized: false });
+      const hide = vi.fn(() => {
+        visible = false;
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      const show = vi.fn(() => {
+        visible = true;
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      const saved = vi.fn<(value: unknown) => void>();
+      const pending = new PendingWork();
+      const owner = new HiddenWindowObservation({ state, hide, show }, document, saved, pending);
+      let release = (): void => {};
+      const read = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let signal: AbortSignal | undefined;
+      let actual: Promise<Sample['facts']> | undefined;
+      const action = vi.fn((abort: AbortSignal) => {
+        signal = abort;
+        actual = read.then(() => {
+          if (mode === 'rejection') throw new Error('Delayed source read rejected');
+          if (mode === 'abort') {
+            expect(abort.aborted).toBe(true);
+            throw new Error('Delayed source read aborted');
+          }
+          return { complete: true };
+        });
+        return actual;
+      });
+      const result = pending.track(owner.run(action)).then(
+        () => 'complete',
+        (error: unknown) => String(error),
+      );
+      let cleanup: Promise<string> | undefined;
+      try {
+        await vi.advanceTimersByTimeAsync(mode === 'abort' ? 0 : 30000);
+        expect(action).toHaveBeenCalledOnce();
+        if (mode !== 'abort')
+          expect(await result).toContain('Timed out: hidden note search (30000 ms)');
+        await owner.restore();
+        expect(signal?.aborted).toBe(true);
+        expect(state()).toEqual({ id: 42, visible: true, focused: true, minimized: false });
+        expect(hide).toHaveBeenCalledOnce();
+        expect(show).toHaveBeenCalledOnce();
+        let clean = false;
+        cleanup = pending.settle().then(
+          () => {
+            clean = true;
+            return 'clean';
+          },
+          (error: unknown) => String(error),
+        );
+        await vi.advanceTimersByTimeAsync(29999);
+        expect(clean).toBe(false);
+        if (mode === 'drain-timeout') {
+          await vi.advanceTimersByTimeAsync(1);
+          expect(await cleanup).toContain(
+            'Timed out: native operations drained before restoration (30000 ms)',
+          );
+          expect(clean).toBe(false);
+        }
+        release();
+        if (mode === 'abort') expect(await result).toContain('Delayed source read aborted');
+        if (mode !== 'drain-timeout') expect(await cleanup).toBe('clean');
+        await pending.settle();
+        if (mode === 'rejection')
+          await expect(actual).rejects.toThrow('Delayed source read rejected');
+        else if (mode === 'abort')
+          await expect(actual).rejects.toThrow('Delayed source read aborted');
+        else await expect(actual).resolves.toEqual({ complete: true });
+        expect(saved).toHaveBeenCalledOnce();
+        const finalEvidence = JSON.stringify(saved.mock.calls);
+        await vi.advanceTimersByTimeAsync(30001);
+        expect(JSON.stringify(saved.mock.calls)).toBe(finalEvidence);
+        expect(action).toHaveBeenCalledOnce();
+      } finally {
+        release();
+        await owner.restore();
+        await Promise.allSettled([actual, result, cleanup]);
+        await pending.settle();
+        visibility.mockRestore();
+        vi.useRealTimers();
+      }
+    },
+  );
   it('does not allow restoration until timed-out work has actually settled', async () => {
     const work = new PendingWork();
     let release = (): void => {};
@@ -308,6 +928,23 @@ describe('native profile boundaries', () => {
     expect(parseOptions(['--compare', 'before', 'after']).compare).toEqual(['before', 'after']);
     expect(parseOptions(['--recover-offline', 'run']).recoverOffline).toBe('run');
     expect(() => parseOptions(['--recover-offline', 'run', '--runs', '2'])).toThrow();
+  });
+  it('selects the opt-in API roster without changing the ordinary roster', () => {
+    expect(parseOptions([]).api).toBe(false);
+    expect(parseOptions(['--api']).api).toBe(true);
+    expect(() => parseOptions(['--api', '--startup'])).toThrow();
+    expect(scenarioIds('standard', false, true)).toEqual([
+      'startup.index',
+      'api.scan',
+      'api.status',
+    ]);
+    expect(scenarioIds('wide-tree', false, true)).toEqual([
+      'startup.index',
+      'api.scan',
+      'api.status',
+    ]);
+    expect(scenarioIds('standard', false, false)).toEqual(originalStandardRoster);
+    expect(scenarioIds('standard', false)).toEqual(originalStandardRoster);
   });
   it('selects only the finite fixture roster and keeps startup mode startup-only', () => {
     expect(parseOptions([]).fixture).toBe('standard');

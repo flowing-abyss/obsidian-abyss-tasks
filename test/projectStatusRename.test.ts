@@ -4,7 +4,7 @@ import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProp
 import { ProjectManager } from '../src/projects/ProjectManager';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
-import { createAppWithFiles, expectDefined } from './helpers';
+import { createAppWithFiles, expectDefined, setVaultSource } from './helpers';
 
 function clone(): CalendarSettings {
   const settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS)) as CalendarSettings;
@@ -72,7 +72,7 @@ describe('ProjectManager.renameStatusDefinition', () => {
       'Projects/A.md': '---\nstatus: active\n---\n',
       'Notes/Broken.md': 'valid before the cached projection\n',
     });
-    await app.vault.adapter.write('Notes/Broken.md', malformed);
+    setVaultSource(app, 'Notes/Broken.md', malformed);
     const settings = clone();
     const active = expectDefined(settings.projects.statuses[0]);
     const persist = vi.fn().mockResolvedValue(undefined);
@@ -91,7 +91,7 @@ describe('ProjectManager.renameStatusDefinition', () => {
       'Projects/A.md': '---\nstatus: active\n---\n',
       'Projects/Broken.md': 'valid before the cached projection\n',
     });
-    await app.vault.adapter.write('Projects/Broken.md', malformed);
+    setVaultSource(app, 'Projects/Broken.md', malformed);
     const settings = clone();
     const active = expectDefined(settings.projects.statuses[0]);
     const persist = vi.fn().mockResolvedValue(undefined);
@@ -122,7 +122,7 @@ describe('ProjectManager.renameStatusDefinition', () => {
   ])('uses $label to classify malformed project source', async ({ membershipQuery, source }) => {
     const malformed = '---\nbroken: [unterminated\n---\n';
     const app = await createAppWithFiles({ 'Notes/Cached.md': source });
-    await app.vault.adapter.write('Notes/Cached.md', malformed);
+    setVaultSource(app, 'Notes/Cached.md', malformed);
     const settings = clone();
     settings.projects.membershipQuery = membershipQuery;
     const active = expectDefined(settings.projects.statuses[0]);
@@ -142,14 +142,8 @@ describe('ProjectManager.renameStatusDefinition', () => {
       'Notes/WasProject.md': '---\nstatus: active\nkind: project\n---\n',
       'Notes/BecameProject.md': '---\nstatus: active\nkind: reference\n---\n',
     });
-    await app.vault.adapter.write(
-      'Notes/WasProject.md',
-      '---\nstatus: active\nkind: reference\n---\n',
-    );
-    await app.vault.adapter.write(
-      'Notes/BecameProject.md',
-      '---\nstatus: active\nkind: project\n---\n',
-    );
+    setVaultSource(app, 'Notes/WasProject.md', '---\nstatus: active\nkind: reference\n---\n');
+    setVaultSource(app, 'Notes/BecameProject.md', '---\nstatus: active\nkind: project\n---\n');
     const settings = clone();
     settings.projects.membershipQuery = 'kind=project';
     const active = expectDefined(settings.projects.statuses[0]);

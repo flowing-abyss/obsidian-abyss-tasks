@@ -3,6 +3,7 @@ import type { TaskSearchDocument, TaskSearchEngineHit } from './TaskSearchSource
 export type TaskSearchEngineRequest = (
   { readonly kind: 'roots' } | { readonly kind: 'nodes'; readonly matchScope?: 'node' | 'subtree' }
 ) & {
+  readonly fields?: 'title' | 'body' | 'all';
   readonly query: PreparedSearchQuery;
   readonly includeSourcePath: boolean;
   readonly preferFilePath?: string;
@@ -12,7 +13,13 @@ export type TaskSearchEngineRequest = (
 export function validTaskSearchMatchScope(request: {
   readonly kind: unknown;
   readonly matchScope?: unknown;
+  readonly fields?: unknown;
 }): boolean {
+  if (
+    request.fields !== undefined &&
+    (typeof request.fields !== 'string' || !['title', 'body', 'all'].includes(request.fields))
+  )
+    return false;
   return request.kind === 'nodes'
     ? request.matchScope === undefined ||
         request.matchScope === 'node' ||

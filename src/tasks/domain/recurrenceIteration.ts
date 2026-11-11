@@ -16,6 +16,7 @@ export interface RecurrenceIterationInput {
   readonly nextPlanning: TaskPlanning;
   readonly dayDelta: number;
   readonly doneSymbol: string;
+  readonly semanticTransition?: boolean;
   readonly todoSymbol: string;
   readonly today: LocalDate;
   readonly addCreatedDate: boolean;
@@ -89,6 +90,7 @@ export type RecurrenceTaskLineEdit =
   | {
       readonly type: 'complete-owner';
       readonly doneSymbol: string;
+      readonly semanticTransition?: boolean;
       readonly today: LocalDate;
       readonly addCompletionDate: boolean;
     };
@@ -593,7 +595,7 @@ function changesForEdit(
     return {
       type: 'valid',
       changes: {
-        ...(!sameDoneStatus && {
+        ...((!sameDoneStatus || edit.semanticTransition === true) && {
           completion: edit.addCompletionDate ? `✅ ${edit.today}` : null,
         }),
         cancelled: null,
@@ -718,6 +720,7 @@ function completedIterationLines(
   const completed = editRecurrenceIterationTaskLine(source.text + source.ending, {
     type: 'complete-owner',
     doneSymbol: input.doneSymbol,
+    ...(input.semanticTransition === true && { semanticTransition: true }),
     today: input.today,
     addCompletionDate: input.addCompletionDate,
   });

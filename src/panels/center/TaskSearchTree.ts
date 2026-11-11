@@ -7,17 +7,19 @@ import type {
   TaskSnapshot,
   TaskTextTarget,
 } from '../../tasks';
-import { sameTaskNodeRef, taskNodeAddress } from '../../tasks';
+import { taskNodeAddress } from '../../tasks';
 import type { RenderTaskTextOptions } from '../../ui/renderTaskText';
-import {
-  RetainedTaskText,
-  type PreparedTaskTextUpdate,
-  type RetainedTaskTextInput,
-} from '../../ui/retainedTaskText';
+import { type RetainedTaskTextInput } from '../../ui/retainedTaskText';
 import type { TaskRenderOutcome, TaskTextRender } from '../../ui/taskRenderScope';
 import { taskNodeRef, type TaskSelectionNode } from '../../ui/taskSelection';
+import {
+  mountTaskTreeDisplay,
+  type TaskDisplayField,
+  type TaskDisplayNode,
+  type TaskTreeDisplayMount,
+  type TaskTreeDisplayOptions,
+} from '../../ui/taskTreeDisplay';
 import type { TaskCardSearchPresentation } from './TaskCardRenderer';
-import { mountTaskSearchKeyboardActivation } from './taskSearchKeyboardActivation';
 
 export type TaskSearchSemanticEvidence = TaskSearchEvidence & {
   readonly field: 'tag' | 'metadata';
@@ -106,85 +108,19 @@ function matchingDescriptionAnchors(
   return matching;
 }
 
-interface FieldRecord {
-  readonly element: HTMLElement;
-  readonly wrapper: HTMLElement;
-  readonly text: RetainedTaskText;
-  desired: boolean;
-  destroy(): void;
-}
-interface EntryRecord {
-  readonly target: ReturnType<typeof taskNodeRef>;
-  readonly host: HTMLElement;
-  readonly body: HTMLElement;
-  readonly owner: Component;
-  readonly stagingHost: HTMLElement;
-  readonly row: HTMLElement | undefined;
-  readonly title: FieldRecord | undefined;
-  description: FieldRecord | undefined;
-  readonly comments: Map<number, FieldRecord>;
-  options: TaskSearchTreeRenderOptions;
-  tree: TaskSearchTreeNode;
-  node: TaskSelectionNode;
-  desired: boolean;
-  metadataKey: string;
-  metadataOwner: Component | undefined;
-}
-interface TreePreparation {
-  readonly desired: Map<string, EntryRecord>;
-  readonly candidates: Map<string, EntryRecord>;
-  readonly updates: PreparedTaskTextUpdate[];
-  readonly placements: Array<readonly [HTMLElement, readonly HTMLElement[]]>;
-  readonly removed: Set<FieldRecord>;
-  readonly added: Array<readonly [EntryRecord, number, FieldRecord]>;
-  readonly descriptions: EntryRecord[];
+interface NativeRecord {
+  readonly node: TaskSelectionNode;
+  readonly tree: TaskSearchTreeNode;
+  readonly options: TaskSearchTreeRenderOptions;
+  current(): boolean;
 }
 export interface TaskSearchTreeMount {
   readonly settled: Promise<TaskRenderOutcome>;
   update(options: TaskSearchTreeRenderOptions): void;
   destroy(): void;
 }
-function isCurrent(record: EntryRecord): boolean {
-  return record.desired && record.options.textOptions.isCurrent?.() !== false;
-}
-function modified(event: MouseEvent): boolean {
-  return event.ctrlKey || event.metaKey || event.shiftKey || event.altKey;
-}
-function activateField(event: MouseEvent, record: EntryRecord): void {
-  if (!isCurrent(record)) {
-    event.stopPropagation();
-    return;
-  }
-  const { search } = record.options;
-  if (search.mode === 'filter' && (record.tree === search.context.tree || modified(event))) return;
-  const win = record.host.ownerDocument.defaultView;
-  if (
-    win !== null &&
-    event.target instanceof win.Element &&
-    event.target.closest('a, button, .abyss-status-control, .abyss-task-tag, .abyss-task-date') !==
-      null
-  )
-    return;
-  event.stopPropagation();
-  search.onActivate(record.tree.address);
-}
-function reconcile(container: HTMLElement, elements: readonly HTMLElement[]): void {
-  const desired = new Set(elements);
-  for (const child of [...container.children])
-    if (!desired.has(child as HTMLElement)) child.remove();
-  let cursor = container.firstChild;
-  for (const element of elements) {
-    if (element === cursor) cursor = cursor.nextSibling;
-    else container.insertBefore(element, cursor);
-  }
-  while (cursor !== null) {
-    const next = cursor.nextSibling;
-    container.removeChild(cursor);
-    cursor = next;
-  }
-}
 function fieldInput(
-  record: EntryRecord,
+  record: NativeRecord,
   markdown: string,
   target: TaskTextTarget,
   decoration: Pick<RetainedTaskTextInput['decoration'], 'kind' | 'continuation'>,
@@ -218,7 +154,7 @@ function fieldInput(
     },
     callbacks: {
       app: options.app,
-      isCurrent: () => isCurrent(record),
+      isCurrent: () => record.current(),
       onRenderFailure: (error) => {
         record.options.textOptions.onRenderFailure?.(error);
       },
@@ -228,167 +164,19 @@ function fieldInput(
     },
   };
 }
-function createField(
-  element: HTMLElement,
-  wrapper: HTMLElement,
-  lifetime: { owner: Component; current: () => EntryRecord | undefined; stagingHost: HTMLElement },
-): FieldRecord {
-  const owner = lifetime.owner.addChild(new Component());
-  const text = new RetainedTaskText(element, owner, lifetime.stagingHost);
-  const field: FieldRecord = {
-    element,
-    wrapper,
-    text,
-    desired: true,
-    destroy: () => {
-      field.desired = false;
-      text.destroy();
-      lifetime.owner.removeChild(owner);
-      wrapper.remove();
-    },
-  };
-  owner.registerDomEvent(element, 'click', (event) => {
-    const record = field.desired ? lifetime.current() : undefined;
-    if (record === undefined) {
-      event.stopPropagation();
-      return;
-    }
-    activateField(event, record);
-  });
-  return field;
-}
-function createEntry(
-  tree: TaskSearchTreeNode,
-  node: TaskSelectionNode,
-  options: TaskSearchTreeRenderOptions,
-  hosts: { context: HTMLElement; base: HTMLElement; owner: Component },
-): EntryRecord {
-  const host = hosts.context.createDiv({ cls: 'abyss-subtask-content' });
-  host.remove();
-  const owner = hosts.owner.addChild(new Component());
-  const stagingHost =
-    hosts.context.closest<HTMLElement>('.abyss-panel-view') ?? hosts.context.ownerDocument.body;
-  const isBase = tree === options.search.context.tree;
-  const row = isBase
-    ? undefined
-    : host.createDiv({ cls: 'abyss-subtask-row abyss-task-card-main-row' });
-  const body =
-    row === undefined
-      ? hosts.base
-      : row.createDiv({ cls: 'abyss-subtask-content abyss-task-body' });
-  const titleRow =
-    row === undefined ? undefined : body.createDiv({ cls: 'abyss-subtask-title-row' });
-  const title =
-    titleRow === undefined
-      ? undefined
-      : createField(titleRow.createSpan({ cls: 'abyss-subtask-label' }), titleRow, {
-          owner,
-          current: () => record,
-          stagingHost,
-        });
-  const record: EntryRecord = {
-    target: taskNodeRef(node),
-    host,
-    body,
-    owner,
-    stagingHost,
-    row,
-    title,
-    description: undefined,
-    comments: new Map(),
-    options,
-    tree,
-    node,
-    desired: true,
-    metadataKey: '',
-    metadataOwner: undefined,
-  };
-  if (row !== undefined) {
-    owner.registerDomEvent(host, 'contextmenu', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      if (isCurrent(record) && !('source' in record.node))
-        record.options.onChildContextMenu(event, record.node, row);
-    });
-  }
-  if (row !== undefined)
-    mountTaskSearchKeyboardActivation(row, owner, () => {
-      if (isCurrent(record)) record.options.search.onActivate(record.tree.address);
-    });
-  return record;
-}
-function releaseEntry(record: EntryRecord, parent: Component): void {
-  record.desired = false;
-  record.title?.destroy();
-  record.description?.destroy();
-  for (const field of record.comments.values()) field.destroy();
-  parent.removeChild(record.owner);
-  record.host.remove();
-}
-function commentLines(tree: TaskSearchTreeNode): Set<number> {
-  return new Set(
-    tree.evidence.flatMap((evidence) =>
-      evidence.provenance.type === 'field' &&
-      evidence.provenance.field === 'comment' &&
-      evidence.provenance.commentLine !== undefined
-        ? [evidence.provenance.commentLine]
-        : [],
-    ),
-  );
-}
-function prepareComments(
-  record: EntryRecord,
-  plan: TreePreparation,
-): Array<{ line: number; element: HTMLElement }> {
-  const lines = commentLines(record.tree);
-  const ordered: Array<{ line: number; element: HTMLElement }> = [];
-  for (const comment of record.node.comments) {
-    if (!lines.has(comment.ref.relativeLine)) continue;
-    let field = record.comments.get(comment.ref.relativeLine);
-    if (field === undefined) {
-      const wrapper = record.host.createDiv({ cls: 'abyss-comment-row' });
-      wrapper.remove();
-      field = createField(wrapper.createEl('p', { cls: 'abyss-comment-text' }), wrapper, {
-        owner: record.owner,
-        stagingHost: record.stagingHost,
-        current: () => record,
-      });
-      record.comments.set(comment.ref.relativeLine, field);
-      plan.added.push([record, comment.ref.relativeLine, field]);
-    }
-    field.desired = true;
-    plan.updates.push(
-      field.text.prepare(
-        fieldInput(
-          record,
-          comment.text,
-          { type: 'comment', ref: comment.ref },
-          { kind: 'complete' },
-        ),
-      ),
-    );
-    ordered.push({ line: comment.ref.relativeLine, element: field.wrapper });
-  }
-  for (const [line, field] of record.comments)
-    if (!lines.has(line)) {
-      field.desired = false;
-      plan.removed.add(field);
-    }
-  return ordered;
-}
 function descriptionContinues(source: string): boolean {
   return source
     .split('\n')
     .slice(1)
     .some((line) => line.trim().length > 0);
 }
-function descriptionMode(record: EntryRecord, matched: boolean): 'hidden' | 'preview' | 'full' {
+function descriptionMode(record: NativeRecord, matched: boolean): 'hidden' | 'preview' | 'full' {
   if (matched) return 'full';
   if (record.tree !== record.options.search.context.tree || record.options.search.mode !== 'filter')
     return 'hidden';
   return record.options.fullDescription === true ? 'full' : 'preview';
 }
-function descriptionPresentation(record: EntryRecord): {
+function descriptionPresentation(record: NativeRecord): {
   markdown: string;
   preview: boolean;
   continuation: boolean;
@@ -407,289 +195,234 @@ function descriptionPresentation(record: EntryRecord): {
   const continuation = preview && descriptionContinues(source);
   return { markdown, preview, continuation, show: markdown !== '' || continuation };
 }
-function prepareDescriptionField(
-  record: EntryRecord,
-  plan: TreePreparation,
-  presentation: ReturnType<typeof descriptionPresentation>,
-): FieldRecord | undefined {
-  const { show, markdown, preview, continuation } = presentation;
-  const full =
-    record.options.fullDescription === true && record.tree === record.options.search.context.tree;
-  const kind = preview ? 'preview' : 'excerpt';
-  if (!show) {
-    if (record.description !== undefined) {
-      record.description.desired = false;
-      plan.removed.add(record.description);
-    }
-    return;
-  }
-  if (record.description === undefined) {
-    const element = record.host.createDiv({ cls: 'abyss-task-desc' });
-    element.remove();
-    record.description = createField(element, element, {
-      owner: record.owner,
-      stagingHost: record.stagingHost,
-      current: () => record,
-    });
-    plan.descriptions.push(record);
-  }
-  const field = record.description;
-  field.desired = true;
-  plan.updates.push(
-    field.text.prepare(
-      fieldInput(
-        record,
-        markdown,
-        { type: 'description', target: record.target },
-        { kind: full ? 'complete' : kind, continuation },
-      ),
-    ),
-  );
-  return field;
-}
-function prepareDescription(
-  record: EntryRecord,
-  plan: TreePreparation,
-  baseTextHost: HTMLElement,
-): void {
-  const presentation = descriptionPresentation(record);
-  const field = prepareDescriptionField(record, plan, presentation);
-  const elements = record.title === undefined ? [] : [record.title.wrapper];
-  if (!presentation.preview && field !== undefined) elements.push(field.element);
-  plan.placements.push([record.body, elements]);
-  if (record.tree === record.options.search.context.tree)
-    plan.placements.push([
-      baseTextHost,
-      [...(presentation.preview && field !== undefined ? [field.element] : []), record.body],
-    ]);
-}
-function prepareHeader(record: EntryRecord, changed: boolean, plan: TreePreparation): void {
-  const { title, node, row, options } = record;
-  if (title !== undefined) {
-    title.element.toggleClass('is-done', node.status === 'done');
-    plan.updates.push(
-      title.text.prepare(
-        fieldInput(
-          record,
-          node.markdownTitle,
-          { type: 'title', target: record.target },
-          { kind: 'complete' },
-        ),
-      ),
-    );
-  }
-  if (row === undefined) return;
-  if (!('source' in node))
-    options.renderChildStatus(row, node, () =>
-      isCurrent(record) && !('source' in record.node) ? record.node : undefined,
-    );
-  refreshEntryMetadata(record, changed);
-}
-function refreshEntryMetadata(record: EntryRecord, changed: boolean): void {
-  const { row, node, options } = record;
-  if (row === undefined) return;
-  const evidence = record.tree.evidence.filter(isTaskSearchSemanticEvidence);
-  const key = options.metadataKey(node, evidence);
-  if (!changed && record.metadataKey === key && record.metadataOwner !== undefined) return;
-  record.metadataKey = key;
-  if (record.metadataOwner !== undefined) record.owner.removeChild(record.metadataOwner);
-  record.metadataOwner = record.owner.addChild(new Component());
-  row.querySelector(':scope > .abyss-task-meta-right')?.remove();
-  options.renderMetadata(row, node, evidence, record.metadataOwner);
-}
 
-class RetainedSearchTree implements TaskSearchTreeMount {
-  readonly #host: HTMLElement;
-  readonly #baseTextHost: HTMLElement;
-  readonly #context: HTMLElement;
-  readonly #base: HTMLElement;
-  readonly #owner: Component;
-  readonly #parent: Component;
-  #records = new Map<string, EntryRecord>();
-  #cancel = (): void => {};
-  #live = true;
-  settled: Promise<TaskRenderOutcome> = Promise.resolve({ type: 'ready' });
-  constructor(host: HTMLElement, baseTextHost: HTMLElement, options: TaskSearchTreeRenderOptions) {
-    this.#host = host;
-    this.#baseTextHost = baseTextHost;
-    this.#parent = options.textOptions.component;
-    this.#owner = this.#parent.addChild(new Component());
-    this.#context = host.createDiv({ cls: 'abyss-search-context' });
-    this.#base = baseTextHost.createDiv({ cls: 'abyss-search-context' });
-    this.update(options);
+function nativeField(
+  record: NativeRecord,
+  key: string,
+  input: {
+    markdown: string;
+    target: TaskTextTarget;
+    decoration: Pick<RetainedTaskTextInput['decoration'], 'kind' | 'continuation'>;
+  },
+): TaskDisplayField {
+  return { key, input: fieldInput(record, input.markdown, input.target, input.decoration) };
+}
+function descriptionField(
+  record: NativeRecord,
+  key: string,
+  target: ReturnType<typeof taskNodeRef>,
+): Pick<TaskDisplayNode, 'description' | 'descriptionPreview'> {
+  const presentation = descriptionPresentation(record);
+  if (!presentation.show) return {};
+  let kind: RetainedTaskTextInput['decoration']['kind'] = 'excerpt';
+  if (record.options.fullDescription === true && record.tree === record.options.search.context.tree)
+    kind = 'complete';
+  else if (presentation.preview) kind = 'preview';
+  return {
+    descriptionPreview: presentation.preview,
+    description: nativeField(record, `${key}:description`, {
+      markdown: presentation.markdown,
+      target: { type: 'description', target },
+      decoration: { kind, continuation: presentation.continuation },
+    }),
+  };
+}
+function isModified(event: MouseEvent | undefined): boolean {
+  return event !== undefined && (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey);
+}
+function activate(record: NativeRecord, event: MouseEvent | undefined): void {
+  if (!record.current()) return;
+  const { options, tree } = record;
+  if (
+    options.search.mode === 'filter' &&
+    (tree === options.search.context.tree || isModified(event))
+  )
+    return;
+  event?.stopPropagation();
+  options.search.onActivate(tree.address);
+}
+class NativeSearchTree implements TaskSearchTreeMount {
+  private options: TaskSearchTreeRenderOptions;
+  private readonly context: HTMLElement;
+  private readonly mount: TaskTreeDisplayMount;
+  private live = true;
+  private latest = new Map<string, NativeRecord>();
+  private readonly metadata = new WeakMap<HTMLElement, { key: string; owner: Component }>();
+  constructor(
+    private readonly host: HTMLElement,
+    private readonly baseTextHost: HTMLElement,
+    options: TaskSearchTreeRenderOptions,
+  ) {
+    this.options = options;
+    this.context = host.createDiv({ cls: 'abyss-search-context' });
+    this.mount = mountTaskTreeDisplay(this.context, this.project(options));
+    this.retireWhenSettled();
+    options.track({
+      settled: this.settled,
+      cancel: () => {
+        this.mount.cancelPending();
+      },
+    });
   }
-  #entry(
+  private retireEmptyHost(): void {
+    if (
+      this.options.search.context.tree.children.length === 0 &&
+      this.context.querySelector('.abyss-comment-row') === null
+    )
+      this.host.remove();
+  }
+  private retireWhenSettled(): void {
+    const settled = this.mount.settled;
+    void settled.then(
+      (outcome) => {
+        if (this.live && this.mount.settled === settled && outcome.type === 'ready')
+          this.retireEmptyHost();
+      },
+      (error: unknown) => {
+        this.options.textOptions.onRenderFailure?.(error);
+      },
+    );
+  }
+  get settled(): Promise<TaskRenderOutcome> {
+    return this.mount.settled;
+  }
+  private node(
     tree: TaskSearchTreeNode,
     node: TaskSelectionNode,
     options: TaskSearchTreeRenderOptions,
-    plan: TreePreparation,
-  ): EntryRecord {
-    const key = taskNodeAddress(taskNodeRef(node));
-    let record = plan.candidates.get(key);
-    if (record !== undefined && !sameTaskNodeRef(record.target, taskNodeRef(node)))
-      record = undefined;
-    record ??= createEntry(tree, node, options, {
-      context: this.#context,
-      base: this.#base,
-      owner: this.#owner,
-    });
-    plan.candidates.set(key, record);
-    return record;
-  }
-  #prepare(options: TaskSearchTreeRenderOptions): TreePreparation {
-    const plan: TreePreparation = {
-      desired: new Map(),
-      candidates: new Map(this.#records),
-      updates: [],
-      placements: [],
-      removed: new Set(),
-      added: [],
-      descriptions: [],
+  ): TaskDisplayNode {
+    const target = taskNodeRef(node);
+    const key = taskNodeAddress(target);
+    const record: NativeRecord = {
+      tree,
+      node,
+      options,
+      current: () =>
+        this.live &&
+        this.options.textOptions.isCurrent?.() !== false &&
+        this.latest.get(key) === record,
     };
-    const pending = [{ tree: options.search.context.tree, node: options.base }];
-    while (pending.length > 0) {
-      const item = pending.pop();
-      if (item === undefined) break;
-      const record = this.#entry(item.tree, item.node, options, plan);
-      const changed =
-        record.node !== item.node || record.options.search.mode !== options.search.mode;
-      record.options = options;
-      record.tree = item.tree;
-      record.node = item.node;
-      record.desired = true;
-      plan.desired.set(taskNodeAddress(record.target), record);
-      prepareHeader(record, changed, plan);
-      prepareDescription(record, plan, this.#baseTextHost);
-      const ordered = prepareComments(record, plan);
-      this.#children(record, plan, pending, ordered);
-      ordered.sort((a, b) => a.line - b.line);
-      plan.placements.push([
-        record.tree === options.search.context.tree ? this.#context : record.host,
-        [...(record.row === undefined ? [] : [record.row]), ...ordered.map((item) => item.element)],
-      ]);
-    }
-    return plan;
+    this.latest.set(key, record);
+    return {
+      kind: 'task',
+      key,
+      identity: { type: 'title', target },
+      ...(tree === options.search.context.tree
+        ? {}
+        : {
+            title: nativeField(record, `${key}:title`, {
+              markdown: node.markdownTitle,
+              target: { type: 'title', target },
+              decoration: { kind: 'complete' },
+            }),
+          }),
+      ...descriptionField(record, key, target),
+      entries: this.entries(record, key),
+      complete: true,
+      done: node.status === 'done',
+      onActivate: (event) => {
+        activate(record, event);
+      },
+      onContextMenu: (event, row) => {
+        if (!record.current() || 'source' in node) return;
+        event.preventDefault();
+        event.stopPropagation();
+        options.onChildContextMenu(event, node, row);
+      },
+      renderHeader: (row, owner) => {
+        this.renderHeader(record, key, row, owner);
+      },
+    };
   }
-  #children(
-    record: EntryRecord,
-    plan: TreePreparation,
-    pending: Array<{ tree: TaskSearchTreeNode; node: TaskSelectionNode }>,
-    ordered: Array<{ line: number; element: HTMLElement }>,
-  ): void {
-    const children = new Map(record.node.subtasks.map((child) => [child.ref.relativeLine, child]));
-    for (const tree of record.tree.children) {
-      const line = tree.address.childLines[tree.address.childLines.length - 1];
-      if (line === undefined) continue;
-      const node = children.get(line);
-      if (node === undefined) continue;
-      const child = this.#entry(tree, node, record.options, plan);
-      ordered.push({ line, element: child.host });
-      pending.push({ tree, node });
-    }
-  }
-  #focusedRemoval(plan: TreePreparation): boolean {
-    const active = this.#host.ownerDocument.activeElement;
-    return (
-      [...this.#records.values()].some(
-        (record) =>
-          plan.desired.get(taskNodeAddress(record.target)) !== record &&
-          (record.host.contains(active) || record.description?.element.contains(active) === true),
-      ) || [...plan.removed].some((field) => field.element.contains(active))
+  private entries(record: NativeRecord, key: string): TaskDisplayNode['entries'] {
+    const { tree, node, options } = record;
+    const ordered: Array<{ line: number; value: TaskDisplayNode['entries'][number] }> = [];
+    const lines = new Set(
+      tree.evidence.flatMap((evidence) =>
+        evidence.provenance.type === 'field' &&
+        evidence.provenance.field === 'comment' &&
+        evidence.provenance.commentLine !== undefined
+          ? [evidence.provenance.commentLine]
+          : [],
+      ),
     );
+    for (const comment of node.comments) {
+      if (!lines.has(comment.ref.relativeLine)) continue;
+      const commentKey = `${key}:comment:${comment.ref.relativeLine}`;
+      ordered.push({
+        line: comment.ref.relativeLine,
+        value: {
+          kind: 'comment',
+          key: commentKey,
+          field: nativeField(record, commentKey, {
+            markdown: comment.text,
+            target: { type: 'comment', ref: comment.ref },
+            decoration: { kind: 'complete' },
+          }),
+        },
+      });
+    }
+    for (const childTree of tree.children) {
+      const line = childTree.address.childLines[childTree.address.childLines.length - 1];
+      const child = node.subtasks.find((candidate) => candidate.ref.relativeLine === line);
+      if (child !== undefined && line !== undefined)
+        ordered.push({ line, value: this.node(childTree, child, options) });
+    }
+    ordered.sort((a, b) => a.line - b.line);
+    return ordered.map((entry) => entry.value);
   }
-  #commit(plan: TreePreparation): boolean {
-    if (this.#focusedRemoval(plan) || !plan.updates.every((update) => update.canCommit()))
-      return false;
-    if (!plan.updates.every((update) => update.commit())) return false;
-    for (const [host, elements] of plan.placements) reconcile(host, elements);
-    for (const [key, record] of this.#records)
-      if (plan.desired.get(key) !== record) releaseEntry(record, this.#owner);
-    for (const field of plan.removed) field.destroy();
-    this.#removeComments(plan);
-    this.#records = plan.desired;
-    if (this.#context.childElementCount === 0) this.#host.remove();
-    return true;
+  private currentChild(key: string): SubtaskSnapshot | undefined {
+    const current = this.latest.get(key);
+    return current !== undefined && current.current() && !('source' in current.node)
+      ? current.node
+      : undefined;
   }
-  #removeComments(plan: TreePreparation): void {
-    for (const record of plan.desired.values())
-      if (record.description !== undefined && plan.removed.has(record.description))
-        record.description = undefined;
-    for (const record of plan.desired.values())
-      for (const [line, field] of record.comments)
-        if (plan.removed.has(field)) record.comments.delete(line);
+  private renderHeader(
+    record: NativeRecord,
+    key: string,
+    row: HTMLElement,
+    owner: Component,
+  ): void {
+    const { node, tree, options } = record;
+    if (!('source' in node)) options.renderChildStatus(row, node, () => this.currentChild(key));
+    const evidence = tree.evidence.filter(isTaskSearchSemanticEvidence);
+    const metadataKey = options.metadataKey(node, evidence);
+    const previous = this.metadata.get(row);
+    if (previous?.key === metadataKey) return;
+    if (previous !== undefined) owner.removeChild(previous.owner);
+    const metadataOwner = owner.addChild(new Component());
+    row.querySelector(':scope > .abyss-task-meta-right')?.remove();
+    options.renderMetadata(row, node, evidence, metadataOwner);
+    this.metadata.set(row, { key: metadataKey, owner: metadataOwner });
   }
-  #cancelPreparation(plan: TreePreparation): void {
-    for (const update of plan.updates) update.cancel();
-    for (const [key, record] of plan.candidates)
-      if (this.#records.get(key) !== record) releaseEntry(record, this.#owner);
-    for (const record of plan.descriptions)
-      if (this.#records.get(taskNodeAddress(record.target)) === record) {
-        record.description?.destroy();
-        record.description = undefined;
-      }
-    for (const [record, line, field] of plan.added)
-      if (this.#records.get(taskNodeAddress(record.target)) === record) {
-        field.destroy();
-        record.comments.delete(line);
-      }
+  private project(options: TaskSearchTreeRenderOptions): TaskTreeDisplayOptions {
+    this.latest = new Map();
+    return {
+      owner: options.textOptions.component,
+      roots: [this.node(options.search.context.tree, options.base, options)],
+      baseTextHost: this.baseTextHost,
+      isCurrent: () => this.live && this.options.textOptions.isCurrent?.() !== false,
+      ...(options.textOptions.onRenderFailure === undefined
+        ? {}
+        : { onRenderFailure: options.textOptions.onRenderFailure }),
+    };
   }
   update(options: TaskSearchTreeRenderOptions): void {
-    this.#cancel();
-    for (const record of this.#records.values()) record.desired = false;
-    const plan = this.#prepare(options);
-    let done = false;
-    let resolve!: (outcome: TaskRenderOutcome) => void;
-    this.settled = new Promise((r) => {
-      resolve = r;
+    this.options = options;
+    this.mount.update(this.project(options));
+    this.retireWhenSettled();
+    options.track({
+      settled: this.settled,
+      cancel: () => {
+        this.mount.cancelPending();
+      },
     });
-    const finish = (outcome: TaskRenderOutcome): void => {
-      if (done) return;
-      done = true;
-      cleanup();
-      resolve(outcome);
-    };
-    const commit = (): void => {
-      if (done || !this.#live || options.textOptions.isCurrent?.() === false) return;
-      if (this.#commit(plan)) finish({ type: 'ready' });
-    };
-    const blur = (): void => {
-      this.#host.ownerDocument.defaultView?.queueMicrotask(commit);
-    };
-    const cleanup = (): void => {
-      this.#host.removeEventListener('focusout', blur);
-      this.#baseTextHost.removeEventListener('focusout', blur);
-    };
-    this.#host.addEventListener('focusout', blur);
-    this.#baseTextHost.addEventListener('focusout', blur);
-    this.#cancel = () => {
-      if (done) return;
-      this.#cancelPreparation(plan);
-      finish({ type: 'cancelled' });
-    };
-    const failed = (error: unknown): void => {
-      this.#cancelPreparation(plan);
-      finish({ type: 'failed', error });
-      options.textOptions.onRenderFailure?.(error);
-    };
-    void Promise.all(plan.updates.map((update) => update.ready)).then((outcomes) => {
-      if (done) return;
-      const failure = outcomes.find((outcome) => outcome.type !== 'ready');
-      if (failure !== undefined) {
-        this.#cancelPreparation(plan);
-        finish(failure);
-      } else commit();
-    }, failed);
-    commit();
-    options.track({ settled: this.settled, cancel: this.#cancel });
   }
   destroy(): void {
-    this.#live = false;
-    this.#cancel();
-    for (const record of this.#records.values()) releaseEntry(record, this.#owner);
-    this.#records.clear();
-    this.#context.remove();
-    this.#base.remove();
-    this.#parent.removeChild(this.#owner);
+    if (!this.live) return;
+    this.live = false;
+    this.mount.destroy();
+    this.context.remove();
   }
 }
 export function mountTaskSearchTree(
@@ -697,7 +430,7 @@ export function mountTaskSearchTree(
   baseTextHost: HTMLElement,
   options: TaskSearchTreeRenderOptions,
 ): TaskSearchTreeMount {
-  return new RetainedSearchTree(host, baseTextHost, options);
+  return new NativeSearchTree(host, baseTextHost, options);
 }
 export function renderTaskSearchTree(
   host: HTMLElement,

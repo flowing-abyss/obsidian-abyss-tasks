@@ -45,7 +45,7 @@ export {
   type RecurrenceParseResult,
   type RecurrencePolicy,
 } from './domain/recurrence';
-export { taskCommandRootRef } from './domain/taskCommandTargets';
+export { taskCommandRootRef, taskNodeRootRef } from './domain/taskCommandTargets';
 export type {
   DependencyDirection,
   TaskDependencyEligibility,
@@ -62,7 +62,9 @@ export {
 } from './domain/taskReconciliation';
 export {
   isTaskInboxMember,
+  matchesInboxPolicy,
   normalizeTaskTagInput,
+  resolveInboxCreationPolicy,
   sameTag,
   taskPrefixForSubtask,
 } from './domain/taskTags';
@@ -93,6 +95,7 @@ export { sameTaskNodeRef } from './domain/types';
 export type {
   CommentRef,
   DateRange,
+  DurationMinutes,
   LocalDate,
   LocalTime,
   SubtaskRef,
@@ -109,7 +112,7 @@ export type {
   TaskTextTarget,
   TimeEntryRef,
 } from './domain/types';
-export { durationMinutes, localDate, localTime } from './domain/validation';
+export { durationMinutes, formatDurationMinutes, localDate, localTime } from './domain/validation';
 
 export { clampDurationToDay } from './domain/taskDuration';
 
@@ -122,6 +125,7 @@ export type { TaskDependencySummary } from './domain/taskSearchTypes';
 export type {
   TaskReadProjectionApi,
   TaskSearchApi,
+  TaskSearchCursor,
   TaskSearchState,
 } from './application/TaskSearchApi';
 export { TaskSearchError } from './domain/taskSearchTypes';
@@ -156,7 +160,7 @@ export {
   taskOccurrenceCompletion,
   taskTodayOccurrence,
 } from './domain/taskOccupiedDates';
-export { taskNodeSourceLine } from './domain/taskSearchProjection';
+export { observedTaskTags, taskNodeSourceLine } from './domain/taskSearchProjection';
 
 export type { TaskOccurrenceCompletion } from './domain/taskOccupiedDates';
 export {
@@ -195,3 +199,49 @@ export type {
 export type { TaskInputRecurrenceCandidate } from './domain/recurrenceInputTypes';
 
 export type { RecurrenceInputParser } from './application/RecurrenceInputParser';
+
+export type {
+  ProjectSourceReadApi,
+  TaskAcceptedOccurrenceChange,
+  TaskIntegrationReadApi,
+  TaskNodeReadQuery,
+  TaskReadNode,
+  TaskReadObservation,
+  TaskReadResult,
+} from './application/TaskIntegrationReadApi';
+export { projectTaskFailure } from './application/TaskProjectCommands';
+export type {
+  ProjectTaskDestination,
+  ProjectTaskExecution,
+  TaskProjectCommands,
+} from './application/TaskProjectCommands';
+export type {
+  TaskStatusMutationApi,
+  TaskStatusMutationOutcome,
+  TaskStatusMutationRequest,
+  TaskStatusOccurrenceContinuation,
+} from './application/TaskStatusMutationApi';
+export type { TaskOccurrenceAddress } from './domain/taskOccurrence';
+
+export type {
+  PreparedTaskEditCommand,
+  TaskEditPartition,
+  TaskEditPreparation,
+  TaskEditPreparationApi,
+  TaskFieldSelection,
+  TaskHierarchyPreparation,
+  TaskHierarchyPreparationApi,
+} from './application/TaskEditPreparationApi';
+
+export type {
+  TaskCreatePreparation,
+  TaskCreatePreparationApi,
+  TaskCreatePreparationDestination,
+  TaskCreateTreeNode,
+} from './application/TaskCreatePreparationApi';
+
+export { addEntryToTotal } from './domain/timeTracking';
+
+export type { TaskStatusRule } from './domain/types';
+
+export type { TaskSourceCopy, TaskSourceCopyEvidence } from './application/TaskSourceCopyApi';

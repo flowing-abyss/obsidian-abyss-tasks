@@ -23,11 +23,23 @@ import type {
 } from './TaskApplicationApi';
 import type { TaskDiagnosticSink } from './TaskDependencyService';
 import type { TaskEditCommand } from './TaskRepository';
+import type { CompletionFollowUpDetails } from './TaskStatusMutationApi';
 
 /** A session shorter than this leaves no trace, so a mistaken start costs the note nothing. */
 export { MINIMUM_TRACKED_MS } from '../domain/timeTracking';
 
-const NOTHING_DISCARDED = { discardedShortEntry: false } as const;
+const NO_FOLLOW_UP: CompletionFollowUpDetails = {
+  discardedShortEntry: false,
+  closed: 0,
+  unclosed: 0,
+  state: 'complete',
+};
+interface CompletionCloseOptions {
+  readonly edit?: (command: TaskEditCommand) => Promise<TaskCommandResult>;
+  readonly stopOnFailure?: true;
+  /** Eligibility captured by the strict main command before awaiting its write. */
+  readonly completionConfirmed?: boolean;
+}
 
 export interface TimeTrackingDependencies {
   readonly queries: TaskQueryApi & TaskDependencyQueryApi & TimeTrackingQueryApi;
@@ -58,20 +70,51 @@ interface LocatedNode {
 /** Which pass is closing entries, which is what a set-aside entry is reported under. */
 type ClosePhase = 'close-others' | 'completion-follow-up';
 
-type RootClose =
-  | {
-      readonly type: 'closed';
-      readonly root: TaskSnapshot;
-      readonly closed: number;
-      readonly discarded: boolean;
-    }
-  | { readonly type: 'failed'; readonly result: TaskCommandResult };
+interface CloseProgress {
+  readonly root: TaskSnapshot;
+  readonly closed: number;
+  readonly unclosed: number;
+  readonly discarded: boolean;
+}
+type RootClose = CloseProgress &
+  (
+    | { readonly type: 'closed' }
+    | { readonly type: 'failed'; readonly result: TaskCommandResult; readonly error?: unknown }
+  );
+
+function followUpDetails(closed: RootClose): CompletionFollowUpDetails {
+  let state: CompletionFollowUpDetails['state'] = closed.unclosed > 0 ? 'partial' : 'complete';
+  if (
+    closed.type === 'failed' &&
+    (closed.result.type === 'ok' ||
+      (closed.result.type === 'io-error' && closed.result.contentState === 'unknown'))
+  )
+    state = 'unknown';
+  return {
+    root: closed.root,
+    discardedShortEntry: closed.discarded,
+    closed: closed.closed,
+    unclosed: closed.unclosed,
+    state,
+  };
+}
 
 interface ClosePass {
   readonly roots: ReadonlyMap<string, TaskSnapshot>;
   readonly closed: number;
   readonly discarded: boolean;
   readonly failure?: TaskCommandResult;
+}
+
+function failedClosePass(
+  pass: Extract<RootClose, { readonly type: 'failed' }>,
+  roots: ReadonlyMap<string, TaskSnapshot>,
+  closed: number,
+  discarded: boolean,
+): ClosePass {
+  if (pass.error !== undefined)
+    throw pass.error instanceof Error ? pass.error : new Error('Time entry edit failed');
+  return { roots, closed, discarded, failure: pass.result };
 }
 
 type StartTarget =
@@ -211,36 +254,30 @@ export class TimeTrackingService {
     return this.serialize_abyssPrivate(async () => await this.stopNow_abyssPrivate(reading));
   }
 
-  /**
-   * Called after a status command succeeded. Closes the subtree's running entries only while the
-   * committed node really reads as done or cancelled, because a queued command may have resolved
-   * the same target against a status the caller no longer sees. Never throws. Reports back only
-   * whether a session was dropped for being too short, so the command that triggered it can say so.
-   */
+  /** Closes a completed subtree, retaining proven progress even if a later timer fails. */
   async closeAfterCompletion(
     root: TaskSnapshot,
     target: TaskNodeRef,
     reading: ClockReading,
-  ): Promise<{ readonly discardedShortEntry: boolean }> {
+    options?: CompletionCloseOptions,
+  ): Promise<CompletionFollowUpDetails> {
+    let details: CompletionFollowUpDetails = { ...NO_FOLLOW_UP, root };
     try {
       const path = childIndexPath(root, target);
-      if (path === undefined) return NOTHING_DISCARDED;
-      const completed = nodeAtIndexPath(root, path);
-      if (completed === undefined || !this.isCompleted_abyssPrivate(completed.node)) {
-        return NOTHING_DISCARDED;
+      if (path === undefined) return NO_FOLLOW_UP;
+      details = {
+        ...details,
+        unclosed: runningEntries(root).filter((entry) => withinSubtree(entry.path, path)).length,
+      };
+      const closed = await this.closeCompletedSubtree_abyssPrivate(root, path, reading, options);
+      if (closed === undefined) return NO_FOLLOW_UP;
+      details = followUpDetails(closed);
+      if (closed.type === 'failed') {
+        this.reportCloseFailure_abyssPrivate(closed);
+        // Ordinary UI results historically suppress the short-entry notice on a failed pass.
+        if (options === undefined) return { ...details, discardedShortEntry: false };
       }
-      const closed = await this.closeInRoot_abyssPrivate(
-        root,
-        reading,
-        (candidate) => withinSubtree(candidate, path),
-        'completion-follow-up',
-      );
-      if (closed.type !== 'failed') return { discardedShortEntry: closed.discarded };
-      this.diagnostics_abyssPrivate({
-        operation: 'close-time-entry',
-        phase: 'completion-follow-up',
-        cause: closed.result.type,
-      });
+      return details;
     } catch (error) {
       this.diagnostics_abyssPrivate(
         {
@@ -250,8 +287,43 @@ export class TimeTrackingService {
         },
         error,
       );
+      return {
+        ...details,
+        state: 'unknown',
+        discardedShortEntry: options === undefined ? false : details.discardedShortEntry,
+      };
     }
-    return NOTHING_DISCARDED;
+  }
+
+  private reportCloseFailure_abyssPrivate(
+    closed: Extract<RootClose, { readonly type: 'failed' }>,
+  ): void {
+    this.diagnostics_abyssPrivate(
+      {
+        operation: 'close-time-entry',
+        phase: 'completion-follow-up',
+        cause: closed.error === undefined ? closed.result.type : 'repository-error',
+      },
+      ...(closed.error === undefined ? [] : [closed.error]),
+    );
+  }
+
+  private async closeCompletedSubtree_abyssPrivate(
+    root: TaskSnapshot,
+    path: NodePath,
+    reading: ClockReading,
+    options?: CompletionCloseOptions,
+  ): Promise<RootClose | undefined> {
+    const completed = nodeAtIndexPath(root, path);
+    if (completed === undefined) return undefined;
+    if (!(options?.completionConfirmed ?? this.isCompleted_abyssPrivate(completed.node)))
+      return undefined;
+    return await this.closeInRoot_abyssPrivate(
+      root,
+      reading,
+      (candidate) => withinSubtree(candidate, path),
+      { ...options, phase: 'completion-follow-up' },
+    );
   }
 
   private async startNow_abyssPrivate(
@@ -342,12 +414,12 @@ export class TimeTrackingService {
         root,
         reading,
         (path) => exempt?.root !== key || !samePath(path, exempt.path),
-        'close-others',
+        { phase: 'close-others' },
       );
-      if (pass.type === 'failed') return { roots, closed, discarded, failure: pass.result };
       roots.set(key, pass.root);
       closed += pass.closed;
       discarded = discarded || pass.discarded;
+      if (pass.type === 'failed') return failedClosePass(pass, roots, closed, discarded);
     }
     return { roots, closed, discarded };
   }
@@ -365,34 +437,59 @@ export class TimeTrackingService {
     root: TaskSnapshot,
     reading: ClockReading,
     accepts: (path: NodePath) => boolean,
-    phase: ClosePhase,
+    options: CompletionCloseOptions & { readonly phase: ClosePhase },
   ): Promise<RootClose> {
     let current = root;
     let closed = 0;
     let discarded = false;
     const setAside = new Set<string>();
     for (;;) {
-      const next = runningEntries(current).find(
-        (candidate) => accepts(candidate.path) && !setAside.has(entryKey(candidate)),
-      );
-      if (next === undefined) return { type: 'closed', root: current, closed, discarded };
-      const result = await this.edit_abyssPrivate({
-        type: 'close-time-entry',
-        ...(phase === 'completion-follow-up' ? { completionFollowUp: true as const } : {}),
-        entry: timeEntryRef(next.target, next.entry),
-        stamp: reading.atom,
-        endMs: reading.epochMs,
-        minimumMs: MINIMUM_TRACKED_MS,
-      });
+      const running = runningEntries(current).filter((candidate) => accepts(candidate.path));
+      const next = running.find((candidate) => !setAside.has(entryKey(candidate)));
+      const progress = {
+        root: current,
+        closed,
+        discarded,
+        unclosed: running.length,
+      };
+      if (next === undefined) return { type: 'closed', ...progress };
+      const attempted = await this.closeEntry_abyssPrivate(next, reading, options);
+      const { result } = attempted;
+      if ('error' in attempted) return { type: 'failed', ...progress, ...attempted };
       // A committed close always answers with its fresh root; without one nothing can be re-read.
-      if (result.type === 'ok' && result.outcome.type === 'task') {
+      if (result.type === 'ok' && result.changed && result.outcome.type === 'task') {
         closed += 1;
         discarded = discarded || result.outcome.discardedShortEntry === true;
         current = result.outcome.task;
         continue;
       }
-      if (!this.setAside_abyssPrivate(result, phase)) return { type: 'failed', result };
+      if (options.stopOnFailure === true || !this.setAside_abyssPrivate(result, options.phase)) {
+        return { type: 'failed', ...progress, result };
+      }
       setAside.add(entryKey(next));
+    }
+  }
+
+  private async closeEntry_abyssPrivate(
+    next: RunningEntry,
+    reading: ClockReading,
+    options: CompletionCloseOptions & { readonly phase: ClosePhase },
+  ): Promise<{ readonly result: TaskCommandResult; readonly error?: unknown }> {
+    try {
+      const result = await (options.edit ?? this.edit_abyssPrivate)({
+        type: 'close-time-entry',
+        ...(options.phase === 'completion-follow-up' ? { completionFollowUp: true as const } : {}),
+        entry: timeEntryRef(next.target, next.entry),
+        stamp: reading.atom,
+        endMs: reading.epochMs,
+        minimumMs: MINIMUM_TRACKED_MS,
+      });
+      return { result };
+    } catch (error) {
+      return {
+        error,
+        result: { type: 'io-error', cause: 'repository-error', contentState: 'unknown' },
+      };
     }
   }
 

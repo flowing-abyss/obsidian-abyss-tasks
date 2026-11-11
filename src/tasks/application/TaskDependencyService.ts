@@ -196,6 +196,7 @@ function ioError(): TaskCommandResult {
 }
 
 function terminal(result: TaskRepositoryResult): TaskCommandResult {
+  if (result.type === 'strict-rejected') return invalidTaskTarget('target');
   if (result.type === 'rebased') return { type: 'conflict', current: result.current };
   if (result.type === 'uncertain') return { type: 'not-found', target: result.target };
   if (result.type === 'committed') return ioError();

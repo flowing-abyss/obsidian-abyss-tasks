@@ -15,7 +15,7 @@ const loadNodeTools = async () => {
 };
 const [
   { execFileSync, spawn },
-  { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync },
+  { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync },
   { tmpdir },
   path,
   { createServer },
@@ -690,6 +690,41 @@ describe('CI to release tag authorization', () => {
       expect(result.status).toBe(1);
       expect(result.stderr).toContain('returned HTTP 500');
       expect(git('tag', '--list')).toBe('');
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
+});
+
+describe('development compatibility release preparation', () => {
+  it(
+    'appends the new minimum after verifying unchanged published history',
+    async () => {
+      git('tag', '1.0.0');
+      const published = git('rev-parse', 'HEAD');
+      write('manifest.json', { ...metadata['manifest.json'], minAppVersion: '1.11.5' });
+      commit();
+      const bin = path.join(directory, 'bin');
+      mkdirSync(bin);
+      const gh = path.join(bin, 'gh');
+      writeFileSync(
+        gh,
+        `#!/usr/bin/env node
+const route = process.argv[3];
+process.stdout.write(JSON.stringify(route.includes('/releases/') ? { tag_name: '1.0.0', draft: false, prerelease: false, published_at: '2026-11-01' } : { object: { type: 'commit', sha: '${published}' } }));
+`,
+      );
+      chmodSync(gh, 0o755);
+      const result = await invoke('prepare', {
+        PATH: `${bin}${path.delimiter}${environment['PATH'] ?? ''}`,
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(read('versions.json')).toEqual({ ...metadata['versions.json'], '1.0.1': '1.11.5' });
+      expect(read('manifest.json')).toEqual({
+        ...metadata['manifest.json'],
+        version: '1.0.1',
+        minAppVersion: '1.11.5',
+      });
+      expect(git('tag', '--list')).toBe('1.0.0');
     },
     CHILD_PROCESS_TIMEOUT_MS,
   );

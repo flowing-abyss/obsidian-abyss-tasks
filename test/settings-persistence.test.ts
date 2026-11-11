@@ -1,6 +1,7 @@
+import { parseProviderSettings } from '../src/ai/providers/providerSettings';
 // @vitest-environment jsdom
 import type * as ObsidianModule from 'obsidian';
-import { Notice, Platform } from 'obsidian';
+import { Notice, Platform, SecretComponent } from 'obsidian';
 import ts from 'typescript';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
@@ -258,8 +259,10 @@ describe('SettingsPersistenceCoordinator migration', () => {
       const staticBefore = structuredClone(port.staticData);
       port.writes.length = 0;
       settings.shortcuts.openStatistics = 'Alt 9';
-      settings.sectionCollapse.tags = true;
-      await coordinator.saveViewState(settings);
+      await coordinator.saveViewState({
+        ...settings,
+        sectionCollapse: { ...settings.sectionCollapse, tags: true },
+      });
       expect(port.writes).toEqual([STATE_PATH]);
       expect(port.staticData).toEqual(staticBefore);
       expect(port.stateText).not.toContain('shortcuts');
@@ -2995,4 +2998,412 @@ describe('settings draft Retry through the persistence coordinator', () => {
       );
     },
   );
+});
+
+describe('provider settings ownership', () => {
+  it('restores the three role pickers, their secret bindings, and a rotated compatible endpoint', async () => {
+    const { ProviderSettingsSection } =
+      await import('../src/settings/sections/ProviderSettingsSection');
+    const { ProviderSecrets } = await import('../src/ai/providers/ProviderSecrets');
+    const { providerSecretBindings } = await import('../src/ai/providers/providerSettings');
+    const app = await createAppWithFiles({});
+    const port = memoryPort(markedStatic({}), stateEnvelope());
+    const secrets = new Map(
+      ['llm-key', 'speech-key', 'search-key', 'local-key'].map((id) => [
+        id,
+        `synthetic-private-${id}`,
+      ]),
+    );
+    const chooseKey = vi.spyOn(SecretComponent.prototype, 'onChange');
+    const pickLastKey = (id: string) => expectDefined(chooseKey.mock.lastCall?.[0])(id);
+    async function open() {
+      const coordinator = new SettingsPersistenceCoordinator(port);
+      const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+      const bindings = new ProviderSecrets(
+        {
+          getSecret: (id) => secrets.get(id) ?? null,
+          setSecret: () => undefined,
+        },
+        () => providerSecretBindings(settings.commandMode),
+      );
+      const writes: Array<Promise<void>> = [];
+      const section = new ProviderSettingsSection({
+        app,
+        settings: () => settings.commandMode,
+        setSettings: (value) => {
+          settings.commandMode = value;
+        },
+        secrets: bindings,
+        models: {
+          list: async () => [
+            { id: 'fixture-llm', name: 'Synthetic LLM' },
+            { id: 'whisper-large-v3', name: 'Speech' },
+          ],
+        },
+        save: () => {
+          const pending = coordinator.saveSettings(settings);
+          writes.push(pending);
+          return pending;
+        },
+      });
+      const container = createDiv();
+      section.render(container);
+      const get = (label: string) =>
+        expectDefined(
+          container.querySelector<HTMLInputElement | HTMLSelectElement>(`[aria-label="${label}"]`),
+        );
+      const change = (label: string, value: string) => {
+        const input = get(label);
+        input.value = value;
+        input.dispatchEvent(
+          new Event(input.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }),
+        );
+      };
+      return {
+        get,
+        change,
+        bindings,
+        close: async () => {
+          section.dispose();
+          await Promise.all(writes);
+        },
+      };
+    }
+    const first = await open();
+    first.change('Agent provider', 'groq');
+    await pickLastKey('llm-key');
+    first.change('Voice provider', 'groq');
+    await pickLastKey('speech-key');
+    first.change('Search provider', 'brave');
+    await pickLastKey('search-key');
+    await flushMicrotasks(0);
+    first.change('Agent model', 'fixture-llm');
+    first.change('Voice model', 'whisper-large-v3');
+    await first.close();
+    const second = await open();
+    expect(second.get('Agent model').value).toBe('fixture-llm');
+    expect(second.get('Voice model').value).toBe('whisper-large-v3');
+    expect(second.get('Search provider').value).toBe('brave');
+    expect(second.bindings.resolve('groq')).toBe('synthetic-private-llm-key');
+    expect(second.bindings.resolve('groq', 'voice')).toBe('synthetic-private-speech-key');
+    expect(second.bindings.resolve('brave')).toBe('synthetic-private-search-key');
+    second.change('Agent provider', 'openai-compatible');
+    second.change('Agent API base URL', 'http://localhost:11434/v1');
+    second.change('Agent model', 'local-llm');
+    await pickLastKey('local-key');
+    await second.close();
+    expect(port.staticData).toMatchObject({
+      commandMode: {
+        compatibleAgent: { secret: { id: 'local-key', baseURL: 'http://localhost:11434/v1' } },
+      },
+    });
+    const third = await open();
+    expect(third.get('Agent model').value).toBe('local-llm');
+    third.change('Agent API base URL', 'https://other.example/v1');
+    await third.close();
+    const restored = await new SettingsPersistenceCoordinator(port).loadSettings(DEFAULT_SETTINGS);
+    expect(parseProviderSettings(restored.settings.commandMode)).toMatchObject({
+      provider: 'openai-compatible',
+      model: 'local-llm',
+      voice: 'groq',
+      voiceModel: 'whisper-large-v3',
+      search: 'brave',
+      secrets: { groq: 'llm-key', voice: { groq: 'speech-key' }, brave: 'search-key' },
+    });
+    expect(parseProviderSettings(restored.settings.commandMode).compatibleAgent).toEqual({
+      baseURL: 'https://other.example/v1',
+      model: 'local-llm',
+    });
+    expect(JSON.stringify(port.staticData)).not.toContain('synthetic-private-');
+    expect(port.stateText).not.toContain('synthetic-private-');
+    expect(JSON.parse(expectDefined(port.stateText))).not.toHaveProperty('views.commandMode');
+  });
+  it('loads defaults for old data and keeps provider choices and unknown extensions in static settings', async () => {
+    const port = memoryPort(markedStatic({ futureExtension: { keep: true } }), stateEnvelope());
+    const coordinator = new SettingsPersistenceCoordinator(port);
+    const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    expect(settings.commandMode).toMatchObject({
+      provider: 'disabled',
+      search: 'agent',
+      voice: 'disabled',
+      voiceInputMode: 'manual',
+    });
+    settings.commandMode = {
+      ...parseProviderSettings(settings.commandMode),
+      voiceInputMode: 'continuous',
+      search: 'tavily',
+      provider: 'groq',
+      model: 'qwen/qwen3.8-27b',
+      futureProviderOption: { keep: true },
+    };
+    await coordinator.saveSettings(settings);
+    expect(port.staticData).toMatchObject({
+      commandMode: {
+        provider: 'groq',
+        model: 'qwen/qwen3.8-27b',
+        search: 'tavily',
+        futureProviderOption: { keep: true },
+      },
+      futureExtension: { keep: true },
+    });
+    const writes = port.writes.length;
+    settings.sectionCollapse.tags = !settings.sectionCollapse.tags;
+    await coordinator.saveViewState(settings);
+    expect(port.writes.slice(writes)).toEqual([STATE_PATH]);
+    expect(JSON.parse(port.stateText ?? '{}')).not.toHaveProperty('views.commandMode');
+    const loaded = await new SettingsPersistenceCoordinator(port).loadSettings(DEFAULT_SETTINGS);
+    expect(loaded.settings.commandMode).toMatchObject({
+      voiceInputMode: 'continuous',
+      search: 'tavily',
+      futureProviderOption: { keep: true },
+    });
+  });
+  it('keeps older explicit LLM and speech choices and their shared native secret without rewriting them', async () => {
+    const { ProviderConnections } = await import('../src/ai/providers/ProviderConnections');
+    const { ProviderSecrets } = await import('../src/ai/providers/ProviderSecrets');
+    const { NativeProviderTransport } = await import('../src/ai/providers/NativeProviderTransport');
+    const legacy = {
+      provider: 'groq',
+      model: 'legacy-llm',
+      voice: 'groq',
+      voiceModel: 'whisper-large-v3',
+      secrets: { groq: 'legacy-key' },
+      voiceInputMode: 'continuous',
+      future: { keep: true },
+    };
+    const port = memoryPort(markedStatic({ commandMode: legacy }), stateEnvelope());
+    const coordinator = new SettingsPersistenceCoordinator(port);
+    const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    const transport = new NativeProviderTransport(
+      async () => {
+        throw new Error('Unexpected request');
+      },
+      () => () => {},
+    );
+    const connections = new ProviderConnections(
+      new ProviderSecrets(
+        {
+          getSecret: (id) => (id === 'legacy-key' ? 'synthetic-shared' : null),
+          setSecret: () => {},
+        },
+        () => legacy.secrets,
+      ),
+      transport,
+    );
+    try {
+      expect(connections.availability(settings.commandMode)).toEqual({ agent: true, voice: true });
+      expect(parseProviderSettings(settings.commandMode)).toMatchObject(legacy);
+      await coordinator.saveSettings(settings);
+      expect(port.staticData).toMatchObject({ commandMode: legacy });
+      expect((await coordinator.loadSettings(DEFAULT_SETTINGS)).settings.commandMode).toEqual(
+        legacy,
+      );
+    } finally {
+      transport.dispose();
+    }
+  });
+});
+
+describe('unsupported provider configuration recovery', () => {
+  it.each(
+    [
+      { provider: 'gateway', extension: { keep: true } },
+      { provider: 'openai', model: '', extension: { keep: true } },
+      { provider: 'openai', search: 'future-search', extension: { keep: true } },
+      { provider: 'openrouter', voice: 'future-voice', extension: { keep: true } },
+      ['future-configuration'],
+      null,
+      42,
+      true,
+      'future-configuration',
+    ].map((commandMode) => ({ commandMode })),
+  )(
+    'preserves unsupported %j through ordinary static and view saves while execution stays blocked',
+    async ({ commandMode }) => {
+      const { ProviderConnections } = await import('../src/ai/providers/ProviderConnections');
+      const { ProviderSecrets } = await import('../src/ai/providers/ProviderSecrets');
+      const { NativeProviderTransport } =
+        await import('../src/ai/providers/NativeProviderTransport');
+      const getSecret = vi.fn(() => 'synthetic-key');
+      const request = vi.fn(async () => {
+        throw new Error('No request expected');
+      });
+      const transport = new NativeProviderTransport(request, () => () => undefined);
+      const connections = new ProviderConnections(
+        new ProviderSecrets({ getSecret, setSecret: () => undefined }),
+        transport,
+      );
+      const port = memoryPort(
+        markedStatic({ commandMode, taskPrefix: '#existing' }),
+        stateEnvelope(),
+      );
+      const coordinator = new SettingsPersistenceCoordinator(port);
+      const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+      expect(settings.taskPrefix).toBe('#existing');
+      expect(settings.commandMode).toEqual(commandMode);
+      expect(() => connections.model(parseProviderSettings(settings.commandMode))).toThrow(
+        expect.objectContaining({ code: 'invalid-request' }),
+      );
+      expect(getSecret).not.toHaveBeenCalled();
+      expect(request).not.toHaveBeenCalled();
+      transport.dispose();
+      settings.taskPrefix = '#changed';
+      await coordinator.saveSettings(settings);
+      await coordinator.saveViewState({
+        ...settings,
+        sectionCollapse: { ...settings.sectionCollapse, tags: true },
+      });
+      expect(port.staticData).toMatchObject({ commandMode, taskPrefix: '#changed' });
+      expect(
+        (await new SettingsPersistenceCoordinator(port).loadSettings(DEFAULT_SETTINGS)).settings
+          .commandMode,
+      ).toEqual(commandMode);
+    },
+  );
+});
+
+it('repairs only explicitly selected provider fields and retains unsupported siblings and extensions', async () => {
+  const { ProviderSettingsSection } =
+    await import('../src/settings/sections/ProviderSettingsSection');
+  const { ProviderSecrets } = await import('../src/ai/providers/ProviderSecrets');
+  const commandMode = {
+    provider: 'gateway',
+    model: '',
+    search: 'future-search',
+    voice: 'future-voice',
+    future: { keep: true },
+  };
+  const port = memoryPort(markedStatic({ commandMode }), stateEnvelope());
+  const coordinator = new SettingsPersistenceCoordinator(port);
+  const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+  const section = new ProviderSettingsSection({
+    app: await createAppWithFiles({}),
+    settings: () => settings.commandMode,
+    setSettings: (value) => {
+      settings.commandMode = value;
+    },
+    save: () => coordinator.saveSettings(settings),
+    secrets: new ProviderSecrets({ getSecret: () => null, setSecret: () => undefined }),
+  });
+  const container = createDiv();
+  section.render(container);
+  const change = (label: string, value: string): void => {
+    const select = expectDefined(
+      container.querySelector<HTMLSelectElement>(`select[aria-label="${label}"]`),
+    );
+    select.value = value;
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+  expect(container.textContent).toContain('Provider settings need attention.');
+  expect(
+    container.querySelector<HTMLSelectElement>('select[aria-label="Agent provider"]')?.value,
+  ).toBe('');
+  expect(container.querySelector('input[type=password]')).toBeNull();
+  change('Agent provider', 'openai');
+  expect(settings.commandMode).toEqual({ ...commandMode, provider: 'openai', model: 'gpt-6-luna' });
+  expect(() => parseProviderSettings(settings.commandMode)).toThrow();
+  change('Search provider', 'openai');
+  expect(() => parseProviderSettings(settings.commandMode)).toThrow();
+  change('Voice provider', 'disabled');
+  expect(parseProviderSettings(settings.commandMode)).toMatchObject({
+    provider: 'openai',
+    model: 'gpt-6-luna',
+    search: 'openai',
+    voice: 'disabled',
+    future: { keep: true },
+  });
+  await coordinator.saveSettings(settings);
+  expect(
+    (await new SettingsPersistenceCoordinator(port).loadSettings(DEFAULT_SETTINGS)).settings
+      .commandMode,
+  ).toEqual(settings.commandMode);
+  expect(container.textContent).not.toContain('Provider settings need attention.');
+  section.dispose();
+});
+
+it.each([
+  {
+    label: 'Agent provider',
+    selected: 'anthropic',
+    expected: { provider: 'anthropic', model: 'claude-haiku-5-5' },
+    stored: { provider: 'anthropic' },
+  },
+  {
+    label: 'Voice provider',
+    selected: 'groq',
+    expected: { provider: 'disabled', voice: 'groq', voiceModel: 'whisper-large-v3-turbo' },
+    stored: { voice: 'groq' },
+  },
+])(
+  'keeps malformed provider data until an explicit $label selection replaces it',
+  async ({ label, selected, expected, stored }) => {
+    const { ProviderSettingsSection } =
+      await import('../src/settings/sections/ProviderSettingsSection');
+    const { ProviderSecrets } = await import('../src/ai/providers/ProviderSecrets');
+    const port = memoryPort(markedStatic({ commandMode: null }), stateEnvelope());
+    const coordinator = new SettingsPersistenceCoordinator(port);
+    const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    const section = new ProviderSettingsSection({
+      app: await createAppWithFiles({}),
+      settings: () => settings.commandMode,
+      setSettings: (value) => {
+        settings.commandMode = value;
+      },
+      save: () => coordinator.saveSettings(settings),
+      secrets: new ProviderSecrets({ getSecret: () => null, setSecret: () => undefined }),
+    });
+    const container = createDiv();
+    section.render(container);
+    expect(settings.commandMode).toBeNull();
+    expect(
+      container.querySelector<HTMLInputElement>('select[aria-label="Agent model"]')?.disabled,
+    ).toBe(true);
+    const select = expectDefined(
+      container.querySelector<HTMLSelectElement>(`select[aria-label="${label}"]`),
+    );
+    expect(select.disabled).toBe(false);
+    select.value = selected;
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(parseProviderSettings(settings.commandMode)).toMatchObject(expected);
+    await coordinator.saveSettings(settings);
+    expect(port.staticData).toMatchObject({ commandMode: stored });
+    section.dispose();
+  },
+);
+
+it('corrects an invalid model without replacing the selected billing provider or extensions', async () => {
+  const { ProviderSettingsSection } =
+    await import('../src/settings/sections/ProviderSettingsSection');
+  const { ProviderSecrets } = await import('../src/ai/providers/ProviderSecrets');
+  const port = memoryPort(
+    markedStatic({
+      commandMode: { provider: 'openai', model: '', search: 'agent', voice: 'disabled', future: 7 },
+    }),
+    stateEnvelope(),
+  );
+  const coordinator = new SettingsPersistenceCoordinator(port);
+  const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+  const section = new ProviderSettingsSection({
+    app: await createAppWithFiles({}),
+    settings: () => settings.commandMode,
+    setSettings: (value) => {
+      settings.commandMode = value;
+    },
+    save: () => coordinator.saveSettings(settings),
+    secrets: new ProviderSecrets({ getSecret: () => null, setSecret: () => undefined }),
+  });
+  const container = createDiv();
+  section.render(container);
+  const model = expectDefined(
+    container.querySelector<HTMLInputElement>('select[aria-label="Agent model"]'),
+  );
+  model.value = 'gpt-6-luna';
+  model.dispatchEvent(new Event('change'));
+  expect(parseProviderSettings(settings.commandMode)).toMatchObject({
+    provider: 'openai',
+    model: 'gpt-6-luna',
+    future: 7,
+  });
+  expect(container.textContent).not.toContain('Provider settings need attention.');
+  section.dispose();
 });

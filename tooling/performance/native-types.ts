@@ -8,7 +8,7 @@ import type {
   TaskStatisticsSource,
   TimeTrackingQueryApi,
 } from '../../src/tasks';
-import type { FixtureKind } from './types.ts';
+import type { CommandProfile, FixtureKind } from './types.ts';
 
 export interface ProfilePlugin {
   queries: TaskQueryApi & TaskDependencyQueryApi & TimeTrackingQueryApi;
@@ -47,6 +47,34 @@ export interface NativeBridge {
   save(name: string, data: unknown): void;
   saveImage(name: string, base64: string): void;
   matchesWorkerSource(source: string): boolean;
+  mainSource(): { text: string; sha256: string };
+  window?: NativeWindow;
+}
+export interface NativeWindowState {
+  id: number;
+  visible: boolean;
+  focused: boolean;
+  minimized: boolean;
+}
+export interface NativeWindow {
+  state(): NativeWindowState;
+  hide(): void;
+  show(): void;
+}
+export interface RendererScript {
+  scriptId: string;
+  url: string;
+  debuggerUrl: string;
+  hash: string;
+  scriptStartLine: number;
+  scriptStartColumn: number;
+  startLine: number;
+  startColumn: number;
+  endLine: number;
+  endColumn: number;
+  prefixCharacters: number;
+  suffixCharacters: number;
+  mainSha256: string;
 }
 export interface NativeOptions {
   vault: string;
@@ -56,5 +84,8 @@ export interface NativeOptions {
   expectedRoots: number;
   expectedNodes: number;
   startup: boolean;
+  readonly api?: boolean;
+  readonly command?: CommandProfile;
+  readonly sourceSizes?: Record<string, { characters: number; bytes: number }>;
   viewport: string;
 }

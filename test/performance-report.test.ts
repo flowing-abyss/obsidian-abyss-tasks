@@ -2,7 +2,12 @@
 import { describe, expect, it } from 'vitest';
 import { parseRun, renderReport } from '../tooling/performance/report';
 import { compareRuns, summarize } from '../tooling/performance/statistics';
-import { scenarioIds, type ProfileRun } from '../tooling/performance/types';
+import {
+  completedWorkProblem,
+  fixtureScenarioProblem,
+  scenarioIds,
+  type ProfileRun,
+} from '../tooling/performance/types';
 
 function run(values: number[], overrides: Partial<ProfileRun> = {}): ProfileRun {
   return {
@@ -31,6 +36,82 @@ function run(values: number[], overrides: Partial<ProfileRun> = {}): ProfileRun 
 }
 
 describe('native performance statistics', () => {
+  it.each(['notes.search.continuation.first', 'notes.search.over-ceiling'])(
+    'requires exact actual prefix-call facts for %s',
+    (scenario) => {
+      const sample = run([10]).samples[0];
+      if (sample === undefined) throw new Error('Missing sample');
+      const facts = scenario.endsWith('first')
+        ? {
+            characters: 25,
+            bytes: 25,
+            sources: 1,
+            results: 1,
+            complete: false,
+            coverage: 'complete',
+          }
+        : {
+            characters: 4194305,
+            bytes: 4194307,
+            code: 'RESOURCE_LIMIT',
+            certifiedComplete: false,
+            readable: true,
+          };
+      expect(
+        completedWorkProblem({
+          ...sample,
+          scenario,
+          facts: { ...facts, pages: 3, emptyPrefixPages: 2 },
+        }),
+      ).toBeUndefined();
+      for (const invalid of [
+        { pages: 3 },
+        { pages: 3, emptyPrefixPages: 0 },
+        { pages: 0, emptyPrefixPages: -1 },
+      ]) {
+        expect(
+          completedWorkProblem({ ...sample, scenario, facts: { ...facts, ...invalid } }),
+        ).toContain('Invalid completed work');
+      }
+    },
+  );
+  it('rejects missing command work facts and mismatched selection identities', () => {
+    const sample = run([10]).samples[0];
+    if (sample === undefined) throw new Error('Missing sample');
+    const roster = scenarioIds('single-note', false, false, 'stress');
+    const stress = run([10], {
+      identity: { fixtureKind: 'single-note', startupOnly: false, commandProfile: 'stress' },
+      expectedScenarios: roster,
+      samples: roster.map((scenario) => ({
+        ...sample,
+        scenario,
+        facts: {
+          roots: 4000,
+          nodes: 6000,
+          writes: 1,
+          retainedRoots: 3999,
+          lineShift: scenario.endsWith('line-shift') ? 1 : 0,
+          exactBytes: true,
+        },
+      })),
+    });
+    expect(parseRun(JSON.stringify(stress))).toEqual(stress);
+    const invalid = {
+      ...stress,
+      samples: stress.samples.map((sample) => ({ ...sample, facts: {} })),
+    };
+    expect(() => parseRun(JSON.stringify(invalid))).toThrow('completed work');
+    expect(compareRuns(invalid, invalid).compatible).toBe(false);
+    expect(
+      fixtureScenarioProblem({
+        ...stress,
+        identity: { ...stress.identity, commandProfile: 'feature' },
+      }),
+    ).toBeDefined();
+    expect(
+      fixtureScenarioProblem({ ...stress, identity: { ...stress.identity, apiOnly: true } }),
+    ).toBeDefined();
+  });
   it('reports distribution without pretending low-count p95 is stable', () => {
     expect(summarize([100, 1, 4, 2, 3])).toEqual({
       n: 5,
@@ -211,5 +292,36 @@ describe('native performance statistics', () => {
     if (first === undefined) throw new Error('Missing fixture sample');
     missing.samples.push({ ...first, scenario: 'search' });
     expect(compareRuns(missing, missing).compatible).toBe(false);
+  });
+});
+
+describe('API profile selection identity', () => {
+  it('accepts historical ordinary rosters and validates API selection', () => {
+    const normal = {
+      identity: { fixtureKind: 'standard', startupOnly: false },
+      expectedScenarios: scenarioIds('standard', false),
+    };
+    expect(fixtureScenarioProblem(normal)).toBeUndefined();
+    expect(
+      fixtureScenarioProblem({ ...normal, identity: { ...normal.identity, apiOnly: false } }),
+    ).toBeUndefined();
+    const api = {
+      ...normal,
+      identity: { ...normal.identity, apiOnly: true },
+      expectedScenarios: ['startup.index', 'api.scan', 'api.status'],
+    };
+    expect(fixtureScenarioProblem(api)).toBeUndefined();
+    expect(
+      fixtureScenarioProblem({ ...api, expectedScenarios: normal.expectedScenarios }),
+    ).toBeDefined();
+    expect(
+      fixtureScenarioProblem({ ...normal, expectedScenarios: api.expectedScenarios }),
+    ).toBeDefined();
+    expect(
+      fixtureScenarioProblem({ ...api, identity: { ...api.identity, apiOnly: 'true' } }),
+    ).toBeDefined();
+    expect(
+      fixtureScenarioProblem({ ...api, identity: { ...api.identity, startupOnly: true } }),
+    ).toBeDefined();
   });
 });

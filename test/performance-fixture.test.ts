@@ -9,8 +9,58 @@ import {
   expectDefined,
   seedTaskCache,
 } from './helpers';
+import { CONCENTRATED_NOTE_AUDIT_TIMEOUT_MS } from './support/timeouts';
 
 describe('performance corpus', () => {
+  async function runConcentratedNoteFixtureAudit() {
+    const fixture = createFixture('2026-11-07', 'single-note');
+    expect(fixture).toEqual(createFixture('2026-11-07', 'single-note'));
+    expect(fixture).toMatchObject({ roots: 4000, nodes: 6000, maxRootsPerFile: 4000 });
+    const dense = `${FIXTURE_FOLDER}/projects/Project-000.md`;
+    expect(fixture.rootsPerFile[dense]).toBe(4000);
+    expect(Object.entries(fixture.rootsPerFile).filter(([, count]) => count > 0)).toEqual([
+      [dense, 4000],
+    ]);
+    for (const [name, size] of [
+      ['target', 262144],
+      ['over-target', 262145],
+      ['ceiling', 4194304],
+      ['over-ceiling', 4194305],
+    ] as const) {
+      const path = `${FIXTURE_FOLDER}/search/${name}/body.md`;
+      const body = expectDefined(fixture.files[path]);
+      expect(body).toHaveLength(size);
+      expect(fixture.sourceSizes[path]).toEqual({
+        characters: size,
+        bytes: Buffer.byteLength(body, 'utf8'),
+      });
+      expect(body).toMatch(/^quartzneedle /u);
+      expect(body).toMatch(/ amberneedle\n$/u);
+      expect(body.indexOf('amberneedle')).toBeGreaterThan(size - 20);
+      expect(body).not.toContain('- [');
+    }
+    const h = await createAppWithFiles(fixture.files);
+    const index = new TaskIndex(h, {
+      statusCatalog: canonicalStatusCatalog(),
+      excludeSource: (s) => s.filePath.endsWith('/archive.md'),
+    });
+    try {
+      await index.initialize();
+      expect(index.list()).toHaveLength(4000);
+      expect(index.listNodes()).toHaveLength(6000);
+      expect(index.list().every((task) => task.ref.filePath === dense)).toBe(true);
+      expect(index.list().filter((task) => task.title === 'Duplicate profile root')).toHaveLength(
+        2,
+      );
+    } finally {
+      index.destroy();
+    }
+  }
+  it(
+    'concentrates the unchanged population and records exact whole-source search sizes',
+    runConcentratedNoteFixtureAudit,
+    CONCENTRATED_NOTE_AUDIT_TIMEOUT_MS,
+  );
   it('is reproducible and changes identity when the calendar anchor changes', () => {
     const fixture = createFixture('2026-10-16');
     expect(fixture).toEqual(createFixture('2026-10-16'));

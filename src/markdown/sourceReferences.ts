@@ -114,6 +114,11 @@ function referencesOutsideFences(text: string): LinkToken[] | undefined {
   return tokens;
 }
 
+/** Proves no source reference or unclassified reference syntax remains outside code. */
+export function isSourceReferenceFree(text: string): boolean {
+  return referencesOutsideFences(text)?.length === 0;
+}
+
 function replaceTarget(link: LinkToken, target: string): string | undefined {
   const at =
     link.type === 'md' ? link.raw.lastIndexOf(link.target) : link.raw.indexOf(link.target, 2);

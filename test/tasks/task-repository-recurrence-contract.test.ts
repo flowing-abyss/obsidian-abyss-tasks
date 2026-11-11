@@ -1,128 +1,17 @@
-import { TFile, type App, type CachedMetadata } from 'obsidian';
+import { TFile, type CachedMetadata } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
-import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
-import { toStatusRules } from '../../src/settings/statusCatalogAdapter';
-import type {
-  RecurrenceCompletionRequest,
-  TaskRepository,
-} from '../../src/tasks/application/TaskRepository';
-import { StatusCatalog } from '../../src/tasks/domain/StatusCatalog';
+import type { TaskAcceptedOccurrenceChange } from '../../src/tasks/application/TaskIntegrationReadApi';
+import type { RecurrenceCompletionRequest } from '../../src/tasks/application/TaskRepository';
+import { atomDateTime } from '../../src/tasks/domain/commentTimestamp';
+import { recurrenceOwnedSubtree } from '../../src/tasks/domain/recurrenceIteration';
+import { taskNodeSourceLine, taskTreeNodes } from '../../src/tasks/domain/taskSearchProjection';
+import { timeEntryRef } from '../../src/tasks/domain/timeTracking';
 import type { TaskNodeRef, TaskSnapshot } from '../../src/tasks/domain/types';
 import { localDate } from '../../src/tasks/domain/validation';
-import { TaskIndex } from '../../src/tasks/infrastructure/TaskIndex';
-import {
-  TaskRefAuthority,
-  type TaskSnapshotState,
-} from '../../src/tasks/infrastructure/TaskRefAuthority';
-import { TaskBlockEditor } from '../../src/tasks/infrastructure/markdown/TaskBlockEditor';
-import { TaskLocator } from '../../src/tasks/infrastructure/markdown/TaskLocator';
-import { TaskMarkdownCodec } from '../../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
-import { ObsidianTaskRepository } from '../../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
-import { createAppWithFiles, flushMicrotasks, metadataChangedEmitter } from '../helpers';
-import { InMemoryTaskRepository } from '../support/InMemoryTaskRepository';
-import { expectDefined } from './../helpers';
-
-type Adapter = 'in-memory' | 'obsidian';
-
-interface Harness {
-  readonly app: App;
-  readonly repository: TaskRepository;
-  readonly snapshots: (content: string) => readonly TaskSnapshot[];
-  readonly read: () => Promise<string>;
-  readonly index: TaskIndex;
-  readonly authority: TaskRefAuthority;
-  readonly fireChanged: (file: TFile, data: string, cache: CachedMetadata) => void;
-}
-
-interface HarnessOptions {
-  readonly failFinalProjection?: boolean;
-  readonly session?: string;
-  readonly extraFiles?: Readonly<Record<string, string>>;
-}
-
+import { expectDefined, flushMicrotasks } from '../helpers';
+import { makeRepositoryHarness as makeHarness } from '../support/taskRepositoryHarness';
+type Harness = Awaited<ReturnType<typeof makeHarness>>;
 const path = 'tasks.md';
-
-async function makeHarness(
-  adapter: Adapter,
-  source: string,
-  options: HarnessOptions = {},
-): Promise<Harness> {
-  const files = { [path]: source, ...options.extraFiles };
-  const app = await createAppWithFiles(files);
-  const statusCatalog = new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses));
-  const codec = new TaskMarkdownCodec(statusCatalog);
-  const authority = new TaskRefAuthority(options.session ?? `${adapter}-session`);
-  const fireChanged = metadataChangedEmitter(app);
-  const index = new TaskIndex(app, {
-    statusCatalog,
-
-    refAuthority: authority,
-  });
-  await index.initialize();
-  for (const [filePath, content] of Object.entries(files)) {
-    index.installCommittedContent(filePath, content);
-  }
-  await flushMicrotasks();
-  const snapshotState: TaskSnapshotState = {
-    currentRoots: (path) => index.currentRoots(path),
-    installCommittedBatch: (contents, proof) => index.installCommittedBatch(contents, proof),
-    currentRoot: (filePath, line, blockSource) => index.currentRoot(filePath, line, blockSource),
-    previewContent: (filePath, content) => {
-      if (options.failFinalProjection === true && content !== source)
-        throw new Error('injected projection failure');
-      return index.previewContent(filePath, content);
-    },
-    installCommittedContent: (filePath, content) =>
-      index.installCommittedContent(filePath, content),
-  };
-  const snapshots = (content: string) => snapshotState.previewContent(path, content);
-  const snapshotsFromContent = (filePath: string, content: string) => {
-    if (options.failFinalProjection === true && content !== source)
-      throw new Error('injected projection failure');
-    return index.previewContent(filePath, content);
-  };
-  const locator = new TaskLocator(authority);
-  if (adapter === 'in-memory') {
-    const repository = new InMemoryTaskRepository({
-      files,
-      codec,
-      snapshotsFromContent,
-      locator,
-      refAuthority: authority,
-      snapshotState,
-    });
-    return {
-      app,
-      repository,
-      snapshots,
-      index,
-      authority,
-      fireChanged,
-      read: async () => repository.content(path) ?? '',
-    };
-  }
-  const repository = new ObsidianTaskRepository(app, {
-    codec,
-    editor: new TaskBlockEditor(),
-    locator,
-    snapshotsFromContent,
-    refAuthority: authority,
-    snapshotState,
-  });
-  return {
-    app,
-    repository,
-    snapshots,
-    index,
-    authority,
-    fireChanged,
-    read: async () => {
-      const file = app.vault.getAbstractFileByPath(path);
-      if (!(file instanceof TFile)) throw new Error('missing task file');
-      return app.vault.cachedRead(file);
-    },
-  };
-}
 
 function request(
   target: TaskNodeRef,
@@ -149,6 +38,32 @@ function rootTarget(harness: Harness, source: string, index = 0): TaskNodeRef {
 
 for (const adapter of ['in-memory', 'obsidian'] as const) {
   describe(`${adapter} recurrence repository contract`, () => {
+    it('honors an explicit semantic transition while ordinary done recurrence remains unchanged', async () => {
+      const source = '- [x] Repeat 🔁 every day 📅 2026-08-01 ❌ 2026-07-01\n';
+      const ordinary = await makeHarness(adapter, source);
+      const h = await makeHarness(adapter, source);
+      try {
+        await expect(
+          ordinary.repository.completeRecurrence(request(rootTarget(ordinary, source))),
+        ).resolves.toMatchObject({ type: 'committed', changed: false });
+        expect(await ordinary.read()).toBe(source);
+        await expect(
+          h.repository.completeRecurrence(
+            request(rootTarget(h, source), { semanticTransition: true }),
+          ),
+        ).resolves.toMatchObject({
+          type: 'committed',
+          changed: true,
+          outcome: { type: 'recurrence' },
+        });
+        expect(await h.read()).toBe(
+          '- [ ] Repeat 🔁 every day ➕ 2026-08-01 📅 2026-08-02\n- [x] Repeat 🔁 every day 📅 2026-08-01 ✅ 2026-08-01\n',
+        );
+      } finally {
+        ordinary.index.destroy();
+        h.index.destroy();
+      }
+    });
     it('promotes a subtree with an owned multiline comment and preserves source bytes', async () => {
       const source =
         '- [ ] Root\r\n  - [ ] Move\r\n    - 2026-10-06: first\r\n      \\- [ ] literal\r\n      tail  ';
@@ -1186,3 +1101,267 @@ describe('Obsidian recurrence transaction boundary', () => {
     expect(await harness.read()).toBe(source);
   });
 });
+
+for (const adapter of ['in-memory', 'obsidian'] as const) {
+  describe(`${adapter} occurrence producers`, () => {
+    it.each([false, true])(
+      'restores tracking Undo bytes but invalidates occurrences (nested=%s)',
+      async (nested) => {
+        const source =
+          '- [ ] Root\n  - 2026-08-01T10:00:00Z →\n  - [ ] Child\n    - 2026-08-01T11:00:00Z →\n    - [ ] Grandchild\n  - [ ] Sibling\n';
+        const h = await makeHarness(adapter, source);
+        try {
+          const reads = h.index.integrationReads();
+          reads.activateOccurrences();
+          const changes: TaskAcceptedOccurrenceChange[] = [];
+          reads.subscribe((event) => {
+            if (event.type === 'accepted') changes.push(event.change);
+          });
+          const root = expectDefined(h.index.list()[0]);
+          const node = nested ? expectDefined(root.subtasks[0]) : root;
+          const target: TaskNodeRef = nested
+            ? { type: 'subtask', ref: expectDefined(root.subtasks[0]).ref }
+            : { type: 'task', ref: root.ref };
+          const removed = await h.repository.edit({
+            type: 'delete-time-entry',
+            entry: timeEntryRef(target, expectDefined(node.timeEntries[0])),
+          });
+          expect(removed).toMatchObject({ type: 'committed', changed: true });
+          if (removed.type !== 'committed' || removed.outcome.type !== 'task')
+            throw new Error('Missing removal recovery');
+          const recovery = expectDefined(removed.outcome.timeEntryRemovalRecovery);
+          expect(changes.flatMap((change) => change.witnesses).map((value) => value.kind)).toEqual([
+            'continued',
+            'continued',
+            'continued',
+            'continued',
+          ]);
+          expect(changes.flatMap((change) => change.invalidated)).toEqual([]);
+          const page = reads.page({}, 20);
+          if (page.type !== 'ok') throw new Error('Missing current nodes');
+          const predecessors = page.value.nodes.map((node) => node.address);
+          changes.length = 0;
+          expect(
+            await h.repository.edit({ type: 'restore-time-entry', ...recovery }),
+          ).toMatchObject({ type: 'committed', changed: true });
+          expect(await h.read()).toBe(source);
+          expect(changes.flatMap((change) => change.witnesses)).toEqual([]);
+          expect(changes.flatMap((change) => change.invalidated)).toEqual(predecessors);
+        } finally {
+          h.index.destroy();
+        }
+      },
+    );
+
+    it('leaves Delete content unchanged when authority staging rejects', async () => {
+      const source = '- [ ] Root 🏁 delete\n  - [ ] Child\n';
+      const h = await makeHarness(adapter, source);
+      try {
+        h.index.integrationReads().activateOccurrences();
+        vi.spyOn(h.authority, 'stage').mockReturnValue({ type: 'conflict' });
+        const root = expectDefined(h.index.list()[0]);
+        expect(
+          await h.repository.edit({
+            type: 'set-status',
+            target: { type: 'task', ref: root.ref },
+            symbol: 'x',
+            stamp: localDate('2026-08-01'),
+          }),
+        ).toMatchObject({ type: 'conflict' });
+        expect(await h.read()).toBe(source);
+      } finally {
+        h.index.destroy();
+      }
+    });
+
+    it('continues deep nodes through field, comment and tracking edits', async () => {
+      const h = await makeHarness(adapter, '- [ ] Root\n  - [ ] Child\n    - [ ] Grandchild\n');
+      try {
+        const reads = h.index.integrationReads();
+        reads.activateOccurrences();
+        const changes: TaskAcceptedOccurrenceChange[] = [];
+        reads.subscribe((event) => {
+          if (event.type === 'accepted') changes.push(event.change);
+        });
+        let root = expectDefined(h.index.list()[0]);
+        const deep = expectDefined(expectDefined(root.subtasks[0]).subtasks[0]);
+        expect(
+          await h.repository.edit({
+            type: 'set-status',
+            target: { type: 'subtask', ref: deep.ref },
+            symbol: 'x',
+            stamp: localDate('2026-08-01'),
+          }),
+        ).toMatchObject({ type: 'committed' });
+        root = expectDefined(h.index.list()[0]);
+        expect(
+          await h.repository.edit({
+            type: 'add-comment',
+            parent: { type: 'task', ref: root.ref },
+            text: 'first\nsecond',
+            stamp: atomDateTime('2026-08-01T10:00:00Z'),
+          }),
+        ).toMatchObject({ type: 'committed' });
+        root = expectDefined(h.index.list()[0]);
+        expect(
+          await h.repository.edit({
+            type: 'add-time-entry',
+            parent: { type: 'task', ref: root.ref },
+            stamp: atomDateTime('2026-08-01T10:00:00Z'),
+          }),
+        ).toMatchObject({ type: 'committed' });
+        root = expectDefined(h.index.list()[0]);
+        expect(
+          await h.repository.edit({
+            type: 'close-time-entry',
+            entry: timeEntryRef(
+              { type: 'task', ref: root.ref },
+              expectDefined(root.timeEntries[0]),
+            ),
+            stamp: atomDateTime('2026-08-01T10:00:01Z'),
+            endMs: Date.parse('2026-08-01T10:00:01Z'),
+            minimumMs: 2000,
+          }),
+        ).toMatchObject({ type: 'committed' });
+        expect(changes.filter((change) => change.witnesses.length > 0)).toHaveLength(4);
+        for (const change of changes.filter((value) => value.witnesses.length > 0)) {
+          expect(change.witnesses.map((value) => value.kind)).toEqual([
+            'continued',
+            'continued',
+            'continued',
+          ]);
+          expect(change.invalidated).toEqual([]);
+        }
+      } finally {
+        h.index.destroy();
+      }
+    });
+
+    for (const nested of [false, true])
+      for (const deletes of [false, true]) {
+        const indent = nested ? '  ' : '';
+        const history = deletes ? '' : `${indent}  - 2026-08-01T10:00:00Z →\n`;
+        it.each(['before', 'after'] as const)(
+          `witnesses every recurrence node nested=${nested} delete=${deletes} placement=%s`,
+          async (placement) => {
+            const selected = `${indent}- [ ] Repeat 🔁 every day${deletes ? ' 🏁 delete' : ''}\n${history}${indent}  - [ ] Child\n${indent}    - [ ] Grandchild\n`;
+            const source = nested ? `- [ ] Container\n${selected}  - [ ] Sibling\n` : selected;
+            const h = await makeHarness(adapter, source);
+            try {
+              const reads = h.index.integrationReads();
+              reads.activateOccurrences();
+              const changes: TaskAcceptedOccurrenceChange[] = [];
+              reads.subscribe((event) => {
+                if (event.type === 'accepted') changes.push(event.change);
+              });
+              const oldRoot = expectDefined(h.snapshots(source)[0]);
+              const target: TaskNodeRef = nested
+                ? { type: 'subtask', ref: expectDefined(oldRoot.subtasks[0]).ref }
+                : { type: 'task', ref: oldRoot.ref };
+              const result = await h.repository.completeRecurrence(
+                request(target, { placement, addCreatedDate: false, addCompletionDate: false }),
+              );
+              expect(result.type).toBe('committed');
+              const change = expectDefined(changes.find((value) => value.witnesses.length > 0));
+              const allBefore = [...taskTreeNodes(oldRoot)];
+              const recurringOffset = taskNodeSourceLine(target) - oldRoot.source.line;
+              const selectedBefore = allBefore.filter(
+                (value) => !nested || value.path[0] === oldRoot.subtasks[0],
+              );
+              expect(change.witnesses.filter((value) => value.kind === 'created')).toHaveLength(
+                selectedBefore.length,
+              );
+              expect(change.witnesses.filter((value) => value.kind === 'removed')).toHaveLength(
+                deletes ? selectedBefore.length : 0,
+              );
+              expect(change.witnesses.filter((value) => value.kind === 'continued')).toHaveLength(
+                allBefore.length - (deletes ? selectedBefore.length : 0),
+              );
+              expect(change.invalidated).toEqual([]);
+              if (result.type !== 'committed' || result.outcome.type !== 'recurrence')
+                throw new Error('Missing recurrence');
+              const active = result.outcome.active;
+              expect(h.index.authoritySuccessor(oldRoot.ref)).toEqual(active.root.ref);
+              const activeOffset = taskNodeSourceLine(active.target) - active.root.source.line;
+              const activeOwnership = expectDefined(
+                recurrenceOwnedSubtree(active.root.source.originalBlock, activeOffset),
+              );
+              const created = change.witnesses.filter((value) => value.kind === 'created');
+              expect(created.map((value) => value.after.nodeOffset)).toEqual(
+                activeOwnership.taskLines,
+              );
+              expect(
+                created.every(
+                  (value) =>
+                    value.after.rootRevision === active.root.ref.revision &&
+                    value.after.rootLine === active.root.source.line,
+                ),
+              ).toBe(true);
+              const nextOffsets = new Set(activeOwnership.taskLines);
+              expect(
+                change.witnesses.some(
+                  (value) =>
+                    value.kind === 'continued' &&
+                    value.after.rootRevision === active.root.ref.revision &&
+                    nextOffsets.has(value.after.nodeOffset),
+                ),
+              ).toBe(false);
+
+              expect(
+                change.witnesses.some(
+                  (value) =>
+                    value.kind === 'continued' &&
+                    value.before.rootRevision === oldRoot.ref.revision &&
+                    value.before.nodeOffset === recurringOffset &&
+                    value.after.rootRevision === active.root.ref.revision &&
+                    value.after.nodeOffset === activeOffset,
+                ),
+              ).toBe(false);
+              if (deletes) expect(await h.read()).toBe(source);
+            } finally {
+              h.index.destroy();
+            }
+          },
+        );
+      }
+    it.each([false, true])('witnesses ordinary Delete descendants nested=%s', async (nested) => {
+      const selected = '- [ ] Remove 🏁 delete\n  - [ ] Child\n';
+      const source = nested
+        ? `- [ ] Container\n${selected
+            .split('\n')
+            .filter(Boolean)
+            .map((line) => `  ${line}\n`)
+            .join('')}  - [ ] Sibling\n`
+        : selected;
+      const h = await makeHarness(adapter, source);
+      try {
+        const reads = h.index.integrationReads();
+        reads.activateOccurrences();
+        const changes: TaskAcceptedOccurrenceChange[] = [];
+        reads.subscribe((event) => {
+          if (event.type === 'accepted') changes.push(event.change);
+        });
+        const root = expectDefined(h.snapshots(source)[0]);
+        const target: TaskNodeRef = nested
+          ? { type: 'subtask', ref: expectDefined(root.subtasks[0]).ref }
+          : { type: 'task', ref: root.ref };
+        expect(
+          await h.repository.edit({
+            type: 'set-status',
+            target,
+            symbol: 'x',
+            stamp: localDate('2026-08-01'),
+          }),
+        ).toMatchObject({ type: 'committed' });
+        const change = expectDefined(changes.find((value) => value.witnesses.length > 0));
+        expect(change.witnesses.filter((value) => value.kind === 'removed')).toHaveLength(2);
+        expect(change.witnesses.filter((value) => value.kind === 'continued')).toHaveLength(
+          nested ? 2 : 0,
+        );
+        expect(change.invalidated).toEqual([]);
+      } finally {
+        h.index.destroy();
+      }
+    });
+  });
+}

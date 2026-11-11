@@ -81,6 +81,8 @@ export interface ProjectsSettings {
 import type { TimeTrackingReminderInterval } from './timeTrackingReminderSettings';
 
 export interface CalendarSettings {
+  /** Preserved verbatim; each provider validates the preferences it uses before execution. */
+  commandMode: unknown;
   firstDayOfWeek: 0 | 1 | 2 | 3 | 4 | 5 | 6;
   timeTrackingReminderMinutes: TimeTrackingReminderInterval;
   taskPrefix: string;

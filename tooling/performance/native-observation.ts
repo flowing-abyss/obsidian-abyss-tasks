@@ -1,4 +1,127 @@
+import type { NativeWindow, NativeWindowState } from './native-types.ts';
+import { bounded, type PendingWork } from './profiler.ts';
 import type { Sample } from './types.ts';
+
+type WindowEvidence = NativeWindowState & { documentVisibility: DocumentVisibilityState };
+interface HiddenEvidence {
+  before: WindowEvidence;
+  hidden?: WindowEvidence;
+  hiddenEnd?: WindowEvidence;
+  restored?: WindowEvidence;
+  frameGapIsIntentional: true;
+}
+export class HiddenWindowObservation {
+  private active: { controller: AbortController; evidence: HiddenEvidence } | undefined;
+  private restoration: Promise<void> | undefined;
+  constructor(
+    private readonly native: NativeWindow,
+    private readonly owner: Document,
+    private readonly save: (evidence: HiddenEvidence) => void,
+    private readonly pending: PendingWork,
+  ) {}
+  private state(): WindowEvidence {
+    return { ...this.native.state(), documentVisibility: this.owner.visibilityState };
+  }
+  async run(action: (signal: AbortSignal) => Promise<Sample['facts']>): Promise<Sample['facts']> {
+    const before = this.state();
+    if (
+      this.active !== undefined ||
+      !before.visible ||
+      !before.focused ||
+      before.minimized ||
+      before.documentVisibility !== 'visible'
+    )
+      throw new Error('Hidden diagnostic requires the visible focused original window');
+    const evidence: HiddenEvidence = { before, frameGapIsIntentional: true };
+    const controller = new AbortController();
+    this.active = { controller, evidence };
+    this.restoration = undefined;
+    try {
+      await this.visibility(
+        'hidden',
+        () => {
+          this.native.hide();
+        },
+        controller.signal,
+      );
+      evidence.hidden = this.hidden(before.id);
+      const facts = await bounded(
+        this.pending.track(action(controller.signal)),
+        30000,
+        'hidden note search',
+      );
+      evidence.hiddenEnd = this.hidden(before.id);
+      return facts;
+    } finally {
+      try {
+        await this.restore();
+      } finally {
+        this.save(evidence);
+        this.active = undefined;
+      }
+    }
+  }
+  private hidden(id: number): WindowEvidence {
+    const state = this.state();
+    if (state.id !== id || state.visible || state.documentVisibility !== 'hidden')
+      throw new Error('Hidden diagnostic window identity or visibility changed');
+    return state;
+  }
+  async restore(): Promise<void> {
+    const active = this.active;
+    if (active === undefined) return;
+    this.restoration ??= this.restoreWindow(active);
+    await this.restoration;
+  }
+  private async restoreWindow(
+    active: NonNullable<HiddenWindowObservation['active']>,
+  ): Promise<void> {
+    active.controller.abort();
+    if (this.native.state().id !== active.evidence.before.id)
+      throw new Error('Refusing to restore a different native window');
+    await this.visibility('visible', () => {
+      this.native.show();
+    });
+    const restored = this.state();
+    this.recordRestored(active, restored);
+    if (JSON.stringify(restored) !== JSON.stringify(active.evidence.before))
+      throw new Error('Original native window state was not restored');
+  }
+  private recordRestored(
+    active: NonNullable<HiddenWindowObservation['active']>,
+    restored: WindowEvidence,
+  ): void {
+    if (this.active !== active) throw new Error('Hidden observation owner changed');
+    active.evidence.restored = restored;
+  }
+  private async visibility(
+    state: DocumentVisibilityState,
+    change: () => void,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    let check = (): void => {},
+      abort = (): void => {};
+    const pending = new Promise<void>((resolve, reject) => {
+      check = () => {
+        if (this.owner.visibilityState === state) resolve();
+      };
+      abort = () => {
+        reject(new Error('Hidden diagnostic aborted'));
+      };
+    });
+    this.owner.addEventListener('visibilitychange', check);
+    signal?.addEventListener('abort', abort, { once: true });
+    try {
+      if (signal?.aborted === true) throw new Error('Hidden diagnostic aborted');
+      change();
+      check();
+      await bounded(pending, 30000, `window visibility ${state}`);
+    } finally {
+      this.owner.removeEventListener('visibilitychange', check);
+      signal?.removeEventListener('abort', abort);
+    }
+  }
+}
 
 export function activityMetrics(
   entries: ReadonlyArray<Pick<PerformanceEntry, 'startTime' | 'duration'>>,

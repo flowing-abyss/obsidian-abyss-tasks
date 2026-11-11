@@ -1,4 +1,5 @@
 import {
+  completedWorkProblem,
   fixtureScenarioProblem,
   type Comparison,
   type Distribution,
@@ -77,7 +78,10 @@ export function sampleProblems(
   count?: number,
 ): string[] {
   const iterations = [...new Set(samples.map((s) => s.iteration))].sort((a, b) => a - b);
-  const reasons: string[] = [];
+  const reasons: string[] = samples.flatMap((sample) => {
+    const problem = completedWorkProblem(sample);
+    return problem === undefined ? [] : [problem];
+  });
   if (iterations.some((n, i) => n !== i) || (count !== undefined && iterations.length !== count))
     reasons.push('Incomplete iteration sequence');
   const keys = samples.map((s) => `${s.iteration}:${s.scenario}`);

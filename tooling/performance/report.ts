@@ -1,5 +1,11 @@
 import { summarize } from './statistics.ts';
-import { fixtureScenarioProblem, type Comparison, type ProfileRun, type Sample } from './types.ts';
+import {
+  completedWorkProblem,
+  fixtureScenarioProblem,
+  type Comparison,
+  type ProfileRun,
+  type Sample,
+} from './types.ts';
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -66,6 +72,7 @@ export function parseRun(json: string): ProfileRun {
   const run = value as unknown as ProfileRun;
   const problem = fixtureScenarioProblem(run);
   if (problem !== undefined) throw new Error(problem);
+  assertCompletedWork(run.samples);
   return run;
 }
 
@@ -140,4 +147,11 @@ export function renderComparison(result: Comparison): string {
     ),
     '',
   ].join('\n');
+}
+
+function assertCompletedWork(samples: readonly Sample[]): void {
+  for (const sample of samples) {
+    const problem = completedWorkProblem(sample);
+    if (problem !== undefined) throw new Error(problem);
+  }
 }

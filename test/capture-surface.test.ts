@@ -704,3 +704,109 @@ it('treats an untouched date seed as empty under the surface blur policy', async
   controller.destroy();
   base.controller.destroy();
 });
+
+describe('Q extension arbitration', () => {
+  it('keeps command input and Enter outside ordinary capture, with a Q-only newline control', async () => {
+    const { controller, execute } = harness();
+    let commandText = '';
+    let submissions = 0;
+    const surface = new CaptureSurface(host(), controller, {
+      extend: () => ({
+        active: () => true,
+        input: (text: string) => {
+          commandText = text;
+        },
+        submit: () => {
+          submissions++;
+        },
+        escape: () => {},
+        destroy: () => {},
+      }),
+    });
+    expect(surface.input.tagName).toBe('TEXTAREA');
+    type(surface, 'First\nSecond');
+    expect(commandText).toBe('First\nSecond');
+    const newline = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      shiftKey: true,
+      cancelable: true,
+      bubbles: true,
+    });
+    surface.input.dispatchEvent(newline);
+    expect(newline.defaultPrevented).toBe(false);
+    key(surface, 'Enter');
+    surface.input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', repeat: true, cancelable: true }),
+    );
+    surface.input.dispatchEvent(new FocusEvent('blur', { relatedTarget: document.body }));
+    await flushMicrotasks(0);
+    expect(submissions).toBe(1);
+    expect(execute).not.toHaveBeenCalled();
+    expect(controller.snapshot().draft).toBe('');
+    surface.destroy();
+  });
+
+  it('retains composition ownership through its final Enter and owns detached menu focus', async () => {
+    const { controller, execute } = harness();
+    let submissions = 0;
+    let escapes = 0;
+    const menu = document.body.createDiv();
+    const surface = new CaptureSurface(host(), controller, {
+      extend: ({ registerSurface }) => {
+        const release = registerSurface(menu);
+        return {
+          active: () => true,
+          input: () => {},
+          submit: () => {
+            submissions++;
+          },
+          escape: () => {
+            escapes++;
+          },
+          destroy: release,
+        };
+      },
+    });
+    expect(surface.ownsInteraction(menu)).toBe(true);
+    surface.input.dispatchEvent(new CompositionEvent('compositionstart'));
+    key(surface, 'Enter');
+    key(surface, 'Escape');
+    surface.input.dispatchEvent(new CompositionEvent('compositionend'));
+    key(surface, 'Enter');
+    expect(submissions).toBe(0);
+    await flushMicrotasks(0);
+    key(surface, 'Enter');
+    key(surface, 'Escape');
+    expect(submissions).toBe(1);
+    expect(escapes).toBe(1);
+    expect(execute).not.toHaveBeenCalled();
+    surface.destroy();
+    expect(surface.ownsInteraction(menu)).toBe(false);
+    menu.remove();
+  });
+});
+
+it('preserves single-line paste sanitization in ordinary Q and keeps command newlines', async () => {
+  const { controller, execute } = harness();
+  let active = false;
+  const extensionInput = vi.fn();
+  const surface = new CaptureSurface(host(), controller, {
+    extend: () => ({
+      active: () => active,
+      input: extensionInput,
+      submit: () => {},
+      escape: () => {},
+      destroy: () => {},
+    }),
+  });
+  type(surface, 'First\r\nSecond\nThird');
+  expect(surface.input.value).toBe('FirstSecondThird');
+  expect(controller.snapshot().draft).toBe('FirstSecondThird');
+  key(surface, 'Enter');
+  await flushMicrotasks(0);
+  expect(execute).toHaveBeenCalledWith({ markdownBody: 'FirstSecondThird #inbox' });
+  active = true;
+  type(surface, 'Command\nline two');
+  expect(extensionInput).toHaveBeenLastCalledWith('Command\nline two');
+  surface.destroy();
+});

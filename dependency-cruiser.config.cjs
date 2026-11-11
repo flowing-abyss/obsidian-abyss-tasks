@@ -2,6 +2,22 @@
 module.exports = {
   forbidden: [
     {
+      name: 'public-task-api-depends-inward',
+      comment: 'The public facade acquires task capabilities only through the public inward entry.',
+      severity: 'error',
+      from: { path: '^src/integrations/' },
+      to: {
+        pathNot: [
+          '^src/integrations/',
+          '^src/tasks/index[.]ts$',
+          '^src/projects/projectApi[.]ts$',
+          '^src/notes/(?:noteApi|NoteSourceApi)[.]ts$',
+          '^api[.]d[.]ts$',
+          '^src/markdown/tagSyntax[.]ts$',
+        ],
+      },
+    },
+    {
       name: 'no-circular',
       comment:
         'Import cycles are hard to spot in a diff and easy to introduce as src/ grows past main.ts.',
@@ -41,7 +57,7 @@ module.exports = {
       comment: 'Task application may depend only on application ports and domain contracts.',
       severity: 'error',
       from: { path: '^src/tasks/application/' },
-      to: { pathNot: '^src/tasks/(?:application|domain)/' },
+      to: { pathNot: ['^src/tasks/(?:application|domain)/', '^src/notes/NoteSourceApi[.]ts$'] },
     },
     {
       name: 'browser-task-scheduler-is-neutral',
@@ -79,6 +95,7 @@ module.exports = {
         pathNot: [
           '^src/tasks/(?:infrastructure|application|domain)/',
           '^src/markdown/',
+          '^src/notes/(?:noteApi|NoteSourceApi)[.]ts$',
           '^obsidian$',
         ],
       },

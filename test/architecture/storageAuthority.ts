@@ -21,11 +21,95 @@ export interface StorageAuthorization {
 // transactions. This adds the raw settings port and resolves the actual APIs.
 export const STORAGE_AUTHORIZATIONS: readonly StorageAuthorization[] = [
   {
+    file: 'src/main.ts',
+    owner: 'TaskCalendarPlugin.commandSessionStorage.ensureDirectory',
+    api: 'DataAdapter.mkdir',
+    reason:
+      'Creates only the sessions directory under the actual plugin directory for scoped history files.',
+  },
+  {
+    file: 'src/main.ts',
+    owner: 'TaskCalendarPlugin.commandSessionStorage.write',
+    api: 'DataAdapter.write',
+    reason:
+      'Creates only a UUID session file or command-session-state.json after absence checking; CommandSessionStore validates exact readback before admitting native writes.',
+  },
+  {
+    file: 'src/main.ts',
+    owner: 'TaskCalendarPlugin.commandSessionStorage.write',
+    api: 'DataAdapter.process',
+    reason:
+      'Updates only a scoped history file after comparing the exact previous bytes inside the native process callback.',
+  },
+  {
+    file: 'src/main.ts',
+    owner: 'TaskCalendarPlugin.commandSessionStorage.remove',
+    api: 'DataAdapter.remove',
+    reason:
+      'Removes only a validated UUID session file after the store has durably verified its deletion marker.',
+  },
+  {
+    file: 'src/main.ts',
+    owner: 'TaskCalendarPlugin.commandSessionStorage.clearLegacy',
+    api: 'App.saveLocalStorage',
+    reason:
+      'Retires only the legacy command-session key after every imported JSON file and its import marker pass readback verification.',
+  },
+  {
+    file: 'src/ai/providers/ChatGptPlan.ts',
+    owner: 'ChatGptPlan.read',
+    api: 'SecretStorage.getSecret',
+    reason:
+      'Reads only the plugin-owned local OAuth registration, including its active account and rotating grant.',
+  },
+  {
+    file: 'src/ai/providers/ChatGptPlan.ts',
+    owner: 'ChatGptPlan.write',
+    api: 'SecretStorage.setSecret',
+    reason:
+      'Atomically replaces only the plugin-owned ChatGPT registration, preserving other accounts and sign-in host identity.',
+  },
+  {
+    file: 'src/ai/providers/ProviderSecrets.ts',
+    owner: 'ProviderSecrets.store',
+    api: 'SecretStorage.setSecret',
+    reason:
+      'Stores or clears only the six fixed plugin credential IDs through vault-scoped host secret storage.',
+  },
+  {
+    file: 'src/ai/providers/ProviderSecrets.ts',
+    owner: 'ProviderSecrets.read',
+    api: 'SecretStorage.getSecret',
+    reason:
+      'Resolves only a selected plugin credential for provider requests or presence-only settings feedback; never enumerates unrelated secrets.',
+  },
+  {
+    file: 'src/notes/NoteApplicationService.ts',
+    owner: 'NoteApplicationService.commitPreparedSection',
+    api: 'Vault.process',
+    reason:
+      'Writes one previously read prose section only after exact note identity, revision, live bytes, source policy and unchanged frontmatter/task ownership checks.',
+  },
+  {
     file: 'src/tasks/infrastructure/obsidian/ObsidianTaskRepository.ts',
     owner: 'ObsidianTaskRepository.cleanupEmptyTaskNote_abyssPrivate',
     api: 'FileManager.trashFile',
     reason:
       'Removes only an empty configured task note after explicit root deletion, fresh byte and identity proof, and unchanged policy.',
+  },
+  {
+    file: 'src/projects/ProjectManager.ts',
+    owner: 'ProjectManager.updateIntegrationProject',
+    api: 'Vault.process',
+    reason:
+      'Applies one typed metadata batch only to the pinned file after live and candidate project scope checks.',
+  },
+  {
+    file: 'src/notes/NoteTemplateService.ts',
+    owner: 'NoteTemplateService.commitStaticNote',
+    api: 'Vault.create',
+    reason:
+      'Creates one final note after rechecking the static template, settings, destination and permitted source scope.',
   },
   {
     file: 'src/projects/ProjectManager.ts',
@@ -56,13 +140,15 @@ export const STORAGE_AUTHORIZATIONS: readonly StorageAuthorization[] = [
     file: 'src/notes/NoteTemplateService.ts',
     owner: 'NoteTemplateService.createPreparedNote',
     api: 'Vault.create',
-    reason: 'Creates the owned destination before applying an optional template.',
+    reason:
+      'Creates the owned destination for eager capture or confirmed template-first creation before optional guarded template application.',
   },
   {
     file: 'src/notes/NoteTemplateService.ts',
     owner: 'NoteTemplateService.applyTemplate',
     api: 'Vault.process',
-    reason: 'Applies output only while the destination matches the owned preparation snapshot.',
+    reason:
+      'Applies output only while the destination matches the owned preparation snapshot; confirmed creation also checks the frozen template and current destination/source policy.',
   },
   {
     file: 'src/tags/TagManager.ts',
@@ -92,10 +178,17 @@ export const STORAGE_AUTHORIZATIONS: readonly StorageAuthorization[] = [
 ];
 
 const SINKS = new Set([
+  'App.saveLocalStorage',
+  'SecretStorage.setSecret',
+  'SecretStorage.getSecret',
+  'SecretStorage.listSecrets',
   'Vault.process',
   'Vault.modify',
   'Vault.append',
   'Vault.create',
+  'DataAdapter.process',
+  'DataAdapter.remove',
+  'DataAdapter.mkdir',
   'DataAdapter.write',
   'DataAdapter.append',
   'FileManager.processFrontMatter',

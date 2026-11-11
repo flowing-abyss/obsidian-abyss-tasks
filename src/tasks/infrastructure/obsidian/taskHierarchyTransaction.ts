@@ -4,6 +4,7 @@ import type {
   RevisionPrecondition,
   TaskHierarchyPhase,
   TaskHierarchyRequest,
+  TaskPreparedHierarchy,
   TaskRepositoryResult,
 } from '../../application/TaskRepository';
 import {
@@ -53,6 +54,10 @@ interface Context extends HierarchyCapabilities {
   readonly request: TaskHierarchyRequest;
   readonly sources: Source[];
   owner: OwnedSourceMutation | undefined;
+  readonly sealed?: {
+    readonly before: ReadonlyMap<string, string>;
+    readonly after: ReadonlyMap<string, string>;
+  };
   prepared?: PreparedHierarchyTransfer;
   phase: TaskHierarchyPhase;
   path?: string;
@@ -167,7 +172,10 @@ function endpoint(
     },
   };
 }
-function prepare(context: Context, contents: ReadonlyMap<string, string>): void {
+function candidate(
+  context: Context,
+  contents: ReadonlyMap<string, string>,
+): PreparedHierarchyTransfer {
   const { request } = context;
   const source = endpoint(context, request.source, hierarchySource(request.command), contents);
   const parent =
@@ -195,6 +203,18 @@ function prepare(context: Context, contents: ReadonlyMap<string, string>): void 
       }),
   });
   if (prepared.type !== 'prepared') throw new HierarchyFailure(invalidTaskTarget('hierarchy'));
+  return prepared;
+}
+function prepare(context: Context, contents: ReadonlyMap<string, string>): void {
+  const prepared = candidate(context, contents);
+  if (
+    context.sealed !== undefined &&
+    (contents.size !== context.sealed.before.size ||
+      prepared.contents.size !== context.sealed.after.size ||
+      [...contents].some(([path, text]) => context.sealed?.before.get(path) !== text) ||
+      [...prepared.contents].some(([path, text]) => context.sealed?.after.get(path) !== text))
+  )
+    throw new HierarchyFailure(invalidTaskTarget('hierarchy'));
   context.prepared = prepared;
   capturePopulations(context, prepared, contents);
   enter(context, 'reservation');
@@ -260,6 +280,9 @@ function confirmPopulations(
 }
 function prove(context: Context, roots: readonly TaskSnapshot[]): TaskHierarchyOutcome {
   confirmPopulations(context, roots, 'roots');
+  return movedOutcome(context, roots);
+}
+function movedOutcome(context: Context, roots: readonly TaskSnapshot[]): TaskHierarchyOutcome {
   const prepared = context.prepared;
   const moved = enumerateTaskNodes(roots).find(
     (node) =>
@@ -434,6 +457,133 @@ function hasCapabilities(options: HierarchyOptions): options is HierarchyCapabil
     options.authority !== undefined
   );
 }
+function nodeCoordinates(node: TaskNodeSnapshot): string {
+  return `${node.root.ref.filePath}\0${node.root.source.line + node.path.reduce((line, child) => line + child.ref.relativeLine, 0)}`;
+}
+function hierarchyContinuations(
+  prepared: PreparedHierarchyTransfer,
+  beforeRoots: readonly TaskSnapshot[],
+  afterRoots: readonly TaskSnapshot[],
+): Array<{ before: TaskNodeRef; after: TaskNodeRef }> {
+  const before = new Map(
+    enumerateTaskNodes(beforeRoots).map((node) => [nodeCoordinates(node), node.target]),
+  );
+  const after = new Map(
+    enumerateTaskNodes(afterRoots).map((node) => [nodeCoordinates(node), node.target]),
+  );
+  const continuations = prepared.correspondence.flatMap((pair) => {
+    const origin = before.get(`${pair.before.filePath}\0${pair.before.line}`);
+    if (origin === undefined) return [];
+    const target = after.get(`${pair.after.filePath}\0${pair.after.line}`);
+    if (target === undefined) throw new HierarchyFailure();
+    return [{ before: origin, after: target }];
+  });
+  if (continuations.length !== before.size || before.size !== after.size)
+    throw new HierarchyFailure();
+  return continuations;
+}
+function hierarchyReview(
+  request: TaskHierarchyRequest,
+  roots: { before: readonly TaskSnapshot[]; after: readonly TaskSnapshot[] },
+  continuations: ReadonlyArray<{ before: TaskNodeRef; after: TaskNodeRef }>,
+  moved: TaskSnapshot,
+): { before: TaskSnapshot[]; after: TaskSnapshot[] } {
+  const participants = [
+    request.source.baseRoot,
+    ...(request.parent === undefined ? [] : [request.parent.baseRoot]),
+  ];
+  const before = roots.before.filter((root) =>
+    participants.some((participant) =>
+      sameTaskNodeRef({ type: 'task', ref: root.ref }, { type: 'task', ref: participant.ref }),
+    ),
+  );
+  const successors = before.map((root) => {
+    const continuation = continuations.find((pair) =>
+      sameTaskNodeRef(pair.before, { type: 'task', ref: root.ref }),
+    );
+    if (continuation === undefined) throw new HierarchyFailure();
+    return taskNodeRootRef(continuation.after);
+  });
+  successors.push(moved.ref);
+  const after = roots.after.filter((root) =>
+    successors.some((ref) =>
+      sameTaskNodeRef({ type: 'task', ref: root.ref }, { type: 'task', ref }),
+    ),
+  );
+  return { before, after };
+}
+/** Captures canonical candidates without taking structural write authority. */
+export async function prepareTaskHierarchy(
+  app: App,
+  request: TaskHierarchyRequest,
+  options: HierarchyOptions,
+): Promise<TaskPreparedHierarchy> {
+  if (!hasCapabilities(options)) return { type: 'invalid', result: invalidTaskTarget('hierarchy') };
+  const context: Context = {
+    ...options,
+    app,
+    request: {
+      ...structuredClone({
+        command: request.command,
+        source: request.source,
+        ...(request.parent === undefined ? {} : { parent: request.parent }),
+      }),
+      ...(request.diagnostic === undefined ? {} : { diagnostic: request.diagnostic }),
+    },
+    sources: [],
+    owner: undefined,
+    phase: 'preflight',
+  };
+  try {
+    const contents = new Map<string, string>();
+    for (const path of new Set([
+      context.request.source.baseRoot.ref.filePath,
+      context.request.parent?.baseRoot.ref.filePath ?? context.request.source.baseRoot.ref.filePath,
+    ])) {
+      const file = fileAt(context, path);
+      contents.set(path, await app.vault.read(file));
+      fileAt(context, path, file);
+    }
+    const prepared = candidate(context, contents);
+    context.prepared = prepared;
+    const beforeRoots = [...contents].flatMap(([path, content]) => options.parse(path, content));
+    const afterRoots = [...prepared.contents].flatMap(([path, content]) =>
+      options.parse(path, content),
+    );
+    const moved = movedOutcome(context, afterRoots).moved;
+    const continuations = hierarchyContinuations(prepared, beforeRoots, afterRoots);
+    let result: Promise<TaskRepositoryResult> | undefined;
+    return {
+      type: 'ready',
+      before: structuredClone(context.request.source.baseRoot),
+      after: structuredClone(moved.root),
+      subjectBefore: hierarchySource(context.request.command),
+      subjectAfter: moved.target,
+      affected: hierarchyReview(
+        context.request,
+        { before: beforeRoots, after: afterRoots },
+        continuations,
+        moved.root,
+      ),
+      continuations,
+      commit: async () => {
+        result ??= run({
+          ...options,
+          app,
+          request: context.request,
+          sources: [],
+          owner: undefined,
+          phase: 'preflight',
+          sealed: { before: contents, after: prepared.contents },
+        });
+        return structuredClone(await result);
+      },
+    };
+  } catch (error) {
+    return { type: 'invalid', result: preflightFailure(error) };
+  }
+}
+
 export async function taskHierarchyTransaction(
   app: App,
   request: TaskHierarchyRequest,
@@ -479,6 +629,11 @@ async function sameParentResult(context: Context): Promise<TaskRepositoryResult 
   fileAt(context, path, file);
   endpoint(context, context.request.source, command.source, contents);
   endpoint(context, parent, command.parent, contents);
+  if (
+    context.sealed !== undefined &&
+    [...contents].some(([key, text]) => context.sealed?.before.get(key) !== text)
+  )
+    throw new HierarchyFailure();
   return {
     type: 'committed',
     changed: false,
@@ -486,7 +641,7 @@ async function sameParentResult(context: Context): Promise<TaskRepositoryResult 
       type: 'hierarchy',
       source: command.source,
       moved: { root: context.request.source.baseRoot, target: command.source },
-      affectedRoots: [context.request.source.baseRoot],
+      affectedRoots: context.parse(path, contents.get(path) ?? ''),
     },
   };
 }

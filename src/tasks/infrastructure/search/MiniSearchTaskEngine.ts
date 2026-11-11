@@ -1,4 +1,4 @@
-/*!
+/*
  * MiniSearch 7.2.0 — bundled dependency notice.
  * Copyright 2022 Luca Ongaro
  *
@@ -70,6 +70,10 @@ function compareOrder(a: TaskSearchSourceNode, b: TaskSearchSourceNode): number 
   return depth === 0 ? a.id - b.id : depth;
 }
 function searchFields(request: TaskSearchEngineRequest): TaskSearchField[] {
+  if (request.fields === 'title') return ['title'];
+  if (request.fields === 'body') return ['description', 'comments'];
+  if (request.fields === 'all')
+    return fields.filter((field) => field !== 'sourcePath' || request.includeSourcePath);
   const selected: TaskSearchField[] =
     request.kind === 'nodes' && request.matchScope !== 'subtree'
       ? ['title', 'tags']

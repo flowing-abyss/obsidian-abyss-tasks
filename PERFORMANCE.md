@@ -18,6 +18,9 @@ pnpm run profile --out docs/performance/before
 # After a code change, repeat under the same conditions.
 pnpm run profile --out docs/performance/after --baseline docs/performance/before
 
+# Opt-in public API scan and status receipt measurements (requires API v1).
+pnpm run profile --api --out <fresh-output>
+
 # Offline comparison: no running Obsidian or rebuild needed.
 pnpm profile:compare docs/performance/before docs/performance/after
 
@@ -28,6 +31,12 @@ pnpm profile:startup --runs 10
 pnpm run profile --runs 30
 pnpm run profile --width 360 --out docs/performance/narrow
 pnpm run profile --fixture wide-tree --anchor 2026-10-16 --out docs/performance/wide-before
+
+# Common native edits in one dense note; supported by the pre-feature product.
+pnpm run profile --fixture single-note --command-stress --out <fresh-output>
+
+# Absolute facade preparation, apply, prose, paging and whole-source search costs.
+pnpm run profile --fixture single-note --command-mode --out <fresh-output>
 ```
 
 Use **`pnpm run profile`**: `pnpm profile` is a pnpm built-in. Output directories must be new and
@@ -35,6 +44,86 @@ outside the vault. The default is a timestamped folder in ignored `docs/performa
 `--anchor YYYY-MM-DD` fixes generated dates; the default is the host's local day. The actual host
 day also belongs to comparison identity because calendar and statistics views use it. `--runs`
 accepts 1–100. `--fixture standard|wide-tree` selects a finite corpus; the default is `standard`. `--no-diagnostics` omits the CPU, trace, screenshot, and heap pass.
+
+`--api` selects exactly `startup.index`, `api.scan`, and `api.status` for either fixture.
+It cannot be combined with `--startup`. Ordinary runs keep their existing scenarios and never
+request a public API client. An API run requires structural `getApi(1)` support and fails clearly
+on an older plugin. The selection is recorded as `apiOnly` in comparison identity; historical
+ordinary reports without that field remain readable.
+
+The API run measures absolute new-path cost. There is no API baseline on the pre-feature runtime.
+This tooling extension changes the protocol hash: collect a fresh ordinary baseline on the base
+runtime with this exact tooling overlaid before comparing ordinary behavior.
+
+`single-note` requires exactly one of `--command-stress` or `--command-mode`; neither combines
+with `--api` or `--startup`. It concentrates 4,000 roots and 6,000 nodes in Project-000, including
+two identical root/child blocks, and leaves the other project notes task-free. `fixture.json`
+records live roots per file, maximum roots per file, and every source's UTF-16 character count
+and UTF-8 byte count. These facts and the mode are part of comparison identity.
+
+The common roster times a native title edit and a native description edit that shifts subsequent
+roots by one line. Target acquisition is untimed; each span includes the command, accepted-source
+readback, exact full-file conservation and unchanged populations. The feature roster separately
+times public task preparation/apply and a section-handle-selected prose append before all roots.
+Preparation must preserve bytes and accepted revisions. Apply must preserve all sibling sources;
+the prose append also verifies retained public identities for both duplicate roots and children.
+Clients, readiness and source acquisition precede the measured operations. No CommandMode session,
+model or microphone is activated. Every client and subscription is disposed before restoration.
+
+Feature note paging drains the existing 10,000-line BOM/frontmatter/CRLF/emoji workload at
+127 characters per page. Search drains body-only hit and absent queries over complete sources of
+262,144, 262,145 and 4,194,304 characters. Two far-apart terms must match. A two-source folder
+proves continuation before the oversized source, and a 4,194,305-character source must return
+`RESOURCE_LIMIT` while ordinary paged reading remains available. The ordinary profiler records
+latency, long tasks and frame gaps for the complete operations; `search-calls-N.json` records each
+individual search call's duration separately from deterministic completed-work facts. The
+continuation roster includes separate first-match, remaining-call and fresh complete-scan spans.
+Scoped search still scans the global source order. The first-match and over-ceiling spans drain
+coherent empty/incomplete prefix pages before the required match or refusal. They record every
+actual call and `emptyPrefixPages`; premature completion, unexpected results or changed observations
+remain failures.
+The character target and ceiling are policy limits, not blocking-time guarantees.
+
+The feature roster also drains an absent body query over all 100 project notes, including 99
+zero-task sources, to exercise the scanner's scheduling yields. Its separate diagnostic pass repeats
+that query with the captured native window hidden. `hidden-window.json` records the same window ID
+and native/document visibility before, during and after the operation. The harness requires a
+visible, focused, non-minimized starting window and restores it in finally and before pending-work
+cleanup. Normal animation-frame observations run while visible. The hidden span's frame gap includes
+the intentional hide/show lifecycle and is not a foreground responsiveness measurement. No timer
+deadline or Chromium throttling setting is changed. Window ownership and visibility use Electron's
+[owning BrowserWindow](https://www.electronjs.org/docs/latest/api/web-contents#contentsgetownerbrowserwindow)
+and [window methods](https://www.electronjs.org/docs/latest/api/base-window#winhide).
+
+Renderer CPU mapping requires `renderer-sources.json` evidence for the sampled script ID and URL.
+The evidence retains the debugger URL separately: V8's debugger prefers a sourceURL comment, while
+the CPU profiler uses the script resource name. An owned script ID can bind `plugin:abyss-tasks`
+to its captured CPU resource URL only after the same complete-source proof below. Other unequal
+debugger URLs and conflicting CPU URLs for one ID are rejected; mapping uses only the captured CPU
+URL. This distinction follows V8's [debugger script URL](https://chromium.googlesource.com/v8/v8/+/refs/heads/main/src/inspector/v8-debugger-script.cc)
+and [CPU profile frame](https://chromium.googlesource.com/v8/v8/+/refs/heads/main/src/inspector/v8-profiler-agent-impl.cc)
+implementations.
+The owned CDP session reads that script and verifies one exact occurrence of the complete saved
+production `main.js`; a host wrapper is represented by its precise source interval and prefix/suffix
+lengths. Mapping excludes code outside that interval and checks the saved main hash. Unrecognized
+or contradictory frames remain unmapped with a reason. Coordinate origins follow CDP's
+[scriptParsed and getScriptSource contract](https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/master/pdl/js_protocol.pdl).
+An empty mapped hotspot list remains a diagnostic gap, even when timing samples are valid.
+
+Failed note-apply receipt checks save `note-apply-failure.json` with receipt predicates, exact
+source conservation and retained-target outcomes. The profiler does not wrap product read,
+reconciliation or installation methods during measured operations. Historical ordering traces
+remain diagnostic evidence; they are excluded from responsiveness acceptance.
+
+Only Project-000 is changed by these new rosters, so the existing exact Project-000/inbox cycle
+reset remains sufficient. The new modes use the same fixture transaction, diagnostics and pending
+work drain. They do not activate the App-local session-history owner. Ordinary Q remains lazy when
+CommandMode is inactive; `data.json` is not a backup of that history. A future scenario that
+activates the owner must add exact history isolation/restoration to the existing transaction.
+Fixture readiness requires a metadata event from the captured native file, verified fresh and
+cached text, and exact raw UTF-8 bytes. Host text may omit one leading BOM only while the original
+file identity and stamp remain stable across all reads; contrary text, line endings or raw bytes
+fail readiness. A failed reset saves scalar diagnostic evidence in `fixture-reset-failure.json`.
 
 `--width` constrains the desktop renderer viewport through CDP, verifies it during every scenario,
 and clears the override afterward. Close existing DevTools/debugger before using this mode so the
@@ -86,6 +175,38 @@ those notes belongs to comparison identity. This is not an empty-host benchmark.
 | `index.wide-child-edit` (wide-tree only)         | Edit only the final wide child's title through the vault API; await that descendant with matching ancestry and exact root/node counts.                                                                                                                                                 |
 | `index.metadata-only` (wide-tree only)           | Change Project-000's frontmatter budget, await accepted task metadata and a newer settled Statistics source, and verify task bytes/population stay unchanged.                                                                                                                          |
 | `panel.close`                                    | Detach the panel. The shared Search Worker may remain alive until plugin unload.                                                                                                                                                                                                       |
+
+API mode uses the same fixture, profiler, samples, diagnostics, cycle reset, pending-work drain,
+and restoration as ordinary mode. Each cycle creates a fresh client named
+`abyss-performance-api`, waits for readiness, and subscribes during untimed `api.scan` preparation.
+Provider discovery and occurrence activation are outside the span. The first scan allocation and
+every page read are timed. Pages use the fixture folder and limit 100, require matching provider
+epoch/revision/generation/scope/semantics, unique targets, strict code-unit path/line order, and a
+final revision equal to the latest subscription event. Standard completes 6,000 nodes in 60 pages;
+wide-tree completes 6,999 nodes in 70 pages. Facts contain only nodes, pages, and page size.
+
+Untimed `api.status` preparation creates one plain task through the existing configured-default
+command. Before dispatch it observes the exact fixture inbox file's metadata and ordinary queued
+changed/reconciled notifications. A bounded 30-second read-only wait requires matching post-create
+metadata, a later canonical notification associated with that metadata stamp, unchanged file identity,
+exact current/cached full bytes, and the returned created root's exact canonical source block/basis.
+It retains an echo already delivered during creation, and ignores early creation publication as
+proof of a later echo. This uses the index's deferred ordinary notifications; synchronous API events
+can precede the metadata observer when the index listener is registered first. Preparation releases
+all three observers on success, failure or cancellation, then returns the single freshly resolved
+target/revision. It performs no rewrite, extra task creation, status retry or arbitrary readiness sleep.
+This measures completion from a prepared source. It does not guarantee complete receipt snapshots
+for an arbitrary immediate consumer call; a later unrelated acquisition still fails the sample.
+
+The timed span completes that task with a new request ID and five-minute deadline, repeats the
+identical request, then gets the original target. Completion requires a changed, committed receipt
+with complete snapshots, retained done original, no next occurrence or warnings, identical replay
+JSON, and a done final read at the
+receipt's revision. Facts record one write, two requests, one replay, and one hydration. API mode
+stops there so this sandbox cannot alter ordinary population assumptions. Listeners and the client
+are released on success or failure; pending work drains before transaction restoration. Incomplete
+or stale reads, observation changes, wrong counts, resource failures, warnings, replay mismatches,
+and failed hydration fail the run without a retry inside the sample.
 
 Both Timeline scroll scenarios use Month scale. Untimed preparation selects Month and Today,
 then aligns January 1 of the host's current year with the exposed date viewport's left edge.

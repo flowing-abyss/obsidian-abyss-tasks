@@ -1,3 +1,4 @@
+import { chimeBuffer } from '../../audioChime';
 import type { ReminderSound } from './TimeTrackingReminder';
 
 const RESUME_LIMIT_MS = 1500;
@@ -6,35 +7,6 @@ const NOTES = [
   { start: 0.29, frequency: 659.255, duration: 0.4, level: 0.72, decay: 0.12 },
   { start: 0.5, frequency: 783.991, duration: 0.43, level: 0.52, decay: 0.125 },
 ] as const;
-
-/** The previewed three-note sound, generated locally at the output device's sample rate. */
-function soundBuffer(context: AudioContext): AudioBuffer {
-  const rate = context.sampleRate;
-  const buffer = context.createBuffer(1, Math.round(rate * 1.35), rate);
-  const samples = buffer.getChannelData(0);
-  for (const note of NOTES) {
-    const offset = Math.round(note.start * rate);
-    for (let index = 0; index < Math.round(note.duration * rate); index++) {
-      const time = index / rate;
-      const phase = 2 * Math.PI * note.frequency * time;
-      const attack = (1 - Math.exp(-time / 0.008)) ** 2;
-      const release = Math.min(1, Math.max(0, (note.duration - time) / 0.075));
-      const fade = 0.5 - 0.5 * Math.cos(Math.PI * release);
-      const tone =
-        Math.sin(phase) * Math.exp(-time / note.decay) +
-        0.16 * Math.sin(2 * phase) * Math.exp(-time / 0.08) +
-        0.035 * Math.sin(3 * phase) * Math.exp(-time / 0.05);
-      const position = offset + index;
-      samples[position] = (samples[position] ?? 0) + note.level * attack * fade * tone;
-    }
-  }
-  let peak = 0;
-  for (const sample of samples) peak = Math.max(peak, Math.abs(sample));
-  const gain = 10 ** (-17.6 / 20) / peak;
-  for (let index = 0; index < samples.length; index++)
-    samples[index] = (samples[index] ?? 0) * gain;
-  return buffer;
-}
 
 /** Owns a lazy audio context, including interrupted activation and idle hardware suspension. */
 export class ReminderAudio implements ReminderSound {
@@ -74,7 +46,7 @@ export class ReminderAudio implements ReminderSound {
       const context = this.getContext();
       if (!(await this.resume(context, generation))) return;
       this.prepared = true;
-      this.buffer ??= soundBuffer(context);
+      this.buffer ??= chimeBuffer(context, NOTES, 1.35, -17.6);
       const source = context.createBufferSource();
       source.buffer = this.buffer;
       source.connect(context.destination);

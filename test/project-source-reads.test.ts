@@ -1,0 +1,214 @@
+import { expect, it, vi } from 'vitest';
+import { deferred, expectDefined, flushMicrotasks, metadataChangedEmitter } from './helpers';
+import { publicApiHarness } from './support/publicApiHarness';
+
+it('reads accepted empty and nested-task files and refuses malformed metadata without blocking a healthy exact path', async () => {
+  const h = await publicApiHarness({
+    'empty.md': '---\nkind: project\n---\n# Empty\n',
+    'nested.md': '- [ ] Root\n  - [x] Child\n',
+    'broken.md': '---\nkind: [\n',
+  });
+  try {
+    const sources = h.index.projectSources();
+    expect(sources.coverage()).toMatchObject({ type: 'error', reason: 'incomplete' });
+    expect(sources.get('empty.md')).toMatchObject({
+      type: 'ok',
+      value: { path: 'empty.md', metadata: { frontmatter: { kind: 'project' } }, roots: [] },
+    });
+    expect(sources.get('nested.md')).toMatchObject({
+      type: 'ok',
+      value: { roots: [{ source: { line: 0 } }] },
+    });
+    expect(sources.get('broken.md')).toMatchObject({ type: 'error', reason: 'incomplete' });
+  } finally {
+    h.dispose();
+  }
+});
+
+it('publishes project settings changes without changing the task semantic revision', async () => {
+  const h = await publicApiHarness({ 'task.md': '- [ ] Task\n' });
+  try {
+    const taskPage = await h.client().tasks.list();
+    if (!taskPage.ok || taskPage.value.items[0] === undefined) throw new Error('Missing task');
+    const task = taskPage.value.items[0];
+    const before = h.reads.capture();
+    const events: number[] = [];
+    const subscription = h.reads.subscribe((event) => events.push(event.observation.generation));
+    h.index.updateProjectIntegrationSemantics('first');
+    const after = h.reads.capture();
+    expect(after.generation).toBeGreaterThan(before.generation);
+    expect(after.semanticsRevision).toBe(before.semanticsRevision);
+    expect(events).toEqual([after.generation]);
+    expect(
+      await h.client().tasks.complete({
+        target: task.target,
+        expectedRevision: task.revision,
+        requestId: 'after-project-settings',
+        expiresAt: Date.UTC(2026, 7, 1, 12, 5),
+      }),
+    ).toMatchObject({ ok: true });
+    subscription.unsubscribe();
+  } finally {
+    h.dispose();
+  }
+});
+
+it('keeps the native file handle inside TaskIndex', async () => {
+  const h = await publicApiHarness({ 'project.md': 'project' });
+  try {
+    const source = h.index.projectSources().get('project.md');
+    if (source.type !== 'ok' || source.value === undefined) throw new Error('Missing source');
+    expect(source.value.identity).not.toBe(h.app.vault.getFileByPath('project.md'));
+  } finally {
+    h.dispose();
+  }
+});
+
+it.each(['!!timestamp 2026-11-05', '!!binary SGVsbG8=', '!!set {one: null}'])(
+  'does not treat non-mapping authored YAML %s as an empty project mapping',
+  async (yaml) => {
+    const h = await publicApiHarness({ 'project.md': `---\n${yaml}\n---\n` });
+    try {
+      expect(h.index.projectSources().get('project.md')).toMatchObject({
+        type: 'error',
+        reason: 'incomplete',
+      });
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it('scopes non-mapping YAML failures and skips sources excluded by path alone', async () => {
+  const h = await publicApiHarness({
+    'bad.md': '---\n!!timestamp 2026-11-05\n---\n',
+    'good.md': '---\nkind: project\n---\n',
+  });
+  try {
+    expect(h.index.projectSources().coverage()).toMatchObject({
+      type: 'error',
+      reason: 'incomplete',
+    });
+    expect(h.index.projectSources().get('good.md')).toMatchObject({ type: 'ok' });
+    await h.index.refreshSourceExclusion(
+      () => false,
+      (path) => path === 'bad.md',
+    );
+    expect(h.index.projectSources().coverage()).toMatchObject({ type: 'ok' });
+  } finally {
+    h.dispose();
+  }
+});
+
+it('checks the writer file against the opaque incarnation token', async () => {
+  const h = await publicApiHarness({ 'project.md': 'project' });
+  try {
+    const sources = h.index.projectSources(),
+      source = sources.get('project.md');
+    if (source.type !== 'ok' || source.value === undefined) throw new Error('Missing source');
+    const file = h.app.vault.getFileByPath('project.md');
+    if (file === null) throw new Error('Missing file');
+    expect(sources.matchesFile(source.value, file)).toBe(true);
+    expect(sources.matchesFile(source.value, {})).toBe(false);
+  } finally {
+    h.dispose();
+  }
+});
+
+it('retries a failed native proof without reading a path-only exclusion', async () => {
+  const h = await publicApiHarness(
+    { 'visible.md': '', 'hidden.md': '' },
+    { index: { excludePath: (p) => p === 'hidden.md' } },
+  );
+  const native = vi.spyOn(h.app.vault, 'read');
+  try {
+    const emit = metadataChangedEmitter(h.app);
+    for (const path of ['hidden.md', 'visible.md']) {
+      const file = expectDefined(h.app.vault.getFileByPath(path));
+      await h.app.vault.adapter.write(path, 'updated');
+      file.stat = { ...file.stat, size: 7, mtime: file.stat.mtime + 1 };
+      emit(file, 'updated', {});
+    }
+    const source = h.index.projectSources();
+    expect(source.get('hidden.md')).toMatchObject({ type: 'ok', value: undefined });
+    expect(native).not.toHaveBeenCalled();
+    native.mockRejectedValueOnce(new Error('transient'));
+    expect(source.coverage()).toMatchObject({ type: 'error', reason: 'incomplete' });
+    await flushMicrotasks();
+    expect(await source.acquire('visible.md')).toMatchObject({
+      type: 'ok',
+      value: { content: 'updated' },
+    });
+    expect(source.coverage()).toMatchObject({ type: 'ok' });
+    expect(native.mock.calls.map(([file]) => file.path)).toEqual(['visible.md', 'visible.md']);
+  } finally {
+    native.mockRestore();
+    h.dispose();
+  }
+});
+
+it('revokes a pending source acquisition when a newer callback wins with the same native stamp', async () => {
+  const path = 'project.md';
+  const h = await publicApiHarness(
+    { [path]: '#public' },
+    { index: { excludeSource: (meta) => meta.tags.includes('#hidden') } },
+  );
+  const native = vi.spyOn(h.app.vault, 'read');
+  try {
+    const file = expectDefined(h.app.vault.getFileByPath(path));
+    const emit = metadataChangedEmitter(h.app);
+    emit(file, '#public', {});
+    const pending = deferred<string>();
+    native.mockReturnValueOnce(pending.promise);
+    const source = h.index.projectSources();
+    const captured = source.acquire(path);
+    await flushMicrotasks();
+    await h.app.vault.adapter.write(path, '#hidden');
+    emit(file, '#hidden', {});
+    await flushMicrotasks();
+    pending.resolve('#public');
+    expect(await captured).toMatchObject({ type: 'error', reason: 'stale' });
+    expect(source.get(path)).toMatchObject({ type: 'ok', value: undefined });
+    expect(native).toHaveBeenCalledTimes(2);
+  } finally {
+    native.mockRestore();
+    h.dispose();
+  }
+});
+
+it('keeps a direct acquisition available while bulk proof is blocked and retires queued work on disposal', async () => {
+  const files = { 'a.md': '', 'b.md': '', 'c.md': '', 'healthy.md': '' };
+  const h = await publicApiHarness(files);
+  const pending = deferred<string>();
+  const read = h.app.vault.read.bind(h.app.vault);
+  const calls = vi
+    .spyOn(h.app.vault, 'read')
+    .mockImplementation((file) => (file.path === 'a.md' ? pending.promise : read(file)));
+  try {
+    const emit = metadataChangedEmitter(h.app);
+    for (const path of ['a.md', 'b.md', 'c.md']) {
+      const file = expectDefined(h.app.vault.getFileByPath(path));
+      await h.app.vault.adapter.write(path, 'changed');
+      file.stat = { ...file.stat, size: 7, mtime: file.stat.mtime + 1 };
+      emit(file, 'changed', {});
+    }
+    const sources = h.index.projectSources();
+    expect(sources.coverage()).toMatchObject({ type: 'error', reason: 'incomplete' });
+    await flushMicrotasks();
+    expect(calls.mock.calls.map(([file]) => file.path)).toEqual(['a.md']);
+    expect(sources.get('healthy.md')).toMatchObject({ type: 'ok', value: { path: 'healthy.md' } });
+    expect(await sources.acquire('b.md')).toMatchObject({
+      type: 'ok',
+      value: { content: 'changed' },
+    });
+    h.dispose();
+    pending.resolve('changed');
+    await flushMicrotasks();
+    expect(sources.coverage()).toMatchObject({ type: 'error', reason: 'disposed' });
+    expect(calls.mock.calls.map(([file]) => file.path)).toEqual(['a.md', 'b.md']);
+  } finally {
+    pending.resolve('changed');
+    h.dispose();
+    calls.mockRestore();
+  }
+});

@@ -45,6 +45,7 @@ export type LineEdit =
       readonly symbol: string;
       readonly today?: string;
       readonly addCompletionDate?: boolean;
+      readonly semanticTransition?: boolean;
     }
   | { readonly type: 'set-priority'; readonly priority: TaskPriority }
   | {
@@ -977,7 +978,7 @@ function prepareStatusTransition(
   parsed: ParsedTaskLine,
   edit: Extract<LineEdit, { readonly type: 'set-status' }>,
 ): StatusTransitionPreparation {
-  if (parsed.statusSymbol === edit.symbol) {
+  if (parsed.statusSymbol === edit.symbol && edit.semanticTransition !== true) {
     return unchangedLine(parsed);
   }
   const rule = statusCatalog.ruleForSymbol(edit.symbol);
@@ -987,7 +988,10 @@ function prepareStatusTransition(
 
   const stampedKind = statusStampKind(rule.type);
   const currentRule = statusCatalog.ruleForSymbol(parsed.statusSymbol);
-  const preservesStamp = stampedKind !== undefined && currentRule?.type === rule.type;
+  const preservesStamp =
+    edit.semanticTransition !== true &&
+    stampedKind !== undefined &&
+    currentRule?.type === rule.type;
   if (statusDateIsMissing(stampedKind, preservesStamp, edit.today)) {
     return invalid('invalid-status', 'status');
   }

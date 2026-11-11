@@ -1,7 +1,7 @@
 import type { ProjectsSettings } from '../settings/types';
 import type { ProjectPropertyCatalog } from './ObsidianProjectProperties';
-import type { ProjectFieldCatalogItem, ProjectPropertyType } from './projectFields';
-import { sameProjectPropertyName } from './projectPropertyNames';
+import type { ProjectField, ProjectFieldCatalogItem, ProjectPropertyType } from './projectFields';
+import { compareProjectPropertyNames, sameProjectPropertyName } from './projectPropertyNames';
 
 export const PROJECT_PROPERTY_DEFINITIONS_VERSION = 1;
 
@@ -219,11 +219,41 @@ export function resolveConfiguredProjectField(
   if (matches.length !== 1) return unavailableCustomField(fieldId);
   const [savedId, definition] = matches[0] ?? [];
   if (savedId?.startsWith(PROPERTY_PREFIX) !== true) return unavailableCustomField(fieldId);
+  return configuredCustomField(projects, fieldId, definition);
+}
+
+function configuredCustomField(
+  projects: ProjectsSettings,
+  fieldId: string,
+  definition: unknown,
+): ProjectFieldCatalogItem {
   const property = fieldId.slice(PROPERTY_PREFIX.length);
   if (!isProjectPropertyDefinition(definition)) return unavailableCustomField(fieldId);
   if (!isConfiguredCustomSourceCompatible(projects, property, definition.type))
     return unavailableCustomField(fieldId);
   return { id: fieldId, property, label: property, type: definition.type };
+}
+
+/** A sorted index detects collation aliases, while the catalog retains authored order. */
+export function configuredProjectCustomFields(projects: ProjectsSettings): ProjectField[] {
+  const entries = definitionEntries(projects);
+  const sorted = entries.map(([id]) => id).sort(compareProjectPropertyNames);
+  const ambiguous = new Set<string>();
+  let prior: string | undefined;
+  for (const id of sorted) {
+    if (prior !== undefined && sameProjectPropertyName(prior, id)) {
+      ambiguous.add(prior);
+      ambiguous.add(id);
+    }
+    prior = id;
+  }
+  const fields: ProjectField[] = [];
+  for (const [id, definition] of entries) {
+    if (!id.startsWith(PROPERTY_PREFIX) || ambiguous.has(id)) continue;
+    const field = configuredCustomField(projects, id, definition);
+    if (field.type !== null) fields.push(field);
+  }
+  return fields;
 }
 
 export function projectPresetPresentation(

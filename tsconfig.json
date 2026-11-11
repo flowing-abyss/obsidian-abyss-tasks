@@ -39,6 +39,7 @@
     "test/**/*.ts",
     "vitest.config.ts",
     "vitest.bench.config.ts",
-    "vitest.store.config.ts"
+    "vitest.store.config.ts",
+    "vitest.command-live.config.ts"
   ]
 }

@@ -13,7 +13,15 @@ import {
   type TaskIndexOptions,
   type TaskSourceMetadata,
 } from '../src/tasks/infrastructure/TaskIndex';
-import { createAppWithFiles, expectDefined, flushMicrotasks, seedTaskCache } from './helpers';
+import { taskSourceMetadata } from '../src/tasks/infrastructure/taskSourceMetadata';
+import {
+  createAppWithFiles,
+  expectDefined,
+  flushMicrotasks,
+  seedTaskCache,
+  setVaultSource,
+} from './helpers';
+import { publicApiHarness } from './support/publicApiHarness';
 
 function catalog(): StatusCatalog {
   return new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses));
@@ -39,6 +47,27 @@ function sourceIndex(
 }
 
 describe('TaskIndex source exclusion', () => {
+  it('uses the same authored metadata helper for ordinary exclusion and integration reads', async () => {
+    const content = '---\nprivate: true\ntags: [source]\n---\n- [ ] Hidden #body\n`#syntax`\n';
+    expect(taskSourceMetadata('a.md', content)).toEqual({
+      filePath: 'a.md',
+      tags: ['#source', '#body'],
+      frontmatter: { private: true, tags: ['source'] },
+    });
+    const h = await publicApiHarness({ 'a.md': '- [ ] Visible' });
+    try {
+      const first = h.reads.page({}, 1);
+      if (first.type !== 'ok') throw new Error('Missing source');
+      const address = expectDefined(first.value.nodes[0]).address;
+      await h.index.refreshSourceExclusion(({ filePath }) => filePath === 'a.md');
+      expect(h.reads.canDisclose(address)).toBe(false);
+      expect(h.reads.node(address)).toMatchObject({ reason: 'unavailable' });
+      expect(h.reads.page({}, 10)).toMatchObject({ type: 'ok', value: { nodes: [] } });
+    } finally {
+      h.dispose();
+    }
+  });
+
   it('keeps authored policy metadata separate from cached presentation through unchanged-byte events and rename', async () => {
     const content =
       '---\nprivate: false\ntags: [authored]\ncolor: red\n---\n- [ ] Visible #body\n`#private`\n';
@@ -190,6 +219,7 @@ describe('TaskIndex source exclusion', () => {
     const excludes = ({ frontmatter }: TaskSourceMetadata): boolean =>
       frontmatter['private'] === true;
     const { app, index } = await sourceIndex({ [path]: '- [ ] Placeholder\n' }, excludes);
+    setVaultSource(app, path, content);
     app.vault.cachedRead = async () => content;
     seedTaskCache(app, path, [{ task: ' ', parent: -1, line: content.split('\n').length - 2 }], {
       private: true,

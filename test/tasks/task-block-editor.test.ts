@@ -1136,3 +1136,61 @@ it('inserts after complete child comments with reformatted quote continuations',
       '   >   > - [ ] Root\n   >   >   - [ ] Child\n   >   >     - head\n> >       tail\n   >   >   - [ ] Added\n   >   >   - root note',
   });
 });
+
+describe('editor occurrence line evidence', () => {
+  it('omits occurrence maps when restoring a removed tracking entry', () => {
+    const editor = new TaskBlockEditor();
+    const content = '- [ ] Root\n  - [ ] Child';
+    const block = expectDefined(editor.rootBlocks(content)[0]);
+    const result = editor.edit(
+      content,
+      block,
+      { relativeLine: 0, lineCount: 2, childRanges: [{ from: 1, to: 1 }] },
+      { type: 'restore-time-entry', markdown: '  - 2026-08-01T10:00:00Z →', relativeLine: 1 },
+      true,
+    );
+    expect(result).toMatchObject({
+      type: 'changed',
+      content: '- [ ] Root\n  - 2026-08-01T10:00:00Z →\n  - [ ] Child',
+    });
+    expect(result).not.toHaveProperty('nodeMap');
+  });
+
+  it('maps the edited deep task line explicitly without comparing task text', () => {
+    const editor = new TaskBlockEditor();
+    const content = '- [ ] Same\n  - [ ] Same\n    - [ ] Same\n  - [ ] Same';
+    const block = expectDefined(editor.rootBlocks(content)[0]);
+    expect(editor.replaceLine(content, block, 2, '    - [x] Edited', true).nodeMap).toEqual([
+      { beforeOffset: 0, afterOffset: 0 },
+      { beforeOffset: 1, afterOffset: 1 },
+      { beforeOffset: 2, afterOffset: 2 },
+      { beforeOffset: 3, afterOffset: 3 },
+    ]);
+    expect(editor.replaceLine(content, block, 2, '    - [x] Edited').nodeMap).toBeUndefined();
+  });
+  it('maps physical node survival after deleting a multiline comment before descendants', () => {
+    const editor = new TaskBlockEditor();
+    const content =
+      '- [ ] Root\n  - 2026-08-01: comment\n    continuation\n  - [ ] Child\n    - [ ] Grandchild';
+    const block = expectDefined(editor.rootBlocks(content)[0]);
+    const result = editor.edit(
+      content,
+      block,
+      { relativeLine: 0, lineCount: 5, childRanges: [{ from: 3, to: 4 }] },
+      {
+        type: 'delete-comment',
+        relativeLine: 1,
+        originalMarkdown: '  - 2026-08-01: comment\n    continuation',
+      },
+      true,
+    );
+    expect(result).toMatchObject({
+      type: 'changed',
+      nodeMap: [
+        { beforeOffset: 0, afterOffset: 0 },
+        { beforeOffset: 3, afterOffset: 1 },
+        { beforeOffset: 4, afterOffset: 2 },
+      ],
+    });
+  });
+});

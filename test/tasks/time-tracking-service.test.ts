@@ -1319,3 +1319,136 @@ describe('time tracking service guards', () => {
     });
   });
 });
+
+it('reports known set-aside timers as unclosed in completion details', async () => {
+  const done = trackedRoot('x');
+  const diagnostics = vi.fn();
+  const edit = vi.fn().mockResolvedValue({ type: 'conflict', current: done });
+  const result = await trackingService({ edit, diagnostics }).closeAfterCompletion(
+    done,
+    taskNode(done),
+    clockFrom(NOW_MS, OFFSET_MINUTES).read(),
+  );
+  expect(result).toEqual({
+    root: done,
+    closed: 0,
+    unclosed: 1,
+    discardedShortEntry: false,
+    state: 'partial',
+  });
+  expect(diagnostics.mock.calls).toEqual([
+    [{ operation: 'close-time-entry', phase: 'completion-follow-up', cause: 'conflict' }],
+  ]);
+});
+
+it('keeps discarded progress and the last proven root when a later close throws', async () => {
+  const initial = trackedRoot('x');
+  const remaining = task({
+    ...initial,
+    timeEntries: [{ ...expectDefined(initial.timeEntries[0]), originalMarkdown: 'second timer' }],
+  });
+  const first = task({
+    ...initial,
+    timeEntries: [...initial.timeEntries, ...remaining.timeEntries],
+  });
+  const fallback = vi.fn();
+  const edit = vi
+    .fn()
+    .mockResolvedValueOnce({
+      type: 'ok',
+      changed: true,
+      outcome: { type: 'task', task: remaining, discardedShortEntry: true },
+    })
+    .mockRejectedValueOnce(new Error('disk full'));
+  const result = await trackingService({ edit: fallback }).closeAfterCompletion(
+    first,
+    taskNode(first),
+    clockFrom(NOW_MS, OFFSET_MINUTES).read(),
+    { edit, stopOnFailure: true },
+  );
+  expect(result).toEqual({
+    root: remaining,
+    closed: 1,
+    unclosed: 1,
+    discardedShortEntry: true,
+    state: 'unknown',
+  });
+  expect(fallback).not.toHaveBeenCalled();
+});
+
+it('reports an unprovable successful close as unknown rather than an unchanged timer', async () => {
+  const done = trackedRoot('x');
+  const edit = vi
+    .fn()
+    .mockResolvedValue({ type: 'ok', changed: true, outcome: { type: 'stopped' } });
+  expect(
+    await trackingService({ edit }).closeAfterCompletion(
+      done,
+      taskNode(done),
+      clockFrom(NOW_MS, OFFSET_MINUTES).read(),
+      { stopOnFailure: true },
+    ),
+  ).toEqual({ root: done, closed: 0, unclosed: 1, discardedShortEntry: false, state: 'unknown' });
+});
+
+it('preserves the ordinary suppressed discarded-entry notice when a later follow-up write fails', async () => {
+  const diagnostics = vi.fn();
+  const stack = await stackFor(
+    {
+      'a.md': `- [ ] Alpha\n  - ${atomAt(-SHORT_SESSION_MS)} →\n  - ${HOUR_AGO_ATOM} →\n`,
+    },
+    { diagnostics },
+  );
+  const process = stack.app.vault.process.bind(stack.app.vault);
+  let writes = 0;
+  vi.spyOn(stack.app.vault, 'process').mockImplementation(async (file, fn, options) => {
+    writes += 1;
+    if (writes === 3) throw new Error('disk full');
+    return await process(file, fn, options);
+  });
+  try {
+    const result = await stack.tasks.execute({
+      type: 'toggle-completion',
+      target: taskNode(rootIn(stack, 'a.md')),
+    });
+    expect(result).toMatchObject({ type: 'ok', changed: true, outcome: { type: 'task' } });
+    expect(result).not.toMatchObject({ outcome: { discardedShortEntry: true } });
+    const content = await read(stack.app, 'a.md');
+    expect(content).toContain('- [x] Alpha');
+    expect(content).not.toContain(atomAt(-SHORT_SESSION_MS));
+    expect(content).toContain(`${HOUR_AGO_ATOM} →`);
+    expect(diagnostics.mock.calls).toEqual([
+      [{ operation: 'close-time-entry', phase: 'completion-follow-up', cause: 'io-error' }],
+    ]);
+  } finally {
+    vi.restoreAllMocks();
+    stack.index.destroy();
+  }
+});
+
+it('keeps the default diagnostic boundary when reading completion status throws', async () => {
+  const done = trackedRoot('x');
+  const error = new Error('status catalog unavailable');
+  const diagnostics = vi.fn();
+  const edit = vi.fn();
+  const service = trackingService({
+    edit,
+    diagnostics,
+    statusOf: () => {
+      throw error;
+    },
+  });
+  const result = await service.closeAfterCompletion(
+    done,
+    taskNode(done),
+    clockFrom(NOW_MS, OFFSET_MINUTES).read(),
+  );
+  expect(result).toMatchObject({ discardedShortEntry: false, closed: 0, state: 'unknown' });
+  expect(edit).not.toHaveBeenCalled();
+  expect(diagnostics.mock.calls).toEqual([
+    [
+      { operation: 'close-time-entry', phase: 'completion-follow-up', cause: 'repository-error' },
+      error,
+    ],
+  ]);
+});

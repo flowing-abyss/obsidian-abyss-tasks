@@ -783,6 +783,7 @@ export function prepareRetry(
   prepared: PreparedMutation,
   authoritative: Extract<RepositoryRevisionResult, { readonly type: 'rebased' }>,
 ): PreparedRetryRequest {
+  if (prepared.repositoryRequest.strictStatus !== undefined) return { type: 'unsafe' };
   if ('destination' in prepared.repositoryRequest) return { type: 'unsafe' };
   if ('baseOwnedDescendants' in prepared.repositoryRequest) {
     const request = prepared.repositoryRequest;

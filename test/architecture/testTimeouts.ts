@@ -2,6 +2,8 @@ import ts from 'typescript';
 import {
   CANONICAL_SEARCH_SCALE_AUDIT_TIMEOUT_MS,
   CHILD_PROCESS_TIMEOUT_MS,
+  CONCENTRATED_NOTE_AUDIT_TIMEOUT_MS,
+  FULL_SOURCE_NOTE_SEARCH_AUDIT_TIMEOUT_MS,
   LINTER_TIMEOUT_MS,
   SOURCE_WALK_TIMEOUT_MS,
   TYPESCRIPT_PROGRAM_TIMEOUT_MS,
@@ -29,6 +31,23 @@ const LISTING = 8;
 const PARSE = 16;
 const VIRTUAL_SURFACE_AUDIT = 32;
 const CANONICAL_SEARCH_SCALE_AUDIT = 64;
+const CONCENTRATED_NOTE_AUDIT = 128;
+const FULL_SOURCE_NOTE_SEARCH_AUDIT = 256;
+
+/** Only these resolved profiler workload declarations own the measured correctness limits. */
+const PROFILER_AUDITS: ReadonlyMap<string, ReadonlyMap<string, number>> = new Map([
+  [
+    'test/performance-public-api.test.ts',
+    new Map([
+      ['stressSetup', CONCENTRATED_NOTE_AUDIT],
+      ['runFullSourceNoteSearchAudit', FULL_SOURCE_NOTE_SEARCH_AUDIT],
+    ]),
+  ],
+  [
+    'test/performance-fixture.test.ts',
+    new Map([['runConcentratedNoteFixtureAudit', CONCENTRATED_NOTE_AUDIT]]),
+  ],
+]);
 
 interface Kind {
   readonly work: string;
@@ -39,6 +58,18 @@ interface Kind {
 
 /** The kinds of heavy work, in the order findings name them, with the limit each one needs. */
 const KINDS: readonly Kind[] = [
+  {
+    work: 'concentrated note audit',
+    limit: 'CONCENTRATED_NOTE_AUDIT_TIMEOUT_MS',
+    value: CONCENTRATED_NOTE_AUDIT_TIMEOUT_MS,
+    signals: CONCENTRATED_NOTE_AUDIT,
+  },
+  {
+    work: 'full-source note search audit',
+    limit: 'FULL_SOURCE_NOTE_SEARCH_AUDIT_TIMEOUT_MS',
+    value: FULL_SOURCE_NOTE_SEARCH_AUDIT_TIMEOUT_MS,
+    signals: FULL_SOURCE_NOTE_SEARCH_AUDIT,
+  },
   {
     work: 'virtual surface audit',
     limit: 'VIRTUAL_SURFACE_AUDIT_TIMEOUT_MS',
@@ -860,6 +891,11 @@ class TimeoutCheck {
     return names;
   }
 
+  private profilerAudit(node: ts.Node): number {
+    if (!ts.isFunctionDeclaration(node) || node.name === undefined) return 0;
+    return PROFILER_AUDITS.get(this.fileOf(node).relative)?.get(node.name.text) ?? 0;
+  }
+
   /** The signals a node holds and the units outside it that its names bind to. */
   private walk(node: ts.Node, scope: ts.Node): Facts {
     const names = this.visibleNames(scope);
@@ -877,7 +913,9 @@ class TimeoutCheck {
       this.fileOf(node).relative === 'test/task-search-navigation.test.ts';
     const facts: Facts = {
       mask:
-        (audit ? VIRTUAL_SURFACE_AUDIT : 0) | (searchScaleAudit ? CANONICAL_SEARCH_SCALE_AUDIT : 0),
+        (audit ? VIRTUAL_SURFACE_AUDIT : 0) |
+        (searchScaleAudit ? CANONICAL_SEARCH_SCALE_AUDIT : 0) |
+        this.profilerAudit(node),
       units: new Set(),
     };
     const add = (units: readonly Unit[]): void => {

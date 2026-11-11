@@ -13,6 +13,7 @@ import { request as httpsRequest } from 'node:https';
 import path from 'node:path';
 import process from 'node:process';
 import { isDeepStrictEqual } from 'node:util';
+import { verifyDevelopmentMinimum } from './published-metadata.mjs';
 
 /** @typedef {Record<string, unknown>} JsonObject */
 /** @typedef {{package: JsonObject, manifest: JsonObject, versions: JsonObject}} Metadata */
@@ -84,14 +85,14 @@ function version(value) {
   return value;
 }
 
-/** @param {Metadata} value @returns {string} */
-function synchronizedVersion(value) {
+/** @param {Metadata} value @param {boolean} development @returns {string} */
+function synchronizedVersion(value, development = false) {
   const current = version(value.manifest['version']);
   const minimum = version(value.manifest['minAppVersion']);
   if (
     value.manifest['id'] !== 'abyss-tasks' ||
     value.package['version'] !== current ||
-    value.versions[current] !== minimum
+    (value.versions[current] !== minimum && !(development && verifyDevelopmentMinimum(value, root)))
   )
     throw new Error('Package, manifest and version history must agree before preparing a release.');
   return current;
@@ -116,7 +117,7 @@ function withoutVersion(value) {
 function patchMetadata(before, after) {
   const target = synchronizedVersion(after);
   if (
-    target !== nextPatch(synchronizedVersion(before)) ||
+    target !== nextPatch(synchronizedVersion(before, true)) ||
     Object.prototype.hasOwnProperty.call(before.versions, target) ||
     !isDeepStrictEqual(withoutVersion(before.package), withoutVersion(after.package)) ||
     !isDeepStrictEqual(withoutVersion(before.manifest), withoutVersion(after.manifest)) ||
@@ -157,7 +158,7 @@ function prepare() {
   if (git(['status', '--porcelain']).length !== 0)
     throw new Error('Release preparation requires a clean checkout.');
   const before = metadata(undefined);
-  const target = nextPatch(synchronizedVersion(before));
+  const target = nextPatch(synchronizedVersion(before, true));
   if (Object.prototype.hasOwnProperty.call(before.versions, target))
     throw new Error('The next patch version already exists.');
   writeFileSync(

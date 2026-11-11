@@ -1,4 +1,4 @@
-import type { App, TFile } from 'obsidian';
+import { normalizePath, type App, type TFile } from 'obsidian';
 
 interface TemplaterCore {
   readonly files_with_pending_templates: Set<string>;
@@ -20,15 +20,92 @@ export interface TemplaterSession {
   finish(): Promise<void>;
 }
 
-function templaterCore(app: App): TemplaterCore | undefined {
-  let plugin: unknown;
+export class UnsupportedTemplaterError extends Error {}
+
+export interface TemplaterPreparation {
+  readonly adapter: TemplaterAdapter | undefined;
+  readonly templatePath: string | undefined;
+  current(): boolean;
+}
+interface CreationSettings {
+  trigger_on_file_creation: boolean;
+  templates_folder: string;
+  ignore_folders_on_creation: Array<{ folder: string }>;
+  enable_folder_templates: boolean;
+  folder_templates: Array<{ folder: string; template: string }>;
+  enable_file_templates: boolean;
+  file_templates: Array<{ regex: string; template: string }>;
+}
+function object(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+function strings(value: unknown, keys: readonly string[]): boolean {
+  return (
+    Array.isArray(value) &&
+    value.every((entry: unknown) => {
+      const row = object(entry);
+      return row !== undefined && keys.every((key) => typeof row[key] === 'string');
+    })
+  );
+}
+function settings(value: unknown): CreationSettings {
+  const r = object(value);
+  if (
+    r === undefined ||
+    typeof r['trigger_on_file_creation'] !== 'boolean' ||
+    typeof r['templates_folder'] !== 'string' ||
+    typeof r['enable_folder_templates'] !== 'boolean' ||
+    typeof r['enable_file_templates'] !== 'boolean' ||
+    !strings(r['ignore_folders_on_creation'], ['folder']) ||
+    !strings(r['folder_templates'], ['folder', 'template']) ||
+    !strings(r['file_templates'], ['regex', 'template'])
+  )
+    throw new UnsupportedTemplaterError();
+  return r as unknown as CreationSettings;
+}
+function ignoredCreation(policy: CreationSettings, path: string): boolean {
+  const templates = normalizePath(policy.templates_folder);
+  if (templates !== '/' && path.includes(templates)) return true;
+  return policy.ignore_folders_on_creation.some(({ folder }) => {
+    const ignored = normalizePath(folder);
+    return ignored !== '' && path.startsWith(ignored);
+  });
+}
+function folderTemplate(policy: CreationSettings, path: string): string | undefined {
+  let folder = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '/';
+  for (;;) {
+    const match = policy.folder_templates.find((entry) => entry.folder === folder);
+    if (match !== undefined && match.template !== '') return match.template;
+    if (folder === '/') return undefined;
+    folder = folder.includes('/') ? folder.slice(0, folder.lastIndexOf('/')) : '/';
+  }
+}
+function configuredTemplate(policy: CreationSettings, path: string): string | undefined {
+  if (!policy.trigger_on_file_creation || ignoredCreation(policy, path)) return undefined;
+  if (policy.enable_folder_templates) return folderTemplate(policy, path);
+  if (policy.enable_file_templates) {
+    const match = policy.file_templates.find(({ regex }) => new RegExp(regex).test(path));
+    return match?.template === '' ? undefined : match?.template;
+  }
+  return undefined;
+}
+
+function templaterPlugin(app: App, requireSuppression: boolean): unknown {
   try {
-    plugin = (
-      app as unknown as { plugins?: { getPlugin(id: string): unknown } }
-    ).plugins?.getPlugin('templater-obsidian');
+    return (app as unknown as { plugins?: { getPlugin(id: string): unknown } }).plugins?.getPlugin(
+      'templater-obsidian',
+    );
   } catch {
+    if (requireSuppression) throw new UnsupportedTemplaterError();
     return undefined;
   }
+}
+
+function templaterCore(app: App, requireSuppression: boolean): TemplaterCore | undefined {
+  const plugin = templaterPlugin(app, requireSuppression);
+  if (plugin == null) return undefined;
   const core = (plugin as { templater?: Partial<TemplaterCore> } | null)?.templater;
   if (
     !(core?.files_with_pending_templates instanceof Set) ||
@@ -37,6 +114,7 @@ function templaterCore(app: App): TemplaterCore | undefined {
     typeof core.create_running_config !== 'function' ||
     typeof core.read_and_parse_template !== 'function'
   ) {
+    if (requireSuppression) throw new UnsupportedTemplaterError();
     return undefined;
   }
   return core as TemplaterCore;
@@ -45,9 +123,34 @@ function templaterCore(app: App): TemplaterCore | undefined {
 export class TemplaterAdapter {
   private constructor(private readonly core: TemplaterCore) {}
 
-  static fromApp(app: App): TemplaterAdapter | undefined {
-    const core = templaterCore(app);
+  static fromApp(app: App, requireSuppression = false): TemplaterAdapter | undefined {
+    const core = templaterCore(app, requireSuppression);
     return core === undefined ? undefined : new TemplaterAdapter(core);
+  }
+
+  /** Captures selection only; no pending task, parser, prompt, hook or file operation runs here. */
+  static prepare(app: App, path: string, configured: boolean): TemplaterPreparation {
+    const plugin = templaterPlugin(app, true);
+    const core = templaterCore(app, true);
+    if (plugin == null)
+      return {
+        adapter: undefined,
+        templatePath: undefined,
+        current: () => templaterPlugin(app, true) == null,
+      };
+    if (core === undefined) throw new UnsupportedTemplaterError();
+    const raw = object(plugin)?.['settings'];
+    const signature: string | undefined = raw === undefined ? undefined : JSON.stringify(raw);
+    if (signature !== undefined && signature.length > 262144) throw new UnsupportedTemplaterError();
+    const templatePath = configured ? configuredTemplate(settings(raw), path) : undefined;
+    return {
+      adapter: new TemplaterAdapter(core),
+      templatePath,
+      current: () =>
+        templaterPlugin(app, true) === plugin &&
+        templaterCore(app, true) === core &&
+        JSON.stringify(object(plugin)?.['settings']) === signature,
+    };
   }
 
   begin(path: string): TemplaterSession {
