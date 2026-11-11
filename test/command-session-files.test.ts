@@ -212,28 +212,42 @@ it('retains local drafts whose identities cannot be matched to deletion markers 
   expect(h.legacy()).toEqual(raw);
   expect([...h.files]).toEqual([['state', state]]);
 });
-it('keeps an earlier divergent draft from another device when the shared session has a newer timestamp', async () => {
-  const h = await setup();
-  await h.store.create(snapshot('shared', 'Edited on device A'));
-  const incoming = legacyDrafts(['shared', 'device-b']);
-  const device = commandSessionStorage(incoming);
-  const store = await CommandSessionStore.open({
-    ...h,
-    storage: {
-      ...h.storage,
-      loadLegacy: device.storage.loadLegacy,
-      clearLegacy: device.storage.clearLegacy,
-    },
-    now: () => 20,
-  });
-  expect(device.legacy()).toEqual(incoming);
-  expect(store.records().find((row) => row.snapshot.id === 'shared')?.snapshot.input).toBe(
-    'Edited on device A',
-  );
-  expect(store.records().some((row) => row.snapshot.id === 'device-b')).toBe(true);
-  expect(store.failure()).not.toBeNull();
-  await expect(store.create(snapshot('usable'))).resolves.toBeUndefined();
-});
+it.each(['shared', 'absent', 'unfinished'])(
+  'keeps an earlier divergent draft with a %s control file',
+  async (control) => {
+    const h = await setup();
+    await h.store.create(snapshot('shared', 'Edited on device A'));
+    if (control === 'absent') h.files.delete('state');
+    if (control === 'unfinished')
+      h.files.set(
+        'state',
+        JSON.stringify({
+          version: 1,
+          activeSessionId: null,
+          legacyImported: false,
+          deletedFiles: [],
+        }),
+      );
+    const incoming = legacyDrafts(['shared', 'device-b']);
+    const device = commandSessionStorage(incoming);
+    const store = await CommandSessionStore.open({
+      ...h,
+      storage: {
+        ...h.storage,
+        loadLegacy: device.storage.loadLegacy,
+        clearLegacy: device.storage.clearLegacy,
+      },
+      now: () => 20,
+    });
+    expect(device.legacy()).toEqual(incoming);
+    expect(store.records().find((row) => row.snapshot.id === 'shared')?.snapshot.input).toBe(
+      'Edited on device A',
+    );
+    expect(store.records().some((row) => row.snapshot.id === 'device-b')).toBe(true);
+    expect(store.failure()?.code).toBe('LEGACY_DIVERGED');
+    await expect(store.create(snapshot('usable'))).resolves.toBeUndefined();
+  },
+);
 it('does not clear a changed device-local envelope after verifying a copy of its previous value', async () => {
   const first = legacyDrafts(['first']),
     next = legacyDrafts(['first', 'new-draft']);
@@ -293,7 +307,7 @@ it('releases the deleted conversation bytes held for compare-before-write after 
   await h.store.remove('one');
   expect(retained()).toBe(false);
 });
-it('retries a partial import without overwriting newer JSON or duplicating logical sessions', async () => {
+it('retains both divergent copies while retrying the other sessions in a partial import', async () => {
   const legacy = {
     version: 1,
     activeSessionId: 'old',
@@ -324,10 +338,12 @@ it('retries a partial import without overwriting newer JSON or duplicating logic
   );
   h.storage.write = write;
   const restored = await open();
-  expect(restored.failure()).toBeNull();
+  expect(restored.failure()?.code).toBe('LEGACY_DIVERGED');
   expect(restored.records()).toHaveLength(2);
   expect(restored.records()[0]?.snapshot.input).toBe('Newer');
-  expect(h.legacy()).toBeNull();
+  expect(h.legacy()).toEqual(legacy);
+  expect((await open()).failure()?.code).toBe('LEGACY_DIVERGED');
+  expect(h.legacy()).toEqual(legacy);
 });
 it('rejects duplicate logical IDs in distinct JSON files without changing either', async () => {
   const h = await setup();

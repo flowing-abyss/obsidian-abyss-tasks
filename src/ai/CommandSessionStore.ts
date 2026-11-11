@@ -255,7 +255,7 @@ export class CommandSessionStore {
       if (existing.updatedAt < old.updatedAt || (existing.updatedAt === old.updatedAt && different))
         throw new Error('Conflicting import');
       // A newer shared file cannot prove that another device's distinct earlier draft was copied.
-      keepLocal = this.state.legacyImported && different;
+      keepLocal = different;
     }
     const file = this.fileIds.get(old.snapshot.id);
     if (file === undefined) this.fail('READBACK_MISMATCH');
