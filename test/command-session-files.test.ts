@@ -76,6 +76,19 @@ it('does not accumulate empty sessions', async () => {
   expect(h.store.records()).toEqual([]);
   expect(h.files.size).toBeLessThanOrEqual(1);
 });
+it('releases a previously persisted active selection pointing at an empty draft', async () => {
+  const h = await setup();
+  await h.store.create(snapshot('old'));
+  const [file, text] = expectDefined([...h.files].find(([key]) => key !== 'state'));
+  h.files.set(
+    file,
+    JSON.stringify({ ...(JSON.parse(text) as object), snapshot: snapshot('old', '') }),
+  );
+  const reopened = await h.open();
+  expect(reopened.failure()).toBeNull();
+  expect(reopened.activeId()).toBeNull();
+  expect(reopened.records()).toEqual([]);
+});
 it('blocks clear-all without partial deletion when any unknown write remains', async () => {
   const h = await setup();
   await h.store.create(snapshot('safe'));
@@ -92,6 +105,22 @@ it('rejects a changed control file without overwriting external bytes', async ()
   await expect(h.store.select('one')).rejects.toMatchObject({ code: 'WRITE_FAILED' });
   expect(h.files.get('state')).toBe(external);
   expect(h.store.activeId()).toBe('two');
+});
+it('preserves all history when an inactive session changed on disk before clear-all', async () => {
+  const h = await setup();
+  await h.store.create(snapshot('inactive'));
+  await h.store.create(snapshot('active'));
+  const [file, text] = expectDefined([...h.files].find(([key]) => key !== 'state'));
+  h.files.set(
+    file,
+    JSON.stringify({
+      ...(JSON.parse(text) as object),
+      snapshot: { ...snapshot('inactive'), blocked: true },
+    }),
+  );
+  const before = [...h.files];
+  await expect(h.store.clearHistory()).rejects.toMatchObject({ code: 'READBACK_MISMATCH' });
+  expect([...h.files]).toEqual(before);
 });
 it('requires exact readback and retains validated memory on failure', async () => {
   const h = await setup();
@@ -132,6 +161,137 @@ it('imports once, preserves original timestamps, and never resurrects deletion f
   expect(first.records()[0]).toMatchObject({ createdAt: 7, updatedAt: 7 });
   await first.remove('old');
   expect((await open()).records()).toEqual([]);
+});
+function legacyDrafts(ids: readonly string[]) {
+  return {
+    version: 1,
+    activeSessionId: ids[0] ?? null,
+    sessions: ids.map((id) => ({ handles: 'historical', updatedAt: 7, snapshot: snapshot(id) })),
+  };
+}
+it('imports this device’s drafts after another device has already migrated and deleted a shared draft', async () => {
+  const h = await setup(legacyDrafts(['shared', 'device-a']));
+  await h.store.remove('shared');
+  const device = commandSessionStorage(legacyDrafts(['shared', 'device-b']));
+  const store = await CommandSessionStore.open({
+    ...h,
+    storage: {
+      ...h.storage,
+      loadLegacy: device.storage.loadLegacy,
+      clearLegacy: device.storage.clearLegacy,
+    },
+    now: () => 20,
+  });
+  expect(store.failure()).toBeNull();
+  expect(
+    store
+      .records()
+      .map((record) => record.snapshot.id)
+      .sort((a, b) => a.localeCompare(b)),
+  ).toEqual(['device-a', 'device-b']);
+  expect(device.legacy()).toBeNull();
+  expect(
+    (await h.open())
+      .records()
+      .map((record) => record.snapshot.id)
+      .sort((a, b) => a.localeCompare(b)),
+  ).toEqual(['device-a', 'device-b']);
+});
+it('retains local drafts whose identities cannot be matched to deletion markers from an older build', async () => {
+  const raw = legacyDrafts(['unknown']);
+  const h = commandSessionStorage(raw);
+  const state = JSON.stringify({
+    version: 1,
+    activeSessionId: null,
+    legacyImported: true,
+    deletedFiles: [h.fileId()],
+  });
+  h.files.set('state', state);
+  const store = await CommandSessionStore.open({ ...h, now: () => 1 });
+  expect(store.failure()).not.toBeNull();
+  expect(h.legacy()).toEqual(raw);
+  expect([...h.files]).toEqual([['state', state]]);
+});
+it('keeps an earlier divergent draft from another device when the shared session has a newer timestamp', async () => {
+  const h = await setup();
+  await h.store.create(snapshot('shared', 'Edited on device A'));
+  const incoming = legacyDrafts(['shared', 'device-b']);
+  const device = commandSessionStorage(incoming);
+  const store = await CommandSessionStore.open({
+    ...h,
+    storage: {
+      ...h.storage,
+      loadLegacy: device.storage.loadLegacy,
+      clearLegacy: device.storage.clearLegacy,
+    },
+    now: () => 20,
+  });
+  expect(device.legacy()).toEqual(incoming);
+  expect(store.records().find((row) => row.snapshot.id === 'shared')?.snapshot.input).toBe(
+    'Edited on device A',
+  );
+  expect(store.records().some((row) => row.snapshot.id === 'device-b')).toBe(true);
+  expect(store.failure()).not.toBeNull();
+  await expect(store.create(snapshot('usable'))).resolves.toBeUndefined();
+});
+it('does not clear a changed device-local envelope after verifying a copy of its previous value', async () => {
+  const first = legacyDrafts(['first']),
+    next = legacyDrafts(['first', 'new-draft']);
+  const h = commandSessionStorage(first);
+  let local: unknown = first;
+  h.storage.loadLegacy = () => structuredClone(local);
+  h.storage.clearLegacy = () => {
+    local = null;
+  };
+  const write = h.storage.write;
+  h.storage.write = async (...args) => {
+    await write(...args);
+    if (args[0].kind === 'state') local = next;
+  };
+  const store = await CommandSessionStore.open({ ...h, now: () => 1 });
+  expect(store.failure()).not.toBeNull();
+  expect(local).toEqual(next);
+  h.storage.write = write;
+  const retried = await CommandSessionStore.open({ ...h, now: () => 2 });
+  expect(retried.failure()).toBeNull();
+  expect(
+    retried
+      .records()
+      .map((record) => record.snapshot.id)
+      .sort((a, b) => a.localeCompare(b)),
+  ).toEqual(['first', 'new-draft']);
+  expect(local).toBeNull();
+});
+it('keeps the local envelope if a copied session changes before the import marker is verified', async () => {
+  const raw = legacyDrafts(['draft']);
+  const h = commandSessionStorage(raw);
+  const write = h.storage.write;
+  h.storage.write = async (...args) => {
+    await write(...args);
+    if (args[0].kind !== 'state') return;
+    const file = expectDefined([...h.files.keys()].find((key) => key !== 'state'));
+    h.files.set(file, 'concurrent replacement');
+  };
+  const store = await CommandSessionStore.open({ ...h, now: () => 1 });
+  expect(store.failure()?.code).toBe('READBACK_MISMATCH');
+  expect(h.legacy()).toEqual(raw);
+  expect([...h.files.values()]).toContain('concurrent replacement');
+});
+it('releases the deleted conversation bytes held for compare-before-write after a verified tombstone', async () => {
+  const h = await setup();
+  const input = 'Unique plaintext from the deleted conversation';
+  await h.store.create(snapshot('one', input));
+  const retained = () =>
+    Object.values(h.store).some(
+      (value: unknown) =>
+        value instanceof Map &&
+        [...value.values()].some(
+          (entry: unknown) => typeof entry === 'string' && entry.includes(input),
+        ),
+    );
+  expect(retained()).toBe(true);
+  await h.store.remove('one');
+  expect(retained()).toBe(false);
 });
 it('retries a partial import without overwriting newer JSON or duplicating logical sessions', async () => {
   const legacy = {

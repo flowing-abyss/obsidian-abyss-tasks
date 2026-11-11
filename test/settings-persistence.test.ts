@@ -1,7 +1,7 @@
 import { parseProviderSettings } from '../src/ai/providers/providerSettings';
 // @vitest-environment jsdom
 import type * as ObsidianModule from 'obsidian';
-import { Notice, Platform } from 'obsidian';
+import { Notice, Platform, SecretComponent } from 'obsidian';
 import ts from 'typescript';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
@@ -3001,6 +3001,123 @@ describe('settings draft Retry through the persistence coordinator', () => {
 });
 
 describe('provider settings ownership', () => {
+  it('restores the three role pickers, their secret bindings, and a rotated compatible endpoint', async () => {
+    const { ProviderSettingsSection } =
+      await import('../src/settings/sections/ProviderSettingsSection');
+    const { ProviderSecrets } = await import('../src/ai/providers/ProviderSecrets');
+    const { providerSecretBindings } = await import('../src/ai/providers/providerSettings');
+    const app = await createAppWithFiles({});
+    const port = memoryPort(markedStatic({}), stateEnvelope());
+    const secrets = new Map(
+      ['llm-key', 'speech-key', 'search-key', 'local-key'].map((id) => [
+        id,
+        `synthetic-private-${id}`,
+      ]),
+    );
+    const chooseKey = vi.spyOn(SecretComponent.prototype, 'onChange');
+    const pickLastKey = (id: string) => expectDefined(chooseKey.mock.lastCall?.[0])(id);
+    async function open() {
+      const coordinator = new SettingsPersistenceCoordinator(port);
+      const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+      const bindings = new ProviderSecrets(
+        {
+          getSecret: (id) => secrets.get(id) ?? null,
+          setSecret: () => undefined,
+        },
+        () => providerSecretBindings(settings.commandMode),
+      );
+      const writes: Array<Promise<void>> = [];
+      const section = new ProviderSettingsSection({
+        app,
+        settings: () => settings.commandMode,
+        setSettings: (value) => {
+          settings.commandMode = value;
+        },
+        secrets: bindings,
+        models: {
+          list: async () => [
+            { id: 'fixture-llm', name: 'Synthetic LLM' },
+            { id: 'whisper-large-v3', name: 'Speech' },
+          ],
+        },
+        save: () => {
+          const pending = coordinator.saveSettings(settings);
+          writes.push(pending);
+          return pending;
+        },
+      });
+      const container = createDiv();
+      section.render(container);
+      const get = (label: string) =>
+        expectDefined(
+          container.querySelector<HTMLInputElement | HTMLSelectElement>(`[aria-label="${label}"]`),
+        );
+      const change = (label: string, value: string) => {
+        const input = get(label);
+        input.value = value;
+        input.dispatchEvent(
+          new Event(input.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }),
+        );
+      };
+      return {
+        get,
+        change,
+        bindings,
+        close: async () => {
+          section.dispose();
+          await Promise.all(writes);
+        },
+      };
+    }
+    const first = await open();
+    first.change('Agent provider', 'groq');
+    await pickLastKey('llm-key');
+    first.change('Voice provider', 'groq');
+    await pickLastKey('speech-key');
+    first.change('Search provider', 'brave');
+    await pickLastKey('search-key');
+    await flushMicrotasks(0);
+    first.change('Agent model', 'fixture-llm');
+    first.change('Voice model', 'whisper-large-v3');
+    await first.close();
+    const second = await open();
+    expect(second.get('Agent model').value).toBe('fixture-llm');
+    expect(second.get('Voice model').value).toBe('whisper-large-v3');
+    expect(second.get('Search provider').value).toBe('brave');
+    expect(second.bindings.resolve('groq')).toBe('synthetic-private-llm-key');
+    expect(second.bindings.resolve('groq', 'voice')).toBe('synthetic-private-speech-key');
+    expect(second.bindings.resolve('brave')).toBe('synthetic-private-search-key');
+    second.change('Agent provider', 'openai-compatible');
+    second.change('Agent API base URL', 'http://localhost:11434/v1');
+    second.change('Agent model', 'local-llm');
+    await pickLastKey('local-key');
+    await second.close();
+    expect(port.staticData).toMatchObject({
+      commandMode: {
+        compatibleAgent: { secret: { id: 'local-key', baseURL: 'http://localhost:11434/v1' } },
+      },
+    });
+    const third = await open();
+    expect(third.get('Agent model').value).toBe('local-llm');
+    third.change('Agent API base URL', 'https://other.example/v1');
+    await third.close();
+    const restored = await new SettingsPersistenceCoordinator(port).loadSettings(DEFAULT_SETTINGS);
+    expect(parseProviderSettings(restored.settings.commandMode)).toMatchObject({
+      provider: 'openai-compatible',
+      model: 'local-llm',
+      voice: 'groq',
+      voiceModel: 'whisper-large-v3',
+      search: 'brave',
+      secrets: { groq: 'llm-key', voice: { groq: 'speech-key' }, brave: 'search-key' },
+    });
+    expect(parseProviderSettings(restored.settings.commandMode).compatibleAgent).toEqual({
+      baseURL: 'https://other.example/v1',
+      model: 'local-llm',
+    });
+    expect(JSON.stringify(port.staticData)).not.toContain('synthetic-private-');
+    expect(port.stateText).not.toContain('synthetic-private-');
+    expect(JSON.parse(expectDefined(port.stateText))).not.toHaveProperty('views.commandMode');
+  });
   it('loads defaults for old data and keeps provider choices and unknown extensions in static settings', async () => {
     const port = memoryPort(markedStatic({ futureExtension: { keep: true } }), stateEnvelope());
     const coordinator = new SettingsPersistenceCoordinator(port);

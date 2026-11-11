@@ -89,18 +89,19 @@ async function fixture() {
       token_type: 'Bearer',
     });
   });
-  const plan = new ChatGptPlan(
-    {
-      getSecret: (id) => values.get(id) ?? null,
-      setSecret: (id, value) => {
-        values.set(id, value);
+  const open = () =>
+    new ChatGptPlan(
+      {
+        getSecret: (id) => values.get(id) ?? null,
+        setSecret: (id, value) => {
+          values.set(id, value);
+        },
       },
-    },
-    fetch,
-    desktop,
-    () => mutable.now,
-  );
-  return { plan, values, mutable, attempts, forms, fetch, issued };
+      fetch,
+      desktop,
+      () => mutable.now,
+    );
+  return { plan: open(), open, values, mutable, attempts, forms, fetch, issued };
 }
 it('does PKCE, verifies the identity and uses only the plugin OAuth grant for the account catalog', async () => {
   const h = await fixture();
@@ -157,13 +158,16 @@ it('preserves a verified registration after declined plan scope and explicitly r
   expect(h.attempts[1]?.searchParams.get('prompt')).toBe('consent');
   expect(h.plan.state().ready).toBe(true);
 });
-it('serializes refresh and keeps both calls on the newly rotated credentials', async () => {
+it('restores the selected account after restart and serializes refresh on its rotated credentials', async () => {
   const h = await fixture();
   await h.plan.signIn(undefined, new AbortController().signal);
+  h.plan.dispose();
+  const restored = h.open();
+  expect(restored.state()).toMatchObject({ active: h.issued, ready: true });
   h.mutable.now += 3600_000;
   await Promise.all([
-    h.plan.list(new AbortController().signal),
-    h.plan.list(new AbortController().signal),
+    restored.list(new AbortController().signal),
+    restored.list(new AbortController().signal),
   ]);
   expect(h.forms.map((form) => form.get('grant_type'))).toEqual([
     'authorization_code',

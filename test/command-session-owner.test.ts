@@ -1048,6 +1048,21 @@ it('clear-all retires a hidden imported empty active record before accepting new
   expect(await h.owner.flush()).toBe(true);
   expect(h.owner.recent()[0]?.snapshot.input).toBe('New work after clear');
 });
+it('restores the next draft after erasing an active draft and reopening twice', async () => {
+  const h = await setup();
+  h.owner.setInput('Temporary draft');
+  expect(await h.owner.flush()).toBe(true);
+  h.owner.setInput('');
+  expect(await h.owner.flush()).toBe(true);
+  h.owner.dispose();
+  await h.owner.drained();
+  const next = (await h.reopenOwner()).owner;
+  next.setInput('New draft after restart');
+  expect(await next.flush()).toBe(true);
+  next.dispose();
+  await next.drained();
+  expect((await h.reopenOwner()).owner.snapshot().input).toBe('New draft after restart');
+});
 it('derives the session title from the root that owns a focused child', async () => {
   const h = await setup();
   const prepared = await expectDefined(h.api().tasks.prepare)({

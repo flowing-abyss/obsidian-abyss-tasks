@@ -10,6 +10,7 @@ import {
   parseCommandHistory,
   parseCommandSessionFile,
   projectCommandSnapshot,
+  type CommandHistoryEnvelope,
   type CommandSessionFile,
   type HistoricalCommandSession,
   type HistoricalCommandSnapshot,
@@ -46,6 +47,7 @@ export type CommandPersistenceFailureCode =
   | 'DELETED_SESSION'
   | 'UNRESOLVED_WRITES'
   | 'DELETE_FAILED'
+  | 'LEGACY_DIVERGED'
   | 'LEGACY_CLEANUP_FAILED';
 export class CommandPersistenceFailure extends Error {
   constructor(readonly code: CommandPersistenceFailureCode) {
@@ -63,19 +65,34 @@ const FAILURE_MESSAGES: Record<CommandPersistenceFailureCode, string> = {
   DELETED_SESSION: 'This session has been deleted.',
   UNRESOLVED_WRITES: 'History contains an unresolved write. Review it before deleting history.',
   DELETE_FAILED: 'Some history files could not be removed. Their deletion is retained.',
+  LEGACY_DIVERGED:
+    'An earlier draft on this device differs from the vault history. Its original local copy has been kept.',
   LEGACY_CLEANUP_FAILED: 'History was imported, but its old copy could not be removed.',
 };
 export function isCommandSessionFileId(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 }
+const fileIdSchema = z.string().refine(isCommandSessionFileId);
+const stateFields = {
+  activeSessionId: z.string().min(1).nullable(),
+  legacyImported: z.boolean(),
+  deletedFiles: z.array(fileIdSchema),
+};
 const stateSchema = z
-  .strictObject({
-    version: z.literal(1),
-    activeSessionId: z.string().min(1).nullable(),
-    legacyImported: z.boolean(),
-    deletedFiles: z.array(z.string().refine(isCommandSessionFileId)),
-  })
-  .refine((value) => value.legacyImported || value.deletedFiles.length === 0);
+  .discriminatedUnion('version', [
+    z.strictObject({ version: z.literal(1), ...stateFields }),
+    z.strictObject({
+      version: z.literal(2),
+      ...stateFields,
+      deletedSessions: z.record(fileIdSchema, z.string().min(1)),
+    }),
+  ])
+  .refine((state) => {
+    if (!state.legacyImported && state.deletedFiles.length > 0) return false;
+    if (state.version === 1) return true;
+    const files = new Set(state.deletedFiles);
+    return Object.keys(state.deletedSessions).every((id) => files.has(id));
+  });
 type HistoryState = z.infer<typeof stateSchema>;
 const MAX_FILE_BYTES = 24 * 1024 * 1024;
 function parseFile(text: string): CommandSessionFile {
@@ -136,15 +153,26 @@ export class CommandSessionStore {
   private writable(): void {
     if (this.paused) this.fail('UNREADABLE_HISTORY');
   }
+  private get deletedSessions(): Record<string, string> {
+    return this.state.version === 2 ? this.state.deletedSessions : {};
+  }
   private async initialize(): Promise<void> {
     try {
       this.stateText = await this.options.storage.read({ kind: 'state' });
       if (this.stateText !== null)
         this.state = stateSchema.parse(JSON.parse(this.stateText) as unknown);
+      for (const id of Object.values(this.deletedSessions)) this.deleted.add(id);
       await this.loadRecords();
       if (this.state.activeSessionId !== null && !this.data.has(this.state.activeSessionId))
         throw new Error('Missing active session');
-      if (!this.state.legacyImported) await this.importLegacy();
+      this.state.activeSessionId = this.visibleSelection(this.state.activeSessionId);
+      const local = this.options.storage.loadLegacy();
+      if (local == null) {
+        // Keep fresh installations free of writes until the first mutation.
+        this.state.legacyImported = true;
+      } else {
+        await this.importLegacy(local);
+      }
     } catch (cause) {
       this.paused = true;
       this.lastFailure =
@@ -154,7 +182,10 @@ export class CommandSessionStore {
       return;
     }
     await this.cleanupDeleted();
-    this.cleanupLegacy();
+  }
+  private visibleSelection(id: string | null): string | null {
+    const record = id === null ? undefined : this.data.get(id);
+    return record !== undefined && hasCommandHistoryContent(record.snapshot) ? id : null;
   }
   private async loadRecords(): Promise<void> {
     const files = await this.options.storage.listSessions();
@@ -173,49 +204,74 @@ export class CommandSessionStore {
         ...(file.titleIsEntity === true ? { titleIsEntity: true as const } : {}),
         snapshot: file.snapshot,
       };
-      if (this.data.has(record.snapshot.id)) throw new Error('Duplicate session');
+      if (this.data.has(record.snapshot.id) || this.deleted.has(record.snapshot.id))
+        throw new Error('Duplicate or deleted session');
       this.data.set(record.snapshot.id, record);
       this.fileIds.set(record.snapshot.id, fileId);
       this.fileTexts.set(fileId, text);
     }
   }
-  private async importLegacy(): Promise<void> {
-    const raw = this.options.storage.loadLegacy();
-    if (raw === null || raw === undefined) {
-      // No eager writes on a fresh installation. First mutation records this decision.
-      this.state = { ...this.state, legacyImported: true };
-      return;
-    }
+  private async importLegacy(raw: unknown): Promise<void> {
     const legacy = parseCommandHistory(raw);
+    const original = JSON.stringify(raw);
+    const known = this.deletedSessions;
+    const unknownDeletion = this.state.deletedFiles.some((file) => known[file] === undefined);
+    const copied: Array<{ file: string; keepLocal: boolean }> = [];
     for (const old of legacy.sessions) {
-      const existing = this.data.get(old.snapshot.id);
-      if (existing !== undefined) {
-        if (
-          existing.updatedAt < old.updatedAt ||
-          (existing.updatedAt === old.updatedAt &&
-            JSON.stringify(existing.snapshot) !== JSON.stringify(old.snapshot))
-        )
-          throw new Error('Conflicting import');
-        continue;
-      }
-      const record: HistoricalCommandSession = {
-        ...old,
-        createdAt: old.updatedAt,
-        ...commandSessionMetadata(old.snapshot),
-      };
-      this.data.set(old.snapshot.id, record);
-      await this.persistRecord(record);
+      if (this.deleted.has(old.snapshot.id)) continue;
+      copied.push(await this.importRecord(old, unknownDeletion));
     }
     await this.persistState({
       ...this.state,
       legacyImported: true,
-      activeSessionId: this.state.activeSessionId ?? legacy.activeSessionId,
+      activeSessionId: this.state.activeSessionId ?? this.visibleSelection(legacy.activeSessionId),
     });
+    for (const { file } of copied) await this.verifyStoredFile(file);
+    if (copied.some((copy) => copy.keepLocal))
+      this.lastFailure = new CommandPersistenceFailure('LEGACY_DIVERGED');
+    else this.cleanupLegacy(original);
   }
-  private cleanupLegacy(): void {
-    if (!this.state.legacyImported) return;
+  private async importRecord(
+    old: CommandHistoryEnvelope['sessions'][number],
+    unknownDeletion: boolean,
+  ): Promise<{ file: string; keepLocal: boolean }> {
+    const existing = this.data.get(old.snapshot.id);
+    let keepLocal = false;
+    if (existing === undefined) {
+      // Version 1 tombstones cannot identify a missing logical session from another device.
+      if (unknownDeletion) throw new Error('Cannot match local history to an older deletion');
+      const record = { ...old, createdAt: old.updatedAt, ...commandSessionMetadata(old.snapshot) };
+      this.data.set(old.snapshot.id, record);
+      await this.persistRecord(record);
+    } else {
+      const different = JSON.stringify(existing.snapshot) !== JSON.stringify(old.snapshot);
+      if (existing.updatedAt < old.updatedAt || (existing.updatedAt === old.updatedAt && different))
+        throw new Error('Conflicting import');
+      // A newer shared file cannot prove that another device's distinct earlier draft was copied.
+      keepLocal = this.state.legacyImported && different;
+    }
+    const file = this.fileIds.get(old.snapshot.id);
+    if (file === undefined) this.fail('READBACK_MISMATCH');
+    return { file, keepLocal };
+  }
+  private async verifyStoredFile(fileId: string): Promise<void> {
     try {
-      if (this.options.storage.loadLegacy() == null) return;
+      if (
+        (await this.options.storage.read({ kind: 'session', fileId })) ===
+        this.fileTexts.get(fileId)
+      )
+        return;
+    } catch {
+      // A failed read cannot confirm that these are still the bytes this store saw.
+    }
+    this.fail('READBACK_MISMATCH');
+  }
+  private cleanupLegacy(original: string): void {
+    try {
+      const current = this.options.storage.loadLegacy();
+      if (current == null) return;
+      if (JSON.stringify(current) !== original)
+        throw new Error('Local history changed during import');
       this.options.storage.clearLegacy();
       if (this.options.storage.loadLegacy() != null) throw new Error('Cleanup unverified');
     } catch {
@@ -280,7 +336,7 @@ export class CommandSessionStore {
     if (select || this.state.activeSessionId === snapshot.id) {
       await this.persistState({
         ...this.state,
-        activeSessionId: this.data.has(snapshot.id) ? snapshot.id : null,
+        activeSessionId: this.visibleSelection(snapshot.id),
       });
     }
     this.lastFailure = null;
@@ -319,17 +375,24 @@ export class CommandSessionStore {
       if (record === undefined) this.fail('MISSING_SESSION');
       if (hasUnresolvedCommandWrites(record.snapshot)) this.fail('UNRESOLVED_WRITES');
     }
-    const fileIds = ids.flatMap((id) => {
+    const files = ids.flatMap((id) => {
       const file = this.fileIds.get(id);
-      return file === undefined ? [] : [file];
+      return file === undefined ? [] : [[file, id] as const];
     });
+    for (const [file] of files) await this.verifyStoredFile(file);
     await this.persistState({
       ...this.state,
+      version: 2,
+      deletedSessions: {
+        ...this.deletedSessions,
+        ...Object.fromEntries(files),
+      },
       activeSessionId: ids.includes(this.state.activeSessionId ?? '')
         ? null
         : this.state.activeSessionId,
-      deletedFiles: [...new Set([...this.state.deletedFiles, ...fileIds])],
+      deletedFiles: [...new Set([...this.state.deletedFiles, ...files.map(([file]) => file)])],
     });
+    for (const [file] of files) this.fileTexts.delete(file);
     for (const id of ids) {
       this.deleted.add(id);
       this.data.delete(id);
