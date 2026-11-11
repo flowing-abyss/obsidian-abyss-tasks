@@ -35,6 +35,7 @@ export interface CommandModeOptions extends Pick<
 > {
   readonly app: App;
   readonly availability?: () => { agent: boolean; voice: boolean };
+  readonly availabilityRevision?: () => number;
   readonly transcription?: CommandTranscriptionPort;
   readonly owner: () => CommandSessionOwner | Promise<CommandSessionOwner>;
   readonly memory: CommandSurfaceMemory;
@@ -45,6 +46,18 @@ export interface CommandModeOptions extends Pick<
   readonly navigate: (target: string, revision: string, intent: 'feedback' | 'reveal') => boolean;
 }
 type PrimaryAction = 'send' | 'save' | 'stop';
+const contentFields = [
+  'id',
+  'proposal',
+  'entities',
+  'focus',
+  'exchanges',
+  'journal',
+  'presentation',
+  'actual',
+  'recovery',
+  'blocked',
+] as const satisfies ReadonlyArray<keyof CommandSessionSnapshot>;
 function busy(state: CommandSessionSnapshot): boolean {
   return ['thinking', 'searching', 'writing'].includes(state.status.kind);
 }
@@ -101,6 +114,8 @@ export class CommandModeSurface implements CaptureExtension {
   private readonly visibility = Symbol();
   private readonly initializing: boolean = true;
   private inputGeneration = 0;
+  private contentState: CommandSessionSnapshot | undefined;
+  private availabilityRevision: number | undefined;
   private navigated = '';
   private phaseTimer: number | undefined;
   private pendingPhase = '';
@@ -215,8 +230,13 @@ export class CommandModeSurface implements CaptureExtension {
     this.component.registerDomEvent(this.capture.input, 'select', () => {
       this.remember();
     });
+    this.component.registerDomEvent(this.capture.input, 'focus', () => {
+      this.updateAvailability();
+      if (this.active() && this.owner !== undefined) this.renderPrimary(this.owner.snapshot());
+    });
   }
   private updateAvailability(availability = this.options.availability?.()): void {
+    this.availabilityRevision = this.options.availabilityRevision?.();
     this.toggle.hidden = availability?.agent === false;
     this.microphone.hidden =
       availability?.voice === false ||
@@ -326,6 +346,9 @@ export class CommandModeSurface implements CaptureExtension {
     if (reason === 'open') this.startContinuous();
   }
   private deactivateCommand(): void {
+    this.tree?.destroy();
+    this.tree = undefined;
+    this.contentState = undefined;
     this.voice?.stop();
     this.releaseNoteReview();
     this.unsubscribe?.();
@@ -380,6 +403,7 @@ export class CommandModeSurface implements CaptureExtension {
     this.bindVoice();
   }
   edited(): void {
+    this.refreshChangedAvailability();
     this.waveform.clear();
     this.voice?.edited();
   }
@@ -548,7 +572,12 @@ export class CommandModeSurface implements CaptureExtension {
     return this.voiceMode() === 'manual' && this.voice?.requestSend() === true;
   }
   private submissionOwner(): CommandSessionOwner | undefined {
-    return this.options.availability?.().agent === false ? undefined : this.owner;
+    this.updateAvailability();
+    if (this.toggle.hidden === true) {
+      this.setPrimary('send', true);
+      return undefined;
+    }
+    return this.owner;
   }
   private async submitText(
     text: string,
@@ -612,11 +641,16 @@ export class CommandModeSurface implements CaptureExtension {
     this.primary.disabled = disabled;
   }
   private renderPrimary(state: CommandSessionSnapshot): void {
-    if (this.options.availability?.().agent === false) {
+    this.refreshChangedAvailability();
+    if (this.toggle.hidden === true) {
       this.setPrimary('send', true);
       return;
     }
     this.renderAvailablePrimary(state);
+  }
+  private refreshChangedAvailability(): void {
+    if (this.availabilityRevision !== this.options.availabilityRevision?.())
+      this.updateAvailability();
   }
   private renderAvailablePrimary(state: CommandSessionSnapshot): void {
     if (this.renderDictationPrimary()) return;
@@ -668,11 +702,11 @@ export class CommandModeSurface implements CaptureExtension {
         end = input.selectionEnd ?? start;
       input.value = state.input;
       input.setSelectionRange(start, end);
+      this.sizeInput();
     }
     if (input.value !== '') this.waveform.clear();
-    this.sizeInput();
     const isBusy = busy(state);
-    this.notes.update(state);
+    this.renderContent(state);
     this.renderPrimary(state);
     this.capture.input.setAttribute('aria-busy', String(isBusy));
     this.capture.input.setAttribute('aria-invalid', String(state.status.kind === 'error'));
@@ -680,17 +714,23 @@ export class CommandModeSurface implements CaptureExtension {
     this.renderLatest(state);
     this.question.textContent = state.activeQuestion ?? '';
     this.question.hidden = state.activeQuestion === null;
-    this.projects.update(state);
-    this.tree?.update(state);
     this.scrollChanges(state);
-    this.content.classList.toggle(
-      'abyss-command-content--populated',
-      this.content.querySelector(
-        '.abyss-task-card, .abyss-project-dashboard-header, .abyss-command-note',
-      ) !== null,
-    );
     this.navigateSaved(state);
     this.reveal(state);
+  }
+  private renderContent(state: CommandSessionSnapshot): void {
+    const previous = this.contentState;
+    this.contentState = state;
+    if (previous !== undefined && contentFields.every((key) => state[key] === previous[key]))
+      return;
+    this.notes.update(state);
+    this.projects.update(state);
+    this.tree?.update(state);
+    this.content.classList.toggle(
+      'abyss-command-content--populated',
+      this.tree?.hasTasks === true ||
+        this.content.querySelector('.abyss-project-dashboard-header, .abyss-command-note') !== null,
+    );
   }
   private renderLatest(state: CommandSessionSnapshot): void {
     const last = [...state.exchanges].reverse().find((entry) => entry.role === 'user');

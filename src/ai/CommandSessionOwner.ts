@@ -142,9 +142,7 @@ export class CommandSessionOwner {
     );
     this.ownedSessions.add(this.session.snapshot().id);
     this.session.requireNoteReview();
-    const active = options.store
-      .records()
-      .find((record) => record.snapshot.id === options.store.activeId());
+    const active = options.store.record(options.store.activeId());
     if (active !== undefined) this.session.restore(active.snapshot);
     let initial = true;
     let transition = JSON.stringify(this.session.snapshot().pendingTransition);
@@ -604,6 +602,9 @@ export class CommandSessionOwner {
   recent(): readonly HistoricalCommandSession[] {
     return this.options.store.records();
   }
+  hasHistory(id: string): boolean {
+    return this.options.store.hasRecord(id);
+  }
   newSession(disposition?: 'keep' | 'discard'): Promise<boolean> {
     this.interaction++;
     this.retireVoice();
@@ -640,7 +641,7 @@ export class CommandSessionOwner {
   }
   private async restoreSelection(id: string): Promise<boolean> {
     if (this.disposed) return false;
-    const record = this.recent().find((entry) => entry.snapshot.id === id);
+    const record = this.options.store.record(id);
     if (record === undefined) return false;
     if (!this.session.restore(record.snapshot)) {
       await this.options.store.create(this.session.snapshot());
@@ -697,9 +698,8 @@ export class CommandSessionOwner {
       return false;
     }
   }
-  deletionReason(id: string): string | null {
-    const record = this.recent().find((entry) => entry.snapshot.id === id);
-    return record !== undefined && hasUnresolvedCommandWrites(record.snapshot)
+  deletionReason(record: HistoricalCommandSession): string | null {
+    return hasUnresolvedCommandWrites(record.snapshot)
       ? 'This session contains an unresolved write. Review it before deleting history.'
       : null;
   }
@@ -721,15 +721,21 @@ export class CommandSessionOwner {
     return this.transition(async () => {
       await this.session.settle();
       if (this.disposed || !(await this.flush())) return false;
-      const ids = id === undefined ? this.recent().map((entry) => entry.snapshot.id) : [id];
+      const records = id === undefined ? this.recent() : [this.options.store.record(id)];
       try {
         // Store checks the whole batch before changing a single row or its selection.
-        if (ids.some((entry) => this.deletionReason(entry) !== null)) {
+        if (
+          records.some((record) => record !== undefined && this.deletionReason(record) !== null)
+        ) {
           await this.removeHistoryRecords(id);
           return false;
         }
-        if (ids.includes(this.session.snapshot().id) && !(await this.startSession('keep')))
-          return false;
+        const active = this.session.snapshot().id;
+        const removesActive =
+          id === undefined
+            ? records.some((record) => record?.snapshot.id === active)
+            : id === active;
+        if (removesActive && !(await this.startSession('keep'))) return false;
         this.assertLive();
         await this.removeHistoryRecords(id);
         this.emit();

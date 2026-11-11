@@ -248,6 +248,7 @@ async function setup(
     selectionEnd: 0,
     scrollTop: 0,
   };
+  let settingsRevision = 0;
   const host = document.body.createDiv();
   let closeCount = 0;
   const navigate = vi.fn<
@@ -287,6 +288,7 @@ async function setup(
           app: h.app,
           ...(transcription === undefined ? {} : { transcription }),
           ...(availability === undefined ? {} : { availability }),
+          availabilityRevision: () => settingsRevision,
           owner: resolveOwner,
           memory,
           context: () => 'Tasks view',
@@ -368,6 +370,9 @@ async function setup(
     },
     memory,
     projectSettings,
+    settingsChanged: () => {
+      settingsRevision++;
+    },
     persisted,
     resolveOwner,
     ordinaryExecute,
@@ -449,6 +454,46 @@ it('hides unavailable agent and voice controls without opening the command owner
   expect(surface.element.querySelector<HTMLButtonElement>('[aria-label="Send"]')?.hidden).toBe(
     false,
   );
+});
+it('restores a pending native task preview after toggling Command mode off and on', async () => {
+  const h = await setup();
+  const gate = deferred<void>();
+  mockReadingView();
+  const renderer = vi.mocked(methodOf(MarkdownRenderer, 'render'));
+  const render = expectDefined(renderer.getMockImplementation());
+  renderer.mockImplementation(async (...args) => {
+    await gate.promise;
+    return render(...args);
+  });
+  const result = await expectDefined(h.api.tasks.prepare)({
+    kind: 'create',
+    destination: { type: 'note', path: 'a.md', insertion: { type: 'append' } },
+    tree: { markdownTitle: 'Review [[Proposal]]' },
+  });
+  if (!result.ok) throw new Error(result.error.code);
+  h.session.stage({
+    kind: 'task',
+    plan: await canonicalCommandPlan(h.api, result.value, new AbortController().signal, {
+      now: () => 0,
+      deadline: 5000,
+    }),
+  });
+  const surface = h.mount();
+  await flushMicrotasks(0);
+  expect(renderer).toHaveBeenCalled();
+  const toggle = voiceButton(surface, 'CommandMode');
+  toggle.click();
+  gate.resolve();
+  await flushMicrotasks(0);
+  toggle.click();
+  await flushMicrotasks(0);
+  expect(surface.element.querySelector('.abyss-task-title')?.textContent).toBe('Review Proposal');
+  expect(surface.element.querySelector('.abyss-command-content--populated')).not.toBeNull();
+  expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+  enter(surface, '');
+  await vi.waitFor(async () => {
+    expect(await h.read('a.md')).toContain('Review [[Proposal]]');
+  });
 });
 it('opens New session from the send context menu and keeps the command toggle a plain toggle', async () => {
   const h = await setup();
@@ -2129,6 +2174,37 @@ it('reveals a changed project only after its native Markdown is ready', async ()
   await flushMicrotasks(0);
   expect(property.textContent).toContain('Long updated description');
   expect(scroll).toHaveBeenCalledWith({ top: 248, behavior: 'smooth' });
+});
+it('keeps one native project Markdown render and its credential checks outside composer edits', async () => {
+  const { h, project } = await projectSetup();
+  const gate = deferred<void>();
+  const renderer = vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (...args) => {
+    await gate.promise;
+    return renderNativeBlocks(...args);
+  });
+  h.session.stage({
+    kind: 'project',
+    before: project,
+    fields: [{ fieldId: 'description', value: 'Review [[Details]]' }],
+  });
+  const availability = vi.fn(() => ({ agent: true, voice: true }));
+  const surface = h.mount(undefined, availability);
+  await flushMicrotasks(0);
+  const initial = renderer.mock.calls.length;
+  expect(initial).toBeGreaterThan(0);
+  availability.mockClear();
+  for (const char of 'draft') {
+    surface.input.value += char;
+    surface.input.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  const callsWhileTyping = availability.mock.calls.length;
+  gate.resolve();
+  await flushMicrotasks(0);
+  expect(surface.element.querySelector('.abyss-project-description')?.textContent).toContain(
+    'Details',
+  );
+  expect(renderer).toHaveBeenCalledTimes(initial);
+  expect(callsWhileTyping).toBe(0);
 });
 it('waits for a focused project field to commit before revealing its change', async () => {
   const { h, project } = await projectSetup(
@@ -4606,6 +4682,28 @@ it('restores ordinary capture when retained command mode loses its provider', as
   expect(h.owner.snapshot().input).toBe('Retained command draft');
   expect(h.resolveOwner).not.toHaveBeenCalled();
 });
+it('updates mounted controls on a settings revision and checks current credentials at submission', async () => {
+  const h = await setup();
+  const availability = vi.fn(() => ({ agent: true, voice: true }));
+  const surface = h.mount({ available: () => {}, transcribe: async () => '' }, availability);
+  availability.mockReturnValue({ agent: false, voice: false });
+  h.settingsChanged();
+  h.owner.setInput('Retained draft');
+  expect(voiceButton(surface, 'CommandMode').hidden).toBe(true);
+  expect(voiceButton(surface).hidden).toBe(true);
+  expect(voiceButton(surface, 'Send').disabled).toBe(true);
+  availability.mockReturnValue({ agent: true, voice: true });
+  h.settingsChanged();
+  h.owner.setInput('Reconnected');
+  expect(voiceButton(surface, 'CommandMode').hidden).toBe(false);
+  expect(voiceButton(surface).hidden).toBe(false);
+  expect(voiceButton(surface, 'Send').disabled).toBe(false);
+  availability.mockReturnValue({ agent: false, voice: true });
+  enter(surface, 'Secret removed outside settings');
+  await flushMicrotasks(0);
+  expect(h.owner.snapshot().exchanges).toEqual([]);
+  expect(surface.input.value).toBe('Secret removed outside settings');
+});
 
 function openHistory(surface: CaptureSurface) {
   expectDefined(surface.element.querySelector<HTMLButtonElement>('[aria-label="History"]')).click();
@@ -4651,6 +4749,23 @@ it.each(['command toggle', 'offline history'] as const)(
 function historyRows(popup: HTMLElement) {
   return [...popup.querySelectorAll<HTMLButtonElement>('.abyss-command-history-select')];
 }
+it('opens retained history once for a list of sessions and keeps tree updates independent of it', async () => {
+  const h = await setup();
+  for (let i = 0; i < 10; i++) {
+    h.owner.setInput(`Draft ${i}`);
+    await h.owner.newSession('keep');
+  }
+  const records = vi.spyOn(CommandSessionStore.prototype, 'records');
+  const surface = h.mount();
+  expect(records).not.toHaveBeenCalled();
+  const history = openHistory(surface);
+  expect(historyRows(history)).toHaveLength(10);
+  const search = expectDefined(history.querySelector('input'));
+  search.value = 'Draft 2';
+  search.dispatchEvent(new Event('input', { bubbles: true }));
+  expect(historyRows(history).map((row) => row.textContent)).toEqual(['Draft 2']);
+  expect(records).toHaveBeenCalledOnce();
+});
 it('searches retained text in a compact newest activity history without transcripts or action-menu rows', async () => {
   let time = 100;
   const h = await setup(

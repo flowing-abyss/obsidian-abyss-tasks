@@ -292,6 +292,7 @@ interface PendingReveal {
 }
 export class CommandSession {
   private state: CommandSessionSnapshot;
+  private published: CommandSessionSnapshot | undefined;
   private readonly listeners = new Set<(state: CommandSessionSnapshot) => void>();
   private turn: AbortController | undefined;
   private running: Promise<void> | undefined;
@@ -361,7 +362,9 @@ export class CommandSession {
     this.publish({});
   }
   snapshot(): CommandSessionSnapshot {
-    const copy = detached({
+    if (this.published !== undefined) return this.published;
+    // State ingress detaches each patch. Frozen siblings can be shared by later publications.
+    const copy = {
       ...this.state,
       ...(this.presentationSession === this.state.id &&
       this.presentation?.proposalRevision === this.state.proposal.revision &&
@@ -369,8 +372,9 @@ export class CommandSession {
         ? { presentation: this.presentation }
         : {}),
       ...(this.pendingReveal === undefined ? {} : { reveal: this.pendingReveal.request }),
-    });
+    };
     freeze(copy);
+    this.published = copy;
     return copy;
   }
   /** The owner calls this only after settling work and persisting selection. */
@@ -528,6 +532,7 @@ export class CommandSession {
     )
       this.conversationRevision++;
     this.state = { ...this.state, ...detached(patch) };
+    this.published = undefined;
     for (const listener of this.listeners) listener(this.snapshot());
   }
   status(kind: CommandStatusKind, message: string): void {

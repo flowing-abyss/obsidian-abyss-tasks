@@ -132,6 +132,13 @@ export class CommandSessionStore {
         ),
     );
   }
+  hasRecord(id: string): boolean {
+    const record = this.data.get(id);
+    return record !== undefined && hasCommandHistoryContent(record.snapshot);
+  }
+  record(id: string | null): HistoricalCommandSession | undefined {
+    return id !== null && this.hasRecord(id) ? structuredClone(this.data.get(id)) : undefined;
+  }
   activeId(): string | null {
     return this.state.activeSessionId;
   }

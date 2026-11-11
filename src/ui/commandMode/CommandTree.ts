@@ -167,6 +167,9 @@ export class CommandTree {
   get settled(): TaskTreeDisplayMount['settled'] {
     return this.mount.settled;
   }
+  get hasTasks(): boolean {
+    return this.bindings.size > 0;
+  }
   private continuations(state: CommandSessionSnapshot): ReadonlyMap<string, string> {
     const proven = new Map<string, string>();
     for (const pair of state.journal.flatMap(receiptPairs)) {
@@ -257,10 +260,9 @@ export class CommandTree {
         ...this.touched,
       ]),
     });
-    const sessions = new Set(this.options.owner.recent().map((record) => record.snapshot.id));
-    sessions.add(this.state.id);
     for (const id of this.options.presentation.keys())
-      if (!sessions.has(id)) this.options.presentation.delete(id);
+      if (id !== this.state.id && !this.options.owner.hasHistory(id))
+        this.options.presentation.delete(id);
   }
   private proposalRoots(context: {
     current: Map<string, CommandNodeFields>;

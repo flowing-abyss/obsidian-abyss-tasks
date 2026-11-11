@@ -32,6 +32,34 @@ it('clears admitted input before planning completes and retains the exact exchan
   gate.resolve();
   await pending;
 });
+it('shares immutable proposal data across input edits while detaching incoming plans', async () => {
+  const { session, api } = await setup();
+  const result = ok(
+    await expectDefined(api.tasks.prepare)({
+      kind: 'create',
+      destination: { type: 'note', path: 'a.md', insertion: { type: 'append' } },
+      tree: { markdownTitle: 'Original' },
+    }),
+  );
+  const plan = await canonicalCommandPlan(api, result, new AbortController().signal, {
+    now: () => 0,
+    deadline: 5000,
+  });
+  session.stage({ kind: 'task', plan });
+  const first = session.snapshot();
+  const change = first.proposal.changes[0];
+  if (change?.kind !== 'task') throw new Error('Missing task proposal');
+  const reviewed = expectDefined(change.plan.after);
+  expect(Object.isFrozen(reviewed)).toBe(true);
+  const supplied = expectDefined(plan.after);
+  Object.assign(supplied, { markdownTitle: 'Changed by caller' });
+  expect(reviewed.markdownTitle).toBe('Original');
+  session.setInput('next');
+  const next = session.snapshot();
+  expect(first.input).toBe('');
+  expect(next.input).toBe('next');
+  expect(next.proposal).toBe(first.proposal);
+});
 it.each([false, true])(
   'restores failed admitted text only without a newer composer edit (newer=%s)',
   async (newer) => {

@@ -79,6 +79,7 @@ export class CommandHistoryPopover {
   private readonly list: HTMLElement;
   private readonly status: HTMLElement;
   private readonly rows = new Map<string, HistoryRow>();
+  private records: readonly HistoricalCommandSession[] = [];
   private readonly unsubscribe: () => void;
   private readonly releaseSurface: () => void;
   private live = true;
@@ -103,6 +104,7 @@ export class CommandHistoryPopover {
         this.unsubscribe();
         this.releaseSurface();
         this.rows.clear();
+        this.records = [];
         options.anchor.setAttribute('aria-expanded', 'false');
         options.closed();
         if (restoreFocus && options.anchor.isConnected)
@@ -135,6 +137,7 @@ export class CommandHistoryPopover {
       );
     });
     this.unsubscribe = options.owner.subscribe(() => {
+      this.records = options.owner.recent();
       this.render();
     });
     this.input.focus({ preventScroll: true });
@@ -203,7 +206,7 @@ export class CommandHistoryPopover {
     row.select.title = record.title;
     row.select.setAttribute('aria-current', String(id === activeId));
     row.select.disabled = this.pending;
-    const reason = this.options.owner.deletionReason(id);
+    const reason = this.options.owner.deletionReason(record);
     row.remove.disabled = this.pending || reason !== null;
     row.remove.title = reason ?? commandMessage('Delete session');
     if (reason === null) row.remove.removeAttribute('aria-description');
@@ -222,7 +225,7 @@ export class CommandHistoryPopover {
   }
   private render(): void {
     if (!this.live) return;
-    const records = this.options.owner.recent();
+    const records = this.records;
     const query = this.input.value.trim().toLocaleLowerCase();
     const visible = records.filter((record) => matches(record, query));
     this.prune(new Set(visible.map((record) => record.snapshot.id)));

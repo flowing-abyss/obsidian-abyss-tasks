@@ -11,6 +11,7 @@ import { RightPanel } from '../panels/RightPanel';
 import { initialCalendarView } from '../panels/calendar/calendarPolicy';
 import { ProjectManager } from '../projects/ProjectManager';
 import { ProjectStore } from '../projects/ProjectStore';
+import { latestSettingsSaveRevision } from '../settings/settingsSaveRevision';
 import type { ShortcutActionId } from '../settings/shortcuts';
 import type { CalendarSettings } from '../settings/types';
 import {
@@ -1051,6 +1052,8 @@ export class PanelView extends ItemView {
                 new CommandModeSurface(capture, {
                   app: this.app,
                   owner: command.owner,
+                  availabilityRevision: () =>
+                    latestSettingsSaveRevision(this.settings_abyssPrivate),
                   ...(command.availability === undefined
                     ? {}
                     : { availability: command.availability }),
