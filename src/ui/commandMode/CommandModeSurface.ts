@@ -139,7 +139,7 @@ export class CommandModeSurface implements CaptureExtension {
           this.activateOwner(owner);
           this.voice?.toggle();
         },
-        () => generation === this.modeGeneration,
+        () => generation === this.modeGeneration && !this.capture.input.ownerDocument.hidden,
       );
     });
     this.component.registerDomEvent(this.microphone, 'contextmenu', (event) => {

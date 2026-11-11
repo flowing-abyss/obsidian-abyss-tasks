@@ -53,6 +53,23 @@ it('restores the saved composer when the first history read finishes and ignores
   expect(live.input.readOnly).toBe(false);
   expect(live.input.value).toBe('Retained from yesterday');
 });
+it('does not acquire the dictation microphone if the window hides during the first history read', async () => {
+  const h = await setup();
+  h.memory.active = false;
+  const media = voiceMediaHarness(window);
+  const opened = deferred<CommandSessionOwner>();
+  h.resolveOwner.mockImplementation(() => opened.promise);
+  const surface = h.mount({ available: () => {}, transcribe: async () => '' }, () => ({
+    agent: false,
+    voice: true,
+  }));
+  voiceButton(surface).click();
+  vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+  document.dispatchEvent(new Event('visibilitychange'));
+  opened.resolve(h.owner);
+  await flushMicrotasks(0);
+  expect(media.getUserMedia).not.toHaveBeenCalled();
+});
 it('keeps the running timer across phases and remount, then retires it on completion', async () => {
   const h = await setup();
   const surface = h.mount();
