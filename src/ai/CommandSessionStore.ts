@@ -137,9 +137,12 @@ export class CommandSessionStore {
   private lastFailure: CommandPersistenceFailure | null = null;
   private queue: Promise<void> = Promise.resolve();
   private constructor(private readonly options: CommandSessionStoreOptions) {}
-  static async open(options: CommandSessionStoreOptions): Promise<CommandSessionStore> {
+  static async open(
+    options: CommandSessionStoreOptions,
+    checkOpening?: () => void,
+  ): Promise<CommandSessionStore> {
     const store = new CommandSessionStore(options);
-    await store.initialize();
+    await store.initialize(checkOpening);
     return store;
   }
   records(): readonly HistoricalCommandSession[] {
@@ -187,7 +190,7 @@ export class CommandSessionStore {
   private get deletedFileDigests(): Record<string, string | null> {
     return this.state.version === 3 ? this.state.deletedFileDigests : {};
   }
-  private async initialize(): Promise<void> {
+  private async initialize(checkOpening?: () => void): Promise<void> {
     try {
       this.stateText = await this.options.storage.read({ kind: 'state' });
       if (this.stateText !== null)
@@ -212,7 +215,7 @@ export class CommandSessionStore {
           : new CommandPersistenceFailure('UNREADABLE_HISTORY');
       return;
     }
-    await this.cleanupDeleted();
+    await this.cleanupDeleted(checkOpening);
   }
   private visibleSelection(id: string | null): string | null {
     const record = id === null ? undefined : this.data.get(id);
@@ -315,10 +318,11 @@ export class CommandSessionStore {
       this.lastFailure = new CommandPersistenceFailure('LEGACY_CLEANUP_FAILED');
     }
   }
-  private async cleanupDeleted(): Promise<boolean> {
+  private async cleanupDeleted(checkOpening?: () => void): Promise<boolean> {
     let clean = true;
     const digests = this.deletedFileDigests;
     for (const fileId of this.state.deletedFiles) {
+      checkOpening?.();
       try {
         const key = { kind: 'session' as const, fileId };
         const text = await this.options.storage.read(key);

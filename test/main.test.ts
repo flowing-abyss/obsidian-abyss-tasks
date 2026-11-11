@@ -2140,11 +2140,18 @@ it('scopes native history paths to the actual plugin directory and rejects unsaf
 it('registers the calendar without reading command history and retires an in-flight first open on unload', async () => {
   const plugin = makePlugin();
   const control = '.test-config/plugins/abyss-tasks/command-session-state.json';
+  const fileId = '00000000-0000-4000-8000-000000000001';
+  const tombstone = `.test-config/plugins/abyss-tasks/sessions/${fileId}.json`;
+  plugin.stateFiles__.set(tombstone, 'Pending cleanup');
   const raw = JSON.stringify({
-    version: 1,
+    version: 3,
     activeSessionId: null,
     legacyImported: true,
-    deletedFiles: [],
+    deletedFiles: [fileId],
+    deletedSessions: { [fileId]: 'old session' },
+    deletedFileDigests: {
+      [fileId]: '3aeb3283ab7a7ea688816c651c5024e24cdf89af4e120f57502ffef503f7a242',
+    },
   });
   plugin.stateFiles__.set(control, raw);
   const started = deferred<void>(),
@@ -2177,7 +2184,123 @@ it('registers the calendar without reading command history and retires an in-fli
   plugin.onunload();
   release.resolve();
   await expect(opening).rejects.toMatchObject({ code: 'CLOSED' });
+  expect(plugin.stateFiles__.get(tombstone)).toBe('Pending cleanup');
+  expect(plugin.stateAdapter__.exists).not.toHaveBeenCalledWith(tombstone);
   expect(() => (plugin as unknown as TaskCalendarPlugin).getCommandSessionOwner()).toThrow(
     expect.objectContaining({ code: 'CLOSED' }),
   );
+  const next = makePlugin() as unknown as TaskCalendarPlugin;
+  Object.assign(next.app.vault, { adapter: concrete.app.vault.adapter });
+  try {
+    await next.onload();
+    await next.getCommandSessionOwner();
+    expect(plugin.stateFiles__.has(tombstone)).toBe(false);
+  } finally {
+    next.onunload();
+  }
+});
+
+it.each(['before', 'after'] as const)(
+  'finishes legacy import once when reloaded %s its first native write becomes visible',
+  async (when) => {
+    const host = makePlugin();
+    const first = host as unknown as TaskCalendarPlugin;
+    await first.onload();
+    const session = first.createCommandSession({ save: async () => {} });
+    session.setInput('First draft');
+    const saved = session.snapshot();
+    session.dispose();
+    let legacy: unknown = {
+      version: 1,
+      activeSessionId: saved.id,
+      sessions: [saved, { ...saved, id: 'another', input: 'Second draft' }].map((snapshot) => ({
+        handles: 'historical',
+        updatedAt: 1,
+        snapshot,
+      })),
+    };
+    vi.spyOn(first.app, 'loadLocalStorage').mockImplementation(() => structuredClone(legacy));
+    const clear = vi.spyOn(first.app, 'saveLocalStorage').mockImplementation((_key, value) => {
+      legacy = value;
+    });
+    const started = deferred<{ path: string; data: string }>(),
+      release = deferred<void>();
+    const write = expectDefined(host.stateAdapter__.write.getMockImplementation());
+    let hold = true;
+    host.stateAdapter__.write.mockImplementation(async (path, value) => {
+      if (hold && path.includes('/sessions/')) {
+        hold = false;
+        if (when === 'after') await write(path, value);
+        started.resolve({ path, data: value });
+        await release.promise;
+        if (when === 'after') return;
+      }
+      await write(path, value);
+    });
+    const retired = expect(first.getCommandSessionOwner()).rejects.toMatchObject({
+      code: 'CLOSED',
+    });
+    const original = await started.promise;
+    first.onunload();
+    const next = makePlugin() as unknown as TaskCalendarPlugin;
+    Object.assign(next.app.vault, { adapter: first.app.vault.adapter });
+    vi.spyOn(next.app, 'loadLocalStorage').mockImplementation(() => structuredClone(legacy));
+    vi.spyOn(next.app, 'saveLocalStorage').mockImplementation((key, value) => {
+      first.app.saveLocalStorage(key, value);
+    });
+    try {
+      await next.onload();
+      const reopened = next.getCommandSessionOwner();
+      await flushMicrotasks(0);
+      release.resolve();
+      const owner = await reopened;
+      await retired;
+      expect(owner.snapshot().input).toBe('First draft');
+      expect(new Set(owner.recent().map((row) => row.snapshot.input))).toEqual(
+        new Set(['First draft', 'Second draft']),
+      );
+      expect(host.stateFiles__.get(original.path)).toBe(original.data);
+      expect(
+        [...host.stateFiles__.keys()].filter((file) => file.includes('/sessions/')),
+      ).toHaveLength(2);
+      expect(clear).toHaveBeenCalledOnce();
+    } finally {
+      release.resolve();
+      next.onunload();
+    }
+  },
+);
+
+it('finishes an already admitted history write when its plugin unloads', async () => {
+  const host = makePlugin();
+  const plugin = host as unknown as TaskCalendarPlugin;
+  await plugin.onload();
+  const owner = await plugin.getCommandSessionOwner();
+  const started = deferred<void>(),
+    release = deferred<void>();
+  const write = expectDefined(host.stateAdapter__.write.getMockImplementation());
+  host.stateAdapter__.write.mockImplementation(async (path, data) => {
+    if (path.includes('/sessions/')) {
+      started.resolve();
+      await release.promise;
+    }
+    await write(path, data);
+  });
+  owner.setInput('Keep my journal');
+  const saving = owner.flush();
+  await started.promise;
+  plugin.onunload();
+  release.resolve();
+  await Promise.all([saving, owner.drained()]);
+  const entry = expectDefined([...host.stateFiles__].find(([path]) => path.includes('/sessions/')));
+  expect(JSON.parse(entry[1])).toMatchObject({
+    snapshot: { id: owner.snapshot().id, input: 'Keep my journal' },
+  });
+  expect(
+    JSON.parse(
+      expectDefined(
+        host.stateFiles__.get('.test-config/plugins/abyss-tasks/command-session-state.json'),
+      ),
+    ),
+  ).toMatchObject({ activeSessionId: owner.snapshot().id });
 });

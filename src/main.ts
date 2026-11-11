@@ -7,6 +7,7 @@ import {
   Plugin,
   requestUrl,
   TFile,
+  type DataAdapter,
   type TAbstractFile,
 } from 'obsidian';
 import type { ApiResultV1, TasksApiV1 } from '../api';
@@ -150,6 +151,8 @@ function configuredTaskInsertion(settings: CalendarSettings): TaskInsertionPolic
 }
 const NO_RESUME_TARGET = 'There is no recent task to resume';
 const DEVICE_OFFSET_AT = (epochMs: number): number => -new Date(epochMs).getTimezoneOffset();
+// The host reloads the bundle while native writes from the retired instance can still be pending.
+const COMMAND_HISTORY_OPENINGS = Symbol.for('abyss-tasks.command-history-openings');
 
 export default class TaskCalendarPlugin extends Plugin {
   override settings!: CalendarSettings;
@@ -440,7 +443,7 @@ export default class TaskCalendarPlugin extends Plugin {
     return session;
   }
 
-  private commandSessionStorage(): CommandSessionStoragePort {
+  private commandSessionStorage(checkOpening: () => void = () => {}): CommandSessionStoragePort {
     const legacyKey = 'abyss-tasks:command-sessions:v1';
     const directory = normalizePath(
       this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`,
@@ -452,13 +455,21 @@ export default class TaskCalendarPlugin extends Plugin {
       if (!isCommandSessionFileId(key.fileId)) throw new Error('Invalid history file ID');
       return normalizePath(`${sessions}/${key.fileId}.json`);
     };
+    const exists = (file: string): Promise<boolean> => {
+      checkOpening();
+      return adapter.exists(file);
+    };
     const ensureDirectory = async (): Promise<void> => {
-      if (!(await adapter.exists(sessions))) await adapter.mkdir(sessions);
+      if (await exists(sessions)) return;
+      checkOpening();
+      await adapter.mkdir(sessions);
     };
     return {
       listSessions: async () => {
-        if (!(await adapter.exists(sessions))) return [];
+        if (!(await exists(sessions))) return [];
+        checkOpening();
         const listed = await adapter.list(sessions);
+        checkOpening();
         return listed.files.map((file) => {
           const prefix = `${sessions}/`;
           if (!file.startsWith(prefix) || !file.endsWith('.json'))
@@ -470,17 +481,24 @@ export default class TaskCalendarPlugin extends Plugin {
       },
       read: async (key) => {
         const file = path(key);
-        return (await adapter.exists(file)) ? adapter.read(file) : null;
+        if (!(await exists(file))) return null;
+        checkOpening();
+        const value = await adapter.read(file);
+        checkOpening();
+        return value;
       },
       write: async (key, text, previous) => {
         const file = path(key);
         await ensureDirectory();
+        checkOpening();
         if (previous === null) {
-          if (await adapter.exists(file)) throw new Error('History file already exists');
+          if (await exists(file)) throw new Error('History file already exists');
+          checkOpening();
           // The public adapter has no atomic create-if-absent or fsync contract.
           await adapter.write(file, text);
         } else {
           await adapter.process(file, (current) => {
+            checkOpening();
             if (current !== previous) throw new Error('History changed outside this writer');
             return text;
           });
@@ -488,14 +506,20 @@ export default class TaskCalendarPlugin extends Plugin {
       },
       remove: async (fileId, previous) => {
         const file = path({ kind: 'session', fileId });
-        if (!(await adapter.exists(file))) return;
+        if (!(await exists(file))) return;
+        checkOpening();
         const bytes = await adapter.readBinary(file);
         const current = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
         if (current !== previous) throw new Error('History changed outside this writer');
+        checkOpening();
         await adapter.remove(file);
       },
-      loadLegacy: () => this.app.loadLocalStorage(legacyKey) as unknown,
+      loadLegacy: () => {
+        checkOpening();
+        return this.app.loadLocalStorage(legacyKey) as unknown;
+      },
       clearLegacy: () => {
+        checkOpening();
         this.app.saveLocalStorage(legacyKey, null);
       },
     };
@@ -506,21 +530,53 @@ export default class TaskCalendarPlugin extends Plugin {
     if (this.commandModeClosed || this.commandSessionOwner?.isDisposed() === true)
       throw new CommandFailure('CLOSED', 'This session owner has closed.');
     if (this.commandSessionOwner !== undefined) return this.commandSessionOwner;
-    this.commandSessionOpening ??= CommandSessionStore.open({
-      storage: this.commandSessionStorage(),
-      now: () => Date.now(),
-      fileId: () => crypto.randomUUID(),
-    })
-      .then((store) => {
-        if (this.commandModeClosed)
-          throw new CommandFailure('CLOSED', 'This session owner has closed.');
-        this.commandSessionOwner = this.createCommandSessionOwner(store, research);
-        return this.commandSessionOwner;
-      })
-      .finally(() => {
-        this.commandSessionOpening = undefined;
-      });
+    this.commandSessionOpening ??= this.queueCommandSessionOpen(research);
     return this.commandSessionOpening;
+  }
+
+  private queueCommandSessionOpen(research?: CommandResearchPort): Promise<CommandSessionOwner> {
+    const workspaceWindow = this.app.workspace.containerEl.win as Window & {
+      [COMMAND_HISTORY_OPENINGS]?: Map<DataAdapter, Promise<void>>;
+    };
+    const openings =
+      workspaceWindow[COMMAND_HISTORY_OPENINGS] ?? new Map<DataAdapter, Promise<void>>();
+    workspaceWindow[COMMAND_HISTORY_OPENINGS] = openings;
+    const adapter = this.app.vault.adapter;
+    const previous = openings.get(adapter) ?? Promise.resolve();
+    const current = previous.then(() => this.openCommandSessionOwner(research));
+    const drained = current.then(
+      () => {},
+      () => {},
+    );
+    openings.set(adapter, drained);
+    return current.finally(() => {
+      if (openings.get(adapter) === drained) openings.delete(adapter);
+      if (openings.size === 0) delete workspaceWindow[COMMAND_HISTORY_OPENINGS];
+      this.commandSessionOpening = undefined;
+    });
+  }
+
+  private async openCommandSessionOwner(
+    research?: CommandResearchPort,
+  ): Promise<CommandSessionOwner> {
+    let opening = true;
+    const checkOpening = (): void => {
+      if (opening && this.commandModeClosed)
+        throw new CommandFailure('CLOSED', 'This session owner has closed.');
+    };
+    const store = await CommandSessionStore.open(
+      {
+        storage: this.commandSessionStorage(checkOpening),
+        now: () => Date.now(),
+        fileId: () => crypto.randomUUID(),
+      },
+      checkOpening,
+    );
+    checkOpening();
+    // Once acquired, the owner's admitted journal and final save must drain through unload.
+    opening = false;
+    this.commandSessionOwner = this.createCommandSessionOwner(store, research);
+    return this.commandSessionOwner;
   }
 
   private createCommandSessionOwner(
