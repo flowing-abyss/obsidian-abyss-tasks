@@ -43,6 +43,7 @@ const STATE_PATH = '.test-config/plugins/abyss-tasks/state.json';
 interface StateAdapterLike {
   readonly exists: Mock<(path: string) => Promise<boolean>>;
   readonly read: Mock<(path: string) => Promise<string>>;
+  readonly readBinary: Mock<(path: string) => Promise<ArrayBuffer>>;
   readonly write: Mock<(path: string, value: string) => Promise<void>>;
   readonly trashSystem: Mock<(path: string) => Promise<boolean>>;
   readonly rename: Mock<(from: string, to: string) => Promise<void>>;
@@ -136,6 +137,11 @@ function makePlugin(data: Record<string, unknown> | null = null): PluginLike {
       const value = stateFiles.get(path);
       if (value === undefined) throw new Error(`Missing ${path}`);
       return value;
+    }),
+    readBinary: vi.fn(async (path: string) => {
+      const value = stateFiles.get(path);
+      if (value === undefined) throw new Error(`Missing ${path}`);
+      return new TextEncoder().encode(value).buffer;
     }),
     write: vi.fn(async (path: string, value: string) => {
       stateFiles.set(path, value);
@@ -2119,8 +2125,16 @@ it('scopes native history paths to the actual plugin directory and rejects unsaf
   expect(await port.read(key)).toBe('original');
   await port.write(key, 'verified', 'original');
   expect(await port.read(key)).toBe('verified');
-  await port.remove(key.fileId);
+  await expect(port.remove(key.fileId, 'original')).rejects.toThrow('changed outside');
+  expect(await port.read(key)).toBe('verified');
+  await port.remove(key.fileId, 'verified');
   expect(await port.read(key)).toBeNull();
+  await port.write(key, '\uFFFD', null);
+  (plugin as unknown as PluginLike).stateAdapter__.readBinary.mockResolvedValueOnce(
+    new Uint8Array([0xff]).buffer,
+  );
+  await expect(port.remove(key.fileId, '\uFFFD')).rejects.toThrow();
+  expect(await port.read(key)).toBe('\uFFFD');
 });
 
 it('registers the calendar without reading command history and retires an in-flight first open on unload', async () => {

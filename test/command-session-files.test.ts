@@ -96,6 +96,16 @@ it('blocks clear-all without partial deletion when any unknown write remains', a
   await expect(h.store.clearHistory()).rejects.toMatchObject({ code: 'UNRESOLVED_WRITES' });
   expect(h.store.records()).toHaveLength(2);
 });
+it('keeps the original control format until a deletion is recorded', async () => {
+  const h = await setup();
+  await h.store.clearHistory();
+  expect(h.files.has('state')).toBe(false);
+  await h.store.create(snapshot('active'));
+  const control = expectDefined(h.files.get('state'));
+  expect(JSON.parse(control)).toMatchObject({ version: 1 });
+  await h.store.clearCompleted();
+  expect(h.files.get('state')).toBe(control);
+});
 it('rejects a changed control file without overwriting external bytes', async () => {
   const h = await setup();
   await h.store.create(snapshot('one'));
@@ -372,6 +382,88 @@ it('keeps deletion markers after physical removal fails and cleans delayed files
   expect(JSON.parse(expectDefined(h.files.get('state')))).toMatchObject({
     deletedFiles: [file[0]],
   });
+});
+it.each(['marker write', 'reopen'])(
+  'preserves a changed session file under a verified deletion marker during %s',
+  async (phase) => {
+    const h = await setup();
+    await h.store.create(snapshot('one', 'Approved for deletion'));
+    const [file, approved] = expectDefined([...h.files].find(([id]) => id !== 'state'));
+    const changed = JSON.stringify({
+      ...(JSON.parse(approved) as object),
+      snapshot: { ...snapshot('one', 'New command from another device'), blocked: true },
+    });
+    if (phase === 'marker write') {
+      const write = h.storage.write;
+      h.storage.write = async (...args) => {
+        await write(...args);
+        if (args[0].kind === 'state') h.files.set(file, changed);
+      };
+      await expect(h.store.remove('one')).rejects.toMatchObject({ code: 'DELETE_FAILED' });
+    } else {
+      await h.store.remove('one');
+      h.files.set(file, changed);
+    }
+    const reopened = await h.open();
+    expect(h.files.get(file)).toBe(changed);
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(approved));
+    const hex = Array.from(new Uint8Array(digest), (byte) =>
+      byte.toString(16).padStart(2, '0'),
+    ).join('');
+    expect(JSON.parse(expectDefined(h.files.get('state')))).toMatchObject({
+      version: 3,
+      deletedFileDigests: { [file]: hex },
+    });
+    expect(reopened.failure()?.code).toBe('DELETE_FAILED');
+    expect(reopened.records()).toEqual([]);
+
+    // A matching copy that Sync restores later can still be removed on retry.
+    h.files.set(file, approved);
+    expect((await h.open()).failure()).toBeNull();
+    expect(h.files.has(file)).toBe(false);
+  },
+);
+it.each([1, 2])(
+  'keeps bytes under a version %i deletion marker without file evidence',
+  async (version) => {
+    const h = await setup();
+    await h.store.create(snapshot('one'));
+    const [file, text] = expectDefined([...h.files].find(([id]) => id !== 'state'));
+    h.files.set(
+      'state',
+      JSON.stringify({
+        version,
+        legacyImported: true,
+        activeSessionId: null,
+        deletedFiles: [file],
+        ...(version === 2 ? { deletedSessions: { [file]: 'one' } } : {}),
+      }),
+    );
+    const restored = await h.open();
+    expect(h.files.get(file)).toBe(text);
+    expect(restored.records()).toEqual([]);
+    expect(restored.failure()?.code).toBe('DELETE_FAILED');
+  },
+);
+it('retains a later copy if the approved session file had never reached disk', async () => {
+  const h = commandSessionStorage();
+  const fileId = h.fileId();
+  const open = () => CommandSessionStore.open({ ...h, fileId: () => fileId, now: () => 10 });
+  const store = await open();
+  const write = h.storage.write;
+  h.storage.write = async (...args) => {
+    if (args[0].kind === 'session') throw new Error('Not saved');
+    await write(...args);
+  };
+  await expect(store.create(snapshot('one'))).rejects.toMatchObject({ code: 'WRITE_FAILED' });
+  await store.remove('one');
+  expect(JSON.parse(expectDefined(h.files.get('state')))).toMatchObject({
+    version: 3,
+    deletedFileDigests: { [fileId]: null },
+  });
+  h.files.set(fileId, 'A file that arrived later');
+  expect((await open()).failure()?.code).toBe('DELETE_FAILED');
+  expect(h.files.get(fileId)).toBe('A file that arrived later');
 });
 it('blocks mutation during an incomplete import and preserves duplicate legacy IDs', async () => {
   const record = { handles: 'historical', updatedAt: 7, snapshot: snapshot('old') };

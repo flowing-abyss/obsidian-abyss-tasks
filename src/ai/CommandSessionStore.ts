@@ -28,7 +28,7 @@ export interface CommandSessionStoragePort {
     text: string,
     previous: string | null,
   ): Promise<void>;
-  remove(this: void, fileId: string): Promise<void>;
+  remove(this: void, fileId: string, previous: string): Promise<void>;
   loadLegacy(this: void): unknown;
   clearLegacy(this: void): void;
 }
@@ -78,26 +78,47 @@ const stateFields = {
   legacyImported: z.boolean(),
   deletedFiles: z.array(fileIdSchema),
 };
+const deletedSessions = z.record(fileIdSchema, z.string().min(1));
 const stateSchema = z
   .discriminatedUnion('version', [
     z.strictObject({ version: z.literal(1), ...stateFields }),
     z.strictObject({
       version: z.literal(2),
       ...stateFields,
-      deletedSessions: z.record(fileIdSchema, z.string().min(1)),
+      deletedSessions,
+    }),
+    z.strictObject({
+      version: z.literal(3),
+      ...stateFields,
+      deletedSessions,
+      deletedFileDigests: z.record(
+        fileIdSchema,
+        z
+          .string()
+          .regex(/^[0-9a-f]{64}$/u)
+          .nullable(),
+      ),
     }),
   ])
   .refine((state) => {
     if (!state.legacyImported && state.deletedFiles.length > 0) return false;
     if (state.version === 1) return true;
     const files = new Set(state.deletedFiles);
-    return Object.keys(state.deletedSessions).every((id) => files.has(id));
+    if (Object.keys(state.deletedSessions).some((id) => !files.has(id))) return false;
+    return (
+      state.version === 2 ||
+      Object.keys(state.deletedFileDigests).every((id) => state.deletedSessions[id] !== undefined)
+    );
   });
 type HistoryState = z.infer<typeof stateSchema>;
 const MAX_FILE_BYTES = 24 * 1024 * 1024;
 function parseFile(text: string): CommandSessionFile {
   if (new TextEncoder().encode(text).byteLength > MAX_FILE_BYTES) throw new Error('File too large');
   return parseCommandSessionFile(JSON.parse(text) as unknown);
+}
+async function digestFileText(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 /** One serial journal and detached history owner, initialized before any runtime is created. */
 export class CommandSessionStore {
@@ -161,7 +182,10 @@ export class CommandSessionStore {
     if (this.paused) this.fail('UNREADABLE_HISTORY');
   }
   private get deletedSessions(): Record<string, string> {
-    return this.state.version === 2 ? this.state.deletedSessions : {};
+    return this.state.version === 1 ? {} : this.state.deletedSessions;
+  }
+  private get deletedFileDigests(): Record<string, string | null> {
+    return this.state.version === 3 ? this.state.deletedFileDigests : {};
   }
   private async initialize(): Promise<void> {
     try {
@@ -261,17 +285,23 @@ export class CommandSessionStore {
     if (file === undefined) this.fail('READBACK_MISMATCH');
     return { file, keepLocal };
   }
-  private async verifyStoredFile(fileId: string): Promise<void> {
+  private async verifyStoredFile(fileId: string): Promise<string | null> {
     try {
-      if (
-        (await this.options.storage.read({ kind: 'session', fileId })) ===
-        this.fileTexts.get(fileId)
-      )
-        return;
+      const text = await this.options.storage.read({ kind: 'session', fileId });
+      if (text === this.fileTexts.get(fileId)) return text;
     } catch {
       // A failed read cannot confirm that these are still the bytes this store saw.
     }
     this.fail('READBACK_MISMATCH');
+  }
+  private async deletionDigest(fileId: string): Promise<string | null> {
+    const text = await this.verifyStoredFile(fileId);
+    if (text === null) return null;
+    try {
+      return await digestFileText(text);
+    } catch {
+      this.fail('WRITE_FAILED');
+    }
   }
   private cleanupLegacy(original: string): void {
     try {
@@ -287,11 +317,17 @@ export class CommandSessionStore {
   }
   private async cleanupDeleted(): Promise<boolean> {
     let clean = true;
-    for (const id of this.state.deletedFiles) {
+    const digests = this.deletedFileDigests;
+    for (const fileId of this.state.deletedFiles) {
       try {
-        await this.options.storage.remove(id);
-        if ((await this.options.storage.read({ kind: 'session', fileId: id })) !== null)
-          throw new Error('Delete unverified');
+        const key = { kind: 'session' as const, fileId };
+        const text = await this.options.storage.read(key);
+        if (text === null) continue;
+        const expected = digests[fileId];
+        if (expected == null || (await digestFileText(text)) !== expected)
+          throw new Error('Cannot verify deleted file contents');
+        await this.options.storage.remove(fileId, text);
+        if ((await this.options.storage.read(key)) !== null) throw new Error('Delete unverified');
       } catch {
         clean = false;
         this.lastFailure = new CommandPersistenceFailure('DELETE_FAILED');
@@ -377,6 +413,11 @@ export class CommandSessionStore {
   }
   private async deleteRecords(ids: readonly string[]): Promise<void> {
     this.writable();
+    if (ids.length > 0) await this.markDeleted(ids);
+    this.lastFailure = null;
+    if (!(await this.cleanupDeleted())) this.fail('DELETE_FAILED');
+  }
+  private async markDeleted(ids: readonly string[]): Promise<void> {
     for (const id of ids) {
       const record = this.data.get(id);
       if (record === undefined) this.fail('MISSING_SESSION');
@@ -386,10 +427,12 @@ export class CommandSessionStore {
       const file = this.fileIds.get(id);
       return file === undefined ? [] : [[file, id] as const];
     });
-    for (const [file] of files) await this.verifyStoredFile(file);
+    const digests = { ...this.deletedFileDigests };
+    for (const [file] of files) digests[file] = await this.deletionDigest(file);
     await this.persistState({
       ...this.state,
-      version: 2,
+      version: 3,
+      deletedFileDigests: digests,
       deletedSessions: {
         ...this.deletedSessions,
         ...Object.fromEntries(files),
@@ -405,8 +448,6 @@ export class CommandSessionStore {
       this.data.delete(id);
       this.fileIds.delete(id);
     }
-    this.lastFailure = null;
-    if (!(await this.cleanupDeleted())) this.fail('DELETE_FAILED');
   }
   private async persistRecord(record: HistoricalCommandSession): Promise<void> {
     let fileId = this.fileIds.get(record.snapshot.id);

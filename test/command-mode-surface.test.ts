@@ -4835,9 +4835,9 @@ it('deletes through a separate X and retains the search and focused input during
   search.focus();
   const wait = deferred<void>();
   const remove = h.persisted.storage.remove;
-  h.persisted.storage.remove = async (id) => {
+  h.persisted.storage.remove = async (...args) => {
     await wait.promise;
-    await remove(id);
+    await remove(...args);
   };
   const row = expectDefined(
     historyRows(popup).find((button) => button.textContent === 'Delete this'),
@@ -5173,9 +5173,9 @@ it('returns keyboard focus to history search when a pending row deletion loses i
   const popup = openHistory(surface);
   const wait = deferred<void>();
   const removeFile = h.persisted.storage.remove;
-  h.persisted.storage.remove = async (id) => {
+  h.persisted.storage.remove = async (...args) => {
     await wait.promise;
-    await removeFile(id);
+    await removeFile(...args);
   };
   const remove = expectDefined(
     popup.querySelector<HTMLButtonElement>('[aria-label="Delete session"]'),

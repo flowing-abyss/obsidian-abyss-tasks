@@ -486,9 +486,13 @@ export default class TaskCalendarPlugin extends Plugin {
           });
         }
       },
-      remove: async (fileId) => {
+      remove: async (fileId, previous) => {
         const file = path({ kind: 'session', fileId });
-        if (await adapter.exists(file)) await adapter.remove(file);
+        if (!(await adapter.exists(file))) return;
+        const bytes = await adapter.readBinary(file);
+        const current = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
+        if (current !== previous) throw new Error('History changed outside this writer');
+        await adapter.remove(file);
       },
       loadLegacy: () => this.app.loadLocalStorage(legacyKey) as unknown,
       clearLegacy: () => {

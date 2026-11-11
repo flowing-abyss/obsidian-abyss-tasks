@@ -4,7 +4,7 @@ import type {
 } from '../../src/ai/CommandSessionStore';
 import { expectDefined } from '../helpers';
 
-/** In-memory asynchronous host boundary with compare-before-write semantics. */
+/** In-memory asynchronous host boundary with compare-before-write and remove semantics. */
 export function commandSessionStorage(initial: unknown = null) {
   const files = new Map<string, string>();
   let legacy: unknown = initial;
@@ -18,7 +18,10 @@ export function commandSessionStorage(initial: unknown = null) {
       if ((files.get(key(value)) ?? null) !== previous) throw new Error('conflict');
       files.set(key(value), text);
     },
-    remove: async (fileId) => {
+    remove: async (fileId, previous) => {
+      const current = files.get(fileId);
+      if (current === undefined) return;
+      if (current !== previous) throw new Error('conflict');
       files.delete(fileId);
     },
     loadLegacy: () => structuredClone(legacy),
