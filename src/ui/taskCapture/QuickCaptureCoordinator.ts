@@ -15,12 +15,10 @@ export type QuickCapturePhase = 'closed' | 'resolving' | 'open';
 
 interface QuickCaptureCoordinatorOptions {
   readonly command?: {
-    readonly active: () => boolean;
     readonly mount: (
       host: CaptureExtensionHost,
       close: (restoreFocus?: boolean) => void,
     ) => CaptureExtension;
-    readonly hide: () => void;
   };
   readonly app?: App;
   readonly smart?: CaptureSmartOptions;

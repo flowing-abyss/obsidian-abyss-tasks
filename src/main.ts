@@ -199,7 +199,7 @@ export default class TaskCalendarPlugin extends Plugin {
     selectionEnd: 0,
     scrollTop: 0,
   };
-  private commandSessionStore: CommandSessionStore | undefined;
+  private commandSessionOpening: Promise<CommandSessionOwner> | undefined = undefined;
   private commandModeClosed = true;
   private commandModeRetired = false;
   private commandSessionOwner: CommandSessionOwner | undefined = undefined;
@@ -264,11 +264,6 @@ export default class TaskCalendarPlugin extends Plugin {
     });
     this.timeTrackingReminder.setInterval(this.settings.timeTrackingReminderMinutes);
     const commentTimeContext: CommentTimeContextProvider = systemCommentTimeContext;
-    this.commandSessionStore = await CommandSessionStore.open({
-      storage: this.commandSessionStorage(),
-      now: () => Date.now(),
-      fileId: () => crypto.randomUUID(),
-    });
     if (this.commandModeRetired) return;
     this.commandModeClosed = false;
     this.registerPanel(commentTimeContext);
@@ -501,15 +496,35 @@ export default class TaskCalendarPlugin extends Plugin {
       },
     };
   }
-  getCommandSessionOwner(research?: CommandResearchPort): CommandSessionOwner {
-    if (
-      this.commandModeClosed ||
-      this.commandSessionStore === undefined ||
-      this.commandSessionOwner?.isDisposed() === true
-    )
+  getCommandSessionOwner(
+    research?: CommandResearchPort,
+  ): CommandSessionOwner | Promise<CommandSessionOwner> {
+    if (this.commandModeClosed || this.commandSessionOwner?.isDisposed() === true)
       throw new CommandFailure('CLOSED', 'This session owner has closed.');
-    this.commandSessionOwner ??= new CommandSessionOwner({
-      store: this.commandSessionStore,
+    if (this.commandSessionOwner !== undefined) return this.commandSessionOwner;
+    this.commandSessionOpening ??= CommandSessionStore.open({
+      storage: this.commandSessionStorage(),
+      now: () => Date.now(),
+      fileId: () => crypto.randomUUID(),
+    })
+      .then((store) => {
+        if (this.commandModeClosed)
+          throw new CommandFailure('CLOSED', 'This session owner has closed.');
+        this.commandSessionOwner = this.createCommandSessionOwner(store, research);
+        return this.commandSessionOwner;
+      })
+      .finally(() => {
+        this.commandSessionOpening = undefined;
+      });
+    return this.commandSessionOpening;
+  }
+
+  private createCommandSessionOwner(
+    store: CommandSessionStore,
+    research?: CommandResearchPort,
+  ): CommandSessionOwner {
+    return new CommandSessionOwner({
+      store,
       createSession: (journal, transitions) =>
         this.createCommandSession(journal, research, transitions),
       schedule: (callback) => {
@@ -535,7 +550,6 @@ export default class TaskCalendarPlugin extends Plugin {
         new Notice(commandMessage(message));
       },
     });
-    return this.commandSessionOwner;
   }
 
   private initializeTaskApi(

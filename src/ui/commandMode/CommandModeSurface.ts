@@ -36,7 +36,7 @@ export interface CommandModeOptions extends Pick<
   readonly app: App;
   readonly availability?: () => { agent: boolean; voice: boolean };
   readonly transcription?: CommandTranscriptionPort;
-  readonly owner: () => CommandSessionOwner;
+  readonly owner: () => CommandSessionOwner | Promise<CommandSessionOwner>;
   readonly memory: CommandSurfaceMemory;
   readonly registry: StatusRegistry;
   readonly projectSettings: () => ProjectsSettings;
@@ -96,6 +96,8 @@ export class CommandModeSurface implements CaptureExtension {
   private releaseMenu = (): void => {};
   private live = true;
   private commandActive = false;
+  private modeGeneration = 0;
+  private popupGeneration = 0;
   private readonly visibility = Symbol();
   private readonly initializing: boolean = true;
   private inputGeneration = 0;
@@ -116,8 +118,14 @@ export class CommandModeSurface implements CaptureExtension {
     this.toggle = this.button(commandMessage('CommandMode'), 'sparkles');
     this.microphone = this.button(commandMessage('Microphone'), 'mic');
     this.component.registerDomEvent(this.microphone, 'click', () => {
-      this.activateOwner();
-      this.voice?.toggle();
+      const generation = this.modeGeneration;
+      this.withOwner(
+        (owner) => {
+          this.activateOwner(owner);
+          this.voice?.toggle();
+        },
+        () => generation === this.modeGeneration,
+      );
     });
     this.component.registerDomEvent(this.microphone, 'contextmenu', (event) => {
       event.preventDefault();
@@ -257,6 +265,7 @@ export class CommandModeSurface implements CaptureExtension {
     const availability = this.options.availability?.();
     const active = requested && (availability?.agent !== false || reason === 'history');
     this.retirePreviousInput(active);
+    const generation = ++this.modeGeneration;
     this.commandActive = active;
     this.updateAvailability(availability);
     this.options.memory.active = active;
@@ -266,8 +275,20 @@ export class CommandModeSurface implements CaptureExtension {
     this.content.hidden = !active;
     this.latest.hidden = !active || this.latest.textContent === '';
     this.question.hidden = !active || this.question.textContent === '';
-    if (active) this.activateCommand(reason);
-    else this.deactivateCommand();
+    if (active) {
+      this.withOwner(
+        (owner) => {
+          this.activateCommand(owner, reason);
+        },
+        () => generation === this.modeGeneration,
+        () => {
+          this.capture.input.readOnly = true;
+          this.capture.input.setAttribute('aria-busy', 'true');
+          this.phaseLabel.textContent = commandMessage('Opening session…');
+          this.setPrimary('send', true);
+        },
+      );
+    } else this.deactivateCommand();
     if (!this.initializing) this.capture.refresh();
   }
   private retirePreviousInput(active: boolean): void {
@@ -279,8 +300,11 @@ export class CommandModeSurface implements CaptureExtension {
     this.clearPhaseTimer();
     this.elapsed.dispose();
   }
-  private activateCommand(reason: 'open' | 'history' | 'preference'): void {
-    const owner = this.activateOwner();
+  private activateCommand(
+    owner: CommandSessionOwner,
+    reason: 'open' | 'history' | 'preference',
+  ): void {
+    this.activateOwner(owner);
     this.bindNoteReview();
     owner.updateContext(this.options.context());
     this.options.memory.presentation ??= new Map();
@@ -326,11 +350,34 @@ export class CommandModeSurface implements CaptureExtension {
     );
     this.content.scrollTop = this.options.memory.scrollTop;
   }
-  private activateOwner(): CommandSessionOwner {
-    this.owner ??= this.options.owner();
-    this.owner.open(this.visibility);
+  private withOwner(
+    action: (owner: CommandSessionOwner) => void,
+    current: () => boolean,
+    loading?: () => void,
+  ): void {
+    const resolved = this.owner ?? this.options.owner();
+    const accept = (owner: CommandSessionOwner): void => {
+      if (!this.live || !current()) return;
+      this.owner = owner;
+      action(owner);
+    };
+    if (!(resolved instanceof Promise)) {
+      accept(resolved);
+      return;
+    }
+    loading?.();
+    runAsyncAction(
+      resolved.then(accept, (error: unknown) => {
+        if (!this.live || !current()) return;
+        this.failure(commandMessage('Could not open command history.'));
+        throw error;
+      }),
+      commandMessage('Could not open command history.'),
+    );
+  }
+  private activateOwner(owner: CommandSessionOwner): void {
+    owner.open(this.visibility);
     this.bindVoice();
-    return this.owner;
   }
   edited(): void {
     this.waveform.clear();
@@ -784,11 +831,19 @@ export class CommandModeSurface implements CaptureExtension {
       return;
     }
     this.menu?.hide();
-    this.owner ??= this.options.owner();
+    const generation = ++this.popupGeneration;
+    this.withOwner(
+      (owner) => {
+        this.showHistory(trigger, owner);
+      },
+      () => generation === this.popupGeneration,
+    );
+  }
+  private showHistory(trigger: HTMLElement, owner: CommandSessionOwner): void {
     this.history = new CommandHistoryPopover({
       capture: this.capture,
       anchor: trigger,
-      owner: this.owner,
+      owner,
       selected: () => {
         if (this.live) this.setActive(true, 'history');
       },
@@ -801,8 +856,15 @@ export class CommandModeSurface implements CaptureExtension {
     if (!this.canOpenMenu(trigger)) return;
     this.history?.close(false);
     this.menu?.hide();
-    this.owner ??= this.options.owner();
-    const owner = this.owner;
+    const generation = ++this.popupGeneration;
+    this.withOwner(
+      (owner) => {
+        this.showMenu(owner, trigger, event);
+      },
+      () => generation === this.popupGeneration,
+    );
+  }
+  private showMenu(owner: CommandSessionOwner, trigger: HTMLElement, event?: MouseEvent): void {
     const menu = new Menu();
     this.menu = menu;
     trigger.setAttribute('aria-expanded', 'true');

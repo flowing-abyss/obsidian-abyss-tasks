@@ -355,7 +355,10 @@ checkboxes use `applyStatus` and do not commit unrelated proposals.
 
 `CommandSessionStore` stores one version-1 JSON snapshot per generated UUID filename in the actual
 plugin directory's `sessions/` folder. Main alone acquires DataAdapter callbacks scoped to session
-files and `command-session-state.json`. The latter contains selection, the import marker and durable
+files and `command-session-state.json`. Calendar startup and ordinary quick capture do not read
+these files. The first command, voice or history action opens the shared store. Concurrent opens
+share one read, and closing the surface or unloading the plugin retires its pending UI action.
+The control file contains selection, the import marker and durable
 deleted-file IDs, never conversations. The store serializes immutable captured writes, validates
 snapshots and receipts through `commandRecovery`, and requires exact readback before journal admission.
 Existing-file updates compare previous bytes inside DataAdapter.process. New-file creation checks

@@ -64,7 +64,6 @@ import { bindLocalSearchScope } from '../ui/localSearchKeys';
 import { nativeInteractionBlocksPanelShortcuts } from '../ui/nativeInteractionBlocker';
 import { PanelShortcutRouter } from '../ui/panelShortcutRouter';
 import { prefersReducedMotion } from '../ui/reducedMotion';
-import { runAsyncAction } from '../ui/runAsyncAction';
 import { shouldShowSourcePath } from '../ui/sourceNoteChip';
 import {
   CaptureTargetResolver,
@@ -138,7 +137,7 @@ interface PanelLayoutElements {
 export interface PanelCommandServices {
   readonly availability?: () => { agent: boolean; voice: boolean };
   readonly transcription?: CommandTranscriptionPort;
-  readonly owner: () => CommandSessionOwner;
+  readonly owner: () => CommandSessionOwner | Promise<CommandSessionOwner>;
   readonly memory: CommandSurfaceMemory;
   readonly nativeTarget: (target: string, revision: string) => TaskNodeRef | undefined;
 }
@@ -1048,10 +1047,6 @@ export class PanelView extends ItemView {
         ? {}
         : {
             command: {
-              active: () => command.memory.active,
-              hide: () => {
-                runAsyncAction(command.owner().hide(), 'Could not retain command session');
-              },
               mount: (capture, close) =>
                 new CommandModeSurface(capture, {
                   app: this.app,

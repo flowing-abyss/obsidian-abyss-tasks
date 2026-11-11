@@ -1984,7 +1984,7 @@ it('shares one lazy command owner and persists input in scoped JSON outside sett
   await plugin.onload();
   try {
     plugin.settings.commandMode = { provider: 'unsupported' };
-    const first = plugin.getCommandSessionOwner();
+    const first = await plugin.getCommandSessionOwner();
     expect(plugin.getCommandSessionOwner()).toBe(first);
     expect(first.snapshot().voiceMode).toBe('manual');
     plugin.settings.commandMode = { provider: 'unsupported', voiceInputMode: 'continuous' };
@@ -2059,7 +2059,7 @@ it('lets an already-open command owner use research after settings are corrected
       },
     });
     const connection = vi.spyOn(plugin.providerConnections, 'model').mockReturnValue(model);
-    const owner = plugin.getCommandSessionOwner();
+    const owner = await plugin.getCommandSessionOwner();
     owner.open();
     expect(search).not.toHaveBeenCalled();
     expect(connection).not.toHaveBeenCalled();
@@ -2085,7 +2085,7 @@ it('leaves the calendar usable with malformed JSON history and never recreates a
   await plugin.onload();
   const concrete = plugin as unknown as TaskCalendarPlugin;
   expect(plugin.views__.has(PANEL_VIEW_TYPE)).toBe(true);
-  const owner = concrete.getCommandSessionOwner();
+  const owner = await concrete.getCommandSessionOwner();
   expect(owner.persistenceFailure()?.code).toBe('UNREADABLE_HISTORY');
   owner.setInput('Retain in memory');
   expect(await owner.flush()).toBe(false);
@@ -2123,7 +2123,7 @@ it('scopes native history paths to the actual plugin directory and rejects unsaf
   expect(await port.read(key)).toBeNull();
 });
 
-it('does not register Q or recreate a runtime when unload happens during history initialization', async () => {
+it('registers the calendar without reading command history and retires an in-flight first open on unload', async () => {
   const plugin = makePlugin();
   const control = '.test-config/plugins/abyss-tasks/command-session-state.json';
   const raw = JSON.stringify({
@@ -2143,12 +2143,26 @@ it('does not register Q or recreate a runtime when unload happens during history
     }
     return expectDefined(read)(path);
   });
-  const loading = plugin.onload();
+  const concrete = plugin as unknown as TaskCalendarPlugin;
+  const startup = plugin.onload();
+  const first = await Promise.race([
+    startup.then(() => 'calendar'),
+    started.promise.then(() => 'history'),
+  ]);
+  if (first === 'history') release.resolve();
+  await startup;
+  expect(first).toBe('calendar');
+  expect(plugin.views__.has(PANEL_VIEW_TYPE)).toBe(true);
+  expect(plugin.stateAdapter__.read).not.toHaveBeenCalledWith(control);
+  const opening = concrete.getCommandSessionOwner();
+  expect(concrete.getCommandSessionOwner()).toBe(opening);
   await started.promise;
+  expect(plugin.stateAdapter__.read.mock.calls.filter(([path]) => path === control)).toHaveLength(
+    1,
+  );
   plugin.onunload();
   release.resolve();
-  await loading;
-  expect(plugin.views__.has(PANEL_VIEW_TYPE)).toBe(false);
+  await expect(opening).rejects.toMatchObject({ code: 'CLOSED' });
   expect(() => (plugin as unknown as TaskCalendarPlugin).getCommandSessionOwner()).toThrow(
     expect.objectContaining({ code: 'CLOSED' }),
   );

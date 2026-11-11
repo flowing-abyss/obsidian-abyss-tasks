@@ -37,6 +37,22 @@ import { publicApiHarness, type PublicApiHarness } from './support/publicApiHarn
 import { scriptedWriteReview } from './support/scriptedWriteReview';
 import { voiceMediaHarness } from './support/voiceMediaHarness';
 const cleanups: Array<() => void> = [];
+it('restores the saved composer when the first history read finishes and ignores a closed surface', async () => {
+  const h = await setup();
+  const opened = deferred<CommandSessionOwner>();
+  h.resolveOwner.mockImplementation(() => opened.promise);
+  h.owner.setInput('Retained from yesterday');
+  const abandoned = h.mount();
+  expect(abandoned.input.readOnly).toBe(true);
+  abandoned.destroy();
+  const live = h.mount();
+  const open = vi.spyOn(h.owner, 'open');
+  opened.resolve(h.owner);
+  await flushMicrotasks();
+  expect(open).toHaveBeenCalledTimes(1);
+  expect(live.input.readOnly).toBe(false);
+  expect(live.input.value).toBe('Retained from yesterday');
+});
 it('keeps the running timer across phases and remount, then retires it on completion', async () => {
   const h = await setup();
   const surface = h.mount();
@@ -237,7 +253,7 @@ async function setup(
   const navigate = vi.fn<
     (target: string, revision: string, intent: 'feedback' | 'reveal') => boolean
   >(() => true);
-  const resolveOwner = vi.fn(() => owner);
+  const resolveOwner = vi.fn<() => CommandSessionOwner | Promise<CommandSessionOwner>>(() => owner);
   const ordinaryExecute = vi.fn<TaskCreateSession['execute']>(async () => {
     throw new Error('Ordinary capture leaked');
   });
@@ -312,10 +328,6 @@ async function setup(
       }),
       interactionOwnership: new InteractionRegistry(),
       command: {
-        active: () => memory.active,
-        hide: () => {
-          owner.hide().catch(() => {});
-        },
         mount: (capture, close) =>
           new CommandModeSurface(capture, {
             app: h.app,

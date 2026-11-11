@@ -51,6 +51,12 @@ Task snapshots are immutable. Dates use `YYYY-MM-DD`. A `target` identifies one 
 
 Pass `nextCursor` as `cursor` with the same filters and limit. For a consistent scan, subscribe before the first page. The `ObservationV1` values must match across pages and still match the latest event when you use the combined result. Discard the staged pages and restart after an intervening change, `STALE_CURSOR` or `INCOMPLETE_READ`.
 
+For providers that expose `tasks.search`, pass `query` alongside the list filters. Use `fields` to search the title, body or both, and `matchScope` to search a single node or its subtree. `tasks.tags` pages through the vault's task tags and accepts a folder, path or prefix. `tasks.tree` returns a task's description, comments and children in source order. Page through the direct entries and expand incomplete children separately.
+
+## Preparing a task edit
+
+Check for the optional methods on `client.tasks`. Read `creationPolicy()` for the configured task prefix, default tags and Inbox behavior. `prepare(input)` returns a revision-bound proposal for creating or editing a tree. With `tree`, pass the plan target, revision and side to inspect a proposal. Use `create` for a prepared creation and `apply` for a prepared edit. Both take the plan target, its expected revision and the usual request ID and deadline. Inspect the receipt before retrying a write.
+
 ## Changing a status
 
 All three write methods use a freshly read task, a unique ID for the operation, and an acceptance deadline in Unix milliseconds. The revision covers the whole task block and its status rules. When choosing a symbol for `setStatus`, read the task **before** calling `statuses()` so a settings change invalidates the captured revision.
@@ -123,7 +129,7 @@ Use `statusId` for a status change. Pick an ID from `schema().statuses` or pass 
 
 ## Notes
 
-Check `client.notes` before use. `search` finds permitted notes, `read` returns bounded note or exact-section pages, and `prepare` returns a complete before/after proposal. `create` and `apply` commit that proposal through the same request/receipt protocol as task writes. Preserve the returned selector and limits when passing `nextCursor`; incomplete pages are not full-note reads. Frontmatter and task blocks remain protected.
+Check `client.notes` before use. `search` finds permitted notes, `read` returns bounded note or exact-section pages, and `prepare` returns the proposed edit. For template-first creation, `plan.creationPreview.requestedBody` and `plan.after` show the text to append. The template runs at creation time. Read the resulting note for its final contents. `create` and `apply` commit that proposal through the same request/receipt protocol as task writes. Preserve the returned selector and limits when passing `nextCursor`; incomplete pages are not full-note reads. Frontmatter and task blocks remain protected.
 
 New-note preparation accepts optional `collision: 'reject' | 'suffix'`. Absent or `reject` requires the exact requested path to be unused. `suffix` selects an unused same-directory path during preparation, trying at most 100 numbered alternatives (`Name 2.md` through `Name 101.md`). Review the actual `plan.path`. Commit never chooses another path or overwrites a later collision; prepare and review again after a conflict. Check the `notes.create.collision` capability before supplying this option to an older provider.
 

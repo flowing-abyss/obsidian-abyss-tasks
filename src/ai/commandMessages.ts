@@ -141,6 +141,8 @@ const russian = {
   'Delete session': 'Удалить сессию',
   'Could not clear history': 'Не удалось очистить историю',
   'Could not delete session': 'Не удалось удалить сессию',
+  'Opening session…': 'Открываю сессию…',
+  'Could not open command history.': 'Не удалось открыть историю команд.',
   'Updating history…': 'Обновляю историю…',
   'No sessions yet': 'Пока нет сессий',
   'No matching sessions': 'Нет подходящих сессий',
