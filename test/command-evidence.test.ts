@@ -259,8 +259,7 @@ it('allows a parent lookup correction only for a prepared change on the observed
   const lookup = evidence.discovery(query);
   evidence.expectTaskChange(lookup, 'change', parent, [parent]);
   evidence.observeSavedBranch({ ...parent, children: [child] });
-  const repeated = evidence.discovery(query);
-  evidence.correctParentLookup(lookup, repeated, [parent]);
+  const references = { issuedFindEvidence: () => ['@turn:q1'] };
   for (const fact of [
     { action: 'inspect' as const, ...child },
     { action: 'change' as const, ...child, revision: 'other-revision' },
@@ -268,10 +267,15 @@ it('allows a parent lookup correction only for a prepared change on the observed
   ]) {
     evidence.accept({ entity: 'task', ...fact });
     expect(() => {
-      evidence.checkTaskChanges();
+      evidence.checkTaskChanges([], references);
     }).toThrow(/no preview/u);
   }
   evidence.accept({ action: 'change', entity: 'task', ...child });
+  expect(() => {
+    evidence.checkTaskChanges([], references);
+  }).toThrow(/child edit is already prepared/u);
+  const repeated = evidence.discovery(query);
+  evidence.correctParentLookup(lookup, repeated, [parent]);
   evidence.checkTaskChanges();
   evidence.expectTaskChange(evidence.discovery(query), 'change', parent, [parent]);
   expect(() => {

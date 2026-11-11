@@ -1,3 +1,4 @@
+import type { CommandReferenceBook } from './CommandReferenceBook';
 import { CommandFailure } from './commandTypes';
 export interface CommandFact {
   action: 'create' | 'change' | 'find' | 'focus' | 'inspect' | 'research';
@@ -268,7 +269,10 @@ export class CommandEvidence {
         'No unique task was verified for the requested change. Narrow the lookup or ask with its discovery evidence.',
       );
   }
-  checkTaskChanges(displayed: readonly TaskVersion[] = []): void {
+  checkTaskChanges(
+    displayed: readonly TaskVersion[] = [],
+    references?: Pick<CommandReferenceBook, 'issuedFindEvidence'>,
+  ): void {
     const corrected = this.correctedRoots(displayed);
     this.checkUnresolvedLookups(corrected);
     for (const root of this.parentCorrections) {
@@ -288,11 +292,38 @@ export class CommandEvidence {
         corrected.has(versionKey({ target, revision: change.revision }))
       )
         continue;
-      throw new CommandFailure(
-        'PENDING_TASK_CHANGE',
-        'The requested edit has no preview on that lookup target. If the target only locates the requested child, repeat the same find with purpose:"locate-child" and retryOf set to its evidence. Keep any accepted child edits. If the user only asked for display, repeat with purpose:"show-only" and retryOf, then finish with exact selection.',
+      throw this.pendingChangeFailure(
+        versionKey({ target, revision: change.revision }),
+        references,
       );
     }
+  }
+  private pendingChangeFailure(
+    root: string,
+    references?: Pick<CommandReferenceBook, 'issuedFindEvidence'>,
+  ): CommandFailure {
+    const id = this.changeLookups.get(root);
+    const lookup = id === undefined ? undefined : this.discoveries.get(id);
+    const retryOf = id === undefined ? undefined : references?.issuedFindEvidence([id])[0];
+    if (
+      retryOf !== undefined &&
+      lookup?.complete === true &&
+      lookup.count === 1 &&
+      this.latest.get(this.queryKey_abyssPrivate(lookup)) === lookup &&
+      this.preparedDescendant(root)
+    ) {
+      const scope = { ...lookup.scope };
+      Reflect.deleteProperty(scope, 'limit');
+      const find = { query: lookup.query, ...scope, purpose: 'locate-child', retryOf };
+      return new CommandFailure(
+        'PENDING_TASK_CHANGE',
+        `The child edit is already prepared. If the parent only locates that child, call find(${JSON.stringify(find)}) now, then finish. Do not repeat the child edit or add its comment again. If the user also requested a parent edit, prepare that edit.`,
+      );
+    }
+    return new CommandFailure(
+      'PENDING_TASK_CHANGE',
+      'The requested edit has no preview on that lookup target. If the target only locates the requested child, repeat the same find with purpose:"locate-child" and retryOf set to its evidence. Keep any accepted child edits. If the user only asked for display, repeat with purpose:"show-only" and retryOf, then finish with exact selection.',
+    );
   }
   discovery(fact: CommandDiscovery): string {
     const evidence = `discovery:${this.discoveries.size + 1}`;

@@ -365,7 +365,10 @@ class CommandToolOwner {
       const state = this.ctx_abyssPrivate.session.snapshot();
       const reviewed = { id: state.id, revision: state.proposal.revision };
       try {
-        required(this.ctx_abyssPrivate.evidence).checkTaskChanges();
+        required(this.ctx_abyssPrivate.evidence).checkTaskChanges(
+          [],
+          this.ctx_abyssPrivate.references,
+        );
       } catch (cause) {
         if (!(cause instanceof CommandFailure) || cause.code !== 'PENDING_TASK_CHANGE') throw cause;
         return checkedOutput({ ...record(preview), completionBlocked: cause.message });
@@ -2195,6 +2198,7 @@ class CommandToolOwner {
     );
     required(ctx.evidence).checkTaskChanges(
       displayOnly && savedTasks.length === selection.length ? savedTasks : undefined,
+      ctx.references,
     );
     return undefined;
   }

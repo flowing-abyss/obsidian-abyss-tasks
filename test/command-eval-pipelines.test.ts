@@ -1824,7 +1824,15 @@ it('resolves an explicitly named child among fuzzy titles without guessing betwe
 });
 it('keeps the prepared child edit when its parent lookup was classified as the edit subject', async () => {
   const item = expectDefined(selectCases('C01-en')[0]);
-  const query = { query: 'Relay', fields: 'all' };
+  const query = { query: 'Relay', fields: 'all', path: 'a.md' };
+  function recovery(feedback: unknown, evidence: unknown): unknown {
+    expect(feedback).toContain('child edit is already prepared');
+    expect(feedback).toContain('Do not repeat');
+    const args = /find\((\{.*\})\)/u.exec(String(feedback))?.[1];
+    const input: unknown = JSON.parse(expectDefined(args));
+    expect(input).toEqual({ ...query, purpose: 'locate-child', retryOf: evidence });
+    return input;
+  }
   await replay(
     item,
     [
@@ -1843,12 +1851,21 @@ it('keeps the prepared child edit when its parent lookup was classified as the e
       (p) => {
         const prepared = result(p, 'change_task');
         expect(prepared['preparation']).toBeDefined();
-        expect(prepared['completionBlocked']).toBeDefined();
-        return tool('find', {
-          ...query,
-          purpose: 'locate-child',
-          retryOf: result(p, 'find')['evidence'],
-        });
+        recovery(prepared['completionBlocked'], result(p, 'find')['evidence']);
+        return finish;
+      },
+      (p) => {
+        const feedback = p
+          .flatMap((message) => (message.role === 'tool' ? message.content : []))
+          .find((part) => part.type === 'tool-result' && part.toolName === 'finish');
+        const error = feedback?.type === 'tool-result' ? feedback.output : undefined;
+        return tool(
+          'find',
+          recovery(
+            error?.type === 'error-text' ? error.value : undefined,
+            result(p, 'find')['evidence'],
+          ),
+        );
       },
       finish,
     ],
