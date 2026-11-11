@@ -173,7 +173,11 @@ work, further edits, or a save-before-switch. Its only tool returns a decision a
 and scope. A partial grant is checked against the selected owner's observed identity and fields.
 An unresolved owner keeps the proposal open. A negative decision closes the turn to further
 write attempts. The host rechecks cancellation, deadline and proposal revision after the decision;
-an instruction to edit and save requires a material change to the canonical preview. Native Enter
+an instruction to edit and save requires a material change to the canonical preview. Immediately
+before that write, a second read-only assessment compares the complete initial and final canonical
+changes, the focused owners and the same vault clock against the instruction. A scope mismatch,
+unavailable evidence or an oversized assessment leaves the proposal open for review. The writer
+rechecks cancellation, deadline and revision after the response. Native Enter
 proceeds through the usual revision check and writer directly. Previewing or correcting a task
 requires no separate write review.
 
@@ -183,7 +187,8 @@ changes and existing-node fields before admission; unsaved-parent and linked-ope
 retain a question. Field selection uses the public `select-fields` preparation. The selected plans
 use the existing journal, writer and settled readback; successful receipt-authorized refresh leaves
 a freshly based remainder in the same tree. Failed remainder proof retains the committed receipt
-and unresolved proposal under existing recovery. Empty Enter and unqualified confirmation save the whole proposal. The surface routes empty Enter
+and unresolved proposal under existing recovery. Field selections for different children of one prepared tree share a single
+revision-bound `select-fields` request and one receipt. Empty Enter and unqualified confirmation save the whole proposal. The surface routes empty Enter
 through the owner’s serialized confirm-and-start action: only complete verified saving, an unchanged
 composer and no question/recovery state can start a new session. Semantic confirmation stays in the
 current session. The send button owns the New session context menu. Multi-root creation retains the latest successful, read-back creation
@@ -364,11 +369,14 @@ snapshots and receipts through `commandRecovery`, and requires exact readback be
 Existing-file updates compare previous bytes inside DataAdapter.process. New-file creation checks
 absence, but the public host API provides no atomic create-if-absent, cross-instance lock or fsync guarantee.
 
-Legacy localStorage history is validated and copied before the verified import marker permits cleanup
-of `abyss-tasks:command-sessions:v1`. Retries preserve newer JSON records and reject duplicate logical
-IDs. The marker prevents an uncleared legacy copy from resurrecting deleted sessions. Malformed or
-future data pauses mutations and remains untouched. Older plugin builds cannot read the JSON history;
-rollback requires the pre-deployment history snapshot. Session history never enters settings or task Markdown.
+Each device reconciles its own legacy localStorage history. Before clearing the local copy, the
+store verifies the control file, the surviving session files and the original local contents.
+Deletion writes a version-2 control file pairing each deleted file UUID with its logical session
+ID. Version-1 control files remain readable. When an old tombstone cannot be matched to a missing
+local session, writes pause and the local copy stays available. A divergent older draft remains on
+its device while the newer vault session stays usable. Empty drafts release the active selection.
+Restoring an older build after a version-2 deletion requires the pre-upgrade history backup.
+Session snapshots remain version 1 and live outside settings and task Markdown.
 
 JSON history remains until explicit deletion. Individual files have structural and byte validation
 limits; there is no aggregate session-count or byte pruning policy. Records retain createdAt, meaningful
@@ -396,6 +404,10 @@ revokes capture, UI subscriptions and future saves immediately. Its captured fin
 `drained()` waits for pending work and persistence before a replacement may be constructed against the
 same store. Unload does not promise completion of arbitrary I/O; already durable admission evidence
 remains conservative, and late callbacks never grant new write admission.
+
+History lists resolve record summaries by session ID. A composer edit retains unchanged immutable
+tree references so active Markdown renders can finish. Each session revision publishes a shared
+read-only snapshot for its subscribers. Provider readiness is refreshed when its settings change.
 
 `CommandSession` publishes detached immutable state: input, focused entities, canonical trees,
 proposal revision, complete exchanges, question, status, actual readback and write journal.
