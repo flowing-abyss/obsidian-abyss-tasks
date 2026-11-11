@@ -1,6 +1,8 @@
 import type {
   ApiResultV1,
+  DefaultNoteDestinationV1,
   NoteSelectorV1,
+  NoteTemplateExecutionV1,
   PrepareNoteV1,
   ReadNoteV1,
   SearchNotesV1,
@@ -28,6 +30,20 @@ function notePath(value: unknown): string {
     result.toLowerCase().endsWith('.md')
     ? result
     : invalid();
+}
+function destination(value: unknown): DefaultNoteDestinationV1 {
+  const r = record(value, ['type', 'fileName', 'fromPath']);
+  if (r['type'] !== 'obsidian-default') return invalid();
+  const fileName = notePath(r['fileName']);
+  if (fileName.includes('/') || fileName.length <= 3) return invalid();
+  return { type: 'obsidian-default', fileName, ...optional(r, 'fromPath', notePath) };
+}
+function templateExecution(value: unknown): NoteTemplateExecutionV1 {
+  const r = record(value, ['type']);
+  const type = r['type'];
+  if (type !== 'static' && type !== 'configured-templater' && type !== 'explicit-templater')
+    return invalid();
+  return { type };
 }
 function origin(
   value: unknown,
@@ -118,6 +134,8 @@ export function validateNotePrepare(value: unknown): ApiResultV1<PrepareNoteV1> 
       'collision',
       'plan',
       'expectedPlanRevision',
+      'destination',
+      'templateExecution',
     ]);
     if (r['kind'] === 'refine') return refinement(r);
     if (r['kind'] === 'edit') {
@@ -137,27 +155,46 @@ export function validateNotePrepare(value: unknown): ApiResultV1<PrepareNoteV1> 
       };
     }
     if (r['kind'] !== 'create') return invalid();
-    record(value, [
-      'kind',
-      'path',
-      'title',
-      'text',
-      'template',
-      'expectedTemplateRevision',
-      'collision',
-    ]);
-    if ((r['template'] === undefined) !== (r['expectedTemplateRevision'] === undefined))
-      return invalid();
-    return {
-      kind: 'create',
-      path: notePath(r['path']),
-      title: text(r['title'], 4096),
-      text: prose(r['text']),
-      ...optional(r, 'template', token),
-      ...optional(r, 'expectedTemplateRevision', token),
-      ...optional(r, 'collision', (v) => (v === 'reject' || v === 'suffix' ? v : invalid())),
-    };
+    return createPreparation(r);
   });
+}
+
+function createPreparation(r: Record<string, unknown>): Extract<PrepareNoteV1, { kind: 'create' }> {
+  record(r, [
+    'kind',
+    'path',
+    'title',
+    'text',
+    'template',
+    'expectedTemplateRevision',
+    'collision',
+    'destination',
+    'templateExecution',
+  ]);
+  const execution = creationMode(r);
+  return {
+    kind: 'create',
+    ...(r['path'] === undefined
+      ? { destination: destination(r['destination']) }
+      : { path: notePath(r['path']) }),
+    title: text(r['title'], 4096),
+    text: prose(r['text']),
+    ...optional(r, 'template', token),
+    ...optional(r, 'expectedTemplateRevision', token),
+    ...optional(r, 'collision', (v) => (v === 'reject' || v === 'suffix' ? v : invalid())),
+    ...(execution === undefined ? {} : { templateExecution: execution }),
+  };
+}
+
+function creationMode(r: Record<string, unknown>): NoteTemplateExecutionV1 | undefined {
+  if ((r['template'] === undefined) !== (r['expectedTemplateRevision'] === undefined))
+    return invalid();
+  if ((r['path'] === undefined) === (r['destination'] === undefined)) return invalid();
+  const execution =
+    r['templateExecution'] === undefined ? undefined : templateExecution(r['templateExecution']);
+  if (execution?.type === 'explicit-templater' && r['template'] === undefined) return invalid();
+  if (execution?.type === 'configured-templater' && r['template'] !== undefined) return invalid();
+  return execution;
 }
 
 function refinement(r: Record<string, unknown>): Extract<PrepareNoteV1, { kind: 'refine' }> {

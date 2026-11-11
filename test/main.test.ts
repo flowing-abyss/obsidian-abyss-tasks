@@ -1,5 +1,6 @@
 import { App, Notice } from 'obsidian';
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest';
+import type { CommandSessionStoragePort } from '../src/ai/CommandSessionStore';
 import type { AppState } from '../src/app/AppState';
 import TaskCalendarPlugin from '../src/main';
 import { buildDefaultProjectKanbanSettings } from '../src/projects/projectKanbanSettings';
@@ -109,8 +110,28 @@ function makePlugin(data: Record<string, unknown> | null = null): PluginLike {
   // Keep layout NOT ready so onLayoutReady queues callbacks (lets onload finish before initialize fires)
   workspace.layoutReady = false;
   const stateFiles = new Map<string, string>();
+  const directories = new Set<string>();
   const adapter = {
-    exists: vi.fn(async (path: string) => stateFiles.has(path)),
+    mkdir: vi.fn(async (path: string) => {
+      directories.add(path);
+    }),
+    list: vi.fn(async (path: string) => ({
+      files: [...stateFiles.keys()].filter(
+        (name) => name.startsWith(`${path}/`) && !name.slice(path.length + 1).includes('/'),
+      ),
+      folders: [],
+    })),
+    remove: vi.fn(async (path: string) => {
+      stateFiles.delete(path);
+    }),
+    process: vi.fn(async (path: string, transform: (value: string) => string) => {
+      const previous = stateFiles.get(path);
+      if (previous === undefined) throw new Error('Missing file');
+      const next = transform(previous);
+      stateFiles.set(path, next);
+      return next;
+    }),
+    exists: vi.fn(async (path: string) => stateFiles.has(path) || directories.has(path)),
     read: vi.fn(async (path: string) => {
       const value = stateFiles.get(path);
       if (value === undefined) throw new Error(`Missing ${path}`);
@@ -1948,7 +1969,7 @@ it('starts ordinary task services and settings with unsupported provider prefere
   }
 });
 
-it('shares one command owner and persists its input through only the vault-local host key', async () => {
+it('shares one lazy command owner and persists input in scoped JSON outside settings', async () => {
   const plugin = makePlugin() as unknown as TaskCalendarPlugin;
   let raw: unknown = null;
   const written: string[] = [];
@@ -1965,15 +1986,24 @@ it('shares one command owner and persists its input through only the vault-local
     plugin.settings.commandMode = { provider: 'unsupported' };
     const first = plugin.getCommandSessionOwner();
     expect(plugin.getCommandSessionOwner()).toBe(first);
+    expect(first.snapshot().voiceMode).toBe('manual');
+    plugin.settings.commandMode = { provider: 'unsupported', voiceInputMode: 'continuous' };
+    expect(first.snapshot().voiceMode).toBe('manual');
     first.open();
     first.setInput('Retained locally');
     await first.flush();
-    expect(written).toEqual(['abyss-tasks:command-sessions:v1']);
-    expect(raw).toMatchObject({
+    expect(written).toEqual([]);
+    const files = (plugin as unknown as PluginLike).stateFiles__;
+    const sessionFiles = [...files].filter(([path]) => path.includes('/sessions/'));
+    expect(sessionFiles).toHaveLength(1);
+    expect(JSON.parse(expectDefined(sessionFiles[0])[1])).toMatchObject({
       version: 1,
-      sessions: [{ snapshot: { input: 'Retained locally' } }],
+      snapshot: { input: 'Retained locally' },
     });
+    expect(files.has('.test-config/plugins/abyss-tasks/command-session-state.json')).toBe(true);
     expect(plugin.settings).not.toHaveProperty('commandSessions');
+    await first.newSession();
+    expect(first.snapshot().voiceMode).toBe('continuous');
     first.dispose();
   } finally {
     plugin.onunload();
@@ -2003,6 +2033,7 @@ it('lets an already-open command owner use research after settings are corrected
     });
     const calls = [
       { toolName: 'interpret', input: { intent: 'plan', research: true } },
+      { toolName: 'expand', input: { capabilities: ['research'] } },
       { toolName: 'research', input: { query: 'Compare two choices' } },
       { toolName: 'finish', input: { state: 'ready', message: 'Compared.' } },
     ];
@@ -2039,10 +2070,86 @@ it('lets an already-open command owner use research after settings are corrected
     expect(plugin.getCommandSessionOwner()).toBe(owner);
     await owner.submit('Compare choices');
     expect(search).toHaveBeenCalledTimes(1);
-    expect(owner.snapshot().status.message).toBe('Compared.');
+    expect(owner.snapshot().status).toEqual({ kind: 'ready', message: 'Ready.' });
     owner.dispose();
   } finally {
     plugin.onunload();
     vi.restoreAllMocks();
   }
+});
+
+it('leaves the calendar usable with malformed JSON history and never recreates an owner after unload', async () => {
+  const plugin = makePlugin();
+  const historyPath = '.test-config/plugins/abyss-tasks/command-session-state.json';
+  plugin.stateFiles__.set(historyPath, '{"version":99}');
+  await plugin.onload();
+  const concrete = plugin as unknown as TaskCalendarPlugin;
+  expect(plugin.views__.has(PANEL_VIEW_TYPE)).toBe(true);
+  const owner = concrete.getCommandSessionOwner();
+  expect(owner.persistenceFailure()?.code).toBe('UNREADABLE_HISTORY');
+  owner.setInput('Retain in memory');
+  expect(await owner.flush()).toBe(false);
+  expect(plugin.stateFiles__.get(historyPath)).toBe('{"version":99}');
+  plugin.onunload();
+  await owner.drained();
+  expect(() => concrete.getCommandSessionOwner()).toThrow(
+    expect.objectContaining({ code: 'CLOSED' }),
+  );
+});
+it('scopes native history paths to the actual plugin directory and rejects unsafe file IDs', async () => {
+  const plugin = makePlugin() as unknown as TaskCalendarPlugin;
+  plugin.manifest = { ...plugin.manifest, dir: 'custom-config/plugins/actual-plugin' };
+  const port = (
+    plugin as unknown as {
+      commandSessionStorage(): CommandSessionStoragePort;
+    }
+  ).commandSessionStorage();
+  await expect(port.write({ kind: 'session', fileId: '../../note' }, '{}', null)).rejects.toThrow(
+    'Invalid history file ID',
+  );
+  const key = { kind: 'session' as const, fileId: '00000000-0000-4000-8000-000000000001' };
+  await port.write(key, 'original', null);
+  expect(
+    (plugin as unknown as PluginLike).stateFiles__.get(
+      'custom-config/plugins/actual-plugin/sessions/00000000-0000-4000-8000-000000000001.json',
+    ),
+  ).toBe('original');
+  await expect(port.write(key, 'overwrite', null)).rejects.toThrow('already exists');
+  await expect(port.write(key, 'overwrite', 'stale')).rejects.toThrow('changed outside');
+  expect(await port.read(key)).toBe('original');
+  await port.write(key, 'verified', 'original');
+  expect(await port.read(key)).toBe('verified');
+  await port.remove(key.fileId);
+  expect(await port.read(key)).toBeNull();
+});
+
+it('does not register Q or recreate a runtime when unload happens during history initialization', async () => {
+  const plugin = makePlugin();
+  const control = '.test-config/plugins/abyss-tasks/command-session-state.json';
+  const raw = JSON.stringify({
+    version: 1,
+    activeSessionId: null,
+    legacyImported: true,
+    deletedFiles: [],
+  });
+  plugin.stateFiles__.set(control, raw);
+  const started = deferred<void>(),
+    release = deferred<void>();
+  const read = plugin.stateAdapter__.read.getMockImplementation();
+  plugin.stateAdapter__.read.mockImplementation(async (path) => {
+    if (path === control) {
+      started.resolve();
+      await release.promise;
+    }
+    return expectDefined(read)(path);
+  });
+  const loading = plugin.onload();
+  await started.promise;
+  plugin.onunload();
+  release.resolve();
+  await loading;
+  expect(plugin.views__.has(PANEL_VIEW_TYPE)).toBe(false);
+  expect(() => (plugin as unknown as TaskCalendarPlugin).getCommandSessionOwner()).toThrow(
+    expect.objectContaining({ code: 'CLOSED' }),
+  );
 });

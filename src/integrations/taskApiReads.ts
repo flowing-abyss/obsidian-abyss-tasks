@@ -64,35 +64,83 @@ function project(
   }
   return freezeValue({ ok: true, value: items });
 }
+export function inboxPolicy(
+  context: TaskApiContext,
+  inbox?: boolean,
+): ApiResultV1<
+  { mode: 'untagged' | 'tag' | 'both'; serviceTag?: string; member: boolean } | undefined
+> {
+  if (inbox === undefined) return { ok: true, value: undefined };
+  const policy = context.creationPolicy?.().inbox;
+  if (policy === undefined || (policy.mode !== 'untagged' && policy.serviceTag === undefined))
+    return readError('unsupported', 'INBOX_POLICY_UNAVAILABLE', 'Inbox policy is unavailable.');
+  return {
+    ok: true,
+    value: {
+      mode: policy.mode,
+      ...(policy.mode === 'untagged'
+        ? {}
+        : { serviceTag: (policy.serviceTag ?? '').toLowerCase() }),
+      member: inbox,
+    },
+  };
+}
 function list(
   context: TaskApiContext,
   query: ListTasksV1,
   before: TaskReadObservation,
 ): ApiResultV1<TaskPageV1> {
+  const policy = inboxPolicy(context, query.inbox);
+  if (!policy.ok) return policy;
+  return listWithPolicy(context, query, before, policy.value);
+}
+function resumeList(
+  context: TaskApiContext,
+  query: ListTasksV1,
+  observation: TaskReadObservation,
+  fingerprint?: string,
+): ApiResultV1<{ path: string; line: number }> | undefined {
+  return query.cursor === undefined
+    ? undefined
+    : context.cursors.resume(query.cursor, query, observation, fingerprint);
+}
+function listWithPolicy(
+  context: TaskApiContext,
+  query: ListTasksV1,
+  before: TaskReadObservation,
+  policy: ReturnType<typeof inboxPolicy> extends ApiResultV1<infer P> ? P : never,
+): ApiResultV1<TaskPageV1> {
+  const fingerprint = JSON.stringify(policy);
   const observation = context.reads.capture();
-  const resume =
-    query.cursor === undefined
-      ? undefined
-      : context.cursors.resume(query.cursor, query, observation);
+  const resume = resumeList(context, query, observation, fingerprint);
   if (resume !== undefined && !resume.ok) return resume;
   if (observation.generation !== before.generation)
     return readFailure(query.cursor === undefined ? 'incomplete' : 'generation-changed');
-  const page = context.reads.page(query, query.limit ?? 100, resume?.value, observation.generation);
+  const page = context.reads.page(
+    { ...query, ...(policy === undefined ? {} : { inboxPolicy: policy }) },
+    query.limit ?? 100,
+    resume?.value,
+    observation.generation,
+  );
   if (page.type === 'error') return readFailure(page.reason);
   const projected = project(context, page.value.nodes, page.observation);
   if (!projected.ok) return projected;
-  return finishPage(context, query, page, projected.value);
+  return finishPage(context, query, { page, items: projected.value, fingerprint });
 }
 function finishPage(
   context: TaskApiContext,
   query: ListTasksV1,
-  page: Extract<ReturnType<TaskApiContext['reads']['page']>, { type: 'ok' }>,
-  items: readonly TaskDtoV1[],
+  result: {
+    page: Extract<ReturnType<TaskApiContext['reads']['page']>, { type: 'ok' }>;
+    items: readonly TaskDtoV1[];
+    fingerprint: string | undefined;
+  },
 ): ApiResultV1<TaskPageV1> {
+  const { page, items, fingerprint } = result;
   const next =
     page.value.next === undefined
       ? undefined
-      : context.cursors.open(query, page.observation, page.value.next);
+      : context.cursors.open(query, page.observation, page.value.next, fingerprint);
   if (next !== undefined && !next.ok) return next;
   return freezeValue({
     ok: true,

@@ -31,11 +31,17 @@ interface AllowedWriter {
     | 'destination provisioning'
     | 'project creation scaffold'
     | 'project metadata'
-    | 'vault-wide tag rename';
+    | 'vault-wide tag rename'
+    | 'command history persistence';
   readonly reason: string;
 }
 
 const ALLOWED_WRITER_CALLS: Record<string, AllowedWriter> = {
+  'src/main.ts#TaskCalendarPlugin.commandSessionStorage#process#1': {
+    mutation: 'command history persistence',
+    reason:
+      'Composition-root history port compares exact previous bytes before replacing a scoped session or control file.',
+  },
   'src/notes/NoteApplicationService.ts#NoteApplicationService.commitPreparedSection#process#1': {
     mutation: 'note prose mutation',
     reason:
@@ -94,6 +100,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   TaskSourceCopy: ['src/integrations/taskContentApi.ts'],
   TaskSourceCopyEvidence: ['src/integrations/taskContentCopies.ts'],
   TaskAcceptedOccurrenceChange: ['src/integrations/TaskIdentityRegistry.ts'],
+  TaskNodeReadQuery: ['src/integrations/taskSearchApi.ts'],
   TaskIntegrationReadApi: [
     'src/integrations/TaskApiProvider.ts',
     'src/integrations/taskApiMutations.ts',
@@ -293,6 +300,8 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   hierarchyWouldCycle: ['src/ui/taskHierarchyActions.ts'],
   taskPrefixForSubtask: ['src/panels/RightPanel.ts'],
   isTaskInboxMember: ['src/task-lists/taskNodeMembership.ts'],
+  matchesInboxPolicy: ['src/integrations/taskSearchApi.ts'],
+  resolveInboxCreationPolicy: ['src/ui/taskCapture/CaptureTargetResolver.ts'],
   sameTag: ['src/ui/taskCapture/CaptureMetadataRow.ts', 'src/integrations/validation.ts'],
   normalizeTaskTagInput: [
     'src/integrations/validation.ts',

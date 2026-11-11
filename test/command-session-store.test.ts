@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 import { CommandSessionStore } from '../src/ai/CommandSessionStore';
 import type { CommandSessionSnapshot } from '../src/ai/commandTypes';
+import { commandSessionStorage } from './support/commandSessionStorage';
 
 function session(id = 'one', patch: Partial<CommandSessionSnapshot> = {}): CommandSessionSnapshot {
   return {
@@ -10,7 +11,7 @@ function session(id = 'one', patch: Partial<CommandSessionSnapshot> = {}): Comma
     context: '',
     trees: [],
     entities: { tasks: [], projects: [], notes: [] },
-    exchanges: [],
+    exchanges: [{ role: 'user', text: `History ${id}` }],
     activeQuestion: null,
     status: { kind: 'ready', message: '' },
     proposal: { revision: 0, operations: 0, changes: [] },
@@ -20,24 +21,26 @@ function session(id = 'one', patch: Partial<CommandSessionSnapshot> = {}): Comma
     ...patch,
   };
 }
-function setup(initial: unknown = null) {
-  let raw: unknown = initial;
-  let writes = 0;
-  let quota = false;
-  let mismatch = false;
-  const storage = {
-    load: (): unknown => raw,
-    save: (value: unknown): void => {
-      writes++;
-      if (quota) throw new Error('secret provider failure');
-      raw = mismatch ? { version: 1, activeSessionId: null, sessions: [] } : structuredClone(value);
-    },
+async function setup(initial: unknown = null) {
+  const h = commandSessionStorage(initial);
+  let writes = 0,
+    quota = false,
+    mismatch = false,
+    now = 10;
+  const write = h.storage.write,
+    read = h.storage.read;
+  h.storage.write = async (...args) => {
+    writes++;
+    if (quota) throw new Error('secret provider failure');
+    await write(...args);
   };
-  let now = 10;
+  h.storage.read = async (key) => {
+    const raw = await read(key);
+    return mismatch && raw !== null ? `${raw} ` : raw;
+  };
   return {
-    store: new CommandSessionStore({ storage, now: () => now++ }),
-    storage,
-    raw: () => raw,
+    ...h,
+    store: await CommandSessionStore.open({ ...h, now: () => now++ }),
     writes: () => writes,
     quota: (value: boolean) => {
       quota = value;
@@ -48,7 +51,7 @@ function setup(initial: unknown = null) {
   };
 }
 it('loads missing storage without writing and roundtrips complete detached historical records', async () => {
-  const h = setup();
+  const h = await setup();
   expect(h.store.records()).toEqual([]);
   expect(h.writes()).toBe(0);
   const input = session('one', {
@@ -59,9 +62,17 @@ it('loads missing storage without writing and roundtrips complete detached histo
     })),
   });
   await h.store.create(input);
-  const reopened = new CommandSessionStore({ storage: h.storage, now: () => 100 });
+  const reopened = await CommandSessionStore.open({ ...h, now: () => 100 });
   expect(reopened.activeId()).toBe('one');
-  expect(reopened.records()).toEqual([{ handles: 'historical', updatedAt: 10, snapshot: input }]);
+  expect(reopened.records()).toEqual([
+    {
+      handles: 'historical',
+      createdAt: 10,
+      updatedAt: 10,
+      title: `Constraint 0 ${'a'.repeat(5000)}`,
+      snapshot: input,
+    },
+  ]);
   const records = reopened.records();
   const first = records[0];
   if (first === undefined) throw new Error('Missing retained record.');
@@ -79,31 +90,25 @@ it.each([
     sessions: [{ handles: 'historical', updatedAt: 1, snapshot: { id: 'malformed' } }],
   },
 ])('preserves malformed or future raw storage and pauses all writes (%j)', async (raw) => {
-  const h = setup(raw);
+  const h = await setup(raw);
   expect(h.store.failure()?.code).toBe('UNREADABLE_HISTORY');
   await expect(h.store.create(session())).rejects.toMatchObject({ code: 'UNREADABLE_HISTORY' });
-  expect(h.raw()).toBe(raw);
+  expect(h.raw()).toEqual(raw);
   expect(h.writes()).toBe(0);
   expect(h.store.records()[0]?.snapshot.id).toBe('one');
 });
 it('reports load exceptions without exposing raw diagnostics', async () => {
-  const store = new CommandSessionStore({
-    storage: {
-      load: () => {
-        throw new Error('secret');
-      },
-      save: () => {
-        throw new Error('unexpected');
-      },
-    },
-    now: () => 1,
-  });
+  const h = commandSessionStorage();
+  h.storage.read = async () => {
+    throw new Error('secret');
+  };
+  const store = await CommandSessionStore.open({ ...h, now: () => 1 });
   expect(store.failure()).toMatchObject({ code: 'UNREADABLE_HISTORY' });
   expect(JSON.stringify(store.failure())).not.toContain('secret');
   await expect(store.save(session())).rejects.toMatchObject({ code: 'UNREADABLE_HISTORY' });
 });
 it('separates explicit selection from late archived journal saves', async () => {
-  const h = setup();
+  const h = await setup();
   await h.store.create(session('old'));
   await h.store.create(session('current'));
   await h.store.save(session('old', { input: 'late outcome' }));
@@ -113,20 +118,16 @@ it('separates explicit selection from late archived journal saves', async () => 
   await expect(h.store.select('missing')).rejects.toMatchObject({ code: 'MISSING_SESSION' });
   expect(h.store.activeId()).toBe('old');
 });
-it('prunes oldest eligible completed records to twenty while retaining the active record', async () => {
-  const h = setup();
+it('retains all completed records until explicit completion-only clearing', async () => {
+  const h = await setup();
   await h.store.create(session('active'));
   for (let n = 0; n < 23; n++) await h.store.save(session(`done-${n}`));
-  expect(h.store.records()).toHaveLength(20);
-  expect(h.store.records().map((record) => record.snapshot.id)).toEqual([
-    'active',
-    ...Array.from({ length: 19 }, (_, n) => `done-${n + 4}`),
-  ]);
+  expect(h.store.records()).toHaveLength(24);
   await h.store.clearCompleted();
   expect(h.store.records().map((record) => record.snapshot.id)).toEqual(['active']);
 });
 it('keeps inactive pending input, questions, proposals, and admitted or uncertain journals under count pressure and explicit clearing', async () => {
-  const h = setup();
+  const h = await setup();
   const change = {
     kind: 'status',
     target: 'task',
@@ -163,42 +164,36 @@ it('keeps inactive pending input, questions, proposals, and admitted or uncertai
   for (let n = 0; n < 23; n++) await h.store.save(session(`done-${n}`));
   await h.store.clearCompleted();
   expect(h.store.records().map((record) => record.snapshot.id)).toEqual([
-    'active',
-    'input',
-    'question',
-    'proposal',
-    'admitted',
-    'unknown',
     'partial',
+    'unknown',
+    'admitted',
+    'proposal',
+    'question',
+    'input',
+    'active',
   ]);
 });
-it('prunes completed history by UTF-8 bytes and retains a full Unicode command on refusal', async () => {
-  const h = setup();
+it('retains independent files beyond the former aggregate byte limit', async () => {
+  const h = await setup();
   await h.store.create(session('active', { input: 'retained' }));
   await h.store.save(session('old', { exchanges: [{ role: 'user', text: 'a'.repeat(1200000) }] }));
   await h.store.save(session('new', { exchanges: [{ role: 'user', text: 'a'.repeat(1200000) }] }));
-  expect(h.store.records().map((record) => record.snapshot.id)).toEqual(['active', 'new']);
-  const raw = h.raw();
   const unicode = '界'.repeat(750000);
-  await expect(h.store.save(session('protected', { input: unicode }))).rejects.toMatchObject({
-    code: 'HISTORY_LIMIT',
-  });
-  expect(h.raw()).toBe(raw);
+  await h.store.save(session('protected', { input: unicode }));
+  expect((await CommandSessionStore.open({ ...h, now: () => 100 })).records()).toHaveLength(4);
   expect(h.store.records().find((r) => r.snapshot.id === 'protected')?.snapshot.input).toBe(
     unicode,
   );
-  await expect(h.store.clearCompleted()).rejects.toMatchObject({ code: 'HISTORY_LIMIT' });
-  expect(h.store.records().find((r) => r.snapshot.id === 'protected')).toBeDefined();
 });
 it('retains valid memory after quota failure and rejects awaited saves until verified readback succeeds', async () => {
-  const h = setup();
+  const h = await setup();
   await h.store.create(session());
   const raw = h.raw();
   h.quota(true);
   await expect(h.store.save(session('one', { input: 'unsaved' }))).rejects.toMatchObject({
     code: 'WRITE_FAILED',
   });
-  expect(h.raw()).toBe(raw);
+  expect(h.raw()).toEqual(raw);
   expect(h.store.records()[0]?.snapshot.input).toBe('unsaved');
   expect(JSON.stringify(h.store.failure())).not.toContain('secret');
   h.quota(false);
@@ -212,7 +207,7 @@ it('retains valid memory after quota failure and rejects awaited saves until ver
   expect(h.store.failure()).toBeNull();
 });
 it('refuses invalid or structurally oversized input without replacing validated memory or disk', async () => {
-  const h = setup();
+  const h = await setup();
   await h.store.create(session());
   const raw = h.raw();
   const cycle: Record<string, unknown> = {};
@@ -224,11 +219,11 @@ it('refuses invalid or structurally oversized input without replacing validated 
     h.store.save(session('one', { input: 'a'.repeat(17 * 1024 * 1024) })),
   ).rejects.toMatchObject({ code: 'INVALID_SNAPSHOT' });
   expect(h.store.records()[0]?.snapshot.input).toBe('');
-  expect(h.raw()).toBe(raw);
+  expect(h.raw()).toEqual(raw);
 });
 
 it('protects uncertain receipt evidence even if the enclosing entry claims committed effects', async () => {
-  const h = setup();
+  const h = await setup();
   await h.store.create(session('active'));
   const change = {
     kind: 'status',
@@ -264,11 +259,11 @@ it('protects uncertain receipt evidence even if the enclosing entry claims commi
     }),
   );
   await h.store.clearCompleted();
-  expect(h.store.records().map((record) => record.snapshot.id)).toEqual(['active', 'uncertain']);
+  expect(h.store.records().map((record) => record.snapshot.id)).toEqual(['uncertain', 'active']);
 });
 
-it('releases all failed-save protection after a later verified envelope includes those records', async () => {
-  const h = setup();
+it('explicit completion-only clearing can remove a failed-save record', async () => {
+  const h = await setup();
   await h.store.create(session('active'));
   h.quota(true);
   await expect(h.store.save(session('earlier'))).rejects.toMatchObject({ code: 'WRITE_FAILED' });
@@ -279,7 +274,7 @@ it('releases all failed-save protection after a later verified envelope includes
 });
 
 it('keeps the active selection on failed create/select while retaining newly authored memory', async () => {
-  const h = setup();
+  const h = await setup();
   await h.store.create(session('active'));
   await h.store.save(session('archived', { input: 'existing draft' }));
   h.quota(true);
@@ -396,9 +391,9 @@ function unknownResourceSession(resource: UnknownResource): CommandSessionSnapsh
     ],
   });
 }
-function loadedUnknownResource(resource: UnknownResource) {
+async function loadedUnknownResource(resource: UnknownResource) {
   const snapshot = unknownResourceSession(resource);
-  const h = setup({
+  const h = await setup({
     version: 1,
     activeSessionId: 'active',
     sessions: [
@@ -411,11 +406,11 @@ function loadedUnknownResource(resource: UnknownResource) {
 it.each(unknownResources)(
   'retains loaded %s uncertainty through explicit clearing',
   async (resource) => {
-    const h = loadedUnknownResource(resource);
+    const h = await loadedUnknownResource(resource);
     expect(h.store.failure()).toBeNull();
     await h.store.clearCompleted();
-    expect(h.store.records().map((record) => record.snapshot.id)).toEqual(['uncertain', 'active']);
-    const reloaded = new CommandSessionStore({ storage: h.storage, now: () => 100 });
+    expect(h.store.records().map((record) => record.snapshot.id)).toEqual(['active', 'uncertain']);
+    const reloaded = await CommandSessionStore.open({ ...h, now: () => 100 });
     expect(
       reloaded.records().find((record) => record.snapshot.id === 'uncertain')?.snapshot,
     ).toEqual(h.snapshot);
@@ -424,22 +419,18 @@ it.each(unknownResources)(
 it.each(unknownResources)(
   'retains loaded %s uncertainty through automatic history pressure',
   async (resource) => {
-    const h = loadedUnknownResource(resource);
+    const h = await loadedUnknownResource(resource);
     expect(h.store.failure()).toBeNull();
     for (let n = 0; n < 20; n++) await h.store.save(session(`done-${n}`));
-    expect(h.store.records().map((record) => record.snapshot.id)).toEqual([
-      'uncertain',
-      'active',
-      ...Array.from({ length: 19 }, (_, n) => `done-${n + 1}`),
-    ]);
-    const reloaded = new CommandSessionStore({ storage: h.storage, now: () => 100 });
+    expect(h.store.records()).toHaveLength(22);
+    const reloaded = await CommandSessionStore.open({ ...h, now: () => 100 });
     expect(
       reloaded.records().find((record) => record.snapshot.id === 'uncertain')?.snapshot,
     ).toEqual(h.snapshot);
   },
 );
 it('retains only the session voice mode across reload, without recording state or audio', async () => {
-  const h = setup();
+  const h = await setup();
   const value = {
     ...session('voice', { voiceMode: 'continuous', input: 'Retained text' }),
     recording: true,
@@ -447,7 +438,7 @@ it('retains only the session voice mode across reload, without recording state o
     pendingTranscription: true,
   };
   await h.store.create(value);
-  const reopened = new CommandSessionStore({ storage: h.storage, now: () => 100 });
+  const reopened = await CommandSessionStore.open({ ...h, now: () => 100 });
   expect(reopened.records()[0]?.snapshot.voiceMode).toBe('continuous');
   expect(reopened.records()[0]?.snapshot.input).toBe('Retained text');
   expect(JSON.stringify(h.raw())).not.toContain('private audio');

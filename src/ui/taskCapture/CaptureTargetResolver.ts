@@ -7,6 +7,7 @@ import { collectTaskNodeTags } from '../../tags/taskTagCatalog';
 import {
   localDate,
   normalizeTaskTagInput,
+  resolveInboxCreationPolicy,
   shiftLocalDate,
   type CreateTaskCommandInitial,
   type LocalDate,
@@ -149,11 +150,11 @@ export class CaptureTargetResolver {
   private async inboxTarget_abyssPrivate(
     context: Extract<CaptureContext, { type: 'list' }>,
   ): Promise<CaptureTarget> {
-    const tagged = this.settings_abyssPrivate.inbox.mode !== 'untagged';
-    const tag = tagged ? normalizedTag(this.settings_abyssPrivate.inbox.tag) : '';
-    if (tagged && tag.length === 0) {
+    const policy = resolveInboxCreationPolicy(this.settings_abyssPrivate, 'inbox');
+    if (policy === undefined) {
       return unavailableTarget(context, 'Inbox · unavailable');
     }
+    const tag = policy.serviceTag ?? '';
     return {
       label: tag.length > 0 ? `Inbox · ${tag}` : 'Inbox · untagged',
       context,

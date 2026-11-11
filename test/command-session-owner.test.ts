@@ -5,6 +5,7 @@ import { CommandSessionOwner } from '../src/ai/CommandSessionOwner';
 import { CommandSessionStore } from '../src/ai/CommandSessionStore';
 import type { CommandAgentPort, CommandSessionSnapshot } from '../src/ai/commandTypes';
 import { deferred, expectDefined } from './helpers';
+import { commandSessionStorage } from './support/commandSessionStorage';
 import { publicApiHarness, type PublicApiHarness } from './support/publicApiHarness';
 
 const harnesses: PublicApiHarness[] = [];
@@ -17,11 +18,13 @@ afterEach(() => {
     harness.dispose();
   });
 });
-async function setup(initial?: unknown) {
+async function setup(
+  initial?: unknown,
+  defaultVoiceMode: () => 'manual' | 'continuous' = () => 'manual',
+) {
   const h = await publicApiHarness({ 'a.md': '- [ ] Existing\n' });
   harnesses.push(h);
-  let raw: unknown = initial,
-    failed = false,
+  let failed = false,
     saves = 0,
     ids = 0,
     clients = 0;
@@ -34,21 +37,21 @@ async function setup(initial?: unknown) {
   const timers = new Set<() => void>();
   const notifications: CommandSessionSnapshot[] = [];
   let afterSave: (() => void) | undefined;
-  const storage = {
-    load: () => structuredClone(raw),
-    save: (value: unknown) => {
-      saves++;
-      if (failed) throw new Error('quota');
-      raw = structuredClone(value);
-      const callback = afterSave;
-      afterSave = undefined;
-      callback?.();
-    },
+  const memory = commandSessionStorage(initial);
+  const storage = memory.storage,
+    write = storage.write;
+  storage.write = async (...args) => {
+    if (args[0].kind === 'session') saves++;
+    if (failed) throw new Error('quota');
+    await write(...args);
+    const callback = afterSave;
+    afterSave = undefined;
+    callback?.();
   };
-  const createOwner = () => {
-    const store = new CommandSessionStore({ storage, now: () => now });
+  const store = await CommandSessionStore.open({ storage, fileId: memory.fileId, now: () => now });
+  const createOwner = (sessionStore = store) => {
     const owner = new CommandSessionOwner({
-      store,
+      store: sessionStore,
       notify: (state) => {
         notifications.push(state);
       },
@@ -71,6 +74,7 @@ async function setup(initial?: unknown) {
         };
         live = new CommandSession({
           api,
+          defaultVoiceMode,
           journal,
           transitions,
           now: () => now,
@@ -81,15 +85,19 @@ async function setup(initial?: unknown) {
       },
     });
     owners.push(owner);
-    return { owner, store };
+    return { owner, store: sessionStore };
   };
-  const { owner, store } = createOwner();
+  const { owner } = createOwner();
   return {
     ...h,
     owner,
     notifications,
     store,
     createOwner,
+    reopenOwner: async () =>
+      createOwner(
+        await CommandSessionStore.open({ storage, fileId: memory.fileId, now: () => now }),
+      ),
     session: () => live,
     api: () => api,
     aroundCreate: (work: typeof aroundCreate) => {
@@ -98,7 +106,8 @@ async function setup(initial?: unknown) {
     afterSave: (callback: () => void) => {
       afterSave = callback;
     },
-    raw: () => structuredClone(raw),
+    raw: memory.raw,
+    storage,
     saves: () => saves,
     clients: () => clients,
     fail: (value: boolean) => {
@@ -286,14 +295,14 @@ it.each(['session', 'revision'] as const)(
         proposalRevision:
           stale === 'revision' ? previous.proposal.revision : current.proposal.revision,
       },
-      registration.token,
+      { noteReview: registration.token, visibility: undefined },
     );
     expect(h.app.vault.getFileByPath('Review.md')).toBeNull();
     expect(h.owner.snapshot().journal).toHaveLength(0);
     await h.owner.submit(
       '',
       { sessionId: current.id, proposalRevision: current.proposal.revision },
-      registration.token,
+      { noteReview: registration.token, visibility: undefined },
     );
     expect(await h.read('Review.md')).toContain('Current draft.');
     expect(h.owner.snapshot().journal).toHaveLength(1);
@@ -309,7 +318,7 @@ it('retains the same runtime and exact unsent state through hide and reopen, wit
   expect(h.owner.open()).toEqual(before);
   expect(h.clients()).toBe(1);
   expect(h.saves()).toBe(1);
-  const reloaded = h.createOwner().owner;
+  const reloaded = (await h.reopenOwner()).owner;
   expect(reloaded.snapshot().input).toBe('Unsent 99');
 });
 it('retires shared input captures on same-session restoration and treats retained bytes as a draft', async () => {
@@ -319,6 +328,12 @@ it('retires shared input captures on same-session restoration and treats retaine
   expect(captured.dirty).toBe(false);
   expect(await h.owner.select(h.owner.snapshot().id)).toBe(true);
   expect(captured.current()).toBe(false);
+  expect(h.owner.captureInput().dirty).toBe(false);
+  expect(h.owner.snapshot().input).toBe('');
+  h.owner.setInput('Retained command');
+  const unsent = h.owner.captureInput();
+  expect(await h.owner.select(h.owner.snapshot().id)).toBe(true);
+  expect(unsent.current()).toBe(false);
   expect(h.owner.captureInput().dirty).toBe(true);
   expect(h.owner.snapshot().input).toBe('Retained command');
   expect(await h.read('a.md')).toBe('- [ ] Existing\n');
@@ -433,6 +448,9 @@ it('revokes delayed old-owner callbacks before a replacement can write history',
   });
   const running = h.owner.submit('Delayed command');
   h.owner.dispose();
+  wait.resolve();
+  await running;
+  await h.owner.drained();
   const replacement = h.createOwner().owner;
   replacement.setInput('Replacement input');
   await replacement.flush();
@@ -445,6 +463,7 @@ it('revokes delayed old-owner callbacks before a replacement can write history',
 });
 it('selection storage failure leaves the active session and its unsent input intact', async () => {
   const h = await setup();
+  h.owner.setInput('Retained first session');
   const first = h.owner.snapshot().id;
   await h.owner.newSession('keep');
   h.owner.setInput('Do not lose this');
@@ -514,7 +533,8 @@ it('reload retains historical preview and intent, then explicit review keeps its
   const original = h.owner.snapshot();
   await h.owner.flush();
   h.owner.dispose();
-  const restored = h.createOwner().owner;
+  await h.owner.drained();
+  const restored = (await h.reopenOwner()).owner;
   expect(restored.snapshot().id).toBe(original.id);
   expect(restored.snapshot().trees).toEqual(original.trees);
   expect(restored.snapshot().recovery).toBe('historical');
@@ -594,6 +614,9 @@ it('reload treats a persisted admission as unresolved even when the last snapsho
   const writing = h.owner.confirm();
   await admitted.promise;
   h.owner.dispose();
+  finish.resolve();
+  await writing;
+  await h.owner.drained();
   const replacement = h.createOwner().owner;
   expect(replacement.snapshot().blocked).toBe(true);
   expect(replacement.snapshot().recovery).toBe('uncertain');
@@ -636,6 +659,7 @@ it('changed source or ambiguous identity prevents same-runtime plan resumption',
 
 it('binds a submission after an external selection to the selected session', async () => {
   const h = await setup();
+  h.owner.setInput('Retained first session');
   const first = h.owner.snapshot().id;
   await h.owner.newSession('keep');
   const received: string[] = [];
@@ -702,7 +726,7 @@ it.each(['hide', 'stop'] as const)(
     expect(h.owner.open().input).toBe(unsent);
     expect(h.owner.snapshot().actual[0]?.title).toBe('Created once');
     expect((await h.read('a.md')).match(/Created once/g)).toHaveLength(1);
-    const restored = h.createOwner().owner;
+    const restored = (await h.reopenOwner()).owner;
     expect(restored.snapshot().input).toBe(unsent);
   },
 );
@@ -728,12 +752,14 @@ it('retains a submitted follow-up while a menu-confirmed write is still settling
   finish.resolve();
   await Promise.all([writing, next]);
   expect(received).toEqual(['Follow-up intent']);
-  expect(h.owner.snapshot().input).toBe('Follow-up intent');
+  expect(h.owner.snapshot().input).toBe('');
+  expect(h.owner.snapshot().exchanges).toContainEqual({ role: 'user', text: 'Follow-up intent' });
   expect((await h.read('a.md')).match(/Created once/g)).toHaveLength(1);
 });
 
 it('history cannot bypass uncertainty acknowledgement and acknowledged evidence remains inspectable after reload', async () => {
   const h = await setup();
+  h.owner.setInput('Retained first session');
   const first = h.owner.snapshot().id;
   await h.owner.newSession('keep');
   await stageCreate(h);
@@ -754,11 +780,13 @@ it('history cannot bypass uncertainty acknowledgement and acknowledged evidence 
   expect(h.owner.snapshot().status.kind).toBe('question');
   expect(await h.owner.acknowledgeUncertainty()).toBe(true);
   const independent = h.owner.snapshot().id;
+  h.owner.setInput('Independent draft');
   expect(await h.owner.select(uncertain)).toBe(true);
   expect(h.owner.snapshot().blocked).toBe(true);
   expect(await h.owner.confirm()).toBe(false);
   h.owner.dispose();
-  const reloaded = h.createOwner().owner;
+  await h.owner.drained();
+  const reloaded = (await h.reopenOwner()).owner;
   expect(reloaded.snapshot().id).toBe(uncertain);
   expect(await reloaded.select(independent)).toBe(true);
   await reloaded.clearCompleted();
@@ -782,7 +810,8 @@ it('a verified direct status receipt does not make a separate pending draft unce
   expect(retained.changes).toHaveLength(1);
   await h.owner.flush();
   h.owner.dispose();
-  const reloaded = h.createOwner().owner;
+  await h.owner.drained();
+  const reloaded = (await h.reopenOwner()).owner;
   expect(reloaded.snapshot().proposal).toEqual(retained);
   expect(reloaded.snapshot().blocked).toBe(false);
   expect(reloaded.snapshot().recovery).toBe('historical');
@@ -794,6 +823,7 @@ it.each([false, true])(
   'a %s stale status queued after selection cannot change its session or source',
   async (valid) => {
     const h = await setup();
+    h.owner.setInput('Retained first session');
     const first = h.owner.snapshot().id;
     await h.owner.newSession('keep');
     const listed = await h.api().tasks.list();
@@ -826,6 +856,7 @@ it.each([false, true])(
 
 it('a real status queued before selection settles in its original session', async () => {
   const h = await setup();
+  h.owner.setInput('Retained first session');
   const first = h.owner.snapshot().id;
   await h.owner.newSession('keep');
   const original = h.owner.snapshot().id;
@@ -857,6 +888,7 @@ it('a real status queued before selection settles in its original session', asyn
 
 it('a refused restore reports failure and restores the live selection after a competing direct write', async () => {
   const h = await setup();
+  h.owner.setInput('Retained first session');
   const first = h.owner.snapshot().id;
   await h.owner.newSession('keep');
   const active = h.owner.snapshot().id;
@@ -865,11 +897,9 @@ it('a refused restore reports failure and restores the live selection after a co
   const task = expectDefined(listed.value.items[0]);
   let writing: Promise<boolean> | undefined;
   h.afterSave(() => {
-    h.afterSave(() => {
-      writing = h
-        .session()
-        .applyStatus({ target: task.target, revision: task.revision, symbol: 'x' });
-    });
+    writing = h
+      .session()
+      .applyStatus({ target: task.target, revision: task.revision, symbol: 'x' });
   });
   expect(await h.owner.select(first)).toBe(false);
   expect(await expectDefined(writing)).toBe(true);
@@ -880,6 +910,7 @@ it('a refused restore reports failure and restores the live selection after a co
 
 it('hide cancels queued status and selection before their admission without changing the active record', async () => {
   const h = await setup();
+  h.owner.setInput('Retained first session');
   const first = h.owner.snapshot().id;
   await h.owner.newSession('keep');
   const active = h.owner.snapshot().id;
@@ -938,3 +969,453 @@ it.each([false, true])(
     expect((await h.read('a.md')).match(/Created once/g)).toHaveLength(1);
   },
 );
+
+it('does not grant write admission after retirement while its JSON save is pending', async () => {
+  const h = await setup();
+  await stageCreate(h);
+  await h.owner.flush();
+  const write = h.storage.write,
+    started = deferred<void>(),
+    release = deferred<void>();
+  h.storage.write = async (...args) => {
+    started.resolve();
+    await release.promise;
+    await write(...args);
+  };
+  const writing = h.owner.confirm();
+  await started.promise;
+  h.owner.dispose();
+  release.resolve();
+  await writing;
+  await h.owner.drained();
+  const replacement = h.createOwner().owner;
+  expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+  expect(replacement.snapshot().blocked).toBe(true);
+});
+it('explicit deletion settles an admitted write before removing its row and cannot resurrect it', async () => {
+  const h = await setup();
+  await stageCreate(h);
+  const id = h.owner.snapshot().id,
+    started = deferred<void>(),
+    release = deferred<void>();
+  h.aroundCreate(async (write) => {
+    const result = await write();
+    started.resolve();
+    await release.promise;
+    return result;
+  });
+  const writing = h.owner.confirm();
+  await started.promise;
+  const deletion = h.owner.delete(id);
+  release.resolve();
+  await writing;
+  expect(await deletion).toBe(true);
+  expect(h.owner.recent().some((row) => row.snapshot.id === id)).toBe(false);
+  expect((await h.read('a.md')).match(/Created once/g)).toHaveLength(1);
+  await h.owner.flush();
+  expect(h.owner.recent().some((row) => row.snapshot.id === id)).toBe(false);
+});
+
+it('clear-all retires a hidden imported empty active record before accepting new input', async () => {
+  const h = await setup({
+    version: 1,
+    activeSessionId: 'empty-import',
+    sessions: [
+      {
+        handles: 'historical',
+        updatedAt: 1,
+        snapshot: {
+          id: 'empty-import',
+          input: '',
+          focus: [],
+          context: '',
+          trees: [],
+          entities: { tasks: [], projects: [], notes: [] },
+          exchanges: [],
+          activeQuestion: null,
+          status: { kind: 'ready', message: '' },
+          proposal: { revision: 0, operations: 0, changes: [] },
+          journal: [],
+          actual: [],
+          blocked: false,
+        },
+      },
+    ],
+  });
+  expect(h.owner.recent()).toEqual([]);
+  expect(await h.owner.clearHistory()).toBe(true);
+  h.owner.setInput('New work after clear');
+  expect(await h.owner.flush()).toBe(true);
+  expect(h.owner.recent()[0]?.snapshot.input).toBe('New work after clear');
+});
+it('derives the session title from the root that owns a focused child', async () => {
+  const h = await setup();
+  const prepared = await expectDefined(h.api().tasks.prepare)({
+    kind: 'create',
+    destination: { type: 'note', path: 'a.md', insertion: { type: 'append' } },
+    tree: { markdownTitle: 'Root title', children: [{ markdownTitle: 'Focused child' }] },
+  });
+  if (!prepared.ok) throw new Error(prepared.error.code);
+  h.session().stage({ kind: 'task', plan: prepared.value });
+  const child = expectDefined(prepared.value.after?.children[0]);
+  expect(await h.owner.focus({ kind: 'task', target: child.target })).toBe(true);
+  await h.owner.flush();
+  expect(h.owner.recent()[0]?.title).toBe('Root title');
+});
+
+it('keeps the top-level root title when a direct child result is the newest actual subtree', async () => {
+  const h = await setup();
+  const prepared = await expectDefined(h.api().tasks.prepare)({
+    kind: 'create',
+    destination: { type: 'note', path: 'a.md', insertion: { type: 'append' } },
+    tree: { markdownTitle: 'Top-level root', children: [{ markdownTitle: 'Child result' }] },
+  });
+  if (!prepared.ok) throw new Error(prepared.error.code);
+  const root = expectDefined(prepared.value.after),
+    child = expectDefined(root.children[0]);
+  h.session().restore(
+    {
+      ...h.owner.snapshot(),
+      actual: [child],
+      trees: [{ before: null, after: root }],
+      focus: [{ kind: 'task', target: child.target }],
+    },
+    false,
+  );
+  await h.owner.flush();
+  expect(h.owner.recent()[0]?.title).toBe('Top-level root');
+});
+
+it.each(['input', 'proposal'] as const)(
+  'preserves a retained %s draft when active deletion fails after replacement selection',
+  async (kind) => {
+    const h = await setup();
+    if (kind === 'proposal') await stageCreate(h, 'Keep this proposal');
+    h.owner.setInput('Keep this unsent input');
+    await h.owner.flush();
+    const before = h.owner.snapshot(),
+      write = h.storage.write;
+    const started = deferred<void>(),
+      release = deferred<void>();
+    h.storage.write = async (...args) => {
+      const control =
+        args[0].kind === 'state' ? (JSON.parse(args[1]) as { deletedFiles: string[] }) : null;
+      if (control !== null && control.deletedFiles.length > 0) {
+        started.resolve();
+        await release.promise;
+        throw new Error('Control write failed');
+      }
+      await write(...args);
+    };
+    const deleting = h.owner.delete(before.id);
+    await started.promise;
+    expect(h.owner.snapshot().id).not.toBe(before.id);
+    release.resolve();
+    expect(await deleting).toBe(false);
+    expect(h.owner.persistenceFailure()?.code).toBe('WRITE_FAILED');
+    const retained = expectDefined(
+      h.owner.recent().find((record) => record.snapshot.id === before.id),
+    ).snapshot;
+    expect(retained.input).toBe(before.input);
+    expect(retained.trees).toEqual(before.trees);
+    expect(retained.proposal).toEqual(before.proposal);
+    const reopened = (await h.reopenOwner()).owner;
+    const durable = expectDefined(
+      reopened.recent().find((record) => record.snapshot.id === before.id),
+    ).snapshot;
+    expect(durable.input).toBe(before.input);
+    expect(durable.trees).toEqual(before.trees);
+    expect(durable.proposal).toEqual(before.proposal);
+    expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+  },
+);
+it('shows a persistence error when derived metadata pushes otherwise valid input over the file structure limit', async () => {
+  const h = await setup();
+  const input = 'a'.repeat(9 * 1024 * 1024);
+  h.owner.setInput(input);
+  expect(await h.owner.flush()).toBe(false);
+  expect(h.owner.persistenceFailure()?.code).toBe('INVALID_SNAPSHOT');
+  expect(h.owner.snapshot().status.kind).toBe('error');
+  expect(h.owner.snapshot().input).toBe(input);
+});
+
+it('snapshots the voice default only for fresh sessions and preserves explicit historical modes', async () => {
+  let mode: 'manual' | 'continuous' = 'continuous';
+  const h = await setup(undefined, () => mode);
+  expect(h.owner.snapshot().voiceMode).toBe('continuous');
+  h.owner.setVoiceMode('manual');
+  h.owner.setInput('Retain this session');
+  const original = h.owner.snapshot().id;
+  await h.owner.flush();
+  mode = 'continuous';
+  await h.owner.newSession();
+  expect(h.owner.snapshot().voiceMode).toBe('continuous');
+  await h.owner.select(original);
+  expect(h.owner.snapshot().voiceMode).toBe('manual');
+});
+it('queues continuous followups in order across agent-created focus without interrupting work', async () => {
+  const h = await setup();
+  const release = deferred<void>(),
+    started = deferred<void>();
+  const calls: string[] = [];
+  h.run(async ({ text, signal }) => {
+    calls.push(text);
+    if (text === 'Create') {
+      started.resolve();
+      await release.promise;
+      expect(signal.aborted).toBe(false);
+      const created = await stageCreate(h, 'Created');
+      await h.session().focus(
+        {
+          kind: 'task',
+          target: expectDefined(created.after).target,
+          plan: created.target,
+          expectedPlanRevision: created.revision,
+        },
+        signal,
+      );
+    } else {
+      const current = h.owner.snapshot().proposal.changes[0];
+      if (current?.kind !== 'task') throw new Error('Missing proposal');
+      expect(h.owner.snapshot().focus[0]?.target).toBe(current.plan.after?.target);
+      const refined = await expectDefined(h.api().tasks.prepare)({
+        kind: 'append',
+        plan: current.plan.target,
+        expectedPlanRevision: current.plan.revision,
+        operation: {
+          type: 'patch',
+          target: expectDefined(current.plan.after).target,
+          patch: { markdownTitle: { type: 'set', value: text } },
+        },
+      });
+      if (!refined.ok) throw new Error(refined.error.code);
+      h.session().stage({ kind: 'task', plan: refined.value });
+    }
+  });
+  const first = h.owner.submit('Create');
+  await started.promise;
+  const captured = h.owner.captureSubmission();
+  const followups = ['Refine one', 'Refine two'].map((text) =>
+    h.owner.enqueueVoice(text, captured.basis, undefined, () => captured.continuationCurrent()),
+  );
+  expect(h.owner.queuedVoice()).toBe(2);
+  release.resolve();
+  await Promise.all([first, ...followups]);
+  expect(calls).toEqual(['Create', 'Refine one', 'Refine two']);
+  expect(h.owner.snapshot().trees[0]?.after?.markdownTitle).toBe('Refine two');
+  expect(captured.current()).toBe(false);
+  expect(h.owner.queuedVoice()).toBe(0);
+  expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+});
+
+it('does not reorder an inactive input-only session merely by selecting and flushing it', async () => {
+  const h = await setup();
+  h.owner.setInput('Older retained text');
+  await h.owner.flush();
+  const old = h.owner.snapshot().id;
+  h.clock(10_000);
+  await h.owner.newSession();
+  h.owner.setInput('Newer retained text');
+  await h.owner.flush();
+  const before = h.owner.recent().map(({ snapshot, updatedAt }) => [snapshot.id, updatedAt]);
+  h.clock(20_000);
+  await h.owner.select(old);
+  h.owner.updateContext('Current view');
+  await h.owner.flush();
+  expect(h.owner.recent().map(({ snapshot, updatedAt }) => [snapshot.id, updatedAt])).toEqual(
+    before,
+  );
+  h.owner.setInput('Actually changed');
+  await h.owner.flush();
+  expect(h.owner.recent().find((entry) => entry.snapshot.id === old)?.updatedAt).toBe(20_000);
+});
+it.each(['hide', 'stop', 'new', 'dispose'])(
+  'retains waiting recognized text on %s without losing newer typed input',
+  async (action) => {
+    const h = await setup(),
+      release = deferred<void>(),
+      started = deferred<void>();
+    h.run(async ({ signal }) => {
+      started.resolve();
+      await release.promise;
+      if (action === 'hide') expect(signal.aborted).toBe(false);
+    });
+    const first = h.owner.submit('Running');
+    await started.promise;
+    const captured = h.owner.captureSubmission(),
+      input = h.owner.captureInput();
+    const waiting = ['First waiting', 'Second waiting'].map((text) =>
+      h.owner.enqueueVoice(
+        text,
+        captured.basis,
+        undefined,
+        () => captured.continuationCurrent() && input.current(),
+      ),
+    );
+    h.owner.setInput('Newer typed text');
+    let retired: Promise<unknown> | undefined;
+    if (action === 'dispose') h.owner.dispose();
+    else if (action === 'new') retired = h.owner.newSession();
+    else if (action === 'hide') retired = h.owner.hide();
+    else retired = h.owner.stop();
+    await Promise.all(waiting);
+    expect(h.owner.snapshot().input).toBe('Newer typed text\n\nFirst waiting\n\nSecond waiting');
+    release.resolve();
+    await first;
+    await retired;
+  },
+);
+it('bounds the voice FIFO and retains the exact waiting text before overflow text', async () => {
+  const h = await setup(),
+    release = deferred<void>(),
+    started = deferred<void>();
+  h.run(async () => {
+    started.resolve();
+    await release.promise;
+  });
+  const first = h.owner.submit('Running');
+  await started.promise;
+  const capture = h.owner.captureSubmission();
+  const pending = Array.from({ length: 8 }, (_, n) =>
+    h.owner.enqueueVoice(`Waiting ${n}`, capture.basis, undefined, () =>
+      capture.continuationCurrent(),
+    ),
+  );
+  expect(await h.owner.enqueueVoice('Overflow', capture.basis, undefined, () => true)).toBe(false);
+  expect(h.owner.snapshot().input).toBe(
+    'Waiting 0\n\nWaiting 1\n\nWaiting 2\n\nWaiting 3\n\nWaiting 4\n\nWaiting 5\n\nWaiting 6\n\nWaiting 7\n\nOverflow',
+  );
+  release.resolve();
+  await first;
+  await Promise.all(pending);
+  expect(h.owner.snapshot().exchanges.filter((entry) => entry.role === 'user')).toHaveLength(1);
+});
+it('manual interaction retires continuation proof even when the strict submission basis stays current', async () => {
+  const h = await setup(),
+    capture = h.owner.captureSubmission();
+  const confirmation = h.owner.confirm();
+  expect(capture.current()).toBe(true);
+  expect(capture.continuationCurrent()).toBe(false);
+  await confirmation;
+});
+it('retires continuation proof when a pending transition opens and closes before admission', async () => {
+  const h = await setup();
+  await stageCreate(h);
+  const captured = h.owner.captureSubmission();
+  await h.session().newSession();
+  expect(h.owner.snapshot().pendingTransition).not.toBeNull();
+  await h.session().resolveTransition('cancel');
+  expect(h.owner.snapshot().pendingTransition).toBeNull();
+  expect(captured.continuationCurrent()).toBe(false);
+});
+it('retains failed active input and every queued followup for review', async () => {
+  const h = await setup(),
+    release = deferred<void>(),
+    started = deferred<void>();
+  h.run(async () => {
+    started.resolve();
+    await release.promise;
+    throw new Error('provider failed');
+  });
+  const first = h.owner.submit('Failed first');
+  await started.promise;
+  const captured = h.owner.captureSubmission(),
+    input = h.owner.captureInput();
+  const waiting = ['Next one', 'Next two'].map((text) =>
+    h.owner.enqueueVoice(
+      text,
+      captured.basis,
+      undefined,
+      () => captured.continuationCurrent() && input.current(),
+    ),
+  );
+  release.resolve();
+  await first;
+  await Promise.all(waiting);
+  expect(h.owner.snapshot().input).toBe('Failed first\n\nNext one\n\nNext two');
+  expect(h.owner.snapshot().exchanges.filter((entry) => entry.role === 'user')).toEqual([
+    { role: 'user', text: 'Failed first' },
+  ]);
+});
+
+it.each(['origin', 'idle'] as const)(
+  'finishing an admitted save after hiding %s Q keeps the correct session lifetime',
+  async (hidden) => {
+    const h = await setup();
+    await stageCreate(h);
+    const origin = Symbol(),
+      idle = Symbol(),
+      admitted = deferred<void>(),
+      held = deferred<void>();
+    h.owner.open(origin);
+    h.owner.open(idle);
+    const sessionId = h.owner.snapshot().id;
+    h.aroundCreate(async (write) => {
+      const result = await write();
+      admitted.resolve();
+      await held.promise;
+      return result;
+    });
+    const finishing = h.owner.confirmAndStart(undefined, undefined, origin);
+    await admitted.promise;
+    await h.owner.hide(hidden === 'origin' ? origin : idle);
+    held.resolve();
+    await finishing;
+    expect((await h.read('a.md')).match(/Created once/gu)).toHaveLength(1);
+    if (hidden === 'origin') {
+      expect(h.owner.snapshot().id).toBe(sessionId);
+      expect(h.owner.snapshot().journal[0]?.effects).toBe('committed');
+    } else expect(h.owner.snapshot().id).not.toBe(sessionId);
+  },
+);
+
+it('a queued voice item cannot gain fresh authority when its surface hides at dequeue', async () => {
+  const h = await setup(),
+    origin = Symbol();
+  h.owner.open(origin);
+  let armed = false;
+  let hidden: Promise<void> | undefined;
+  const release = h.owner.subscribe(() => {
+    if (armed && h.owner.queuedVoice() === 0) {
+      armed = false;
+      hidden = h.owner.hide(origin);
+    }
+  });
+  armed = true;
+  await h.owner.enqueueVoice(
+    'Waiting voice',
+    h.owner.captureSubmission(origin).basis,
+    {
+      noteReview: undefined,
+      visibility: origin,
+    },
+    () => true,
+  );
+  await hidden;
+  release();
+  expect(h.owner.snapshot().exchanges).toEqual([]);
+  expect(h.owner.snapshot().input).toBe('Waiting voice');
+});
+
+it('notifies once when an admitted empty-Enter save finishes after its Q hides', async () => {
+  const h = await setup(),
+    origin = Symbol(),
+    admitted = deferred<void>(),
+    held = deferred<void>();
+  await stageCreate(h);
+  h.owner.open(origin);
+  h.aroundCreate(async (write) => {
+    const result = await write();
+    admitted.resolve();
+    await held.promise;
+    return result;
+  });
+  const finishing = h.owner.confirmAndStart(undefined, undefined, origin);
+  await admitted.promise;
+  await h.owner.hide(origin);
+  held.resolve();
+  await finishing;
+  expect(h.owner.snapshot().status.kind).toBe('saved');
+  expect(h.notifications.map((state) => state.status.kind)).toEqual(['saved']);
+  expect((await h.read('a.md')).match(/Created once/gu)).toHaveLength(1);
+});

@@ -302,7 +302,7 @@ export class CommandSession {
   private focusRun = 0;
   private pendingReveal: PendingReveal | undefined;
   private acceptance = 0;
-  private queuedInput: string | undefined;
+  private queuedInput: { text: string; current(): boolean } | undefined;
   private inputRevision = 0;
   private editRevision = 0;
   private inputDraft = false;
@@ -317,6 +317,7 @@ export class CommandSession {
   private empty(): CommandSessionSnapshot {
     return {
       id: this.options.id(),
+      voiceMode: this.options.defaultVoiceMode?.() ?? 'manual',
       input: '',
       focus: [],
       context: this.options.context ?? '',
@@ -386,6 +387,18 @@ export class CommandSession {
     if (historical) {
       const blocked = hasUnresolvedCommandWrites(snapshot);
       this.state = { ...this.state, blocked, recovery: blocked ? 'uncertain' : 'historical' };
+      if (['thinking', 'searching', 'writing'].includes(this.state.status.kind))
+        this.state = {
+          ...this.state,
+          status: blocked
+            ? {
+                kind: 'error',
+                message: commandMessage(
+                  'Could not save or record the result. Review the retained write journal before continuing.',
+                ),
+              }
+            : { kind: 'ready', message: commandMessage('Stopped. Your draft is retained.') },
+        };
     }
     this.publish({});
     return true;
@@ -630,7 +643,7 @@ export class CommandSession {
       const verified: VerifiedFocus[] = [];
       for (const entry of requested) verified.push(await this.verifyFocus(entry, read));
       if (!current()) return false;
-      if (this.retainFocusTransition(requested)) return false;
+      if (this.retainFocusTransition(requested, verified)) return false;
       for (const entry of verified) this.observeFocus(entry);
       this.publish({ focus: verified.map((entry) => entry.focus) });
       return true;
@@ -639,16 +652,29 @@ export class CommandSession {
       return false;
     }
   }
-  private retainFocusTransition(requested: readonly CommandFocus[]): boolean {
+  private retainFocusTransition(
+    requested: readonly CommandFocus[],
+    verified: readonly VerifiedFocus[],
+  ): boolean {
     if (this.readOnly()) return false;
     if (this.retainProjectMoveFocus(requested)) return true;
     this.restoreProjectMoveRoot(requested);
+    if (this.hasProjectTaskContext(verified)) return false;
     if (!this.needsFocusDisposition(requested)) return false;
     this.requestTransition(
       { kind: 'focus', target: requested },
       commandMessage('Save these changes, keep them for later, discard them, or stay here?'),
     );
     return true;
+  }
+  private hasProjectTaskContext(verified: readonly VerifiedFocus[]): boolean {
+    return this.state.proposal.changes.some(
+      (change) =>
+        change.kind === 'project' &&
+        verified.some(
+          (entry) => entry.kind === 'task' && entry.tree.tree.source?.path === change.before.path,
+        ),
+    );
   }
   private requestTransition(pending: CommandPendingTransition, question: string): void {
     const requested = { ...pending, previousQuestion: this.previousQuestion() };
@@ -698,6 +724,7 @@ export class CommandSession {
   }
   private needsFocusDisposition(requested: readonly CommandFocus[]): boolean {
     if (this.readOnly() || this.state.proposal.changes.length === 0) return false;
+    if (requested.length === 0 && this.state.focus.length === 0) return false;
     if (
       requested.some((entry) => this.state.focus.some((current) => current.target === entry.target))
     )
@@ -710,7 +737,7 @@ export class CommandSession {
           return (
             entry.target === change.destination.target || entry.target === change.before.target
           );
-        if (change.kind === 'note') return entry.target === change.plan.target;
+        if (change.kind === 'note') return entry.target === change.plan.note?.target;
         if (change.kind === 'status') return entry.target === change.target;
         return commandPlanViews(change.plan).some(
           (view) =>
@@ -960,6 +987,7 @@ export class CommandSession {
   }
   async readTreePage(query: ReadTaskTreeV1): Promise<TaskTreePageV1> {
     const id = this.state.id,
+      revision = this.conversationRevision,
       signal = new AbortController().signal;
     const page = await commandRead(
       this.options.api,
@@ -967,7 +995,13 @@ export class CommandSession {
       signal,
       { deadline: this.options.now() + 5000, now: this.options.now },
     );
-    if (!this.disposed && this.state.id === id) this.observeTree(page);
+    if (
+      !this.disposed &&
+      this.state.id === id &&
+      this.conversationRevision === revision &&
+      !this.readOnly()
+    )
+      this.observeTree(page);
     return page;
   }
   observeTree(page: TaskTreePageV1): void {
@@ -1007,7 +1041,7 @@ export class CommandSession {
       },
     });
   }
-  discardDraft(plan: string, revision: string): void {
+  discardDraft(plan: string, revision: string): number {
     const draft = this.state.proposal.changes.find(
       (c) => c.kind === 'task' && c.plan.target === plan,
     );
@@ -1024,9 +1058,10 @@ export class CommandSession {
           c.kind === 'project-move' ||
           c.plan.target !== plan,
     );
+    const proposalRevision = this.state.proposal.revision + 1;
     this.publish({
       proposal: {
-        revision: this.state.proposal.revision + 1,
+        revision: proposalRevision,
         operations: this.state.proposal.operations + 1,
         changes,
       },
@@ -1035,6 +1070,7 @@ export class CommandSession {
       ),
       trees: changes.flatMap(changeViews),
     });
+    return proposalRevision;
   }
   updateContext(context: string): void {
     if (!this.disposed) this.publish({ context: context.slice(0, 8000) });
@@ -1187,38 +1223,74 @@ export class CommandSession {
     admission?: () => boolean,
   ): Promise<void> {
     if (!this.admitSubmission(admission)) return;
+    const input = this.captureInput();
     if (text.length <= 16000 && text.trim() === '') {
       await this.confirmSubmission(submittedAgainst, review);
       return;
     }
     if (this.running !== undefined || this.pendingWrite !== undefined) {
-      this.inputDraft = false;
-      const previous = this.running ?? this.pendingWrite;
-      this.cancelTurn(false);
-      const generation = this.acceptance;
-      this.queuedInput = text;
-      await previous;
-      if (generation !== this.acceptance) return;
-      this.queuedInput = undefined;
-      return this.submit(text, submittedAgainst, review, admission);
-    }
-    if (text.length > 16000) {
-      this.setInput(text);
-      this.status(
-        'error',
-        commandMessage(
-          'This command is too long. Shorten it before sending; your full input is retained.',
-        ),
+      await this.submitAfterDrain(text, input, admission, () =>
+        this.startSubmission(text, input, submittedAgainst, review),
       );
       return;
     }
-    const running = this.runTurn(text, submittedAgainst, review);
+    await this.startSubmission(text, input, submittedAgainst, review);
+  }
+  private async startSubmission(
+    text: string,
+    input: ReturnType<CommandSession['captureInput']>,
+    submittedAgainst?: CommandSubmissionBasis,
+    review?: CommandNoteReview,
+  ): Promise<void> {
+    if (this.rejectOversizedInput(text, input)) return;
+    const running = this.runTurn(text, input, submittedAgainst, review);
     this.running = running;
     try {
       await running;
     } finally {
       if (this.running === running) this.running = undefined;
     }
+  }
+  private async submitAfterDrain(
+    text: string,
+    input: ReturnType<CommandSession['captureInput']>,
+    admission: (() => boolean) | undefined,
+    start: () => Promise<void>,
+  ): Promise<void> {
+    const previous = this.running ?? this.pendingWrite;
+    this.cancelTurn(false);
+    const generation = this.acceptance;
+    this.queuedInput = { text, current: () => input.current() };
+    await previous;
+    if (generation !== this.acceptance) return;
+    this.queuedInput = undefined;
+    if (this.admitSubmission(admission)) await start();
+  }
+  private clearAcceptedInput(input: { current(): boolean }): void {
+    if (input.current()) this.setInput('', false);
+  }
+  private retainInput(text: string, input: { current(): boolean }): void {
+    if (input.current()) this.setInput(text);
+  }
+  private rejectOversizedInput(text: string, input: { current(): boolean }): boolean {
+    if (text.length <= 16000) return false;
+    this.retainInput(text, input);
+    this.status(
+      'error',
+      commandMessage(
+        'This command is too long. Shorten it before sending; your full input is retained.',
+      ),
+    );
+    return true;
+  }
+  private restoreFailedInput(
+    text: string,
+    input: { current(): boolean },
+    signal: AbortSignal,
+    sessionId: string,
+  ): void {
+    if (this.acceptsTurn(signal, sessionId) && this.state.status.kind === 'error')
+      this.retainInput(text, input);
   }
   private admitSubmission(admission: (() => boolean) | undefined): boolean {
     return !this.disposed && admission?.() !== false;
@@ -1242,6 +1314,7 @@ export class CommandSession {
   }
   private async runTurn(
     text: string,
+    input: ReturnType<CommandSession['captureInput']>,
     submittedAgainst?: CommandSubmissionBasis,
     review?: CommandNoteReview,
   ): Promise<void> {
@@ -1250,7 +1323,7 @@ export class CommandSession {
       return;
     }
     this.presentation = undefined;
-    this.setInput(text, false);
+    this.clearAcceptedInput(input);
     this.exchange('user', text);
     const controller = new AbortController();
     this.turn = controller;
@@ -1279,6 +1352,7 @@ export class CommandSession {
           cause instanceof CommandFailure ? cause.message : providerFailure(cause).message,
         );
     } finally {
+      this.restoreFailedInput(text, input, controller.signal, snapshot.id);
       if (this.turn === controller) {
         this.turn = undefined;
         this.turnReview = undefined;
@@ -1288,7 +1362,7 @@ export class CommandSession {
   cancelTurn(retainQueued = true): void {
     this.acceptance++;
     if (retainQueued && this.queuedInput !== undefined) {
-      this.setInput(this.queuedInput);
+      this.retainInput(this.queuedInput.text, this.queuedInput);
       this.queuedInput = undefined;
     }
     const active = this.turn !== undefined;
@@ -1297,6 +1371,12 @@ export class CommandSession {
     this.writeAdmission?.abort();
     if (active && !this.writing && this.state.activeQuestion === null)
       this.status('ready', commandMessage('Stopped. Your draft is retained.'));
+  }
+  async whenIdle(): Promise<void> {
+    while (this.running !== undefined || this.pendingWrite !== undefined) {
+      await this.running;
+      await this.pendingWrite;
+    }
   }
   async settle(): Promise<void> {
     this.cancelTurn();

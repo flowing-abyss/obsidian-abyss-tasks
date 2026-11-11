@@ -8,6 +8,7 @@ import {
   type CachedMetadata,
   type HeadingCache,
 } from 'obsidian';
+import type { DefaultNoteDestinationV1 } from '../../api';
 import { markdownLinkTargetParts } from '../markdown/linkTarget';
 import { parseLinks } from '../markdown/links';
 import type { AcceptedNoteSource, NoteSourceReadApi } from './NoteSourceApi';
@@ -20,6 +21,20 @@ export class NoteHostAdapter {
     private readonly sources: NoteSourceReadApi,
     private readonly structure: (source: AcceptedNoteSource) => CachedMetadata | undefined,
   ) {}
+  resolveCreateDestination(destination: DefaultNoteDestinationV1): string {
+    const name = destination.fileName;
+    if (
+      name.trim() !== name ||
+      !name.toLowerCase().endsWith('.md') ||
+      name.length <= 3 ||
+      /[\\/:]/u.test(name) ||
+      [...name].some((character) => character.charCodeAt(0) < 32) ||
+      name === '..md'
+    )
+      throw new NoteFailure('INVALID_ARGUMENT');
+    const folder = this.app.fileManager.getNewFileParent(destination.fromPath ?? '', name);
+    return folder.path === '/' || folder.path === '' ? name : `${folder.path}/${name}`;
+  }
   file(source: AcceptedNoteSource): TFile {
     const file = this.app.vault.getAbstractFileByPath(source.path);
     if (!(file instanceof TFile) || !this.sources.matchesFile(source, file))

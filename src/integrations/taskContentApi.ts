@@ -40,7 +40,7 @@ import type { TaskApiContext } from './TaskApiProvider';
 import type { SelectedContentEvidence, TaskRequestRegistry } from './TaskRequestRegistry';
 import type { ProjectPorts } from './projectApiMutations';
 import { currentNode } from './taskApiMutations';
-import { readError, readFailure } from './taskApiReads';
+import { inboxPolicy, readError, readFailure } from './taskApiReads';
 import {
   acceptedSourceComment,
   copyOrigin,
@@ -123,7 +123,14 @@ function commandResultError(result: TaskCommandResult): ApiResultV1<never> {
   if (result.type === 'not-found') return readFailure('missing');
   if (result.type === 'ambiguous') return readFailure('ambiguous');
   if (result.type === 'invalid')
-    return readError('validation', 'INVALID_ARGUMENT', 'The task content change is invalid.');
+    return readError(
+      'validation',
+      'INVALID_ARGUMENT',
+      `The task content change is invalid: ${result.issues
+        .slice(0, 8)
+        .map((issue) => [issue.field, issue.code].filter((value) => value !== undefined).join(': '))
+        .join('; ')}.`,
+    );
   return readError('io', 'IO_ERROR', 'The task content write could not be confirmed.');
 }
 function supportedTreeStatuses(tree: TaskCreateTreeV1, ports: TaskContentPorts): boolean {
@@ -1096,6 +1103,10 @@ export class TaskContentApi {
   private async create_abyssPrivate(
     input: Extract<PrepareTaskContentV1, { kind: 'create' }>,
   ): Promise<ApiResultV1<ContentPlanV1>> {
+    if (input.intent === 'inbox') {
+      const policy = inboxPolicy(this.ctx_abyssPrivate.api, true);
+      if (!policy.ok) return policy;
+    }
     if (!supportedTreeStatuses(input.tree, this.ctx_abyssPrivate.ports))
       return readError(
         'unsupported',
@@ -1107,7 +1118,11 @@ export class TaskContentApi {
     if (!selected.ok) return selected;
     const destination = selected.value;
     const tree = nativeTree(input.tree, this.ctx_abyssPrivate.ports),
-      native = await this.ctx_abyssPrivate.ports.creates.prepareCreateTree({ destination, tree });
+      native = await this.ctx_abyssPrivate.ports.creates.prepareCreateTree({
+        destination,
+        tree,
+        ...(input.intent === undefined ? {} : { intent: input.intent }),
+      });
     if (native.type !== 'ready') return commandResultError(native.result);
     const check = this.ctx_abyssPrivate.api.check();
     if (check !== undefined) return check;

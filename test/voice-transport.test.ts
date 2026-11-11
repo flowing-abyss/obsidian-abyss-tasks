@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { createGroq } from '@ai-sdk/groq';
 import { createOpenAI } from '@ai-sdk/openai';
 import { transcribe } from 'ai';
 import type { RequestUrlParam, RequestUrlResponse } from 'obsidian';
@@ -11,6 +12,79 @@ async function desktopTimers() {
   throw new Error('Desktop test runtime required');
 }
 const { setTimeout, clearTimeout } = await desktopTimers();
+it.each([
+  { provider: 'disabled' },
+  { provider: 'unsupported', model: '' },
+  { provider: 'openai', model: '', search: 'unsupported' },
+  {},
+])(
+  'sends only transcription to the selected Voice connection with LLM settings %j',
+  async (agent) => {
+    const { ProviderConnections } = await import('../src/ai/providers/ProviderConnections');
+    const { ProviderSecrets } = await import('../src/ai/providers/ProviderSecrets');
+    const { ProviderTranscription } = await import('../src/ai/voice/ProviderTranscription');
+    const settings = {
+      ...agent,
+      voice: 'openai',
+      voiceInputMode: 'continuous',
+      secrets: { openai: null, voice: { openai: 'speech-key' } },
+    };
+    const secrets = new ProviderSecrets(
+      {
+        getSecret: (id) => (id === 'speech-key' ? 'synthetic-speech' : null),
+        setSecret: () => {},
+      },
+      () => settings.secrets,
+    );
+    const requests: RequestUrlParam[] = [];
+    const transport = transportFixture(async (request) => {
+      requests.push(request);
+      return reply('{"text":"Speak one task"}');
+    });
+    try {
+      expect(new ProviderConnections(secrets, transport).availability(settings)).toEqual({
+        agent: false,
+        voice: true,
+      });
+      const speech = new ProviderTranscription(secrets, transport, () => settings);
+      speech.available();
+      expect(requests).toEqual([]);
+      const audio = new Blob([new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 1, 2, 3, 4])]);
+      await expect(speech.transcribe(audio, new AbortController().signal)).resolves.toBe(
+        'Speak one task',
+      );
+      expect(requests.map((request) => request.url)).toEqual([
+        'https://api.openai.com/v1/audio/transcriptions',
+      ]);
+      expect(new Headers(requests[0]?.headers).get('authorization')).toBe(
+        'Bearer synthetic-speech',
+      );
+    } finally {
+      transport.dispose();
+    }
+  },
+);
+it('sends the selected Groq transcription model through its own endpoint and credential', async () => {
+  const requests: RequestUrlParam[] = [];
+  const transport = transportFixture(async (request) => {
+    requests.push(request);
+    return reply('{"text":"Next task","x_groq":{"id":"test"}}');
+  });
+  const result = await transcribe({
+    model: createGroq({
+      apiKey: 'synthetic-groq',
+      fetch: transport.fetchFor('groq'),
+    }).transcription('whisper-large-v3-turbo'),
+    audio: new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 1, 2, 3, 4]),
+    maxRetries: 0,
+  });
+  expect(result.text).toBe('Next task');
+  const request = expectDefined(requests[0]);
+  expect(request.url).toBe('https://api.groq.com/openai/v1/audio/transcriptions');
+  const form = await new Response(request.body, { headers: request.headers ?? {} }).formData();
+  expect(form.get('model')).toBe('whisper-large-v3-turbo');
+  transport.dispose();
+});
 function transportFixture(request: ConstructorParameters<typeof NativeProviderTransport>[0]) {
   return new NativeProviderTransport(request, (callback, ms) => {
     const timer = setTimeout(callback, ms);

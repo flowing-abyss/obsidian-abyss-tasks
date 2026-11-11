@@ -1,7 +1,14 @@
 import type { Component } from 'obsidian';
 import type { ContentPlanV1, TaskTreeV1 } from '../../../api';
 import type { CommandSessionSnapshot } from '../../ai/commandTypes';
-import { durationMinutes, localDate, localTime, type TaskPlanning } from '../../tasks';
+import {
+  durationMinutes,
+  formatDurationMinutes,
+  localDate,
+  localTime,
+  recurrenceLabel,
+  type TaskPlanning,
+} from '../../tasks';
 import { renderStatusMarker, updateStatusMarker } from '../StatusMarker';
 import { runAsyncAction } from '../runAsyncAction';
 import {
@@ -10,6 +17,7 @@ import {
   type TaskMetadataDisplayMount,
   type TaskMetadataDisplayOptions,
 } from '../taskMetadataDisplay';
+import { decorateTaskTextDifference } from '../taskTextDifference';
 import type { CommandTreeOptions } from './CommandTree';
 export interface CommandTaskBinding {
   readonly tree: TaskTreeV1;
@@ -35,6 +43,7 @@ function planning(tree: TaskTreeV1): TaskPlanning {
 function changedMetadata(name: string, before: TaskTreeV1 | undefined, tree: TaskTreeV1): boolean {
   if (before === undefined) return false;
   const role = name.split(':')[0];
+  if (role === 'recurrence') return before.recurrence !== tree.recurrence;
   if (role === 'time') return before.time !== tree.time;
   if (role === 'duration') return before.durationMinutes !== tree.durationMinutes;
   if (role === 'tag') return !before.tags.includes(name.slice(4));
@@ -51,8 +60,13 @@ function removedMetadata(
   const current = planning(binding.tree);
   return {
     planning: Object.fromEntries(
-      Object.entries(planning(before)).filter(([role]) => !(role in current)),
+      Object.entries(planning(before)).filter(
+        ([role]) => current[role as keyof TaskPlanning] === undefined,
+      ),
     ),
+    ...(before.recurrence !== undefined && binding.tree.recurrence === undefined
+      ? { recurrence: before.recurrence }
+      : {}),
     tags: before.tags.filter((tag) => !binding.tree.tags.includes(tag)),
   };
 }
@@ -67,14 +81,19 @@ export class CommandTreeHeader {
     owner: Component,
     input: {
       readonly key: string;
+      readonly depth: number;
       readonly before: TaskTreeV1 | undefined;
       readonly comparison: TaskTreeV1 | undefined;
       readonly state: CommandSessionSnapshot;
+      readonly sessionChanged: boolean;
+      readonly added: boolean;
     },
   ): void {
     const binding = this.binding(input.key);
     if (binding === undefined) return;
     this.selection(host, binding.tree.target, input.state);
+    host.dataset['sessionChanged'] = String(input.sessionChanged);
+    host.style.setProperty('--abyss-command-task-depth', String(input.depth));
     const pending = input.state.proposal.changes.find(
       (change) => change.kind === 'status' && change.target === binding.tree.target,
     );
@@ -83,11 +102,7 @@ export class CommandTreeHeader {
       priority: binding.tree.priority,
     };
     const metadataOptions = this.metadataOptions(owner);
-    const value = {
-      planning: planning(binding.tree),
-      tags: binding.tree.tags,
-      ...(binding.tree.source === undefined ? {} : { sourcePath: binding.tree.source.path }),
-    };
+    const value = this.metadataValue(binding.tree);
     let header = this.headers.get(host);
     if (header === undefined) {
       const marker = renderStatusMarker(host, {
@@ -111,7 +126,7 @@ export class CommandTreeHeader {
       updateStatusMarker(header.marker, { task, registry: this.options.registry });
       header.metadata.update(value, metadataOptions);
     }
-    header.removed.update(removedMetadata(binding, input.before), metadataOptions);
+    header.removed.update(removedMetadata(binding, input.comparison), metadataOptions);
     header.metadata.host.hidden = ![header.metadata.host, header.removed.host].some(
       (element) => element.hidden === false,
     );
@@ -121,16 +136,50 @@ export class CommandTreeHeader {
       (input.comparison !== undefined && input.comparison.statusSymbol !== task.statusSymbol)
         ? 'changed'
         : '';
-    this.markChanges(header, input.comparison, binding.tree);
+    this.markChanges(header, input, binding.tree);
   }
-  private markChanges(header: Header, comparison: TaskTreeV1 | undefined, tree: TaskTreeV1): void {
+  private metadataValue(tree: TaskTreeV1): TaskMetadataDisplay {
+    return {
+      planning: planning(tree),
+      tags: tree.tags,
+      ...(tree.recurrence === undefined ? {} : { recurrence: tree.recurrence }),
+      ...(tree.source === undefined ? {} : { sourcePath: tree.source.path }),
+    };
+  }
+  private markChanges(
+    header: Header,
+    input: { comparison: TaskTreeV1 | undefined; added: boolean },
+    tree: TaskTreeV1,
+  ): void {
     for (const element of header.removed.values.values()) element.dataset['change'] = 'removed';
-    for (const [name, element] of header.metadata.values)
-      element.dataset['change'] = changedMetadata(name, comparison, tree) ? 'changed' : '';
+    for (const [name, element] of header.metadata.values) {
+      const changed = input.added || changedMetadata(name, input.comparison, tree);
+      element.dataset['change'] = changed ? 'changed' : '';
+      decorateTaskTextDifference(
+        element,
+        changed ? this.previousMetadata(name, input.comparison) : undefined,
+      );
+    }
+  }
+  private previousMetadata(name: string, tree: TaskTreeV1 | undefined): string {
+    if (tree === undefined) return '';
+    const role = name.split(':')[0];
+    if (role === 'recurrence')
+      return tree.recurrence === undefined ? '' : recurrenceLabel(tree.recurrence);
+    if (role === 'time') return tree.time ?? '';
+    if (role === 'duration')
+      return tree.durationMinutes === undefined
+        ? ''
+        : formatDurationMinutes(durationMinutes(tree.durationMinutes));
+    return this.previousDate(role, tree);
+  }
+  private previousDate(role: string | undefined, tree: TaskTreeV1): string {
+    if (role !== 'start' && role !== 'scheduled' && role !== 'due') return '';
+    const date = tree.dates[role];
+    return date === undefined ? '' : (this.options.formatDate?.(date) ?? date);
   }
   private selection(host: HTMLElement, target: string, state: CommandSessionSnapshot): void {
     const selected = state.focus.some((focus) => focus.kind === 'task' && focus.target === target);
-    host.classList.toggle('is-selected', selected);
     if (selected) host.setAttribute('aria-current', 'true');
     else host.removeAttribute('aria-current');
   }

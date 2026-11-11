@@ -18,6 +18,7 @@ import {
   useRealMoment,
 } from './helpers';
 import { publicApiHarness } from './support/publicApiHarness';
+import { scriptedWriteReview } from './support/scriptedWriteReview';
 
 useRealMoment();
 afterEach(() => vi.restoreAllMocks());
@@ -949,6 +950,7 @@ function projectCommandSession(api: TasksApiV1) {
     id: () => crypto.randomUUID(),
   });
   const agent: CommandAgent = new CommandAgent({
+    reviewWrite: scriptedWriteReview,
     api,
     session,
     connections: { model: () => model },
@@ -963,6 +965,7 @@ function projectCommandSession(api: TasksApiV1) {
         toolName: 'interpret',
         input: {
           intent: 'confirm',
+          approval: 'Save only this move',
           research: false,
           scope: {
             proposalRevision: session.snapshot().proposal.revision,
@@ -983,6 +986,7 @@ function projectCommandSession(api: TasksApiV1) {
     turn: (input: unknown) =>
       steps.push(
         { toolName: 'interpret', input: { intent: 'plan', research: false } },
+        { toolName: 'expand', input: { capabilities: ['project'] } },
         { toolName: 'project', input },
         { toolName: 'finish', input: { state: 'ready', message: 'Ready.' } },
       ),
@@ -1345,6 +1349,14 @@ it.each(['single', 'mixed', 'sdk'] as const)(
         expectedTaskRevision: source.revision,
       });
       await session.submit('Move this root');
+      expect(session.snapshot().status.kind, session.snapshot().status.message).toBe('ready');
+      expect(session.snapshot().proposal.changes).toMatchObject([
+        {
+          kind: 'project-move',
+          before: { target: source.target },
+          destination: { target: destination.target },
+        },
+      ]);
       const changes = session.snapshot().proposal.changes;
       const originalId = session.snapshot().id;
       const historyCount = saved.length;
@@ -1487,6 +1499,14 @@ it.each(['cancel', 'keep', 'discard'] as const)(
         expectedTaskRevision: source.revision,
       });
       await session.submit('Move this root');
+      expect(session.snapshot().status.kind, session.snapshot().status.message).toBe('ready');
+      expect(session.snapshot().proposal.changes).toMatchObject([
+        {
+          kind: 'project-move',
+          before: { target: source.target },
+          destination: { target: destination.target },
+        },
+      ]);
       const previous = session.snapshot();
       const destinationBefore = await app.vault.read(expectDefined(app.vault.getFileByPath(empty)));
       expect(
@@ -1560,6 +1580,14 @@ it.each(['historical', 'blocked', 'uncertain'] as const)(
         expectedTaskRevision: source.revision,
       });
       await session.submit('Move this root');
+      expect(session.snapshot().status.kind, session.snapshot().status.message).toBe('ready');
+      expect(session.snapshot().proposal.changes).toMatchObject([
+        {
+          kind: 'project-move',
+          before: { target: source.target },
+          destination: { target: destination.target },
+        },
+      ]);
       const previous = session.snapshot();
       if (mode === 'historical') expect(session.restore(previous)).toBe(true);
       else

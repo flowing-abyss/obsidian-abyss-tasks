@@ -7,19 +7,24 @@ import type {
   TaskTagPageV1,
 } from '../../api';
 import {
+  matchesInboxPolicy,
   observedTaskTags,
   sameTag,
+  type TaskNodeReadQuery,
   type TaskReadNode,
   type TaskSearchApi,
   type TaskSearchCursor,
 } from '../tasks';
 import type { TaskApiContext } from './TaskApiProvider';
-import { readError, readFailure } from './taskApiReads';
+import { inboxPolicy, readError, readFailure } from './taskApiReads';
 import { validateSearch, validateTags } from './taskContentValidation';
 import { toTaskDto } from './taskDto';
 import { readNodeFor } from './taskTreeApi';
 import { validateReadOptions } from './validation';
 import { freezeValue } from './values';
+type SearchQuery = SearchTasksV1 & {
+  readonly inboxPolicy?: NonNullable<TaskNodeReadQuery['inboxPolicy']>;
+};
 interface Cursor {
   binding: string;
   offset: number;
@@ -61,10 +66,12 @@ export class TaskSearchReads {
   }
   private cursor_abyssPrivate(
     query: SearchTasksV1 | ListTaskTagsV1,
+    policy?: string,
   ): ApiResultV1<{ cursor?: Cursor; binding: string }> {
     this.clean_abyssPrivate();
     const binding = JSON.stringify({
       ...query,
+      policy,
       cursor: undefined,
       generation: this.ctx_abyssPrivate.reads.capture().generation,
     });
@@ -198,31 +205,59 @@ export class TaskSearchReads {
       port = this.search_abyssPrivate;
     if (port === undefined)
       return readError('unsupported', 'UNSUPPORTED_OPERATION', 'Search unavailable.');
-    const resume = this.cursor_abyssPrivate(q);
+    const policy = inboxPolicy(ctx, q.inbox);
+    if (!policy.ok) return policy;
+    const fingerprint = policy.value === undefined ? undefined : JSON.stringify(policy.value);
+    const resume = this.cursor_abyssPrivate(q, fingerprint);
     if (!resume.ok) return resume;
+    return await this.searchFrozen_abyssPrivate(q, signal, policy.value, resume.value);
+  }
+  private async searchFrozen_abyssPrivate(
+    q: SearchTasksV1,
+    signal: AbortSignal,
+    policy: SearchQuery['inboxPolicy'],
+    resume: { cursor?: Cursor; binding: string },
+  ): Promise<ApiResultV1<TaskSearchPageV1>> {
+    const ctx = this.ctx_abyssPrivate;
+    const port = this.search_abyssPrivate;
+    if (port === undefined)
+      return readError('unsupported', 'UNSUPPORTED_OPERATION', 'Search unavailable.');
     const state = ctx.reads.capture(),
       health = ctx.reads.coverage(q);
     if (health.type === 'error') return readFailure(health.reason);
-    const native = await this.nativeCursor_abyssPrivate(q, resume.value.cursor, signal);
+    const native = await this.nativeCursor_abyssPrivate(q, resume.cursor, signal);
     try {
       const rows = await this.collectSearch_abyssPrivate(
-        q,
-        { native, offset: resume.value.cursor?.offset ?? 0 },
+        { ...q, ...(policy === undefined ? {} : { inboxPolicy: policy }) },
+        { native, offset: resume.cursor?.offset ?? 0 },
         signal,
       );
       if (!rows.ok) return rows;
-      const failed = ctx.check(signal);
+      const failed = this.searchStillCurrent_abyssPrivate(q, signal, policy, state.generation);
       if (failed !== undefined) return failed;
-      if (ctx.reads.capture().generation !== state.generation)
-        return readFailure('generation-changed');
       return this.searchResult_abyssPrivate(
-        { native, binding: resume.value.binding, ...rows.value },
+        { native, binding: resume.binding, ...rows.value },
         state,
       );
     } finally {
       if (![...this.cursors_abyssPrivate.values()].some((c) => c.native === native))
         port.release(native);
     }
+  }
+  private searchStillCurrent_abyssPrivate(
+    q: SearchTasksV1,
+    signal: AbortSignal,
+    policy: SearchQuery['inboxPolicy'],
+    generation: number,
+  ): ApiResultV1<never> | undefined {
+    const ctx = this.ctx_abyssPrivate;
+    const failed = ctx.check(signal);
+    if (failed !== undefined) return failed;
+    if (ctx.reads.capture().generation !== generation) return readFailure('generation-changed');
+    const current = inboxPolicy(ctx, q.inbox);
+    if (!current.ok || JSON.stringify(current.value) !== JSON.stringify(policy))
+      return readFailure(q.cursor === undefined ? 'incomplete' : 'generation-changed');
+    return undefined;
   }
   private async nativeCursor_abyssPrivate(
     q: SearchTasksV1,
@@ -244,7 +279,7 @@ export class TaskSearchReads {
     );
   }
   private async collectSearch_abyssPrivate(
-    q: SearchTasksV1,
+    q: SearchQuery,
     position: { native: TaskSearchCursor; offset: number },
     signal: AbortSignal,
   ): Promise<ApiResultV1<{ items: TaskDtoV1[]; offset: number }>> {
@@ -271,7 +306,7 @@ export class TaskSearchReads {
     return { ok: true, value: { items, offset } };
   }
   private consume_abyssPrivate(
-    q: SearchTasksV1,
+    q: SearchQuery,
     page: { items: TaskDtoV1[]; offset: number; limit: number },
     hydrated: Awaited<ReturnType<TaskSearchApi['resolveHits']>>,
   ): ApiResultV1<{ offset: number; full: boolean }> {
@@ -322,9 +357,11 @@ export class TaskSearchReads {
       },
     });
   }
-  private matches_abyssPrivate(n: TaskReadNode, q: SearchTasksV1): boolean {
-    if (q.path !== undefined && n.address.filePath !== q.path) return false;
-    if (!this.folderMatches_abyssPrivate(n, q.folder)) return false;
+  private matches_abyssPrivate(n: TaskReadNode, q: SearchQuery): boolean {
+    const policy = q.inboxPolicy;
+    if (policy !== undefined && !matchesInboxPolicy(n.value.node.tags, n.value.path.length, policy))
+      return false;
+    if (!this.scopeMatches_abyssPrivate(n, q)) return false;
     if (q.statuses !== undefined && !q.statuses.includes(n.status)) return false;
     if (
       q.tagsAll !== undefined &&
@@ -332,6 +369,12 @@ export class TaskSearchReads {
     )
       return false;
     return q.dates === undefined || q.dates.every((d) => this.dateMatches_abyssPrivate(n, d));
+  }
+  private scopeMatches_abyssPrivate(n: TaskReadNode, q: SearchTasksV1): boolean {
+    return (
+      (q.path === undefined || n.address.filePath === q.path) &&
+      this.folderMatches_abyssPrivate(n, q.folder)
+    );
   }
   private folderMatches_abyssPrivate(n: TaskReadNode, folder?: string): boolean {
     return folder === undefined || folder === '' || n.address.filePath.startsWith(`${folder}/`);

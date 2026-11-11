@@ -210,7 +210,7 @@ describe('CalendarSettingsTab sections', () => {
       'Tags',
       'Projects',
       'Custom statuses',
-      'CommandMode',
+      'Command mode',
       'Hotkeys',
     ]);
   });

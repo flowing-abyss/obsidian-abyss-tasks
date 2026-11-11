@@ -1,7 +1,8 @@
 import type { ReadTaskTreeV1, TaskTreePageV1 } from '../../api';
+import { commandMessage } from './commandMessages';
+import { hasUnresolvedCommandWrites, type HistoricalCommandSession } from './commandRecovery';
 import type { CommandSession } from './CommandSession';
 import type { CommandPersistenceFailure, CommandSessionStore } from './CommandSessionStore';
-import type { HistoricalCommandSession } from './commandRecovery';
 import type { CommandStatusInput } from './commandTypes';
 import {
   CommandFailure,
@@ -26,6 +27,26 @@ export interface CommandSessionOwnerOptions {
   readonly diagnose?: (code: string) => void;
   readonly notify?: (state: CommandSessionSnapshot) => void;
 }
+interface SubmissionSurface {
+  readonly noteReview: symbol | undefined;
+  readonly visibility: symbol | undefined;
+}
+interface CaptureClaim {
+  readonly visibility: symbol;
+  stop(): void;
+  workChanged(): void;
+  awaitingTranscript(): boolean;
+  continuous(): boolean;
+}
+interface QueuedVoice {
+  readonly text: string;
+  readonly basis: CommandSubmissionBasis;
+  readonly surface: symbol | undefined;
+  readonly visibility: symbol | undefined;
+  readonly admission: () => boolean;
+  readonly sessionId: string;
+  resolve(accepted: boolean): void;
+}
 /** One runtime/client across surfaces. Inactive sessions remain detached store records. */
 export class CommandSessionOwner {
   private readonly session: CommandSession;
@@ -33,29 +54,75 @@ export class CommandSessionOwner {
   private readonly listeners = new Set<(state: CommandSessionSnapshot) => void>();
   private cancelScheduled: (() => void) | undefined;
   private disposed = false;
+  private retirement: Promise<void> | undefined;
   private visible = false;
-  private readonly surfaces = new Set<symbol>();
+  private readonly surfaces = new Map<symbol, object>();
   private changing: Promise<void> | undefined;
+  private pendingWork = 0;
   private acceptance = 0;
+  private interaction = 0;
+  private readonly voiceQueue: QueuedVoice[] = [];
+  private drainingVoice = false;
   private submitted = 0;
   private failureCode: string | undefined;
   private readonly ownedSessions = new Set<string>();
   private readonly noteReviews = new Map<symbol, CommandNoteReview>();
-  private stopCapture: (() => void) | undefined;
-  claimCapture(stop: () => void): () => void {
-    this.stopCapture?.();
-    this.stopCapture = stop;
+  private captureClaim: CaptureClaim | undefined;
+  private preferenceOrigin: symbol | undefined;
+  private voiceTurn: { readonly visibility: symbol | undefined } | undefined;
+  claimCapture(claim: CaptureClaim): () => void {
+    this.stopCapture();
+    this.captureClaim = claim;
     return () => {
-      if (this.stopCapture === stop) this.stopCapture = undefined;
+      if (this.captureClaim === claim) this.captureClaim = undefined;
     };
   }
-  captureSubmission(): ReturnType<CommandSession['captureSubmission']> {
+  private stopCapture(visibility?: symbol): void {
+    const claim = this.captureClaim;
+    if (claim !== undefined && (visibility === undefined || claim.visibility === visibility))
+      claim.stop();
+  }
+  canStartManual(visibility: symbol): boolean {
+    const claim = this.captureClaim;
+    return claim === undefined || claim.visibility === visibility || !claim.continuous();
+  }
+  canStartContinuous(visibility: symbol, replace: boolean): boolean {
+    const claim = this.captureClaim;
+    return (
+      claim === undefined ||
+      claim.visibility === visibility ||
+      (replace && !this.commandPending() && !claim.awaitingTranscript())
+    );
+  }
+  followsVoicePreference(visibility: symbol): boolean {
+    if (!this.surfaces.has(visibility)) return false;
+    return this.captureClaim === undefined
+      ? (this.preferenceOrigin ?? this.voiceTurn?.visibility) === visibility
+      : this.captureClaim.visibility === visibility;
+  }
+  captureSubmission(visibility?: symbol): ReturnType<CommandSession['captureSubmission']> & {
+    continuationCurrent(): boolean;
+  } {
     const captured = this.session.captureSubmission(),
-      generation = this.acceptance;
+      generation = this.acceptance,
+      interaction = this.interaction,
+      visible = this.captureVisibility(visibility);
     return {
+      continuationCurrent: () =>
+        !this.disposed &&
+        visible() &&
+        generation === this.acceptance &&
+        interaction === this.interaction &&
+        captured.basis.sessionId === this.session.snapshot().id,
       basis: captured.basis,
-      current: () => !this.disposed && generation === this.acceptance && captured.current(),
+      current: () =>
+        !this.disposed && visible() && generation === this.acceptance && captured.current(),
     };
+  }
+  private captureVisibility(visibility?: symbol): () => boolean {
+    const scope = visibility === undefined ? undefined : this.surfaces.get(visibility);
+    return () =>
+      visibility === undefined || (scope !== undefined && this.surfaces.get(visibility) === scope);
   }
   constructor(private readonly options: CommandSessionOwnerOptions) {
     this.session = options.createSession(
@@ -67,7 +134,8 @@ export class CommandSessionOwner {
           this.assertLive();
           if (!current())
             throw new CommandFailure('CANCELLED', 'Session change stopped. Your work is retained.');
-          await options.store.create(next);
+          await options.store.create(next, () => !this.disposed && current());
+          this.assertLive();
           this.ownedSessions.add(next.id);
         },
       },
@@ -79,7 +147,13 @@ export class CommandSessionOwner {
       .find((record) => record.snapshot.id === options.store.activeId());
     if (active !== undefined) this.session.restore(active.snapshot);
     let initial = true;
-    this.unsubscribe = this.session.subscribe(() => {
+    let transition = JSON.stringify(this.session.snapshot().pendingTransition);
+    this.unsubscribe = this.session.subscribe((state) => {
+      const next = JSON.stringify(state.pendingTransition);
+      if (transition !== next) {
+        this.interaction++;
+        transition = next;
+      }
       if (!initial) this.schedule();
       this.emit();
     });
@@ -125,9 +199,21 @@ export class CommandSessionOwner {
   }
   open(surface?: symbol): CommandSessionSnapshot {
     if (surface === undefined) this.visible = true;
-    else this.surfaces.add(surface);
+    else if (!this.surfaces.has(surface)) this.surfaces.set(surface, {});
     this.emit();
     return this.snapshot();
+  }
+  commandPending(): boolean {
+    return this.pendingWork > 0;
+  }
+  /** Cover admission, queued work, intermediate published results, and durable readback. */
+  private async duringCommand<T>(work: () => Promise<T>): Promise<T> {
+    if (++this.pendingWork === 1) this.captureClaim?.workChanged();
+    try {
+      return await work();
+    } finally {
+      if (--this.pendingWork === 0) this.captureClaim?.workChanged();
+    }
   }
   private transition(work: () => Promise<boolean>): Promise<boolean> {
     const pending = (this.changing ?? Promise.resolve()).then(work);
@@ -143,18 +229,21 @@ export class CommandSessionOwner {
       .catch(() => {
         this.emit();
       });
-    return pending;
+    return this.duringCommand(() => pending);
   }
   async hide(surface?: symbol): Promise<void> {
     if (this.disposed) return;
     if (surface === undefined) this.visible = false;
     else this.surfaces.delete(surface);
-    this.stopCapture?.();
-    this.acceptance++;
+    this.retireVoice(surface);
+    this.stopCapture(surface);
+    if (surface === undefined) this.acceptance++;
     await this.flush();
   }
   async stop(): Promise<void> {
     if (this.disposed) return;
+    this.stopCapture();
+    this.retireVoice();
     this.submitted++;
     this.acceptance++;
     this.session.cancelTurn();
@@ -174,6 +263,7 @@ export class CommandSessionOwner {
     try {
       if (this.options.store.activeId() === null) await this.options.store.create(state);
       else await this.options.store.save(state);
+      this.assertLive();
     } finally {
       this.emit();
     }
@@ -194,6 +284,7 @@ export class CommandSessionOwner {
     if (!this.disposed) this.session.updateContext(context);
   }
   stageStatus(input: CommandStatusInput): Promise<boolean> {
+    this.interaction++;
     const basis = this.session.snapshot(),
       generation = this.acceptance;
     return this.transition(async () => {
@@ -235,31 +326,165 @@ export class CommandSessionOwner {
     return (basis) =>
       !this.disposed && token !== undefined && this.noteReviews.get(token)?.(basis) === true;
   }
-  async submit(
+  submit(
     text: string,
     basis?: CommandSubmissionBasis,
-    surface?: symbol,
+    surface?: SubmissionSurface,
     admission?: () => boolean,
   ): Promise<void> {
+    return this.duringCommand(() => this.submitText(text, basis, surface, admission));
+  }
+  private async submitText(
+    text: string,
+    basis?: CommandSubmissionBasis,
+    surface?: SubmissionSurface,
+    admission?: () => boolean,
+  ): Promise<void> {
+    this.interaction++;
     const generation = this.acceptance,
       submitted = ++this.submitted,
-      input = this.session.captureInput();
+      input = this.session.captureInput(),
+      visible = this.captureVisibility(surface?.visibility);
     if (this.changing !== undefined) await this.changing;
-    if (this.isDisposed() || admission?.() === false) return;
+    if (this.isDisposed() || !visible() || admission?.() === false) return;
     if (generation !== this.acceptance) {
       this.retainUnadmitted(text, input, admission);
       await this.flush();
       return;
     }
     const acceptance = { retired: false };
-    await this.session.submit(text, basis, this.noteReview(surface), () => {
-      const current = generation === this.acceptance;
+    await this.submitTurn(text, basis, surface, () => {
+      const current = generation === this.acceptance && visible();
       acceptance.retired ||= !current;
       return current && admission?.() !== false;
     });
     if (acceptance.retired) this.retainUnadmitted(text, input, admission);
     await this.flush();
     this.notifyCompletion(submitted);
+  }
+  private async submitTurn(
+    text: string,
+    basis: CommandSubmissionBasis | undefined,
+    surface: SubmissionSurface | undefined,
+    admission: () => boolean,
+  ): Promise<void> {
+    const turn = { visibility: surface?.visibility };
+    try {
+      await this.session.submit(text, basis, this.noteReview(surface?.noteReview), () => {
+        if (!admission()) return false;
+        this.voiceTurn = turn;
+        return true;
+      });
+    } finally {
+      if (this.voiceTurn === turn) this.voiceTurn = undefined;
+    }
+  }
+  setVoiceMode(mode: 'manual' | 'continuous', visibility?: symbol): void {
+    if (this.disposed) return;
+    this.preferenceOrigin = visibility;
+    try {
+      this.session.setVoiceMode(mode);
+    } finally {
+      this.preferenceOrigin = undefined;
+    }
+  }
+  queuedVoice(): number {
+    return this.voiceQueue.length;
+  }
+  enqueueVoice(
+    text: string,
+    basis: CommandSubmissionBasis,
+    surface: SubmissionSurface | undefined,
+    admission: () => boolean,
+  ): Promise<boolean> {
+    if (this.disposed) return Promise.resolve(false);
+    if (
+      this.voiceQueue.length >= 8 ||
+      this.voiceQueue.reduce((size, item) => size + item.text.length, text.length) > 64000 ||
+      text.length > 16000
+    ) {
+      this.retireVoice();
+      this.retainVoiceText(text, basis.sessionId);
+      return Promise.resolve(false);
+    }
+    const visible = this.captureVisibility(surface?.visibility);
+    const result = new Promise<boolean>((resolve) => {
+      this.voiceQueue.push({
+        text,
+        basis,
+        surface: surface?.noteReview,
+        visibility: surface?.visibility,
+        admission: () => visible() && admission(),
+        sessionId: basis.sessionId,
+        resolve,
+      });
+    });
+    this.emit();
+    if (!this.drainingVoice)
+      void this.duringCommand(() => this.drainVoice()).catch(() => {
+        this.retireVoice();
+        this.session.status('error', commandMessage('Voice kept as text. Review before sending.'));
+        console.error('[abyss-tasks] Voice queue failed', { code: 'VOICE_QUEUE' });
+      });
+    return result;
+  }
+  private async drainVoice(): Promise<void> {
+    this.drainingVoice = true;
+    try {
+      while (this.voiceQueue.length > 0 && !this.disposed) {
+        await this.session.whenIdle();
+        if (this.changing !== undefined) await this.changing;
+        const item = this.voiceQueue.shift();
+        if (item === undefined) break;
+        this.emit();
+        await this.runVoice(item);
+      }
+    } finally {
+      this.drainingVoice = false;
+    }
+  }
+  private async runVoice(item: QueuedVoice): Promise<void> {
+    try {
+      if (!item.admission()) {
+        this.retainVoiceText(item.text, item.sessionId);
+        return;
+      }
+      const submitted = ++this.submitted;
+      const acceptance = { retired: false };
+      await this.submitTurn(
+        item.text,
+        item.basis,
+        { noteReview: item.surface, visibility: item.visibility },
+        () => {
+          const current = item.admission();
+          acceptance.retired ||= !current;
+          return current;
+        },
+      );
+      if (acceptance.retired) this.retainVoiceText(item.text, item.sessionId);
+      await this.flush();
+      this.notifyCompletion(submitted);
+    } catch (cause) {
+      this.retainVoiceText(item.text, item.sessionId);
+      throw cause;
+    } finally {
+      item.resolve(true);
+    }
+  }
+  private retainVoiceText(text: string, sessionId: string): void {
+    const state = this.session.snapshot();
+    if (state.id === sessionId)
+      this.session.setInput(state.input === '' ? text : `${state.input}\n\n${text}`);
+  }
+  retireVoice(visibility?: symbol): void {
+    const retired = this.voiceQueue.filter(
+      (item) => visibility === undefined || item.visibility === visibility,
+    );
+    for (const item of retired) {
+      this.voiceQueue.splice(this.voiceQueue.indexOf(item), 1);
+      this.retainVoiceText(item.text, item.sessionId);
+      item.resolve(true);
+    }
   }
   private retainUnadmitted(
     text: string,
@@ -277,13 +502,16 @@ export class CommandSessionOwner {
     )
       this.options.notify?.(this.snapshot());
   }
-  confirmAndStart(revision?: number, surface?: symbol): Promise<boolean> {
+  confirmAndStart(revision?: number, surface?: symbol, visibility?: symbol): Promise<boolean> {
+    this.interaction++;
     const basis = this.session.snapshot(),
       input = this.session.captureInput(),
       generation = this.acceptance,
-      expectedRevision = revision ?? basis.proposal.revision;
+      expectedRevision = revision ?? basis.proposal.revision,
+      visible = this.captureVisibility(visibility);
     const current = (): boolean =>
       !this.disposed &&
+      visible() &&
       generation === this.acceptance &&
       input.current() &&
       this.session.snapshot().id === basis.id &&
@@ -296,20 +524,23 @@ export class CommandSessionOwner {
         !this.canFinishSession(state)
       )
         return false;
-      if (
-        state.proposal.changes.length > 0 &&
-        !(await this.session.confirm(expectedRevision, this.noteReview(surface)))
-      ) {
-        await this.flush();
-        return false;
-      }
-      await this.flush();
+      if (state.proposal.changes.length > 0) {
+        if (!(await this.saveToFinish(expectedRevision, surface))) return false;
+      } else await this.flush();
       const next = this.session.snapshot();
       if (!current() || next.proposal.changes.length !== 0 || !this.canFinishSession(next))
         return false;
-      this.stopCapture?.();
+      this.retireVoice();
+      this.stopCapture();
       return this.startSession();
     });
+  }
+  private async saveToFinish(revision: number, surface?: symbol): Promise<boolean> {
+    const submitted = ++this.submitted;
+    const result = await this.session.confirm(revision, this.noteReview(surface));
+    await this.flush();
+    this.notifyCompletion(submitted);
+    return result;
   }
   private canFinishSession(state: CommandSessionSnapshot): boolean {
     return (
@@ -320,7 +551,11 @@ export class CommandSessionOwner {
       ['ready', 'saved'].includes(state.status.kind)
     );
   }
-  async confirm(revision?: number, surface?: symbol): Promise<boolean> {
+  confirm(revision?: number, surface?: symbol): Promise<boolean> {
+    return this.duringCommand(() => this.confirmCurrent(revision, surface));
+  }
+  private async confirmCurrent(revision?: number, surface?: symbol): Promise<boolean> {
+    this.interaction++;
     const basis = this.session.snapshot();
     if (this.changing !== undefined) await this.changing;
     if (this.isDisposed() || this.session.snapshot().id !== basis.id) return false;
@@ -332,6 +567,7 @@ export class CommandSessionOwner {
     return result;
   }
   focus(target: CommandFocus | readonly CommandFocus[]): Promise<boolean> {
+    this.interaction++;
     return this.transition(async () => {
       await this.session.settle();
       return this.session.focus(target);
@@ -347,6 +583,7 @@ export class CommandSessionOwner {
     return this.session.readTreePage(query);
   }
   applyStatus(input: { target: string; revision: string; symbol: string }): Promise<boolean> {
+    this.interaction++;
     const basis = this.session.snapshot(),
       generation = this.acceptance;
     return this.transition(async () => {
@@ -368,7 +605,9 @@ export class CommandSessionOwner {
     return this.options.store.records();
   }
   newSession(disposition?: 'keep' | 'discard'): Promise<boolean> {
-    this.stopCapture?.();
+    this.interaction++;
+    this.retireVoice();
+    this.stopCapture();
     return this.transition(() => this.startSession(disposition));
   }
   private async startSession(disposition?: 'keep' | 'discard'): Promise<boolean> {
@@ -378,7 +617,11 @@ export class CommandSessionOwner {
     return result;
   }
   select(id: string): Promise<boolean> {
-    if (id !== this.session.snapshot().id) this.stopCapture?.();
+    this.interaction++;
+    if (id !== this.session.snapshot().id) {
+      this.retireVoice();
+      this.stopCapture();
+    }
     const generation = this.acceptance;
     return this.transition(() => this.selectSession(id, generation));
   }
@@ -388,7 +631,7 @@ export class CommandSessionOwner {
     if (id !== this.session.snapshot().id && !this.session.canLeaveUncertainty()) return false;
     if (!(await this.flush()) || this.isDisposed() || generation !== this.acceptance) return false;
     try {
-      await this.options.store.select(id);
+      await this.options.store.select(id, () => !this.disposed && generation === this.acceptance);
       return await this.restoreSelection(id);
     } catch {
       this.emit();
@@ -407,6 +650,7 @@ export class CommandSessionOwner {
     return this.session.snapshot().id === id && this.options.store.activeId() === id;
   }
   review(): Promise<boolean> {
+    this.interaction++;
     return this.transition(() => this.reviewSession());
   }
   private async reviewSession(): Promise<boolean> {
@@ -415,6 +659,7 @@ export class CommandSessionOwner {
     return this.session.beginReview();
   }
   acknowledgeUncertainty(): Promise<boolean> {
+    this.interaction++;
     return this.transition(async () => {
       if (this.disposed || !this.snapshot().blocked) return false;
       return this.session.newSession('keep', undefined, true);
@@ -425,6 +670,7 @@ export class CommandSessionOwner {
     basis?: CommandTransitionBasis,
     surface?: symbol,
   ): Promise<boolean> {
+    this.interaction++;
     const expected = basis ?? this.transitionBasis();
     if (expected === undefined) return Promise.resolve(false);
     return this.transition(() =>
@@ -451,20 +697,76 @@ export class CommandSessionOwner {
       return false;
     }
   }
+  deletionReason(id: string): string | null {
+    const record = this.recent().find((entry) => entry.snapshot.id === id);
+    return record !== undefined && hasUnresolvedCommandWrites(record.snapshot)
+      ? 'This session contains an unresolved write. Review it before deleting history.'
+      : null;
+  }
+  delete(id: string): Promise<boolean> {
+    return this.deleteHistory(id);
+  }
+  clearHistory(): Promise<boolean> {
+    return this.deleteHistory();
+  }
+  private removeHistoryRecords(id?: string): Promise<void> {
+    return id === undefined ? this.options.store.clearHistory() : this.options.store.remove(id);
+  }
+  private deleteHistory(id?: string): Promise<boolean> {
+    this.retireVoice();
+    this.stopCapture();
+    this.acceptance++;
+    this.submitted++;
+    this.session.cancelTurn();
+    return this.transition(async () => {
+      await this.session.settle();
+      if (this.disposed || !(await this.flush())) return false;
+      const ids = id === undefined ? this.recent().map((entry) => entry.snapshot.id) : [id];
+      try {
+        // Store checks the whole batch before changing a single row or its selection.
+        if (ids.some((entry) => this.deletionReason(entry) !== null)) {
+          await this.removeHistoryRecords(id);
+          return false;
+        }
+        if (ids.includes(this.session.snapshot().id) && !(await this.startSession('keep')))
+          return false;
+        this.assertLive();
+        await this.removeHistoryRecords(id);
+        this.emit();
+        return true;
+      } catch {
+        this.emit();
+        return false;
+      }
+    });
+  }
+  /** Retirement revokes callbacks synchronously; callers replacing this owner await its drain. */
+  drained(): Promise<void> {
+    return this.retirement ?? this.options.store.drained();
+  }
   dispose(): void {
     if (this.disposed) return;
-    this.stopCapture?.();
+    this.retireVoice();
+    this.stopCapture();
     this.session.cancelTurn();
-    // Host storage is synchronous: this flush crosses its boundary before revocation.
-    void this.flush().catch(() => {
-      this.emit();
-    });
+    const final = this.session.snapshot();
+    const save =
+      this.options.store.activeId() === null
+        ? this.options.store.create(final)
+        : this.options.store.save(final);
     this.disposed = true;
+    this.acceptance++;
+    this.submitted++;
     this.noteReviews.clear();
     this.cancelScheduled?.();
     this.cancelScheduled = undefined;
     this.unsubscribe();
     this.listeners.clear();
     this.session.dispose();
+    this.retirement = Promise.allSettled([save, this.changing, this.session.settle()]).then(
+      async () => {
+        await this.options.store.drained();
+      },
+    );
   }
 }

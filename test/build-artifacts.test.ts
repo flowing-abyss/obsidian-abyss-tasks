@@ -121,6 +121,14 @@ const privateOwners = new Set([
   'TaskSearch',
   'TaskSearchService',
   'TaskSearchRuntime',
+  // Research exposes search results; its private connections and helpers are never reflected or serialized.
+  'ProviderResearch',
+  // Settings expose render/dispose; private ports, lifecycle and rendering helpers stay behind methods.
+  'ProviderSettingsSection',
+  // Tool tables capture the owner through callbacks; only tool definitions/results are spread or serialized.
+  'CommandToolOwner',
+  // Evidence exposes accepted facts through methods; private query/mutation helpers have no string dispatch.
+  'CommandEvidence',
 ]);
 
 function privateOwner(node: ts.Node): string | undefined {
@@ -324,6 +332,7 @@ describe('production JavaScript artifact', () => {
       'node_modules/.pnpm/internmap@2.0.3/node_modules/internmap/LICENSE',
       'node_modules/minisearch/LICENSE.txt',
       'node_modules/chrono-node/LICENSE.txt',
+      'node_modules/jose/LICENSE.md',
       'node_modules/rrule/LICENCE',
       'node_modules/@ai-sdk/openai/LICENSE',
       'node_modules/@ai-sdk/anthropic/LICENSE',
@@ -346,6 +355,7 @@ describe('production JavaScript artifact', () => {
       'internmap@2.0.3',
       'minisearch@7.2.0',
       'chrono-node@2.10.3',
+      'jose@6.2.17',
       'rrule@2.8.1',
       '@ai-sdk/openai@4.0.110',
       '@ai-sdk/anthropic@4.0.98',

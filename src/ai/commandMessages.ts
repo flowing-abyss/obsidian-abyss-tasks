@@ -1,5 +1,22 @@
 /** Fixed CommandMode chrome only. main supplies the host language; Node consumers default to English. */
 const russian = {
+  queued: 'в очереди',
+  Dictation: 'Диктовка',
+  Continuous: 'Непрерывный ввод',
+  'Continuous voice is active in another panel.': 'Непрерывный ввод включён в другой панели.',
+  'Finishing recording…': 'Завершаю запись…',
+  'Microphone paused': 'Микрофон на паузе',
+  'Microphone stopped': 'Микрофон выключен',
+  'Starting microphone…': 'Запускаю микрофон…',
+  'Recording…': 'Записываю…',
+  'Stop dictation': 'Остановить диктовку',
+  'Microphone startup timed out. Try the microphone again.':
+    'Микрофон не запустился вовремя. Попробуйте снова.',
+  'Microphone · right-click for input mode': 'Микрофон · правая кнопка — режим ввода',
+  'Voice queue is full. Text retained for review.':
+    'Очередь голосовых команд заполнена. Текст оставлен для проверки.',
+
+  'New note · Content after template': 'Новая заметка · Текст после шаблона',
   'Command needs attention. Press Q to continue.':
     'Нужно ваше внимание. Нажмите Q, чтобы продолжить.',
   'Command is waiting for your answer. Press Q to continue.':
@@ -10,6 +27,7 @@ const russian = {
   'Saving…': 'Сохраняю…',
   'Working…': 'Думаю…',
   'Ready.': 'Готово.',
+  'There are no changes to save.': 'Нет изменений для сохранения.',
   'Waiting for your command.': 'Жду вашу команду.',
   'Ready for review.': 'Готово к проверке.',
   'Ready. Enter to save.': 'Готово. Enter — сохранить.',
@@ -67,6 +85,20 @@ const russian = {
     'Сохраните или отмените изменения этих заметок перед переносом задач. Вся текущая работа сохранена.',
   'Status uses ordinary completion, recurrence, deletion, timer and blocker rules after the content is saved.':
     'После сохранения содержимого статус применяет обычные правила завершения, повторения, удаления, таймера и блокировок.',
+  'Custom servers require an Obsidian desktop runtime with secure HTTP support.':
+    'Для подключения к своему серверу нужна настольная версия Obsidian с поддержкой запросов без переадресации.',
+  'Could not access the ChatGPT connection in Obsidian secret storage.':
+    'Не удалось получить подключение ChatGPT из хранилища секретов Obsidian.',
+  'Sign in with ChatGPT requires Obsidian desktop.':
+    'Для входа с ChatGPT нужна настольная версия Obsidian.',
+  'Sign in with ChatGPT in the LLM settings and try again.':
+    'Войдите с ChatGPT в настройках LLM и повторите попытку.',
+  'ChatGPT plan use is unavailable for this account or workspace. Check the connection in LLM settings.':
+    'Тариф ChatGPT недоступен для этого аккаунта или рабочего пространства. Проверьте подключение в настройках LLM.',
+  'The ChatGPT plan limit was reached. Open Manage usage in LLM settings.':
+    'Достигнут лимит тарифа ChatGPT. Откройте управление расходом в настройках LLM.',
+  'Signed out locally. Disconnect Abyss Tasks in ChatGPT settings to confirm revocation.':
+    'Вы вышли из аккаунта на этом устройстве. Отключите Abyss Tasks в настройках ChatGPT, чтобы подтвердить отзыв доступа.',
   'Save an API key for the selected provider.': 'Сохраните API-ключ выбранного провайдера.',
   'Could not access the API key in Obsidian secret storage.':
     'Не удалось получить API-ключ из хранилища секретов Obsidian.',
@@ -81,6 +113,8 @@ const russian = {
   'The provider returned an unreadable response.': 'Провайдер вернул нечитаемый ответ.',
   'The provider or model configuration is not supported.':
     'Настройки провайдера или модели не поддерживаются.',
+  'Shorten the Brave query to 600 characters and 75 words.':
+    'Сократите запрос Brave до 600 символов и 75 слов.',
   'The request was cancelled locally. Remote work may still finish.':
     'Запрос отменён локально. Удалённая обработка может завершиться.',
   'The provider took too long. Remote work may still finish.':
@@ -102,6 +136,16 @@ const russian = {
   'Untitled session': 'Сессия без названия',
   'Quick capture controls': 'Управление быстрым вводом',
   History: 'История',
+  'Search history': 'Поиск по истории',
+  'Clear history': 'Очистить историю',
+  'Delete session': 'Удалить сессию',
+  'Could not clear history': 'Не удалось очистить историю',
+  'Could not delete session': 'Не удалось удалить сессию',
+  'Updating history…': 'Обновляю историю…',
+  'No sessions yet': 'Пока нет сессий',
+  'No matching sessions': 'Нет подходящих сессий',
+  'Incomplete saved tree. Review current source to see the rest.':
+    'Сохранена часть дерева. Проверьте текущий источник, чтобы увидеть остальное.',
   CommandMode: 'CommandMode',
   Microphone: 'Микрофон',
   Send: 'Отправить',
@@ -192,6 +236,8 @@ const russian = {
   'Researching…': 'Ищу информацию…',
   'Stopped after the last admitted write. Review the result before continuing.':
     'Остановлено после последней принятой записи. Проверьте результат перед продолжением.',
+  'The write settled, but the complete saved result could not be verified. Review the current source before continuing.':
+    'Запись завершилась, но полный сохранённый результат не удалось проверить. Проверьте текущий источник перед продолжением.',
   'The write settled, but a selected task is unavailable. Review the current result.':
     'Запись завершена, но выбранная задача недоступна. Проверьте текущий результат.',
   'The note was saved; the task link could not be verified. Review the current result.':
@@ -286,6 +332,14 @@ const russian = {
   'The task content change is invalid.': 'Изменение содержимого задачи недопустимо.',
   'The task content write could not be confirmed.':
     'Не удалось подтвердить запись содержимого задачи.',
+  'No {entity} matches for “{query}” in the searched scope. Change the search?':
+    'По запросу «{query}» ({entity}) в проверенной области ничего не найдено. Изменить поиск?',
+  'Multiple {entity} matches for “{query}” in the searched scope. Which one?':
+    'По запросу «{query}» ({entity}) в проверенной области найдено несколько вариантов. Какой выбрать?',
+  'The {entity} search for “{query}” is incomplete. Continue?':
+    'Поиск «{query}» ({entity}) ещё не завершён. Продолжить?',
+  'The catalog marks “{query}” as unavailable for changes. Choose another field?':
+    'Каталог не разрешает изменять «{query}». Выбрать другое поле?',
 } as const;
 export type CommandMessage = keyof typeof russian;
 let russianLocale = false;

@@ -10,6 +10,7 @@ import type {
   ReadOptionsV1,
   ReadyV1,
   SearchTasksV1,
+  TaskCreationPolicyV1,
   TasksApiProviderV1,
   TasksApiV1,
 } from '../../api';
@@ -42,6 +43,7 @@ export type TaskReadClientV1 = Omit<TasksApiV1, 'tasks'> & {
 };
 export interface TaskApiContext {
   readonly reads: TaskIntegrationReadApi;
+  readonly creationPolicy?: () => TaskCreationPolicyV1;
   readonly identities: TaskIdentityRegistry;
   readonly cursors: TaskCursorRegistry;
   observation(value: TaskReadObservation): ObservationV1;
@@ -65,6 +67,7 @@ interface Publication {
 }
 interface ProviderOptions {
   readonly notes?: NoteApplicationApi;
+  readonly creationPolicy?: () => TaskCreationPolicyV1;
   readonly search?: TaskSearchApi;
   readonly content?: TaskContentPorts;
   readonly projects?: ProjectPorts;
@@ -91,6 +94,31 @@ interface ProviderOwner {
   terminal?: ApiResultV1<never>;
   unsubscribe?: () => void;
 }
+const NOTE_CAPABILITIES = [
+  'notes.search',
+  'notes.read',
+  'notes.prepare',
+  'notes.create',
+  'notes.apply',
+  'notes.create.collision',
+  'notes.create.default-destination',
+  'notes.create.template-first',
+  'notes.apply.section',
+  'notes.prepare.refine',
+];
+function contentCapabilities(options: ProviderOptions): string[] {
+  if (options.content === undefined) return [];
+  return [
+    'tasks.tree',
+    'tasks.prepare',
+    'tasks.apply',
+    'tasks.create',
+    ...(options.creationPolicy === undefined ? [] : ['tasks.create.inbox-intent']),
+    'tasks.prepare.reorder',
+    'tasks.prepare.select-fields',
+    ...(options.content.hierarchies === undefined ? [] : ['tasks.prepare.hierarchy']),
+  ];
+}
 function apiInfo(options: ProviderOptions): ApiInfoV1 {
   return freezeValue({
     apiVersion: 1,
@@ -98,31 +126,13 @@ function apiInfo(options: ProviderOptions): ApiInfoV1 {
     providerEpoch: options.epoch,
     capabilities: [
       'tasks.read',
-      ...(options.notes === undefined
+      ...(options.creationPolicy === undefined
         ? []
-        : [
-            'notes.search',
-            'notes.read',
-            'notes.prepare',
-            'notes.create',
-            'notes.apply',
-            'notes.create.collision',
-            'notes.apply.section',
-            'notes.prepare.refine',
-          ]),
+        : ['tasks.creation-policy', 'tasks.inbox-filter']),
+      ...(options.notes === undefined ? [] : NOTE_CAPABILITIES),
       'tasks.tags',
       ...(options.search === undefined ? [] : ['tasks.search']),
-      ...(options.content === undefined
-        ? []
-        : [
-            'tasks.tree',
-            'tasks.prepare',
-            'tasks.apply',
-            'tasks.create',
-            'tasks.prepare.reorder',
-            'tasks.prepare.select-fields',
-            ...(options.content.hierarchies === undefined ? [] : ['tasks.prepare.hierarchy']),
-          ]),
+      ...contentCapabilities(options),
       'tasks.resolve',
       'tasks.statuses',
       'tasks.complete',
@@ -304,6 +314,9 @@ function activate(owner: ProviderOwner): void {
 function clientContext(owner: ProviderOwner, client: ClientRecord): TaskApiContext {
   return {
     reads: owner.options.reads,
+    ...(owner.options.creationPolicy === undefined
+      ? {}
+      : { creationPolicy: owner.options.creationPolicy }),
     identities: owner.identities,
     cursors: owner.cursors,
     observation: (value) => observation(owner, value),
@@ -353,6 +366,20 @@ function subscribe(
     return internal(owner, 'subscribe');
   }
 }
+async function readCreationPolicy(
+  context: TaskApiContext,
+  read: () => TaskCreationPolicyV1,
+  options?: ReadOptionsV1,
+): Promise<ApiResultV1<TaskCreationPolicyV1>> {
+  const parsed = validateReadOptions(options);
+  if (!parsed.ok) return parsed;
+  try {
+    await Promise.resolve();
+    return context.check(parsed.value.signal) ?? { ok: true, value: freezeValue(read()) };
+  } catch {
+    return context.internal('tasks.creationPolicy');
+  }
+}
 function clientTasks(
   owner: ProviderOwner,
   client: ClientRecord,
@@ -376,8 +403,15 @@ function clientTasks(
     owner.options.epoch,
   );
   client.search = searches;
+  const policyRead = context.creationPolicy;
   return Object.freeze({
     ...createTaskApiReads(context),
+    ...(policyRead === undefined
+      ? {}
+      : {
+          creationPolicy: (options?: ReadOptionsV1) =>
+            readCreationPolicy(context, policyRead, options),
+        }),
     tags: (query?: ListTaskTagsV1, options?: ReadOptionsV1) => searches.tags(query, options),
     ...(owner.options.search === undefined
       ? {}

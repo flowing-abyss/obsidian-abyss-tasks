@@ -9,14 +9,37 @@ import type { NoteCommitOutcome } from '../notes/noteApi';
 import { apiError } from './values';
 
 function effects(outcome: NoteCommitOutcome): EffectStateV1 {
-  if (outcome.noteEffects === 'unknown' || outcome.destinationEffects === 'unknown')
+  if (
+    [
+      outcome.noteEffects,
+      outcome.destinationEffects,
+      outcome.templateEffects,
+      outcome.contentEffects,
+    ].includes('unknown')
+  )
     return 'unknown';
+  if (
+    outcome.completion === 'incomplete' &&
+    outcome.noteEffects === 'committed' &&
+    outcome.contentEffects !== 'committed'
+  )
+    return 'partial';
   if (outcome.noteEffects === 'committed') return 'committed';
   return outcome.destinationEffects === 'committed' ? 'partial' : 'unchanged';
 }
 function recovery(effect: EffectStateV1, code: string | undefined): RecoveryV1 {
   if (effect === 'unknown' || effect === 'partial') return 'reconcile';
   return code === undefined ? 'none' : 'reread';
+}
+function templateOutcome(
+  outcome: NoteCommitOutcome,
+): Pick<NoteMutationReceiptV1, 'completion' | 'phase' | 'templateEffects' | 'contentEffects'> {
+  return {
+    ...(outcome.completion === undefined ? {} : { completion: outcome.completion }),
+    ...(outcome.phase === undefined ? {} : { phase: outcome.phase }),
+    ...(outcome.templateEffects === undefined ? {} : { templateEffects: outcome.templateEffects }),
+    ...(outcome.contentEffects === undefined ? {} : { contentEffects: outcome.contentEffects }),
+  };
 }
 export function noteReceipt(
   context: {
@@ -29,8 +52,10 @@ export function noteReceipt(
   outcome: NoteCommitOutcome,
 ): NoteMutationResultV1 & { readonly receipt: NoteMutationReceiptV1 } {
   const effect = effects(outcome),
-    recover = recovery(effect, outcome.code);
-  const success = outcome.noteEffects === 'committed' || outcome.noop === true;
+    recover = outcome.completion === 'incomplete' ? 'reconcile' : recovery(effect, outcome.code);
+  const success =
+    outcome.completion !== 'incomplete' &&
+    (outcome.noteEffects === 'committed' || outcome.noop === true);
   let result: NoteMutationReceiptV1['outcome'] = 'failed';
   if (success) result = outcome.noop === true ? 'noop' : 'changed';
   const receipt: NoteMutationReceiptV1 = {
@@ -45,6 +70,7 @@ export function noteReceipt(
     recovery: recover,
     noteEffects: outcome.noteEffects,
     destinationEffects: outcome.destinationEffects,
+    ...templateOutcome(outcome),
     ...(context.note === undefined ? {} : { note: context.note }),
     ...(context.section === undefined ? {} : { section: context.section }),
     warnings: [],

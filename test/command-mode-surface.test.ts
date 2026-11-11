@@ -1,31 +1,69 @@
 import { MockLanguageModelV4 } from 'ai/test';
-import { MarkdownRenderer } from 'obsidian';
+import { MarkdownRenderer, Menu } from 'obsidian';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { ContentPlanV1, ProjectDtoV1, TaskContentOperationV1, TasksApiV1 } from '../api';
 import { CommandAgent } from '../src/ai/CommandAgent';
 import { configureCommandLocale } from '../src/ai/commandMessages';
 import { canonicalCommandPlan } from '../src/ai/commandReads';
+import { commandReferences } from '../src/ai/commandReferences';
+import { record } from '../src/ai/commandReferenceShapes';
 import { prepareSchema } from '../src/ai/commandSchemas';
 import { CommandSession } from '../src/ai/CommandSession';
 import { CommandSessionOwner } from '../src/ai/CommandSessionOwner';
 import { CommandSessionStore } from '../src/ai/CommandSessionStore';
 import type { CommandAgentPort, CommandSessionSnapshot } from '../src/ai/commandTypes';
+import { NativeProviderTransport } from '../src/ai/providers/NativeProviderTransport';
+import { ProviderConnections } from '../src/ai/providers/ProviderConnections';
+import { ProviderSecrets } from '../src/ai/providers/ProviderSecrets';
 import type { CommandTranscriptionPort } from '../src/ai/voice/ProviderTranscription';
 import TaskCalendarPlugin from '../src/main';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
+import type { TaskCreateSession } from '../src/tasks';
 import {
   CommandModeSurface,
   type CommandSurfaceMemory,
 } from '../src/ui/commandMode/CommandModeSurface';
+import { InteractionRegistry } from '../src/ui/interactionOwnership';
 import { CaptureSurface } from '../src/ui/taskCapture/CaptureSurface';
+import { QuickCaptureCoordinator } from '../src/ui/taskCapture/QuickCaptureCoordinator';
 import { TaskCaptureController } from '../src/ui/taskCapture/TaskCaptureController';
 import { describeTaskCreationResult } from '../src/ui/taskCommandResult';
-import { createAppWithFiles, deferred, expectDefined, flushMicrotasks } from './helpers';
+import * as textFieldPosition from '../src/ui/textFieldAnchor';
+import { createAppWithFiles, deferred, expectDefined, flushMicrotasks, methodOf } from './helpers';
+import { commandSessionStorage } from './support/commandSessionStorage';
 import { captureMenus, mockReadingView } from './support/linkEditHarness';
 import { publicApiHarness, type PublicApiHarness } from './support/publicApiHarness';
+import { scriptedWriteReview } from './support/scriptedWriteReview';
 import { voiceMediaHarness } from './support/voiceMediaHarness';
 const cleanups: Array<() => void> = [];
+it('keeps the running timer across phases and remount, then retires it on completion', async () => {
+  const h = await setup();
+  const surface = h.mount();
+  await flushMicrotasks(0);
+  vi.useFakeTimers();
+  vi.setSystemTime(10_000);
+  h.session.status('thinking', 'Thinking…');
+  const timer = (target = surface) =>
+    expectDefined(target.element.querySelector('.abyss-command-elapsed'));
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(timer().textContent).toBe('5s');
+  h.session.status('searching', 'Searching notes…');
+  await vi.advanceTimersByTimeAsync(56_000);
+  expect(timer().textContent).toBe('1:01');
+  surface.destroy();
+  await vi.advanceTimersByTimeAsync(4_000);
+  const reopened = h.mount();
+  expect(timer(reopened).textContent).toBe('1:05');
+  h.session.status('ready', 'Ready.');
+  expect(timer(reopened).hasAttribute('hidden')).toBe(true);
+  expect(reopened.element.querySelector('.abyss-command-phase')?.textContent).toBe('Ready.');
+  h.session.status('thinking', 'Thinking…');
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(timer(reopened).textContent).toBe('1s');
+  reopened.destroy();
+  expect(vi.getTimerCount()).toBe(0);
+});
 it('grows the shared composer for retained multiline text and width changes without moving selection', async () => {
   let resized: ResizeObserverCallback | undefined;
   const disconnect = vi.fn();
@@ -145,18 +183,12 @@ async function setup(
   const projectSettings = structuredClone(DEFAULT_SETTINGS.projects);
   let session!: CommandSession;
   let sequence = 0;
-  let persisted: unknown;
+  const persisted = commandSessionStorage();
   let override: CommandAgentPort['run'] | undefined;
+  const notify = vi.fn();
   const owner = new CommandSessionOwner({
-    store: new CommandSessionStore({
-      storage: {
-        load: () => persisted,
-        save: (value) => {
-          persisted = value;
-        },
-      },
-      now: () => 100,
-    }),
+    notify,
+    store: await CommandSessionStore.open({ ...persisted, now }),
     schedule: () => () => {},
     createSession: (journal, transitions) =>
       (session = new CommandSession({
@@ -206,12 +238,14 @@ async function setup(
     (target: string, revision: string, intent: 'feedback' | 'reveal') => boolean
   >(() => true);
   const resolveOwner = vi.fn(() => owner);
-  const ordinaryExecute = vi.fn(async () => {
+  const ordinaryExecute = vi.fn<TaskCreateSession['execute']>(async () => {
     throw new Error('Ordinary capture leaked');
   });
   const mount = (
     transcription?: CommandTranscriptionPort,
     availability?: () => { agent: boolean; voice: boolean },
+    interactionOwnership?: InteractionRegistry<string>,
+    mountHost: HTMLElement = host,
   ) => {
     const controller = new TaskCaptureController({
       target: {
@@ -230,7 +264,8 @@ async function setup(
       onResult: () => {},
       onRequestClose: () => {},
     });
-    const surface = new CaptureSurface(host, controller, {
+    const surface = new CaptureSurface(mountHost, controller, {
+      ...(interactionOwnership === undefined ? {} : { interactionOwnership }),
       extend: (capture) =>
         new CommandModeSurface(capture, {
           app: h.app,
@@ -254,17 +289,84 @@ async function setup(
     });
     return surface;
   };
+  const mountCoordinator = async (
+    transcription?: CommandTranscriptionPort,
+    availability?: () => { agent: boolean; voice: boolean },
+  ) => {
+    const coordinatedHost = document.body.createDiv();
+    const coordinator = new QuickCaptureCoordinator({
+      app: h.app,
+      host: coordinatedHost,
+      context: () => ({ type: 'list', selection: 'inbox' }),
+      resolveTarget: async (context) => ({
+        label: 'Inbox',
+        context,
+        markdownPrefix: '',
+        markdownSuffixes: [],
+        session: {
+          type: 'ready',
+          destination: { filePath: 'a.md', insertion: { type: 'append' } },
+          preview: () => ({ type: 'unavailable', cause: 'preview-capability' }),
+          execute: ordinaryExecute,
+        },
+      }),
+      interactionOwnership: new InteractionRegistry(),
+      command: {
+        active: () => memory.active,
+        hide: () => {
+          owner.hide().catch(() => {});
+        },
+        mount: (capture, close) =>
+          new CommandModeSurface(capture, {
+            app: h.app,
+            ...(transcription === undefined ? {} : { transcription }),
+            ...(availability === undefined ? {} : { availability }),
+            owner: resolveOwner,
+            memory,
+            context: () => 'Tasks view',
+            registry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+            projectSettings: () => projectSettings,
+            close,
+            navigate,
+          }),
+      },
+    });
+    cleanups.push(() => {
+      coordinator.destroy();
+    });
+    coordinator.openOrFocus();
+    await flushMicrotasks(0);
+    return {
+      coordinator,
+      host: coordinatedHost,
+      element: expectDefined(coordinatedHost.querySelector<HTMLElement>('.abyss-capture-surface')),
+      input: expectDefined(
+        coordinatedHost.querySelector<HTMLTextAreaElement>('.abyss-capture-input'),
+      ),
+    };
+  };
   return {
     ...h,
     api,
     owner,
+    notify,
+    mountCoordinator,
     get session() {
       return session;
     },
     memory,
     projectSettings,
+    persisted,
     resolveOwner,
     ordinaryExecute,
+    allowOrdinaryWrites: () =>
+      ordinaryExecute.mockImplementation(async (request) => {
+        const create = await h.service.planCreate({
+          type: 'explicit',
+          destination: { filePath: 'a.md', insertion: { type: 'append' } },
+        });
+        return create.execute(request);
+      }),
     mount,
     navigate,
     confirmInSession: (surface: CaptureSurface) => {
@@ -282,7 +384,7 @@ async function setup(
     closeCount: () => closeCount,
   };
 }
-function enter(surface: CaptureSurface, text: string) {
+function enter(surface: Pick<CaptureSurface, 'input'>, text: string) {
   surface.input.value = text;
   surface.input.dispatchEvent(new Event('input', { bubbles: true }));
   surface.input.dispatchEvent(
@@ -413,6 +515,17 @@ it('retains duplicate-child ownership, comment DOM and focus through a date-only
     surface.element.querySelectorAll<HTMLElement>('.abyss-subtask-label')[1],
   );
   const comment = expectDefined(surface.element.querySelector<HTMLElement>('.abyss-comment-text'));
+  expect(expectDefined(title.querySelector('ins.abyss-text-difference')).textContent).toBe(
+    'Duplicate',
+  );
+  expect(expectDefined(comment.querySelector('ins.abyss-text-difference')).textContent).toBe(
+    'Second child only',
+  );
+  expect(
+    expectDefined(title.closest<HTMLElement>('.abyss-task-card-main-row')).style.getPropertyValue(
+      '--abyss-command-task-depth',
+    ),
+  ).toBe('1');
   title.tabIndex = 0;
   title.focus();
   h.session.exchange('user', 'Change only the second child date');
@@ -509,7 +622,7 @@ it('keeps a proposed accepted child deletion identifiable and inert through unre
   });
   await flushMicrotasks(0);
   h.owner.setInput('Later');
-  await new Promise((resolve) => window.setTimeout(resolve, 220));
+  await new Promise((resolve) => window.setTimeout(resolve, 470));
   const row = expectDefined(
     [...surface.element.querySelectorAll<HTMLElement>('[data-change="removed"]')].find((element) =>
       element.textContent.includes('Remove'),
@@ -563,18 +676,18 @@ it('blocks owned missing basename links before native navigation and preserves e
   expect(opened).toEqual(['Other/Details']);
   expect(h.app.vault.getAbstractFileByPath('Folder/Details.md')).toBeNull();
 });
-it('offers new session through the compact history menu and retains a dirty tree until disposition', async () => {
+it('offers new session through the send context menu and retains a dirty tree until disposition', async () => {
   const h = await setup();
   const shown = captureMenus();
   const surface = h.mount();
   enter(surface, 'Create');
   await flushMicrotasks(0);
-  expectDefined(surface.element.querySelector<HTMLButtonElement>('[aria-label="History"]')).click();
+  openActions(surface);
   expectDefined(shown[0]).pick('New session');
   await flushMicrotasks(0);
   expect(h.owner.snapshot().pendingTransition?.kind).toBe('new-session');
   expect(surface.element.querySelector('.abyss-task-title')?.textContent).toBe('Parent');
-  expectDefined(surface.element.querySelector<HTMLButtonElement>('[aria-label="History"]')).click();
+  openActions(surface);
   expectDefined(shown[1]).pick('Keep for later');
   await flushMicrotasks(0);
   expect(h.owner.snapshot().proposal.changes).toHaveLength(0);
@@ -600,8 +713,13 @@ async function noteFocusTransition() {
   await h.owner.focus({ kind: 'task', target: target.target, revision: target.revision });
   return { ...h, notes, plan: prepared.value, target, other };
 }
-function historyMenu(surface: CaptureSurface, shown: ReturnType<typeof captureMenus>) {
-  expectDefined(surface.element.querySelector<HTMLButtonElement>('[aria-label="History"]')).click();
+function openActions(surface: CaptureSurface) {
+  expectDefined(
+    surface.element.querySelector<HTMLButtonElement>('.abyss-command-toolbar button:last-child'),
+  ).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+}
+function actionsMenu(surface: CaptureSurface, shown: ReturnType<typeof captureMenus>) {
+  openActions(surface);
   return expectDefined(shown[shown.length - 1]);
 }
 it('saves a rendered note and changes focus through the actual Save and continue menu once', async () => {
@@ -612,7 +730,7 @@ it('saves a rendered note and changes focus through the actual Save and continue
   expect(surface.element.querySelector('.abyss-command-note-body')?.textContent).toContain(
     'Agreed note',
   );
-  const menu = historyMenu(surface, shown);
+  const menu = actionsMenu(surface, shown);
   menu.pick('Save and continue');
   await vi.waitFor(() => {
     expect(h.owner.snapshot().focus[0]?.target).toBe(h.target.target);
@@ -640,7 +758,7 @@ it.each(['pending', 'failed'] as const)(
     });
     let surface = h.mount();
     await flushMicrotasks(0);
-    historyMenu(surface, shown).pick('Save and continue');
+    actionsMenu(surface, shown).pick('Save and continue');
     await flushMicrotasks(0);
     expect(h.app.vault.getFileByPath('Review.md')).toBeNull();
     expect(h.owner.snapshot().journal).toHaveLength(0);
@@ -652,7 +770,7 @@ it.each(['pending', 'failed'] as const)(
       surface = h.mount();
     }
     await flushMicrotasks(0);
-    historyMenu(surface, shown).pick('Save and continue');
+    actionsMenu(surface, shown).pick('Save and continue');
     await vi.waitFor(() => {
       expect(h.owner.snapshot().focus[0]?.target).toBe(h.target.target);
     });
@@ -664,7 +782,7 @@ it('rejects a retired surface menu even when a new surface displays the same not
   const shown = captureMenus();
   const original = h.mount();
   await flushMicrotasks(0);
-  const retired = historyMenu(original, shown);
+  const retired = actionsMenu(original, shown);
   original.destroy();
   const current = h.mount();
   await flushMicrotasks(0);
@@ -672,7 +790,7 @@ it('rejects a retired surface menu even when a new surface displays the same not
   await flushMicrotasks(0);
   expect(h.app.vault.getFileByPath('Review.md')).toBeNull();
   expect(h.owner.snapshot().journal).toHaveLength(0);
-  historyMenu(current, shown).pick('Save and continue');
+  actionsMenu(current, shown).pick('Save and continue');
   await vi.waitFor(() => {
     expect(h.owner.snapshot().focus[0]?.target).toBe(h.target.target);
   });
@@ -685,7 +803,7 @@ it.each(['proposal', 'session', 'transition'] as const)(
     const shown = captureMenus();
     const surface = h.mount();
     await flushMicrotasks(0);
-    const old = historyMenu(surface, shown);
+    const old = actionsMenu(surface, shown);
     if (stale === 'session') {
       await h.owner.newSession('keep');
       const created = await h.notes.prepare({
@@ -717,7 +835,7 @@ it.each(['proposal', 'session', 'transition'] as const)(
       kind: 'focus',
       target: [{ target: h.other.target }],
     });
-    historyMenu(surface, shown).pick('Save and continue');
+    actionsMenu(surface, shown).pick('Save and continue');
     await vi.waitFor(() => {
       expect(h.owner.snapshot().focus[0]?.target).toBe(h.other.target);
     });
@@ -1085,14 +1203,73 @@ it('keeps ordinary ready selection quiet and acknowledges only explicit reveal r
   expect(document.activeElement).toBe(surface.input);
 });
 
+function toolReferences(
+  message: Parameters<MockLanguageModelV4['doGenerate']>[0]['prompt'][number],
+): unknown {
+  if (message.role !== 'tool') return undefined;
+  for (const result of [...message.content].reverse()) {
+    if (result.type !== 'tool-result' || result.output.type !== 'json') continue;
+    const references = record(result.output.value)?.['references'];
+    if (references !== undefined) return references;
+  }
+  return undefined;
+}
+function surfaceReferences(
+  prompt: Parameters<MockLanguageModelV4['doGenerate']>[0]['prompt'],
+): unknown {
+  for (const message of [...prompt].reverse()) {
+    const references = toolReferences(message);
+    if (references !== undefined) return references;
+    if (message.role !== 'user') continue;
+    const text = message.content.find((part) => part.type === 'text');
+    if (text?.type === 'text')
+      return record(record(JSON.parse(text.text))?.['visibleSession'])?.['references'];
+  }
+  throw Error('Missing current references');
+}
+function referenceRows(value: unknown, family: string): Array<Record<string, unknown>> {
+  const rows = record(value)?.[family];
+  return Array.isArray(rows) ? rows.map((row: unknown) => expectDefined(record(row))) : [];
+}
+function currentSelection(h: Awaited<ReturnType<typeof setup>>) {
+  const state = h.owner.snapshot();
+  const rows = referenceRows(commandReferences(state), 'taskReferences');
+  return state.focus.map((focus) => {
+    const basis = record(rows.find((row) => row['target'] === focus.target)?.['editBasis']);
+    if (focus.kind !== 'task' || basis?.['kind'] !== 'append') return focus;
+    return {
+      kind: 'task',
+      target: focus.target,
+      plan: basis['plan'],
+      expectedPlanRevision: basis['expectedPlanRevision'],
+    };
+  });
+}
+function surfaceEdit(
+  h: Awaited<ReturnType<typeof setup>>,
+  references: unknown,
+  target: string,
+): string {
+  const canonical = commandReferences(h.owner.snapshot());
+  const family = referenceRows(canonical, 'commentReferences').some(
+    (row) => row['target'] === target,
+  )
+    ? 'commentReferences'
+    : 'taskReferences';
+  const index = referenceRows(canonical, family).findIndex((row) => row['target'] === target);
+  if (index < 0) throw Error('Missing exact editable owner');
+  return String(expectDefined(referenceRows(references, family)[index]?.['edit']));
+}
+
 function scriptedAgent(
   h: Awaited<ReturnType<typeof setup>>,
   calls: Array<{ tool: string; input: unknown }>,
 ): void {
   let sequence = 0;
   const model = new MockLanguageModelV4({
-    doGenerate: async () => {
+    doGenerate: async ({ prompt }) => {
       const call = expectDefined(calls.shift());
+      const references = surfaceReferences(prompt);
       return {
         content: [
           {
@@ -1100,9 +1277,23 @@ function scriptedAgent(
             toolCallId: `surface-${++sequence}`,
             toolName: call.tool,
             input: JSON.stringify(
-              typeof call.input === 'function' ? (call.input as () => unknown)() : call.input,
+              typeof call.input === 'function'
+                ? (call.input as (references: unknown) => unknown)(references)
+                : call.input,
             ),
           },
+          ...(call.tool === 'interpret' && (call.input as { intent?: string }).intent !== 'confirm'
+            ? [
+                {
+                  type: 'tool-call' as const,
+                  toolCallId: `surface-${++sequence}`,
+                  toolName: 'expand',
+                  input: JSON.stringify({
+                    capabilities: ['read', 'task', 'note', 'project', 'link', 'cleanup', 'status'],
+                  }),
+                },
+              ]
+            : []),
         ],
         finishReason: { unified: 'tool-calls', raw: 'tool_calls' },
         usage: {
@@ -1114,6 +1305,7 @@ function scriptedAgent(
     },
   });
   const agent = new CommandAgent({
+    reviewWrite: scriptedWriteReview,
     api: h.api,
     session: h.session,
     connections: { model: () => model },
@@ -1138,27 +1330,14 @@ it('proves the first saved-comment rewrite through the real tool path and restor
   const detail = await expectDefined(h.api.tasks.tree)({ target: second.target, limit: 500 });
   if (!detail.ok) throw new Error(detail.error.code);
   const comment = expectDefined(detail.value.tree.comments[0]);
-  const request = {
-    kind: 'edit',
-    target: root.target,
-    expectedRevision: root.revision,
-    operation: { type: 'update-comment', target: comment.target, text: 'Bring blue pen' },
-  };
   const calls: Array<{ tool: string; input: unknown }> = [
     { tool: 'interpret', input: { intent: 'plan', research: false } },
     { tool: 'read', input: { input: { kind: 'tree', target: second.target, limit: 500 } } },
     {
-      tool: 'task',
-      input: () => ({
-        input: {
-          ...request,
-          operation: {
-            ...request.operation,
-            target: expectDefined(
-              [...h.owner.snapshot().entities.tasks].reverse()[0]?.tree.comments[0],
-            ).target,
-          },
-        },
+      tool: 'change_task',
+      input: (references: unknown) => ({
+        edit: surfaceEdit(h, references, comment.target),
+        operation: { type: 'update-comment', text: 'Bring blue pen' },
       }),
     },
     { tool: 'finish', input: { state: 'ready', message: 'Ready.' } },
@@ -1174,7 +1353,8 @@ it('proves the first saved-comment rewrite through the real tool path and restor
   const surface = h.mount();
   enter(surface, 'Change only the second child comment');
   await vi.waitFor(() => {
-    expect(h.owner.snapshot().status.message).toBe('Ready.');
+    expect(h.owner.snapshot().input).toBe('');
+    expect(h.owner.snapshot().status.kind, h.owner.snapshot().status.message).toBe('ready');
   });
   const rows = surface.element.querySelectorAll<HTMLElement>('.abyss-comment-row');
   expect(expectDefined(rows[0]).textContent).toBe('Bring red pen');
@@ -1187,12 +1367,18 @@ it('proves the first saved-comment rewrite through the real tool path and restor
     { tool: 'interpret', input: { intent: 'plan', research: false } },
     {
       tool: 'finish',
-      input: { state: 'ready', message: 'All changes.', presentation: 'cumulative' },
+      input: () => ({
+        state: 'ready',
+        message: 'All changes.',
+        presentation: 'cumulative',
+        selection: currentSelection(h),
+      }),
     },
   );
   enter(surface, 'Show all changes');
   await vi.waitFor(() => {
-    expect(h.owner.snapshot().status.message).toBe('All changes.');
+    expect(h.owner.snapshot().input).toBe('');
+    expect(h.owner.snapshot().status.kind, h.owner.snapshot().status.message).toBe('ready');
   });
   expect(changed.querySelector('del')?.textContent).toBe('red');
   surface.destroy();
@@ -1201,11 +1387,19 @@ it('proves the first saved-comment rewrite through the real tool path and restor
   expect(reopened.element.querySelector('del')?.textContent).toBe('red');
   calls.push(
     { tool: 'interpret', input: { intent: 'plan', research: false } },
-    { tool: 'finish', input: { state: 'ready', message: 'Selection retained.' } },
+    {
+      tool: 'finish',
+      input: () => ({
+        state: 'ready',
+        message: 'Selection retained.',
+        selection: currentSelection(h),
+      }),
+    },
   );
   enter(reopened, 'Keep that selection');
   await vi.waitFor(() => {
-    expect(h.owner.snapshot().status.message).toBe('Selection retained.');
+    expect(h.owner.snapshot().input).toBe('');
+    expect(h.owner.snapshot().status.kind, h.owner.snapshot().status.message).toBe('ready');
   });
   expect(reopened.element.querySelector('del')).toBeNull();
   expect(h.owner.snapshot().presentation).toBeUndefined();
@@ -1242,7 +1436,7 @@ it('marks a direct saved-child link after two note-only turns and retains its it
   let surface = h.mount();
   enter(surface, 'Prepare a research note');
   await vi.waitFor(() => {
-    expect(h.owner.snapshot().status.message).toBe('Note prepared.');
+    expect(h.owner.snapshot().status.message).toBe('Ready. Enter to save.');
   });
   const note = expectDefined(
     h.owner.snapshot().proposal.changes.find((change) => change.kind === 'note'),
@@ -1264,7 +1458,7 @@ it('marks a direct saved-child link after two note-only turns and retains its it
   );
   enter(surface, 'Shorten the note');
   await vi.waitFor(() => {
-    expect(h.owner.snapshot().status.message).toBe('Note shortened.');
+    expect(h.owner.snapshot().status.message).toBe('Ready. Enter to save.');
   });
   expect(h.owner.snapshot().entities.tasks).toHaveLength(0);
   expect(surface.element.querySelectorAll('.abyss-comment-row')).toHaveLength(0);
@@ -1304,7 +1498,7 @@ it('marks a direct saved-child link after two note-only turns and retains its it
   );
   enter(surface, 'Link the note under the second child');
   await vi.waitFor(() => {
-    expect(h.owner.snapshot().status.message).toBe('Link prepared.');
+    expect(h.owner.snapshot().status.message).toBe('Ready. Enter to save.');
   });
   await flushMicrotasks(0);
   const rows = [...surface.element.querySelectorAll<HTMLElement>('.abyss-comment-row')];
@@ -1324,11 +1518,19 @@ it('marks a direct saved-child link after two note-only turns and retains its it
   );
   calls.push(
     { tool: 'interpret', input: { intent: 'plan', research: false } },
-    { tool: 'finish', input: { state: 'ready', message: 'Selection retained.' } },
+    {
+      tool: 'finish',
+      input: () => ({
+        state: 'ready',
+        message: 'Selection retained.',
+        selection: currentSelection(h),
+      }),
+    },
   );
   enter(surface, 'Keep this selection');
   await vi.waitFor(() => {
-    expect(h.owner.snapshot().status.message).toBe('Selection retained.');
+    expect(h.owner.snapshot().input).toBe('');
+    expect(h.owner.snapshot().status.kind, h.owner.snapshot().status.message).toBe('ready');
   });
   expect(surface.element.querySelectorAll('.abyss-comment-row[data-change="added"]')).toHaveLength(
     0,
@@ -1424,8 +1626,14 @@ it.each(['', ' ⏰ 10:00'])(
     });
     const duration = [
       ...surface.element.querySelectorAll<HTMLElement>('[data-change="changed"]'),
-    ].find((element) => element.textContent === '45m');
+    ].find((element) => element.querySelector('ins')?.textContent === '45m');
     expect(duration).toBeDefined();
+    expect(
+      [...surface.element.querySelectorAll('.abyss-task-meta-right del')].some(
+        (element) => element.textContent === '30m',
+      ),
+    ).toBe(true);
+    expect(duration?.querySelector('del')?.textContent).toBe('30m');
     expect(surface.element.textContent).toContain('2026-08-03');
     expect(surface.element.textContent).toContain('2026-08-10');
     await refineCommand(h, plan, {
@@ -1441,6 +1649,39 @@ it.each(['', ' ⏰ 10:00'])(
     expect(await h.read('a.md')).toContain('30m');
   },
 );
+it('shows removals from an earlier draft iteration, then retires their ghosts', async () => {
+  const h = await setup();
+  let surface = h.mount();
+  enter(surface, 'Create');
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().status.kind).toBe('ready');
+  });
+  let plan = currentPlan(h);
+  const first = expectDefined(plan.after?.children[0]);
+  const second = expectDefined(plan.after?.children[1]);
+  h.session.exchange('user', 'Remove the first child and the comment under the second');
+  plan = await refineCommand(h, plan, {
+    type: 'remove-comment',
+    target: expectDefined(second.comments[0]).target,
+  });
+  await refineCommand(h, plan, { type: 'remove', target: first.target });
+  expect(
+    surface.element.querySelector('.abyss-comment-row[data-change="removed"]')?.textContent,
+  ).toBe('Second child only');
+  expect(
+    surface.element.querySelector(
+      '.abyss-subtask-content[data-change="removed"] .abyss-subtask-label',
+    )?.textContent,
+  ).toBe('Duplicate');
+  surface.destroy();
+  surface = h.mount();
+  await flushMicrotasks(0);
+  expect(surface.element.querySelector('.abyss-comment-row[data-change="removed"]')).not.toBeNull();
+  h.session.exchange('user', 'Continue');
+  await flushMicrotasks(0);
+  expect(surface.element.querySelector('[data-change="removed"]')).toBeNull();
+});
+
 async function refineCommand(
   h: Awaited<ReturnType<typeof setup>>,
   plan: ContentPlanV1,
@@ -1468,7 +1709,9 @@ async function refineCommand(
 it('coalesces transient phase updates while questions and errors replace them immediately', async () => {
   const h = await setup();
   const surface = h.mount();
-  const phase = expectDefined(surface.element.querySelector<HTMLElement>('.abyss-command-phase'));
+  const phase = expectDefined(
+    surface.element.querySelector<HTMLElement>('.abyss-command-phase > span'),
+  );
   vi.useFakeTimers();
   try {
     h.session.status('thinking', 'Planning…');
@@ -1562,7 +1805,8 @@ it.each(['stale', 'unknown'])(
     const surface = h.mount();
     enter(surface, 'Merge both tasks');
     await vi.waitFor(() => {
-      expect(h.owner.snapshot().status.message).toBe('Ready.');
+      expect(h.owner.snapshot().input).toBe('');
+      expect(h.owner.snapshot().status.kind, h.owner.snapshot().status.message).toBe('ready');
     });
     expect(surface.element.querySelectorAll('.abyss-task-title')).toHaveLength(2);
     const removed = expectDefined(
@@ -1584,8 +1828,12 @@ it.each(['stale', 'unknown'])(
   },
 );
 
-async function projectSetup(source = '---\nEffort: 2\n---\nProject body\n') {
+async function projectSetup(
+  source = '---\nEffort: 2\n---\nProject body\n',
+  other: Record<string, string> = {},
+) {
   const app = await createAppWithFiles({
+    ...other,
     'projects/Project.md': source,
   });
   await app.vault.adapter.mkdir(`${app.vault.configDir}/plugins/abyss-tasks`);
@@ -1600,6 +1848,7 @@ async function projectSetup(source = '---\nEffort: 2\n---\nProject body\n') {
   });
   Object.assign(plugin.settings.projects, {
     membershipQuery: 'projects/',
+    createFolder: 'projects',
     propertyDefinitionsVersion: 1,
     propertyDefinitions: { 'property:Effort': { type: 'number' } },
   });
@@ -1622,8 +1871,78 @@ async function projectSetup(source = '---\nEffort: 2\n---\nProject body\n') {
   );
   h.projectSettings.propertyDefinitions['property:Effort'] = { type: 'number' };
   await h.owner.focus({ kind: 'project', target: project.target, revision: project.revision });
-  return { h, project, projects };
+  return { h, project, projects, api };
 }
+
+it('keeps the session gutter after a new project saves and remounts', async () => {
+  const { h, projects } = await projectSetup();
+  const schema = await projects.schema();
+  if (!schema.ok) throw new Error(schema.error.code);
+  h.setRun(async ({ text, signal, session }) => {
+    if (text === 'Save') await h.session.confirmFromTurn(session.proposal.revision, signal);
+    else
+      h.session.stage({
+        kind: 'project-create',
+        id: 'new-project-preview',
+        name: 'Created project',
+        schema: schema.value,
+      });
+  });
+  let surface = h.mount();
+  enter(surface, 'Create');
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().status.kind).toBe('ready');
+  });
+  const row = () =>
+    expectDefined(
+      [...surface.element.querySelectorAll<HTMLElement>('[data-session-changed]')].find((element) =>
+        element.textContent.includes('Created project'),
+      ),
+    );
+  expect(row().dataset['sessionChanged']).toBe('true');
+  enter(surface, 'Save');
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().status.kind).toBe('saved');
+  });
+  expect(h.owner.snapshot().proposal.changes).toHaveLength(0);
+  expect(row().dataset['sessionChanged']).toBe('true');
+  expect(row().querySelector('ins, del')).toBeNull();
+  surface.destroy();
+  surface = h.mount();
+  expect(row().dataset['sessionChanged']).toBe('true');
+});
+
+it.each([true, false])(
+  'keeps project changes while selecting its member task (related=%s)',
+  async (related) => {
+    const { h, project, api } = await projectSetup('---\nEffort: 2\n---\n- [ ] Member\n', {
+      'Other.md': '- [ ] Unrelated\n',
+    });
+    h.session.stage({
+      kind: 'project',
+      before: project,
+      fields: [{ fieldId: 'start', value: '2026-08-03' }],
+    });
+    const pending = h.owner.snapshot().proposal.changes;
+    const surface = h.mount();
+    const listed = await api.tasks.list();
+    if (!listed.ok) throw new Error(listed.error.code);
+    const task = expectDefined(
+      listed.value.items.find((item) => item.title === (related ? 'Member' : 'Unrelated')),
+    );
+    expect(
+      await h.owner.focus({ kind: 'task', target: task.target, revision: task.revision }),
+    ).toBe(related);
+    expect(h.owner.snapshot().proposal.changes).toEqual(pending);
+    if (related) {
+      expect(h.owner.snapshot().pendingTransition ?? null).toBeNull();
+      await vi.waitFor(() => {
+        expect(surface.element.textContent).toContain('Member');
+      });
+      expect(surface.element.textContent).toContain('Project');
+    } else expect(h.owner.snapshot().pendingTransition?.kind).toBe('focus');
+  },
+);
 
 it('keeps only this project iteration highlighted across remount and shows cumulative fields on request until verified save', async () => {
   const { h, project, projects } = await projectSetup();
@@ -1658,9 +1977,11 @@ it('keeps only this project iteration highlighted across remount and shows cumul
     });
   };
   await command('Effort');
+  expect(field().closest('[data-session-changed="true"]')).not.toBeNull();
   expect(field().getAttribute('data-change')).toBe('changed');
   const retainedProperty = field();
   await command('Start');
+  expect(field().closest('[data-session-changed="true"]')).not.toBeNull();
   expect(field()).toBe(retainedProperty);
   expect(start().compareDocumentPosition(field()) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
   expect(field().getAttribute('data-change')).toBe('');
@@ -1700,6 +2021,168 @@ it('keeps only this project iteration highlighted across remount and shows cumul
   );
 });
 
+it('removes cleared project fields after their iteration and restores them only for cumulative review', async () => {
+  const { h, project } = await projectSetup(
+    '---\nstart: 2026-08-03\ndescription: Original description\n---\nProject body\n',
+  );
+  h.session.stage({
+    kind: 'project',
+    before: project,
+    fields: [
+      { fieldId: 'start', value: null },
+      { fieldId: 'description', value: null },
+    ],
+  });
+  const surface = h.mount();
+  await flushMicrotasks(0);
+  expect(surface.element.querySelector('[aria-label^="Start:"]')?.getAttribute('data-change')).toBe(
+    'removed',
+  );
+  expect(
+    surface.element
+      .querySelector('[data-project-field="description"]')
+      ?.getAttribute('data-change'),
+  ).toBe('removed');
+  expect(surface.element.querySelector('[aria-label^="Start:"] del')).not.toBeNull();
+  expect(surface.element.querySelector('[data-project-field="description"] del')?.textContent).toBe(
+    'Original description',
+  );
+  h.session.exchange('user', 'Continue with another detail');
+  await flushMicrotasks(0);
+  expect(surface.element.querySelector('[aria-label^="Start:"]')).toBeNull();
+  expect(surface.element.querySelector('[data-project-field="description"]')).toBeNull();
+  h.setRun(async ({ signal }) => {
+    h.session.showChanges(signal);
+  });
+  enter(surface, 'All changes');
+  await vi.waitFor(() => {
+    expect(h.session.snapshot().status.kind).toBe('ready');
+  });
+  await flushMicrotasks(0);
+  expect(surface.element.querySelector('[aria-label^="Start:"]')?.getAttribute('data-change')).toBe(
+    'removed',
+  );
+  expect(
+    surface.element.querySelector('[data-project-field="description"]')?.textContent,
+  ).toContain('Original description');
+});
+
+it('shows the most recently reviewed project description when it is removed', async () => {
+  const { h, project } = await projectSetup('---\ndescription: Original\n---\nProject body\n');
+  const surface = h.mount();
+  h.session.stage({
+    kind: 'project',
+    before: project,
+    fields: [{ fieldId: 'description', value: 'Refined description' }],
+  });
+  await flushMicrotasks(0);
+  h.session.exchange('user', 'Remove the description');
+  h.session.stage({
+    kind: 'project',
+    before: project,
+    fields: [{ fieldId: 'description', value: null }],
+  });
+  await flushMicrotasks(0);
+  expect(surface.element.querySelector('[data-project-field="description"] del')?.textContent).toBe(
+    'Refined description',
+  );
+});
+
+it('reveals a changed project only after its native Markdown is ready', async () => {
+  const { h, project } = await projectSetup();
+  const waiting = deferred<void>();
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (...args) => {
+    if (args[1].includes('Long updated description')) await waiting.promise;
+    return renderNativeBlocks(...args);
+  });
+  h.session.stage({
+    kind: 'project',
+    before: project,
+    fields: [{ fieldId: 'description', value: 'Long updated description with [[Details]]' }],
+  });
+  const surface = h.mount();
+  const content = expectDefined(
+    surface.element.querySelector<HTMLElement>('.abyss-command-content'),
+  );
+  const scroll = vi.fn();
+  content.scrollTo = scroll;
+  vi.spyOn(content, 'getBoundingClientRect').mockReturnValue({ top: 100, bottom: 400 } as DOMRect);
+  const property = expectDefined(
+    content.querySelector<HTMLElement>('[data-project-field="description"]'),
+  );
+  vi.spyOn(property, 'getBoundingClientRect').mockReturnValue({ top: 600, bottom: 640 } as DOMRect);
+  await flushMicrotasks(0);
+  expect(scroll).not.toHaveBeenCalled();
+  waiting.resolve();
+  await flushMicrotasks(0);
+  expect(property.textContent).toContain('Long updated description');
+  expect(scroll).toHaveBeenCalledWith({ top: 248, behavior: 'smooth' });
+});
+it('waits for a focused project field to commit before revealing its change', async () => {
+  const { h, project } = await projectSetup(
+    '---\ndescription: "Original [[Details]]"\n---\nProject body\n',
+  );
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, text, holder) => {
+    const paragraph = holder.createEl('p', { text: text.replace('[[Details]]', '') });
+    paragraph.createEl('a', { text: 'Details', href: 'https://example.test/details' });
+  });
+  const surface = h.mount();
+  await flushMicrotasks(0);
+  const content = expectDefined(
+    surface.element.querySelector<HTMLElement>('.abyss-command-content'),
+  );
+  const property = expectDefined(
+    content.querySelector<HTMLElement>('[data-project-field="description"]'),
+  );
+  const link = expectDefined(property.querySelector<HTMLAnchorElement>('a'));
+  link.tabIndex = 0;
+  link.focus();
+  const scroll = vi.fn();
+  content.scrollTo = scroll;
+  vi.spyOn(content, 'getBoundingClientRect').mockReturnValue({ top: 100, bottom: 400 } as DOMRect);
+  vi.spyOn(property, 'getBoundingClientRect').mockReturnValue({ top: 600, bottom: 640 } as DOMRect);
+  h.session.stage({
+    kind: 'project',
+    before: project,
+    fields: [{ fieldId: 'description', value: 'Updated [[Details]]' }],
+  });
+  await flushMicrotasks(0);
+  expect(scroll).not.toHaveBeenCalled();
+  expect(property.textContent).toContain('Original');
+  surface.input.focus();
+  await flushMicrotasks(0);
+  expect(property.textContent).toContain('Updated');
+  expect(scroll).toHaveBeenCalledWith({ top: 248, behavior: 'smooth' });
+});
+
+it('omits an absent project date after adding and clearing it in a cumulative preview', async () => {
+  const { h, project } = await projectSetup('Project body\n');
+  const surface = h.mount();
+  h.session.stage({
+    kind: 'project',
+    before: project,
+    fields: [{ fieldId: 'start', value: '2026-08-03' }],
+  });
+  await flushMicrotasks(0);
+  h.session.exchange('user', 'Remove the new start');
+  h.session.stage({
+    kind: 'project',
+    before: project,
+    fields: [{ fieldId: 'start', value: null }],
+  });
+  await flushMicrotasks(0);
+  expect(surface.element.querySelector('[aria-label^="Start:"] del')).not.toBeNull();
+  h.setRun(async ({ signal }) => {
+    h.session.showChanges(signal);
+  });
+  enter(surface, 'All changes');
+  await vi.waitFor(() => {
+    expect(h.session.snapshot().status.kind).toBe('ready');
+  });
+  await flushMicrotasks(0);
+  expect(surface.element.querySelector('[aria-label^="Start:"]')).toBeNull();
+});
+
 it('retires a verified project description clear before and after remount', async () => {
   const { h, project, projects } = await projectSetup(
     '---\ndescription: Accepted description\n---\nProject body\n',
@@ -1724,7 +2207,8 @@ it('retires a verified project description clear before and after remount', asyn
   let surface = h.mount();
   enter(surface, 'Clear the description');
   await vi.waitFor(() => {
-    expect(h.owner.snapshot().status.message).toBe('Ready.');
+    expect(h.owner.snapshot().input).toBe('');
+    expect(h.owner.snapshot().status.kind, h.owner.snapshot().status.message).toBe('ready');
   });
   const removed = expectDefined(
     surface.element.querySelector<HTMLElement>('[data-project-field="description"]'),
@@ -1757,103 +2241,173 @@ function appendCall(
   operation: (plan: ContentPlanV1) => TaskContentOperationV1,
 ) {
   return {
-    tool: 'task',
-    input: () => {
-      const plan = currentPlan(h);
-      return {
-        input: {
-          kind: 'append',
-          plan: plan.target,
-          expectedPlanRevision: plan.revision,
-          operation: operation(plan),
-        },
-      };
+    tool: 'change_task',
+    input: (references: unknown) => {
+      const next = operation(currentPlan(h));
+      const { target, ...change } = next;
+      return { edit: surfaceEdit(h, references, target), operation: change };
     },
   };
 }
+
 it.each([
   ['B', 'A', 'Child C'],
   ['Child C', 'A', 'B'],
-])(
-  'retains canonical interleaved removal order across preparations and remount (%j)',
-  async (...order) => {
-    const h = await setup({
-      'a.md':
-        '- [ ] Root\n\t- 2026-08-01T10:00:00+00:00 → 2026-08-01T10:30:00+00:00\n\t- 2026-08-01: A\n\t- 2026-08-01: B\n\t- [ ] Child C\n\t- 2026-08-01T11:00:00+00:00 → 2026-08-01T11:30:00+00:00\n\t- 2026-08-01: D\n\t- [ ] Child E\n\t\t- 2026-08-01: A\n',
-    });
+])('keeps owner comments before children through removals and remount (%j)', async (...order) => {
+  const h = await setup({
+    'a.md':
+      '- [ ] Root\n\t- 2026-08-01T10:00:00+00:00 → 2026-08-01T10:30:00+00:00\n\t- 2026-08-01: A\n\t- 2026-08-01: B\n\t- [ ] Child C\n\t- 2026-08-01T11:00:00+00:00 → 2026-08-01T11:30:00+00:00\n\t- 2026-08-01: D\n\t- [ ] Child E\n\t\t- 2026-08-01: A\n',
+  });
+  const listed = await h.api.tasks.list();
+  if (!listed.ok) throw new Error(listed.error.code);
+  const root = expectDefined(listed.value.items[0]);
+  await h.owner.focus({ kind: 'task', target: root.target, revision: root.revision });
+  scriptedAgent(h, [
+    { tool: 'interpret', input: { intent: 'plan', research: false } },
+    {
+      tool: 'task',
+      input: { input: { kind: 'edit', target: root.target, expectedRevision: root.revision } },
+    },
+    ...order.map((label) =>
+      appendCall(h, (plan) =>
+        label === 'Child C'
+          ? {
+              type: 'remove',
+              target: expectDefined(
+                plan.after?.children.find((child) => child.markdownTitle === label),
+              ).target,
+            }
+          : {
+              type: 'remove-comment',
+              target: expectDefined(plan.after?.comments.find((comment) => comment.text === label))
+                .target,
+            },
+      ),
+    ),
+    { tool: 'finish', input: { state: 'ready', message: 'Ready.' } },
+  ]);
+  let surface = h.mount();
+  enter(surface, 'Remove these exact comments and child');
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().input).toBe('');
+    expect(h.owner.snapshot().status.kind, h.owner.snapshot().status.message).toBe('ready');
+  });
+  const display = () => {
+    const host = expectDefined(
+      surface.element.querySelector('.abyss-command-tree > .abyss-task-card'),
+    );
+    return [...host.children]
+      .filter((element) => element.matches('.abyss-comment-row, .abyss-subtask-content'))
+      .map((element) => ({
+        text: element.matches('.abyss-comment-row')
+          ? element.textContent
+          : element.querySelector('.abyss-subtask-label')?.textContent,
+        removed: element.getAttribute('data-change') === 'removed',
+      }));
+  };
+  const expected = [
+    { text: 'A', removed: true },
+    { text: 'B', removed: true },
+    { text: 'D', removed: false },
+    { text: 'Child C', removed: true },
+    { text: 'Child E', removed: false },
+  ];
+  expect(display()).toEqual(expected);
+  const nested = expectDefined(
+    surface.element.querySelector('.abyss-subtask-content:last-child .abyss-comment-row'),
+  );
+  expect(nested.textContent).toBe('A');
+  expect(nested.getAttribute('data-change')).not.toBe('removed');
+  surface.destroy();
+  surface = h.mount();
+  await flushMicrotasks(0);
+  expect(display()).toEqual(expected);
+  h.confirmInSession(surface);
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().status.kind).toBe('saved');
+  });
+  const saved = await expectDefined(h.api.tasks.tree)({ target: root.target, limit: 500 });
+  if (!saved.ok) throw new Error(saved.error.code);
+  expect(saved.value.tree.comments.map((comment) => comment.text)).toEqual(['D']);
+  expect(saved.value.tree.children.map((child) => child.markdownTitle)).toEqual(['Child E']);
+  expect(saved.value.tree.timeEntries).toHaveLength(2);
+});
+
+it.each([true, false])(
+  'keeps the right removed-comment baseline when rewrite and removal share an iteration: %s',
+  async (sameIteration) => {
+    const h = await setup({ 'a.md': '- [ ] Original root\n\t- 2026-08-01: Original comment\n' });
     const listed = await h.api.tasks.list();
     if (!listed.ok) throw new Error(listed.error.code);
     const root = expectDefined(listed.value.items[0]);
     await h.owner.focus({ kind: 'task', target: root.target, revision: root.revision });
+    const remove = () =>
+      appendCall(h, (plan) => ({
+        type: 'remove-comment',
+        target: expectDefined(plan.after?.comments[0]).target,
+      }));
     scriptedAgent(h, [
       { tool: 'interpret', input: { intent: 'plan', research: false } },
       {
         tool: 'task',
         input: { input: { kind: 'edit', target: root.target, expectedRevision: root.revision } },
       },
-      ...order.map((label) =>
-        appendCall(h, (plan) =>
-          label === 'Child C'
-            ? {
-                type: 'remove',
-                target: expectDefined(
-                  plan.after?.children.find((child) => child.markdownTitle === label),
-                ).target,
-              }
-            : {
-                type: 'remove-comment',
-                target: expectDefined(
-                  plan.after?.comments.find((comment) => comment.text === label),
-                ).target,
-              },
-        ),
-      ),
+      appendCall(h, (plan) => ({
+        type: 'update-comment',
+        target: expectDefined(plan.after?.comments[0]).target,
+        text: 'Refined comment',
+      })),
+      ...(sameIteration ? [remove()] : []),
       { tool: 'finish', input: { state: 'ready', message: 'Ready.' } },
     ]);
     let surface = h.mount();
-    enter(surface, 'Remove these exact comments and child');
+    enter(surface, 'Refine the comment');
     await vi.waitFor(() => {
-      expect(h.owner.snapshot().status.message).toBe('Ready.');
+      expect(h.session.snapshot().status.kind).toBe('ready');
     });
-    const display = () => {
-      const host = expectDefined(
-        surface.element.querySelector('.abyss-command-tree > .abyss-task-card'),
-      );
-      return [...host.children]
-        .filter((element) => element.matches('.abyss-comment-row, .abyss-subtask-content'))
-        .map((element) => ({
-          text: element.matches('.abyss-comment-row')
-            ? element.textContent
-            : element.querySelector('.abyss-subtask-label')?.textContent,
-          removed: element.getAttribute('data-change') === 'removed',
-        }));
-    };
-    const expected = [
-      { text: 'A', removed: true },
-      { text: 'B', removed: true },
-      { text: 'Child C', removed: true },
-      { text: 'D', removed: false },
-      { text: 'Child E', removed: false },
-    ];
-    expect(display()).toEqual(expected);
-    const nested = expectDefined(
-      surface.element.querySelector('.abyss-subtask-content:last-child .abyss-comment-row'),
+    await flushMicrotasks(0);
+    if (!sameIteration) {
+      scriptedAgent(h, [
+        { tool: 'interpret', input: { intent: 'plan', research: false } },
+        remove(),
+        { tool: 'finish', input: { state: 'ready', message: 'Ready.' } },
+      ]);
+      enter(surface, 'Remove that comment');
+      await vi.waitFor(() => {
+        expect(h.session.snapshot().status.kind).toBe('ready');
+        expect(currentPlan(h).after?.comments).toEqual([]);
+      });
+    }
+    await flushMicrotasks(0);
+    expect(
+      surface.element.querySelector('.abyss-comment-row[data-change="removed"]')?.textContent,
+    ).toBe(sameIteration ? 'Original comment' : 'Refined comment');
+    scriptedAgent(h, [
+      { tool: 'interpret', input: { intent: 'plan', research: false } },
+      {
+        tool: 'finish',
+        input: () => ({
+          state: 'ready',
+          message: 'All changes.',
+          presentation: 'cumulative',
+          selection: currentSelection(h),
+        }),
+      },
+    ]);
+    enter(surface, 'Show all changes');
+    await vi.waitFor(() => {
+      expect(h.session.snapshot().status.kind).toBe('ready');
+    });
+    await flushMicrotasks(0);
+    expect(surface.element.querySelector('.abyss-comment-row del')?.textContent).toBe(
+      'Original comment',
     );
-    expect(nested.textContent).toBe('A');
-    expect(nested.getAttribute('data-change')).not.toBe('removed');
     surface.destroy();
     surface = h.mount();
     await flushMicrotasks(0);
-    expect(display()).toEqual(expected);
-    h.confirmInSession(surface);
-    await vi.waitFor(() => {
-      expect(h.owner.snapshot().status.kind).toBe('saved');
-    });
-    const saved = await expectDefined(h.api.tasks.tree)({ target: root.target, limit: 500 });
-    if (!saved.ok) throw new Error(saved.error.code);
-    expect(saved.value.tree.comments.map((comment) => comment.text)).toEqual(['D']);
-    expect(saved.value.tree.children.map((child) => child.markdownTitle)).toEqual(['Child E']);
-    expect(saved.value.tree.timeEntries).toHaveLength(2);
+    expect(surface.element.querySelector('.abyss-comment-row del')?.textContent).toBe(
+      'Original comment',
+    );
   },
 );
 
@@ -1901,7 +2455,15 @@ it('retains every task and comment change in one user iteration while keeping la
   let surface = h.mount();
   const title = () => expectDefined(surface.element.querySelector('.abyss-task-title'));
   const comment = () => expectDefined(surface.element.querySelector('.abyss-comment-row'));
+  const row = () => expectDefined(title().closest('.abyss-task-card-main-row'));
+  await flushMicrotasks(0);
+  expect(row().getAttribute('data-session-changed')).not.toBe('true');
+  expect(row().classList.contains('is-selected')).toBe(false);
   const checkFirst = () => {
+    expect(
+      surface.element.querySelector('.abyss-command-latest')?.closest('.abyss-command-content'),
+    ).toBeNull();
+    expect(row().getAttribute('data-session-changed')).toBe('true');
     expect(title().querySelector('del')?.textContent).toBe('Original');
     expect(title().querySelector('ins')?.textContent).toBe('Renamed');
     expect(comment().getAttribute('data-change')).toBe('changed');
@@ -1913,7 +2475,8 @@ it('retains every task and comment change in one user iteration while keeping la
   };
   enter(surface, 'Rename, rewrite comment, and set the date');
   await vi.waitFor(() => {
-    expect(h.owner.snapshot().status.message).toBe('Ready.');
+    expect(h.owner.snapshot().input).toBe('');
+    expect(h.owner.snapshot().status.kind, h.owner.snapshot().status.message).toBe('ready');
   });
   checkFirst();
   surface.destroy();
@@ -1931,9 +2494,10 @@ it('retains every task and comment change in one user iteration while keeping la
   );
   enter(surface, 'Change only time');
   await vi.waitFor(() => {
-    expect(h.owner.snapshot().status.message).toBe('Only time.');
+    expect(h.owner.snapshot().status.message).toBe('Ready. Enter to save.');
   });
   const checkLatest = () => {
+    expect(row().getAttribute('data-session-changed')).toBe('true');
     expect(title().textContent).toBe('Renamed root');
     expect(comment().textContent).toBe('Final comment');
     expect(comment().getAttribute('data-change')).toBe('');
@@ -1954,12 +2518,18 @@ it('retains every task and comment change in one user iteration while keeping la
     { tool: 'interpret', input: { intent: 'plan', research: false } },
     {
       tool: 'finish',
-      input: { state: 'ready', message: 'All changes.', presentation: 'cumulative' },
+      input: () => ({
+        state: 'ready',
+        message: 'All changes.',
+        presentation: 'cumulative',
+        selection: currentSelection(h),
+      }),
     },
   );
   enter(surface, 'Show cumulative changes');
   await vi.waitFor(() => {
-    expect(h.owner.snapshot().status.message).toBe('All changes.');
+    expect(h.owner.snapshot().input).toBe('');
+    expect(h.owner.snapshot().status.kind, h.owner.snapshot().status.message).toBe('ready');
   });
   checkFirst();
   surface.destroy();
@@ -1971,6 +2541,11 @@ it('retains every task and comment change in one user iteration while keeping la
     expect(h.owner.snapshot().status.kind).toBe('saved');
   });
   expect(surface.element.querySelector('del, [data-change="changed"]')).toBeNull();
+  expect(row().getAttribute('data-session-changed')).toBe('true');
+  surface.destroy();
+  surface = h.mount();
+  await flushMicrotasks(0);
+  expect(row().getAttribute('data-session-changed')).toBe('true');
   expect(await h.read('a.md')).toContain('Renamed root');
   expect(await h.read('a.md')).toContain('Final comment');
 });
@@ -2125,7 +2700,7 @@ it('keeps native task DOM while a background research note proposal updates', as
   );
   expect(disclosure.tagName).toBe('DETAILS');
   expect(disclosure.open).toBe(false);
-  expect(disclosure.querySelector('ins')).toBeNull();
+  expect(disclosure.querySelector('summary ins')?.textContent).toBe('Research');
   expect(disclosure.dataset['change']).toBe('added');
   expectDefined(disclosure.querySelector('summary')).click();
   expect(disclosure.open).toBe(true);
@@ -2297,7 +2872,12 @@ it.each(['pending', 'failed'] as const)(
     await flushMicrotasks(0);
     expect(await h.read('Note.md')).toBe(original);
     expect(h.owner.snapshot().journal).toHaveLength(0);
-    scriptedAgent(h, [{ tool: 'interpret', input: { intent: 'confirm', research: false } }]);
+    scriptedAgent(h, [
+      {
+        tool: 'interpret',
+        input: { intent: 'confirm', approval: 'Yes, save these changes', research: false },
+      },
+    ]);
     enter(surface, 'Yes, save these changes');
     await vi.waitFor(() => {
       expect(h.owner.snapshot().status.kind).not.toBe('thinking');
@@ -2353,7 +2933,7 @@ it.each(['pending', 'failed'] as const)(
       await (args[1].includes('Latest draft') ? current.promise : waiting.promise);
       return render(...args);
     });
-    const second = h.mount();
+    let second = h.mount();
     await flushMicrotasks(0);
     enter(second, '');
     await flushMicrotasks(0);
@@ -2376,7 +2956,7 @@ it.each(['pending', 'failed'] as const)(
     ]);
     enter(second, 'Replace this with the latest draft');
     await vi.waitFor(() => {
-      expect(h.owner.snapshot().status.message).toBe('Revised.');
+      expect(h.owner.snapshot().status.message).toBe('Ready. Enter to save.');
     });
     expect(first.element.querySelector('.abyss-command-note-body')?.textContent).toContain(
       'First draft',
@@ -2391,6 +2971,12 @@ it.each(['pending', 'failed'] as const)(
     renderer.mockRestore();
     mockNativeBlocks();
     current.resolve();
+    // A failed historical comparison is part of the review; reopening retries
+    // that render after the host renderer has recovered.
+    if (fault === 'failed') {
+      second.destroy();
+      second = h.mount();
+    }
     await vi.waitFor(() => {
       expect(second.element.querySelector('.abyss-command-note-body')?.textContent).toContain(
         'Latest draft',
@@ -2684,7 +3270,8 @@ it.each([false, true])(
     ]);
     enter(surface, 'Read the full current note');
     await vi.waitFor(() => {
-      expect(h.owner.snapshot().status.message).toBe('Read current note.');
+      expect(h.owner.snapshot().input).toBe('');
+      expect(h.owner.snapshot().status.kind, h.owner.snapshot().status.message).toBe('ready');
     });
     const check = () => {
       expect(surface.element.querySelectorAll('.abyss-command-note')).toHaveLength(1);
@@ -2879,6 +3466,59 @@ it('compares native note blocks without raw heading deletion and keeps rendered 
   );
 });
 
+it('keeps note session marks while comparing only the latest refinement across remount', async () => {
+  mockNativeBlocks();
+  const h = await setup();
+  const notes = expectDefined(h.api.notes);
+  h.setRun(async ({ text }) => {
+    if (text === 'Wait') return;
+    const previous = h.session.snapshot().proposal.changes.find((change) => change.kind === 'note');
+    const prepared = await notes.prepare(
+      previous === undefined
+        ? {
+            kind: 'create',
+            path: 'Research.md',
+            title: 'Research',
+            text: '# Research\n\nCheck dark theme.',
+          }
+        : {
+            kind: 'refine',
+            plan: previous.plan.target,
+            expectedPlanRevision: previous.plan.revision,
+            operation: { type: 'replace-body', text: '# Research\n\nCheck light theme.' },
+          },
+    );
+    if (!prepared.ok) throw new Error(prepared.error.code);
+    h.session.stage({ kind: 'note', plan: prepared.value });
+  });
+  let surface = h.mount();
+  const command = async (text: string) => {
+    enter(surface, text);
+    await vi.waitFor(() => {
+      expect(h.owner.snapshot().input).toBe('');
+      expect(h.owner.snapshot().status.kind, h.owner.snapshot().status.message).toBe('ready');
+    });
+    await flushMicrotasks(0);
+  };
+  await command('Create');
+  expect(surface.element.querySelector('summary ins')?.textContent).toBe('Research');
+  await command('Light');
+  expect(surface.element.querySelector('summary ins')).toBeNull();
+  expect(surface.element.querySelector('.abyss-command-note-body del')?.textContent).toBe('dark');
+  expect(surface.element.querySelector('.abyss-command-note-body ins')?.textContent).toBe('light');
+  surface.destroy();
+  surface = h.mount();
+  await flushMicrotasks(0);
+  expect(surface.element.querySelector('.abyss-command-note-body ins')?.textContent).toBe('light');
+  await command('Wait');
+  expect(
+    surface.element.querySelector('.abyss-command-note ins, .abyss-command-note del'),
+  ).toBeNull();
+  expect(
+    surface.element.querySelector('.abyss-command-note')?.getAttribute('data-session-changed'),
+  ).toBe('true');
+});
+
 it('reviews independent note ranges as fields in one card and commits them together', async () => {
   mockReadingView();
   const original = 'First prose\n\n- [ ] Keep task\n\nSecond prose\n';
@@ -2948,11 +3588,11 @@ it('reviews independent note ranges as fields in one card and commits them toget
   );
 });
 
-it.each(['enter', 'send', 'microphone'])(
+it.each(['microphone'])(
   'manual voice finished with %s stays editable until the user sends it',
   async (action) => {
     const h = await setup();
-    const media = voiceMediaHarness(window);
+    const media = voiceMediaWithSampleClock();
     const transcribe = vi.fn(async () => 'Recognized command');
     const surface = h.mount({ available: () => {}, transcribe });
     const microphone = expectDefined(
@@ -2961,9 +3601,7 @@ it.each(['enter', 'send', 'microphone'])(
     microphone.click();
     await flushMicrotasks(0);
     expect(media.getUserMedia).toHaveBeenCalledOnce();
-    media.level(0.1);
-    await new Promise((resolve) => window.setTimeout(resolve, 200));
-    media.level(0);
+    await sampleUtterance(media);
     expect(transcribe).not.toHaveBeenCalled();
     if (action === 'microphone') microphone.click();
     else if (action === 'send')
@@ -2997,6 +3635,17 @@ it.each(['enter', 'send', 'microphone'])(
   },
 );
 
+function voiceMediaWithSampleClock() {
+  // Advance the analyser's interval and cue clock while the Q and storage callbacks run normally.
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'performance'] });
+  return voiceMediaHarness(window);
+}
+async function sampleUtterance(media: ReturnType<typeof voiceMediaHarness>) {
+  await vi.advanceTimersByTimeAsync(300);
+  media.level(0.1);
+  await vi.advanceTimersByTimeAsync(200);
+  media.level(0);
+}
 async function spoken(surface: CaptureSurface, media: ReturnType<typeof voiceMediaHarness>) {
   expectDefined(
     surface.element.querySelector<HTMLButtonElement>('[aria-label="Microphone"]'),
@@ -3013,21 +3662,22 @@ async function spokenCommand(
     surface.element.querySelector<HTMLButtonElement>('[aria-label="Microphone"]'),
   );
   if (microphone.getAttribute('aria-pressed') !== 'true') microphone.click();
-  await finishSpoken(surface, media);
+  await flushMicrotasks(0);
+  const track = expectDefined(media.tracks[media.tracks.length - 1]);
+  await sampleUtterance(media);
+  await vi.advanceTimersByTimeAsync(3500);
+  expect(track.readyState).toBe('ended');
+  await flushMicrotasks(0);
 }
 async function finishSpoken(surface: CaptureSurface, media: ReturnType<typeof voiceMediaHarness>) {
   await flushMicrotasks(0);
-  media.level(0.1);
-  await new Promise((resolve) => window.setTimeout(resolve, 220));
-  media.level(0);
-  surface.input.dispatchEvent(
-    new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
-  );
+  await sampleUtterance(media);
+  voiceButton(surface).click();
   await flushMicrotasks(0);
 }
 it('empty final speech never confirms the retained reviewed proposal', async () => {
   const h = await setup();
-  const media = voiceMediaHarness(window);
+  const media = voiceMediaWithSampleClock();
   const surface = h.mount({ available: () => {}, transcribe: async () => '   ' });
   enter(surface, 'Create parent');
   await vi.waitFor(() => {
@@ -3044,7 +3694,7 @@ it.each(['hide', 'session', 'unload', 'pagehide'])(
   'retires %s media and held final results without submitting on Q resume',
   async (action) => {
     const h = await setup();
-    const media = voiceMediaHarness(window);
+    const media = voiceMediaWithSampleClock();
     const result = deferred<string>();
     const surface = h.mount({ available: () => {}, transcribe: () => result.promise });
     await spoken(surface, media);
@@ -3068,7 +3718,7 @@ it.each(['hide', 'session', 'unload', 'pagehide'])(
 );
 it('retains both exact typed input and late voice text without submitting the combined composer', async () => {
   const h = await setup();
-  const media = voiceMediaHarness(window);
+  const media = voiceMediaWithSampleClock();
   const result = deferred<string>();
   const surface = h.mount({ available: () => {}, transcribe: () => result.promise });
   await spokenCommand(h, surface, media);
@@ -3084,13 +3734,22 @@ it('retains both exact typed input and late voice text without submitting the co
 });
 it("retains another surface's exact draft when held voice recognition finishes", async () => {
   const h = await setup();
-  const media = voiceMediaHarness(window);
+  const media = voiceMediaWithSampleClock();
   const result = deferred<string>();
   const origin = h.mount({ available: () => {}, transcribe: () => result.promise });
-  const other = h.mount();
+  const frame = document.body.createEl('iframe');
+  const otherDocument = expectDefined(frame.contentDocument);
+  const otherHost = document.body.createDiv();
+  otherDocument.body.append(otherHost);
+  const other = h.mount(undefined, undefined, undefined, otherHost);
+  await flushMicrotasks(0);
+  expect(origin.element.isConnected).toBe(true);
+  expect(other.element.isConnected).toBe(true);
   await spokenCommand(h, origin, media);
   other.input.value = '  Unsent text from the other Q  ';
   other.input.dispatchEvent(new Event('input', { bubbles: true }));
+  expect(h.closeCount()).toBe(0);
+  expect(origin.input.getAttribute('aria-label')).toBe('Command');
   result.resolve('Spoken command');
   await flushMicrotasks(0);
   expect(origin.input.value).toBe('  Unsent text from the other Q  \n\nSpoken command');
@@ -3104,14 +3763,16 @@ it("retains another surface's exact draft when held voice recognition finishes",
 });
 it('an identical-byte edit in another surface invalidates pending voice and protects late clearing', async () => {
   const h = await setup();
-  const media = voiceMediaHarness(window);
+  const media = voiceMediaWithSampleClock();
   const result = deferred<string>(),
     finish = deferred<void>();
   h.setRun(async () => finish.promise);
   const origin = h.mount({ available: () => {}, transcribe: () => result.promise });
   const other = h.mount();
-  enter(origin, 'Same command');
   await spokenCommand(h, origin, media);
+  enter(origin, 'Same command');
+  expect(other.input.value).toBe('');
+  h.owner.setInput('Same command');
   expect(other.input.value).toBe('Same command');
   other.input.dispatchEvent(new Event('input', { bubbles: true }));
   finish.resolve();
@@ -3127,7 +3788,7 @@ it('an identical-byte edit in another surface invalidates pending voice and prot
 });
 it('voice preserves retained nonempty input selected from history in an already mounted surface', async () => {
   const h = await setup();
-  const media = voiceMediaHarness(window);
+  const media = voiceMediaWithSampleClock();
   const surface = h.mount({ available: () => {}, transcribe: async () => 'Spoken command' });
   const original = h.owner.snapshot().id;
   surface.input.value = '  Retained draft  ';
@@ -3146,7 +3807,7 @@ it('voice preserves retained nonempty input selected from history in an already 
 });
 it("voice in a new empty session submits normally after another session's unsent draft", async () => {
   const h = await setup();
-  const media = voiceMediaHarness(window);
+  const media = voiceMediaWithSampleClock();
   const surface = h.mount({ available: () => {}, transcribe: async () => 'Create parent' });
   surface.input.value = 'Prior unsent draft';
   surface.input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -3165,7 +3826,7 @@ it("voice in a new empty session submits normally after another session's unsent
 });
 it('preserves a changed focus and proposal when a final acknowledgement was captured for another subject', async () => {
   const h = await setup();
-  const media = voiceMediaHarness(window);
+  const media = voiceMediaWithSampleClock();
   const result = deferred<string>();
   const surface = h.mount({ available: () => {}, transcribe: () => result.promise });
   enter(surface, 'Create parent');
@@ -3191,53 +3852,54 @@ it('preserves a changed focus and proposal when a final acknowledgement was capt
   expect(h.owner.snapshot().exchanges.filter((e) => e.role === 'user')).toHaveLength(1);
   expect(await h.read('a.md')).toBe('- [ ] Existing\n');
 });
-it('final continuous speech steers planning; activity alone leaves the current turn running', async () => {
-  const h = await setup();
-  const media = voiceMediaHarness(window);
-  const calls: Array<Parameters<CommandAgentPort['run']>[0]> = [];
-  h.setRun(async (input) => {
-    calls.push(input);
-    if (calls.length === 1)
-      await new Promise<void>((resolve) => {
-        input.signal.addEventListener(
-          'abort',
-          () => {
-            resolve();
-          },
-          { once: true },
-        );
-      });
+it('waits with all tracks stopped through ASR, research and a published result until the whole turn settles', async () => {
+  const h = await setup(),
+    media = voiceMediaHarness(window);
+  const recognition = deferred<string>(),
+    research = deferred<void>(),
+    finish = deferred<void>();
+  h.setRun(async ({ text, signal }) => {
+    h.session.status('searching', 'Reading sources');
+    await research.promise;
+    h.session.question(text);
+    await finish.promise;
+    expect(signal.aborted).toBe(false);
   });
-  const texts = ['First voice command', 'Second voice refinement'];
-  h.mount({
-    available: () => {},
-    transcribe: async () => expectDefined(texts.shift()),
-  });
-  h.session.setVoiceMode('continuous');
-  await flushMicrotasks(0);
-  for (let index = 0; index < 2; index++) {
-    media.level(0.1);
-    await new Promise((resolve) => window.setTimeout(resolve, 220));
-    if (index === 1) expect(calls[0]?.signal.aborted).toBe(false);
-    media.level(0);
-    await vi.waitFor(
-      () => {
-        expect(calls).toHaveLength(index + 1);
-      },
-      { timeout: 2000 },
-    );
-  }
-  expect(calls[0]?.signal.aborted).toBe(true);
-  expect(calls.map((call) => call.text)).toEqual([
-    'First voice command',
-    'Second voice refinement',
-  ]);
+  const transcribe = vi.fn(() => recognition.promise);
+  h.owner.setVoiceMode('continuous');
+  vi.useFakeTimers();
+  const surface = h.mount({ available: () => {}, transcribe });
+  await vi.advanceTimersByTimeAsync(300);
+  media.level(0.1);
+  await vi.advanceTimersByTimeAsync(200);
+  media.level(0);
+  await vi.advanceTimersByTimeAsync(3500);
+  expect(transcribe).toHaveBeenCalledOnce();
+  expect(media.tracks[0]?.readyState).toBe('ended');
+  expect(voiceButton(surface).getAttribute('aria-description')).toMatch(/recognizing/i);
+  expect(voiceButton(surface).getAttribute('aria-description')).not.toMatch(/listening/i);
+  await vi.advanceTimersByTimeAsync(5000);
   expect(media.getUserMedia).toHaveBeenCalledOnce();
-  expect(media.tracks[0]?.stop).not.toHaveBeenCalled();
+  recognition.resolve('First voice command');
+  await vi.advanceTimersByTimeAsync(200);
+  expect(h.owner.snapshot().status.kind).toBe('searching');
+  expect(voiceButton(surface).getAttribute('aria-description')).toMatch(/paused/i);
+  research.resolve();
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(h.owner.snapshot().activeQuestion).toBe('First voice command');
+  expect(media.getUserMedia).toHaveBeenCalledOnce();
+  finish.resolve();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(media.getUserMedia).toHaveBeenCalledTimes(2);
+  expect(media.tracks[1]?.readyState).toBe('live');
+  expect(voiceButton(surface).getAttribute('aria-description')).toMatch(/listening/i);
+  expect(h.owner.snapshot().exchanges.filter((entry) => entry.role === 'user')).toEqual([
+    { role: 'user', text: 'First voice command' },
+  ]);
 });
 it('voice failure leaves typed input and proposal available for the next deliberate attempt', async () => {
   const h = await setup();
-  const media = voiceMediaHarness(window);
+  const media = voiceMediaWithSampleClock();
   const transcribe = vi.fn(async () => 'Retried voice');
   transcribe.mockRejectedValueOnce(new Error('private provider detail'));
   const surface = h.mount({ available: () => {}, transcribe });
@@ -3264,7 +3926,7 @@ it.each(['ready', 'pending'])(
   async (readiness) => {
     mockNativeBlocks();
     const h = await setup();
-    const media = voiceMediaHarness(window);
+    const media = voiceMediaWithSampleClock();
     const prepared = await expectDefined(h.api.notes).prepare({
       kind: 'create',
       path: 'Voice.md',
@@ -3280,7 +3942,12 @@ it.each(['ready', 'pending'])(
         await renderNativeBlocks(...args);
       });
     const surface = h.mount({ available: () => {}, transcribe: async () => 'Yes, save it' });
-    scriptedAgent(h, [{ tool: 'interpret', input: { intent: 'confirm', research: false } }]);
+    scriptedAgent(h, [
+      {
+        tool: 'interpret',
+        input: { intent: 'confirm', approval: 'Yes, save it', research: false },
+      },
+    ]);
     await spokenCommand(h, surface, media);
     await vi.waitFor(() => {
       expect(h.owner.snapshot().exchanges.filter((e) => e.role === 'user')).toHaveLength(1);
@@ -3300,7 +3967,7 @@ it.each(['ready', 'pending'])(
 );
 it('speech captured before a proposal revision change cannot confirm the newer proposal', async () => {
   const h = await setup();
-  const media = voiceMediaHarness(window);
+  const media = voiceMediaWithSampleClock();
   const result = deferred<string>();
   const surface = h.mount({ available: () => {}, transcribe: () => result.promise });
   enter(surface, 'Create parent');
@@ -3311,15 +3978,19 @@ it('speech captured before a proposal revision change cannot confirm the newer p
   const original = h.owner.snapshot().proposal.changes[0];
   if (original?.kind !== 'task') throw new Error('No plan');
   h.session.stage(original);
-  scriptedAgent(h, [{ tool: 'interpret', input: { intent: 'confirm', research: false } }]);
+  scriptedAgent(h, [
+    { tool: 'interpret', input: { intent: 'confirm', approval: 'Confirm it', research: false } },
+  ]);
   result.resolve('Confirm it');
-  await flushMicrotasks(0);
+  await vi.waitFor(() => {
+    const state = h.owner.snapshot();
+    expect(state.activeQuestion ?? '', state.status.message).toMatch(/proposal changed/i);
+  });
   expect(await h.read('a.md')).toBe('- [ ] Existing\n');
   expect(h.owner.snapshot().journal).toEqual([]);
-  expect(h.owner.snapshot().activeQuestion).toMatch(/proposal changed/i);
   expect(surface.element.querySelector('.abyss-command-latest')?.textContent).toBe('Confirm it');
 });
-it('final voice waits for an admitted write and follows its verified focus mapping without replay', async () => {
+it('voice acquisition waits for an admitted write and captures the verified focus without replay', async () => {
   const admitted = deferred<void>(),
     release = deferred<void>();
   let writes = 0;
@@ -3336,7 +4007,7 @@ it('final voice waits for an admitted write and follows its verified focus mappi
       },
     },
   }));
-  const media = voiceMediaHarness(window);
+  const media = voiceMediaWithSampleClock();
   const surface = h.mount({ available: () => {}, transcribe: async () => 'Refine after saving' });
   enter(surface, 'Create parent');
   await vi.waitFor(() => {
@@ -3356,19 +4027,26 @@ it('final voice waits for an admitted write and follows its verified focus mappi
   h.setRun(async ({ session }) => {
     interpreted = session;
   });
-  await spokenCommand(h, surface, media);
+  h.session.setVoiceMode('continuous');
+  await flushMicrotasks(0);
+  expect(media.getUserMedia).not.toHaveBeenCalled();
   expect(interpreted).toBeUndefined();
   expect(writes).toBe(1);
   release.resolve();
+  await vi.waitFor(() => {
+    expect(media.tracks[0]?.readyState).toBe('live');
+  });
+  const savedRevision = h.owner.snapshot().proposal.revision;
+  await spokenCommand(h, surface, media);
   await vi.waitFor(() => {
     expect(interpreted).toBeDefined();
   });
   expect(writes).toBe(1);
   expect(interpreted?.focus[0]?.target).toBe(h.owner.snapshot().actual[0]?.target);
-  expect(interpreted?.submissionBasis?.proposalRevision).toBe(1);
+  expect(interpreted?.submissionBasis?.proposalRevision).toBe(savedRevision);
   expect((await h.read('a.md')).match(/Parent/g)).toHaveLength(1);
 });
-it('final voice waits for a dispatched apply before its source effect, then previews a new refinement', async () => {
+it('voice acquisition waits for a dispatched apply before its source effect, then previews a new refinement', async () => {
   const admitted = deferred<void>(),
     release = deferred<void>();
   let calls = 0;
@@ -3402,7 +4080,7 @@ it('final voice waits for a dispatched apply before its source effect, then prev
   });
   if (!prepared.ok) throw new Error(prepared.error.code);
   h.session.stage({ kind: 'task', plan: prepared.value });
-  const media = voiceMediaHarness(window);
+  const media = voiceMediaWithSampleClock();
   const surface = h.mount({ available: () => {}, transcribe: async () => 'Set twenty minutes' });
   let interpreted: CommandSessionSnapshot | undefined;
   h.setRun(async ({ session }) => {
@@ -3425,10 +4103,17 @@ it('final voice waits for a dispatched apply before its source effect, then prev
   h.confirmInSession(surface);
   await admitted.promise;
   expect(h.owner.snapshot().journal[0]?.state).toBe('admitted');
-  await spokenCommand(h, surface, media);
+  h.session.setVoiceMode('continuous');
+  await flushMicrotasks(0);
+  expect(media.getUserMedia).not.toHaveBeenCalled();
   expect(interpreted).toBeUndefined();
   expect(await h.read('a.md')).toBe('- [ ] Existing\n');
   release.resolve();
+  await vi.waitFor(() => {
+    expect(media.tracks[0]?.readyState).toBe('live');
+  });
+  const savedRevision = h.owner.snapshot().proposal.revision;
+  await spokenCommand(h, surface, media);
   await vi.waitFor(() => {
     expect(h.owner.snapshot().journal[0]?.effects).toBe('committed');
   });
@@ -3437,7 +4122,7 @@ it('final voice waits for a dispatched apply before its source effect, then prev
   });
   expect(calls).toBe(1);
   expect(interpreted?.focus[0]?.target).toBe(h.owner.snapshot().actual[0]?.target);
-  expect(interpreted?.submissionBasis?.proposalRevision).toBe(1);
+  expect(interpreted?.submissionBasis?.proposalRevision).toBe(savedRevision);
   expect(
     h.owner
       .snapshot()
@@ -3459,7 +4144,7 @@ it('final voice waits for a dispatched apply before its source effect, then prev
 });
 it('a second Enter during recorder finalization or pending ASR cannot confirm the old proposal', async () => {
   const h = await setup();
-  const media = voiceMediaHarness(window);
+  const media = voiceMediaWithSampleClock();
   const result = deferred<string>();
   const surface = h.mount({ available: () => {}, transcribe: () => result.promise });
   enter(surface, 'Create parent');
@@ -3470,9 +4155,7 @@ it('a second Enter during recorder finalization or pending ASR cannot confirm th
     surface.element.querySelector<HTMLButtonElement>('[aria-label="Microphone"]'),
   ).click();
   await flushMicrotasks(0);
-  media.level(0.1);
-  await new Promise((resolve) => window.setTimeout(resolve, 220));
-  media.level(0);
+  await sampleUtterance(media);
   const recorder = expectDefined(media.recorders[0]),
     finish = recorder.stop.bind(recorder);
   vi.spyOn(recorder, 'stop').mockImplementation(() => {});
@@ -3530,7 +4213,7 @@ it('ends the owned transcription deadline without clearing the typed composer or
   ).click();
   await vi.advanceTimersByTimeAsync(0);
   media.level(0.1);
-  await vi.advanceTimersByTimeAsync(220);
+  await vi.advanceTimersByTimeAsync(470);
   media.level(0);
   surface.input.dispatchEvent(
     new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
@@ -3564,7 +4247,7 @@ it('starts the selected continuous mode once on Q open and releases it before re
 it('transcribes in ordinary Q without an agent connection or switching capture mode', async () => {
   const h = await setup();
   h.memory.active = false;
-  const media = voiceMediaHarness(window);
+  const media = voiceMediaWithSampleClock();
   const surface = h.mount(
     { available: () => {}, transcribe: async () => 'Ordinary dictation' },
     () => ({ agent: false, voice: true }),
@@ -3578,13 +4261,148 @@ it('transcribes in ordinary Q without an agent connection or switching capture m
   expect(h.owner.snapshot().exchanges).toHaveLength(0);
   expect(await h.read('a.md')).toBe('- [ ] Existing\n');
 });
-it('keeps agent phases, readiness, questions and errors visible during continuous listening', async () => {
+it.each(['stop and edit', 'one-click send'] as const)(
+  'uses native task creation for standalone Voice (%s) despite a retained continuous command preference',
+  async (gesture) => {
+    const h = await setup(),
+      media = voiceMediaHarness(window),
+      transcript = deferred<string>();
+    h.allowOrdinaryWrites();
+    h.owner.setVoiceMode('continuous');
+    h.owner.setInput('An older command draft');
+    const run = vi.fn(async () => {});
+    h.setRun(run);
+    const transport = new NativeProviderTransport(
+      async () => {
+        throw new Error('No LLM requests for dictation');
+      },
+      () => () => {},
+    );
+    cleanups.push(() => {
+      transport.dispose();
+    });
+    const connections = new ProviderConnections(
+      new ProviderSecrets({
+        getSecret: (id) => (id === 'abyss-tasks-openai-api-key' ? 'synthetic-speech' : null),
+        setSecret: () => {},
+      }),
+      transport,
+    );
+    const surface = await h.mountCoordinator(
+      { available: () => {}, transcribe: () => transcript.promise },
+      () => connections.availability({ voice: 'openai', provider: 'disabled' }),
+    );
+    expect(surface.input.getAttribute('aria-label')).toBe('Add task');
+    const mic = voiceButton(surface);
+    expect(mic.hidden).toBe(false);
+    expect(voiceButton(surface, 'CommandMode').hidden).toBe(true);
+    expect(voiceButton(surface, 'History').hidden).toBe(false);
+    const menus = captureMenus();
+    for (const button of [mic, voiceButton(surface, 'Send')])
+      button.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    expect(menus).toHaveLength(0);
+    expect(h.resolveOwner).not.toHaveBeenCalled();
+    expect(media.getUserMedia).not.toHaveBeenCalled();
+    vi.useFakeTimers();
+    await startManualSpeech(surface, media);
+    if (gesture === 'stop and edit') {
+      mic.click();
+      transcript.resolve('Spoken task');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(surface.input.value).toBe('Spoken task');
+      expect(h.ordinaryExecute).not.toHaveBeenCalled();
+      surface.input.value = 'Edited spoken task';
+      surface.input.dispatchEvent(new Event('input', { bubbles: true }));
+      voiceButton(surface, 'Send').click();
+    } else {
+      voiceButton(surface, 'Send').click();
+      transcript.resolve('Spoken task');
+    }
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await h.read('a.md')).toBe(
+      gesture === 'stop and edit'
+        ? '- [ ] Existing\n- [ ] Edited spoken task ➕ 2026-08-01\n'
+        : '- [ ] Existing\n- [ ] Spoken task ➕ 2026-08-01\n',
+    );
+    expect(h.ordinaryExecute).toHaveBeenCalledOnce();
+    expect(h.owner.snapshot()).toMatchObject({
+      input: 'An older command draft',
+      exchanges: [],
+      voiceMode: 'continuous',
+    });
+    expect(run).not.toHaveBeenCalled();
+  },
+);
+it.each(['recovered', 'terminal error', 'manual stop', 'hidden window'] as const)(
+  'settles continuous capture after a failed task focus and SDK retry (%s)',
+  async (outcome) => {
+    const h = await setup(),
+      media = voiceMediaHarness(window);
+    const result = await h.api.tasks.list();
+    if (!result.ok) throw new Error(result.error.code);
+    const task = expectDefined(result.value.items[0]);
+    h.owner.setVoiceMode('continuous');
+    const surface = h.mount({ available: () => {}, transcribe: async () => '' });
+    const voicePhase = expectDefined(surface.element.querySelector('.abyss-command-voice-phase'));
+    await vi.waitFor(() => {
+      expect(media.tracks[0]?.readyState).toBe('live');
+    });
+    const focus = { kind: 'task', target: task.target, revision: task.revision };
+    let errorDuringTurn = false;
+    let phaseDuringRetry = '';
+    let tracksDuringRetry: string[] = [];
+    cleanups.push(
+      h.owner.subscribe((state) => {
+        if (h.owner.commandPending() && state.status.kind === 'error') errorDuringTurn = true;
+      }),
+    );
+    scriptedAgent(h, [
+      { tool: 'find', input: { query: 'Existing', purpose: 'show-only' } },
+      { tool: 'finish', input: { state: 'ready', selection: [{ ...focus, revision: 'expired' }] } },
+      {
+        tool: 'finish',
+        input: () => {
+          phaseDuringRetry = voicePhase.textContent;
+          tracksDuringRetry = media.tracks.map((track) => track.readyState);
+          if (outcome === 'terminal error')
+            throw new Error('Provider could not complete the retry');
+          if (outcome === 'manual stop') voiceButton(surface).click();
+          if (outcome === 'hidden window') {
+            vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+            document.dispatchEvent(new Event('visibilitychange'));
+          }
+          return { state: 'ready', selection: [focus] };
+        },
+      },
+    ]);
+    enter(surface, 'Show Existing');
+    await vi.waitFor(() => {
+      expect(h.owner.commandPending()).toBe(false);
+      expect(h.owner.snapshot().status.kind).toBe(outcome === 'terminal error' ? 'error' : 'ready');
+    });
+    expect(errorDuringTurn).toBe(true);
+    expect(phaseDuringRetry).toMatch(/paused/i);
+    expect(tracksDuringRetry).toEqual(['ended']);
+    expect(media.tracks[0]?.readyState).toBe('ended');
+    if (outcome !== 'terminal error') expect(h.owner.snapshot().focus).toMatchObject([focus]);
+    if (outcome === 'recovered') {
+      expect(media.getUserMedia).toHaveBeenCalledTimes(2);
+      expect(media.tracks[1]?.readyState).toBe('live');
+      expect(voiceButton(surface).getAttribute('aria-description')).toMatch(/listening/i);
+    } else {
+      expect(media.getUserMedia).toHaveBeenCalledOnce();
+      expect(voicePhase.textContent).toMatch(/stopped/i);
+    }
+  },
+);
+it('keeps agent phases and questions visible and retires continuous listening after an error', async () => {
   const h = await setup();
   const media = voiceMediaHarness(window);
   const surface = h.mount({ available: () => {}, transcribe: async () => '' });
   h.session.setVoiceMode('continuous');
+  voiceButton(surface).click();
   await flushMicrotasks(0);
-  const phase = expectDefined(surface.element.querySelector('.abyss-command-phase'));
+  const phase = expectDefined(surface.element.querySelector('.abyss-command-phase > span'));
   for (const [kind, message] of [
     ['thinking', 'Planning current command'],
     ['searching', 'Looking up sources'],
@@ -3602,10 +4420,10 @@ it('keeps agent phases, readiness, questions and errors visible during continuou
   expect(surface.element.querySelector('.abyss-command-question')?.textContent).toBe(
     'Which duplicate child?',
   );
-  expect(media.tracks[0]?.stop).not.toHaveBeenCalled();
+  expect(media.tracks.every((track) => track.readyState === 'ended')).toBe(true);
   expect(
     surface.element.querySelector('[aria-label="Microphone"]')?.getAttribute('aria-pressed'),
-  ).toBe('true');
+  ).toBe('false');
 });
 
 it('renders both native hierarchy roots with one moved child and its retained comment', async () => {
@@ -3704,7 +4522,7 @@ it('renders requested project creation values in the retained native project hea
 
 it('keeps a pending manual transcript editable when continuous mode is selected meanwhile', async () => {
   const h = await setup();
-  const media = voiceMediaHarness(window),
+  const media = voiceMediaWithSampleClock(),
     result = deferred<string>();
   const surface = h.mount({ available: () => {}, transcribe: () => result.promise });
   await spoken(surface, media);
@@ -3749,32 +4567,6 @@ it('stops continuous listening with the microphone and reports speech activity w
   expect(h.owner.snapshot().exchanges).toEqual([]);
 });
 
-it('does not write ordinary input on departure while dictation is recording or recognizing', async () => {
-  const h = await setup(),
-    media = voiceMediaHarness(window),
-    result = deferred<string>();
-  h.memory.active = false;
-  const surface = h.mount({ available: () => {}, transcribe: () => result.promise });
-  surface.input.value = 'Typed preface';
-  surface.input.dispatchEvent(new Event('input', { bubbles: true }));
-  expectDefined(
-    surface.element.querySelector<HTMLButtonElement>('[aria-label="Microphone"]'),
-  ).click();
-  await flushMicrotasks(0);
-  const outside = document.body.createEl('button');
-  outside.dispatchEvent(new Event('pointerdown', { bubbles: true }));
-  await flushMicrotasks(0);
-  expect(h.ordinaryExecute).not.toHaveBeenCalled();
-  await finishSpoken(surface, media);
-  outside.dispatchEvent(new Event('pointerdown', { bubbles: true }));
-  await flushMicrotasks(0);
-  expect(h.ordinaryExecute).not.toHaveBeenCalled();
-  result.resolve('Dictated continuation');
-  await flushMicrotasks(0);
-  expect(surface.input.value).toBe('Typed preface Dictated continuation');
-  expect(h.owner.snapshot().exchanges).toEqual([]);
-  expect(h.ordinaryExecute).not.toHaveBeenCalled();
-});
 it('keeps one textarea row when integer scrollHeight rounds a fractional line height upward', async () => {
   const h = await setup(),
     surface = h.mount(),
@@ -3802,3 +4594,2122 @@ it('restores ordinary capture when retained command mode loses its provider', as
   expect(h.owner.snapshot().input).toBe('Retained command draft');
   expect(h.resolveOwner).not.toHaveBeenCalled();
 });
+
+function openHistory(surface: CaptureSurface) {
+  expectDefined(surface.element.querySelector<HTMLButtonElement>('[aria-label="History"]')).click();
+  return expectDefined(document.body.querySelector<HTMLElement>('.abyss-command-history-popover'));
+}
+it.each(['command toggle', 'offline history'] as const)(
+  'retires an ordinary one-click speech send when opening %s',
+  async (route) => {
+    const h = await setup(),
+      media = voiceMediaHarness(window),
+      transcript = deferred<string>();
+    h.memory.active = false;
+    h.owner.setInput('Keep the command draft');
+    await h.owner.flush();
+    let signal: AbortSignal | undefined;
+    const surface = h.mount(
+      {
+        available: () => {},
+        transcribe: (_audio, current) => {
+          signal = current;
+          return transcript.promise;
+        },
+      },
+      () => ({ agent: route === 'command toggle', voice: true }),
+    );
+    vi.useFakeTimers();
+    await startManualSpeech(surface, media);
+    voiceButton(surface, 'Send').click();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(signal?.aborted).toBe(false);
+    if (route === 'command toggle') voiceButton(surface, 'CommandMode').click();
+    else expectDefined(historyRows(openHistory(surface))[0]).click();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(surface.input.getAttribute('aria-label')).toBe('Command');
+    expect(signal?.aborted).toBe(true);
+    transcript.resolve('Old quick capture');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(surface.input.value).toBe('Keep the command draft');
+    expect(h.owner.snapshot().exchanges).toEqual([]);
+    expect(h.ordinaryExecute).not.toHaveBeenCalled();
+  },
+);
+function historyRows(popup: HTMLElement) {
+  return [...popup.querySelectorAll<HTMLButtonElement>('.abyss-command-history-select')];
+}
+it('searches retained text in a compact newest activity history without transcripts or action-menu rows', async () => {
+  let time = 100;
+  const h = await setup(
+    {},
+    (api) => api,
+    () => time,
+  );
+  h.owner.setInput('Older task');
+  await h.owner.flush();
+  await h.owner.newSession('keep');
+  time = 200;
+  h.setRun(async () => {
+    h.session.exchange('agent', 'Retained assistant answer');
+    h.session.status('ready', 'Ready.');
+  });
+  await h.owner.submit('Newer task');
+  await h.owner.submit('Find this hidden followup');
+  await h.owner.flush();
+  await h.owner.newSession('keep');
+  const surface = h.mount();
+  const popup = openHistory(surface);
+  expect(popup.getAttribute('role')).toBe('dialog');
+  expect(historyRows(popup).map((row) => row.textContent)).toEqual(['Newer task', 'Older task']);
+  expect(popup.textContent).not.toContain('Retained assistant answer');
+  expect(popup.textContent).not.toContain('New session');
+  const search = expectDefined(popup.querySelector<HTMLInputElement>('input'));
+  search.value = 'HIDDEN FOLLOWUP';
+  search.dispatchEvent(new Event('input', { bubbles: true }));
+  expect(historyRows(popup).map((row) => row.textContent)).toEqual(['Newer task']);
+  search.value = 'absent';
+  search.dispatchEvent(new Event('input', { bubbles: true }));
+  expect(historyRows(popup)).toHaveLength(0);
+  expect(popup.textContent).toContain('No matching sessions');
+});
+it('deletes through a separate X and retains the search and focused input during asynchronous refresh', async () => {
+  const h = await setup();
+  h.owner.setInput('Keep this');
+  await h.owner.flush();
+  const first = h.owner.snapshot().id;
+  await h.owner.newSession('keep');
+  h.owner.setInput('Delete this');
+  await h.owner.flush();
+  await h.owner.newSession('keep');
+  const active = h.owner.snapshot().id;
+  const surface = h.mount();
+  const popup = openHistory(surface);
+  const search = expectDefined(popup.querySelector<HTMLInputElement>('input'));
+  search.value = 'this';
+  search.dispatchEvent(new Event('input', { bubbles: true }));
+  search.focus();
+  const wait = deferred<void>();
+  const remove = h.persisted.storage.remove;
+  h.persisted.storage.remove = async (id) => {
+    await wait.promise;
+    await remove(id);
+  };
+  const row = expectDefined(
+    historyRows(popup).find((button) => button.textContent === 'Delete this'),
+  );
+  expectDefined(
+    row.parentElement?.querySelector<HTMLButtonElement>('[aria-label="Delete session"]'),
+  ).click();
+  await flushMicrotasks();
+  expect(popup.textContent).toContain('Updating history');
+  expect(h.owner.snapshot().id).toBe(active);
+  expect(search.value).toBe('this');
+  expect(document.activeElement).toBe(search);
+  wait.resolve();
+  await vi.waitFor(() => {
+    expect(historyRows(popup).map((button) => button.textContent)).toEqual(['Keep this']);
+  });
+  expect(h.owner.recent().map((record) => record.snapshot.id)).toEqual([first]);
+  expect(search.value).toBe('this');
+  expect(document.activeElement).toBe(search);
+  expect(h.ordinaryExecute).not.toHaveBeenCalled();
+});
+it('clears all history through the broom and reports empty history', async () => {
+  const h = await setup();
+  h.owner.setInput('Disposable draft');
+  await h.owner.flush();
+  const surface = h.mount();
+  const popup = openHistory(surface);
+  expectDefined(popup.querySelector<HTMLButtonElement>('[aria-label="Clear history"]')).click();
+  await vi.waitFor(() => {
+    expect(h.owner.recent()).toHaveLength(0);
+  });
+  await flushMicrotasks();
+  expect(popup.textContent).toContain('No sessions yet');
+  expect(historyRows(popup)).toHaveLength(0);
+});
+it('shows history storage failures while keeping retained rows inspectable', async () => {
+  const h = await setup();
+  h.owner.setInput('Retained');
+  await h.owner.flush();
+  const surface = h.mount();
+  const popup = openHistory(surface);
+  h.persisted.storage.write = async () => {
+    throw new Error('disk unavailable');
+  };
+  expectDefined(popup.querySelector<HTMLButtonElement>('[aria-label="Clear history"]')).click();
+  await vi.waitFor(() => {
+    expect(h.owner.persistenceFailure()).not.toBeNull();
+  });
+  expect(popup.querySelector('[role="status"]')?.textContent).toContain('history');
+  expect(historyRows(popup).map((row) => row.textContent)).toEqual(['Retained']);
+});
+it('owns detached history input and Escape restores History focus and releases shortcut ownership', async () => {
+  const h = await setup();
+  const registry = new InteractionRegistry<string>();
+  h.memory.active = false;
+  const surface = h.mount(undefined, undefined, registry);
+  surface.input.value = 'Ordinary draft';
+  surface.input.dispatchEvent(new Event('input', { bubbles: true }));
+  surface.input.focus();
+  const popup = openHistory(surface);
+  const search = expectDefined(popup.querySelector<HTMLInputElement>('input'));
+  expect(surface.element.contains(popup)).toBe(false);
+  expect(document.activeElement).toBe(search);
+  expect(registry.allows('next')).toBe(false);
+  await flushMicrotasks(0);
+  expect(h.ordinaryExecute).not.toHaveBeenCalled();
+  search.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+  );
+  expect(popup.isConnected).toBe(false);
+  expect(document.activeElement?.getAttribute('aria-label')).toBe('History');
+  expect(registry.allows('next')).toBe(true);
+  openHistory(surface);
+  surface.destroy();
+  expect(document.querySelector('.abyss-command-history-popover')).toBeNull();
+  expect(registry.allows('next')).toBe(true);
+});
+it('selects complete saved descendants from JSON history without native reads or provider execution', async () => {
+  let treeReads = 0;
+  const h = await setup({}, (api) => ({
+    ...api,
+    tasks: {
+      ...api.tasks,
+      tree: async (...args) => {
+        treeReads++;
+        return expectDefined(api.tasks.tree)(...args);
+      },
+    },
+  }));
+  const first = h.mount();
+  enter(first, 'Create');
+  await flushMicrotasks(0);
+  h.confirmInSession(first);
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().actual.length).toBeGreaterThan(0);
+  });
+  await h.session.whenIdle();
+  await h.owner.flush();
+  const savedSnapshot = h.owner.snapshot();
+  const reloaded = await CommandSessionStore.open({ ...h.persisted, now: () => 1 });
+  const record = expectDefined(
+    reloaded.records().find((item) => item.snapshot.id === savedSnapshot.id),
+  );
+  expect(record.snapshot.actual).toEqual(savedSnapshot.actual);
+  expect(record.snapshot.actual[0]?.complete).toBe(true);
+  await h.owner.newSession('keep');
+  first.destroy();
+  const readsAfterSave = treeReads;
+  let runs = 0;
+  h.setRun(async () => {
+    runs++;
+  });
+  const surface = h.mount({ available: () => {}, transcribe: async () => 'Unsendable' }, () => ({
+    agent: false,
+    voice: true,
+  }));
+  expect(voiceButton(surface).hidden).toBe(false);
+  const popup = openHistory(surface);
+  expectDefined(historyRows(popup)[0]).click();
+  await vi.waitFor(() => {
+    expect(surface.element.querySelector('.abyss-task-title')?.textContent).toBe('Parent');
+  });
+  expect(surface.element.querySelector<HTMLElement>('.abyss-command-content')?.hidden).toBe(false);
+  expect(voiceButton(surface).hidden).toBe(true);
+  expect(popup.isConnected).toBe(false);
+  expect(surface.element.querySelector('.abyss-command-content')?.textContent).toContain(
+    'Second child only',
+  );
+  expect(surface.element.querySelector('.abyss-command-content')?.textContent).not.toContain(
+    'Incomplete saved tree',
+  );
+  expect(treeReads).toBe(readsAfterSave);
+  enter(surface, 'Do another thing');
+  await flushMicrotasks(0);
+  expect(runs).toBe(0);
+  expect(h.ordinaryExecute).not.toHaveBeenCalled();
+});
+it.each(['historical', 'live'] as const)(
+  'uses receipt-verified actual for %s restoration while preserving fresh live selection',
+  async (mode) => {
+    const h = await setup();
+    const listed = await h.api.tasks.list();
+    if (!listed.ok) throw new Error(listed.error.code);
+    const root = expectDefined(listed.value.items[0]);
+    const stale = await expectDefined(h.api.tasks.tree)({
+      target: root.target,
+      expectedRevision: root.revision,
+    });
+    if (!stale.ok) throw new Error(stale.error.code);
+    const prepared = await expectDefined(h.api.tasks.prepare)({
+      kind: 'edit',
+      target: root.target,
+      expectedRevision: root.revision,
+      operation: {
+        type: 'patch',
+        target: root.target,
+        patch: { markdownTitle: { type: 'set', value: 'Verified result' } },
+      },
+    });
+    if (!prepared.ok) throw new Error(prepared.error.code);
+    h.session.stage({ kind: 'task', plan: prepared.value });
+    expect(await h.owner.confirm()).toBe(true);
+    expect(h.owner.snapshot().journal[0]?.effects).toBe('committed');
+    const actual = expectDefined(h.owner.snapshot().actual[0]);
+    // History can retain an older discovery of the receipt's committed identity.
+    h.session.restore(
+      {
+        ...h.owner.snapshot(),
+        entities: {
+          tasks: [
+            {
+              ...stale.value,
+              tree: {
+                ...stale.value.tree,
+                target: actual.target,
+                markdownTitle: mode === 'live' ? 'Fresh selected read' : 'Stale discovery',
+              },
+            },
+          ],
+          projects: [],
+          notes: [],
+        },
+      },
+      mode === 'historical',
+    );
+    const surface = h.mount();
+    await flushMicrotasks(0);
+    expect(surface.element.querySelector('.abyss-task-title')?.textContent).toBe(
+      mode === 'live' ? 'Fresh selected read' : 'Verified result',
+    );
+  },
+);
+it('keeps incomplete historical scope without reading expired handles or accepting a late live expansion', async () => {
+  const wait = deferred<void>();
+  const admitted = deferred<void>();
+  const comments = Array.from({ length: 65 }, (_, i) => `\t- 2026-08-01: Comment ${i}\n`).join('');
+  let reads = 0;
+  const h = await setup(
+    {
+      'a.md': `- [ ] Existing\n${comments}`,
+    },
+    (api) => ({
+      ...api,
+      tasks: {
+        ...api.tasks,
+        tree: async (input) => {
+          reads++;
+          if (reads > 1) {
+            admitted.resolve();
+            await wait.promise;
+          }
+          return expectDefined(api.tasks.tree)(input);
+        },
+      },
+    }),
+  );
+  const listed = await h.api.tasks.list();
+  if (!listed.ok) throw new Error(listed.error.code);
+  const root = expectDefined(listed.value.items[0]);
+  const read = await expectDefined(h.api.tasks.tree)({
+    target: root.target,
+    expectedRevision: root.revision,
+    limit: 10,
+  });
+  if (!read.ok) throw new Error(read.error.code);
+  expect(read.value.tree.complete).toBe(false);
+  const retained = {
+    ...h.owner.snapshot(),
+    focus: [{ kind: 'task' as const, target: root.target, revision: root.revision }],
+    entities: { tasks: [read.value], projects: [], notes: [] },
+  };
+  h.session.restore(retained);
+  let surface = h.mount();
+  await flushMicrotasks(0);
+  expect(reads).toBe(1);
+  expect(surface.element.querySelector('.abyss-command-content')?.textContent).toContain(
+    'Incomplete saved tree',
+  );
+  surface.destroy();
+  h.session.restore(retained, false);
+  surface = h.mount();
+  await admitted.promise;
+  h.session.restore(retained);
+  wait.resolve();
+  await flushMicrotasks(0);
+  expect(surface.element.querySelector('.abyss-command-content')?.textContent).toContain(
+    'Incomplete saved tree',
+  );
+  expect(surface.element.querySelectorAll('.abyss-comment-row')).toHaveLength(
+    read.value.tree.comments.length,
+  );
+  h.session.restore(retained, false);
+  await vi.waitFor(() => {
+    expect(surface.element.querySelectorAll('.abyss-comment-row')).toHaveLength(65);
+  });
+  h.session.restore(retained);
+  await flushMicrotasks(0);
+  expect(surface.element.querySelectorAll('.abyss-comment-row')).toHaveLength(
+    read.value.tree.comments.length,
+  );
+  expect(await h.owner.review()).toBe(true);
+  expect(await h.owner.focus({ kind: 'task', target: root.target, revision: root.revision })).toBe(
+    true,
+  );
+  await flushMicrotasks(0);
+  expect(reads).toBeGreaterThan(2);
+  expect(surface.element.querySelectorAll('.abyss-comment-row')).toHaveLength(65);
+  expect(surface.element.querySelector('.abyss-command-tree-scope')?.hasAttribute('hidden')).toBe(
+    true,
+  );
+});
+it('protects an unresolved history row and leaves all records when clear-all is blocked', async () => {
+  const h = await setup({}, (api) => ({
+    ...api,
+    tasks: {
+      ...api.tasks,
+      create: async () => ({
+        ok: false as const,
+        error: { code: 'LOST', category: 'io' as const, message: 'Lost receipt' },
+        effects: 'unknown' as const,
+        recovery: 'reconcile' as const,
+      }),
+    },
+  }));
+  const surface = h.mount();
+  enter(surface, 'Create');
+  await flushMicrotasks(0);
+  h.confirmInSession(surface);
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().blocked).toBe(true);
+  });
+  await h.owner.flush();
+  const popup = openHistory(surface);
+  const remove = expectDefined(
+    popup.querySelector<HTMLButtonElement>('[aria-label="Delete session"]'),
+  );
+  expect(remove.disabled).toBe(true);
+  expect(remove.title).toContain('unresolved write');
+  const ids = h.owner.recent().map((record) => record.snapshot.id);
+  expectDefined(popup.querySelector<HTMLButtonElement>('[aria-label="Clear history"]')).click();
+  await vi.waitFor(() => {
+    expect(h.owner.persistenceFailure()).not.toBeNull();
+  });
+  expect(h.owner.recent().map((record) => record.snapshot.id)).toEqual(ids);
+  expect(popup.querySelector('[role="status"]')?.textContent).toContain('history');
+});
+
+it('searches a pending project subject even when another focused entity supplies the session title', async () => {
+  const { h, projects } = await projectSetup();
+  const schema = await projects.schema();
+  if (!schema.ok) throw new Error(schema.error.code);
+  h.session.stage({
+    kind: 'project-create',
+    id: 'another-project',
+    name: 'Hidden project subject',
+    schema: schema.value,
+  });
+  await h.owner.flush();
+  const surface = h.mount();
+  const popup = openHistory(surface);
+  const search = expectDefined(popup.querySelector<HTMLInputElement>('input'));
+  search.value = 'Hidden project subject';
+  search.dispatchEvent(new Event('input', { bubbles: true }));
+  expect(historyRows(popup)).toHaveLength(1);
+  expect(historyRows(popup)[0]?.textContent).toBe('Project');
+});
+it('returns keyboard focus to history search when a pending row deletion loses its button focus', async () => {
+  const h = await setup();
+  h.owner.setInput('Remove focused row');
+  await h.owner.flush();
+  await h.owner.newSession('keep');
+  const surface = h.mount();
+  const popup = openHistory(surface);
+  const wait = deferred<void>();
+  const removeFile = h.persisted.storage.remove;
+  h.persisted.storage.remove = async (id) => {
+    await wait.promise;
+    await removeFile(id);
+  };
+  const remove = expectDefined(
+    popup.querySelector<HTMLButtonElement>('[aria-label="Delete session"]'),
+  );
+  remove.focus();
+  remove.click();
+  // Browsers may blur a focused button as it becomes disabled during the operation.
+  remove.blur();
+  wait.resolve();
+  await vi.waitFor(() => {
+    expect(historyRows(popup)).toHaveLength(0);
+  });
+  await flushMicrotasks(0);
+  expect(document.activeElement).toBe(popup.querySelector('input'));
+});
+
+it.each(['contextmenu', 'keyboard'])(
+  'selects continuous voice explicitly from the microphone %s menu',
+  async (method) => {
+    const h = await setup(),
+      media = voiceMediaHarness(window),
+      shown = captureMenus();
+    const surface = h.mount({ available: () => {}, transcribe: async () => '' });
+    const mic = expectDefined(
+      surface.element.querySelector<HTMLButtonElement>('[aria-label="Microphone"]'),
+    );
+    mic.dispatchEvent(
+      method === 'contextmenu'
+        ? new MouseEvent('contextmenu', { bubbles: true, cancelable: true })
+        : new KeyboardEvent('keydown', {
+            key: 'F10',
+            shiftKey: true,
+            bubbles: true,
+            cancelable: true,
+          }),
+    );
+    expect(shown[shown.length - 1]?.titles).toEqual(['Dictation', 'Continuous']);
+    expectDefined(shown[shown.length - 1]).pick('Continuous');
+    await flushMicrotasks(0);
+    expect(h.owner.snapshot().voiceMode).toBe('continuous');
+    expect(media.getUserMedia).toHaveBeenCalledOnce();
+    expect(h.owner.snapshot().exchanges).toEqual([]);
+  },
+);
+it('ordinary dictation preserves mounted command status and elapsed children', async () => {
+  const h = await setup(),
+    media = voiceMediaWithSampleClock();
+  h.memory.active = false;
+  const surface = h.mount({ available: () => {}, transcribe: async () => 'Dictated text' });
+  await spoken(surface, media);
+  const phase = expectDefined(surface.element.querySelector('.abyss-command-phase'));
+  expect(phase.querySelector('.abyss-command-elapsed')).not.toBeNull();
+  expectDefined(
+    surface.element.querySelector<HTMLButtonElement>('[aria-label="CommandMode"]'),
+  ).click();
+  h.session.status('error', 'Visible command failure');
+  expect(phase.textContent).toContain('Visible command failure');
+});
+it('shows failed command text once while preserving the editable retry and newer edits', async () => {
+  const h = await setup(),
+    surface = h.mount();
+  h.setRun(async () => {
+    throw new Error('failed');
+  });
+  enter(surface, 'Failed command');
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().status.kind).toBe('error');
+  });
+  expect(surface.input.value).toBe('Failed command');
+  const latest = expectDefined(surface.element.querySelector<HTMLElement>('.abyss-command-latest'));
+  expect(latest.hidden).toBe(true);
+  h.owner.setInput('Newer edit');
+  expect(latest.hidden).toBe(false);
+});
+it('empty Enter saves a reviewed preview while continuous capture is only listening', async () => {
+  const h = await setup(),
+    media = voiceMediaHarness(window);
+  const surface = h.mount({ available: () => {}, transcribe: async () => '' });
+  enter(surface, 'Create parent');
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().proposal.changes).toHaveLength(1);
+  });
+  h.session.setVoiceMode('continuous');
+  voiceButton(surface).click();
+  await flushMicrotasks(0);
+  surface.input.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+  );
+  await vi.waitFor(async () => {
+    expect(await h.read('a.md')).toContain('Parent');
+  });
+  expect(media.tracks[0]?.stop).toHaveBeenCalledOnce();
+});
+
+it.each(['finish', 'microphone', 'owner Stop', 'Escape', 'manual', 'session', 'error', 'pagehide'])(
+  'opening continuous Q during an existing turn waits; %s controls resumption',
+  async (action) => {
+    const h = await setup(),
+      media = voiceMediaHarness(window),
+      held = deferred<void>();
+    h.owner.setVoiceMode('continuous');
+    h.setRun(async () => {
+      await held.promise;
+      if (action === 'error') throw new Error('Failed turn');
+    });
+    const turn = h.owner.submit('Background command');
+    vi.useFakeTimers();
+    const surface = h.mount({ available: () => {}, transcribe: async () => '' });
+    await vi.advanceTimersByTimeAsync(200);
+    expect(media.getUserMedia).not.toHaveBeenCalled();
+    expect(voiceButton(surface).getAttribute('aria-description')).toMatch(/paused/i);
+    let changing: Promise<unknown> | undefined;
+    if (action === 'microphone') voiceButton(surface).click();
+    if (action === 'owner Stop') changing = h.owner.stop();
+    if (action === 'Escape')
+      surface.input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+      );
+    if (action === 'manual') h.owner.setVoiceMode('manual');
+    if (action === 'session') changing = h.owner.newSession('keep');
+    if (action === 'pagehide') window.dispatchEvent(new Event('pagehide'));
+    held.resolve();
+    await turn;
+    await changing;
+    await vi.advanceTimersByTimeAsync(0);
+    expect(media.getUserMedia).toHaveBeenCalledTimes(action === 'finish' ? 1 : 0);
+  },
+);
+it('opening a second visible continuous surface during ASR leaves the exclusive voice turn with its origin', async () => {
+  const h = await setup(),
+    media = voiceMediaHarness(window),
+    recognition = deferred<string>();
+  const frame = document.body.createEl('iframe');
+  const child = expectDefined(frame.contentWindow) as Window & typeof window;
+  const childMedia = voiceMediaHarness(child);
+  const otherHost = document.body.createDiv();
+  child.document.body.append(otherHost);
+  h.owner.setVoiceMode('continuous');
+  h.setRun(async () => {});
+  vi.useFakeTimers();
+  const origin = h.mount({ available: () => {}, transcribe: () => recognition.promise });
+  await vi.advanceTimersByTimeAsync(300);
+  media.level(0.1);
+  await vi.advanceTimersByTimeAsync(200);
+  media.level(0);
+  await vi.advanceTimersByTimeAsync(3500);
+  expect(voiceButton(origin).getAttribute('aria-description')).toMatch(/recognizing/i);
+  const other = h.mount(
+    { available: () => {}, transcribe: async () => '' },
+    undefined,
+    undefined,
+    otherHost,
+  );
+  await vi.advanceTimersByTimeAsync(0);
+  expect(childMedia.getUserMedia).not.toHaveBeenCalled();
+  voiceButton(other).click();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(childMedia.getUserMedia).not.toHaveBeenCalled();
+  recognition.resolve('Origin command');
+  await vi.advanceTimersByTimeAsync(0);
+  expect(h.owner.snapshot().exchanges.filter((entry) => entry.role === 'user')).toEqual([
+    { role: 'user', text: 'Origin command' },
+  ]);
+  expect(media.getUserMedia).toHaveBeenCalledTimes(2);
+  expect(childMedia.getUserMedia).not.toHaveBeenCalled();
+});
+it.each(['listening', 'recognizing', 'work', 'open during work'])(
+  'an ordinary microphone cannot take another surface’s enabled continuous claim during %s',
+  async (phase) => {
+    const h = await setup(),
+      media = voiceMediaHarness(window),
+      held = deferred<void>(),
+      recognition = deferred<string>();
+    const frame = document.body.createEl('iframe');
+    const child = expectDefined(frame.contentWindow) as Window & typeof window;
+    const childMedia = voiceMediaHarness(child);
+    const otherHost = document.body.createDiv();
+    child.document.body.append(otherHost);
+    h.owner.setVoiceMode('continuous');
+    h.setRun(async () => held.promise);
+    vi.useFakeTimers();
+    const background = phase === 'open during work' ? h.owner.submit('Already working') : undefined;
+    const origin = h.mount({ available: () => {}, transcribe: () => recognition.promise });
+    await vi.advanceTimersByTimeAsync(300);
+    if (phase === 'recognizing') {
+      media.level(0.1);
+      await vi.advanceTimersByTimeAsync(200);
+      media.level(0);
+      await vi.advanceTimersByTimeAsync(3500);
+    } else if (phase === 'work') enter(origin, 'Typed work');
+    h.memory.active = false;
+    const other = h.mount(
+      { available: () => {}, transcribe: async () => 'Ordinary dictation' },
+      undefined,
+      undefined,
+      otherHost,
+    );
+    expect(other.input.getAttribute('aria-label')).toBe('Add task');
+    voiceButton(other).click();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(childMedia.getUserMedia).not.toHaveBeenCalled();
+    expect(voiceButton(other).getAttribute('aria-description')).toMatch(/another panel/i);
+    expect(media.tracks.some((track) => track.readyState === 'live')).toBe(phase === 'listening');
+    if (phase === 'work' || phase === 'open during work') {
+      voiceButton(other, 'CommandMode').click();
+      voiceButton(other).click();
+      expect(childMedia.getUserMedia).not.toHaveBeenCalled();
+    }
+    recognition.resolve('Origin command');
+    held.resolve();
+    await background;
+    await vi.advanceTimersByTimeAsync(300);
+    expect(media.tracks[media.tracks.length - 1]?.readyState).toBe('live');
+    voiceButton(origin).click();
+    if (other.input.getAttribute('aria-label') === 'Command')
+      voiceButton(other, 'CommandMode').click();
+    voiceButton(other).click();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(childMedia.getUserMedia).toHaveBeenCalledOnce();
+  },
+);
+it('deliberate manual dictation can stay editable during an independent typed LLM turn', async () => {
+  const h = await setup(),
+    media = voiceMediaHarness(window),
+    held = deferred<void>();
+  let signal: AbortSignal | undefined;
+  h.setRun(async (turn) => {
+    signal = turn.signal;
+    await held.promise;
+  });
+  const running = h.owner.submit('Typed request');
+  h.memory.active = false;
+  const surface = h.mount({ available: () => {}, transcribe: async () => 'Manual text' });
+  vi.useFakeTimers();
+  await startManualSpeech(surface, media);
+  expect(media.tracks[0]?.readyState).toBe('live');
+  expect(
+    expectDefined(surface.element.querySelector('.abyss-command-waveform path')).hasAttribute('d'),
+  ).toBe(false);
+  voiceButton(surface).click();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(surface.input.value).toBe('Manual text');
+  expect(signal?.aborted).toBe(false);
+  expect(h.owner.snapshot().exchanges.filter((entry) => entry.role === 'user')).toEqual([
+    { role: 'user', text: 'Typed request' },
+  ]);
+  held.resolve();
+  await running;
+});
+it.each([false, true])(
+  'a delayed context-close error belongs to its recording, restarted=%s',
+  async (restart) => {
+    const h = await setup(),
+      media = voiceMediaHarness(window),
+      closing = deferred<void>();
+    h.owner.setVoiceMode('continuous');
+    vi.useFakeTimers();
+    const surface = h.mount({ available: () => {}, transcribe: async () => '' });
+    await vi.advanceTimersByTimeAsync(0);
+    expectDefined(media.contexts[0]).close.mockImplementationOnce(async () => {
+      await closing.promise;
+      throw new Error('Private device detail');
+    });
+    voiceButton(surface).click();
+    if (restart) {
+      voiceButton(surface).click();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(media.tracks[1]?.readyState).toBe('live');
+    }
+    closing.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    const description = voiceButton(surface).getAttribute('aria-description');
+    if (restart) {
+      expect(media.tracks[1]?.readyState).toBe('live');
+      expect(description).toMatch(/listening/i);
+    } else expect(description).toMatch(/could not release voice processing/i);
+  },
+);
+it.each(['Stop', 'microphone', 'empty', 'failure', 'timeout'])(
+  'retiring continuous recognition on %s never reacquires automatically',
+  async (action) => {
+    const h = await setup(),
+      media = voiceMediaHarness(window),
+      recognition = deferred<string>();
+    h.owner.setVoiceMode('continuous');
+    vi.useFakeTimers();
+    const surface = h.mount({
+      available: () => {},
+      transcribe: async () => {
+        const text = await recognition.promise;
+        if (action === 'failure') throw new Error('Private ASR failure');
+        return text;
+      },
+    });
+    await vi.advanceTimersByTimeAsync(300);
+    media.level(0.1);
+    await vi.advanceTimersByTimeAsync(200);
+    media.level(0);
+    await vi.advanceTimersByTimeAsync(3500);
+    expect(media.tracks[0]?.readyState).toBe('ended');
+    if (action === 'microphone') voiceButton(surface).click();
+    if (action === 'Stop') await h.owner.stop();
+    if (action === 'timeout') await vi.advanceTimersByTimeAsync(45000);
+    recognition.resolve(action === 'empty' ? '   ' : 'Late text');
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(h.owner.snapshot().exchanges).toEqual([]);
+    expect(media.getUserMedia).toHaveBeenCalledOnce();
+    voiceButton(surface).click();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(media.getUserMedia).toHaveBeenCalledTimes(2);
+  },
+);
+it('a delayed recorder stop keeps its container and shows capture has ended before ASR starts', async () => {
+  const h = await setup(),
+    media = voiceMediaHarness(window),
+    recognition = deferred<string>();
+  h.owner.setVoiceMode('continuous');
+  media.delayStops();
+  vi.useFakeTimers();
+  const transcribe = vi.fn(() => recognition.promise);
+  const surface = h.mount({ available: () => {}, transcribe });
+  await vi.advanceTimersByTimeAsync(300);
+  media.level(0.1);
+  await vi.advanceTimersByTimeAsync(200);
+  media.level(0);
+  await vi.advanceTimersByTimeAsync(3500);
+  expect(media.tracks[0]?.readyState).toBe('ended');
+  expect(transcribe).not.toHaveBeenCalled();
+  expect(voiceButton(surface).getAttribute('aria-pressed')).toBe('false');
+  expect(voiceButton(surface).getAttribute('aria-description')).toMatch(/finishing/i);
+  media.completeStops();
+  expect(transcribe).toHaveBeenCalledOnce();
+  expect(voiceButton(surface).getAttribute('aria-description')).toMatch(/recognizing/i);
+  recognition.resolve('');
+});
+it('retains already-finished speech when a typed turn starts before the recorder delivers its blob', async () => {
+  const h = await setup(),
+    media = voiceMediaHarness(window),
+    held = deferred<void>();
+  h.owner.setVoiceMode('continuous');
+  h.setRun(async () => held.promise);
+  media.delayStops();
+  vi.useFakeTimers();
+  const transcribe = vi.fn(async () => 'Earlier complete speech');
+  const surface = h.mount({ available: () => {}, transcribe });
+  await vi.advanceTimersByTimeAsync(300);
+  media.level(0.1);
+  await vi.advanceTimersByTimeAsync(200);
+  media.level(0);
+  await vi.advanceTimersByTimeAsync(3500);
+  expect(media.tracks[0]?.readyState).toBe('ended');
+  enter(surface, 'Typed command');
+  media.completeStops();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(transcribe).toHaveBeenCalledOnce();
+  held.resolve();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(surface.input.value).toBe('Earlier complete speech');
+  expect(h.owner.snapshot().exchanges.filter((entry) => entry.role === 'user')).toEqual([
+    { role: 'user', text: 'Typed command' },
+  ]);
+});
+it.each(['agent', 'voice'] as const)(
+  'rechecks the enabled %s connection before automatically reopening physical input',
+  async (role) => {
+    const h = await setup(),
+      media = voiceMediaHarness(window),
+      held = deferred<void>();
+    h.owner.setVoiceMode('continuous');
+    h.setRun(async () => held.promise);
+    const available = { agent: true, voice: true };
+    vi.useFakeTimers();
+    const surface = h.mount({ available: () => {}, transcribe: async () => '' }, () => available);
+    await vi.advanceTimersByTimeAsync(0);
+    enter(surface, 'Typed work');
+    expect(media.tracks[0]?.readyState).toBe('ended');
+    available[role] = false;
+    held.resolve();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(media.getUserMedia).toHaveBeenCalledOnce();
+  },
+);
+it.each(['permission', 'resume'])(
+  'rechecks enabled voice after delayed %s and stops the acquired track before starting a recorder',
+  async (phase) => {
+    const h = await setup(),
+      media = voiceMediaHarness(window),
+      held = deferred<void>();
+    let connected = true;
+    h.owner.setVoiceMode('continuous');
+    if (phase === 'permission') {
+      const acquire = expectDefined(media.getUserMedia.getMockImplementation());
+      media.getUserMedia.mockImplementation(async () => {
+        await held.promise;
+        return acquire();
+      });
+    } else media.resume(() => held.promise);
+    vi.useFakeTimers();
+    h.mount({ available: () => {}, transcribe: async () => '' }, () => ({
+      agent: true,
+      voice: connected,
+    }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(media.getUserMedia).toHaveBeenCalledOnce();
+    expect(media.recorders).toHaveLength(0);
+    connected = false;
+    held.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(media.tracks[0]?.readyState).toBe('ended');
+    expect(media.recorders).toHaveLength(0);
+    expect(media.cues).toEqual([]);
+    connected = true;
+    h.owner.updateContext('Later background publication');
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(media.getUserMedia).toHaveBeenCalledOnce();
+  },
+);
+it('retires late microphone permission during typed work without a false recording cue', async () => {
+  const h = await setup(),
+    media = voiceMediaHarness(window),
+    held = deferred<void>();
+  h.owner.setVoiceMode('continuous');
+  h.setRun(async () => held.promise);
+  vi.useFakeTimers();
+  const surface = h.mount({ available: () => {}, transcribe: async () => '' });
+  enter(surface, 'Typed before permission');
+  await vi.advanceTimersByTimeAsync(200);
+  expect(media.tracks[0]?.readyState).toBe('ended');
+  expect(media.recorders).toHaveLength(0);
+  expect(media.cues).toEqual([]);
+  held.resolve();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(media.tracks[1]?.readyState).toBe('live');
+  expect(media.cues).toHaveLength(1);
+});
+it('selecting dictation from a stopped continuous session does not acquire the microphone', async () => {
+  const h = await setup(),
+    media = voiceMediaHarness(window),
+    shown = captureMenus();
+  const surface = h.mount({ available: () => {}, transcribe: async () => '' });
+  h.owner.setVoiceMode('continuous');
+  voiceButton(surface).click();
+  await flushMicrotasks(0);
+  const mic = expectDefined(
+    surface.element.querySelector<HTMLButtonElement>('[aria-label="Microphone"]'),
+  );
+  mic.click();
+  expect(media.tracks[0]?.stop).toHaveBeenCalledOnce();
+  mic.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+  expectDefined(shown[shown.length - 1]).pick('Dictation');
+  await flushMicrotasks(0);
+  expect(h.owner.snapshot().voiceMode).toBe('manual');
+  expect(media.getUserMedia).toHaveBeenCalledOnce();
+  expect(mic.getAttribute('aria-pressed')).toBe('false');
+});
+
+it.each(['', ' 🔁 every week on Wednesday'])(
+  'shows recurrence add/change/removal without changing date/time (%s)',
+  async (initial) => {
+    const h = await setup({ 'a.md': `- [ ] Gym ⏳ 2026-11-11 ⏰ 10:00${initial}\n` });
+    const listed = await h.api.tasks.list({});
+    if (!listed.ok) throw new Error(listed.error.code);
+    const root = expectDefined(listed.value.items[0]);
+    const prepared = await expectDefined(h.api.tasks.prepare)({
+      kind: 'edit',
+      target: root.target,
+      expectedRevision: root.revision,
+    });
+    if (!prepared.ok) throw new Error(prepared.error.code);
+    let plan = await canonicalCommandPlan(h.api, prepared.value, new AbortController().signal, {
+      now: () => Date.UTC(2026, 7, 1, 12),
+      deadline: Date.UTC(2026, 7, 1, 12) + 5000,
+    });
+    h.session.stage({ kind: 'task', plan });
+    const surface = h.mount();
+    await flushMicrotasks(0);
+    if (initial !== '') {
+      expect(
+        expectDefined(surface.element.querySelector('.abyss-recurrence-badge')).textContent,
+      ).toContain('Wednesday');
+      expect(
+        expectDefined(surface.element.querySelector('.abyss-recurrence-badge')).getAttribute(
+          'data-change',
+        ),
+      ).toBe('');
+    }
+    plan = await refineCommand(h, plan, {
+      type: 'patch',
+      target: root.target,
+      patch: { recurrence: { type: 'set', value: 'every week on Friday' } },
+    });
+    const badge = expectDefined(surface.element.querySelector('.abyss-recurrence-badge'));
+    expect(badge.textContent).toContain('Friday');
+    expect(badge.getAttribute('data-change')).toBe('changed');
+    expect(expectDefined(badge.querySelector('ins')).textContent).toContain('Friday');
+    if (initial !== '')
+      expect(expectDefined(badge.querySelector('del')).textContent).toContain('Wednesday');
+    expect(surface.element.textContent).toContain('2026-11-11');
+    expect(surface.element.textContent).toContain('10:00');
+    expect([
+      ...surface.element.querySelectorAll('.abyss-task-date [data-change="changed"]'),
+    ]).toHaveLength(0);
+    await refineCommand(h, plan, {
+      type: 'patch',
+      target: root.target,
+      patch: { recurrence: { type: 'clear' } },
+    });
+    if (initial !== '')
+      expect(
+        surface.element.querySelector('.abyss-recurrence-badge[data-change="removed"]')
+          ?.textContent,
+      ).toContain('Wednesday');
+    else expect(surface.element.querySelector('.abyss-recurrence-badge')).toBeNull();
+    expect(await h.read('a.md')).toBe(`- [ ] Gym ⏳ 2026-11-11 ⏰ 10:00${initial}\n`);
+  },
+);
+
+it.each(['Root', 'Child'])(
+  'keeps the recurrence-only cumulative gutter on its owning %s row across later context',
+  async (targetTitle) => {
+    const rootRule = targetTitle === 'Root' ? ' 🔁 every week on Wednesday' : '';
+    const childRule = targetTitle === 'Child' ? ' 🔁 every week on Wednesday' : '';
+    const h = await setup({
+      'a.md': `- [ ] Root ⏳ 2026-11-11 ⏰ 10:00${rootRule}\n\t- [ ] Child ⏳ 2026-11-11${childRule}\n`,
+    });
+    const listed = await h.api.tasks.list();
+    if (!listed.ok) throw new Error(listed.error.code);
+    const root = expectDefined(listed.value.items.find((node) => node.title === 'Root'));
+    const target = expectDefined(listed.value.items.find((node) => node.title === targetTitle));
+    await h.owner.focus({ kind: 'task', target: root.target, revision: root.revision });
+    const calls: Array<{ tool: string; input: unknown }> = [
+      { tool: 'interpret', input: { intent: 'plan', research: false } },
+      {
+        tool: 'task',
+        input: {
+          input: {
+            kind: 'edit',
+            target: target.target,
+            expectedRevision: target.revision,
+            operation: {
+              type: 'patch',
+              target: target.target,
+              patch: { recurrence: { type: 'set', value: 'every week on Friday' } },
+            },
+          },
+        },
+      },
+      { tool: 'finish', input: { state: 'ready', message: 'Recurrence ready.' } },
+    ];
+    scriptedAgent(h, calls);
+    const surface = h.mount();
+    const rows = () => [
+      ...surface.element.querySelectorAll<HTMLElement>('.abyss-task-card-main-row'),
+    ];
+    const ownerRow = () =>
+      expectDefined(rows().find((row) => row.querySelector('.abyss-recurrence-badge') !== null));
+    await flushMicrotasks(0);
+    expect(ownerRow().dataset['sessionChanged']).toBe('false');
+    enter(surface, 'Change only the repeat to Friday.');
+    await vi.waitFor(() => {
+      expect(h.owner.snapshot().status.message).toBe('Ready. Enter to save.');
+    });
+    expect(ownerRow().dataset['sessionChanged']).toBe('true');
+    expect(ownerRow().querySelector('ins')?.textContent).toBe('Friday');
+    expect(
+      rows()
+        .filter((row) => row !== ownerRow())
+        .every((row) => row.dataset['sessionChanged'] === 'false'),
+    ).toBe(true);
+    calls.push(
+      { tool: 'interpret', input: { intent: 'plan', research: false } },
+      { tool: 'read', input: { input: { kind: 'statuses' } } },
+      {
+        tool: 'finish',
+        input: () => ({ state: 'ready', message: 'Context only.', selection: currentSelection(h) }),
+      },
+    );
+    enter(surface, 'Show available statuses, change nothing.');
+    await vi.waitFor(() => {
+      expect(h.owner.snapshot().input).toBe('');
+      expect(h.owner.snapshot().status.kind, h.owner.snapshot().status.message).toBe('ready');
+    });
+    expect(ownerRow().dataset['sessionChanged']).toBe('true');
+    expect(ownerRow().querySelector('.abyss-recurrence-badge')?.textContent).toContain('Friday');
+    expect(await h.read('a.md')).toBe(
+      `- [ ] Root ⏳ 2026-11-11 ⏰ 10:00${rootRule}\n\t- [ ] Child ⏳ 2026-11-11${childRule}\n`,
+    );
+  },
+);
+
+it.each([false, true])(
+  'history selection keeps continuous capture stopped from command mode=%s',
+  async (active) => {
+    const h = await setup();
+    h.owner.setInput('Continuous history');
+    h.owner.setVoiceMode('continuous');
+    await h.owner.flush();
+    const retained = h.owner.snapshot().id;
+    await h.owner.newSession('keep');
+    h.owner.setVoiceMode('manual');
+    h.memory.active = active;
+    const media = voiceMediaHarness(window);
+    const surface = h.mount({ available: () => {}, transcribe: async () => '' });
+    const popup = openHistory(surface);
+    expectDefined(
+      historyRows(popup).find((row) => row.textContent === 'Continuous history'),
+    ).click();
+    await vi.waitFor(() => {
+      expect(h.owner.snapshot().id).toBe(retained);
+    });
+    await flushMicrotasks(0);
+    expect(h.memory.active).toBe(true);
+    expect(media.getUserMedia).not.toHaveBeenCalled();
+    surface.destroy();
+    h.mount({ available: () => {}, transcribe: async () => '' });
+    await flushMicrotasks(0);
+    expect(media.getUserMedia).toHaveBeenCalledOnce();
+  },
+);
+
+it.each(['thinking', 'searching', 'writing'] as const)(
+  'renders restored %s without a dead Stop control or running timer',
+  async (kind) => {
+    const h = await setup();
+    h.owner.setInput('Retained history input');
+    h.session.restore({
+      ...h.session.snapshot(),
+      status: { kind, message: 'Interrupted work' },
+      blocked: kind === 'writing',
+    });
+    let surface = h.mount();
+    for (let reopen = 0; reopen < 2; reopen++) {
+      await flushMicrotasks(0);
+      expect(surface.element.querySelector('[aria-label="Stop"]')).toBeNull();
+      expect(surface.element.querySelector('.abyss-command-elapsed')?.hasAttribute('hidden')).toBe(
+        true,
+      );
+      expect(h.owner.snapshot().recovery).toBe(kind === 'writing' ? 'uncertain' : 'historical');
+      expect(surface.input.value).toBe('Retained history input');
+      h.session.cancelTurn();
+      surface.destroy();
+      if (reopen === 0) surface = h.mount();
+    }
+  },
+);
+
+it.each(['manual', 'continuous'] as const)(
+  'history stays microphone-stopped after an active %s controller enters ordinary capture',
+  async (initialMode) => {
+    const h = await setup();
+    h.owner.setInput('Retained continuous history');
+    h.owner.setVoiceMode('continuous');
+    await h.owner.flush();
+    const retained = h.owner.snapshot().id;
+    await h.owner.newSession('keep');
+    h.owner.setVoiceMode(initialMode);
+    const media = voiceMediaHarness(window);
+    const surface = h.mount({ available: () => {}, transcribe: async () => '' });
+    const microphone = expectDefined(
+      surface.element.querySelector<HTMLButtonElement>('[aria-label="Microphone"]'),
+    );
+    await flushMicrotasks(0);
+    if (initialMode === 'continuous') microphone.click();
+    const starts = media.getUserMedia.mock.calls.length;
+    expect(microphone.getAttribute('aria-pressed')).toBe('false');
+    expectDefined(
+      surface.element.querySelector<HTMLButtonElement>('[aria-label="CommandMode"]'),
+    ).click();
+    await flushMicrotasks(0);
+    expect(h.memory.active).toBe(false);
+    const popup = openHistory(surface);
+    expectDefined(
+      historyRows(popup).find((row) => row.textContent === 'Retained continuous history'),
+    ).click();
+    await vi.waitFor(() => {
+      expect(h.owner.snapshot().id).toBe(retained);
+    });
+    await flushMicrotasks(0);
+    expect(h.memory.active).toBe(true);
+    expect(media.getUserMedia).toHaveBeenCalledTimes(starts);
+    expect(microphone.getAttribute('aria-pressed')).toBe('false');
+    for (let publication = 0; publication < 3; publication++) {
+      h.owner.open();
+      h.owner.updateContext(`Publication ${publication}`);
+      await h.owner.flush();
+    }
+    expect(media.getUserMedia).toHaveBeenCalledTimes(starts);
+    expect(microphone.getAttribute('aria-pressed')).toBe('false');
+    surface.destroy();
+    h.mount({ available: () => {}, transcribe: async () => '' });
+    await flushMicrotasks(0);
+    expect(media.getUserMedia).toHaveBeenCalledTimes(starts + 1);
+  },
+);
+
+it('coordinated command departure hides outside Q and retains its admitted turn', async () => {
+  const h = await setup(),
+    held = deferred<void>();
+  let signal: AbortSignal | undefined;
+  h.setRun(async (input) => {
+    signal = input.signal;
+    await held.promise;
+  });
+  const surface = await h.mountCoordinator();
+  const sessionId = h.owner.snapshot().id;
+  enter(surface, 'Accepted work');
+  await vi.waitFor(() => {
+    expect(signal).toBeDefined();
+  });
+  const outside = document.body.createEl('button', { text: 'Outside' });
+  outside.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+  outside.focus();
+  await flushMicrotasks(0);
+  expect(surface.host.querySelector('.abyss-capture-input')).toBeNull();
+  expect(document.activeElement).toBe(outside);
+  expect(h.owner.snapshot().id).toBe(sessionId);
+  expect(signal?.aborted).toBe(false);
+  outside.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  held.resolve();
+  await vi.waitFor(() => {
+    expect(h.notify).toHaveBeenCalledOnce();
+  });
+  const reopened = await h.mountCoordinator();
+  expect(h.owner.snapshot().id).toBe(sessionId);
+  expect(reopened.element.querySelector('.abyss-command-latest')?.textContent).toBe(
+    'Accepted work',
+  );
+  expect(h.ordinaryExecute).not.toHaveBeenCalled();
+});
+it.each(['body', 'toolbar', 'content'])(
+  'coordinated command Escape dismisses Q from %s focus',
+  async (target) => {
+    const h = await setup(),
+      surface = await h.mountCoordinator();
+    const selector = target === 'toolbar' ? '[aria-label="Send"]' : '.abyss-command-content';
+    const destination =
+      target === 'body'
+        ? document.body
+        : expectDefined(surface.element.querySelector<HTMLElement>(selector));
+    surface.input.blur();
+    destination.setAttribute('tabindex', '-1');
+    destination.focus();
+    destination.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    );
+    expect(surface.host.querySelector('.abyss-capture-input')).toBeNull();
+    expect(h.ordinaryExecute).not.toHaveBeenCalled();
+  },
+);
+it('coordinated History consumes its first Escape before Q dismisses', async () => {
+  const h = await setup(),
+    surface = await h.mountCoordinator();
+  expectDefined(surface.element.querySelector<HTMLButtonElement>('[aria-label="History"]')).click();
+  const search = expectDefined(
+    document.querySelector<HTMLInputElement>('.abyss-command-history-search'),
+  );
+  search.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+  );
+  expect(surface.host.querySelector('.abyss-capture-input')).not.toBeNull();
+  expect(document.querySelector('.abyss-command-history-search')).toBeNull();
+  document.activeElement?.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+  );
+  expect(surface.host.querySelector('.abyss-capture-input')).toBeNull();
+});
+it('a sibling ordinary toggle cannot reroute a visibly command Send into task capture', async () => {
+  const h = await setup(),
+    first = h.mount(),
+    second = h.mount();
+  h.owner.setInput('Move the existing task to tomorrow');
+  expectDefined(
+    first.element.querySelector<HTMLButtonElement>('[aria-label="CommandMode"]'),
+  ).click();
+  expect(second.input.getAttribute('aria-label')).toBe('Command');
+  expect(second.element.classList.contains('abyss-capture-surface--command')).toBe(true);
+  expectDefined(second.element.querySelector<HTMLButtonElement>('[aria-label="Send"]')).click();
+  await flushMicrotasks(0);
+  expect(
+    h.owner
+      .snapshot()
+      .exchanges.filter((entry) => entry.role === 'user')
+      .map((entry) => entry.text),
+  ).toEqual(['Move the existing task to tomorrow']);
+  expect(h.ordinaryExecute).not.toHaveBeenCalled();
+  expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+});
+
+function voiceButton(
+  surface: Pick<CaptureSurface, 'element'>,
+  label = 'Microphone',
+): HTMLButtonElement {
+  const selector = label === 'Microphone' ? '[data-voice-icon]' : `[aria-label="${label}"]`;
+  return expectDefined(surface.element.querySelector<HTMLButtonElement>(selector));
+}
+async function startManualSpeech(
+  surface: Pick<CaptureSurface, 'element'>,
+  media: ReturnType<typeof voiceMediaHarness>,
+) {
+  voiceButton(surface).click();
+  await vi.advanceTimersByTimeAsync(250);
+  media.level(0.1);
+  await vi.advanceTimersByTimeAsync(200);
+  media.level(0);
+}
+it.each(['recording', 'recorder-stop', 'recognizing', 'visible transcript'])(
+  'one Send during %s admits exactly one manual voice exchange',
+  async (stage) => {
+    const h = await setup(),
+      media = voiceMediaHarness(window),
+      result = deferred<string>();
+    h.setRun(async () => {});
+    const surface = h.mount({ available: () => {}, transcribe: () => result.promise });
+    await flushMicrotasks(0);
+    vi.useFakeTimers();
+    media.delayStops();
+    await startManualSpeech(surface, media);
+    if (stage !== 'recording') voiceButton(surface).click();
+    if (stage === 'recognizing' || stage === 'visible transcript') media.completeStops();
+    if (stage === 'visible transcript') {
+      result.resolve('Recognized command');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(surface.input.value).toBe('Recognized command');
+    }
+    const send = voiceButton(surface, 'Send');
+    expect(send.disabled).toBe(false);
+    send.click();
+    if (stage !== 'visible transcript') {
+      send.click();
+      surface.input.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Enter',
+          repeat: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      media.completeStops();
+      result.resolve('Recognized command');
+    }
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.owner.snapshot().exchanges.filter((entry) => entry.role === 'user')).toEqual([
+      { role: 'user', text: 'Recognized command' },
+    ]);
+    expect(surface.input.value).toBe('');
+    expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+  },
+);
+it('keeps the next complete manual dictation editable after a held recognition times out', async () => {
+  const h = await setup(),
+    media = voiceMediaHarness(window),
+    stale = deferred<string>();
+  const transcribe = vi
+    .fn(async () => 'Second dictation')
+    .mockImplementationOnce(() => stale.promise);
+  const surface = h.mount({ available: () => {}, transcribe });
+  await flushMicrotasks(0);
+  vi.useFakeTimers();
+  await startManualSpeech(surface, media);
+  voiceButton(surface).click();
+  await startManualSpeech(surface, media);
+  expect(media.tracks[1]?.readyState).toBe('live');
+  expect(
+    expectDefined(surface.element.querySelector('.abyss-command-waveform path')).hasAttribute('d'),
+  ).toBe(false);
+  voiceButton(surface).click();
+  expect(transcribe).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(45000);
+  expect(surface.input.value).toBe('Second dictation');
+  stale.resolve('Late first result');
+  await vi.advanceTimersByTimeAsync(0);
+  expect(surface.input.value).toBe('Second dictation');
+  expect(h.owner.snapshot().exchanges).toEqual([]);
+});
+it('Enter records one pending send while microphone-stop alone remains editable', async () => {
+  const h = await setup(),
+    media = voiceMediaHarness(window);
+  h.setRun(async () => {});
+  const surface = h.mount({ available: () => {}, transcribe: async () => 'Recognized command' });
+  await flushMicrotasks(0);
+  vi.useFakeTimers();
+  await startManualSpeech(surface, media);
+  voiceButton(surface).click();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(surface.input.value).toBe('Recognized command');
+  expect(h.owner.snapshot().exchanges).toEqual([]);
+  h.owner.setInput('');
+  await startManualSpeech(surface, media);
+  surface.input.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+  );
+  await vi.advanceTimersByTimeAsync(0);
+  expect(h.owner.snapshot().exchanges.filter((entry) => entry.role === 'user')).toEqual([
+    { role: 'user', text: 'Recognized command' },
+  ]);
+});
+async function retirePendingSend(
+  h: Awaited<ReturnType<typeof setup>>,
+  surface: CaptureSurface,
+  action: string,
+) {
+  if (action === 'edit' || action === 'sibling edit') {
+    surface.input.value = 'Later typed input';
+    surface.input.dispatchEvent(new Event('input', { bubbles: true }));
+  } else if (action === 'hide') surface.destroy();
+  else if (action === 'mode') voiceButton(surface, 'CommandMode').click();
+  else if (action === 'session') await h.owner.newSession('keep');
+}
+it.each(['edit', 'sibling edit', 'hide', 'mode', 'session', 'empty', 'error'])(
+  'manual pending Send retires after %s without confirming a retained proposal',
+  async (retire) => {
+    const h = await setup(),
+      media = voiceMediaHarness(window),
+      result = deferred<string>();
+    const surface = h.mount({
+      available: () => {},
+      transcribe: async () => {
+        const text = await result.promise;
+        if (retire === 'error') throw new Error('ASR failed');
+        return text;
+      },
+    });
+    enter(surface, 'Create parent');
+    await vi.waitFor(() => {
+      expect(h.owner.snapshot().proposal.changes).toHaveLength(1);
+    });
+    const other = retire === 'sibling edit' ? h.mount() : undefined;
+    vi.useFakeTimers();
+    await startManualSpeech(surface, media);
+    voiceButton(surface, 'Send').click();
+    await retirePendingSend(h, other ?? surface, retire);
+    const edited = ['edit', 'sibling edit'].includes(retire);
+    result.resolve(retire === 'empty' ? '   ' : 'Recognized refinement');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.owner.snapshot().exchanges.filter((entry) => entry.role === 'user')).toHaveLength(
+      retire === 'session' ? 0 : 1,
+    );
+    expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+    expect(h.owner.snapshot().journal).toEqual([]);
+    if (edited) expect(surface.input.value).toBe('Later typed input\n\nRecognized refinement');
+    if (['empty', 'error'].includes(retire)) {
+      expect(surface.input.value).toBe('');
+      expect(surface.element.querySelector('.abyss-command-phase')?.textContent).toMatch(
+        /speech|failed|unexpected/i,
+      );
+    }
+  },
+);
+it.each(['recording', 'recognizing', 'pending Send'])(
+  'closing idle Q preserves another Q with %s',
+  async (stage) => {
+    const h = await setup(),
+      media = voiceMediaHarness(window),
+      result = deferred<string>();
+    h.setRun(async () => {});
+    const first = h.mount(),
+      second = h.mount({ available: () => {}, transcribe: () => result.promise });
+    await flushMicrotasks(0);
+    vi.useFakeTimers();
+    await startManualSpeech(second, media);
+    if (stage !== 'recording')
+      voiceButton(second, stage === 'recognizing' ? 'Microphone' : 'Send').click();
+    first.destroy();
+    if (stage === 'recording') {
+      expect(voiceButton(second).getAttribute('aria-pressed')).toBe('true');
+      expect(media.tracks[0]?.stop).not.toHaveBeenCalled();
+      voiceButton(second).click();
+    }
+    result.resolve('Second surface command');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.owner.snapshot().exchanges.filter((entry) => entry.role === 'user')).toEqual(
+      stage === 'pending Send' ? [{ role: 'user', text: 'Second surface command' }] : [],
+    );
+    if (stage !== 'pending Send') expect(second.input.value).toBe('Second surface command');
+    second.destroy();
+    expect(media.tracks[0]?.stop).toHaveBeenCalledOnce();
+  },
+);
+it('a passive shared preference update cannot acquire either stopped surface microphone', async () => {
+  const h = await setup(),
+    media = voiceMediaHarness(window);
+  const first = h.mount({ available: () => {}, transcribe: async () => '' });
+  const second = h.mount({ available: () => {}, transcribe: async () => '' });
+  voiceButton(first, 'CommandMode').click();
+  h.owner.setVoiceMode('continuous');
+  await flushMicrotasks(0);
+  expect(media.getUserMedia).not.toHaveBeenCalled();
+  expect(voiceButton(first).getAttribute('aria-pressed')).not.toBe('true');
+  expect(voiceButton(second).getAttribute('aria-pressed')).not.toBe('true');
+});
+it('a visible submitting surface alone acquires an agent-requested continuous microphone', async () => {
+  const h = await setup(),
+    media = voiceMediaHarness(window);
+  const first = h.mount({ available: () => {}, transcribe: async () => '' });
+  const second = h.mount({ available: () => {}, transcribe: async () => '' });
+  voiceButton(first, 'CommandMode').click();
+  h.setRun(async () => {
+    h.session.setVoiceMode('continuous');
+  });
+  enter(second, 'Use continuous voice');
+  await flushMicrotasks(0);
+  expect(media.getUserMedia).toHaveBeenCalledOnce();
+  expect(voiceButton(second).getAttribute('aria-pressed')).toBe('true');
+  expect(voiceButton(first).getAttribute('aria-pressed')).not.toBe('true');
+});
+it('selecting a shared voice preference preserves the existing other-surface capture claim', async () => {
+  const h = await setup(),
+    media = voiceMediaHarness(window),
+    shown = captureMenus();
+  const first = h.mount({ available: () => {}, transcribe: async () => '' });
+  const second = h.mount({ available: () => {}, transcribe: async () => '' });
+  voiceButton(second).click();
+  await flushMicrotasks(0);
+  voiceButton(first).dispatchEvent(
+    new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+  );
+  expectDefined(shown[0]).pick('Continuous');
+  expect(media.getUserMedia).toHaveBeenCalledOnce();
+  expect(voiceButton(second).getAttribute('aria-pressed')).toBe('true');
+  expect(voiceButton(first).getAttribute('aria-pressed')).not.toBe('true');
+  expect(media.tracks[0]?.stop).not.toHaveBeenCalled();
+});
+
+it('closing idle Q preserves the other surface’s armed microphone while its typed turn settles', async () => {
+  const h = await setup(),
+    media = voiceMediaHarness(window),
+    held = deferred<void>();
+  h.owner.setVoiceMode('continuous');
+  vi.useFakeTimers();
+  h.setRun(async () => held.promise);
+  const transcribe = vi.fn(async () => 'Unintended command');
+  const first = h.mount(),
+    second = h.mount({ available: () => {}, transcribe });
+  await vi.advanceTimersByTimeAsync(300);
+  media.level(0.1);
+  await vi.advanceTimersByTimeAsync(200);
+  enter(second, 'Running');
+  expect(media.tracks[0]?.readyState).toBe('ended');
+  first.destroy();
+  await vi.advanceTimersByTimeAsync(2500);
+  expect(transcribe).not.toHaveBeenCalled();
+  expect(media.getUserMedia).toHaveBeenCalledOnce();
+  held.resolve();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(media.getUserMedia).toHaveBeenCalledTimes(2);
+  expect(voiceButton(second).getAttribute('aria-description')).toMatch(/listening/i);
+});
+it.each([false, true])(
+  'resets speech feedback during a typed command with reduced motion=%s',
+  async (reduced) => {
+    const h = await setup(),
+      media = voiceMediaHarness(window),
+      held = deferred<void>();
+    h.setRun(async () => held.promise);
+    vi.stubGlobal('matchMedia', () => ({ matches: reduced }));
+    h.owner.setVoiceMode('continuous');
+    vi.useFakeTimers();
+    const surface = h.mount({ available: () => {}, transcribe: async () => '' });
+    await vi.advanceTimersByTimeAsync(300);
+    media.level(0.1);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(voiceButton(surface).dataset['speaking']).toBe('true');
+    enter(surface, 'Work while listening');
+    h.session.status('thinking', 'Planning current command');
+    await vi.advanceTimersByTimeAsync(200);
+    const phase = expectDefined(surface.element.querySelector<HTMLElement>('.abyss-command-phase'));
+    expect(phase.textContent).toMatch(/Planning current command/);
+    expect(phase.textContent).toMatch(/paused/i);
+    expect(phase.textContent).not.toMatch(/listening/i);
+    expect(voiceButton(surface).dataset['speaking']).toBe('false');
+    expect(phase.lastElementChild?.classList.contains('abyss-command-elapsed')).toBe(true);
+    voiceButton(surface).click();
+    expect(phase.textContent).toMatch(/stopped/i);
+    held.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(media.getUserMedia).toHaveBeenCalledOnce();
+  },
+);
+it.each(['recording', 'recognizing', 'visible transcript'])(
+  'ordinary Q sends typed and dictated text exactly once from %s',
+  async (stage) => {
+    const h = await setup(),
+      media = voiceMediaHarness(window),
+      result = deferred<string>();
+    h.memory.active = false;
+    h.allowOrdinaryWrites();
+    const surface = await h.mountCoordinator({
+      available: () => {},
+      transcribe: () => result.promise,
+    });
+    surface.input.value = 'Typed preface';
+    surface.input.dispatchEvent(new Event('input', { bubbles: true }));
+    vi.useFakeTimers();
+    await startManualSpeech(surface, media);
+    if (stage !== 'recording') voiceButton(surface).click();
+    if (stage === 'visible transcript') {
+      result.resolve('Dictated continuation');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(surface.input.value).toBe('Typed preface Dictated continuation');
+    }
+    voiceButton(surface, 'Send').click();
+    if (stage !== 'visible transcript') voiceButton(surface, 'Send').click();
+    result.resolve('Dictated continuation');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await h.read('a.md')).toBe(
+      '- [ ] Existing\n- [ ] Typed preface Dictated continuation ➕ 2026-08-01\n',
+    );
+    expect(h.ordinaryExecute).toHaveBeenCalledOnce();
+    expect(h.owner.snapshot().exchanges).toEqual([]);
+  },
+);
+it.each(['recording', 'recognizing'])(
+  'ordinary coordinated departure retires %s without creating a partial task',
+  async (stage) => {
+    const h = await setup(),
+      media = voiceMediaHarness(window),
+      result = deferred<string>();
+    h.memory.active = false;
+    h.allowOrdinaryWrites();
+    const surface = await h.mountCoordinator({
+      available: () => {},
+      transcribe: () => result.promise,
+    });
+    surface.input.value = 'Typed preface';
+    surface.input.dispatchEvent(new Event('input', { bubbles: true }));
+    vi.useFakeTimers();
+    await startManualSpeech(surface, media);
+    if (stage === 'recognizing') voiceButton(surface).click();
+    const outside = document.body.createEl('button');
+    outside.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(surface.host.querySelector('.abyss-capture-input')).toBeNull();
+    result.resolve('Late dictated text');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+    expect(media.tracks[0]?.stop).toHaveBeenCalledOnce();
+    expect(h.ordinaryExecute).not.toHaveBeenCalled();
+  },
+);
+it.each(['outside', 'Escape'])(
+  'coordinated %s hide preserves an admitted write and its same-session readback',
+  async (exit) => {
+    const admitted = deferred<void>(),
+      held = deferred<void>();
+    let signal: AbortSignal | undefined;
+    const h = await setup({}, (api) => ({
+      ...api,
+      tasks: {
+        ...api.tasks,
+        create: async (input, options) => {
+          const result = await expectDefined(api.tasks.create)(input, options);
+          admitted.resolve();
+          await held.promise;
+          return result;
+        },
+      },
+    }));
+    const surface = await h.mountCoordinator();
+    enter(surface, 'Create parent');
+    await vi.waitFor(() => {
+      expect(h.owner.snapshot().status.kind).toBe('ready');
+    });
+    const sessionId = h.owner.snapshot().id;
+    h.setRun(async (input) => {
+      signal = input.signal;
+      await h.session.confirmFromTurn(input.session.proposal.revision, input.signal);
+    });
+    enter(surface, 'Save the reviewed proposal');
+    await admitted.promise;
+    if (exit === 'outside')
+      document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    else
+      surface.input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+      );
+    await flushMicrotasks(0);
+    expect(surface.host.querySelector('.abyss-capture-input')).toBeNull();
+    expect(signal?.aborted).toBe(false);
+    held.resolve();
+    await vi.waitFor(() => {
+      expect(h.owner.snapshot().status.kind).toBe('saved');
+    });
+    await vi.waitFor(() => {
+      expect(h.notify).toHaveBeenCalledOnce();
+    });
+    expect(h.owner.snapshot().id).toBe(sessionId);
+    expect(h.owner.snapshot().journal[0]?.effects).toBe('committed');
+    expect((await h.read('a.md')).match(/Parent/gu)).toHaveLength(1);
+    const reopened = await h.mountCoordinator();
+    await flushMicrotasks(0);
+    expect(reopened.element.querySelector('.abyss-command-tree')?.textContent).toContain('Parent');
+    expect(h.owner.snapshot().id).toBe(sessionId);
+  },
+);
+
+it('a completed manual dictation releases its acquisition claim before a passive mode publication', async () => {
+  const h = await setup(),
+    media = voiceMediaHarness(window);
+  const surface = h.mount({ available: () => {}, transcribe: async () => 'Editable text' });
+  await flushMicrotasks(0);
+  vi.useFakeTimers();
+  await startManualSpeech(surface, media);
+  voiceButton(surface).click();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(surface.input.value).toBe('Editable text');
+  expect(media.tracks[0]?.stop).toHaveBeenCalledOnce();
+  h.owner.setVoiceMode('continuous');
+  await vi.advanceTimersByTimeAsync(0);
+  expect(media.getUserMedia).toHaveBeenCalledOnce();
+  expect(voiceButton(surface).getAttribute('aria-pressed')).toBe('false');
+});
+it('coordinated wiki completion owns the first Escape without submitting or closing Q', async () => {
+  vi.spyOn(textFieldPosition, 'textFieldAnchor').mockReturnValue(new DOMRect(100, 100, 1, 20));
+  vi.spyOn(textFieldPosition, 'textFieldViewport').mockReturnValue(new DOMRect(0, 0, 1000, 800));
+  const h = await setup({ 'Alpha.md': '', 'Alpine.md': '' }),
+    surface = await h.mountCoordinator();
+  surface.input.value = 'Draft [[Al';
+  surface.input.setSelectionRange(10, 10);
+  surface.input.dispatchEvent(new Event('input', { bubbles: true }));
+  await vi.waitFor(() => {
+    expect(document.querySelector('.abyss-link-suggest-option')).not.toBeNull();
+  });
+  surface.input.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+  );
+  expect(document.querySelector('.abyss-link-suggest-option')).toBeNull();
+  expect(surface.host.querySelector('.abyss-capture-input')).not.toBeNull();
+  surface.input.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+  );
+  expect(surface.host.querySelector('.abyss-capture-input')).toBeNull();
+  expect(h.owner.snapshot().exchanges).toEqual([]);
+  expect(h.ordinaryExecute).not.toHaveBeenCalled();
+});
+
+it('coordinated command menu owns its detached pointer and first Escape', async () => {
+  const h = await setup(),
+    surface = await h.mountCoordinator();
+  vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (this: Menu) {
+    const menu = document.body.createDiv({ cls: 'menu' });
+    menu.createDiv({ cls: 'menu-item', text: 'New session' });
+    return this;
+  });
+  const hide = methodOf(Menu.prototype, 'hide');
+  vi.spyOn(Menu.prototype, 'hide').mockImplementation(function (this: Menu) {
+    document.querySelector('.menu')?.remove();
+    return hide.call(this);
+  });
+  voiceButton(surface, 'Send').dispatchEvent(
+    new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+  );
+  const item = expectDefined(document.querySelector<HTMLElement>('.menu-item'));
+  item.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+  await flushMicrotasks(0);
+  expect(surface.host.querySelector('.abyss-capture-input')).not.toBeNull();
+  item.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+  );
+  expect(document.querySelector('.menu')).toBeNull();
+  expect(surface.host.querySelector('.abyss-capture-input')).not.toBeNull();
+  document.activeElement?.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+  );
+  expect(surface.host.querySelector('.abyss-capture-input')).toBeNull();
+});
+it('a later ordinary edit retires its pending Send and retains both editable parts', async () => {
+  const h = await setup(),
+    media = voiceMediaHarness(window),
+    result = deferred<string>();
+  h.memory.active = false;
+  h.allowOrdinaryWrites();
+  const surface = await h.mountCoordinator({
+    available: () => {},
+    transcribe: () => result.promise,
+  });
+  vi.useFakeTimers();
+  await startManualSpeech(surface, media);
+  voiceButton(surface, 'Send').click();
+  surface.input.value = 'Later ordinary edit';
+  surface.input.dispatchEvent(new Event('input', { bubbles: true }));
+  result.resolve('Recognized text');
+  await vi.advanceTimersByTimeAsync(0);
+  expect(surface.input.value).toBe('Later ordinary edit Recognized text');
+  expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+  voiceButton(surface, 'Send').click();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(await h.read('a.md')).toBe(
+    '- [ ] Existing\n- [ ] Later ordinary edit Recognized text ➕ 2026-08-01\n',
+  );
+});
+
+it('coordinated command departure waits for IME composition without cancelling admitted work', async () => {
+  const h = await setup(),
+    held = deferred<void>();
+  let signal: AbortSignal | undefined;
+  h.setRun(async (input) => {
+    signal = input.signal;
+    await held.promise;
+  });
+  const surface = await h.mountCoordinator();
+  const sessionId = h.owner.snapshot().id;
+  enter(surface, 'Accepted work');
+  await vi.waitFor(() => {
+    expect(signal).toBeDefined();
+  });
+  vi.useFakeTimers();
+  surface.input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+  surface.input.value = '未確定';
+  surface.input.dispatchEvent(new InputEvent('input', { bubbles: true, isComposing: true }));
+  const outside = document.body.createEl('button', { text: 'Outside' });
+  outside.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+  outside.focus();
+  await vi.advanceTimersByTimeAsync(10);
+  expect(surface.host.querySelector('.abyss-capture-input')).toBe(surface.input);
+  expect(document.activeElement).toBe(outside);
+  expect(signal?.aborted).toBe(false);
+  expect(h.ordinaryExecute).not.toHaveBeenCalled();
+  surface.input.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }));
+  surface.input.value = '確定した入力';
+  surface.input.dispatchEvent(new InputEvent('input', { bubbles: true }));
+  await vi.advanceTimersByTimeAsync(10);
+  expect(surface.host.querySelector('.abyss-capture-input')).toBeNull();
+  expect(document.activeElement).toBe(outside);
+  expect(h.owner.snapshot().input).toBe('確定した入力');
+  expect(h.owner.snapshot().id).toBe(sessionId);
+  expect(signal?.aborted).toBe(false);
+  expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+  held.resolve();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(h.notify).toHaveBeenCalledOnce();
+});
+it.each(['recording', 'recognizing'])(
+  'ordinary voice departure waits for IME composition while %s without writing partial input',
+  async (stage) => {
+    const h = await setup(),
+      media = voiceMediaHarness(window),
+      transcript = deferred<string>();
+    h.memory.active = false;
+    h.allowOrdinaryWrites();
+    const surface = await h.mountCoordinator({
+      available: () => {},
+      transcribe: () => transcript.promise,
+    });
+    vi.useFakeTimers();
+    await startManualSpeech(surface, media);
+    if (stage === 'recognizing') voiceButton(surface).click();
+    surface.input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+    surface.input.value = '未確定';
+    surface.input.dispatchEvent(new InputEvent('input', { bubbles: true, isComposing: true }));
+    const outside = document.body.createEl('button', { text: 'Outside' });
+    outside.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    outside.focus();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(surface.host.querySelector('.abyss-capture-input')).toBe(surface.input);
+    expect(h.ordinaryExecute).not.toHaveBeenCalled();
+    surface.input.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }));
+    surface.input.value = '確定した入力';
+    surface.input.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    await vi.advanceTimersByTimeAsync(10);
+    expect(surface.host.querySelector('.abyss-capture-input')).toBeNull();
+    expect(document.activeElement).toBe(outside);
+    transcript.resolve('Late speech');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+    expect(h.ordinaryExecute).not.toHaveBeenCalled();
+    expect(media.tracks[0]?.stop).toHaveBeenCalledOnce();
+  },
+);
+it('retires held recognition after same-document focus actually hides its originating surface', async () => {
+  const h = await setup();
+  const media = voiceMediaWithSampleClock();
+  const result = deferred<string>();
+  let recognitionSignal: AbortSignal | undefined;
+  const origin = h.mount({
+    available: () => {},
+    transcribe: (_audio, signal) => {
+      recognitionSignal = signal;
+      return result.promise;
+    },
+  });
+  await spokenCommand(h, origin, media);
+  expect(expectDefined(recognitionSignal).aborted).toBe(false);
+  const other = h.mount();
+  other.input.focus();
+  await vi.waitFor(() => {
+    expect(origin.element.isConnected).toBe(false);
+  });
+  expect(expectDefined(recognitionSignal).aborted).toBe(true);
+  other.input.value = '  Other exact draft  ';
+  other.input.dispatchEvent(new Event('input', { bubbles: true }));
+  result.resolve('Retired speech');
+  await flushMicrotasks(0);
+  expect(other.input.value).toBe('  Other exact draft  ');
+  expect(h.owner.snapshot().exchanges).toEqual([]);
+  expect(h.owner.snapshot().journal).toEqual([]);
+  expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+});
+
+it.each(['manual', 'continuous'] as const)(
+  'draws the %s waveform from live input, fades through quiet, and clears immediately for typing or Stop',
+  async (mode) => {
+    const h = await setup(),
+      media = voiceMediaHarness(window);
+    h.owner.setVoiceMode(mode);
+    vi.useFakeTimers();
+    const surface = h.mount({ available: () => {}, transcribe: async () => '' });
+    const mic = voiceButton(surface);
+    if (mode === 'manual') mic.click();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(mic.dataset['voiceIcon']).toBe(mode === 'manual' ? 'square' : 'audio-lines');
+    if (mode === 'manual') expect(mic.getAttribute('aria-label')).toBe('Stop dictation');
+    const wave = expectDefined(
+      surface.input.parentElement?.querySelector('.abyss-command-waveform'),
+    );
+    const path = expectDefined(wave.querySelector('path'));
+    expect(wave.getAttribute('aria-hidden')).toBe('true');
+    expect(path.getAttribute('d')).toBeNull();
+    media.level(0.03);
+    await vi.advanceTimersByTimeAsync(100);
+    const quiet = path.getAttribute('d');
+    expect(quiet).toBeTruthy();
+    media.level(0.2);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(path.getAttribute('d')).not.toBe(quiet);
+    media.level(0);
+    await vi.advanceTimersByTimeAsync(50);
+    const lastVoice = firstBarHeight(path);
+    expect(lastVoice).toBeGreaterThan(0);
+    await vi.advanceTimersByTimeAsync(32);
+    expect(firstBarHeight(path)).toBeGreaterThan(0);
+    expect(firstBarHeight(path)).toBeLessThan(lastVoice);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(path.getAttribute('d')).toBeNull();
+    media.level(0.1);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(path.getAttribute('d')).toBeTruthy();
+    surface.input.value = 'I am typing';
+    surface.input.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(path.getAttribute('d')).toBeNull();
+    await vi.advanceTimersByTimeAsync(50);
+    expect(path.getAttribute('d')).toBeNull();
+    surface.input.value = '';
+    surface.input.dispatchEvent(new Event('input', { bubbles: true }));
+    await vi.advanceTimersByTimeAsync(100);
+    expect(path.getAttribute('d')).toBeTruthy();
+    mic.click();
+    expect(path.getAttribute('d')).toBeNull();
+    expect(media.tracks[0]?.readyState).toBe('ended');
+    await vi.advanceTimersByTimeAsync(500);
+    expect(path.getAttribute('d')).toBeNull();
+    surface.destroy();
+    expect(wave.isConnected).toBe(false);
+  },
+);
+it.each([false, true])(
+  'fits the live waveform to both edges at a consistent bar spacing after resizing (reduced motion: %s)',
+  async (reduced) => {
+    vi.stubGlobal('matchMedia', () => ({ matches: reduced }));
+    let resized: ResizeObserverCallback | undefined;
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(callback: ResizeObserverCallback) {
+          resized = callback;
+        }
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const h = await setup(),
+      media = voiceMediaHarness(window);
+    vi.useFakeTimers();
+    const surface = h.mount({ available: () => {}, transcribe: async () => '' });
+    const wave = expectDefined(
+      surface.element.querySelector<SVGSVGElement>('.abyss-command-waveform'),
+    );
+    const path = expectDefined(wave.querySelector('path'));
+    voiceButton(surface).click();
+    await vi.advanceTimersByTimeAsync(300);
+    let firstHeight: number | undefined;
+    for (const width of [500, 175]) {
+      media.level(width === 500 ? 0.04 : 0.3);
+      Object.defineProperty(surface.input, 'clientWidth', {
+        configurable: true,
+        value: width + 24,
+      });
+      Object.defineProperty(wave, 'clientWidth', { configurable: true, value: width });
+      resized?.([], {} as ResizeObserver);
+      await vi.advanceTimersByTimeAsync(80);
+      const shape = path.getAttribute('d') ?? '';
+      const height = firstBarHeight(path);
+      if (firstHeight === undefined) firstHeight = height;
+      else expect(height).toBeGreaterThan(firstHeight);
+      const points = [...shape.matchAll(/M(\d+(?:\.\d+)?)/gu)].map((m) => Number(m[1]));
+      const viewWidth = Number(wave.getAttribute('viewBox')?.split(' ')[2]);
+      const pixels = points.map((x) => (x * width) / viewWidth);
+      expect(points.length).toBeGreaterThanOrEqual(Math.floor(width / 6));
+      expect(points.length).toBeLessThanOrEqual(Math.ceil(width / 4));
+      expect(pixels[0]).toBeLessThanOrEqual(3);
+      expect(width - (pixels[pixels.length - 1] ?? 0)).toBeLessThanOrEqual(3);
+    }
+    expect(wave.getAttribute('preserveAspectRatio')).toBe('none');
+    expect(path.getAttribute('vector-effect')).toBe('non-scaling-stroke');
+  },
+);
+function firstBarHeight(path: Element): number {
+  return Number(/v([\d.]+)/u.exec(path.getAttribute('d') ?? '')?.[1] ?? 0);
+}
+it.each([false, true])(
+  'interpolates rising and falling microphone frames between analyser samples then stops requesting frames (reduced motion: %s)',
+  async (reduced) => {
+    const h = await setup(),
+      media = voiceMediaHarness(window);
+    vi.stubGlobal('matchMedia', () => ({ matches: reduced }));
+    vi.useFakeTimers();
+    const surface = h.mount({ available: () => {}, transcribe: async () => '' });
+    voiceButton(surface).click();
+    const path = expectDefined(surface.element.querySelector('.abyss-command-waveform path'));
+    await vi.advanceTimersByTimeAsync(300);
+    media.level(0.04);
+    await vi.advanceTimersByTimeAsync(800);
+    const quiet = firstBarHeight(path);
+    expect(quiet).toBeGreaterThan(0);
+    const request = window.requestAnimationFrame.bind(window);
+    let pending = 0,
+      maxPending = 0;
+    const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((paint) => {
+      maxPending = Math.max(maxPending, ++pending);
+      return request((time) => {
+        pending--;
+        paint(time);
+      });
+    });
+    await vi.advanceTimersByTimeAsync(200);
+    expect(raf).not.toHaveBeenCalled();
+    media.level(0.3);
+    await vi.advanceTimersByTimeAsync(50);
+    await vi.advanceTimersByTimeAsync(16);
+    const rising = firstBarHeight(path);
+    await vi.advanceTimersByTimeAsync(16);
+    expect(rising).toBeGreaterThan(quiet);
+    expect(firstBarHeight(path)).toBeGreaterThan(rising);
+    await vi.advanceTimersByTimeAsync(768);
+    const loud = firstBarHeight(path);
+    media.level(0.04);
+    await vi.advanceTimersByTimeAsync(50);
+    await vi.advanceTimersByTimeAsync(16);
+    const falling = firstBarHeight(path);
+    await vi.advanceTimersByTimeAsync(16);
+    expect(falling).toBeLessThan(loud);
+    expect(firstBarHeight(path)).toBeLessThan(falling);
+    expect(firstBarHeight(path)).toBeGreaterThan(quiet);
+    expect(raf).toHaveBeenCalled();
+    expect(maxPending).toBe(1);
+  },
+);
+it('reacts gently when reduced motion changes during speech and retains identical bar positions', async () => {
+  const h = await setup(),
+    media = voiceMediaHarness(window),
+    preference = { matches: false };
+  vi.stubGlobal('matchMedia', () => preference);
+  vi.useFakeTimers();
+  const surface = h.mount({ available: () => {}, transcribe: async () => '' });
+  voiceButton(surface).click();
+  await vi.advanceTimersByTimeAsync(300);
+  const path = expectDefined(surface.element.querySelector('.abyss-command-waveform path'));
+  const positions = () => [...(path.getAttribute('d') ?? '').matchAll(/M(\d+)/gu)].map((m) => m[1]);
+  media.level(0.3);
+  await vi.advanceTimersByTimeAsync(82);
+  const earlyNormal = firstBarHeight(path);
+  await vi.advanceTimersByTimeAsync(718);
+  const normal = firstBarHeight(path),
+    geometry = positions();
+  preference.matches = true;
+  await vi.advanceTimersByTimeAsync(800);
+  const reduced = firstBarHeight(path);
+  expect(reduced).toBeGreaterThan(0);
+  expect(reduced).toBeLessThan(normal);
+  expect(positions()).toEqual(geometry);
+  media.level(0);
+  await vi.advanceTimersByTimeAsync(200);
+  expect(path.hasAttribute('d')).toBe(false);
+  media.level(0.3);
+  await vi.advanceTimersByTimeAsync(82);
+  expect(firstBarHeight(path)).toBeGreaterThan(0);
+  expect(firstBarHeight(path) / reduced).toBeLessThan(earlyNormal / normal);
+  preference.matches = false;
+  await vi.advanceTimersByTimeAsync(718);
+  expect(firstBarHeight(path)).toBe(normal);
+});
+it.each(['stop', 'agent work', 'hidden', 'disposed'] as const)(
+  'cancels the pending waveform fade immediately on %s',
+  async (reason) => {
+    const h = await setup(),
+      media = voiceMediaHarness(window),
+      held = deferred<void>();
+    h.setRun(() => held.promise);
+    vi.useFakeTimers();
+    const surface = h.mount({ available: () => {}, transcribe: async () => '' });
+    voiceButton(surface).click();
+    await vi.advanceTimersByTimeAsync(300);
+    const path = expectDefined(surface.element.querySelector('.abyss-command-waveform path'));
+    media.level(0.2);
+    await vi.advanceTimersByTimeAsync(300);
+    media.level(0);
+    await vi.advanceTimersByTimeAsync(66);
+    expect(path.hasAttribute('d')).toBe(true);
+    const cancel = vi.spyOn(window, 'cancelAnimationFrame');
+    let command: Promise<void> | undefined;
+    if (reason === 'stop') voiceButton(surface).click();
+    if (reason === 'agent work') command = h.owner.submit('Show the existing task');
+    if (reason === 'hidden') {
+      vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+      document.dispatchEvent(new Event('visibilitychange'));
+    }
+    if (reason === 'disposed') surface.destroy();
+    expect(path.hasAttribute('d')).toBe(false);
+    expect(cancel).toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(160);
+    expect(path.hasAttribute('d')).toBe(false);
+    held.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    await command;
+  },
+);
+it('draws different samples with the same loudness differently without rendering the command tree', async () => {
+  const h = await setup(),
+    media = voiceMediaHarness(window);
+  vi.useFakeTimers();
+  const surface = h.mount({ available: () => {}, transcribe: async () => '' });
+  voiceButton(surface).click();
+  await vi.advanceTimersByTimeAsync(300);
+  const path = expectDefined(surface.element.querySelector('.abyss-command-waveform path'));
+  const renders = vi.spyOn(h.owner, 'snapshot');
+  const firstHalf = new Float32Array(2048);
+  firstHalf.fill(0.1, 0, 1024);
+  media.frame(firstHalf);
+  await vi.advanceTimersByTimeAsync(400);
+  const first = path.getAttribute('d');
+  expect(first).toBeTruthy();
+  await vi.advanceTimersByTimeAsync(250);
+  expect(path.getAttribute('d')).toBe(first);
+  media.frame(firstHalf.reverse());
+  await vi.advanceTimersByTimeAsync(100);
+  expect(path.getAttribute('d')).toBeTruthy();
+  expect(path.getAttribute('d')).not.toBe(first);
+  expect(renders).not.toHaveBeenCalled();
+});
+it.each([false, true])(
+  'one pointer click on Send finishes, transcribes and submits once in coordinated Q (command=%s)',
+  async (command) => {
+    const h = await setup(),
+      media = voiceMediaHarness(window),
+      recognition = deferred<string>();
+    h.memory.active = command;
+    h.allowOrdinaryWrites();
+    const run = vi.fn(async () => {});
+    h.setRun(run);
+    const transcribe = vi.fn(() => recognition.promise);
+    const surface = await h.mountCoordinator({ available: () => {}, transcribe });
+    vi.useFakeTimers();
+    media.delayStops();
+    await startManualSpeech(surface, media);
+    const send = voiceButton(surface, 'Send');
+    send.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true }));
+    send.focus();
+    send.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, cancelable: true }));
+    send.click();
+    expect(media.tracks[0]?.readyState).toBe('ended');
+    expect(transcribe).not.toHaveBeenCalled();
+    media.completeStops();
+    expect(transcribe).toHaveBeenCalledOnce();
+    recognition.resolve('Buy milk');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(run).toHaveBeenCalledTimes(Number(command));
+    expect(h.ordinaryExecute).toHaveBeenCalledTimes(Number(!command));
+    expect(h.owner.snapshot().exchanges.filter((entry) => entry.role === 'user')).toEqual(
+      command ? [{ role: 'user', text: 'Buy milk' }] : [],
+    );
+  },
+);

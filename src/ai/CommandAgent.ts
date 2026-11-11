@@ -1,21 +1,34 @@
-import { generateText, isStepCount, wrapLanguageModel, type ModelMessage } from 'ai';
+import {
+  generateText,
+  isStepCount,
+  wrapLanguageModel,
+  type ModelMessage,
+  type ToolCallRepairFunction,
+  type ToolSet,
+  type TypedToolCall,
+} from 'ai';
 import type { TasksApiV1 } from '../../api';
+import { repairEncodedContainers } from './commandArgumentRepair';
+import { CommandEvidence } from './CommandEvidence';
+import { commandEditTools } from './commandModelSchema';
+import { CommandPendingOperations } from './CommandPendingOperations';
 import { commandPrompt } from './commandPrompt';
 import { CommandReferenceBook } from './CommandReferenceBook';
 import { commandReferences } from './commandReferences';
 import { record } from './commandReferenceShapes';
-import { planToolOutput } from './commandSchemas';
+import { creationGrammar, finishGrammar, planToolOutput } from './commandSchemas';
 import type { CommandSession } from './CommandSession';
-import { commandTools, type CommandToolContext } from './commandTools';
+import { canonicalToolName, commandTools, type CommandToolContext } from './commandTools';
 import {
   CommandFailure,
   type CommandAgentPort,
   type CommandResearchPort,
   type CommandSessionSnapshot,
 } from './commandTypes';
+import { reviewCommandWrite, type WriteReviewer } from './commandWriteAuthorization';
 import type { ProviderConnections } from './providers/ProviderConnections';
 import { providerRetryable } from './providers/providerFailure';
-import { parseProviderSettings } from './providers/providerSettings';
+import { parseAgentSettings } from './providers/providerSettings';
 
 export interface CommandAgentOptions {
   readonly api: TasksApiV1;
@@ -25,6 +38,7 @@ export interface CommandAgentOptions {
   readonly now: () => number;
   readonly research?: CommandResearchPort;
   readonly temporalContext?: () => string;
+  readonly reviewWrite?: WriteReviewer;
 }
 function generationLifetime(
   parent: AbortSignal | undefined,
@@ -42,7 +56,7 @@ function generationLifetime(
       expired = true;
       abort();
     },
-    Math.max(1, Math.min(ctx.deadline - ctx.now(), ctx.researchMode ? 45000 : 25000)),
+    Math.max(1, Math.min(ctx.deadline - ctx.now(), ctx.researchMode ? 45000 : 40000)),
   );
   return {
     signal: controller.signal,
@@ -61,27 +75,32 @@ function generationLifetime(
 }
 function rejectedKind(input: string): string | undefined {
   try {
-    const parsed: unknown = JSON.parse(input);
-    const payload = record(record(parsed)?.['work'])?.['task'] ?? parsed;
-    let nested: unknown = record(payload)?.['input'];
-    // Inspect only the discriminator for feedback. Never execute a coerced payload.
+    let nested: unknown = record(JSON.parse(input))?.['input'];
     if (typeof nested === 'string') nested = JSON.parse(nested) as unknown;
-    const kind = record(nested)?.['kind'];
-    return typeof kind === 'string' ? kind : undefined;
+    const value = record(nested);
+    return typeof value?.['kind'] === 'string' ? value['kind'] : undefined;
   } catch {
     return undefined;
   }
 }
 function taskSchemaRepair(input: string): string {
-  const kind = rejectedKind(input),
-    object = 'input must be an object, never a JSON string. ';
-  if (kind === 'create')
-    return `${object}Use input.kind=create, destination and tree. tree contains markdownTitle, optional description/comments/children and tree.initial. Put scheduled/due/start/time/durationMinutes/tags/statusSymbol only in tree.initial; field assignments use {type:set,value} or {type:clear}. Children have that same tree shape. Do not change to append or invent plan references.`;
-  if (kind === 'append' || kind === 'batch')
-    return `${object}Use input.kind=append with ONE operation object, or input.kind=batch with an operations array directly beside plan and expectedPlanRevision. Never put batch inside operation. Use each target’s own exact editBasis; append/batch can only refine nodes in that one plan, never combine independent roots.`;
-  if (kind === 'edit')
-    return `${object}Use {kind:"edit",target:"issued task",expectedRevision:"its revision",operation:{type:"...",target:"issued node",...}}. target and expectedRevision belong beside kind, not inside operation. Description uses operation {type:"description",target,text}; it is not a patch field or a comment. Keep the requested operation and use the exact current editBasis.`;
-  return `${object}Keep the intended kind; match its advertised fields. Do not switch to append/batch or invent references. If creating, use destination and tree; metadata belongs in tree.initial. Example: {"input":{"kind":"create","destination":{"type":"configured-default"},"tree":{"markdownTitle":"Task","initial":{"scheduled":{"type":"set","value":"2026-08-02"}}}}}.`;
+  const kind = rejectedKind(input);
+  let envelope = '';
+  try {
+    const root = record(JSON.parse(input));
+    if (
+      root !== undefined &&
+      Object.keys(root).length === 3 &&
+      typeof root['plan'] === 'string' &&
+      typeof root['expectedPlanRevision'] === 'string' &&
+      record(root['operation']) !== undefined
+    )
+      envelope =
+        ' Move unchanged operands into {input:{kind:append,plan,expectedPlanRevision,operation}} only if this is the intended pending-plan refinement.';
+  } catch {
+    /* Invalid JSON has no inferred operation. */
+  }
+  return `Use outer input object, not encoded JSON; advertised ${kind ?? 'intended'} branch, exact content/references. Missing/malformed kind does not imply create. create requires destination/tree; metadata in tree.initial, set/value or clear. edit: target/expectedRevision beside kind. append: operation; batch: operations beside plan/expectedPlanRevision, never nested. Copy target’s own editBasis; one tree per plan, independent saved roots need separate edits. Never replace failed refinement with creation.${envelope}`;
 }
 function validationIssue(value: unknown): string {
   const issue = record(value);
@@ -101,44 +120,158 @@ function validationIssue(value: unknown): string {
           .slice(0, 8)
           .join(', ')
       : '';
-  const removed = keys === '' ? '' : `; remove keys: ${keys}`;
+  const removed = keys === '' ? '' : `; unrecognized at this level: ${keys}`;
   return `${path === '' ? 'arguments' : path}: ${issue['code']}${expected}${removed}`;
+}
+function validationLeaves(issues: unknown[], depth = 0): string[] {
+  return issues
+    .slice(0, 8)
+    .flatMap((issue: unknown) => {
+      const errors = record(issue)?.['errors'];
+      if (depth < 3 && Array.isArray(errors)) {
+        const branch = errors
+          .slice(0, 32)
+          .filter((entry: unknown): entry is unknown[] => Array.isArray(entry))
+          .sort((a, b) => a.length - b.length)[0];
+        if (branch !== undefined)
+          return validationLeaves(branch, depth + 1).map((hint) => `Possible branch: ${hint}`);
+      }
+      return [validationIssue(issue)];
+    })
+    .slice(0, 8);
 }
 function validationHint(error: unknown): string {
   let cause = error;
   for (let depth = 0; depth < 4; depth += 1) {
     const value = record(cause);
     if (Array.isArray(value?.['issues']))
-      return value['issues']
-        .slice(0, 8)
-        .map(validationIssue)
-        .filter(Boolean)
-        .join('; ')
-        .slice(0, 1200);
+      return validationLeaves(value['issues']).filter(Boolean).join('; ').slice(0, 1200);
     cause = value?.['cause'];
   }
   return '';
 }
+function rejectedRemoval(name: string, input: string): boolean {
+  if (!['task', 'change_task'].includes(name)) return false;
+  try {
+    const outer = record(JSON.parse(input));
+    const type = record((record(outer?.['input']) ?? outer)?.['operation'])?.['type'];
+    return type === 'delete' || type === 'remove';
+  } catch {
+    return false;
+  }
+}
 function schemaRepairMessage(name: string, input: string, error: unknown): string {
-  const common = `Arguments were rejected; no operation ran. Repair their format without changing the intended content or target. ${validationHint(error)} `;
+  const common = `Arguments rejected; nothing ran. Retain intended content/target. ${validationHint(error)} `;
+  if (rejectedRemoval(name, input))
+    return `${common}For whole-task deletion use change_task with the matched row’s issued edit and operation:{"type":"remove"}, complete:true. This previews the entire subtree.`;
   if (name === 'task') return common + taskSchemaRepair(input);
-  if (name === 'interpret' && rejectedKind(input) !== undefined)
-    return `${common}Required envelope: {intent:"plan",research:false,work:{task:{input:...},message:"..."}}. message belongs to work, not task. Use immediate only with explicit consent; no scope/disposition. Repair work.task: ${taskSchemaRepair(input)} If more reads are needed, omit work, then repair with task; never create a replacement for a failed refinement.`;
-  if (name === 'interpret')
-    return `${common}For new-session use disposition=keep|discard, not transitionDisposition. For a current pendingTransition use resolve-transition and transitionDisposition=save|keep|discard|cancel; use plan with transitionDisposition when resolving and continuing requested work in the same turn. Omit unrelated voiceMode/disposition fields. No pendingTransition means ordinary work uses plan. To cancel an unsaved task in this same session, use plan with no disposition, then task append/batch with a sole remove on its exact draft root.`;
+  if (name === 'create_task')
+    return `${common}${creationGrammar}; requested facts only, metadata in tree.initial, never stringify containers.`;
+  if (name === 'change_task')
+    return `${common}Use references.taskReferences[].edit (the b handle, never target). Metadata shape: {"edit":"<issued edit>","operation":{"type":"set","time":"HH:mm"}}; use the requested field/value. Keep exact owner.`;
+  if (name === 'interpret') return common + controlSchemaRepair(input);
   if (name === 'finish')
-    return `${
-      common
-    }Use state=ready with message, or state=question with message and blockingIssue {kind:missing-information|conflict, detail}. Every selection entry needs kind=task|project|note and its exact returned target/basis; a project is never a task. A ready proposal does not need saving permission.`;
-  if (name === 'note')
-    return `${common}Use object input. Create requires {kind:create,path,title,text}; path is a vault-relative .md path, normally beside the working task. Edit uses {kind:edit,target,expectedRevision,operation:{type:append|replace-section,section,text}}. Refine uses {kind:refine,plan,expectedPlanRevision,operation}; replace-body applies to a new-note plan. Preserve the requested title, body and frozen creation path.`;
-  if (name === 'read')
-    return `${
-      common
-    }Use an object input. Match one advertised kind and only its fields; tree selects an opaque target, while note selectors can use a path. Never encode input as a string.`;
+    return `${common}Use ${finishGrammar}; blockers need issued evidence; selection: exact typed targets/revisions/bases. Prepared work needs no selection/saving question.`;
   if (name === 'project')
-    return `${common}Read project-schema for writable field IDs and status IDs. Update with {kind:"update",target,expectedRevision,fields:[{fieldId,value}],statusId?}. Each field value is the native scalar or null, not a task patch assignment. Omit unchanged fields/statusId. No action or patch property. Preserve the requested project; never replace an update with creation.`;
-  return `${common}Follow this tool’s exact object schema; do not add undeclared fields.`;
+    return `${common}Read project-schema; use fields:[{fieldId,value}] and target/expectedRevision, not task date patches.`;
+  if (name === 'note')
+    return `${common}input: create/title/text (path if requested), edit/target/expectedRevision/operation, or refine/plan/expectedPlanRevision/operation. Keep content/frozen path. replace-body: new-note plans only.`;
+  return `${common}Match one advertised schema branch; omit unrelated fields. Keep exact references/requested values.`;
+}
+function controlSchemaRepair(input: string): string {
+  try {
+    const intent = record(JSON.parse(input))?.['intent'];
+    if (intent === 'acknowledge-uncertainty' || intent === 'review')
+      return 'That recovery action is unavailable in this session. For ordinary work retry interpret({"intent":"plan"}) first; refine the current draft with its issued edit, or use create_task for an additional requested activity.';
+    if (intent === 'confirm')
+      return 'Nothing was saved. Confirmation requires approval containing the entire current userMessage verbatim when it approves the displayed proposal as shown. A subset needs nonempty exact issued selections; omit scope only for the whole proposal. If the message requests a revision, return to interpret({intent:"plan"}) and preview it; finish neither saves nor repairs control.';
+  } catch {
+    // Unparseable control has no known branch.
+  }
+  return 'Use intended control branch only. Ordinary work needs no interpret. Control precedes work. new-session: disposition; transitionDisposition requires pending transition. Voice: voiceMode; research requires trusted explicit permission.';
+}
+function repairCall(ctx: CommandToolContext): ToolCallRepairFunction<ToolSet> {
+  return async ({ toolCall, error, tools: activeTools }) => {
+    const schema = Object.prototype.hasOwnProperty.call(activeTools, toolCall.toolName)
+      ? activeTools[toolCall.toolName]?.inputSchema
+      : undefined;
+    if (schema !== undefined) {
+      const repaired = await repairEncodedContainers(toolCall.input, schema);
+      if (repaired !== undefined) return { ...toolCall, input: repaired };
+    }
+    ctx.feedback.set(
+      toolCall.toolCallId,
+      schemaRepairMessage(toolCall.toolName, toolCall.input, error),
+    );
+    return null;
+  };
+}
+function accountRejectedMetadata(ctx: CommandToolContext, call: TypedToolCall<ToolSet>): boolean {
+  const basis =
+    call.toolName === 'change_task'
+      ? ctx.references?.schemaRefinement(call.input, commandReferences(ctx.session.snapshot()))
+      : undefined;
+  if (basis === undefined) return false;
+  // A flat request still identifies the exact fields even when one value is invalid.
+  if (record(record(call.input)?.['operation'])?.['type'] === 'set')
+    ctx.pendingOperations.reject(call.toolName, call.input);
+  ctx.pendingOperations.rejectSchema(basis, ctx.generation);
+  ctx.repair(call.toolCallId);
+  return true;
+}
+function accountRejected(ctx: CommandToolContext, call: TypedToolCall<ToolSet>): void {
+  if (accountRejectedMetadata(ctx, call)) return;
+  const input = JSON.stringify(call.input);
+  ctx.pendingOperations.reject(call.toolName, call.input);
+  const kind = rejectedKind(input);
+  if (
+    call.toolName === 'change_task' ||
+    (call.toolName === 'task' &&
+      ['append', 'batch', 'edit', 'refresh', 'hierarchy'].includes(kind ?? ''))
+  )
+    ctx.unresolvedTaskRefinement = true;
+  ctx.errors.add(canonicalToolName(call.toolName));
+  ctx.repair(call.toolCallId);
+}
+function deferControlSiblings(
+  ctx: CommandToolContext,
+  calls: ReadonlyArray<TypedToolCall<ToolSet>>,
+): void {
+  const first = calls[0];
+  const startsWithControl = first?.toolName === 'interpret';
+  if (!ctx.interpreted && startsWithControl && first.invalid === true) {
+    const input = record(first.input) ?? {};
+    ctx.controlRepair ??= {
+      intent: input['intent'],
+      scoped: input['scope'] !== undefined,
+    };
+  }
+  if (ctx.controlRepair === undefined) return;
+  for (const call of calls.slice(startsWithControl ? 1 : 0)) {
+    ctx.deferred.add(call.toolCallId);
+    ctx.feedback.set(
+      call.toolCallId,
+      'Deferred. Correct interpret first, then resubmit this work. Nothing ran.',
+    );
+  }
+}
+function accountCalls(ctx: CommandToolContext, calls: Array<TypedToolCall<ToolSet>>): void {
+  ctx.generation++;
+  ctx.generationCalls = calls.length;
+  ctx.deferred.clear();
+  ctx.rejected.clear();
+  deferControlSiblings(ctx, calls);
+  calls.forEach((call) => {
+    if (call.invalid === true) ctx.rejected.add(call.toolCallId);
+  });
+  // Parsing is parallel; admit rejected predecessors only at the serial execution boundary.
+  ctx.account = (id) => {
+    while (calls.length > 0) {
+      const call = calls.shift();
+      if (call === undefined || call.toolCallId === id) return;
+      if (call.invalid === true && !ctx.deferred.has(call.toolCallId)) accountRejected(ctx, call);
+    }
+  };
 }
 function repairMessages(
   messages: ModelMessage[],
@@ -158,6 +291,48 @@ function repairMessages(
     };
   });
 }
+type GenerationPrompt = Parameters<ReturnType<typeof wrapLanguageModel>['doGenerate']>[0]['prompt'];
+function requestToolCall(prompt: GenerationPrompt): GenerationPrompt {
+  return prompt.map((message) =>
+    message.role === 'system'
+      ? {
+          ...message,
+          content: `${message.content}\nReturn a tool call. Read previous tool results; do not repeat successful operations. Complete the remaining request, or call finish if it is complete.`,
+        }
+      : message,
+  );
+}
+function missingToolCall(result: {
+  finishReason: { unified: string };
+  content: ReadonlyArray<{ type: string }>;
+}): boolean {
+  return (
+    (result.finishReason.unified === 'stop' || result.finishReason.unified === 'length') &&
+    result.content.length > 0 &&
+    result.content.every((part) => part.type === 'text' || part.type === 'reasoning')
+  );
+}
+function assertGenerationCurrent(ctx: CommandToolContext, signal: AbortSignal): void {
+  signal.throwIfAborted();
+  if (ctx.now() >= ctx.deadline)
+    throw new CommandFailure('TIMEOUT', 'This request took too long. Your draft is retained.');
+}
+function requireFormatRetry(alreadyRequested: boolean, attempt: number): void {
+  if (alreadyRequested || attempt >= 2)
+    throw new CommandFailure(
+      'INCOMPLETE',
+      'The model returned no action. Review the retained draft.',
+    );
+}
+function canRetryGeneration(attempt: number, signal: AbortSignal, cause: unknown): boolean {
+  return attempt < 2 && !signal.aborted && providerRetryable(cause);
+}
+function soleWorkingCreation(state: CommandSessionSnapshot): string | undefined {
+  const change = state.proposal.changes.length === 1 ? state.proposal.changes[0] : undefined;
+  if (change?.kind !== 'task' || change.plan.kind !== 'create') return undefined;
+  const root = change.plan.after?.target;
+  return state.focus.every((row) => row.kind === 'task' && row.target === root) ? root : undefined;
+}
 export class CommandAgent implements CommandAgentPort {
   private turnSequence = 0;
   constructor(private readonly options: CommandAgentOptions) {}
@@ -165,25 +340,45 @@ export class CommandAgent implements CommandAgentPort {
     ctx: CommandToolContext,
     signal: AbortSignal,
   ): ReturnType<typeof wrapLanguageModel> {
+    let requestedAction = false;
     return wrapLanguageModel({
-      model: this.options.connections.model(parseProviderSettings(this.options.settings())),
+      model: this.options.connections.model(parseAgentSettings(this.options.settings())),
       middleware: {
         wrapGenerate: async ({ model: underlying, params }) => {
+          const state = ctx.session.snapshot();
+          const tools = commandEditTools(
+            params.tools,
+            ctx.references,
+            () => commandReferences(state),
+            {
+              workingRoot: soleWorkingCreation(state),
+              retryEvidence: ctx.evidence?.retryableFindEvidence() ?? [],
+            },
+          );
+          const request = tools === undefined ? params : { ...params, tools };
           const lifetime = generationLifetime(params.abortSignal, ctx);
+          let prompt = params.prompt;
           try {
             for (let attempt = 0; ; attempt++) {
-              signal.throwIfAborted();
-              if (this.options.now() >= ctx.deadline)
-                throw new CommandFailure(
-                  'TIMEOUT',
-                  'This request took too long. Your draft is retained.',
-                );
+              assertGenerationCurrent(ctx, signal);
               try {
-                return await underlying.doGenerate({ ...params, abortSignal: lifetime.signal });
+                const result = await underlying.doGenerate({
+                  ...request,
+                  prompt,
+                  abortSignal: lifetime.signal,
+                });
+                if (!missingToolCall(result)) return result;
+                lifetime.checkDeadline();
+                lifetime.signal.throwIfAborted();
+                requireFormatRetry(requestedAction, attempt);
+                ctx.repair('missing-action');
+                requestedAction = true;
+                // This generation ran no tools. Keep the original user request, admitted work and
+                // permissions; never turn the model's prose into instructions or confirmation.
+                prompt = requestToolCall(params.prompt);
               } catch (cause) {
                 lifetime.checkDeadline();
-                if (attempt >= 2 || lifetime.signal.aborted || !providerRetryable(cause))
-                  throw cause;
+                if (!canRetryGeneration(attempt, lifetime.signal, cause)) throw cause;
               }
             }
           } finally {
@@ -198,23 +393,32 @@ export class CommandAgent implements CommandAgentPort {
     start: number,
   ): CommandToolContext {
     const repairs = new Set<string>();
+    const turn = (++this.turnSequence).toString(36);
+    const references = new CommandReferenceBook(turn);
     let repairsUsed = 0;
     const context: CommandToolContext = {
+      userMessage: input.text,
       api: this.options.api,
       session: this.options.session,
       basis: input.session,
       signal: input.signal,
       now: this.options.now,
-      deadline: start + 60000,
+      deadline: start + 120000,
       researchMode: false,
       researchCalls: 0,
       interpreted: false,
       immediate: false,
       done: false,
       errors: new Set(),
+      generation: 0,
+      deferred: new Set(),
+      rejected: new Set(),
+      pendingOperations: new CommandPendingOperations((value) => references.identity(value), turn),
       feedback: new Map(),
       repairExhausted: false,
-      references: new CommandReferenceBook((++this.turnSequence).toString(36)),
+      references,
+      evidence: new CommandEvidence(),
+      capabilities: new Set(['find', 'inspect', 'create_task', 'change_task']),
       ...(this.options.research === undefined ? {} : { research: this.options.research }),
       repair: (call) => {
         if (repairs.has(call) || ++repairsUsed > 2) {
@@ -237,14 +441,18 @@ export class CommandAgent implements CommandAgentPort {
       snapshot.exchanges.filter((entry) => entry.role === 'agent').slice(-16),
     );
     return {
-      ...snapshot,
+      id: snapshot.id,
+      focus: snapshot.focus,
+      context: snapshot.context,
+      status: snapshot.status,
+      activeQuestion: snapshot.activeQuestion,
+      pendingTransition: snapshot.pendingTransition,
+      recovery: snapshot.recovery,
+      blocked: snapshot.blocked,
+      voiceMode: snapshot.voiceMode,
       exchanges: snapshot.exchanges.filter(
         (entry) => entry.role === 'user' || recentReplies.has(entry),
       ),
-      references: commandReferences(snapshot),
-      submissionBasis: undefined,
-      journal: undefined,
-      trees: undefined,
       proposal: {
         revision: snapshot.proposal.revision,
         operations: snapshot.proposal.operations,
@@ -252,7 +460,7 @@ export class CommandAgent implements CommandAgentPort {
           if (change.kind !== 'task') return change;
           return {
             ...change,
-            plan: planToolOutput(change.plan),
+            plan: planToolOutput(change.plan, false),
             planBasis: {
               plan: change.plan.target,
               expectedPlanRevision: change.plan.revision,
@@ -263,31 +471,45 @@ export class CommandAgent implements CommandAgentPort {
       entities: { ...snapshot.entities, tasks: [...pages.values()] },
       actual: [...actual.values()],
       projection: 'Current working state; full native pages remain available through read(tree).',
+      references: commandReferences(snapshot),
     };
   }
   private activeTools(ctx: CommandToolContext): string[] {
-    if (!ctx.interpreted) return ['interpret'];
-    if (this.options.session.readOnly()) return ['read', 'research', 'finish'];
-    return ['read', 'task', 'status', 'note', 'project', 'link', 'cleanup', 'research', 'finish'];
+    const allowed = [...(ctx.capabilities ?? [])];
+    return [
+      ...(!ctx.interpreted ? ['interpret'] : []),
+      'expand',
+      'finish',
+      ...allowed.filter(
+        (name) =>
+          !this.options.session.readOnly() ||
+          ['find', 'inspect', 'read', 'research'].includes(name),
+      ),
+    ];
   }
   async run(input: Parameters<CommandAgentPort['run']>[0]): Promise<void> {
     const start = this.options.now();
     const ctx = this.context(input, start);
     const model = this.model(ctx, input.signal);
+    ctx.reviewWrite =
+      this.options.reviewWrite ?? ((request) => reviewCommandWrite(model, request, input.signal));
     const tools = commandTools(ctx);
+    const policy = await this.options.api.tasks.creationPolicy?.().catch(() => undefined);
+    const clock = this.options.temporalContext?.() ?? new Date(start).toISOString();
+    const instructions = `${commandPrompt}\n\ntemporalContext is the vault clock for this request: ${clock}. Resolve all relative dates from this local date.`;
     const prompt = JSON.stringify({
-      temporalContext: this.options.temporalContext?.() ?? new Date(start).toISOString(),
-      userMessage: input.text,
+      creationPolicy: policy?.ok === true ? policy.value : undefined,
       visibleSession: ctx.references?.project(this.modelContext(input.session)),
+      userMessage: input.text,
     });
-    if (prompt.length + commandPrompt.length > 96000)
+    if (prompt.length + instructions.length > 96000)
       throw new CommandFailure(
         'CONTEXT_LIMIT',
         'This session is too large for another model turn. Save or start a new session.',
       );
     const result = await generateText({
       model,
-      instructions: commandPrompt,
+      instructions,
       prompt,
       tools,
       toolChoice: 'required',
@@ -304,35 +526,34 @@ export class CommandAgent implements CommandAgentPort {
             'REPAIR_LIMIT',
             'The request could not be prepared reliably. Your draft is retained.',
           );
-        ctx.deadline = start + (ctx.researchMode ? 180000 : 60000);
+        ctx.deadline = start + (ctx.researchMode ? 180000 : 120000);
         if (this.options.now() >= ctx.deadline || ctx.done)
           throw new CommandFailure('TIMEOUT', 'This request stopped. Your draft is retained.');
         return {
+          instructions,
           activeTools: this.activeTools(ctx),
           maxOutputTokens: ctx.researchMode ? 8192 : 4096,
           messages: repairMessages(messages, ctx.feedback),
         };
       },
-      repairToolCall: async ({ toolCall, error }) => {
-        const kind = rejectedKind(toolCall.input);
-        if (
-          (toolCall.toolName === 'task' || toolCall.toolName === 'interpret') &&
-          ['append', 'batch', 'edit', 'refresh', 'hierarchy'].includes(kind ?? '')
-        )
-          ctx.unresolvedTaskRefinement = true;
-        ctx.feedback.set(
-          toolCall.toolCallId,
-          schemaRepairMessage(toolCall.toolName, toolCall.input, error),
+      repairToolCall: repairCall(ctx),
+      onLanguageModelCallEnd: ({ content }) => {
+        accountCalls(
+          ctx,
+          content.filter((part) => part.type === 'tool-call'),
         );
-        ctx.repair(toolCall.toolCallId);
-        ctx.errors.add(toolCall.toolName);
-        return null;
       },
       onStepEnd: ({ content }) => {
         for (const part of content) {
-          if (part.type === 'tool-error') ctx.errors.add(part.toolName);
-          if (part.type === 'tool-result') ctx.errors.delete(part.toolName);
+          if (
+            'toolCallId' in part &&
+            (ctx.deferred.has(part.toolCallId) || ctx.rejected.has(part.toolCallId))
+          )
+            continue;
+          if (part.type === 'tool-error') ctx.errors.add(canonicalToolName(part.toolName));
+          if (part.type === 'tool-result') ctx.errors.delete(canonicalToolName(part.toolName));
         }
+        ctx.account?.();
       },
     });
     input.signal.throwIfAborted();
@@ -342,12 +563,12 @@ export class CommandAgent implements CommandAgentPort {
         'The request could not be prepared reliably. Your draft is retained.',
       );
     this.requireFinished(
-      ctx.done,
+      ctx,
       result.steps.some((step) => step.content.some((part) => part.type === 'tool-error')),
     );
   }
-  private requireFinished(done: boolean, failed: boolean): void {
-    if (done) return;
+  private requireFinished(ctx: CommandToolContext, failed: boolean): void {
+    if (ctx.done && ctx.errors.size === 0 && !ctx.pendingOperations.unresolved) return;
     throw new CommandFailure(
       failed ? 'TOOL_ERROR' : 'INCOMPLETE',
       failed

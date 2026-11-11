@@ -50,6 +50,8 @@ export async function publicApiHarness(
   options: {
     readonly initialize?: boolean;
     readonly provision?: boolean;
+    readonly policyAvailable?: boolean;
+    readonly capturedToday?: string;
     readonly index?: Partial<TaskIndexOptions>;
     readonly behaviorSettings?: TaskBehaviorSettingsProvider;
     readonly noteYield?: (signal: AbortSignal) => Promise<void>;
@@ -86,7 +88,7 @@ export async function publicApiHarness(
           () => ({
             taskFilePath: 'a.md',
             taskTemplatePath: '',
-            capturedToday: '2026-08-01',
+            capturedToday: options.capturedToday ?? '2026-08-01',
             insertion: { type: 'append' },
           }),
           (path, template, title) => templates.ensureNote(path, template, title),
@@ -142,6 +144,9 @@ export async function publicApiHarness(
     notes: noteService,
     search,
     reads,
+    ...(options.policyAvailable === false
+      ? {}
+      : { creationPolicy: () => service.creationPolicy() }),
     mutations: service,
     content: {
       edits: service,

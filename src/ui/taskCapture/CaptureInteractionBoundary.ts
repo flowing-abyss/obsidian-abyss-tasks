@@ -13,6 +13,7 @@ type ExitEvidence =
 interface BoundaryCallbacks {
   readonly flushInput: () => 'ready' | 'blocked';
   readonly submit: (trigger: SubmitTrigger) => void;
+  readonly depart?: () => boolean;
   readonly isLive: () => boolean;
 }
 
@@ -112,10 +113,14 @@ export class CaptureInteractionBoundary {
     try {
       for (const child of [...this.surfaces.values()])
         if (child.flush?.(trigger) === 'blocked') return;
+      if (this.depart(trigger)) return;
       if (this.callbacks.flushInput() === 'ready') this.callbacks.submit(trigger);
     } finally {
       this.settling = false;
     }
+  }
+  private depart(trigger: SubmitTrigger): boolean {
+    return trigger === 'blur' && this.callbacks.depart?.() === true;
   }
   private schedule(): void {
     if (!this.pendingExit || this.composing || this.timer !== undefined || this.destroyed) return;

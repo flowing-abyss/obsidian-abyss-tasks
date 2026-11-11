@@ -316,10 +316,10 @@ function findComp<T extends CapturedComp['type']>(
 }
 
 function attachSettingsScroller(tab: CalendarSettingsTab, scrollTop: number): HTMLElement {
-  const scroller = document.body.createDiv({ cls: 'vertical-tab-content' });
-  scroller.append(tab.containerEl);
-  scroller.scrollTop = scrollTop;
-  return scroller;
+  document.body.createDiv({ cls: 'vertical-tab-content-container' }).append(tab.containerEl);
+  tab.containerEl.addClass('vertical-tab-content');
+  tab.containerEl.scrollTop = scrollTop;
+  return tab.containerEl;
 }
 
 function cardNamed(container: HTMLElement, title: string): HTMLElement {
@@ -2654,9 +2654,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
   it('preserves the real settings scroller and focuses a newly added project status', async () => {
     const { tab } = makeTab();
     openSection(tab, 3);
-    const scroller = document.body.createDiv({ cls: 'vertical-tab-content' });
-    scroller.append(tab.containerEl);
-    scroller.scrollTop = 720.5;
+    const scroller = attachSettingsScroller(tab, 720.5);
     const add = expectDefined(
       tab.containerEl.querySelector<HTMLButtonElement>('[aria-label="Add project status"]'),
     );
@@ -2680,9 +2678,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     };
     const { tab } = makeTab({}, { projectProperties });
     openSection(tab, 3);
-    const scroller = document.body.createDiv({ cls: 'vertical-tab-content' });
-    scroller.append(tab.containerEl);
-    scroller.scrollTop = 1855;
+    const scroller = attachSettingsScroller(tab, 1855);
     const input = expectDefined(
       tab.containerEl.querySelector<HTMLInputElement>('.abyss-project-column-add-input'),
     );

@@ -177,11 +177,16 @@ function scope(input: RecordValue): Pick<ListTasksV1, 'path' | 'folder'> {
   };
 }
 
+function parseInbox(value: unknown): boolean {
+  if (typeof value !== 'boolean') return invalid();
+  return value;
+}
 function list(value: unknown): ListTasksV1 {
   const input = record(value === undefined ? {} : value, [
     'path',
     'folder',
     'statuses',
+    'inbox',
     'tagsAll',
     'dates',
     'limit',
@@ -189,6 +194,7 @@ function list(value: unknown): ListTasksV1 {
   ]);
   return {
     ...scope(input),
+    ...(input['inbox'] === undefined ? {} : { inbox: parseInbox(input['inbox']) }),
     ...(input['statuses'] === undefined ? {} : { statuses: parseStatuses(input['statuses']) }),
     ...(input['tagsAll'] === undefined ? {} : { tagsAll: parseTags(input['tagsAll']) }),
     ...(input['dates'] === undefined ? {} : { dates: parseDates(input['dates']) }),

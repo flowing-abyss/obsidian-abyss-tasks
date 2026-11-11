@@ -302,6 +302,42 @@ export async function noteWorkflow(client: TasksApiV1, deadline: number): Promis
     });
 }
 
+export async function nativeNoteCreation(
+  client: TasksApiV1,
+  deadline: number,
+): Promise<ReadonlyArray<string | undefined> | undefined> {
+  const notes = client.notes;
+  if (notes === undefined) return;
+  const prepared = await notes.prepare({
+    kind: 'create',
+    destination: { type: 'obsidian-default', fileName: 'New.md', fromPath: 'context/source.md' },
+    title: 'New',
+    text: 'Requested prose',
+    templateExecution: { type: 'configured-templater' },
+  });
+  if (!prepared.ok || prepared.value.creationPreview === undefined) return;
+  const requestedBody: string = prepared.value.creationPreview.requestedBody.text;
+  await notes.prepare({
+    kind: 'refine',
+    plan: prepared.value.target,
+    expectedPlanRevision: prepared.value.revision,
+    operation: { type: 'replace-body', text: requestedBody },
+  });
+  const saved = await notes.create({
+    plan: prepared.value.target,
+    expectedPlanRevision: prepared.value.revision,
+    requestId: 'native-note',
+    expiresAt: deadline,
+  });
+  if (saved.receipt?.completion === 'incomplete') {
+    const phase: 'provision' | 'template' | 'content' | 'readback' | undefined =
+      saved.receipt.phase;
+    const effect: 'unchanged' | 'committed' | 'unknown' | undefined = saved.receipt.templateEffects;
+    return [phase, effect];
+  }
+  return undefined;
+}
+
 export async function preparedRefinements(
   client: TasksApiV1,
   source: string,
@@ -315,6 +351,14 @@ export async function preparedRefinements(
     destination: { type: 'configured-default' },
     tree: { markdownTitle: 'New' },
   });
+  if (client.info.capabilities.includes('tasks.create.inbox-intent')) {
+    await prepare({
+      kind: 'create',
+      intent: 'inbox',
+      destination: { type: 'configured-default' },
+      tree: { markdownTitle: 'Inbox item' },
+    });
+  }
   if (!made.ok || made.value.after === null) return;
   const next = await prepare({
     kind: 'append',

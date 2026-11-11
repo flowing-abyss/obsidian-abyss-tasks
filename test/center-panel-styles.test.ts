@@ -361,7 +361,7 @@ describe('CenterPanel task metadata styles', () => {
   it('keeps a usable title track under the observed 292px center metadata pressure', () => {
     const center = declarationsFor('.abyss-center');
     const compact = atRuleBlock('@container abyss-task-list (max-width: 28rem)');
-    const mainRow = declarationsForSource(compact, '.abyss-task-card-main-row');
+    const mainRow = declarationsForSource(compact, '.abyss-task-card .abyss-task-card-main-row');
     const mainRowWithDelete = declarationsForSource(
       compact,
       '.abyss-task-card-main-row--has-delete',
@@ -621,9 +621,9 @@ it('keeps the smaller nested search header on the shared responsive tracks', () 
     'line-height: var(--line-height-tight)',
   );
   const compact = atRuleBlock('@container abyss-task-list (max-width: 28rem)');
-  expect(
-    declarationsForSource(compact, '.abyss-search-context .abyss-task-card-main-row'),
-  ).toContain('display: grid');
+  expect(declarationsForSource(compact, '.abyss-task-card .abyss-task-card-main-row')).toContain(
+    'display: grid',
+  );
   expect(
     declarationsForSource(compact, '.abyss-task-card-main-row > .abyss-task-meta-right'),
   ).toContain('justify-content: flex-start');
@@ -654,10 +654,12 @@ it('keeps every selected description window visible with compact Markdown block 
 it('uses compact logical list gutters inside descriptions only', () => {
   for (const surface of [
     '.abyss-right-desc-view',
-    '.abyss-task-card .abyss-search-context .abyss-task-desc',
+    '.abyss-search-context .abyss-task-desc',
+    '.abyss-command-tree .abyss-task-desc',
   ]) {
     for (const list of ['ol', 'ul']) {
-      const rule = declarationsFor(`${surface} .abyss-md ${list}`);
+      const selector = surface === '.abyss-right-desc-view' ? list : ':is(ol, ul)';
+      const rule = declarationsFor(`${surface} .abyss-md ${selector}`);
       expect(rule).toContain('padding-inline-start: 2em');
       expect(rule).toContain('margin-inline: 0');
     }

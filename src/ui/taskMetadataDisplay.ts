@@ -3,11 +3,13 @@ import { setIcon } from 'obsidian';
 import type { TaskOccurrencePresentation } from '../task-lists/taskOccurrencePresentation';
 import {
   formatDurationMinutes,
+  recurrenceLabel,
   taskOccupiedDates,
   type DurationMinutes,
   type LocalDate,
   type TaskPlanning,
 } from '../tasks';
+import { recurrenceBadgeInput, renderRecurrenceBadge } from './recurrence/renderRecurrenceBadge';
 import { renderSourceNoteContent, renderTaskTagContent } from './taskMetadataContent';
 export interface TaskDateDisplayOptions {
   readonly completePlanning?: boolean;
@@ -20,6 +22,7 @@ export interface TaskMetadataDisplay {
   readonly planning: TaskPlanning;
   readonly tags: readonly string[];
   readonly sourcePath?: string;
+  readonly recurrence?: string;
 }
 export interface TaskMetadataDisplayOptions extends TaskDateDisplayOptions {
   readonly owner: Component;
@@ -197,6 +200,9 @@ class MetadataDisplay implements TaskMetadataDisplayMount {
   readonly values = new Map<string, HTMLElement>();
   private readonly dates: HTMLElement;
   private readonly source: HTMLElement;
+  private readonly recurrence: HTMLElement;
+  private recurrenceKey: string | undefined;
+  private recurrenceValue: HTMLElement | undefined;
   private readonly tags = new Map<string, HTMLElement>();
   private options: TaskMetadataDisplayOptions;
   private dateKey = '';
@@ -210,6 +216,7 @@ class MetadataDisplay implements TaskMetadataDisplayMount {
     this.host = parent.createDiv({ cls: 'abyss-task-meta-right' });
     this.dates = this.host.createSpan({ cls: 'abyss-task-meta-right' });
     this.source = this.host.createSpan();
+    this.recurrence = this.host.createSpan();
     this.options = options;
     this.update(value, options);
   }
@@ -218,12 +225,30 @@ class MetadataDisplay implements TaskMetadataDisplayMount {
     this.updateDates(next);
     this.values.clear();
     for (const [key, element] of this.dateValues) this.values.set(key, element);
+    this.updateRecurrence(next.recurrence);
     this.updateSource(next.sourcePath);
     this.updateTags(next.tags);
     this.host.hidden =
       this.dates.childElementCount === 0 &&
       this.source.childElementCount === 0 &&
-      this.tags.size === 0;
+      this.tags.size === 0 &&
+      this.recurrenceValue === undefined;
+  }
+  private updateRecurrence(rule: string | undefined): void {
+    if (rule !== this.recurrenceKey) {
+      this.recurrence.empty();
+      this.recurrenceKey = rule;
+      this.recurrenceValue =
+        rule === undefined
+          ? undefined
+          : renderRecurrenceBadge(this.recurrence, recurrenceBadgeInput(rule));
+      if (rule !== undefined) {
+        this.recurrenceValue?.addClass('abyss-task-date');
+        this.recurrenceValue?.createSpan({ text: recurrenceLabel(rule) });
+      }
+    }
+    if (this.recurrenceValue !== undefined)
+      this.values.set(`recurrence:${rule ?? ''}`, this.recurrenceValue);
   }
   private updateDates(next: TaskMetadataDisplay): void {
     const dates = taskDisplayDates(next.planning);

@@ -47,7 +47,7 @@ it('submits one complete manual segment despite repeated finish and stop events'
   h.media.level(0.1);
   await vi.advanceTimersByTimeAsync(400);
   h.media.level(0);
-  await vi.advanceTimersByTimeAsync(2000);
+  await vi.advanceTimersByTimeAsync(3500);
   expect(h.segments).toHaveLength(0);
   h.capture.finish();
   h.capture.finish();
@@ -55,28 +55,106 @@ it('submits one complete manual segment despite repeated finish and stop events'
   expect(h.segments).toHaveLength(1);
   expect(h.media.tracks[0]?.stop).toHaveBeenCalledOnce();
 });
-it('continuous silence stays local then accepts the next utterance on the same stream', async () => {
+it('rolls quiet containers locally, then releases the microphone before delivering speech', async () => {
+  const h = setup('continuous');
+  h.media.delayStops();
+  await h.start();
+  await vi.advanceTimersByTimeAsync(5100);
+  h.media.completeStops();
+  expect(h.media.recorders).toHaveLength(2);
+  expect(h.media.cues).toHaveLength(1);
+  h.media.level(0.1);
+  await vi.advanceTimersByTimeAsync(400);
+  h.media.level(0);
+  await vi.advanceTimersByTimeAsync(3500);
+  expect(h.media.tracks[0]?.readyState).toBe('ended');
+  expect(h.segments).toHaveLength(0);
+  h.media.completeStops();
+  expect(h.segments).toHaveLength(1);
+  expect(h.capture.active()).toBe(false);
+  await vi.advanceTimersByTimeAsync(15000);
+  expect(h.media.cues).toHaveLength(2);
+  expect(h.media.recorders).toHaveLength(2);
+  expect(h.media.getUserMedia).toHaveBeenCalledOnce();
+});
+
+// Count positive-going cycles in equal windows inside each note of the rendered waveform.
+function pitchCycles(samples: Float32Array, start: number): number {
+  const section = samples.subarray(samples.length * start, samples.length * (start + 0.22));
+  return section.reduce(
+    (count, sample, index) => count + Number(sample > 0 && (section[index - 1] ?? 1) <= 0),
+    0,
+  );
+}
+
+it.each(['manual', 'continuous'] as const)(
+  'plays a quiet rising pair on %s recording start and a falling pair after releasing the track',
+  async (mode) => {
+    const h = setup(mode);
+    await h.start();
+    h.capture.stop();
+    h.capture.stop();
+    expect(h.media.cues.map((cue) => cue.activeTrack)).toEqual([true, false]);
+    expect(h.media.cues[0]?.recording).toBe(true);
+    const [start, end] = h.media.cues;
+    if (start === undefined || end === undefined) throw new Error('Missing cues');
+    expect(pitchCycles(start.samples, 0.62)).toBeGreaterThan(
+      pitchCycles(start.samples, 0.1) * 1.15,
+    );
+    expect(pitchCycles(end.samples, 0.62)).toBeLessThan(pitchCycles(end.samples, 0.1) * 0.87);
+    for (const cue of [start, end]) {
+      expect(cue.samples.length).toBeLessThan(12000);
+      expect(cue.samples.some((sample) => Math.abs(sample) > 0.01)).toBe(true);
+      expect(cue.samples.every((sample) => Number.isFinite(sample) && Math.abs(sample) < 0.1)).toBe(
+        true,
+      );
+    }
+  },
+);
+it('finishes the output-only end cue before fast rearm can open the microphone again', async () => {
+  const h = setup('continuous');
+  h.media.holdCues();
+  await h.start();
+  h.capture.stop();
+  const again = h.start();
+  await Promise.resolve();
+  expect(h.media.tracks[0]?.readyState).toBe('ended');
+  expect(h.media.getUserMedia).toHaveBeenCalledOnce();
+  expect(h.media.contexts[0]?.close).not.toHaveBeenCalled();
+  h.media.endCues();
+  await again;
+  expect(h.media.getUserMedia).toHaveBeenCalledTimes(2);
+  expect(h.media.contexts[0]?.close).toHaveBeenCalledOnce();
+});
+it('releases visible input immediately on disposal and bounds the remaining end cue', async () => {
+  const h = setup();
+  h.media.holdCues();
+  await h.start();
+  h.capture.dispose();
+  expect(h.media.tracks[0]?.readyState).toBe('ended');
+  expect(h.media.cues).toHaveLength(2);
+  expect(h.media.contexts[0]?.close).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1500);
+  expect(h.media.contexts[0]?.close).toHaveBeenCalledOnce();
+  expect(vi.getTimerCount()).toBe(0);
+  h.media.endCues();
+  expect(h.media.getUserMedia).toHaveBeenCalledOnce();
+});
+it('ignores the opening sound picked up by the microphone without dropping the next spoken command', async () => {
   const h = setup('continuous');
   await h.start();
-  await vi.advanceTimersByTimeAsync(15000);
+  h.media.level(0.06);
+  await vi.advanceTimersByTimeAsync(250);
+  expect(h.capture.speaking()).toBe(false);
+  h.media.level(0);
+  await vi.advanceTimersByTimeAsync(2200);
   expect(h.segments).toHaveLength(0);
-  h.media.level(0.1);
-  await vi.advanceTimersByTimeAsync(400);
+  expect(h.media.tracks[0]?.readyState).toBe('live');
+  h.media.level(0.06);
+  await vi.advanceTimersByTimeAsync(200);
   h.media.level(0);
-  await vi.advanceTimersByTimeAsync(1200);
+  await vi.advanceTimersByTimeAsync(3500);
   expect(h.segments).toHaveLength(1);
-  await vi.advanceTimersByTimeAsync(15000);
-  expect(h.segments).toHaveLength(1);
-  h.media.level(0.1);
-  await vi.advanceTimersByTimeAsync(400);
-  h.media.level(0);
-  await vi.advanceTimersByTimeAsync(1200);
-  expect(h.segments).toHaveLength(2);
-  expect(h.media.getUserMedia).toHaveBeenCalledOnce();
-  expect(h.media.tracks[0]?.stop).not.toHaveBeenCalled();
-  h.capture.dispose();
-  expect(h.media.tracks[0]?.stop).toHaveBeenCalledOnce();
-  expect(vi.getTimerCount()).toBe(0);
 });
 it('disposes late permission results and all owning-window media resources', async () => {
   const h = setup();
@@ -85,6 +163,7 @@ it('disposes late permission results and all owning-window media resources', asy
   await pending;
   expect(h.media.tracks[0]?.stop).toHaveBeenCalledOnce();
   expect(h.media.recorders).toHaveLength(0);
+  expect(h.media.cues).toEqual([]);
   expect(h.segments).toEqual([]);
 });
 it.each(['error', 'ended', 'mute'])('discards incomplete capture on %s', async (event) => {
@@ -108,6 +187,21 @@ it('reports denial without a recorder and permits a deliberate retry', async () 
   await h.start();
   expect(h.media.recorders).toHaveLength(1);
 });
+it('discards buffered analyser speech after the input stream becomes inactive', async () => {
+  const h = setup('continuous');
+  await h.start();
+  h.media.level(0.1);
+  await vi.advanceTimersByTimeAsync(500);
+  expect(h.capture.speaking()).toBe(true);
+  const track = h.media.tracks[0];
+  if (track === undefined) throw new Error('Missing microphone');
+  track.stop(); // Stopping a track directly does not dispatch its ended event.
+  await vi.advanceTimersByTimeAsync(50);
+  expect(h.capture.speaking()).toBe(false);
+  expect(h.capture.state()).toBe('idle');
+  expect(h.segments).toEqual([]);
+  expect(h.errors).toHaveLength(1);
+});
 it('does not cut speech that begins just before a quiet container rollover', async () => {
   const h = setup('continuous');
   await h.start();
@@ -115,7 +209,7 @@ it('does not cut speech that begins just before a quiet container rollover', asy
   h.media.level(0.1);
   await vi.advanceTimersByTimeAsync(200);
   h.media.level(0);
-  await vi.advanceTimersByTimeAsync(900);
+  await vi.advanceTimersByTimeAsync(3600);
   expect(h.segments).toHaveLength(1);
   expect(h.errors).toEqual([]);
 });
@@ -226,3 +320,135 @@ it('uses elapsed quiet-container age without counting a stalled interval as obse
   expect(h.errors).toEqual([]);
   expect(h.media.getUserMedia).toHaveBeenCalledOnce();
 });
+
+it('bounds suspended startup, releases media and rejects late resume', async () => {
+  const h = setup();
+  let resume!: () => void;
+  h.media.resume(
+    () =>
+      new Promise<void>((resolve) => {
+        resume = resolve;
+      }),
+  );
+  const pending = h.start();
+  await Promise.resolve();
+  expect(h.capture.state()).toBe('starting');
+  await vi.advanceTimersByTimeAsync(1500);
+  await pending;
+  expect(h.capture.state()).toBe('idle');
+  expect(h.errors[0]).toMatch(/start|microphone/i);
+  expect(h.media.tracks[0]?.stop).toHaveBeenCalledOnce();
+  expect(h.media.contexts[0]?.close).toHaveBeenCalledOnce();
+  resume();
+  await Promise.resolve();
+  expect(h.media.recorders).toHaveLength(0);
+  expect(vi.getTimerCount()).toBe(0);
+});
+it('publishes the current analyser samples only during speech and clears activity once on release', async () => {
+  vi.useFakeTimers();
+  const media = voiceMediaHarness(window);
+  const frames: Array<number | undefined> = [];
+  const changed = vi.fn();
+  const capture = new NativeVoiceCapture(window, {
+    begin: () => 1,
+    segment: () => {},
+    changed,
+    failure: () => {},
+    activity: (samples) => frames.push(samples?.[0]),
+  });
+  disposers.push(() => {
+    capture.dispose();
+  });
+  await capture.start('continuous');
+  changed.mockClear();
+  media.level(0.1);
+  await vi.advanceTimersByTimeAsync(250);
+  expect(frames).toEqual([]);
+  media.level(0.02);
+  await vi.advanceTimersByTimeAsync(100);
+  expect(frames).toHaveLength(2);
+  expect(frames[0]).toBeCloseTo(0.02);
+  media.level(0.1);
+  await vi.advanceTimersByTimeAsync(100);
+  expect(frames[frames.length - 1]).toBeCloseTo(0.1);
+  expect(changed).not.toHaveBeenCalled();
+  capture.stop();
+  expect(frames[frames.length - 1]).toBeUndefined();
+  const count = frames.length;
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(frames).toHaveLength(count);
+});
+it('accepts delayed final recorder events exactly once and discards retired containers', async () => {
+  const h = setup();
+  h.media.delayStops();
+  await h.start();
+  await vi.advanceTimersByTimeAsync(250);
+  h.media.level(0.1);
+  await vi.advanceTimersByTimeAsync(200);
+  h.capture.finish();
+  h.capture.finish();
+  expect(h.segments).toHaveLength(0);
+  h.media.completeStops();
+  expect(h.segments).toHaveLength(1);
+  await h.start();
+  await vi.advanceTimersByTimeAsync(200);
+  h.capture.finish();
+  h.capture.dispose();
+  h.media.completeStops();
+  expect(h.segments).toHaveLength(1);
+});
+
+it('disposal during resume clears its deadline immediately and allows startup to settle', async () => {
+  const h = setup();
+  h.media.resume(() => new Promise<void>(() => {}));
+  const pending = h.start();
+  await Promise.resolve();
+  h.capture.dispose();
+  expect(vi.getTimerCount()).toBe(0);
+  await pending;
+  expect(h.media.contexts[0]?.close).toHaveBeenCalledOnce();
+  expect(h.errors).toEqual([]);
+});
+
+it('restarts continuous capture after delayed silent rollover and discards a late stopped segment', async () => {
+  const h = setup('continuous');
+  h.media.delayStops();
+  await h.start();
+  await vi.advanceTimersByTimeAsync(5200);
+  expect(h.media.recorders).toHaveLength(1);
+  h.media.completeStops();
+  expect(h.media.recorders).toHaveLength(2);
+  h.media.level(0.1);
+  await vi.advanceTimersByTimeAsync(200);
+  h.media.level(0);
+  await vi.advanceTimersByTimeAsync(3600);
+  h.capture.stop();
+  h.media.completeStops();
+  expect(h.segments).toEqual([]);
+  expect(h.media.recorders).toHaveLength(2);
+  expect(h.media.tracks[0]?.stop).toHaveBeenCalledOnce();
+});
+
+it.each([1000, 2000, 3000])(
+  'a %i ms thought pause stays in the same continuous utterance',
+  async (pause) => {
+    const h = setup('continuous');
+    await h.start();
+    await vi.advanceTimersByTimeAsync(300);
+    h.media.level(0.1);
+    await vi.advanceTimersByTimeAsync(200);
+    h.media.level(0);
+    await vi.advanceTimersByTimeAsync(pause);
+    expect(h.segments).toHaveLength(0);
+    h.media.level(0.1);
+    await vi.advanceTimersByTimeAsync(200);
+    h.media.level(0);
+    await vi.advanceTimersByTimeAsync(3450);
+    expect(h.segments).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(h.segments).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(h.segments).toHaveLength(1);
+    expect(h.errors).toEqual([]);
+  },
+);

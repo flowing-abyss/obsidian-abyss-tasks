@@ -29,6 +29,7 @@ export type TaskCreatePreparationDestination =
 export interface TaskCreatePreparationApi {
   prepareCreateTree(input: {
     readonly destination: TaskCreatePreparationDestination;
+    readonly intent?: 'inbox';
     readonly tree: TaskCreateTreeNode;
   }): Promise<TaskCreatePreparation>;
 }

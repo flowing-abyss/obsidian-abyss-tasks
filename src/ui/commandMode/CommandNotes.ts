@@ -9,6 +9,8 @@ import type {
   CommandSubmissionBasis,
 } from '../../ai/commandTypes';
 import { RetainedTaskText, type PreparedTaskTextUpdate } from '../retainedTaskText';
+import { decorateTaskTextDifference } from '../taskTextDifference';
+import type { CommandPresentationMemory } from './CommandTree';
 
 interface NoteFieldDisplay {
   readonly key: string;
@@ -22,6 +24,22 @@ interface NoteDisplay {
   readonly fields: readonly NoteFieldDisplay[];
   readonly expanded: boolean;
   readonly change: string;
+  readonly sessionChanged?: boolean;
+}
+export interface CommandNotePaint {
+  readonly iteration: number;
+  readonly fields: readonly NoteFieldDisplay[];
+  readonly created: boolean;
+  readonly touched: boolean;
+}
+function comparisonBefore(
+  prior: CommandNotePaint | undefined,
+  field: NoteFieldDisplay,
+  iteration: number,
+): string | undefined {
+  const old = prior?.fields.find((value) => value.key === field.key);
+  if (old === undefined) return field.before;
+  return prior?.iteration === iteration ? old.before : old.text;
 }
 interface NoteRow {
   readonly host: HTMLDetailsElement;
@@ -154,6 +172,7 @@ export class CommandNotes {
     private readonly app: App,
     private readonly component: Component,
     private readonly options: {
+      memory: { presentation?: CommandPresentationMemory };
       allowLink(href: string, path: string): boolean;
       changed(): void;
     },
@@ -175,18 +194,54 @@ export class CommandNotes {
     this.reviewKeys = state.proposal.changes.flatMap((change) =>
       change.kind === 'note' ? [change.plan.target] : [],
     );
-    const notes = displays(state);
+    const notes = this.paint(state, displays(state));
     const keys = new Set(notes.map((note) => note.key));
     for (const [key, row] of this.rows) if (!keys.has(key)) this.release(key, row);
     for (const note of notes) this.render(note);
     this.host.hidden = notes.length === 0;
+  }
+  private paint(state: CommandSessionSnapshot, notes: readonly NoteDisplay[]): NoteDisplay[] {
+    const memory = (this.options.memory.presentation ??= new Map());
+    const retained = memory.get(state.id);
+    const previous = retained?.notes ?? new Map<string, CommandNotePaint>();
+    const iteration = state.exchanges.filter((exchange) => exchange.role === 'user').length;
+    const next = new Map(previous);
+    const result = notes.map((note) => {
+      const prior = previous.get(note.path);
+      const fields = note.fields.map((field) => {
+        const before = comparisonBefore(prior, field, iteration);
+        return { ...field, ...(before === undefined ? {} : { before }) };
+      });
+      const created =
+        note.change === 'added' &&
+        (prior === undefined || (prior.iteration === iteration && prior.created));
+      const touched =
+        prior?.touched === true ||
+        note.fields.some((field) => field.before !== undefined && field.before !== field.text);
+      next.set(note.path, { iteration, fields, created, touched });
+      return {
+        ...note,
+        fields: state.presentation?.changes === 'cumulative' ? note.fields : fields,
+        change: created ? 'added' : '',
+        sessionChanged: touched,
+      };
+    });
+    memory.set(state.id, {
+      ...retained,
+      proposalRevision: state.proposal.revision,
+      owners: retained?.owners ?? new Map(),
+      notes: next,
+    });
+    return result;
   }
   private render(note: NoteDisplay): void {
     const row = this.row(note.key);
     if (note.expanded !== row.expanded) row.host.open = note.expanded;
     row.expanded = note.expanded;
     row.host.dataset['change'] = note.change;
+    row.host.dataset['sessionChanged'] = String(note.sessionChanged === true);
     row.title.textContent = note.path.split('/').pop()?.replace(/\.md$/i, '') ?? note.path;
+    if (note.change === 'added') decorateTaskTextDifference(row.title, '');
     row.title.setAttribute('title', note.path);
     row.path.textContent = note.path;
     row.path.setAttribute('title', note.path);
@@ -209,9 +264,12 @@ export class CommandNotes {
       field.body.empty();
       field.text = new RetainedTaskText(field.body, field.owner);
     }
+    const sameReviewedContent =
+      field.ready === true && field.value?.text === value.text && field.path === note.path;
     field.value = value;
     field.path = note.path;
-    field.ready = false;
+    // Repainting iteration cues does not invalidate already displayed source text.
+    field.ready = sameReviewedContent;
     field.failed = false;
     const current = (): boolean =>
       this.rows.get(note.key) === row &&
@@ -235,7 +293,7 @@ export class CommandNotes {
       },
       decoration: {
         kind: 'complete',
-        ...(value.before === undefined || value.before === ''
+        ...(value.before === undefined
           ? {}
           : { previousMarkdown: value.before, compareMarkdown: true }),
       },
@@ -330,6 +388,8 @@ function showRead(state: CommandSessionSnapshot, page: NoteReadPageV1): boolean 
   );
 }
 function previewScope(state: CommandSessionSnapshot, plan: NotePlanV1): string {
+  if (plan.creationPreview !== undefined)
+    return commandMessage('New note · Content after template');
   if (plan.kind === 'create') return commandMessage('New note · Complete preview');
   if ((plan.sections?.length ?? 0) > 1)
     return commandMessage('Changed sections · Complete preview');
@@ -343,6 +403,6 @@ function previewScope(state: CommandSessionSnapshot, plan: NotePlanV1): string {
   return commandMessage('{scope} · Complete preview', { scope });
 }
 function noteChange(note: NoteFieldDisplay): string {
-  if (note.before === undefined) return '';
+  if (note.before === undefined || note.before === note.text) return '';
   return note.before === '' ? 'added' : 'changed';
 }

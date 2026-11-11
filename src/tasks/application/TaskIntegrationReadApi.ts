@@ -55,6 +55,11 @@ export interface TaskIntegrationReadStateApi {
 }
 
 export interface TaskNodeReadQuery extends TaskReadScope {
+  readonly inboxPolicy?: {
+    readonly mode: 'untagged' | 'tag' | 'both';
+    readonly serviceTag?: string;
+    readonly member: boolean;
+  };
   readonly statuses?: readonly TaskStatus[];
   readonly tagsAll?: readonly string[];
   readonly dates?: ReadonlyArray<{

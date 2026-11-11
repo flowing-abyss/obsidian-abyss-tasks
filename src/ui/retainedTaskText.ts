@@ -30,6 +30,7 @@ export interface RetainedTaskTextInput {
     readonly kind: 'complete' | 'preview' | 'excerpt';
     readonly continuation?: boolean;
     readonly previousMarkdown?: string;
+    readonly removed?: boolean;
     readonly compareMarkdown?: boolean;
     readonly query?: PreparedSearchQuery;
     readonly segment?: SearchWordSegmenter;
@@ -107,6 +108,7 @@ function sameDecoration(
   return (
     a.kind === b.kind &&
     a.previousMarkdown === b.previousMarkdown &&
+    a.removed === b.removed &&
     a.compareMarkdown === b.compareMarkdown &&
     a.continuation === b.continuation &&
     a.segment === b.segment &&
@@ -115,6 +117,7 @@ function sameDecoration(
   );
 }
 interface VisibleField {
+  rendered?: string;
   comparison?: { readonly markdown: string; readonly text: string };
   input: RetainedTaskTextInput;
   readonly owner: Component;
@@ -149,6 +152,8 @@ function applyDifference(
   current: RetainedTaskTextInput,
 ): void {
   if (
+    current.decoration.removed === true ||
+    previous.input.decoration.removed === true ||
     current.decoration.previousMarkdown !== undefined ||
     previous.input.decoration.previousMarkdown !== undefined
   )
@@ -159,6 +164,7 @@ function applyDifference(
         previous.comparison?.markdown === current.decoration.previousMarkdown
         ? previous.comparison?.text
         : undefined,
+      current.decoration.removed,
     );
 }
 function inPlace(
@@ -301,6 +307,7 @@ class PreparedField implements PreparedTaskTextUpdate {
         beforeOpenLink: (link) =>
           this.#field.input.callbacks.beforeOpenLink?.(link) ?? Promise.resolve(true),
         onRendered: (element) => {
+          this.#field.rendered = renderedText(element).text;
           decorate(element, this.#field, input);
           if (this.#direct !== undefined) this.#direct = [...element.childNodes];
           this.#finish({ type: 'ready' });
@@ -403,6 +410,7 @@ export class RetainedTaskText {
     const old = this.#visible;
     const reuse = inPlace(old, input, this.#host.ownerDocument);
     const field = reuse ? old : this.#create(input);
+    retainComparison(field, old, input);
     if (reuse) field.input = { ...field.input, callbacks: input.callbacks };
     const update = new PreparedField(this.#host, input, field, {
       replace: !reuse,
@@ -444,4 +452,18 @@ export class RetainedTaskText {
     if (this.#visible !== undefined) this.#parent.removeChild(this.#visible.owner);
     this.#visible = undefined;
   }
+}
+function retainComparison(
+  field: VisibleField,
+  old: VisibleField | undefined,
+  input: RetainedTaskTextInput,
+): void {
+  if (old?.rendered === undefined || old.document !== field.document) return;
+  if (
+    old.input.source.path !== input.source.path ||
+    old.input.source.presentation !== input.source.presentation
+  )
+    return;
+  if (old.input.source.markdown === input.decoration.previousMarkdown)
+    field.comparison = { markdown: old.input.source.markdown, text: old.rendered };
 }

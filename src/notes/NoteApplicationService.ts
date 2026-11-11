@@ -1,14 +1,17 @@
 import type { App, TFile } from 'obsidian';
+import type { DefaultNoteDestinationV1 } from '../../api';
 import { frontmatterRange } from '../markdown/frontmatterRange';
-import { sameNoteFileStamp } from '../markdown/noteFileStamp';
+import { sameNoteFileStamp, type NoteFileStamp } from '../markdown/noteFileStamp';
 import { readVaultText } from '../markdown/readVaultText';
 import type { NoteHostAdapter } from './NoteHostAdapter';
 import type { AcceptedNoteSource, NoteSourceReadApi, TaskReadObservation } from './NoteSourceApi';
 import {
   NoteTemplateService,
   StaticNoteFailure,
+  TemplateFirstFailure,
   type PreparedStaticNoteRequest,
   type StaticNotePlan,
+  type TemplateFirstPlan,
 } from './NoteTemplateService';
 import {
   NOTE_LIMITS,
@@ -73,7 +76,15 @@ function sameMeaning(before: TaskReadObservation, after: TaskReadObservation): b
     before.semanticsRevision === after.semanticsRevision
   );
 }
+interface CreationBasis {
+  template: AcceptedNoteSource | undefined;
+  observation: TaskReadObservation;
+  destinationCurrent(): void;
+}
+type CreationOptions = NonNullable<Parameters<NoteApplicationApi['prepareCreate']>[3]>;
+type InitializedNote = Awaited<ReturnType<NoteTemplateService['createTemplateFirstNote']>>;
 interface EditBasis {
+  readonly guard?: () => void;
   readonly source: AcceptedNoteSource;
   readonly range: NoteRange;
   readonly replacement: string;
@@ -98,6 +109,7 @@ interface EditAttempt {
 /** Owns one exact, prepared prose mutation; task ownership is supplied by the canonical adapter. */
 export class NoteApplicationService implements NoteApplicationApi {
   private readonly templates: NoteTemplateService;
+  private readonly editBases = new WeakMap<PreparedNote, EditBasis>();
   constructor(
     private readonly app: App,
     readonly sources: NoteSourceReadApi,
@@ -162,6 +174,7 @@ export class NoteApplicationService implements NoteApplicationApi {
       throw new NoteFailure('REVISION_CONFLICT');
   }
   private checkEdit(basis: EditBasis, live: string): void {
+    basis.guard?.();
     this.current(basis.source);
     if (
       !sameMeaning(basis.observation, this.capture()) ||
@@ -248,7 +261,7 @@ export class NoteApplicationService implements NoteApplicationApi {
       after: edits.length === 1 ? after : edit.replacement,
     }));
     let result: Promise<NoteCommitOutcome> | undefined;
-    return {
+    const prepared: PreparedNote = {
       kind: 'edit',
       path: source.path,
       source,
@@ -273,8 +286,13 @@ export class NoteApplicationService implements NoteApplicationApi {
           this.commitPreparedSection(basis),
         )),
     };
+    this.editBases.set(prepared, basis);
+    return prepared;
   }
-  private async commitPreparedSection(basis: EditBasis): Promise<NoteCommitOutcome> {
+  private async commitPreparedSection(
+    basis: EditBasis,
+    onAcknowledged?: (stamp: NoteFileStamp) => void,
+  ): Promise<NoteCommitOutcome> {
     const state: EditAttempt = {
       forwarded: false,
       acknowledged: false,
@@ -296,6 +314,7 @@ export class NoteApplicationService implements NoteApplicationApi {
       if (!state.forwarded)
         return { code: state.failure, noteEffects: 'unchanged', destinationEffects: 'unchanged' };
       state.acknowledged = written === basis.candidate;
+      if (state.acknowledged) onAcknowledged?.({ ...basis.file.stat });
       return await this.finishEdit(basis, state);
     } catch (cause) {
       return await this.failedEdit(basis, state, cause);
@@ -409,28 +428,296 @@ export class NoteApplicationService implements NoteApplicationApi {
     throw new NoteFailure('RESOURCE_LIMIT');
   }
   async prepareCreate(
-    requestedPath: string,
+    destination: string | DefaultNoteDestinationV1,
     title: string,
     text: string,
-    options: {
-      readonly template?: AcceptedNoteSource;
-      readonly collision?: 'reject' | 'suffix';
-    } = {},
+    options: CreationOptions = {},
   ): Promise<PreparedNote> {
-    const { template, collision = 'reject' } = options;
-    const path = this.creationPath(requestedPath, collision);
+    const requestedPath = this.resolveDestination(destination);
+    const path = this.creationPath(requestedPath, options.collision ?? 'reject');
     bounded(text);
-    const observation = this.capture();
-    if (template !== undefined) this.current(template);
-    const staticPlan = await this.templates.planStaticNote(path, template?.path ?? '', title);
+    const basis: CreationBasis = {
+      template: options.template,
+      observation: this.capture(),
+      destinationCurrent: () => {
+        if (this.resolveDestination(destination) !== requestedPath)
+          throw new NoteFailure('REVISION_CONFLICT');
+      },
+    };
+    if (basis.template !== undefined) this.current(basis.template);
+    const mode = options.templateExecution?.type ?? 'static';
+    if (mode !== 'static')
+      return await this.prepareTemplateCreation({ path, title, text }, basis, mode);
+    const staticPlan = await this.templates.planStaticNote(path, basis.template?.path ?? '', title);
     if (staticPlan.type !== 'ready') throw new NoteFailure('UNSUPPORTED_TEMPLATE');
-    return this.preparedCreation(path, staticPlan, text, { template, observation });
+    return this.preparedCreation(path, staticPlan, text, basis);
   }
+  private resolveDestination(destination: string | DefaultNoteDestinationV1): string {
+    return typeof destination === 'string'
+      ? destination
+      : this.dependencies.host.resolveCreateDestination(destination);
+  }
+  private async prepareTemplateCreation(
+    request: { path: string; title: string; text: string },
+    basis: CreationBasis,
+    mode: string,
+  ): Promise<PreparedNote> {
+    const { path, title, text } = request;
+    if ((mode === 'explicit-templater') !== (basis.template !== undefined))
+      throw new NoteFailure('INVALID_ARGUMENT');
+    const plan = await this.templateFirstPlan(path, basis.template?.path, title);
+    const template = await this.acceptedTemplate(plan.templatePath);
+    return this.preparedTemplateFirst(plan, text, { ...basis, template });
+  }
+  private async templateFirstPlan(
+    path: string,
+    template: string | undefined,
+    title: string,
+  ): Promise<TemplateFirstPlan> {
+    try {
+      return await this.templates.planTemplateFirstNote(path, template, title);
+    } catch {
+      throw new NoteFailure('UNSUPPORTED_TEMPLATE');
+    }
+  }
+  private async acceptedTemplate(
+    path: string | undefined,
+  ): Promise<AcceptedNoteSource | undefined> {
+    if (path === undefined) return undefined;
+    const read = await this.sources.acquire(path);
+    if (read.type === 'error' || read.value === undefined)
+      throw new NoteFailure('TARGET_UNAVAILABLE');
+    this.dependencies.host.file(read.value);
+    return read.value;
+  }
+  private preparedTemplateFirst(
+    plan: TemplateFirstPlan,
+    text: string,
+    basis: CreationBasis,
+  ): PreparedNote {
+    bounded(text);
+    if (plan.retainedBytes > NOTE_LIMITS.maxPlanTextBytes) throw new NoteFailure('RESOURCE_LIMIT');
+    const checkContent = (content: string): void => {
+      bounded(content);
+      if (this.sources.prospective(plan.path, content).type !== 'ok')
+        throw new NoteFailure('TARGET_UNAVAILABLE');
+    };
+    const check = (): void => {
+      basis.destinationCurrent();
+      if (!plan.current()) throw new NoteFailure('REVISION_CONFLICT');
+      if (!sameMeaning(basis.observation, this.capture()))
+        throw new NoteFailure('REVISION_CONFLICT');
+      if (basis.template !== undefined) this.current(basis.template);
+    };
+    check();
+    checkContent('');
+    if (!preservedFrontmatter('', text)) throw new NoteFailure('FRONTMATTER_REQUIRES_PROPERTY_API');
+    if (this.dependencies.protection.ranges(text).length !== 0)
+      throw new NoteFailure('TASK_CONTENT_REQUIRES_TASK_API');
+    let result: Promise<NoteCommitOutcome> | undefined;
+    return {
+      kind: 'create',
+      path: plan.path,
+      before: null,
+      after: text,
+      creationPreview: {
+        type: 'template-first',
+        ...(plan.templatePath === undefined ? {} : { template: { path: plan.templatePath } }),
+        requestedBody: { text, complete: true },
+        placement: 'append-after-template',
+      },
+      retainedBytes:
+        utf8(text) +
+        plan.retainedBytes +
+        (basis.template === undefined ? 0 : utf8(basis.template.content)),
+      validate: () => {
+        check();
+        if (this.app.vault.getAbstractFileByPath(plan.path) !== null)
+          throw new NoteFailure('DESTINATION_EXISTS');
+      },
+      refineBody: (body) => this.preparedTemplateFirst(plan, body, basis),
+      commit: (current) =>
+        (result ??= this.dependencies.serialize(plan.path, () =>
+          this.commitTemplateFirst(
+            plan,
+            text,
+            () => {
+              current?.();
+              check();
+            },
+            checkContent,
+          ),
+        )),
+    };
+  }
+  private async commitTemplateFirst(
+    plan: TemplateFirstPlan,
+    text: string,
+    check: () => void,
+    checkContent: (content: string) => void,
+  ): Promise<NoteCommitOutcome> {
+    let initialized: InitializedNote | undefined;
+    let phase: NonNullable<NoteCommitOutcome['phase']> = 'provision';
+    try {
+      check();
+      if (!(await plan.validate())) throw new NoteFailure('REVISION_CONFLICT');
+      checkContent('');
+      initialized = await this.templates.createTemplateFirstNote(
+        plan,
+        check,
+        checkContent,
+        (file) => this.reconcileOwnedCreation(plan.path, file, '', check),
+      );
+      phase = 'readback';
+      const source = await this.initializedSource(plan, initialized, check);
+      checkContent(source.content);
+      check();
+      phase = 'content';
+      const outcome = await this.appendInitialized(source, text, check);
+      return this.templateFirstOutcome(outcome, initialized);
+    } catch (cause) {
+      return this.templateFirstFailure(cause, initialized, phase);
+    }
+  }
+  private async initializedSource(
+    plan: TemplateFirstPlan,
+    initialized: InitializedNote,
+    check: () => void,
+  ): Promise<AcceptedNoteSource> {
+    const { file, content } = initialized;
+    await this.reconcileOwnedCreation(plan.path, file, content, check);
+    const read = this.sources.get(plan.path);
+    const source = read.type === 'ok' ? read.value : undefined;
+    if (
+      source?.content !== content ||
+      !this.sources.matchesFile(source, file) ||
+      file.path !== plan.path
+    )
+      throw new NoteFailure('READBACK_UNAVAILABLE');
+    return source;
+  }
+  private async reconcileOwnedCreation(
+    path: string,
+    file: TFile,
+    content: string,
+    check: () => void,
+  ): Promise<void> {
+    const stamp = { ...file.stat };
+    const current = (): void => {
+      check();
+      if (
+        file.path !== path ||
+        this.app.vault.getAbstractFileByPath(path) !== file ||
+        !sameNoteFileStamp(stamp, file.stat)
+      )
+        throw new NoteFailure('READBACK_UNAVAILABLE');
+    };
+    // A native create/metadata acquisition can supersede a read without changing bytes.
+    // Retry only reconciliation under the same file/stamp; provisioning and templates never replay.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      current();
+      const accepted = await this.sources.reconcile(path, file, content);
+      current();
+      if (accepted) return;
+    }
+    throw new NoteFailure('READBACK_UNAVAILABLE');
+  }
+  private async appendInitialized(
+    source: AcceptedNoteSource,
+    text: string,
+    check: () => void,
+  ): Promise<NoteCommitOutcome> {
+    const range = [...this.sections(source)]
+      .reverse()
+      .find((range) => range.editable && range.to === source.content.length);
+    if (range === undefined) throw new NoteFailure('SECTION_NOT_EDITABLE');
+    const prepared = this.prepareEdit(source, range, text, true);
+    const edit = this.editBases.get(prepared);
+    if (edit === undefined) throw new NoteFailure('INTERNAL_ERROR');
+    let stamp: NoteFileStamp | undefined;
+    const outcome = await this.commitPreparedSection({ ...edit, guard: check }, (acknowledged) => {
+      stamp = acknowledged;
+    });
+    return await this.recoverAcknowledgedCreation(edit, stamp, check, outcome);
+  }
+  private async recoverAcknowledgedCreation(
+    edit: EditBasis,
+    stamp: NoteFileStamp | undefined,
+    check: () => void,
+    outcome: NoteCommitOutcome,
+  ): Promise<NoteCommitOutcome> {
+    if (
+      outcome.code !== 'READBACK_UNAVAILABLE' ||
+      outcome.noteEffects !== 'committed' ||
+      stamp === undefined ||
+      this.dependencies.protection.ranges(edit.source.content).length !== 0
+    )
+      return outcome;
+    try {
+      await this.reconcileOwnedCreation(edit.source.path, edit.file, edit.candidate, () => {
+        check();
+        if (!sameNoteFileStamp(stamp, edit.file.stat))
+          throw new NoteFailure('READBACK_UNAVAILABLE');
+      });
+      const read = this.sources.get(edit.source.path);
+      const source = read.type === 'ok' ? read.value : undefined;
+      if (!this.acceptedEdit(edit, source)) return outcome;
+      return {
+        noteEffects: 'committed',
+        destinationEffects: 'unchanged',
+        source,
+        section: this.editedRange(edit),
+      };
+    } catch {
+      // Preserve the acknowledged write's original failure when exact readback cannot recover.
+      return outcome;
+    }
+  }
+  private templateFirstOutcome(
+    outcome: NoteCommitOutcome,
+    initialized: InitializedNote,
+  ): NoteCommitOutcome {
+    return {
+      ...outcome,
+      noteEffects: 'committed',
+      destinationEffects: initialized.effects.destinationEffects,
+      completion: outcome.code === undefined ? 'complete' : 'incomplete',
+      phase: outcome.code === 'READBACK_UNAVAILABLE' ? 'readback' : 'content',
+      templateEffects: initialized.effects.templateEffects,
+      contentEffects: outcome.noteEffects,
+    };
+  }
+  private templateFirstFailure(
+    cause: unknown,
+    initialized: InitializedNote | undefined,
+    phase: NonNullable<NoteCommitOutcome['phase']>,
+  ): NoteCommitOutcome {
+    if (cause instanceof TemplateFirstFailure)
+      return {
+        ...cause.effects,
+        code: cause.cause instanceof NoteFailure ? cause.cause.code : 'CREATE_FAILED',
+        completion: 'incomplete',
+        contentEffects: 'unchanged',
+      };
+    const effects = initialized?.effects ?? {
+      noteEffects: 'unchanged' as const,
+      destinationEffects: 'unchanged' as const,
+      templateEffects: 'unchanged' as const,
+    };
+    return {
+      ...effects,
+      code: cause instanceof NoteFailure ? cause.code : 'CREATE_FAILED',
+      completion: 'incomplete',
+      phase,
+      contentEffects: 'unchanged',
+    };
+  }
+
   private preparedCreation(
     path: string,
     staticPlan: Extract<StaticNotePlan, { type: 'ready' }>,
     text: string,
-    basis: { template: AcceptedNoteSource | undefined; observation: TaskReadObservation },
+    basis: CreationBasis,
   ): PreparedNote {
     const { template, observation } = basis;
     bounded(text);
@@ -441,6 +728,7 @@ export class NoteApplicationService implements NoteApplicationApi {
     );
     bounded(content);
     const check = (): void => {
+      basis.destinationCurrent();
       if (!sameMeaning(observation, this.capture())) throw new NoteFailure('REVISION_CONFLICT');
       if (template !== undefined) this.current(template);
       if (this.app.vault.getAbstractFileByPath(path) !== null)

@@ -1,6 +1,7 @@
 import { Component } from 'obsidian';
 import type { ProjectDtoV1, ProjectFieldValueV1, ProjectStatusV1 } from '../../../api';
 import { commandMessage } from '../../ai/commandMessages';
+import { checkedWriteResult } from '../../ai/commandSchemas';
 import type { CommandChange, CommandSessionSnapshot } from '../../ai/commandTypes';
 import { formatProjectPrettyDate } from '../../panels/projects/projectDatePresentation';
 import { applyProjectStatusPresentation } from '../../panels/projects/projectStatusPresentation';
@@ -13,6 +14,7 @@ import type { ProjectStatus } from '../../settings/types';
 import { createProjectDateParts } from '../projectDateParts';
 import { projectMetadataText } from '../projectPropertyValuePresentation';
 import { RetainedTaskText, type PreparedTaskTextUpdate } from '../retainedTaskText';
+import { decorateTaskTextDifference } from '../taskTextDifference';
 import type { CommandModeOptions } from './CommandModeSurface';
 type ProjectChange = Extract<CommandChange, { kind: 'project' | 'project-create' }>;
 interface ProjectPresentation {
@@ -57,6 +59,7 @@ function projectProposal(change: CommandChange): ProjectPresentation | undefined
 interface PaintedValue {
   readonly value: string | undefined;
   readonly markdown: string;
+  readonly status?: ProjectStatusV1;
 }
 export interface CommandProjectFields {
   readonly revision: string;
@@ -119,7 +122,8 @@ function values(
     const value = assignment === undefined ? fieldValue(project, id) : assignment.value;
     fields.set(id, { value: JSON.stringify(value), markdown: projectMetadataText(value) });
   }
-  fields.set('status', { value: JSON.stringify(displayedStatus(project, change)), markdown: '' });
+  const status = displayedStatus(project, change);
+  fields.set('status', { value: JSON.stringify(status), markdown: '', status });
   return fields;
 }
 function changedFields(
@@ -150,14 +154,28 @@ export class CommandProjects {
   private previous: ReadonlyMap<string, CommandProjectFields> = new Map();
   private changed: ReadonlySet<string> = new Set();
   private comparison: ReadonlyMap<string, PaintedValue> = new Map();
+  private touched = new Set<string>();
   constructor(
     private readonly host: HTMLElement,
     private readonly options: CommandModeOptions,
     private readonly component: Component,
-    private readonly allowLink: (href: string, path: string) => boolean,
+    private readonly callbacks: { allowLink(href: string, path: string): boolean; changed(): void },
   ) {}
+  get settled(): Promise<boolean> {
+    const pending = [...this.rows.values()].flatMap((row) =>
+      [...row.properties.values()].flatMap((field) =>
+        field.pending === undefined ? [] : [field.pending],
+      ),
+    );
+    return Promise.all(pending.map((field) => field.ready)).then(
+      (outcomes) =>
+        outcomes.every((outcome) => outcome.type === 'ready') &&
+        pending.every((field) => field.canCommit()),
+    );
+  }
   update(state: CommandSessionSnapshot): void {
     this.restorePresentation(state);
+    this.retainCreatedProjects(state);
     const iteration = state.exchanges.filter((exchange) => exchange.role === 'user').length;
     const next = new Map<string, CommandProjectFields>();
     const projects = this.selected(state);
@@ -172,6 +190,8 @@ export class CommandProjects {
         project.label === undefined ? project.name : `${project.label}: ${project.name}`;
       const change = project.change;
       this.projectChanges(state, project, change, { iteration, next });
+      if (change !== undefined) this.touched.add(key);
+      row.host.dataset['sessionChanged'] = String(this.touched.has(key));
       this.status(row, project, change);
       for (const id of ['start', 'end']) this.date(row, project, id, change);
       this.properties(row, project, change);
@@ -179,9 +199,30 @@ export class CommandProjects {
     this.retainPresentation(state, next);
     this.host.hidden = projects.size === 0;
   }
+  private retainCreatedProjects(state: CommandSessionSnapshot): void {
+    for (const entry of state.journal) {
+      if (
+        entry.change.kind !== 'project-create' ||
+        entry.state !== 'settled' ||
+        entry.effects !== 'committed' ||
+        entry.receipt === undefined
+      )
+        continue;
+      const result = checkedWriteResult({ ok: true, receipt: entry.receipt });
+      if (!result.ok || !('project' in result.receipt)) continue;
+      const saved = result.receipt.project;
+      if (
+        state.entities.projects.some(
+          (project) => project.target === saved.target && project.revision === saved.revision,
+        )
+      )
+        this.touched.add(saved.target);
+    }
+  }
   private restorePresentation(state: CommandSessionSnapshot): void {
     if (this.sessionId === state.id) return;
     const retained = this.options.memory.presentation?.get(state.id);
+    this.touched = new Set(retained?.touched);
     this.previous =
       retained?.proposalRevision === state.proposal.revision
         ? (retained.projects ?? new Map())
@@ -195,9 +236,11 @@ export class CommandProjects {
     this.previous = next;
     const memory = (this.options.memory.presentation ??= new Map());
     memory.set(state.id, {
+      ...memory.get(state.id),
       proposalRevision: state.proposal.revision,
       owners: memory.get(state.id)?.owners ?? new Map(),
       projects: next,
+      touched: new Set([...(memory.get(state.id)?.touched ?? []), ...this.touched]),
     });
   }
   private projectChanges(
@@ -269,10 +312,9 @@ export class CommandProjects {
     id: string,
     change: ProjectChange | undefined,
   ): void {
-    const assignment = change?.fields?.find((field) => field.fieldId === id);
-    const original = fieldValue(project, id);
-    const value = assignment === undefined ? original : assignment.value;
-    if (value == null && original === undefined) {
+    const { assignment, value } = displayField(project, id, change);
+    const previousMarkdown = this.previousMarkdown(id);
+    if (value == null && (previousMarkdown === undefined || previousMarkdown === '')) {
       this.removeProperty(row, id);
       return;
     }
@@ -288,8 +330,7 @@ export class CommandProjects {
       project,
       id,
       value,
-      original,
-      previousMarkdown: this.previousMarkdown(id),
+      previousMarkdown,
     });
   }
   private previousMarkdown(id: string): string | undefined {
@@ -302,27 +343,27 @@ export class CommandProjects {
       project: ProjectPresentation;
       id: string;
       value: ProjectFieldValueV1 | null | undefined;
-      original: ProjectFieldValueV1 | undefined;
       previousMarkdown: string | undefined;
     },
   ): void {
-    const { row, project, id, value, original, previousMarkdown } = input;
+    const { row, project, id, value, previousMarkdown } = input;
     field.pending = field.text.prepare({
       source: {
         target: { type: 'display', key: `${project.key}:${id}` },
-        markdown: projectMetadataText(value ?? original),
+        markdown: value == null ? (previousMarkdown ?? '') : projectMetadataText(value),
         path: project.sourcePath ?? '',
         presentation: id === 'description' ? 'description' : 'markdown',
       },
       decoration: {
         kind: 'complete',
+        removed: value === null,
         ...(previousMarkdown === undefined || value === null ? {} : { previousMarkdown }),
       },
       callbacks: {
         app: this.options.app,
         isCurrent: () => this.rows.get(project.key) === row,
         beforeOpenLink: async ({ href, sourcePath }) =>
-          project.sourcePath !== undefined && this.allowLink(href, sourcePath),
+          project.sourcePath !== undefined && this.callbacks.allowLink(href, sourcePath),
         onRenderFailure: () => {
           field.value.textContent = commandMessage('Could not display property.');
         },
@@ -356,7 +397,7 @@ export class CommandProjects {
     };
     owner.registerDomEvent(value, 'focusout', () => {
       value.win.queueMicrotask(() => {
-        field.pending?.commit();
+        if (field.pending?.commit() === true) this.callbacks.changed();
       });
     });
     row.properties.set(id, field);
@@ -383,19 +424,23 @@ export class CommandProjects {
     change: ProjectChange | undefined,
   ): void {
     const value = displayedStatus(project, change);
-    const configured =
-      value.state === 'configured'
-        ? this.options.projectSettings().statuses.find((status) => status.id === value.id)
-        : undefined;
+    const configured = this.configuredStatus(value);
     applyProjectStatusPresentation(row.status, configured);
-    row.status.textContent =
-      change?.kind === 'project-create' &&
-      change.statusId === undefined &&
-      change.schema.defaultStatusId === undefined
-        ? commandMessage('Default status')
-        : statusLabel(value, configured);
+    row.status.textContent = projectStatusLabel(value, configured, change);
     row.status.dataset['change'] =
       change?.statusId === undefined || !this.changed.has('status') ? '' : 'changed';
+    const previous = this.comparison.get('status')?.status;
+    if (previous !== undefined && this.changed.has('status')) {
+      decorateTaskTextDifference(
+        row.status,
+        statusLabel(previous, this.configuredStatus(previous)),
+      );
+    }
+  }
+  private configuredStatus(value: ProjectStatusV1): ProjectStatus | undefined {
+    return value.state === 'configured'
+      ? this.options.projectSettings().statuses.find((status) => status.id === value.id)
+      : undefined;
   }
   private date(
     row: ProjectRow,
@@ -403,13 +448,11 @@ export class CommandProjects {
     id: string,
     change: ProjectChange | undefined,
   ): void {
-    const assignment = change?.fields?.find((field) => field.fieldId === id);
-    const original = fieldValue(project, id);
-    const value = assignment === undefined ? original : assignment.value;
-    const displayed = value ?? original;
-    if (displayed == null) {
-      row.dates.get(id)?.element.remove();
-      row.dates.delete(id);
+    const { assignment, value } = displayField(project, id, change);
+    const previous = this.changed.has(id) ? this.comparison.get(id)?.markdown : undefined;
+    const displayed = value ?? previous;
+    if (displayed == null || displayed === '') {
+      this.removeDate(row, id);
       return;
     }
     const date = row.dates.get(id) ?? this.createDate(row, id);
@@ -420,6 +463,19 @@ export class CommandProjects {
       `${id === 'start' ? commandMessage('Start') : commandMessage('End')}: ${text}`,
     );
     this.dateChange(date.element, assignment?.value, id);
+    if (this.changed.has(id)) this.dateDifference(date.label, previous, value === null);
+  }
+  private dateDifference(label: HTMLElement, previous: string | undefined, removed: boolean): void {
+    decorateTaskTextDifference(
+      label,
+      previous === undefined || previous === '' ? '' : this.dateText(previous),
+      undefined,
+      removed,
+    );
+  }
+  private removeDate(row: ProjectRow, id: string): void {
+    row.dates.get(id)?.element.remove();
+    row.dates.delete(id);
   }
   private createDate(row: ProjectRow, id: string): ProjectDate {
     const element = row.host.createSpan({ cls: 'abyss-project-dashboard-date' });
@@ -444,7 +500,7 @@ export class CommandProjects {
     id: string,
   ): void {
     let change = '';
-    if (value === null) change = 'removed';
+    if (value === null && this.changed.has(id)) change = 'removed';
     else if (value !== undefined && this.changed.has(id)) change = 'changed';
     element.dataset['change'] = change;
   }
@@ -452,4 +508,31 @@ export class CommandProjects {
     for (const row of this.rows.values()) this.release(row);
     this.rows.clear();
   }
+}
+
+function displayField(
+  project: ProjectPresentation,
+  id: string,
+  change: ProjectChange | undefined,
+): {
+  assignment: { readonly value: ProjectFieldValueV1 | null } | undefined;
+  original: ProjectFieldValueV1 | undefined;
+  value: ProjectFieldValueV1 | null | undefined;
+} {
+  const assignment = change?.fields?.find((field) => field.fieldId === id);
+  const original = fieldValue(project, id);
+  return { assignment, original, value: assignment === undefined ? original : assignment.value };
+}
+function projectStatusLabel(
+  value: ProjectStatusV1,
+  configured: ProjectStatus | undefined,
+  change: ProjectChange | undefined,
+): string {
+  if (
+    change?.kind === 'project-create' &&
+    change.statusId === undefined &&
+    change.schema.defaultStatusId === undefined
+  )
+    return commandMessage('Default status');
+  return statusLabel(value, configured);
 }

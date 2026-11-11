@@ -62,7 +62,9 @@ export {
 } from './domain/taskReconciliation';
 export {
   isTaskInboxMember,
+  matchesInboxPolicy,
   normalizeTaskTagInput,
+  resolveInboxCreationPolicy,
   sameTag,
   taskPrefixForSubtask,
 } from './domain/taskTags';
@@ -202,6 +204,7 @@ export type {
   ProjectSourceReadApi,
   TaskAcceptedOccurrenceChange,
   TaskIntegrationReadApi,
+  TaskNodeReadQuery,
   TaskReadNode,
   TaskReadObservation,
   TaskReadResult,

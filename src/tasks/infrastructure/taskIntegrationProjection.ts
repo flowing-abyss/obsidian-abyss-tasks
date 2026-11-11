@@ -13,6 +13,7 @@ import type { StatusCatalog } from '../domain/StatusCatalog';
 import type { TaskNodeSnapshot } from '../domain/taskDependencies';
 import type { TaskOccurrenceAddress } from '../domain/taskOccurrence';
 import { taskNodeSourceLine, taskTreeNodes } from '../domain/taskSearchProjection';
+import { matchesInboxPolicy } from '../domain/taskTags';
 import type { TaskSnapshot, TaskStatus } from '../domain/types';
 
 interface IntegrationProjectionOwner {
@@ -62,6 +63,8 @@ function hydrateIntegrationNode(value: TaskNodeSnapshot, status: TaskStatus): Ta
 
 function matches(value: TaskNodeSnapshot, status: TaskStatus, query: TaskNodeReadQuery): boolean {
   return (
+    (query.inboxPolicy === undefined ||
+      matchesInboxPolicy(value.node.tags, value.path.length, query.inboxPolicy)) &&
     (query.statuses === undefined || query.statuses.includes(status)) &&
     (query.tagsAll === undefined ||
       query.tagsAll.every((tag) => value.node.tags.some((authored) => sameTag(tag, authored)))) &&

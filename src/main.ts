@@ -14,16 +14,26 @@ import { CommandAgent } from './ai/CommandAgent';
 import { commandMessage, configureCommandLocale } from './ai/commandMessages';
 import { CommandSession } from './ai/CommandSession';
 import { CommandSessionOwner } from './ai/CommandSessionOwner';
-import { CommandSessionStore, type CommandSessionStoragePort } from './ai/CommandSessionStore';
+import {
+  CommandSessionStore,
+  isCommandSessionFileId,
+  type CommandHistoryFileKey,
+  type CommandSessionStoragePort,
+} from './ai/CommandSessionStore';
 import type {
   CommandJournalPort,
   CommandResearchPort,
   CommandSessionTransitions,
 } from './ai/commandTypes';
+import { CommandFailure } from './ai/commandTypes';
+import { desktopChatGptSignIn } from './ai/providers/chatGptLoopback';
+import { ChatGptPlan } from './ai/providers/ChatGptPlan';
 import { NativeProviderTransport } from './ai/providers/NativeProviderTransport';
 import { ProviderConnections } from './ai/providers/ProviderConnections';
+import { ProviderModelCatalog } from './ai/providers/ProviderModelCatalog';
 import { ProviderResearch } from './ai/providers/ProviderResearch';
 import { ProviderSecrets } from './ai/providers/ProviderSecrets';
+import { providerSecretBindings, providerVoiceMode } from './ai/providers/providerSettings';
 import {
   ProviderTranscription,
   type CommandTranscriptionPort,
@@ -177,8 +187,10 @@ export default class TaskCalendarPlugin extends Plugin {
   private projectPropertyCaptureQueue: Promise<void> = Promise.resolve();
   private timeTrackingReminder: TimeTrackingReminder | undefined = undefined;
 
+  chatGptPlan!: ChatGptPlan;
   providerSecrets!: ProviderSecrets;
   providerConnections!: ProviderConnections;
+  providerModels!: ProviderModelCatalog;
   commandResearch!: CommandResearchPort;
   commandTranscription!: CommandTranscriptionPort;
   private readonly commandSurfaceMemory: CommandSurfaceMemory = {
@@ -187,20 +199,35 @@ export default class TaskCalendarPlugin extends Plugin {
     selectionEnd: 0,
     scrollTop: 0,
   };
+  private commandSessionStore: CommandSessionStore | undefined;
+  private commandModeClosed = true;
+  private commandModeRetired = false;
   private commandSessionOwner: CommandSessionOwner | undefined = undefined;
   private readonly commandRuntimes = new Set<CommandSession>();
 
   override async onload(): Promise<void> {
     configureCommandLocale(getLanguage());
     await this.loadSettings();
-    this.providerSecrets = new ProviderSecrets(this.app.secretStorage);
+    this.providerSecrets = new ProviderSecrets(this.app.secretStorage, () =>
+      providerSecretBindings(this.settings.commandMode),
+    );
     const providerTransport = new NativeProviderTransport(requestUrl, (callback, delayMs) => {
       const timer = window.setTimeout(callback, delayMs);
       return () => {
         window.clearTimeout(timer);
       };
     });
-    this.providerConnections = new ProviderConnections(this.providerSecrets, providerTransport);
+    this.chatGptPlan = new ChatGptPlan(
+      this.app.secretStorage,
+      providerTransport.chatGptFetch(),
+      desktopChatGptSignIn(),
+    );
+    this.providerConnections = new ProviderConnections(
+      this.providerSecrets,
+      providerTransport,
+      this.chatGptPlan,
+    );
+    this.providerModels = new ProviderModelCatalog(this.providerSecrets, providerTransport);
     this.commandResearch = new ProviderResearch(
       this.providerSecrets,
       providerTransport,
@@ -212,6 +239,7 @@ export default class TaskCalendarPlugin extends Plugin {
       () => this.settings.commandMode,
     );
     this.register(() => {
+      this.chatGptPlan.dispose();
       providerTransport.dispose();
     });
     for (const ref of this.viewStatePaths.listen(this.app.vault)) this.registerEvent(ref);
@@ -236,6 +264,13 @@ export default class TaskCalendarPlugin extends Plugin {
     });
     this.timeTrackingReminder.setInterval(this.settings.timeTrackingReminderMinutes);
     const commentTimeContext: CommentTimeContextProvider = systemCommentTimeContext;
+    this.commandSessionStore = await CommandSessionStore.open({
+      storage: this.commandSessionStorage(),
+      now: () => Date.now(),
+      fileId: () => crypto.randomUUID(),
+    });
+    if (this.commandModeRetired) return;
+    this.commandModeClosed = false;
     this.registerPanel(commentTimeContext);
     this.registerCommands();
     this.addSettingTab(new CalendarSettingsTab(this.app, this));
@@ -384,6 +419,7 @@ export default class TaskCalendarPlugin extends Plugin {
     if (!result.ok) throw new Error(result.error.message);
     const session: CommandSession = new CommandSession({
       api: result.value,
+      defaultVoiceMode: () => providerVoiceMode(this.settings.commandMode),
       journal,
       now: () => Date.now(),
       id,
@@ -410,46 +446,95 @@ export default class TaskCalendarPlugin extends Plugin {
   }
 
   private commandSessionStorage(): CommandSessionStoragePort {
-    const key = 'abyss-tasks:command-sessions:v1';
+    const legacyKey = 'abyss-tasks:command-sessions:v1';
+    const directory = normalizePath(
+      this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`,
+    );
+    const sessions = normalizePath(`${directory}/sessions`),
+      adapter = this.app.vault.adapter;
+    const path = (key: CommandHistoryFileKey): string => {
+      if (key.kind === 'state') return normalizePath(`${directory}/command-session-state.json`);
+      if (!isCommandSessionFileId(key.fileId)) throw new Error('Invalid history file ID');
+      return normalizePath(`${sessions}/${key.fileId}.json`);
+    };
+    const ensureDirectory = async (): Promise<void> => {
+      if (!(await adapter.exists(sessions))) await adapter.mkdir(sessions);
+    };
     return {
-      load: () => this.app.loadLocalStorage(key) as unknown,
-      save: (value) => {
-        this.app.saveLocalStorage(key, value);
+      listSessions: async () => {
+        if (!(await adapter.exists(sessions))) return [];
+        const listed = await adapter.list(sessions);
+        return listed.files.map((file) => {
+          const prefix = `${sessions}/`;
+          if (!file.startsWith(prefix) || !file.endsWith('.json'))
+            throw new Error('Invalid history entry');
+          const fileId = file.slice(prefix.length, -5);
+          if (!isCommandSessionFileId(fileId)) throw new Error('Invalid history entry');
+          return fileId;
+        });
+      },
+      read: async (key) => {
+        const file = path(key);
+        return (await adapter.exists(file)) ? adapter.read(file) : null;
+      },
+      write: async (key, text, previous) => {
+        const file = path(key);
+        await ensureDirectory();
+        if (previous === null) {
+          if (await adapter.exists(file)) throw new Error('History file already exists');
+          // The public adapter has no atomic create-if-absent or fsync contract.
+          await adapter.write(file, text);
+        } else {
+          await adapter.process(file, (current) => {
+            if (current !== previous) throw new Error('History changed outside this writer');
+            return text;
+          });
+        }
+      },
+      remove: async (fileId) => {
+        const file = path({ kind: 'session', fileId });
+        if (await adapter.exists(file)) await adapter.remove(file);
+      },
+      loadLegacy: () => this.app.loadLocalStorage(legacyKey) as unknown,
+      clearLegacy: () => {
+        this.app.saveLocalStorage(legacyKey, null);
       },
     };
   }
   getCommandSessionOwner(research?: CommandResearchPort): CommandSessionOwner {
-    if (this.commandSessionOwner === undefined || this.commandSessionOwner.isDisposed())
-      this.commandSessionOwner = new CommandSessionOwner({
-        store: new CommandSessionStore({
-          storage: this.commandSessionStorage(),
-          now: () => Date.now(),
-        }),
-        createSession: (journal, transitions) =>
-          this.createCommandSession(journal, research, transitions),
-        schedule: (callback) => {
-          const timer = window.setTimeout(callback, 250);
-          return () => {
-            window.clearTimeout(timer);
-          };
-        },
-        diagnose: (code) => {
-          console.warn('[abyss-tasks] Command history persistence failed', { code });
-        },
-        notify: (state) => {
-          let message: Parameters<typeof commandMessage>[0] = 'Command ready. Press Q to review.';
-          if (state.status.kind === 'error')
-            console.warn('[abyss-tasks] Background command stopped', {
-              message: state.status.message,
-            });
-          if (state.status.kind === 'error')
-            message = 'Command needs attention. Press Q to continue.';
-          else if (state.activeQuestion !== null)
-            message = 'Command is waiting for your answer. Press Q to continue.';
-          else if (state.status.kind === 'saved') message = 'Changes saved. Press Q to continue.';
-          new Notice(commandMessage(message));
-        },
-      });
+    if (
+      this.commandModeClosed ||
+      this.commandSessionStore === undefined ||
+      this.commandSessionOwner?.isDisposed() === true
+    )
+      throw new CommandFailure('CLOSED', 'This session owner has closed.');
+    this.commandSessionOwner ??= new CommandSessionOwner({
+      store: this.commandSessionStore,
+      createSession: (journal, transitions) =>
+        this.createCommandSession(journal, research, transitions),
+      schedule: (callback) => {
+        const timer = window.setTimeout(callback, 250);
+        return () => {
+          window.clearTimeout(timer);
+        };
+      },
+      diagnose: (code) => {
+        console.warn('[abyss-tasks] Command history persistence failed', { code });
+      },
+      notify: (state) => {
+        let message: Parameters<typeof commandMessage>[0] = 'Command ready. Press Q to review.';
+        if (state.status.kind === 'error')
+          console.warn('[abyss-tasks] Background command stopped', {
+            message: state.status.message,
+          });
+        if (state.status.kind === 'error')
+          message = 'Command needs attention. Press Q to continue.';
+        else if (state.activeQuestion !== null)
+          message = 'Command is waiting for your answer. Press Q to continue.';
+        else if (state.status.kind === 'saved') message = 'Changes saved. Press Q to continue.';
+        new Notice(commandMessage(message));
+      },
+    });
     return this.commandSessionOwner;
   }
 
@@ -474,6 +559,7 @@ export default class TaskCalendarPlugin extends Plugin {
         serialize: (path, work) => runTaskFileMutation(this.app, path, work),
       }),
       reads: this.taskIndex.integrationReads(),
+      creationPolicy: () => tasks.creationPolicy(),
       mutations: tasks,
       search: this.taskSearch,
       content: {
@@ -657,6 +743,10 @@ export default class TaskCalendarPlugin extends Plugin {
   }
 
   override onunload(): void {
+    // Retire Q acquisition before callbacks and runtimes; host unload owns view registrations.
+    this.commandModeClosed = true;
+    this.commandModeRetired = true;
+    this.commandSurfaceMemory.active = false;
     this.commandSessionOwner?.dispose();
     this.commandSurfaceMemory.presentation?.clear();
     this.commandSessionOwner = undefined;

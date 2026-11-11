@@ -1,6 +1,13 @@
 import { APICallError } from 'ai';
 import { commandMessage, type CommandMessage } from '../commandMessages';
 export type ProviderFailureCode =
+  | 'plan-storage'
+  | 'plan-desktop'
+  | 'plan-sign-in'
+  | 'plan-permission'
+  | 'plan-limit'
+  | 'plan-revoke'
+  | 'compatible-unavailable'
   | 'missing-key'
   | 'secret-storage'
   | 'authentication'
@@ -9,11 +16,22 @@ export type ProviderFailureCode =
   | 'unavailable'
   | 'invalid-response'
   | 'invalid-request'
+  | 'query-too-long'
   | 'cancelled'
   | 'timeout'
   | 'busy'
   | 'too-large';
 const messages: Record<ProviderFailureCode, CommandMessage> = {
+  'plan-storage': 'Could not access the ChatGPT connection in Obsidian secret storage.',
+  'plan-desktop': 'Sign in with ChatGPT requires Obsidian desktop.',
+  'plan-sign-in': 'Sign in with ChatGPT in the LLM settings and try again.',
+  'plan-permission':
+    'ChatGPT plan use is unavailable for this account or workspace. Check the connection in LLM settings.',
+  'plan-limit': 'The ChatGPT plan limit was reached. Open Manage usage in LLM settings.',
+  'plan-revoke':
+    'Signed out locally. Disconnect Abyss Tasks in ChatGPT settings to confirm revocation.',
+  'compatible-unavailable':
+    'Custom servers require an Obsidian desktop runtime with secure HTTP support.',
   'missing-key': 'Save an API key for the selected provider.',
   'secret-storage': 'Could not access the API key in Obsidian secret storage.',
   authentication: 'The provider rejected the API key or its permissions.',
@@ -22,6 +40,7 @@ const messages: Record<ProviderFailureCode, CommandMessage> = {
   unavailable: 'The provider request failed. Check the connection and try again.',
   'invalid-response': 'The provider returned an unreadable response.',
   'invalid-request': 'The provider or model configuration is not supported.',
+  'query-too-long': 'Shorten the Brave query to 600 characters and 75 words.',
   cancelled: 'The request was cancelled locally. Remote work may still finish.',
   timeout: 'The provider took too long. Remote work may still finish.',
   busy: 'Earlier provider requests are still finishing. Try again shortly.',

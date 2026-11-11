@@ -13,13 +13,19 @@ function compare(left: string, right: string): number {
   if (left > right) return 1;
   return 0;
 }
-function binding(query: ListTasksV1, observation: TaskReadObservation): ApiResultV1<string> {
+function binding(
+  query: ListTasksV1,
+  observation: TaskReadObservation,
+  policy?: string,
+): ApiResultV1<string> {
   const result = validateList({ ...query, cursor: undefined });
   if (!result.ok) return result;
   const normalized = result.value;
   return {
     ok: true,
     value: JSON.stringify({
+      inbox: normalized.inbox,
+      policy,
       path: normalized.path,
       folder: normalized.folder,
       statuses:
@@ -65,9 +71,10 @@ export class TaskCursorRegistry {
     query: ListTasksV1,
     observation: TaskReadObservation,
     after: { path: string; line: number },
+    policy?: string,
   ): ApiResultV1<string> {
     if (this.disposed_abyssPrivate) return failure('DISPOSED');
-    const key = binding(query, observation);
+    const key = binding(query, observation, policy);
     if (!key.ok) return key;
     const now = this.now_abyssPrivate();
     for (const [token, record] of this.records_abyssPrivate) {
@@ -90,6 +97,7 @@ export class TaskCursorRegistry {
     token: string,
     query: ListTasksV1,
     observation: TaskReadObservation,
+    policy?: string,
   ): ApiResultV1<{ path: string; line: number }> {
     if (this.disposed_abyssPrivate) return failure('DISPOSED');
     const record = this.records_abyssPrivate.get(token);
@@ -98,7 +106,7 @@ export class TaskCursorRegistry {
       this.records_abyssPrivate.delete(token);
       return failure('STALE_CURSOR');
     }
-    const key = binding(query, observation);
+    const key = binding(query, observation, policy);
     if (!key.ok || key.value !== record.binding) return failure('STALE_CURSOR');
     return freezeValue({ ok: true, value: { ...record.after } });
   }

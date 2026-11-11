@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
 import { CommandReferenceBook } from '../src/ai/CommandReferenceBook';
+import { expectDefined } from './helpers';
 
 const canonical = {
   task: {
@@ -588,42 +589,147 @@ it('projects note continuation selectors and link contexts through the same exac
     },
   });
 });
-it('decodes nested first-answer task operands while preserving authored literals', () => {
+it('decodes task operands while preserving authored literals', () => {
   const book = new CommandReferenceBook('work'),
     r = book.project(canonical) as typeof canonical;
   const input = {
-    intent: 'plan',
-    research: false,
-    work: {
-      task: {
-        input: {
-          kind: 'append',
-          plan: r.taskPlan.target,
-          expectedPlanRevision: r.taskPlan.revision,
-          operation: { type: 'add-comment', target: r.task.target, text: r.peer.target },
-        },
-      },
-      message: r.project.target,
-      focus: r.task.target,
+    input: {
+      kind: 'append',
+      plan: r.taskPlan.target,
+      expectedPlanRevision: r.taskPlan.revision,
+      operation: { type: 'add-comment', target: r.task.target, text: r.peer.target },
     },
   };
-  expect(book.input('interpret', input)).toEqual({
-    intent: 'plan',
-    research: false,
-    work: {
-      task: {
-        input: {
-          kind: 'append',
-          plan: 'canonical-task-plan',
-          expectedPlanRevision: 'task-plan-revision',
-          operation: { type: 'add-comment', target: 'canonical-task', text: r.peer.target },
-        },
-      },
-      message: r.project.target,
-      focus: 'canonical-task',
+  expect(book.input('task', input)).toEqual({
+    input: {
+      kind: 'append',
+      plan: 'canonical-task-plan',
+      expectedPlanRevision: 'task-plan-revision',
+      operation: { type: 'add-comment', target: 'canonical-task', text: r.peer.target },
     },
   });
   expect(() =>
-    book.input('interpret', { ...input, work: { ...input.work, focus: r.project.target } }),
+    book.input('task', {
+      input: { ...input.input, operation: { ...input.input.operation, target: r.project.target } },
+    }),
   ).toThrow();
+});
+
+it('binds immutable task and owner-bound comment edits to their exact plan basis', () => {
+  const book = new CommandReferenceBook('edits');
+  const refs = (revision: string) => ({
+    taskReferences: [
+      {
+        kind: 'task',
+        target: 'task',
+        markdownTitle: 'Root',
+        editBasis: { kind: 'append', plan: 'plan', expectedPlanRevision: revision },
+      },
+    ],
+    commentReferences: [
+      {
+        kind: 'comment',
+        target: 'comment',
+        ownerTarget: 'task',
+        editBasis: { kind: 'append', plan: 'plan', expectedPlanRevision: revision },
+      },
+    ],
+  });
+  const first = book.project(refs('r1')) as {
+    taskReferences: Array<{ edit: string }>;
+    commentReferences: Array<{ edit: string }>;
+  };
+  const task = expectDefined(first.taskReferences[0]).edit;
+  const comment = expectDefined(first.commentReferences[0]).edit;
+  expect(book.edit(task, 'patch', refs('r1'))).toEqual({
+    target: 'task',
+    basis: { kind: 'append', plan: 'plan', expectedPlanRevision: 'r1' },
+  });
+  expect(book.edit(comment, 'update-comment', refs('r1'))).toEqual({
+    target: 'comment',
+    basis: { kind: 'append', plan: 'plan', expectedPlanRevision: 'r1' },
+  });
+  expect(() => book.edit(comment, 'patch', refs('r1'))).toThrow();
+  const wrongOwner = refs('r1');
+  expectDefined(wrongOwner.commentReferences[0]).ownerTarget = 'other';
+  expect(() => book.edit(comment, 'update-comment', wrongOwner)).toThrow();
+  const second = book.project(refs('r2')) as typeof first;
+  expect(second.taskReferences[0]?.edit).not.toBe(task);
+  expect(() => book.edit(task, 'patch', refs('r2'))).toThrow();
+  expect(() => book.edit(comment, 'update-comment', refs('r2'))).toThrow();
+  expect(() => new CommandReferenceBook('next').edit(task, 'patch', refs('r1'))).toThrow();
+  expect(() => book.edit('task', 'patch', refs('r1'))).toThrow();
+});
+it('discovery evidence rejects raw and previous-turn handles', () => {
+  const book = new CommandReferenceBook('query');
+  const projected = book.project({ evidence: 'discovery:1' }) as { evidence: string };
+  expect(book.issuedFindEvidence(['discovery:2', 'discovery:1'])).toEqual([projected.evidence]);
+  expect(book.input('finish', { blockingIssue: { evidence: projected.evidence } })).toEqual({
+    blockingIssue: { evidence: 'discovery:1' },
+  });
+  expect(book.input('find', { retryOf: projected.evidence })).toEqual({ retryOf: 'discovery:1' });
+  for (const evidence of [
+    'none',
+    'discovery:1',
+    projected.evidence.replace('@query:', '@previous:'),
+  ]) {
+    expect(() => book.input('finish', { blockingIssue: { evidence } })).toThrow();
+    expect(() => book.input('find', { retryOf: evidence })).toThrow();
+  }
+});
+
+it('admits schema-only patch markers through exact current task capabilities and immutable bases', () => {
+  const book = new CommandReferenceBook('repair');
+  const catalog = (revision: string) => ({
+    taskReferences: ['root', 'child'].map((target) => ({
+      kind: 'task',
+      target,
+      editBasis: { kind: 'append', plan: 'plan', expectedPlanRevision: revision },
+    })),
+    commentReferences: [
+      {
+        kind: 'comment',
+        target: 'comment',
+        ownerTarget: 'root',
+        editBasis: { kind: 'append', plan: 'plan', expectedPlanRevision: revision },
+      },
+    ],
+  });
+  const current = catalog('r1');
+  const projected = book.project(current) as {
+    taskReferences: Array<{ edit: string; target: string }>;
+    commentReferences: Array<{ edit: string }>;
+  };
+  const root = expectDefined(projected.taskReferences[0]);
+  const malformed = (edit: string) => ({
+    edit,
+    operation: { type: 'patch', patch: { status: 'cancelled' } },
+  });
+  const marker = book.schemaRefinement(malformed(root.edit), current);
+  expect(marker).toBe(book.taskBasis('root', current));
+  expect(marker).not.toBe(book.taskBasis('child', current));
+  expect(marker).not.toBe(book.taskBasis('root', catalog('r2')));
+  expect(book.schemaRefinement(malformed(root.edit), catalog('r2'))).toBeUndefined();
+  for (const alias of [
+    'root',
+    root.target,
+    '@unknown:b1',
+    expectDefined(projected.commentReferences[0]).edit,
+  ])
+    expect(book.schemaRefinement(malformed(alias), current)).toBeUndefined();
+  expect(
+    new CommandReferenceBook('next').schemaRefinement(malformed(root.edit), current),
+  ).toBeUndefined();
+  expect(
+    book.schemaRefinement({ ...malformed(root.edit), target: 'child' }, current),
+  ).toBeUndefined();
+  expect(
+    book.schemaRefinement(
+      {
+        edit: root.edit,
+        operation: { type: 'patch', target: 'child', patch: { status: 'cancelled' } },
+      },
+      current,
+    ),
+  ).toBeUndefined();
 });

@@ -6,30 +6,50 @@ the vault and writes user changes through application commands.
 
 ## Provider connections
 
-Main owns `ProviderSecrets`, `ProviderConnections`, and one `NativeProviderTransport` shared
-by the explicit OpenRouter, OpenAI, Anthropic, Groq and Cerebras SDK factories. Credentials live only in the
-host's vault-scoped SecretStorage under six fixed plugin IDs. The settings section submits
-masked, initially empty inputs on Enter or blur, clears successful submissions, and reports key
-presence without claiming connectivity. Neither rendering settings nor constructing a model sends
-a request. `commandMode` holds only static provider/model/search/voice preferences; unknown
-extensions remain intact through the ordinary settings coordinator. Persisted preferences remain
-unvalidated `unknown` data until `parseProviderSettings` succeeds at the provider-use boundary.
-Unsupported values do not block calendar startup; settings retain them until an explicit field
-correction. Only an absent setting receives composition defaults. There is no prior AI data
-format to migrate, and older plugin versions can retain the additive settings.
+Main owns `ProviderSecrets`, `ProviderConnections`, `ProviderModelCatalog`, and one
+`NativeProviderTransport` shared by the explicit OpenRouter, OpenAI, Anthropic, Groq and Cerebras
+SDK factories. Credentials stay in Obsidian SecretStorage. Settings use the native `SecretComponent`
+and persist only selected secret IDs; disconnecting a provider does not delete a shared secret.
+`commandMode` holds the LLM, Voice and Search preferences. Fresh installations start with LLM and
+Voice disabled. Each role validates its own connection when Q checks availability. Voice can
+transcribe into ordinary capture with only its own provider configured. For OpenAI and Groq,
+`secrets.voice` can select a stored key by ID or disconnect Voice with an explicit null. An absent
+voice binding inherits the existing provider binding or the plugin-owned ID. Rebinding the shared
+credential preserves the other role’s existing selection. Ordinary Q always uses dictation;
+continuous listening is available inside Command mode with an agent connection. The nested
+`voiceInputMode` defaults to manual and is copied only into fresh sessions; restored session modes
+win, and older records without a mode remain manual. Unknown settings extensions survive the ordinary
+persistence coordinator. The boundary validates persisted `unknown` data when a provider is used.
+Unsupported settings leave calendar startup available and remain visible for correction.
+
+LLM and Voice also accept independent OpenAI-compatible profiles: an explicit API base URL, a
+model ID and an optional SecretStorage binding scoped to that same base. Changing the base clears
+its credential binding; the two roles never borrow one another's key or fall back to a hosted
+provider. Opening settings does not contact a custom server. On desktop the LLM uses the pinned
+Chat Completions adapter; Voice sends a file and model to the transcription endpoint. Both use
+the existing queue and limits; the custom desktop transport aborts on cancellation, rejects
+redirects and caps responses while reading. On hosts without the required desktop transport these
+connections report unavailability. The fixed providers retain their existing mobile transports.
+
+Opening the provider section can fetch a bounded model catalog through fixed official GET endpoints.
+Each row owns its cancellation/generation guard; late results cannot replace another connection's
+model. Catalog errors retain the selected model and show a short failure. Construction of an agent
+model sends no request. Search and voice have independent provider/model selections; switching the
+agent preserves an older same-agent search selection as an explicit connection. These preferences
+do not start research, transcription or a command session.
 
 The native adapter admits two requests and eight queued requests. Cancellation and a 60-second
 logical deadline reject local acceptance; an active slot remains occupied until `requestUrl`
 settles. Queued cancelled work never starts. JSON requests are capped at 4 MiB and accepted
-buffered responses at 8 MiB. OpenAI transcription alone accepts the pinned SDK multipart shape
-(`gpt-transcribe` and one nonempty file), at most 4 MiB of audio plus 64 KiB of multipart overhead.
+buffered responses at 8 MiB. OpenAI and Groq transcription accept their pinned SDK multipart shapes
+(`gpt-transcribe` or the supported Whisper model, and one nonempty file), at most 4 MiB of audio plus 64 KiB of multipart overhead.
 Validated parts are copied before queueing, encoded with the native Fetch boundary, and rechecked
 for cancellation before requestUrl admission. Host buffering occurs before the response check. Streaming is
 rejected. Fixed official initial endpoints prevent arbitrary source-page requests, but the host
 follows redirects and offers no redirect isolation or physical abort. Typed safe failures omit
 raw provider messages, request bodies, and credentials. Search selection can reuse OpenRouter
-or OpenAI, or select independent OpenAI/Tavily billing; Anthropic, Groq and Cerebras have no implicit fallback.
-Voice defaults to disabled and has an explicit OpenAI connection preference. These settings do
+or OpenAI, or select independent OpenAI, Tavily, Exa, Firecrawl or Brave billing; Anthropic, Groq and Cerebras have no implicit fallback.
+Voice defaults to disabled; enabled transcription uses the selected OpenAI, Groq or compatible connection. These settings do
 not start research, transcription, or an agent session.
 
 Groq and Cerebras use their pinned AI SDK adapters and fixed native chat-completions endpoints. Each key has a
@@ -37,10 +57,25 @@ separate SecretStorage ID; model IDs remain user-selected. Same-agent web resear
 through the OpenAI/OpenRouter adapters; Groq, Cerebras and Anthropic require an explicitly selected search
 provider. No provider fallback changes the billing destination.
 
+The desktop ChatGPT plan connection uses OpenAI's [open-source sign-in flow](https://developers.openai.com/siwc/token-sharing-open-source).
+Main owns `ChatGptPlan` and cancels its work on unload. Its loopback callback opens the system browser
+through Electron and validates fresh OAuth state, PKCE and a signed OIDC identity. A dedicated
+device- and vault-local SecretStorage record retains the installation host ID and each account
+registration. Web Locks serialize refresh-token rotation. API-key bindings cannot acquire this
+record. The settings picker reads the selected account's visible models from the public Models API.
+Commands send the existing SDK's active tools in one namespace and replay their results through
+the public Responses API with storage disabled. The adapter waits for a completed streaming response
+before the ordinary command pipeline can validate or execute a call. Search and voice keep their
+own provider selections. Continuous voice submits its transcript to the same command pipeline.
+Manual dictation delivers text to the active Q input and follows that surface’s submission route.
+OpenAI currently excludes audio and transcription from the plan grant. The Voice picker explains
+the separate transcription credential when paired with the ChatGPT plan.
+[Supported plan capabilities](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)
+
 ## Command sessions
 
 Main's `getCommandSessionOwner(research?)` lazily composes one `CommandSessionOwner`, public client,
-provider-backed agent and local store per plugin instance. Panels and popouts share that owner.
+provider-backed agent per plugin instance. Main awaits `CommandSessionStore.open()` before registering the panel and Q; the initialized store is shared by panels and popouts. History load failures preserve the calendar and appear through Q's persistence status. Main retains one owner for its plugin lifetime and revokes Q acquisition before unload teardown; it never reconstructs a disposed owner.
 The mandatory-journal `createCommandSession(journal, research?, transitions?)` factory remains
 available for internal integration tests; a main-owned set releases disposed runtimes instead of
 retaining one unload closure per archived conversation. Construction/opening does not parse provider
@@ -49,29 +84,98 @@ preferences or send requests. Main always supplies its `commandResearch` port, b
 settings on its next deliberate request. The adapter parses current preferences per call, uses the
 shared native transport and SecretStorage, and sends only the bounded query. Generated search reserves output space for reasoning and marks
 provider token exhaustion as incomplete evidence alongside local result truncation. OpenRouter requests
-Exa through the pinned SDK plugin; OpenAI explicitly invokes hosted web search; selected Tavily uses
-its fixed search endpoint. No fallback or page-fetching loop runs. Trusted interpretation admits at
+Exa through the pinned SDK plugin; OpenAI explicitly invokes hosted web search. Tavily, Exa, Firecrawl
+and Brave use fixed native search endpoints and their selected SecretStorage bindings, without a model
+selector. Firecrawl requests web snippets without scraping or domain tools; Brave requests undecorated
+web snippets. Brave queries exceeding 600 characters or 75 words fail before dispatch with a safe
+shortening diagnostic. Direct responses validate their provider envelopes before source normalization.
+An explicitly empty direct search returns `outcome: 'empty'` only with no sources or summary and
+`truncated: false`; uncited generated prose still fails. Exa warnings/notices and Firecrawl warnings
+mark nonempty evidence incomplete without disclosing raw provider messages; warned empty evidence
+fails instead of claiming complete zero matches. No fallback or page-fetching loop runs. Explicit research control admits at
 most two research calls per turn. Each SDK call permits at most two network retries inside one
 45-second deadline and the enclosing 180-second turn. Logical invocations and physical retries are
 different counts. Output retains at most five validated HTTP(S) sources and 12,000 serialized
 characters, separating generated summary from nullable attributed excerpts and marking truncation.
 Cancellation rejects late output without claiming physical cancellation of host requests.
 
-`CommandAgent` retains the SDK's bounded tool loop. Trusted interpretation may carry one complete
-`work` proposal (canonical task arguments, concise message and optional issued focus). It is
-admitted only for planning or explicitly immediate saving without dependent reads or transitions.
-Preparation and ready completion reuse the ordinary task/finish boundaries, sequentially after
-interpretation succeeds. Nested failure keeps its own repair key and refinement provenance;
-failed focus does not replay an already-staged edit. Unqualified planning still only previews.
-Tool arguments use the SDK’s default inline schema representation; recursive tree references
-remain supported. Canonical Zod validation is unchanged. Its model projection includes exact typed task,
-comment, project and note references; these are issued handles, never aliases or fuzzy title matches.
-Reference failures return the current canonical choices without changing the rejected operation.
+`CommandAgent` retains the SDK's bounded, serialized tool loop. Ordinary turns expose narrow
+find, inspect, create_task, change_task and finish operations with preview/no-research authority.
+`expand` enables predeclared advanced families through SDK `prepareStep.activeTools`; it does not
+grant consent. Optional strict `interpret` controls admit explicit saving, research and lifecycle
+actions only before the first ordinary operation. That first operation seals preview authority
+synchronously, including when several tool calls share a response. Pending-transition and history
+checks still apply without interpretation. There is no duplicate semantic work declaration or
+binding protocol. `create_task` and `change_task` adapt to the canonical task preparation owner.
+Each editable alias captures its exact task/comment owner and saved or pending-plan basis;
+superseding that basis invalidates the alias.
+
+The core prompt defines existing-context selection before new capture. At the control boundary,
+ordinary create/add/schedule requests preview; approval of the displayed proposal uses confirm
+with the requested scope, and immediate requires an explicit waiver of preview for new work.
+Task-only find points note/project discovery to the existing read family. Detailed hierarchy/copy,
+note, project and link grammar travels with each enabled tool description. Accepted task preparation
+feedback starts with a preview cue before the canonical plan and issued references; the existing
+paged-output budget includes that cue. It describes the preparation operation only. Discovery,
+lifecycle staging and draft cancellation retain their own outputs. Invalid confirm arguments receive
+branch-specific scope repair guidance; an empty scope never becomes whole-proposal consent, and
+finish cannot repair or execute rejected control.
+
+`CommandEvidence` retains accepted current-turn action/owner, removal and completeness facts, plus
+aggregate discovery coverage. Canonical plans retain field values; evidence does not duplicate them.
+Native-validated selection replaces focus evidence; removal invalidates affected descendant facts.
+Canonical attempted changes, including exact no-ops, supply mutation evidence; inspection remains
+an observation. A pre-existing proposal or catalog read alone cannot establish a new result.
+The established first-control immediate path may save an unchanged captured visible proposal,
+subject to captured status and current history/recovery guards at the save boundary. Read or focus
+evidence cannot bypass that check. New immediate preparation or draft removal records its accepted proposal revision;
+publication rejects any later proposal change before passing that exact revision to confirmation. Issued discovery aliases bind questions to the
+latest accepted query/scope and completeness; raw, prior-turn and superseded evidence rejects.
+The host validates discovery blockers before any focus/transition effect. Evidence-backed questions
+cannot supply selection or reveal; the host renders their factual question from that evidence. Missing-information/conflict
+questions retain the model's exact text. Routine completion text describes accepted results and
+proposal/receipt state; it does not claim that every natural-language requirement was understood.
+Independent utterance and outcome oracles remain necessary. Explicit immediate consent is required
+to save newly prepared work in that turn. Canonical Zod
+validation remains the execution boundary. The model presentation adds redundant properties and common
+required fields only to owned finish/control/project unions and direct task/note/read input unions.
+Original union locations remain intact. Creation exposes one shallow generated tree definition beside
+its unchanged local reference; children still reference the retained definition. Added copies omit
+repeated descriptions. Custom SDK schemas and schemas with URI/anchor resources receive no added
+presentation. These fields and exact JSON examples improve argument visibility without changing
+accepted values, default preview authority or repair bounds. SDK tool-call repair can decode stringified containers
+only at declared object/array paths that forbid strings, including bounded same-document schema
+references, with input, depth and node bounds. Remote/unresolved references cannot authorize repair. The entire
+argument must then pass canonical validation; tool identity, references, user text and consent are
+unchanged. A sole `input` envelope can be removed only after canonical rejection when every root
+schema branch excludes that envelope and the unchanged inner object passes canonical validation.
+A union envelope also needs present constant fields identifying exactly one branch; omitted
+discriminators do not authorize an inferred operation.
+Ambiguous schema branches, extra outer keys and scalar coercions remain repair failures. This
+format-only recovery runs before failure bookkeeping and never replays an executed operation.
+The pending-operation owner issues turn-local retryOf tokens only for canonical-schema accepted
+narrow task creations rejected before staging. A token binds the creation intent and exact normalized
+destination; only accepted staging resolves that named failure. Unrelated successes cannot retire it,
+and unknown, previous-turn, consumed or stage-attempted tokens cannot prepare again. Tokens remain
+transient and do not change the public API, persisted data, or the existing repair budget.
+Model context uses exact turn-local typed aliases for
+task, comment, project and note handles; aliases never imply fuzzy title matching or refresh stale
+revisions. Reference failures return bounded current choices without changing the rejected operation.
 A saved-tree read without explicit paging uses the same bounded canonical reader as proposals;
 large results retain paged disclosure. Comment rewrites use the current owner-bound comment handle.
 Intent-specific disposition validation distinguishes continuing work, resolving a pending transition,
 and leaving a session. Archived sessions settle active planning status and clear accepted control
 input while retaining genuinely unsent text and complete exchanges.
+
+Model-requested writes quote the current user instruction. Before admission, the selected provider
+makes a separate read-only `assess_write` call to classify the permission granted for the displayed
+work, further edits, or a save-before-switch. Its only tool returns a decision about the effect
+and scope. A partial grant is checked against the selected owner's observed identity and fields.
+An unresolved owner keeps the proposal open. A negative decision closes the turn to further
+write attempts. The host rechecks cancellation, deadline and proposal revision after the decision;
+an instruction to edit and save requires a material change to the canonical preview. Native Enter
+proceeds through the usual revision check and writer directly. Previewing or correcting a task
+requires no separate write review.
 
 Explicit limited confirmation carries a typed scope from the trusted turn, bound to the exact
 proposal revision and issued task plan references. `commandSelection` validates independent whole
@@ -101,33 +205,70 @@ Late descendant selection retains that conflict through confirmation; selecting 
 resolves it. The write owner rechecks current focus before admission, independently of preparation.
 Both operations use the shared admission journal and unknown-effect replay prohibition.
 
-`ProviderTranscription` uses the pinned OpenAI transcription adapter through that same transport and
-current SecretStorage/preferences. It returns final text only; the SDK exposes no portable confidence
+`ProviderTranscription` selects its SDK transcription model through the current Voice connection and
+SecretStorage/preferences. It returns final text only; the SDK exposes no portable confidence
 score. Two SDK network retries share one 45-second transcription lifetime, without resubmitting a
 command. Empty recognition and incomplete capture never enter the command queue.
 
 Each mounted Q owns a `CommandVoiceController` and `NativeVoiceCapture` in its document/window.
-The microphone, Enter and send finish manual dictation into editable input, in ordinary Q or
-CommandMode. It does not submit an agent command. Continuous mode is a semantic session choice,
-retained in local history with manual as the default. Selecting it in an open configured CommandMode
-or deliberately reopening Q starts capture once; restoring history alone does not. A capture claims
-the owner's exclusive media lifetime. The microphone stops continuous listening. Speech activity
-updates that same control without adding another surface. Local
-RMS samples separate utterances after 800 ms of quiet. Silence stays local; five-second quiet
+The microphone stops manual dictation into editable input. Send or Enter retains one transient
+submission intent for that recording or pending recognition, in ordinary Q or CommandMode. A valid
+nonempty result fulfills it once through the existing submission route. Later editing, hide, mode or
+session change, stale composer/proposal evidence, and empty or failed recognition retire the intent.
+It never enters history and cannot turn an empty transcript into proposal confirmation.
+Continuous mode is a session choice exposed through the microphone menu and semantic commands,
+retained in local history with manual as the default. Deliberately opening Q can acquire capture;
+restoring history alone cannot. A preference change preserves the current capture owner. With no
+capture owner, only its initiating visible menu or admitted submission may acquire; passive
+subscribers update mode without starting media. Exclusive media claims carry the originating Q's
+visibility token. A visible continuous session keeps its claim between recording, transcription,
+agent work and write settlement. The owner synchronously pauses that recorder when work is admitted
+from any surface. A recoverable tool error keeps capture paused through the retry. Capture resumes
+when the command succeeds and recognition is idle. A terminal error ends that listening cycle. Manual dictation
+outside a continuous session remains independent.
+Manual recording replaces the microphone with a stop square. Continuous listening keeps its mode
+icon. In both modes the capture owner sends active microphone samples to a single SVG path across
+the empty text column. The composer’s resize observer adjusts bar density within equal inline insets.
+Measured peaks set each bar’s target. The owning window interpolates heights between audio samples
+and stops requesting frames once the shape settles. Reduced motion uses a smaller range and a slower
+response. A quiet microphone releases the last shape over 85 ms. Typing, recorder retirement,
+agent work and disposal clear it immediately. The waveform shares the existing analyser and runs
+independently of session rendering.
+The compact phase row shows starting/listening/recognizing/stopped state and queued count alongside
+agent progress, with elapsed time at the far right. AudioContext startup has a 1500 ms deadline;
+retirement cancels its timer and releases acquired tracks even if resume finishes late. Local
+RMS samples separate utterances after 3,500 ms of consecutive observed quiet; resumed speech resets
+that interval. Silence stays local; five-second quiet
 containers are discarded only after current quiet, preserving speech that starts at the boundary.
-Each segment has a fresh supported WebM/Opus or MP4 recorder/container on the same stream.
-Recording stops at one minute or 4 MiB; at most two segments await recognition. Activity alone does
-not cancel agent work.
+Silent container rotation uses the same stream. At an utterance boundary the recorder releases
+all input tracks before sending the recording to transcription. A new listening cycle acquires
+a new stream. Distinct, low-volume local start and end tones share the time-tracking chime
+synthesizer. The pair of notes rises when recording starts and falls when it ends. The silence
+detector excludes the start cue and the output device's latency. Quiet container rotation has no cue.
+Recording stops at one minute or 4 MiB. Activity alone does not cancel agent work.
 
-Each recording retains its mode at capture time. Manual recognition remains editable even if the
-mode changes while recognition is pending. Continuous accepted text uses the existing surface
-submission token and owner queue. Ordinary capture departure cannot write while audio is pending. A transient capture
-predicate binds the session, focus identity, transition, and actual composer-edit generation, and
-is checked again after queued work settles. Composer edit/draft provenance belongs to the shared
+Each recording retains its mode at capture time. Manual recognition remains editable if the
+mode changes while recognition is pending. Continuous accepted text carries distinct originating
+visibility and note-review tokens through the existing submission boundary and an owner-controlled FIFO of at most eight waiting utterances and 64,000
+characters, with the existing 16,000-character utterance limit. One drain waits for current agent
+and write work without cancelling it. Overflow stops capture and retains waiting text in order
+for manual review. Ordinary capture departure hides and retires pending audio without writing a
+partial task. Closing an idle Q leaves another Q's media, ASR and waiting voice intact. Scoped hide
+revokes only that surface's acceptance; session transitions and unload still retire all voice work.
+Visibility is rechecked when a queued item leaves the FIFO and again before its turn starts. The owner
+captures a separate interaction generation for continuous admission: manual commands, focus, status,
+confirmation, session navigation and every opened/closed pending transition retire continuation.
+Agent-created focus can therefore receive the next refinement without refreshing the captured
+proposal revision or note-review token. The original strict submission predicate remains unchanged.
+Changing the composer from ordinary capture to a command or history view retires an unfinished
+dictation and its pending Send before the destination changes. Composer provenance and continuation
+are checked immediately before each queued turn starts. Composer edit/draft provenance belongs to the shared
 session and is exposed through its owner. Every explicit edit invalidates earlier input captures,
 including identical bytes from another surface; accepted turns and internal clears do not.
 Restoration derives draft state from retained input and retires captures even for the same session
-ID. Post-submit clearing uses that same shared predicate so it cannot erase another surface's edit.
+ID. The session clears accepted text at turn admission, retaining its complete exchange. Failed turns
+restore that text only while the same composer capture remains current; queued admission and
+cancellation preserve newer drafts. Post-submit surface clearing uses the same shared predicate.
 Proposal revision changes retain the captured revision
 for semantic consent checks; proven focus continuations from canonical refinements and receipts
 remain usable. The predicate stops checking after admission so a spoken command may deliberately
@@ -135,10 +276,13 @@ change its own focus. Unsafe text in the same live session is retained after the
 with a blank-line separator and one review status; it is never submitted automatically. Audio,
 media activity and those predicates never enter history or model context. Hide, owner/session
 retirement, pagehide, media loss and unload stop tracks, local processing, timers and late results;
-reopening retains the conversation and mode. Typed input remains available on failure.
+reopening retains the conversation and mode. Unstarted recognized text is moved into the session
+composer before retirement; hide leaves the admitted agent turn running. Typed input remains
+available on failure. The latest-command label is hidden while its exact text is already editable
+in the composer.
 
 `CommandSessionOwner` owns visibility, coalesced ordinary persistence, serialized external session
-selection and direct status actions, and disposal. `CommandSession` owns input, focus, proposal,
+selection, explicit history deletion, direct status actions, and disposal. `CommandSession` owns input, focus, proposal,
 typed pending disposition and recovery state. Switching reuses the client; inactive sessions are detached JSON records. The owner
 flushes ordinary state at command/lifecycle boundaries and after a 250 ms scheduler delay. Required
 write admission and receipt saves bypass that delay. Storage failures appear as one short surface
@@ -150,13 +294,18 @@ ownership. Only Q uses the multiline adapter; main supplies credential-presence 
 checks so unavailable agent/voice controls remain hidden. Status occupies the ordinary metadata row’s
 position, with the shared tree and a separated last-command line below. ordinary capture removes CR/LF before its existing
 controller receives input. Command input never follows ordinary capture's blur submission path.
-Main retains transient mode/selection/scroll memory and the shared owner; destroying or migrating
-a surface releases its Components and subscriptions without discarding the session. `CommandNotes`
+Each mounted surface owns its displayed mode and submission route; main's transient mode memory
+only initializes reopening. Main retains selection/scroll memory and the shared owner. The capture
+boundary handles command departure as hide, while ordinary text keeps its submit-on-departure rules.
+The coordinator owns document Escape for Q, after nested menus, history and wiki suggestions have
+consumed their first Escape. Outside departure preserves outside focus. Destroying or migrating a
+surface releases its Components and subscriptions without discarding the session. `CommandNotes`
 adds focused note pages and exact NotePlan before/after ranges to that same retained canvas through
 `RetainedTaskText`. Related notes use native disclosures so task work stays compact; note-only and
 explicitly focused note work opens their retained content. Full preparation and render-failure checks
-still precede confirmation even while a disclosure is closed. Newly created notes use a row marker
-instead of marking every word as an insertion. Note and Q description/comment comparisons opt into an owned, hidden native
+still precede confirmation even while a disclosure is closed. New note prose uses inline insertions
+and a separate cumulative session gutter. Template-first previews label that prose as content to append
+after the template; they do not claim to show executed template output. Note and Q description/comment comparisons opt into an owned, hidden native
 rendering of previous Markdown with the same field presentation, then use the same rendered diff.
 Current comparison failures reach the caller's visible failure boundary; cancellation retires the
 temporary owner and suppresses late failure output. Title/search comparison paths are unchanged.
@@ -188,7 +337,9 @@ never become current merely because a write committed. This uses existing receip
 Stop cancels future planning through the owner, while an admitted write settles through its existing
 journal. Hiding leaves the active agent turn running and stops microphone capture; the owner emits
 one completion/attention notification through main only if the latest submitted work settles while
-hidden. Reopening suppresses that notification. UI input/submission generations prevent late completion from clearing newer text.
+hidden. Reopening suppresses that notification. An admitted save may finish after hide, but its
+surface's retired visibility cannot start a new session afterward. UI input/submission generations
+prevent late completion from clearing newer text.
 
 `PanelView` refreshes bounded read-only view/inspector context on activation and submission.
 Accepted saved task navigation uses main's internal `TaskApiProvider.nativeTaskTarget` resolution
@@ -202,21 +353,46 @@ Draft checkboxes use the owner's serialized `stageStatus`: new nodes append init
 exact canonical plan; existing and copied nodes retain a separate lifecycle status intent. Saved
 checkboxes use `applyStatus` and do not commit unrelated proposals.
 
-`CommandSessionStore` owns a version-1 local history envelope through main's synchronous
-`App.loadLocalStorage/saveLocalStorage` port at `abyss-tasks:command-sessions:v1` and an explicit
-clock. Record saves and active selection are separate. `commandRecovery` validates complete
-snapshots, public domain DTOs/receipts, typed preparation inputs and retained review evidence.
-Malformed or future storage pauses persistence without overwriting its raw value. Save failures
-retain validated memory and reject the awaited journal. Writes require exact validated readback;
-the host port provides no crash transaction guarantee. Session history never enters settings or task
-Markdown.
+`CommandSessionStore` stores one version-1 JSON snapshot per generated UUID filename in the actual
+plugin directory's `sessions/` folder. Main alone acquires DataAdapter callbacks scoped to session
+files and `command-session-state.json`. The latter contains selection, the import marker and durable
+deleted-file IDs, never conversations. The store serializes immutable captured writes, validates
+snapshots and receipts through `commandRecovery`, and requires exact readback before journal admission.
+Existing-file updates compare previous bytes inside DataAdapter.process. New-file creation checks
+absence, but the public host API provides no atomic create-if-absent, cross-instance lock or fsync guarantee.
 
-History retains complete exchanges and authored fields. The soft policy is 20 completed sessions
-and 2 MiB of UTF-8 JSON, pruning oldest eligible inactive records only after verified persistence.
-Active, pending, uncertain and unverified-save records stay protected, including during explicit
-clearing. Protected overflow fails without truncation. Entity read caches remain separate from
-intent/proposal evidence and are retained exactly; the store does not discard selected evidence
-under pressure or own a live session/client cache.
+Legacy localStorage history is validated and copied before the verified import marker permits cleanup
+of `abyss-tasks:command-sessions:v1`. Retries preserve newer JSON records and reject duplicate logical
+IDs. The marker prevents an uncleared legacy copy from resurrecting deleted sessions. Malformed or
+future data pauses mutations and remains untouched. Older plugin builds cannot read the JSON history;
+rollback requires the pre-deployment history snapshot. Session history never enters settings or task Markdown.
+
+JSON history remains until explicit deletion. Individual files have structural and byte validation
+limits; there is no aggregate session-count or byte pruning policy. Records retain createdAt, meaningful
+updatedAt, and a derived entity/command title. An optional titleIsEntity flag preserves known entity
+labels when their original evidence clears; older files derive that provenance only from retained entities. Newest meaningful activity sorts first; restoration and
+selection alone do not reorder history. Untouched empty sessions have no file or history row.
+
+`CommandHistoryPopover` uses the shared anchored shell in the capture's document. It registers its
+detached surface with capture and holds the existing interaction lease until close. Search filters
+retained titles, exchanges and entity names; keyed selection and separate deletion buttons preserve
+query and focus during owner refreshes. History has no transcript rows. New-session, disposition and
+source-review actions remain in Send's context menu. Selecting a saved session can display retained
+work without a configured provider; submission still requires provider availability.
+
+Restored task rendering prefers actual write readback over older discovery trees of the same identity;
+live selected reads keep their existing precedence.
+Historical and uncertain snapshots show retained incomplete scope without paging stored handles.
+A live expansion that settles after restoration cannot replace that evidence; source review retires
+the historical working context through the existing owner command.
+
+Owner deletion cancels unissued work, waits for admitted work to settle, and protects unresolved effects.
+Clear-all checks every record before deleting any. Verified tombstones precede physical removal and
+remain after cleanup failures, so late file callbacks cannot restore a deleted row. Owner retirement
+revokes capture, UI subscriptions and future saves immediately. Its captured final save joins the queue;
+`drained()` waits for pending work and persistence before a replacement may be constructed against the
+same store. Unload does not promise completion of arbitrary I/O; already durable admission evidence
+remains conservative, and late callbacks never grant new write admission.
 
 `CommandSession` publishes detached immutable state: input, focused entities, canonical trees,
 proposal revision, complete exchanges, question, status, actual readback and write journal.
@@ -241,16 +417,27 @@ correspondence and readback. Deleted or unverified affected selections leave cur
 historical entity and journal evidence remains. Project/note readback updates selected revisions.
 
 An unrelated focus change with pending work retains a typed target and asks for save, keep, discard
-or cancel. Same-tree focus and added context preserve the existing workflow. Menu and semantic
+or cancel. Same-tree focus, the actual note belonging to its pending plan, unchanged empty selection
+and added context preserve the existing workflow. Menu and semantic
 session changes share these transitions. Dispositions and confirmations bind to the accepted
 session/proposal revision; changing the pending target advances that revision. Save-and-switch
 awaits the verified previous outcome, and save-then-plan leaves the subsequent tree as a preview.
+A model-requested write binds to the entire current user message. Immediate writes and
+save-and-continue controls also identify the user's saving instruction. A separate call to the
+configured model receives the current message, the displayed changes and any selected owners and
+fields. Its only tool classifies approval of the displayed work, explicit saving after a new edit,
+saving before a separate request, or preview. The host checks the quoted source, effect, scope,
+session revision, cancellation and deadline before dispatch. A declined preview stays read-only
+for the current message. A partial approval binds to verified owners and values and leaves other
+changes pending. Saving a requested new edit also requires material new preparation. Enter still
+confirms the visible proposal through the session's native command.
 Keep retains the complete unsaved draft in history without a source write; discard requires explicit
 abandonment. Ambiguous disposition retains work and asks a short question. Legitimate transition
 questions terminate normally instead of consuming tool-repair attempts.
 
 Reloaded handles are historical. Opening preserves input, question, exchanges and canonical trees
-without replay. The still-owning runtime can resume task-only plans after public refresh proves
+without replay. Persisted thinking/searching/writing phases restore as stopped history or unresolved-write
+feedback, never as a live operation. The still-owning runtime can resume task-only plans after public refresh proves
 unchanged canonical values; other or expired plans require explicit fresh review. Review retains the
 logical session ID and original proposal/focus/preparation evidence, clears old executable proposal
 state, advances its revision, and publishes fresh preparation for renewed confirmation. Preparation
@@ -267,14 +454,60 @@ pruning protection. History selection checks the same acknowledgement boundary a
 `CommandAgent` runs the SDK tool loop with generic required tool calls, serial execution, at most
 12 steps and generation deadlines. Local multi-read workflows use the same step ceiling as research;
 local and research time budgets remain separate. Active tools enforce the interpretation phase; a typed finish
-is the only accepted terminal ready/question result. The loop has
-application-owned network retries and separate schema/domain repair limits. The provider boundary also
+is the only accepted terminal ready/question result. An empty-session readiness guard requires successful tool observations or visible canonical work before
+ready, while concrete questions and context-only answers remain available. The guard runs before
+finish selection or native reveal and does not infer completion from message text.
+A task lookup carries its requested effect and returns candidates with source evidence.
+Inspection resolves a saved candidate at its issued revision. A typed selection identifies the
+row to display, including a child when the parent was only a search anchor. A request to change
+or remove a tree needs an accepted preparation for that target before the turn can report success.
+An exact-title lookup can distinguish a single named row among fuzzy matches on a complete page.
+Same-titled siblings retain separate identities for clarification. Each accepted edit supplies
+current task and comment references for subsequent corrections.
+A parent lookup can locate a child. Reclassifying an edit lookup as a parent lookup requires its
+original evidence, matching scope, the verified parent and a prepared edit on its observed descendant.
+If a preview was prepared but another lookup still needs resolution, the tool returns the accepted
+preview and the remaining obligation together so the model can continue without repeating the edit.
+For a follow-up, the reference catalog identifies the latest accepted metadata refinement on a
+current plan by its task, sibling ordinal and fields. This information carries no focus or edit
+authority. A whole-task removal attempted with a current comment edit stays unexecuted. Its repair
+requires an explicit comment removal on the same comment.
+A model can explicitly complete a single create/edit preview in the same call. The shortcut
+requires the preparation accepted in this turn and passes through the usual readiness checks.
+Discarding the last unsaved root can also finish in that call if the same session still has the exact
+empty proposal produced by the discard. Batches, unresolved operations and immediate saves still
+require a separate finish. For a small complete edit catalog, the outgoing tool schema lists only the already issued, still-current edit handles; its validator and Markdown authority are unchanged. Flat metadata edits compile to the same set/clear patch; omitted fields are preserved. If a value is rejected, a repair must address the same owner, preparation basis and every identified field before the turn can finish. A ready result does
+not need model-authored status text. A reply containing only prose or reasoning, including a
+reply cut off by the output token limit, can request one corrected generation within the turn's
+repair and time budgets. The retry uses the original command and the accepted tool results.
+
+The loop has application-owned network retries and separate schema/domain repair limits. The provider boundary also
 classifies Cerebras HTTP 400 generation/parser failures for the same bounded generation retry; other
 nonretryable HTTP errors stay terminal. Retrying generation cannot replay a tool already executed. Provider-facing schemas
-use explicit object roots and inline operation fields so provider templates can expose their
-arguments. Optional/default wrappers and object unions are projected without changing canonical
-acceptance: the original strict branch parses again, rejects extra fields and supplies its own defaults. Ready/question finish uses a small explicit object
-with the original union validation. Main supplies local
+preserve branch-specific operands, required fields and recursive references through
+`commandModelSchema`. Zod-owned tool schemas use native draft-2020-12 input conversion, including
+recursive `$defs`; custom SDK schemas retain their dialect. Projection visits only schema positions,
+preserving literal annotations and property names. Object alternatives keep their canonical union;
+a union becomes `oneOf` only when its branches are provably disjoint and no pointer target moves.
+Custom URI resources retain union locations conservatively. Explicit object types and singleton enums help provider
+templates expose those same arguments. Runtime validation still uses the original strict Zod schema.
+Interpretation accepts intent and consent only; task, note and project preparation use their existing
+separate tools. The SDK parses calls concurrently; its model-call callback captures their order, and
+binding accounts rejected predecessors at the serial execution boundary (remaining rejections at
+step end). A schema-invalid leading control reserves its position before admission. Dependent
+siblings, including malformed ones, receive deferral feedback without effects or repair charges;
+a corrected leading control must pass ordinary authority guards, then work is explicitly resubmitted.
+A rejected control retains its original intent. The same turn can return to ordinary preview planning.
+Late controls cannot reopen authority or prevent earlier ordinary operations. Rejections after a
+ready call still prevent successful turn completion. The sole terminal exception is schema-valid
+`expand` after a positively completed `finish`: the tool owner returns a not-executed diagnostic
+before binding or tracking and excludes only that call from step accounting. Capabilities, evidence,
+repair allowance and existing errors/debts remain unchanged. Its private accepted-finish marker is
+separate from the loop-stop `done` flag and is set only after output validation, cancellation checks
+and pending-operation accounting; immediate completion also requires successful native confirmation.
+Failed/refused publication, other terminal controls, malformed expansion and every non-expand
+suffix retain strict accounting. Schema feedback reports bounded canonical
+leaf paths/types from a possible closest union branch, never rejected values. This keeps the full task grammar out of the initial interpretation request. Main supplies local
 civil time and timezone. `commandSchemas` validates executable arguments and outputs, preserves
 unrequested authored title annotations, and bounds model-facing projections. `commandReads`
 recovers only typed incomplete readonly coverage through bounded publication waits. Full-tree
@@ -286,7 +519,23 @@ Unknown, wrong-kind and previous-turn aliases fail before an operation; exact st
 reach the native revision checks. Each run owns its book, and session state, history, consent,
 preparation records and writes keep canonical handles. Current observed revisions supersede older
 reference-catalog pages, while same-revision comment pages can be combined.
-An unresolved non-create task failure cannot be cleared by creating a replacement root in that turn.
+`CommandPendingOperations` retains failed mutations by known subject and operation within a turn.
+Canonical preparation failures expose bounded native field/issue identifiers through the existing
+public error message. Field errors do not receive unrelated reference-basis repair advice.
+Patch and project-field obligations resolve individually; another root, plan or child addition cannot
+clear them. Aliases normalize for comparison without granting execution authority. A malformed
+creation with no identifiable title remains an ordinary bounded schema error. An unresolved non-create
+task failure cannot be cleared by creating a replacement root in that turn. A narrow exception in
+accounting applies to nonexecuted, schema-invalid single `change_task` patches with a validated
+current issued task edit capability and no competing owner fields. These retain a separate exact
+owner/pre-mutation-basis marker instead of interpreting malformed patch fields. A fully successful
+staged patch, description, initial-status or lifecycle-status mutation of that exact owner/basis in a
+later model generation can settle only that marker. Reads, creation, other owners/bases, stale or
+wrong-kind capabilities, same-generation success, failed staging/projection and cancellation cannot
+settle it. Canonical binding/domain/preparation failures retain field-specific obligations. This
+proves continuation of existing work, not semantic fulfillment of malformed values; independent
+oracles must still reject omitted fields or wrong statuses. Other malformed operations retain the
+conservative existing accounting.
 Unqualified live draft tree reads reuse the session's exact, uniquely owned proposal basis; explicit
 plan/side/cursor selectors are never replaced. Reads return their declared cursor query, and large
 complete-tree exploration falls back to a truthful bounded page.
@@ -300,13 +549,13 @@ does not charge shifted unchanged siblings. Refreshed plans use the same complet
 reviewed-value comparison. Current view context never implies an additional source restriction.
 
 `commandWrites` sequences public facade operations and awaits journal persistence before every
-effect. Cancellation is checked again after that save and before dispatch. A dispatched facade
+effect. Project schema reads finish before this admission; cancellation is checked again after the save and before dispatch. A dispatched facade
 call uses the run's independent settlement signal, so explicit Stop or superseding input stops only unissued
 operations; native request deadlines, revisions, source checks and disposal still apply.
 Known receipts and exact accepted readback precede Saved. Partial or unknown effects stop
 replay and retain the draft and observed entities. Project-first writes can refresh a dependent
 plan only when its complete reviewed values remain unchanged apart from proved identity/source
-line relocation and observational clock values; source paths remain compared. A refresh drops
+line relocation and observational clock values; source paths remain compared. Verified note readback also records its actual path for this same canonical task refresh and reviewed-value check. A refresh drops
 merge preservation; dependent cleanup
 then needs renewed review. Source cleanup otherwise requires the exact covered assessment and a
 known destination receipt/readback. Linked note creation freezes the path, task field and template;
@@ -325,7 +574,9 @@ never a prose match. Materialization uses the current exact comment handle and t
 link to the actual collision-resolved note path. A later task failure retains the saved note and
 reports the partial outcome without replaying creation. Deterministic dependency checks precede
 every effect batch; incompatible refinements need renewed review before any note is created.
-Current task readbacks are keyed by verified root identity. Lifecycle deletion removes the old root;
+Current task readbacks are keyed by verified root identity. The bounded canonical tree reader
+exhausts owner cursors and descendants at exact revisions before publishing actual saved evidence.
+Failed expansion retains the settled receipt and requires review without replay. Lifecycle deletion removes the old root;
 retained/recurring nodes and affected ancestors are reread through accepted parent handles.
 Known write paths retire older observed task pages, preserving unrelated-source reads; selected
 peers from an affected source are refreshed through their accepted handles before Saved. An
@@ -671,7 +922,12 @@ validates and projects its coordinates before installation. Unproven/stale event
 heading/block authority. Append previews include a required existing trailing line separator
 before a following protected block; commit writes that sealed result.
 
-Prepared note creation freezes the static template and final prose through `NoteTemplateService`.
+Prepared note creation uses `NoteTemplateService`. Existing explicit-path/static callers freeze
+static template bytes and final prose as before. Opted-in `obsidian-default` destinations use
+Obsidian's `getNewFileParent` with an optional source path; preparation freezes the resolved path,
+collision choice and template policy without creating anything. `configured-templater` and
+`explicit-templater` execution modes publish a `template-first` creation preview: requested prose
+is complete, while executable template output is not yet known.
 The additive create-only `collision: reject | suffix` option defaults to rejection for public callers.
 Opted-in suffix selection checks at most 100 same-directory alternatives during preparation; its
 chosen path is frozen and a later collision rejects commit. CommandMode defaults ordinary new notes
@@ -686,7 +942,7 @@ canonical protection owner maps unchanged task blocks through the exact piecewis
 and reserves one structural continuation stage for the sole existing `vault.process` write.
 Frontmatter, scope, source and native-file checks still guard the complete candidate. CommandMode
 routes repeated edits of the same accepted note through its current plan and refuses a separate
-competing edit plan. Create-plan `replace-body` refinement reuses the captured static template,
+competing edit plan. Create-plan `replace-body` refinement reuses the captured template/policy,
 title and frozen destination; it never reselects a path. Link dependencies retain the same note plan
 target across revisions. Existing single-operation public forms and all prior resource limits remain.
 Successful exact-range edits can return an optional `section` receipt reference, advertised by
@@ -697,10 +953,23 @@ Receipt redaction removes both note and section references after disclosure or r
 These additive fields require no persisted migration; older consumers ignore new receipt fields,
 older providers reject unsupported create arguments, and all versions still read ordinary Markdown.
 No prior form is removed.
-Its existing `commitStaticNote` remains the sole static creation sink and checks the final source
-basis synchronously after asynchronous validation. Executable templates and task-containing
-candidates are rejected before provisioning. Folder effects and note effects remain separate;
-a later task-link failure never authorizes repeating a successful note creation.
+`commitStaticNote` remains the static creation sink. Confirmed template-first creation uses the
+existing `createPreparedNote`, `applyTemplate` and `commitPreparedSection` authorities: provision an
+owned blank note, run the supported template parser/end lifecycle, read back its current content,
+then append agent prose through the protected note writer. Client lifetime, file identity, source
+and frozen policy are rechecked across asynchronous work, with synchronous checks immediately before folder and blank-note creation. Superseded metadata acquisitions permit
+up to three read-only reconciliation attempts under the same native file and stamp. Acknowledged
+task-free prose can recover exact readback under its acknowledgement stamp; unknown writes and
+task-containing stages retain their failure. Provisioning, templates and prose never replay.
+Frontmatter and template-created tasks
+remain protected. Template-driven relocation is refused. Arbitrary detached template callbacks
+cannot be awaited through this adapter and may run after readback.
+
+Creation receipts retain `completion`, `phase`, `templateEffects` and `contentEffects` alongside
+note/folder effects. A provisioned note is not proof of completed prose: incomplete outcomes remain
+failures, and unknown effects in any stage keep the aggregate unknown. Request replay returns the
+retained outcome and never repeats a partial or uncertain write. Command recovery preserves these
+fields. A later task-link failure never authorizes repeating successful note creation.
 
 The headless project read adapter derives membership and fields from accepted TaskIndex sources,
 including empty notes, without opening ProjectStore. Main injects one reader, the ProjectManager
@@ -788,6 +1057,12 @@ Provider closure settles pending readiness and closes listeners before releasing
 
 [`taskApiReads`](src/integrations/taskApiReads.ts) snapshots validated inputs before yielding, checks
 liveness and current source permission at delivery, and maps inward failures to sanitized API errors.
+The optional creation-policy read comes from the task application settings authority and exposes the
+ordinary prefix and canonical Inbox mode/service tag. Prepared Inbox intent shares native capture's
+policy resolver while retaining the original settings snapshot for stale checks. Inbox-filtered list
+and search calls freeze the policy at the facade; pure projection and search apply the same node-level
+membership predicate. Cursor bindings include that policy, and asynchronous search rechecks it before
+disclosure. CommandMode receives policy only through the public read boundary.
 Cursor binding failures precede incomplete coverage. [`taskDto`](src/integrations/taskDto.ts) copies
 only the public allowlist, including parent targets; no inward revision or source block becomes a public
 token. Current exclusion precedes incomplete health for target reads, while lifecycle failure retains
@@ -1260,24 +1535,33 @@ existing capture and inspector commands still persist the draft.
 [`taskTreeDisplay`](src/ui/taskTreeDisplay.ts) owns the retained structural task/title/description/
 comment rows shared by native search and Q. `TaskSearchTree` adapts native snapshots, evidence,
 excerpt policy and action closures; `CommandTree` adapts canonical public trees and owner actions.
+Command mode groups each task's comments after its description and before its children; canonical
+source order remains unchanged, including the relative order within comments and children.
 Neither adapter manufactures the other's identities. Display-only field keys stay inside the
 renderer. Command comments retain keys only through exact current handles, typed preparation
 operations with complete owner-bound sequences, or complete committed task correspondence at the
 accepted revision. Removed accepted content remains inert beneath its owner until save resolves.
-The shared metadata/date primitives preserve native formatting and tag/source chips. Q exposes all
+The shared metadata/date primitives preserve native formatting and tag/source chips. Their optional recurrence value uses the existing recurrence badge and visible rule label; Q includes it in the same add/change/remove comparison as dates and time. Q exposes all
 planning roles and independent native time/duration values, while ordinary cards retain their primary
 date policy. Project context reuses the configured field catalog, native status/date/property text and
 retained Markdown for its description and changed writable fields, without moving related tasks.
 Project paint compares resolved fields within each user iteration, accumulates that iteration's
-changes, and retains the exact accepted-project revision's projection across surface remounts.
+changes, and retains the exact accepted-project revision's projection across surface remounts. A freshly
+verified task from the pending project's exact source note can enter the working context while
+project fields remain pending. Unrelated selection still uses the existing disposition question;
+project-move descendant guards remain in force.
 
 Accepted canonical plans and their validated preparation proofs publish in one session snapshot.
 Task-content cleanup source plans use the same tree and inert removal treatment as ordinary edits.
 Main retains only the latest exact proposal/owner revision's paint correspondence for each
 owner-retained session; replaced revisions and removed sessions are pruned, and unload clears it.
 This memory grants no authority and is not persisted. Cold, unproven comment correspondence stays
-neutral. Bounded grapheme-aware text differences decorate native rendered text nodes, preserving
-links and their handlers; old fragments are inert and additions/removals keep static local cues.
+neutral. A separate cumulative gutter sits in one column before every checkbox, independent of
+nesting depth. Iteration differences use a bounded word comparison over native rendered text;
+unchanged phrases and links retain their DOM and handlers. Inline additions/removals have small
+padding and semantic green/red colors; metadata uses the same text differences without extra bars.
+Descriptions, comments and narrow metadata rows reuse the search/card CSS rules. Removed comments
+retain their exact owner and the text visible before that iteration.
 Pending focused-field removal keeps its old DOM but revokes activation; native empty hosts retire
 only after the current asynchronous text preparation settles. Shared activation uses the existing
 IME ownership guard, including legacy composition events.
@@ -1287,6 +1571,10 @@ iteration. Q opts into bounded 150 ms insertion/move/removal motion in the share
 path, after focused-removal checks; unchanged row order does not trigger geometry reads. Owning-window
 animations are cancelled on replacement/disposal and skipped for reduced motion. Transient phase
 text coalesces at 150 ms; questions, errors and save feedback remain immediate.
+`CommandElapsedTime` owns the far-right busy timer through the surface's window and retains its
+start across remounts. `CommandChangeViewport` scrolls only Q's content viewport to the latest
+changed field after retained task/project/note rendering is ready. Focus-blocked replacements defer
+that reveal until their native field commits; the last-command footer stays outside the viewport.
 
 Q intercepts internal links before native missing-note navigation. It uses native link parsing and
 resolution with the field's exact source path; unresolved links show a short creation instruction

@@ -274,6 +274,16 @@ function destination(value: unknown): TaskCreateDestinationV1 {
     ...(r['provision'] === undefined ? {} : { provision: 'if-missing' }),
   };
 }
+function createPreparation(value: unknown, r: Record<string, unknown>): PrepareTaskContentV1 {
+  record(value, ['kind', 'destination', 'tree', 'intent']);
+  if (r['intent'] !== undefined && r['intent'] !== 'inbox') return invalid();
+  return {
+    kind: 'create',
+    ...(r['intent'] === undefined ? {} : { intent: r['intent'] }),
+    destination: destination(r['destination']),
+    tree: tree(r['tree'], { nodes: 500 }),
+  };
+}
 function prepare(value: unknown): PrepareTaskContentV1 {
   const r = record(value, [
     'kind',
@@ -281,6 +291,7 @@ function prepare(value: unknown): PrepareTaskContentV1 {
     'expectedRevision',
     'operation',
     'destination',
+    'intent',
     'tree',
     'plan',
     'expectedPlanRevision',
@@ -322,14 +333,7 @@ function prepare(value: unknown): PrepareTaskContentV1 {
       ...optional(r, 'operation', operation),
     };
   }
-  if (r['kind'] === 'create') {
-    record(value, ['kind', 'destination', 'tree']);
-    return {
-      kind: 'create',
-      destination: destination(r['destination']),
-      tree: tree(r['tree'], { nodes: 500 }),
-    };
-  }
+  if (r['kind'] === 'create') return createPreparation(value, r);
   if (r['kind'] === 'append') {
     record(value, ['kind', 'plan', 'expectedPlanRevision', 'operation']);
     return {
@@ -448,6 +452,7 @@ export function validateSearch(value: unknown): ApiResultV1<SearchTasksV1> {
       'path',
       'folder',
       'statuses',
+      'inbox',
       'tagsAll',
       'dates',
       'limit',

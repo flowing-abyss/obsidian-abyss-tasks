@@ -18,9 +18,19 @@ import {
   type CommandNoteRead,
   type CommandPreparation,
   type CommandProposal,
+  type CommandSessionSnapshot,
 } from './commandTypes';
+export const creationGrammar =
+  '`{"tree":{"markdownTitle":"Read","initial":{"scheduled":{"type":"set","value":"2027-03-18"},"time":{"type":"set","value":"09:30"}}}}`';
+export const finishGrammar =
+  '`{"state":"ready"}` or `{"state":"question","message":"Which date?","blockingIssue":{"kind":"missing-information","detail":"Date unspecified"}}`';
 const handle = z.string().min(1).max(512);
 const text = z.string().max(16000);
+const activityTitle = text
+  .min(1)
+  .describe(
+    'Keep explicit titles; otherwise concise user-language activity. Schedule in metadata; invent no facts.',
+  );
 const field = (value: z.ZodType): z.ZodType =>
   z.union([
     z.strictObject({ type: z.literal('set'), value }),
@@ -29,20 +39,18 @@ const field = (value: z.ZodType): z.ZodType =>
 const patchSchema = z.strictObject({
   markdownTitle: field(text).optional(),
   priority: field(z.enum(['A', 'B', 'C', 'D', 'E', 'F'])).optional(),
-  due: field(z.string())
-    .optional()
-    .describe(
-      'Deadline date: work must be completed by this date. Planning work on a date alone is not a deadline.',
-    ),
-  scheduled: field(z.string())
-    .optional()
-    .describe('Planned work date: when the user intends to do this task.'),
-  start: field(z.string())
-    .optional()
-    .describe('Not-before date: when work becomes available to begin.'),
+  due: field(z.string()).optional().describe('Deadline, not merely a planned work date.'),
+  scheduled: field(z.string()).optional().describe('Planned work date.'),
+  start: field(z.string()).optional().describe('Not-before date.'),
   time: field(z.string()).optional(),
   durationMinutes: field(z.number().nonnegative()).optional(),
-  recurrence: field(z.string()).optional(),
+  recurrence: field(
+    z
+      .string()
+      .describe(
+        'English recurrence: "every week on Wednesday", "every 3 days", "every weekday"; "when done" only completion-relative. No localized weekday/time/count/until; keep separate date/time.',
+      ),
+  ).optional(),
   onCompletion: field(z.enum(['keep', 'delete'])).optional(),
   tags: z
     .strictObject({
@@ -56,7 +64,7 @@ const initial = patchSchema
   .extend({ statusSymbol: z.string().length(1).optional() });
 const seed: z.ZodType<TaskCreateTreeV1> = z.lazy(() =>
   z.strictObject({
-    markdownTitle: text.min(1),
+    markdownTitle: activityTitle,
     initial: initial.optional(),
     description: text.optional(),
     comments: z.array(z.strictObject({ text })).max(50).optional(),
@@ -90,7 +98,7 @@ const operationVariants = z.discriminatedUnion('type', [
   }),
   z.strictObject({ type: z.literal('patch'), target: handle, patch: patchSchema }),
   z.strictObject({ type: z.literal('description'), target: handle, text: text.nullable() }),
-  z.strictObject({ type: z.literal('add-child'), target: handle, markdownTitle: text.min(1) }),
+  z.strictObject({ type: z.literal('add-child'), target: handle, markdownTitle: activityTitle }),
   z.strictObject({ type: z.literal('remove'), target: handle }),
   z.strictObject({ type: z.literal('add-comment'), target: handle, text }),
   z.strictObject({ type: z.literal('update-comment'), target: handle, text }),
@@ -133,7 +141,12 @@ export const prepareSchema = z.discriminatedUnion('kind', [
       }),
     ]),
   }),
-  z.strictObject({ kind: z.literal('create'), destination, tree: seed }),
+  z.strictObject({
+    kind: z.literal('create'),
+    intent: z.literal('inbox').optional(),
+    destination,
+    tree: seed,
+  }),
   z.strictObject({
     kind: z.literal('edit'),
     target: handle,
@@ -148,6 +161,14 @@ export const prepareSchema = z.discriminatedUnion('kind', [
   }),
   z.strictObject({ kind: z.literal('refresh'), plan: handle, expectedPlanRevision: handle }),
 ]);
+const taskOperationTypes = new Set<unknown>([
+  ...operationVariants.options.map((option) => option.shape.type.value),
+  ...prepareSchema.options[0].shape.operation.options.map((option) => option.shape.type.value),
+]);
+/** Unknown discriminator spellings identify no executable operation for repair bookkeeping. */
+export function isTaskOperationType(value: unknown): boolean {
+  return taskOperationTypes.has(value);
+}
 const batchOptions = operationVariants.options.filter(
   (option) => !['update-comment', 'remove-comment'].includes(option.shape.type.value),
 ) as [
@@ -164,18 +185,9 @@ export const batchSchema = z.strictObject({
 const taskToolSchema = z.discriminatedUnion('kind', [...prepareSchema.options, batchSchema]);
 export const taskArgumentsSchema = z.strictObject({
   input: modelSchema(taskToolSchema).describe(
-    'A JSON object, never an encoded string. Use each target’s own editBasis. edit addresses saved targets; append/batch only refine their exact pending plan.',
+    'Object, never encoded JSON. Use each target’s own editBasis: saved edit or exact pending append/batch.',
   ),
   removeAnnotations: z.array(z.string()).max(50).optional(),
-});
-const preparedWorkSchema = z.strictObject({
-  task: taskArgumentsSchema,
-  message: z.string().min(1).max(160),
-  focus: handle
-    .optional()
-    .describe(
-      'Optional existing task handle within this prepared tree. Omit to select its resulting root. Never invent handles for new children.',
-    ),
 });
 const saveScopeSchema = z.strictObject({
   proposalRevision: z.number().int().nonnegative(),
@@ -213,99 +225,165 @@ const saveScopeSchema = z.strictObject({
     .min(1)
     .max(50),
 });
-export const intentSchema = z
-  .strictObject({
-    work: preparedWorkSchema
-      .optional()
-      .describe(
-        'Complete one self-contained task proposal in this answer when all operands are known. Same canonical task tool, followed by ready completion. Omit when a read, research, transition, project or note operation is needed first.',
-      ),
-    scope: saveScopeSchema
-      .optional()
-      .describe(
-        'For explicit limited confirmation, use confirm with scope to select exact change indexes or existing task fields across current plans. The application partitions combined plans and retains unselected edits; no separate field-only preview is needed. Omit for whole-proposal confirmation. Never widen a child or linked-note dependency.',
-      ),
-    intent: z
-      .enum([
-        'plan',
-        'confirm',
-        'immediate',
-        'new-session',
-        'resolve-transition',
-        'save-then-plan',
-        'review',
-        'acknowledge-uncertainty',
-        'voice-mode',
-      ])
-      .describe(
-        'plan means creating, editing, finding or showing entities in the CURRENT conversation; use it for ordinary task work. confirm saves already-previewed edits: the whole proposal by default, or an explicitly authorized subset with scope. immediate explicitly requests saving now. new-session ONLY means an explicit request to leave this conversation and start a separate session; a new task or topic stays plan.',
-      ),
-    research: z
-      .boolean()
-      .describe(
-        'Whether this whole trusted user request authorizes web research. Set true for requested online research or verification, even if local discovery must happen first. False for purely local work. This permission is fixed before reading external content; later tools cannot enable it.',
-      ),
-    voiceMode: z
-      .enum(['manual', 'continuous'])
-      .optional()
-      .describe('Only for an explicit request to change voice input mode in this session.'),
-    disposition: z
-      .enum(['keep', 'discard'])
-      .optional()
-      .describe(
-        'keep preserves the full pending draft in history, WITHOUT saving it to source. discard permanently abandons the draft ONLY when the user explicitly wants it removed. Not saving to source does not mean discard. If unresolved, omit this field to ask and retain the draft.',
-      ),
-    transitionDisposition: z
-      .enum(['save', 'keep', 'discard', 'cancel'])
-      .optional()
-      .describe(
-        'save writes the reviewed changes; keep LEAVES this session and archives the unsaved draft; discard switches and abandons it ONLY on explicit abandonment; cancel stays here. To return to a pending project-move root and keep the SAME active proposal, use plan and omit this field, then finish.selection. Unsaved does not mean leave or discard. If ambiguous, omit this field and retain the issue.',
-      ),
-  })
-  .refine(
-    (input) =>
-      input.work === undefined ||
-      (['plan', 'immediate'].includes(input.intent) &&
-        !input.research &&
-        input.scope === undefined &&
-        input.disposition === undefined &&
-        input.transitionDisposition === undefined),
-    {
-      path: ['work'],
-      message:
-        'work requires plan or immediate, research=false and no confirmation scope or transition disposition.',
-    },
-  )
-  .superRefine((input, context) => {
-    if (input.scope !== undefined && !['confirm', 'immediate'].includes(input.intent))
-      context.addIssue({
-        code: 'custom',
-        path: ['scope'],
-        message: 'scope belongs only to confirmation of the current proposal.',
-      });
-    if (input.disposition !== undefined && input.intent !== 'new-session')
-      context.addIssue({
-        code: 'custom',
-        path: ['disposition'],
-        message: 'disposition belongs only to new-session.',
-      });
-    if (
-      input.transitionDisposition !== undefined &&
-      !['plan', 'resolve-transition'].includes(input.intent)
-    )
-      context.addIssue({
-        code: 'custom',
-        path: ['transitionDisposition'],
-        message:
-          'Use disposition for new-session; transitionDisposition resolves an existing transition with plan or resolve-transition.',
-      });
-    if (input.voiceMode !== undefined && input.intent !== 'voice-mode')
-      context.addIssue({
-        code: 'custom',
-        path: ['voiceMode'],
-        message: 'voiceMode belongs only to voice-mode.',
-      });
-  });
+export const capabilitySchema = z.enum([
+  'find',
+  'inspect',
+  'create_task',
+  'change_task',
+  'task',
+  'read',
+  'status',
+  'note',
+  'project',
+  'link',
+  'cleanup',
+  'research',
+]);
+const completePreview = z
+  .boolean()
+  .optional()
+  .describe('Set true when this single preview covers the whole request. Does not save.');
+export const createTaskSchema = prepareSchema.options[1].omit({ kind: true }).extend({
+  destination: destination.optional(),
+  retryOf: handle.optional(),
+  complete: completePreview,
+});
+// Flat model-facing metadata compiles to the existing application patch. Omitted fields stay untouched.
+const scalarValue = z.string().nullable().optional();
+const setMetadata = z.strictObject({
+  type: z.literal('set'),
+  scheduled: scalarValue,
+  due: scalarValue,
+  start: scalarValue,
+  time: scalarValue,
+  durationMinutes: z.number().nonnegative().nullable().optional(),
+  recurrence: scalarValue,
+  priority: z.enum(['A', 'B', 'C', 'D', 'E', 'F']).nullable().optional(),
+});
+export const changeTaskSchema = z.strictObject({
+  complete: completePreview,
+  edit: handle,
+  operation: z.discriminatedUnion('type', [
+    setMetadata,
+    operationVariants.options[1].omit({ target: true }),
+    operationVariants.options[2].omit({ target: true }),
+    operationVariants.options[3].omit({ target: true }),
+    operationVariants.options[4].omit({ target: true }),
+    operationVariants.options[5].omit({ target: true }),
+    operationVariants.options[6].omit({ target: true }),
+    operationVariants.options[7].omit({ target: true }),
+  ]),
+  removeAnnotations: z.array(z.string()).max(50).optional(),
+});
+export function flatPatchKeys(operation: Record<string, unknown>): string[] {
+  return Object.keys(operation).filter((key) => key !== 'type');
+}
+type TaskChange = z.infer<typeof changeTaskSchema>['operation'];
+export function taskChangeOperation(operation: TaskChange): Exclude<TaskChange, { type: 'set' }> {
+  if (operation.type !== 'set') return operation;
+  const fields = flatPatchKeys(operation);
+  if (fields.length === 0)
+    throw new CommandFailure('INVALID_PATCH', 'Specify at least one metadata field.');
+  return {
+    type: 'patch' as const,
+    patch: Object.fromEntries(
+      fields.map((key) => {
+        const value: unknown = Reflect.get(operation, key);
+        return [key, value === null ? { type: 'clear' } : { type: 'set', value }];
+      }),
+    ),
+  };
+}
+const researchControl = { research: z.boolean().default(false) };
+const localControl = { research: z.literal(false).default(false) };
+export const transitionDispositionSchema = z.enum(['save', 'keep', 'discard', 'cancel']);
+const writeApproval = z
+  .string()
+  .min(1)
+  .describe(
+    'The entire current userMessage verbatim. Only a user request that grants this write can be used.',
+  );
+const saveInstruction = z
+  .string()
+  .min(1)
+  .describe(
+    'The exact clause in that userMessage expressly authorizing the write. A date, change request, or approval of the other fields does not grant saving.',
+  );
+const transitionWrite = {
+  approval: writeApproval.optional(),
+  saveInstruction: saveInstruction.optional(),
+};
+const planControl = z.strictObject({ intent: z.literal('plan'), ...researchControl });
+const sharedControls = [
+  z.strictObject({
+    intent: z.literal('confirm'),
+    ...localControl,
+    approval: writeApproval,
+    scope: saveScopeSchema.optional(),
+  }),
+  z.strictObject({
+    intent: z.literal('immediate'),
+    ...researchControl,
+    approval: writeApproval,
+    saveInstruction,
+    scope: saveScopeSchema.optional(),
+  }),
+  z.strictObject({
+    intent: z.literal('save-then-plan'),
+    ...researchControl,
+    approval: writeApproval,
+    saveInstruction,
+  }),
+  z.strictObject({ intent: z.literal('review'), ...researchControl }),
+  z.strictObject({
+    intent: z.literal('new-session'),
+    ...localControl,
+    disposition: z.enum(['keep', 'discard']).optional(),
+  }),
+  z.strictObject({ intent: z.literal('acknowledge-uncertainty'), ...localControl }),
+  z.strictObject({
+    intent: z.literal('voice-mode'),
+    ...localControl,
+    voiceMode: z.enum(['manual', 'continuous']).optional(),
+  }),
+] as const;
+const ordinaryControlSchema = z.union([planControl, ...sharedControls]);
+export const intentSchema = z.union([
+  planControl.extend({
+    ...transitionWrite,
+    transitionDisposition: transitionDispositionSchema.optional(),
+  }),
+  ...sharedControls,
+  z.strictObject({
+    intent: z.literal('resolve-transition'),
+    ...localControl,
+    ...transitionWrite,
+    transitionDisposition: transitionDispositionSchema.optional(),
+  }),
+]);
+type RecoveryState = Pick<
+  CommandSessionSnapshot,
+  'recovery' | 'blocked' | 'uncertaintyAcknowledged'
+>;
+export function recoveryControlAvailable(intent: string, state: RecoveryState): boolean {
+  if (intent === 'acknowledge-uncertainty')
+    return state.blocked && state.uncertaintyAcknowledged !== true;
+  if (intent === 'review')
+    return !state.blocked && (state.recovery === 'historical' || state.recovery === 'reviewing');
+  return true;
+}
+/** Transition and recovery choices follow the current native session state. */
+export function controlSchema(
+  pending: boolean,
+  recovery?: RecoveryState,
+): z.ZodType<z.output<typeof intentSchema>, z.input<typeof intentSchema>> {
+  const schema = pending ? intentSchema : ordinaryControlSchema;
+  if (recovery === undefined) return schema;
+  const options = schema.options.filter((branch) =>
+    recoveryControlAvailable(branch.shape.intent.value, recovery),
+  );
+  return z.union(options);
+}
 const selection = z
   .array(
     z.union([
@@ -321,31 +399,51 @@ const selection = z
   )
   .max(5)
   .optional();
-export const finishSchema = z.discriminatedUnion('state', [
+const finishMessage = z
+  .string()
+  .min(1)
+  .describe(
+    'Brief grounded user-language reply. Questions: question state. Unprepared work is never created/saved.',
+  );
+export const finishSchema = z.union([
   z.strictObject({
     state: z.literal('ready'),
-    message: z.string().min(1).max(160),
+    message: finishMessage.max(160).optional(),
+    coverage: z
+      .literal('page')
+      .optional()
+      .describe('Only explicitly requested partial pages; otherwise complete discovery.'),
     selection,
     presentation: z
       .enum(['cumulative'])
       .optional()
-      .describe(
-        'Only when the user asks to show all changes in the current unsaved proposal; display the cumulative diff in the existing tree.',
-      ),
+      .describe('Only user-requested all unsaved changes: show cumulative diff in existing tree.'),
     reveal: z
       .strictObject({ target: handle, revision: handle })
       .optional()
       .describe(
-        'Only an explicit user request to open or reveal one saved task in the native inspector. Ordinary working selection does not reveal. The application verifies the target and acknowledges native navigation before completion; never use a draft target.',
+        'Explicit request only: open one saved task in native inspector. Selection does not reveal. Host verifies target/navigation before completion; never drafts.',
       ),
   }),
   z.strictObject({
     state: z.literal('question'),
-    message: z.string().min(1).max(240),
+    message: finishMessage.max(240),
     selection,
     blockingIssue: z.strictObject({
       kind: z.enum(['missing-information', 'conflict']),
       detail: z.string().min(1).max(240),
+    }),
+  }),
+  z.strictObject({
+    state: z.literal('question'),
+    message: z
+      .string()
+      .max(240)
+      .optional()
+      .describe('Host renders discovery questions from evidence; omit text.'),
+    blockingIssue: z.strictObject({
+      kind: z.enum(['not-found', 'ambiguous', 'incomplete', 'unsupported']),
+      evidence: handle,
     }),
   }),
 ]);
@@ -377,8 +475,14 @@ export const readSchema = z.discriminatedUnion('kind', [
     kind: z.literal('tasks'),
     query: z.string().max(2000),
     cursor: handle.optional(),
-    path: z.string().optional(),
+    path: z
+      .string()
+      .optional()
+      .describe(
+        'Actual vault file path only. For a child of a named task, search the parent title and use its tree; a task title is not a path.',
+      ),
     folder: z.string().optional(),
+    inbox: z.boolean().optional(),
     statuses: z
       .array(z.enum(['open', 'in-progress', 'done', 'cancelled']))
       .min(1)
@@ -400,10 +504,13 @@ export const readSchema = z.discriminatedUnion('kind', [
   }),
   z.strictObject({
     kind: z.literal('tree'),
-    target: handle,
+    target: handle.describe('Task node, never plan/project/note/section.'),
+    expectedRevision: handle.optional().describe('For a saved search result, use its revision.'),
     side: z.enum(['before', 'after']).optional(),
-    plan: handle.optional(),
-    expectedPlanRevision: handle.optional(),
+    plan: handle.optional().describe('For a pending task, copy its editBasis.plan.'),
+    expectedPlanRevision: handle
+      .optional()
+      .describe('Copy the same editBasis.expectedPlanRevision.'),
     cursor: handle.optional(),
     limit: z.number().int().min(1).max(500).optional(),
   }),
@@ -443,11 +550,25 @@ export const notePrepareSchema = z.discriminatedUnion('kind', [
   }),
   z.strictObject({
     kind: z.literal('create'),
-    path: z.string().min(1),
+    path: z
+      .string()
+      .min(1)
+      .optional()
+      .describe('Explicit requested vault path only; omit for Obsidian new-note defaults.'),
+    destination: z
+      .strictObject({
+        type: z.literal('obsidian-default'),
+        fileName: z.string().min(1),
+        fromPath: z.string().exactOptional(),
+      })
+      .optional(),
+    templateExecution: z
+      .strictObject({ type: z.enum(['static', 'configured-templater', 'explicit-templater']) })
+      .optional(),
     collision: z
       .enum(['reject', 'suffix'])
       .default('suffix')
-      .describe('suffix avoids existing names; reject requires exactly the requested path.'),
+      .describe('suffix avoids collisions; reject needs exact requested path.'),
     title: text,
     text,
     template: handle.optional(),
@@ -509,6 +630,7 @@ export const statusStageSchema = z.strictObject({
 export const researchSchema = z.strictObject({ query: z.string().trim().min(1).max(2000) });
 export const researchResultSchema = z
   .strictObject({
+    outcome: z.literal('empty').optional(),
     query: z.string().max(2000),
     summary: z.string().max(12000),
     sources: z
@@ -523,10 +645,14 @@ export const researchResultSchema = z
           evidence: z.enum(['citation', 'retrieved-url', 'provider-excerpt']),
         }),
       )
-      .min(1)
       .max(5),
     truncated: z.boolean(),
   })
+  .refine((r) =>
+    r.outcome === 'empty'
+      ? r.sources.length === 0 && r.summary === '' && !r.truncated
+      : r.sources.length > 0,
+  )
   .refine((r) => JSON.stringify(r).length <= 12000);
 export function checkedOutput(value: unknown): z.infer<ReturnType<typeof z.json>> {
   const json = z.json().parse(value);
@@ -617,6 +743,10 @@ const noteReceipt = receiptBase
   .extend({
     plan: z.string(),
     planRevision: z.string(),
+    completion: z.enum(['complete', 'incomplete']).optional(),
+    phase: z.enum(['provision', 'template', 'content', 'readback']).optional(),
+    templateEffects: z.enum(['unchanged', 'committed', 'unknown']).optional(),
+    contentEffects: z.enum(['unchanged', 'committed', 'unknown']).optional(),
     noteEffects: z.enum(['unchanged', 'committed', 'unknown']),
     destinationEffects: z.enum(['unchanged', 'committed', 'unknown']),
     note: reference.optional(),
@@ -688,6 +818,7 @@ function noteReceiptMatches(
   receipt: z.infer<typeof noteReceipt>,
 ): boolean {
   return (
+    receipt.completion !== 'incomplete' &&
     receipt.plan === plan.target &&
     receipt.planRevision === plan.revision &&
     receipt.providerEpoch === plan.providerEpoch &&
@@ -778,7 +909,16 @@ export function validatePlanOutput(plan: ContentPlanV1): void {
 }
 
 /** Keep full canonical trees in the surface; model context uses explicitly paged summaries. */
-export function planToolOutput(plan: ContentPlanV1): ReturnType<typeof checkedOutput> {
+export function planToolOutput(
+  plan: ContentPlanV1,
+  currentOperation = true,
+): ReturnType<typeof checkedOutput> {
+  const feedback = currentOperation
+    ? {
+        preparation:
+          'Preview accepted; this operation has not saved source content. If the request is complete, finish; otherwise refine through its issued edit alias. Create again only for another requested task.',
+      }
+    : {};
   const selection =
     plan.after === null
       ? {}
@@ -790,8 +930,8 @@ export function planToolOutput(plan: ContentPlanV1): ReturnType<typeof checkedOu
             expectedPlanRevision: plan.revision,
           },
         };
-  if (JSON.stringify({ ...plan, ...selection }).length <= 65536)
-    return checkedOutput({ ...plan, ...selection });
+  if (JSON.stringify({ ...feedback, ...plan, ...selection }).length <= 65536)
+    return checkedOutput({ ...feedback, ...plan, ...selection });
   const page = (tree: TaskTreeV1 | null): unknown =>
     tree === null
       ? null
@@ -805,6 +945,7 @@ export function planToolOutput(plan: ContentPlanV1): ReturnType<typeof checkedOu
           truncated: true,
         };
   return checkedOutput({
+    ...feedback,
     ...plan,
     ...selection,
     before: page(plan.before),
@@ -823,74 +964,9 @@ export function planToolOutput(plan: ContentPlanV1): ReturnType<typeof checkedOu
   });
 }
 
-/** Provider roots require explicit objects. The original union still validates every branch. */
-export function modelSchema<T>(
-  schema: z.ZodType<T> & { options: readonly z.ZodObject[] },
-  hint = '',
-): z.ZodType<T> {
-  const shape: Record<string, z.ZodType> = {};
-  const fields = unionFields(schema.options);
-  for (const [key, variants] of fields) {
-    const field = modelField(variants);
-    if (field === undefined) continue;
-    const required = schema.options.every(
-      (branch) => objectShape(branch)[key]?.safeParse(undefined).success === false,
-    );
-    shape[key] = required ? field : field.optional();
-  }
-  return z.strictObject(shape).transform((value, context) => {
-    const parsed = schema.safeParse(value);
-    if (parsed.success) return parsed.data;
-    for (const issue of parsed.error.issues)
-      context.addIssue({
-        ...issue,
-        message: hint === '' ? issue.message : `${issue.message} ${hint}`,
-      });
-    return z.NEVER;
-  });
-}
-function modelField(variants: z.ZodType[]): z.ZodType | undefined {
-  const fields = [...new Set(variants.flatMap(modelVariants))];
-  if (fields.length === 1) return fields[0];
-  const literals = fields.flatMap((field) => {
-    if (field instanceof z.ZodLiteral) return [...field.values];
-    if (field instanceof z.ZodEnum) return field.options;
-    return [];
-  });
-  if (
-    fields.every((field) => field instanceof z.ZodLiteral || field instanceof z.ZodEnum) &&
-    literals.every((value) => typeof value === 'string')
-  )
-    return z.enum([...new Set(literals)]);
-  if (fields.every((field) => field instanceof z.ZodString)) return z.string();
-  if (fields.every((field) => field instanceof z.ZodObject))
-    return modelSchema(z.union(fields as [z.ZodObject, z.ZodObject, ...z.ZodObject[]]));
-  return z.union(fields);
-}
-function modelVariants(field: z.ZodType): z.ZodType[] {
-  // Only the advertised shape is broadened. The original branch validates and
-  // supplies defaults afterward, so another branch's optional/default cannot leak.
-  if (field instanceof z.ZodOptional || field instanceof z.ZodDefault)
-    return modelVariants(field.unwrap() as z.ZodType);
-  if (field instanceof z.ZodPipe) return modelVariants(field.in as z.ZodType);
-  if (field instanceof z.ZodUnion)
-    return field.options.flatMap((option) => modelVariants(option as z.ZodType));
-  return [field];
-}
-function unionFields(branches: readonly z.ZodObject[]): Map<string, z.ZodType[]> {
-  const fields = new Map<string, z.ZodType[]>();
-  for (const branch of branches) {
-    for (const [key, field] of Object.entries(objectShape(branch))) {
-      const variants = fields.get(key) ?? [];
-      if (!variants.includes(field)) variants.push(field);
-      fields.set(key, variants);
-    }
-  }
-  return fields;
-}
-
-function objectShape(schema: z.ZodObject): Readonly<Record<string, z.ZodType>> {
-  return schema.shape;
+/** Keep canonical union branches intact for validation and provider projection. */
+export function modelSchema<T>(schema: z.ZodType<T>): z.ZodType<T> {
+  return schema;
 }
 
 type CommandLink = Extract<CommandChange, { kind: 'link' }>;
@@ -1030,9 +1106,37 @@ function commentSafePreparations(
       ({ input }) =>
         input.kind === 'append' &&
         input.plan === plan.target &&
-        ['patch', 'description', 'set-initial-status', 'add-child'].includes(input.operation.type),
+        (['patch', 'description', 'set-initial-status', 'add-child'].includes(
+          input.operation.type,
+        ) ||
+          (preparations.length === 1 && unrelatedCommentRemoval(link, input.operation))),
     )
   );
+}
+function unrelatedCommentRemoval(
+  link: CommandLink,
+  operation: z.infer<typeof operationVariants>,
+): boolean {
+  if (operation.type !== 'remove-comment' || link.plan.after === null) return false;
+  const owners = removalOwners(link.plan.after, operation.target);
+  return owners?.length === 1 && owners[0]?.target !== link.target;
+}
+function removalOwners(root: TaskTreeV1, target: string): TaskTreeV1[] | undefined {
+  const pending = [root],
+    owners: TaskTreeV1[] = [];
+  while (pending.length > 0) {
+    const node = pending.pop();
+    if (node === undefined) break;
+    const matches = node.comments.filter((comment) => comment.target === target);
+    if (
+      matches.some((comment) => comment.parentTarget !== node.target) ||
+      (matches.length > 0 && !node.complete)
+    )
+      return undefined;
+    owners.push(...matches.map(() => node));
+    pending.push(...node.children);
+  }
+  return owners;
 }
 
 function linkedCommentIndex(link: CommandLink, tree: TaskTreeV1 | undefined): number {

@@ -1,5 +1,5 @@
 export type CommandReferenceKind =
-  't' | 'p' | 'n' | 'd' | 'nd' | 'c' | 's' | 'r' | 'u' | 'pd' | 'e';
+  'b' | 't' | 'p' | 'n' | 'd' | 'nd' | 'c' | 's' | 'r' | 'u' | 'pd' | 'e' | 'q';
 type Fields = { readonly [key: string]: ReferenceShape };
 export type ReferenceShape =
   CommandReferenceKind | Fields | ((value: Record<string, unknown>) => Fields);
@@ -41,7 +41,10 @@ function selection(value: Record<string, unknown>): Fields {
   return { target: value['kind'] === 'project' ? 'p' : 'n', revision: 'r' };
 }
 export const commandReferenceInputs: Readonly<Record<string, ReferenceShape>> = {
-  interpret: { scope: { changes: taskBasis }, work: { task: { input: task }, focus: 't' } },
+  find: { cursor: 'u', retryOf: 'q' },
+  interpret: {
+    scope: { changes: taskBasis },
+  },
   task: { input: task },
   read: { input: read },
   status: taskBasis,
@@ -69,7 +72,7 @@ export const commandReferenceInputs: Readonly<Record<string, ReferenceShape>> = 
     comment: 'c',
   },
   cleanup: { destinationPlan: 'd', destinationRevision: 'r' },
-  finish: { selection, reveal: { target: 't', revision: 'r' } },
+  finish: { selection, blockingIssue: { evidence: 'q' }, reveal: { target: 't', revision: 'r' } },
 };
 export function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -120,6 +123,7 @@ const outputFields: Readonly<Record<string, CommandReferenceKind>> = {
   cursor: 'u',
   nextCursor: 'u',
   proposal: 'pd',
+  evidence: 'q',
 };
 function entityKind(
   value: Record<string, unknown>,
@@ -146,8 +150,8 @@ function secondaryKind(
     comment: 'c',
     'time-entry': 'e',
   };
-  if (typeof value['kind'] === 'string' && kinds[value['kind']] !== undefined)
-    return kinds[value['kind']];
+  const kind = kinds[String(value['kind'] ?? value['entity'])];
+  if (kind !== undefined) return kind;
   const parents: Readonly<Record<string, CommandReferenceKind>> = {
     note: 'n',
     selector: 'n',

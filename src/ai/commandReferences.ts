@@ -18,18 +18,67 @@ function plannedTargets(snapshot: CommandSessionSnapshot): Set<string> {
   }
   return planned;
 }
-function editReference(
-  node: TaskTreeV1,
-  basis: { plan: string; expectedPlanRevision: string } | undefined,
-): unknown {
+type PlanBasis = { plan: string; expectedPlanRevision: string };
+type EditBasis =
+  { kind: 'edit'; target: string; expectedRevision: string } | ({ kind: 'append' } & PlanBasis);
+interface TaskReference {
+  kind: 'task';
+  target: string;
+  revision: string;
+  markdownTitle: string;
+  parentTarget?: string;
+  siblingOrdinal?: number;
+  editBasis: EditBasis;
+}
+function editReference(node: TaskTreeV1, basis: PlanBasis | undefined): EditBasis {
   return basis === undefined
     ? { kind: 'edit', target: node.target, expectedRevision: node.revision }
     : { kind: 'append', ...basis };
 }
+function taskReference(
+  node: TaskTreeV1,
+  basis: { plan: string; expectedPlanRevision: string } | undefined,
+  ordinal: number | undefined,
+): TaskReference {
+  return {
+    kind: 'task',
+    target: node.target,
+    revision: node.revision,
+    markdownTitle: node.markdownTitle.slice(0, 500),
+    ...(node.parentTarget === undefined ? {} : { parentTarget: node.parentTarget }),
+    ...(ordinal === undefined ? {} : { siblingOrdinal: ordinal }),
+    editBasis: editReference(node, basis),
+  };
+}
+function lastFieldChange(
+  snapshot: CommandSessionSnapshot,
+  tasks: ReadonlyMap<string, TaskReference>,
+): Record<string, unknown> {
+  const history = snapshot.preparations ?? [];
+  const last = history[history.length - 1];
+  if (
+    last?.kind !== 'task' ||
+    last.input.kind !== 'append' ||
+    last.input.operation.type !== 'patch'
+  )
+    return {};
+  const { operation, plan } = last.input;
+  const row = tasks.get(operation.target);
+  if (row === undefined || !('plan' in row.editBasis) || row.editBasis.plan !== plan) return {};
+  return {
+    lastPreparedFieldChange: {
+      kind: 'task',
+      target: row.target,
+      markdownTitle: row.markdownTitle,
+      ...(row.siblingOrdinal === undefined ? {} : { siblingOrdinal: row.siblingOrdinal }),
+      fields: Object.keys(operation.patch),
+    },
+  };
+}
 /** Exact issued references, not aliases or an identity resolver. Never match model text by title. */
 export function commandReferences(snapshot: CommandSessionSnapshot): unknown {
   const planned = plannedTargets(snapshot);
-  const tasks = new Map<string, unknown>(),
+  const tasks = new Map<string, TaskReference>(),
     comments = new Map<string, unknown>(),
     revisions = new Map<string, string>();
   const visit = (
@@ -42,15 +91,7 @@ export function commandReferences(snapshot: CommandSessionSnapshot): unknown {
     const revision = revisions.get(node.target);
     if (revision !== undefined && revision !== node.revision) return;
     revisions.set(node.target, node.revision);
-    tasks.set(node.target, {
-      kind: 'task',
-      target: node.target,
-      revision: node.revision,
-      markdownTitle: node.markdownTitle.slice(0, 500),
-      parentTarget: node.parentTarget,
-      siblingOrdinal: ordinal,
-      editBasis: editReference(node, basis),
-    });
+    tasks.set(node.target, taskReference(node, basis, ordinal));
     for (const comment of node.comments) {
       if (comments.size >= 80 && !comments.has(comment.target)) break;
       comments.set(comment.target, {
@@ -76,6 +117,7 @@ export function commandReferences(snapshot: CommandSessionSnapshot): unknown {
   for (const tree of snapshot.actual) visit(tree);
   return {
     taskReferences: [...tasks.values()],
+    ...lastFieldChange(snapshot, tasks),
     commentReferences: [...comments.values()],
     projectReferences: snapshot.entities.projects.map((project) => ({
       kind: 'project',

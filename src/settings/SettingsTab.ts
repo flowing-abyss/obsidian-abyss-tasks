@@ -8,6 +8,8 @@ import {
   Setting,
   type SettingDefinitionItem,
 } from 'obsidian';
+import type { ChatGptPlan } from '../ai/providers/ChatGptPlan';
+import type { ProviderModelCatalog } from '../ai/providers/ProviderModelCatalog';
 import type { ProviderSecrets } from '../ai/providers/ProviderSecrets';
 import { extractMarkdownBodyTags } from '../markdown/markdownTagRename';
 import {
@@ -44,7 +46,9 @@ const IGNORED_SOURCE_DESCRIPTION =
   'Exclude note paths, tags, or frontmatter from all task views. Example: archive/ OR #private.';
 
 interface TaskCalendarPlugin extends Plugin {
+  chatGptPlan?: ChatGptPlan;
   providerSecrets?: ProviderSecrets;
+  providerModels?: ProviderModelCatalog;
   settings: CalendarSettings;
   tagManager?: TagManager;
   queries?: Pick<TaskDependencyQueryApi, 'listNodes'>;
@@ -126,6 +130,13 @@ export class CalendarSettingsTab extends PluginSettingTab {
     this.containerEl.addClass('abyss-settings-tab');
     if (plugin_abyssPrivate.providerSecrets !== undefined) {
       this.#providers = new ProviderSettingsSection({
+        app,
+        ...(plugin_abyssPrivate.chatGptPlan === undefined
+          ? {}
+          : { plan: plugin_abyssPrivate.chatGptPlan }),
+        ...(plugin_abyssPrivate.providerModels === undefined
+          ? {}
+          : { models: plugin_abyssPrivate.providerModels }),
         settings: () => plugin_abyssPrivate.settings.commandMode,
         setSettings: (value) => {
           plugin_abyssPrivate.settings.commandMode = value;
@@ -341,7 +352,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
     this.addSection_abyssPrivate(nextContainer, 'Custom statuses', 'list-checks', (body) => {
       this.#taskStatuses.render(body);
     });
-    this.addSection_abyssPrivate(nextContainer, 'CommandMode', 'sparkles', (body) => {
+    this.addSection_abyssPrivate(nextContainer, 'Command mode', 'sparkles', (body) => {
       this.#providers?.render(body);
     });
     this.addSection_abyssPrivate(nextContainer, 'Hotkeys', 'keyboard', (body) => {

@@ -230,6 +230,16 @@ export interface DateFilterV1 {
   readonly from?: string;
   readonly to?: string;
 }
+/** Current native creation settings; invalid tagged Inbox policy has no serviceTag. */
+export interface TaskCreationPolicyV1 {
+  readonly taskPrefix: string;
+  readonly defaultTags: readonly string[];
+  readonly inbox: {
+    readonly mode: 'untagged' | 'tag' | 'both';
+    readonly serviceTag?: string;
+    readonly removeTagOnAssign: boolean;
+  };
+}
 /**
  * path and folder are mutually exclusive; folder '' means the vault root. Folders
  * include descendants by segment boundary. Filters compose as an intersection;
@@ -239,6 +249,8 @@ export interface DateFilterV1 {
  * Empty filter arrays, duplicate statuses and duplicate date fields are invalid.
  */
 export interface ListTasksV1 {
+  /** Match current configured native Inbox membership, including node depth. */
+  readonly inbox?: boolean;
   readonly path?: string;
   readonly folder?: string;
   readonly statuses?: readonly TaskStatusV1[];
@@ -396,6 +408,9 @@ export interface TasksApiV1 {
   readonly dispose: () => void;
   readonly projects?: ProjectsApiV1;
   readonly tasks: {
+    readonly creationPolicy?: (
+      options?: ReadOptionsV1,
+    ) => Promise<ApiResultV1<TaskCreationPolicyV1>>;
     readonly list: (
       query?: ListTasksV1,
       options?: ReadOptionsV1,
@@ -813,6 +828,8 @@ export type PrepareTaskContentV1 =
     }
   | {
       readonly kind: 'create';
+      /** Apply native Inbox policy; an explicit removal of its required tag can conflict. */
+      readonly intent?: 'inbox';
       readonly destination: TaskCreateDestinationV1;
       readonly tree: TaskCreateTreeV1;
     }
@@ -1057,6 +1074,21 @@ export type NoteOperationV1 =
       readonly section: NoteSectionTargetV1;
       readonly text: string;
     };
+export interface DefaultNoteDestinationV1 {
+  readonly type: 'obsidian-default';
+  readonly fileName: string;
+  /** Explicit location context; omitted means no source, never the active editor. */
+  readonly fromPath?: string;
+}
+export type NoteTemplateExecutionV1 = {
+  readonly type: 'static' | 'configured-templater' | 'explicit-templater';
+};
+export interface NoteCreationPreviewV1 {
+  readonly type: 'template-first';
+  readonly template?: { readonly path: string };
+  readonly requestedBody: { readonly text: string; readonly complete: true };
+  readonly placement: 'append-after-template';
+}
 export type PrepareNoteV1 =
   | {
       readonly kind: 'refine';
@@ -1071,16 +1103,19 @@ export type PrepareNoteV1 =
       readonly expectedRevision: NoteRevisionV1;
       readonly operation: NoteOperationV1;
     }
-  | {
+  | ({
       readonly kind: 'create';
-      readonly path: string;
       /** Default reject; suffix selects one same-directory path during preparation, never at commit. */
       readonly collision?: 'reject' | 'suffix';
       readonly title: string;
       readonly text: string;
       readonly template?: NoteTargetV1;
       readonly expectedTemplateRevision?: NoteRevisionV1;
-    };
+      readonly templateExecution?: NoteTemplateExecutionV1;
+    } & (
+      | { readonly path: string; readonly destination?: never }
+      | { readonly path?: never; readonly destination: DefaultNoteDestinationV1 }
+    ));
 export interface NotePlanV1 extends Omit<ObservationV1, 'revision'> {
   readonly target: NotePlanTargetV1;
   readonly revision: NotePlanRevisionV1;
@@ -1089,6 +1124,8 @@ export interface NotePlanV1 extends Omit<ObservationV1, 'revision'> {
   readonly path: string;
   readonly before: { readonly text: string; readonly complete: true } | null;
   readonly after: { readonly text: string; readonly complete: true };
+  /** When present, after is the requested insertion body, not unknown template output. */
+  readonly creationPreview?: NoteCreationPreviewV1;
   readonly note?: { readonly target: NoteTargetV1; readonly revision: NoteRevisionV1 };
   readonly section?: NoteSectionTargetV1;
   /** Exact original editable ranges retained in an owner-composed edit plan. */
@@ -1116,6 +1153,11 @@ export interface NoteMutationReceiptV1 {
   readonly recovery: RecoveryV1;
   readonly noteEffects: StorageEffectV1;
   readonly destinationEffects: StorageEffectV1;
+  /** Present for opted-in template-first creation, including incomplete provisioning. */
+  readonly completion?: 'complete' | 'incomplete';
+  readonly phase?: 'provision' | 'template' | 'content' | 'readback';
+  readonly templateEffects?: StorageEffectV1;
+  readonly contentEffects?: StorageEffectV1;
   readonly note?: { readonly target: NoteTargetV1; readonly revision: NoteRevisionV1 };
   /** Exact current edited range for readback; absent when its correspondence cannot be verified. */
   readonly section?: NoteSectionTargetV1;

@@ -3006,12 +3006,14 @@ describe('provider settings ownership', () => {
     const coordinator = new SettingsPersistenceCoordinator(port);
     const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
     expect(settings.commandMode).toMatchObject({
-      provider: 'openrouter',
+      provider: 'disabled',
       search: 'agent',
       voice: 'disabled',
+      voiceInputMode: 'manual',
     });
     settings.commandMode = {
       ...parseProviderSettings(settings.commandMode),
+      voiceInputMode: 'continuous',
       search: 'tavily',
       provider: 'groq',
       model: 'qwen/qwen3.8-27b',
@@ -3034,9 +3036,54 @@ describe('provider settings ownership', () => {
     expect(JSON.parse(port.stateText ?? '{}')).not.toHaveProperty('views.commandMode');
     const loaded = await new SettingsPersistenceCoordinator(port).loadSettings(DEFAULT_SETTINGS);
     expect(loaded.settings.commandMode).toMatchObject({
+      voiceInputMode: 'continuous',
       search: 'tavily',
       futureProviderOption: { keep: true },
     });
+  });
+  it('keeps older explicit LLM and speech choices and their shared native secret without rewriting them', async () => {
+    const { ProviderConnections } = await import('../src/ai/providers/ProviderConnections');
+    const { ProviderSecrets } = await import('../src/ai/providers/ProviderSecrets');
+    const { NativeProviderTransport } = await import('../src/ai/providers/NativeProviderTransport');
+    const legacy = {
+      provider: 'groq',
+      model: 'legacy-llm',
+      voice: 'groq',
+      voiceModel: 'whisper-large-v3',
+      secrets: { groq: 'legacy-key' },
+      voiceInputMode: 'continuous',
+      future: { keep: true },
+    };
+    const port = memoryPort(markedStatic({ commandMode: legacy }), stateEnvelope());
+    const coordinator = new SettingsPersistenceCoordinator(port);
+    const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    const transport = new NativeProviderTransport(
+      async () => {
+        throw new Error('Unexpected request');
+      },
+      () => () => {},
+    );
+    const connections = new ProviderConnections(
+      new ProviderSecrets(
+        {
+          getSecret: (id) => (id === 'legacy-key' ? 'synthetic-shared' : null),
+          setSecret: () => {},
+        },
+        () => legacy.secrets,
+      ),
+      transport,
+    );
+    try {
+      expect(connections.availability(settings.commandMode)).toEqual({ agent: true, voice: true });
+      expect(parseProviderSettings(settings.commandMode)).toMatchObject(legacy);
+      await coordinator.saveSettings(settings);
+      expect(port.staticData).toMatchObject({ commandMode: legacy });
+      expect((await coordinator.loadSettings(DEFAULT_SETTINGS)).settings.commandMode).toEqual(
+        legacy,
+      );
+    } finally {
+      transport.dispose();
+    }
   });
 });
 
@@ -3113,6 +3160,7 @@ it('repairs only explicitly selected provider fields and retains unsupported sib
   const coordinator = new SettingsPersistenceCoordinator(port);
   const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
   const section = new ProviderSettingsSection({
+    app: await createAppWithFiles({}),
     settings: () => settings.commandMode,
     setSettings: (value) => {
       settings.commandMode = value;
@@ -3156,40 +3204,55 @@ it('repairs only explicitly selected provider fields and retains unsupported sib
   section.dispose();
 });
 
-it('keeps malformed provider data until an explicit provider selection replaces it', async () => {
-  const { ProviderSettingsSection } =
-    await import('../src/settings/sections/ProviderSettingsSection');
-  const { ProviderSecrets } = await import('../src/ai/providers/ProviderSecrets');
-  const port = memoryPort(markedStatic({ commandMode: null }), stateEnvelope());
-  const coordinator = new SettingsPersistenceCoordinator(port);
-  const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
-  const section = new ProviderSettingsSection({
-    settings: () => settings.commandMode,
-    setSettings: (value) => {
-      settings.commandMode = value;
-    },
-    save: () => coordinator.saveSettings(settings),
-    secrets: new ProviderSecrets({ getSecret: () => null, setSecret: () => undefined }),
-  });
-  const container = createDiv();
-  section.render(container);
-  expect(settings.commandMode).toBeNull();
-  expect(
-    container.querySelector<HTMLInputElement>('input[aria-label="Agent model"]')?.disabled,
-  ).toBe(true);
-  const select = expectDefined(
-    container.querySelector<HTMLSelectElement>('select[aria-label="Agent provider"]'),
-  );
-  select.value = 'anthropic';
-  select.dispatchEvent(new Event('change', { bubbles: true }));
-  expect(parseProviderSettings(settings.commandMode)).toMatchObject({
-    provider: 'anthropic',
-    model: 'claude-haiku-5-5',
-  });
-  await coordinator.saveSettings(settings);
-  expect(port.staticData).toMatchObject({ commandMode: { provider: 'anthropic' } });
-  section.dispose();
-});
+it.each([
+  {
+    label: 'Agent provider',
+    selected: 'anthropic',
+    expected: { provider: 'anthropic', model: 'claude-haiku-5-5' },
+    stored: { provider: 'anthropic' },
+  },
+  {
+    label: 'Voice provider',
+    selected: 'groq',
+    expected: { provider: 'disabled', voice: 'groq', voiceModel: 'whisper-large-v3-turbo' },
+    stored: { voice: 'groq' },
+  },
+])(
+  'keeps malformed provider data until an explicit $label selection replaces it',
+  async ({ label, selected, expected, stored }) => {
+    const { ProviderSettingsSection } =
+      await import('../src/settings/sections/ProviderSettingsSection');
+    const { ProviderSecrets } = await import('../src/ai/providers/ProviderSecrets');
+    const port = memoryPort(markedStatic({ commandMode: null }), stateEnvelope());
+    const coordinator = new SettingsPersistenceCoordinator(port);
+    const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    const section = new ProviderSettingsSection({
+      app: await createAppWithFiles({}),
+      settings: () => settings.commandMode,
+      setSettings: (value) => {
+        settings.commandMode = value;
+      },
+      save: () => coordinator.saveSettings(settings),
+      secrets: new ProviderSecrets({ getSecret: () => null, setSecret: () => undefined }),
+    });
+    const container = createDiv();
+    section.render(container);
+    expect(settings.commandMode).toBeNull();
+    expect(
+      container.querySelector<HTMLInputElement>('select[aria-label="Agent model"]')?.disabled,
+    ).toBe(true);
+    const select = expectDefined(
+      container.querySelector<HTMLSelectElement>(`select[aria-label="${label}"]`),
+    );
+    expect(select.disabled).toBe(false);
+    select.value = selected;
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(parseProviderSettings(settings.commandMode)).toMatchObject(expected);
+    await coordinator.saveSettings(settings);
+    expect(port.staticData).toMatchObject({ commandMode: stored });
+    section.dispose();
+  },
+);
 
 it('corrects an invalid model without replacing the selected billing provider or extensions', async () => {
   const { ProviderSettingsSection } =
@@ -3204,6 +3267,7 @@ it('corrects an invalid model without replacing the selected billing provider or
   const coordinator = new SettingsPersistenceCoordinator(port);
   const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
   const section = new ProviderSettingsSection({
+    app: await createAppWithFiles({}),
     settings: () => settings.commandMode,
     setSettings: (value) => {
       settings.commandMode = value;
@@ -3214,10 +3278,10 @@ it('corrects an invalid model without replacing the selected billing provider or
   const container = createDiv();
   section.render(container);
   const model = expectDefined(
-    container.querySelector<HTMLInputElement>('input[aria-label="Agent model"]'),
+    container.querySelector<HTMLInputElement>('select[aria-label="Agent model"]'),
   );
   model.value = 'gpt-6-luna';
-  model.dispatchEvent(new Event('blur'));
+  model.dispatchEvent(new Event('change'));
   expect(parseProviderSettings(settings.commandMode)).toMatchObject({
     provider: 'openai',
     model: 'gpt-6-luna',

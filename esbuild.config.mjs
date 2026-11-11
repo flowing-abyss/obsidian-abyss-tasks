@@ -28,6 +28,7 @@ const thirdPartyNotices = combineNotices([
     fileURLToPath(import.meta.resolve('chrono-node/ru')),
     'LICENSE.txt',
   ),
+  dependencyNotice('jose', fileURLToPath(import.meta.resolve('jose')), 'LICENSE.md'),
   dependencyNotice('rrule', fileURLToPath(import.meta.resolve('rrule')), 'LICENCE'),
   dependencyNotice(
     '@ai-sdk/openai',
@@ -115,6 +116,7 @@ const taskSearchWorkerPlugin = {
         platform: 'browser',
         format: 'iife',
         target: 'es2021',
+        charset: 'utf8',
         write: false,
         metafile: true,
         minify: prod,
@@ -154,6 +156,8 @@ const context = await esbuild.context({
   ],
   format: 'cjs',
   target: 'es2021',
+  // Obsidian reads main.js and the embedded worker Blob as UTF-8. Keep localized text compact.
+  charset: 'utf8',
   logLevel: analyze ? 'silent' : 'info',
   sourcemap: prod ? (profile ? 'external' : false) : 'inline',
   drop: ['debugger'],

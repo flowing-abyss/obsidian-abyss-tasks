@@ -204,6 +204,7 @@ export interface CommandSessionTransitions {
   ): Promise<void>;
 }
 export interface CommandSessionOptions {
+  readonly defaultVoiceMode?: () => 'manual' | 'continuous';
   readonly api: TasksApiV1;
   readonly agent: CommandAgentPort;
   readonly journal: CommandJournalPort;
@@ -214,6 +215,7 @@ export interface CommandSessionOptions {
   readonly onDispose?: () => void;
 }
 export interface CommandResearchResult {
+  readonly outcome?: 'empty';
   readonly query: string;
   readonly summary: string;
   readonly sources: ReadonlyArray<{

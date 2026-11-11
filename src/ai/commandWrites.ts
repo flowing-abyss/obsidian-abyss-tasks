@@ -23,7 +23,7 @@ import {
   sameCommandProjectSchema,
   validateCommandProject,
 } from './commandProjects';
-import { canonicalCommandPlan, commandRead } from './commandReads';
+import { canonicalCommandPlan, canonicalCommandTree, commandRead } from './commandReads';
 import { hasUnknownCommandResourceEffects } from './commandRecovery';
 import {
   checkedWriteResult,
@@ -560,6 +560,7 @@ class CommandWriteRun {
         commandMessage('The note changed before its edited section could be verified.'),
       );
     this.ctx.observeNote({ ...current, request });
+    this.changedPaths.add(current.note.path);
   }
   private async readContent(receipt: TaskContentReceiptV1, change: CommandChange): Promise<void> {
     const correspondence = receipt.contentContinuity.correspondence;
@@ -705,17 +706,34 @@ class CommandWriteRun {
   }
   private async readTree(target: string, expectedRevision?: string): Promise<void> {
     const root = await this.rootReference(target, expectedRevision);
-    const page = await this.read(() =>
+    const initial = await this.read(() =>
       required(this.ctx.api.tasks.tree)({
         target: root.target,
         expectedRevision: root.revision,
         limit: 500,
       }),
     );
+    const page = await this.completeReadback(initial);
     if (page.tree.source !== undefined) this.changedPaths.add(page.tree.source.path);
     this.actual.set(page.tree.target, page.tree);
     this.ctx.observeTree(page);
     this.ctx.actual([...this.actual.values()]);
+  }
+  private async completeReadback(initial: TaskTreePageV1): Promise<TaskTreePageV1> {
+    try {
+      return await canonicalCommandTree(this.ctx.api, initial, this.signal, {
+        now: this.ctx.now,
+        deadline: this.ctx.now() + 5000,
+      });
+    } catch (cause) {
+      if (cause instanceof CommandFailure && cause.code === 'CANCELLED') throw cause;
+      throw new CommandFailure(
+        'READBACK',
+        commandMessage(
+          'The write settled, but the complete saved result could not be verified. Review the current source before continuing.',
+        ),
+      );
+    }
   }
   private async operation(
     change: Exclude<CommandChange, { kind: 'link' }>,
@@ -723,34 +741,34 @@ class CommandWriteRun {
   ): Promise<() => Promise<WriteResult>> {
     if (change.kind === 'task' || change.kind === 'cleanup' || change.kind === 'note')
       return this.contentOperation(change, request);
-    if (change.kind === 'project-create')
-      return async () => {
-        try {
-          const schema = await this.read(() => required(this.ctx.api.projects).schema());
-          if (!sameCommandProjectSchema(change.schema, schema))
-            throw new CommandFailure(
-              'PROJECT_SCHEMA',
-              commandMessage(
-                'Project settings changed. Review the retained requested values before saving.',
-              ),
-            );
-          validateCommandProject(schema, change);
-        } catch (cause) {
-          return {
-            ok: false,
-            effects: 'unchanged',
-            recovery: 'reread',
-            error: {
-              code: 'REVISION_CONFLICT',
-              category: 'conflict',
-              message:
-                cause instanceof Error
-                  ? cause.message
-                  : commandMessage('Project settings could not be checked.'),
-            },
-          };
-        }
-        return required(this.ctx.api.projects).create(
+    if (change.kind === 'project-create') {
+      try {
+        const schema = await this.read(() => required(this.ctx.api.projects).schema());
+        if (!sameCommandProjectSchema(change.schema, schema))
+          throw new CommandFailure(
+            'PROJECT_SCHEMA',
+            commandMessage(
+              'Project settings changed. Review the retained requested values before saving.',
+            ),
+          );
+        validateCommandProject(schema, change);
+      } catch (cause) {
+        return async () => ({
+          ok: false,
+          effects: 'unchanged',
+          recovery: 'reread',
+          error: {
+            code: 'REVISION_CONFLICT',
+            category: 'conflict',
+            message:
+              cause instanceof Error
+                ? cause.message
+                : commandMessage('Project settings could not be checked.'),
+          },
+        });
+      }
+      return () =>
+        required(this.ctx.api.projects).create(
           {
             name: change.name,
             ...(change.fields === undefined ? {} : { fields: change.fields }),
@@ -759,7 +777,7 @@ class CommandWriteRun {
           },
           { signal: this.signal },
         );
-      };
+    }
     if (change.kind === 'project-move')
       return () =>
         required(this.ctx.api.projects).moveTask(

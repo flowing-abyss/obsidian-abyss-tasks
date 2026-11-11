@@ -49,6 +49,7 @@ describe('README', () => {
       '@tanstack/charts',
       'ai',
       'chrono-node',
+      'jose',
       'minisearch',
       'rrule',
       'zod',

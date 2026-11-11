@@ -188,6 +188,14 @@ const notePlan: z.ZodType<NotePlanV1> = z.object({
   path: text,
   before: z.object({ text, complete: z.literal(true) }).nullable(),
   after: z.object({ text, complete: z.literal(true) }),
+  creationPreview: z
+    .object({
+      type: z.literal('template-first'),
+      template: z.object({ path: text }).exactOptional(),
+      requestedBody: z.object({ text, complete: z.literal(true) }),
+      placement: z.literal('append-after-template'),
+    })
+    .exactOptional(),
   note: reference.exactOptional(),
   section: handle.exactOptional(),
   sections: z
@@ -404,6 +412,10 @@ const noteReceipt: z.ZodType<NoteMutationReceiptV1> = z.object({
   ...receiptBase,
   plan: handle,
   planRevision: handle,
+  completion: z.enum(['complete', 'incomplete']).exactOptional(),
+  phase: z.enum(['provision', 'template', 'content', 'readback']).exactOptional(),
+  templateEffects: storageEffect.exactOptional(),
+  contentEffects: storageEffect.exactOptional(),
   noteEffects: storageEffect,
   destinationEffects: storageEffect,
   note: reference.exactOptional(),
@@ -553,15 +565,36 @@ export interface HistoricalCommandSnapshot extends Omit<
 }
 
 /** Historical tokens are evidence only. This wrapper is never a restored live session. */
-export interface HistoricalCommandSession {
+interface LegacyCommandSession {
   readonly handles: 'historical';
   readonly updatedAt: number;
   readonly snapshot: HistoricalCommandSnapshot;
 }
+export interface HistoricalCommandSession extends LegacyCommandSession {
+  readonly createdAt: number;
+  readonly title: string;
+  readonly titleIsEntity?: true;
+}
+export interface CommandSessionFile extends HistoricalCommandSession {
+  readonly version: 1;
+}
+const sessionFile: z.ZodType<CommandSessionFile> = z.strictObject({
+  version: z.literal(1),
+  handles: z.literal('historical'),
+  createdAt: finite,
+  updatedAt: finite,
+  title: text.min(1),
+  titleIsEntity: z.literal(true).exactOptional(),
+  snapshot,
+});
+export function parseCommandSessionFile(value: unknown): CommandSessionFile {
+  checkCommandStructure(value);
+  return sessionFile.parse(value);
+}
 export interface CommandHistoryEnvelope {
   readonly version: 1;
   readonly activeSessionId: string | null;
-  readonly sessions: readonly HistoricalCommandSession[];
+  readonly sessions: readonly LegacyCommandSession[];
 }
 const envelope: z.ZodType<CommandHistoryEnvelope> = z
   .object({
@@ -578,7 +611,7 @@ const envelope: z.ZodType<CommandHistoryEnvelope> = z
       ctx.addIssue({ code: 'custom', message: 'Invalid session references.' });
   });
 
-/** Hard safety bounds exceed the 4 MiB canonical capture and 2 MiB durable soft budget.
+/** Per-snapshot safety bounds exceed the 4 MiB canonical capture.
  * Count repeated aliases separately: serialized JSON duplicates them. Limit stack depth before Zod.
  */
 function checkCommandStructure(value: unknown): void {

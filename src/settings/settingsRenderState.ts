@@ -14,8 +14,7 @@ interface FocusScope {
 
 export interface SettingsRenderContext {
   readonly focus: SettingsFocusSnapshot | undefined;
-  readonly scroller: HTMLElement | null;
-  readonly scrollTop: number | undefined;
+  readonly restoreScroll: () => void;
 }
 
 function isInput(element: HTMLElement): element is HTMLInputElement {
@@ -128,9 +127,26 @@ function restoreFocus(
   return target;
 }
 
-export function captureSettingsRenderContext(container: HTMLElement): SettingsRenderContext {
+function captureScroll(container: HTMLElement): () => void {
   const scroller = container.closest<HTMLElement>('.vertical-tab-content');
-  return { focus: captureFocus(container), scroller, scrollTop: scroller?.scrollTop };
+  const top = scroller?.scrollTop ?? 0;
+  return () => {
+    if (scroller !== null) scroller.scrollTop = top;
+  };
+}
+
+/** Use the current position when a catalog result arrives, including scrolls made while it loaded. */
+export function preserveSettingsScroll(container: HTMLElement, render: () => void): void {
+  const restore = captureScroll(container);
+  try {
+    render();
+  } finally {
+    restore();
+  }
+}
+
+export function captureSettingsRenderContext(container: HTMLElement): SettingsRenderContext {
+  return { focus: captureFocus(container), restoreScroll: captureScroll(container) };
 }
 
 export function restoreSettingsRenderContext(
@@ -138,9 +154,8 @@ export function restoreSettingsRenderContext(
   context: SettingsRenderContext,
   explicitFocus?: () => HTMLElement | null,
 ): void {
-  const focus = explicitFocus?.() ?? restoreFocus(container, context.focus);
+  const tab = container.closest<HTMLElement>('.abyss-settings-tab') ?? container;
+  const focus = explicitFocus?.() ?? restoreFocus(tab, context.focus);
   focus?.focus({ preventScroll: true });
-  if (context.scroller !== null && context.scrollTop !== undefined) {
-    context.scroller.scrollTop = context.scrollTop;
-  }
+  context.restoreScroll();
 }

@@ -1,4 +1,4 @@
-/*!
+/*
  * MiniSearch 7.2.0 — bundled dependency notice.
  * Copyright 2022 Luca Ongaro
  *

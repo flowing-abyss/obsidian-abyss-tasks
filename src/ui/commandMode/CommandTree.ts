@@ -15,9 +15,11 @@ import {
 import {
   commandCommentDisplay,
   commandNodeFields,
+  removedCommentVisible,
   type CommandNodeFields,
   type CommentField,
 } from './commandFieldChanges';
+import type { CommandNotePaint } from './CommandNotes';
 import type { CommandProjectFields } from './CommandProjects';
 import { CommandTreeHeader, type CommandTaskBinding } from './CommandTreeHeader';
 import { CommandTreeReader } from './CommandTreeReader';
@@ -27,6 +29,8 @@ export type CommandPresentationMemory = Map<
   {
     readonly proposalRevision: number;
     readonly projects?: ReadonlyMap<string, CommandProjectFields>;
+    readonly notes?: ReadonlyMap<string, CommandNotePaint>;
+    readonly touched?: ReadonlySet<string>;
     readonly owners: ReadonlyMap<
       string,
       { readonly plan: string; readonly revision: string; readonly fields: CommandNodeFields }
@@ -55,6 +59,7 @@ interface Projection {
   readonly committed: ReadonlyMap<string, string>;
 }
 interface NodeProjection {
+  readonly depth: number;
   readonly tree: TaskTreeV1;
   readonly key: string;
   readonly before: TaskTreeV1 | undefined;
@@ -91,6 +96,8 @@ function receiptPairs(entry: CommandJournalEntry): ReadonlyArray<{
 function projectionSignature(state: CommandSessionSnapshot): string {
   return JSON.stringify([
     state.id,
+    state.recovery,
+    state.blocked,
     state.proposal.revision,
     state.presentation,
     state.exchanges.filter((exchange) => exchange.role === 'user').length,
@@ -120,6 +127,7 @@ function fieldChange(
 }
 export class CommandTree {
   private readonly mount: TaskTreeDisplayMount;
+  private readonly scope: HTMLElement;
   private readonly headers: CommandTreeHeader;
   private state: CommandSessionSnapshot;
   private readonly keys = new Map<string, string>();
@@ -136,6 +144,9 @@ export class CommandTree {
     private readonly options: CommandTreeOptions,
   ) {
     this.state = options.owner.snapshot();
+    this.scope = host.createDiv({ cls: 'abyss-command-tree-scope abyss-command-scope-label' });
+    this.scope.hidden = true;
+    host.after(this.scope);
     this.mount = mountTaskTreeDisplay(host, {
       owner: options.component,
       roots: [],
@@ -152,9 +163,14 @@ export class CommandTree {
     }
     return key;
   }
+  private touched = new Set<string>();
+  get settled(): TaskTreeDisplayMount['settled'] {
+    return this.mount.settled;
+  }
   private continuations(state: CommandSessionSnapshot): ReadonlyMap<string, string> {
     const proven = new Map<string, string>();
     for (const pair of state.journal.flatMap(receiptPairs)) {
+      if (this.touched.has(pair.preparedTarget)) this.touched.add(pair.committedTarget);
       const key = this.keys.get(pair.preparedTarget);
       if (key !== undefined && this.previous.has(key)) {
         this.keys.set(pair.committedTarget, key);
@@ -175,6 +191,7 @@ export class CommandTree {
       this.expanded.clear();
       this.reading.clear();
       this.sessionId = state.id;
+      this.touched = new Set(this.options.presentation.get(state.id)?.touched);
     }
     const committed = this.continuations(state),
       current = new Map<string, CommandNodeFields>(),
@@ -182,6 +199,10 @@ export class CommandTree {
     this.bindings.clear();
     const roots = this.proposalRoots({ current, committed, covered });
     roots.push(...this.savedRoots({ current, committed, covered }));
+    this.scope.hidden = !roots.some((root) => this.incomplete(root));
+    this.scope.textContent = this.scope.hidden
+      ? ''
+      : commandMessage('Incomplete saved tree. Review current source to see the rest.');
     this.previous = current;
     this.retainPresentation();
     this.mount.update({
@@ -206,7 +227,10 @@ export class CommandTree {
       ? owner.fields
       : undefined;
   }
-  private retainPresentation(): void {
+  private retainedOwners(): ReadonlyMap<
+    string,
+    { readonly plan: string; readonly revision: string; readonly fields: CommandNodeFields }
+  > {
     const owners = new Map<string, { plan: string; revision: string; fields: CommandNodeFields }>();
     for (const [key, fields] of this.previous) {
       const binding = this.bindings.get(key);
@@ -217,18 +241,26 @@ export class CommandTree {
         fields,
       });
     }
+    return owners;
+  }
+  private retainPresentation(): void {
+    const owners = this.retainedOwners();
     const projects = this.options.presentation.get(this.state.id)?.projects ?? new Map();
-    if (owners.size + projects.size === 0) this.options.presentation.delete(this.state.id);
-    else
-      this.options.presentation.set(this.state.id, {
-        proposalRevision: this.state.proposal.revision,
-        owners,
-        projects,
-      });
-    const retained = new Set(this.options.owner.recent().map((record) => record.snapshot.id));
-    retained.add(this.state.id);
+    const retained = this.options.presentation.get(this.state.id);
+    this.options.presentation.set(this.state.id, {
+      ...retained,
+      proposalRevision: this.state.proposal.revision,
+      owners,
+      projects,
+      touched: new Set([
+        ...(this.options.presentation.get(this.state.id)?.touched ?? []),
+        ...this.touched,
+      ]),
+    });
+    const sessions = new Set(this.options.owner.recent().map((record) => record.snapshot.id));
+    sessions.add(this.state.id);
     for (const id of this.options.presentation.keys())
-      if (!retained.has(id)) this.options.presentation.delete(id);
+      if (!sessions.has(id)) this.options.presentation.delete(id);
   }
   private proposalRoots(context: {
     current: Map<string, CommandNodeFields>;
@@ -284,6 +316,12 @@ export class CommandTree {
     }
     return roots;
   }
+  private incomplete(node: TaskDisplayNode): boolean {
+    return (
+      !node.complete ||
+      node.entries.some((entry) => entry.kind === 'task' && this.incomplete(entry))
+    );
+  }
   private savedRoots(context: {
     current: Map<string, CommandNodeFields>;
     committed: ReadonlyMap<string, string>;
@@ -297,7 +335,7 @@ export class CommandTree {
     );
     for (const full of this.savedCandidates()) {
       if (context.covered.has(full.target) || !this.showSaved(full, selected)) continue;
-      if (nodes(full).some((node) => !node.complete)) this.expand(full);
+      if (this.canExpand() && nodes(full).some((node) => !node.complete)) this.expand(full);
       nodes(full).forEach((node) => context.covered.add(node.target));
       roots.push(this.project(full, { ...context, baseline: baseline(full) }, false));
     }
@@ -305,12 +343,12 @@ export class CommandTree {
   }
   private savedCandidates(): readonly TaskTreeV1[] {
     const latest = new Map<string, TaskTreeV1>();
-    for (const tree of [
-      ...this.state.entities.tasks.map((page) => page.tree).reverse(),
-      ...this.state.actual,
-    ]) {
-      if (!latest.has(tree.target))
-        latest.set(tree.target, this.expanded.get(`${tree.target}:${tree.revision}`) ?? tree);
+    const discoveries = this.state.entities.tasks.map((page) => page.tree).reverse();
+    const candidates = this.canExpand()
+      ? [...discoveries, ...this.state.actual]
+      : [...this.state.actual, ...discoveries];
+    for (const tree of candidates) {
+      if (!latest.has(tree.target)) latest.set(tree.target, this.savedTree(tree));
     }
     const trees = [...latest.values()];
     return trees.filter(
@@ -323,6 +361,9 @@ export class CommandTree {
             ),
         ),
     );
+  }
+  private savedTree(tree: TaskTreeV1): TaskTreeV1 {
+    return this.canExpand() ? (this.expanded.get(`${tree.target}:${tree.revision}`) ?? tree) : tree;
   }
   private showSaved(tree: TaskTreeV1, selected: ReadonlyMap<string, string | undefined>): boolean {
     if (this.state.proposal.changes.length > 0 || this.state.actual.length === 0)
@@ -342,6 +383,7 @@ export class CommandTree {
     },
   ): TaskDisplayField {
     const { key, markdown, presentation, change } = input;
+    const previousMarkdown = change === 'added' ? '' : input.previousMarkdown;
     return {
       key,
       ...(change === undefined ? {} : { change }),
@@ -349,10 +391,11 @@ export class CommandTree {
         source: { target: { type: 'display', key }, markdown, path: node.path, presentation },
         decoration: {
           kind: 'complete',
-          ...(input.previousMarkdown === undefined
+          ...(change === 'removed' ? { removed: true } : {}),
+          ...(previousMarkdown === undefined
             ? {}
             : {
-                previousMarkdown: input.previousMarkdown,
+                previousMarkdown,
                 compareMarkdown: presentation !== 'title',
               }),
         },
@@ -367,7 +410,12 @@ export class CommandTree {
       },
     };
   }
-  private project(tree: TaskTreeV1, projection: Projection, removed: boolean): TaskDisplayNode {
+  private project(
+    tree: TaskTreeV1,
+    projection: Projection,
+    removed: boolean,
+    depth = 0,
+  ): TaskDisplayNode {
     const key = this.key(tree.target),
       before = projection.baseline.get(tree.target),
       previous = this.previous.get(key) ?? this.restoredFields(tree.target, projection.plan);
@@ -381,12 +429,14 @@ export class CommandTree {
       committed: projection.committed.get(tree.target) === tree.revision,
     });
     projection.current.set(key, fields);
+    if (fields.sessionChanged || removed || this.pendingStatus(tree)) this.touched.add(tree.target);
     this.bindings.set(key, {
       tree,
       ...(projection.plan === undefined ? {} : { plan: projection.plan }),
       removed,
     });
     const node: NodeProjection = {
+      depth,
       tree,
       key,
       before,
@@ -394,12 +444,24 @@ export class CommandTree {
       path: this.sourcePath(tree, projection.plan),
       fields,
       removed,
-      added:
-        fields.added &&
-        (fields.comparison === undefined || this.state.presentation?.changes === 'cumulative'),
+      added: this.added(fields),
       projection,
     };
     return this.display(node);
+  }
+  private added(fields: CommandNodeFields): boolean {
+    return (
+      fields.added &&
+      (fields.comparison === undefined || this.state.presentation?.changes === 'cumulative')
+    );
+  }
+  private pendingStatus(tree: TaskTreeV1): boolean {
+    return this.state.proposal.changes.some(
+      (change) =>
+        change.kind === 'status' &&
+        change.target === tree.target &&
+        change.symbol !== tree.statusSymbol,
+    );
   }
   private sourcePath(tree: TaskTreeV1, plan: ContentPlanV1 | undefined): string {
     return tree.source?.path ?? plan?.destination?.path ?? plan?.before?.source?.path ?? '';
@@ -427,9 +489,12 @@ export class CommandTree {
       renderHeader: (host, owner) => {
         this.headers.render(host, owner, {
           key: node.key,
+          depth: node.depth,
           before: node.before,
           comparison: node.comparison,
           state: this.state,
+          sessionChanged: this.touched.has(node.tree.target),
+          added: node.added,
         });
       },
       onActivate: (event) => {
@@ -439,7 +504,7 @@ export class CommandTree {
     };
   }
   private description(node: NodeProjection): Pick<TaskDisplayNode, 'description'> {
-    const description = node.tree.description ?? node.before?.description;
+    const description = node.tree.description ?? node.comparison?.description;
     if (description === undefined) return {};
     return {
       description: this.field(node, {
@@ -448,11 +513,7 @@ export class CommandTree {
         presentation: 'description',
         previousMarkdown:
           node.tree.description === undefined ? undefined : node.comparison?.description,
-        change: fieldChange(
-          node.tree.description,
-          node.comparison?.description ?? node.before?.description,
-          node,
-        ),
+        change: fieldChange(node.tree.description, node.comparison?.description, node),
       }),
     };
   }
@@ -473,37 +534,50 @@ export class CommandTree {
     const child = children.get(key) ?? before.get(key);
     return child === undefined
       ? undefined
-      : this.project(child, node.projection, node.removed || !children.has(key));
+      : this.project(child, node.projection, node.removed || !children.has(key), node.depth + 1);
   }
   private entries(node: NodeProjection): TaskDisplayNode['entries'] {
     const entries: Array<TaskDisplayNode['entries'][number]> = [];
+    const childEntries: TaskDisplayNode[] = [];
     const comments = new Map(node.fields.comments.map((field) => [field.key, field]));
-    const removed = new Map(node.fields.removed.map((field) => [field.key, field]));
+    const removed = new Map(
+      node.fields.removed
+        .filter((field) =>
+          removedCommentVisible(
+            field,
+            node.fields,
+            this.state.presentation?.changes === 'cumulative',
+          ),
+        )
+        .map((field) => [field.key, field]),
+    );
     const children = new Map(node.tree.children.map((child) => [child.target, child]));
-    const before = new Map(node.before?.children.map((child) => [child.target, child]));
+    const before = new Map(node.comparison?.children.map((child) => [child.target, child]));
     for (const entry of node.fields.order) {
       if (entry.kind === 'comment') {
         const field = comments.get(entry.key) ?? removed.get(entry.key);
         if (field !== undefined) entries.push(this.comment(node, field, removed.has(entry.key)));
       } else {
         const child = this.childEntry(node, children, before, entry.key);
-        if (child !== undefined) entries.push(child);
+        if (child !== undefined) childEntries.push(child);
       }
     }
-    return entries;
+    return [...entries, ...childEntries];
   }
   private comment(
     node: NodeProjection,
     field: CommentField,
     removed: boolean,
   ): TaskDisplayNode['entries'][number] {
-    const display = commandCommentDisplay(field, this.state.presentation?.changes === 'cumulative');
+    const cumulative = this.state.presentation?.changes === 'cumulative';
+    const display = commandCommentDisplay(field, cumulative);
+    const previous = cumulative ? field.original : field.removedMarkdown;
     return {
       kind: 'comment',
       key: field.key,
       field: this.field(node, {
         key: field.key,
-        markdown: field.comment.text,
+        markdown: removed ? (previous ?? field.comment.text) : field.comment.text,
         presentation: 'markdown',
         change: node.removed || removed ? 'removed' : display.change,
         previousMarkdown: removed ? undefined : display.previousMarkdown,
@@ -524,20 +598,29 @@ export class CommandTree {
       commandMessage('Could not focus this task'),
     );
   }
+  private canExpand(): boolean {
+    return (
+      this.state.recovery !== 'historical' &&
+      this.state.recovery !== 'uncertain' &&
+      !this.state.blocked
+    );
+  }
   private expand(seed: TaskTreeV1): void {
     const key = `${seed.target}:${seed.revision}`;
     if (this.reading.has(key)) return;
     this.reading.add(key);
     const session = this.state.id,
-      current = (): boolean => this.live && session === this.state.id;
+      current = (): boolean => this.live && session === this.state.id && this.canExpand();
     void new CommandTreeReader(this.options.owner, current).tree(seed).then(
       (tree) => {
+        this.reading.delete(key);
         if (!current()) return;
         this.expanded.set(key, tree);
         this.signature = '';
         this.update(this.options.owner.snapshot());
       },
       () => {
+        this.reading.delete(key);
         if (current())
           this.options.failure(commandMessage('Could not expand the complete task tree.'));
       },
@@ -546,6 +629,7 @@ export class CommandTree {
   destroy(): void {
     this.live = false;
     this.mount.destroy();
+    this.scope.remove();
     this.bindings.clear();
   }
 }

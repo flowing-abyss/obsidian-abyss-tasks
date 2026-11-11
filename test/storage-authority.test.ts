@@ -25,6 +25,9 @@ const prelude =
 const denied = [
   ["await app.vault.adapter.write('a.md', 'text');", 'DataAdapter.write'],
   ["await app.vault.adapter.append('a.md', 'text');", 'DataAdapter.append'],
+  ["await app.vault.adapter.process('a.md', text => text);", 'DataAdapter.process'],
+  ["await app.vault.adapter.remove('a.md');", 'DataAdapter.remove'],
+  ["await app.vault.adapter.mkdir('folder');", 'DataAdapter.mkdir'],
   ['await app.fileManager.processFrontMatter(file, () => {});', 'FileManager.processFrontMatter'],
   ["const writer: NoteVault = app.vault; await writer.create('a.md', '- [ ] x');", 'Vault.create'],
   ["await app.vault['modify'](file, 'text');", 'Vault.modify'],
@@ -92,6 +95,8 @@ void ordinaryObject;
 `;
 // These source-shaped fixtures independently enumerate the audited operation owners.
 const allowed = [
+  ['src/ai/providers/ChatGptPlan.ts', 'ChatGptPlan', 'write', 'SecretStorage.setSecret'],
+  ['src/ai/providers/ChatGptPlan.ts', 'ChatGptPlan', 'read', 'SecretStorage.getSecret'],
   ['src/ai/providers/ProviderSecrets.ts', 'ProviderSecrets', 'store', 'SecretStorage.setSecret'],
   ['src/ai/providers/ProviderSecrets.ts', 'ProviderSecrets', 'read', 'SecretStorage.getSecret'],
   [
@@ -234,7 +239,13 @@ sourceMap.set(
   `${prelude}
 export class TaskCalendarPlugin extends Plugin {
   commandSessionStorage() {
-    return { save: (data: unknown) => this.app.saveLocalStorage('abyss-tasks:command-sessions:v1', data) };
+    const adapter = this.app.vault.adapter;
+    const ensureDirectory = async () => { await adapter.mkdir('sessions'); };
+    return {
+      write: async () => { await ensureDirectory(); await adapter.write('session.json', '{}'); await adapter.process('session.json', text => text); },
+      remove: async () => { await adapter.remove('session.json'); },
+      clearLegacy: () => this.app.saveLocalStorage('abyss-tasks:command-sessions:v1', null),
+    };
   }
   persistencePort() {
     const adapter = this.app.vault.adapter;
@@ -330,7 +341,7 @@ describe('resolved Obsidian storage authority', () => {
       const found = [...new Set([...allowed.map(([file]) => file), 'src/main.ts'])].flatMap(
         accesses,
       );
-      expect(found).toHaveLength(17);
+      expect(found).toHaveLength(23);
       expect(storageAuthorityViolations(found, STORAGE_AUTHORIZATIONS)).toEqual([]);
     },
     TYPESCRIPT_PROGRAM_TIMEOUT_MS,
@@ -467,7 +478,7 @@ describe('resolved Obsidian storage authority', () => {
           .map((source) => source.fileName),
       ).toEqual([]);
       const found = collectStorageAccesses(sourceProgram, sourceFiles);
-      expect(found).toHaveLength(17);
+      expect(found).toHaveLength(23);
       expect(storageAuthorityViolations(found, STORAGE_AUTHORIZATIONS)).toEqual([]);
     },
     TYPESCRIPT_PROGRAM_TIMEOUT_MS,

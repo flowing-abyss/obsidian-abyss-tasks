@@ -604,3 +604,76 @@ it.each(['initial fields', 'authored metadata'] as const)(
     expect(h.index.list()).toHaveLength(2);
   },
 );
+
+describe('Inbox creation intent', () => {
+  it.each(['untagged', 'tag', 'both'] as const)(
+    'uses native Inbox policy in %s mode and freezes its settings',
+    async (mode) => {
+      const settings = {
+        ...behavior(),
+        taskPrefix: '#task/one-off',
+        inbox: { mode, tag: '#task/inbox', removeTagOnAssign: true },
+      };
+      const h = await taskEditPreparationHarness('- [ ] Existing\n', { behavior: () => settings });
+      const p = ready(
+        await h.service.prepareCreateTree({
+          destination: explicit,
+          intent: 'inbox',
+          tree: { markdownTitle: 'Gym' },
+        }),
+      );
+      expect(p.after.tags).toEqual(mode === 'untagged' ? [] : ['#task/inbox']);
+      expect(h.index.list()).toHaveLength(1);
+      settings.taskPrefix = '#changed';
+      expect((await p.commit()).result.type).not.toBe('ok');
+      expect(h.index.list()).toHaveLength(1);
+    },
+  );
+});
+
+it('rejects Inbox creation when authored tags defeat configured membership', async () => {
+  const settings = {
+    ...behavior(),
+    taskPrefix: '#task/one-off',
+    inbox: { mode: 'untagged' as const, tag: '', removeTagOnAssign: true },
+  };
+  const h = await taskEditPreparationHarness('- [ ] Existing\n', { behavior: () => settings });
+  const p = await h.service.prepareCreateTree({
+    destination: explicit,
+    intent: 'inbox',
+    tree: { markdownTitle: 'Gym #work' },
+  });
+  expect(p.type).toBe('invalid');
+  expect(h.index.list()).toHaveLength(1);
+});
+
+it.each(['tag', 'both'] as const)('respects a service-tag removal in %s mode', async (mode) => {
+  const settings = {
+    ...behavior(),
+    taskPrefix: '#task/one-off',
+    inbox: { mode, tag: '#task/inbox', removeTagOnAssign: true },
+  };
+  const h = await taskEditPreparationHarness('- [ ] Existing\n', { behavior: () => settings });
+  const p = await h.service.prepareCreateTree({
+    destination: explicit,
+    intent: 'inbox',
+    tree: { markdownTitle: 'Gym', initial: { tags: { remove: ['#task/inbox'] } } },
+  });
+  if (mode === 'tag') expect(p.type).toBe('invalid');
+  else expect(ready(p).after.tags).toEqual([]);
+});
+
+it('rejects an invalid configured Inbox tag before provisioning', async () => {
+  const settings = {
+    ...behavior(),
+    inbox: { mode: 'tag' as const, tag: 'bad tag', removeTagOnAssign: true },
+  };
+  const h = await taskEditPreparationHarness('- [ ] Existing\n', { behavior: () => settings });
+  const p = await h.service.prepareCreateTree({
+    destination: configured,
+    intent: 'inbox',
+    tree: { markdownTitle: 'Gym' },
+  });
+  expect(p.type).toBe('invalid');
+  expect(h.index.list()).toHaveLength(1);
+});

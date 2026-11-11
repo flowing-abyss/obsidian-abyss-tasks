@@ -1,7 +1,12 @@
 import { normalizePath, TFile, TFolder, type App } from 'obsidian';
 import { sameNoteFileStamp } from '../markdown/noteFileStamp';
 import { readVaultText } from '../markdown/readVaultText';
-import { TemplaterAdapter, type TemplaterSession } from './TemplaterAdapter';
+import {
+  TemplaterAdapter,
+  type TemplaterPreparation,
+  type TemplaterSession,
+} from './TemplaterAdapter';
+import type { NoteEffect } from './noteApi';
 
 interface FailedPreparation {
   readonly content: string | undefined;
@@ -16,6 +21,46 @@ interface TemplateApplication {
   readonly title: string;
   readonly expectedContent: string;
   readonly session: TemplaterSession | undefined;
+  readonly guard?: TemplateCreationGuard;
+}
+interface TemplateCreationGuard {
+  readonly adapter: TemplaterAdapter | undefined;
+  check(file?: TFile): void | Promise<void>;
+  finalCheck(): void;
+  attempting(): void;
+  created(file: TFile): void | Promise<void>;
+  rendering(): void;
+  applied(): void;
+  checkContent(content: string): void;
+  checkLive(file: TFile, content: string): void;
+}
+export interface TemplateFirstPlan {
+  readonly path: string;
+  readonly templatePath: string | undefined;
+  readonly retainedBytes: number;
+  current(): boolean;
+  validate(): Promise<boolean>;
+}
+interface TemplateFirstBasis {
+  readonly title: string;
+  readonly policy: TemplaterPreparation;
+  readonly template: TFile | undefined;
+  readonly raw: string | undefined;
+  readonly stamp: TFile['stat'] | undefined;
+}
+export interface TemplateFirstEffects {
+  phase: 'provision' | 'template' | 'readback';
+  noteEffects: NoteEffect;
+  destinationEffects: NoteEffect;
+  templateEffects: NoteEffect;
+}
+export class TemplateFirstFailure extends Error {
+  constructor(
+    readonly effects: Readonly<TemplateFirstEffects>,
+    readonly cause: unknown,
+  ) {
+    super('Template-first note creation did not complete.');
+  }
 }
 
 export interface StaticNoteRequest {
@@ -56,8 +101,13 @@ export class StaleStaticNoteError extends Error {}
 
 interface FolderGuard {
   check(): void | Promise<void>;
+  finalCheck?(): void;
   attempting(): void;
   created(): void;
+}
+
+function finalFolderCheck(guard: FolderGuard | undefined): void {
+  guard?.finalCheck?.();
 }
 
 function renderCoreTemplate(raw: string, title: string): string {
@@ -163,7 +213,210 @@ export type StaticNotePlan =
 
 export class NoteTemplateService {
   private readonly staticPlanBases = new WeakMap<object, StaticPlanBasis>();
+  private readonly templateFirstBases = new WeakMap<TemplateFirstPlan, TemplateFirstBasis>();
   constructor(private readonly app: App) {}
+
+  async planTemplateFirstNote(
+    path: string,
+    explicitTemplatePath?: string,
+    title = '',
+  ): Promise<TemplateFirstPlan> {
+    notePath(path);
+    const basis = await this.captureTemplateFirstBasis(path, explicitTemplatePath, title);
+    const plan: TemplateFirstPlan = {
+      path,
+      templatePath: basis.template?.path,
+      retainedBytes: new TextEncoder().encode(basis.raw ?? '').length,
+      current: () => this.templateFirstNativeBasisCurrent(plan, basis),
+      validate: async () =>
+        this.app.vault.getAbstractFileByPath(path) === null &&
+        (await this.templateFirstBasisCurrent(plan, basis)),
+    };
+    if (!(await plan.validate())) throw new StaleStaticNoteError();
+    this.templateFirstBases.set(plan, basis);
+    return plan;
+  }
+  private async captureTemplateFirstBasis(
+    path: string,
+    explicitTemplatePath: string | undefined,
+    title: string,
+  ): Promise<TemplateFirstBasis> {
+    const policy = TemplaterAdapter.prepare(this.app, path, explicitTemplatePath === undefined);
+    const selected = explicitTemplatePath ?? policy.templatePath;
+    const template = selected === undefined ? undefined : this.resolveTemplate(selected);
+    const stamp = template === undefined ? undefined : { ...template.stat };
+    const raw = template === undefined ? undefined : await readVaultText(this.app.vault, template);
+    if (raw?.includes('<%') === true && policy.adapter === undefined)
+      throw new ExecutableTemplateError();
+    return { policy, template, raw, stamp, title };
+  }
+
+  async createTemplateFirstNote(
+    plan: TemplateFirstPlan,
+    validate: () => void,
+    checkContent: (content: string) => void,
+    acceptBlank: (file: TFile) => Promise<void>,
+  ): Promise<{
+    readonly file: TFile;
+    readonly content: string;
+    readonly effects: Readonly<TemplateFirstEffects>;
+  }> {
+    const effects: TemplateFirstEffects = {
+      phase: 'provision',
+      noteEffects: 'unchanged',
+      destinationEffects: 'unchanged',
+      templateEffects: 'unchanged',
+    };
+    const basis = this.templateFirstBases.get(plan);
+    try {
+      if (basis === undefined) throw new StaleStaticNoteError();
+      const finalCheck = (): void => {
+        validate();
+        if (
+          !this.templateFirstDestinationCurrent(plan.path, undefined) ||
+          !this.templateFirstNativeBasisCurrent(plan, basis)
+        )
+          throw new StaleStaticNoteError();
+      };
+      const check = async (file?: TFile): Promise<void> => {
+        validate();
+        if (
+          !this.templateFirstDestinationCurrent(plan.path, file) ||
+          !(await this.templateFirstBasisCurrent(plan, basis))
+        )
+          throw new StaleStaticNoteError();
+      };
+      await check();
+      await this.ensureFolders(plan.path, {
+        check,
+        finalCheck,
+        attempting: () => {
+          if (effects.destinationEffects === 'unchanged') effects.destinationEffects = 'unknown';
+        },
+        created: () => {
+          effects.destinationEffects = 'committed';
+        },
+      });
+      const file = await this.createPreparedNote(
+        plan.path,
+        basis.template,
+        plan.templatePath ?? '',
+        {
+          title: basis.title,
+          guard: this.templateFirstGuard({
+            plan,
+            basis,
+            effects,
+            validate,
+            checkContent,
+            acceptBlank,
+            check,
+            finalCheck,
+          }),
+        },
+      );
+      return await this.readTemplateFirstResult({ plan, file, effects, check });
+    } catch (cause) {
+      if (cause instanceof TemplateFirstFailure) throw cause;
+      throw new TemplateFirstFailure({ ...effects }, cause);
+    }
+  }
+
+  private templateFirstGuard(context: {
+    plan: TemplateFirstPlan;
+    basis: TemplateFirstBasis;
+    effects: TemplateFirstEffects;
+    readonly validate: () => void;
+    readonly checkContent: (content: string) => void;
+    readonly acceptBlank: (file: TFile) => Promise<void>;
+    readonly check: (file?: TFile) => Promise<void>;
+    readonly finalCheck: () => void;
+  }): TemplateCreationGuard {
+    const { plan, basis, effects, validate, checkContent, acceptBlank, check } = context;
+    return {
+      adapter: basis.policy.adapter,
+      check,
+      finalCheck: context.finalCheck,
+      attempting: () => {
+        effects.noteEffects = 'unknown';
+      },
+      created: async (file) => {
+        effects.noteEffects = 'committed';
+        effects.phase = 'template';
+        await acceptBlank(file);
+      },
+      rendering: () => {
+        effects.templateEffects = 'unknown';
+      },
+      applied: () => {
+        effects.templateEffects = 'committed';
+      },
+      checkContent,
+      checkLive: (file, content) => {
+        validate();
+        if (
+          !this.templateFirstDestinationCurrent(plan.path, file) ||
+          !this.templateFirstNativeBasisCurrent(plan, basis)
+        )
+          throw new StaleStaticNoteError();
+        checkContent(content);
+      },
+    };
+  }
+  private async readTemplateFirstResult(context: {
+    readonly plan: TemplateFirstPlan;
+    readonly file: TFile;
+    readonly effects: TemplateFirstEffects;
+    readonly check: (file: TFile) => Promise<void>;
+  }): Promise<{
+    readonly file: TFile;
+    readonly content: string;
+    readonly effects: Readonly<TemplateFirstEffects>;
+  }> {
+    const { file, check } = context;
+    const effects: TemplateFirstEffects = { ...context.effects, phase: 'readback' };
+    try {
+      await check(file);
+      const stamp = { ...file.stat };
+      const content = await readVaultText(this.app.vault, file);
+      await check(file);
+      if (!sameNoteFileStamp(stamp, file.stat)) throw new StaleStaticNoteError();
+      return { file, content, effects };
+    } catch (cause) {
+      throw new TemplateFirstFailure(effects, cause);
+    }
+  }
+
+  private templateFirstDestinationCurrent(path: string, file: TFile | undefined): boolean {
+    return file === undefined
+      ? this.app.vault.getAbstractFileByPath(path) === null
+      : file.path === path && this.app.vault.getAbstractFileByPath(path) === file;
+  }
+  private async templateFirstBasisCurrent(
+    plan: TemplateFirstPlan,
+    basis: TemplateFirstBasis,
+  ): Promise<boolean> {
+    if (!this.templateFirstNativeBasisCurrent(plan, basis)) return false;
+    if (basis.template === undefined) return true;
+    return (
+      this.resolveTemplate(plan.templatePath ?? '') === basis.template &&
+      sameNoteFileStamp(basis.stamp, basis.template.stat) &&
+      (await readVaultText(this.app.vault, basis.template)) === basis.raw &&
+      sameNoteFileStamp(basis.stamp, basis.template.stat) &&
+      basis.policy.current()
+    );
+  }
+  private templateFirstNativeBasisCurrent(
+    plan: TemplateFirstPlan,
+    basis: TemplateFirstBasis,
+  ): boolean {
+    return (
+      basis.policy.current() &&
+      (basis.template === undefined ||
+        (this.resolveTemplate(plan.templatePath ?? '') === basis.template &&
+          sameNoteFileStamp(basis.stamp, basis.template.stat)))
+    );
+  }
 
   /** Read-only static provisioning plan; executable templates are never run by this capability. */
   async planStaticNote(
@@ -396,7 +649,7 @@ export class NoteTemplateService {
     }
     const template = this.resolveTemplate(templatePath.trim());
     await this.ensureFolders(path);
-    return await this.createPreparedNote(path, template, templatePath.trim(), title);
+    return await this.createPreparedNote(path, template, templatePath.trim(), { title });
   }
 
   /** Creates final, prevalidated content without running template code or opening an existing note. */
@@ -487,6 +740,7 @@ export class NoteTemplateService {
       await check();
       await this.ensureFolders(basis.path, {
         check,
+        finalCheck,
         attempting: () => {
           if (folders.effects === 'unchanged') folders.effects = 'unknown';
         },
@@ -561,7 +815,7 @@ export class NoteTemplateService {
     if (existing !== null) throw new InvalidNotePathError(path);
     const template = this.resolveTemplate(templatePath);
     await this.ensureFolders(path);
-    return await this.createPreparedNote(path, template, templatePath, title);
+    return await this.createPreparedNote(path, template, templatePath, { title });
   }
 
   private async retryFailedNote(
@@ -623,6 +877,7 @@ export class NoteTemplateService {
     if (existing !== null) throw new InvalidNotePathError(filePath);
     try {
       await guard?.check();
+      finalFolderCheck(guard);
       guard?.attempting();
       await this.app.vault.createFolder(path);
       guard?.created();
@@ -636,28 +891,77 @@ export class NoteTemplateService {
     path: string,
     template: TFile | undefined,
     templatePath: string,
-    title: string,
+    options: { readonly title: string; readonly guard?: TemplateCreationGuard },
   ): Promise<TFile> {
-    const session = this.templater()?.begin(path);
+    const { guard, title } = options;
+    await guard?.check();
+    const session = this.preparationSession(path, guard);
     let file: TFile | undefined;
+    let failure: { readonly cause: unknown } | undefined;
     try {
+      await guard?.check();
+      guard?.finalCheck();
+      guard?.attempting();
       file = await this.app.vault.create(path, '');
-      if (template === undefined) {
-        mapFor(failedByApp, this.app).delete(path);
-        return file;
-      }
-      await this.applyTemplate({ file, template, title, expectedContent: '', session });
+      await guard?.created(file);
+      if (template !== undefined)
+        await this.applyTemplate({
+          file,
+          template,
+          title,
+          expectedContent: '',
+          session,
+          ...(guard === undefined ? {} : { guard }),
+        });
       mapFor(failedByApp, this.app).delete(path);
-      return file;
     } catch (cause) {
-      if (file !== undefined) {
-        await this.recordFailedPreparation(file, templatePath, title, '');
-        throw new CreatedNoteTemplateError(path, cause);
-      }
-      throw cause;
-    } finally {
-      await session?.finish();
+      failure = { cause };
     }
+    failure = await this.finishPreparation(session, failure);
+    return await this.finishCreatedPreparation({
+      file,
+      failure,
+      path,
+      templatePath,
+      title,
+      guarded: guard !== undefined,
+    });
+  }
+  private preparationSession(
+    path: string,
+    guard: TemplateCreationGuard | undefined,
+  ): TemplaterSession | undefined {
+    return (guard === undefined ? this.templater() : guard.adapter)?.begin(path);
+  }
+  private async finishCreatedPreparation(state: {
+    file: TFile | undefined;
+    failure: { readonly cause: unknown } | undefined;
+    path: string;
+    templatePath: string;
+    title: string;
+    guarded: boolean;
+  }): Promise<TFile> {
+    const { file, failure, path, templatePath, title } = state;
+    if (failure !== undefined) {
+      if (!state.guarded && file !== undefined) {
+        await this.recordFailedPreparation(file, templatePath, title, '');
+        throw new CreatedNoteTemplateError(path, failure.cause);
+      }
+      throw failure.cause;
+    }
+    if (file === undefined) throw new Error('Note creation returned no file.');
+    return file;
+  }
+  private async finishPreparation(
+    session: TemplaterSession | undefined,
+    failure: { readonly cause: unknown } | undefined,
+  ): Promise<{ readonly cause: unknown } | undefined> {
+    try {
+      await session?.finish();
+    } catch (cause) {
+      return failure ?? { cause };
+    }
+    return failure;
   }
 
   private async retryTemplate(
@@ -731,15 +1035,27 @@ export class NoteTemplateService {
     title,
     expectedContent,
     session,
+    guard,
   }: TemplateApplication): Promise<void> {
+    const path = file.path;
     let content: string;
+    await guard?.check(file);
+    guard?.rendering();
     if (session !== undefined) {
       content = await session.render(template, file);
     } else {
       const raw = await readVaultText(this.app.vault, template, 'cached');
       content = renderCoreTemplate(raw, title);
     }
-    await this.app.vault.process(file, (source) => {
+    await guard?.check(file);
+    guard?.checkContent(content);
+    const written = await this.app.vault.process(file, (source) => {
+      guard?.checkLive(file, content);
+      if (
+        guard !== undefined &&
+        (file.path !== path || this.app.vault.getAbstractFileByPath(path) !== file)
+      )
+        throw new NoteContentChangedError();
       if (source !== expectedContent) {
         throw new NoteContentChangedError(
           `Note content changed while applying the template: ${file.path}`,
@@ -747,6 +1063,8 @@ export class NoteTemplateService {
       }
       return content;
     });
+    if (guard !== undefined && written !== content) throw new NoteContentChangedError();
+    guard?.applied();
   }
 
   private templater(): TemplaterAdapter | undefined {

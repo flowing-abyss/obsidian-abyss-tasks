@@ -12,6 +12,9 @@ export interface CommentField {
   readonly original?: string | undefined;
   readonly previousMarkdown?: string | undefined;
   readonly change?: TaskDisplayField['change'];
+  readonly createdIteration?: number;
+  readonly removedIteration?: number;
+  readonly removedMarkdown?: string;
 }
 type DisplayEntry =
   | { readonly kind: 'comment'; readonly key: string }
@@ -25,6 +28,7 @@ export interface CommandNodeFields {
   readonly iteration: number;
   readonly comparison?: TaskTreeV1 | undefined;
   readonly added: boolean;
+  readonly sessionChanged: boolean;
 }
 function sequence(comments: readonly TaskCommentV1[]): string {
   return JSON.stringify(comments.map((comment) => [comment.text, comment.timestamp]));
@@ -143,8 +147,32 @@ export function commandNodeFields(input: FieldInput): CommandNodeFields {
     iteration: iteration(state),
     added: before === undefined && plan !== undefined && (previous === undefined || previous.added),
     comparison: comparison(resolved),
+    sessionChanged: sessionChanged(resolved),
     ...(plan === undefined ? {} : { planRevision: plan.revision }),
   };
+}
+function sessionChanged({ previous, plan, before, tree }: FieldInput): boolean {
+  return (
+    previous?.sessionChanged === true ||
+    (plan !== undefined && (before === undefined || ownContent(before) !== ownContent(tree)))
+  );
+}
+
+/** Revisions include descendants; a child edit must not mark every ancestor's title. */
+function ownContent(tree: TaskTreeV1): string {
+  return JSON.stringify([
+    tree.markdownTitle,
+    tree.description,
+    tree.statusSymbol,
+    tree.priority,
+    tree.dates,
+    tree.time,
+    tree.durationMinutes,
+    tree.recurrence,
+    tree.tags,
+    tree.comments.map((comment) => [comment.text, comment.timestamp]),
+    tree.children.length,
+  ]);
 }
 
 interface FieldContext {
@@ -182,10 +210,7 @@ function initialAddition(input: FieldInput): boolean {
   return input.previous === undefined && input.before === undefined && input.plan !== undefined;
 }
 function buildComment(comment: TaskCommentV1, index: number, context: FieldContext): CommentField {
-  const exact = context.input.previous?.comments.find(
-    (field) => field.comment.target === comment.target,
-  );
-  const retained = context.continuation?.[index] ?? exact;
+  const retained = retainedComment(comment, index, context);
   const change = commentChange(index, retained, context);
   return {
     comment,
@@ -193,8 +218,19 @@ function buildComment(comment: TaskCommentV1, index: number, context: FieldConte
     accepted: context.input.plan === undefined || (retained?.accepted ?? context.accepted),
     original: originalText(retained, comment, context),
     previousMarkdown: previousCommentText(retained, change, context),
+    createdIteration: retained?.createdIteration ?? iteration(context.input.state),
     ...(change === undefined ? {} : { change }),
   };
+}
+function retainedComment(
+  comment: TaskCommentV1,
+  index: number,
+  context: FieldContext,
+): CommentField | undefined {
+  return (
+    context.continuation?.[index] ??
+    context.input.previous?.comments.find((field) => field.comment.target === comment.target)
+  );
 }
 function originalText(
   retained: CommentField | undefined,
@@ -218,8 +254,25 @@ function removedComments(context: FieldContext): readonly CommentField[] {
   if (edit?.type !== 'remove-comment' || changedIndex === undefined || input.previous === undefined)
     return removed;
   const field = input.previous.comments[changedIndex];
-  if (field?.accepted === true) removed.push({ ...field, change: 'removed' });
+  if (field !== undefined && removalWasVisible(field, input.state))
+    removed.push({
+      ...field,
+      change: 'removed',
+      removedIteration: iteration(input.state),
+      removedMarkdown: removalText(field, input),
+    });
   return removed;
+}
+function removalText(field: CommentField, input: FieldInput): string {
+  return input.previous?.iteration === iteration(input.state)
+    ? (field.previousMarkdown ?? field.comment.text)
+    : field.comment.text;
+}
+function removalWasVisible(field: CommentField, state: CommandSessionSnapshot): boolean {
+  return field.accepted || field.createdIteration !== iteration(state);
+}
+function childTargets(tree: TaskTreeV1 | undefined): readonly string[] {
+  return tree?.children.map((child) => child.target) ?? [];
 }
 function treeOrder(tree: TaskTreeV1, comments: readonly CommentField[]): DisplayEntry[] {
   const keys = new Map(comments.map((field) => [field.comment.target, field.key]));
@@ -239,7 +292,8 @@ function displayOrder(
   if (input.plan === undefined) return current;
   const pending = new Set([
     ...removed.map((field) => field.key),
-    ...(input.before?.children.map((child) => child.target) ?? []),
+    ...childTargets(input.before),
+    ...childTargets(comparison(input)),
   ]);
   const basis =
     input.previous?.order ?? (input.before === undefined ? [] : treeOrder(input.before, comments));
@@ -301,6 +355,7 @@ function initialFields(input: FieldInput): CommandNodeFields | undefined {
     order: treeOrder(source, comments),
     removed: [],
     added: false,
+    sessionChanged: false,
     iteration: iteration(input.state),
   };
 }
@@ -347,4 +402,11 @@ export function commandCommentDisplay(
   let previousMarkdown = field.previousMarkdown;
   if (cumulative) previousMarkdown = change === 'changed' ? field.original : undefined;
   return { change, previousMarkdown };
+}
+export function removedCommentVisible(
+  field: CommentField,
+  fields: CommandNodeFields,
+  cumulative: boolean,
+): boolean {
+  return cumulative ? field.accepted : field.removedIteration === fields.iteration;
 }

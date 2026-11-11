@@ -2,6 +2,7 @@ import type { App } from 'obsidian';
 import type { ShortcutActionId } from '../../settings/shortcuts';
 import type { TaskCommandResult } from '../../tasks';
 import type { CreationRevealAuthority } from '../creation/CreationPresentationController';
+import { isImeOwnedEvent } from '../ime';
 import type { InteractionOwnershipPort } from '../interactionOwnership';
 import { runAsyncAction } from '../runAsyncAction';
 import { describeTaskCreationResult, type CreationResultDescription } from '../taskCommandResult';
@@ -15,7 +16,10 @@ export type QuickCapturePhase = 'closed' | 'resolving' | 'open';
 interface QuickCaptureCoordinatorOptions {
   readonly command?: {
     readonly active: () => boolean;
-    readonly mount: (host: CaptureExtensionHost, close: () => void) => CaptureExtension;
+    readonly mount: (
+      host: CaptureExtensionHost,
+      close: (restoreFocus?: boolean) => void,
+    ) => CaptureExtension;
     readonly hide: () => void;
   };
   readonly app?: App;
@@ -197,8 +201,8 @@ export class QuickCaptureCoordinator {
         ? {}
         : {
             extend: (host: CaptureExtensionHost) =>
-              command.mount(host, () => {
-                if (this.generation === generation) this.releaseCurrentGeneration(true);
+              command.mount(host, (restoreFocus = true) => {
+                if (this.generation === generation) this.releaseCurrentGeneration(restoreFocus);
               }),
           }),
       ...(this.options.getTagColor === undefined ? {} : { getTagColor: this.options.getTagColor }),
@@ -226,9 +230,24 @@ export class QuickCaptureCoordinator {
     const onOutsidePointerDown = (event: Event): void => {
       this.handleOutsidePointer(event, generation, ownerDocument);
     };
+    const onEscape = (event: KeyboardEvent): void => {
+      if (
+        this.generation !== generation ||
+        event.defaultPrevented ||
+        event.key !== 'Escape' ||
+        isImeOwnedEvent(event)
+      )
+        return;
+      if (this.surface?.escape() === true) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }
+    };
+    ownerDocument.addEventListener('keydown', onEscape);
     ownerDocument.addEventListener('pointerdown', onOutsidePointerDown, true);
     this.outsidePointerCleanup = () => {
       ownerDocument.removeEventListener('pointerdown', onOutsidePointerDown, true);
+      ownerDocument.removeEventListener('keydown', onEscape);
     };
   }
 
@@ -236,12 +255,11 @@ export class QuickCaptureCoordinator {
     if (!this.isOutsideCurrentCapture(event, generation)) return;
 
     this.restoreFocusOnClose = false;
-    if (this.options.command?.active() === true) return;
     if (this.currentPhase === 'resolving') {
       this.releaseCurrentGeneration(false);
       return;
     }
-    if (this.options.smart !== undefined) return;
+    if (this.options.smart !== undefined || this.options.command !== undefined) return;
     const controller = this.controller;
     const surface = this.surface;
     if (controller == null || surface == null) return;
@@ -296,7 +314,6 @@ export class QuickCaptureCoordinator {
     this.revealIntent?.unmount();
     this.revealIntent = null;
     outsidePointerCleanup?.();
-    if (this.options.command?.active() === true) this.options.command.hide();
     surface?.destroy();
     controller?.destroy();
     ownershipToken?.release();

@@ -261,10 +261,18 @@ export class NoteApi {
       value.template === undefined
         ? undefined
         : await this.options.registry.acquire(value.template, value.expectedTemplateRevision);
-    return this.options.registry.port.prepareCreate(value.path, value.title, value.text, {
-      ...(template === undefined ? {} : { template }),
-      ...(value.collision === undefined ? {} : { collision: value.collision }),
-    });
+    return this.options.registry.port.prepareCreate(
+      value.path ?? value.destination,
+      value.title,
+      value.text,
+      {
+        ...(template === undefined ? {} : { template }),
+        ...(value.collision === undefined ? {} : { collision: value.collision }),
+        ...(value.templateExecution === undefined
+          ? {}
+          : { templateExecution: value.templateExecution }),
+      },
+    );
   }
   private async refineNative(
     value: Extract<PrepareNoteV1, { kind: 'refine' }>,
@@ -299,6 +307,9 @@ export class NoteApi {
       path: prepared.path,
       before: prepared.before === null ? null : { text: prepared.before, complete: true },
       after: { text: prepared.after, complete: true },
+      ...(prepared.creationPreview === undefined
+        ? {}
+        : { creationPreview: prepared.creationPreview }),
       ...(prepared.source === undefined
         ? {}
         : {
@@ -368,7 +379,9 @@ export class NoteApi {
                 execute: async (acceptedAt) => {
                   plan.attempted = true;
                   plan.accepted = true;
-                  const outcome = await plan.prepared.commit();
+                  const outcome = await plan.prepared.commit(() => {
+                    this.commitCurrent();
+                  });
                   return this.receipt(normalized, acceptedAt, outcome, (source) =>
                     reservation.project(source),
                   );
@@ -404,6 +417,11 @@ export class NoteApi {
       return freezeValue({ ...result, receipt: redacted });
     }
     return freezeValue(result);
+  }
+  private commitCurrent(): void {
+    if (this.options.isDisposed()) throw new NoteFailure('DISPOSED');
+    const failure = this.options.api.check();
+    if (failure !== undefined && !failure.ok) throw new NoteFailure(failure.error.code);
   }
   private receipt(
     input: CommitNoteV1,

@@ -41,7 +41,8 @@
     "ci": "node tooling/verify-changes.mjs",
     "prepare": "husky && node .ai/setup.mjs && pnpm run codegraph:setup",
     "lint:css:artifact": "node tooling/check-css.mjs --artifact dist/styles.css",
-    "codegraph:setup": "node .ai/setup-codegraph.mjs"
+    "codegraph:setup": "node .ai/setup-codegraph.mjs",
+    "command:eval": "node tooling/command-eval.mjs"
   },
   "nano-staged": {
     "*.{ts,cts,mts,tsx,js,cjs,mjs,jsx}": [
@@ -57,7 +58,7 @@
     ]
   },
   "release": {
-    "mainJsBudgetBytes": 4116480,
+    "mainJsBudgetBytes": 4194304,
     "stylesCssBudgetBytes": 226304
   },
   "keywords": [
@@ -86,6 +87,7 @@
     "@tanstack/charts": "1.1.0",
     "ai": "7.0.164",
     "chrono-node": "2.10.3",
+    "jose": "6.2.17",
     "minisearch": "7.2.0",
     "rrule": "2.8.1",
     "zod": "4.6.7"

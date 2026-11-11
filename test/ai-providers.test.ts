@@ -45,6 +45,29 @@ function secrets() {
 }
 
 describe('provider connections', () => {
+  it('resolves the selected native secret ID and treats disconnect separately from legacy defaults', () => {
+    const values = new Map([
+      ['abyss-tasks-cerebras-api-key', 'legacy'],
+      ['shared-key', 'selected'],
+    ]);
+    let bindings: unknown = {};
+    const owner = new ProviderSecrets(
+      {
+        getSecret: (id) => values.get(id) ?? null,
+        setSecret: (id, value) => {
+          values.set(id, value);
+        },
+      },
+      () => bindings,
+    );
+    expect(owner.resolve('cerebras')).toBe('legacy');
+    bindings = { cerebras: 'shared-key' };
+    expect(owner.resolve('cerebras')).toBe('selected');
+    bindings = { cerebras: null };
+    expect(owner.has('cerebras')).toBe(false);
+    expect(values.get('shared-key')).toBe('selected');
+    expect(values.get('abyss-tasks-cerebras-api-key')).toBe('legacy');
+  });
   it('reports configured controls from current preferences and key presence without a request', () => {
     const { owner } = secrets();
     const request = vi.fn(async () => reply());
@@ -52,8 +75,22 @@ describe('provider connections', () => {
     expect(connections.availability({})).toEqual({ agent: false, voice: false });
     owner.store('openrouter', 'synthetic-agent-key');
     owner.store('openai', 'synthetic-voice-key');
-    expect(connections.availability({})).toEqual({ agent: true, voice: false });
-    expect(connections.availability({ voice: 'openai' })).toEqual({ agent: true, voice: true });
+    expect(connections.availability({})).toEqual({ agent: false, voice: false });
+    expect(connections.availability({ voice: 'openai' })).toEqual({ agent: false, voice: true });
+    expect(connections.availability({ provider: 'openrouter', voice: 'openai' })).toEqual({
+      agent: true,
+      voice: true,
+    });
+    expect(
+      connections.availability({
+        provider: 'openrouter',
+        voice: 'openai',
+        voiceModel: 'unsupported',
+      }),
+    ).toEqual({
+      agent: true,
+      voice: false,
+    });
     owner.store('openrouter', '');
     expect(connections.availability({ voice: 'openai' })).toEqual({ agent: false, voice: true });
     expect(connections.availability({ provider: 'unsupported' })).toEqual({
@@ -62,15 +99,21 @@ describe('provider connections', () => {
     });
     expect(request).not.toHaveBeenCalled();
   });
-  it('defaults to explicit OpenRouter and reuses only supported research billing providers', () => {
+  it('leaves new roles disabled until selected and retains legacy explicit providers and supported research billing', () => {
     const settings = defaultProviderSettings();
-    expect(settings).toEqual({
-      provider: 'openrouter',
-      model: 'openai/gpt-6-luna',
-      search: 'agent',
+    expect(parseProviderSettings(undefined)).toMatchObject({
+      provider: 'disabled',
       voice: 'disabled',
     });
-    expect(researchProvider(settings)).toBe('openrouter');
+    expect(settings).toEqual({
+      provider: 'disabled',
+      model: '',
+      search: 'agent',
+      voice: 'disabled',
+      voiceInputMode: 'manual',
+    });
+    expect(researchProvider(settings)).toBeNull();
+    expect(researchProvider(parseProviderSettings({ provider: 'openrouter' }))).toBe('openrouter');
     expect(researchProvider({ ...settings, provider: 'anthropic' })).toBeNull();
     expect(researchProvider({ ...settings, provider: 'anthropic', search: 'openai' })).toBe(
       'openai',
@@ -138,7 +181,9 @@ describe('provider connections', () => {
     try {
       await expect(
         generateText({
-          model: new ProviderConnections(owner, transport).model(defaultProviderSettings()),
+          model: new ProviderConnections(owner, transport).model(
+            parseProviderSettings({ provider: 'openrouter' }),
+          ),
           prompt: 'Reply OK.',
           maxOutputTokens: 16,
           maxRetries: 0,
@@ -160,7 +205,7 @@ describe('provider connections', () => {
       return reply('{broken');
     });
     const connections = new ProviderConnections(owner, transport);
-    expect(() => connections.model(defaultProviderSettings())).toThrow(
+    expect(() => connections.model(parseProviderSettings({ provider: 'openrouter' }))).toThrow(
       expect.objectContaining({ code: 'missing-key' }),
     );
     for (const [provider, model, url] of [
@@ -331,7 +376,7 @@ it('runs a validated SDK tool exchange through the selected native OpenRouter mo
   });
   const connections = new ProviderConnections(owner, transport);
   const result = await generateText({
-    model: connections.model(defaultProviderSettings()),
+    model: connections.model(parseProviderSettings({ provider: 'openrouter' })),
     prompt: 'Double 3.',
     maxRetries: 0,
     stopWhen: isStepCount(2),
@@ -436,5 +481,57 @@ it.each([
     owner.store(provider, '');
     expect(connections.availability(settings).agent).toBe(false);
     transport.dispose();
+  },
+);
+
+it.each(['exa', 'firecrawl', 'brave'] as const)(
+  'preserves %s native secret bindings, unknown extensions and disconnection without network admission',
+  async (provider) => {
+    const settings = parseProviderSettings({
+      search: provider,
+      secrets: { [provider]: 'shared-key', extension: 'keep' },
+      extension: { keep: true },
+    });
+    expect(researchProvider(settings)).toBe(provider);
+    expect(settings).toMatchObject({ secrets: { extension: 'keep' }, extension: { keep: true } });
+    let bindings: unknown = settings.secrets;
+    const values = new Map([['shared-key', 'synthetic-shared-key']]);
+    const owner = new ProviderSecrets(
+      {
+        getSecret: (id) => values.get(id) ?? null,
+        setSecret: (id, value) => {
+          values.set(id, value);
+        },
+      },
+      () => bindings,
+    );
+    expect(owner.resolve(provider)).toBe('synthetic-shared-key');
+    bindings = { [provider]: null };
+    expect(owner.has(provider)).toBe(false);
+    expect(() => owner.resolve(provider)).toThrow(expect.objectContaining({ code: 'missing-key' }));
+    expect(values.get('shared-key')).toBe('synthetic-shared-key');
+    bindings = {};
+    owner.store(provider, 'synthetic-default-key');
+    expect(owner.id(provider)).toBe(`abyss-tasks-${provider}-api-key`);
+    expect(owner.resolve(provider)).toBe('synthetic-default-key');
+    const request = vi.fn(async () => reply());
+    const transport = transportFixture(request);
+    try {
+      for (const url of [
+        'https://example.org/source',
+        'https://api.exa.ai/search?query=untrusted',
+        'https://api.firecrawl.dev/v2/crawl',
+      ]) {
+        await expect(
+          transport.fetchFor(provider)(url, { method: 'POST', body: '{}' }),
+        ).rejects.toMatchObject({ code: 'invalid-request' });
+        await expect(transport.fetchFor(provider)(url, { method: 'GET' })).rejects.toMatchObject({
+          code: 'invalid-request',
+        });
+      }
+      expect(request).not.toHaveBeenCalled();
+    } finally {
+      transport.dispose();
+    }
   },
 );

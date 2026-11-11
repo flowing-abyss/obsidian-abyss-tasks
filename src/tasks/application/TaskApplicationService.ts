@@ -34,8 +34,10 @@ import {
   applyTaskCreationTagPolicy,
   isTaskInboxMember,
   normalizeTaskTagInput,
+  resolveInboxCreationPolicy,
   sameTag,
   tagComparisonKey,
+  taskCreationPrefixTags,
   taskPrefixForSubtask,
 } from '../domain/taskTags';
 import type {
@@ -483,6 +485,58 @@ function ownedDescendants(task: TaskSnapshot | SubtaskSnapshot): string {
   return newline < 0 ? '' : block.slice(newline);
 }
 
+function unsupportedInboxDestination(
+  input: Parameters<TaskCreatePreparationApi['prepareCreateTree']>[0],
+): boolean {
+  return (
+    input.intent === 'inbox' &&
+    input.destination.type !== 'configured-default' &&
+    input.destination.type !== 'explicit'
+  );
+}
+function inboxCreationMismatch(
+  intent: 'inbox' | undefined,
+  prepared: TaskPreparedCreateRoot,
+  settings: TaskBehaviorSettings,
+): boolean {
+  return (
+    intent === 'inbox' &&
+    prepared.type === 'ready' &&
+    !createInboxPreview(prepared.after.tags, settings).member
+  );
+}
+function creationProject(
+  destination: TaskCreatePreparationDestination,
+): ProjectTaskDestination | undefined {
+  return destination.type === 'project' ? { ...destination.destination } : undefined;
+}
+function creationPlanFailure(
+  plan: TaskDestinationPlan | undefined,
+): TaskCreatePreparation | undefined {
+  if (plan?.preparedFailure === undefined) return undefined;
+  return {
+    type: 'invalid',
+    result: { type: 'invalid', issues: [{ code: plan.preparedFailure, field: 'template' }] },
+  };
+}
+function creationTreePolicy(
+  input: Parameters<TaskCreatePreparationApi['prepareCreateTree']>[0],
+  snapshot: TaskBehaviorSettings,
+): { tree: TaskCreateTreeNode; settings: TaskBehaviorSettings } | undefined {
+  const policy = resolveInboxCreationPolicy(snapshot, input.intent);
+  if (policy === undefined || unsupportedInboxDestination(input)) return undefined;
+  let tree = structuredClone(input.tree);
+  const serviceTag = policy.serviceTag;
+  const tags = tree.initial?.tags;
+  if (serviceTag !== undefined && tags?.remove?.some((tag) => sameTag(tag, serviceTag)) !== true) {
+    tree = {
+      ...tree,
+      initial: { ...tree.initial, tags: { ...tags, add: [...(tags?.add ?? []), serviceTag] } },
+    };
+  }
+  return { tree, settings: { ...snapshot, taskPrefix: policy.prefix } };
+}
+
 function snapshotBehaviorSettings(provider: TaskBehaviorSettingsProvider): TaskBehaviorSettings {
   const settings = provider();
   return {
@@ -755,12 +809,35 @@ export class TaskApplicationService
     );
   }
 
+  creationPolicy(): {
+    readonly taskPrefix: string;
+    readonly defaultTags: readonly string[];
+    readonly inbox: {
+      readonly mode: TaskBehaviorSettings['inbox']['mode'];
+      readonly serviceTag?: string;
+      readonly removeTagOnAssign: boolean;
+    };
+  } {
+    const settings = snapshotBehaviorSettings(this.behaviorSettings_abyssPrivate);
+    const serviceTag = resolveInboxCreationPolicy(settings, 'inbox')?.serviceTag;
+    return {
+      taskPrefix: settings.taskPrefix,
+      defaultTags: taskCreationPrefixTags(settings.taskPrefix),
+      inbox: {
+        mode: settings.inbox.mode,
+        removeTagOnAssign: settings.inbox.removeTagOnAssign,
+        ...(serviceTag === undefined ? {} : { serviceTag }),
+      },
+    };
+  }
+
   async planCreate(
     destination: CreateTaskCommandDestination,
     options?: TaskCreatePlanOptions,
   ): Promise<TaskCreateSession> {
     const snapshot = snapshotBehaviorSettings(this.behaviorSettings_abyssPrivate);
-    const settings = options?.intent === 'inbox' ? { ...snapshot, taskPrefix: '' } : snapshot;
+    const policy = resolveInboxCreationPolicy(snapshot, options?.intent);
+    const settings = { ...snapshot, taskPrefix: policy?.prefix ?? '' };
     const reading = captureClock(this.clock_abyssPrivate);
     try {
       const plan = await this.destinationPlan_abyssPrivate(destination);
@@ -1677,45 +1754,28 @@ export class TaskApplicationService
   async prepareCreateTree(
     input: Parameters<TaskCreatePreparationApi['prepareCreateTree']>[0],
   ): Promise<TaskCreatePreparation> {
-    const tree = structuredClone(input.tree);
-    const settings = structuredClone(this.behaviorSettings_abyssPrivate());
+    const snapshot = structuredClone(this.behaviorSettings_abyssPrivate());
+    const resolved = creationTreePolicy(input, snapshot);
+    if (resolved === undefined) return { type: 'invalid', result: invalidTaskTarget('settings') };
+    const { tree, settings } = resolved;
     const reading = captureClock(this.clock_abyssPrivate);
     const catalog = JSON.stringify(this.statusCatalog_abyssPrivate.all());
     const current = (): boolean =>
-      JSON.stringify(this.behaviorSettings_abyssPrivate()) === JSON.stringify(settings) &&
+      JSON.stringify(this.behaviorSettings_abyssPrivate()) === JSON.stringify(snapshot) &&
       JSON.stringify(this.statusCatalog_abyssPrivate.all()) === catalog;
     try {
-      const project =
-        input.destination.type === 'project' ? { ...input.destination.destination } : undefined;
+      const project = creationProject(input.destination);
       const plan = await this.sealedDestinationPlan_abyssPrivate(input.destination);
-      if (plan?.preparedFailure !== undefined)
-        return {
-          type: 'invalid',
-          result: { type: 'invalid', issues: [{ code: plan.preparedFailure, field: 'template' }] },
-        };
+      const failure = creationPlanFailure(plan);
+      if (failure !== undefined) return failure;
       if (plan === undefined) return { type: 'invalid', result: destinationUnavailableResult() };
       const draft = this.treeDraft_abyssPrivate(tree, settings, reading);
       if (draft === undefined) return { type: 'invalid', result: invalidTaskTarget('tree') };
       const root = await this.repository_abyssPrivate.prepareCreateRoot?.(plan.destination, draft);
       if (root === undefined) return { type: 'invalid', result: destinationUnavailableResult() };
-      const prepared = buildPreparedCreateTree(root, tree, {
-        draft: (node, parent) =>
-          this.treeDraft_abyssPrivate(
-            node,
-            {
-              ...settings,
-              taskPrefix: taskPrefixForSubtask(
-                settings.taskPrefix,
-                settings.applyTaskPrefixToSubtasks,
-                parent.tags,
-                settings.inbox,
-              ),
-            },
-            reading,
-          ),
-        normalize: (command, snapshot) =>
-          this.normalizeTreeCommand_abyssPrivate(command, snapshot, settings, reading),
-      });
+      const prepared = this.buildCreationTree_abyssPrivate(root, tree, settings, reading);
+      if (inboxCreationMismatch(input.intent, prepared, settings))
+        return { type: 'invalid', result: invalidTaskTarget('tags') };
       if (!current()) return { type: 'invalid', result: invalidTaskTarget('settings') };
       const guard: PreparedTaskCreateGuard = {
         validateBeforeProvision: async () =>
@@ -1750,6 +1810,32 @@ export class TaskApplicationService
         result: { type: 'io-error', cause: 'repository-error', contentState: 'unchanged' },
       };
     }
+  }
+
+  private buildCreationTree_abyssPrivate(
+    root: TaskPreparedCreateRoot,
+    tree: TaskCreateTreeNode,
+    settings: TaskBehaviorSettings,
+    reading: ClockReading | { readonly localDate: ClockReading['localDate'] },
+  ): TaskPreparedCreateRoot {
+    return buildPreparedCreateTree(root, tree, {
+      draft: (node, parent) =>
+        this.treeDraft_abyssPrivate(
+          node,
+          {
+            ...settings,
+            taskPrefix: taskPrefixForSubtask(
+              settings.taskPrefix,
+              settings.applyTaskPrefixToSubtasks,
+              parent.tags,
+              settings.inbox,
+            ),
+          },
+          reading,
+        ),
+      normalize: (command, snapshot) =>
+        this.normalizeTreeCommand_abyssPrivate(command, snapshot, settings, reading),
+    });
   }
 
   private async sealedDestinationPlan_abyssPrivate(

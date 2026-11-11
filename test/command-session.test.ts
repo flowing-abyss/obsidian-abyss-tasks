@@ -1,10 +1,12 @@
 import { afterEach, expect, it } from 'vitest';
 import type { ApiResultV1, TasksApiV1 } from '../api';
-import { canonicalCommandPlan } from '../src/ai/commandReads';
+import { canonicalCommandPlan, canonicalCommandTree } from '../src/ai/commandReads';
 import { sameReviewedContent } from '../src/ai/commandSchemas';
 import { CommandSession } from '../src/ai/CommandSession';
+import { CommandSessionStore } from '../src/ai/CommandSessionStore';
 import type { CommandAgentPort, CommandSessionSnapshot } from '../src/ai/commandTypes';
 import { deferred, expectDefined } from './helpers';
+import { commandSessionStorage } from './support/commandSessionStorage';
 import { publicApiHarness, type PublicApiHarness } from './support/publicApiHarness';
 const owners: PublicApiHarness[] = [];
 afterEach(() => {
@@ -16,9 +18,73 @@ function ok<T>(r: ApiResultV1<T>): T {
   if (!r.ok) throw new Error(r.error.code);
   return r.value;
 }
+it('clears admitted input before planning completes and retains the exact exchange', async () => {
+  const h = await setup();
+  const gate = deferred<void>();
+  h.setRun(async () => gate.promise);
+  h.session.setInput('Accepted task');
+  const capture = h.session.captureInput();
+  const pending = h.session.submit('Accepted task');
+  expect(h.session.snapshot().input).toBe('');
+  expect(capture.current()).toBe(true);
+  expect(h.session.captureInput().dirty).toBe(false);
+  expect(h.session.snapshot().exchanges).toContainEqual({ role: 'user', text: 'Accepted task' });
+  gate.resolve();
+  await pending;
+});
+it.each([false, true])(
+  'restores failed admitted text only without a newer composer edit (newer=%s)',
+  async (newer) => {
+    const h = await setup();
+    const gate = deferred<void>();
+    h.setRun(async () => {
+      await gate.promise;
+      throw new Error('Synthetic failure');
+    });
+    h.session.setInput('Accepted task');
+    const pending = h.session.submit('Accepted task');
+    expect(h.session.snapshot().input).toBe('');
+    if (newer) h.session.setInput('Newer draft');
+    gate.resolve();
+    await pending;
+    expect(h.session.snapshot().input).toBe(newer ? 'Newer draft' : 'Accepted task');
+    expect(h.session.captureInput().dirty).toBe(true);
+    expect(h.session.snapshot().status.kind).toBe('error');
+  },
+);
+it.each([false, true])(
+  'preserves a newer draft while a queued command is admitted or stopped (stopped=%s)',
+  async (stopped) => {
+    const h = await setup();
+    const gate = deferred<void>();
+    const seen: string[] = [];
+    h.setRun(async ({ text }) => {
+      seen.push(text);
+      if (text === 'First') await gate.promise;
+    });
+    const first = h.session.submit('First');
+    h.session.setInput('Queued');
+    const queued = h.session.submit('Queued');
+    h.session.setInput('Newer draft');
+    if (stopped) h.session.cancelTurn();
+    gate.resolve();
+    await Promise.all([first, queued]);
+    expect(h.session.snapshot().input).toBe('Newer draft');
+    expect(h.session.captureInput().dirty).toBe(true);
+    expect(seen).toEqual(stopped ? ['First'] : ['First', 'Queued']);
+  },
+);
+it('retains rejected admission input without adding an exchange', async () => {
+  const h = await setup();
+  h.session.setInput('Unsent');
+  await h.session.submit('Unsent', undefined, undefined, () => false);
+  expect(h.session.snapshot().input).toBe('Unsent');
+  expect(h.session.snapshot().exchanges).toEqual([]);
+});
 async function setup(
   files: Record<string, string> = { 'a.md': '- [ ] Existing\n' },
   configure: (api: TasksApiV1) => TasksApiV1 = (api) => api,
+  now: () => number = () => Date.UTC(2026, 7, 1, 12),
 ) {
   const h = await publicApiHarness(files);
   owners.push(h);
@@ -32,7 +98,7 @@ async function setup(
         saved.push(state);
       },
     },
-    now: () => Date.UTC(2026, 7, 1, 12),
+    now,
     id: (() => {
       let i = 0;
       return () => `command-${++i}`;
@@ -829,7 +895,8 @@ it('ignores empty Enter while planning and interprets fresh input after cancelli
   firstResolve();
   await Promise.all([pending, next]);
   expect(seen).toEqual(['First', 'Second']);
-  expect(h.session.snapshot().input).toBe('Second');
+  expect(h.session.snapshot().input).toBe('');
+  expect(h.session.snapshot().exchanges.slice(-1)).toEqual([{ role: 'user', text: 'Second' }]);
 });
 it('counts changed nodes rather than an unchanged large surrounding tree', async () => {
   const h = await publicApiHarness({
@@ -1342,7 +1409,7 @@ it('retains trailing constraints in an accepted long user command', async () => 
   const text = `${'a'.repeat(4100)} Keep the original destination.`;
   await h.session.submit(text);
   expect(h.session.snapshot().exchanges[0]?.text).toBe(text);
-  expect(h.session.snapshot().input).toBe(text);
+  expect(h.session.snapshot().input).toBe('');
 });
 it('rejects oversized commands before interpretation and retains the complete input', async () => {
   const h = await setup();
@@ -1398,7 +1465,8 @@ it('does not publish rejected input after disposal while draining a previous tur
   h.session.dispose();
   first.resolve();
   await Promise.all([pending, rejected]);
-  expect(h.session.snapshot().input).toBe('First');
+  expect(h.session.snapshot().input).toBe('');
+  expect(h.session.snapshot().exchanges).toEqual([{ role: 'user', text: 'First' }]);
 });
 it('retains oversized input after a cancelled planning turn settles its admitted write', async () => {
   const h = await setup();
@@ -1833,3 +1901,523 @@ it.each(['reparent', 'promote'] as const)(
     );
   },
 );
+
+const readbackSource =
+  '- [ ] Root 🔁 every week on Wednesday\n  - Root comment\n  - [ ] Child A\n    - 2026-08-01: Dated child comment\n    - 2026-08-01T09:00:00+00:00 → 2026-08-01T09:45:00+00:00\n    - [ ] Grandchild\n      - Grandchild comment\n  - [ ] Child B\n';
+async function stageReadbackEdit(h: Awaited<ReturnType<typeof setup>>) {
+  const root = expectDefined(ok(await h.api.tasks.list()).items[0]);
+  const plan = ok(
+    await expectDefined(h.api.tasks.prepare)({
+      kind: 'edit',
+      target: root.target,
+      expectedRevision: root.revision,
+      operation: {
+        type: 'patch',
+        target: root.target,
+        patch: {
+          recurrence: { type: 'set', value: 'every week on Friday' },
+        },
+      },
+    }),
+  );
+  const complete = await canonicalCommandPlan(h.api, plan, new AbortController().signal, {
+    now: () => 0,
+    deadline: 5000,
+  });
+  h.session.stage({ kind: 'task', plan: complete });
+  return root;
+}
+it('publishes complete committed descendants and restores the exact actual tree from verified JSON without native reads', async () => {
+  let applies = 0;
+  const h = await setup({ 'a.md': readbackSource }, (api) => ({
+    ...api,
+    tasks: {
+      ...api.tasks,
+      apply: async (...args) => {
+        applies++;
+        return expectDefined(api.tasks.apply)(...args);
+      },
+    },
+  }));
+  const root = await stageReadbackEdit(h);
+  const shallow = ok(await expectDefined(h.api.tasks.tree)({ target: root.target, limit: 500 }));
+  expect(shallow.tree.complete).toBe(false);
+  expect(shallow.tree.children[0]?.comments).toEqual([]);
+  expect(await h.session.confirm()).toBe(true);
+  const snapshot = h.session.snapshot();
+  const actual = expectDefined(snapshot.actual[0]);
+  expect(actual).toMatchObject({
+    complete: true,
+    truncated: false,
+    comments: [{ text: 'Root comment' }],
+    children: [
+      {
+        complete: true,
+        comments: [
+          { text: 'Dated child comment', timestamp: { precision: 'day', value: '2026-08-01' } },
+        ],
+        timeEntries: [
+          {
+            startMs: Date.parse('2026-08-01T09:00:00+00:00'),
+            endMs: Date.parse('2026-08-01T09:45:00+00:00'),
+            state: 'closed',
+          },
+        ],
+        children: [{ complete: true, comments: [{ text: 'Grandchild comment' }] }],
+      },
+      { complete: true, markdownTitle: 'Child B' },
+    ],
+  });
+  const current = ok(
+    await expectDefined(h.api.tasks.tree)({
+      target: actual.target,
+      expectedRevision: actual.revision,
+    }),
+  );
+  const canonical = await canonicalCommandTree(h.api, current, new AbortController().signal, {
+    now: () => 0,
+    deadline: 5000,
+  });
+  expect(actual).toEqual(canonical.tree);
+  expect(await h.read('a.md')).toBe(readbackSource.replace('Wednesday', 'Friday'));
+  expect(applies).toBe(1);
+  const storage = commandSessionStorage();
+  const open = () => CommandSessionStore.open({ ...storage, now: () => 1 });
+  const store = await open();
+  await store.create(snapshot);
+  const restored = expectDefined((await open()).records()[0]).snapshot;
+  const historical = new CommandSession({
+    api: {
+      ...h.api,
+      tasks: {
+        ...h.api.tasks,
+        tree: async () => {
+          throw new Error('Historical reads are forbidden');
+        },
+      },
+    },
+    agent: { run: async () => {} },
+    journal: { save: async () => {} },
+    now: () => 1,
+    id: () => 'restored',
+  });
+  expect(historical.restore(restored)).toBe(true);
+  expect(historical.snapshot().actual).toEqual(snapshot.actual);
+  expect(historical.readOnly()).toBe(true);
+  expect(await historical.confirm()).toBe(false);
+  expect(applies).toBe(1);
+  historical.dispose();
+});
+it('exhausts per-owner cursors before publishing a saved tree with more than 500 entries', async () => {
+  const comments = Array.from({ length: 503 }, (_, i) => `  - Comment ${i}\n`).join('');
+  const h = await setup({ 'a.md': `- [ ] Root\n${comments}  - [ ] Child\n    - Nested\n` });
+  const root = expectDefined(ok(await h.api.tasks.list()).items[0]);
+  h.session.stage({
+    kind: 'status',
+    target: root.target,
+    revision: root.revision,
+    symbol: 'x',
+    nuance: 'Complete with normal lifecycle',
+  });
+  expect(await h.session.confirm()).toBe(true);
+  const tree = expectDefined(h.session.snapshot().actual[0]);
+  expect(tree.complete).toBe(true);
+  expect(tree.comments.map((comment) => comment.text)).toEqual(
+    Array.from({ length: 503 }, (_, i) => `Comment ${i}`),
+  );
+  expect(tree.entries).toHaveLength(504);
+  expect(tree.children[0]?.comments[0]?.text).toBe('Nested');
+});
+it.each(['read failure', 'revision change', 'deadline'])(
+  'retains the committed receipt and prohibits replay after descendant %s',
+  async (failure) => {
+    let applies = 0;
+    let clock = Date.UTC(2026, 7, 1, 12);
+    const h = await setup(
+      { 'a.md': readbackSource },
+      (api) => ({
+        ...api,
+        tasks: {
+          ...api.tasks,
+          apply: async (...args) => {
+            applies++;
+            return expectDefined(api.tasks.apply)(...args);
+          },
+          tree: async (input, options) => {
+            const result = await expectDefined(api.tasks.tree)(input, options);
+            if (applies > 0 && result.ok && result.value.tree.markdownTitle === 'Child A') {
+              if (failure === 'read failure') throw new Error('Unavailable descendant');
+              if (failure === 'deadline') {
+                clock += 6000;
+                return result;
+              }
+              return {
+                ...result,
+                value: {
+                  ...result.value,
+                  tree: { ...result.value.tree, revision: 'changed-revision' },
+                },
+              };
+            }
+            return result;
+          },
+        },
+      }),
+      () => clock,
+    );
+    await stageReadbackEdit(h);
+    expect(await h.session.confirm()).toBe(false);
+    expect(h.session.snapshot().status.message).toBe(
+      'The write settled, but the complete saved result could not be verified. Review the current source before continuing.',
+    );
+    expect(h.session.snapshot()).toMatchObject({
+      status: { kind: 'error' },
+      blocked: true,
+      journal: [{ state: 'settled', effects: 'committed', receipt: { effects: 'committed' } }],
+      actual: [],
+    });
+    expect(await h.session.confirm()).toBe(false);
+    expect(applies).toBe(1);
+    expect(await h.read('a.md')).toBe(readbackSource.replace('Wednesday', 'Friday'));
+  },
+);
+
+it.each(['thinking', 'searching', 'writing'] as const)(
+  'restores interrupted %s as stopped history without replay, including Stop and reopen',
+  async (kind) => {
+    const h = await setup();
+    await h.session.submit('Retained exchange');
+    const plan = ok(
+      await expectDefined(h.api.tasks.prepare)({
+        kind: 'create',
+        destination: { type: 'note', path: 'a.md', insertion: { type: 'append' } },
+        tree: { markdownTitle: 'Pending draft', children: [{ markdownTitle: 'Retained child' }] },
+      }),
+    );
+    h.session.stage({ kind: 'task', plan });
+    const listed = ok(await h.api.tasks.list());
+    const actual = ok(
+      await expectDefined(h.api.tasks.tree)({ target: expectDefined(listed.items[0]).target }),
+    );
+    h.session.setInput('Unsent draft');
+    const snapshot: CommandSessionSnapshot = {
+      ...h.session.snapshot(),
+      status: { kind, message: 'Active operation' },
+      actual: [actual.tree],
+      activeQuestion: 'Retained question?',
+      journal:
+        kind === 'writing'
+          ? [
+              {
+                id: 'interrupted',
+                proposalRevision: 0,
+                change: {
+                  kind: 'status',
+                  target: 'task',
+                  revision: 'revision',
+                  symbol: 'x',
+                  nuance: '',
+                },
+                request: { requestId: 'request', expiresAt: 100 },
+                state: 'admitted',
+              },
+            ]
+          : [],
+    };
+    let calls = 0;
+    h.setRun(async () => {
+      calls++;
+    });
+    expect(h.session.restore(snapshot)).toBe(true);
+    const restored = h.session.snapshot();
+    expect(restored.status.kind).toBe(kind === 'writing' ? 'error' : 'ready');
+    expect(restored.recovery).toBe(kind === 'writing' ? 'uncertain' : 'historical');
+    expect(restored.blocked).toBe(kind === 'writing');
+    h.session.cancelTurn();
+    expect(h.session.restore(h.session.snapshot())).toBe(true);
+    for (const key of [
+      'input',
+      'proposal',
+      'actual',
+      'activeQuestion',
+      'exchanges',
+      'journal',
+    ] as const)
+      expect(h.session.snapshot()[key]).toEqual(snapshot[key]);
+    expect(h.session.snapshot().status).toEqual(restored.status);
+    expect(await h.session.confirm()).toBe(false);
+    expect(calls).toBe(0);
+  },
+);
+
+it.each([false, true])(
+  'composes protected prose and task edits in the same note (task first=%s)',
+  async (taskFirst) => {
+    const h = await setup({ 'a.md': 'Original prose\n\n- [ ] Existing\n' });
+    const root = expectDefined(ok(await h.api.tasks.list()).items[0]);
+    const task = ok(
+      await expectDefined(h.api.tasks.prepare)({
+        kind: 'edit',
+        target: root.target,
+        expectedRevision: root.revision,
+        operation: {
+          type: 'patch',
+          target: root.target,
+          patch: { markdownTitle: { type: 'set', value: 'Renamed' } },
+        },
+      }),
+    );
+    const notes = expectDefined(h.api.notes);
+    const page = ok(await notes.read({ selector: { path: 'a.md' } }));
+    const section = expectDefined(
+      page.segments.find((segment) => segment.section.kind === 'prose'),
+    );
+    const note = ok(
+      await notes.prepare({
+        kind: 'edit',
+        target: page.note.target,
+        expectedRevision: page.note.revision,
+        operation: {
+          type: 'replace-section',
+          section: section.section.target,
+          text: 'Changed prose\n\n',
+        },
+      }),
+    );
+    if (taskFirst) h.session.stage({ kind: 'task', plan: task });
+    h.session.stage({ kind: 'note', plan: note });
+    if (!taskFirst) h.session.stage({ kind: 'task', plan: task });
+    expect(await h.session.confirm()).toBe(true);
+    expect(await h.read('a.md')).toBe('Changed prose\n\n- [ ] Renamed\n');
+    expect(h.session.snapshot().journal.map((entry) => entry.effects)).toEqual([
+      'committed',
+      'committed',
+    ]);
+  },
+);
+
+it('does not dispatch project creation after cancellation during schema read', async () => {
+  const entered = deferred<void>(),
+    release = deferred<void>();
+  let holding = false;
+  const created: string[] = [];
+  const schema = {
+    providerEpoch: 'epoch',
+    revision: 1,
+    generation: 1,
+    scopeRevision: 1,
+    semanticsRevision: 1,
+    statuses: [],
+    fields: [],
+  };
+  const h = await setup(undefined, (api) => ({
+    ...api,
+    projects: {
+      schema: async () => {
+        if (holding) {
+          entered.resolve();
+          await release.promise;
+        }
+        return { ok: true as const, value: schema };
+      },
+      create: async (input: { name: string }) => {
+        created.push(input.name);
+        return {
+          ok: false as const,
+          effects: 'unchanged' as const,
+          recovery: 'none' as const,
+          error: {
+            code: 'INVALID_ARGUMENT' as const,
+            category: 'validation' as const,
+            message: 'failed',
+          },
+        };
+      },
+    } as unknown as NonNullable<TasksApiV1['projects']>,
+  }));
+  h.session.stage({ kind: 'project-create', id: 'p', name: 'New project', schema });
+  holding = true;
+  const writing = h.session.confirm();
+  await entered.promise;
+  h.session.cancelTurn();
+  release.resolve();
+  await writing;
+  expect(created).toEqual([]);
+  expect(h.session.snapshot().journal[0]).toMatchObject({ state: 'settled', effects: 'unchanged' });
+});
+
+it('settles a project request already dispatched when cancellation arrives', async () => {
+  const entered = deferred<void>(),
+    release = deferred<void>();
+  const schema = {
+    providerEpoch: 'epoch',
+    revision: 1,
+    generation: 1,
+    scopeRevision: 1,
+    semanticsRevision: 1,
+    statuses: [],
+    fields: [],
+  };
+  let calls = 0;
+  let settlementSignal: AbortSignal | undefined;
+  const h = await setup(undefined, (api) => ({
+    ...api,
+    projects: {
+      schema: async () => ({ ok: true as const, value: schema }),
+      create: async (_input: unknown, options?: { signal?: AbortSignal }) => {
+        settlementSignal = options?.signal;
+        calls++;
+        entered.resolve();
+        await release.promise;
+        return {
+          ok: false as const,
+          effects: 'unchanged' as const,
+          recovery: 'none' as const,
+          error: {
+            code: 'INVALID_ARGUMENT' as const,
+            category: 'validation' as const,
+            message: 'failed',
+          },
+        };
+      },
+    } as unknown as NonNullable<TasksApiV1['projects']>,
+  }));
+  h.session.stage({ kind: 'project-create', id: 'p', name: 'New project', schema });
+  const writing = h.session.confirm();
+  await entered.promise;
+  h.session.cancelTurn();
+  expect(expectDefined(settlementSignal).aborted).toBe(false);
+  release.resolve();
+  await writing;
+  expect(calls).toBe(1);
+  expect(h.session.snapshot().journal).toMatchObject([
+    { state: 'settled', effects: 'unchanged', error: 'INVALID_ARGUMENT' },
+  ]);
+});
+
+it('refuses a same-note task continuation when external task meaning changes after prose is saved', async () => {
+  let changeSource: () => Promise<void> = async () => {};
+  const h = await setup({ 'a.md': 'Original prose\n\n- [ ] Existing\n' }, (api) => ({
+    ...api,
+    tasks: {
+      ...api.tasks,
+      prepare: async (input, options) => {
+        if (input.kind === 'refresh') await changeSource();
+        return expectDefined(api.tasks.prepare)(input, options);
+      },
+    },
+  }));
+  changeSource = async () => h.external('a.md', 'Changed prose\n\n- [ ] External\n');
+  const root = expectDefined(ok(await h.api.tasks.list()).items[0]);
+  const task = ok(
+    await expectDefined(h.api.tasks.prepare)({
+      kind: 'edit',
+      target: root.target,
+      expectedRevision: root.revision,
+      operation: {
+        type: 'patch',
+        target: root.target,
+        patch: { markdownTitle: { type: 'set', value: 'Renamed' } },
+      },
+    }),
+  );
+  const notes = expectDefined(h.api.notes);
+  const page = ok(await notes.read({ selector: { path: 'a.md' } }));
+  const section = expectDefined(page.segments.find((segment) => segment.section.kind === 'prose'));
+  const note = ok(
+    await notes.prepare({
+      kind: 'edit',
+      target: page.note.target,
+      expectedRevision: page.note.revision,
+      operation: {
+        type: 'replace-section',
+        section: section.section.target,
+        text: 'Changed prose\n\n',
+      },
+    }),
+  );
+  h.session.stage({ kind: 'note', plan: note });
+  h.session.stage({ kind: 'task', plan: task });
+  expect(await h.session.confirm()).toBe(false);
+  expect(await h.read('a.md')).toBe('Changed prose\n\n- [ ] External\n');
+  expect(h.session.snapshot().journal).toHaveLength(1);
+  expect(h.session.snapshot().journal[0]).toMatchObject({ state: 'settled', effects: 'committed' });
+});
+
+it('refreshes an edited child after a prose insertion shifts it while preserving its sibling', async () => {
+  const h = await setup({ 'a.md': 'Intro\n\n- [ ] Parent\n\t- [ ] Child\n\t- [ ] Sibling\n' });
+  const tasks = ok(await h.api.tasks.list()).items;
+  const child = expectDefined(tasks.find((item) => item.markdownTitle === 'Child'));
+  const task = ok(
+    await expectDefined(h.api.tasks.prepare)({
+      kind: 'edit',
+      target: child.target,
+      expectedRevision: child.revision,
+      operation: {
+        type: 'patch',
+        target: child.target,
+        patch: { markdownTitle: { type: 'set', value: 'Renamed child' } },
+      },
+    }),
+  );
+  const notes = expectDefined(h.api.notes);
+  const page = ok(await notes.read({ selector: { path: 'a.md' } }));
+  const section = expectDefined(page.segments.find((segment) => segment.section.kind === 'prose'));
+  const note = ok(
+    await notes.prepare({
+      kind: 'edit',
+      target: page.note.target,
+      expectedRevision: page.note.revision,
+      operation: { type: 'append', section: section.section.target, text: 'Inserted\n\n' },
+    }),
+  );
+  h.session.stage({ kind: 'task', plan: task });
+  h.session.stage({ kind: 'note', plan: note });
+  expect(await h.session.confirm()).toBe(true);
+  expect(await h.read('a.md')).toBe(
+    'Intro\n\nInserted\n\n- [ ] Parent\n\t- [ ] Renamed child\n\t- [ ] Sibling\n',
+  );
+  expect(h.session.snapshot().journal.map((entry) => entry.effects)).toEqual([
+    'committed',
+    'committed',
+  ]);
+});
+
+it('does not apply a dependent task when the preceding note edit fails', async () => {
+  const h = await setup({ 'a.md': 'Original prose\n\n- [ ] Existing\n' });
+  const root = expectDefined(ok(await h.api.tasks.list()).items[0]);
+  const task = ok(
+    await expectDefined(h.api.tasks.prepare)({
+      kind: 'edit',
+      target: root.target,
+      expectedRevision: root.revision,
+      operation: {
+        type: 'patch',
+        target: root.target,
+        patch: { markdownTitle: { type: 'set', value: 'Renamed' } },
+      },
+    }),
+  );
+  const notes = expectDefined(h.api.notes);
+  const page = ok(await notes.read({ selector: { path: 'a.md' } }));
+  const section = expectDefined(page.segments.find((segment) => segment.section.kind === 'prose'));
+  const note = ok(
+    await notes.prepare({
+      kind: 'edit',
+      target: page.note.target,
+      expectedRevision: page.note.revision,
+      operation: {
+        type: 'replace-section',
+        section: section.section.target,
+        text: 'Changed prose\n\n',
+      },
+    }),
+  );
+  h.session.stage({ kind: 'note', plan: note });
+  h.session.stage({ kind: 'task', plan: task });
+  await h.external('a.md', 'External prose\n\n- [ ] Existing\n');
+  expect(await h.session.confirm()).toBe(false);
+  expect(await h.read('a.md')).toBe('External prose\n\n- [ ] Existing\n');
+  expect(h.session.snapshot().journal).toHaveLength(1);
+  expect(h.session.snapshot().journal[0]).toMatchObject({ state: 'settled', effects: 'unchanged' });
+});

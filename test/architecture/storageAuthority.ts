@@ -22,10 +22,52 @@ export interface StorageAuthorization {
 export const STORAGE_AUTHORIZATIONS: readonly StorageAuthorization[] = [
   {
     file: 'src/main.ts',
-    owner: 'TaskCalendarPlugin.commandSessionStorage.save',
+    owner: 'TaskCalendarPlugin.commandSessionStorage.ensureDirectory',
+    api: 'DataAdapter.mkdir',
+    reason:
+      'Creates only the sessions directory under the actual plugin directory for scoped history files.',
+  },
+  {
+    file: 'src/main.ts',
+    owner: 'TaskCalendarPlugin.commandSessionStorage.write',
+    api: 'DataAdapter.write',
+    reason:
+      'Creates only a UUID session file or command-session-state.json after absence checking; CommandSessionStore validates exact readback before admitting native writes.',
+  },
+  {
+    file: 'src/main.ts',
+    owner: 'TaskCalendarPlugin.commandSessionStorage.write',
+    api: 'DataAdapter.process',
+    reason:
+      'Updates only a scoped history file after comparing the exact previous bytes inside the native process callback.',
+  },
+  {
+    file: 'src/main.ts',
+    owner: 'TaskCalendarPlugin.commandSessionStorage.remove',
+    api: 'DataAdapter.remove',
+    reason:
+      'Removes only a validated UUID session file after the store has durably verified its deletion marker.',
+  },
+  {
+    file: 'src/main.ts',
+    owner: 'TaskCalendarPlugin.commandSessionStorage.clearLegacy',
     api: 'App.saveLocalStorage',
     reason:
-      'Composition-root port stores only the device/vault command-session envelope under abyss-tasks:command-sessions:v1; the store validates and reads it back before native admission.',
+      'Retires only the legacy command-session key after every imported JSON file and its import marker pass readback verification.',
+  },
+  {
+    file: 'src/ai/providers/ChatGptPlan.ts',
+    owner: 'ChatGptPlan.read',
+    api: 'SecretStorage.getSecret',
+    reason:
+      'Reads only the plugin-owned local OAuth registration, including its active account and rotating grant.',
+  },
+  {
+    file: 'src/ai/providers/ChatGptPlan.ts',
+    owner: 'ChatGptPlan.write',
+    api: 'SecretStorage.setSecret',
+    reason:
+      'Atomically replaces only the plugin-owned ChatGPT registration, preserving other accounts and sign-in host identity.',
   },
   {
     file: 'src/ai/providers/ProviderSecrets.ts',
@@ -98,13 +140,15 @@ export const STORAGE_AUTHORIZATIONS: readonly StorageAuthorization[] = [
     file: 'src/notes/NoteTemplateService.ts',
     owner: 'NoteTemplateService.createPreparedNote',
     api: 'Vault.create',
-    reason: 'Creates the owned destination before applying an optional template.',
+    reason:
+      'Creates the owned destination for eager capture or confirmed template-first creation before optional guarded template application.',
   },
   {
     file: 'src/notes/NoteTemplateService.ts',
     owner: 'NoteTemplateService.applyTemplate',
     api: 'Vault.process',
-    reason: 'Applies output only while the destination matches the owned preparation snapshot.',
+    reason:
+      'Applies output only while the destination matches the owned preparation snapshot; confirmed creation also checks the frozen template and current destination/source policy.',
   },
   {
     file: 'src/tags/TagManager.ts',
@@ -142,6 +186,9 @@ const SINKS = new Set([
   'Vault.modify',
   'Vault.append',
   'Vault.create',
+  'DataAdapter.process',
+  'DataAdapter.remove',
+  'DataAdapter.mkdir',
   'DataAdapter.write',
   'DataAdapter.append',
   'FileManager.processFrontMatter',

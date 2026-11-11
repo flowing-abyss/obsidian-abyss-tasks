@@ -437,6 +437,14 @@ it('ties the task link mirror width to its field measurement and owned CSS', asy
   expect(contracts.runtime.produced).toContain('--abyss-field-width');
 });
 
+it('uses a transient task depth only to align the command gutter with the root checkbox column', async () => {
+  const { default: ts } = await import('typescript');
+  const source =
+    ts.sys.readFile(ts.sys.resolvePath('src/ui/commandMode/CommandTreeHeader.ts')) ?? '';
+  expect(discoverRuntimeVariables(source).produced).toContain('--abyss-command-task-depth');
+  expect(contracts.runtime.produced).toContain('--abyss-command-task-depth');
+});
+
 it('ties finite runtime producer families to calls in their actual source owners', async () => {
   const { default: ts } = await import('typescript');
   const { runtimeFamilies } = await import('../tooling/css-contracts.mjs');

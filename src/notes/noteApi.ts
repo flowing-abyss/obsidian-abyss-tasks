@@ -1,3 +1,8 @@
+import type {
+  DefaultNoteDestinationV1,
+  NoteCreationPreviewV1,
+  NoteTemplateExecutionV1,
+} from '../../api';
 import { frontmatterRange } from '../markdown/frontmatterRange';
 import type { AcceptedNoteSource, NoteSourceReadApi, TaskReadObservation } from './NoteSourceApi';
 
@@ -46,6 +51,7 @@ export interface NoteTaskProtection {
     replacement: string,
   ): NoteTaskStage | undefined;
 }
+export type NoteEffect = 'unchanged' | 'committed' | 'unknown';
 export interface NoteCommitOutcome {
   readonly code?: string;
   readonly noteEffects: 'unchanged' | 'committed' | 'unknown';
@@ -53,12 +59,17 @@ export interface NoteCommitOutcome {
   readonly source?: AcceptedNoteSource;
   readonly noop?: boolean;
   readonly section?: NoteRange;
+  readonly completion?: 'complete' | 'incomplete';
+  readonly phase?: 'provision' | 'template' | 'content' | 'readback';
+  readonly templateEffects?: NoteEffect;
+  readonly contentEffects?: NoteEffect;
 }
 export interface PreparedNote {
   readonly kind: 'edit' | 'create';
   readonly path: string;
   readonly before: string | null;
   readonly after: string;
+  readonly creationPreview?: NoteCreationPreviewV1;
   readonly retainedBytes: number;
   readonly source?: AcceptedNoteSource;
   readonly sections?: ReadonlyArray<{
@@ -69,7 +80,7 @@ export interface PreparedNote {
   readonly refineSection?: (range: NoteRange, text: string, append: boolean) => PreparedNote;
   readonly refineBody?: (text: string) => PreparedNote;
   validate(): void;
-  commit(): Promise<NoteCommitOutcome>;
+  commit(current?: () => void): Promise<NoteCommitOutcome>;
 }
 export interface NoteApplicationApi {
   readonly sources: NoteSourceReadApi;
@@ -89,10 +100,14 @@ export interface NoteApplicationApi {
     append: boolean,
   ): PreparedNote;
   prepareCreate(
-    path: string,
+    path: string | DefaultNoteDestinationV1,
     title: string,
     text: string,
-    options?: { readonly template?: AcceptedNoteSource; readonly collision?: 'reject' | 'suffix' },
+    options?: {
+      readonly template?: AcceptedNoteSource;
+      readonly collision?: 'reject' | 'suffix';
+      readonly templateExecution?: NoteTemplateExecutionV1;
+    },
   ): Promise<PreparedNote>;
 }
 

@@ -4,6 +4,39 @@ import { TaskTreeReader } from '../src/integrations/taskTreeApi';
 import { deferred, metadataChangedEmitter } from './helpers';
 import { publicApiHarness, type PublicApiHarness } from './support/publicApiHarness';
 const owners: PublicApiHarness[] = [];
+it('returns canonical recurrence issues while retaining the prior valid task plan', async () => {
+  const original = '- [ ] Зал ⏳ 2026-11-11 ⏰ 10:00 [unknown:: keep]\n';
+  const h = await publicApiHarness({ 'a.md': original });
+  owners.push(h);
+  const api = h.client();
+  const task = required(ok(await api.tasks.list()).items[0]);
+  const prepare = required(api.tasks.prepare);
+  const plan = ok(
+    await prepare({ kind: 'edit', target: task.target, expectedRevision: task.revision }),
+  );
+  const request = (value: string) => ({
+    kind: 'append' as const,
+    plan: plan.target,
+    expectedPlanRevision: plan.revision,
+    operation: {
+      type: 'patch' as const,
+      target: required(plan.after ?? undefined).target,
+      patch: { recurrence: { type: 'set' as const, value } },
+    },
+  });
+  const rejected = await prepare(request('каждую среду'));
+  expect(rejected).toMatchObject({ ok: false, error: { code: 'INVALID_ARGUMENT' } });
+  if (rejected.ok) throw new Error('Raw localized recurrence must be rejected');
+  expect(rejected.error.message).toContain('recurrence');
+  expect(rejected.error.message).toContain('must-start-with-every');
+  const accepted = ok(await prepare(request('every week on Wednesday')));
+  expect(accepted.after).toMatchObject({
+    recurrence: 'every week on Wednesday',
+    dates: { scheduled: '2026-11-11' },
+    time: '10:00',
+  });
+  expect(await h.read('a.md')).toBe(original);
+});
 it('copies an accepted cross-file root comment after a prepared description with preambles', async () => {
   const h = await publicApiHarness({
     'A/source.md':
@@ -1985,4 +2018,224 @@ it('withholds every hierarchy view and admission when the destination becomes un
   ).toMatchObject({ ok: false, effects: 'unchanged' });
   expect(await h.read('source.md')).toBe('- [ ] Move\n');
   expect(await h.read('target.md')).toBe('- [ ] Parent\n');
+});
+
+it.each(['untagged', 'tag', 'both'] as const)(
+  'prepares Inbox intent with the native %s policy',
+  async (mode) => {
+    const behaviorSettings = () => ({
+      taskPrefix: '#task/one-off',
+      applyTaskPrefixToSubtasks: true,
+      inbox: { mode, tag: '#task/inbox', removeTagOnAssign: true },
+      taskLifecycle: { addCreatedDate: false, addCompletionDate: false },
+      recurrence: { newOccurrencePlacement: 'after' as const, removeScheduledDate: false },
+    });
+    const h = await publicApiHarness(
+      { 'a.md': '- [ ] Existing\n' },
+      { provision: true, behaviorSettings },
+    );
+    owners.push(h);
+    const api = h.client();
+    const p = ok(
+      await required(api.tasks.prepare)({
+        kind: 'create',
+        intent: 'inbox',
+        destination: { type: 'configured-default' },
+        tree: { markdownTitle: 'Gym' },
+      }),
+    );
+    expect(p.after?.tags).toEqual(mode === 'untagged' ? [] : ['#task/inbox']);
+    expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+    const request = {
+      plan: p.target,
+      expectedPlanRevision: p.revision,
+      requestId: `inbox-${mode}`,
+      expiresAt: Date.UTC(2026, 7, 1, 12) + 60000,
+    };
+    const saved = await required(api.tasks.create)(request);
+    if (!saved.ok) throw new Error(JSON.stringify(saved));
+    expect(await required(api.tasks.create)(request)).toEqual(saved);
+    expect((await h.read('a.md')).match(/Gym/gu)).toHaveLength(1);
+  },
+);
+
+it('lists canonical Inbox membership with pagination and rejects changed policy', async () => {
+  const behavior = {
+    taskPrefix: '#task/one-off',
+    applyTaskPrefixToSubtasks: false,
+    inbox: {
+      mode: 'both' as 'tag' | 'both' | 'untagged',
+      tag: '#task/inbox',
+      removeTagOnAssign: true,
+    },
+    taskLifecycle: { addCreatedDate: false, addCompletionDate: false },
+    recurrence: { newOccurrencePlacement: 'after' as const, removeScheduledDate: false },
+  };
+  const h = await publicApiHarness(
+    { 'a.md': '- [ ] Untagged\n  - [ ] Child\n- [ ] Tagged #task/inbox\n- [ ] Other #work\n' },
+    { behaviorSettings: () => behavior },
+  );
+  owners.push(h);
+  const api = h.client();
+  const first = ok(await api.tasks.list({ inbox: true, limit: 1 }));
+  expect(first.items.map((x) => x.title)).toEqual(['Untagged']);
+  const second = ok(
+    await api.tasks.list({ inbox: true, limit: 1, cursor: required(first.nextCursor) }),
+  );
+  expect(second.items.map((x) => x.title)).toEqual(['Tagged']);
+  expect(
+    ok(
+      await api.tasks.list({ inbox: true, tagsAll: ['#task/inbox'], statuses: ['open'] }),
+    ).items.map((x) => x.title),
+  ).toEqual(['Tagged']);
+  expect(ok(await api.tasks.list({ inbox: false })).items.map((x) => x.title)).toEqual([
+    'Child',
+    'Other',
+  ]);
+  behavior.inbox.mode = 'tag';
+  expect(
+    await api.tasks.list({ inbox: true, limit: 1, cursor: required(first.nextCursor) }),
+  ).toMatchObject({ ok: false, error: { code: 'STALE_CURSOR' } });
+});
+
+it('searches only Inbox members using the frozen policy', async () => {
+  const behavior = {
+    taskPrefix: '',
+    applyTaskPrefixToSubtasks: false,
+    inbox: { mode: 'both' as const, tag: '#task/inbox', removeTagOnAssign: true },
+    taskLifecycle: { addCreatedDate: false, addCompletionDate: false },
+    recurrence: { newOccurrencePlacement: 'after' as const, removeScheduledDate: false },
+  };
+  const h = await publicApiHarness(
+    {
+      'a.md': '- [ ] Gym\n  - [ ] Gym child\n- [ ] Gym tagged #task/inbox\n- [ ] Gym other #work\n',
+    },
+    { behaviorSettings: () => behavior },
+  );
+  owners.push(h);
+  const result = ok(await required(h.client().tasks.search)({ query: 'Gym', inbox: true }));
+  expect(result.items.map((x) => x.title).sort((a, b) => a.localeCompare(b))).toEqual([
+    'Gym',
+    'Gym tagged',
+  ]);
+});
+
+it('rejects Inbox search when its policy changes during the search', async () => {
+  const h = await setup('- [ ] Gym\n');
+  const original = h.service.creationPolicy.bind(h.service);
+  const first = original();
+  vi.spyOn(h.service, 'creationPolicy')
+    .mockReturnValueOnce(first)
+    .mockReturnValue({ ...first, inbox: { ...first.inbox, mode: 'tag', serviceTag: '#inbox' } });
+  const result = await required(h.client().tasks.search)({ query: 'Gym', inbox: true });
+  expect(result).toMatchObject({ ok: false, error: { code: 'INCOMPLETE_READ' } });
+});
+
+it('exposes ordinary and Inbox defaults through the optional policy read', async () => {
+  const settings = {
+    taskPrefix: '#task/one-off',
+    applyTaskPrefixToSubtasks: false,
+    inbox: { mode: 'both' as const, tag: '#task/inbox', removeTagOnAssign: true },
+    taskLifecycle: { addCreatedDate: false, addCompletionDate: false },
+    recurrence: { newOccurrencePlacement: 'after' as const, removeScheduledDate: false },
+  };
+  const h = await publicApiHarness({ 'a.md': '' }, { behaviorSettings: () => settings });
+  owners.push(h);
+  expect(ok(await required(h.client().tasks.creationPolicy)())).toMatchObject({
+    taskPrefix: '#task/one-off',
+    defaultTags: ['#task/one-off'],
+    inbox: { mode: 'both', serviceTag: '#task/inbox' },
+  });
+});
+
+it('binds Inbox search cursors to membership policy', async () => {
+  const behavior = {
+    taskPrefix: '',
+    applyTaskPrefixToSubtasks: false,
+    inbox: { mode: 'both' as 'tag' | 'both', tag: '#task/inbox', removeTagOnAssign: true },
+    taskLifecycle: { addCreatedDate: false, addCompletionDate: false },
+    recurrence: { newOccurrencePlacement: 'after' as const, removeScheduledDate: false },
+  };
+  const h = await publicApiHarness(
+    { 'a.md': '- [ ] Gym one\n- [ ] Gym two #task/inbox\n' },
+    { behaviorSettings: () => behavior },
+  );
+  owners.push(h);
+  const search = required(h.client().tasks.search);
+  const page = ok(await search({ query: 'Gym', inbox: true, limit: 1 }));
+  behavior.inbox.mode = 'tag';
+  expect(
+    await search({ query: 'Gym', inbox: true, limit: 1, cursor: required(page.nextCursor) }),
+  ).toMatchObject({ ok: false, error: { code: 'STALE_CURSOR' } });
+});
+
+it('preserves ordinary defaults and honors exact Inbox service-tag removals', async () => {
+  const behavior = {
+    taskPrefix: '#task/one-off',
+    applyTaskPrefixToSubtasks: false,
+    inbox: { mode: 'both' as 'both' | 'tag', tag: '#task/inbox', removeTagOnAssign: true },
+    taskLifecycle: { addCreatedDate: false, addCompletionDate: false },
+    recurrence: { newOccurrencePlacement: 'after' as const, removeScheduledDate: false },
+  };
+  const h = await publicApiHarness(
+    { 'a.md': '' },
+    { provision: true, behaviorSettings: () => behavior },
+  );
+  owners.push(h);
+  const prepare = required(h.client().tasks.prepare);
+  const base = {
+    kind: 'create' as const,
+    destination: { type: 'configured-default' as const },
+    tree: { markdownTitle: 'Gym' },
+  };
+  expect(ok(await prepare(base)).after?.tags).toEqual(['#task/one-off']);
+  expect(
+    ok(await prepare({ ...base, tree: { markdownTitle: 'Gym', initial: { tags: { add: [] } } } }))
+      .after?.tags,
+  ).toEqual(['#task/one-off']);
+  const without = {
+    ...base,
+    intent: 'inbox' as const,
+    tree: { markdownTitle: 'Gym', initial: { tags: { remove: ['#task/inbox'] } } },
+  };
+  expect(ok(await prepare(without)).after?.tags).toEqual([]);
+  behavior.inbox.mode = 'tag';
+  expect(await prepare(without)).toMatchObject({ ok: false });
+  expect(await h.read('a.md')).toBe('');
+});
+
+it('rejects Inbox filtering without a policy port while preserving ordinary reads', async () => {
+  const h = await publicApiHarness(
+    { 'a.md': '- [ ] Gym\n' },
+    { policyAvailable: false, provision: true },
+  );
+  owners.push(h);
+  const api = h.client();
+  expect(ok(await api.tasks.list()).items).toHaveLength(1);
+  expect(
+    (
+      await required(api.tasks.prepare)({
+        kind: 'create',
+        destination: { type: 'configured-default' },
+        tree: { markdownTitle: 'Ordinary' },
+      })
+    ).ok,
+  ).toBe(true);
+  expect(
+    await required(api.tasks.prepare)({
+      kind: 'create',
+      intent: 'inbox',
+      destination: { type: 'configured-default' },
+      tree: { markdownTitle: 'New' },
+    }),
+  ).toMatchObject({ ok: false, error: { code: 'INBOX_POLICY_UNAVAILABLE' } });
+  expect(await api.tasks.list({ inbox: true })).toMatchObject({
+    ok: false,
+    error: { code: 'INBOX_POLICY_UNAVAILABLE' },
+  });
+  expect(ok(await required(api.tasks.search)({ query: 'Gym' })).items).toHaveLength(1);
+  expect(await required(api.tasks.search)({ query: 'Gym', inbox: true })).toMatchObject({
+    ok: false,
+    error: { code: 'INBOX_POLICY_UNAVAILABLE' },
+  });
 });
