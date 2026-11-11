@@ -460,6 +460,10 @@ it('hides unavailable agent and voice controls without opening the command owner
   const h = await setup();
   h.memory.active = false;
   const surface = h.mount(undefined, () => ({ agent: false, voice: false }));
+  const history = voiceButton(surface, 'History');
+  expect(history.hidden).toBe(true);
+  history.click();
+  expect(document.querySelector('.abyss-command-history-popover')).toBeNull();
   expect(
     surface.element.querySelector<HTMLButtonElement>('[aria-label="CommandMode"]')?.hidden,
   ).toBe(true);
@@ -2438,6 +2442,55 @@ it.each([
   expect(saved.value.tree.timeEntries).toHaveLength(2);
 });
 
+it('restores a removed child comment under its original task after a cold history open', async () => {
+  const source = '- [ ] Parent\n\t- Parent comment\n\t- [ ] Child\n\t\t- Child comment\n';
+  const h = await setup({ 'a.md': source });
+  const listed = await h.api.tasks.list();
+  if (!listed.ok) throw new Error(listed.error.code);
+  const parent = expectDefined(listed.value.items.find((task) => task.title === 'Parent'));
+  const root = await h.session.readTreePage({ target: parent.target, limit: 500 });
+  const child = expectDefined(root.tree.children[0]);
+  const read = await h.session.readTreePage({ target: child.target, limit: 500 });
+  const input = {
+    kind: 'edit' as const,
+    target: child.target,
+    expectedRevision: child.revision,
+    operation: {
+      type: 'remove-comment' as const,
+      target: expectDefined(read.tree.comments[0]).target,
+    },
+  };
+  const result = await expectDefined(h.api.tasks.prepare)(input);
+  if (!result.ok) throw new Error(result.error.code);
+  const plan = await canonicalCommandPlan(h.api, result.value, new AbortController().signal, {
+    now: () => 1,
+    deadline: 5001,
+  });
+  const live = h.mount();
+  h.session.stage({ kind: 'task', plan }, 1, [{ kind: 'task', input }]);
+  const removal = '.abyss-subtask-content .abyss-comment-row[data-change="removed"]';
+  await vi.waitFor(() => {
+    expect(live.element.querySelector(removal)?.textContent).toBe('Child comment');
+  });
+  const id = h.owner.snapshot().id;
+  expect(await h.owner.newSession('discard')).toBe(true);
+  live.destroy();
+  h.memory.presentation?.clear();
+  const store = await CommandSessionStore.open({ ...h.persisted, now: () => 1 });
+  const archived = expectDefined(store.record(id)).snapshot;
+  expect(archived.preparations).toEqual([]);
+  expect(archived.proposal.changes).toEqual([]);
+  expect(h.session.restore(archived)).toBe(true);
+  const surface = h.mount();
+  await vi.waitFor(() => {
+    expect(surface.element.querySelector(removal)?.textContent).toBe('Child comment');
+  });
+  expect(surface.element.querySelector('.abyss-task-card > .abyss-comment-row')?.textContent).toBe(
+    'Parent comment',
+  );
+  expect(await h.read('a.md')).toBe(source);
+});
+
 it.each([true, false])(
   'keeps the right removed-comment baseline when rewrite and removal share an iteration: %s',
   async (sameIteration) => {
@@ -4401,7 +4454,7 @@ it.each(['stop and edit', 'one-click send'] as const)(
     const mic = voiceButton(surface);
     expect(mic.hidden).toBe(false);
     expect(voiceButton(surface, 'CommandMode').hidden).toBe(true);
-    expect(voiceButton(surface, 'History').hidden).toBe(false);
+    expect(voiceButton(surface, 'History').hidden).toBe(true);
     const menus = captureMenus();
     for (const button of [mic, voiceButton(surface, 'Send')])
       button.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
@@ -4707,12 +4760,14 @@ it('updates mounted controls on a settings revision and checks current credentia
   h.settingsChanged();
   h.owner.setInput('Retained draft');
   expect(voiceButton(surface, 'CommandMode').hidden).toBe(true);
+  expect(voiceButton(surface, 'History').hidden).toBe(true);
   expect(voiceButton(surface).hidden).toBe(true);
   expect(voiceButton(surface, 'Send').disabled).toBe(true);
   availability.mockReturnValue({ agent: true, voice: true });
   h.settingsChanged();
   h.owner.setInput('Reconnected');
   expect(voiceButton(surface, 'CommandMode').hidden).toBe(false);
+  expect(voiceButton(surface, 'History').hidden).toBe(false);
   expect(voiceButton(surface).hidden).toBe(false);
   expect(voiceButton(surface, 'Send').disabled).toBe(false);
   availability.mockReturnValue({ agent: false, voice: true });
@@ -4726,7 +4781,7 @@ function openHistory(surface: CaptureSurface) {
   expectDefined(surface.element.querySelector<HTMLButtonElement>('[aria-label="History"]')).click();
   return expectDefined(document.body.querySelector<HTMLElement>('.abyss-command-history-popover'));
 }
-it.each(['command toggle', 'offline history'] as const)(
+it.each(['command toggle', 'history'] as const)(
   'retires an ordinary one-click speech send when opening %s',
   async (route) => {
     const h = await setup(),
@@ -4744,7 +4799,7 @@ it.each(['command toggle', 'offline history'] as const)(
           return transcript.promise;
         },
       },
-      () => ({ agent: route === 'command toggle', voice: true }),
+      () => ({ agent: true, voice: true }),
     );
     vi.useFakeTimers();
     await startManualSpeech(surface, media);
@@ -4766,6 +4821,166 @@ it.each(['command toggle', 'offline history'] as const)(
 function historyRows(popup: HTMLElement) {
   return [...popup.querySelectorAll<HTMLButtonElement>('.abyss-command-history-select')];
 }
+it('keeps dictation available while history waits for an LLM, including during a delayed open', async () => {
+  const h = await setup();
+  h.memory.active = false;
+  let agent = false;
+  const surface = h.mount({ available: () => {}, transcribe: async () => '' }, () => ({
+    agent,
+    voice: true,
+  }));
+  const history = voiceButton(surface, 'History');
+  expect(voiceButton(surface).hidden).toBe(false);
+  expect(history.hidden).toBe(true);
+  agent = true;
+  surface.input.dispatchEvent(new Event('focus'));
+  expect(history.hidden).toBe(false);
+  const opening = deferred<CommandSessionOwner>();
+  h.resolveOwner.mockImplementation(() => opening.promise);
+  history.click();
+  agent = false;
+  opening.resolve(h.owner);
+  await flushMicrotasks(0);
+  expect(document.querySelector('.abyss-command-history-popover')).toBeNull();
+  expect(history.hidden).toBe(true);
+});
+
+it('closes open history if the LLM is disconnected before a row is selected', async () => {
+  const h = await setup();
+  h.owner.setInput('Previous work');
+  await h.owner.newSession('keep');
+  const current = h.owner.snapshot().id;
+  h.memory.active = false;
+  let agent = true;
+  const surface = h.mount(undefined, () => ({ agent, voice: false }));
+  const popup = openHistory(surface);
+  agent = false;
+  expectDefined(historyRows(popup)[0]).click();
+  await flushMicrotasks(0);
+  expect(popup.isConnected).toBe(false);
+  expect(h.owner.snapshot().id).toBe(current);
+  expect(surface.input.getAttribute('aria-label')).toBe('Add task');
+});
+
+it('reopens the discarded task tree from history without reviving its changes or writing the vault', async () => {
+  const h = await setup();
+  const surface = h.mount();
+  enter(surface, 'Create a parent with two children');
+  await vi.waitFor(() => {
+    expect(surface.element.querySelectorAll('.abyss-subtask-row')).toHaveLength(2);
+  });
+  const id = h.owner.snapshot().id;
+  expect(await h.owner.newSession('discard')).toBe(true);
+  const stored = await CommandSessionStore.open({ ...h.persisted, now: () => 1 });
+  const record = expectDefined(stored.records().find((entry) => entry.snapshot.id === id));
+  expect(record.snapshot.proposal.changes).toEqual([]);
+  expectDefined(
+    historyRows(openHistory(surface)).find((button) => button.textContent === record.title),
+  ).click();
+  await vi.waitFor(() => {
+    expect(surface.element.querySelector('.abyss-task-title')?.textContent).toBe('Parent');
+  });
+  expect(surface.element.querySelectorAll('.abyss-subtask-row')).toHaveLength(2);
+  expect(surface.element.querySelector('.abyss-command-tree')?.textContent).toContain(
+    'Second child only',
+  );
+  expect(surface.element.querySelector('.abyss-command-phase')?.textContent).toBe(
+    'Draft discarded.',
+  );
+  expect(h.owner.snapshot().recovery).toBe('historical');
+  expect(surface.element.querySelector('[aria-label="Save"]')).toBeNull();
+  expect(await h.session.confirm()).toBe(false);
+  expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+  // The same JSON survives a fresh client with no retained plan handles.
+  expect(await h.owner.newSession('keep')).toBe(true);
+  expect(surface.element.querySelector('.abyss-command-tree')?.textContent).toBe('');
+  expect(h.session.restore(record.snapshot)).toBe(true);
+  await vi.waitFor(() => {
+    expect(surface.element.querySelectorAll('.abyss-subtask-row')).toHaveLength(2);
+  });
+  expect(h.session.beginReview()).toBe(true);
+  expect(surface.element.querySelector('.abyss-command-tree')?.textContent).toBe('');
+});
+
+it.each([false, true])(
+  'shows the last tool-discard only in history and retires it on subsequent work (replace=%s)',
+  async (replace) => {
+    const h = await setup();
+    const surface = h.mount();
+    enter(surface, 'Create a tree');
+    await vi.waitFor(() => {
+      expect(surface.element.querySelectorAll('.abyss-subtask-row')).toHaveLength(2);
+    });
+    const first = expectDefined(h.owner.snapshot().proposal.changes[0]);
+    if (first.kind !== 'task') throw new Error('Expected create');
+    const id = h.owner.snapshot().id;
+    h.session.discardDraft(first.plan.target, first.plan.revision);
+    expect(surface.element.querySelector('.abyss-command-tree')?.textContent).toBe('');
+    if (replace) {
+      const result = await h.api.tasks.list();
+      if (!result.ok) throw new Error(result.error.code);
+      const task = expectDefined(result.value.items.find((item) => item.title === 'Existing'));
+      expect(
+        await h.session.focus([{ kind: 'task', target: task.target, revision: task.revision }]),
+      ).toBe(true);
+    }
+    expect(await h.owner.newSession()).toBe(true);
+    expect(await h.owner.select(id)).toBe(true);
+    await vi.waitFor(() => {
+      expect(surface.element.querySelector('.abyss-task-title')?.textContent).toBe(
+        replace ? 'Existing' : 'Parent',
+      );
+    });
+    expect(h.owner.snapshot().proposal.changes).toEqual([]);
+    expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+  },
+);
+
+it.each(['Draft discarded.', 'Черновик удалён.'])(
+  'shows the recorded creation from an older discarded session (%s)',
+  async (message) => {
+    const h = await setup();
+    const surface = h.mount();
+    const input = {
+      kind: 'create' as const,
+      destination: { type: 'configured-default' as const },
+      tree: {
+        markdownTitle: 'Meet my partner',
+        initial: { scheduled: { type: 'set' as const, value: '2026-11-12' } },
+        children: [{ markdownTitle: 'Bring the notes', comments: [{ text: 'Check the address' }] }],
+      },
+    };
+    const legacy: CommandSessionSnapshot = {
+      ...h.owner.snapshot(),
+      status: { kind: 'ready', message },
+      preparations: [{ kind: 'task', input }],
+      exchanges: [{ role: 'user', text: 'Meet tomorrow' }],
+    };
+    h.session.restore(legacy);
+    await vi.waitFor(() => {
+      expect(surface.element.querySelector('.abyss-task-title')?.textContent).toBe(
+        'Meet my partner',
+      );
+    });
+    const tree = expectDefined(surface.element.querySelector('.abyss-command-tree'));
+    expect(tree.textContent).toContain('2026-11-12');
+    expect(tree.textContent).toContain('Bring the notes');
+    expect(tree.textContent).toContain('Check the address');
+    expect(h.owner.snapshot().proposal.changes).toEqual([]);
+    expect(await h.session.confirm()).toBe(false);
+    expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+    expect(
+      h.session.restore({
+        ...legacy,
+        preparations: [
+          { kind: 'task', input },
+          { kind: 'task', input },
+        ],
+      }),
+    ).toBe(true);
+    expect(surface.element.querySelector('.abyss-command-tree')?.textContent).toBe('');
+  },
+);
 it('opens retained history once for a list of sessions and keeps tree updates independent of it', async () => {
   const h = await setup();
   for (let i = 0; i < 10; i++) {
@@ -4950,8 +5165,8 @@ it('selects complete saved descendants from JSON history without native reads or
   h.setRun(async () => {
     runs++;
   });
-  const surface = h.mount({ available: () => {}, transcribe: async () => 'Unsendable' }, () => ({
-    agent: false,
+  const surface = h.mount({ available: () => {}, transcribe: async () => '' }, () => ({
+    agent: true,
     voice: true,
   }));
   expect(voiceButton(surface).hidden).toBe(false);
@@ -4961,7 +5176,7 @@ it('selects complete saved descendants from JSON history without native reads or
     expect(surface.element.querySelector('.abyss-task-title')?.textContent).toBe('Parent');
   });
   expect(surface.element.querySelector<HTMLElement>('.abyss-command-content')?.hidden).toBe(false);
-  expect(voiceButton(surface).hidden).toBe(true);
+  expect(voiceButton(surface).hidden).toBe(false);
   expect(popup.isConnected).toBe(false);
   expect(surface.element.querySelector('.abyss-command-content')?.textContent).toContain(
     'Second child only',
@@ -4970,8 +5185,6 @@ it('selects complete saved descendants from JSON history without native reads or
     'Incomplete saved tree',
   );
   expect(treeReads).toBe(readsAfterSave);
-  enter(surface, 'Do another thing');
-  await flushMicrotasks(0);
   expect(runs).toBe(0);
   expect(h.ordinaryExecute).not.toHaveBeenCalled();
 });

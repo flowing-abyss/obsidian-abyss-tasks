@@ -591,8 +591,10 @@ describe('CaptureSurface', () => {
   });
 
   it('keeps keyboard focus paint above the inline capture base geometry', () => {
-    const inlineFocus = declarationsFor(
+    const inlineFocus = cssDeclarationText(
+      css,
       '.abyss-capture-surface--inline .abyss-capture-input:focus-visible',
+      true,
     );
 
     expectDeclaration(inlineFocus, 'border-color', 'var(--interactive-accent)');

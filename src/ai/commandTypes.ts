@@ -162,6 +162,8 @@ export interface CommandSessionSnapshot {
   readonly recovery?: 'live' | 'historical' | 'reviewing' | 'uncertain';
   readonly preparations?: readonly CommandPreparation[];
   readonly recoveryEvidence?: {
+    /** The visible proposal at discard, retained for display only. */
+    readonly discarded?: true;
     readonly proposal: CommandProposal;
     readonly focus: readonly CommandFocus[];
     readonly preparations: readonly CommandPreparation[];

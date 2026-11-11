@@ -1,6 +1,23 @@
 import type { TaskTreeV1 } from '../../api';
 import type { HistoricalCommandSession, HistoricalCommandSnapshot } from './commandRecovery';
-import type { CommandChange, CommandFocus } from './commandTypes';
+import type { CommandChange, CommandFocus, CommandSessionSnapshot } from './commandTypes';
+
+export function discardedHistoryPreview(
+  state: CommandSessionSnapshot,
+): CommandSessionSnapshot['recoveryEvidence'] {
+  return state.recovery === 'historical' && state.recoveryEvidence?.discarded === true
+    ? state.recoveryEvidence
+    : undefined;
+}
+
+/** The display projection is never a submission basis. */
+export function commandDisplayProposal(
+  state: CommandSessionSnapshot,
+): CommandSessionSnapshot['proposal'] {
+  return state.recoveryEvidence?.discarded === true
+    ? state.recoveryEvidence.proposal
+    : state.proposal;
+}
 
 function meaningful(value: string | undefined): value is string {
   return value !== undefined && value.trim().length > 0;
@@ -40,7 +57,7 @@ function changedTitle(change: CommandChange): string | undefined {
 function entityTitle(state: HistoricalCommandSnapshot): string | undefined {
   return [
     ...state.focus.map((focus) => focusedTitle(state, focus)),
-    ...state.proposal.changes.map(changedTitle),
+    ...commandDisplayProposal(state).changes.map(changedTitle),
     ...state.actual.map((tree) => tree.markdownTitle),
   ].find(meaningful);
 }
@@ -68,7 +85,7 @@ export function commandSessionMetadata(
 export function hasCommandHistoryContent(state: HistoricalCommandSnapshot): boolean {
   const evidence = [
     state.exchanges,
-    state.proposal.changes,
+    commandDisplayProposal(state).changes,
     state.actual,
     state.journal,
     state.focus,

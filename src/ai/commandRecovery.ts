@@ -10,6 +10,7 @@ import type {
   TaskContentReceiptV1,
   TaskTreeV1,
 } from '../../api';
+import { matchesStoredCommandMessage } from './commandMessages';
 import { notePrepareSchema, noteReadRequestSchema, prepareSchema } from './commandSchemas';
 import type {
   CommandChange,
@@ -492,13 +493,47 @@ const preparation = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('task'), input: prepareSchema }),
   z.object({ kind: z.literal('note'), input: notePrepareSchema }),
 ]);
-const snapshot: z.ZodType<HistoricalCommandSnapshot> = z.object({
+export function discardedCommandEvidence(
+  state: CommandSessionSnapshot,
+): NonNullable<CommandSessionSnapshot['recoveryEvidence']> {
+  return {
+    discarded: true,
+    proposal: state.proposal,
+    focus: state.focus,
+    preparations: state.preparations ?? [],
+  };
+}
+
+/** Old archives cleared the proposal at discard and kept only their recorded tool inputs. */
+export function recoverDiscardedSnapshot<T extends CommandSessionSnapshot>(state: T): T {
+  if (
+    state.blocked ||
+    state.recoveryEvidence !== undefined ||
+    state.proposal.changes.length !== 0 ||
+    state.proposal.operations !== 0 ||
+    state.status.kind !== 'ready' ||
+    !matchesStoredCommandMessage(state.status.message, 'Draft discarded.')
+  )
+    return state;
+  return {
+    ...state,
+    recoveryEvidence: discardedCommandEvidence(state),
+    preparations: [],
+  };
+}
+
+const snapshotFields: z.ZodType<HistoricalCommandSnapshot> = z.object({
   voiceMode: z.enum(['manual', 'continuous']).exactOptional(),
   uncertaintyAcknowledged: z.boolean().exactOptional(),
   recovery: z.enum(['live', 'historical', 'reviewing', 'uncertain']).exactOptional(),
   preparations: z.array(preparation).exactOptional(),
   recoveryEvidence: z
-    .object({ proposal, focus: z.array(focus), preparations: z.array(preparation) })
+    .object({
+      discarded: z.literal(true).exactOptional(),
+      proposal,
+      focus: z.array(focus),
+      preparations: z.array(preparation),
+    })
     .exactOptional(),
   pendingTransition: z
     .discriminatedUnion('kind', [
@@ -551,6 +586,7 @@ const snapshot: z.ZodType<HistoricalCommandSnapshot> = z.object({
   actual: z.array(tree),
   blocked: z.boolean(),
 });
+const snapshot = snapshotFields.transform(recoverDiscardedSnapshot);
 
 export type HistoricalCommandReceipt =
   MutationReceiptV1 | TaskContentReceiptV1 | NoteMutationReceiptV1 | ProjectMutationReceiptV1;

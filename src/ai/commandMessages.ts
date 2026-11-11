@@ -346,6 +346,10 @@ const russian = {
     'Каталог не разрешает изменять «{query}». Выбрать другое поле?',
 } as const;
 export type CommandMessage = keyof typeof russian;
+/** Older history files stored translated status text without a disposition. */
+export function matchesStoredCommandMessage(text: string, message: CommandMessage): boolean {
+  return text === message || text === russian[message];
+}
 let russianLocale = false;
 export function configureCommandLocale(locale: string): void {
   russianLocale = locale.toLowerCase().split(/[-_]/)[0] === 'ru';

@@ -1,6 +1,7 @@
 import { Component, Menu, parseLinktext, setIcon, setTooltip, type App } from 'obsidian';
-import type { CommandSessionOwner } from '../../ai/CommandSessionOwner';
+import { discardedHistoryPreview } from '../../ai/commandHistoryMetadata';
 import { commandMessage } from '../../ai/commandMessages';
+import type { CommandSessionOwner } from '../../ai/CommandSessionOwner';
 import type { CommandSessionSnapshot, CommandSubmissionBasis } from '../../ai/commandTypes';
 import { CommandVoiceController } from '../../ai/voice/CommandVoiceController';
 import type { CommandTranscriptionPort } from '../../ai/voice/ProviderTranscription';
@@ -56,6 +57,7 @@ const contentFields = [
   'presentation',
   'actual',
   'recovery',
+  'recoveryEvidence',
   'blocked',
 ] as const satisfies ReadonlyArray<keyof CommandSessionSnapshot>;
 function busy(state: CommandSessionSnapshot): boolean {
@@ -91,6 +93,7 @@ export class CommandModeSurface implements CaptureExtension {
   private readonly treeHost: HTMLElement;
   private readonly latest: HTMLElement;
   private readonly question: HTMLElement;
+  private readonly historyButton: HTMLButtonElement;
   private readonly toggle: HTMLButtonElement;
   private readonly toolbar: HTMLElement;
   private readonly primary: HTMLButtonElement;
@@ -129,7 +132,7 @@ export class CommandModeSurface implements CaptureExtension {
       cls: 'abyss-command-toolbar',
       attr: { role: 'toolbar', 'aria-label': commandMessage('Quick capture controls') },
     });
-    const history = this.button(commandMessage('History'), 'history');
+    this.historyButton = this.button(commandMessage('History'), 'history');
     this.toggle = this.button(commandMessage('CommandMode'), 'sparkles');
     this.microphone = this.button(commandMessage('Microphone'), 'mic');
     this.component.registerDomEvent(this.microphone, 'click', () => {
@@ -193,15 +196,15 @@ export class CommandModeSurface implements CaptureExtension {
     );
     this.latest = capture.element.createDiv({ cls: 'abyss-command-latest' });
     this.question = capture.element.createDiv({ cls: 'abyss-command-question' });
-    this.bindControls(history);
+    this.bindControls();
     this.bindInputSizing();
     this.setActive(options.memory.active);
     this.renderMicrophone();
     this.initializing = false;
   }
-  private bindControls(history: HTMLButtonElement): void {
-    this.component.registerDomEvent(history, 'click', () => {
-      this.openHistory(history);
+  private bindControls(): void {
+    this.component.registerDomEvent(this.historyButton, 'click', () => {
+      this.openHistory();
     });
     this.component.registerDomEvent(this.toggle, 'click', () => {
       this.setActive(!this.active());
@@ -237,12 +240,19 @@ export class CommandModeSurface implements CaptureExtension {
   }
   private updateAvailability(availability = this.options.availability?.()): void {
     this.availabilityRevision = this.options.availabilityRevision?.();
-    this.toggle.hidden = availability?.agent === false;
+    const agent = availability?.agent !== false;
+    this.toggle.hidden = !agent;
+    this.updateHistoryAvailability(agent);
     this.microphone.hidden =
       availability?.voice === false ||
       this.options.transcription === undefined ||
-      (this.active() && availability?.agent === false);
+      (this.active() && !agent);
     this.microphone.disabled = this.microphone.hidden === true;
+  }
+  private updateHistoryAvailability(available: boolean): void {
+    this.historyButton.hidden = !available;
+    this.historyButton.disabled = !available;
+    if (!available) this.history?.close(false);
   }
   private bindInputSizing(): void {
     const win = this.capture.input.win as Window & { ResizeObserver?: typeof ResizeObserver };
@@ -283,7 +293,7 @@ export class CommandModeSurface implements CaptureExtension {
   }
   private setActive(requested: boolean, reason: 'open' | 'history' | 'preference' = 'open'): void {
     const availability = this.options.availability?.();
-    const active = requested && (availability?.agent !== false || reason === 'history');
+    const active = requested && availability?.agent !== false;
     this.retirePreviousInput(active);
     const generation = ++this.modeGeneration;
     this.commandActive = active;
@@ -723,9 +733,19 @@ export class CommandModeSurface implements CaptureExtension {
     this.contentState = state;
     if (previous !== undefined && contentFields.every((key) => state[key] === previous[key]))
       return;
-    this.notes.update(state);
-    this.projects.update(state);
-    this.tree?.update(state);
+    const evidence = discardedHistoryPreview(state);
+    const display =
+      evidence !== undefined
+        ? {
+            ...state,
+            proposal: evidence.proposal,
+            focus: evidence.focus,
+            preparations: evidence.preparations,
+          }
+        : state;
+    this.notes.update(display);
+    this.projects.update(display);
+    this.tree?.update(display);
     this.content.classList.toggle(
       'abyss-command-content--populated',
       this.tree?.hasTasks === true ||
@@ -865,7 +885,9 @@ export class CommandModeSurface implements CaptureExtension {
       commandMessage('Could not open task'),
     );
   }
-  private openHistory(trigger: HTMLElement): void {
+  private openHistory(): void {
+    this.updateAvailability();
+    if (this.historyButton.disabled) return;
     if (this.history !== undefined) {
       this.history.close();
       return;
@@ -874,7 +896,8 @@ export class CommandModeSurface implements CaptureExtension {
     const generation = ++this.popupGeneration;
     this.withOwner(
       (owner) => {
-        this.showHistory(trigger, owner);
+        this.updateAvailability();
+        if (!this.historyButton.disabled) this.showHistory(this.historyButton, owner);
       },
       () => generation === this.popupGeneration,
     );
@@ -884,6 +907,10 @@ export class CommandModeSurface implements CaptureExtension {
       capture: this.capture,
       anchor: trigger,
       owner,
+      available: () => {
+        this.updateAvailability();
+        return !this.historyButton.disabled;
+      },
       selected: () => {
         if (this.live) this.setActive(true, 'history');
       },

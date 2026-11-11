@@ -1,8 +1,9 @@
 import { setIcon, setTooltip } from 'obsidian';
 import type { TaskTreeV1 } from '../../../api';
-import type { CommandSessionOwner } from '../../ai/CommandSessionOwner';
+import { commandDisplayProposal } from '../../ai/commandHistoryMetadata';
 import { commandMessage } from '../../ai/commandMessages';
 import type { HistoricalCommandSession } from '../../ai/commandRecovery';
+import type { CommandSessionOwner } from '../../ai/CommandSessionOwner';
 import type { CommandChange } from '../../ai/commandTypes';
 import { openAnchoredPopover, type AnchoredPopover } from '../anchoredPopover';
 import { runAsyncAction } from '../runAsyncAction';
@@ -12,6 +13,7 @@ interface HistoryOptions {
   readonly capture: CaptureExtensionHost;
   readonly anchor: HTMLElement;
   readonly owner: CommandSessionOwner;
+  readonly available: () => boolean;
   readonly selected: () => void;
   readonly closed: () => void;
 }
@@ -51,7 +53,7 @@ function matches(record: HistoricalCommandSession, query: string): boolean {
     state.input,
     ...state.exchanges.map((entry) => entry.text),
     ...state.actual.flatMap(taskTitles),
-    ...state.proposal.changes.flatMap(changeSubjects),
+    ...commandDisplayProposal(state).changes.flatMap(changeSubjects),
     ...state.trees.flatMap((tree) =>
       [tree.before, tree.after].flatMap((value) => (value === null ? [] : taskTitles(value))),
     ),
@@ -259,7 +261,7 @@ export class CommandHistoryPopover {
     failure: string,
     success?: () => void,
   ): Promise<void> {
-    if (!this.live || this.pending) return;
+    if (!this.live || this.pending || !this.options.available()) return;
     this.pending = true;
     this.failure = '';
     this.render();

@@ -1,5 +1,6 @@
 import type { Component } from 'obsidian';
 import type { ContentPlanV1, TaskTreeV1 } from '../../../api';
+import { discardedHistoryPreview } from '../../ai/commandHistoryMetadata';
 import type { CommandSessionSnapshot } from '../../ai/commandTypes';
 import {
   durationMinutes,
@@ -108,7 +109,7 @@ export class CommandTreeHeader {
       const marker = renderStatusMarker(host, {
         task,
         registry: this.options.registry,
-        interactive: true,
+        interactive: discardedHistoryPreview(input.state) === undefined,
         onLeftClick: () => {
           this.status(input.key);
         },
@@ -204,7 +205,13 @@ export class CommandTreeHeader {
   }
   private status(key: string): void {
     const binding = this.binding(key);
-    if (binding === undefined || binding.removed || !this.options.isCurrent()) return;
+    if (
+      binding === undefined ||
+      binding.removed ||
+      !this.options.isCurrent() ||
+      discardedHistoryPreview(this.options.owner.snapshot()) !== undefined
+    )
+      return;
     const symbol =
       this.currentStatus(binding.tree) === 'done'
         ? this.options.registry.defaultTodo().symbol

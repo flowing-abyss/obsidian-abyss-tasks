@@ -1,5 +1,6 @@
 import type { App, Component } from 'obsidian';
 import type { ContentPlanV1, TaskTreeV1 } from '../../../api';
+import { discardedHistoryPreview } from '../../ai/commandHistoryMetadata';
 import { commandMessage } from '../../ai/commandMessages';
 import { checkedWriteResult, commandPlanViews } from '../../ai/commandSchemas';
 import type { CommandSessionOwner } from '../../ai/CommandSessionOwner';
@@ -23,6 +24,7 @@ import type { CommandNotePaint } from './CommandNotes';
 import type { CommandProjectFields } from './CommandProjects';
 import { CommandTreeHeader, type CommandTaskBinding } from './CommandTreeHeader';
 import { CommandTreeReader } from './CommandTreeReader';
+import { discardedCreationTree } from './discardedCreationTree';
 /** Paint evidence only: one latest proposal per owner-retained session, never serialized. */
 export type CommandPresentationMemory = Map<
   string,
@@ -185,8 +187,9 @@ export class CommandTree {
   update(state: CommandSessionSnapshot): void {
     if (!this.live) return;
     const signature = projectionSignature(state);
+    const sameEvidence = this.state.recoveryEvidence === state.recoveryEvidence;
     this.state = state;
-    if (signature === this.signature) return;
+    if (signature === this.signature && sameEvidence) return;
     this.signature = signature;
     if (this.sessionId !== state.id) {
       this.keys.clear();
@@ -201,6 +204,11 @@ export class CommandTree {
       covered = new Set<string>();
     this.bindings.clear();
     const roots = this.proposalRoots({ current, committed, covered });
+    const creation = discardedCreationTree(state, this.options.registry);
+    if (creation !== undefined)
+      roots.push(
+        this.project(creation, { current, committed, baseline: baseline(creation) }, false),
+      );
     roots.push(...this.savedRoots({ current, committed, covered }));
     this.scope.hidden = !roots.some((root) => this.incomplete(root));
     this.scope.textContent = this.scope.hidden
@@ -501,7 +509,7 @@ export class CommandTree {
       },
       onActivate: (event) => {
         event?.stopPropagation();
-        this.focus(node.key);
+        if (discardedHistoryPreview(this.state) === undefined) this.focus(node.key);
       },
     };
   }

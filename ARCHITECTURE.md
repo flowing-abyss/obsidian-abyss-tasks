@@ -396,8 +396,13 @@ selection alone do not reorder history. Untouched empty sessions have no file or
 detached surface with capture and holds the existing interaction lease until close. Search filters
 retained titles, exchanges and entity names; keyed selection and separate deletion buttons preserve
 query and focus during owner refreshes. History has no transcript rows. New-session, disposition and
-source-review actions remain in Send's context menu. Selecting a saved session can display retained
-work without a configured provider; submission still requires provider availability.
+source-review actions remain in Send's context menu. The history button follows the LLM connection
+in ordinary and command capture. A voice-only connection keeps ordinary dictation available.
+
+Discarding a session clears its writable proposal. Its last proposal stays in the session file as
+read-only recovery evidence for the existing task, project and note renderers. Selecting the file
+does not refresh its plan handles. Explicit source review retires the discarded preview. Older
+discarded files with a single recorded task creation can display its authored fields locally.
 
 Restored task rendering prefers actual write readback over older discovery trees of the same identity;
 live selected reads keep their existing precedence.

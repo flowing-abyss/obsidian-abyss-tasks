@@ -10,7 +10,11 @@ import type {
 import { commandDiagnostic, commandMessage } from './commandMessages';
 import { projectMoveFocusMessage, projectMoveWithDescendantFocus } from './commandProjects';
 import { canonicalCommandPlan, commandRead } from './commandReads';
-import { hasUnresolvedCommandWrites } from './commandRecovery';
+import {
+  discardedCommandEvidence,
+  hasUnresolvedCommandWrites,
+  recoverDiscardedSnapshot,
+} from './commandRecovery';
 import {
   commandPlanViews,
   reconcileCommandLink,
@@ -382,13 +386,13 @@ export class CommandSession {
     if (this.disposed || this.writing) return false;
     this.focusRun++;
     this.conversationRevision++;
-    this.state = detached(snapshot);
+    this.state = recoverDiscardedSnapshot(detached(snapshot));
     this.editRevision++;
     this.inputDraft = this.state.input !== '';
     Reflect.deleteProperty(this.state, 'reveal');
     Reflect.deleteProperty(this.state, 'presentation');
     this.presentation = undefined;
-    if (historical) {
+    if (historical || this.state.recoveryEvidence?.discarded === true) {
       const blocked = hasUnresolvedCommandWrites(snapshot);
       this.state = { ...this.state, blocked, recovery: blocked ? 'uncertain' : 'historical' };
       if (['thinking', 'searching', 'writing'].includes(this.state.status.kind))
@@ -531,9 +535,22 @@ export class CommandSession {
           JSON.stringify(this.state.pendingTransition ?? null))
     )
       this.conversationRevision++;
-    this.state = { ...this.state, ...detached(patch) };
+    this.state = this.patchedState(patch);
     this.published = undefined;
     for (const listener of this.listeners) listener(this.snapshot());
+  }
+  private patchedState(patch: Partial<CommandSessionSnapshot>): CommandSessionSnapshot {
+    const next = { ...this.state, ...detached(patch) };
+    // A later focus or edit is now the last result. A live cancellation is visible only in history.
+    if (
+      this.state.recoveryEvidence?.discarded === true &&
+      !this.readOnly() &&
+      patch.recoveryEvidence === undefined &&
+      ('focus' in patch || 'proposal' in patch || 'entities' in patch || 'actual' in patch)
+    ) {
+      Reflect.deleteProperty(next, 'recoveryEvidence');
+    }
+    return next;
   }
   status(kind: CommandStatusKind, message: string): void {
     this.publish({ status: { kind, message: message.slice(0, 500) } });
@@ -1065,6 +1082,9 @@ export class CommandSession {
     );
     const proposalRevision = this.state.proposal.revision + 1;
     this.publish({
+      ...(changes.length === 0
+        ? { recoveryEvidence: discardedCommandEvidence(this.state), preparations: [] }
+        : {}),
       proposal: {
         revision: proposalRevision,
         operations: this.state.proposal.operations + 1,
@@ -1797,7 +1817,12 @@ export class CommandSession {
       ? {
           ...previous,
           input: '',
-          recovery: 'live',
+          recovery: 'historical',
+          recoveryEvidence:
+            previous.recoveryEvidence?.discarded === true
+              ? previous.recoveryEvidence
+              : discardedCommandEvidence(previous),
+          preparations: [],
           proposal: { revision: previous.proposal.revision + 1, operations: 0, changes: [] },
           trees: [],
           activeQuestion: null,

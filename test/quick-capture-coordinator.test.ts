@@ -206,14 +206,16 @@ describe('QuickCaptureCoordinator', () => {
     );
   });
 
-  it('keeps the hovered Q input on the menu surface with a visible focus ring', () => {
+  it('keeps the hovered Q input on the menu surface and uses one softened theme accent for focus', () => {
     expect(declarationsFor('.abyss-capture-input-shell')).toContain('background: inherit');
     expect(declarationsFor('.abyss-capture-input-shell .abyss-capture-input')).toContain(
       'background: inherit',
     );
-    expect(declarationsFor('.abyss-capture-input-shell:focus-within')).toContain(
-      'box-shadow: 0 0 0 2px var(--background-modifier-border-focus)',
+    const focus = declarationsFor('.abyss-capture-input-shell:focus-within');
+    expect(focus).toMatch(
+      /border-color:\s*color-mix\(\s*in srgb,\s*var\(--interactive-accent\) \d+%,\s*var\(--background-modifier-border\)\s*\)/u,
     );
+    expect(focus).toContain('box-shadow: none');
   });
 
   it('hides the caret only on a recording Q input that is still empty', () => {

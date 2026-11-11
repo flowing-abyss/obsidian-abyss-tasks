@@ -3527,11 +3527,6 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   box-sizing: border-box;
 }
 
-.abyss-capture-input:focus-visible {
-  border-color: var(--interactive-accent);
-  box-shadow: 0 0 0 2px var(--background-modifier-border-focus);
-}
-
 .abyss-capture-input::placeholder {
   color: var(--text-faint);
 }
@@ -3548,6 +3543,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   padding-inline: 10px;
 }
 
+.abyss-capture-input:focus-visible,
 .abyss-capture-surface--inline .abyss-capture-input:focus-visible {
   border-color: var(--interactive-accent);
   box-shadow: 0 0 0 2px var(--background-modifier-border-focus);
@@ -11458,6 +11454,13 @@ button.abyss-statistics-row-button:focus-visible {
 }
 
 /* Shared task metadata stays inline; only the row owns its spacing and button resets. */
+.abyss-capture-metadata,
+.abyss-command-phase {
+  padding: calc(var(--size-4-2) - var(--size-2-1)) var(--size-2-3) 0;
+  min-block-size: calc(1.3em + var(--size-4-2) - var(--size-2-1));
+  line-height: 1.3;
+}
+
 .abyss-capture-metadata {
   box-sizing: border-box;
   grid-column: 1 / -1;
@@ -11465,12 +11468,17 @@ button.abyss-statistics-row-button:focus-visible {
   flex-wrap: wrap;
   align-items: center;
   gap: var(--size-4-1) 0;
-  padding: calc(var(--size-4-2) - var(--size-2-1)) var(--size-2-3) 0;
-  min-block-size: calc(1.3em + var(--size-4-2) - var(--size-2-1));
   min-width: 0;
   position: relative;
   font-size: 11px;
-  line-height: 1.3;
+}
+
+.abyss-quick-capture-host .abyss-capture-metadata {
+  font-size: var(--font-ui-small);
+}
+
+.abyss-capture-chip-body > span {
+  font-size: inherit;
 }
 
 .abyss-capture-chip {
@@ -12155,8 +12163,12 @@ button.abyss-calendar-date[aria-pressed='true'] {
 }
 
 .abyss-capture-input-shell:focus-within {
-  border-color: var(--interactive-accent);
-  box-shadow: 0 0 0 2px var(--background-modifier-border-focus);
+  border-color: color-mix(
+    in srgb,
+    var(--interactive-accent) 78%,
+    var(--background-modifier-border)
+  );
+  box-shadow: none;
 }
 
 .abyss-capture-input-shell .abyss-capture-input {
@@ -12170,6 +12182,7 @@ button.abyss-calendar-date[aria-pressed='true'] {
   background: inherit;
   box-shadow: none;
   font-family: inherit;
+  font-size: calc(var(--font-ui-medium) + 1px);
   line-height: 1.4;
 }
 
@@ -12226,7 +12239,6 @@ button.abyss-calendar-date[aria-pressed='true'] {
   font-size: var(--font-ui-small);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
-  padding-inline: var(--size-4-2);
 }
 
 .abyss-command-phase {
@@ -12234,10 +12246,6 @@ button.abyss-calendar-date[aria-pressed='true'] {
   align-items: baseline;
   justify-content: space-between;
   gap: var(--size-4-3);
-  padding: calc(var(--size-4-2) - var(--size-2-1)) var(--size-2-3) 0;
-  min-block-size: calc(1.3em + var(--size-4-2) - var(--size-2-1));
-  font-size: 11px;
-  line-height: 1.3;
 }
 
 .abyss-command-elapsed {
@@ -12264,6 +12272,7 @@ button.abyss-calendar-date[aria-pressed='true'] {
 .abyss-command-latest,
 .abyss-command-question {
   margin-block: var(--size-4-2);
+  padding-inline: var(--size-4-2);
 }
 
 .abyss-command-question {
