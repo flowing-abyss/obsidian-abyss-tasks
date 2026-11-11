@@ -74,8 +74,10 @@ the separate transcription credential when paired with the ChatGPT plan.
 
 ## Command sessions
 
-Main's `getCommandSessionOwner(research?)` lazily composes one `CommandSessionOwner`, public client,
-provider-backed agent per plugin instance. Main awaits `CommandSessionStore.open()` before registering the panel and Q; the initialized store is shared by panels and popouts. History load failures preserve the calendar and appear through Q's persistence status. Main retains one owner for its plugin lifetime and revokes Q acquisition before unload teardown; it never reconstructs a disposed owner.
+Main registers the panel and Q during plugin startup. On first use, `getCommandSessionOwner(research?)`
+opens the store and composes the session owner, public client and provider-backed agent. Panels and
+popouts share the owner for the plugin's lifetime. Q reports history load failures while the
+calendar remains available. Unload retires the owner and any pending acquisition.
 The mandatory-journal `createCommandSession(journal, research?, transitions?)` factory remains
 available for internal integration tests; a main-owned set releases disposed runtimes instead of
 retaining one unload closure per archived conversation. Construction/opening does not parse provider
@@ -362,20 +364,26 @@ checkboxes use `applyStatus` and do not commit unrelated proposals.
 plugin directory's `sessions/` folder. Main alone acquires DataAdapter callbacks scoped to session
 files and `command-session-state.json`. Calendar startup and ordinary quick capture do not read
 these files. The first command, voice or history action opens the shared store. Concurrent opens
-share one read, and closing the surface or unloading the plugin retires its pending UI action.
+share one read. During hot reload the replacement waits for an in-flight history open on the same
+vault adapter to settle. The retired instance checks its lifetime before further file or local
+storage operations. An already admitted journal write retains its settlement path. A closed surface
+cannot resume its pending UI action.
 The control file contains selection, the import marker and durable
 deleted-file IDs, never conversations. The store serializes immutable captured writes, validates
 snapshots and receipts through `commandRecovery`, and requires exact readback before journal admission.
 Existing-file updates compare previous bytes inside DataAdapter.process. New-file creation checks
-absence, but the public host API provides no atomic create-if-absent, cross-instance lock or fsync guarantee.
+absence. The host adapter has no atomic create-if-absent, conditional remove, or fsync operation.
+Another process can change a file between the final comparison and removal.
 
 Each device reconciles its own legacy localStorage history. Before clearing the local copy, the
 store verifies the control file, the surviving session files and the original local contents.
-Deletion writes a version-2 control file pairing each deleted file UUID with its logical session
-ID. Version-1 control files remain readable. When an old tombstone cannot be matched to a missing
+Deletion writes a version-3 control file pairing each deleted file UUID with its logical session
+ID and a SHA-256 digest of the accepted file. The store checks those bytes before physical
+removal and keeps a divergent file. Versions 1 and 2 remain readable. Files referenced by older
+tombstones without a digest stay hidden and are retained on disk. When an old tombstone cannot be matched to a missing
 local session, writes pause and the local copy stays available. A divergent older draft remains on
 its device while the newer vault session stays usable. Empty drafts release the active selection.
-Restoring an older build after a version-2 deletion requires the pre-upgrade history backup.
+Restoring an older build after a version-3 deletion requires the pre-upgrade history backup.
 Session snapshots remain version 1 and live outside settings and task Markdown.
 
 JSON history remains until explicit deletion. Individual files have structural and byte validation
