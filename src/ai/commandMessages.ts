@@ -1,5 +1,7 @@
 /** Fixed CommandMode chrome only. main supplies the host language; Node consumers default to English. */
 const russian = {
+  'Review the prepared changes before saving them.':
+    'Проверьте подготовленные изменения перед сохранением.',
   queued: 'в очереди',
   Dictation: 'Диктовка',
   Continuous: 'Непрерывный ввод',

@@ -398,6 +398,84 @@ it('applies note review admission only to the explicitly selected work', async (
   expect(h.app.vault.getFileByPath('Pending.md')).toBeNull();
   expect(h.session.snapshot().proposal.changes).toEqual([{ kind: 'note', plan: note }]);
 });
+it.each(['both-children', 'repeat-owner', 'whole-and-fields', 'stale-revision'] as const)(
+  'preserves the parent draft for exact field selections within one tree (%s)',
+  async (mode) => {
+    const original = '- [ ] Root\n\t- [ ] First\n\t- [ ] Second\n';
+    const h = await setup({ 'a.md': original });
+    const root = expectDefined(ok(await h.api.tasks.list()).items[0]);
+    const prepare = expectDefined(h.api.tasks.prepare);
+    let plan = ok(
+      await prepare({
+        kind: 'edit',
+        target: root.target,
+        expectedRevision: root.revision,
+        operation: {
+          type: 'patch',
+          target: root.target,
+          patch: { markdownTitle: { type: 'set', value: 'Pending name' } },
+        },
+      }),
+    );
+    for (const index of [0, 1]) {
+      const target = expectDefined(plan.after?.children[index]).target;
+      plan = ok(
+        await prepare({
+          kind: 'append',
+          plan: plan.target,
+          expectedPlanRevision: plan.revision,
+          operation: {
+            type: 'patch',
+            target,
+            patch: { due: { type: 'set', value: '2026-11-23' } },
+          },
+        }),
+      );
+    }
+    const reviewed = plan;
+    h.session.stage({ kind: 'task', plan: reviewed });
+    h.setRun(async ({ signal, session }) => {
+      const first = {
+        kind: 'task-fields' as const,
+        index: 0,
+        plan: reviewed.target,
+        expectedPlanRevision: reviewed.revision,
+        target: expectDefined(reviewed.after?.children[0]).target,
+        fields: ['due'] as const,
+      };
+      const second =
+        mode === 'whole-and-fields'
+          ? { kind: 'change' as const, index: 0 }
+          : {
+              ...first,
+              target:
+                mode === 'repeat-owner'
+                  ? first.target
+                  : expectDefined(reviewed.after?.children[1]).target,
+              expectedPlanRevision: mode === 'stale-revision' ? 'old' : reviewed.revision,
+            };
+      await h.session.confirmFromTurn(session.proposal.revision, signal, false, {
+        proposalRevision: session.proposal.revision,
+        changes: [first, second],
+      });
+    });
+    await h.session.submit('Save only both child dates. Keep the parent name pending.');
+    if (mode !== 'both-children') {
+      expect(h.session.snapshot().journal).toHaveLength(0);
+      expect(await h.read('a.md')).toBe(original);
+      return;
+    }
+    expect(await h.read('a.md')).toBe(
+      '- [ ] Root\n\t- [ ] First 📅 2026-11-23\n\t- [ ] Second 📅 2026-11-23\n',
+    );
+    expect(h.session.snapshot().journal).toHaveLength(1);
+    expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+    await h.session.submit('');
+    expect(await h.read('a.md')).toContain('- [ ] Pending name\n');
+    expect(h.session.snapshot().journal).toHaveLength(2);
+  },
+);
+
 it('saves semantically selected date fields while retaining the title and child for later whole confirmation', async () => {
   const h = await setup();
   const root = expectDefined(ok(await h.api.tasks.list()).items[0]);

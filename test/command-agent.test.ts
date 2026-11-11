@@ -794,6 +794,149 @@ it('does not resample a denied correction into confirmation in the same user tur
   expect(await h.read('a.md')).toBe('');
   expect(h.session.snapshot().journal).toHaveLength(0);
 });
+function finalTaskWrites(
+  h: Awaited<ReturnType<typeof setup>>,
+  message: string,
+  focus: CommandSessionSnapshot['focus'],
+) {
+  const step = expectDefined(h.model.doGenerateCalls[h.model.doGenerateCalls.length - 1]);
+  expect(step.tools?.map((item) => item.name)).toEqual(['assess_write']);
+  const user = expectDefined(step.prompt.find((entry) => entry.role === 'user'));
+  const part = expectDefined(user.content[0]);
+  if (part.type !== 'text') throw Error('Missing canonical write review');
+  const review = JSON.parse(part.text) as {
+    userMessage: string;
+    focus: CommandSessionSnapshot['focus'];
+    temporalContext: string;
+    preparedWrites: Array<{ change: { kind: string; plan: ContentPlanV1 } }>;
+  };
+  expect(review.userMessage).toBe(message);
+  expect(review.temporalContext).toBe('2026-08-01T12:00:00.000Z');
+  expect(review.focus).toEqual(focus);
+  return review.preparedWrites;
+}
+it.each(['requested', 'other-owner', 'wrong-date', 'extra-task'] as const)(
+  'checks the final canonical write set before saving new work (%s)',
+  async (mode) => {
+    const original = '- [ ] Stable\n';
+    const h = await setup({ 'a.md': '', 'stable.md': original }, {}, undefined, {
+      reviewWrite: 'native',
+    });
+    const listed = await h.api.tasks.list();
+    if (!listed.ok) throw Error(listed.error.code);
+    const stable = expectDefined(listed.value.items[0]);
+    await h.session.focus({ kind: 'task', target: stable.target, revision: stable.revision });
+    h.script(() => call('create_task', { tree: { markdownTitle: 'South' }, complete: true }));
+    await h.session.submit('Preview South.');
+    const priorFocus = h.session.snapshot().focus;
+    const message = 'Set South’s due date to 23 November and save it.';
+    const assessment = (matches: boolean) =>
+      call('assess_write', {
+        effect: 'save-after-edits',
+        scope: 'all',
+        scopeMatches: matches,
+        authorization: 'save it',
+      });
+    let finalReviews = 0;
+    h.script(
+      () => call('interpret', { intent: 'immediate', ...writeGrant(h) }),
+      () => assessment(true),
+      () =>
+        call('change_task', {
+          edit: projectedEdit(h, mode === 'other-owner' ? 'Stable' : 'South'),
+          operation: { type: 'set', due: mode === 'wrong-date' ? '2026-11-24' : '2026-11-23' },
+        }),
+      ...(mode === 'extra-task'
+        ? [() => call('create_task', { tree: { markdownTitle: 'Unrequested' } })]
+        : []),
+      finish(),
+      () => {
+        finalReviews++;
+        const writes = finalTaskWrites(h, message, priorFocus);
+        const [write] = writes;
+        if (writes.length !== 1 || write?.change.kind !== 'task') return assessment(false);
+        const plan = write.change.plan;
+        return assessment(
+          plan.kind === 'create' &&
+            plan.after?.markdownTitle === 'South' &&
+            plan.after.dates.due === '2026-11-23',
+        );
+      },
+    );
+    await h.session.submit(message);
+    expect(await h.read('stable.md')).toBe(original);
+    expect(await h.read('a.md')).toBe(
+      mode === 'requested' ? '- [ ] South ➕ 2026-08-01 📅 2026-11-23' : '',
+    );
+    expect(h.session.snapshot().journal).toHaveLength(mode === 'requested' ? 1 : 0);
+    expect(finalReviews).toBe(1);
+    if (mode !== 'requested') {
+      expect(h.session.snapshot().proposal.changes.length).toBeGreaterThan(0);
+      expect(h.session.snapshot().status.kind).toBe('ready');
+    }
+  },
+);
+it.each(['unavailable', 'prior-work-only'] as const)(
+  'retains the native preview when the final write review is %s',
+  async (mode) => {
+    let assessments = 0;
+    const h = await setup({ 'a.md': '' }, {}, undefined, {
+      reviewWrite: async (request) => {
+        assessments++;
+        const initial = await scriptedWriteReview(request);
+        if (request.preparedWrites === undefined) return initial;
+        if (mode === 'unavailable') throw Error('Write assessment unavailable');
+        return { ...initial, effect: 'save-reviewed' };
+      },
+    });
+    h.script(
+      () => call('interpret', { intent: 'immediate', ...writeGrant(h) }),
+      () => call('create_task', { tree: { markdownTitle: 'South' } }),
+      finish(),
+    );
+    await h.session.submit('Create South and save now.');
+    expect(await h.read('a.md')).toBe('');
+    expect(h.session.snapshot().journal).toHaveLength(0);
+    expect(h.session.snapshot().status.kind).toBe('ready');
+    expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+    await h.session.submit('');
+    expect(await h.read('a.md')).toBe('- [ ] South ➕ 2026-08-01');
+    expect(h.session.snapshot().journal).toHaveLength(1);
+    expect(assessments).toBe(2);
+  },
+);
+it.each(['changed-proposal', 'expired', 'cancelled'] as const)(
+  'holds new work when the final write assessment loses its basis (%s)',
+  async (mode) => {
+    let clock = Date.UTC(2026, 7, 1, 12);
+    let assess = (): void => {};
+    let checks = 0;
+    const h = await setup({ 'a.md': '' }, {}, undefined, {
+      now: () => clock,
+      reviewWrite: async (request) => {
+        if (++checks === 2) assess();
+        return scriptedWriteReview(request);
+      },
+    });
+    assess = () => {
+      if (mode === 'changed-proposal')
+        h.session.stage(expectDefined(h.session.snapshot().proposal.changes[0]));
+      if (mode === 'expired') clock += 180000;
+      if (mode === 'cancelled') h.session.cancelTurn();
+    };
+    h.script(
+      () => call('interpret', { intent: 'immediate', ...writeGrant(h) }),
+      () => call('create_task', { tree: { markdownTitle: 'South' } }),
+      finish(),
+    );
+    await h.session.submit('Create South and save now.');
+    expect(await h.read('a.md')).toBe('');
+    expect(h.session.snapshot().journal).toHaveLength(0);
+    expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+    expect(checks).toBe(2);
+  },
+);
+
 it('keeps old work pending when an unrelated saved task gets a separate edit with no changed source', async () => {
   const source = '- [ ] Stable\n';
   const h = await setup({ 'a.md': source });

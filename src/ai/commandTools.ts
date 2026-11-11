@@ -70,7 +70,9 @@ import {
 } from './commandTypes';
 import {
   authorizeCommandWrite,
+  verifyPreparedWrite,
   type WriteDecision,
+  type WriteGrant,
   type WriteReview,
   type WriteReviewer,
 } from './commandWriteAuthorization';
@@ -101,6 +103,7 @@ function omitKind<T extends { kind: string }>(input: T): Omit<T, 'kind'> {
 export interface CommandToolContext {
   readonly userMessage: string;
   reviewWrite?: WriteReviewer;
+  readonly temporalContext: string;
   readonly api: TasksApiV1;
   readonly session: CommandSession;
   readonly basis: CommandSessionSnapshot;
@@ -290,7 +293,7 @@ class CommandToolOwner {
   private finished_abyssPrivate = false;
   private readonly attempts = new WeakMap<object, { staged: boolean }>();
   private preparedRevision: number | undefined;
-  private writeEffect: WriteDecision['effect'] | undefined;
+  private writeGrant: WriteGrant | undefined;
   private writeDenied = false;
   private scopeLimit: 'fields' | 'subset' | undefined;
   private readonly declinedSelections = new Set<string>();
@@ -872,14 +875,14 @@ class CommandToolOwner {
   private async admitWrite(control: z.infer<typeof intentSchema>): Promise<void> {
     const ctx = this.ctx_abyssPrivate;
     try {
-      const effect = await authorizeCommandWrite(control, {
+      const grant = await authorizeCommandWrite(control, {
         userMessage: ctx.userMessage,
         basis: ctx.basis,
         signal: ctx.signal,
         review: (request) => this.reviewWriteRequest(request),
       });
       this.checkFinishBasis();
-      this.acceptWriteEffect(effect);
+      this.writeGrant = grant;
     } catch (cause) {
       this.retainWriteLimit(cause);
       throw cause;
@@ -911,9 +914,6 @@ class CommandToolOwner {
   private outsideWriteScope(request: WriteReview): boolean {
     if (this.scopeLimit === 'fields') return !request.fieldsOnly;
     return this.scopeLimit === 'subset' && request.proposedScope !== 'subset';
-  }
-  private acceptWriteEffect(effect: WriteDecision['effect'] | undefined): void {
-    this.writeEffect = effect;
   }
   private retainWriteLimit(cause: unknown): void {
     if (!(cause instanceof CommandFailure)) return;
@@ -1018,7 +1018,7 @@ class CommandToolOwner {
   private confirmsNow(intent: z.infer<typeof intentSchema>['intent'], scoped: boolean): boolean {
     return (
       intent === 'confirm' ||
-      (intent === 'immediate' && (scoped || this.writeEffect === 'save-reviewed'))
+      (intent === 'immediate' && (scoped || this.writeGrant?.effect === 'save-reviewed'))
     );
   }
   private reportDeclinedConfirmation(confirmed: boolean): void {
@@ -2220,6 +2220,22 @@ class CommandToolOwner {
   private async publishReady_abyssPrivate(result: string | undefined): Promise<boolean> {
     const current = this.ctx_abyssPrivate.session.snapshot();
     this.checkImmediatePreparation(current);
+    const grant = this.writeGrant;
+    if (grant?.effect === 'save-after-edits') {
+      const ctx = this.ctx_abyssPrivate;
+      const approved = await verifyPreparedWrite(
+        grant,
+        { before: ctx.basis, current, temporalContext: ctx.temporalContext },
+        required(ctx.reviewWrite),
+      );
+      this.checkFinishBasis({ id: current.id, revision: current.proposal.revision });
+      if (!approved) {
+        const message = commandMessage('Review the prepared changes before saving them.');
+        ctx.session.status('ready', message);
+        ctx.session.exchange('agent', message);
+        return true;
+      }
+    }
     this.ctx_abyssPrivate.session.finishReview();
     let finished = true;
     if (this.ctx_abyssPrivate.immediate)
@@ -2259,7 +2275,7 @@ class CommandToolOwner {
         'Immediate saving requires the unchanged reviewed proposal or current accepted preparation.',
       );
     if (
-      this.writeEffect === 'save-after-edits' &&
+      this.writeGrant?.effect === 'save-after-edits' &&
       !hasFreshCommandWork(this.ctx_abyssPrivate.basis, current)
     )
       throw new CommandFailure(
@@ -2269,7 +2285,7 @@ class CommandToolOwner {
   }
   private reviewedImmediate_abyssPrivate(): boolean {
     return (
-      this.writeEffect !== 'save-after-edits' &&
+      this.writeGrant?.effect !== 'save-after-edits' &&
       this.ctx_abyssPrivate.immediate &&
       this.ctx_abyssPrivate.basis.status.kind !== 'error' &&
       !this.ctx_abyssPrivate.session.readOnly() &&

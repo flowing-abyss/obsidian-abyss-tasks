@@ -278,6 +278,14 @@ function missingScope(): never {
     'The selected work has no verified owner or matching field change in this reviewed proposal. Keep the preview or select its exact current owner and fields.',
   );
 }
+/** Complete canonical changes, including earlier pending work that the writer will also dispatch. */
+export function commandPreparedWrites(snapshot: CommandSessionSnapshot): readonly unknown[] {
+  return snapshot.proposal.changes.map((change) => {
+    const { owner } = describeChange(change, snapshot);
+    if (owner === undefined) return missingScope();
+    return { owner, change };
+  });
+}
 type Part = CommandSaveScope['changes'][number];
 function fieldSelection(
   part: Extract<Part, { kind: 'task-fields' }>,

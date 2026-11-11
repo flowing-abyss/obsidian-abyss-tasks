@@ -25,7 +25,11 @@ import {
   type CommandResearchPort,
   type CommandSessionSnapshot,
 } from './commandTypes';
-import { reviewCommandWrite, type WriteReviewer } from './commandWriteAuthorization';
+import {
+  COMMAND_CONTEXT_CHARACTERS,
+  reviewCommandWrite,
+  type WriteReviewer,
+} from './commandWriteAuthorization';
 import type { ProviderConnections } from './providers/ProviderConnections';
 import { providerRetryable } from './providers/providerFailure';
 import { parseAgentSettings } from './providers/providerSettings';
@@ -398,6 +402,7 @@ export class CommandAgent implements CommandAgentPort {
     let repairsUsed = 0;
     const context: CommandToolContext = {
       userMessage: input.text,
+      temporalContext: this.options.temporalContext?.() ?? new Date(start).toISOString(),
       api: this.options.api,
       session: this.options.session,
       basis: input.session,
@@ -495,14 +500,14 @@ export class CommandAgent implements CommandAgentPort {
       this.options.reviewWrite ?? ((request) => reviewCommandWrite(model, request, input.signal));
     const tools = commandTools(ctx);
     const policy = await this.options.api.tasks.creationPolicy?.().catch(() => undefined);
-    const clock = this.options.temporalContext?.() ?? new Date(start).toISOString();
+    const clock = ctx.temporalContext;
     const instructions = `${commandPrompt}\n\ntemporalContext is the vault clock for this request: ${clock}. Resolve all relative dates from this local date.`;
     const prompt = JSON.stringify({
       creationPolicy: policy?.ok === true ? policy.value : undefined,
       visibleSession: ctx.references?.project(this.modelContext(input.session)),
       userMessage: input.text,
     });
-    if (prompt.length + instructions.length > 96000)
+    if (prompt.length + instructions.length > COMMAND_CONTEXT_CHARACTERS)
       throw new CommandFailure(
         'CONTEXT_LIMIT',
         'This session is too large for another model turn. Save or start a new session.',

@@ -79,7 +79,10 @@ function dependencies(change: CommandChange): readonly string[] {
   if (change.kind === 'status' && change.plan !== undefined) return [change.plan];
   return [];
 }
-function checkDependencies(proposal: CommandProposal, selected: ReadonlySet<number>): void {
+function checkDependencies(
+  proposal: CommandProposal,
+  selected: Pick<ReadonlySet<number>, 'has'>,
+): void {
   proposal.changes.forEach((change, index) => {
     for (const plan of dependencies(change)) {
       const owner = proposal.changes.findIndex(
@@ -111,16 +114,37 @@ function checkIndependent(
       dependency();
   }
 }
-function preflight(proposal: CommandProposal, scope: CommandSaveScope): Set<number> {
-  if (scope.proposalRevision !== proposal.revision || scope.changes.length === 0) staleScope();
-  const selected = new Set<number>();
-  for (const item of scope.changes) {
-    const change = proposal.changes[item.index];
-    if (!Number.isInteger(item.index) || change === undefined || selected.has(item.index))
-      staleScope();
-    selected.add(item.index);
-    if (item.kind === 'task-fields') checkFields(change, item, proposal);
+type FieldSelection = Extract<CommandSaveScope['changes'][number], { kind: 'task-fields' }>;
+type GroupedSelections = Map<number, 'whole' | FieldSelection[]>;
+
+function groupSelection(
+  proposal: CommandProposal,
+  groups: GroupedSelections,
+  item: CommandSaveScope['changes'][number],
+): void {
+  const change = proposal.changes[item.index];
+  if (!Number.isInteger(item.index) || change === undefined) staleScope();
+  const previous = groups.get(item.index);
+  if (item.kind === 'change') {
+    if (previous !== undefined) staleScope();
+    groups.set(item.index, 'whole');
+    return;
   }
+  checkFields(change, item, proposal);
+  if (
+    previous === 'whole' ||
+    previous?.some((selection) => selection.target === item.target) === true
+  )
+    staleScope();
+  const selections = previous ?? [];
+  selections.push(item);
+  groups.set(item.index, selections);
+}
+
+function preflight(proposal: CommandProposal, scope: CommandSaveScope): GroupedSelections {
+  if (scope.proposalRevision !== proposal.revision || scope.changes.length === 0) staleScope();
+  const selected: GroupedSelections = new Map();
+  for (const item of scope.changes) groupSelection(proposal, selected, item);
   checkDependencies(proposal, selected);
   checkIndependent(
     proposal.changes.filter((_, index) => selected.has(index)),
@@ -135,22 +159,17 @@ export async function selectCommandWrite(
   context: { readonly signal: AbortSignal; readonly now: () => number },
 ): Promise<CommandSelectedWrite> {
   const { signal, now } = context;
-  const indexes = preflight(proposal, scope);
+  const groups = preflight(proposal, scope);
   const changes: CommandChange[] = [],
     partitions = new Map<string, string>();
-  const remainder = proposal.changes.filter(
-    (_, index) =>
-      !indexes.has(index) ||
-      scope.changes.some(
-        (selection) => selection.index === index && selection.kind === 'task-fields',
-      ),
-  );
-  for (const selection of scope.changes) {
-    const change = required(proposal.changes[selection.index]);
-    if (selection.kind === 'change') {
+  const remainder = proposal.changes.filter((_, index) => groups.get(index) !== 'whole');
+  for (const [index, selections] of groups) {
+    const change = required(proposal.changes[index]);
+    if (selections === 'whole') {
       changes.push(change);
       continue;
     }
+    const selection = required(selections[0]);
     const timing = { now, deadline: now() + 5000 };
     const page = await commandRead(
       api,
@@ -159,7 +178,7 @@ export async function selectCommandWrite(
           kind: 'select-fields',
           plan: selection.plan,
           expectedPlanRevision: selection.expectedPlanRevision,
-          selections: [{ target: selection.target, fields: selection.fields }],
+          selections: selections.map(({ target, fields }) => ({ target, fields })),
         }),
       signal,
       timing,
