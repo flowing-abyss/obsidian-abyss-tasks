@@ -104,6 +104,7 @@
     "@types/jsdom": "30.0.0",
     "@types/node": "26.6.5",
     "@vitest/coverage-v8": "5.0.5",
+    "acorn": "8.19.0",
     "cssnano": "9.9.0",
     "dependency-cruiser": "18.7.0",
     "esbuild": "0.28.2",

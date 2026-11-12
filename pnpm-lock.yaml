@@ -240,6 +240,9 @@ importers:
       '@vitest/coverage-v8':
         specifier: 5.0.5
         version: 5.0.5(vitest@5.0.5)
+      acorn:
+        specifier: 8.19.0
+        version: 8.19.0
       cssnano:
         specifier: 9.9.0
         version: 9.9.0(postcss@8.5.32)

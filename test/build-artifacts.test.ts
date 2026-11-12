@@ -1,3 +1,4 @@
+import { tokenizer, tokTypes } from 'acorn';
 import * as obsidian from 'obsidian';
 import { Platform } from 'obsidian';
 import ts from 'typescript';
@@ -263,26 +264,23 @@ function loadArtifact(code: string): typeof TaskCalendarPlugin {
 }
 
 function embeddedSearchWorker(code: string): string {
-  let workerSource: string | undefined;
-  const parsed = ts.createSourceFile(
-    'main.js',
-    code,
-    ts.ScriptTarget.ES2021,
-    true,
-    ts.ScriptKind.JS,
-  );
-  function visit(node: ts.Node): void {
-    if (ts.isStringLiteral(node) && node.text.startsWith('/* abyss-task-search-worker */'))
-      workerSource = node.text;
-    ts.forEachChild(node, visit);
+  for (const token of tokenizer(code, { ecmaVersion: 2021 })) {
+    if (
+      token.type === tokTypes.string &&
+      'value' in token &&
+      typeof token.value === 'string' &&
+      token.value.startsWith('/* abyss-task-search-worker */')
+    ) {
+      return token.value;
+    }
   }
-  visit(parsed);
-  return expectDefined(workerSource);
+  throw new Error('Production main.js is missing the embedded search worker');
 }
 
 describe('production JavaScript artifact', () => {
   let directory: string;
   let code: string;
+  let workerSource: string;
   let buildStatus: number | null;
   let buildError: string;
 
@@ -307,6 +305,7 @@ describe('production JavaScript artifact', () => {
     buildError = result.stderr;
     expect(buildStatus, buildError).toBe(0);
     code = readFileSync(path.join(directory, 'main.js'), 'utf8');
+    workerSource = embeddedSearchWorker(code);
   }, CHILD_PROCESS_TIMEOUT_MS);
 
   afterAll(() => {
@@ -377,15 +376,14 @@ describe('production JavaScript artifact', () => {
   });
 
   it('embeds a self-contained browser worker and executes its minified ready/add/query protocol', async () => {
-    const source = embeddedSearchWorker(code);
-    expect(lookbehindOpeners(source)).toEqual([]);
-    expect(source).not.toMatch(/\brequire\s*\(|\bimport\s*\(/u);
+    expect(lookbehindOpeners(workerSource)).toEqual([]);
+    expect(workerSource).not.toMatch(/\brequire\s*\(|\bimport\s*\(/u);
     const replies: Array<{ type: string; value?: { total: number } }> = [];
     const scope = {
       onmessage: undefined as ((event: { data: unknown }) => void) | undefined,
       postMessage: (reply: { type: string }) => replies.push(reply),
     };
-    const executeWorker = compileFunction(source, ['self']) as (scope: unknown) => void;
+    const executeWorker = compileFunction(workerSource, ['self']) as (scope: unknown) => void;
     executeWorker(scope);
     const send = async (data: unknown) => {
       scope.onmessage?.({ data: structuredClone(data) });
@@ -459,7 +457,7 @@ describe('production JavaScript artifact', () => {
     (phase) => {
       // Isolate rejection reporting from Vitest and execute the unchanged minified Worker.
       const script = `
-        const source = ${JSON.stringify(embeddedSearchWorker(code))};
+        const source = ${JSON.stringify(workerSource)};
         const phase = ${JSON.stringify(phase)};
         const reported = [], unhandled = [], synchronous = [], failedReplies = [];
         let timerCalls = 0;
