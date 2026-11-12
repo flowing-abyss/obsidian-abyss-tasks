@@ -3553,27 +3553,28 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   padding-inline-end: var(--abyss-inline-capture-pending-space);
 }
 
+.abyss-capture-destination,
+.abyss-capture-pending,
+.abyss-capture-error {
+  font-size: var(--font-ui-smaller);
+  line-height: var(--line-height-tight);
+}
+
 .abyss-capture-destination {
   overflow: hidden;
   color: var(--text-muted);
-  font-size: var(--font-ui-smaller);
-  line-height: var(--line-height-tight);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .abyss-capture-pending {
   color: var(--text-accent);
-  font-size: var(--font-ui-smaller);
-  line-height: var(--line-height-tight);
   white-space: nowrap;
 }
 
 .abyss-capture-error {
   grid-column: 1 / -1;
   color: var(--text-error);
-  font-size: var(--font-ui-smaller);
-  line-height: var(--line-height-tight);
 }
 
 :is(
@@ -11473,8 +11474,13 @@ button.abyss-statistics-row-button:focus-visible {
   font-size: 11px;
 }
 
-.abyss-quick-capture-host .abyss-capture-metadata {
-  font-size: var(--font-ui-small);
+.abyss-quick-capture-host .abyss-capture-input {
+  font-size: var(--font-ui-medium);
+}
+
+.abyss-quick-capture-host .abyss-capture-metadata,
+.abyss-command-phase {
+  font-size: var(--font-ui-smaller);
 }
 
 .abyss-capture-chip-body > span {
@@ -12182,7 +12188,6 @@ button.abyss-calendar-date[aria-pressed='true'] {
   background: inherit;
   box-shadow: none;
   font-family: inherit;
-  font-size: calc(var(--font-ui-medium) + 1px);
   line-height: 1.4;
 }
 
@@ -12236,7 +12241,6 @@ button.abyss-calendar-date[aria-pressed='true'] {
 .abyss-command-latest,
 .abyss-command-question {
   color: var(--text-muted);
-  font-size: var(--font-ui-small);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
@@ -12277,6 +12281,7 @@ button.abyss-calendar-date[aria-pressed='true'] {
 
 .abyss-command-question {
   color: var(--text-normal);
+  font-size: var(--font-ui-small);
 }
 
 .abyss-command-latest:not([hidden]) {

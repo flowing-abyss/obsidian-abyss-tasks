@@ -18,6 +18,7 @@ import {
   type QuickCapturePhase,
 } from '../src/ui/taskCapture/QuickCaptureCoordinator';
 import { TaskCaptureController } from '../src/ui/taskCapture/TaskCaptureController';
+import { cssDeclarations } from './cssHelpers';
 import {
   cssRuleParts,
   deferred,
@@ -216,6 +217,20 @@ describe('QuickCaptureCoordinator', () => {
       /border-color:\s*color-mix\(\s*in srgb,\s*var\(--interactive-accent\) \d+%,\s*var\(--background-modifier-border\)\s*\)/u,
     );
     expect(focus).toContain('box-shadow: none');
+  });
+
+  it('uses the host UI type scale for both Q inputs and their captions', () => {
+    const size = (selector: string) =>
+      cssDeclarations(css, selector, true)
+        .reverse()
+        .find((rule) => rule.prop === 'font-size')?.value;
+    const input = size('.abyss-quick-capture-host .abyss-capture-input');
+    expect(input).toBe('var(--font-ui-medium)');
+    expect(size('.abyss-capture-input-shell .abyss-capture-input') ?? input).toBe(input);
+    expect(size('.abyss-quick-capture-host .abyss-capture-metadata')).toBe(
+      'var(--font-ui-smaller)',
+    );
+    expect(size('.abyss-command-phase')).toBe('var(--font-ui-smaller)');
   });
 
   it('hides the caret only on a recording Q input that is still empty', () => {
