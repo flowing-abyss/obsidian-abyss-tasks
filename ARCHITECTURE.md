@@ -244,7 +244,7 @@ independently of session rendering.
 The compact phase row shows starting/listening/recognizing/stopped state and queued count alongside
 agent progress, with elapsed time at the far right. AudioContext startup has a 1500 ms deadline;
 retirement cancels its timer and releases acquired tracks even if resume finishes late. Local
-RMS samples separate utterances after 3,500 ms of consecutive observed quiet; resumed speech resets
+RMS samples separate utterances after 3,100 ms of consecutive observed quiet. Resumed speech resets
 that interval. Silence stays local; five-second quiet
 containers are discarded only after current quiet, preserving speech that starts at the boundary.
 Silent container rotation uses the same stream. At an utterance boundary the recorder releases

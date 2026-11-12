@@ -4031,7 +4031,7 @@ it('waits with all tracks stopped through ASR, research and a published result u
   media.level(0.1);
   await vi.advanceTimersByTimeAsync(200);
   media.level(0);
-  await vi.advanceTimersByTimeAsync(3500);
+  await vi.advanceTimersByTimeAsync(3100);
   expect(transcribe).toHaveBeenCalledOnce();
   expect(media.tracks[0]?.readyState).toBe('ended');
   expect(voiceButton(surface).getAttribute('aria-description')).toMatch(/recognizing/i);

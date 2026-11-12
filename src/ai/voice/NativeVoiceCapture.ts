@@ -21,7 +21,7 @@ interface Recording<B> {
   ending?: 'utterance' | 'rollover';
 }
 const SAMPLE_INTERVAL_MS = 50;
-const END_OF_UTTERANCE_MS = 3500;
+const END_OF_UTTERANCE_MS = 3100;
 /** Owns one window's physical capture and bounded local pause detection. */
 export class NativeVoiceCapture<B> {
   private stream: MediaStream | undefined;

@@ -443,7 +443,7 @@ it.each([1000, 2000, 3000])(
     h.media.level(0.1);
     await vi.advanceTimersByTimeAsync(200);
     h.media.level(0);
-    await vi.advanceTimersByTimeAsync(3450);
+    await vi.advanceTimersByTimeAsync(3050);
     expect(h.segments).toHaveLength(0);
     await vi.advanceTimersByTimeAsync(50);
     expect(h.segments).toHaveLength(1);
