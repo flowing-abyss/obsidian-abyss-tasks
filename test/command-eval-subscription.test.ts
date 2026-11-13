@@ -1,7 +1,7 @@
 import { Platform } from 'obsidian';
 import { expect, it, vi } from 'vitest';
 import { parseArgs } from '../tooling/command-eval.mjs';
-import { subscriptionModel } from '../tooling/command-subscription.mjs';
+import { isTrustedSubscriptionModel, subscriptionModel } from '../tooling/command-subscription.mjs';
 import { canonicalModel } from './command-live/controls';
 import { selectCases } from './command-live/corpus';
 import { runCase } from './command-live/harness';
@@ -497,7 +497,7 @@ it('invokes the in-app production model without copying authentication and meter
 });
 
 useRealMoment();
-it('labels subscription-backed injection as live provenance rather than scripted control', async () => {
+it('labels a canonical model override as scripted control even for subscription provider selection', async () => {
   const source = selectCases('B01-en')[0];
   if (source === undefined) throw new Error('case missing');
   const report = await runCase(
@@ -513,7 +513,16 @@ it('labels subscription-backed injection as live provenance rather than scripted
     async () => {},
     canonicalModel(),
   );
-  expect(report.modelSource).toBe('live-provider');
+  expect(report.modelSource).toBe('scripted-control');
+});
+
+it('trusts only the actual default subscription adapter identity without dispatching', () => {
+  const budget = new RequestBudget(1);
+  const productionAdapter = subscriptionModel('gpt-6-luna', budget);
+  const injectedAdapter = subscriptionModel('gpt-6-luna', budget, async () => ({}));
+  expect(isTrustedSubscriptionModel(productionAdapter)).toBe(true);
+  expect(isTrustedSubscriptionModel(injectedAdapter)).toBe(false);
+  expect(budget.used).toBe(0);
 });
 
 it('delivers each case fixed research evidence to the model rather than the generic canned result', async () => {

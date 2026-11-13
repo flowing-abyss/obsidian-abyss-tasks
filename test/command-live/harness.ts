@@ -20,7 +20,10 @@ import { matchesInboxPolicy, normalizeTaskTagInput } from '../../src/tasks';
 import { createMiniSearchTaskEngine } from '../../src/tasks/infrastructure/search/MiniSearchTaskEngine';
 import { TaskSearchRuntime } from '../../src/tasks/infrastructure/search/TaskSearchRuntime';
 import * as taskSearch from '../../src/tasks/infrastructure/search/TaskSearchService';
-import { SubscriptionEvaluationFailure } from '../../tooling/command-subscription.mjs';
+import {
+  isTrustedSubscriptionModel,
+  SubscriptionEvaluationFailure,
+} from '../../tooling/command-subscription.mjs';
 import { createAppWithFiles } from '../helpers';
 import { commandSessionStorage } from '../support/commandSessionStorage';
 import { publicApiHarness } from '../support/publicApiHarness';
@@ -1100,7 +1103,7 @@ function injectedControl(
   test: EvalCase,
   model: Exclude<LanguageModel, string> | undefined,
 ): boolean {
-  return test.scripted === true || model !== undefined;
+  return test.scripted === true || (model !== undefined && !isTrustedSubscriptionModel(model));
 }
 function caseAvailable(test: EvalCase, report: CaseReport): boolean {
   const gaps = unqualifiedTurns(test);
@@ -1268,10 +1271,7 @@ export async function runCase(
   const report = initialReport(
     {
       ...test,
-      scripted: injectedControl(
-        test,
-        runtime.options.provider === 'chatgpt-plan' ? undefined : modelOverride,
-      ),
+      scripted: injectedControl(test, modelOverride),
     },
     runtime.options.provider,
   );

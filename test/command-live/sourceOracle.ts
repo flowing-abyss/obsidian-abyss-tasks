@@ -84,7 +84,12 @@ export function hasSourceAbsenceFacts(text: string, facts: readonly AbsenceFact[
       /[.!?;,\n]+|\b(?:but|however|whereas|yet)\b|(?:^|[^\p{L}\p{N}])(?:но|однако|зато|а)(?![\p{L}\p{N}])/gu,
     )
     .map((clause) => [...clause.matchAll(/[\p{L}\p{N}]+/gu)].map((match) => match[0]));
-  return facts.every((aliases) => clauses.some((tokens) => capabilityIsAbsent(tokens, aliases)));
+  return facts.every((aliases) => {
+    const verdicts = clauses.map((tokens) => capabilityVerdict(tokens, aliases));
+    return (
+      verdicts.some((verdict) => verdict.absent) && !verdicts.some((verdict) => verdict.present)
+    );
+  });
 }
 
 const absenceCues = new Set([
@@ -115,16 +120,14 @@ const presenceCues = new Set([
   'есть',
 ]);
 const presenceStems = ['доступ', 'поддерж', 'имеет', 'налич'];
-function capabilityIsAbsent(tokens: readonly string[], aliases: AbsenceFact): boolean {
-  const matches = aliases.flatMap((alias) => {
-    if (alias.length === 0) return [];
-    const positions = alias.map((term) => tokens.findIndex((token) => token.startsWith(term)));
-    if (positions.some((position) => position < 0)) return [];
-    const start = Math.min(...positions),
-      end = Math.max(...positions);
-    return end - start <= 8 ? [{ start, end }] : [];
-  });
-  return matches.some(({ start, end }) => {
+function capabilityVerdict(
+  tokens: readonly string[],
+  aliases: AbsenceFact,
+): { absent: boolean; present: boolean } {
+  const matches = aliases.flatMap((alias) => capabilityMentions(tokens, alias));
+  let absent = false;
+  let present = false;
+  for (const { start, end } of matches) {
     const distance = (index: number) => {
       if (index < start) return start - index;
       if (index > end) return index - end;
@@ -134,14 +137,88 @@ function capabilityIsAbsent(tokens: readonly string[], aliases: AbsenceFact): bo
     const negative = tokens.flatMap((_token, index) =>
       nearby(index) && isAbsenceCueAt(tokens, index, start, end) ? [index] : [],
     );
-    const positive = tokens.flatMap((token, index) =>
-      nearby(index) && isPresenceCue(token) && !negatedCue(tokens, index) ? [index] : [],
-    );
-    if (negative.length === 0) return false;
+    const positive = tokens.flatMap((token, index) => {
+      if (!nearby(index)) return [];
+      const negated = negatedCue(tokens, index);
+      return (isPresenceCue(token) && !negated) || (isAbsenceCue(token) && negated) ? [index] : [];
+    });
+    if (hasCoordinatedOppositeCues(tokens, negative, positive)) {
+      absent = true;
+      present = true;
+      continue;
+    }
+    if (negative.length === 0) {
+      if (positive.length > 0) present = true;
+      continue;
+    }
     const nearestNegative = Math.min(...negative.map(distance));
     const nearestPositive = positive.length > 0 ? Math.min(...positive.map(distance)) : Infinity;
-    return nearestNegative < nearestPositive;
-  });
+    if (nearestNegative < nearestPositive) absent = true;
+    else if (nearestPositive < nearestNegative) present = true;
+  }
+  return { absent, present };
+}
+function hasCoordinatedOppositeCues(
+  tokens: readonly string[],
+  negative: readonly number[],
+  positive: readonly number[],
+): boolean {
+  const conjunctions = new Set(['and', 'и']);
+  const links = new Set(['is', 'are', 'was', 'were', 'be', 'been', 'being']);
+  return negative.some((negativeIndex) =>
+    positive.some((positiveIndex) => {
+      const start = Math.min(negativeIndex, positiveIndex);
+      const end = Math.max(negativeIndex, positiveIndex);
+      const between = tokens.slice(start + 1, end);
+      return (
+        between.some((token) => conjunctions.has(token)) &&
+        between.every(
+          (token) =>
+            conjunctions.has(token) ||
+            links.has(token) ||
+            token === 'not' ||
+            token === 'не' ||
+            isAbsenceCue(token) ||
+            isPresenceCue(token),
+        )
+      );
+    }),
+  );
+}
+function capabilityMentions(
+  tokens: readonly string[],
+  alias: readonly string[],
+): Array<{ start: number; end: number }> {
+  if (alias.length === 0) return [];
+  const positions = alias.map((term) =>
+    tokens.flatMap((token, index) => (token.startsWith(term) ? [index] : [])),
+  );
+  if (positions.some((matches) => matches.length === 0)) return [];
+  const spans = new Map<string, { start: number; end: number }>();
+  const select = (termIndex: number, selected: number[]) => {
+    if (termIndex === positions.length) {
+      const start = Math.min(...selected);
+      const end = Math.max(...selected);
+      if (end - start <= 8) spans.set(`${start}:${end}`, { start, end });
+      return;
+    }
+    for (const index of positions[termIndex] ?? []) {
+      if (selected.includes(index)) continue;
+      const next = [...selected, index];
+      if (Math.max(...next) - Math.min(...next) <= 8) select(termIndex + 1, next);
+    }
+  };
+  select(0, []);
+  const candidates = [...spans.values()];
+  return candidates.filter(
+    (candidate) =>
+      !candidates.some(
+        (other) =>
+          candidate.start <= other.start &&
+          candidate.end >= other.end &&
+          (candidate.start < other.start || candidate.end > other.end),
+      ),
+  );
 }
 function isAbsenceCue(token: string): boolean {
   return (

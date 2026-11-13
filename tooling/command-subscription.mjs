@@ -21,6 +21,13 @@ const failureCodes = [
   'busy',
   'too-large',
 ];
+const productionAdapters = new WeakSet();
+
+/** @param {unknown} model */
+export function isTrustedSubscriptionModel(model) {
+  return typeof model === 'object' && model !== null && productionAdapters.has(model);
+}
+
 export class SubscriptionEvaluationFailure extends Error {
   /** @param {string} code */
   constructor(code) {
@@ -31,7 +38,8 @@ export class SubscriptionEvaluationFailure extends Error {
 }
 /** The CLI never receives credentials. The running development-vault plugin owns OAuth,
  * token refresh, the production SDK adapter, and its deadline. Synthetic parameters/results
- * cross a private temporary directory which is removed after every generation. */
+ * cross a private temporary directory. The directory is removed after known settlement and
+ * retained when remote settlement is unknown. */
 /**
  * @param {string} model
  * @param {{dispatch:()=>void,close?:()=>void}} budget
@@ -39,7 +47,8 @@ export class SubscriptionEvaluationFailure extends Error {
  * @returns {ReturnType<typeof import('../src/ai/providers/chatGptPlanModel.ts').createChatGptPlanModel>}
  */
 export function subscriptionModel(model, budget, execute = executeInDevelopmentVault) {
-  return {
+  /** @type {ReturnType<typeof import('../src/ai/providers/chatGptPlanModel.ts').createChatGptPlanModel>} */
+  const adapter = {
     specificationVersion: 'v4',
     provider: 'chatgpt-plan',
     modelId: model,
@@ -175,6 +184,8 @@ export function subscriptionModel(model, budget, execute = executeInDevelopmentV
       throw new Error('subscription-evaluation-streaming-unavailable');
     },
   };
+  if (execute === executeInDevelopmentVault) productionAdapters.add(adapter);
+  return adapter;
 }
 const settlementDrainMs = 5_000;
 

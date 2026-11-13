@@ -2,6 +2,7 @@ import { expect, it } from 'vitest';
 import { tree } from './command-live/fixtures';
 import { evaluateTurn, type TurnEvidence, type TurnExpectation } from './command-live/oracles';
 import { pageCases } from './command-live/pageCases';
+import { hasSourceAbsenceFacts } from './command-live/sourceOracle';
 
 const source = 'https://example.org/offline-backup';
 const base = (trees: readonly unknown[]): TurnEvidence => ({
@@ -34,6 +35,34 @@ const sourceExpectation: TurnExpectation = {
     },
   ],
 };
+function evaluatePagePreview(secondComment: string): string[] {
+  const pageCase = pageCases.find((candidate) => candidate.id === 'project-page-overview-ru');
+  const expected = pageCase?.turns[1]?.expect;
+  if (expected === undefined) throw new Error('project page expectation missing');
+  const url = 'https://example.org/projects/cairn';
+  const original = tree('Изучить Cairn', {
+    description: 'Оценить для личного использования.',
+    tags: ['#keep'],
+  });
+  const preview = tree('Изучить Cairn', {
+    description: 'Оценить для личного использования.',
+    tags: ['#keep'],
+    comments: [
+      { text: `Cairn is an offline CLI task manager for personal Markdown files. ${url}` },
+      { text: `${secondComment} ${url}` },
+    ],
+  });
+  return evaluateTurn(expected, {
+    ...base([preview]),
+    focus: [{ kind: 'task', path: 'projects/Launch.md', line: 5 }],
+    taskSources: [{ path: 'projects/Launch.md', line: 5, kind: 'edit', basisValid: true }],
+    proposalKinds: ['task'],
+    publicTrees: [original],
+    freshPreparation: true,
+    research: [{ invocation: 1, query: url, sources: [url], action: 'read-page' }],
+    writeCount: 0,
+  });
+}
 
 it.each([`Keep 3 copies offline. ${source}`, `Хранить 3 копии без сети. [Источник](${source})`])(
   'accepts independently specified source facts in either language: %s',
@@ -213,4 +242,100 @@ it('accepts the offline paraphrase and rejects contradicted offline or team-edit
   expect(evaluate([`${valid[0] ?? ''} ${'лишние слова '.repeat(20)}`, valid[1] ?? ''])).toContain(
     'tree-postcondition',
   );
+});
+
+it('rejects same-capability contradiction mutations from fully valid RU and EN page previews', () => {
+  const cases = [
+    {
+      gold: 'Expand recurring tasks; no shared team editing; no cloud sync and calendar export is available.',
+      contradiction:
+        'Expand recurring tasks; no shared team editing; no cloud sync and calendar export works and cloud sync is available.',
+    },
+    {
+      gold: 'Expand recurring tasks; no shared team editing; no cloud sync and calendar export is available.',
+      contradiction:
+        'Expand recurring tasks; no shared team editing; cloud sync is available and no cloud sync; calendar export is available.',
+    },
+    {
+      gold: 'Повторяющиеся задачи; совместного редактирования нет; облачной синхронизации нет и экспорт календаря доступен.',
+      contradiction:
+        'Повторяющиеся задачи; совместного редактирования нет; облачной синхронизации нет и экспорт календаря работает и облачная синхронизация доступна.',
+    },
+    {
+      gold: 'Повторяющиеся задачи; совместного редактирования нет; облачной синхронизации нет и экспорт календаря доступен.',
+      contradiction:
+        'Повторяющиеся задачи; совместного редактирования нет; облачная синхронизация доступна и облачной синхронизации нет; экспорт календаря доступен.',
+    },
+  ];
+  for (const { gold, contradiction } of cases) {
+    expect(evaluatePagePreview(gold)).toEqual([]);
+    expect(evaluatePagePreview(contradiction)).toContain('tree-postcondition');
+  }
+});
+
+it('rejects coordinated opposite polarity cues for one capability in RU and EN page previews', () => {
+  const cases = [
+    {
+      gold: 'Expand recurring tasks; calendar export; no shared team editing; cloud sync is unavailable.',
+      mutations: [
+        'Expand recurring tasks; calendar export; no shared team editing; cloud sync is unavailable and available.',
+        'Expand recurring tasks; calendar export; no shared team editing; cloud sync is available and unavailable.',
+      ],
+    },
+    {
+      gold: 'Повторяющиеся задачи; экспорт календаря; совместного редактирования нет; облачная синхронизация недоступна.',
+      mutations: [
+        'Повторяющиеся задачи; экспорт календаря; совместного редактирования нет; облачная синхронизация недоступна и доступна.',
+        'Повторяющиеся задачи; экспорт календаря; совместного редактирования нет; облачная синхронизация доступна и недоступна.',
+      ],
+    },
+  ];
+  for (const { gold, mutations } of cases) {
+    expect(evaluatePagePreview(gold)).toEqual([]);
+    for (const mutation of mutations) {
+      expect(evaluatePagePreview(mutation)).toContain('tree-postcondition');
+    }
+  }
+});
+
+it('keeps unrelated positive capabilities and conservative negation controls calibrated', () => {
+  const pageCase = pageCases.find((candidate) => candidate.id === 'project-page-overview-ru');
+  const expected = pageCase?.turns[1]?.expect;
+  expect(expected).toBeDefined();
+  const evaluate = (comment: string) =>
+    evaluateTurn(
+      expected as TurnExpectation,
+      base([
+        tree('Изучить Cairn', {
+          description: 'Оценить для личного использования.',
+          tags: ['#keep'],
+          comments: [
+            {
+              text: 'Cairn is an offline CLI task manager for personal Markdown files. https://example.org/projects/cairn',
+            },
+            {
+              text: `Expand recurring tasks and export a calendar file; no cloud sync or shared team editing. ${comment} https://example.org/projects/cairn`,
+            },
+          ],
+        }),
+      ]),
+    );
+  const absenceFacts = [
+    [
+      ['облачн', 'синхронизац'],
+      ['синхронизац', 'облак'],
+      ['cloud', 'sync'],
+      ['cloud', 'synchronization'],
+    ],
+  ] as const;
+  expect(evaluate('Calendar export is available.')).not.toContain('tree-postcondition');
+  expect(hasSourceAbsenceFacts('No cloud sync. Calendar export is available.', absenceFacts)).toBe(
+    true,
+  );
+  expect(hasSourceAbsenceFacts('Cloud sync is not unavailable.', absenceFacts)).toBe(false);
+  expect(hasSourceAbsenceFacts('No cloud sync. Cloud sync is not unavailable.', absenceFacts)).toBe(
+    false,
+  );
+  expect(hasSourceAbsenceFacts('Cloud sync is not required.', absenceFacts)).toBe(false);
+  expect(hasSourceAbsenceFacts('Облачная синхронизация не требуется.', absenceFacts)).toBe(false);
 });
