@@ -79,15 +79,48 @@ export function hasSourceAbsenceFacts(text: string, facts: readonly AbsenceFact[
     .toLowerCase()
     .replace(/doesn['’]t/gu, 'does not')
     .replace(/isn['’]t/gu, 'is not');
-  const clauses = normalized
-    .split(
-      /[.!?;,\n]+|\b(?:but|however|whereas|yet)\b|(?:^|[^\p{L}\p{N}])(?:но|однако|зато|а)(?![\p{L}\p{N}])/gu,
-    )
-    .map((clause) => [...clause.matchAll(/[\p{L}\p{N}]+/gu)].map((match) => match[0]));
-  return facts.every((aliases) => {
-    const verdicts = clauses.map((tokens) => capabilityVerdict(tokens, aliases));
+  const pieces = normalized.split(
+    /(,|[.!?;\n]+|\b(?:but|however|whereas|yet)\b|(?<![\p{L}\p{N}])(?:но|однако|зато|а)(?![\p{L}\p{N}]))/gu,
+  );
+  const clauses: Array<{ tokens: string[]; commaLinked: boolean }> = [];
+  for (let index = 0; index < pieces.length; index += 2) {
+    const clause = pieces[index] ?? '';
+    const boundary = pieces[index - 1];
+    clauses.push({
+      tokens: [...clause.matchAll(/[\p{L}\p{N}]+/gu)].map((match) => match[0]),
+      commaLinked: boundary === ',',
+    });
+  }
+  return facts.every((aliases, factIndex) => {
+    const verdicts = clauses.map(({ tokens }) => capabilityVerdict(tokens, aliases));
+    const inherited = clauses.some(({ tokens, commaLinked }, index) => {
+      if (
+        !commaLinked ||
+        clauses[index + 1]?.commaLinked === true ||
+        !['тоже', 'также'].includes(tokens[tokens.length - 1] ?? '') ||
+        !aliases.some((alias) => {
+          const ellipticalTokens = tokens.slice(0, -1);
+          return (
+            ellipticalTokens.length === alias.length &&
+            capabilityMentions(ellipticalTokens, alias).some(
+              ({ start, end }) => start === 0 && end === ellipticalTokens.length - 1,
+            )
+          );
+        }) ||
+        verdicts[index]?.present === true
+      )
+        return false;
+      const precedingClause = clauses[index - 1];
+      if (precedingClause === undefined) return false;
+      return facts.some((_otherAliases, otherIndex) => {
+        if (otherIndex === factIndex) return false;
+        const precedingVerdict = capabilityVerdict(precedingClause.tokens, facts[otherIndex] ?? []);
+        return precedingVerdict.absent && !precedingVerdict.present;
+      });
+    });
     return (
-      verdicts.some((verdict) => verdict.absent) && !verdicts.some((verdict) => verdict.present)
+      (verdicts.some((verdict) => verdict.absent) || inherited) &&
+      !verdicts.some((verdict) => verdict.present)
     );
   });
 }

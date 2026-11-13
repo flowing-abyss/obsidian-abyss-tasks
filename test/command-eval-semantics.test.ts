@@ -2,7 +2,11 @@ import { expect, it } from 'vitest';
 import { tree } from './command-live/fixtures';
 import { evaluateTurn, type TurnEvidence, type TurnExpectation } from './command-live/oracles';
 import { pageCases } from './command-live/pageCases';
-import { hasSourceAbsenceFacts } from './command-live/sourceOracle';
+import {
+  hasSourceAbsenceFacts,
+  hasSourceDestination,
+  hasSourceFacts,
+} from './command-live/sourceOracle';
 
 const source = 'https://example.org/offline-backup';
 const base = (trees: readonly unknown[]): TurnEvidence => ({
@@ -338,4 +342,153 @@ it('keeps unrelated positive capabilities and conservative negation controls cal
   );
   expect(hasSourceAbsenceFacts('Cloud sync is not required.', absenceFacts)).toBe(false);
   expect(hasSourceAbsenceFacts('Облачная синхронизация не требуется.', absenceFacts)).toBe(false);
+});
+
+it('recognizes only terminal comma-linked ellipsis for configured source capabilities', () => {
+  const pageCase = pageCases.find((candidate) => candidate.id === 'project-page-overview-ru');
+  const expected = pageCase?.turns[1]?.expect;
+  expect(expected).toBeDefined();
+  const url = 'https://example.org/projects/cairn';
+  const actualFirst =
+    'Cairn — офлайн-менеджер задач для командной строки, для тех, кто хранит задачи в локальных Markdown-файлах. Им управляют через командную строку, а задачи остаются в локальных файлах на вашем устройстве.';
+  const firstComment = `${actualFirst} [Страница Cairn](${url})`;
+  const secondPrefix =
+    'Возможности: Cairn умеет показывать и фильтровать локальные задачи, разворачивать повторяющиеся задачи и экспортировать календарный файл. Экспорт — только файл, не двусторонняя связь с календарём.';
+  const secondComment = (claim: string) => `${secondPrefix} ${claim} [Страница Cairn](${url})`;
+  const evaluateComplete = (claim: string) =>
+    evaluateTurn(expected as TurnExpectation, {
+      ...base([
+        tree('Изучить Cairn', {
+          description: 'Оценить для личного использования.',
+          tags: ['#keep'],
+          comments: [{ text: firstComment }, { text: secondComment(claim) }],
+        }),
+      ]),
+      focus: [{ kind: 'task', path: 'projects/Launch.md', line: 5 }],
+      taskSources: [{ path: 'projects/Launch.md', line: 5, kind: 'edit', basisValid: true }],
+      proposalKinds: ['task'],
+      publicTrees: [
+        tree('Изучить Cairn', {
+          description: 'Оценить для личного использования.',
+          tags: ['#keep'],
+        }),
+      ],
+      freshPreparation: true,
+      research: [
+        {
+          invocation: 1,
+          query: url,
+          sources: [url],
+          action: 'read-page',
+        },
+      ],
+      writeCount: 0,
+    });
+  const actualGold = 'Облачной синхронизации нет, совместного редактирования командой тоже.';
+  const expectsAbsence = [
+    actualGold,
+    'Совместного редактирования командой нет, облачной синхронизации тоже.',
+    'Облачной синхронизации нет, совместного редактирования командой также.',
+    'Облачной синхронизации нет, совместного редактирования командой тоже нет.',
+  ];
+  for (const claim of expectsAbsence) expect.soft(evaluateComplete(claim)).toEqual([]);
+
+  const absenceFacts = [
+    [
+      ['облачн', 'синхронизац'],
+      ['синхронизац', 'облак'],
+      ['cloud', 'sync'],
+      ['cloud', 'synchronization'],
+    ],
+    [
+      ['совместн', 'командн', 'редактирован'],
+      ['совместн', 'редактирован'],
+      ['совместн', 'редактирован', 'команд'],
+      ['shared', 'team', 'edit'],
+      ['team', 'edit'],
+      ['collaborat'],
+    ],
+  ] as const;
+  const pageFacts = [['повтор'], ['экспорт'], ['календар']] as const;
+  const pageExcludes = [
+    'supports cloud',
+    'cloud synchronization is supported',
+    'облачная синхронизация поддерживается',
+    'shared team editing is supported',
+    'team editing is available',
+    'совместное редактирование командой доступно',
+    'поддерживает совместную работу команды',
+  ];
+  const actualComment = secondComment(actualGold);
+  expect(actualComment.length).toBeLessThanOrEqual(400);
+  expect(hasSourceDestination(actualComment, url)).toBe(true);
+  expect(hasSourceFacts(actualComment, pageFacts, pageExcludes)).toBe(true);
+  expect(hasSourceAbsenceFacts(actualComment, absenceFacts)).toBe(true);
+  expect(evaluateComplete(actualGold)).toEqual([]);
+
+  const reject = [
+    'Облачной синхронизации нет. Совместного редактирования командой тоже.',
+    'Облачной синхронизации нет; совместного редактирования командой тоже.',
+    'Облачной синхронизации нет\nсовместного редактирования командой тоже.',
+    'Облачной синхронизации нет, но совместного редактирования командой тоже.',
+    'Облачной синхронизации нет, а совместного редактирования командой тоже.',
+    'Регистрации нет, облачной синхронизации нет. Совместного редактирования командой тоже.',
+    'Облачной синхронизации нет, совместного редактирования командой тоже доступно.',
+    'Облачной синхронизации нет, совместное редактирование работает тоже.',
+    'Облачной синхронизации нет, совместное редактирование не требуется тоже.',
+    'Облачной синхронизации нет, совместное редактирование для всех участников одной команды в каждом проекте доступно тоже.',
+    'Облачной синхронизации нет, совместное редактирование работает для всех участников одной команды в каждом проекте тоже.',
+    'Облачной синхронизации нет, совместного редактирования командой тоже, совместной работы также.',
+    'Облачной синхронизации нет, совместного редактирования командой, хотя доступно тоже.',
+  ];
+  for (const claim of reject) {
+    const comment = secondComment(claim);
+    expect(comment.length).toBeLessThanOrEqual(400);
+    expect(hasSourceDestination(comment, url)).toBe(true);
+    expect(hasSourceFacts(comment, pageFacts, pageExcludes)).toBe(true);
+    expect.soft(hasSourceAbsenceFacts(comment, absenceFacts), claim).toBe(false);
+    expect.soft(evaluateComplete(claim), claim).toContain('tree-postcondition');
+  }
+
+  const contradictions = [
+    'Облачная синхронизация доступна, облачной синхронизации нет, совместного редактирования командой тоже.',
+    'Облачной синхронизации нет, облачная синхронизация доступна, совместного редактирования командой тоже.',
+    'Совместное редактирование командой доступно, облачной синхронизации нет, совместного редактирования командой тоже.',
+    'Облачной синхронизации нет, совместное редактирование командой доступно, совместного редактирования командой тоже.',
+    'Облачной синхронизации нет, совместного редактирования командой тоже. Совместное редактирование доступно.',
+    'Облачной синхронизации нет, совместного редактирования командой тоже. Облачная синхронизация поддерживается.',
+    'Облачная синхронизация не отсутствует, совместного редактирования командой тоже.',
+    'Облачной синхронизации нет, совместное редактирование командой не отсутствует.',
+  ];
+  for (const claim of contradictions) {
+    const comment = secondComment(claim);
+    expect(comment.length).toBeLessThanOrEqual(400);
+    expect(hasSourceDestination(comment, url)).toBe(true);
+    expect(hasSourceFacts(comment, pageFacts, [])).toBe(true);
+    expect(hasSourceAbsenceFacts(comment, absenceFacts)).toBe(false);
+    expect(evaluateComplete(claim)).toContain('tree-postcondition');
+  }
+
+  const alternateVocabulary = [[['remote', 'backup']], [['local', 'scheduling']]] as const;
+  expect(
+    hasSourceAbsenceFacts(
+      'Remote backup is unavailable, local scheduling тоже. https://example.net/guide',
+      alternateVocabulary,
+    ),
+  ).toBe(true);
+  expect(
+    hasSourceAbsenceFacts(
+      'Remote backup is unavailable. Local scheduling тоже. https://example.net/guide',
+      alternateVocabulary,
+    ),
+  ).toBe(false);
+  expect
+    .soft(
+      hasSourceAbsenceFacts(
+        'Remote backup is unavailable, local scheduling works тоже. https://example.net/guide',
+        alternateVocabulary,
+      ),
+      'unmatched predicate under alternate capability vocabulary',
+    )
+    .toBe(false);
 });
