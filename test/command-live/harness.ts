@@ -402,7 +402,7 @@ export interface CaseReport {
   phase?: string;
   elapsedMs?: number;
   activeTurn?: number;
-  cleanup?: 'settled' | 'unsettled';
+  cleanup?: 'settled' | 'unsettled' | 'remote-unknown';
   interruptedPhase?: string;
   failure?: string;
 }
@@ -1227,13 +1227,14 @@ async function cleanupCase(context: {
   transport.dispose();
   h?.dispose();
   try {
-    const settled = await lifetime.settle(limits.cleanupMs, state?.settled());
-    updateReport(report, { cleanup: settled ? 'settled' : 'unsettled' });
-    if (!settled) {
+    const locallySettled = await lifetime.settle(limits.cleanupMs, state?.settled());
+    const cleanup = cleanupReportState(report, locallySettled);
+    updateReport(report, { cleanup: cleanup.status });
+    if (cleanup.unsettled) {
       runtime.budget.close();
       updateReport(report, {
         outcome: 'infrastructure-failure',
-        failure: report.failure ?? 'cleanup-timeout',
+        failure: report.failure ?? cleanup.failure,
       });
     }
     await lifetime.finish();
@@ -1241,6 +1242,22 @@ async function cleanupCase(context: {
     runtime.budget.close();
     throw cause;
   }
+}
+function cleanupReportState(report: CaseReport, locallySettled: boolean) {
+  const remoteSettlementUnknown = report.trace.some(
+    (event) =>
+      event.kind === 'generation-rejected' &&
+      object(event.data)['subscriptionCode'] === 'settlement-unknown',
+  );
+  let status: NonNullable<CaseReport['cleanup']>;
+  if (remoteSettlementUnknown) status = 'remote-unknown';
+  else if (locallySettled) status = 'settled';
+  else status = 'unsettled';
+  return {
+    status,
+    unsettled: !locallySettled || remoteSettlementUnknown,
+    failure: remoteSettlementUnknown ? 'remote-settlement-unknown' : 'cleanup-timeout',
+  } as const;
 }
 export async function runCase(
   test: EvalCase,
