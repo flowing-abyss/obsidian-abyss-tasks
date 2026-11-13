@@ -213,6 +213,14 @@ composer and no question/recovery state can start a new session. Semantic confir
 current session. The send button owns the New session context menu. Multi-root creation retains the latest successful, read-back creation
 request as a candidate refresh anchor; the public facade independently verifies its destination basis.
 
+For model-reviewed explicit confirmation, the host may match an assessor's full-proposal scope to a
+selected scope only when typed validation proves that distinct whole-change indexes exactly cover
+every change in that captured proposal revision and every selected change has its verified owner.
+The structural scope remains a subset for restrictions and mode checks, and the original selection
+continues to canonical execution. This equivalence never applies to immediate saves, task-field or
+mixed selections, incomplete or duplicate indexes, or a different revision; the independent reviewer
+still sees the complete displayed proposal and must provide the exact current authorization.
+
 `commandMessages` owns the limited English/Russian vocabulary for fixed CommandMode chrome and
 application diagnostics. Main selects it from the host's `getLanguage()` result; other languages
 fall back to English. The catalog has no host imports, so settings and Node tooling retain their

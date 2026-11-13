@@ -340,16 +340,16 @@ export function commandTools(ctx: CommandToolContext): ToolSet {
   );
 }
 class CommandToolOwner {
-  private readonly inspections = new Map<string, string>();
-  private readonly pageReads = new Map<string, z.infer<typeof researchResultSchema>>();
+  private readonly inspections_abyssPrivate = new Map<string, string>();
+  private readonly pageReads_abyssPrivate = new Map<string, z.infer<typeof researchResultSchema>>();
   private finished_abyssPrivate = false;
-  private readonly attempts = new WeakMap<object, { staged: boolean }>();
-  private preparedRevision: number | undefined;
-  private writeGrant: WriteGrant | undefined;
-  private writeDenied = false;
-  private scopeLimit: 'fields' | 'subset' | undefined;
-  private readonly declinedSelections = new Set<string>();
-  private readonly discovery = new Map<string, { cursor?: string; count: number }>();
+  private readonly attempts_abyssPrivate = new WeakMap<object, { staged: boolean }>();
+  private preparedRevision_abyssPrivate: number | undefined;
+  private writeGrant_abyssPrivate: WriteGrant | undefined;
+  private writeDenied_abyssPrivate = false;
+  private scopeLimit_abyssPrivate: 'fields' | 'subset' | undefined;
+  private readonly declinedSelections_abyssPrivate = new Set<string>();
+  private readonly discovery_abyssPrivate = new Map<string, { cursor?: string; count: number }>();
   constructor(private readonly ctx_abyssPrivate: CommandToolContext) {
     ctx_abyssPrivate.evidence ??= new CommandEvidence();
   }
@@ -407,7 +407,7 @@ class CommandToolOwner {
   ): Promise<unknown> {
     const preview = await work;
     if (name === 'find')
-      return lookupFeedback(record(input)?.['purpose'], preview, this.inspections);
+      return lookupFeedback(record(input)?.['purpose'], preview, this.inspections_abyssPrivate);
     const operand = record(record(canonical)?.['input']);
     if (
       completesTask(name, input) &&
@@ -445,10 +445,13 @@ class CommandToolOwner {
     if (!this.canFinishRead()) return false;
     const ctx = this.ctx_abyssPrivate;
     const current = ctx.session.snapshot();
-    if (current.id !== ctx.basis.id || this.preparedRevision !== current.proposal.revision)
+    if (
+      current.id !== ctx.basis.id ||
+      this.preparedRevision_abyssPrivate !== current.proposal.revision
+    )
       return false;
     return (
-      this.attempts.get(operand)?.staged === true ||
+      this.attempts_abyssPrivate.get(operand)?.staged === true ||
       (record(result)?.['cancelledDraft'] === true && current.proposal.changes.length === 0)
     );
   }
@@ -485,7 +488,7 @@ class CommandToolOwner {
       const operation = taskChangeOperation(value.operation);
       const references = required(this.ctx_abyssPrivate.references);
       const current = commandReferences(this.ctx_abyssPrivate.session.snapshot());
-      const inspect = this.inspections.get(value.edit);
+      const inspect = this.inspections_abyssPrivate.get(value.edit);
       if (inspect !== undefined) {
         const edit = references.issuedTaskEdit(references.identity(value.edit), current);
         throw new CommandFailure(
@@ -552,7 +555,7 @@ class CommandToolOwner {
   ): Promise<T> {
     const attempt = { staged: false, retry };
     const value = record(record(input)?.['input']) ?? record(input);
-    if (value !== undefined) this.attempts.set(value, attempt);
+    if (value !== undefined) this.attempts_abyssPrivate.set(value, attempt);
     const basis = this.mutationBasis_abyssPrivate(name, value);
     try {
       const result = await work();
@@ -944,44 +947,47 @@ class CommandToolOwner {
         signal: ctx.signal,
         review: (request) => this.reviewWriteRequest(request),
       });
-      this.checkFinishBasis();
-      this.writeGrant = grant;
+      this.checkFinishBasis_abyssPrivate();
+      this.writeGrant_abyssPrivate = grant;
     } catch (cause) {
-      this.retainWriteLimit(cause);
+      this.retainWriteLimit_abyssPrivate(cause);
       throw cause;
     }
   }
   private async reviewWriteRequest(request: WriteReview): Promise<WriteDecision> {
-    if (this.writeDenied)
+    if (this.writeDenied_abyssPrivate)
       throw new CommandFailure(
         'WRITE_DENIED',
         'This turn can continue with a preview. Saving requires a new user instruction.',
       );
     const selection = JSON.stringify(request.selections);
-    if (this.outsideWriteScope(request) || this.declinedSelections.has(selection))
+    if (
+      this.outsideWriteScope_abyssPrivate(request) ||
+      this.declinedSelections_abyssPrivate.has(selection)
+    )
       throw new CommandFailure(
         'WRITE_SCOPE',
         'Only the approved subset may be saved. Keep the preview or select its exact owner and fields.',
       );
     const decision = await required(this.ctx_abyssPrivate.reviewWrite)(request);
-    if (decision.scope === 'fields') this.scopeLimit = 'fields';
-    if (this.scopeLimit === 'fields' && decision.scope === 'subset')
+    if (decision.scope === 'fields') this.scopeLimit_abyssPrivate = 'fields';
+    if (this.scopeLimit_abyssPrivate === 'fields' && decision.scope === 'subset')
       throw new CommandFailure(
         'WRITE_SCOPE',
         'This turn permits only the explicitly approved fields.',
       );
     if ((decision.scope === 'subset' || decision.scope === 'fields') && !decision.scopeMatches)
-      this.declinedSelections.add(selection);
+      this.declinedSelections_abyssPrivate.add(selection);
     return decision;
   }
-  private outsideWriteScope(request: WriteReview): boolean {
-    if (this.scopeLimit === 'fields') return !request.fieldsOnly;
-    return this.scopeLimit === 'subset' && request.proposedScope !== 'subset';
+  private outsideWriteScope_abyssPrivate(request: WriteReview): boolean {
+    if (this.scopeLimit_abyssPrivate === 'fields') return !request.fieldsOnly;
+    return this.scopeLimit_abyssPrivate === 'subset' && request.proposedScope !== 'subset';
   }
-  private retainWriteLimit(cause: unknown): void {
+  private retainWriteLimit_abyssPrivate(cause: unknown): void {
     if (!(cause instanceof CommandFailure)) return;
-    if (cause.code === 'WRITE_SCOPE') this.scopeLimit ??= 'subset';
-    else this.writeDenied = true;
+    if (cause.code === 'WRITE_SCOPE') this.scopeLimit_abyssPrivate ??= 'subset';
+    else this.writeDenied_abyssPrivate = true;
   }
   private requireControlRepair(input: z.infer<typeof intentSchema>): void {
     const scoped = 'scope' in input && input.scope !== undefined;
@@ -1073,7 +1079,8 @@ class CommandToolOwner {
           intent === 'immediate',
           scope,
         ));
-      if (intent === 'confirm' && scope === undefined) this.reportDeclinedConfirmation(confirmed);
+      if (intent === 'confirm' && scope === undefined)
+        this.reportDeclinedConfirmation_abyssPrivate(confirmed);
       return { confirmed };
     }
     return undefined;
@@ -1081,10 +1088,11 @@ class CommandToolOwner {
   private confirmsNow(intent: z.infer<typeof intentSchema>['intent'], scoped: boolean): boolean {
     return (
       intent === 'confirm' ||
-      (intent === 'immediate' && (scoped || this.writeGrant?.effect === 'save-reviewed'))
+      (intent === 'immediate' &&
+        (scoped || this.writeGrant_abyssPrivate?.effect === 'save-reviewed'))
     );
   }
-  private reportDeclinedConfirmation(confirmed: boolean): void {
+  private reportDeclinedConfirmation_abyssPrivate(confirmed: boolean): void {
     const { basis, session, signal } = this.ctx_abyssPrivate;
     if (confirmed || signal.aborted) return;
     const current = session.snapshot();
@@ -1412,12 +1420,12 @@ class CommandToolOwner {
   ): string {
     const query = record(input) ?? {};
     const key = JSON.stringify([entity, subject, { ...query, cursor: undefined }]);
-    const previous = this.discovery.get(key);
+    const previous = this.discovery_abyssPrivate.get(key);
     const cursor = typeof query['cursor'] === 'string' ? query['cursor'] : undefined;
     const connected = cursor === undefined || previous?.cursor === cursor;
     const count = result.items.length + this.previousCount_abyssPrivate(query['cursor'], previous);
     if (connected)
-      this.discovery.set(key, {
+      this.discovery_abyssPrivate.set(key, {
         count,
         ...(result.nextCursor === undefined ? {} : { cursor: result.nextCursor }),
       });
@@ -1508,7 +1516,7 @@ class CommandToolOwner {
         candidate.plan.before === null &&
         candidate.plan.after?.target === request.operation.target
       ) {
-        this.preparedRevision = this.ctx_abyssPrivate.session.discardDraft(
+        this.preparedRevision_abyssPrivate = this.ctx_abyssPrivate.session.discardDraft(
           request.plan,
           request.expectedPlanRevision,
         );
@@ -1595,7 +1603,7 @@ class CommandToolOwner {
         plan,
         1,
         [prepareSchema.parse(request)],
-        this.attempts.get(input),
+        this.attempts_abyssPrivate.get(input),
       );
       return planToolOutput(plan);
     });
@@ -1729,7 +1737,7 @@ class CommandToolOwner {
               'This mark is not a configured task status. Read the statuses catalog and use its exact symbol for the requested state.',
             );
           this.ctx_abyssPrivate.session.stageLifecycleStatus({ ...input, symbol });
-          const attempt = this.attempts.get(input);
+          const attempt = this.attempts_abyssPrivate.get(input);
           if (attempt !== undefined) attempt.staged = true;
           this.acceptPreparation_abyssPrivate();
           this.entityEvidence_abyssPrivate('change', 'task', node);
@@ -2185,7 +2193,7 @@ class CommandToolOwner {
               'RESEARCH_INTENT',
               'Research requires the current user’s research intent.',
             );
-          const cached = 'url' in input ? this.pageReads.get(input.url) : undefined;
+          const cached = 'url' in input ? this.pageReads_abyssPrivate.get(input.url) : undefined;
           if (cached !== undefined) return { untrustedResearch: cached };
           if (this.ctx_abyssPrivate.researchCalls >= 2)
             throw new CommandFailure(
@@ -2206,7 +2214,7 @@ class CommandToolOwner {
           } else output = await port.search(input.query, this.ctx_abyssPrivate.signal);
           const result = researchResultSchema.parse(output);
           this.ctx_abyssPrivate.signal.throwIfAborted();
-          if ('url' in input) this.pageReads.set(input.url, result);
+          if ('url' in input) this.pageReads_abyssPrivate.set(input.url, result);
           this.ctx_abyssPrivate.evidence?.accept({
             action: 'research',
             entity: 'web',
@@ -2251,7 +2259,7 @@ class CommandToolOwner {
     const result =
       input.state === 'ready' ? this.readyResult_abyssPrivate(input.coverage) : undefined;
     await this.reveal(input);
-    this.checkFinishBasis(reviewed);
+    this.checkFinishBasis_abyssPrivate(reviewed);
     this.ctx_abyssPrivate.done = true;
     if (input.state === 'question') {
       this.ctx_abyssPrivate.session.exchange('agent', required(question));
@@ -2274,7 +2282,7 @@ class CommandToolOwner {
     );
     return undefined;
   }
-  private checkFinishBasis(reviewed?: { id: string; revision: number }): void {
+  private checkFinishBasis_abyssPrivate(reviewed?: { id: string; revision: number }): void {
     const ctx = this.ctx_abyssPrivate;
     ctx.signal.throwIfAborted();
     if (ctx.now() >= ctx.deadline)
@@ -2291,12 +2299,12 @@ class CommandToolOwner {
       : required(this.ctx_abyssPrivate.evidence).ready(coverage);
   }
   private acceptPreparation_abyssPrivate(): void {
-    this.preparedRevision = this.ctx_abyssPrivate.session.snapshot().proposal.revision;
+    this.preparedRevision_abyssPrivate = this.ctx_abyssPrivate.session.snapshot().proposal.revision;
   }
   private async publishReady_abyssPrivate(result: string | undefined): Promise<boolean> {
     const current = this.ctx_abyssPrivate.session.snapshot();
     this.checkImmediatePreparation(current);
-    const grant = this.writeGrant;
+    const grant = this.writeGrant_abyssPrivate;
     if (grant?.effect === 'save-after-edits') {
       const ctx = this.ctx_abyssPrivate;
       const approved = await verifyPreparedWrite(
@@ -2304,7 +2312,7 @@ class CommandToolOwner {
         { before: ctx.basis, current, temporalContext: ctx.temporalContext },
         required(ctx.reviewWrite),
       );
-      this.checkFinishBasis({ id: current.id, revision: current.proposal.revision });
+      this.checkFinishBasis_abyssPrivate({ id: current.id, revision: current.proposal.revision });
       if (!approved) {
         const message = commandMessage('Review the prepared changes before saving them.');
         ctx.session.status('ready', message);
@@ -2341,9 +2349,9 @@ class CommandToolOwner {
       this.ctx_abyssPrivate.immediate &&
       !this.reviewedImmediate_abyssPrivate() &&
       !(
-        this.preparedRevision !== undefined &&
+        this.preparedRevision_abyssPrivate !== undefined &&
         current.id === this.ctx_abyssPrivate.basis.id &&
-        current.proposal.revision === this.preparedRevision
+        current.proposal.revision === this.preparedRevision_abyssPrivate
       )
     )
       throw new CommandFailure(
@@ -2351,7 +2359,7 @@ class CommandToolOwner {
         'Immediate saving requires the unchanged reviewed proposal or current accepted preparation.',
       );
     if (
-      this.writeGrant?.effect === 'save-after-edits' &&
+      this.writeGrant_abyssPrivate?.effect === 'save-after-edits' &&
       !hasFreshCommandWork(this.ctx_abyssPrivate.basis, current)
     )
       throw new CommandFailure(
@@ -2361,7 +2369,7 @@ class CommandToolOwner {
   }
   private reviewedImmediate_abyssPrivate(): boolean {
     return (
-      this.writeGrant?.effect !== 'save-after-edits' &&
+      this.writeGrant_abyssPrivate?.effect !== 'save-after-edits' &&
       this.ctx_abyssPrivate.immediate &&
       this.ctx_abyssPrivate.basis.status.kind !== 'error' &&
       !this.ctx_abyssPrivate.session.readOnly() &&

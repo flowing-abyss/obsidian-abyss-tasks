@@ -6,6 +6,7 @@ import {
   reviewCommandWrite,
   type WriteReview,
 } from '../src/ai/commandWriteAuthorization';
+import { commandScopeCoversWholeProposal } from '../src/ai/commandWriteSubjects';
 
 const message = 'Сохрани оба комментария.';
 
@@ -167,3 +168,176 @@ it('does not grant a save when the reviewer refuses an unmentioned pending owner
     ),
   ).rejects.toMatchObject({ code: 'WRITE_DENIED' });
 });
+
+it.each([
+  [
+    'duplicate index',
+    2,
+    [
+      { kind: 'change', index: 0 },
+      { kind: 'change', index: 0 },
+    ],
+  ],
+  ['partial owner selection', 2, [{ kind: 'change', index: 0 }]],
+] as const)('does not treat a %s as complete scope coverage', async (_case, count, changes) => {
+  const projectChange = (index: number) => ({
+    kind: 'project-create' as const,
+    id: `pending-project-${index}`,
+    name: `Project ${index}`,
+    schema: {
+      providerEpoch: 'epoch',
+      revision: 1,
+      generation: 1,
+      scopeRevision: 0,
+      semanticsRevision: 1,
+      statuses: [],
+      fields: [],
+    },
+  });
+  const basis = {
+    id: 'session',
+    input: message,
+    focus: [],
+    context: '',
+    trees: [],
+    entities: { tasks: [], projects: [], notes: [] },
+    exchanges: [],
+    activeQuestion: null,
+    status: { kind: 'ready', message: '' },
+    proposal: {
+      revision: 1,
+      operations: count,
+      changes: Array.from({ length: count }, (_, index) => projectChange(index)),
+    },
+    journal: [],
+    actual: [],
+    blocked: false,
+  } satisfies CommandSessionSnapshot;
+
+  await expect(
+    authorizeCommandWrite(
+      {
+        intent: 'confirm',
+        research: false,
+        approval: message,
+        scope: { proposalRevision: 1, changes },
+      } as unknown as Parameters<typeof authorizeCommandWrite>[0],
+      {
+        userMessage: message,
+        basis,
+        review: async () => ({
+          effect: 'save-reviewed',
+          scope: 'all',
+          scopeMatches: true,
+          authorization: message,
+        }),
+        signal: new AbortController().signal,
+      },
+    ),
+  ).rejects.toMatchObject({ code: 'WRITE_NOT_AUTHORIZED' });
+});
+
+it.each([
+  [
+    'field-only scope',
+    [
+      {
+        kind: 'task-fields' as const,
+        index: 0,
+        plan: 'plan',
+        expectedPlanRevision: '1',
+        target: 'task',
+        fields: ['due' as const],
+      },
+      {
+        kind: 'task-fields' as const,
+        index: 1,
+        plan: 'plan',
+        expectedPlanRevision: '1',
+        target: 'task-2',
+        fields: ['due' as const],
+      },
+    ],
+  ],
+  [
+    'mixed field and whole-change scope',
+    [
+      {
+        kind: 'task-fields' as const,
+        index: 0,
+        plan: 'plan',
+        expectedPlanRevision: '1',
+        target: 'task',
+        fields: ['due' as const],
+      },
+      { kind: 'change' as const, index: 1 },
+    ],
+  ],
+] as const)('never proves a %s as complete whole-change coverage', (_case, changes) => {
+  const basis = {
+    proposal: { revision: 1, changes: [{}, {}] },
+  } as unknown as CommandSessionSnapshot;
+  expect(commandScopeCoversWholeProposal(basis, { proposalRevision: 1, changes })).toBe(false);
+});
+
+it.each(['stale revision', 'out-of-range owner'] as const)(
+  'rejects complete-scope equivalence with a %s',
+  async (invalid) => {
+    const basis = {
+      id: 'session',
+      input: message,
+      focus: [],
+      context: '',
+      trees: [],
+      entities: { tasks: [], projects: [], notes: [] },
+      exchanges: [],
+      activeQuestion: null,
+      status: { kind: 'ready', message: '' },
+      proposal: {
+        revision: 1,
+        operations: 1,
+        changes: [
+          {
+            kind: 'project-create' as const,
+            id: 'pending-project',
+            name: 'Pending project',
+            schema: {
+              providerEpoch: 'epoch',
+              revision: 1,
+              generation: 1,
+              scopeRevision: 0,
+              semanticsRevision: 1,
+              statuses: [],
+              fields: [],
+            },
+          },
+        ],
+      },
+      journal: [],
+      actual: [],
+      blocked: false,
+    } satisfies CommandSessionSnapshot;
+    const scope = {
+      proposalRevision: invalid === 'stale revision' ? 0 : 1,
+      changes: [{ kind: 'change' as const, index: invalid === 'out-of-range owner' ? 1 : 0 }],
+    };
+    await expect(
+      authorizeCommandWrite(
+        { intent: 'confirm', research: false, approval: message, scope } as unknown as Parameters<
+          typeof authorizeCommandWrite
+        >[0],
+        {
+          userMessage: message,
+          basis,
+          review: async () => ({
+            effect: 'save-reviewed',
+            scope: 'all',
+            scopeMatches: true,
+            authorization: message,
+          }),
+          signal: new AbortController().signal,
+        },
+      ),
+    ).rejects.toMatchObject({ code: 'WRITE_SCOPE' });
+  },
+);

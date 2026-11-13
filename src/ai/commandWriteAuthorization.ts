@@ -3,7 +3,11 @@ import { z } from 'zod';
 import { modelToolSchema } from './commandModelSchema';
 import type { intentSchema } from './commandSchemas';
 import { CommandFailure, type CommandSessionSnapshot } from './commandTypes';
-import { commandPreparedWrites, commandWriteSubjects } from './commandWriteSubjects';
+import {
+  commandPreparedWrites,
+  commandScopeCoversWholeProposal,
+  commandWriteSubjects,
+} from './commandWriteSubjects';
 
 export const COMMAND_CONTEXT_CHARACTERS = 96000;
 type Control = z.output<typeof intentSchema>;
@@ -56,14 +60,29 @@ function matchesMode(request: WriteReview, decision: WriteDecision): boolean {
   return decision.effect === 'save-reviewed';
 }
 
-function grantMatches(request: WriteReview, decision: WriteDecision): boolean {
-  const excerpt = decision.authorization.trim();
+function scopeMatches(
+  request: WriteReview,
+  decision: WriteDecision,
+  completeWholeChangeScope: boolean,
+): boolean {
   const scope = decision.scope === 'fields' ? 'subset' : decision.scope;
+  return (
+    scope === request.proposedScope ||
+    (completeWholeChangeScope && request.proposedMode === 'confirm' && scope === 'all')
+  );
+}
+
+function grantMatches(
+  request: WriteReview,
+  decision: WriteDecision,
+  completeWholeChangeScope: boolean,
+): boolean {
+  const excerpt = decision.authorization.trim();
   return (
     excerpt !== '' &&
     request.userMessage.includes(excerpt) &&
     (request.saveInstruction.includes(excerpt) || excerpt.includes(request.saveInstruction)) &&
-    scope === request.proposedScope &&
+    scopeMatches(request, decision, completeWholeChangeScope) &&
     decision.scopeMatches &&
     matchesMode(request, decision)
   );
@@ -95,14 +114,18 @@ function checkRestrictedScope(request: WriteReview, decision: WriteDecision): vo
     'Only the approved owners or fields may be saved. For field-only approval choose their exact task-fields selection.',
   );
 }
-function decide(request: WriteReview, decision: WriteDecision): WriteDecision['effect'] {
+function decide(
+  request: WriteReview,
+  decision: WriteDecision,
+  completeWholeChangeScope = false,
+): WriteDecision['effect'] {
   if (decision.effect === 'preview' || decision.scope === 'none')
     throw new CommandFailure(
       'WRITE_DENIED',
       'This message authorizes a preview. Continue with interpret({intent:"plan"}) and prepare the requested change. Saving needs a new user instruction.',
     );
   checkRestrictedScope(request, decision);
-  if (!grantMatches(request, decision))
+  if (!grantMatches(request, decision, completeWholeChangeScope))
     throw new CommandFailure(
       'WRITE_NOT_AUTHORIZED',
       'Nothing was saved. The requested effect or scope did not match this write. For changes return to interpret({intent:"plan"}) and prepare the preview. For explicit partial saving use the exact reviewed subset.',
@@ -123,20 +146,22 @@ export async function authorizeCommandWrite(
   if (proposedMode === undefined) return undefined;
   const saveInstruction = writeInstruction(control, input.userMessage);
   const scope = 'scope' in control ? control.scope : undefined;
+  const subjects = commandWriteSubjects(input.basis, scope);
+  const completeWholeChangeScope = commandScopeCoversWholeProposal(input.basis, scope);
   const request: WriteReview = {
     proposedMode,
     proposedScope: scope === undefined ? 'all' : 'subset',
     fieldsOnly: scope?.changes.every((part) => part.kind === 'task-fields') === true,
     userMessage: input.userMessage,
     saveInstruction,
-    ...commandWriteSubjects(input.basis, scope),
+    ...subjects,
     pendingQuestion: input.basis.activeQuestion,
     pendingTransition: input.basis.pendingTransition != null,
   };
   input.signal.throwIfAborted();
   const decision = await input.review(request);
   input.signal.throwIfAborted();
-  return { effect: decide(request, decision), request };
+  return { effect: decide(request, decision, completeWholeChangeScope), request };
 }
 
 export async function verifyPreparedWrite(

@@ -336,3 +336,22 @@ export function commandWriteSubjects(
   });
   return { displayed, selections };
 }
+
+/** Call after subject construction has validated revision, indexes and their owners. */
+export function commandScopeCoversWholeProposal(
+  snapshot: CommandSessionSnapshot,
+  scope?: CommandSaveScope,
+): boolean {
+  const changes = snapshot.proposal.changes;
+  if (
+    scope === undefined ||
+    changes.length === 0 ||
+    scope.proposalRevision !== snapshot.proposal.revision ||
+    scope.changes.length !== changes.length
+  )
+    return false;
+  return (
+    scope.changes.every((part) => part.kind === 'change') &&
+    new Set(scope.changes.map((part) => part.index)).size === changes.length
+  );
+}

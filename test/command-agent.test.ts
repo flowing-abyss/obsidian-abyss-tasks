@@ -799,6 +799,190 @@ it('repairs an out-of-range comment selection to its task change without droppin
   expect(trace).toContain('Scope indexes must identify top-level changes');
   expect(trace).toContain('A scoped write cannot be repaired by dropping its scope');
 });
+it('confirms a complete selected whole-change scope when review approves the full proposal', async () => {
+  const source = '- [ ] Cairn\n  - [ ] Unchanged child\n';
+  const h = await setup({ 'a.md': source, 'other.md': '- [ ] Keep intact\n' }, {}, undefined, {
+    reviewWrite: 'native',
+  });
+  const rows = await h.api.tasks.list({ path: 'a.md' });
+  if (!rows.ok) throw Error(rows.error.code);
+  const task = expectDefined(rows.value.items.find((item) => item.title === 'Cairn'));
+  const signal = new AbortController().signal;
+  const first = await expectDefined(h.api.tasks.prepare)({
+    kind: 'edit',
+    target: task.target,
+    expectedRevision: task.revision,
+    operation: { type: 'add-comment', target: task.target, text: 'Purpose.' },
+  });
+  if (!first.ok) throw Error(first.error.code);
+  const second = await expectDefined(h.api.tasks.prepare)({
+    kind: 'append',
+    plan: first.value.target,
+    expectedPlanRevision: first.value.revision,
+    operation: { type: 'add-comment', target: task.target, text: 'Features and limits.' },
+  });
+  if (!second.ok) throw Error(second.error.code);
+  const plan = await canonicalCommandPlan(h.api, second.value, signal, {
+    now: () => 0,
+    deadline: 5000,
+  });
+  h.session.stage({ kind: 'task', plan });
+
+  const message = 'Save both comments.';
+  const proposalRevision = h.session.snapshot().proposal.revision;
+  const scope = { proposalRevision, changes: [{ kind: 'change' as const, index: 0 }] };
+  const confirm = vi.spyOn(h.session, 'confirmFromTurn');
+  h.script(
+    () => call('interpret', { intent: 'confirm', approval: message, scope }),
+    () =>
+      call('assess_write', {
+        effect: 'save-reviewed',
+        scope: 'all',
+        scopeMatches: true,
+        authorization: message,
+      }),
+    finish(),
+  );
+  await h.session.submit(message);
+
+  expect(confirm).toHaveBeenCalledTimes(1);
+  expect(confirm).toHaveBeenCalledWith(proposalRevision, expect.any(AbortSignal), false, scope);
+  const assessor = h.model.doGenerateCalls.find(
+    (step) => step.tools?.some((tool) => tool.name === 'assess_write') === true,
+  );
+  const userMessage = expectDefined(assessor?.prompt.find((part) => part.role === 'user'));
+  const userText = Array.isArray(userMessage.content)
+    ? expectDefined(userMessage.content.find((part) => part.type === 'text')).text
+    : userMessage.content;
+  const assessed = JSON.parse(userText) as {
+    proposedScope: string;
+    selections: Array<{ index: number; wholeChange: boolean; owner: unknown }>;
+  };
+  expect(assessed.proposedScope).toBe('subset');
+  expect(assessed.selections).toEqual([
+    {
+      index: 0,
+      wholeChange: true,
+      owner: { title: 'Cairn', path: 'a.md', line: 0 },
+    },
+  ]);
+  expect(h.session.snapshot().journal).toMatchObject([{ state: 'settled', effects: 'committed' }]);
+  const saved = h.session.snapshot();
+  expect(saved.status.kind).toBe('saved');
+  expect(saved.proposal.changes).toEqual([]);
+  const actual = expectDefined(saved.actual.find((tree) => tree.target === task.target));
+  const readback = await expectDefined(h.api.tasks.tree)({ target: task.target, limit: 500 });
+  if (!readback.ok) throw Error(readback.error.code);
+  expect(actual).toEqual(readback.value.tree);
+  const treeText = JSON.stringify(readback.value.tree);
+  expect(treeText.match(/Purpose\./g)).toHaveLength(1);
+  expect(treeText.match(/Features and limits\./g)).toHaveLength(1);
+  expect(treeText).toContain('Unchanged child');
+  expect(await h.read('other.md')).toBe('- [ ] Keep intact\n');
+});
+it('confirms out-of-order coverage of multiple whole changes without reordering execution scope', async () => {
+  const h = await setup({ 'a.md': '- [ ] Cairn\n', 'b.md': '- [ ] Mesa\n' }, {}, undefined, {
+    reviewWrite: 'native',
+  });
+  const plans: ContentPlanV1[] = [];
+  for (const [path, title] of [
+    ['a.md', 'Cairn'],
+    ['b.md', 'Mesa'],
+  ] as const) {
+    const rows = await h.api.tasks.list({ path });
+    if (!rows.ok) throw Error(rows.error.code);
+    const task = expectDefined(rows.value.items.find((item) => item.title === title));
+    const prepared = await expectDefined(h.api.tasks.prepare)({
+      kind: 'edit',
+      target: task.target,
+      expectedRevision: task.revision,
+      operation: { type: 'add-comment', target: task.target, text: `${title} reviewed.` },
+    });
+    if (!prepared.ok) throw Error(prepared.error.code);
+    plans.push(
+      await canonicalCommandPlan(h.api, prepared.value, new AbortController().signal, {
+        now: () => 0,
+        deadline: 5000,
+      }),
+    );
+  }
+  for (const plan of plans) h.session.stage({ kind: 'task', plan });
+
+  const message = 'Save Cairn and Mesa.';
+  const proposalRevision = h.session.snapshot().proposal.revision;
+  const scope = {
+    proposalRevision,
+    changes: [
+      { kind: 'change' as const, index: 1 },
+      { kind: 'change' as const, index: 0 },
+    ],
+  };
+  const confirm = vi.spyOn(h.session, 'confirmFromTurn');
+  h.script(
+    () => call('interpret', { intent: 'confirm', approval: message, scope }),
+    () =>
+      call('assess_write', {
+        effect: 'save-reviewed',
+        scope: 'all',
+        scopeMatches: true,
+        authorization: message,
+      }),
+    finish(),
+  );
+  await h.session.submit(message);
+
+  expect(confirm).toHaveBeenCalledTimes(1);
+  expect(confirm).toHaveBeenCalledWith(proposalRevision, expect.any(AbortSignal), false, scope);
+  expect(h.session.snapshot().status.kind).toBe('saved');
+  expect(h.session.snapshot().proposal.changes).toEqual([]);
+  expect(h.session.snapshot().journal).toMatchObject([
+    { state: 'settled', effects: 'committed' },
+    { state: 'settled', effects: 'committed' },
+  ]);
+  for (const [path, title] of [
+    ['a.md', 'Cairn'],
+    ['b.md', 'Mesa'],
+  ] as const) {
+    const rows = await h.api.tasks.list({ path });
+    if (!rows.ok) throw Error(rows.error.code);
+    const task = expectDefined(rows.value.items.find((item) => item.title === title));
+    const readback = await expectDefined(h.api.tasks.tree)({ target: task.target, limit: 500 });
+    if (!readback.ok) throw Error(readback.error.code);
+    expect([
+      ...JSON.stringify(readback.value.tree).matchAll(new RegExp(`${title} reviewed\\.`, 'g')),
+    ]).toHaveLength(1);
+  }
+});
+it('does not apply confirm scope equivalence to a full-scope immediate save-after-edits review', async () => {
+  const { h, source } = await structuredReviewFixture('none', 'native');
+  const message = 'Save the whole proposal now.';
+  const proposalRevision = h.session.snapshot().proposal.revision;
+  const scope = { proposalRevision, changes: [{ kind: 'change' as const, index: 0 }] };
+  const confirm = vi.spyOn(h.session, 'confirmFromTurn');
+  h.script(
+    () =>
+      call('interpret', {
+        intent: 'immediate',
+        approval: message,
+        saveInstruction: message,
+        scope,
+      }),
+    () =>
+      call('assess_write', {
+        effect: 'save-after-edits',
+        scope: 'all',
+        scopeMatches: true,
+        authorization: message,
+      }),
+    finish(),
+  );
+  await h.session.submit(message);
+
+  expect(confirm).not.toHaveBeenCalled();
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(await h.read('a.md')).toBe(source);
+  expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+});
 it('retains a field-only grant when the planner retries with a different whole task', async () => {
   const message = 'Save only the due date.';
   const decision = { effect: 'save-reviewed', scopeMatches: true, authorization: message } as const;
