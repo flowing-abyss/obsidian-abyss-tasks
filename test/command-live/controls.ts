@@ -1,11 +1,11 @@
 import { MockLanguageModelV4 } from 'ai/test';
 import { object } from './safety';
-function call(name: string, input: unknown) {
+function call(name: string, input: unknown, toolCallId = `control-${name}`) {
   return {
     content: [
       {
         type: 'tool-call' as const,
-        toolCallId: `control-${name}`,
+        toolCallId,
         toolName: name,
         input: JSON.stringify(input),
       },
@@ -49,10 +49,82 @@ function append(prompt: Parameters<MockLanguageModelV4['doGenerate']>[0]['prompt
     },
   });
 }
+type GenerationParams = Parameters<MockLanguageModelV4['doGenerate']>[0];
+function hasExactKeys(
+  value: unknown,
+  expected: readonly string[],
+): value is Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const actual = Object.keys(value).sort((left, right) => left.localeCompare(right));
+  return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
+}
+function hasCanonicalReviewState(context: Record<string, unknown>, mainStep: number): boolean {
+  return (
+    hasExactKeys(context, [
+      'displayed',
+      'pendingQuestion',
+      'pendingTransition',
+      'proposedScope',
+      'selections',
+      'userMessage',
+    ]) &&
+    context['userMessage'] === 'Сохрани.' &&
+    context['proposedScope'] === 'all' &&
+    context['pendingQuestion'] === null &&
+    context['pendingTransition'] === false &&
+    Array.isArray(context['selections']) &&
+    context['selections'].length === 0 &&
+    mainStep === 7
+  );
+}
+function hasCanonicalDisplayedSubject(context: Record<string, unknown>): boolean {
+  const displayed = context['displayed'];
+  if (!Array.isArray(displayed) || displayed.length !== 1) return false;
+  const item = displayed[0] as unknown;
+  if (!hasExactKeys(item, ['index', 'kind', 'owner'])) return false;
+  const owner = item['owner'];
+  return (
+    item['index'] === 0 &&
+    item['kind'] === 'create' &&
+    hasExactKeys(owner, ['path', 'title']) &&
+    owner['title'] === 'Root' &&
+    owner['path'] === 'a.md'
+  );
+}
+function isCanonicalAssessmentContext(context: Record<string, unknown>, mainStep: number): boolean {
+  return hasCanonicalReviewState(context, mainStep) && hasCanonicalDisplayedSubject(context);
+}
+export function canonicalWriteAssessment(
+  params: GenerationParams,
+  assessmentStep: number,
+  mainStep: number,
+): ReturnType<typeof call> | undefined {
+  if (
+    params.tools?.some((tool) => tool.type === 'function' && tool.name === 'assess_write') !== true
+  )
+    return undefined;
+  const message = params.prompt.find((entry) => entry.role === 'user');
+  const text = message?.content.find((part) => part.type === 'text');
+  if (text?.type !== 'text') throw Error('canonical-assessment-prompt-missing');
+  const context = object(JSON.parse(text.text) as unknown);
+  if (!isCanonicalAssessmentContext(context, mainStep))
+    throw Error('canonical-assessment-subject-mismatch');
+  return call(
+    'assess_write',
+    { effect: 'save-reviewed', scope: 'all', scopeMatches: true, authorization: 'Сохрани.' },
+    `control-assess-write-${assessmentStep}`,
+  );
+}
 export function canonicalModel() {
   let step = 0;
+  let assessmentStep = 0;
   return new MockLanguageModelV4({
     doGenerate: async (params) => {
+      const assessment = canonicalWriteAssessment(params, assessmentStep + 1, step);
+      if (assessment !== undefined) {
+        assessmentStep++;
+        return assessment;
+      }
       step++;
       if (step === 1 || step === 4)
         return call('expand', {

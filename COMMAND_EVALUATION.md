@@ -40,6 +40,11 @@ List cases without dispatching a model request:
 pnpm command:eval --list
 ```
 
+Every evaluation run writes to a newly reserved output directory. The launcher creates an exclusive
+directory before starting Vitest; if `--out` already exists, the run stops and asks for a fresh path.
+The default path uses a unique run ID under `docs/research/command-mode-round6/runs/`. Keep prior
+manifests and reports intact. `--list` remains read-only and does not reserve an output directory.
+
 For the already connected ChatGPT plan in the development vault, use the model ID offered by that
 connection and an explicit bounded request count:
 

@@ -1,6 +1,7 @@
 import { MockLanguageModelV4 } from 'ai/test';
 import { expect, it } from 'vitest';
 import type { TaskTreeV1 } from '../api';
+import type { canonicalWriteAssessment } from './command-live/controls';
 import { submittedMessage } from './command-live/controls';
 import { selectCases } from './command-live/corpus';
 import { RequestBudget } from './command-live/safety';
@@ -229,6 +230,146 @@ it('replays canonical create, append recurrence and contextual confirmation thro
     ),
   ).toBe('passed');
 });
+it('runs the complete canonical scripted control through save review and public readback', async () => {
+  const { canonicalControl } = await import('./command-live/corpus');
+  const { canonicalModel } = await import('./command-live/controls');
+  const { runCase: runPipeline } = await import('./command-live/harness');
+  const flushed: string[] = [];
+  const report = await runPipeline(
+    canonicalControl,
+    {
+      options: {
+        provider: 'openrouter',
+        model: 'google/gemma-4-31b-it:free',
+        allowPaid: false,
+        maxRequests: 1,
+      },
+      budget: new RequestBudget(1),
+      key: 'synthetic-not-a-key',
+      fetch: async () => {
+        throw new Error('canonical scripted control must not use network');
+      },
+    },
+    async (value) => {
+      flushed.push(JSON.stringify(value));
+    },
+    canonicalModel(),
+  );
+
+  expect(report.outcome, JSON.stringify(report.turns.map((turn) => turn.failures))).toBe('passed');
+  expect(report.turns).toHaveLength(3);
+  expect(report.physicalRequests).toBe(0);
+  expect(report.turns[2]?.writeCount).toBe(1);
+  expect(report.turns[2]?.publicReadback.filter((task) => task.title === 'Root')).toMatchObject([
+    {
+      title: 'Root',
+      dates: { scheduled: '2026-11-11' },
+      time: '10:00',
+      recurrence: 'every week on Wednesday',
+    },
+  ]);
+  expect(report.trace.filter((event) => event.kind === 'write-dispatch')).toHaveLength(1);
+  expect(
+    report.turns[2]?.snapshot.journal.filter(
+      (entry) =>
+        entry.state === 'settled' && entry.effects === 'committed' && entry.receipt !== undefined,
+    ),
+  ).toHaveLength(1);
+  expect(flushed.map((value) => (JSON.parse(value) as { phase?: string }).phase)).toContain(
+    'finished',
+  );
+});
+it.each([
+  [
+    'a displayed owner whose name only contains Root',
+    {
+      index: 0,
+      kind: 'create',
+      owner: { title: 'NotRoot', path: 'a.md' },
+    },
+  ],
+  [
+    'a delete action displayed for Root',
+    {
+      index: 0,
+      kind: 'delete',
+      owner: { title: 'Root', path: 'a.md' },
+    },
+  ],
+  [
+    'the right title routed to a different destination',
+    {
+      index: 0,
+      kind: 'create',
+      owner: { title: 'Root', path: 'other.md' },
+    },
+  ],
+])('does not script approval for %s', async (_description, displayed) => {
+  const { canonicalWriteAssessment } = await import('./command-live/controls');
+  const context = canonicalAssessmentContext({ displayed: [displayed] });
+  const params = scriptedAssessmentParams(context);
+  expect(() => canonicalWriteAssessment(params, 1, 7)).toThrow();
+});
+it('rejects prepared writes even when the displayed Root owner matches', async () => {
+  const { canonicalWriteAssessment } = await import('./command-live/controls');
+  const context = canonicalAssessmentContext({
+    preparedWrites: [
+      {
+        owner: { title: 'Root', path: 'a.md' },
+        change: { kind: 'task', plan: { kind: 'delete', target: 'another-task' } },
+      },
+    ],
+  });
+  expect(() => canonicalWriteAssessment(scriptedAssessmentParams(context), 1, 7)).toThrow();
+});
+it.each([
+  [
+    'an altered date, time, and recurrence',
+    [
+      {
+        owner: { title: 'Root', path: 'a.md' },
+        change: {
+          kind: 'task',
+          plan: {
+            kind: 'create',
+            after: {
+              markdownTitle: 'Root',
+              dates: { scheduled: '2026-11-12' },
+              time: '11:00',
+              recurrence: 'every week on Tuesday',
+            },
+          },
+        },
+      },
+    ],
+  ],
+  [
+    'an extra unrelated prepared task',
+    [
+      {
+        owner: { title: 'Root', path: 'a.md' },
+        change: { kind: 'task', plan: { kind: 'create' } },
+      },
+      {
+        owner: { title: 'Other', path: 'other.md' },
+        change: { kind: 'task', plan: { kind: 'delete' } },
+      },
+    ],
+  ],
+])('rejects %s in a prepared-write assessment', async (_description, preparedWrites) => {
+  const { canonicalWriteAssessment } = await import('./command-live/controls');
+  const context = canonicalAssessmentContext({ preparedWrites });
+  expect(() => canonicalWriteAssessment(scriptedAssessmentParams(context), 1, 7)).toThrow();
+});
+it('rejects unexpected assent and unexpected assessment turn', async () => {
+  const { canonicalWriteAssessment } = await import('./command-live/controls');
+  const context = canonicalAssessmentContext({ userMessage: 'Сохрани всё.' });
+  const params = scriptedAssessmentParams(context);
+  expect(() => canonicalWriteAssessment(params, 1, 7)).toThrow();
+  expect(() =>
+    canonicalWriteAssessment(scriptedAssessmentParams(canonicalAssessmentContext()), 1, 6),
+  ).toThrow();
+});
 it('accepts canonical English recurrence and rejects raw Russian recurrence without writing', async () => {
   const { publicApiHarness } = await import('./support/publicApiHarness');
   const h = await publicApiHarness({ 'a.md': '# Inbox\n' }, { provision: true });
@@ -258,6 +399,32 @@ it('accepts canonical English recurrence and rejects raw Russian recurrence with
     h.dispose();
   }
 });
+
+function canonicalAssessmentContext(overrides: Record<string, unknown> = {}) {
+  return {
+    userMessage: 'Сохрани.',
+    proposedScope: 'all',
+    selections: [],
+    displayed: [{ index: 0, kind: 'create', owner: { title: 'Root', path: 'a.md' } }],
+    pendingQuestion: null,
+    pendingTransition: false,
+    ...overrides,
+  };
+}
+
+function scriptedAssessmentParams(
+  context: unknown,
+): Parameters<typeof canonicalWriteAssessment>[0] {
+  return {
+    tools: [{ type: 'function', name: 'assess_write' }],
+    prompt: [
+      {
+        role: 'user',
+        content: [{ type: 'text', text: JSON.stringify(context) }],
+      },
+    ],
+  } as unknown as Parameters<typeof canonicalWriteAssessment>[0];
+}
 it('refuses to score a status-only ready case and flushes incomplete evidence without dispatch', async () => {
   const flushed: string[] = [];
   const report = await runCase(

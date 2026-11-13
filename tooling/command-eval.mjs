@@ -1,6 +1,10 @@
+const { randomUUID } = await import('node:crypto');
+const { mkdir } = await import('node:fs/promises');
 const { spawn } = await import('node:child_process');
-const { resolve } = await import('node:path');
+const { dirname, resolve } = await import('node:path');
 const { default: process } = await import('node:process');
+const repoRoot = resolve(import.meta.dirname, '..');
+const outputExistsMessage = 'Output directory already exists; choose a fresh --out directory.';
 
 /** Parse only documented options. No credentials are accepted on the command line. */
 /** @param {string[]} args */
@@ -10,7 +14,7 @@ export function parseArgs(args) {
     provider: 'openrouter',
     cases: 'gym',
     maxRequests: 60,
-    out: 'docs/research/command-mode-round2/runs/baseline',
+    out: `docs/research/command-mode-round6/runs/${randomUUID()}`,
     allowPaid: false,
     list: false,
     vault: /** @type {string | undefined} */ (undefined),
@@ -77,6 +81,19 @@ export function parseArgs(args) {
     throw new Error('Paid models require --allow-paid');
   return options;
 }
+/** @param {string} output */
+export async function reserveOutputDirectory(output) {
+  const target = resolve(repoRoot, output);
+  await mkdir(dirname(target), { recursive: true });
+  try {
+    await mkdir(target);
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'EEXIST')
+      throw new Error(outputExistsMessage);
+    throw error;
+  }
+  return target;
+}
 /** @param {{provider:string,vault?:string|undefined,localBaseURL?:string|undefined,allowPaid:boolean}} options @param {boolean} explicitModel */
 function assertTransport(options, explicitModel) {
   if (options.provider === 'chatgpt-plan') {
@@ -97,6 +114,7 @@ function assertTransport(options, explicitModel) {
 }
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  if (!options.list) options.out = await reserveOutputDirectory(options.out);
   /** @type {number} */
   const code = await new Promise((done, reject) => {
     const child = spawn(
@@ -119,7 +137,11 @@ async function main() {
   process.exitCode = code;
 }
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === resolve(import.meta.filename))
-  void main().catch(() => {
-    process.stderr.write('Command evaluation configuration or launcher failed.\n');
+  void main().catch((error) => {
+    const message =
+      error instanceof Error && error.message === outputExistsMessage
+        ? outputExistsMessage
+        : 'Command evaluation configuration or launcher failed.';
+    process.stderr.write(`${message}\n`);
     process.exitCode = 1;
   });
