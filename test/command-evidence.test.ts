@@ -296,6 +296,22 @@ it('keeps another ambiguous change unresolved when a corrected display search sh
     evidence.checkTaskChanges([north]);
   }).toThrow(/unique/u);
 });
+it('keeps a second ambiguous mutation lookup blocking after one accepted edit is resolved', () => {
+  const evidence = new CommandEvidence();
+  const north = { target: 'north', revision: 'n1' },
+    south = { target: 'south', revision: 's1' },
+    east = { target: 'east', revision: 'e1' };
+  const proof = { entity: 'task' as const, query: 'Proof', scope: {}, count: 2, complete: true };
+  const relay = { ...proof, query: 'Relay' };
+  evidence.expectTaskChange(evidence.discovery(proof), 'change', undefined, [north, south]);
+  evidence.expectTaskChange(evidence.discovery(relay), 'change', undefined, [north, east]);
+  evidence.accept({ action: 'change', entity: 'task', ...north });
+  const narrowed = evidence.discovery({ ...proof, scope: { tagsAll: ['#north'] }, count: 1 });
+  evidence.expectTaskChange(narrowed, 'change', north, [north]);
+  expect(() => {
+    evidence.checkTaskChanges();
+  }).toThrow(/"Relay".*is ambiguous/iu);
+});
 it('resolves an ambiguous change after omitting only the complete status domain', () => {
   const evidence = new CommandEvidence();
   const north = { target: 'north', revision: 'n1' },
@@ -308,6 +324,7 @@ it('resolves an ambiguous change after omitting only the complete status domain'
     complete: true,
   });
   evidence.expectTaskChange(original, 'change', undefined, [north, south]);
+  evidence.accept({ action: 'change', entity: 'task', ...north });
   const narrowed = evidence.discovery({
     entity: 'task',
     query: 'Proof',
@@ -316,10 +333,252 @@ it('resolves an ambiguous change after omitting only the complete status domain'
     complete: true,
   });
   evidence.expectTaskChange(narrowed, 'change', north, [north]);
-  evidence.accept({ action: 'change', entity: 'task', ...north });
   expect(() => {
     evidence.checkTaskChanges();
   }).not.toThrow();
+});
+it('does not reuse an accepted task edit from before the ambiguous lookup', () => {
+  const evidence = new CommandEvidence();
+  const north = { target: 'north', revision: 'n1' },
+    south = { target: 'south', revision: 's1' };
+  const query = {
+    entity: 'task' as const,
+    query: 'Proof',
+    scope: { fields: 'all' },
+    count: 2,
+    complete: true,
+  };
+  evidence.accept({ action: 'change', entity: 'task', ...north });
+  const original = evidence.discovery(query);
+  evidence.expectTaskChange(original, 'change', undefined, [north, south]);
+  const narrowed = evidence.discovery({
+    ...query,
+    scope: { ...query.scope, tagsAll: ['#north'] },
+    count: 1,
+  });
+  evidence.expectTaskChange(narrowed, 'change', north, [north]);
+  expect(() => {
+    evidence.checkTaskChanges();
+  }).toThrow(/no preview/u);
+});
+it('keeps the original acceptance boundary across repeated ambiguous lookups', () => {
+  const evidence = new CommandEvidence();
+  const north = { target: 'north', revision: 'n1' },
+    south = { target: 'south', revision: 's1' };
+  const query = {
+    entity: 'task' as const,
+    query: 'Proof',
+    scope: { fields: 'all' },
+    count: 2,
+    complete: true,
+  };
+  const original = evidence.discovery(query);
+  evidence.expectTaskChange(original, 'change', undefined, [north, south]);
+  evidence.accept({ action: 'change', entity: 'task', ...north });
+  evidence.expectTaskChange(evidence.discovery(query), 'change', undefined, [north, south]);
+  const narrowed = evidence.discovery({
+    ...query,
+    scope: { ...query.scope, tagsAll: ['#north'] },
+    count: 1,
+  });
+  evidence.expectTaskChange(narrowed, 'change', north, [north]);
+  expect(() => {
+    evidence.checkTaskChanges();
+  }).not.toThrow();
+});
+it('gives recovery guidance when an accepted edit still has an unresolved ambiguity', () => {
+  const evidence = new CommandEvidence();
+  const north = { target: 'north', revision: 'n1' },
+    south = { target: 'south', revision: 's1' };
+  const original = evidence.discovery({
+    entity: 'task',
+    query: 'Proof',
+    scope: { fields: 'all', path: 'a.md' },
+    count: 2,
+    complete: true,
+  });
+  evidence.expectTaskChange(original, 'change', undefined, [north, south]);
+  evidence.accept({ action: 'change', entity: 'task', ...north });
+  expect(() => {
+    evidence.checkTaskChanges();
+  }).toThrow(
+    /preview kept.*"Proof".*"path":"a\.md".*repeat with user's discriminator.*without repeating it.*ask with evidence/iu,
+  );
+});
+it.each([
+  ['inspection only', { action: 'inspect' as const, target: 'north', revision: 'n1' }, 'change'],
+  ['another owner', { action: 'change' as const, target: 'south', revision: 's1' }, 'change'],
+  ['another revision', { action: 'change' as const, target: 'north', revision: 'n2' }, 'change'],
+  [
+    'a removal operation',
+    { action: 'change' as const, target: 'north', revision: 'n1', removal: true },
+    'change',
+  ],
+  ['the wrong effect', { action: 'change' as const, target: 'north', revision: 'n1' }, 'remove'],
+] as const)('does not inherit ambiguous progress from %s', (_label, accepted, effect) => {
+  const evidence = new CommandEvidence();
+  const north = { target: 'north', revision: 'n1' },
+    south = { target: 'south', revision: 's1' };
+  const query = {
+    entity: 'task' as const,
+    query: 'Proof',
+    scope: { fields: 'all' },
+    count: 2,
+    complete: true,
+  };
+  evidence.expectTaskChange(evidence.discovery(query), effect, undefined, [north, south]);
+  evidence.accept({ entity: 'task', ...accepted });
+  const narrowed = evidence.discovery({
+    ...query,
+    scope: { ...query.scope, tagsAll: ['#north'] },
+    count: 1,
+  });
+  evidence.expectTaskChange(narrowed, effect, north, [north]);
+  expect(() => {
+    evidence.checkTaskChanges();
+  }).toThrow(/no preview|still ambiguous|unique task|requested removal/u);
+});
+it('does not report removed accepted work as a retained preview', () => {
+  const evidence = new CommandEvidence();
+  const north = { target: 'north', revision: 'n1' },
+    south = { target: 'south', revision: 's1' };
+  const original = evidence.discovery({
+    entity: 'task',
+    query: 'Proof',
+    scope: {},
+    count: 2,
+    complete: true,
+  });
+  evidence.expectTaskChange(original, 'change', undefined, [north, south]);
+  evidence.accept({ action: 'change', entity: 'task', ...north });
+  evidence.remove(north.target);
+  expect(() => {
+    evidence.checkTaskChanges();
+  }).toThrow(/No unique task/u);
+});
+it('retains accepted progress when status filtering legitimately narrows the same query', () => {
+  const evidence = new CommandEvidence();
+  const north = { target: 'north', revision: 'n1' },
+    south = { target: 'south', revision: 's1' };
+  const original = evidence.discovery({
+    entity: 'task',
+    query: 'Proof',
+    scope: { fields: 'all' },
+    count: 2,
+    complete: true,
+  });
+  evidence.expectTaskChange(original, 'change', undefined, [north, south]);
+  evidence.accept({ action: 'change', entity: 'task', ...north });
+  const narrowed = evidence.discovery({
+    entity: 'task',
+    query: 'Proof',
+    scope: { fields: 'all', statuses: ['open'] },
+    count: 1,
+    complete: true,
+  });
+  evidence.expectTaskChange(narrowed, 'change', north, [north]);
+  expect(() => {
+    evidence.checkTaskChanges();
+  }).not.toThrow();
+});
+it.each([
+  {
+    name: 'changed query',
+    query: 'North',
+    scope: { fields: 'all', path: 'a.md', tagsAll: ['#north'] },
+    complete: true,
+    broadComplete: true,
+  },
+  {
+    name: 'dropped filter',
+    query: 'Proof',
+    scope: { fields: 'all', tagsAll: ['#north'] },
+    complete: true,
+    broadComplete: true,
+  },
+  {
+    name: 'incomplete narrowed lookup',
+    query: 'Proof',
+    scope: { fields: 'all', path: 'a.md', tagsAll: ['#north'] },
+    complete: false,
+    broadComplete: true,
+  },
+])('does not recover accepted progress with $name', ({ query, scope, complete, broadComplete }) => {
+  const evidence = new CommandEvidence();
+  const north = { target: 'north', revision: 'n1' },
+    south = { target: 'south', revision: 's1' };
+  const original = evidence.discovery({
+    entity: 'task',
+    query: 'Proof',
+    scope: { fields: 'all', path: 'a.md' },
+    count: 2,
+    complete: broadComplete,
+  });
+  evidence.expectTaskChange(original, 'change', undefined, [north, south]);
+  evidence.accept({ action: 'change', entity: 'task', ...north });
+  const narrowed = evidence.discovery({
+    entity: 'task',
+    query,
+    scope,
+    count: 1,
+    complete,
+  });
+  evidence.expectTaskChange(narrowed, 'change', north, [north]);
+  expect(() => {
+    evidence.checkTaskChanges();
+  }).toThrow(/ambiguous|no preview/iu);
+});
+it('does not inherit a preview from an unsupported current discovery', () => {
+  const evidence = new CommandEvidence();
+  const north = { target: 'north', revision: 'n1' },
+    south = { target: 'south', revision: 's1' };
+  const original = evidence.discovery({
+    entity: 'task',
+    query: 'Proof',
+    scope: {},
+    count: 2,
+    complete: true,
+  });
+  evidence.expectTaskChange(original, 'change', undefined, [north, south]);
+  evidence.accept({ action: 'change', entity: 'task', ...north });
+  const current = evidence.discovery({
+    entity: 'task',
+    query: 'Proof',
+    scope: {},
+    count: 1,
+    complete: true,
+    unsupported: true,
+  });
+  evidence.expectTaskChange(current, 'change', north, [north]);
+  expect(() => {
+    evidence.checkTaskChanges();
+  }).toThrow(/no preview/iu);
+});
+it('does not inherit a superseded accepted change fact', () => {
+  const evidence = new CommandEvidence();
+  const north = { target: 'north', revision: 'n1' },
+    south = { target: 'south', revision: 's1' };
+  const original = evidence.discovery({
+    entity: 'task',
+    query: 'Proof',
+    scope: {},
+    count: 2,
+    complete: true,
+  });
+  evidence.expectTaskChange(original, 'change', undefined, [north, south]);
+  evidence.accept({ action: 'change', entity: 'task', ...north });
+  evidence.accept({ action: 'change', entity: 'task', target: north.target, revision: 'n2' });
+  const current = evidence.discovery({
+    entity: 'task',
+    query: 'Proof',
+    scope: { tagsAll: ['#north'] },
+    count: 1,
+    complete: true,
+  });
+  evidence.expectTaskChange(current, 'change', north, [north]);
+  expect(() => {
+    evidence.checkTaskChanges();
+  }).toThrow(/no preview/iu);
 });
 it.each([
   ['strict subset', ['open']],
@@ -349,7 +608,51 @@ it.each([
   evidence.accept({ action: 'change', entity: 'task', ...north });
   expect(() => {
     evidence.checkTaskChanges();
-  }).toThrow(/unique task/u);
+  }).toThrow(/preview kept/iu);
+});
+it('retains accepted progress after an incomplete broad lookup gets complete unique coverage', () => {
+  const evidence = new CommandEvidence();
+  const north = { target: 'north', revision: 'n1' },
+    south = { target: 'south', revision: 's1' };
+  const query = {
+    entity: 'task' as const,
+    query: 'Proof',
+    scope: { fields: 'all' },
+  };
+  evidence.expectTaskChange(
+    evidence.discovery({ ...query, count: 2, complete: false }),
+    'change',
+    undefined,
+    [north, south],
+  );
+  evidence.accept({ action: 'change', entity: 'task', ...north });
+  const complete = evidence.discovery({ ...query, count: 1, complete: true });
+  evidence.expectTaskChange(complete, 'change', north, [north]);
+  expect(() => {
+    evidence.checkTaskChanges();
+  }).not.toThrow();
+});
+it('retains accepted progress after a complete same-query unique lookup without a scope change', () => {
+  const evidence = new CommandEvidence();
+  const north = { target: 'north', revision: 'n1' },
+    south = { target: 'south', revision: 's1' };
+  const query = {
+    entity: 'task' as const,
+    query: 'Proof',
+    scope: { fields: 'all' },
+  };
+  evidence.expectTaskChange(
+    evidence.discovery({ ...query, count: 2, complete: true }),
+    'change',
+    undefined,
+    [north, south],
+  );
+  evidence.accept({ action: 'change', entity: 'task', ...north });
+  const unique = evidence.discovery({ ...query, count: 1, complete: true });
+  evidence.expectTaskChange(unique, 'change', north, [north]);
+  expect(() => {
+    evidence.checkTaskChanges();
+  }).not.toThrow();
 });
 it('does not resolve the complete-status ambiguity for a different candidate revision', () => {
   const evidence = new CommandEvidence();

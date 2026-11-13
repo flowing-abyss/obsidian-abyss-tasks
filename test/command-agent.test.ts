@@ -1,7 +1,13 @@
 import { APICallError } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { afterEach, expect, it, vi } from 'vitest';
-import type { ContentPlanV1, PrepareTaskContentV1, TasksApiV1, TaskTreeV1 } from '../api';
+import type {
+  ContentPlanV1,
+  PrepareTaskContentV1,
+  TaskDtoV1,
+  TasksApiV1,
+  TaskTreeV1,
+} from '../api';
 import { CommandAgent } from '../src/ai/CommandAgent';
 import { CommandEvidence } from '../src/ai/CommandEvidence';
 import { configureCommandLocale } from '../src/ai/commandMessages';
@@ -3246,6 +3252,223 @@ it('selects the requested second child after a show-only parent lookup', async (
   await h.session.submit('Under Orbit there are two subtasks called Echo. Select the second one.');
   expect(h.session.snapshot().focus).toMatchObject([{ target: second.target }]);
   expect(h.session.snapshot().proposal.changes).toEqual([]);
+});
+interface AcceptedNarrowedCommentCapture {
+  broadResult?: Record<string, unknown>;
+  inspected?: Record<string, unknown>;
+  prepared?: Record<string, unknown>;
+  finishError?: string;
+  savedTarget?: string;
+  savedRevision?: string;
+  plan?: ContentPlanV1;
+  completionBlocked?: unknown;
+  narrowed?: Record<string, unknown>;
+  multipleItems?: boolean;
+}
+type CommandTestHarness = Awaited<ReturnType<typeof setup>>;
+function inspectNorthAndAddComment(h: CommandTestHarness, capture: AcceptedNarrowedCommentCapture) {
+  return () => {
+    capture.inspected = latestToolValue(h, 'inspect');
+    const rows = record(capture.inspected['references'])?.['taskReferences'];
+    if (!Array.isArray(rows)) throw Error('Missing inspected task references');
+    const owner = expectDefined(
+      rows
+        .map((row: unknown) => expectDefined(record(row)))
+        .find(
+          (row) =>
+            row['target'] === capture.savedTarget && row['revision'] === capture.savedRevision,
+        ),
+    );
+    return call('change_task', {
+      edit: owner['edit'],
+      operation: { type: 'add-comment', text: 'Call Jo.' },
+      complete: true,
+    });
+  };
+}
+function findNorthFromBroadResult(h: CommandTestHarness, capture: AcceptedNarrowedCommentCapture) {
+  return () => {
+    capture.broadResult = latestToolValue(h, 'find');
+    const items = capture.broadResult['items'];
+    if (!Array.isArray(items)) throw Error('Missing broad result items');
+    const north = expectDefined(
+      items
+        .map((item: unknown) => expectDefined(record(item)))
+        .find((item) => (item['tags'] as string[]).includes('#north')),
+    );
+    capture.savedTarget = String(north['target']);
+    capture.savedRevision = String(north['revision']);
+    return call('inspect', {
+      target: capture.savedTarget,
+      expectedRevision: capture.savedRevision,
+    });
+  };
+}
+function acceptCommentAndNarrow(
+  h: CommandTestHarness,
+  broad: { query: string; fields: string; path: string },
+  capture: AcceptedNarrowedCommentCapture,
+  selector: Record<string, unknown>,
+) {
+  return () => {
+    capture.prepared = latestToolValue(h, 'change_task');
+    capture.completionBlocked = capture.prepared['completionBlocked'];
+    const change = h.session.snapshot().proposal.changes[0];
+    if (change?.kind !== 'task') throw Error('Missing accepted task plan');
+    capture.plan = change.plan;
+    return call('find', { ...broad, ...selector, purpose: 'change' });
+  };
+}
+function finishNarrowedComment(h: CommandTestHarness, capture: AcceptedNarrowedCommentCapture) {
+  return () => {
+    capture.narrowed = latestToolValue(h, 'find');
+    return call('finish', { state: 'ready' });
+  };
+}
+function askAfterBlockedFinish(h: CommandTestHarness, capture: AcceptedNarrowedCommentCapture) {
+  return () => {
+    const step = expectDefined(h.model.doGenerateCalls[h.model.doGenerateCalls.length - 1]);
+    const results = step.prompt
+      .flatMap((message) => (message.role === 'tool' ? message.content : []))
+      .filter((part) => part.type === 'tool-result' && part.toolName === 'finish');
+    const result = results[results.length - 1];
+    if (result?.type === 'tool-result' && result.output.type === 'error-text')
+      capture.finishError = result.output.value;
+    return call('finish', {
+      state: 'question',
+      blockingIssue: { kind: 'ambiguous', evidence: capture.narrowed?.['evidence'] },
+    });
+  };
+}
+function scriptAcceptedCommentNarrowing(
+  h: CommandTestHarness,
+  broad: { query: string; fields: string; path: string },
+  selector: Record<string, unknown> = { tagsAll: ['#north'] },
+): AcceptedNarrowedCommentCapture {
+  const capture: AcceptedNarrowedCommentCapture = {};
+  capture.multipleItems = selector['taskId'] !== undefined;
+  h.script(
+    () => call('find', { ...broad, purpose: 'change' }),
+    findNorthFromBroadResult(h, capture),
+    inspectNorthAndAddComment(h, capture),
+    acceptCommentAndNarrow(h, broad, capture, selector),
+    finishNarrowedComment(h, capture),
+    askAfterBlockedFinish(h, capture),
+  );
+  return capture;
+}
+function assertAcceptedCommentNarrowing(
+  h: CommandTestHarness,
+  source: string,
+  canonicalNorth: Pick<TaskDtoV1, 'target' | 'revision'>,
+  capture: AcceptedNarrowedCommentCapture,
+): void {
+  const broadResult = expectDefined(capture.broadResult);
+  const inspected = expectDefined(capture.inspected);
+  const prepared = expectDefined(capture.prepared);
+  const plan = expectDefined(capture.plan);
+  const narrowed = expectDefined(capture.narrowed);
+  const final = h.session.snapshot();
+  expect(broadResult).toMatchObject({
+    complete: true,
+    items: [{ tags: ['#north'] }, { tags: ['#south'] }],
+  });
+  expect(broadResult['match']).toBeUndefined();
+  expect(broadResult['selection']).toBeUndefined();
+  expect(broadResult['items']).toContainEqual(
+    expect.objectContaining({ target: capture.savedTarget, revision: capture.savedRevision }),
+  );
+  expect(inspected).toMatchObject({ request: { expectedRevision: capture.savedRevision } });
+  expect(inspected).toHaveProperty('tree.target', capture.savedTarget);
+  expect(inspected).toHaveProperty('tree.revision', capture.savedRevision);
+  expect(prepared).toHaveProperty('completionBlocked');
+  expect(plan.before).toMatchObject({
+    target: canonicalNorth.target,
+    revision: canonicalNorth.revision,
+  });
+  expect(plan.after).toMatchObject({ target: canonicalNorth.target });
+  expect(plan.after?.revision).toBe(plan.revision);
+  expect(plan.revision).not.toBe(canonicalNorth.revision);
+  expect(plan.after?.comments.map((comment) => comment.text)).toEqual([
+    '2026-11-14 09:00 North original.',
+    'Call Jo.',
+  ]);
+  expect(plan.before?.comments.map((comment) => comment.text)).toEqual([
+    '2026-11-14 09:00 North original.',
+  ]);
+  expect(narrowed).toMatchObject({
+    complete: true,
+    selection: { target: capture.savedTarget, revision: capture.savedRevision },
+    match: {
+      target: capture.savedTarget,
+      revision: prepared['revision'],
+      editBasis: { kind: 'append', expectedPlanRevision: prepared['revision'] },
+    },
+  });
+  if (capture.multipleItems === true) expect(narrowed['items']).toHaveLength(2);
+  else
+    expect(narrowed['items']).toEqual([
+      expect.objectContaining({ target: capture.savedTarget, revision: capture.savedRevision }),
+    ]);
+  expect(final.proposal.changes).toHaveLength(1);
+  expect(final.proposal.operations).toBe(1);
+  expect(final.proposal.changes[0]).toMatchObject({
+    kind: 'task',
+    plan: {
+      before: { target: canonicalNorth.target, revision: canonicalNorth.revision },
+      after: {
+        target: canonicalNorth.target,
+        comments: [{ text: '2026-11-14 09:00 North original.' }, { text: 'Call Jo.' }],
+      },
+    },
+  });
+  expect(final.journal).toEqual([]);
+  expect(capture.completionBlocked).toBeTruthy();
+  expect(source).toContain('South original.');
+}
+it('retains an accepted comment when a complete narrowed lookup resolves ambiguity', async () => {
+  const source = [
+    '- [ ] Proof #north',
+    '\t- 2026-11-14 09:00 North original.',
+    '- [ ] Proof #south',
+    '\t- 2026-11-14 09:01 South original.',
+    '',
+  ].join('\n');
+  const h = await setup({ 'a.md': source });
+  const initial = await h.api.tasks.list({ path: 'a.md' });
+  if (!initial.ok) throw Error('Missing canonical task source');
+  const canonicalNorth = expectDefined(
+    initial.value.items.find((item) => item.tags.includes('#north')),
+  );
+  const broad = { query: 'Proof', fields: 'all', path: 'a.md' };
+  const capture = scriptAcceptedCommentNarrowing(h, broad);
+  await h.session.submit('Add the comment "Call Jo." to Proof tagged #north in a.md.');
+  expect(capture.finishError).toBeUndefined();
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  assertAcceptedCommentNarrowing(h, source, canonicalNorth, capture);
+  expect(await h.read('a.md')).toBe(source);
+});
+it('retains an accepted comment when an exact authored ID selects one complete result row', async () => {
+  const source = [
+    '- [ ] Proof #north 🆔 north-id',
+    '\t- 2026-11-14 09:00 North original.',
+    '- [ ] Proof #south 🆔 south-id',
+    '\t- 2026-11-14 09:01 South original.',
+    '',
+  ].join('\n');
+  const h = await setup({ 'a.md': source });
+  const initial = await h.api.tasks.list({ path: 'a.md' });
+  if (!initial.ok) throw Error('Missing canonical task source');
+  const canonicalNorth = expectDefined(
+    initial.value.items.find((item) => item.tags.includes('#north')),
+  );
+  const broad = { query: 'Proof', fields: 'all', path: 'a.md' };
+  const capture = scriptAcceptedCommentNarrowing(h, broad, { taskId: 'north-id' });
+  await h.session.submit('Add the comment "Call Jo." to task ID north-id in a.md.');
+  expect(capture.finishError).toBeUndefined();
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  assertAcceptedCommentNarrowing(h, source, canonicalNorth, capture);
+  expect(await h.read('a.md')).toBe(source);
 });
 it.each(['before correcting the lookup', 'with an unrelated task'] as const)(
   'rejects selecting the child %s, then accepts only the verified second Echo after correction',

@@ -25,6 +25,7 @@ interface UnresolvedLookup {
   discovery: CommandDiscovery;
   effect: TaskEffect;
   candidates: Set<string>;
+  acceptedChangeSequence_abyssPrivate: number;
 }
 const ALL_TASK_STATUSES = ['open', 'in-progress', 'done', 'cancelled'] as const;
 function retainedFilter(field: string, prior: unknown, next: unknown): boolean {
@@ -69,6 +70,8 @@ export class CommandEvidence {
   private readonly displayCorrections_abyssPrivate = new Map<string, Set<string>>();
   private readonly savedDescendants = new Map<string, Set<string>>();
   private readonly parentCorrections = new Set<string>();
+  private acceptedTaskChangeSequence_abyssPrivate = 0;
+  private readonly factSequence_abyssPrivate = new WeakMap<CommandFact, number>();
   private selected = false;
   clearFocus(empty = true): void {
     this.selected = empty;
@@ -88,6 +91,14 @@ export class CommandEvidence {
     if (fact.target !== undefined && this.removed.has(fact.target) && fact.removal !== true) return;
     if (fact.action === 'change' && fact.target !== undefined) this.changed(fact, fact.target);
     this.facts.push(fact);
+    if (
+      fact.action === 'change' &&
+      fact.entity === 'task' &&
+      fact.target !== undefined &&
+      fact.revision !== undefined
+    ) {
+      this.factSequence_abyssPrivate.set(fact, ++this.acceptedTaskChangeSequence_abyssPrivate);
+    }
   }
   private changed(fact: CommandFact, target: string): void {
     if (fact.removal === true) this.remove(target);
@@ -222,31 +233,93 @@ export class CommandEvidence {
         this.parentCorrections.delete(key);
         this.changeLookups.set(key, evidence);
       }
-    if (task === undefined) {
-      const candidates =
-        this.unresolvedLookups_abyssPrivate.get(key)?.candidates ?? new Set<string>();
-      for (const candidate of page) candidates.add(versionKey(candidate));
-      this.unresolvedLookups_abyssPrivate.set(key, { discovery: fact, effect, candidates });
-    } else {
-      this.unresolvedLookups_abyssPrivate.delete(key);
-      this.resolveNarrowed(fact, effect, task);
-      const required =
-        this.taskChanges.get(task.target) ??
-        new Map<TaskEffect, { revision: string; prepared: boolean }>();
-      required.set(effect, { revision: task.revision, prepared: false });
-      this.taskChanges.set(task.target, required);
-    }
+    if (task === undefined) this.recordUnresolvedLookup_abyssPrivate(key, fact, effect, page);
+    else this.recordResolvedLookup_abyssPrivate(key, fact, effect, task);
     return fact;
   }
-  private resolveNarrowed(fact: CommandDiscovery, effect: TaskEffect, task: TaskVersion): void {
+  private recordUnresolvedLookup_abyssPrivate(
+    key: string,
+    fact: CommandDiscovery,
+    effect: TaskEffect,
+    page: readonly TaskVersion[],
+  ): void {
+    const previous = this.unresolvedLookups_abyssPrivate.get(key);
+    const candidates = previous?.candidates ?? new Set<string>();
+    for (const candidate of page) candidates.add(versionKey(candidate));
+    this.unresolvedLookups_abyssPrivate.set(key, {
+      discovery: fact,
+      effect,
+      candidates,
+      acceptedChangeSequence_abyssPrivate:
+        previous?.acceptedChangeSequence_abyssPrivate ??
+        this.acceptedTaskChangeSequence_abyssPrivate,
+    });
+  }
+  private recordResolvedLookup_abyssPrivate(
+    key: string,
+    fact: CommandDiscovery,
+    effect: TaskEffect,
+    task: TaskVersion,
+  ): void {
+    const retained = this.resolveNarrowed_abyssPrivate(fact, effect, task);
+    this.unresolvedLookups_abyssPrivate.delete(key);
+    const required =
+      this.taskChanges.get(task.target) ??
+      new Map<TaskEffect, { revision: string; prepared: boolean }>();
+    required.set(effect, { revision: task.revision, prepared: retained });
+    this.taskChanges.set(task.target, required);
+  }
+  private resolveNarrowed_abyssPrivate(
+    fact: CommandDiscovery,
+    effect: TaskEffect,
+    task: TaskVersion,
+  ): boolean {
+    let retained = false;
     for (const [key, other] of this.unresolvedLookups_abyssPrivate) {
       if (
         other.effect === effect &&
         narrows(other.discovery, fact) &&
         other.candidates.has(versionKey(task))
-      )
+      ) {
+        if (
+          effect === 'change' &&
+          fact.complete &&
+          fact.unsupported !== true &&
+          this.hasRetainedAcceptedChange_abyssPrivate(other, task)
+        )
+          retained = true;
         this.unresolvedLookups_abyssPrivate.delete(key);
+      }
     }
+    return retained;
+  }
+  private hasRetainedAcceptedChange_abyssPrivate(
+    lookup: UnresolvedLookup,
+    task?: TaskVersion,
+  ): boolean {
+    if (
+      task === undefined &&
+      (lookup.effect !== 'change' ||
+        !lookup.discovery.complete ||
+        lookup.discovery.unsupported === true ||
+        lookup.discovery.count < 2)
+    )
+      return false;
+    return this.facts.some((fact) => {
+      const sequence = this.factSequence_abyssPrivate.get(fact);
+      return (
+        sequence !== undefined &&
+        sequence > lookup.acceptedChangeSequence_abyssPrivate &&
+        fact.action === 'change' &&
+        fact.entity === 'task' &&
+        fact.removal !== true &&
+        fact.target !== undefined &&
+        fact.revision !== undefined &&
+        (task === undefined
+          ? lookup.candidates.has(versionKey({ target: fact.target, revision: fact.revision }))
+          : fact.target === task.target && fact.revision === task.revision)
+      );
+    });
   }
   private preparedDescendant(root: string): boolean {
     const branch = this.savedDescendants.get(root);
@@ -261,23 +334,38 @@ export class CommandEvidence {
     );
   }
   private checkUnresolvedLookups(corrected: Set<string>): void {
-    if (
-      [...this.unresolvedLookups_abyssPrivate.values()].some(
-        (lookup) =>
-          lookup.effect !== 'change' ||
-          !lookup.discovery.complete ||
-          ![...corrected].some(
-            (key) =>
-              lookup.candidates.has(key) &&
-              this.discoveries_abyssPrivate.get(this.changeLookups.get(key) ?? '') ===
-                lookup.discovery,
-          ),
-      )
-    )
+    const unresolved = [...this.unresolvedLookups_abyssPrivate.values()].filter(
+      (lookup) =>
+        lookup.effect !== 'change' ||
+        !lookup.discovery.complete ||
+        ![...corrected].some(
+          (key) =>
+            lookup.candidates.has(key) &&
+            this.discoveries_abyssPrivate.get(this.changeLookups.get(key) ?? '') ===
+              lookup.discovery,
+        ),
+    );
+    if (unresolved.length > 0) {
+      const retained = unresolved.find((lookup) =>
+        this.hasRetainedAcceptedChange_abyssPrivate(lookup),
+      );
+      if (retained !== undefined) {
+        const scope = { ...retained.discovery.scope };
+        Reflect.deleteProperty(scope, 'limit');
+        const scopeHint =
+          Object.keys(scope).length > 0 ? ` with filters ${JSON.stringify(scope)}` : '';
+        const otherLookupsHint =
+          unresolved.length > 1 ? ' Resolve any other outstanding lookup before finishing.' : '';
+        throw new CommandFailure(
+          'PENDING_TASK_CHANGE',
+          `Preview kept. ${JSON.stringify(retained.discovery.query)}${scopeHint} is ambiguous: repeat with user's discriminator; finish without repeating it, or ask with evidence.${otherLookupsHint}`,
+        );
+      }
       throw new CommandFailure(
         'PENDING_TASK_CHANGE',
         'No unique task was verified for the requested change. Narrow the lookup or ask with its discovery evidence.',
       );
+    }
   }
   checkTaskChanges(
     displayed: readonly TaskVersion[] = [],

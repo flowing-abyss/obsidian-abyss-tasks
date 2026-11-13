@@ -140,6 +140,11 @@ aggregate discovery coverage. Canonical plans retain field values; evidence does
 Native-validated selection replaces focus evidence; removal invalidates affected descendant facts.
 Canonical attempted changes, including exact no-ops, supply mutation evidence; inspection remains
 an observation. A pre-existing proposal or catalog read alone cannot establish a new result.
+When a complete supported canonical lookup resolves an outstanding mutation discovery under its
+existing query, retained-filter and exact-candidate rules, it may retain preparation only from an
+active accepted non-removal change to that same owner and saved revision after the original
+discovery began. Repeated ambiguous discoveries preserve that original chronology boundary; older
+or superseded facts cannot carry preparation forward.
 The established first-control immediate path may save an unchanged captured visible proposal,
 subject to captured status and current history/recovery guards at the save boundary. Read or focus
 evidence cannot bypass that check. New immediate preparation or draft removal records its accepted proposal revision;
