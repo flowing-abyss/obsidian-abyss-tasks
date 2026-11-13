@@ -296,6 +296,88 @@ it('keeps another ambiguous change unresolved when a corrected display search sh
     evidence.checkTaskChanges([north]);
   }).toThrow(/unique/u);
 });
+it('resolves an ambiguous change after omitting only the complete status domain', () => {
+  const evidence = new CommandEvidence();
+  const north = { target: 'north', revision: 'n1' },
+    south = { target: 'south', revision: 's1' };
+  const original = evidence.discovery({
+    entity: 'task',
+    query: 'Proof',
+    scope: { fields: 'all', statuses: ['open', 'in-progress', 'done', 'cancelled'] },
+    count: 2,
+    complete: true,
+  });
+  evidence.expectTaskChange(original, 'change', undefined, [north, south]);
+  const narrowed = evidence.discovery({
+    entity: 'task',
+    query: 'Proof',
+    scope: { fields: 'all', tagsAll: ['#north'] },
+    count: 1,
+    complete: true,
+  });
+  evidence.expectTaskChange(narrowed, 'change', north, [north]);
+  evidence.accept({ action: 'change', entity: 'task', ...north });
+  expect(() => {
+    evidence.checkTaskChanges();
+  }).not.toThrow();
+});
+it.each([
+  ['strict subset', ['open']],
+  ['duplicate status', ['open', 'in-progress', 'done', 'done']],
+  ['empty statuses', []],
+  ['unknown status', ['open', 'in-progress', 'done', 'paused']],
+] as const)('does not treat %s as the complete status domain', (_label, statuses) => {
+  const evidence = new CommandEvidence();
+  const north = { target: 'north', revision: 'n1' },
+    south = { target: 'south', revision: 's1' };
+  const original = evidence.discovery({
+    entity: 'task',
+    query: 'Proof',
+    scope: { statuses },
+    count: 2,
+    complete: true,
+  });
+  evidence.expectTaskChange(original, 'change', undefined, [north, south]);
+  const narrowed = evidence.discovery({
+    entity: 'task',
+    query: 'Proof',
+    scope: { tagsAll: ['#north'] },
+    count: 1,
+    complete: true,
+  });
+  evidence.expectTaskChange(narrowed, 'change', north, [north]);
+  evidence.accept({ action: 'change', entity: 'task', ...north });
+  expect(() => {
+    evidence.checkTaskChanges();
+  }).toThrow(/unique task/u);
+});
+it('does not resolve the complete-status ambiguity for a different candidate revision', () => {
+  const evidence = new CommandEvidence();
+  const north = { target: 'north', revision: 'n1' },
+    south = { target: 'south', revision: 's1' };
+  const original = evidence.discovery({
+    entity: 'task',
+    query: 'Proof',
+    scope: { statuses: ['open', 'in-progress', 'done', 'cancelled'] },
+    count: 2,
+    complete: true,
+  });
+  evidence.expectTaskChange(original, 'change', undefined, [north, south]);
+  const narrowed = evidence.discovery({
+    entity: 'task',
+    query: 'Proof',
+    scope: { tagsAll: ['#north'] },
+    count: 1,
+    complete: true,
+  });
+  evidence.expectTaskChange(narrowed, 'change', { ...north, revision: 'n2' }, [
+    { ...north, revision: 'n2' },
+  ]);
+  evidence.accept({ action: 'change', entity: 'task', ...north, revision: 'n2' });
+  expect(() => {
+    evidence.checkTaskChanges();
+  }).toThrow(/unique task/u);
+});
 it('rejects a parent lookup correction when repeating it finds an additional candidate', () => {
   const evidence = new CommandEvidence();
   const root = { target: 'root', revision: 'r1' },

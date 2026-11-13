@@ -379,6 +379,7 @@ export default defineConfig(
       'release-check.mjs',
       'release-artifacts.mjs',
       'tooling/command-eval.mjs',
+      'tooling/command-subscription.mjs',
       'test/command-live/live.ts',
       'tooling/check-css.mjs',
       'tooling/css-policy.mjs',

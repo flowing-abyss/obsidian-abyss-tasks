@@ -51,16 +51,41 @@ function taskOperation(
   const operationTarget = operand(operation, 'target', identity);
   const rootTarget = input['kind'] === 'edit' ? operand(input, 'target', identity) : '';
   const target = operationTarget !== '' ? operationTarget : rootTarget;
+  if (type === 'add-comment')
+    return [
+      JSON.stringify([
+        'operation',
+        'add-comment',
+        target,
+        operation['text'],
+        operation['text'] !== undefined,
+      ]),
+    ];
   const base = [
     'operation',
     type,
     target,
     ...['source', 'parent', 'relativeTo'].map((key) => operand(operation, key, identity)),
     type === 'add-child' ? operation['markdownTitle'] : null,
-    type === 'add-comment' ? operation['text'] : null,
+    null,
   ];
   const fields = Object.keys(record(operation['patch']) ?? {});
   return (fields.length === 0 ? [''] : fields).map((field) => JSON.stringify([...base, field]));
+}
+function missingCommentFallback(key: string): string | undefined {
+  if (!key.startsWith('task:[')) return undefined;
+  const tuple: unknown = JSON.parse(key.slice(5));
+  if (
+    !Array.isArray(tuple) ||
+    tuple[0] !== 'operation' ||
+    tuple[1] !== 'add-comment' ||
+    typeof tuple[3] !== 'string' ||
+    tuple[4] !== true
+  )
+    return undefined;
+  tuple[3] = null;
+  tuple[4] = false;
+  return `task:${JSON.stringify(tuple)}`;
 }
 function taskCreationKeys(
   input: Record<string, unknown>,
@@ -197,27 +222,33 @@ function subjectKeys(
 }
 /** A successful operation on B cannot erase an unresolved failure on A. Transient, read-only evidence. */
 export class CommandPendingOperations {
-  private readonly failed = new Map<string, { count: number; refinement: boolean }>();
-  private readonly retries = new Map<string, string>();
-  private retrySequence = 0;
-  private readonly schemaRefinements = new Map<string, number>();
+  private readonly failed_abyssPrivate = new Map<string, { count: number; refinement: boolean }>();
+  private readonly retries_abyssPrivate = new Map<string, string>();
+  private retrySequence_abyssPrivate = 0;
+  private readonly schemaRefinements_abyssPrivate = new Map<string, number>();
   rejectSchema(basis: string, generation: number): void {
-    this.schemaRefinements.set(basis, generation);
+    this.schemaRefinements_abyssPrivate.set(basis, generation);
   }
   resolveSchema(basis: string | undefined, generation: number): void {
-    if (basis !== undefined && (this.schemaRefinements.get(basis) ?? generation) < generation)
-      this.schemaRefinements.delete(basis);
+    if (
+      basis !== undefined &&
+      (this.schemaRefinements_abyssPrivate.get(basis) ?? generation) < generation
+    )
+      this.schemaRefinements_abyssPrivate.delete(basis);
   }
   constructor(
-    private readonly identity: (value: string) => string,
-    private readonly turn = '',
+    private readonly identity_abyssPrivate: (value: string) => string,
+    private readonly turn_abyssPrivate = '',
   ) {}
-  private creationDestination(value: unknown): string {
+  private creationDestination_abyssPrivate(value: unknown): string {
     const input = record(record(value)?.['input']) ?? {};
     return JSON.stringify([input['intent'], input['destination']]);
   }
   checkRetry(token: string | undefined, value: unknown): void {
-    if (token !== undefined && this.retries.get(token) !== this.creationDestination(value))
+    if (
+      token !== undefined &&
+      this.retries_abyssPrivate.get(token) !== this.creationDestination_abyssPrivate(value)
+    )
       throw new CommandFailure(
         'RETRY',
         'Use an unconsumed current create retryOf with the same intent and exact destination.',
@@ -225,35 +256,45 @@ export class CommandPendingOperations {
     if (token !== undefined) this.blockRetry(token);
   }
   rejectCreate(value: unknown, token?: string): string {
-    const retry = token ?? `create:${this.turn}:${++this.retrySequence}`;
-    this.retries.set(retry, this.creationDestination(value));
+    const retry = token ?? `create:${this.turn_abyssPrivate}:${++this.retrySequence_abyssPrivate}`;
+    this.retries_abyssPrivate.set(retry, this.creationDestination_abyssPrivate(value));
     return retry;
   }
   blockRetry(token: string): void {
-    this.retries.set(token, '');
+    this.retries_abyssPrivate.set(token, '');
   }
   resolveCreate(token: string | undefined): void {
-    if (token !== undefined) this.retries.delete(token);
+    if (token !== undefined) this.retries_abyssPrivate.delete(token);
   }
-  private keys(name: string, value: unknown): ReadonlyArray<{ key: string; refinement: boolean }> {
+  private keys_abyssPrivate(
+    name: string,
+    value: unknown,
+  ): ReadonlyArray<{ key: string; refinement: boolean }> {
     const parsed = payload(name, value);
     if (parsed === undefined) return [];
     const subjects =
       parsed.name === 'task'
-        ? taskKeys(parsed.input, this.identity)
-        : subjectKeys(parsed.name, parsed.input, this.identity);
+        ? taskKeys(parsed.input, this.identity_abyssPrivate)
+        : subjectKeys(parsed.name, parsed.input, this.identity_abyssPrivate);
     return subjects.map((subject) => ({
       key: `${parsed.name}:${subject}`,
       refinement: parsed.name === 'task' && parsed.input['kind'] !== 'create',
     }));
   }
+  private resolutionKey_abyssPrivate(key: string, unknownDestination: string | undefined): string {
+    if (this.failed_abyssPrivate.has(key)) return key;
+    const fallback = missingCommentFallback(key);
+    return fallback !== undefined && this.failed_abyssPrivate.has(fallback)
+      ? fallback
+      : (unknownDestination ?? key);
+  }
   reject(name: string, value: unknown): void {
     const counts = new Map<string, number>();
-    for (const entry of this.keys(name, value)) {
+    for (const entry of this.keys_abyssPrivate(name, value)) {
       const count = (counts.get(entry.key) ?? 0) + 1;
       counts.set(entry.key, count);
-      this.failed.set(entry.key, {
-        count: Math.max(this.failed.get(entry.key)?.count ?? 0, count),
+      this.failed_abyssPrivate.set(entry.key, {
+        count: Math.max(this.failed_abyssPrivate.get(entry.key)?.count ?? 0, count),
         refinement: entry.refinement,
       });
     }
@@ -262,22 +303,27 @@ export class CommandPendingOperations {
     const parsed = payload(name, value);
     const unknownDestination =
       parsed?.name === 'task' && parsed.input['kind'] === 'create'
-        ? this.keys(name, { ...parsed.input, destination: undefined })[0]?.key
+        ? this.keys_abyssPrivate(name, { ...parsed.input, destination: undefined })[0]?.key
         : undefined;
-    for (const entry of this.keys(name, value)) {
-      const key = this.failed.has(entry.key) ? entry.key : (unknownDestination ?? entry.key);
-      const current = this.failed.get(key);
+    for (const entry of this.keys_abyssPrivate(name, value)) {
+      const key = this.resolutionKey_abyssPrivate(entry.key, unknownDestination);
+      const current = this.failed_abyssPrivate.get(key);
       if (current === undefined) continue;
-      if (current.count <= 1) this.failed.delete(key);
-      else this.failed.set(key, { ...current, count: current.count - 1 });
+      if (current.count <= 1) this.failed_abyssPrivate.delete(key);
+      else this.failed_abyssPrivate.set(key, { ...current, count: current.count - 1 });
     }
   }
   get unresolved(): boolean {
-    return this.failed.size > 0 || this.retries.size > 0 || this.schemaRefinements.size > 0;
+    return (
+      this.failed_abyssPrivate.size > 0 ||
+      this.retries_abyssPrivate.size > 0 ||
+      this.schemaRefinements_abyssPrivate.size > 0
+    );
   }
   get taskRefinement(): boolean {
     return (
-      this.schemaRefinements.size > 0 || [...this.failed.values()].some((entry) => entry.refinement)
+      this.schemaRefinements_abyssPrivate.size > 0 ||
+      [...this.failed_abyssPrivate.values()].some((entry) => entry.refinement)
     );
   }
 }

@@ -437,6 +437,14 @@ export default class TaskCalendarPlugin extends Plugin {
       now: () => Date.now(),
       research: research ?? {
         search: (query, signal) => this.commandResearch.search(query, signal),
+        readPage: (url, signal) => {
+          if (this.commandResearch.readPage === undefined)
+            throw new CommandFailure(
+              'PAGE_UNAVAILABLE',
+              'The configured research connection cannot read pages.',
+            );
+          return this.commandResearch.readPage(url, signal);
+        },
       },
     });
     this.commandRuntimes.add(session);

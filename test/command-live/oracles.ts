@@ -1,5 +1,5 @@
 import { normalizeLinkCarrier, taskLinkFailures, type TaskLinkExpectation } from './linkOracle';
-import { hasSourceDestination } from './sourceOracle';
+import { hasSourceAbsenceFacts, hasSourceDestination, hasSourceFacts } from './sourceOracle';
 export interface ObservationExpectation {
   kind: 'task' | 'note' | 'project';
   path: string;
@@ -17,6 +17,7 @@ export interface StatusPlanExpectation {
   symbol: string;
 }
 export interface ResearchEvidence {
+  action?: string;
   invocation: number;
   query: string;
   sources: readonly string[];
@@ -43,6 +44,7 @@ export interface TurnExpectation {
   freshPreparation?: boolean;
   researchCalls?: number;
   researchSource?: string;
+  researchPage?: string;
   noteFacts?: ReadonlyArray<{ path: string; line: string; source: string }>;
 
   trees?: readonly unknown[];
@@ -58,6 +60,12 @@ export interface TurnExpectation {
   projectChanges?: readonly unknown[];
   notePlans?: ReadonlyArray<{ path: string; text: string }>;
   taskLinks?: readonly TaskLinkExpectation[];
+  decomposition?: {
+    minChildren: number;
+    maxChildren: number;
+    maxDepth: number;
+    noInventedSchedule: boolean;
+  };
 }
 export interface PreservationPair {
   before: unknown;
@@ -124,16 +132,29 @@ function fieldMatcher(expected: unknown, actual: unknown): boolean | undefined {
       authored(normalizeLinkCarrier(actual, carrier['notePath'])),
     );
   const source = record(expected)['sourceText'];
-  if (typeof source === 'string')
-    return (
-      typeof actual === 'string' &&
-      actual.trim().length > source.length &&
-      hasSourceDestination(actual, source)
-    );
+  if (typeof source === 'string') return sourceMatches(expected, actual, source);
   const includes = record(expected)['includes'];
   if (typeof includes === 'string') return typeof actual === 'string' && actual.includes(includes);
   const alternatives = record(expected)['oneOf'];
   return Array.isArray(alternatives) ? alternatives.includes(actual) : undefined;
+}
+function sourceMatches(expected: unknown, actual: unknown, source: string): boolean {
+  const maxLength = record(expected)['maxLength'];
+  return (
+    typeof actual === 'string' &&
+    actual.trim().length > source.length &&
+    (typeof maxLength !== 'number' || actual.length <= maxLength) &&
+    hasSourceDestination(actual, source) &&
+    hasSourceFacts(
+      actual,
+      (record(expected)['facts'] ?? []) as ReadonlyArray<readonly string[]>,
+      (record(expected)['excludes'] ?? []) as readonly string[],
+    ) &&
+    hasSourceAbsenceFacts(
+      actual,
+      (record(expected)['absenceFacts'] ?? []) as ReadonlyArray<ReadonlyArray<readonly string[]>>,
+    )
+  );
 }
 function matches(expected: unknown, actual: unknown): boolean {
   const special = fieldMatcher(expected, actual);
@@ -327,7 +348,19 @@ function rootsMatch(expected: readonly unknown[], actual: readonly unknown[]): b
   return expected.every((_tree, index) => assign(index, new Set()));
 }
 export function requestedTree(expected: TurnExpectation, tree: unknown): unknown {
-  return expected.trees?.find((want) => matches(want, tree)) ?? {};
+  const matched = expected.trees?.find((want) => matches(want, tree));
+  if (matched !== undefined) return matched;
+  const candidates = (expected.trees ?? []).filter((want) => {
+    const wanted = record(want),
+      actual = record(tree);
+    if (!Array.isArray(wanted['comments']) || !Array.isArray(actual['comments'])) return false;
+    const withoutComments = (value: Record<string, unknown>) =>
+      Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'comments'));
+    const wantedWithoutComments = withoutComments(wanted),
+      actualWithoutComments = withoutComments(actual);
+    return matches(wantedWithoutComments, actualWithoutComments);
+  });
+  return candidates.length === 1 ? candidates[0] : {};
 }
 function questionFailures(expected: TurnExpectation, evidence: TurnEvidence): string[] {
   const failures: string[] = [];
@@ -535,16 +568,30 @@ function noteFactText(
   const plans = evidence.notePlans?.filter((plan) => plan.path === path) ?? [];
   return plans.length === 1 ? plans[0]?.text : undefined;
 }
+function researchSourceMatches(evidence: TurnEvidence, source: string): boolean {
+  return (
+    (evidence.research?.length ?? 0) > 0 &&
+    evidence.research?.every((item) => item.sources.includes(source)) === true
+  );
+}
+function researchPageMatches(evidence: TurnEvidence, url: string): boolean {
+  return (
+    evidence.research?.some(
+      (item) => item.action === 'read-page' && item.query === url && item.sources.includes(url),
+    ) === true
+  );
+}
 function researchFailures(expected: TurnExpectation, evidence: TurnEvidence): string[] {
   const failures: string[] = [];
   if (expected.researchCalls !== undefined && evidence.research?.length !== expected.researchCalls)
     failures.push('research-invocations');
   if (
     expected.researchSource !== undefined &&
-    evidence.research?.every((item) => item.sources.includes(expected.researchSource ?? '')) !==
-      true
+    !researchSourceMatches(evidence, expected.researchSource)
   )
     failures.push('research-source');
+  if (expected.researchPage !== undefined && !researchPageMatches(evidence, expected.researchPage))
+    failures.push('research-page');
   return failures;
 }
 function noteFactFailures(expected: TurnExpectation, evidence: TurnEvidence): string[] {
@@ -560,6 +607,44 @@ function noteFactFailures(expected: TurnExpectation, evidence: TurnEvidence): st
   }
   return failures;
 }
+function hasSchedule(value: Record<string, unknown>): boolean {
+  return (
+    Object.values(record(value['dates'])).some((date) => date !== undefined) ||
+    value['time'] != null ||
+    value['recurrence'] != null
+  );
+}
+/** Structural checks leave the usefulness of an open plan for human review. */
+function decompositionFailures(expected: TurnExpectation, evidence: TurnEvidence): string[] {
+  const constraint = expected.decomposition;
+  if (constraint === undefined) return [];
+  if (evidence.trees.length !== 1) return ['decomposition:root-count'];
+  const failures = new Set<string>();
+  const children = record(evidence.trees[0])['children'];
+  if (
+    !Array.isArray(children) ||
+    children.length < constraint.minChildren ||
+    children.length > constraint.maxChildren
+  )
+    failures.add('decomposition:child-count');
+  const visit = (node: unknown, depth: number) => {
+    const value = record(node);
+    if (typeof value['markdownTitle'] !== 'string' || value['markdownTitle'].trim().length === 0)
+      failures.add('decomposition:empty-title');
+    if (depth > constraint.maxDepth) failures.add('decomposition:depth');
+    if (constraint.noInventedSchedule && hasSchedule(value))
+      failures.add('decomposition:invented-schedule');
+    const descendants = Array.isArray(value['children']) ? value['children'] : [];
+    const titles = descendants.map((child) => {
+      const title = record(child)['markdownTitle'];
+      return typeof title === 'string' ? title.trim().toLowerCase() : '';
+    });
+    if (new Set(titles).size !== titles.length) failures.add('decomposition:duplicate-title');
+    for (const child of descendants) visit(child, depth + 1);
+  };
+  visit(evidence.trees[0], 0);
+  return [...failures];
+}
 export function evaluateTurn(expected: TurnExpectation, evidence: TurnEvidence): string[] {
   return [
     ...statusFailures(expected, evidence),
@@ -571,6 +656,7 @@ export function evaluateTurn(expected: TurnExpectation, evidence: TurnEvidence):
     ...continuationFailures(expected, evidence),
     ...basisFailures(expected, evidence),
     ...researchFailures(expected, evidence),
+    ...decompositionFailures(expected, evidence),
     ...noteFactFailures(expected, evidence),
     ...(evidence.preservationFailures ?? []),
     ...(expected.writeCount !== undefined && expected.writeCount !== evidence.writeCount

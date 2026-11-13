@@ -13,6 +13,7 @@ export function parseArgs(args) {
     out: 'docs/research/command-mode-round2/runs/baseline',
     allowPaid: false,
     list: false,
+    vault: /** @type {string | undefined} */ (undefined),
     localBaseURL: /** @type {string | undefined} */ (undefined),
   };
   let explicitModel = false;
@@ -37,6 +38,9 @@ export function parseArgs(args) {
       case '--provider':
         options.provider = value;
         break;
+      case '--vault':
+        options.vault = value;
+        break;
       case '--base-url':
         options.localBaseURL = value;
         break;
@@ -57,22 +61,39 @@ export function parseArgs(args) {
     !Number.isSafeInteger(options.maxRequests) ||
     options.maxRequests < 1 ||
     options.model.trim() === '' ||
-    !['openrouter', 'openai', 'anthropic', 'groq', 'cerebras', 'local'].includes(
+    !['openrouter', 'openai', 'anthropic', 'groq', 'cerebras', 'local', 'chatgpt-plan'].includes(
       options.provider,
-    ) ||
-    (options.provider === 'local'
-      ? !explicitModel || !options.localBaseURL || options.allowPaid
-      : options.localBaseURL !== undefined)
+    )
   )
     throw new Error('Invalid configuration');
+  assertTransport(options, explicitModel);
   if (
     !options.list &&
     !options.allowPaid &&
     options.provider !== 'local' &&
+    options.provider !== 'chatgpt-plan' &&
     (options.provider !== 'openrouter' || !options.model.endsWith(':free'))
   )
     throw new Error('Paid models require --allow-paid');
   return options;
+}
+/** @param {{provider:string,vault?:string|undefined,localBaseURL?:string|undefined,allowPaid:boolean}} options @param {boolean} explicitModel */
+function assertTransport(options, explicitModel) {
+  if (options.provider === 'chatgpt-plan') {
+    if (
+      !explicitModel ||
+      options.vault !== 'dev-vault-tasks' ||
+      options.allowPaid ||
+      options.localBaseURL !== undefined
+    )
+      throw new Error('Invalid subscription configuration');
+    return;
+  }
+  if (options.vault !== undefined) throw new Error('Unexpected vault');
+  if (options.provider === 'local') {
+    if (!explicitModel || !options.localBaseURL || options.allowPaid)
+      throw new Error('Invalid local configuration');
+  } else if (options.localBaseURL !== undefined) throw new Error('Unexpected local base');
 }
 async function main() {
   const options = parseArgs(process.argv.slice(2));

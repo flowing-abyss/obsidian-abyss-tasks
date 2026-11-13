@@ -156,6 +156,134 @@ it.each(['add-child', 'add-comment'])('retains each same-parent %s obligation', 
   work.resolve('task', { input: { kind: 'append', operation: operation('Second') } });
   expect(work.unresolved).toBe(false);
 });
+it('recovers an unknown-text comment without clearing a known-text obligation', () => {
+  const work = new CommandPendingOperations((value) => value);
+  const unknown = {
+    edit: 'owner',
+    operation: { type: 'add-comment', markdownTitle: 'x' },
+  };
+  const known = {
+    edit: 'owner',
+    operation: { type: 'add-comment', text: 'Known rejected text.' },
+  };
+  work.reject('change_task', unknown);
+  work.reject('change_task', known);
+  work.resolve('change_task', known);
+  expect(work.unresolved).toBe(true);
+  work.resolve('change_task', {
+    edit: 'owner',
+    operation: { type: 'add-comment', text: 'Corrected unknown intent.' },
+  });
+  expect(work.unresolved).toBe(false);
+});
+it.each([
+  ['source', { source: 'other-owner' }],
+  ['parent', { parent: 'other-owner' }],
+  ['relativeTo', { relativeTo: 'other-owner' }],
+  ['patch', { patch: { due: { type: 'set', value: '2026-12-01' } } }],
+])('repairs a missing-text comment despite rejected %s extras', (_name, extra) => {
+  const work = new CommandPendingOperations((value) => value);
+  work.reject('change_task', {
+    edit: 'owner',
+    operation: { type: 'add-comment', ...extra },
+  });
+  work.resolve('change_task', {
+    edit: 'owner',
+    operation: { type: 'add-comment', text: 'Recovered requested comment.' },
+  });
+  expect(work.unresolved).toBe(false);
+});
+it('matches known comment text while ignoring rejected schema extras', () => {
+  const work = new CommandPendingOperations((value) => value);
+  work.reject('change_task', {
+    edit: 'owner',
+    operation: { type: 'add-comment', text: 'Known text.', source: 'extra source' },
+  });
+  work.resolve('change_task', {
+    edit: 'owner',
+    operation: { type: 'add-comment', text: 'Different text.' },
+  });
+  expect(work.unresolved).toBe(true);
+  work.resolve('change_task', {
+    edit: 'owner',
+    operation: { type: 'add-comment', text: 'Known text.' },
+  });
+  expect(work.unresolved).toBe(false);
+});
+it('does not treat the unknown-text marker as authored comment content', () => {
+  const work = new CommandPendingOperations((value) => value);
+  const request = (text: string) => ({
+    edit: 'owner',
+    operation: { type: 'add-comment', text },
+  });
+  work.reject('change_task', request('unknown-text'));
+  work.resolve('change_task', request('Different content.'));
+  expect(work.unresolved).toBe(true);
+  work.resolve('change_task', request('unknown-text'));
+  expect(work.unresolved).toBe(false);
+});
+it('does not treat an explicit null comment text as missing text', () => {
+  const work = new CommandPendingOperations((value) => value);
+  work.reject('change_task', {
+    edit: 'owner',
+    operation: { type: 'add-comment', text: null },
+  });
+  work.resolve('change_task', {
+    edit: 'owner',
+    operation: { type: 'add-comment', text: 'Corrected content.' },
+  });
+  expect(work.unresolved).toBe(true);
+});
+it('treats a NUL-prefixed authored comment as ordinary exact text', () => {
+  const work = new CommandPendingOperations((value) => value);
+  const request = (text: string) => ({
+    edit: 'owner',
+    operation: { type: 'add-comment', text },
+  });
+  work.reject('change_task', request('\u0000alternate:owner'));
+  work.resolve('change_task', request('Different content.'));
+  expect(work.unresolved).toBe(true);
+  work.resolve('change_task', request('\u0000alternate:owner'));
+  expect(work.unresolved).toBe(false);
+});
+it('keeps an unknown-text comment tied to its owner and operation', () => {
+  const work = new CommandPendingOperations((value) => value);
+  work.reject('change_task', {
+    edit: 'owner',
+    operation: { type: 'add-comment' },
+  });
+  work.resolve('change_task', {
+    edit: 'other-owner',
+    operation: { type: 'add-comment', text: 'Unrelated.' },
+  });
+  work.resolve('change_task', {
+    edit: 'owner',
+    operation: { type: 'description', text: 'Wrong operation.' },
+  });
+  expect(work.unresolved).toBe(true);
+  work.resolve('change_task', {
+    edit: 'owner',
+    operation: { type: 'add-comment', text: 'Corrected intent.' },
+  });
+  expect(work.unresolved).toBe(false);
+});
+it('preserves explicit unknown-comment batch multiplicity and deduplicates repeated retries', () => {
+  const work = new CommandPendingOperations((value) => value);
+  const unknown = { type: 'add-comment', target: 'owner' };
+  work.reject('task', { input: { kind: 'batch', operations: [unknown, unknown] } });
+  const correction = {
+    input: { kind: 'append', operation: { type: 'add-comment', target: 'owner', text: 'Fixed.' } },
+  };
+  work.resolve('task', correction);
+  expect(work.unresolved).toBe(true);
+  work.resolve('task', correction);
+  expect(work.unresolved).toBe(false);
+
+  work.reject('task', { input: { kind: 'append', operation: unknown } });
+  work.reject('task', { input: { kind: 'append', operation: unknown } });
+  work.resolve('task', correction);
+  expect(work.unresolved).toBe(false);
+});
 it('resolves project field obligations separately with an omitted update kind', () => {
   const work = new CommandPendingOperations((value) => value);
   const start = { fieldId: 'start', value: '2026-08-01' },

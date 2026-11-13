@@ -524,6 +524,36 @@ it('finds filtered matches beyond a native page and keeps duplicates distinct', 
   expect(all.items[0]?.target).not.toBe(all.items[1]?.target);
   expect(all.truncated).toBe(true);
 });
+it('treats omitted statuses like the full domain in public task searches', async () => {
+  const h = await setup(
+    '- [ ] Proof #north\n- [/] Proof #north\n- [x] Proof #south\n- [-] Proof #south\n',
+  );
+  const search = required(h.client().tasks.search);
+  const base = { query: 'Proof', fields: 'title' as const };
+  const unrestricted = ok(await search(base));
+  const allStatuses = ok(
+    await search({ ...base, statuses: ['open', 'in-progress', 'done', 'cancelled'] }),
+  );
+  const northUnrestricted = ok(await search({ ...base, tagsAll: ['#north'] }));
+  const northAllStatuses = ok(
+    await search({
+      ...base,
+      statuses: ['open', 'in-progress', 'done', 'cancelled'],
+      tagsAll: ['#north'],
+    }),
+  );
+  const versions = (rows: typeof unrestricted.items) =>
+    rows
+      .map(({ target, revision }) => [target, revision])
+      .sort((a, b) => `${a[0]}:${a[1]}`.localeCompare(`${b[0]}:${b[1]}`));
+
+  expect(new Set(unrestricted.items.map(({ status }) => status))).toEqual(
+    new Set(['open', 'in-progress', 'done', 'cancelled']),
+  );
+  expect(versions(allStatuses.items)).toEqual(versions(unrestricted.items));
+  expect(northUnrestricted.items.map(({ tags }) => tags)).toEqual([['#north'], ['#north']]);
+  expect(versions(northAllStatuses.items)).toEqual(versions(northUnrestricted.items));
+});
 it('rejects cross-epoch handles, malformed input and shared request namespace collisions', async () => {
   const h = await setup('- [ ] Root\n');
   const other = await setup('- [ ] Root\n');

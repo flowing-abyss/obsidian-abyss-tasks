@@ -348,8 +348,13 @@ function visibleTool(schema: JsonSchema, name: string): JsonSchema {
     : schema;
 }
 /** Change only provider presentation; canonical validation/defaults own executable arguments. */
-export function modelToolSchema<T>(input: FlexibleSchema<T>, name?: string): Schema<T> {
+export function modelToolSchema<T>(
+  input: FlexibleSchema<T>,
+  name?: string,
+  validationInput?: FlexibleSchema<T>,
+): Schema<T> {
   const canonical = asSchema(input);
+  const executable = validationInput === undefined ? canonical : asSchema(validationInput);
   return jsonSchema(
     // Command tools are Zod-owned. Custom SDK schemas retain their own dialect;
     // only native Zod conversion establishes the modern recursive representation.
@@ -362,6 +367,6 @@ export function modelToolSchema<T>(input: FlexibleSchema<T>, name?: string): Sch
       );
       return owned && name !== undefined ? visibleTool(projected, name) : projected;
     },
-    canonical.validate === undefined ? {} : { validate: canonical.validate },
+    executable.validate === undefined ? {} : { validate: executable.validate },
   );
 }

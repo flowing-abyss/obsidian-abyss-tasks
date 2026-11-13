@@ -2176,3 +2176,166 @@ it.each(bilingualExpectations)(
     }
   },
 );
+
+function appendCommentToLatestPlan(prompt: Prompt, text: string): Call {
+  const value = result(prompt, 'task');
+  return tool('task', {
+    input: {
+      kind: 'append',
+      plan: value['target'],
+      expectedPlanRevision: value['revision'],
+      operation: { type: 'add-comment', target: object(value['after'])['target'], text },
+    },
+  });
+}
+
+it.each(['ru', 'en'] as const)(
+  'qualifies fixed-source research on the selected project task with two saved comments (%s)',
+  async (language) => {
+    const test = expectDefined(selectCases(`research-project-dictation-${language}`)[0]);
+    const lookup = tool('read', {
+      input: { kind: 'tasks', query: 'Настроить резервное копирование' },
+    });
+    const firstComment =
+      'Atlas: 3 encrypted local copies; 20 minutes; offline. https://example.org/backup-comparison';
+    const secondComment =
+      'Test restore every week: successful copying alone does not prove recovery. https://example.org/backup-comparison';
+    const { report } = await replay(test, [
+      plan,
+      lookup,
+      (prompt) => {
+        const node = firstRead(prompt);
+        return tool('finish', {
+          state: 'ready',
+          selection: [{ kind: 'task', target: node['target'], revision: node['revision'] }],
+        });
+      },
+      research,
+      tool('research', {
+        query:
+          'https://example.org/backup-comparison compare offline backup options under 25 minutes',
+      }),
+      lookup,
+      (prompt) => {
+        const node = firstRead(prompt);
+        return tool('task', {
+          input: {
+            kind: 'edit',
+            target: node['target'],
+            expectedRevision: node['revision'],
+            operation: {
+              type: 'patch',
+              target: node['target'],
+              patch: { durationMinutes: { type: 'set', value: 20 } },
+            },
+          },
+        });
+      },
+      (prompt) => appendCommentToLatestPlan(prompt, firstComment),
+      (prompt) => appendCommentToLatestPlan(prompt, secondComment),
+      finish,
+      confirm,
+    ]);
+    const preview = expectDefined(report.turns[1]);
+    rejectDamage(expectDefined(test.turns[1]).expect, preview, [
+      (value) => {
+        object(value.trees[0])['comments'] = [
+          {
+            text: 'Beacon: 3 copies; 30 minutes; cloud upload required. https://example.org/backup-comparison',
+          },
+          { text: secondComment },
+        ];
+      },
+      (value) => {
+        object(value.trees[0])['comments'] = [{ text: firstComment }];
+      },
+      (value) => {
+        object(value.trees[0])['durationMinutes'] = 30;
+      },
+      (value) => {
+        object(value.trees[0])['children'] = [];
+      },
+    ]);
+  },
+);
+
+it.each(['ru', 'en'] as const)(
+  'qualifies an open goal hierarchy without prescribing the model’s individual steps (%s)',
+  async (language) => {
+    const test = expectDefined(selectCases(`open-goal-decomposition-${language}`)[0]);
+    await replay(test, [
+      plan,
+      tool('task', {
+        input: {
+          kind: 'create',
+          destination: { type: 'configured-default' },
+          tree: {
+            markdownTitle: language === 'ru' ? 'Переезд' : 'Move home',
+            children: [
+              { markdownTitle: 'Inventory valuables and fragile items' },
+              {
+                markdownTitle: 'Choose a carrier',
+                children: [{ markdownTitle: 'Request written quotes' }],
+              },
+              { markdownTitle: 'Pack and label boxes by room' },
+              { markdownTitle: 'Check every box after delivery' },
+            ],
+          },
+        },
+      }),
+      finish,
+    ]);
+  },
+);
+
+it.each(['ru', 'en'] as const)(
+  'qualifies actual page-content consumption for the long project overview request (%s)',
+  async (language) => {
+    const test = expectDefined(selectCases(`project-page-overview-${language}`)[0]);
+    const lookup = tool('read', { input: { kind: 'tasks', query: 'Изучить Cairn' } });
+    const url = 'https://example.org/projects/cairn';
+    const firstComment = `Cairn is an offline CLI task manager for personal Markdown files. ${url}`;
+    const secondComment = `Expand recurring tasks and export a calendar file; no cloud sync or shared team editing. ${url}`;
+    const { report } = await replay(test, [
+      plan,
+      lookup,
+      (prompt) => {
+        const node = firstRead(prompt);
+        return tool('finish', {
+          state: 'ready',
+          selection: [{ kind: 'task', target: node['target'], revision: node['revision'] }],
+        });
+      },
+      research,
+      tool('research', { url }),
+      lookup,
+      (prompt) => {
+        const node = firstRead(prompt);
+        return tool('task', {
+          input: {
+            kind: 'edit',
+            target: node['target'],
+            expectedRevision: node['revision'],
+            operation: { type: 'add-comment', target: node['target'], text: firstComment },
+          },
+        });
+      },
+      (prompt) => appendCommentToLatestPlan(prompt, secondComment),
+      finish,
+      confirm,
+    ]);
+    const preview = expectDefined(report.turns[1]);
+    const expected = expectDefined(test.turns[1]).expect;
+    rejectDamage(expected, preview, [
+      (value) => {
+        value.research = value.research?.map((item) => ({ ...item, action: 'search' })) ?? [];
+      },
+      (value) => {
+        object(value.trees[0])['comments'] = [
+          { text: firstComment },
+          { text: `Recurring exports with cloud synchronization and a shared calendar. ${url}` },
+        ];
+      },
+    ]);
+  },
+);

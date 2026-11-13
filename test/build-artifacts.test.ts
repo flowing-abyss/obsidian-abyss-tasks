@@ -128,6 +128,8 @@ const privateOwners = new Set([
   'ProviderSettingsSection',
   // Tool tables capture the owner through callbacks; only tool definitions/results are spread or serialized.
   'CommandToolOwner',
+  // Retry obligations and normalized lookup keys stay internal; they are never reflected or serialized.
+  'CommandPendingOperations',
   // Evidence exposes accepted facts through methods; private query/mutation helpers have no string dispatch.
   'CommandEvidence',
 ]);

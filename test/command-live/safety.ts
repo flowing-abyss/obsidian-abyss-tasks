@@ -2,7 +2,7 @@ import type { RequestUrlParam } from 'obsidian';
 import type { CatalogProvider } from '../../src/ai/providers/providerSettings';
 import { EvalBoundaryFailure } from './diagnostics';
 export interface EvalOptions {
-  provider: CatalogProvider | 'local';
+  provider: CatalogProvider | 'local' | 'chatgpt-plan';
   localBaseURL?: string;
   model: string;
   maxRequests: number;
@@ -10,17 +10,26 @@ export interface EvalOptions {
 }
 export function validateOptions(input: EvalOptions): EvalOptions {
   if (
-    !['openrouter', 'openai', 'anthropic', 'groq', 'cerebras', 'local'].includes(input.provider) ||
-    input.model.trim() === '' ||
-    input.model.length > 200 ||
+    !['openrouter', 'openai', 'anthropic', 'groq', 'cerebras', 'local', 'chatgpt-plan'].includes(
+      input.provider,
+    ) ||
+    invalidModel(input.model) ||
     !Number.isSafeInteger(input.maxRequests) ||
     input.maxRequests < 1
   )
     throw new Error('invalid-configuration');
   if (input.provider === 'local') return validateLocalOptions(input);
   if (input.localBaseURL !== undefined) throw new Error('unexpected-local-base');
+  if (input.provider === 'chatgpt-plan') return validateSubscriptionOptions(input);
   if (!input.allowPaid && !freeOpenRouter(input)) throw new Error('paid-opt-in-required');
   return input;
+}
+function validateSubscriptionOptions(input: EvalOptions): EvalOptions {
+  if (input.allowPaid) throw new Error('unexpected-paid-opt-in');
+  return input;
+}
+function invalidModel(model: string): boolean {
+  return model.trim() === '' || model.length > 200;
 }
 function freeOpenRouter(input: EvalOptions): boolean {
   return input.provider === 'openrouter' && input.model.endsWith(':free');

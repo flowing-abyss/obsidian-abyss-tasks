@@ -220,6 +220,17 @@ export interface CommandResearchResult {
   readonly outcome?: 'empty';
   readonly query: string;
   readonly summary: string;
+  readonly page?: {
+    readonly kind: 'page-content';
+    readonly requestedUrl: string;
+    readonly finalUrl: null;
+    readonly limitations: readonly [
+      'provider-extracted',
+      'redirect-chain-unverified',
+      'final-url-unverified',
+      'freshness-unverified',
+    ];
+  };
   readonly sources: ReadonlyArray<{
     readonly url: string;
     readonly title: string | null;
@@ -231,6 +242,7 @@ export interface CommandResearchResult {
 }
 export interface CommandResearchPort {
   search(query: string, signal: AbortSignal): Promise<CommandResearchResult>;
+  readPage?(url: string, signal: AbortSignal): Promise<CommandResearchResult>;
 }
 export class CommandFailure extends Error {
   constructor(

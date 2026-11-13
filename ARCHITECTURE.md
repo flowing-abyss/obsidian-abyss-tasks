@@ -94,8 +94,18 @@ shortening diagnostic. Direct responses validate their provider envelopes before
 An explicitly empty direct search returns `outcome: 'empty'` only with no sources or summary and
 `truncated: false`; uncited generated prose still fails. Exa warnings/notices and Firecrawl warnings
 mark nonempty evidence incomplete without disclosing raw provider messages; warned empty evidence
-fails instead of claiming complete zero matches. No fallback or page-fetching loop runs. Explicit research control admits at
-most two research calls per turn. Each SDK call permits at most two network retries inside one
+fails instead of claiming complete zero matches. A URL request uses the selected Tavily Extract,
+Exa Contents or Firecrawl Scrape endpoint to read one page, without crawling linked pages or
+switching billing providers. Other search connections report page reading unavailable. Main's live
+research delegate forwards both searches and page reads. Page evidence identifies extracted content,
+the requested URL and the provider-returned source URL; its final redirect URL remains unknown.
+Explicit limitations retain redirect and freshness uncertainty. Per-URL extraction failures fail even
+when the provider returns HTTP 200. Page content retains at most 8,000 characters, reduced further
+to fit the existing 12,000-character serialized result budget, with explicit truncation. Sources remain
+untrusted evidence and cannot authorize writes. Successful page results can be reused within the turn;
+failed or cancelled reads are not cached. No fallback or page-fetching loop runs. Explicit research
+control admits at most two uncached research calls per turn, shared by search and page reads.
+Each SDK call permits at most two network retries inside one
 45-second deadline and the enclosing 180-second turn. Logical invocations and physical retries are
 different counts. Output retains at most five validated HTTP(S) sources and 12,000 serialized
 characters, separating generated summary from nullable attributed excerpts and marking truncation.
@@ -109,8 +119,10 @@ actions only before the first ordinary operation. That first operation seals pre
 synchronously, including when several tool calls share a response. Pending-transition and history
 checks still apply without interpretation. There is no duplicate semantic work declaration or
 binding protocol. `create_task` and `change_task` adapt to the canonical task preparation owner.
-Each editable alias captures its exact task/comment owner and saved or pending-plan basis;
-superseding that basis invalidates the alias.
+For an explicitly supplied task ID, `find.taskId` requires a unique case-sensitive `authoredId`
+match inside complete, filtered results; `showExact` remains title-only. Both paths issue an edit
+alias only after a canonical revision-checked read. Each editable alias captures its exact
+task/comment owner and saved or pending-plan basis; superseding that basis invalidates the alias.
 
 The core prompt defines existing-context selection before new capture. At the control boundary,
 ordinary create/add/schedule requests preview; approval of the displayed proposal uses confirm

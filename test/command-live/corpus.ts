@@ -3,6 +3,8 @@ import { bilingualCases } from './bilingual';
 import { files, tree } from './fixtures';
 import { lookupCases } from './lookupCases';
 import type { TurnExpectation } from './oracles';
+import { pageCases } from './pageCases';
+import { semanticCases } from './semanticCases';
 export interface EvalTurn {
   text: string;
   expect: TurnExpectation;
@@ -21,6 +23,8 @@ export interface EvalCase {
   };
   files: Readonly<Record<string, string>>;
   turns: readonly EvalTurn[];
+  researchFixture?: { text: string; sources: readonly string[] };
+  pageFixture?: { url: string; title: string; content: string };
   limitations?: readonly string[];
   unavailable?: string;
   scripted?: boolean;
@@ -2093,6 +2097,8 @@ export const corpus = [
   ...qualificationContrasts,
   ...bilingualCases,
   ...lookupCases,
+  ...semanticCases,
+  ...pageCases,
 ];
 export function selectCases(selection: string): readonly EvalCase[] {
   if (selection === 'all') return corpus;
@@ -2132,6 +2138,7 @@ function hasLiteralContract(turn: EvalTurn): boolean {
     expected.observations,
     expected.projectChanges,
     expected.notePlans,
+    expected.decomposition,
   ].some((predicate) => predicate !== undefined);
 }
 

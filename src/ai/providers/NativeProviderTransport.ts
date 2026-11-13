@@ -21,9 +21,9 @@ export const providerEndpoints: Record<CredentialProvider, readonly [string, ...
     'https://api.groq.com/openai/v1/audio/transcriptions',
   ],
   cerebras: ['https://api.cerebras.ai/v1/chat/completions'],
-  tavily: ['https://api.tavily.com/search'],
-  exa: ['https://api.exa.ai/search'],
-  firecrawl: ['https://api.firecrawl.dev/v2/search'],
+  tavily: ['https://api.tavily.com/search', 'https://api.tavily.com/extract'],
+  exa: ['https://api.exa.ai/search', 'https://api.exa.ai/contents'],
+  firecrawl: ['https://api.firecrawl.dev/v2/search', 'https://api.firecrawl.dev/v2/scrape'],
   brave: ['https://api.search.brave.com/res/v1/web/search'],
 };
 interface PendingRequest {

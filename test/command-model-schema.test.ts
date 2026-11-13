@@ -313,6 +313,24 @@ it('exposes only applicable strict control fields and pending transition branche
   ).toHaveProperty('success', true);
 });
 
+it('bounds confirmation change indexes to the captured top-level proposal', async () => {
+  const schema = modelToolSchema(
+    controlSchema(false, undefined, 1),
+    'interpret',
+    controlSchema(false),
+  );
+  const control = (index: number) => ({
+    intent: 'confirm',
+    approval: 'Сохрани оба комментария.',
+    scope: { proposalRevision: 2, changes: [{ kind: 'change', index }] },
+  });
+
+  expect(JSON.stringify(await schema.jsonSchema)).toContain('"maximum":0');
+  expect(await schema.validate?.(control(0))).toHaveProperty('success', true);
+  // The SDK-facing schema is bounded, while canonical input parsing still lets the owner set its scoped-repair lock.
+  expect(await schema.validate?.(control(1))).toHaveProperty('success', true);
+});
+
 it.each([
   [
     'finish',

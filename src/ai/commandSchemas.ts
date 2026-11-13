@@ -18,6 +18,7 @@ import {
   type CommandNoteRead,
   type CommandPreparation,
   type CommandProposal,
+  type CommandSaveScope,
   type CommandSessionSnapshot,
 } from './commandTypes';
 export const creationGrammar =
@@ -189,42 +190,48 @@ export const taskArgumentsSchema = z.strictObject({
   ),
   removeAnnotations: z.array(z.string()).max(50).optional(),
 });
-const saveScopeSchema = z.strictObject({
-  proposalRevision: z.number().int().nonnegative(),
-  changes: z
-    .array(
-      z.discriminatedUnion('kind', [
-        z.strictObject({ kind: z.literal('change'), index: z.number().int().nonnegative() }),
-        z.strictObject({
-          kind: z.literal('task-fields'),
-          index: z.number().int().nonnegative(),
-          plan: handle,
-          expectedPlanRevision: handle,
-          target: handle,
-          fields: z
-            .array(
-              z.enum([
-                'markdownTitle',
-                'priority',
-                'due',
-                'scheduled',
-                'start',
-                'time',
-                'durationMinutes',
-                'recurrence',
-                'onCompletion',
-                'tags',
-                'description',
-              ]),
-            )
-            .min(1)
-            .max(11),
-        }),
-      ]),
-    )
-    .min(1)
-    .max(50),
-});
+function saveScopeSchema(maxChangeIndex?: number): z.ZodType<CommandSaveScope> {
+  const index =
+    maxChangeIndex === undefined
+      ? z.number().int().nonnegative()
+      : z.number().int().nonnegative().max(maxChangeIndex);
+  return z.strictObject({
+    proposalRevision: z.number().int().nonnegative(),
+    changes: z
+      .array(
+        z.discriminatedUnion('kind', [
+          z.strictObject({ kind: z.literal('change'), index }),
+          z.strictObject({
+            kind: z.literal('task-fields'),
+            index,
+            plan: handle,
+            expectedPlanRevision: handle,
+            target: handle,
+            fields: z
+              .array(
+                z.enum([
+                  'markdownTitle',
+                  'priority',
+                  'due',
+                  'scheduled',
+                  'start',
+                  'time',
+                  'durationMinutes',
+                  'recurrence',
+                  'onCompletion',
+                  'tags',
+                  'description',
+                ]),
+              )
+              .min(1)
+              .max(11),
+          }),
+        ]),
+      )
+      .min(1)
+      .max(50),
+  });
+}
 export const capabilitySchema = z.enum([
   'find',
   'inspect',
@@ -319,14 +326,14 @@ const sharedControls = [
     intent: z.literal('confirm'),
     ...localControl,
     approval: writeApproval,
-    scope: saveScopeSchema.optional(),
+    scope: saveScopeSchema().optional(),
   }),
   z.strictObject({
     intent: z.literal('immediate'),
     ...researchControl,
     approval: writeApproval,
     saveInstruction,
-    scope: saveScopeSchema.optional(),
+    scope: saveScopeSchema().optional(),
   }),
   z.strictObject({
     intent: z.literal('save-then-plan'),
@@ -376,12 +383,22 @@ export function recoveryControlAvailable(intent: string, state: RecoveryState): 
 export function controlSchema(
   pending: boolean,
   recovery?: RecoveryState,
+  proposalChangeCount?: number,
 ): z.ZodType<z.output<typeof intentSchema>, z.input<typeof intentSchema>> {
   const schema = pending ? intentSchema : ordinaryControlSchema;
-  if (recovery === undefined) return schema;
-  const options = schema.options.filter((branch) =>
-    recoveryControlAvailable(branch.shape.intent.value, recovery),
-  );
+  const options = schema.options
+    .filter(
+      (branch) =>
+        recovery === undefined || recoveryControlAvailable(branch.shape.intent.value, recovery),
+    )
+    .map((branch) =>
+      'scope' in branch.shape && proposalChangeCount !== undefined
+        ? branch.extend({ scope: saveScopeSchema(proposalChangeCount - 1).optional() })
+        : branch,
+    );
+  if (options.length === 0) return z.never();
+  if (options.length === 1)
+    return options[0] as z.ZodType<z.output<typeof intentSchema>, z.input<typeof intentSchema>>;
   return z.union(options);
 }
 const selection = z
@@ -627,12 +644,36 @@ export const statusStageSchema = z.strictObject({
   symbol: z.string().length(1),
   plan: handle.optional(),
 });
-export const researchSchema = z.strictObject({ query: z.string().trim().min(1).max(2000) });
+const researchUrl = z
+  .url()
+  .max(2000)
+  .refine((value) => {
+    const url = new URL(value);
+    return ['http:', 'https:'].includes(url.protocol) && url.username === '' && url.password === '';
+  });
+export const pageReadSchema = z.strictObject({ url: researchUrl });
+export const researchSchema = z.union([
+  z.strictObject({ query: z.string().trim().min(1).max(2000) }),
+  pageReadSchema,
+]);
 export const researchResultSchema = z
   .strictObject({
     outcome: z.literal('empty').optional(),
     query: z.string().max(2000),
     summary: z.string().max(12000),
+    page: z
+      .strictObject({
+        kind: z.literal('page-content'),
+        requestedUrl: researchUrl,
+        finalUrl: z.null(),
+        limitations: z.tuple([
+          z.literal('provider-extracted'),
+          z.literal('redirect-chain-unverified'),
+          z.literal('final-url-unverified'),
+          z.literal('freshness-unverified'),
+        ]),
+      })
+      .optional(),
     sources: z
       .array(
         z.strictObject({

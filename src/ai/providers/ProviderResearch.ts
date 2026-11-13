@@ -2,7 +2,7 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { generateText, type ContentPart, type ToolSet } from 'ai';
 import { z } from 'zod';
-import { researchResultSchema, researchSchema } from '../commandSchemas';
+import { pageReadSchema, researchResultSchema, researchSchema } from '../commandSchemas';
 import {
   CommandFailure,
   type CommandResearchPort,
@@ -77,6 +77,72 @@ const directResponseSchemas = {
     })
     .transform((r) => [r.web?.results ?? [], false] as const),
 };
+const pageItem = z.object({ url: z.string(), title: z.string().nullish() });
+const pageResponseSchemas = {
+  tavily: z
+    .object({
+      results: z.array(pageItem.extend({ raw_content: z.string().trim().min(1) })).length(1),
+      failed_results: z.array(z.unknown()).max(0),
+      ...errorFree,
+    })
+    .transform((r) => ({ item: r.results[0], incomplete: false })),
+  exa: z
+    .object({
+      results: z.array(pageItem.extend({ text: z.string().trim().min(1) })).length(1),
+      statuses: z
+        .array(z.object({ status: z.literal('success'), error: z.never().optional() }))
+        .length(1)
+        .optional(),
+      warnings: z.array(z.unknown()).optional(),
+      notices: z.array(z.unknown()).optional(),
+      ...errorFree,
+    })
+    .transform((r) => ({
+      item: r.results[0],
+      incomplete: (r.warnings?.length ?? 0) + (r.notices?.length ?? 0) > 0,
+    })),
+  firecrawl: z
+    .object({
+      success: z.literal(true),
+      data: z.object({
+        markdown: z.string().trim().min(1),
+        metadata: z.object({
+          sourceURL: z.string(),
+          title: z.string().nullish(),
+          statusCode: z.number().int().min(200).max(299).optional(),
+          error: z.never().optional(),
+        }),
+        warning: z.string().nullish(),
+      }),
+      ...errorFree,
+    })
+    .transform((r) => ({
+      item: {
+        url: r.data.metadata.sourceURL,
+        title: r.data.metadata.title,
+        raw_content: r.data.markdown,
+      },
+      incomplete: Boolean(r.data.warning),
+    })),
+};
+const pageBodies = {
+  tavily: (url: string) => ({
+    urls: [url],
+    extract_depth: 'basic',
+    format: 'markdown',
+    include_images: false,
+    include_favicon: false,
+    timeout: 30,
+  }),
+  exa: (url: string) => ({ urls: [url], text: true, subpages: 0, livecrawlTimeout: 30000 }),
+  firecrawl: (url: string) => ({
+    url,
+    formats: ['markdown'],
+    onlyMainContent: true,
+    timeout: 30000,
+    parsers: [],
+  }),
+};
 
 /** A single bounded research request; the command agent owns intent and turn limits. */
 export class ProviderResearch implements CommandResearchPort {
@@ -86,7 +152,7 @@ export class ProviderResearch implements CommandResearchPort {
     private readonly settings_abyssPrivate: () => unknown,
   ) {}
   async search(query: string, signal: AbortSignal): Promise<CommandResearchResult> {
-    const parsed = researchSchema.safeParse({ query });
+    const parsed = researchSchema.options[0].safeParse({ query });
     if (!parsed.success) throw new ProviderFailure('invalid-request');
     const question = parsed.data.query;
     signal.throwIfAborted();
@@ -113,6 +179,71 @@ export class ProviderResearch implements CommandResearchPort {
     } finally {
       lifetime.dispose();
     }
+  }
+  async readPage(url: string, signal: AbortSignal): Promise<CommandResearchResult> {
+    const parsed = pageReadSchema.safeParse({ url });
+    if (!parsed.success) throw new ProviderFailure('invalid-request');
+    signal.throwIfAborted();
+    const provider = researchProvider(parseResearchSettings(this.settings_abyssPrivate()));
+    if (provider !== 'tavily' && provider !== 'exa' && provider !== 'firecrawl')
+      throw new CommandFailure(
+        'PAGE_UNAVAILABLE',
+        'Page reading requires a Tavily, Exa or Firecrawl search connection.',
+      );
+    const lifetime = researchLifetime(signal);
+    try {
+      const result = await this.page_abyssPrivate(provider, parsed.data.url, lifetime.signal);
+      lifetime.signal.throwIfAborted();
+      return result;
+    } catch (cause) {
+      if (lifetime.expired()) throw new ProviderFailure('timeout');
+      throw providerFailure(cause);
+    } finally {
+      lifetime.dispose();
+    }
+  }
+  private async page_abyssPrivate(
+    provider: 'tavily' | 'exa' | 'firecrawl',
+    url: string,
+    signal: AbortSignal,
+  ): Promise<CommandResearchResult> {
+    const key = this.secrets_abyssPrivate.resolve(provider);
+    const response = await this.transport_abyssPrivate.fetchFor(provider)(
+      providerEndpoints[provider][1] ?? '',
+      {
+        method: 'POST',
+        signal,
+        headers: {
+          [provider === 'exa' ? 'x-api-key' : 'Authorization']:
+            provider === 'exa' ? key : `Bearer ${key}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(pageBodies[provider](url)),
+      },
+    );
+    if (!response.ok) throw providerFailure({ statusCode: response.status });
+    let raw: unknown;
+    try {
+      raw = await response.json();
+    } catch {
+      throw new ProviderFailure('invalid-response');
+    }
+    const result = pageResponseSchemas[provider].safeParse(raw);
+    if (!result.success || result.data.item === undefined)
+      throw new ProviderFailure('invalid-response');
+    const { item, incomplete } = result.data;
+    const content = 'text' in item ? item.text : item.raw_content;
+    return boundedPage(
+      url,
+      {
+        url: item.url,
+        title: item.title ?? null,
+        snippet: null,
+        content,
+        evidence: 'provider-excerpt',
+      },
+      incomplete,
+    );
   }
   private async generated_abyssPrivate(
     provider: 'openai' | 'openrouter',
@@ -330,6 +461,44 @@ function boundedResult(
   const valid = researchResultSchema.safeParse(result);
   if (!valid.success) throw new ProviderFailure('too-large');
   return result;
+}
+function boundedPage(url: string, source: Source, incomplete: boolean): CommandResearchResult {
+  if (!sourceSchema.safeParse(source).success) throw new ProviderFailure('invalid-response');
+  const content = source.content ?? '';
+  const title = source.title === null ? null : source.title.slice(0, 300);
+  const pageSource = { ...source, title, content: content.slice(0, 8000) };
+  const pageSources: Source[] = [pageSource];
+  const result: CommandResearchResult = {
+    query: url,
+    summary: '',
+    page: {
+      kind: 'page-content',
+      requestedUrl: url,
+      finalUrl: null,
+      limitations: [
+        'provider-extracted',
+        'redirect-chain-unverified',
+        'final-url-unverified',
+        'freshness-unverified',
+      ],
+    },
+    sources: pageSources,
+    truncated: incomplete || pageSource.content !== content || title !== source.title,
+  };
+  let length = Math.min(content.length, 8000);
+  while (JSON.stringify(result).length > 12000 && length > 0) {
+    length = Math.floor(length / 2);
+    pageSources[0] = {
+      ...pageSource,
+      content: content.slice(0, length),
+    };
+  }
+  const bounded: CommandResearchResult = {
+    ...result,
+    truncated: result.truncated || length < content.length,
+  };
+  if (!researchResultSchema.safeParse(bounded).success) throw new ProviderFailure('too-large');
+  return bounded;
 }
 
 function researchLifetime(parent: AbortSignal): {

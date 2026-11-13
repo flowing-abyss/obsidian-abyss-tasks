@@ -220,7 +220,7 @@ function accountRejectedMetadata(ctx: CommandToolContext, call: TypedToolCall<To
   if (record(record(call.input)?.['operation'])?.['type'] === 'set')
     ctx.pendingOperations.reject(call.toolName, call.input);
   ctx.pendingOperations.rejectSchema(basis, ctx.generation);
-  ctx.repair(call.toolCallId);
+  ctx.repair(call.toolCallId, `${canonicalToolName(call.toolName)}: INVALID_ARGUMENTS`);
   return true;
 }
 function accountRejected(ctx: CommandToolContext, call: TypedToolCall<ToolSet>): void {
@@ -233,9 +233,9 @@ function accountRejected(ctx: CommandToolContext, call: TypedToolCall<ToolSet>):
     (call.toolName === 'task' &&
       ['append', 'batch', 'edit', 'refresh', 'hierarchy'].includes(kind ?? ''))
   )
-    ctx.unresolvedTaskRefinement = true;
+    ctx.taskRefinement = true;
   ctx.errors.add(canonicalToolName(call.toolName));
-  ctx.repair(call.toolCallId);
+  ctx.repair(call.toolCallId, `${canonicalToolName(call.toolName)}: INVALID_ARGUMENTS`);
 }
 function deferControlSiblings(
   ctx: CommandToolContext,
@@ -337,6 +337,14 @@ function soleWorkingCreation(state: CommandSessionSnapshot): string | undefined 
   const root = change.plan.after?.target;
   return state.focus.every((row) => row.kind === 'task' && row.target === root) ? root : undefined;
 }
+function repairLimit(ctx: CommandToolContext): CommandFailure {
+  const reason = ctx.repairReason;
+  const detail = reason === undefined ? '' : ` First: ${reason.first}. Last: ${reason.latest}.`;
+  return new CommandFailure(
+    'REPAIR_LIMIT',
+    `The request could not be prepared reliably. Your draft is retained.${detail} Review the retained preview and retry the unfinished instruction.`,
+  );
+}
 export class CommandAgent implements CommandAgentPort {
   private turnSequence = 0;
   constructor(private readonly options: CommandAgentOptions) {}
@@ -375,7 +383,7 @@ export class CommandAgent implements CommandAgentPort {
                 lifetime.checkDeadline();
                 lifetime.signal.throwIfAborted();
                 requireFormatRetry(requestedAction, attempt);
-                ctx.repair('missing-action');
+                ctx.repair('missing-action', 'model: MISSING_ACTION');
                 requestedAction = true;
                 // This generation ran no tools. Keep the original user request, admitted work and
                 // permissions; never turn the model's prose into instructions or confirmation.
@@ -425,13 +433,13 @@ export class CommandAgent implements CommandAgentPort {
       evidence: new CommandEvidence(),
       capabilities: new Set(['find', 'inspect', 'create_task', 'change_task']),
       ...(this.options.research === undefined ? {} : { research: this.options.research }),
-      repair: (call) => {
+      repair: (call, reason) => {
+        // Persist codes only: arguments, source text, credentials and provider bodies stay out.
+        if (reason !== undefined && /^[a-z_]{1,32}: [A-Z_]{1,48}$/u.test(reason))
+          context.repairReason = { first: context.repairReason?.first ?? reason, latest: reason };
         if (repairs.has(call) || ++repairsUsed > 2) {
           context.repairExhausted = true;
-          throw new CommandFailure(
-            'REPAIR_LIMIT',
-            'The request could not be prepared reliably. Your draft is retained.',
-          );
+          throw repairLimit(context);
         }
         repairs.add(call);
       },
@@ -481,6 +489,7 @@ export class CommandAgent implements CommandAgentPort {
   }
   private activeTools(ctx: CommandToolContext): string[] {
     const allowed = [...(ctx.capabilities ?? [])];
+    if (ctx.researchMode && !allowed.includes('research')) allowed.push('research');
     return [
       ...(!ctx.interpreted ? ['interpret'] : []),
       'expand',
@@ -526,11 +535,7 @@ export class CommandAgent implements CommandAgentPort {
       stopWhen: [isStepCount(12), () => ctx.done || ctx.repairExhausted],
       prepareStep: ({ messages }) => {
         input.signal.throwIfAborted();
-        if (ctx.repairExhausted)
-          throw new CommandFailure(
-            'REPAIR_LIMIT',
-            'The request could not be prepared reliably. Your draft is retained.',
-          );
+        if (ctx.repairExhausted) throw repairLimit(ctx);
         ctx.deadline = start + (ctx.researchMode ? 180000 : 120000);
         if (this.options.now() >= ctx.deadline || ctx.done)
           throw new CommandFailure('TIMEOUT', 'This request stopped. Your draft is retained.');
@@ -562,11 +567,7 @@ export class CommandAgent implements CommandAgentPort {
       },
     });
     input.signal.throwIfAborted();
-    if (ctx.repairExhausted)
-      throw new CommandFailure(
-        'REPAIR_LIMIT',
-        'The request could not be prepared reliably. Your draft is retained.',
-      );
+    if (ctx.repairExhausted) throw repairLimit(ctx);
     this.requireFinished(
       ctx,
       result.steps.some((step) => step.content.some((part) => part.type === 'tool-error')),

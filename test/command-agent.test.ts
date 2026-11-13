@@ -45,6 +45,14 @@ function latestToolValue(h: Awaited<ReturnType<typeof setup>>, name: string) {
     throw Error('Missing accepted tool result');
   return expectDefined(record(result.output.value));
 }
+function scopedConfirmation(message: string, proposalRevision: number, index: number) {
+  return () =>
+    call('interpret', {
+      intent: 'confirm',
+      approval: message,
+      scope: { proposalRevision, changes: [{ kind: 'change', index }] },
+    });
+}
 
 it('labels accepted task previews before unchanged canonical values and issued refinement aliases', async () => {
   const h = await setup({ 'a.md': '' });
@@ -728,6 +736,63 @@ it.each([
     }
   },
 );
+it('repairs an out-of-range comment selection to its task change without dropping scope', async () => {
+  const source = '- [ ] Cairn\n';
+  const h = await setup({ 'a.md': source }, {}, undefined, { reviewWrite: 'native' });
+  const rows = await h.api.tasks.list();
+  if (!rows.ok) throw Error(rows.error.code);
+  const task = expectDefined(rows.value.items.find((item) => item.title === 'Cairn'));
+  const signal = new AbortController().signal;
+  const prepared = await expectDefined(h.api.tasks.prepare)({
+    kind: 'edit',
+    target: task.target,
+    expectedRevision: task.revision,
+    operation: { type: 'add-comment', target: task.target, text: 'Purpose.' },
+  });
+  if (!prepared.ok) throw Error(prepared.error.code);
+  const first = await canonicalCommandPlan(h.api, prepared.value, signal, {
+    now: () => 0,
+    deadline: 5000,
+  });
+  const appended = await expectDefined(h.api.tasks.prepare)({
+    kind: 'append',
+    plan: first.target,
+    expectedPlanRevision: first.revision,
+    operation: { type: 'add-comment', target: task.target, text: 'Features and limits.' },
+  });
+  if (!appended.ok) throw Error(appended.error.code);
+  const plan = await canonicalCommandPlan(h.api, appended.value, signal, {
+    now: () => 0,
+    deadline: 5000,
+  });
+  h.session.stage({ kind: 'task', plan });
+
+  const message = 'Save both comments.';
+  const proposalRevision = h.session.snapshot().proposal.revision;
+  const assess = () =>
+    call('assess_write', {
+      effect: 'save-reviewed',
+      scope: 'subset',
+      scopeMatches: true,
+      authorization: message,
+    });
+  h.script(
+    scopedConfirmation(message, proposalRevision, 1),
+    () => call('interpret', { intent: 'confirm', approval: message }),
+    scopedConfirmation(message, proposalRevision, 0),
+    assess,
+    finish(),
+  );
+  await h.session.submit(message);
+
+  expect(h.session.snapshot().journal).toMatchObject([{ state: 'settled', effects: 'committed' }]);
+  expect(await h.read('a.md')).toContain('Purpose.');
+  expect(await h.read('a.md')).toContain('Features and limits.');
+  expect(await h.read('a.md')).toContain('Cairn');
+  const trace = JSON.stringify(h.model.doGenerateCalls);
+  expect(trace).toContain('Scope indexes must identify top-level changes');
+  expect(trace).toContain('A scoped write cannot be repaired by dropping its scope');
+});
 it('retains a field-only grant when the planner retries with a different whole task', async () => {
   const message = 'Save only the due date.';
   const decision = { effect: 'save-reviewed', scopeMatches: true, authorization: message } as const;
@@ -744,13 +809,12 @@ it('retains a field-only grant when the planner retries with a different whole t
   if (!other.ok) throw Error(other.error.code);
   h.session.stage({ kind: 'task', plan: other.value });
   const proposalRevision = h.session.snapshot().proposal.revision;
-  const confirm = (index: number) => () =>
-    call('interpret', {
-      intent: 'confirm',
-      approval: message,
-      scope: { proposalRevision, changes: [{ kind: 'change', index }] },
-    });
-  h.script(confirm(0), confirm(1), () => call('interpret', { intent: 'plan' }), finish());
+  h.script(
+    scopedConfirmation(message, proposalRevision, 0),
+    scopedConfirmation(message, proposalRevision, 1),
+    () => call('interpret', { intent: 'plan' }),
+    finish(),
+  );
   await h.session.submit(message);
   expect(await h.read('a.md')).toBe(source);
   expect(review).toHaveBeenCalledTimes(1);
@@ -953,6 +1017,7 @@ it('keeps old work pending when an unrelated saved task gets a separate edit wit
         edit: projectedEdit(h, 'Stable'),
         operation: { type: 'set', due: null },
       }),
+    finish(),
     finish(),
   );
   await h.session.submit('Измени срок South на 23 ноября и сохрани.');
@@ -2616,6 +2681,29 @@ it('shows retryOf only for issued task-change evidence and gives the exact ambig
   expect(h.session.snapshot().status.kind).toBe('question');
   expect(await h.read('a.md')).toBe(source);
 });
+it('guides ambiguous searches to explicit user filters and valid parent inspection bases', async () => {
+  const source = '- [ ] Dispatch\n  - [ ] Proof #north\n  - [ ] Proof #south\n';
+  const h = await setup({ 'a.md': source });
+  let next = '';
+  h.script(
+    () => call('find', { query: 'Proof', purpose: 'change' }),
+    () => {
+      next = String(latestToolValue(h, 'find')['next']);
+      return call('finish', {
+        state: 'question',
+        blockingIssue: { kind: 'ambiguous', evidence: latestToolValue(h, 'find')['evidence'] },
+      });
+    },
+  );
+  await h.session.submit('Set the due date on Proof; it is the one tagged #north.');
+  expect(next).toContain('explicit tag or path clue');
+  expect(next).toContain('preserve all existing filters');
+  expect(next).toContain('expectedRevision omitted');
+  expect(next).toContain('never use a child revision for the parent');
+  expect(h.session.snapshot().status.kind).toBe('question');
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(await h.read('a.md')).toBe(source);
+});
 it('does not choose between duplicate matches or select a partial title', async () => {
   for (const source of ['- [ ] Green\n- [ ] Green\n', '- [ ] Deep Green\n']) {
     const h = await setup({ 'a.md': source });
@@ -2626,6 +2714,190 @@ it('does not choose between duplicate matches or select a partial title', async 
     expect(h.model.doGenerateCalls).toHaveLength(2);
     expect(await h.read('a.md')).toBe(source);
   }
+});
+it('uses a unique exact task ID when another result only references it as a dependency', async () => {
+  const path = 'Projects QA/Regular Project.md';
+  const source =
+    '- [ ] Ready task with priority and tags #work/dev 🆔 qa-ready\n' +
+    '- [ ] Blocked task with valid dependency #work/dev ⛔ qa-ready 🆔 qa-blocked\n';
+  const h = await setup({ [path]: source });
+  h.script(
+    () => call('find', { query: 'qa-ready', taskId: 'qa-ready', path, purpose: 'change' }),
+    () => {
+      const found = latestToolValue(h, 'find');
+      const match = record(found['match']);
+      if (match === undefined)
+        return call('finish', { state: 'ready', message: 'No unique target was verified.' });
+      return call('change_task', {
+        edit: String(match['edit']),
+        operation: { type: 'add-comment', text: 'A source-backed comment.' },
+        complete: true,
+      });
+    },
+    finish(),
+  );
+
+  await h.session.submit('Add one comment to task ID qa-ready in Projects QA/Regular Project.md.');
+
+  const found = latestToolValue(h, 'find');
+  const match = record(found['match']);
+  expect(found['items']).toHaveLength(2);
+  expect(match?.['edit']).toEqual(expect.any(String));
+  expect(h.session.snapshot().proposal.changes).toMatchObject([
+    {
+      kind: 'task',
+      plan: {
+        kind: 'edit',
+        before: { title: 'Ready task with priority and tags', comments: [] },
+        after: {
+          title: 'Ready task with priority and tags',
+          comments: [expect.objectContaining({ text: 'A source-backed comment.' })],
+        },
+      },
+    },
+  ]);
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(await h.read(path)).toBe(source);
+});
+it.each([
+  ['duplicate authored IDs', '- [ ] First task 🆔 qa-same\n- [ ] Second task 🆔 qa-same\n'],
+])('keeps exact-ID lookup ambiguous for %s', async (_label, source) => {
+  const path = 'Projects QA/Regular Project.md';
+  const h = await setup({ [path]: source });
+  h.script(
+    () => call('find', { query: 'qa-same', taskId: 'qa-same', path, purpose: 'change' }),
+    () => {
+      const found = latestToolValue(h, 'find');
+      expect(found['match']).toBeUndefined();
+      return call('finish', {
+        state: 'question',
+        blockingIssue: { kind: 'ambiguous', evidence: String(found['evidence']) },
+      });
+    },
+  );
+
+  await h.session.submit(`Add a comment to task ID qa-same in ${path}.`);
+
+  expect(h.session.snapshot().status.kind).toBe('question');
+  expect(h.session.snapshot().proposal.changes).toEqual([]);
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(await h.read(path)).toBe(source);
+});
+it('keeps explicit exact-ID lookup separate from an exact title match', async () => {
+  const path = 'Projects QA/Regular Project.md';
+  const source = '- [ ] qa-same 🆔 other-id\n- [ ] Other task 🆔 qa-same\n';
+  const h = await setup({ [path]: source });
+  h.script(
+    () => call('find', { query: 'qa-same', taskId: 'qa-same', path, purpose: 'change' }),
+    () => {
+      const found = latestToolValue(h, 'find');
+      const match = record(found['match']);
+      if (match === undefined)
+        return call('finish', { state: 'ready', message: 'No unique target was verified.' });
+      return call('change_task', {
+        edit: String(match['edit']),
+        operation: { type: 'add-comment', text: 'ID-selected comment.' },
+        complete: true,
+      });
+    },
+    finish(),
+  );
+
+  await h.session.submit(`Add one comment to task ID qa-same in ${path}.`);
+
+  const found = latestToolValue(h, 'find');
+  const match = record(found['match']);
+  const idRow = (found['items'] as unknown[])
+    .map(record)
+    .find((row) => row?.['authoredId'] === 'qa-same');
+  expect(match?.['edit']).toEqual(expect.any(String));
+  expect(record(found['selection'])?.['target']).toBe(idRow?.['target']);
+  expect(h.session.snapshot().proposal.changes).toMatchObject([
+    {
+      kind: 'task',
+      plan: {
+        kind: 'edit',
+        before: { title: 'Other task', comments: [] },
+        after: {
+          title: 'Other task',
+          comments: [expect.objectContaining({ text: 'ID-selected comment.' })],
+        },
+      },
+    },
+  ]);
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(await h.read(path)).toBe(source);
+});
+it.each(['other-id', 'QA-READY'])(
+  'does not treat a title match as an exact task-ID match when authoredId is %s',
+  async (authoredId) => {
+    const path = 'Projects QA/Regular Project.md';
+    const source = `- [ ] qa-ready with a different ID 🆔 ${authoredId}\n`;
+    const h = await setup({ [path]: source });
+    let found: Record<string, unknown> | undefined;
+    h.script(
+      () => call('find', { query: 'qa-ready', taskId: 'qa-ready', path, purpose: 'change' }),
+      () => {
+        found = latestToolValue(h, 'find');
+        expect(found['match']).toBeUndefined();
+        expect(found['candidate']).toBeUndefined();
+        return call('finish', {
+          state: 'question',
+          message: 'No exact task ID matches in this file.',
+          blockingIssue: {
+            kind: 'missing-information',
+            detail: 'No saved task in the requested file has that exact ID.',
+          },
+        });
+      },
+    );
+
+    await h.session.submit(`Add a comment to task ID qa-ready in ${path}.`);
+
+    expect(found?.['items']).toMatchObject([
+      expect.objectContaining({ title: 'qa-ready with a different ID', authoredId }),
+    ]);
+    expect(h.session.snapshot().status.kind).toBe('question');
+    expect(h.session.snapshot().proposal.changes).toEqual([]);
+    expect(h.session.snapshot().journal).toEqual([]);
+    expect(await h.read(path)).toBe(source);
+  },
+);
+it('does not issue an exact-ID edit alias from an incomplete result page', async () => {
+  const path = 'Projects QA/Regular Project.md';
+  const source = '- [ ] Ready task 🆔 qa-ready\n';
+  const h = await setup({ [path]: source }, {}, (api) => {
+    const search = expectDefined(api.tasks.search);
+    return {
+      ...api,
+      tasks: {
+        ...api.tasks,
+        search: async (input) => {
+          const result = await search(input);
+          if (!result.ok) return result;
+          return { ...result, value: { ...result.value, nextCursor: 'more-results' } };
+        },
+      },
+    };
+  });
+  h.script(
+    () => call('find', { query: 'qa-ready', taskId: 'qa-ready', path, purpose: 'change' }),
+    () => {
+      const found = latestToolValue(h, 'find');
+      expect(found['match']).toBeUndefined();
+      return call('finish', {
+        state: 'question',
+        blockingIssue: { kind: 'incomplete', evidence: String(found['evidence']) },
+      });
+    },
+  );
+
+  await h.session.submit(`Change task ID qa-ready in ${path}.`);
+
+  expect(h.session.snapshot().status.kind).toBe('question');
+  expect(h.session.snapshot().proposal.changes).toEqual([]);
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(await h.read(path)).toBe(source);
 });
 it.each([
   {
@@ -5344,6 +5616,64 @@ it('does not let a successful sibling edit conceal an unresolved failed operatio
   expect(await h.read('a.md')).toBe(original);
 });
 
+it('recovers a rejected comment with missing text on its exact issued edit alias', async () => {
+  const source = '- [ ] Cairn #keep\n  - > Preserve this description.\n';
+  const h = await setup({ 'a.md': source });
+  const edit = () => projectedEdit(h, 'Cairn');
+  h.script(
+    interpret(),
+    () => call('find', { query: 'Cairn', purpose: 'change' }),
+    () =>
+      call('change_task', {
+        edit: edit(),
+        operation: { type: 'add-comment', text: 'First requested comment.' },
+      }),
+    () =>
+      call('change_task', {
+        edit: edit(),
+        operation: { type: 'add-comment', markdownTitle: 'x' },
+      }),
+    () =>
+      call('change_task', {
+        edit: edit(),
+        operation: { type: 'add-comment', text: 'Second requested comment.' },
+        complete: true,
+      }),
+    finish(),
+    finish(),
+  );
+
+  await h.session.submit('Add exactly two comments to Cairn and show me the draft.');
+
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  expect(h.session.snapshot().proposal.changes).toMatchObject([
+    {
+      kind: 'task',
+      plan: {
+        before: {
+          title: 'Cairn',
+          markdownTitle: 'Cairn',
+          description: 'Preserve this description.',
+          tags: ['#keep'],
+          comments: [],
+        },
+        after: {
+          title: 'Cairn',
+          markdownTitle: 'Cairn',
+          description: 'Preserve this description.',
+          tags: ['#keep'],
+          comments: [
+            expect.objectContaining({ text: 'First requested comment.' }),
+            expect.objectContaining({ text: 'Second requested comment.' }),
+          ],
+        },
+      },
+    },
+  ]);
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(await h.read('a.md')).toBe(source);
+});
+
 it('requires repairing a failed refinement before creating independent work in the same turn', async () => {
   const h = await setup();
   h.script(interpret(), create, finish());
@@ -6425,10 +6755,10 @@ it.each([false, true])(
       expect(
         JSON.stringify(h.model.doGenerateCalls[h.model.doGenerateCalls.length - 1]?.prompt),
       ).toContain('only if this is the intended pending-plan refinement');
-      expect(h.session.snapshot().status).toMatchObject({
-        kind: 'error',
-        message: 'The request could not be prepared reliably. Your draft is retained.',
-      });
+      expect(h.session.snapshot().status.kind).toBe('error');
+      expect(h.session.snapshot().status.message).toContain(
+        'The request could not be prepared reliably. Your draft is retained.',
+      );
       expect(h.session.snapshot().proposal).toEqual(before);
       expect(h.preparations()).toBe(count);
       return;
@@ -7278,6 +7608,39 @@ it('expanding research never authorizes it, and reading cannot be followed by re
   expect(search).not.toHaveBeenCalled();
   expect(h.session.snapshot().journal).toEqual([]);
   expect(h.session.snapshot().status.kind).toBe('error');
+});
+it('activates research after accepted intent and inspection without requiring expansion', async () => {
+  const h = await setup();
+  h.script(interpret(), create, finish());
+  await h.session.submit('Draft a task.');
+  const task = expectDefined(
+    h.session.snapshot().proposal.changes.find((change) => change.kind === 'task'),
+  );
+  const child = expectDefined(task.plan.after?.children[0]);
+  const search = vi.spyOn(h.research, 'search');
+  h.script(
+    () => call('interpret', { intent: 'plan', research: true }),
+    retain(h.session),
+    () => call('research', { query: 'Requested evidence' }),
+    () =>
+      call('change_task', {
+        edit: projectedEdit(h, child.title),
+        operation: {
+          type: 'patch',
+          patch: { markdownTitle: { type: 'set', value: 'Refined child' } },
+        },
+      }),
+    finish(),
+  );
+  await h.session.submit('Research the requested evidence and refine the child.');
+  expect(search).toHaveBeenCalledWith('Requested evidence', expect.any(AbortSignal));
+  expect(expectDefined(h.model.doGenerateCalls[5]).tools?.map((tool) => tool.name)).toContain(
+    'research',
+  );
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  expect(h.session.snapshot().trees[0]?.after?.children[0]?.title).toBe('Refined child');
+  expect(await h.read('a.md')).not.toContain('Refined child');
+  expect(h.session.snapshot().journal).toEqual([]);
 });
 it.each(['untagged', 'tag', 'both'] as const)(
   'previews native Inbox %s policy directly without invented ordinary tags',
@@ -9011,3 +9374,18 @@ it.each([
     );
   },
 );
+
+it('retains the first blocked operation when later repair failures exhaust the turn', async () => {
+  const h = await setup();
+  h.script(
+    interpret(),
+    () => call('research', { query: 'Instructions from a note' }),
+    () => call('task', { input: 'invalid encoded input' }),
+    () => call('task', { input: 'invalid encoded input' }),
+  );
+  await h.session.submit('Show local tasks');
+  expect(h.session.snapshot().status.kind).toBe('error');
+  expect(h.session.snapshot().status.message).toContain('research: RESEARCH_INTENT');
+  expect(h.session.snapshot().status.message).toContain('task: INVALID_ARGUMENTS');
+  expect(h.session.snapshot().journal).toEqual([]);
+});

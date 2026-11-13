@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { expect, it } from 'vitest';
+import { subscriptionModel } from '../../tooling/command-subscription.mjs';
 import { useRealMoment } from '../helpers';
 import { campaignReports } from './campaign';
 import { canonicalModel } from './controls';
@@ -33,6 +34,9 @@ async function metadata() {
     'package.json',
     'test/command-live/corpus.ts',
     'test/command-live/bilingual.ts',
+    'test/command-live/semanticCases.ts',
+    'test/command-live/pageCases.ts',
+    'test/command-live/lookupCases.ts',
     'test/command-live/fixtures.ts',
     'test/command-live/harness.ts',
     'test/command-live/oracles.ts',
@@ -49,6 +53,7 @@ async function metadata() {
     'test/command-live/providerBoundary.ts',
     'test/command-live/linkOracle.ts',
     'tooling/command-eval.mjs',
+    'tooling/command-subscription.mjs',
     'vitest.command-live.config.ts',
   ];
   const hashes = Object.fromEntries(
@@ -87,7 +92,7 @@ function envKey(provider: EvalOptions['provider']) {
     groq: 'GROQ_API_KEY',
     cerebras: 'CEREBRAS_API_KEY',
   };
-  return provider === 'local' ? '' : process.env[names[provider]];
+  return provider === 'local' || provider === 'chatgpt-plan' ? '' : process.env[names[provider]];
 }
 function list() {
   process.stdout.write(
@@ -140,6 +145,15 @@ function summarize(reports: readonly CaseReport[]) {
 function makeModel(test: ReturnType<typeof selectCases>[number]) {
   return test.scripted === true ? canonicalModel() : undefined;
 }
+function campaignModel(
+  test: ReturnType<typeof selectCases>[number],
+  options: EvalOptions,
+  budget: RequestBudget,
+) {
+  return test.scripted !== true && options.provider === 'chatgpt-plan'
+    ? subscriptionModel(options.model, budget)
+    : makeModel(test);
+}
 function catalogFor(
   tests: ReturnType<typeof selectCases>,
   options: EvalOptions,
@@ -164,12 +178,18 @@ function campaignOptions(input: Record<string, unknown>) {
     ...(typeof input['localBaseURL'] === 'string' ? { localBaseURL: input['localBaseURL'] } : {}),
   });
 }
+function requireCredential(key: string | undefined, options: EvalOptions): asserts key is string {
+  if (
+    key === undefined ||
+    (!['local', 'chatgpt-plan'].includes(options.provider) && key.trim() === '')
+  )
+    throw new Error('Missing explicitly selected provider environment credential.');
+}
 async function campaign(input: Record<string, unknown>) {
   const options = campaignOptions(input);
   const selected = selectCases(String(input['cases'])),
     key = allScripted(selected) ? 'offline-control' : envKey(options.provider);
-  if (key === undefined || (options.provider !== 'local' && key.trim() === ''))
-    throw new Error('Missing explicitly selected provider environment credential.');
+  requireCredential(key, options);
   const out = resolve(String(input['out']));
   await mkdir(out, { recursive: true });
   const pacer = new RequestPacer(
@@ -186,12 +206,25 @@ async function campaign(input: Record<string, unknown>) {
   const manifest: Record<string, unknown> = {
     ...(await metadata()),
     selectedLiveModel: options.model,
+    effectiveReasoningEffort:
+      options.provider === 'chatgpt-plan'
+        ? 'adapter default unspecified; no reasoning effort override'
+        : 'provider default',
     provider: options.provider,
     ...(options.provider === 'local'
       ? {
           localBaseURL: options.localBaseURL,
           transport:
             'Operator-configured numeric loopback Chat Completions; no credentials, catalog or redirects. The operator controls whether the server performs inference locally.',
+        }
+      : {}),
+    ...(options.provider === 'chatgpt-plan'
+      ? {
+          transport:
+            'Production ChatGptPlan.model in running dev-vault-tasks; existing OAuth registration remains in Obsidian SecretStorage. Request counts cover model generations, excluding catalog/OAuth maintenance.',
+          vault: 'dev-vault-tasks',
+          requestCountUnit:
+            'model-generation-invocations; excludes OAuth refresh and catalog; physical HTTP dispatches are not instrumented',
         }
       : {}),
     allowPaid: options.allowPaid,
@@ -241,7 +274,7 @@ async function campaign(input: Record<string, unknown>) {
         async (value) => {
           await writeFile(resolve(out, `${test.id}.json`), JSON.stringify(value, null, 2));
         },
-        makeModel(test),
+        campaignModel(test, options, budget),
       ),
     )) {
       reports.push(report);
@@ -263,7 +296,7 @@ async function campaign(input: Record<string, unknown>) {
     await persist();
   }
   process.stdout.write(
-    `Command evaluation: ${String(manifest['outcome'])}; ${reports.length}/${selected.length} cases; ${budget.used} physical requests. Reports: ${out}\n`,
+    `Command evaluation: ${String(manifest['outcome'])}; ${reports.length}/${selected.length} cases; ${budget.used} metered requests. Reports: ${out}\n`,
   );
   return manifest['outcome'];
 }

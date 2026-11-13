@@ -5,6 +5,8 @@ export async function readFreeCatalog(
   budget: RequestBudget,
   fetch: typeof window.fetch,
 ) {
+  if (options.provider === 'chatgpt-plan')
+    return { checked: false, reason: 'existing-subscription-model-selection' };
   if (options.provider === 'local')
     return { checked: false, reason: 'operator-configured-loopback' };
   if (options.provider !== 'openrouter' || options.allowPaid) return { checked: false };
