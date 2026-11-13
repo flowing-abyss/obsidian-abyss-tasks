@@ -87,8 +87,18 @@ function rejectedKind(input: string): string | undefined {
     return undefined;
   }
 }
+function rejectedAddComment(input: string): boolean {
+  try {
+    const root = record(JSON.parse(input));
+    const payload = record(root?.['input']) ?? root;
+    return record(payload?.['operation'])?.['type'] === 'add-comment';
+  } catch {
+    return false;
+  }
+}
 function taskSchemaRepair(input: string): string {
   const kind = rejectedKind(input);
+  const addComment = rejectedAddComment(input);
   let envelope = '';
   try {
     const root = record(JSON.parse(input));
@@ -104,6 +114,8 @@ function taskSchemaRepair(input: string): string {
   } catch {
     /* Invalid JSON has no inferred operation. */
   }
+  if (addComment)
+    return `Keep operation.text byte for byte; repair only the reported leaf. Use the intended node’s issued target; never guess or rewrite.${envelope}`;
   return `Use outer input object, not encoded JSON; advertised ${kind ?? 'intended'} branch, exact content/references. Missing/malformed kind does not imply create. create requires destination/tree; metadata in tree.initial, set/value or clear. edit: target/expectedRevision beside kind. append: operation; batch: operations beside plan/expectedPlanRevision, never nested. Copy target’s own editBasis; one tree per plan, independent saved roots need separate edits. Never replace failed refinement with creation.${envelope}`;
 }
 function validationIssue(value: unknown): string {
@@ -172,7 +184,7 @@ function schemaRepairMessage(name: string, input: string, error: unknown): strin
   if (name === 'create_task')
     return `${common}${creationGrammar}; requested facts only, metadata in tree.initial, never stringify containers.`;
   if (name === 'change_task')
-    return `${common}Use references.taskReferences[].edit (the b handle, never target). Metadata shape: {"edit":"<issued edit>","operation":{"type":"set","time":"HH:mm"}}; use the requested field/value. Keep exact owner.`;
+    return `${common}Use owner’s issued edit; preserve values; fix reported leaf.`;
   if (name === 'interpret') return common + controlSchemaRepair(input);
   if (name === 'finish')
     return `${common}Use ${finishGrammar}; blockers need issued evidence; selection: exact typed targets/revisions/bases. Prepared work needs no selection/saving question.`;

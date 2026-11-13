@@ -356,7 +356,10 @@ it.each([false, true])(
     expect(
       await schema.validate?.({ intent: 'confirm', approval: 'Save the displayed proposal.' }),
     ).toHaveProperty('success', true);
-    expect(await schema.validate?.({ intent: 'plan', research: false })).toHaveProperty('success');
+    expect(await schema.validate?.({ intent: 'plan', research: false })).toHaveProperty(
+      'success',
+      true,
+    );
   },
 );
 

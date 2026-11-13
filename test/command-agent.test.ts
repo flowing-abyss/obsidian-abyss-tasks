@@ -6830,6 +6830,47 @@ it('returns bounded validation paths without accepting preparation in interpreta
   expect(h.session.snapshot().proposal.changes).toHaveLength(1);
 });
 
+it('repairs a rejected comment leaf without changing its supplied text', async () => {
+  const h = await setup();
+  const listed = await h.api.tasks.list();
+  if (!listed.ok) throw new Error(listed.error.code);
+  const root = expectDefined(listed.value.items[0]);
+  const text = 'Use this literal [[reference]] exactly as supplied.';
+  let feedback = '';
+  const edit = (target?: string) => ({
+    kind: 'edit',
+    target: root.target,
+    expectedRevision: root.revision,
+    operation: { type: 'add-comment', ...(target === undefined ? {} : { target }), text },
+  });
+  h.script(
+    interpret(),
+    () => call('expand', { capabilities: ['task'] }),
+    () => call('task', { input: edit() }),
+    () => {
+      feedback = JSON.stringify(
+        expectDefined(h.model.doGenerateCalls[3]).prompt.filter(
+          (message) => message.role === 'tool',
+        ),
+      );
+      return call('task', { input: edit(root.target) });
+    },
+    finish(),
+  );
+
+  await h.session.submit('Add this comment to Existing.');
+
+  expect(feedback).toContain('operation.target');
+  expect(feedback).toContain('byte for byte');
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+  expect(h.session.snapshot().trees[0]?.after?.comments.map((comment) => comment.text)).toEqual([
+    text,
+  ]);
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(await h.read('a.md')).toBe('- [ ] Existing [unknown:: keep]\n');
+});
+
 it('returns the project field contract after a task-shaped project edit without executing it', async () => {
   const h = await setup();
   const malformed = () =>
@@ -7018,6 +7059,7 @@ it.each([
   { target: 'other' },
   { operations: [] },
   { extra: true },
+  { kind: 'create', operation: { type: 'add-comment', text: 'Conflicting extra operand.' } },
 ])('does not infer append for conflicting wrapperless operands %j', async (conflict) => {
   const h = await setup();
   const malformed = () =>
@@ -7036,6 +7078,62 @@ it.each([
   expect(feedback).not.toContain('Do not switch to append/batch');
   expect(h.session.snapshot().proposal.changes).toHaveLength(0);
   expect(h.session.snapshot().journal).toEqual([]);
+});
+
+it('repairs a wrapperless pending comment with unchanged operands before preparing append', async () => {
+  const h = await setupCountedPreparation();
+  h.script(
+    interpret(),
+    () =>
+      call('task', {
+        input: {
+          kind: 'create',
+          destination: { type: 'note', path: 'a.md', insertion: { type: 'append' } },
+          tree: { markdownTitle: 'Draft' },
+        },
+      }),
+    finish(),
+  );
+  await h.session.submit('Prepare Draft.');
+  const before = h.session.snapshot().proposal;
+  const change = expectDefined(before.changes[0]);
+  if (change.kind !== 'task' || change.plan.after === null) throw new Error('task');
+  const text = 'Keep this literal [[reference]] exactly as supplied.';
+  const operands = {
+    plan: change.plan.target,
+    expectedPlanRevision: change.plan.revision,
+    operation: { type: 'add-comment', target: change.plan.after.target, text },
+  };
+  const count = h.preparations();
+  let feedback = '';
+  h.script(
+    interpret(),
+    () => call('task', operands),
+    () => {
+      expect(h.session.snapshot().proposal).toEqual(before);
+      expect(h.preparations()).toBe(count);
+      feedback = JSON.stringify(
+        h.model.doGenerateCalls[h.model.doGenerateCalls.length - 1]?.prompt.filter(
+          (message) => message.role === 'tool',
+        ),
+      );
+      return call('task', { input: { kind: 'append', ...operands } });
+    },
+    finish(),
+  );
+
+  await h.session.submit('Add the comment to Draft.');
+
+  expect(feedback).toContain('byte for byte');
+  expect(feedback).toContain('Move unchanged operands');
+  expect(feedback).toContain('only if this is the intended pending-plan refinement');
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  expect(h.preparations()).toBe(count + 1);
+  expect(h.session.snapshot().trees[0]?.after?.comments.map((comment) => comment.text)).toEqual([
+    text,
+  ]);
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(await h.read('a.md')).toBe('- [ ] Existing [unknown:: keep]\n');
 });
 
 function expectPreparedNoteSelection(

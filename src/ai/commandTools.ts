@@ -1555,7 +1555,7 @@ class CommandToolOwner {
   task(): Tool {
     return tool({
       description:
-        'Preview: target’s own editBasis gives saved root edit or pending append/batch. A plan covers one tree; independent saved roots require separate edits. Batch up to20 operations on issued nodes in one pending plan; dependent new children/comments need later calls. hierarchy reparent combines intact trees without copy/delete. Selective copy: copy-comment/copy-subtree. After final destination edit: assess-merge, then cleanup only with coverage.',
+        'Preview: saved root edit or pending append/batch. For one comment/field, prefer change_task with the owner’s issued edit; raw task edits need each node’s issued target. A plan covers one tree; independent saved roots need separate edits. Batch up to20 operations on issued nodes in one pending plan; dependent new children/comments need later calls. Hierarchy reparent combines intact trees without copy/delete. Selective copy: copy-comment/copy-subtree. After final destination edit: assess-merge, then cleanup only with coverage.',
       inputSchema: taskArgumentsSchema,
       execute: (input, { toolCallId }) =>
         this.execute_abyssPrivate('task', toolCallId, () => this.prepareTask(input)),
