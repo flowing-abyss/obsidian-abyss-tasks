@@ -14,7 +14,31 @@ const contexts = new WeakMap<object, unknown>();
 type SdkTools = Parameters<
   NonNullable<LanguageModelMiddleware['wrapGenerate']>
 >[0]['params']['tools'];
+type SdkGenerate = Parameters<
+  NonNullable<LanguageModelMiddleware['wrapGenerate']>
+>[0]['doGenerate'];
+type SdkGenerationResult = Awaited<ReturnType<SdkGenerate>>;
 type SdkFunctionTool = Extract<NonNullable<SdkTools>[number], { type: 'function' }>;
+const sdkContentTypeValues = [
+  'text',
+  'reasoning',
+  'custom',
+  'reasoning-file',
+  'file',
+  'tool-approval-request',
+  'source',
+  'tool-call',
+  'tool-result',
+] satisfies Array<SdkGenerationResult['content'][number]['type']>;
+const sdkFinishReasonValues = [
+  'stop',
+  'length',
+  'content-filter',
+  'tool-calls',
+  'error',
+  'interrupted',
+  'other',
+] satisfies Array<SdkGenerationResult['finishReason']['unified']>;
 
 async function evaluate(code: string, app: unknown, root: object): Promise<unknown> {
   if (!Platform.isDesktop) throw new Error('native-trace-serialization-test-requires-desktop');
@@ -475,6 +499,7 @@ describe('native command trace installer', () => {
 
   it('fails open when finish input observation throws and preserves the exact provider result', async () => {
     const { app, root, plugin, model } = fixture();
+    let getterReads = 0;
     const result = {
       content: [
         Object.defineProperties(
@@ -482,6 +507,7 @@ describe('native command trace installer', () => {
           {
             input: {
               get() {
+                getterReads++;
                 throw new Error('finish input observation failure');
               },
             },
@@ -500,8 +526,131 @@ describe('native command trace installer', () => {
     await evaluate(buildNativeTraceInstallEval(pageUrl, expectedModelId, traceKey), app, root);
     const modelWithTrace = plugin.providerConnections.model({ fixture: true });
 
-    await expect(modelWithTrace.doGenerate({})).resolves.toBe(result);
+    await expect(
+      modelWithTrace.doGenerate({
+        tools: [
+          {
+            type: 'function',
+            name: 'finish',
+            inputSchema: { type: 'object' },
+          } satisfies NonNullable<SdkTools>[number],
+        ],
+      }),
+    ).resolves.toBe(result);
+    expect(getterReads).toBeGreaterThan(0);
     expect(calls).toBe(1);
+  });
+
+  it('counts declared tool calls omitted by the recorded-name cap', async () => {
+    const { app, root, plugin, model } = fixture();
+    const result = {
+      content: Array.from({ length: 17 }, () => ({
+        type: 'tool-call',
+        toolName: 'research',
+        input: '{}',
+      })),
+      finishReason: { unified: 'tool-calls', raw: 'tool_calls' },
+      usage: { inputTokens: { total: 1 }, outputTokens: { total: 1 } },
+    };
+    model.doGenerate = async function (this: typeof model) {
+      expect(this).toBe(model);
+      return result;
+    } as unknown as typeof model.doGenerate;
+    await evaluate(buildNativeTraceInstallEval(pageUrl, expectedModelId, traceKey), app, root);
+    const wrapped = plugin.providerConnections.model({ fixture: true });
+
+    await expect(
+      wrapped.doGenerate({
+        tools: [
+          {
+            type: 'function',
+            name: 'research',
+            inputSchema: { type: 'object' },
+          } satisfies NonNullable<SdkTools>[number],
+        ],
+      }),
+    ).resolves.toBe(result);
+
+    const trace = JSON.parse(
+      String(await evaluate(buildNativeTraceReadEval(traceKey), app, root)),
+    ) as { generations: Array<Record<string, unknown>> };
+    expect(trace.generations[0]).toMatchObject({
+      toolNames: Array.from({ length: 16 }, () => 'research'),
+      toolNameOmittedCount: 1,
+      contentOmittedCount: 0,
+    });
+    expect(result.content).toHaveLength(17);
+  });
+
+  it('bounds SDK metadata and keeps only tool names declared in the current SDK call', async () => {
+    const { app, root, plugin, model } = fixture();
+    const maliciousToolName = 'UNTRUSTED_TOOL_NAME_CANARY'.padEnd(34_000, 'x');
+    const contentTypeCanary = 'UNTRUSTED_CONTENT_TYPE_CANARY';
+    const finishCanary = 'UNTRUSTED_FINISH_REASON_CANARY';
+    const content = [
+      ...sdkContentTypeValues.map((type) => ({ type })),
+      { type: 'text', text: 'private' },
+      { type: 'tool-call', toolName: 'research', input: '{}' },
+      { type: 'tool-call', toolName: maliciousToolName, input: '{}' },
+      { type: contentTypeCanary },
+      ...Array.from({ length: 100 }, () => ({ type: 'reasoning' })),
+    ];
+    const result = {
+      content,
+      finishReason: { unified: finishCanary, raw: finishCanary },
+      usage: { inputTokens: { total: 1 }, outputTokens: { total: 1 } },
+    };
+    model.doGenerate = async function (this: typeof model) {
+      expect(this).toBe(model);
+      return result;
+    } as unknown as typeof model.doGenerate;
+    await evaluate(buildNativeTraceInstallEval(pageUrl, expectedModelId, traceKey), app, root);
+    const wrapped = plugin.providerConnections.model({ fixture: true });
+    const tools = [
+      {
+        type: 'function' as const,
+        name: 'research',
+        inputSchema: { type: 'object' },
+      } satisfies NonNullable<SdkTools>[number],
+      {
+        type: 'function' as const,
+        name: 'finish',
+        inputSchema: { type: 'object' },
+      } satisfies NonNullable<SdkTools>[number],
+    ];
+
+    await expect(wrapped.doGenerate({ tools })).resolves.toBe(result);
+
+    const trace = JSON.parse(
+      String(await evaluate(buildNativeTraceReadEval(traceKey), app, root)),
+    ) as { generations: Array<Record<string, unknown>> };
+    const generation = trace.generations[0];
+    expect(generation).toMatchObject({
+      finishReason: 'other',
+      contentTypes: sdkContentTypeValues,
+      toolNames: ['research'],
+      contentCount: content.length,
+      contentOmittedCount: content.length - 64,
+      contentTypeUnknownCount: 1,
+      toolNameUnknownCount: 1,
+    });
+    expect((generation?.['contentTypes'] as unknown[]).length).toBeLessThanOrEqual(16);
+    expect((generation?.['toolNames'] as unknown[]).length).toBeLessThanOrEqual(16);
+    const serialized = JSON.stringify(trace);
+    expect(serialized).not.toContain(maliciousToolName);
+    expect(serialized).not.toContain(contentTypeCanary);
+    expect(serialized).not.toContain(finishCanary);
+    expect(result.content).toHaveLength(content.length);
+    expect(result.finishReason.unified).toBe(finishCanary);
+    expect(sdkFinishReasonValues).toEqual([
+      'stop',
+      'length',
+      'content-filter',
+      'tool-calls',
+      'error',
+      'interrupted',
+      'other',
+    ]);
   });
 
   it('wraps live seams without calling them and records only bounded generation metadata', async () => {
@@ -529,7 +678,12 @@ describe('native command trace installer', () => {
     expect(plugin.providerConnections.model({ fixture: true })).toBe(model);
 
     const wrapped = plugin.providerConnections.model({ fixture: true });
-    const result = await wrapped.doGenerate({ prompt: ['never persist'] });
+    const result = await wrapped.doGenerate({
+      prompt: ['never persist'],
+      tools: [
+        { type: 'function', name: 'research', inputSchema: { type: 'object' } },
+      ] satisfies NonNullable<SdkTools>,
+    });
     expect(result.finishReason.unified).toBe('tool-calls');
 
     const trace = JSON.parse(

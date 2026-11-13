@@ -130,10 +130,55 @@ function installNativeTrace(
     if (typeof total === 'number' && Number.isFinite(total)) result['totalTokens'] = total;
     return Object.keys(result).length === 0 ? undefined : result;
   };
-  /** @param {unknown} content */
-  const safeToolNames = (content) => {
-    if (!Array.isArray(content)) return [];
-    return content.flatMap((part) => {
+  const maxContentEntries = 64;
+  const maxRecordedEntries = 16;
+  const contentTypeEnums = new Set([
+    'text',
+    'reasoning',
+    'custom',
+    'reasoning-file',
+    'file',
+    'tool-approval-request',
+    'source',
+    'tool-call',
+    'tool-result',
+  ]);
+  const finishReasonEnums = new Set([
+    'stop',
+    'length',
+    'content-filter',
+    'tool-calls',
+    'error',
+    'interrupted',
+    'other',
+  ]);
+  /** @param {unknown} params */
+  const declaredToolNames = (params) => {
+    const names = /** @type {Set<string>} */ (new Set());
+    if (typeof params !== 'object' || params === null || !('tools' in params)) return names;
+    const tools = params.tools;
+    if (!Array.isArray(tools)) return names;
+    for (const tool of tools.slice(0, maxContentEntries)) {
+      if (
+        typeof tool === 'object' &&
+        tool !== null &&
+        'type' in tool &&
+        tool.type === 'function' &&
+        'name' in tool &&
+        typeof tool.name === 'string' &&
+        tool.name.length <= 120
+      )
+        names.add(tool.name);
+    }
+    return names;
+  };
+  /** @param {unknown} content @param {Set<string>} declaredNames */
+  const safeToolNames = (content, declaredNames) => {
+    if (!Array.isArray(content)) return { names: [], unknownCount: 0, omittedCount: 0 };
+    const names = [];
+    let unknownCount = 0;
+    let omittedCount = 0;
+    for (const part of content.slice(0, maxContentEntries)) {
       if (
         typeof part !== 'object' ||
         part === null ||
@@ -142,9 +187,36 @@ function installNativeTrace(
         !('toolName' in part) ||
         typeof part.toolName !== 'string'
       )
-        return [];
-      return [part.toolName];
-    });
+        continue;
+      if (declaredNames.has(part.toolName)) {
+        if (names.length < maxRecordedEntries) names.push(part.toolName);
+        else omittedCount++;
+      } else unknownCount++;
+    }
+    return {
+      names,
+      unknownCount: Math.min(maxContentEntries, unknownCount),
+      omittedCount: Math.min(maxContentEntries, omittedCount),
+    };
+  };
+  /** @param {unknown} content */
+  const contentTypeSummary = (content) => {
+    if (!Array.isArray(content)) return { types: [], unknownCount: 0, omittedCount: 0, count: 0 };
+    /** @type {string[]} */
+    const types = [];
+    let unknownCount = 0;
+    for (const part of content.slice(0, maxContentEntries)) {
+      if (typeof part !== 'object' || part === null || !('type' in part)) continue;
+      const type = part.type;
+      if (typeof type !== 'string' || !contentTypeEnums.has(type)) unknownCount++;
+      else if (!types.includes(type) && types.length < maxRecordedEntries) types.push(type);
+    }
+    return {
+      types,
+      unknownCount: Math.min(maxContentEntries, unknownCount),
+      omittedCount: Math.min(1_000_000, Math.max(0, content.length - maxContentEntries)),
+      count: Math.min(1_000_000, content.length),
+    };
   };
   const finishKeys = new Set([
     'state',
@@ -278,11 +350,11 @@ function installNativeTrace(
       return { representation: 'invalid-json' };
     }
   };
-  /** @param {unknown} content */
-  const safeFinishInputs = (content) => {
-    if (!Array.isArray(content)) return [];
+  /** @param {unknown} content @param {Set<string>} declaredNames */
+  const safeFinishInputs = (content, declaredNames) => {
+    if (!Array.isArray(content) || !declaredNames.has('finish')) return [];
     const inputs = [];
-    for (const part of content) {
+    for (const part of content.slice(0, maxContentEntries)) {
       if (
         typeof part !== 'object' ||
         part === null ||
@@ -394,8 +466,10 @@ function installNativeTrace(
         modelId: typeof model.modelId === 'string' ? model.modelId : 'unknown',
       };
       const params = generateArgs[0];
+      let declaredNames = new Set();
       let finishSchemaSha256;
       try {
+        declaredNames = declaredToolNames(params);
         finishSchemaSha256 = await finishSchemaFingerprint(params);
       } catch {
         finishSchemaSha256 = undefined;
@@ -407,25 +481,29 @@ function installNativeTrace(
           await Reflect.apply(originalGenerate, this, generateArgs)
         );
         generation['durationMs'] = elapsed(start);
-        const finishReason = result['finishReason'];
-        if (
-          typeof finishReason === 'object' &&
-          finishReason !== null &&
-          'unified' in finishReason &&
-          typeof finishReason.unified === 'string'
-        )
-          generation['finishReason'] = finishReason.unified;
-        const usage = safeUsage(result['usage']);
-        if (usage !== undefined) generation['usage'] = usage;
-        generation['contentTypes'] = Array.isArray(result['content'])
-          ? result['content'].flatMap((part) => {
-              if (typeof part !== 'object' || part === null || !('type' in part)) return [];
-              return typeof part.type === 'string' ? [part.type] : [];
-            })
-          : [];
-        generation['toolNames'] = safeToolNames(result['content']);
         try {
-          const finishInputs = safeFinishInputs(result['content']);
+          const finishReason = result['finishReason'];
+          if (
+            typeof finishReason === 'object' &&
+            finishReason !== null &&
+            'unified' in finishReason &&
+            typeof finishReason.unified === 'string'
+          )
+            generation['finishReason'] = finishReasonEnums.has(finishReason.unified)
+              ? finishReason.unified
+              : 'other';
+          const usage = safeUsage(result['usage']);
+          if (usage !== undefined) generation['usage'] = usage;
+          const contentSummary = contentTypeSummary(result['content']);
+          generation['contentTypes'] = contentSummary.types;
+          generation['contentTypeUnknownCount'] = contentSummary.unknownCount;
+          generation['contentOmittedCount'] = contentSummary.omittedCount;
+          generation['contentCount'] = contentSummary.count;
+          const toolNameSummary = safeToolNames(result['content'], declaredNames);
+          generation['toolNames'] = toolNameSummary.names;
+          generation['toolNameUnknownCount'] = toolNameSummary.unknownCount;
+          generation['toolNameOmittedCount'] = toolNameSummary.omittedCount;
+          const finishInputs = safeFinishInputs(result['content'], declaredNames);
           if (finishInputs.length > 0) generation['finishInputs'] = finishInputs;
         } catch {
           // Diagnostic observation must never replace the provider result.

@@ -113,27 +113,27 @@ that action under the same owner, source-freshness, vault-name and base-path gua
 the model watchdog cancel an idle preview or an admitted write. If the plan expires, use the existing
 History and “Review current source” flow; an expired plan cannot be resumed for saving.
 
-Dispose and drain the owner before restoring trace hooks or restoring backed-up files. Saving can
-create a new automatic session; retain only bounded receipt and session-ID metadata needed to identify
-the saved owner and generated session. Avoid serializing complete or growing session snapshots into a
-CLI result. If a read-only post-save export exceeds the CLI output limit, record it as an export failure
-and retain the already captured public receipt and source verification; do not reinterpret it as a
-provider or write failure. Call
-`buildNativeTraceRestoreEval(key)` in `finally`; the restore only replaces methods that still point to
-this trace's wrappers. Compare live files with the manifest before restoring. Restore only files whose
-current contents match the trial's expected changes; if a backup is missing, or live state does not
-match the recorded trial state, do not claim exact restoration or overwrite unmatched state. Read the
-trace with `buildNativeTraceReadEval(key)` after the trial. A result is not attributable to this
-instrumentation unless `sdkInvocations` increased before the result was claimed. The wrapper stops
-before the 13th SDK call or third combined search/page-read adapter call and records each local budget
-rejection separately. Do not retry a stopped trial to fill its trace.
+Dispose and drain the owner before reading the trace or restoring files. Saving can create a new
+automatic session; retain only bounded receipt and session-ID metadata needed to identify the saved
+owner and generated session. Avoid serializing complete or growing session snapshots into a CLI
+result. Read the bounded trace with `buildNativeTraceReadEval(key)`, then save that sanitized readback
+to a new ignored `docs/` directory using a temporary file and atomic rename. Put trace read/export in
+a `try` block and call `buildNativeTraceRestoreEval(key)` in `finally`, so hooks are restored even if
+the read or export fails. The restore only replaces methods that still point to this trace's wrappers.
+If a read-only post-save export exceeds the CLI output limit, record it as an export failure and retain
+the already captured public receipt and source verification; do not reinterpret it as a provider or
+write failure. Compare live files with the manifest before restoring. Restore only files whose current
+contents match the trial's expected changes; if a backup is missing, or live state does not match the
+recorded trial state, do not claim exact restoration or overwrite unmatched state. A result is not
+attributable to this instrumentation unless `sdkInvocations` increased before the result was claimed.
+The wrapper stops before the 13th SDK call or third combined search/page-read adapter call and records
+each local budget rejection separately. Do not retry a stopped trial to fill its trace.
 
-Save the sanitized readback to a new ignored `docs/` directory using a temporary file and atomic
-rename. Independently check the synthetic target through the public API, record write effects and
-runtime errors, and compare the target/session snapshots. Keep the development vault as the only
-trial target. After cleanup, confirm the trace wrappers are absent and the snapshots match. These
-logical adapter-call counts do not identify provider HTTP retries; page text establishes only what
-the plugin received, not source freshness or correctness.
+Independently check the synthetic target through the public API, record write effects and runtime
+errors, and compare the target/session snapshots. Keep the development vault as the only trial target.
+After cleanup, confirm the trace wrappers are absent and the snapshots match. These logical
+adapter-call counts do not identify provider HTTP retries; page text establishes only what the plugin
+received, not source freshness or correctness.
 
 ## Interpret the evidence
 
