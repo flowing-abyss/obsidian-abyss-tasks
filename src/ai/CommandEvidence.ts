@@ -25,7 +25,8 @@ interface UnresolvedLookup {
   discovery: CommandDiscovery;
   effect: TaskEffect;
   candidates: Set<string>;
-  acceptedChangeSequence_abyssPrivate: number;
+  /** Accepted change sequence when the original discovery began. */
+  after: number;
 }
 const ALL_TASK_STATUSES = ['open', 'in-progress', 'done', 'cancelled'] as const;
 function retainedFilter(field: string, prior: unknown, next: unknown): boolean {
@@ -250,9 +251,7 @@ export class CommandEvidence {
       discovery: fact,
       effect,
       candidates,
-      acceptedChangeSequence_abyssPrivate:
-        previous?.acceptedChangeSequence_abyssPrivate ??
-        this.acceptedTaskChangeSequence_abyssPrivate,
+      after: previous?.after ?? this.acceptedTaskChangeSequence_abyssPrivate,
     });
   }
   private recordResolvedLookup_abyssPrivate(
@@ -309,7 +308,7 @@ export class CommandEvidence {
       const sequence = this.factSequence_abyssPrivate.get(fact);
       return (
         sequence !== undefined &&
-        sequence > lookup.acceptedChangeSequence_abyssPrivate &&
+        sequence > lookup.after &&
         fact.action === 'change' &&
         fact.entity === 'task' &&
         fact.removal !== true &&

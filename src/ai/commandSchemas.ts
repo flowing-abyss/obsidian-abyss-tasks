@@ -307,9 +307,7 @@ export const transitionDispositionSchema = z.enum(['save', 'keep', 'discard', 'c
 const writeApproval = z
   .string()
   .min(1)
-  .describe(
-    'The entire current userMessage verbatim. Only a user request that grants this write can be used.',
-  );
+  .describe('Copy the entire current userMessage verbatim. It must grant this write.');
 const saveInstruction = z
   .string()
   .min(1)
@@ -391,11 +389,13 @@ export function controlSchema(
       (branch) =>
         recovery === undefined || recoveryControlAvailable(branch.shape.intent.value, recovery),
     )
-    .map((branch) =>
-      'scope' in branch.shape && proposalChangeCount !== undefined
-        ? branch.extend({ scope: saveScopeSchema(proposalChangeCount - 1).optional() })
-        : branch,
-    );
+    .map((branch) => {
+      if (!('scope' in branch.shape) || proposalChangeCount === undefined) return branch;
+      if (proposalChangeCount === 0) {
+        return (branch as z.ZodObject<z.ZodRawShape>).omit({ scope: true }) as typeof branch;
+      }
+      return branch.extend({ scope: saveScopeSchema(proposalChangeCount - 1).optional() });
+    });
   if (options.length === 0) return z.never();
   if (options.length === 1)
     return options[0] as z.ZodType<z.output<typeof intentSchema>, z.input<typeof intentSchema>>;

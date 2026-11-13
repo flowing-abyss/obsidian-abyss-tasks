@@ -331,6 +331,58 @@ it('bounds confirmation change indexes to the captured top-level proposal', asyn
   expect(await schema.validate?.(control(1))).toHaveProperty('success', true);
 });
 
+it.each([false, true])(
+  'omits unavailable scoped-save controls for a zero-change proposal (pending=%s)',
+  async (pending) => {
+    const bounded = controlSchema(pending, undefined, 0);
+    const schema = modelToolSchema(bounded, 'interpret');
+    const advertised = await schema.jsonSchema;
+    const branches = advertised.oneOf ?? advertised.anyOf ?? [];
+
+    expect(advertised.properties).not.toHaveProperty('scope');
+    expect(JSON.stringify(advertised)).not.toMatch(/"(?:minimum|maximum)":-1/);
+    expect(JSON.stringify(advertised)).not.toMatch(/"minimum":0,"maximum":-1/);
+    for (const branch of branches) {
+      if (typeof branch === 'object') expect(branch.properties).not.toHaveProperty('scope');
+    }
+
+    expect(
+      await schema.validate?.({
+        intent: 'confirm',
+        approval: 'Save the displayed proposal.',
+        scope: { proposalRevision: 2, changes: [{ kind: 'change', index: 0 }] },
+      }),
+    ).toHaveProperty('success', false);
+    expect(
+      await schema.validate?.({ intent: 'confirm', approval: 'Save the displayed proposal.' }),
+    ).toHaveProperty('success', true);
+    expect(await schema.validate?.({ intent: 'plan', research: false })).toHaveProperty('success');
+  },
+);
+
+it('preserves the exact zero-based scoped index for a one-change proposal', async () => {
+  const schema = modelToolSchema(controlSchema(false, undefined, 1), 'interpret');
+  const advertised = await schema.jsonSchema;
+  const json = JSON.stringify(advertised);
+
+  expect(json).toContain('"maximum":0');
+  expect(json).not.toContain('"maximum":-1');
+  expect(
+    await schema.validate?.({
+      intent: 'confirm',
+      approval: 'Save the displayed proposal.',
+      scope: { proposalRevision: 2, changes: [{ kind: 'change', index: 0 }] },
+    }),
+  ).toHaveProperty('success', true);
+  expect(
+    await schema.validate?.({
+      intent: 'confirm',
+      approval: 'Save the displayed proposal.',
+      scope: { proposalRevision: 2, changes: [{ kind: 'change', index: 1 }] },
+    }),
+  ).toHaveProperty('success', false);
+});
+
 it.each([
   [
     'finish',

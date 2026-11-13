@@ -7,6 +7,7 @@ import { readFreeCatalog } from './command-live/providerBoundary';
 import { object, RequestBudget, validateOptions, type EvalOptions } from './command-live/safety';
 import { runScriptedCase as runCase } from './command-live/scriptedCase';
 import { expectDefined, useRealMoment } from './helpers';
+import { CHILD_PROCESS_TIMEOUT_MS } from './support/timeouts';
 
 useRealMoment();
 const base = 'http://127.0.0.1:12345/v1';
@@ -55,86 +56,94 @@ it('gives omitted output paths distinct run IDs while preserving explicit option
   });
 });
 
-it('reserves only fresh run directories without modifying existing outputs', async () => {
-  if (!Platform.isDesktop) throw Error('Output reservation controls require desktop');
-  const [
-    { mkdir, mkdtemp, readFile, rm, writeFile },
-    { tmpdir },
-    { join, resolve },
-    { randomUUID },
-    { spawnSync },
-    { pathToFileURL },
-  ] = await Promise.all([
-    import('node:fs/promises'),
-    import('node:os'),
-    import('node:path'),
-    import('node:crypto'),
-    import('node:child_process'),
-    import('node:url'),
-  ]);
-  const { reserveOutputDirectory } = await import('../tooling/command-eval.mjs');
-  const root = await mkdtemp(join(tmpdir(), 'command-eval-out-'));
-  try {
-    const existing = join(root, 'existing');
-    await mkdir(existing);
-    const manifest = join(existing, 'manifest.json');
-    await writeFile(manifest, '{"fixture":"keep bytes"}\n');
-    const original = await readFile(manifest);
-    await expect(reserveOutputDirectory(existing)).rejects.toThrow(
-      'Output directory already exists; choose a fresh --out directory.',
-    );
-    expect(await readFile(manifest)).toEqual(original);
-
-    const nested = join(root, 'nested', 'fresh-run');
-    await expect(reserveOutputDirectory(nested)).resolves.toBe(resolve(nested));
-    await expect(readFile(manifest)).resolves.toEqual(original);
-
-    const fromOtherCwd = `docs/research/command-mode-round6/runs/cwd-${randomUUID()}`;
-    const launcherUrl = pathToFileURL(join(process.cwd(), 'tooling/command-eval.mjs')).href;
-    const reservation = spawnSync(
-      process.execPath,
-      [
-        '--input-type=module',
-        '-e',
-        `const { reserveOutputDirectory } = await import(${JSON.stringify(launcherUrl)}); process.stdout.write(await reserveOutputDirectory(${JSON.stringify(fromOtherCwd)}));`,
-      ],
-      { cwd: root, encoding: 'utf8' },
-    );
-    try {
-      expect(reservation.status, reservation.stderr).toBe(0);
-      expect(reservation.stdout).toBe(resolve(fromOtherCwd));
-    } finally {
-      await rm(resolve(fromOtherCwd), { recursive: true, force: true });
-    }
-
-    const shared = join(root, 'concurrent');
-    const results = await Promise.allSettled([
-      reserveOutputDirectory(shared),
-      reserveOutputDirectory(shared),
+it(
+  'reserves only fresh run directories without modifying existing outputs',
+  async () => {
+    if (!Platform.isDesktop) throw Error('Output reservation controls require desktop');
+    const [
+      { mkdir, mkdtemp, readFile, rm, writeFile },
+      { tmpdir },
+      { join, resolve },
+      { randomUUID },
+      { spawnSync },
+      { pathToFileURL },
+    ] = await Promise.all([
+      import('node:fs/promises'),
+      import('node:os'),
+      import('node:path'),
+      import('node:crypto'),
+      import('node:child_process'),
+      import('node:url'),
     ]);
-    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
-    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
+    const { reserveOutputDirectory } = await import('../tooling/command-eval.mjs');
+    const root = await mkdtemp(join(tmpdir(), 'command-eval-out-'));
+    try {
+      const existing = join(root, 'existing');
+      await mkdir(existing);
+      const manifest = join(existing, 'manifest.json');
+      await writeFile(manifest, '{"fixture":"keep bytes"}\n');
+      const original = await readFile(manifest);
+      await expect(reserveOutputDirectory(existing)).rejects.toThrow(
+        'Output directory already exists; choose a fresh --out directory.',
+      );
+      expect(await readFile(manifest)).toEqual(original);
 
-it('keeps CLI list mode read-only even when an output path is supplied', async () => {
-  if (!Platform.isDesktop) throw Error('CLI output controls require desktop');
-  const [{ spawnSync }, { existsSync }, { resolve }] = await Promise.all([
-    import('node:child_process'),
-    import('node:fs'),
-    import('node:path'),
-  ]);
-  const output = 'docs/research/command-mode-round6/list-must-not-exist';
-  const result = spawnSync(
-    process.execPath,
-    ['tooling/command-eval.mjs', '--list', '--out', output],
-    { encoding: 'utf8', timeout: 30_000, stdio: 'ignore' },
-  );
-  expect(result.status).toBe(0);
-  expect(existsSync(resolve(output))).toBe(false);
-});
+      const nested = join(root, 'nested', 'fresh-run');
+      await expect(reserveOutputDirectory(nested)).resolves.toBe(resolve(nested));
+      await expect(readFile(manifest)).resolves.toEqual(original);
+
+      const fromOtherCwd = `docs/research/command-mode-round6/runs/cwd-${randomUUID()}`;
+      const launcherUrl = pathToFileURL(join(process.cwd(), 'tooling/command-eval.mjs')).href;
+      const reservation = spawnSync(
+        process.execPath,
+        [
+          '--input-type=module',
+          '-e',
+          `const { reserveOutputDirectory } = await import(${JSON.stringify(launcherUrl)}); process.stdout.write(await reserveOutputDirectory(${JSON.stringify(fromOtherCwd)}));`,
+        ],
+        { cwd: root, encoding: 'utf8', timeout: CHILD_PROCESS_TIMEOUT_MS },
+      );
+      try {
+        expect(reservation.status, reservation.stderr).toBe(0);
+        expect(reservation.stdout).toBe(resolve(fromOtherCwd));
+      } finally {
+        await rm(resolve(fromOtherCwd), { recursive: true, force: true });
+      }
+
+      const shared = join(root, 'concurrent');
+      const results = await Promise.allSettled([
+        reserveOutputDirectory(shared),
+        reserveOutputDirectory(shared),
+      ]);
+      expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+      expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+  CHILD_PROCESS_TIMEOUT_MS,
+);
+
+it(
+  'keeps CLI list mode read-only even when an output path is supplied',
+  async () => {
+    if (!Platform.isDesktop) throw Error('CLI output controls require desktop');
+    const [{ spawnSync }, { existsSync }, { resolve }] = await Promise.all([
+      import('node:child_process'),
+      import('node:fs'),
+      import('node:path'),
+    ]);
+    const output = 'docs/research/command-mode-round6/list-must-not-exist';
+    const result = spawnSync(
+      process.execPath,
+      ['tooling/command-eval.mjs', '--list', '--out', output],
+      { encoding: 'utf8', timeout: CHILD_PROCESS_TIMEOUT_MS, stdio: 'ignore' },
+    );
+    expect(result.status).toBe(0);
+    expect(existsSync(resolve(output))).toBe(false);
+  },
+  CHILD_PROCESS_TIMEOUT_MS,
+);
 
 it('requires an explicit numeric loopback API base and a named local model', () => {
   expect(validateOptions(options).localBaseURL).toBe(base);
