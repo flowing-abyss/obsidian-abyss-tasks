@@ -94,6 +94,10 @@ export function diagnosticOutcome(
 
 /** New artifacts only; original campaigns retain their original classification. */
 export const evaluationPolicyVersion = 'turn-generation-recovery-v2';
+export const sourcePredicatePolicy = 'mechanical' as const;
+export const sourcePredicateScope =
+  'nonempty text, declared length cap, exact cited destination; no source entailment' as const;
+export const semanticContentReview = 'pending' as const;
 interface SequencedEvent extends Event {
   sequence: number;
 }

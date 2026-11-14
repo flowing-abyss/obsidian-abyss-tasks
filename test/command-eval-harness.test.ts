@@ -5,6 +5,7 @@ import type { canonicalWriteAssessment } from './command-live/controls';
 import { submittedMessage } from './command-live/controls';
 import { selectCases } from './command-live/corpus';
 import { runCase as runLiveCase } from './command-live/harness';
+import { evaluateTurn, regradeRetainedTurn, type RetainedTurn } from './command-live/oracles';
 import { object, RequestBudget } from './command-live/safety';
 import { runScriptedCase as runCase } from './command-live/scriptedCase';
 import { expectDefined } from './helpers';
@@ -528,8 +529,21 @@ it('mechanically accepts a cited contradiction for independent semantic review',
   comments[2] = `README confirms that AI integration, voice input, and hybrid search are already fully implemented and ready. Источник: ${url}`;
   const { report } = await runNative9Pipeline(comments);
   expect(report.outcome).toBe('passed');
+  expect(report.sourcePredicatePolicy).toBe('mechanical');
+  expect(report.sourcePredicateScope).toContain('no source entailment');
+  expect(report.semanticContentReview).toBe('pending');
   expect(report.turns[0]?.writeCount).toBe(0);
   expect(report.turns[0]?.before).toEqual(report.turns[0]?.after);
+  const expected = expectDefined(item.turns[0]).expect;
+  const serializedTurn = JSON.parse(JSON.stringify(expectDefined(report.turns[0]))) as RetainedTurn;
+  const direct = evaluateTurn(expected, serializedTurn, { sourcePredicatePolicy: 'mechanical' });
+  expect(direct).toEqual([]);
+  expect(
+    regradeRetainedTurn(expected, serializedTurn, report.trace, {
+      oneBasedTurn: 1,
+      sourcePredicatePolicy: 'mechanical',
+    }).failures,
+  ).toEqual(direct);
 });
 it.each(['Q6-context', 'Q6-capture', 'Q6-ambiguous', 'Q6-twins', 'Q6-independent'])(
   'executes the held-out %s oracle with canonical scripted tools and no network',

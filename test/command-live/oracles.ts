@@ -131,6 +131,13 @@ export interface TurnEvidence {
     results: ReadonlyArray<{ sequence: number; result: unknown }>;
   };
 }
+export type SourcePredicatePolicy = 'strict' | 'mechanical';
+export interface EvaluationPolicyOptions {
+  sourcePredicatePolicy?: SourcePredicatePolicy;
+}
+export interface RetainedTurnRegradeOptions extends EvaluationPolicyOptions {
+  oneBasedTurn: number;
+}
 function record(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
 }
@@ -1640,30 +1647,71 @@ function decompositionFailures(expected: TurnExpectation, evidence: TurnEvidence
   visit(evidence.trees[0], 0);
   return [...failures];
 }
-export function evaluateTurn(expected: TurnExpectation, evidence: TurnEvidence): string[] {
+function projectMechanicalSourceArray(value: readonly unknown[]): unknown {
+  const projected = value.map(projectMechanicalSourceExpectations);
+  return projected.every((item, index) => item === value[index]) ? value : projected;
+}
+function projectMechanicalSourceObject(value: Record<string, unknown>): unknown {
+  const entries = Object.entries(value),
+    isSourceMatcher = typeof value['sourceText'] === 'string',
+    retained = entries.filter(
+      ([key]) =>
+        !isSourceMatcher || (key !== 'facts' && key !== 'absenceFacts' && key !== 'excludes'),
+    ),
+    projected = retained.map(([key, item]) => [key, projectMechanicalSourceExpectations(item)]);
+  return retained.length === entries.length &&
+    projected.every(([, item], index) => item === entries[index]?.[1])
+    ? value
+    : Object.fromEntries(projected);
+}
+function projectMechanicalSourceExpectations(value: unknown): unknown {
+  if (Array.isArray(value)) return projectMechanicalSourceArray(value);
+  if (typeof value === 'object' && value !== null)
+    return projectMechanicalSourceObject(value as Record<string, unknown>);
+  return value;
+}
+function evaluationExpectation(
+  expected: TurnExpectation,
+  policy: EvaluationPolicyOptions,
+): TurnExpectation {
+  return policy.sourcePredicatePolicy === 'mechanical'
+    ? (projectMechanicalSourceExpectations(expected) as TurnExpectation)
+    : expected;
+}
+function inboxMembershipFailures(expected: TurnExpectation, evidence: TurnEvidence): string[] {
+  return expected.inboxMembers !== undefined && !equal(expected.inboxMembers, evidence.inboxMembers)
+    ? ['inbox-membership']
+    : [];
+}
+export function evaluateTurn(
+  expected: TurnExpectation,
+  evidence: TurnEvidence,
+  policy: EvaluationPolicyOptions = {},
+): string[] {
+  const evaluatedExpected = evaluationExpectation(expected, policy);
   return [
-    ...statusFailures(expected, evidence),
-    ...(expected.inboxMembers !== undefined && !equal(expected.inboxMembers, evidence.inboxMembers)
-      ? ['inbox-membership']
-      : []),
-    ...focusFailures(expected, evidence),
-    ...proposalFailures(expected, evidence),
-    ...continuationFailures(expected, evidence),
-    ...basisFailures(expected, evidence),
-    ...researchFailures(expected, evidence),
-    ...decompositionFailures(expected, evidence),
-    ...noteFactFailures(expected, evidence),
+    ...statusFailures(evaluatedExpected, evidence),
+    ...inboxMembershipFailures(evaluatedExpected, evidence),
+    ...focusFailures(evaluatedExpected, evidence),
+    ...proposalFailures(evaluatedExpected, evidence),
+    ...continuationFailures(evaluatedExpected, evidence),
+    ...basisFailures(evaluatedExpected, evidence),
+    ...researchFailures(evaluatedExpected, evidence),
+    ...decompositionFailures(evaluatedExpected, evidence),
+    ...noteFactFailures(evaluatedExpected, evidence),
     ...(evidence.preservationFailures ?? []),
-    ...(expected.writeCount !== undefined && expected.writeCount !== evidence.writeCount
+    ...(evaluatedExpected.writeCount !== undefined &&
+    evaluatedExpected.writeCount !== evidence.writeCount
       ? ['write-count']
       : []),
-    ...(expected.partialSave === true && !partialSaveScopeMatches(expected, evidence)
+    ...(evaluatedExpected.partialSave === true &&
+    !partialSaveScopeMatches(evaluatedExpected, evidence)
       ? ['partial-save-scope']
       : []),
-    ...writeFailures(expected, evidence),
-    ...fileFailures(expected, evidence),
-    ...observationFailures(expected, evidence),
-    ...taskLinkFailures(expected.taskLinks ?? [], evidence.trees),
+    ...writeFailures(evaluatedExpected, evidence),
+    ...fileFailures(evaluatedExpected, evidence),
+    ...observationFailures(evaluatedExpected, evidence),
+    ...taskLinkFailures(evaluatedExpected.taskLinks ?? [], evidence.trees),
     ...(evidence.preservation ?? []).flatMap(preserve),
   ];
 }
@@ -1949,10 +1997,11 @@ export function regradeRetainedTurn(
   expected: TurnExpectation,
   turn: RetainedTurn,
   trace: readonly RetainedTraceEvent[],
-  oneBasedTurn: number,
+  turnOptions: number | RetainedTurnRegradeOptions,
 ): { failures: string[]; evidence?: TurnEvidence } {
-  const evidence = retainedTurnEvidence(expected, turn, trace, oneBasedTurn);
+  const options = typeof turnOptions === 'number' ? { oneBasedTurn: turnOptions } : turnOptions;
+  const evidence = retainedTurnEvidence(expected, turn, trace, options.oneBasedTurn);
   return evidence === undefined
     ? { failures: ['retained-turn-evidence'] }
-    : { failures: evaluateTurn(expected, evidence), evidence };
+    : { failures: evaluateTurn(expected, evidence, options), evidence };
 }

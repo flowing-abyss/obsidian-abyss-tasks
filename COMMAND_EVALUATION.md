@@ -64,6 +64,14 @@ fixed `pageFixture` content checks model behavior without fetching that source. 
 trial may check a real URL and an explicitly reviewed Obsidian Save action. It needs the safeguards
 and snapshot procedure in “Native command SDK trace”; do not combine it with a fixed-source result.
 
+Harness runs use mechanical source predicates: nonempty text, any declared length limit, and the
+exact cited destination. Those checks do not establish that claims, exclusions or absence claims
+match the page. Each source-based output remains pending independent calibrated content review,
+including semantic accuracy, contradictions, relevance and concision. A report's `outcome: passed`
+records harness checks only; task completion also requires applicable operational checks and an
+independent content-review pass. Direct `evaluateTurn` calls remain strict unless the caller explicitly selects
+mechanical mode. Reports and the CLI identify the policy and pending review status.
+
 For a free OpenRouter run, name a model ending in `:free`, keep the default no-paid setting, and use
 a fresh `--out` directory and bounded `--max-requests` value:
 

@@ -90,6 +90,115 @@ it.each([
   ).toContain('tree-postcondition');
 });
 
+it('keeps source predicates strict by default and permits only mechanical checks by explicit policy', () => {
+  const text = `The product is excellent and solves every problem. ${source}`;
+  const original = structuredClone(sourceExpectation);
+  expect(
+    evaluateTurn(sourceExpectation, base([{ markdownTitle: 'Backup', comments: [{ text }] }])),
+  ).toContain('tree-postcondition');
+  expect(
+    evaluateTurn(sourceExpectation, base([{ markdownTitle: 'Backup', comments: [{ text }] }]), {
+      sourcePredicatePolicy: 'mechanical',
+    }),
+  ).toEqual([]);
+  expect(sourceExpectation).toEqual(original);
+  expect(
+    evaluateTurn(
+      sourceExpectation,
+      base([
+        { markdownTitle: 'Backup', comments: [{ text: `The product is excellent. ${source}` }] },
+      ]),
+      { sourcePredicatePolicy: 'mechanical' },
+    ),
+  ).toEqual([]);
+  expect(
+    evaluateTurn(
+      sourceExpectation,
+      base([{ markdownTitle: 'Backup', comments: [{ text: 'The product is excellent.' }] }]),
+      { sourcePredicatePolicy: 'mechanical' },
+    ),
+  ).toContain('tree-postcondition');
+});
+
+it('keeps citation, length, and unrelated structured predicates active in mechanical mode', () => {
+  const text = `A broad claim with no source support. ${source}`;
+  const expected: TurnExpectation = {
+    ...structuredClone(sourceExpectation),
+    trees: [
+      {
+        markdownTitle: 'Backup',
+        retainedData: { facts: ['literal'] },
+        comments: [
+          {
+            text: {
+              sourceText: source,
+              facts: [['offline', 'без сети']],
+              maxLength: text.length - 1,
+            },
+          },
+        ],
+      },
+    ],
+  };
+  expect(
+    evaluateTurn(
+      expected,
+      base([
+        {
+          markdownTitle: 'Backup',
+          retainedData: { facts: ['literal'] },
+          comments: [{ text }],
+        },
+      ]),
+      { sourcePredicatePolicy: 'mechanical' },
+    ),
+  ).toContain('tree-postcondition');
+  const withinLimit: TurnExpectation = {
+    ...expected,
+    trees: [
+      {
+        markdownTitle: 'Backup',
+        retainedData: { facts: ['literal'] },
+        comments: [
+          {
+            text: {
+              sourceText: source,
+              facts: [['offline', 'без сети']],
+              maxLength: text.length + 1,
+            },
+          },
+        ],
+      },
+    ],
+  };
+  expect(
+    evaluateTurn(
+      withinLimit,
+      base([
+        {
+          markdownTitle: 'Backup',
+          retainedData: { facts: ['literal'] },
+          comments: [{ text: `A broad claim with no source support. https://wrong.example` }],
+        },
+      ]),
+      { sourcePredicatePolicy: 'mechanical' },
+    ),
+  ).toContain('tree-postcondition');
+  expect(
+    evaluateTurn(
+      withinLimit,
+      base([
+        {
+          markdownTitle: 'Backup',
+          retainedData: { facts: ['changed'] },
+          comments: [{ text }],
+        },
+      ]),
+      { sourcePredicatePolicy: 'mechanical' },
+    ),
+  ).toContain('tree-postcondition');
+});
+
 it('rejects source-shaped empty output when no research result was returned', () => {
   expect(
     evaluateTurn({ status: 'ready', researchSource: source }, { ...base([]), research: [] }),

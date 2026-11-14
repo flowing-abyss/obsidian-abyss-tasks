@@ -335,6 +335,11 @@ function rejectDamage(
     expect(evaluateTurn(expected, damaged).length).toBeGreaterThan(0);
   }
 }
+function freezeRecursively<T>(value: T): T {
+  if (value === null || typeof value !== 'object' || Object.isFrozen(value)) return value;
+  for (const child of Object.values(value) as unknown[]) freezeRecursively(child);
+  return Object.freeze(value);
+}
 it('qualifies 095 against fresh research, exact structured duration, same comment and trusted receipt', async () => {
   const { test, report } = await replay(
     '095',
@@ -3760,6 +3765,260 @@ it.each(['ru', 'en'] as const)(
     ]);
   },
 );
+
+it('uses mechanical source predicates to continue a project preview through canonical Save', async () => {
+  const test = expectDefined(selectCases('project-page-overview-ru')[0]);
+  expect(test.split).toBe('development');
+  const url = 'https://example.org/projects/cairn';
+  const firstComment = `Cairn is a perfect product for every possible task workflow. ${url}`;
+  const secondComment = `Cairn supports cloud synchronization and team editing is available. ${url}`;
+  const lookup = tool('read', { input: { kind: 'tasks', query: 'Изучить Cairn' } });
+  const { report } = await replay(
+    test,
+    [
+      plan,
+      lookup,
+      (prompt) => {
+        const node = firstRead(prompt);
+        return tool('finish', {
+          state: 'ready',
+          selection: [{ kind: 'task', target: node['target'], revision: node['revision'] }],
+        });
+      },
+      research,
+      tool('research', { url }),
+      lookup,
+      (prompt) => {
+        const node = firstRead(prompt);
+        return tool('task', {
+          input: {
+            kind: 'edit',
+            target: node['target'],
+            expectedRevision: node['revision'],
+            operation: { type: 'add-comment', target: node['target'], text: firstComment },
+          },
+        });
+      },
+      (prompt) => appendCommentToLatestPlan(prompt, secondComment),
+      finish,
+      confirm,
+    ],
+    undefined,
+    { reviewResearch: scriptedResearchAllowance },
+  );
+  const turnExpectations = test.turns.map((turn) =>
+    freezeRecursively(structuredClone(turn.expect)),
+  );
+  const previewExpectation = expectDefined(turnExpectations[1]);
+  const preview = expectDefined(report.turns[1]);
+  const expectationComments = object(previewExpectation.trees?.[0])['comments'] as unknown[];
+  const sourceMatcher = object(object(expectationComments[1])['text']);
+  expect(sourceMatcher['sourceText']).toBe(url);
+  expect(sourceMatcher['facts']).toHaveLength(3);
+  expect(sourceMatcher['absenceFacts']).toHaveLength(2);
+  expect(sourceMatcher['excludes']).toHaveLength(7);
+  const originalExpectation = structuredClone(previewExpectation);
+  expect(Object.isFrozen(previewExpectation)).toBe(true);
+  expect(evaluateTurn(previewExpectation, preview)).toContain('tree-postcondition');
+  const directMechanical = evaluateTurn(previewExpectation, preview, {
+    sourcePredicatePolicy: 'mechanical',
+  });
+  expect(directMechanical).toEqual([]);
+  const preservedPreview = expectDefined(preview.preservation?.[0]);
+  expect(preservedPreview.requested).toEqual(previewExpectation.trees?.[0]);
+  expect(preview.preservationFailures ?? []).toEqual([]);
+  expect(previewExpectation).toEqual(originalExpectation);
+
+  const serialized = JSON.parse(JSON.stringify(report)) as {
+    turns: RetainedTurn[];
+    trace: RetainedTraceEvent[];
+  };
+  const serializedPreview = expectDefined(serialized.turns[1]);
+  expect(
+    regradeRetainedTurn(previewExpectation, serializedPreview, serialized.trace, 2).failures,
+  ).toContain('tree-postcondition');
+  expect(
+    regradeRetainedTurn(previewExpectation, serializedPreview, serialized.trace, {
+      oneBasedTurn: 2,
+      sourcePredicatePolicy: 'mechanical',
+    }).failures,
+  ).toEqual(directMechanical);
+
+  const sourceMutations: Array<{
+    name: string;
+    failures: readonly string[];
+    mutate: (value: TurnEvidence) => void;
+  }> = [
+    {
+      name: 'empty source text',
+      failures: ['tree-postcondition'],
+      mutate: (value) => {
+        object((object(value.trees[0])['comments'] as unknown[])[0])['text'] = '';
+      },
+    },
+    {
+      name: 'non-string source text',
+      failures: ['tree-postcondition'],
+      mutate: (value) => {
+        object((object(value.trees[0])['comments'] as unknown[])[0])['text'] = 42;
+      },
+    },
+    {
+      name: 'citation-only source text',
+      failures: ['tree-postcondition'],
+      mutate: (value) => {
+        object((object(value.trees[0])['comments'] as unknown[])[0])['text'] = url;
+      },
+    },
+    {
+      name: 'spoofed source destination',
+      failures: ['tree-postcondition'],
+      mutate: (value) => {
+        object((object(value.trees[0])['comments'] as unknown[])[0])['text'] =
+          `Cairn is a capable tool. ${url.replace('example.org', 'spoof.example')}`;
+      },
+    },
+    {
+      name: 'wrong selected task owner',
+      failures: ['task-source-basis'],
+      mutate: (value) => {
+        value.taskSources = [
+          { path: 'projects/Other.md', line: 5, kind: 'edit', basisValid: true },
+        ];
+      },
+    },
+    {
+      name: 'invalid source basis',
+      failures: ['task-source-basis'],
+      mutate: (value) => {
+        value.taskSources = [
+          { path: 'projects/Launch.md', line: 5, kind: 'edit', basisValid: false },
+        ];
+      },
+    },
+    {
+      name: 'protected task fields changed',
+      failures: ['tree-postcondition'],
+      mutate: (value) => {
+        object(value.trees[0])['description'] = 'A changed task description';
+      },
+    },
+    {
+      name: 'wrong turn status',
+      failures: ['status:question:expected:ready'],
+      mutate: (value) => {
+        value.status = 'question';
+      },
+    },
+    {
+      name: 'search result replaces page read',
+      failures: ['research-page'],
+      mutate: (value) => {
+        value.research = (value.research ?? []).map((item) => ({ ...item, action: 'search' }));
+      },
+    },
+    {
+      name: 'extra research invocation',
+      failures: ['research-invocations'],
+      mutate: (value) => {
+        value.research = [...(value.research ?? []), expectDefined(value.research?.[0])];
+      },
+    },
+    {
+      name: 'preserved task field damaged',
+      failures: ['preservation:task-correspondence'],
+      mutate: (value) => {
+        const pair = expectDefined(value.preservation?.[0]);
+        value.preservation = [
+          {
+            ...pair,
+            before: { ...object(pair.before), children: [{ target: 'retained-child' }] },
+            after: { ...object(pair.after), children: [] },
+          },
+        ];
+      },
+    },
+    {
+      name: 'unexpected write during preview',
+      failures: ['write-count', 'unconsented-write'],
+      mutate: (value) => {
+        value.writeCount = 1;
+        value.journal = [{ id: 'unexpected', state: 'settled', effects: 'committed' }];
+      },
+    },
+  ];
+  for (const { name, failures, mutate } of sourceMutations) {
+    const damaged = structuredClone(preview);
+    mutate(damaged);
+    const actualFailures = evaluateTurn(previewExpectation, damaged, {
+      sourcePredicatePolicy: 'mechanical',
+    });
+    for (const failure of failures) expect(actualFailures, name).toContain(failure);
+  }
+
+  const saveExpectation = expectDefined(turnExpectations[2]);
+  const saved = expectDefined(report.turns[2]);
+  expect(report.modelSource).toBe('scripted-control');
+  expect(report.sourcePredicatePolicy).toBe('mechanical');
+  expect(report.semanticContentReview).toBe('pending');
+  expect(report.sourcePredicateScope).toContain('no source entailment');
+  expect(report.outcome).toBe('passed');
+  expect(report.physicalRequests).toBe(0);
+  expect(report.turns).toHaveLength(3);
+  expect(saved.text).toBe(test.turns[2]?.text);
+  expect(saved.status).toBe('saved');
+  expect(saved.writeCount).toBe(1);
+  expect(saved.failures).toEqual([]);
+  expect(saved.journal).toHaveLength(1);
+  expect(saved.journal[0]).toMatchObject({ state: 'settled', effects: 'committed' });
+  expect(saved.journal[0]?.receipt).toBeDefined();
+  expect(saved.admissions).toContainEqual(
+    expect.objectContaining({ id: saved.journal[0]?.id, state: 'admitted' }),
+  );
+  expect(report.trace.filter((event) => event.kind === 'write-dispatch')).toHaveLength(1);
+  expect(report.trace.filter((event) => event.kind === 'write-result')).toHaveLength(1);
+  const publicTask = expectDefined(
+    saved.publicReadback.find((task) => task.markdownTitle === 'Изучить Cairn'),
+  );
+  expect(publicTask).toMatchObject({
+    markdownTitle: 'Изучить Cairn',
+    description: 'Оценить для личного использования.',
+    tags: ['#keep'],
+    comments: [{ text: firstComment }, { text: secondComment }],
+  });
+  expect(publicTask.target).toBe(object(preview.trees[0])['target']);
+  expect(object(publicTask.source)['path']).toBe('projects/Launch.md');
+  expect(evaluateTurn(saveExpectation, saved, { sourcePredicatePolicy: 'mechanical' })).toEqual([]);
+  const serializedSave = expectDefined(serialized.turns[2]);
+  const directSaved = evaluateTurn(saveExpectation, serializedSave, {
+    sourcePredicatePolicy: 'mechanical',
+  });
+  expect(
+    regradeRetainedTurn(saveExpectation, serializedSave, serialized.trace, {
+      oneBasedTurn: 3,
+      sourcePredicatePolicy: 'mechanical',
+    }).failures,
+  ).toEqual(directSaved);
+
+  const receiptDamage = structuredClone(saved);
+  receiptDamage.journal = receiptDamage.journal.map((entry) => ({ ...entry, receipt: undefined }));
+  expect(
+    evaluateTurn(saveExpectation, receiptDamage, { sourcePredicatePolicy: 'mechanical' }),
+  ).toContain('saved-without-committed-receipt');
+  const readbackDamage = structuredClone(saved);
+  readbackDamage.publicTrees = [];
+  expect(
+    evaluateTurn(saveExpectation, readbackDamage, { sourcePredicatePolicy: 'mechanical' }),
+  ).toContain('public-tree-postcondition');
+  const retainedReadbackDamage = structuredClone(serializedSave);
+  retainedReadbackDamage.publicReadback = [];
+  expect(
+    regradeRetainedTurn(saveExpectation, retainedReadbackDamage, serialized.trace, {
+      oneBasedTurn: 3,
+      sourcePredicatePolicy: 'mechanical',
+    }).failures,
+  ).toContain('public-tree-postcondition');
+});
 
 it.each(['ru', 'en'] as const)(
   'qualifies an open goal hierarchy without prescribing the model’s individual steps (%s)',

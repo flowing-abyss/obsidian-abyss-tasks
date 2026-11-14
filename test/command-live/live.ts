@@ -12,6 +12,9 @@ import {
   diagnosticOutcome,
   evaluationPolicyVersion,
   safeDiagnostic,
+  semanticContentReview,
+  sourcePredicatePolicy,
+  sourcePredicateScope,
   summarizeCompletionRequests,
 } from './diagnostics';
 import { runCase, temporalContext, type CaseReport } from './harness';
@@ -63,6 +66,9 @@ async function metadata() {
   );
   return {
     evaluationPolicyVersion,
+    sourcePredicatePolicy,
+    sourcePredicateScope,
+    semanticContentReview,
     commit: execFileSync('/usr/bin/git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
     diffHash: digest(
       execFileSync('/usr/bin/git', ['diff', '--binary'], {
@@ -296,7 +302,7 @@ async function campaign(input: Record<string, unknown>) {
     await persist();
   }
   process.stdout.write(
-    `Command evaluation: ${String(manifest['outcome'])}; ${reports.length}/${selected.length} cases; ${budget.used} metered requests. Reports: ${out}\n`,
+    `Command evaluation: ${String(manifest['outcome'])}; ${reports.length}/${selected.length} cases; ${budget.used} metered requests. Source predicates: ${sourcePredicatePolicy} (${sourcePredicateScope}); independent content review: ${semanticContentReview}. Reports: ${out}\n`,
   );
   return manifest['outcome'];
 }

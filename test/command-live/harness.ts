@@ -40,6 +40,9 @@ import {
   EvalBoundaryFailure,
   evaluationPolicyVersion,
   httpCode,
+  semanticContentReview,
+  sourcePredicatePolicy,
+  sourcePredicateScope,
   transportCode,
 } from './diagnostics';
 import {
@@ -394,6 +397,9 @@ async function inventory(api: TasksApiV1) {
 }
 export interface CaseReport {
   evaluationPolicyVersion: typeof evaluationPolicyVersion;
+  sourcePredicatePolicy: typeof sourcePredicatePolicy;
+  sourcePredicateScope: typeof sourcePredicateScope;
+  semanticContentReview: typeof semanticContentReview;
   id: string;
   family: string;
   bilingual?: EvalCase['bilingual'];
@@ -1060,12 +1066,10 @@ async function runTurn(input: {
     ),
   };
   const retainedTurn = { ...evidence, inputSnapshot, snapshot, publicReadback } as RetainedTurn;
-  const regraded = regradeRetainedTurn(
-    turn.expect,
-    retainedTurn,
-    report.trace,
-    report.activeTurn ?? 0,
-  );
+  const regraded = regradeRetainedTurn(turn.expect, retainedTurn, report.trace, {
+    oneBasedTurn: report.activeTurn ?? 0,
+    sourcePredicatePolicy,
+  });
   const failures = regraded.failures;
   const providerDiagnostics = classifyCompletionRecovery(report.trace.slice(traceStart));
   appendTurnFailures(failures, { trace: report.trace, traceStart, budget, providerDiagnostics });
@@ -1092,6 +1096,9 @@ function initialReport(test: EvalCase, provider: EvalOptions['provider']): CaseR
   const liveSource = provider === 'local' ? 'local-server' : 'live-provider';
   return {
     evaluationPolicyVersion,
+    sourcePredicatePolicy,
+    sourcePredicateScope,
+    semanticContentReview,
     id: test.id,
     family: test.family,
     behavior: caseBehavior(test),
