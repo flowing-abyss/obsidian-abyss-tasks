@@ -647,7 +647,7 @@ function installNativeTrace(
         ]),
       );
     } else if (sourceName === 'assess_research') {
-      result['allowed'] = observedBooleanField(fields, 'allowed');
+      result['authorized'] = observedBooleanField(fields, 'authorized');
       result['requiresTaskPreparation'] = observedBooleanField(fields, 'requiresTaskPreparation');
     }
     return result;

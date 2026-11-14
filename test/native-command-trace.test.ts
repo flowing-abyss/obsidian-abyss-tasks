@@ -1782,7 +1782,7 @@ describe('native command trace installer', () => {
           toolName: 'assess_research',
           toolCallId: 'assess-enabled-call',
           input: JSON.stringify({
-            allowed: true,
+            authorized: true,
             requiresTaskPreparation: false,
             reason: 'PRIVATE_REASON_CANARY',
           }),
@@ -1791,14 +1791,14 @@ describe('native command trace installer', () => {
           type: 'tool-call',
           toolName: 'assess_research',
           toolCallId: 'assess-denied-call',
-          input: JSON.stringify({ allowed: false }),
+          input: JSON.stringify({ authorized: false }),
         },
         {
           type: 'tool-call',
           toolName: 'assess_research',
           toolCallId: 'assess-invalid-call',
           input: JSON.stringify({
-            allowed: enumCanary,
+            authorized: enumCanary,
             requiresTaskPreparation: 'PRIVATE_REQUIRES_PREPARATION_CANARY',
             reason: 'PRIVATE_REASON_CANARY',
           }),
@@ -1911,19 +1911,19 @@ describe('native command trace installer', () => {
       {
         sourceName: 'assess_research',
         callOrdinal: 4,
-        allowed: { status: 'valid', value: true },
+        authorized: { status: 'valid', value: true },
         requiresTaskPreparation: { status: 'valid', value: false },
       },
       {
         sourceName: 'assess_research',
         callOrdinal: 5,
-        allowed: { status: 'valid', value: false },
+        authorized: { status: 'valid', value: false },
         requiresTaskPreparation: { status: 'omitted' },
       },
       {
         sourceName: 'assess_research',
         callOrdinal: 6,
-        allowed: { status: 'invalid', shape: { type: 'string', length: enumCanary.length } },
+        authorized: { status: 'invalid', shape: { type: 'string', length: enumCanary.length } },
         requiresTaskPreparation: {
           status: 'invalid',
           shape: { type: 'string', length: 'PRIVATE_REQUIRES_PREPARATION_CANARY'.length },
@@ -1932,7 +1932,7 @@ describe('native command trace installer', () => {
       {
         sourceName: 'assess_research',
         callOrdinal: 7,
-        allowed: { status: 'omitted' },
+        authorized: { status: 'omitted' },
         requiresTaskPreparation: { status: 'omitted' },
       },
       {

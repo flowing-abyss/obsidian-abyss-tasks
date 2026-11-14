@@ -1,5 +1,6 @@
 import { APICallError } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
+import { Platform } from 'obsidian';
 import { afterEach, expect, it, vi } from 'vitest';
 import type {
   ContentPlanV1,
@@ -31,6 +32,11 @@ import { ProviderFailure } from '../src/ai/providers/providerFailure';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { toStatusRules } from '../src/settings/statusCatalogAdapter';
 import { StatusCatalog } from '../src/tasks/domain/StatusCatalog';
+import {
+  buildNativeTraceInstallEval,
+  buildNativeTraceReadEval,
+  buildNativeTraceRestoreEval,
+} from '../tooling/native-command-trace.mjs';
 import { deferred, expectDefined, methodOf } from './helpers';
 import { publicApiHarness, type PublicApiHarness } from './support/publicApiHarness';
 import { scriptedWriteReview } from './support/scriptedWriteReview';
@@ -9241,6 +9247,92 @@ it('sends only trusted user instructions to the production research reviewer', a
   expect(serialized).not.toContain('private secrets');
   expect(JSON.stringify(h.model.doGenerateCalls[2]?.prompt)).toContain('private secrets');
   expect(h.session.snapshot().status.kind).toBe('ready');
+});
+it('traces the production default research reviewer authorized decision', async () => {
+  const h = await setup({ 'a.md': '- [ ] Root\n' }, {}, undefined, {
+    reviewWrite: 'native',
+    reviewResearch: 'native',
+  });
+  const search = vi.spyOn(h.research, 'search');
+  const originalGenerate = h.model.doGenerate;
+  const plugin = {
+    providerConnections: { model: () => h.model },
+    commandResearch: {
+      search,
+      readPage: async () => ({ status: 'unavailable' }),
+    },
+  };
+  const originalModelSelector = plugin.providerConnections.model;
+  const originalSearch = plugin.commandResearch.search;
+  const originalReadPage = plugin.commandResearch.readPage;
+  const app = { plugins: { plugins: { 'abyss-tasks': plugin } } };
+  const root = {} as Record<string, unknown>;
+  expect(plugin.providerConnections.model()).toBe(h.model);
+  const vm = await (async () => {
+    if (!Platform.isDesktop) throw new Error('native-trace-test-requires-desktop');
+    return import('node:vm');
+  })();
+  const context = vm.createContext({
+    app,
+    window: root,
+    URL,
+    performance,
+    crypto: window.crypto,
+    TextEncoder,
+  });
+  const modelId = h.model.modelId;
+  const traceKey = '__abyssCommandAgentResearchTrace__';
+  const installed = vm.runInContext(
+    buildNativeTraceInstallEval('https://example.test/source', modelId, traceKey),
+    context,
+  ) as { installed: boolean };
+  expect(installed.installed).toBe(true);
+  expect(plugin.providerConnections.model()).toBe(h.model);
+
+  try {
+    h.script(
+      () => call('research', { query: 'PRIVATE_RESEARCH_QUERY_CANARY' }),
+      () => call('assess_research', { authorized: true }),
+      finish(),
+    );
+    await h.session.submit('Research the current source.');
+
+    const reviewer = researchReviewCall(h);
+    expect(reviewer.tools).toHaveLength(1);
+    const reviewerTool = reviewer.tools?.[0];
+    expect(reviewerTool?.type).toBe('function');
+    if (reviewerTool?.type !== 'function') throw new Error('missing-default-reviewer-schema');
+    expect(reviewerTool).toMatchObject({ name: 'assess_research' });
+    expect(reviewerTool.inputSchema).toMatchObject({
+      type: 'object',
+      properties: { authorized: { type: 'boolean' } },
+      required: ['authorized'],
+      additionalProperties: false,
+    });
+    expect(search).toHaveBeenCalledOnce();
+    expect(h.session.snapshot().status.kind).toBe('ready');
+
+    const trace = JSON.parse(
+      String(vm.runInContext(buildNativeTraceReadEval(traceKey), context)),
+    ) as { generations: Array<{ commandInputs?: Array<Record<string, unknown>> }> };
+    expect(
+      trace.generations.flatMap((generation) => generation.commandInputs ?? []),
+    ).toContainEqual({
+      sourceName: 'assess_research',
+      generationOrdinal: 2,
+      callOrdinal: 1,
+      representation: 'json-string',
+      authorized: { status: 'valid', value: true },
+      requiresTaskPreparation: { status: 'omitted' },
+    });
+    expect(JSON.stringify(trace)).not.toContain('PRIVATE_RESEARCH_QUERY_CANARY');
+  } finally {
+    vm.runInContext(buildNativeTraceRestoreEval(traceKey), context);
+    expect(h.model.doGenerate).toBe(originalGenerate);
+    expect(plugin.providerConnections.model).toBe(originalModelSelector);
+    expect(plugin.commandResearch.search).toBe(originalSearch);
+    expect(plugin.commandResearch.readPage).toBe(originalReadPage);
+  }
 });
 it('does not invoke the default research assessor for ordinary work', async () => {
   const h = await setup({ 'a.md': '- [ ] Root\n' }, {}, undefined, {

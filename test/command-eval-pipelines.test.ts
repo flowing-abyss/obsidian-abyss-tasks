@@ -6,6 +6,7 @@ import { parseRecurrenceRule } from '../src/tasks';
 import { submittedMessage } from './command-live/controls';
 import { actions, pipelines, selectCases, type EvalCase } from './command-live/corpus';
 import { files, tree } from './command-live/fixtures';
+import { traceWriteAdmissionFailures } from './command-live/harness';
 import {
   evaluateTurn,
   regradeRetainedTurn,
@@ -2692,6 +2693,44 @@ it('qualifies 073 native project creation by exact source, public identity and c
   expect(actual.admissions).toContainEqual(
     expect.objectContaining({ id: entry.id, state: 'admitted' }),
   );
+  const canonicalTrace = structuredClone(report.trace);
+  expect(traceWriteAdmissionFailures(canonicalTrace)).toEqual([]);
+  const dispatch = expectDefined(canonicalTrace.find((event) => event.kind === 'write-dispatch'));
+  const requestId = object(object(dispatch.data)['input'])['requestId'];
+  const isAdmittedSnapshot = (event: RetainedTraceEvent) =>
+    event.kind === 'durable-journal' &&
+    Array.isArray(object(event.data)['journal']) &&
+    (object(event.data)['journal'] as unknown[]).some(
+      (raw) =>
+        object(object(raw)['request'])['requestId'] === requestId &&
+        object(raw)['state'] === 'admitted',
+    );
+  const withoutAdmission = canonicalTrace
+    .map((event) => {
+      if (event.kind !== 'durable-journal' || event.sequence >= dispatch.sequence) return event;
+      const data = object(event.data);
+      if (!Array.isArray(data['journal'])) return event;
+      return {
+        ...event,
+        data: {
+          ...data,
+          journal: (data['journal'] as unknown[]).filter(
+            (raw) =>
+              object(object(raw)['request'])['requestId'] !== requestId ||
+              object(raw)['state'] !== 'admitted',
+          ),
+        },
+      };
+    })
+    .map((event, index) => ({ ...event, sequence: index + 1 }));
+  expect(traceWriteAdmissionFailures(withoutAdmission)).toContain('write-before-admission');
+  const admissionAfterDispatch = canonicalTrace
+    .map((event) =>
+      isAdmittedSnapshot(event) ? { ...event, sequence: dispatch.sequence + 0.5 } : event,
+    )
+    .sort((left, right) => left.sequence - right.sequence)
+    .map((event, index) => ({ ...event, sequence: index + 1 }));
+  expect(traceWriteAdmissionFailures(admissionAfterDispatch)).toContain('write-before-admission');
   const project = expectDefined(
     actual.snapshot.entities.projects.find((item) => item.path === path),
   );

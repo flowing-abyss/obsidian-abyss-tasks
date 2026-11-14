@@ -881,7 +881,7 @@ async function inboxEvidence(
     ),
   };
 }
-function traceWriteAdmissionFailures(trace: readonly TraceEvent[]): string[] {
+export function traceWriteAdmissionFailures(trace: readonly TraceEvent[]): string[] {
   return trace.flatMap((event) => {
     if (event.kind !== 'write-dispatch') return [];
     const requestId = object(object(event.data)['input'])['requestId'];
