@@ -258,7 +258,7 @@ function schemaRepairMessage(name: string, input: string, error: unknown): strin
     return `${common}For whole-task deletion use change_task with the matched row’s issued edit and operation:{"type":"remove"}, complete:true. This previews the entire subtree.`;
   if (name === 'task') return common + taskSchemaRepair(input);
   if (name === 'create_task')
-    return `${common}${creationGrammar}; requested facts only, metadata in tree.initial, never stringify containers.`;
+    return `${common}${creationGrammar}; requested facts only. At every depth, initial is metadata only; keep descriptions, comments, and children beside it. Move misplaced fields without losing values; never stringify containers.`;
   if (name === 'change_task')
     return `${common}Use owner’s issued edit; preserve values; fix reported leaf.`;
   if (name === 'interpret') return common + controlSchemaRepair(input);

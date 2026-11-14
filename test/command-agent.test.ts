@@ -144,6 +144,193 @@ it('keeps preparation feedback within the existing paged output bound', async ()
   expect(output).toHaveProperty('readHint');
   expect(JSON.stringify(output).length).toBeLessThanOrEqual(65536);
 });
+it('adds local no-op feedback only for a current unchanged plan and keeps paging intact', async () => {
+  const h = await setup({ 'a.md': '' });
+  const result = await expectDefined(h.api.tasks.prepare)({
+    kind: 'create',
+    destination: { type: 'configured-default' },
+    tree: { markdownTitle: 'Sensor' },
+  });
+  if (!result.ok || result.value.after === null) throw Error('Missing plan');
+  const plan = result.value;
+  const noOpText =
+    'This plan has no authored differences relative to saved source; nothing has been saved. An undo may be complete, but other requested changes need their own operations before finish. Use the current issued edit aliases.';
+  const noOp = record(planToolOutput({ ...plan, hasChanges: false }));
+  expect(noOp).toHaveProperty('preparation', noOpText);
+  const canonical = { ...noOp };
+  delete canonical['preparation'];
+  expect(canonical).toMatchObject(plan);
+  expect(canonical).toHaveProperty('selection.expectedPlanRevision', plan.revision);
+  expect(record(planToolOutput({ ...plan, hasChanges: true }))).toHaveProperty(
+    'preparation',
+    expect.stringContaining('Preview accepted'),
+  );
+  expect(record(planToolOutput(plan))).toHaveProperty(
+    'preparation',
+    expect.stringContaining('Preview accepted'),
+  );
+  expect(record(planToolOutput({ ...plan, hasChanges: false }, false))).not.toHaveProperty(
+    'preparation',
+  );
+
+  const after = expectDefined(plan.after);
+  const original = JSON.stringify({
+    ...plan,
+    selection: {
+      kind: 'task',
+      target: after.target,
+      plan: plan.target,
+      expectedPlanRevision: plan.revision,
+    },
+  }).length;
+  const padded = {
+    ...plan,
+    hasChanges: false,
+    after: { ...after, entries: ['x'.repeat(65530 - original - 2)] },
+  } as unknown as ContentPlanV1;
+  const paged = record(planToolOutput(padded));
+  expect(paged).toHaveProperty('preparation', noOpText);
+  expect(paged).toHaveProperty('contextTruncated', true);
+  expect(paged).toHaveProperty('after.complete', false);
+  expect(paged).toHaveProperty('readHint');
+  expect(paged).toHaveProperty('hasChanges', false);
+  expect(paged).toHaveProperty('selection.expectedPlanRevision', plan.revision);
+  expect(JSON.stringify(paged).length).toBeLessThanOrEqual(65536);
+});
+it('completes an undo-only no-op restore without another model request', async () => {
+  const source = '- [ ] North Proof #north 📅 2026-11-18\n';
+  const h = await setup({ 'a.md': source });
+  h.script(
+    () => call('find', { query: 'North Proof', purpose: 'change' }),
+    () => call('find', { query: 'North Proof', purpose: 'change', showExact: true }),
+    () =>
+      call('change_task', {
+        edit: projectedEdit(h, 'North Proof'),
+        operation: { type: 'patch', patch: { due: { type: 'set', value: '2026-11-21' } } },
+        complete: true,
+      }),
+  );
+  await h.session.submit('Change North Proof to November 21.');
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  expect(await h.read('a.md')).toBe(source);
+
+  const beforeRestore = h.model.doGenerateCalls.length;
+  h.script(() =>
+    call('change_task', {
+      edit: projectedEdit(h, 'North Proof'),
+      operation: { type: 'patch', patch: { due: { type: 'set', value: '2026-11-18' } } },
+      complete: true,
+    }),
+  );
+  await h.session.submit('Restore North Proof to November 18; that is the whole request.');
+  expect(h.model.doGenerateCalls).toHaveLength(beforeRestore + 1);
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(h.session.snapshot().trees[0]?.after?.dates.due).toBe('2026-11-18');
+  const plan = h.session.snapshot().proposal.changes[0];
+  if (plan?.kind !== 'task') throw Error('Missing canonical no-op restore');
+  expect(plan.plan).toHaveProperty('hasChanges', false);
+  expect(record(planToolOutput(plan.plan))).toHaveProperty(
+    'preparation',
+    expect.stringContaining('An undo may be complete'),
+  );
+  expect(await h.read('a.md')).toBe(source);
+});
+
+it('preserves a canonical sibling no-op restore and an independent edit together', async () => {
+  const source = [
+    '# Telescope work',
+    'Protected introduction stays byte-for-byte.',
+    '- [ ] North Proof #north 📅 2026-11-18',
+    '\t- [ ] North child ⏳ 2026-11-16',
+    '\t- 2026-11-14 09:00 North original.',
+    '- [ ] South Proof #south #shared 📅 2026-11-25 ⏳ 2026-11-12',
+    '\t- [ ] South child',
+    '\t- 2026-11-14 09:01 South original.',
+    '- [ ] Untouched [x:: keep]',
+    'Protected ending stays byte-for-byte.',
+    '',
+  ].join('\n');
+  const h = await setup({ 'a.md': source, 'Other.md': 'Unrelated bytes.\n' });
+  const listed = await h.api.tasks.list({ path: 'a.md' });
+  if (!listed.ok) throw Error('Missing canonical tasks');
+  const north = expectDefined(listed.value.items.find((item) => item.title === 'North Proof'));
+  const south = expectDefined(listed.value.items.find((item) => item.title === 'South Proof'));
+  const prepare = expectDefined(h.api.tasks.prepare);
+  const pending = await prepare({
+    kind: 'edit',
+    target: north.target,
+    expectedRevision: north.revision,
+    operation: {
+      type: 'patch',
+      target: north.target,
+      patch: { due: { type: 'set', value: '2026-11-21' } },
+    },
+  });
+  if (!pending.ok) throw Error(pending.error.code);
+  const restored = await prepare({
+    kind: 'append',
+    plan: pending.value.target,
+    expectedPlanRevision: pending.value.revision,
+    operation: {
+      type: 'patch',
+      target: north.target,
+      patch: { due: { type: 'set', value: '2026-11-18' } },
+    },
+  });
+  if (!restored.ok) throw Error(restored.error.code);
+  const sibling = await prepare({
+    kind: 'edit',
+    target: south.target,
+    expectedRevision: south.revision,
+    operation: {
+      type: 'patch',
+      target: south.target,
+      patch: { due: { type: 'set', value: '2026-11-21' } },
+    },
+  });
+  if (!sibling.ok) throw Error(sibling.error.code);
+  const alreadySatisfied = await prepare({
+    kind: 'edit',
+    target: south.target,
+    expectedRevision: south.revision,
+    operation: {
+      type: 'patch',
+      target: south.target,
+      patch: { due: { type: 'set', value: '2026-11-25' } },
+    },
+  });
+  if (!alreadySatisfied.ok) throw Error(alreadySatisfied.error.code);
+  expect(restored.value).toHaveProperty('hasChanges', false);
+  expect(alreadySatisfied.value).toHaveProperty('hasChanges', false);
+  expect(record(planToolOutput(restored.value))).toHaveProperty(
+    'preparation',
+    expect.stringContaining('no authored differences relative to saved source'),
+  );
+  h.session.stage({ kind: 'task', plan: restored.value });
+  h.session.stage({ kind: 'task', plan: sibling.value });
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(h.session.snapshot().trees.map((tree) => tree.after?.title)).toEqual([
+    'North Proof',
+    'South Proof',
+  ]);
+  expect(h.session.snapshot().trees[0]?.after).toMatchObject({
+    title: 'North Proof',
+    tags: ['#north'],
+    dates: { due: '2026-11-18' },
+    comments: [{ text: '2026-11-14 09:00 North original.' }],
+    children: [{ title: 'North child', dates: { scheduled: '2026-11-16' } }],
+  });
+  expect(h.session.snapshot().trees[1]?.after).toMatchObject({
+    title: 'South Proof',
+    tags: ['#south', '#shared'],
+    dates: { due: '2026-11-21', scheduled: '2026-11-12' },
+    comments: [{ text: '2026-11-14 09:01 South original.' }],
+    children: [{ title: 'South child' }],
+  });
+  expect(await h.read('a.md')).toBe(source);
+  expect(await h.read('Other.md')).toBe('Unrelated bytes.\n');
+});
 
 it('does not label discovery, lifecycle staging or cancelled drafts as prepared task previews', async () => {
   const h = await setup();
@@ -7068,6 +7255,184 @@ it('returns bounded validation paths without accepting preparation in interpreta
   expect(feedback).toContain('Ordinary work needs no interpret');
   expect(h.session.snapshot().status.kind).toBe('ready');
   expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+});
+
+it('repairs recursive creation placement without staging or losing authored content', async () => {
+  const h = await setupCountedPreparation();
+  const source = '- [ ] Existing [unknown:: keep]\n';
+  const invalidRoot = {
+    markdownTitle: 'Assemble telescope',
+    initial: {
+      scheduled: { type: 'set', value: '2026-12-03' },
+      description: 'Align the base.',
+      comments: [{ text: 'Use the brass screws.' }],
+      children: [
+        {
+          markdownTitle: 'Level tripod',
+          initial: {
+            due: { type: 'set', value: '2026-12-05' },
+            description: 'Set all three feet evenly.',
+            comments: [{ text: 'Check the bubble twice.' }],
+            children: [
+              {
+                markdownTitle: 'Attach mount',
+                initial: {
+                  priority: { type: 'set', value: 'C' },
+                  description: 'Keep the locking pin visible.',
+                  comments: [{ text: 'Do not overtighten.' }],
+                },
+              },
+            ],
+          },
+        },
+        { markdownTitle: 'Fit finder scope', initial: { description: 'Center Polaris.' } },
+      ],
+    },
+  };
+  const partlyFixed = {
+    markdownTitle: 'Assemble telescope',
+    initial: { scheduled: { type: 'set', value: '2026-12-03' } },
+    description: 'Align the base.',
+    comments: [{ text: 'Use the brass screws.' }],
+    children: [
+      {
+        markdownTitle: 'Level tripod',
+        initial: {
+          due: { type: 'set', value: '2026-12-05' },
+          description: 'Set all three feet evenly.',
+          comments: [{ text: 'Check the bubble twice.' }],
+          children: [
+            {
+              markdownTitle: 'Attach mount',
+              initial: {
+                priority: { type: 'set', value: 'C' },
+                description: 'Keep the locking pin visible.',
+                comments: [{ text: 'Do not overtighten.' }],
+              },
+            },
+          ],
+        },
+      },
+      { markdownTitle: 'Fit finder scope', initial: { description: 'Center Polaris.' } },
+    ],
+  };
+  const validTree = {
+    ...partlyFixed,
+    children: [
+      {
+        markdownTitle: 'Level tripod',
+        description: 'Set all three feet evenly.',
+        comments: [{ text: 'Check the bubble twice.' }],
+        initial: { due: { type: 'set', value: '2026-12-05' } },
+        children: [
+          {
+            markdownTitle: 'Attach mount',
+            description: 'Keep the locking pin visible.',
+            comments: [{ text: 'Do not overtighten.' }],
+            initial: { priority: { type: 'set', value: 'C' } },
+          },
+        ],
+      },
+      { markdownTitle: 'Fit finder scope', description: 'Center Polaris.' },
+    ],
+  };
+  let rootFeedback = '';
+  let descendantFeedback = '';
+  h.script(
+    () => call('create_task', { tree: invalidRoot }),
+    () => {
+      rootFeedback = JSON.stringify(
+        h.model.doGenerateCalls[h.model.doGenerateCalls.length - 1]?.prompt.filter(
+          (message) => message.role === 'tool',
+        ),
+      );
+      expect(h.preparations()).toBe(0);
+      expect(h.session.snapshot().proposal.changes).toEqual([]);
+      expect(h.session.snapshot().journal).toEqual([]);
+      return call('create_task', { tree: partlyFixed });
+    },
+    () => {
+      descendantFeedback = JSON.stringify(
+        h.model.doGenerateCalls[h.model.doGenerateCalls.length - 1]?.prompt.filter(
+          (message) => message.role === 'tool',
+        ),
+      );
+      expect(h.preparations()).toBe(0);
+      expect(h.session.snapshot().proposal.changes).toEqual([]);
+      expect(h.session.snapshot().journal).toEqual([]);
+      return call('create_task', { tree: validTree, complete: true });
+    },
+  );
+  await h.session.submit('Prepare Assemble telescope with its setup steps.');
+  expect(rootFeedback).toContain('tree.initial: unrecognized_keys');
+  expect(descendantFeedback).toContain('tree.children.0.initial: unrecognized_keys');
+  expect(descendantFeedback).toContain('At every depth');
+  expect(h.preparations()).toBe(1);
+  expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+  expect(h.session.snapshot().trees[0]?.after).toMatchObject({
+    title: 'Assemble telescope',
+    description: 'Align the base.',
+    dates: { scheduled: '2026-12-03' },
+    comments: [{ text: 'Use the brass screws.' }],
+    children: [
+      {
+        title: 'Level tripod',
+        description: 'Set all three feet evenly.',
+        dates: { due: '2026-12-05' },
+        children: [
+          {
+            title: 'Attach mount',
+            description: 'Keep the locking pin visible.',
+            priority: 'C',
+            comments: [{ text: 'Do not overtighten.' }],
+          },
+        ],
+        comments: [{ text: 'Check the bubble twice.' }],
+      },
+      { title: 'Fit finder scope', description: 'Center Polaris.' },
+    ],
+  });
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(await h.read('a.md')).toBe(source);
+});
+it('exhausts repeated recursive creation placement errors without preparing or writing', async () => {
+  const source = '- [ ] Existing [unknown:: keep]\n';
+  const h = await setupCountedPreparation();
+  const malformedRoot = {
+    markdownTitle: 'Sort equipment',
+    initial: {
+      description: 'Keep every item.',
+      children: [
+        {
+          markdownTitle: 'Sort cables',
+          initial: { description: 'Group by length.' },
+        },
+      ],
+    },
+  };
+  const partial = {
+    markdownTitle: 'Sort equipment',
+    description: 'Keep every item.',
+    children: [
+      {
+        markdownTitle: 'Sort cables',
+        initial: { description: 'Group by length.' },
+      },
+    ],
+  };
+  h.script(
+    () => call('create_task', { tree: malformedRoot }),
+    () => call('create_task', { tree: partial }),
+    () => call('create_task', { tree: partial }),
+  );
+  await h.session.submit('Prepare a task to sort equipment.');
+  expect(h.model.doGenerateCalls).toHaveLength(3);
+  expect(h.session.snapshot().status.kind).toBe('error');
+  expect(h.session.snapshot().proposal.changes).toEqual([]);
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(h.preparations()).toBe(0);
+  expect(await h.read('a.md')).toBe(source);
 });
 
 it('repairs a rejected comment leaf without changing its supplied text', async () => {

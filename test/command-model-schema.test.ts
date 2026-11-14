@@ -13,6 +13,13 @@ import {
   readSchema,
   taskArgumentsSchema,
 } from '../src/ai/commandSchemas';
+type SchemaDefinition = SchemaProjection | boolean;
+type SchemaProjection = {
+  $ref?: string | undefined;
+  $defs?: Record<string, SchemaDefinition> | undefined;
+  properties?: Record<string, SchemaDefinition> | undefined;
+  [key: string]: unknown;
+};
 
 it('keeps interpretation independent of task preparation and rejects bundled work', async () => {
   const schema = modelToolSchema(intentSchema);
@@ -281,6 +288,52 @@ function resolvePointer(root: unknown, ref: string): unknown {
       return Reflect.get(value, token.replaceAll('~1', '/').replaceAll('~0', '~')) as unknown;
     }, root);
 }
+async function assertRecursiveCreationMetadataProjection(
+  schema: ReturnType<typeof modelToolSchema>,
+) {
+  const shown = await schema.jsonSchema;
+  const tree = shown.properties?.['tree'];
+  if (typeof tree !== 'object') throw new Error('Missing tree');
+  const guidance =
+    'Task metadata only. At every tree node, description, comments, and children belong beside initial, never inside it.';
+  expect(tree.properties?.['initial']).toHaveProperty('description', guidance);
+  expect(tree.properties?.['initial']).toHaveProperty('additionalProperties', false);
+  expect(tree.properties?.['initial']).not.toHaveProperty('properties.due.description');
+  expect(tree.properties?.['description']).not.toHaveProperty('description');
+  assertRecursiveDefinition(
+    shown as unknown as SchemaProjection,
+    tree as unknown as SchemaProjection,
+    guidance,
+  );
+}
+
+function assertRecursiveDefinition(
+  shown: SchemaProjection,
+  tree: SchemaProjection,
+  guidance: string,
+) {
+  const recursiveName = tree.$ref?.replace('#/$defs/', '');
+  const recursiveSeed = shown.$defs?.[recursiveName ?? ''];
+  if (typeof recursiveSeed !== 'object') throw new Error('Missing recursive creation definition');
+  expect(recursiveSeed).toHaveProperty('properties.initial.description', guidance);
+}
+
+async function assertRecursiveCreationValidation(schema: ReturnType<typeof modelToolSchema>) {
+  const valid = await schema.validate?.({
+    tree: {
+      markdownTitle: 'Parent',
+      children: [{ markdownTitle: 'Child', children: [{ markdownTitle: 'Leaf' }] }],
+    },
+  });
+  const misplaced = await schema.validate?.({
+    tree: {
+      markdownTitle: 'Parent',
+      children: [{ markdownTitle: 'Child', initial: { description: 'Misplaced.' } }],
+    },
+  });
+  expect(valid).toHaveProperty('success', true);
+  expect(misplaced).toHaveProperty('success', false);
+}
 function localReferences(value: unknown): string[] {
   if (value === null || typeof value !== 'object') return [];
   return Object.entries(value).flatMap(([key, child]: [string, unknown]) =>
@@ -477,6 +530,11 @@ it('shows one creation-tree level while retaining recursive definition and canon
   expect(
     await schema.validate?.({ tree: { markdownTitle: 'Read', scheduled: '2027-03-18' } }),
   ).toHaveProperty('success', false);
+});
+it('exposes recursive initial guidance without loosening creation validation', async () => {
+  const schema = modelToolSchema(createTaskSchema, 'create_task');
+  await assertRecursiveCreationMetadataProjection(schema);
+  await assertRecursiveCreationValidation(schema);
 });
 it('keeps malformed finish and mixed controls invalid despite visible mirrors', async () => {
   const finish = modelToolSchema(finishSchema, 'finish');

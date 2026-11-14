@@ -62,7 +62,10 @@ const patchSchema = z.strictObject({
 });
 const initial = patchSchema
   .omit({ markdownTitle: true })
-  .extend({ statusSymbol: z.string().length(1).optional() });
+  .extend({ statusSymbol: z.string().length(1).optional() })
+  .describe(
+    'Task metadata only. At every tree node, description, comments, and children belong beside initial, never inside it.',
+  );
 const seed: z.ZodType<TaskCreateTreeV1> = z.lazy(() =>
   z.strictObject({
     markdownTitle: activityTitle,
@@ -957,7 +960,9 @@ export function planToolOutput(
   const feedback = currentOperation
     ? {
         preparation:
-          'Preview accepted; this operation has not saved source content. If the request is complete, finish; otherwise refine through its issued edit alias. Create again only for another requested task.',
+          plan.hasChanges === false
+            ? 'This plan has no authored differences relative to saved source; nothing has been saved. An undo may be complete, but other requested changes need their own operations before finish. Use the current issued edit aliases.'
+            : 'Preview accepted; this operation has not saved source content. If the request is complete, finish; otherwise refine through its issued edit alias. Create again only for another requested task.',
       }
     : {};
   const selection =

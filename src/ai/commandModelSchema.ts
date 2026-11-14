@@ -255,10 +255,10 @@ function combine(left: Definition, right: Definition): JsonSchema {
     enum: values,
   };
 }
-function presentationField(field: Definition): Definition {
+function presentationField(field: Definition, preserveRootDescription = false): Definition {
   const visit: Visit = (node, path) => {
     const result = children(node, path, visit);
-    delete result.description;
+    if (!preserveRootDescription || path.length > 0) delete result.description;
     return result;
   };
   return typeof field === 'boolean' ? field : visit(field, []);
@@ -317,7 +317,7 @@ function visibleTree(schema: JsonSchema): JsonSchema {
         properties: Object.fromEntries(
           Object.entries(definition.properties ?? {}).map(([key, field]) => [
             key,
-            presentationField(field),
+            presentationField(field, key === 'initial'),
           ]),
         ),
         required: definition.required,
