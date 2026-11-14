@@ -294,38 +294,39 @@ interface PendingReveal {
   readonly signal: AbortSignal;
   settle(accepted: boolean): void;
 }
+// Public operations and detached snapshots are the boundary; live session state is not reflected or serialized.
 export class CommandSession {
-  private state: CommandSessionSnapshot;
-  private published: CommandSessionSnapshot | undefined;
-  private readonly listeners = new Set<(state: CommandSessionSnapshot) => void>();
-  private turn: AbortController | undefined;
-  private running: Promise<void> | undefined;
-  private pendingWrite: Promise<boolean> | undefined;
-  private writing = false;
-  private writeAdmission: AbortController | undefined;
-  private disposed = false;
-  private focusRun = 0;
-  private pendingReveal: PendingReveal | undefined;
-  private acceptance = 0;
-  private queuedInput: { text: string; current(): boolean } | undefined;
-  private inputRevision = 0;
-  private editRevision = 0;
-  private inputDraft = false;
-  private noteReviewRequired = false;
-  private turnReview: CommandNoteReview | undefined;
+  private state_abyssPrivate: CommandSessionSnapshot;
+  private published_abyssPrivate: CommandSessionSnapshot | undefined;
+  private readonly listeners_abyssPrivate = new Set<(state: CommandSessionSnapshot) => void>();
+  private turn_abyssPrivate: AbortController | undefined;
+  private running_abyssPrivate: Promise<void> | undefined;
+  private pendingWrite_abyssPrivate: Promise<boolean> | undefined;
+  private writing_abyssPrivate = false;
+  private writeAdmission_abyssPrivate: AbortController | undefined;
+  private disposed_abyssPrivate = false;
+  private focusRun_abyssPrivate = 0;
+  private pendingReveal_abyssPrivate: PendingReveal | undefined;
+  private acceptance_abyssPrivate = 0;
+  private queuedInput_abyssPrivate: { text: string; current(): boolean } | undefined;
+  private inputRevision_abyssPrivate = 0;
+  private editRevision_abyssPrivate = 0;
+  private inputDraft_abyssPrivate = false;
+  private noteReviewRequired_abyssPrivate = false;
+  private turnReview_abyssPrivate: CommandNoteReview | undefined;
   requireNoteReview(): void {
-    this.noteReviewRequired = true;
+    this.noteReviewRequired_abyssPrivate = true;
   }
-  constructor(private readonly options: CommandSessionOptions) {
-    this.state = this.empty();
+  constructor(private readonly options_abyssPrivate: CommandSessionOptions) {
+    this.state_abyssPrivate = this.empty_abyssPrivate();
   }
-  private empty(): CommandSessionSnapshot {
+  private empty_abyssPrivate(): CommandSessionSnapshot {
     return {
-      id: this.options.id(),
-      voiceMode: this.options.defaultVoiceMode?.() ?? 'manual',
+      id: this.options_abyssPrivate.id(),
+      voiceMode: this.options_abyssPrivate.defaultVoiceMode?.() ?? 'manual',
       input: '',
       focus: [],
-      context: this.options.context ?? '',
+      context: this.options_abyssPrivate.context ?? '',
       trees: [],
       entities: { tasks: [], projects: [], notes: [] },
       exchanges: [],
@@ -337,67 +338,79 @@ export class CommandSession {
       blocked: false,
     };
   }
-  private presentation: CommandSessionSnapshot['presentation'];
-  private conversationRevision = 0;
+  private presentation_abyssPrivate: CommandSessionSnapshot['presentation'];
+  private conversationRevision_abyssPrivate = 0;
   captureInput(): { dirty: boolean; current(): boolean } {
-    const revision = this.editRevision;
+    const revision = this.editRevision_abyssPrivate;
     return {
-      dirty: this.inputDraft,
-      current: () => !this.disposed && this.editRevision === revision,
+      dirty: this.inputDraft_abyssPrivate,
+      current: () => !this.disposed_abyssPrivate && this.editRevision_abyssPrivate === revision,
     };
   }
   captureSubmission(): { basis: CommandSubmissionBasis; current(): boolean } {
-    const id = this.state.id,
-      revision = this.conversationRevision;
+    const id = this.state_abyssPrivate.id,
+      revision = this.conversationRevision_abyssPrivate;
     return {
-      basis: { sessionId: id, proposalRevision: this.state.proposal.revision },
+      basis: { sessionId: id, proposalRevision: this.state_abyssPrivate.proposal.revision },
       current: () =>
-        !this.disposed && this.state.id === id && this.conversationRevision === revision,
+        !this.disposed_abyssPrivate &&
+        this.state_abyssPrivate.id === id &&
+        this.conversationRevision_abyssPrivate === revision,
     };
   }
   setVoiceMode(mode: 'manual' | 'continuous'): void {
-    if (!this.disposed) this.publish({ voiceMode: mode });
+    if (!this.disposed_abyssPrivate) this.publish_abyssPrivate({ voiceMode: mode });
   }
-  private presentationSession = '';
+  private presentationSession_abyssPrivate = '';
   showChanges(signal: AbortSignal): void {
-    if (this.turn?.signal !== signal || signal.aborted) return;
-    this.presentationSession = this.state.id;
-    this.presentation = { proposalRevision: this.state.proposal.revision, changes: 'cumulative' };
-    this.publish({});
+    if (this.turn_abyssPrivate?.signal !== signal || signal.aborted) return;
+    this.presentationSession_abyssPrivate = this.state_abyssPrivate.id;
+    this.presentation_abyssPrivate = {
+      proposalRevision: this.state_abyssPrivate.proposal.revision,
+      changes: 'cumulative',
+    };
+    this.publish_abyssPrivate({});
   }
   snapshot(): CommandSessionSnapshot {
-    if (this.published !== undefined) return this.published;
+    if (this.published_abyssPrivate !== undefined) return this.published_abyssPrivate;
     // State ingress detaches each patch. Frozen siblings can be shared by later publications.
     const copy = {
-      ...this.state,
-      ...(this.presentationSession === this.state.id &&
-      this.presentation?.proposalRevision === this.state.proposal.revision &&
-      this.state.proposal.changes.length > 0
-        ? { presentation: this.presentation }
+      ...this.state_abyssPrivate,
+      ...(this.presentationSession_abyssPrivate === this.state_abyssPrivate.id &&
+      this.presentation_abyssPrivate?.proposalRevision ===
+        this.state_abyssPrivate.proposal.revision &&
+      this.state_abyssPrivate.proposal.changes.length > 0
+        ? { presentation: this.presentation_abyssPrivate }
         : {}),
-      ...(this.pendingReveal === undefined ? {} : { reveal: this.pendingReveal.request }),
+      ...(this.pendingReveal_abyssPrivate === undefined
+        ? {}
+        : { reveal: this.pendingReveal_abyssPrivate.request }),
     };
     freeze(copy);
-    this.published = copy;
+    this.published_abyssPrivate = copy;
     return copy;
   }
   /** The owner calls this only after settling work and persisting selection. */
   restore(snapshot: CommandSessionSnapshot, historical = true): boolean {
-    if (this.disposed || this.writing) return false;
-    this.focusRun++;
-    this.conversationRevision++;
-    this.state = recoverDiscardedSnapshot(detached(snapshot));
-    this.editRevision++;
-    this.inputDraft = this.state.input !== '';
-    Reflect.deleteProperty(this.state, 'reveal');
-    Reflect.deleteProperty(this.state, 'presentation');
-    this.presentation = undefined;
-    if (historical || this.state.recoveryEvidence?.discarded === true) {
+    if (this.disposed_abyssPrivate || this.writing_abyssPrivate) return false;
+    this.focusRun_abyssPrivate++;
+    this.conversationRevision_abyssPrivate++;
+    this.state_abyssPrivate = recoverDiscardedSnapshot(detached(snapshot));
+    this.editRevision_abyssPrivate++;
+    this.inputDraft_abyssPrivate = this.state_abyssPrivate.input !== '';
+    Reflect.deleteProperty(this.state_abyssPrivate, 'reveal');
+    Reflect.deleteProperty(this.state_abyssPrivate, 'presentation');
+    this.presentation_abyssPrivate = undefined;
+    if (historical || this.state_abyssPrivate.recoveryEvidence?.discarded === true) {
       const blocked = hasUnresolvedCommandWrites(snapshot);
-      this.state = { ...this.state, blocked, recovery: blocked ? 'uncertain' : 'historical' };
-      if (['thinking', 'searching', 'writing'].includes(this.state.status.kind))
-        this.state = {
-          ...this.state,
+      this.state_abyssPrivate = {
+        ...this.state_abyssPrivate,
+        blocked,
+        recovery: blocked ? 'uncertain' : 'historical',
+      };
+      if (['thinking', 'searching', 'writing'].includes(this.state_abyssPrivate.status.kind))
+        this.state_abyssPrivate = {
+          ...this.state_abyssPrivate,
           status: blocked
             ? {
                 kind: 'error',
@@ -408,22 +421,27 @@ export class CommandSession {
             : { kind: 'ready', message: commandMessage('Stopped. Your draft is retained.') },
         };
     }
-    this.publish({});
+    this.publish_abyssPrivate({});
     return true;
   }
   readOnly(): boolean {
     return (
-      this.state.blocked ||
-      this.state.recovery === 'historical' ||
-      this.state.recovery === 'uncertain'
+      this.state_abyssPrivate.blocked ||
+      this.state_abyssPrivate.recovery === 'historical' ||
+      this.state_abyssPrivate.recovery === 'uncertain'
     );
   }
   beginReview(): boolean {
-    if (this.disposed || this.writing || this.state.blocked || this.state.recovery === 'uncertain')
+    if (
+      this.disposed_abyssPrivate ||
+      this.writing_abyssPrivate ||
+      this.state_abyssPrivate.blocked ||
+      this.state_abyssPrivate.recovery === 'uncertain'
+    )
       return false;
-    if (this.state.recovery === 'reviewing') return true;
-    const previous = this.state;
-    this.publish({
+    if (this.state_abyssPrivate.recovery === 'reviewing') return true;
+    const previous = this.state_abyssPrivate;
+    this.publish_abyssPrivate({
       recovery: 'reviewing',
       recoveryEvidence: {
         proposal: previous.proposal,
@@ -447,30 +465,37 @@ export class CommandSession {
   }
   finishReview(): void {
     if (
-      this.state.recovery === 'reviewing' &&
-      this.state.proposal.changes.length > 0 &&
-      this.state.activeQuestion === null
+      this.state_abyssPrivate.recovery === 'reviewing' &&
+      this.state_abyssPrivate.proposal.changes.length > 0 &&
+      this.state_abyssPrivate.activeQuestion === null
     )
-      this.publish({ recovery: 'live' });
+      this.publish_abyssPrivate({ recovery: 'live' });
   }
   prepared(value: CommandPreparation): void {
-    if (this.disposed || this.readOnly()) return;
-    this.publish({ preparations: [...(this.state.preparations ?? []), value] });
+    if (this.disposed_abyssPrivate || this.readOnly()) return;
+    this.publish_abyssPrivate({
+      preparations: [...(this.state_abyssPrivate.preparations ?? []), value],
+    });
   }
-  private current(id: string): boolean {
-    return !this.disposed && this.state.id === id;
+  private current_abyssPrivate(id: string): boolean {
+    return !this.disposed_abyssPrivate && this.state_abyssPrivate.id === id;
   }
-  private async refreshOwnedChanges(): Promise<Array<Extract<CommandChange, { kind: 'task' }>>> {
+  private async refreshOwnedChanges_abyssPrivate(): Promise<
+    Array<Extract<CommandChange, { kind: 'task' }>>
+  > {
     const signal = new AbortController().signal;
-    const timing = { now: this.options.now, deadline: this.options.now() + 5000 };
+    const timing = {
+      now: this.options_abyssPrivate.now,
+      deadline: this.options_abyssPrivate.now() + 5000,
+    };
     const changes: Array<Extract<CommandChange, { kind: 'task' }>> = [];
-    for (const change of this.state.proposal.changes) {
+    for (const change of this.state_abyssPrivate.proposal.changes) {
       if (change.kind !== 'task')
         throw new CommandFailure('REVIEW', commandMessage('Review this preview again.'));
       const page = await commandRead(
-        this.options.api,
+        this.options_abyssPrivate.api,
         () =>
-          required(this.options.api.tasks.prepare)({
+          required(this.options_abyssPrivate.api.tasks.prepare)({
             kind: 'refresh',
             plan: change.plan.target,
             expectedPlanRevision: change.plan.revision,
@@ -478,7 +503,7 @@ export class CommandSession {
         signal,
         timing,
       );
-      const plan = await canonicalCommandPlan(this.options.api, page, signal, timing);
+      const plan = await canonicalCommandPlan(this.options_abyssPrivate.api, page, signal, timing);
       if (!sameReviewedContent(change.plan, plan))
         throw new CommandFailure(
           'REVIEW',
@@ -488,10 +513,10 @@ export class CommandSession {
     }
     return changes;
   }
-  private refreshedFocus(
+  private refreshedFocus_abyssPrivate(
     changes: ReadonlyArray<Extract<CommandChange, { kind: 'task' }>>,
   ): readonly CommandFocus[] {
-    return this.state.focus.map((focus) => {
+    return this.state_abyssPrivate.focus.map((focus) => {
       if (focus.kind !== 'task') return focus;
       const change = changes.find((entry) => entry.plan.target === focus.plan);
       return change === undefined
@@ -501,49 +526,63 @@ export class CommandSession {
   }
   /** Only the still-owning client may attempt this proof. Failure leaves historical evidence. */
   async resumeOwned(): Promise<void> {
-    if (this.disposed || this.state.blocked || this.state.recoveryEvidence !== undefined) return;
-    const id = this.state.id;
+    if (
+      this.disposed_abyssPrivate ||
+      this.state_abyssPrivate.blocked ||
+      this.state_abyssPrivate.recoveryEvidence !== undefined
+    )
+      return;
+    const id = this.state_abyssPrivate.id;
     try {
-      const changes = await this.refreshOwnedChanges();
-      if (!this.current(id)) return;
-      this.publish({
+      const changes = await this.refreshOwnedChanges_abyssPrivate();
+      if (!this.current_abyssPrivate(id)) return;
+      this.publish_abyssPrivate({
         recovery: 'live',
-        proposal: { ...this.state.proposal, revision: this.state.proposal.revision + 1, changes },
+        proposal: {
+          ...this.state_abyssPrivate.proposal,
+          revision: this.state_abyssPrivate.proposal.revision + 1,
+          changes,
+        },
         trees: changes.flatMap((change) => commandPlanViews(change.plan)),
-        focus: this.refreshedFocus(changes),
+        focus: this.refreshedFocus_abyssPrivate(changes),
       });
     } catch {
-      if (this.current(id)) this.publish({ recovery: 'historical' });
+      if (this.current_abyssPrivate(id)) this.publish_abyssPrivate({ recovery: 'historical' });
     }
   }
   subscribe(listener: (state: CommandSessionSnapshot) => void): () => void {
-    this.listeners.add(listener);
+    this.listeners_abyssPrivate.add(listener);
     listener(this.snapshot());
     return () => {
-      this.listeners.delete(listener);
+      this.listeners_abyssPrivate.delete(listener);
     };
   }
-  private publish(patch: Partial<CommandSessionSnapshot>, verifiedFocusContinuation = false): void {
+  private publish_abyssPrivate(
+    patch: Partial<CommandSessionSnapshot>,
+    verifiedFocusContinuation = false,
+  ): void {
     const identity = (focus: readonly CommandFocus[]): string =>
       JSON.stringify(focus.map(({ kind, target }) => ({ kind, target })));
     if (
       (!verifiedFocusContinuation &&
         patch.focus !== undefined &&
-        identity(patch.focus) !== identity(this.state.focus)) ||
+        identity(patch.focus) !== identity(this.state_abyssPrivate.focus)) ||
       ('pendingTransition' in patch &&
         JSON.stringify(patch.pendingTransition ?? null) !==
-          JSON.stringify(this.state.pendingTransition ?? null))
+          JSON.stringify(this.state_abyssPrivate.pendingTransition ?? null))
     )
-      this.conversationRevision++;
-    this.state = this.patchedState(patch);
-    this.published = undefined;
-    for (const listener of this.listeners) listener(this.snapshot());
+      this.conversationRevision_abyssPrivate++;
+    this.state_abyssPrivate = this.patchedState_abyssPrivate(patch);
+    this.published_abyssPrivate = undefined;
+    for (const listener of this.listeners_abyssPrivate) listener(this.snapshot());
   }
-  private patchedState(patch: Partial<CommandSessionSnapshot>): CommandSessionSnapshot {
-    const next = { ...this.state, ...detached(patch) };
+  private patchedState_abyssPrivate(
+    patch: Partial<CommandSessionSnapshot>,
+  ): CommandSessionSnapshot {
+    const next = { ...this.state_abyssPrivate, ...detached(patch) };
     // A later focus or edit is now the last result. A live cancellation is visible only in history.
     if (
-      this.state.recoveryEvidence?.discarded === true &&
+      this.state_abyssPrivate.recoveryEvidence?.discarded === true &&
       !this.readOnly() &&
       patch.recoveryEvidence === undefined &&
       ('focus' in patch || 'proposal' in patch || 'entities' in patch || 'actual' in patch)
@@ -553,44 +592,49 @@ export class CommandSession {
     return next;
   }
   status(kind: CommandStatusKind, message: string): void {
-    this.publish({ status: { kind, message: message.slice(0, 500) } });
+    this.publish_abyssPrivate({ status: { kind, message: message.slice(0, 500) } });
   }
   question(text: string): void {
-    this.publish({
+    this.publish_abyssPrivate({
       activeQuestion: text.slice(0, 500),
       status: { kind: 'question', message: text.slice(0, 500) },
     });
   }
   answer(): void {
-    this.publish({ activeQuestion: null });
+    this.publish_abyssPrivate({ activeQuestion: null });
   }
   async requestReveal(
     input: { target: string; revision: string },
     signal: AbortSignal,
   ): Promise<boolean> {
-    const turn = this.turn,
-      id = this.state.id;
-    if (turn === undefined || signal.aborted || this.writing || this.readOnly()) return false;
+    const turn = this.turn_abyssPrivate,
+      id = this.state_abyssPrivate.id;
+    if (turn === undefined || signal.aborted || this.writing_abyssPrivate || this.readOnly())
+      return false;
     const task = await commandRead(
-      this.options.api,
-      () => this.options.api.tasks.get(input.target),
+      this.options_abyssPrivate.api,
+      () => this.options_abyssPrivate.api.tasks.get(input.target),
       signal,
-      { now: this.options.now, deadline: this.options.now() + 5000 },
+      { now: this.options_abyssPrivate.now, deadline: this.options_abyssPrivate.now() + 5000 },
     );
     if (task.target !== input.target || task.revision !== input.revision)
       throw new CommandFailure(
         'REVEAL_STALE',
         commandMessage('That task changed. Read it again before opening it.'),
       );
-    if (!this.currentRevealTurn(turn, id, signal)) return false;
-    return this.waitForReveal({ id: this.options.id(), sessionId: id, ...input }, turn, signal);
+    if (!this.currentRevealTurn_abyssPrivate(turn, id, signal)) return false;
+    return this.waitForReveal_abyssPrivate(
+      { id: this.options_abyssPrivate.id(), sessionId: id, ...input },
+      turn,
+      signal,
+    );
   }
-  private waitForReveal(
+  private waitForReveal_abyssPrivate(
     request: CommandRevealRequest,
     turn: AbortController,
     signal: AbortSignal,
   ): Promise<boolean> {
-    this.pendingReveal?.settle(false);
+    this.pendingReveal_abyssPrivate?.settle(false);
     return new Promise((resolve) => {
       const abort = (): void => {
         pending.settle(false);
@@ -601,32 +645,36 @@ export class CommandSession {
         signal,
         claimed: false,
         settle: (accepted) => {
-          if (this.pendingReveal !== pending) return;
-          this.pendingReveal = undefined;
+          if (this.pendingReveal_abyssPrivate !== pending) return;
+          this.pendingReveal_abyssPrivate = undefined;
           signal.removeEventListener('abort', abort);
           resolve(accepted);
-          this.publish({});
+          this.publish_abyssPrivate({});
         },
       };
-      this.pendingReveal = pending;
+      this.pendingReveal_abyssPrivate = pending;
       signal.addEventListener('abort', abort, { once: true });
       this.status('thinking', commandMessage('Opening task…'));
     });
   }
   claimReveal(request: CommandRevealRequest): boolean {
-    const pending = this.matchingReveal(request);
+    const pending = this.matchingReveal_abyssPrivate(request);
     if (pending === undefined || pending.claimed) return false;
     pending.claimed = true;
     return true;
   }
-  private currentRevealTurn(turn: AbortController, id: string, signal: AbortSignal): boolean {
-    return this.current(id) && this.turn === turn && !signal.aborted;
+  private currentRevealTurn_abyssPrivate(
+    turn: AbortController,
+    id: string,
+    signal: AbortSignal,
+  ): boolean {
+    return this.current_abyssPrivate(id) && this.turn_abyssPrivate === turn && !signal.aborted;
   }
-  private matchingReveal(request: CommandRevealRequest): PendingReveal | undefined {
-    const pending = this.pendingReveal;
+  private matchingReveal_abyssPrivate(request: CommandRevealRequest): PendingReveal | undefined {
+    const pending = this.pendingReveal_abyssPrivate;
     if (
       pending === undefined ||
-      !this.currentRevealTurn(pending.turn, request.sessionId, pending.signal)
+      !this.currentRevealTurn_abyssPrivate(pending.turn, request.sessionId, pending.signal)
     )
       return undefined;
     const expected = pending.request;
@@ -637,7 +685,7 @@ export class CommandSession {
       : undefined;
   }
   acknowledgeReveal(request: CommandRevealRequest, accepted: boolean): boolean {
-    const pending = this.matchingReveal(request);
+    const pending = this.matchingReveal_abyssPrivate(request);
     if (pending?.claimed !== true) return false;
     pending.settle(accepted);
     return true;
@@ -649,13 +697,19 @@ export class CommandSession {
     const requested: readonly CommandFocus[] = Array.isArray(target)
       ? target
       : [target as CommandFocus];
-    const id = this.state.id,
-      run = ++this.focusRun,
-      deadline = this.options.now() + 5000;
+    const id = this.state_abyssPrivate.id,
+      run = ++this.focusRun_abyssPrivate,
+      deadline = this.options_abyssPrivate.now() + 5000;
     const current = (): boolean =>
-      !this.disposed && !signal.aborted && this.state.id === id && this.focusRun === run;
+      !this.disposed_abyssPrivate &&
+      !signal.aborted &&
+      this.state_abyssPrivate.id === id &&
+      this.focusRun_abyssPrivate === run;
     const read = <T>(work: () => Promise<ApiResultV1<T>>): Promise<T> =>
-      commandRead(this.options.api, work, signal, { deadline, now: this.options.now });
+      commandRead(this.options_abyssPrivate.api, work, signal, {
+        deadline,
+        now: this.options_abyssPrivate.now,
+      });
     try {
       if (requested.length > 5)
         throw new CommandFailure(
@@ -663,34 +717,35 @@ export class CommandSession {
           commandMessage('Choose at most five working entities.'),
         );
       const verified: VerifiedFocus[] = [];
-      for (const entry of requested) verified.push(await this.verifyFocus(entry, read));
+      for (const entry of requested)
+        verified.push(await this.verifyFocus_abyssPrivate(entry, read));
       if (!current()) return false;
-      if (this.retainFocusTransition(requested, verified)) return false;
-      for (const entry of verified) this.observeFocus(entry);
-      this.publish({ focus: verified.map((entry) => entry.focus) });
+      if (this.retainFocusTransition_abyssPrivate(requested, verified)) return false;
+      for (const entry of verified) this.observeFocus_abyssPrivate(entry);
+      this.publish_abyssPrivate({ focus: verified.map((entry) => entry.focus) });
       return true;
     } catch (cause) {
       if (current()) this.status('error', focusError(cause));
       return false;
     }
   }
-  private retainFocusTransition(
+  private retainFocusTransition_abyssPrivate(
     requested: readonly CommandFocus[],
     verified: readonly VerifiedFocus[],
   ): boolean {
     if (this.readOnly()) return false;
-    if (this.retainProjectMoveFocus(requested)) return true;
-    this.restoreProjectMoveRoot(requested);
-    if (this.hasProjectTaskContext(verified)) return false;
-    if (!this.needsFocusDisposition(requested)) return false;
-    this.requestTransition(
+    if (this.retainProjectMoveFocus_abyssPrivate(requested)) return true;
+    this.restoreProjectMoveRoot_abyssPrivate(requested);
+    if (this.hasProjectTaskContext_abyssPrivate(verified)) return false;
+    if (!this.needsFocusDisposition_abyssPrivate(requested)) return false;
+    this.requestTransition_abyssPrivate(
       { kind: 'focus', target: requested },
       commandMessage('Save these changes, keep them for later, discard them, or stay here?'),
     );
     return true;
   }
-  private hasProjectTaskContext(verified: readonly VerifiedFocus[]): boolean {
-    return this.state.proposal.changes.some(
+  private hasProjectTaskContext_abyssPrivate(verified: readonly VerifiedFocus[]): boolean {
+    return this.state_abyssPrivate.proposal.changes.some(
       (change) =>
         change.kind === 'project' &&
         verified.some(
@@ -698,44 +753,55 @@ export class CommandSession {
         ),
     );
   }
-  private requestTransition(pending: CommandPendingTransition, question: string): void {
-    const requested = { ...pending, previousQuestion: this.previousQuestion() };
-    if (JSON.stringify(requested) === JSON.stringify(this.state.pendingTransition)) return;
-    this.publish({
+  private requestTransition_abyssPrivate(
+    pending: CommandPendingTransition,
+    question: string,
+  ): void {
+    const requested = { ...pending, previousQuestion: this.previousQuestion_abyssPrivate() };
+    if (JSON.stringify(requested) === JSON.stringify(this.state_abyssPrivate.pendingTransition))
+      return;
+    this.publish_abyssPrivate({
       pendingTransition: requested,
-      proposal: { ...this.state.proposal, revision: this.state.proposal.revision + 1 },
+      proposal: {
+        ...this.state_abyssPrivate.proposal,
+        revision: this.state_abyssPrivate.proposal.revision + 1,
+      },
     });
     this.question(question);
   }
-  private previousQuestion(): string | null {
-    return this.state.pendingTransition == null
-      ? this.state.activeQuestion
-      : (this.state.pendingTransition.previousQuestion ?? null);
+  private previousQuestion_abyssPrivate(): string | null {
+    return this.state_abyssPrivate.pendingTransition == null
+      ? this.state_abyssPrivate.activeQuestion
+      : (this.state_abyssPrivate.pendingTransition.previousQuestion ?? null);
   }
-  private retainProjectMoveFocus(requested: readonly CommandFocus[]): boolean {
-    if (projectMoveWithDescendantFocus(this.state.proposal.changes, requested) === undefined)
+  private retainProjectMoveFocus_abyssPrivate(requested: readonly CommandFocus[]): boolean {
+    if (
+      projectMoveWithDescendantFocus(this.state_abyssPrivate.proposal.changes, requested) ===
+      undefined
+    )
       return false;
-    this.requestTransition(
+    this.requestTransition_abyssPrivate(
       { kind: 'focus', target: requested },
       commandDiagnostic(projectMoveFocusMessage),
     );
     return true;
   }
-  private pendingProjectMoveFocus(): Extract<CommandChange, { kind: 'project-move' }> | undefined {
-    const pending = this.state.pendingTransition;
+  private pendingProjectMoveFocus_abyssPrivate():
+    Extract<CommandChange, { kind: 'project-move' }> | undefined {
+    const pending = this.state_abyssPrivate.pendingTransition;
     return pending?.kind === 'focus'
-      ? projectMoveWithDescendantFocus(this.state.proposal.changes, pending.target)
+      ? projectMoveWithDescendantFocus(this.state_abyssPrivate.proposal.changes, pending.target)
       : undefined;
   }
-  private restoreProjectMoveRoot(requested: readonly CommandFocus[]): void {
-    const pending = this.pendingProjectMoveFocus();
+  private restoreProjectMoveRoot_abyssPrivate(requested: readonly CommandFocus[]): void {
+    const pending = this.pendingProjectMoveFocus_abyssPrivate();
     if (
       pending === undefined ||
       !requested.some((entry) => entry.kind === 'task' && entry.target === pending.before.target)
     )
       return;
-    const question = this.previousQuestion();
-    this.publish({
+    const question = this.previousQuestion_abyssPrivate();
+    this.publish_abyssPrivate({
       pendingTransition: null,
       activeQuestion: question,
       status: {
@@ -744,15 +810,17 @@ export class CommandSession {
       },
     });
   }
-  private needsFocusDisposition(requested: readonly CommandFocus[]): boolean {
-    if (this.readOnly() || this.state.proposal.changes.length === 0) return false;
-    if (requested.length === 0 && this.state.focus.length === 0) return false;
+  private needsFocusDisposition_abyssPrivate(requested: readonly CommandFocus[]): boolean {
+    if (this.readOnly() || this.state_abyssPrivate.proposal.changes.length === 0) return false;
+    if (requested.length === 0 && this.state_abyssPrivate.focus.length === 0) return false;
     if (
-      requested.some((entry) => this.state.focus.some((current) => current.target === entry.target))
+      requested.some((entry) =>
+        this.state_abyssPrivate.focus.some((current) => current.target === entry.target),
+      )
     )
       return false;
     return !requested.some((entry) =>
-      this.state.proposal.changes.some((change) => {
+      this.state_abyssPrivate.proposal.changes.some((change) => {
         if (change.kind === 'project') return entry.target === change.before.target;
         if (change.kind === 'project-create') return false;
         if (change.kind === 'project-move')
@@ -775,12 +843,12 @@ export class CommandSession {
     basis?: CommandTransitionBasis,
     review?: CommandNoteReview,
   ): Promise<boolean> {
-    if (!(await this.transitionAllowed(signal, basis))) return false;
-    const pending = this.state.pendingTransition;
+    if (!(await this.transitionAllowed_abyssPrivate(signal, basis))) return false;
+    const pending = this.state_abyssPrivate.pendingTransition;
     if (pending == null) return false;
     if (disposition === 'cancel') {
-      const question = this.previousQuestion();
-      this.publish({
+      const question = this.previousQuestion_abyssPrivate();
+      this.publish_abyssPrivate({
         pendingTransition: null,
         activeQuestion: question,
         status:
@@ -790,68 +858,79 @@ export class CommandSession {
       });
       return true;
     }
-    if (disposition === 'save') return this.saveTransition(pending, signal, review);
+    if (disposition === 'save') return this.saveTransition_abyssPrivate(pending, signal, review);
     if (pending.kind === 'new-session') return this.newSession(disposition, signal);
     if (!(await this.newSession(disposition, signal))) return false;
     return this.focus(pending.target, signal);
   }
-  private saveTransition(
+  private saveTransition_abyssPrivate(
     pending: CommandPendingTransition,
     signal: AbortSignal | undefined,
     review: CommandNoteReview | undefined,
   ): Promise<boolean> {
-    if (this.pendingProjectMoveFocus() !== undefined) {
+    if (this.pendingProjectMoveFocus_abyssPrivate() !== undefined) {
       this.question(commandDiagnostic(projectMoveFocusMessage));
       return Promise.resolve(false);
     }
-    return this.saveAndFocus(pending.kind === 'focus' ? pending.target : undefined, signal, review);
-  }
-  private currentTransition(basis?: CommandTransitionBasis): boolean {
-    return (
-      basis === undefined ||
-      (basis.sessionId === this.state.id &&
-        basis.proposalRevision === this.state.proposal.revision &&
-        JSON.stringify(basis.pendingTransition) === JSON.stringify(this.state.pendingTransition))
+    return this.saveAndFocus_abyssPrivate(
+      pending.kind === 'focus' ? pending.target : undefined,
+      signal,
+      review,
     );
   }
-  private async saveAndFocus(
+  private currentTransition_abyssPrivate(basis?: CommandTransitionBasis): boolean {
+    return (
+      basis === undefined ||
+      (basis.sessionId === this.state_abyssPrivate.id &&
+        basis.proposalRevision === this.state_abyssPrivate.proposal.revision &&
+        JSON.stringify(basis.pendingTransition) ===
+          JSON.stringify(this.state_abyssPrivate.pendingTransition))
+    );
+  }
+  private async saveAndFocus_abyssPrivate(
     target: readonly CommandFocus[] | undefined,
     signal?: AbortSignal,
     review?: CommandNoteReview,
   ): Promise<boolean> {
-    const question = this.previousQuestion();
+    const question = this.previousQuestion_abyssPrivate();
     if (question !== null) {
       this.question(question);
       return false;
     }
-    this.publish({ activeQuestion: null, status: { kind: 'ready', message: '' } });
+    this.publish_abyssPrivate({ activeQuestion: null, status: { kind: 'ready', message: '' } });
     const saved =
       signal === undefined
-        ? await this.confirm(this.state.proposal.revision, review)
-        : await this.confirmFromTurn(this.state.proposal.revision, signal);
+        ? await this.confirm(this.state_abyssPrivate.proposal.revision, review)
+        : await this.confirmFromTurn(this.state_abyssPrivate.proposal.revision, signal);
     if (!saved) return false;
-    this.publish({ pendingTransition: null });
+    this.publish_abyssPrivate({ pendingTransition: null });
     if (target === undefined) return this.newSession('keep', signal);
     return this.focus(
       target.map((entry) => ({ kind: entry.kind, target: entry.target })),
       signal,
     );
   }
-  private async transitionAllowed(
+  private async transitionAllowed_abyssPrivate(
     signal?: AbortSignal,
     basis?: CommandTransitionBasis,
   ): Promise<boolean> {
     if (signal === undefined) await this.settle();
-    else if (this.turn?.signal !== signal || signal.aborted) return false;
-    return !this.disposed && !this.writing && this.currentTransition(basis);
+    else if (this.turn_abyssPrivate?.signal !== signal || signal.aborted) return false;
+    return (
+      !this.disposed_abyssPrivate &&
+      !this.writing_abyssPrivate &&
+      this.currentTransition_abyssPrivate(basis)
+    );
   }
-  private async verifyFocus(
+  private async verifyFocus_abyssPrivate(
     target: CommandFocus,
     read: <T>(work: () => Promise<ApiResultV1<T>>) => Promise<T>,
   ): Promise<VerifiedFocus> {
-    if (target.kind === 'task') return this.verifyTaskFocus(target, read);
+    if (target.kind === 'task') return this.verifyTaskFocus_abyssPrivate(target, read);
     if (target.kind === 'project') {
-      const project = await read(() => required(this.options.api.projects).get(target.target));
+      const project = await read(() =>
+        required(this.options_abyssPrivate.api.projects).get(target.target),
+      );
       if (target.revision !== undefined && project.revision !== target.revision)
         throw new CommandFailure(
           'STALE_FOCUS',
@@ -864,7 +943,7 @@ export class CommandSession {
       };
     }
     const note = await read(() =>
-      required(this.options.api.notes).read({
+      required(this.options_abyssPrivate.api.notes).read({
         selector: {
           target: target.target,
           ...(target.revision === undefined ? {} : { expectedRevision: target.revision }),
@@ -875,18 +954,18 @@ export class CommandSession {
     return {
       kind: 'note',
       note:
-        this.state.entities.notes.find(
+        this.state_abyssPrivate.entities.notes.find(
           (page) =>
             page.note.target === note.note.target && page.note.revision === note.note.revision,
         ) ?? note,
       focus: { kind: 'note', target: note.note.target, revision: note.note.revision },
     };
   }
-  private taskFocusBasis(target: Extract<CommandFocus, { kind: 'task' }>): {
+  private taskFocusBasis_abyssPrivate(target: Extract<CommandFocus, { kind: 'task' }>): {
     focus: Extract<CommandFocus, { kind: 'task' }>;
     side: 'before' | 'after';
   } {
-    const matches = this.state.proposal.changes.flatMap((change) => {
+    const matches = this.state_abyssPrivate.proposal.changes.flatMap((change) => {
       if (change.kind !== 'task' && change.kind !== 'cleanup') return [];
       const views = commandPlanViews(change.plan);
       const after = views
@@ -941,7 +1020,10 @@ export class CommandSession {
       ].some((value) => value !== undefined)
     )
       return query;
-    const { focus, side } = this.taskFocusBasis({ kind: 'task', target: query.target });
+    const { focus, side } = this.taskFocusBasis_abyssPrivate({
+      kind: 'task',
+      target: query.target,
+    });
     return focus.plan === undefined
       ? query
       : {
@@ -951,15 +1033,15 @@ export class CommandSession {
           side,
         };
   }
-  private async verifyTaskFocus(
+  private async verifyTaskFocus_abyssPrivate(
     requested: Extract<CommandFocus, { kind: 'task' }>,
     read: <T>(work: () => Promise<ApiResultV1<T>>) => Promise<T>,
   ): Promise<VerifiedFocus> {
-    const { focus: target, side } = this.taskFocusBasis(requested);
+    const { focus: target, side } = this.taskFocusBasis_abyssPrivate(requested);
     const acceptedBasis =
       target.revision === undefined ? {} : { expectedRevision: target.revision };
     const tree = await read(() =>
-      required(this.options.api.tasks.tree)({
+      required(this.options_abyssPrivate.api.tasks.tree)({
         target: target.target,
         ...(target.plan === undefined
           ? acceptedBasis
@@ -985,18 +1067,18 @@ export class CommandSession {
             },
     };
   }
-  private observeFocus(entry: VerifiedFocus): void {
+  private observeFocus_abyssPrivate(entry: VerifiedFocus): void {
     if (entry.kind === 'task') this.observeTree(entry.tree);
     else if (entry.kind === 'project') this.observeProject(entry.project);
     else this.observeNote(entry.note);
   }
   remapFocus(changes: CommandFocusContinuations): void {
-    const removed = this.state.focus.some(
+    const removed = this.state_abyssPrivate.focus.some(
       (entry) => entry.kind === 'task' && changes.get(entry.target) === null,
     );
-    this.publish(
+    this.publish_abyssPrivate(
       {
-        focus: this.state.focus.flatMap((entry): CommandFocus[] => {
+        focus: this.state_abyssPrivate.focus.flatMap((entry): CommandFocus[] => {
           if (entry.kind !== 'task' || !changes.has(entry.target)) return [entry];
           const next = changes.get(entry.target);
           return next == null
@@ -1008,63 +1090,68 @@ export class CommandSession {
     );
   }
   async readTreePage(query: ReadTaskTreeV1): Promise<TaskTreePageV1> {
-    const id = this.state.id,
-      revision = this.conversationRevision,
+    const id = this.state_abyssPrivate.id,
+      revision = this.conversationRevision_abyssPrivate,
       signal = new AbortController().signal;
     const page = await commandRead(
-      this.options.api,
-      () => required(this.options.api.tasks.tree)(query),
+      this.options_abyssPrivate.api,
+      () => required(this.options_abyssPrivate.api.tasks.tree)(query),
       signal,
-      { deadline: this.options.now() + 5000, now: this.options.now },
+      { deadline: this.options_abyssPrivate.now() + 5000, now: this.options_abyssPrivate.now },
     );
     if (
-      !this.disposed &&
-      this.state.id === id &&
-      this.conversationRevision === revision &&
+      !this.disposed_abyssPrivate &&
+      this.state_abyssPrivate.id === id &&
+      this.conversationRevision_abyssPrivate === revision &&
       !this.readOnly()
     )
       this.observeTree(page);
     return page;
   }
   observeTree(page: TaskTreePageV1): void {
-    this.publish({
-      entities: { ...this.state.entities, tasks: [...this.state.entities.tasks, page].slice(-32) },
+    this.publish_abyssPrivate({
+      entities: {
+        ...this.state_abyssPrivate.entities,
+        tasks: [...this.state_abyssPrivate.entities.tasks, page].slice(-32),
+      },
     });
   }
   observeProject(project: ProjectDtoV1): void {
-    this.publish({
-      focus: this.state.focus.map((entry) =>
+    this.publish_abyssPrivate({
+      focus: this.state_abyssPrivate.focus.map((entry) =>
         entry.kind === 'project' && entry.target === project.target
           ? { ...entry, revision: project.revision }
           : entry,
       ),
       entities: {
-        ...this.state.entities,
+        ...this.state_abyssPrivate.entities,
         projects: [
-          ...this.state.entities.projects.filter((p) => p.target !== project.target),
+          ...this.state_abyssPrivate.entities.projects.filter((p) => p.target !== project.target),
           project,
         ].slice(-20),
       },
     });
   }
   observeNote(note: CommandNoteRead): void {
-    this.publish({
-      focus: this.state.focus.map((entry) =>
+    this.publish_abyssPrivate({
+      focus: this.state_abyssPrivate.focus.map((entry) =>
         entry.kind === 'note' && entry.target === note.note.target
           ? { ...entry, revision: note.note.revision }
           : entry,
       ),
       entities: {
-        ...this.state.entities,
+        ...this.state_abyssPrivate.entities,
         notes: [
-          ...this.state.entities.notes.filter((n) => n.note.target !== note.note.target),
+          ...this.state_abyssPrivate.entities.notes.filter(
+            (n) => n.note.target !== note.note.target,
+          ),
           note,
         ].slice(-10),
       },
     });
   }
   discardDraft(plan: string, revision: string): number {
-    const draft = this.state.proposal.changes.find(
+    const draft = this.state_abyssPrivate.proposal.changes.find(
       (c) => c.kind === 'task' && c.plan.target === plan,
     );
     if (draft?.kind !== 'task' || draft.plan.before !== null || draft.plan.revision !== revision)
@@ -1072,7 +1159,7 @@ export class CommandSession {
         'DRAFT',
         commandMessage('Only the current unsaved root can be discarded.'),
       );
-    const changes = this.state.proposal.changes.filter((c) =>
+    const changes = this.state_abyssPrivate.proposal.changes.filter((c) =>
       c.kind === 'status'
         ? c.plan !== plan
         : c.kind === 'project' ||
@@ -1080,17 +1167,17 @@ export class CommandSession {
           c.kind === 'project-move' ||
           c.plan.target !== plan,
     );
-    const proposalRevision = this.state.proposal.revision + 1;
-    this.publish({
+    const proposalRevision = this.state_abyssPrivate.proposal.revision + 1;
+    this.publish_abyssPrivate({
       ...(changes.length === 0
-        ? { recoveryEvidence: discardedCommandEvidence(this.state), preparations: [] }
+        ? { recoveryEvidence: discardedCommandEvidence(this.state_abyssPrivate), preparations: [] }
         : {}),
       proposal: {
         revision: proposalRevision,
-        operations: this.state.proposal.operations + 1,
+        operations: this.state_abyssPrivate.proposal.operations + 1,
         changes,
       },
-      focus: this.state.focus.filter(
+      focus: this.state_abyssPrivate.focus.filter(
         (entry) => entry.kind !== 'task' || !nodeValues(draft.plan.after).has(entry.target),
       ),
       trees: changes.flatMap(changeViews),
@@ -1098,21 +1185,21 @@ export class CommandSession {
     return proposalRevision;
   }
   updateContext(context: string): void {
-    if (!this.disposed) this.publish({ context: context.slice(0, 8000) });
+    if (!this.disposed_abyssPrivate) this.publish_abyssPrivate({ context: context.slice(0, 8000) });
   }
   async stageStatus(input: CommandStatusInput): Promise<boolean> {
-    const basis = this.state;
-    if (!this.canStageStatus(basis)) return false;
+    const basis = this.state_abyssPrivate;
+    if (!this.canStageStatus_abyssPrivate(basis)) return false;
     const change = basis.proposal.changes.find(
       (entry) => entry.kind === 'task' && entry.plan.target === input.plan,
     );
     if (change?.kind !== 'task' || change.plan.revision !== input.expectedPlanRevision)
       return false;
-    if (!this.draftStatusMatches(change.plan, input)) return false;
+    if (!this.draftStatusMatches_abyssPrivate(change.plan, input)) return false;
     try {
-      return await this.applyDraftStatus(change.plan, input, basis);
+      return await this.applyDraftStatus_abyssPrivate(change.plan, input, basis);
     } catch (error) {
-      if (this.current(basis.id))
+      if (this.current_abyssPrivate(basis.id))
         this.status(
           'error',
           error instanceof CommandFailure
@@ -1122,18 +1209,20 @@ export class CommandSession {
       return false;
     }
   }
-  private canStageStatus(basis: CommandSessionSnapshot): boolean {
+  private canStageStatus_abyssPrivate(basis: CommandSessionSnapshot): boolean {
     return (
-      this.canApplyStatus(basis) && this.turn === undefined && this.state.pendingTransition == null
+      this.canApplyStatus_abyssPrivate(basis) &&
+      this.turn_abyssPrivate === undefined &&
+      this.state_abyssPrivate.pendingTransition == null
     );
   }
-  private draftStatusMatches(plan: ContentPlanV1, input: CommandStatusInput): boolean {
+  private draftStatusMatches_abyssPrivate(plan: ContentPlanV1, input: CommandStatusInput): boolean {
     return (
       statusNodes(plan.after).find((node) => node.target === input.target)?.revision ===
       input.revision
     );
   }
-  private async applyDraftStatus(
+  private async applyDraftStatus_abyssPrivate(
     current: ContentPlanV1,
     input: CommandStatusInput,
     basis: CommandSessionSnapshot,
@@ -1155,15 +1244,15 @@ export class CommandSession {
           symbol: input.symbol,
         },
       };
-      const result = await required(this.options.api.tasks.prepare)(request);
+      const result = await required(this.options_abyssPrivate.api.tasks.prepare)(request);
       if (!result.ok) throw new CommandFailure(result.error.code, result.error.message);
       const plan = await canonicalCommandPlan(
-        this.options.api,
+        this.options_abyssPrivate.api,
         result.value,
         new AbortController().signal,
-        { now: this.options.now, deadline: this.options.now() + 5000 },
+        { now: this.options_abyssPrivate.now, deadline: this.options_abyssPrivate.now() + 5000 },
       );
-      if (!this.canApplyStatus(basis)) return false;
+      if (!this.canApplyStatus_abyssPrivate(basis)) return false;
       this.stage({ kind: 'task', plan }, 1, [{ kind: 'task', input: request }]);
     }
     return true;
@@ -1186,14 +1275,14 @@ export class CommandSession {
     });
   }
   setInput(text: string, draft = true): void {
-    this.inputRevision++;
-    if (draft) this.editRevision++;
-    this.inputDraft = draft && text !== '';
-    this.publish({ input: text });
+    this.inputRevision_abyssPrivate++;
+    if (draft) this.editRevision_abyssPrivate++;
+    this.inputDraft_abyssPrivate = draft && text !== '';
+    this.publish_abyssPrivate({ input: text });
   }
   exchange(role: 'user' | 'agent', text: string): void {
-    this.publish({
-      exchanges: [...this.state.exchanges, { role, text }],
+    this.publish_abyssPrivate({
+      exchanges: [...this.state_abyssPrivate.exchanges, { role, text }],
     });
   }
   stage(
@@ -1201,9 +1290,9 @@ export class CommandSession {
     operations = 1,
     preparations: ReadonlyArray<Extract<CommandPreparation, { kind: 'task' }>> = [],
   ): void {
-    this.requireStageable();
+    this.requireStageable_abyssPrivate();
     validateChange(change);
-    const changes = [...this.state.proposal.changes];
+    const changes = [...this.state_abyssPrivate.proposal.changes];
     requireComposable(change, changes);
     const index = changes.findIndex((c) => changeKey(c) === changeKey(change));
     if (index < 0) changes.push(change);
@@ -1216,17 +1305,20 @@ export class CommandSession {
           : entry,
       );
     const count = affectedNodes(retained);
-    if (count > 50 || !validOperationBudget(this.state.proposal.operations, operations))
+    if (
+      count > 50 ||
+      !validOperationBudget(this.state_abyssPrivate.proposal.operations, operations)
+    )
       throw new CommandFailure(
         'BUDGET',
         commandMessage('This proposal is too large. Save or split it first.'),
       );
-    this.publish({
-      preparations: [...(this.state.preparations ?? []), ...preparations],
-      focus: planFocus(this.state.focus, change),
+    this.publish_abyssPrivate({
+      preparations: [...(this.state_abyssPrivate.preparations ?? []), ...preparations],
+      focus: planFocus(this.state_abyssPrivate.focus, change),
       proposal: {
-        revision: this.state.proposal.revision + 1,
-        operations: this.state.proposal.operations + operations,
+        revision: this.state_abyssPrivate.proposal.revision + 1,
+        operations: this.state_abyssPrivate.proposal.operations + operations,
         changes: retained,
       },
       trees: retained.flatMap(changeViews),
@@ -1234,8 +1326,13 @@ export class CommandSession {
       status: { kind: 'ready', message: commandMessage('Ready for review.') },
     });
   }
-  private requireStageable(): void {
-    if (this.disposed || this.writing || this.readOnly() || this.state.pendingTransition != null)
+  private requireStageable_abyssPrivate(): void {
+    if (
+      this.disposed_abyssPrivate ||
+      this.writing_abyssPrivate ||
+      this.readOnly() ||
+      this.state_abyssPrivate.pendingTransition != null
+    )
       throw new CommandFailure(
         'BUSY',
         commandMessage('Resolve the previous write before changing this proposal.'),
@@ -1247,59 +1344,59 @@ export class CommandSession {
     review?: CommandNoteReview,
     admission?: () => boolean,
   ): Promise<void> {
-    if (!this.admitSubmission(admission)) return;
+    if (!this.admitSubmission_abyssPrivate(admission)) return;
     const input = this.captureInput();
     if (text.length <= 16000 && text.trim() === '') {
-      await this.confirmSubmission(submittedAgainst, review);
+      await this.confirmSubmission_abyssPrivate(submittedAgainst, review);
       return;
     }
-    if (this.running !== undefined || this.pendingWrite !== undefined) {
-      await this.submitAfterDrain(text, input, admission, () =>
-        this.startSubmission(text, input, submittedAgainst, review),
+    if (this.running_abyssPrivate !== undefined || this.pendingWrite_abyssPrivate !== undefined) {
+      await this.submitAfterDrain_abyssPrivate(text, input, admission, () =>
+        this.startSubmission_abyssPrivate(text, input, submittedAgainst, review),
       );
       return;
     }
-    await this.startSubmission(text, input, submittedAgainst, review);
+    await this.startSubmission_abyssPrivate(text, input, submittedAgainst, review);
   }
-  private async startSubmission(
+  private async startSubmission_abyssPrivate(
     text: string,
     input: ReturnType<CommandSession['captureInput']>,
     submittedAgainst?: CommandSubmissionBasis,
     review?: CommandNoteReview,
   ): Promise<void> {
-    if (this.rejectOversizedInput(text, input)) return;
-    const running = this.runTurn(text, input, submittedAgainst, review);
-    this.running = running;
+    if (this.rejectOversizedInput_abyssPrivate(text, input)) return;
+    const running = this.runTurn_abyssPrivate(text, input, submittedAgainst, review);
+    this.running_abyssPrivate = running;
     try {
       await running;
     } finally {
-      if (this.running === running) this.running = undefined;
+      if (this.running_abyssPrivate === running) this.running_abyssPrivate = undefined;
     }
   }
-  private async submitAfterDrain(
+  private async submitAfterDrain_abyssPrivate(
     text: string,
     input: ReturnType<CommandSession['captureInput']>,
     admission: (() => boolean) | undefined,
     start: () => Promise<void>,
   ): Promise<void> {
-    const previous = this.running ?? this.pendingWrite;
+    const previous = this.running_abyssPrivate ?? this.pendingWrite_abyssPrivate;
     this.cancelTurn(false);
-    const generation = this.acceptance;
-    this.queuedInput = { text, current: () => input.current() };
+    const generation = this.acceptance_abyssPrivate;
+    this.queuedInput_abyssPrivate = { text, current: () => input.current() };
     await previous;
-    if (generation !== this.acceptance) return;
-    this.queuedInput = undefined;
-    if (this.admitSubmission(admission)) await start();
+    if (generation !== this.acceptance_abyssPrivate) return;
+    this.queuedInput_abyssPrivate = undefined;
+    if (this.admitSubmission_abyssPrivate(admission)) await start();
   }
-  private clearAcceptedInput(input: { current(): boolean }): void {
+  private clearAcceptedInput_abyssPrivate(input: { current(): boolean }): void {
     if (input.current()) this.setInput('', false);
   }
-  private retainInput(text: string, input: { current(): boolean }): void {
+  private retainInput_abyssPrivate(text: string, input: { current(): boolean }): void {
     if (input.current()) this.setInput(text);
   }
-  private rejectOversizedInput(text: string, input: { current(): boolean }): boolean {
+  private rejectOversizedInput_abyssPrivate(text: string, input: { current(): boolean }): boolean {
     if (text.length <= 16000) return false;
-    this.retainInput(text, input);
+    this.retainInput_abyssPrivate(text, input);
     this.status(
       'error',
       commandMessage(
@@ -1308,51 +1405,58 @@ export class CommandSession {
     );
     return true;
   }
-  private restoreFailedInput(
+  private restoreFailedInput_abyssPrivate(
     text: string,
     input: { current(): boolean },
     signal: AbortSignal,
     sessionId: string,
   ): void {
-    if (this.acceptsTurn(signal, sessionId) && this.state.status.kind === 'error')
-      this.retainInput(text, input);
+    if (
+      this.acceptsTurn_abyssPrivate(signal, sessionId) &&
+      this.state_abyssPrivate.status.kind === 'error'
+    )
+      this.retainInput_abyssPrivate(text, input);
   }
-  private admitSubmission(admission: (() => boolean) | undefined): boolean {
-    return !this.disposed && admission?.() !== false;
+  private admitSubmission_abyssPrivate(admission: (() => boolean) | undefined): boolean {
+    return !this.disposed_abyssPrivate && admission?.() !== false;
   }
-  private unavailable(): boolean {
-    return this.disposed || this.writing || this.turn !== undefined;
+  private unavailable_abyssPrivate(): boolean {
+    return (
+      this.disposed_abyssPrivate ||
+      this.writing_abyssPrivate ||
+      this.turn_abyssPrivate !== undefined
+    );
   }
-  private async confirmSubmission(
+  private async confirmSubmission_abyssPrivate(
     basis?: CommandSubmissionBasis,
     review?: CommandNoteReview,
   ): Promise<void> {
-    if (basis !== undefined && basis.sessionId !== this.state.id) return;
+    if (basis !== undefined && basis.sessionId !== this.state_abyssPrivate.id) return;
     await this.confirm(basis?.proposalRevision, review);
   }
-  private acceptsTurn(signal: AbortSignal, id: string): boolean {
-    return !signal.aborted && this.current(id);
+  private acceptsTurn_abyssPrivate(signal: AbortSignal, id: string): boolean {
+    return !signal.aborted && this.current_abyssPrivate(id);
   }
-  private restoreQuestionStatus(): void {
-    const question = this.state.activeQuestion;
+  private restoreQuestionStatus_abyssPrivate(): void {
+    const question = this.state_abyssPrivate.activeQuestion;
     this.status(question === null ? 'ready' : 'question', question ?? commandMessage('Ready.'));
   }
-  private async runTurn(
+  private async runTurn_abyssPrivate(
     text: string,
     input: ReturnType<CommandSession['captureInput']>,
     submittedAgainst?: CommandSubmissionBasis,
     review?: CommandNoteReview,
   ): Promise<void> {
-    if (this.unavailable()) {
+    if (this.unavailable_abyssPrivate()) {
       this.status('error', commandMessage('Finish or reconcile the previous operation first.'));
       return;
     }
-    this.presentation = undefined;
-    this.clearAcceptedInput(input);
+    this.presentation_abyssPrivate = undefined;
+    this.clearAcceptedInput_abyssPrivate(input);
     this.exchange('user', text);
     const controller = new AbortController();
-    this.turn = controller;
-    this.turnReview = review;
+    this.turn_abyssPrivate = controller;
+    this.turnReview_abyssPrivate = review;
     const snapshot = this.snapshot();
     const basis = {
       ...snapshot,
@@ -1363,57 +1467,67 @@ export class CommandSession {
     };
     this.status('thinking', commandMessage('Working…'));
     try {
-      await this.options.agent.run({ text, signal: controller.signal, session: basis });
+      await this.options_abyssPrivate.agent.run({
+        text,
+        signal: controller.signal,
+        session: basis,
+      });
       if (
         !controller.signal.aborted &&
-        this.state.id === snapshot.id &&
-        this.state.status.kind === 'thinking'
+        this.state_abyssPrivate.id === snapshot.id &&
+        this.state_abyssPrivate.status.kind === 'thinking'
       )
-        this.restoreQuestionStatus();
+        this.restoreQuestionStatus_abyssPrivate();
     } catch (cause) {
-      if (this.acceptsTurn(controller.signal, snapshot.id))
+      if (this.acceptsTurn_abyssPrivate(controller.signal, snapshot.id))
         this.status(
           'error',
           cause instanceof CommandFailure ? cause.message : providerFailure(cause).message,
         );
     } finally {
-      this.restoreFailedInput(text, input, controller.signal, snapshot.id);
-      if (this.turn === controller) {
-        this.turn = undefined;
-        this.turnReview = undefined;
+      this.restoreFailedInput_abyssPrivate(text, input, controller.signal, snapshot.id);
+      if (this.turn_abyssPrivate === controller) {
+        this.turn_abyssPrivate = undefined;
+        this.turnReview_abyssPrivate = undefined;
       }
     }
   }
   cancelTurn(retainQueued = true): void {
-    this.acceptance++;
-    if (retainQueued && this.queuedInput !== undefined) {
-      this.retainInput(this.queuedInput.text, this.queuedInput);
-      this.queuedInput = undefined;
+    this.acceptance_abyssPrivate++;
+    if (retainQueued && this.queuedInput_abyssPrivate !== undefined) {
+      this.retainInput_abyssPrivate(
+        this.queuedInput_abyssPrivate.text,
+        this.queuedInput_abyssPrivate,
+      );
+      this.queuedInput_abyssPrivate = undefined;
     }
-    const active = this.turn !== undefined;
-    this.turn?.abort();
-    this.pendingReveal?.settle(false);
-    this.writeAdmission?.abort();
-    if (active && !this.writing && this.state.activeQuestion === null)
+    const active = this.turn_abyssPrivate !== undefined;
+    this.turn_abyssPrivate?.abort();
+    this.pendingReveal_abyssPrivate?.settle(false);
+    this.writeAdmission_abyssPrivate?.abort();
+    if (active && !this.writing_abyssPrivate && this.state_abyssPrivate.activeQuestion === null)
       this.status('ready', commandMessage('Stopped. Your draft is retained.'));
   }
   async whenIdle(): Promise<void> {
-    while (this.running !== undefined || this.pendingWrite !== undefined) {
-      await this.running;
-      await this.pendingWrite;
+    while (
+      this.running_abyssPrivate !== undefined ||
+      this.pendingWrite_abyssPrivate !== undefined
+    ) {
+      await this.running_abyssPrivate;
+      await this.pendingWrite_abyssPrivate;
     }
   }
   async settle(): Promise<void> {
     this.cancelTurn();
-    await this.running;
-    await this.pendingWrite;
+    await this.running_abyssPrivate;
+    await this.pendingWrite_abyssPrivate;
   }
   async confirm(
-    revision = this.state.proposal.revision,
+    revision = this.state_abyssPrivate.proposal.revision,
     review?: CommandNoteReview,
   ): Promise<boolean> {
-    if (this.turn !== undefined) return false;
-    return this.commit(revision, review);
+    if (this.turn_abyssPrivate !== undefined) return false;
+    return this.commit_abyssPrivate(revision, review);
   }
   async confirmFromTurn(
     revision: number,
@@ -1421,83 +1535,88 @@ export class CommandSession {
     immediate = false,
     scope?: CommandSaveScope,
   ): Promise<boolean> {
-    if (this.turn?.signal !== signal || signal.aborted) return false;
-    return this.commit(revision, this.turnReview, immediate, scope);
+    if (this.turn_abyssPrivate?.signal !== signal || signal.aborted) return false;
+    return this.commit_abyssPrivate(revision, this.turnReview_abyssPrivate, immediate, scope);
   }
-  private canCommit(revision: number): boolean {
+  private canCommit_abyssPrivate(revision: number): boolean {
     return (
-      !this.disposed &&
-      !this.writing &&
-      !this.state.blocked &&
-      (this.state.recovery === undefined || this.state.recovery === 'live') &&
-      this.state.activeQuestion === null &&
-      this.state.status.kind !== 'error' &&
-      revision === this.state.proposal.revision &&
-      this.state.proposal.changes.length > 0
+      !this.disposed_abyssPrivate &&
+      !this.writing_abyssPrivate &&
+      !this.state_abyssPrivate.blocked &&
+      (this.state_abyssPrivate.recovery === undefined ||
+        this.state_abyssPrivate.recovery === 'live') &&
+      this.state_abyssPrivate.activeQuestion === null &&
+      this.state_abyssPrivate.status.kind !== 'error' &&
+      revision === this.state_abyssPrivate.proposal.revision &&
+      this.state_abyssPrivate.proposal.changes.length > 0
     );
   }
-  private async commit(
+  private async commit_abyssPrivate(
     revision: number,
     review?: CommandNoteReview,
     immediate = false,
     scope?: CommandSaveScope,
   ): Promise<boolean> {
-    if (this.pendingProjectMoveFocus() !== undefined) {
+    if (this.pendingProjectMoveFocus_abyssPrivate() !== undefined) {
       this.question(commandDiagnostic(projectMoveFocusMessage));
       return false;
     }
     if (
-      !this.canCommit(revision) ||
-      !this.reviewedSelection({ revision, immediate, scope }, review)
+      !this.canCommit_abyssPrivate(revision) ||
+      !this.reviewedSelection_abyssPrivate({ revision, immediate, scope }, review)
     )
       return false;
-    if (scope === undefined) return this.writeProposal(detached(this.state.proposal), true);
-    return this.commitSelection(revision, scope);
+    if (scope === undefined)
+      return this.writeProposal_abyssPrivate(detached(this.state_abyssPrivate.proposal), true);
+    return this.commitSelection_abyssPrivate(revision, scope);
   }
-  private reviewedSelection(
+  private reviewedSelection_abyssPrivate(
     basis: { revision: number; immediate: boolean; scope: CommandSaveScope | undefined },
     review?: CommandNoteReview,
   ): boolean {
     const changes =
       basis.scope === undefined
-        ? this.state.proposal.changes
+        ? this.state_abyssPrivate.proposal.changes
         : basis.scope.changes.flatMap((selection) => {
-            const change = this.state.proposal.changes[selection.index];
+            const change = this.state_abyssPrivate.proposal.changes[selection.index];
             return change === undefined ? [] : [change];
           });
-    if (projectMoveWithDescendantFocus(changes, this.state.focus) !== undefined) {
-      this.retainProjectMoveFocus(this.state.focus);
+    if (projectMoveWithDescendantFocus(changes, this.state_abyssPrivate.focus) !== undefined) {
+      this.retainProjectMoveFocus_abyssPrivate(this.state_abyssPrivate.focus);
       return false;
     }
     if (
       !basis.immediate &&
-      this.noteReviewRequired &&
+      this.noteReviewRequired_abyssPrivate &&
       changes.some((change) => change.kind === 'note') &&
-      review?.({ sessionId: this.state.id, proposalRevision: basis.revision }) !== true
+      review?.({ sessionId: this.state_abyssPrivate.id, proposalRevision: basis.revision }) !== true
     ) {
       this.status('ready', commandMessage('The note preview is not ready to save.'));
       return false;
     }
     return true;
   }
-  private async commitSelection(revision: number, scope: CommandSaveScope): Promise<boolean> {
-    const signal = required(this.turn).signal;
+  private async commitSelection_abyssPrivate(
+    revision: number,
+    scope: CommandSaveScope,
+  ): Promise<boolean> {
+    const signal = required(this.turn_abyssPrivate).signal;
     try {
       const selection = await selectCommandWrite(
-        this.options.api,
-        detached(this.state.proposal),
+        this.options_abyssPrivate.api,
+        detached(this.state_abyssPrivate.proposal),
         scope,
-        { signal, now: this.options.now },
+        { signal, now: this.options_abyssPrivate.now },
       );
-      if (signal.aborted || !this.canCommit(revision)) return false;
-      return this.writeProposal(selection.proposal, true, selection);
+      if (signal.aborted || !this.canCommit_abyssPrivate(revision)) return false;
+      return this.writeProposal_abyssPrivate(selection.proposal, true, selection);
     } catch (cause) {
-      if (signal.aborted || this.turn?.signal !== signal) return false;
-      this.selectionFailed(cause);
+      if (signal.aborted || this.turn_abyssPrivate?.signal !== signal) return false;
+      this.selectionFailed_abyssPrivate(cause);
       return false;
     }
   }
-  private selectionFailed(cause: unknown): void {
+  private selectionFailed_abyssPrivate(cause: unknown): void {
     if (cause instanceof CommandFailure && cause.code === 'SELECTION_DEPENDENCY')
       this.question(cause.message);
     else
@@ -1509,58 +1628,58 @@ export class CommandSession {
       );
   }
   async applyStatus(input: { target: string; revision: string; symbol: string }): Promise<boolean> {
-    const basis = this.state;
-    if (!this.canApplyStatus(basis)) return false;
+    const basis = this.state_abyssPrivate;
+    if (!this.canApplyStatus_abyssPrivate(basis)) return false;
     this.cancelTurn();
-    if (this.running !== undefined) await this.running;
-    if (!this.canApplyStatus(basis)) return false;
-    return this.writeProposal(
+    if (this.running_abyssPrivate !== undefined) await this.running_abyssPrivate;
+    if (!this.canApplyStatus_abyssPrivate(basis)) return false;
+    return this.writeProposal_abyssPrivate(
       {
-        revision: this.state.proposal.revision,
+        revision: this.state_abyssPrivate.proposal.revision,
         operations: 1,
         changes: [{ kind: 'status', ...input, nuance: 'Ordinary status lifecycle.' }],
       },
       false,
     );
   }
-  private canApplyStatus(basis: CommandSessionSnapshot): boolean {
+  private canApplyStatus_abyssPrivate(basis: CommandSessionSnapshot): boolean {
     return (
-      this.current(basis.id) &&
-      this.state.proposal.revision === basis.proposal.revision &&
-      !this.writing &&
+      this.current_abyssPrivate(basis.id) &&
+      this.state_abyssPrivate.proposal.revision === basis.proposal.revision &&
+      !this.writing_abyssPrivate &&
       !this.readOnly() &&
-      this.state.recovery !== 'reviewing'
+      this.state_abyssPrivate.recovery !== 'reviewing'
     );
   }
-  private invalidateTaskReads(path: string): void {
+  private invalidateTaskReads_abyssPrivate(path: string): void {
     const draftTargets = new Set<string>();
-    for (const change of this.state.proposal.changes) {
+    for (const change of this.state_abyssPrivate.proposal.changes) {
       if (change.kind !== 'task') continue;
       if ((change.plan.destination?.path ?? change.plan.before?.source?.path) !== path) continue;
       for (const target of nodeValues(change.plan.after).keys()) draftTargets.add(target);
       for (const target of nodeValues(change.plan.before).keys()) draftTargets.add(target);
     }
-    this.publish({
+    this.publish_abyssPrivate({
       entities: {
-        ...this.state.entities,
-        tasks: this.state.entities.tasks.filter(
+        ...this.state_abyssPrivate.entities,
+        tasks: this.state_abyssPrivate.entities.tasks.filter(
           (page) => page.tree.source?.path !== path && !draftTargets.has(page.tree.target),
         ),
       },
     });
   }
-  private async recordWrite(entry: CommandJournalEntry): Promise<void> {
-    const journal = [...this.state.journal];
+  private async recordWrite_abyssPrivate(entry: CommandJournalEntry): Promise<void> {
+    const journal = [...this.state_abyssPrivate.journal];
     const index = journal.findIndex((j) => j.id === entry.id);
     if (index < 0) journal.push(entry);
     else journal[index] = entry;
-    this.publish({ journal });
+    this.publish_abyssPrivate({ journal });
     try {
-      await this.options.journal.save(this.snapshot());
+      await this.options_abyssPrivate.journal.save(this.snapshot());
     } catch (cause) {
       if (entry.state === 'admitted')
-        this.publish({
-          journal: this.state.journal.map((record) =>
+        this.publish_abyssPrivate({
+          journal: this.state_abyssPrivate.journal.map((record) =>
             record.id === entry.id
               ? {
                   ...record,
@@ -1574,7 +1693,7 @@ export class CommandSession {
       throw cause;
     }
   }
-  private async completeWrite(
+  private async completeWrite_abyssPrivate(
     proposal: CommandSessionSnapshot['proposal'],
     clear: boolean,
     inputRevision: number,
@@ -1582,17 +1701,23 @@ export class CommandSession {
   ): Promise<void> {
     const completed: CommandSessionSnapshot = {
       ...this.snapshot(),
-      ...(clear ? this.completedProposal(proposal, inputRevision, remainder ?? []) : {}),
-      status: this.completedStatus(clear, remainder ?? []),
+      ...(clear
+        ? this.completedProposal_abyssPrivate(proposal, inputRevision, remainder ?? [])
+        : {}),
+      status: this.completedStatus_abyssPrivate(clear, remainder ?? []),
     };
-    await this.options.journal.save(completed);
-    if (clear && inputRevision === this.inputRevision) this.inputDraft = false;
-    this.publish({
+    await this.options_abyssPrivate.journal.save(completed);
+    if (clear && inputRevision === this.inputRevision_abyssPrivate)
+      this.inputDraft_abyssPrivate = false;
+    this.publish_abyssPrivate({
       ...completed,
-      input: inputRevision === this.inputRevision ? completed.input : this.state.input,
+      input:
+        inputRevision === this.inputRevision_abyssPrivate
+          ? completed.input
+          : this.state_abyssPrivate.input,
     });
   }
-  private completedStatus(
+  private completedStatus_abyssPrivate(
     clear: boolean,
     remainder: readonly CommandChange[],
   ): CommandSessionSnapshot['status'] {
@@ -1608,7 +1733,7 @@ export class CommandSession {
           message: commandMessage('Status saved. Pending content is retained for review.'),
         };
   }
-  private completedProposal(
+  private completedProposal_abyssPrivate(
     proposal: CommandSessionSnapshot['proposal'],
     inputRevision: number,
     changes: readonly CommandChange[],
@@ -1618,60 +1743,61 @@ export class CommandSession {
       trees: changes.flatMap((change) =>
         change.kind === 'task' ? commandPlanViews(change.plan) : [],
       ),
-      focus: this.refreshedFocus(changes.filter((change) => change.kind === 'task')),
-      input: inputRevision === this.inputRevision ? '' : this.state.input,
+      focus: this.refreshedFocus_abyssPrivate(changes.filter((change) => change.kind === 'task')),
+      input: inputRevision === this.inputRevision_abyssPrivate ? '' : this.state_abyssPrivate.input,
     };
   }
-  private async writeProposal(
+  private async writeProposal_abyssPrivate(
     proposal: CommandSessionSnapshot['proposal'],
     clear: boolean,
     selection?: CommandSelectedWrite,
   ): Promise<boolean> {
-    const pending = this.performWrite(proposal, clear, selection);
-    this.pendingWrite = pending;
+    const pending = this.performWrite_abyssPrivate(proposal, clear, selection);
+    this.pendingWrite_abyssPrivate = pending;
     try {
       return await pending;
     } finally {
-      if (this.pendingWrite === pending) this.pendingWrite = undefined;
+      if (this.pendingWrite_abyssPrivate === pending) this.pendingWrite_abyssPrivate = undefined;
     }
   }
-  private async performWrite(
+  private async performWrite_abyssPrivate(
     proposal: CommandSessionSnapshot['proposal'],
     clear: boolean,
     selection?: CommandSelectedWrite,
   ): Promise<boolean> {
-    const inputRevision = this.inputRevision;
-    const journalStart = this.state.journal.length;
+    const inputRevision = this.inputRevision_abyssPrivate;
+    const journalStart = this.state_abyssPrivate.journal.length;
     const admission = new AbortController();
-    this.writeAdmission = admission;
-    this.writing = true;
+    this.writeAdmission_abyssPrivate = admission;
+    this.writing_abyssPrivate = true;
     this.status('writing', commandMessage('Saving…'));
     try {
       await executeCommandWrites({
-        api: this.options.api,
+        api: this.options_abyssPrivate.api,
         proposal,
-        now: this.options.now,
-        id: this.options.id,
+        now: this.options_abyssPrivate.now,
+        id: this.options_abyssPrivate.id,
         cancelled: () => admission.signal.aborted,
-        record: (entry) => this.recordWrite({ ...entry, origin: clear ? 'proposal' : 'direct' }),
+        record: (entry) =>
+          this.recordWrite_abyssPrivate({ ...entry, origin: clear ? 'proposal' : 'direct' }),
         actual: (trees) => {
-          this.publish({ actual: trees });
+          this.publish_abyssPrivate({ actual: trees });
         },
-        projects: this.state.entities.projects,
+        projects: this.state_abyssPrivate.entities.projects,
         invalidateTaskReads: (path) => {
-          this.invalidateTaskReads(path);
+          this.invalidateTaskReads_abyssPrivate(path);
         },
         observeTree: (page) => {
           this.observeTree(page);
         },
-        focus: () => this.state.focus,
+        focus: () => this.state_abyssPrivate.focus,
         focusChanges: (changes) => {
           this.remapFocus(changes);
         },
         createdProject: (project) => {
-          this.publish({
+          this.publish_abyssPrivate({
             focus: [
-              ...this.state.focus.filter((f) => f.target !== project.target),
+              ...this.state_abyssPrivate.focus.filter((f) => f.target !== project.target),
               { kind: 'project' as const, target: project.target, revision: project.revision },
             ].slice(-5),
           });
@@ -1687,24 +1813,24 @@ export class CommandSession {
         selection === undefined
           ? undefined
           : await rebaseCommandRemainder(
-              this.options.api,
+              this.options_abyssPrivate.api,
               selection,
-              this.state.journal.slice(journalStart),
-              this.options.now,
+              this.state_abyssPrivate.journal.slice(journalStart),
+              this.options_abyssPrivate.now,
             );
-      await this.completeWrite(proposal, clear, inputRevision, remainder);
+      await this.completeWrite_abyssPrivate(proposal, clear, inputRevision, remainder);
       return true;
     } catch (cause) {
-      this.failedWrite(cause, journalStart);
+      this.failedWrite_abyssPrivate(cause, journalStart);
       return false;
     } finally {
-      this.writing = false;
-      this.writeAdmission = undefined;
-      this.releaseDisposed();
+      this.writing_abyssPrivate = false;
+      this.writeAdmission_abyssPrivate = undefined;
+      this.releaseDisposed_abyssPrivate();
     }
   }
-  private failedWrite(cause: unknown, journalStart: number): void {
-    const unsettled = this.state.journal
+  private failedWrite_abyssPrivate(cause: unknown, journalStart: number): void {
+    const unsettled = this.state_abyssPrivate.journal
       .slice(journalStart)
       .some(
         (j) =>
@@ -1713,9 +1839,9 @@ export class CommandSession {
           j.effects === 'partial' ||
           j.effects === 'committed',
       );
-    this.publish({
+    this.publish_abyssPrivate({
       blocked: unsettled,
-      ...this.writeRecovery(unsettled, cause),
+      ...this.writeRecovery_abyssPrivate(unsettled, cause),
       status: {
         kind: 'error',
         message:
@@ -1727,16 +1853,23 @@ export class CommandSession {
       },
     });
     if (!unsettled && cause instanceof CommandFailure && cause.code === 'PROJECT_MOVE_FOCUS')
-      this.retainProjectMoveFocus(this.state.focus);
+      this.retainProjectMoveFocus_abyssPrivate(this.state_abyssPrivate.focus);
   }
-  private writeRecovery(unsettled: boolean, cause: unknown): Partial<CommandSessionSnapshot> {
+  private writeRecovery_abyssPrivate(
+    unsettled: boolean,
+    cause: unknown,
+  ): Partial<CommandSessionSnapshot> {
     if (unsettled) return { recovery: 'uncertain' };
     return cause instanceof CommandFailure && cause.code === 'EXPIRED'
       ? { recovery: 'historical' }
       : {};
   }
   canLeaveUncertainty(): boolean {
-    if (!this.state.blocked || this.state.uncertaintyAcknowledged === true) return true;
+    if (
+      !this.state_abyssPrivate.blocked ||
+      this.state_abyssPrivate.uncertaintyAcknowledged === true
+    )
+      return true;
     this.question(
       commandMessage(
         'The earlier result is unresolved. Acknowledge it before starting independent work.',
@@ -1749,38 +1882,38 @@ export class CommandSession {
     signal?: AbortSignal,
     acknowledgeUncertainty = false,
   ): Promise<boolean> {
-    if (!(await this.transitionAllowed(signal))) return false;
+    if (!(await this.transitionAllowed_abyssPrivate(signal))) return false;
     if (!acknowledgeUncertainty && !this.canLeaveUncertainty()) return false;
-    if (this.state.proposal.changes.length > 0 && disposition === undefined) {
-      this.requestTransition(
+    if (this.state_abyssPrivate.proposal.changes.length > 0 && disposition === undefined) {
+      this.requestTransition_abyssPrivate(
         { kind: 'new-session' },
         commandMessage('Keep this draft in history or discard it before starting a new session?'),
       );
       return false;
     }
-    return this.startSession(
-      this.archivedSnapshot(disposition, acknowledgeUncertainty),
-      this.empty(),
+    return this.startSession_abyssPrivate(
+      this.archivedSnapshot_abyssPrivate(disposition, acknowledgeUncertainty),
+      this.empty_abyssPrivate(),
       signal,
     );
   }
-  private async startSession(
+  private async startSession_abyssPrivate(
     archived: CommandSessionSnapshot,
     next: CommandSessionSnapshot,
     signal?: AbortSignal,
   ): Promise<boolean> {
     try {
-      if (this.options.transitions !== undefined)
-        await this.options.transitions.start(
+      if (this.options_abyssPrivate.transitions !== undefined)
+        await this.options_abyssPrivate.transitions.start(
           archived,
           next,
-          () => this.current(archived.id) && signal?.aborted !== true,
+          () => this.current_abyssPrivate(archived.id) && signal?.aborted !== true,
         );
       else {
-        await this.options.journal.save(archived);
+        await this.options_abyssPrivate.journal.save(archived);
         if (signal?.aborted === true) return false;
       }
-      if (!this.current(archived.id)) return false;
+      if (!this.current_abyssPrivate(archived.id)) return false;
       return this.restore(next, false);
     } catch {
       if (signal?.aborted !== true)
@@ -1791,27 +1924,29 @@ export class CommandSession {
       return false;
     }
   }
-  private archivedStatus(): CommandSessionSnapshot['status'] {
-    const question = this.previousQuestion();
+  private archivedStatus_abyssPrivate(): CommandSessionSnapshot['status'] {
+    const question = this.previousQuestion_abyssPrivate();
     if (question !== null) return { kind: 'question', message: question };
     if (
-      this.state.pendingTransition != null ||
-      ['thinking', 'searching'].includes(this.state.status.kind)
+      this.state_abyssPrivate.pendingTransition != null ||
+      ['thinking', 'searching'].includes(this.state_abyssPrivate.status.kind)
     )
       return { kind: 'ready', message: commandMessage('Ready for review.') };
-    return this.state.status;
+    return this.state_abyssPrivate.status;
   }
-  private archivedSnapshot(
+  private archivedSnapshot_abyssPrivate(
     disposition?: 'keep' | 'discard',
     acknowledgeUncertainty = false,
   ): CommandSessionSnapshot {
     const previous = {
       ...this.snapshot(),
       pendingTransition: null,
-      activeQuestion: this.previousQuestion(),
-      input: this.inputDraft ? this.state.input : '',
-      status: this.archivedStatus(),
-      ...(acknowledgeUncertainty && this.state.blocked ? { uncertaintyAcknowledged: true } : {}),
+      activeQuestion: this.previousQuestion_abyssPrivate(),
+      input: this.inputDraft_abyssPrivate ? this.state_abyssPrivate.input : '',
+      status: this.archivedStatus_abyssPrivate(),
+      ...(acknowledgeUncertainty && this.state_abyssPrivate.blocked
+        ? { uncertaintyAcknowledged: true }
+        : {}),
     };
     return disposition === 'discard' && !previous.blocked
       ? {
@@ -1830,17 +1965,17 @@ export class CommandSession {
         }
       : previous;
   }
-  private releaseDisposed(): void {
-    if (this.disposed) this.options.api.dispose();
+  private releaseDisposed_abyssPrivate(): void {
+    if (this.disposed_abyssPrivate) this.options_abyssPrivate.api.dispose();
   }
   dispose(): void {
-    if (this.disposed) return;
-    this.disposed = true;
-    this.turn?.abort();
-    this.pendingReveal?.settle(false);
-    this.writeAdmission?.abort();
-    this.listeners.clear();
-    if (!this.writing) this.options.api.dispose();
-    this.options.onDispose?.();
+    if (this.disposed_abyssPrivate) return;
+    this.disposed_abyssPrivate = true;
+    this.turn_abyssPrivate?.abort();
+    this.pendingReveal_abyssPrivate?.settle(false);
+    this.writeAdmission_abyssPrivate?.abort();
+    this.listeners_abyssPrivate.clear();
+    if (!this.writing_abyssPrivate) this.options_abyssPrivate.api.dispose();
+    this.options_abyssPrivate.onDispose?.();
   }
 }

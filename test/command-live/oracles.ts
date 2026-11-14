@@ -43,6 +43,7 @@ export interface TurnExpectation {
   retainPreviousTasks?: boolean;
   freshPreparation?: boolean;
   researchCalls?: number;
+  researchCallLimit?: number;
   researchSource?: string;
   researchPage?: string;
   noteFacts?: ReadonlyArray<{ path: string; line: string; source: string }>;
@@ -582,9 +583,7 @@ function researchPageMatches(evidence: TurnEvidence, url: string): boolean {
   );
 }
 function researchFailures(expected: TurnExpectation, evidence: TurnEvidence): string[] {
-  const failures: string[] = [];
-  if (expected.researchCalls !== undefined && evidence.research?.length !== expected.researchCalls)
-    failures.push('research-invocations');
+  const failures = researchCallLimitFailures(expected, evidence.research?.length ?? 0);
   if (
     expected.researchSource !== undefined &&
     !researchSourceMatches(evidence, expected.researchSource)
@@ -592,6 +591,14 @@ function researchFailures(expected: TurnExpectation, evidence: TurnEvidence): st
     failures.push('research-source');
   if (expected.researchPage !== undefined && !researchPageMatches(evidence, expected.researchPage))
     failures.push('research-page');
+  return failures;
+}
+function researchCallLimitFailures(expected: TurnExpectation, calls: number): string[] {
+  const failures: string[] = [];
+  if (expected.researchCalls !== undefined && calls !== expected.researchCalls)
+    failures.push('research-invocations');
+  if (expected.researchCallLimit !== undefined && calls > expected.researchCallLimit)
+    failures.push('research-call-limit');
   return failures;
 }
 function noteFactFailures(expected: TurnExpectation, evidence: TurnEvidence): string[] {

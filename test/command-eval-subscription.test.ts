@@ -4,7 +4,7 @@ import { parseArgs } from '../tooling/command-eval.mjs';
 import { isTrustedSubscriptionModel, subscriptionModel } from '../tooling/command-subscription.mjs';
 import { canonicalModel } from './command-live/controls';
 import { selectCases } from './command-live/corpus';
-import { runCase } from './command-live/harness';
+import { injectedControl, runCase } from './command-live/harness';
 import { RequestBudget, validateOptions } from './command-live/safety';
 import { useRealMoment } from './helpers';
 
@@ -525,6 +525,30 @@ it('trusts only the actual default subscription adapter identity without dispatc
   expect(budget.used).toBe(0);
 });
 
+it('marks a trusted subscription transport as scripted when a research reviewer override is injected', () => {
+  const source = selectCases('103')[0];
+  if (source === undefined) throw new Error('case missing');
+  const trustedModel = subscriptionModel('gpt-6-luna', new RequestBudget(1));
+  expect(isTrustedSubscriptionModel(trustedModel)).toBe(true);
+  expect(injectedControl(source, trustedModel)).toBe(false);
+  expect(
+    injectedControl(source, trustedModel, {
+      reviewResearch: async () => ({ authorized: true }),
+      options: {
+        provider: 'chatgpt-plan',
+        model: 'gpt-6-luna',
+        maxRequests: 1,
+        allowPaid: false,
+      },
+      budget: new RequestBudget(1),
+      key: '',
+      fetch: async () => {
+        throw new Error('no API dispatch');
+      },
+    }),
+  ).toBe(true);
+});
+
 it('delivers each case fixed research evidence to the model rather than the generic canned result', async () => {
   const { MockLanguageModelV4 } = await import('ai/test');
   const source = selectCases('research-substantive')[0];
@@ -576,6 +600,7 @@ it('delivers each case fixed research evidence to the model rather than the gene
       },
       budget: new RequestBudget(10),
       key: '',
+      reviewResearch: async () => ({ authorized: true }),
       fetch: async () => {
         throw new Error('No network');
       },
@@ -678,6 +703,7 @@ it('returns only the selected fixed page as attributed untrusted content', async
       },
       budget: new RequestBudget(10),
       key: '',
+      reviewResearch: async () => ({ authorized: true }),
       fetch: async () => {
         throw new Error('No network');
       },

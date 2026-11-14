@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { CommandPendingOperations } from '../src/ai/CommandPendingOperations';
 import { CommandSession } from '../src/ai/CommandSession';
 import { commandTools, type CommandToolContext } from '../src/ai/commandTools';
@@ -12,11 +12,12 @@ afterEach(() => {
     owner.dispose();
   });
 });
-async function setup(researchMode = true) {
+async function setup(researchAuthorized = true) {
   const h = await publicApiHarness({ 'a.md': '' }, { provision: true });
   owners.push(h);
   const api = h.client(),
     calls: string[] = [];
+  const reviewResearch = vi.fn(async () => ({ authorized: researchAuthorized }));
   const session = new CommandSession({
     api,
     journal: { save: async () => {} },
@@ -48,7 +49,8 @@ async function setup(researchMode = true) {
     signal: new AbortController().signal,
     now: () => 0,
     deadline: 180000,
-    researchMode,
+    researchMode: false,
+    reviewResearch,
     researchCalls: 0,
     interpreted: true,
     generation: 0,
@@ -81,7 +83,7 @@ async function setup(researchMode = true) {
       messages: [],
       context: undefined,
     });
-  return { ...h, calls, session, ctx, invoke };
+  return { ...h, calls, reviewResearch, session, ctx, invoke };
 }
 it('returns page text only as untrusted research without granting save authority', async () => {
   const h = await setup();
@@ -105,12 +107,22 @@ it('shares the two-call research budget across search and page reading', async (
   });
   expect(h.calls).toEqual(['search:Find a guide', 'page:https://example.org/page']);
 });
-it('rejects page reading without research authority before the adapter is called', async () => {
+it('returns a denied page read without calling the adapter', async () => {
   const h = await setup(false);
-  await expect(h.invoke({ url: 'https://example.org/page' })).rejects.toMatchObject({
-    code: 'RESEARCH_INTENT',
+  await expect(h.invoke({ url: 'https://example.org/page' })).resolves.toMatchObject({
+    notExecuted: true,
   });
   expect(h.calls).toEqual([]);
+});
+it('caches a direct denial across changed queries and page reads', async () => {
+  const h = await setup(false);
+  await expect(h.invoke({ query: 'first query' })).resolves.toMatchObject({ notExecuted: true });
+  await expect(h.invoke({ url: 'https://example.org/page' })).resolves.toMatchObject({
+    notExecuted: true,
+  });
+  expect(h.ctx.researchAdmission).toBe('denied');
+  expect(h.calls).toEqual([]);
+  expect(h.reviewResearch).toHaveBeenCalledOnce();
 });
 it('reuses a successful page read in the turn without consuming another research call', async () => {
   const h = await setup();
@@ -118,10 +130,7 @@ it('reuses a successful page read in the turn without consuming another research
   await h.invoke({ query: 'Find another guide' });
   expect(await h.invoke({ url: 'https://example.org/page' })).toEqual(first);
   expect(h.calls).toEqual(['page:https://example.org/page', 'search:Find another guide']);
-  h.ctx.researchMode = false;
-  await expect(h.invoke({ url: 'https://example.org/page' })).rejects.toMatchObject({
-    code: 'RESEARCH_INTENT',
-  });
+  expect(h.ctx.researchAdmission).toBe('allowed');
 });
 it('does not cache a failed page read', async () => {
   const h = await setup();

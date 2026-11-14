@@ -4,6 +4,7 @@ import type { TaskTreeV1 } from '../api';
 import type { canonicalWriteAssessment } from './command-live/controls';
 import { submittedMessage } from './command-live/controls';
 import { selectCases } from './command-live/corpus';
+import { runCase as runLiveCase } from './command-live/harness';
 import { RequestBudget } from './command-live/safety';
 import { runScriptedCase as runCase } from './command-live/scriptedCase';
 import { expectDefined } from './helpers';
@@ -25,7 +26,47 @@ function response(name: string, input: unknown) {
     warnings: [],
   };
 }
-
+type TestPrompt = Parameters<MockLanguageModelV4['doGenerate']>[0]['prompt'];
+function latestToolResult(prompt: TestPrompt, name: string) {
+  return prompt
+    .flatMap((message) => (message.role === 'tool' ? message.content : []))
+    .reverse()
+    .find((part) => part.type === 'tool-result' && part.toolName === name);
+}
+function jsonToolResult(prompt: TestPrompt, name: string): unknown {
+  const result = latestToolResult(prompt, name);
+  if (result?.type !== 'tool-result' || result.output.type !== 'json')
+    throw new Error(`Missing JSON result for ${name}`);
+  return result.output.value;
+}
+function diagnostic103Response(step: number, prompt: TestPrompt, url: string) {
+  switch (step) {
+    case 1:
+      return response('find', { query: 'Calibrate the orchard gauge', purpose: 'change' });
+    case 2: {
+      const value = jsonToolResult(prompt, 'find') as { items: Array<{ target: string }> };
+      return response('inspect', { target: expectDefined(value.items[0]).target });
+    }
+    case 3:
+      return response('research', { url });
+    case 4: {
+      const value = jsonToolResult(prompt, 'inspect') as {
+        references?: { taskReferences?: Array<{ edit: string }> };
+      };
+      const owner = expectDefined(value.references?.taskReferences?.[0]);
+      return response('change_task', {
+        edit: owner.edit,
+        operation: {
+          type: 'add-comment',
+          text: `Check the gauge ahead of spring calibration: ${url}`,
+        },
+        complete: true,
+      });
+    }
+    default:
+      return response('finish', { state: 'ready', message: 'Prepared.' });
+  }
+}
 function qualificationSelection(
   prompt: Parameters<MockLanguageModelV4['doGenerate']>[0]['prompt'],
   select: boolean,
@@ -116,6 +157,175 @@ it.each(['Q6-context', 'Q6-capture', 'Q6-ambiguous', 'Q6-twins', 'Q6-independent
     expect(report.turns).toHaveLength(item.turns.length);
   },
 );
+it('uses the selected model for the default research assessment', async () => {
+  const url = 'https://example.org/research-boundary';
+  const base = expectDefined(selectCases('103')[0]);
+  const publicTrees = expectDefined(expectDefined(base.turns[0]).expect.publicTrees);
+  const test = {
+    ...base,
+    turns: [
+      {
+        text: `Read ${url} and summarize its useful fact.`,
+        expect: {
+          status: 'ready' as const,
+          researchPage: url,
+          researchCallLimit: 1,
+          publicTrees,
+          writeCount: 0,
+        },
+      },
+    ],
+    pageFixture: { url, title: 'Boundary fixture', content: 'A useful fixed fact.' },
+  };
+  let mainStep = 0;
+  const model = new MockLanguageModelV4({
+    doGenerate: async ({ tools }) => {
+      if (
+        tools?.some((entry) => entry.type === 'function' && entry.name === 'assess_research') ===
+        true
+      )
+        return response('assess_research', { authorized: true });
+      mainStep++;
+      if (mainStep === 1) return response('research', { url });
+      return response('finish', { state: 'ready', message: 'Summarized.' });
+    },
+  });
+  const report = await runLiveCase(
+    test,
+    {
+      options: { provider: 'openrouter', model: 'synthetic', allowPaid: false, maxRequests: 1 },
+      budget: new RequestBudget(1),
+      key: 'synthetic',
+      fetch: async () => {
+        throw new Error('No network');
+      },
+    },
+    async () => {},
+    model,
+  );
+  expect(report.outcome, JSON.stringify({ trace: report.trace, turns: report.turns })).toBe(
+    'passed',
+  );
+  expect(
+    report.trace.some(
+      (event) =>
+        event.kind === 'generation-input' &&
+        (event.data as { activeTools?: string[] }).activeTools?.includes('assess_research') ===
+          true,
+    ),
+  ).toBe(true);
+  expect(report.physicalRequests).toBe(0);
+});
+it('executes diagnostic 103 with a local read before same-turn research and checks the saved API tree', async () => {
+  const item = expectDefined(selectCases('103')[0]);
+  const url = 'https://example.org/orchard-gauge';
+  let step = 0;
+  const model = new MockLanguageModelV4({
+    doGenerate: async ({ prompt, tools }) => {
+      if (
+        tools?.some((entry) => entry.type === 'function' && entry.name === 'assess_research') ===
+        true
+      )
+        return response('assess_research', { authorized: true });
+      return diagnostic103Response(++step, prompt, url);
+    },
+  });
+  const report = await runLiveCase(
+    item,
+    {
+      options: {
+        provider: 'openrouter',
+        model: 'synthetic',
+        allowPaid: false,
+        maxRequests: 1,
+      },
+      budget: new RequestBudget(1),
+      key: 'synthetic',
+      fetch: async () => {
+        throw new Error('No network');
+      },
+    },
+    async () => {},
+    model,
+  );
+  const turn = expectDefined(report.turns[0]);
+  expect(report.outcome, JSON.stringify({ status: turn.status, failures: turn.failures })).toBe(
+    'passed',
+  );
+  expect(turn.failures).toEqual([]);
+  expect(
+    report.trace.some(
+      (event) =>
+        event.kind === 'generation-input' &&
+        (event.data as { activeTools?: string[] }).activeTools?.includes('assess_research') ===
+          true,
+    ),
+  ).toBe(true);
+  expect(turn.writeCount).toBe(0);
+  const savedTree = expectDefined(
+    turn.publicReadback.find((tree) => tree.markdownTitle === 'Calibrate the orchard gauge'),
+  );
+  expect(savedTree).toMatchObject({
+    markdownTitle: 'Calibrate the orchard gauge',
+    dates: { scheduled: '2026-11-12' },
+    comments: [],
+    children: [],
+    source: { path: 'a.md', line: 0 },
+  });
+  expect(turn.trees).toHaveLength(1);
+  expect(turn.trees[0]).toMatchObject({
+    markdownTitle: 'Calibrate the orchard gauge',
+    dates: { scheduled: '2026-11-12' },
+    comments: [{ text: `Check the gauge ahead of spring calibration: ${url}` }],
+    children: [],
+  });
+  const researchOutput = report.trace.find(
+    (event) =>
+      event.kind === 'generation-output' &&
+      (event.data as { content?: Array<{ toolName: string }> }).content?.some(
+        (part) => part.toolName === 'research',
+      ) === true,
+  );
+  expect(researchOutput).toBeDefined();
+  const researchEvent = expectDefined(researchOutput);
+  const correspondingInput = expectDefined(
+    report.trace.find(
+      (event) =>
+        event.kind === 'generation-input' &&
+        (event.data as { generation?: number }).generation ===
+          (researchEvent.data as { generation?: number }).generation,
+    ),
+  );
+  const feedback = (
+    correspondingInput.data as { feedback?: Array<{ content: Array<{ toolName: string }> }> }
+  ).feedback;
+  expect(
+    feedback?.some((message) => message.content.some((part) => part.toolName === 'inspect')) ??
+      false,
+  ).toBe(true);
+  const { evaluateTurn } = await import('./command-live/oracles');
+  const expected = expectDefined(item.turns[0]).expect;
+  const evidence = structuredClone(turn);
+  expect(evaluateTurn(expected, evidence)).toEqual([]);
+  evidence.trees = [];
+  expect(evaluateTurn(expected, evidence)).not.toEqual([]);
+  const wrongSource = structuredClone(turn);
+  const wrongSourceComment = expectDefined(
+    (wrongSource.trees[0] as { comments: Array<{ text: string }> }).comments[0],
+  );
+  wrongSourceComment.text = 'Check a different instrument at https://wrong.example';
+  expect(evaluateTurn(expected, wrongSource)).not.toEqual([]);
+  const wrongFact = structuredClone(turn);
+  const wrongFactComment = expectDefined(
+    (wrongFact.trees[0] as { comments: Array<{ text: string }> }).comments[0],
+  );
+  wrongFactComment.text = `The gauge needs painting in summer: ${url}`;
+  expect(evaluateTurn(expected, wrongFact)).not.toEqual([]);
+  const wrongOwner = structuredClone(turn);
+  wrongOwner.taskSources = [{ path: 'wrong.md', line: 4, kind: 'edit', basisValid: false }];
+  expect(evaluateTurn(expected, wrongOwner)).not.toEqual([]);
+  expect(report.physicalRequests).toBe(0);
+});
 it('runs the canonical real agent preview/save pipeline without network and retains admission before write', async () => {
   const script = [
     response('expand', {

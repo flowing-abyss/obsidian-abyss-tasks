@@ -48,6 +48,8 @@ const privateOwners = new Set([
   'TaskStatusReadLeaseOwner',
   // Registry internals are accessed only through methods, never reflected, serialized, or spread.
   'TaskIdentityRegistry',
+  // Session snapshots and public operations are the boundary; live turn/write state is not reflected or serialized.
+  'CommandSession',
   'TaskCursorRegistry',
   // Client-owned plan/cursor state is accessed through methods, never reflection or spreading.
   'TaskContentApi',

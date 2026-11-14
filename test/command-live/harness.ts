@@ -1,7 +1,7 @@
 import { wrapLanguageModel, type LanguageModel } from 'ai';
 import { vi } from 'vitest';
 import type { TasksApiV1, TaskTreeV1 } from '../../api';
-import { CommandAgent } from '../../src/ai/CommandAgent';
+import { CommandAgent, type ResearchReviewer } from '../../src/ai/CommandAgent';
 import { canonicalCommandTree } from '../../src/ai/commandReads';
 import { CommandSession } from '../../src/ai/CommandSession';
 import { CommandSessionOwner } from '../../src/ai/CommandSessionOwner';
@@ -67,6 +67,7 @@ export interface TraceEvent {
 }
 export interface EvalRuntime {
   reviewWrite?: WriteReviewer;
+  reviewResearch?: ResearchReviewer;
   options: EvalOptions;
   budget: RequestBudget;
   key: string;
@@ -592,6 +593,7 @@ function observeApi(
 }
 async function createSessionRuntime(input: {
   reviewWrite?: WriteReviewer;
+  reviewResearch?: ResearchReviewer;
   test: EvalCase;
   epoch: number;
   api: TasksApiV1;
@@ -657,6 +659,7 @@ async function createSessionRuntime(input: {
     api,
     session: live,
     ...(input.reviewWrite === undefined ? {} : { reviewWrite: input.reviewWrite }),
+    ...(input.reviewResearch === undefined ? {} : { reviewResearch: input.reviewResearch }),
     connections: { model: () => model },
     settings: () => ({
       ...input.selection,
@@ -1099,11 +1102,17 @@ async function executeTurns(
   }
   updateReport(context.report, { outcome: 'passed' });
 }
-function injectedControl(
+export function injectedControl(
   test: EvalCase,
   model: Exclude<LanguageModel, string> | undefined,
+  runtime?: EvalRuntime,
 ): boolean {
-  return test.scripted === true || (model !== undefined && !isTrustedSubscriptionModel(model));
+  return (
+    test.scripted === true ||
+    runtime?.reviewResearch !== undefined ||
+    runtime?.reviewWrite !== undefined ||
+    (model !== undefined && !isTrustedSubscriptionModel(model))
+  );
 }
 function caseAvailable(test: EvalCase, report: CaseReport): boolean {
   const gaps = unqualifiedTurns(test);
@@ -1187,6 +1196,7 @@ async function prepareSession(
     const api = observeApi(acquired.api, test, trace, acquired.refreshClock);
     const created = await createSessionRuntime({
       ...(runtime.reviewWrite === undefined ? {} : { reviewWrite: runtime.reviewWrite }),
+      ...(runtime.reviewResearch === undefined ? {} : { reviewResearch: runtime.reviewResearch }),
       test,
       epoch: acquired.epoch,
       api,
@@ -1271,7 +1281,7 @@ export async function runCase(
   const report = initialReport(
     {
       ...test,
-      scripted: injectedControl(test, modelOverride),
+      scripted: injectedControl(test, modelOverride, runtime),
     },
     runtime.options.provider,
   );

@@ -112,13 +112,22 @@ characters, separating generated summary from nullable attributed excerpts and m
 Cancellation rejects late output without claiming physical cancellation of host requests.
 
 `CommandAgent` retains the SDK's bounded, serialized tool loop. Ordinary turns expose narrow
-find, inspect, create_task, change_task and finish operations with preview/no-research authority.
-`expand` enables predeclared advanced families through SDK `prepareStep.activeTools`; it does not
-grant consent. Optional strict `interpret` controls admit explicit saving, research and lifecycle
-actions only before the first ordinary operation. That first operation seals preview authority
-synchronously, including when several tool calls share a response. Pending-transition and history
-checks still apply without interpretation. There is no duplicate semantic work declaration or
-binding protocol. `create_task` and `change_task` adapt to the canonical task preparation owner.
+find, inspect, create_task, change_task and finish operations with preview authority. When a research
+port is configured, the existing research tool is also directly available. Its first attempted call
+lazily assesses the exact current user message and up to four recent whole user messages (bounded to
+6,000 characters total); the current exchange is excluded from history by position. The assessor
+receives no task, note, page, agent, proposed query or mutable session context. One allowance or
+denial is cached for the turn. Denial returns a not-executed result without evidence or an adapter
+call; malformed or unavailable assessment retains the prepared work with a concrete blocker.
+Cached page reads still require current-turn admission, and the two uncached-call limit is unchanged.
+`interpret(research:true)` is only a declaration; provider configuration and tool availability do
+not grant authority. Research admission is independent of write and lifecycle seals. `expand` enables
+predeclared advanced families through SDK `prepareStep.activeTools`; it does not grant consent.
+Optional strict `interpret` controls admit explicit saving and lifecycle actions only before the first
+ordinary operation. That first operation seals write/lifecycle authority synchronously, including when
+several tool calls share a response. Pending-transition and history checks still apply without
+interpretation. There is no duplicate semantic work declaration or binding protocol. `create_task`
+and `change_task` adapt to the canonical task preparation owner.
 For an explicitly supplied task ID, `find.taskId` requires a unique case-sensitive `authoredId`
 match inside complete, filtered results; `showExact` remains title-only. Both paths issue an edit
 alias only after a canonical revision-checked read. Each editable alias captures its exact

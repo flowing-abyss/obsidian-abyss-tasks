@@ -1,6 +1,7 @@
 import { MockLanguageModelV4 } from 'ai/test';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { TaskTreeV1 } from '../api';
+import type { ResearchReviewer } from '../src/ai/CommandAgent';
 import { parseRecurrenceRule } from '../src/tasks';
 import { submittedMessage } from './command-live/controls';
 import { actions, pipelines, selectCases, type EvalCase } from './command-live/corpus';
@@ -38,6 +39,7 @@ const finish = tool('finish', { state: 'ready', message: 'Ready.' });
 const confirm: Step = (p) =>
   tool('interpret', { intent: 'confirm', approval: submittedMessage(p), research: false });
 const readRoot = tool('read', { input: { kind: 'tasks', query: 'Root' } });
+const scriptedResearchAllowance: ResearchReviewer = async () => ({ authorized: true });
 
 it.each([
   ['ru', 'Сделать домашнюю работу'],
@@ -106,8 +108,15 @@ async function replay(
   id: string | EvalCase,
   steps: Step[],
   turnCount?: number,
-  expectedOutcome = 'passed',
+  outcomeOrOptions:
+    string | { expectedOutcome?: string; reviewResearch?: ResearchReviewer } = 'passed',
 ) {
+  const expectedOutcome =
+    typeof outcomeOrOptions === 'string'
+      ? outcomeOrOptions
+      : (outcomeOrOptions.expectedOutcome ?? 'passed');
+  const reviewResearch =
+    typeof outcomeOrOptions === 'string' ? undefined : outcomeOrOptions.reviewResearch;
   const logs = vi.spyOn(console, 'error').mockImplementation(() => {});
   let index = 0;
   const model = new MockLanguageModelV4({
@@ -163,22 +172,33 @@ async function replay(
       fetch: async () => {
         throw new Error('offline');
       },
+      ...(reviewResearch === undefined ? {} : { reviewResearch }),
     },
     async () => {},
     model,
   );
   expect(
     report.outcome,
-    JSON.stringify(
-      report.turns.map((t) => ({
+    JSON.stringify({
+      trace: report.trace,
+      turns: report.turns.map((t) => ({
         status: t.snapshot.status,
         failures: t.failures,
         proposal: t.proposalKinds,
         trees: t.trees,
       })),
-    ),
+    }),
   ).toBe(expectedOutcome);
   expect(report.physicalRequests).toBe(0);
+  if (reviewResearch !== undefined)
+    expect(
+      report.trace.some(
+        (event) =>
+          event.kind === 'generation-input' &&
+          (event.data as { activeTools?: string[] }).activeTools?.includes('assess_research') ===
+            true,
+      ),
+    ).toBe(false);
   for (const args of logs.mock.calls) {
     expect(args[0]).toBe('[abyss-tasks] search operation failed');
     expect(args[1]).toMatchObject({ phase: 'startup', backend: 'worker' });
@@ -197,52 +217,57 @@ function rejectDamage(
   }
 }
 it('qualifies 095 against fresh research, exact structured duration, same comment and trusted receipt', async () => {
-  const { test, report } = await replay('095', [
-    research,
-    readRoot,
-    tool('research', { query: 'Option A duration' }),
-    (p) => {
-      const node = firstRead(p);
-      return tool('task', {
-        input: {
-          kind: 'edit',
-          target: node['target'],
-          expectedRevision: node['revision'],
-          operation: {
-            type: 'patch',
+  const { test, report } = await replay(
+    '095',
+    [
+      research,
+      readRoot,
+      tool('research', { query: 'Option A duration' }),
+      (p) => {
+        const node = firstRead(p);
+        return tool('task', {
+          input: {
+            kind: 'edit',
             target: node['target'],
-            patch: { durationMinutes: { type: 'set', value: 45 } },
+            expectedRevision: node['revision'],
+            operation: {
+              type: 'patch',
+              target: node['target'],
+              patch: { durationMinutes: { type: 'set', value: 45 } },
+            },
           },
-        },
-      });
-    },
-    (p) => {
-      const value = result(p, 'task');
-      return tool('task', {
-        input: {
-          kind: 'append',
-          plan: value['target'],
-          expectedPlanRevision: value['revision'],
-          operation: {
-            type: 'add-comment',
-            target: object(value['after'])['target'],
-            text: 'Вариант A: https://example.org/evidence',
+        });
+      },
+      (p) => {
+        const value = result(p, 'task');
+        return tool('task', {
+          input: {
+            kind: 'append',
+            plan: value['target'],
+            expectedPlanRevision: value['revision'],
+            operation: {
+              type: 'add-comment',
+              target: object(value['after'])['target'],
+              text: 'Вариант A: https://example.org/evidence',
+            },
           },
-        },
-      });
-    },
-    finish,
-    research,
-    tool('research', { query: 'Verify option A duration again' }),
-    (p) =>
-      append(p, {
-        type: 'update-comment',
-        target: object((currentRoot(p)['comments'] as unknown[])[0])['target'],
-        text: 'Уточнённый вывод: https://example.org/evidence',
-      }),
-    finish,
-    confirm,
-  ]);
+        });
+      },
+      finish,
+      research,
+      tool('research', { query: 'Verify option A duration again' }),
+      (p) =>
+        append(p, {
+          type: 'update-comment',
+          target: object((currentRoot(p)['comments'] as unknown[])[0])['target'],
+          text: 'Уточнённый вывод: https://example.org/evidence',
+        }),
+      finish,
+      confirm,
+    ],
+    undefined,
+    { reviewResearch: scriptedResearchAllowance },
+  );
   const turn = expectDefined(report.turns[1]),
     expected = expectDefined(test.turns[1]).expect;
   expect(turn.research?.map((r) => r.invocation)).toEqual([2]);
@@ -272,38 +297,43 @@ it('qualifies 095 against fresh research, exact structured duration, same commen
 });
 it('qualifies P11 note refinement with one frozen path, exact fact and one owner-bound link', async () => {
   const body = 'Вариант A\ndurationMinutes: 45\nhttps://example.org/evidence';
-  const { test, report } = await replay('P11', [
-    research,
-    tool('research', { query: 'Option A' }),
-    readRoot,
-    tool('note', { input: { kind: 'create', title: 'Evidence', text: body } }),
-    (p) => {
-      const node = firstRead(p);
-      return tool('link', {
-        notePlan: result(p, 'note')['target'],
-        target: node['target'],
-        expectedRevision: node['revision'],
-        field: 'comment',
-        alias: 'Evidence',
-        template: 'Вывод: {{link}}',
-      });
-    },
-    finish,
-    plan,
-    (p) => {
-      const note = object(current(p, 'note')['plan']);
-      return tool('note', {
-        input: {
-          kind: 'refine',
-          plan: note['target'],
-          expectedPlanRevision: note['revision'],
-          operation: { type: 'replace-body', text: `${body}\nconclusion: Option A` },
-        },
-      });
-    },
-    finish,
-    confirm,
-  ]);
+  const { test, report } = await replay(
+    'P11',
+    [
+      research,
+      tool('research', { query: 'Option A' }),
+      readRoot,
+      tool('note', { input: { kind: 'create', title: 'Evidence', text: body } }),
+      (p) => {
+        const node = firstRead(p);
+        return tool('link', {
+          notePlan: result(p, 'note')['target'],
+          target: node['target'],
+          expectedRevision: node['revision'],
+          field: 'comment',
+          alias: 'Evidence',
+          template: 'Вывод: {{link}}',
+        });
+      },
+      finish,
+      plan,
+      (p) => {
+        const note = object(current(p, 'note')['plan']);
+        return tool('note', {
+          input: {
+            kind: 'refine',
+            plan: note['target'],
+            expectedPlanRevision: note['revision'],
+            operation: { type: 'replace-body', text: `${body}\nconclusion: Option A` },
+          },
+        });
+      },
+      finish,
+      confirm,
+    ],
+    undefined,
+    { reviewResearch: scriptedResearchAllowance },
+  );
   const actual = expectDefined(report.turns[1]),
     expected = expectDefined(test.turns[1]).expect;
   rejectDamage(expected, actual, [
@@ -527,50 +557,55 @@ it.each([
 });
 
 it('qualifies 094 research note and task fact without prescribing the generated language', async () => {
-  await replay('094', [
-    research,
-    readRoot,
-    tool('research', { query: 'Option A' }),
-    tool('note', {
-      input: {
-        kind: 'create',
-        title: 'Evidence',
-        text: 'Вывод\ndurationMinutes: 45\nhttps://example.org/evidence',
-      },
-    }),
-    (p) => {
-      const node = firstRead(p);
-      return tool('task', {
+  await replay(
+    '094',
+    [
+      research,
+      readRoot,
+      tool('research', { query: 'Option A' }),
+      tool('note', {
         input: {
-          kind: 'edit',
-          target: node['target'],
-          expectedRevision: node['revision'],
-          operation: {
-            type: 'patch',
+          kind: 'create',
+          title: 'Evidence',
+          text: 'Вывод\ndurationMinutes: 45\nhttps://example.org/evidence',
+        },
+      }),
+      (p) => {
+        const node = firstRead(p);
+        return tool('task', {
+          input: {
+            kind: 'edit',
             target: node['target'],
-            patch: { durationMinutes: { type: 'set', value: 45 } },
+            expectedRevision: node['revision'],
+            operation: {
+              type: 'patch',
+              target: node['target'],
+              patch: { durationMinutes: { type: 'set', value: 45 } },
+            },
           },
-        },
-      });
-    },
-    (p) => {
-      const value = result(p, 'task');
-      return tool('task', {
-        input: {
-          kind: 'append',
-          plan: value['target'],
-          expectedPlanRevision: value['revision'],
-          operation: {
-            type: 'add-comment',
-            target: object(value['after'])['target'],
-            text: 'Вывод: https://example.org/evidence',
+        });
+      },
+      (p) => {
+        const value = result(p, 'task');
+        return tool('task', {
+          input: {
+            kind: 'append',
+            plan: value['target'],
+            expectedPlanRevision: value['revision'],
+            operation: {
+              type: 'add-comment',
+              target: object(value['after'])['target'],
+              text: 'Вывод: https://example.org/evidence',
+            },
           },
-        },
-      });
-    },
-    finish,
-    confirm,
-  ]);
+        });
+      },
+      finish,
+      confirm,
+    ],
+    undefined,
+    { reviewResearch: scriptedResearchAllowance },
+  );
 });
 
 it('qualifies canonical public tags for 009', async () => {
@@ -2200,42 +2235,47 @@ it.each(['ru', 'en'] as const)(
       'Atlas: 3 encrypted local copies; 20 minutes; offline. https://example.org/backup-comparison';
     const secondComment =
       'Test restore every week: successful copying alone does not prove recovery. https://example.org/backup-comparison';
-    const { report } = await replay(test, [
-      plan,
-      lookup,
-      (prompt) => {
-        const node = firstRead(prompt);
-        return tool('finish', {
-          state: 'ready',
-          selection: [{ kind: 'task', target: node['target'], revision: node['revision'] }],
-        });
-      },
-      research,
-      tool('research', {
-        query:
-          'https://example.org/backup-comparison compare offline backup options under 25 minutes',
-      }),
-      lookup,
-      (prompt) => {
-        const node = firstRead(prompt);
-        return tool('task', {
-          input: {
-            kind: 'edit',
-            target: node['target'],
-            expectedRevision: node['revision'],
-            operation: {
-              type: 'patch',
+    const { report } = await replay(
+      test,
+      [
+        plan,
+        lookup,
+        (prompt) => {
+          const node = firstRead(prompt);
+          return tool('finish', {
+            state: 'ready',
+            selection: [{ kind: 'task', target: node['target'], revision: node['revision'] }],
+          });
+        },
+        research,
+        tool('research', {
+          query:
+            'https://example.org/backup-comparison compare offline backup options under 25 minutes',
+        }),
+        lookup,
+        (prompt) => {
+          const node = firstRead(prompt);
+          return tool('task', {
+            input: {
+              kind: 'edit',
               target: node['target'],
-              patch: { durationMinutes: { type: 'set', value: 20 } },
+              expectedRevision: node['revision'],
+              operation: {
+                type: 'patch',
+                target: node['target'],
+                patch: { durationMinutes: { type: 'set', value: 20 } },
+              },
             },
-          },
-        });
-      },
-      (prompt) => appendCommentToLatestPlan(prompt, firstComment),
-      (prompt) => appendCommentToLatestPlan(prompt, secondComment),
-      finish,
-      confirm,
-    ]);
+          });
+        },
+        (prompt) => appendCommentToLatestPlan(prompt, firstComment),
+        (prompt) => appendCommentToLatestPlan(prompt, secondComment),
+        finish,
+        confirm,
+      ],
+      undefined,
+      { reviewResearch: scriptedResearchAllowance },
+    );
     const preview = expectDefined(report.turns[1]);
     rejectDamage(expectDefined(test.turns[1]).expect, preview, [
       (value) => {
@@ -2296,34 +2336,39 @@ it.each(['ru', 'en'] as const)(
     const url = 'https://example.org/projects/cairn';
     const firstComment = `Cairn is an offline CLI task manager for personal Markdown files. ${url}`;
     const secondComment = `Expand recurring tasks and export a calendar file; no cloud sync or shared team editing. ${url}`;
-    const { report } = await replay(test, [
-      plan,
-      lookup,
-      (prompt) => {
-        const node = firstRead(prompt);
-        return tool('finish', {
-          state: 'ready',
-          selection: [{ kind: 'task', target: node['target'], revision: node['revision'] }],
-        });
-      },
-      research,
-      tool('research', { url }),
-      lookup,
-      (prompt) => {
-        const node = firstRead(prompt);
-        return tool('task', {
-          input: {
-            kind: 'edit',
-            target: node['target'],
-            expectedRevision: node['revision'],
-            operation: { type: 'add-comment', target: node['target'], text: firstComment },
-          },
-        });
-      },
-      (prompt) => appendCommentToLatestPlan(prompt, secondComment),
-      finish,
-      confirm,
-    ]);
+    const { report } = await replay(
+      test,
+      [
+        plan,
+        lookup,
+        (prompt) => {
+          const node = firstRead(prompt);
+          return tool('finish', {
+            state: 'ready',
+            selection: [{ kind: 'task', target: node['target'], revision: node['revision'] }],
+          });
+        },
+        research,
+        tool('research', { url }),
+        lookup,
+        (prompt) => {
+          const node = firstRead(prompt);
+          return tool('task', {
+            input: {
+              kind: 'edit',
+              target: node['target'],
+              expectedRevision: node['revision'],
+              operation: { type: 'add-comment', target: node['target'], text: firstComment },
+            },
+          });
+        },
+        (prompt) => appendCommentToLatestPlan(prompt, secondComment),
+        finish,
+        confirm,
+      ],
+      undefined,
+      { reviewResearch: scriptedResearchAllowance },
+    );
     const preview = expectDefined(report.turns[1]);
     const expected = expectDefined(test.turns[1]).expect;
     rejectDamage(expected, preview, [

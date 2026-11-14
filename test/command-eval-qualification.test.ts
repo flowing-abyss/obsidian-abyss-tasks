@@ -258,7 +258,7 @@ it.each([false, true])(
 
 it('requires concrete contracts for every authored action and retained pipeline', async () => {
   const { actions, pipelines, unqualifiedTurns } = await import('./command-live/corpus');
-  expect(actions).toHaveLength(100);
+  expect(actions).toHaveLength(104);
   expect(pipelines).toHaveLength(12);
   expect(
     [...actions, ...pipelines].flatMap((test) =>
