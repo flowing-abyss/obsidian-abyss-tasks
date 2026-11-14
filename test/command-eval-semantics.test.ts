@@ -1,4 +1,5 @@
 import { expect, it } from 'vitest';
+import { selectCases } from './command-live/corpus';
 import { tree } from './command-live/fixtures';
 import { evaluateTurn, type TurnEvidence, type TurnExpectation } from './command-live/oracles';
 import { pageCases } from './command-live/pageCases';
@@ -7,6 +8,7 @@ import {
   hasSourceDestination,
   hasSourceFacts,
 } from './command-live/sourceOracle';
+import { expectDefined } from './helpers';
 
 const source = 'https://example.org/offline-backup';
 const base = (trees: readonly unknown[]): TurnEvidence => ({
@@ -196,6 +198,122 @@ it('rejects overlong source comments even when their facts and citation are corr
   expect(
     evaluateTurn(expected, comment(`Works offline. ${'filler '.repeat(30)}${source}`)),
   ).toContain('tree-postcondition');
+});
+
+const diagnostic104 = () => expectDefined(selectCases('104')[0]);
+const orchardSource = 'https://example.org/orchard-schedule';
+const longFaithfulOrchardComment = `Before the spring calibration, check the gauge; the schedule recommends that pre-calibration check and provides the timing context for the orchard team. Source: ${orchardSource}`;
+function orchardResearchEvidence(text: string, owner = 'Calibrate the orchard gauge') {
+  return {
+    ...base([
+      tree(owner, {
+        dates: { scheduled: '2026-11-12' },
+        comments: [{ text }],
+      }),
+    ]),
+    publicTrees: [tree('Calibrate the orchard gauge', { dates: { scheduled: '2026-11-12' } })],
+    taskSources: [{ path: 'a.md', line: 0, kind: 'edit', basisValid: true }],
+    proposalKinds: ['task'],
+    research: [{ invocation: 1, query: orchardSource, sources: [orchardSource] }],
+    writeCount: 0,
+  };
+}
+
+it('states source and length requirements in diagnostic 103/104 prompts and omits 104 date-turn comments', () => {
+  const diagnostic103 = expectDefined(selectCases('103')[0]);
+  const diagnostic104Case = diagnostic104();
+  expect(diagnostic103.turns[0]?.text).toContain('at most 400 characters including the citation');
+  expect(diagnostic103.turns[0]?.text).toContain(
+    'https://example.org/orchard-gauge as the citation',
+  );
+  expect(diagnostic104Case.turns[0]?.text).toContain('as a citation');
+  expect(diagnostic104Case.turns[0]?.text).toContain(
+    'at most 400 characters including the citation',
+  );
+  expect(diagnostic104Case.turns[1]?.text).toContain('Keep the source URL as a citation');
+  expect(diagnostic104Case.turns[1]?.text).toContain(
+    'at most 400 characters including the citation',
+  );
+  expect(diagnostic104Case.turns).toHaveLength(3);
+  const third = expectDefined(diagnostic104Case.turns[2]).expect;
+  expect(third.retainPreviousTasks).toBe(true);
+  expect(expectDefined(third.trees?.[0])).not.toHaveProperty('comments');
+});
+
+it('accepts faithful 104 research comments over 140 and within 400 characters', () => {
+  expect(longFaithfulOrchardComment.length).toBeGreaterThan(140);
+  expect(longFaithfulOrchardComment.length).toBeLessThanOrEqual(400);
+  const expectation = expectDefined(diagnostic104().turns[1]).expect;
+  expect(evaluateTurn(expectation, orchardResearchEvidence(longFaithfulOrchardComment))).toEqual(
+    [],
+  );
+});
+
+it('rejects overlong, contradictory, wrong-source and wrong-owner 104 research comments', () => {
+  const expectation = expectDefined(diagnostic104().turns[1]).expect;
+  expect(
+    evaluateTurn(
+      expectation,
+      orchardResearchEvidence(`${longFaithfulOrchardComment} ${'extra '.repeat(50)}`),
+    ),
+  ).toContain('tree-postcondition');
+  expect(
+    evaluateTurn(
+      expectation,
+      orchardResearchEvidence(
+        `The gauge should not be checked before spring calibration. ${orchardSource}`,
+      ),
+    ),
+  ).toContain('tree-postcondition');
+  expect(
+    evaluateTurn(
+      expectation,
+      orchardResearchEvidence(
+        longFaithfulOrchardComment.replace(orchardSource, 'https://wrong.example/orchard-schedule'),
+      ),
+    ),
+  ).toContain('tree-postcondition');
+  expect(
+    evaluateTurn(
+      expectation,
+      orchardResearchEvidence(longFaithfulOrchardComment, 'Different task owner'),
+    ),
+  ).toContain('tree-postcondition');
+});
+
+it('requires the previous 104 pending comment bytes to survive its date-only edit', () => {
+  const dateEdit = expectDefined(diagnostic104().turns[2]).expect;
+  const prior = tree('Calibrate the orchard gauge', {
+    dates: { scheduled: '2026-11-12' },
+    target: 'task-target',
+    comments: [
+      { target: 'comment-target', parentTarget: 'task-target', text: longFaithfulOrchardComment },
+    ],
+  });
+  const edited = tree('Calibrate the orchard gauge', {
+    dates: { scheduled: '2026-11-20' },
+    target: 'task-target',
+    comments: [
+      { target: 'comment-target', parentTarget: 'task-target', text: longFaithfulOrchardComment },
+    ],
+  });
+  const evidence = {
+    ...base([edited]),
+    publicTrees: [tree('Calibrate the orchard gauge', { dates: { scheduled: '2026-11-12' } })],
+    previousTaskContinuity: true,
+    taskSources: [{ path: 'a.md', line: 0, kind: 'edit', basisValid: true }],
+    proposalKinds: ['task'],
+    writeCount: 0,
+    preservation: [
+      { before: prior, after: edited, requested: { dates: { scheduled: '2026-11-20' } } },
+    ],
+  };
+  expect(evaluateTurn(dateEdit, evidence)).toEqual([]);
+  const rewritten = structuredClone(evidence);
+  const pair = expectDefined(rewritten.preservation[0]);
+  const comment = expectDefined((pair.after as { comments: Array<{ text: string }> }).comments[0]);
+  comment.text = 'Rewritten during date edit';
+  expect(evaluateTurn(dateEdit, rewritten)).toContain('preservation:comments');
 });
 
 it('accepts the offline paraphrase and rejects contradicted offline or team-editing claims', () => {

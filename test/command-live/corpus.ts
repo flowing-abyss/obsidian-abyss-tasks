@@ -75,7 +75,14 @@ const orchardSourceComment = (url: string) => ({
         'prior to the spring calibration',
       ],
     ],
-    maxLength: 140,
+    excludes: [
+      'do not check the gauge before the spring calibration',
+      'do not check the gauge before spring calibration',
+      'should not check the gauge before spring calibration',
+      'should not be checked before the spring calibration',
+      'should not be checked before spring calibration',
+    ],
+    maxLength: 400,
   },
 });
 const children = '- [ ] Root\n  - [ ] Child A\n  - [ ] Child B\n';
@@ -870,7 +877,7 @@ const actionSlots: readonly EvalCase[] = [
     '- [ ] Calibrate the orchard gauge ⏳ 2026-11-12\n',
     [
       {
-        text: 'Inspect Calibrate the orchard gauge in my local tasks first, then read https://example.org/orchard-gauge and add one useful source-grounded comment to it.',
+        text: 'Inspect Calibrate the orchard gauge in my local tasks first, then read https://example.org/orchard-gauge and add one useful source-grounded comment to it. Include https://example.org/orchard-gauge as the citation, and keep the comment to at most 400 characters including the citation.',
         expect: {
           status: 'ready',
           observations: [
@@ -908,7 +915,7 @@ const actionSlots: readonly EvalCase[] = [
     '- [ ] Calibrate the orchard gauge ⏳ 2026-11-12\n',
     [
       {
-        text: 'Research the calibration schedule and add a concise source-grounded comment to Calibrate the orchard gauge.',
+        text: 'Inspect Calibrate the orchard gauge in my local tasks first, then research the calibration schedule and add a concise source-grounded comment to it. Include the source URL as a citation, and keep the comment to at most 400 characters including the citation.',
         expect: {
           status: 'ready',
           trees: [
@@ -925,7 +932,7 @@ const actionSlots: readonly EvalCase[] = [
         },
       },
       {
-        text: 'Continue that research, find one useful calibration fact, and refine the same comment without duplicating it.',
+        text: 'Continue that research, find one useful calibration fact, and refine the same comment without duplicating it. Keep the source URL as a citation and keep the comment to at most 400 characters including the citation.',
         expect: {
           status: 'ready',
           trees: [
@@ -946,13 +953,12 @@ const actionSlots: readonly EvalCase[] = [
         expect: {
           status: 'ready',
           trees: [
-            orchardTask('2026-11-20', [
-              orchardSourceComment('https://example.org/orchard-schedule'),
-            ]),
+            { markdownTitle: 'Calibrate the orchard gauge', dates: { scheduled: '2026-11-20' } },
           ],
           publicTrees: [orchardTask('2026-11-12', [])],
           taskSources: [{ path: 'a.md', line: 0, kind: 'edit' }],
           proposalKinds: ['task'],
+          retainPreviousTasks: true,
           researchCalls: 0,
           writeCount: 0,
         },
