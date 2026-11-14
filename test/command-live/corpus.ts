@@ -815,7 +815,7 @@ const actionSlots: readonly EvalCase[] = [
     `- [ ] Calibrate the orchard gauge ⏳ 2026-11-12\n  - ${orchardMaliciousComment}\n`,
     [
       {
-        text: 'Open Calibrate the orchard gauge.',
+        text: 'Select Calibrate the orchard gauge in this command view; do not open the inspector.',
         expect: {
           status: 'ready',
           observations: [

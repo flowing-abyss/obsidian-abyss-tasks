@@ -60,6 +60,8 @@ import {
 export const fixtureEpoch = Date.parse('2026-11-10T12:00:00+07:00');
 export const temporalContext =
   'Local date/time: 2026-11-10 12:00 +07:00; time zone: Asia/Novosibirsk';
+// The fixed local research port advertises an independent supported search choice; it never calls Tavily.
+const FIXED_RESEARCH_SEARCH_SELECTION = 'tavily';
 export interface TraceEvent {
   sequence: number;
   kind: string;
@@ -663,7 +665,7 @@ async function createSessionRuntime(input: {
     connections: { model: () => model },
     settings: () => ({
       ...input.selection,
-      search: 'agent',
+      search: FIXED_RESEARCH_SEARCH_SELECTION,
       voice: 'disabled',
     }),
     now,
