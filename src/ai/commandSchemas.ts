@@ -286,7 +286,9 @@ export const changeTaskSchema = z.strictObject({
   removeAnnotations: z.array(z.string()).max(50).optional(),
 });
 export function flatPatchKeys(operation: Record<string, unknown>): string[] {
-  return Object.keys(operation).filter((key) => key !== 'type');
+  return Object.keys(operation).filter(
+    (key) => key !== 'type' && Object.prototype.hasOwnProperty.call(setMetadata.shape, key),
+  );
 }
 type TaskChange = z.infer<typeof changeTaskSchema>['operation'];
 export function taskChangeOperation(operation: TaskChange): Exclude<TaskChange, { type: 'set' }> {

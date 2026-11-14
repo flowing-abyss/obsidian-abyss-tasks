@@ -1422,7 +1422,6 @@ it('keeps old work pending when an unrelated saved task gets a separate edit wit
         operation: { type: 'set', due: null },
       }),
     finish(),
-    finish(),
   );
   await h.session.submit('Измени срок South на 23 ноября и сохрани.');
   expect(await h.read('a.md')).toBe(source);
@@ -2419,6 +2418,7 @@ it('create then edit then delete of an unsaved root cancels the draft without ef
         },
       });
     },
+    finish(),
     finish(),
   );
   await h.session.submit('Change it');
@@ -6404,6 +6404,200 @@ it('does not let a successful sibling edit conceal an unresolved failed operatio
   expect(h.session.snapshot().proposal.changes).toHaveLength(1);
   expect(h.session.snapshot().journal).toHaveLength(0);
   expect(await h.read('a.md')).toBe(original);
+});
+
+it('resolves the corrected flat metadata field after rejecting nested completion metadata', async () => {
+  const source = [
+    '# Field work',
+    'Protected introduction.',
+    '- [ ] Beta Proof #south #shared 📅 2026-12-25 ⏳ 2026-12-12',
+    '  - > Keep beta.',
+    '  - 2026-12-01T10:00:00Z: Preserve beta comment.',
+    '  - [ ] Beta child',
+    'Protected ending.',
+    '',
+  ].join('\n');
+  const h = await setup({ 'a.md': source });
+  let rejectedFeedback = '';
+  h.script(
+    interpret(),
+    () => call('find', { query: 'Beta Proof', purpose: 'change' }),
+    () => call('find', { query: 'Beta Proof', purpose: 'change', showExact: true }),
+    () =>
+      call('change_task', {
+        edit: projectedEdit(h, 'Beta Proof'),
+        operation: { type: 'set', due: '2026-12-21},', complete: true },
+      }),
+    () => {
+      const lastCall = expectDefined(h.model.doGenerateCalls[h.model.doGenerateCalls.length - 1]);
+      const result = lastCall.prompt
+        .flatMap((message) => (message.role === 'tool' ? message.content : []))
+        .reverse()
+        .find((part) => part.type === 'tool-result' && part.toolName === 'change_task');
+      if (result?.type !== 'tool-result' || result.output.type !== 'error-text')
+        throw new Error('Expected strict rejection feedback for malformed metadata');
+      rejectedFeedback = result.output.value;
+      return call('change_task', {
+        edit: projectedEdit(h, 'Beta Proof'),
+        operation: { type: 'set', due: '2026-12-21' },
+        complete: true,
+      });
+    },
+    finish(),
+    finish(),
+  );
+  await h.session.submit('Set Beta Proof due date to December 21.');
+
+  expect(rejectedFeedback).toContain('Arguments rejected; nothing ran.');
+  expect(rejectedFeedback).toContain('operation: unrecognized_keys');
+  expect(rejectedFeedback).toContain('complete');
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(h.session.snapshot().trees).toMatchObject([
+    {
+      after: {
+        title: 'Beta Proof',
+        tags: ['#south', '#shared'],
+        dates: { due: '2026-12-21', scheduled: '2026-12-12' },
+        description: 'Keep beta.',
+        comments: [{ text: 'Preserve beta comment.' }],
+        children: [{ title: 'Beta child' }],
+      },
+    },
+  ]);
+  expect(await h.read('a.md')).toBe(source);
+
+  await h.session.confirm();
+  expect(h.session.snapshot().status.kind).toBe('saved');
+  const written = await h.read('a.md');
+  expect(written).toContain('- [ ] Beta Proof #south #shared 📅 2026-12-21 ⏳ 2026-12-12');
+  expect(written).toContain('  - > Keep beta.');
+  expect(written).toContain('  - 2026-12-01T10:00:00Z: Preserve beta comment.');
+  expect(written).toContain('  - [ ] Beta child');
+  expect(written).toContain('Protected introduction.');
+  expect(written).toContain('Protected ending.');
+});
+
+it('finishes the corrected second child after undoing the first child in the same owner', async () => {
+  const source = [
+    '# Dispatch work',
+    'Protected introduction.',
+    '- [ ] Dispatch',
+    '  - [ ] Alpha Proof #north 📅 2026-12-18',
+    '    - > Keep alpha.',
+    '    - 2026-12-01T10:00:00Z: Preserve alpha comment.',
+    '    - [ ] Alpha child',
+    '  - [ ] Beta Proof #south #shared 📅 2026-12-25 ⏳ 2026-12-12',
+    '    - > Keep beta.',
+    '    - 2026-12-01T10:01:00Z: Preserve beta comment.',
+    '    - [ ] Beta child',
+    '  - [ ] Protected neighbor #untouched 📅 2026-12-30',
+    '    - > Keep neighbor.',
+    'Protected ending.',
+    '',
+  ].join('\n');
+  const h = await setup({ 'a.md': source, 'Other.md': 'Unrelated bytes.\n' });
+
+  h.script(
+    interpret(),
+    () => call('find', { query: 'Alpha Proof', purpose: 'change' }),
+    () => call('find', { query: 'Alpha Proof', purpose: 'change', showExact: true }),
+    () =>
+      call('change_task', {
+        edit: projectedEdit(h, 'Alpha Proof'),
+        operation: { type: 'set', due: '2026-12-21' },
+      }),
+    finish(),
+  );
+  await h.session.submit('Set Alpha Proof due date to December 21.');
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  expect(h.session.snapshot().trees[0]?.after?.children[0]?.dates.due).toBe('2026-12-21');
+  expect(await h.read('a.md')).toBe(source);
+  expect(h.session.snapshot().journal).toEqual([]);
+
+  let rejectedFeedback = '';
+  h.script(
+    () =>
+      call('change_task', {
+        edit: projectedEdit(h, 'Alpha Proof'),
+        operation: { type: 'set', due: '2026-12-18' },
+      }),
+    () =>
+      call('change_task', {
+        edit: projectedEdit(h, 'Beta Proof'),
+        operation: { type: 'set', due: '2026-12-21},', complete: true },
+      }),
+    () => {
+      const lastCall = expectDefined(h.model.doGenerateCalls[h.model.doGenerateCalls.length - 1]);
+      const result = lastCall.prompt
+        .flatMap((message) => (message.role === 'tool' ? message.content : []))
+        .reverse()
+        .find((part) => part.type === 'tool-result' && part.toolName === 'change_task');
+      if (result?.type !== 'tool-result' || result.output.type !== 'error-text')
+        throw new Error('Expected strict rejection feedback for malformed Beta metadata');
+      rejectedFeedback = result.output.value;
+      return call('change_task', {
+        edit: projectedEdit(h, 'Beta Proof'),
+        operation: { type: 'set', due: '2026-12-21' },
+        complete: true,
+      });
+    },
+    finish(),
+    finish(),
+  );
+  await h.session.submit('Restore Alpha Proof to December 18 and set Beta Proof to December 21.');
+
+  expect(rejectedFeedback).toContain('Arguments rejected; nothing ran.');
+  expect(rejectedFeedback).toContain('operation: unrecognized_keys');
+  expect(rejectedFeedback).toContain('complete');
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(JSON.stringify(h.model.doGenerateCalls)).not.toContain(
+    'No current accepted result is ready',
+  );
+  expect(h.session.snapshot().trees).toMatchObject([
+    {
+      after: {
+        title: 'Dispatch',
+        children: [
+          {
+            title: 'Alpha Proof',
+            tags: ['#north'],
+            dates: { due: '2026-12-18' },
+            description: 'Keep alpha.',
+            comments: [{ text: 'Preserve alpha comment.' }],
+            children: [{ title: 'Alpha child' }],
+          },
+          {
+            title: 'Beta Proof',
+            tags: ['#south', '#shared'],
+            dates: { due: '2026-12-21', scheduled: '2026-12-12' },
+            description: 'Keep beta.',
+            comments: [{ text: 'Preserve beta comment.' }],
+            children: [{ title: 'Beta child' }],
+          },
+          {
+            title: 'Protected neighbor',
+            tags: ['#untouched'],
+            dates: { due: '2026-12-30' },
+            description: 'Keep neighbor.',
+          },
+        ],
+      },
+    },
+  ]);
+  expect(await h.read('a.md')).toBe(source);
+  expect(await h.read('Other.md')).toBe('Unrelated bytes.\n');
+
+  await h.session.confirm();
+  expect(h.session.snapshot().status.kind).toBe('saved');
+  expect(await h.read('a.md')).toBe(
+    source.replace(
+      'Beta Proof #south #shared 📅 2026-12-25',
+      'Beta Proof #south #shared 📅 2026-12-21',
+    ),
+  );
+  expect(await h.read('Other.md')).toBe('Unrelated bytes.\n');
 });
 
 it('recovers a rejected comment with missing text on its exact issued edit alias', async () => {

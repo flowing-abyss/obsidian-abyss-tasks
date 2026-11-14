@@ -13,6 +13,30 @@ it('retains each operation-less edit preparation without accepting a nested edit
   expect(work.unresolved).toBe(false);
 });
 
+it('matches rejected flat metadata by declared fields and keeps unknown-only metadata blocked', () => {
+  const work = new CommandPendingOperations((value) => value);
+  work.reject('change_task', {
+    edit: 'beta',
+    operation: { type: 'set', due: '2026-12-21},', complete: true, urgencyLabel: 'high' },
+  });
+  work.resolve('change_task', {
+    edit: 'beta',
+    operation: { type: 'set', due: '2026-12-21' },
+  });
+  expect(work.unresolved).toBe(false);
+
+  const unknownOnly = new CommandPendingOperations((value) => value);
+  unknownOnly.reject('change_task', {
+    edit: 'beta',
+    operation: { type: 'set', complete: true, urgencyLabel: 'high' },
+  });
+  unknownOnly.resolve('change_task', {
+    edit: 'beta',
+    operation: { type: 'set', due: '2026-12-21' },
+  });
+  expect(unknownOnly.unresolved).toBe(true);
+});
+
 it('leaves unknown project envelopes to schema errors without inventing a subject', () => {
   const work = new CommandPendingOperations((value) => value);
   work.reject('project', { input: JSON.stringify({ kind: 'update', target: 'p' }) });
