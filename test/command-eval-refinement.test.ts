@@ -43,8 +43,527 @@ function writeEvidence(saved: boolean) {
     admissions: saved ? [{ id: 'fixture-write', state: 'admitted' }] : [],
   };
 }
+function quietWriteObservations() {
+  return {
+    input: {
+      sessionId: 'session-a',
+      proposalRevision: 3,
+      providerEpoch: 'epoch-1',
+      proposalChanges: [],
+      journal: [],
+    },
+    final: { sessionId: 'session-a', blocked: false, recovery: 'live', journal: [] },
+    snapshots: [],
+    dispatches: [],
+    results: [],
+  };
+}
+function preservedConflictEvidence(): TurnEvidence {
+  const change = {
+    kind: 'task',
+    plan: {
+      kind: 'edit',
+      target: 'plan-1',
+      revision: 'revision-1',
+      before: { target: 'target-1', revision: 'revision-1', source: { path: 'a.md', line: 0 } },
+      after: { target: 'target-1', markdownTitle: 'Calibrate gauge' },
+    },
+  };
+  const entry = {
+    id: 'write-1',
+    proposalRevision: 3,
+    origin: 'proposal',
+    change,
+    request: { requestId: 'request-1', expiresAt: 100 },
+    state: 'settled',
+    effects: 'unchanged',
+    error: 'STALE_REVISION',
+  };
+  return {
+    status: 'error',
+    question: null,
+    trees: [],
+    publicTrees: [],
+    before: { 'a.md': '- [ ] Calibrate gauge\n', 'control.md': 'protected\n' },
+    after: { 'a.md': '- [ ] Calibrate gauge\n', 'control.md': 'protected\n' },
+    journal: [{ id: 'write-1', state: 'settled', effects: 'unchanged', error: 'STALE_REVISION' }],
+    admissions: [{ id: 'write-1', state: 'admitted' }],
+    complete: true,
+    writeCount: 1,
+    writeObservations: {
+      input: {
+        sessionId: 'session-a',
+        proposalRevision: 3,
+        providerEpoch: 'epoch-1',
+        proposalChanges: [change],
+        journal: [],
+      },
+      final: { sessionId: 'session-a', blocked: false, recovery: 'live', journal: [entry] },
+      snapshots: [
+        {
+          sequence: 2,
+          kind: 'durable-journal',
+          sessionId: 'session-a',
+          journal: [{ ...entry, state: 'admitted', effects: undefined, error: undefined }],
+        },
+        { sequence: 5, kind: 'durable-journal', sessionId: 'session-a', journal: [entry] },
+      ],
+      dispatches: [
+        {
+          sequence: 3,
+          method: 'tasks.apply',
+          input: {
+            requestId: 'request-1',
+            expiresAt: 100,
+            plan: 'plan-1',
+            expectedPlanRevision: 'revision-1',
+          },
+        },
+      ],
+      results: [
+        {
+          sequence: 4,
+          result: {
+            ok: false,
+            effects: 'unchanged',
+            recovery: 'none',
+            error: { code: 'STALE_REVISION', category: 'conflict' },
+          },
+        },
+      ],
+    },
+  } as unknown as TurnEvidence;
+}
+function unchangedSaveEvidence(): TurnEvidence {
+  const task = {
+    target: 'task-root',
+    revision: 'task-revision',
+    source: { path: 'a.md', line: 0 },
+    children: [],
+    comments: [],
+    timeEntries: [],
+    complete: true,
+    truncated: false,
+    markdownTitle: 'Calibrate gauge',
+    dates: { scheduled: '2027-02-03' },
+    tags: ['#shop'],
+    description: 'Keep pressure steady',
+  };
+  const plan = {
+    providerEpoch: 'epoch-1',
+    target: 'plan-save',
+    revision: 'plan-revision',
+    kind: 'edit',
+    before: task,
+    after: task,
+  };
+  const change = { kind: 'task', plan };
+  const request = { requestId: 'save-request', expiresAt: 200 };
+  const receipt = {
+    providerEpoch: 'epoch-1',
+    requestId: request.requestId,
+    acceptedAt: 100,
+    expiresAt: request.expiresAt,
+    plan: plan.target,
+    planRevision: plan.revision,
+    outcome: 'noop',
+    effects: 'unchanged',
+    recovery: 'none',
+    original: { target: task.target, state: 'retained' },
+    task: { target: task.target, revision: task.revision },
+    snapshots: 'complete',
+    contentContinuity: {
+      plan: plan.target,
+      planRevision: plan.revision,
+      correspondence: {
+        state: 'complete',
+        coverage: 'issued-plan-tasks',
+        root: { target: task.target, revision: task.revision },
+        tasks: [
+          {
+            preparedTarget: task.target,
+            committedTarget: task.target,
+            committedRevision: task.revision,
+          },
+        ],
+      },
+    },
+    warnings: [],
+  };
+  const admitted = {
+    id: 'save-entry',
+    proposalRevision: 4,
+    origin: 'proposal',
+    change,
+    request,
+    state: 'admitted',
+  };
+  const settled = { ...admitted, state: 'settled', effects: 'unchanged', receipt };
+  const previous = {
+    id: 'prior-write',
+    proposalRevision: 2,
+    origin: 'proposal',
+    change,
+    request: { requestId: 'prior-request', expiresAt: 150 },
+    state: 'settled',
+    effects: 'committed',
+    receipt: { requestId: 'prior-request', outcome: 'changed' },
+  };
+  return {
+    status: 'saved',
+    question: null,
+    trees: [],
+    publicTrees: [task],
+    before: { 'a.md': '- [ ] Calibrate gauge ⏳ 2027-02-03 #shop\n' },
+    after: { 'a.md': '- [ ] Calibrate gauge ⏳ 2027-02-03 #shop\n' },
+    journal: [{ id: settled.id, state: settled.state, effects: settled.effects, receipt }],
+    admissions: [{ id: admitted.id, state: admitted.state }],
+    complete: true,
+    writeCount: 1,
+    writeObservations: {
+      input: {
+        sessionId: 'session-save',
+        proposalRevision: 4,
+        providerEpoch: 'epoch-1',
+        proposalChanges: [change],
+        journal: [previous],
+      },
+      final: {
+        sessionId: 'session-save',
+        blocked: false,
+        recovery: 'live',
+        journal: [previous, settled],
+      },
+      snapshots: [
+        {
+          sequence: 1,
+          kind: 'durable-journal',
+          sessionId: 'session-save',
+          journal: [previous, admitted],
+        },
+        {
+          sequence: 5,
+          kind: 'durable-journal',
+          sessionId: 'session-save',
+          journal: [previous, settled],
+        },
+      ],
+      dispatches: [
+        {
+          sequence: 2,
+          method: 'tasks.apply',
+          input: {
+            plan: plan.target,
+            expectedPlanRevision: plan.revision,
+            requestId: request.requestId,
+            expiresAt: request.expiresAt,
+          },
+        },
+      ],
+      results: [
+        { sequence: 3, result: { ok: true, receipt, effects: 'unchanged', recovery: 'none' } },
+      ],
+    },
+  } as unknown as TurnEvidence;
+}
 const selected = selectCases('028,031,R01,R02,R03,R04,R06,R07,R08,R09,R10,R11,R12');
 describe('focused offline refinement oracle qualification', () => {
+  it('accepts only bounded non-save status alternatives with branch-specific questions', () => {
+    const expectation: TurnExpectation = {
+      status: 'error',
+      statusAlternatives: ['ready', 'question'],
+      preservedConflict: true,
+      files: { 'a.md': '- [ ] Calibrate gauge\n' },
+      publicTrees: [],
+    };
+    const evidence: TurnEvidence = {
+      status: 'question',
+      question: 'Which gauge?',
+      trees: [],
+      publicTrees: [],
+      before: { 'a.md': '- [ ] Calibrate gauge\n', 'control.md': 'protected\n' },
+      after: { 'a.md': '- [ ] Calibrate gauge\n', 'control.md': 'protected\n' },
+      journal: [],
+      admissions: [],
+      complete: true,
+      writeCount: 0,
+      writeObservations: quietWriteObservations(),
+    };
+    expect(evaluateTurn(expectation, evidence)).toEqual([]);
+    expect(evaluateTurn(expectation, { ...evidence, question: null })).toContain(
+      'missing-clarification',
+    );
+    expect(
+      evaluateTurn(
+        {
+          ...expectation,
+          statusAlternatives: ['saved'] as unknown as ReadonlyArray<'ready' | 'question' | 'error'>,
+        },
+        evidence,
+      ),
+    ).toContain('invalid-status-alternatives');
+    expect(
+      evaluateTurn(
+        {
+          ...expectation,
+          statusAlternatives: ['ready', 'ready'] as ReadonlyArray<'ready' | 'question' | 'error'>,
+        },
+        evidence,
+      ),
+    ).toContain('invalid-status-alternatives');
+    expect(
+      evaluateTurn(
+        {
+          ...expectation,
+          statusAlternatives: ['ready', 'question', 'error'],
+        },
+        evidence,
+      ),
+    ).toContain('invalid-status-alternatives');
+    expect(evaluateTurn({ ...expectation, allowWrites: true }, evidence)).toContain(
+      'invalid-preserved-conflict-contract',
+    );
+    for (const [status, question] of [
+      ['ready', null],
+      ['error', null],
+    ] as const)
+      expect(evaluateTurn(expectation, { ...evidence, status, question })).toEqual([]);
+    expect(evaluateTurn({ ...expectation, writeCount: 0 }, evidence)).toContain(
+      'invalid-preserved-conflict-contract',
+    );
+    expect(evaluateTurn({ ...expectation, partialSave: true }, evidence)).toContain(
+      'invalid-preserved-conflict-contract',
+    );
+    expect(evaluateTurn({ ...expectation, rejectedWrite: { error: 'STALE' } }, evidence)).toContain(
+      'invalid-preserved-conflict-contract',
+    );
+  });
+
+  it('rejects status alternatives on the existing partial-save contract', () => {
+    const expected: TurnExpectation = {
+      status: 'ready',
+      statusAlternatives: ['question'],
+      partialSave: true,
+      writeCount: 1,
+      files: { 'a.md': '- [ ] Calibrate gauge\n' },
+      trees: [],
+      publicTrees: [],
+      proposalKinds: [],
+    };
+    const evidence = {
+      ...correct(expected),
+      status: 'question',
+      question: 'Which task should receive this comment?',
+      before: { 'a.md': '- [ ] Calibrate gauge\n', 'control.md': 'protected\n' },
+      after: { 'a.md': '- [ ] Calibrate gauge\n', 'control.md': 'protected\n' },
+      journal: [{ id: 'write-1', state: 'settled', effects: 'committed', receipt: {} }],
+      admissions: [{ id: 'write-1', state: 'admitted' }],
+    } satisfies TurnEvidence;
+    expect(evaluateTurn(expected, evidence)).toContain('invalid-status-alternatives');
+  });
+
+  it('accepts a scoped preserved conflict only with one durable unchanged rejection', () => {
+    const expectation: TurnExpectation = {
+      status: 'error',
+      statusAlternatives: ['ready', 'question'],
+      preservedConflict: true,
+      files: { 'a.md': '- [ ] Calibrate gauge\n' },
+      publicTrees: [],
+    };
+    const evidence = preservedConflictEvidence();
+    const writeObservations = expectDefined(evidence.writeObservations);
+    expect(evaluateTurn(expectation, evidence)).toEqual([]);
+    expect(
+      evaluateTurn(expectation, {
+        ...evidence,
+        writeObservations: {
+          ...writeObservations,
+          dispatches: [
+            ...writeObservations.dispatches,
+            { sequence: 9, method: 'tasks.apply', input: { requestId: 'retry' } },
+          ],
+        },
+      }),
+    ).toContain('preserved-conflict-dispatch');
+    expect(
+      evaluateTurn(expectation, {
+        ...evidence,
+        after: { ...evidence.after, 'control.md': 'changed\n' },
+      }),
+    ).toContain('preserved-conflict-files');
+    expect(
+      evaluateTurn(expectation, {
+        ...evidence,
+        writeObservations: {
+          ...writeObservations,
+          snapshots: [
+            ...writeObservations.snapshots,
+            {
+              sequence: 7,
+              kind: 'snapshot',
+              sessionId: 'archived-session',
+              journal: [{ id: 'hidden-write', state: 'settled' }],
+            },
+          ],
+        },
+      }),
+    ).toContain('preserved-conflict-settlement');
+
+    const mutate = (change: (value: NonNullable<TurnEvidence['writeObservations']>) => void) => {
+      const damaged = structuredClone(evidence);
+      change(expectDefined(damaged.writeObservations));
+      return evaluateTurn(expectation, damaged);
+    };
+    expect(
+      mutate((value) => {
+        value.snapshots = value.snapshots.filter(
+          (event) =>
+            !(
+              event.kind === 'durable-journal' &&
+              event.journal.some((entry) => (entry as { state?: string }).state === 'admitted')
+            ),
+        );
+      }),
+    ).toContain('preserved-conflict-settlement');
+    expect(
+      mutate((value) => {
+        value.snapshots = value.snapshots.filter(
+          (event) =>
+            !(
+              event.kind === 'durable-journal' &&
+              event.journal.some((entry) => (entry as { state?: string }).state === 'settled')
+            ),
+        );
+        value.final = { ...value.final, journal: [] };
+      }),
+    ).toContain('preserved-conflict-settlement');
+    expect(
+      mutate((value) => {
+        const event = expectDefined(
+          value.snapshots.find(
+            (item) =>
+              item.kind === 'durable-journal' &&
+              item.journal.some((entry) => (entry as { state?: string }).state === 'settled'),
+          ),
+        );
+        const entry = event.journal[0] as Record<string, unknown>;
+        event.journal = [{ ...entry, receipt: { requestId: 'foreign-receipt' } }];
+      }),
+    ).toContain('preserved-conflict-settlement');
+    expect(
+      mutate((value) => {
+        value.dispatches = value.dispatches.map((dispatch) => ({
+          ...dispatch,
+          input: { ...(dispatch.input as object), plan: 'foreign-plan' },
+        }));
+      }),
+    ).toContain('preserved-conflict-scope');
+    expect(
+      mutate((value) => {
+        value.snapshots = value.snapshots.map((event) =>
+          event.kind === 'durable-journal' &&
+          event.journal.some((entry) => (entry as { state?: string }).state === 'settled')
+            ? {
+                ...event,
+                journal: event.journal.map((raw) => ({ ...(raw as object), effects: 'unknown' })),
+              }
+            : event,
+        );
+      }),
+    ).toContain('preserved-conflict-settlement');
+    expect(
+      mutate((value) => {
+        const event = expectDefined(
+          value.snapshots.find(
+            (item) =>
+              item.kind === 'durable-journal' &&
+              item.journal.some((entry) => (entry as { state?: string }).state === 'settled'),
+          ),
+        );
+        value.snapshots = [
+          ...value.snapshots,
+          {
+            ...event,
+            sequence: 6,
+            kind: 'snapshot',
+            journal: event.journal.map((raw) => ({
+              ...(raw as object),
+              effects: 'committed',
+              receipt: { requestId: 'hidden-committed-effect' },
+            })),
+          },
+        ];
+      }),
+    ).toContain('preserved-conflict-settlement');
+    expect(evaluateTurn(expectation, { ...evidence, status: 'saved' })).toContain(
+      'status:saved:expected:error',
+    );
+  });
+
+  it('accepts a completely matched successful unchanged reviewed edit save', () => {
+    const evidence = unchangedSaveEvidence();
+    const expected: TurnExpectation = {
+      status: 'saved',
+      files: { 'a.md': '- [ ] Calibrate gauge ⏳ 2027-02-03 #shop\n' },
+      publicTrees: expectDefined(evidence.publicTrees),
+    };
+    expect(evaluateTurn(expected, evidence)).toEqual([]);
+    const invalid = {
+      ...evidence,
+      writeObservations: { ...expectDefined(evidence.writeObservations), dispatches: [] },
+    };
+    expect(evaluateTurn(expected, invalid)).toContain('unchanged-save-dispatch');
+    const mismatch = structuredClone(evidence);
+    mismatch.publicTrees = [
+      { ...(mismatch.publicTrees?.[0] as object), markdownTitle: 'Other task' },
+    ];
+    expect(evaluateTurn(expected, mismatch)).toEqual(
+      expect.arrayContaining(['public-tree-postcondition', 'unchanged-save-readback']),
+    );
+    const failedNative = {
+      ...evidence,
+      writeObservations: {
+        ...expectDefined(evidence.writeObservations),
+        results: [
+          {
+            sequence: 3,
+            result: {
+              ok: false,
+              error: { code: 'WRITE_FAILED' },
+              effects: 'unchanged',
+              recovery: 'none',
+            },
+          },
+        ],
+      },
+    };
+    expect(evaluateTurn(expected, failedNative)).toContain('unchanged-save-dispatch');
+    const unknownOverride = structuredClone(evidence);
+    unknownOverride.journal = unknownOverride.journal.map((entry) => ({
+      ...entry,
+      effects: 'unknown',
+    }));
+    unknownOverride.writeObservations = {
+      ...expectDefined(unknownOverride.writeObservations),
+      final: {
+        ...expectDefined(unknownOverride.writeObservations).final,
+        journal: expectDefined(unknownOverride.writeObservations).final.journal.map((entry) => ({
+          ...(entry as object),
+          effects: 'unknown',
+        })),
+      },
+      snapshots: expectDefined(unknownOverride.writeObservations).snapshots.map((event) => ({
+        ...event,
+        journal: event.journal.map((entry) =>
+          (entry as { id?: string }).id === 'save-entry'
+            ? { ...(entry as object), effects: 'unknown' }
+            : entry,
+        ),
+      })),
+    };
+    expect(evaluateTurn(expected, unknownOverride)).toContain('unsettled-or-uncommitted-effects');
+  });
+
   it('lists qualified/original cases and requested controls with complete contracts', () => {
     expect(
       selectCases('R01,R02,R03,R04,R06,R07,R08,R09,R10,R11,R12,028,031,058,gym_short,042'),
@@ -157,11 +676,8 @@ describe('focused offline refinement oracle qualification', () => {
     };
     expect(pending.markdownTitle).toBe('Calibrate the orchard gauge');
     expect(pending.dates?.scheduled).toBe('2026-11-20');
-    const pendingComment = expectDefined(pending.comments?.[0]);
-    expect(pendingComment.text).toMatchObject({
-      sourceText: 'https://example.org/orchard-schedule',
-    });
-    expect(Array.isArray((pendingComment.text as { facts?: unknown }).facts)).toBe(true);
+    expect(pending.comments).toBeUndefined();
+    expect(dateEdit.retainPreviousTasks).toBe(true);
     expect(dateEdit.taskSources).toEqual([{ path: 'a.md', line: 0, kind: 'edit' }]);
     expect(dateEdit.writeCount).toBe(0);
   });

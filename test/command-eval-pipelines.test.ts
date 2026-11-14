@@ -5,7 +5,15 @@ import type { ResearchReviewer } from '../src/ai/CommandAgent';
 import { parseRecurrenceRule } from '../src/tasks';
 import { submittedMessage } from './command-live/controls';
 import { actions, pipelines, selectCases, type EvalCase } from './command-live/corpus';
-import { evaluateTurn, type TurnEvidence, type TurnExpectation } from './command-live/oracles';
+import { files, tree } from './command-live/fixtures';
+import {
+  evaluateTurn,
+  regradeRetainedTurn,
+  type RetainedTraceEvent,
+  type RetainedTurn,
+  type TurnEvidence,
+  type TurnExpectation,
+} from './command-live/oracles';
 import { preservationEvidence, type SelectedPlanObservation } from './command-live/preservation';
 import { object, RequestBudget } from './command-live/safety';
 import { runScriptedCase as runCase } from './command-live/scriptedCase';
@@ -38,8 +46,60 @@ const research = tool('interpret', { intent: 'plan', research: true });
 const finish = tool('finish', { state: 'ready', message: 'Ready.' });
 const confirm: Step = (p) =>
   tool('interpret', { intent: 'confirm', approval: submittedMessage(p), research: false });
+function editTask(query: string, field: 'scheduled' | 'due', value: string): Step[] {
+  return [
+    tool('read', { input: { kind: 'tasks', query } }),
+    (prompt) => {
+      const row = firstRead(prompt);
+      return tool('task', {
+        input: {
+          kind: 'edit',
+          target: row['target'],
+          expectedRevision: row['revision'],
+          operation: {
+            type: 'patch',
+            target: row['target'],
+            patch: { [field]: { type: 'set', value } },
+          },
+        },
+      });
+    },
+  ];
+}
+function restoreTaskDate(
+  prompt: Prompt,
+  title: string,
+  field: 'scheduled' | 'due',
+  value: string,
+): Call {
+  const change = object(
+    visibleChanges(prompt).find(
+      (candidate) => object(object(object(candidate)['plan'])['after'])['markdownTitle'] === title,
+    ),
+  );
+  return tool('task', {
+    input: {
+      kind: 'append',
+      ...object(change['planBasis']),
+      operation: {
+        type: 'patch',
+        target: object(object(change['plan'])['after'])['target'],
+        patch: { [field]: { type: 'set', value } },
+      },
+    },
+  });
+}
 const readRoot = tool('read', { input: { kind: 'tasks', query: 'Root' } });
 const scriptedResearchAllowance: ResearchReviewer = async () => ({ authorized: true });
+const readExternalTask: Step = () =>
+  tool('read', { input: { kind: 'tasks', query: 'Calibrate gauge externally changed' } });
+const selectReadTask: Step = (prompt) => {
+  const row = firstRead(prompt);
+  return tool('finish', {
+    state: 'ready',
+    selection: [{ kind: 'task', target: row['target'], revision: row['revision'] }],
+  });
+};
 
 it.each([
   ['ru', 'Сделать домашнюю работу'],
@@ -884,6 +944,1311 @@ const removeFirstIssuedComment: Step[] = [
 ];
 it('qualifies actual 034 deletion using the exact issued comment despite plan handle reminting', async () => {
   await replay('034', [...removeFirstIssuedComment]);
+});
+it('continues a different development task through a preserved stale rejection, review, and readback', async () => {
+  const before = '- [ ] Calibrate gauge ⏳ 2027-02-03\n';
+  const changed = '- [ ] Calibrate gauge externally changed ⏳ 2027-02-03\n';
+  const originalTree = tree('Calibrate gauge', { dates: { scheduled: '2027-02-03' } });
+  const externalTree = tree('Calibrate gauge externally changed', {
+    dates: { scheduled: '2027-02-03' },
+  });
+  const test: EvalCase = {
+    id: 'dev-preserved-conflict',
+    family: 'write-oracle-control',
+    split: 'development',
+    profile: 'owner',
+    scripted: true,
+    files: files(before),
+    turns: [
+      {
+        text: 'Change Calibrate gauge scheduled date to February 4, 2027.',
+        expect: {
+          status: 'ready',
+          trees: [tree('Calibrate gauge', { dates: { scheduled: '2027-02-04' } })],
+          publicTrees: [originalTree],
+          taskSources: [{ path: 'a.md', line: 0, kind: 'edit' }],
+          proposalKinds: ['task'],
+          writeCount: 0,
+        },
+      },
+      {
+        text: 'Save the reviewed task edit.',
+        external: { path: 'a.md', content: changed },
+        expect: {
+          status: 'error',
+          statusAlternatives: ['ready', 'question'],
+          preservedConflict: true,
+          files: { 'a.md': changed },
+          publicTrees: [externalTree],
+          createdFiles: [],
+        },
+      },
+      {
+        text: 'Review the current task after the rejected save.',
+        action: 'review',
+        expect: {
+          status: 'ready',
+          publicTrees: [externalTree],
+          proposalKinds: [],
+          writeCount: 0,
+          files: { 'a.md': changed },
+        },
+      },
+      {
+        text: 'Read Calibrate gauge externally changed and verify its scheduled date.',
+        expect: {
+          status: 'ready',
+          publicTrees: [externalTree],
+          observations: [{ kind: 'task', path: 'a.md', line: 0 }],
+          files: { 'a.md': changed },
+          writeCount: 0,
+        },
+      },
+    ],
+  };
+  const { report } = await replay(
+    test,
+    [
+      plan,
+      tool('read', { input: { kind: 'tasks', query: 'Calibrate gauge' } }),
+      (prompt) => {
+        const row = firstRead(prompt);
+        return tool('task', {
+          input: {
+            kind: 'edit',
+            target: row['target'],
+            expectedRevision: row['revision'],
+            operation: {
+              type: 'patch',
+              target: row['target'],
+              patch: { scheduled: { type: 'set', value: '2027-02-04' } },
+            },
+          },
+        });
+      },
+      finish,
+      confirm,
+      plan,
+      readExternalTask,
+      selectReadTask,
+    ],
+    4,
+  );
+  expect(report.turns.map((turn) => turn.status)).toEqual(['ready', 'error', 'ready', 'ready']);
+  expect(report.turns[1]?.failures).toEqual([]);
+  expect(report.turns[1]?.writeObservations?.dispatches).toHaveLength(1);
+  expect(report.turns[1]?.writeObservations?.final.journal[0]).toMatchObject({
+    state: 'settled',
+    effects: 'unchanged',
+  });
+  const staleTurn = expectDefined(report.turns[1]);
+  const staleExpected = expectDefined(test.turns[1]).expect;
+  const retainedStaleTurn = JSON.parse(JSON.stringify(staleTurn)) as unknown as RetainedTurn;
+  const retainedTrace = JSON.parse(JSON.stringify(report.trace)) as unknown as RetainedTraceEvent[];
+  expect(regradeRetainedTurn(staleExpected, retainedStaleTurn, retainedTrace, 2).failures).toEqual(
+    [],
+  );
+  const staleEvidence = structuredClone(staleTurn) as unknown as TurnEvidence;
+  staleEvidence.writeObservations = structuredClone(expectDefined(staleTurn.writeObservations));
+  const staleObservations = expectDefined(staleEvidence.writeObservations);
+  const result = expectDefined(staleObservations.results[0]);
+  const settledSnapshotIndex = staleObservations.snapshots.findIndex(
+    (event) =>
+      event.kind === 'snapshot' && event.journal.some((raw) => object(raw)['state'] === 'settled'),
+  );
+  const settledSnapshot = expectDefined(staleObservations.snapshots[settledSnapshotIndex]);
+  staleObservations.results = staleObservations.results.map((event, index) =>
+    index === 0 ? { ...event, sequence: settledSnapshot.sequence } : event,
+  );
+  staleObservations.snapshots = staleObservations.snapshots.map((event, index) =>
+    index === settledSnapshotIndex ? { ...event, sequence: result.sequence } : event,
+  );
+  expect(evaluateTurn(staleExpected, staleEvidence)).toContain('preserved-conflict-settlement');
+  const unknownRecovery = structuredClone(staleEvidence);
+  unknownRecovery.writeObservations = {
+    ...expectDefined(unknownRecovery.writeObservations),
+    final: {
+      ...expectDefined(unknownRecovery.writeObservations).final,
+      recovery: 'not-a-known-recovery',
+    },
+  };
+  expect(evaluateTurn(staleExpected, unknownRecovery)).toContain('preserved-conflict-settlement');
+  const retainedUnknownRecovery: RetainedTurn = {
+    ...retainedStaleTurn,
+    snapshot: {
+      ...object(retainedStaleTurn.snapshot),
+      recovery: 'not-a-known-recovery',
+    },
+  };
+  expect(
+    regradeRetainedTurn(staleExpected, retainedUnknownRecovery, retainedTrace, 2).failures,
+  ).toContain('preserved-conflict-settlement');
+  expect(typeof report.turns[1]?.journal[0]?.error).toBe('string');
+  expect(report.turns[2]?.writeCount).toBe(0);
+  expect(report.turns[3]?.observations).toMatchObject([
+    { kind: 'task', path: 'a.md', line: 0, complete: true },
+  ]);
+});
+it('continues a zero-dispatch stale-source turn through owner review and explicit readback', async () => {
+  const before = '- [ ] Calibrate gauge ⏳ 2027-02-03\n';
+  const changed = '- [ ] Calibrate gauge externally changed ⏳ 2027-02-03\n';
+  const externalTree = tree('Calibrate gauge externally changed', {
+    dates: { scheduled: '2027-02-03' },
+  });
+  const test: EvalCase = {
+    id: 'dev-stale-zero-dispatch-review',
+    family: 'write-oracle-control',
+    split: 'development',
+    profile: 'owner',
+    scripted: true,
+    files: files(before),
+    turns: [
+      {
+        text: 'Change Calibrate gauge scheduled date to February 4, 2027.',
+        expect: {
+          status: 'ready',
+          trees: [tree('Calibrate gauge', { dates: { scheduled: '2027-02-04' } })],
+          publicTrees: [tree('Calibrate gauge', { dates: { scheduled: '2027-02-03' } })],
+          proposalKinds: ['task'],
+          writeCount: 0,
+        },
+      },
+      {
+        text: 'Review the changed task before saving.',
+        action: 'review',
+        external: { path: 'a.md', content: changed },
+        expect: {
+          status: 'ready',
+          preservedConflict: true,
+          files: { 'a.md': changed },
+          publicTrees: [externalTree],
+          proposalKinds: [],
+        },
+      },
+      {
+        text: 'Read the externally changed task and verify its date.',
+        expect: {
+          status: 'ready',
+          files: { 'a.md': changed },
+          publicTrees: [externalTree],
+          observations: [{ kind: 'task', path: 'a.md', line: 0 }],
+          writeCount: 0,
+        },
+      },
+    ],
+  };
+  const { report } = await replay(
+    test,
+    [
+      plan,
+      tool('read', { input: { kind: 'tasks', query: 'Calibrate gauge' } }),
+      (prompt) => {
+        const row = firstRead(prompt);
+        return tool('task', {
+          input: {
+            kind: 'edit',
+            target: row['target'],
+            expectedRevision: row['revision'],
+            operation: {
+              type: 'patch',
+              target: row['target'],
+              patch: { scheduled: { type: 'set', value: '2027-02-04' } },
+            },
+          },
+        });
+      },
+      finish,
+      plan,
+      readExternalTask,
+      selectReadTask,
+    ],
+    3,
+  );
+  expect(report.turns.map((turn) => turn.failures)).toEqual([[], [], []]);
+  expect(report.turns[1]?.writeCount).toBe(0);
+  expect(report.turns[1]?.writeObservations?.dispatches).toEqual([]);
+  expect(report.turns[2]?.observations).toMatchObject([
+    { kind: 'task', path: 'a.md', line: 0, complete: true },
+  ]);
+});
+it('moves a canonical no-op proposal out of the active session without a write', async () => {
+  const bytes = '- [ ] Calibrate gauge ⏳ 2027-02-03\n';
+  const original = tree('Calibrate gauge', { dates: { scheduled: '2027-02-03' } });
+  const test: EvalCase = {
+    id: 'dev-noop-eliminated',
+    family: 'write-oracle-control',
+    split: 'development',
+    profile: 'owner',
+    files: files(bytes),
+    turns: [
+      {
+        text: 'Move Calibrate gauge to February 4, 2027.',
+        expect: {
+          status: 'ready',
+          trees: [tree('Calibrate gauge', { dates: { scheduled: '2027-02-04' } })],
+          publicTrees: [original],
+          proposalKinds: ['task'],
+          files: { 'a.md': bytes },
+          writeCount: 0,
+        },
+      },
+      {
+        text: 'Restore Calibrate gauge to February 3, 2027.',
+        expect: {
+          status: 'ready',
+          trees: [original],
+          publicTrees: [original],
+          proposalKinds: ['task'],
+          files: { 'a.md': bytes },
+          writeCount: 0,
+        },
+      },
+      {
+        text: 'Start a fresh session without saving the no-op proposal.',
+        action: 'keep',
+        expect: {
+          status: 'ready',
+          trees: [original],
+          publicTrees: [original],
+          proposalKinds: [],
+          files: { 'a.md': bytes },
+          writeCount: 0,
+        },
+      },
+    ],
+  };
+  const { report } = await replay(
+    test,
+    [
+      plan,
+      tool('read', { input: { kind: 'tasks', query: 'Calibrate gauge' } }),
+      (prompt) => {
+        const row = firstRead(prompt);
+        return tool('task', {
+          input: {
+            kind: 'edit',
+            target: row['target'],
+            expectedRevision: row['revision'],
+            operation: {
+              type: 'patch',
+              target: row['target'],
+              patch: { scheduled: { type: 'set', value: '2027-02-04' } },
+            },
+          },
+        });
+      },
+      finish,
+      plan,
+      (prompt) =>
+        append(prompt, {
+          type: 'patch',
+          target: currentRoot(prompt)['target'],
+          patch: { scheduled: { type: 'set', value: '2027-02-03' } },
+        }),
+      finish,
+    ],
+    3,
+  );
+  const turn = expectDefined(report.turns[2]);
+  expect(report.turns.map((item) => item.failures)).toEqual([[], [], []]);
+  expect(turn.writeCount).toBe(0);
+  expect(turn.journal).toEqual([]);
+  expect(turn.before).toEqual(turn.after);
+});
+it('qualifies an all-unchanged canonical task edit save with a current receipt and readback', async () => {
+  const startMs = Date.parse('2026-09-17T09:12:00+03:00');
+  const endMs = Date.parse('2026-09-17T10:40:51+03:00');
+  const bytes = [
+    '- [ ] Calibrate gauge ⏳ 2027-02-03 #shop',
+    '  - 2026-09-17T09:12:00+03:00 → 2026-09-17T10:40:51+03:00',
+    '  - 2027-02-01: Keep pressure steady',
+    '  - [ ] Check seal',
+    '- [ ] Untouched neighbor',
+    '',
+  ].join('\n');
+  const original = tree('Calibrate gauge', {
+    dates: { scheduled: '2027-02-03' },
+    tags: ['#shop'],
+    comments: [
+      { text: 'Keep pressure steady', timestamp: { precision: 'day', value: '2027-02-01' } },
+    ],
+    timeEntries: [{ state: 'closed', startMs, endMs }],
+    children: [tree('Check seal')],
+  });
+  const pending = tree('Calibrate gauge', {
+    dates: { scheduled: '2027-02-04' },
+    tags: ['#shop'],
+    comments: [
+      { text: 'Keep pressure steady', timestamp: { precision: 'day', value: '2027-02-01' } },
+    ],
+    timeEntries: [{ state: 'closed', startMs, endMs }],
+    children: [tree('Check seal')],
+  });
+  const neighbor = tree('Untouched neighbor');
+  const test: EvalCase = {
+    id: 'dev-unchanged-save',
+    family: 'write-oracle-control',
+    split: 'development',
+    profile: 'owner',
+    files: files(bytes),
+    turns: [
+      {
+        text: 'Move Calibrate gauge to February 4, 2027.',
+        expect: {
+          status: 'ready',
+          trees: [pending],
+          publicTrees: [original, neighbor],
+          taskSources: [{ path: 'a.md', line: 0, kind: 'edit' }],
+          proposalKinds: ['task'],
+          writeCount: 0,
+        },
+      },
+      {
+        text: 'Restore Calibrate gauge to February 3, 2027.',
+        expect: {
+          status: 'ready',
+          trees: [original],
+          publicTrees: [original, neighbor],
+          taskSources: [{ path: 'a.md', line: 0, kind: 'edit' }],
+          proposalKinds: ['task'],
+          writeCount: 0,
+          files: { 'a.md': bytes },
+        },
+      },
+      {
+        text: 'Save the reviewed edit.',
+        expect: {
+          status: 'saved',
+          trees: [original, neighbor],
+          publicTrees: [original, neighbor],
+          proposalKinds: [],
+          files: { 'a.md': bytes },
+          writeCount: 1,
+          createdFiles: [],
+        },
+      },
+      {
+        text: 'Keep history and start a fresh session.',
+        action: 'keep',
+        expect: {
+          status: 'ready',
+          trees: [original, neighbor],
+          publicTrees: [original, neighbor],
+          proposalKinds: [],
+          files: { 'a.md': bytes },
+          writeCount: 0,
+        },
+      },
+    ],
+  };
+  const { report } = await replay(
+    test,
+    [
+      plan,
+      tool('read', { input: { kind: 'tasks', query: 'Calibrate gauge' } }),
+      (prompt) => {
+        const row = firstRead(prompt);
+        return tool('task', {
+          input: {
+            kind: 'edit',
+            target: row['target'],
+            expectedRevision: row['revision'],
+            operation: {
+              type: 'patch',
+              target: row['target'],
+              patch: { scheduled: { type: 'set', value: '2027-02-04' } },
+            },
+          },
+        });
+      },
+      finish,
+      plan,
+      (prompt) =>
+        append(prompt, {
+          type: 'patch',
+          target: currentRoot(prompt)['target'],
+          patch: { scheduled: { type: 'set', value: '2027-02-03' } },
+        }),
+      finish,
+      confirm,
+    ],
+    4,
+  );
+  const saved = expectDefined(report.turns[2]);
+  expect(saved.failures).toEqual([]);
+  expect(saved.journal).toMatchObject([
+    {
+      state: 'settled',
+      effects: 'unchanged',
+      receipt: {
+        outcome: 'noop',
+        effects: 'unchanged',
+        recovery: 'none',
+        snapshots: 'complete',
+      },
+    },
+  ]);
+  expect(saved.writeObservations?.dispatches).toHaveLength(1);
+  expect(saved.writeObservations?.results).toHaveLength(1);
+  expect(saved.before).toEqual(saved.after);
+  expect(saved.after['a.md']).toBe(bytes);
+  expect(JSON.stringify(saved)).not.toContain('writeObservations');
+
+  const transition = expectDefined(report.turns[3]);
+  expect(transition.failures).toEqual([]);
+  expect(transition.inputSnapshot.journal).toHaveLength(1);
+  expect(transition.snapshot.id).not.toBe(transition.inputSnapshot.id);
+  expect(transition.snapshot.journal).toEqual([]);
+  expect(transition.writeCount).toBe(0);
+  expect(transition.after['a.md']).toBe(bytes);
+
+  const turnStart = report.trace.findIndex(
+    (event) =>
+      event.kind === 'case-phase' &&
+      object(event.data)['phase'] === 'turn' &&
+      object(event.data)['turn'] === 4,
+  );
+  const evaluationEnd = report.trace.findIndex(
+    (event, index) =>
+      index > turnStart &&
+      event.kind === 'case-phase' &&
+      object(event.data)['phase'] === 'evaluation' &&
+      object(event.data)['turn'] === 4,
+  );
+  expect(turnStart).toBeGreaterThanOrEqual(0);
+  expect(evaluationEnd).toBeGreaterThan(turnStart);
+  const transitionTrace = report.trace.slice(turnStart + 1, evaluationEnd);
+  expect(transitionTrace.filter((event) => event.kind === 'write-dispatch')).toEqual([]);
+  expect(transitionTrace.filter((event) => event.kind === 'write-result')).toEqual([]);
+
+  const savedSnapshotId = object(saved.snapshot)['id'];
+  const stored = [...report.trace].reverse().find((event) => event.kind === 'owner-store');
+  const history = object(stored?.data);
+  const archivedSession = (history['sessions'] as unknown[])
+    .map((record) => object(record))
+    .find((record) => object(record['snapshot'])['id'] === savedSnapshotId);
+  const savedReceiptEntry = object((object(saved.snapshot)['journal'] as unknown[])[0]);
+  const archivedReceiptEntry = (object(archivedSession?.['snapshot'])['journal'] as unknown[])
+    .map((entry) => object(entry))
+    .find((entry) => entry['id'] === savedReceiptEntry['id']);
+  expect(archivedReceiptEntry?.['receipt']).toEqual(savedReceiptEntry['receipt']);
+
+  const expected = expectDefined(test.turns[2]).expect;
+  const serializedReport = JSON.parse(JSON.stringify(report)) as unknown as {
+    turns: RetainedTurn[];
+    trace: RetainedTraceEvent[];
+  };
+  const serializedTurn = expectDefined(serializedReport.turns[2]);
+  expect(regradeRetainedTurn(expected, serializedTurn, serializedReport.trace, 3).failures).toEqual(
+    [],
+  );
+  expect(
+    regradeRetainedTurn(
+      expected,
+      structuredClone(serializedTurn),
+      structuredClone(serializedReport.trace),
+      3,
+    ).failures,
+  ).toEqual([]);
+  expect(regradeRetainedTurn(expected, { ...saved }, report.trace, 3).failures).toEqual([]);
+  const transitionExpected = expectDefined(test.turns[3]).expect;
+  const serializedTransition = expectDefined(
+    (JSON.parse(JSON.stringify(report)) as { turns: RetainedTurn[] }).turns[3],
+  );
+  expect(
+    regradeRetainedTurn(transitionExpected, serializedTransition, report.trace, 4).failures,
+  ).toEqual([]);
+  const missingEpoch: RetainedTurn = { ...serializedTurn };
+  delete missingEpoch.hostProviderEpoch;
+  expect(regradeRetainedTurn(expected, missingEpoch, serializedReport.trace, 3).failures).toContain(
+    'unchanged-save-evidence',
+  );
+  const missingTraceResult = serializedReport.trace.filter(
+    (event) => event.kind !== 'write-result',
+  );
+  expect(regradeRetainedTurn(expected, serializedTurn, missingTraceResult, 3).failures).toContain(
+    'retained-turn-evidence',
+  );
+  const committedSummary: RetainedTurn = {
+    ...serializedTurn,
+    journal: serializedTurn.journal.map((entry) => ({ ...entry, effects: 'committed' })),
+  };
+  const missingResultTrace = serializedReport.trace
+    .filter((event) => event.kind !== 'write-result')
+    .map((event, index) => ({ ...event, sequence: index + 1 }));
+  const missingResultSummaryFailures = regradeRetainedTurn(
+    expected,
+    committedSummary,
+    missingResultTrace,
+    3,
+  ).failures;
+  const foreignEpochSummaryFailures = regradeRetainedTurn(
+    expected,
+    { ...committedSummary, hostProviderEpoch: 'foreign-epoch' },
+    serializedReport.trace,
+    3,
+  ).failures;
+  const currentRequestId = object(object(serializedTurn.journal[0])['receipt'])['requestId'];
+  const uncertainIntermediateTrace = serializedReport.trace.map((event) => {
+    if (event.kind !== 'durable-journal') return event;
+    const snapshot = object(event.data);
+    if (!Array.isArray(snapshot['journal'])) return event;
+    const journal = (snapshot['journal'] as unknown[]).map((raw) => {
+      const entry = object(raw);
+      return object(entry['request'])['requestId'] === currentRequestId &&
+        entry['state'] === 'settled'
+        ? { ...entry, effects: 'unknown', error: 'WRITE_UNCERTAIN' }
+        : raw;
+    });
+    return { ...event, data: { ...snapshot, journal } };
+  });
+  const intermediateUnknownSummaryFailures = regradeRetainedTurn(
+    expected,
+    committedSummary,
+    uncertainIntermediateTrace,
+    3,
+  ).failures;
+  const dispatchSummaryFailures = regradeRetainedTurn(
+    expected,
+    { ...serializedTurn, writeCount: 0 },
+    serializedReport.trace,
+    3,
+  ).failures;
+  expect([
+    missingResultSummaryFailures.length > 0,
+    foreignEpochSummaryFailures.length > 0,
+    intermediateUnknownSummaryFailures.length > 0,
+    dispatchSummaryFailures.length > 0,
+  ]).toEqual([true, true, true, true]);
+  expect(missingResultSummaryFailures).toContain('unchanged-save-dispatch');
+  expect(foreignEpochSummaryFailures).toContain('unchanged-save-admission');
+  expect(intermediateUnknownSummaryFailures).toContain('unchanged-save-settlement');
+  expect(dispatchSummaryFailures).toContain('retained-write-summary');
+  const copyEvidence = () => {
+    const evidence = structuredClone(saved) as unknown as TurnEvidence;
+    evidence.writeObservations = structuredClone(expectDefined(saved.writeObservations));
+    return evidence;
+  };
+  const mutateReceipt = (
+    evidence: TurnEvidence,
+    update: (receipt: Record<string, unknown>) => Record<string, unknown>,
+  ) => {
+    const observations = expectDefined(evidence.writeObservations);
+    const entry = (raw: unknown) => {
+      const value = object(raw);
+      return value['receipt'] === undefined
+        ? raw
+        : { ...value, receipt: update(object(value['receipt'])) };
+    };
+    evidence.journal = evidence.journal.map(entry) as typeof evidence.journal;
+    observations.final = { ...observations.final, journal: observations.final.journal.map(entry) };
+    observations.snapshots = observations.snapshots.map((event) => ({
+      ...event,
+      journal: event.journal.map(entry),
+    }));
+    observations.results = observations.results.map((event) => {
+      const result = object(event.result);
+      return result['receipt'] === undefined
+        ? event
+        : { ...event, result: { ...result, receipt: update(object(result['receipt'])) } };
+    });
+  };
+  const mutateReviewedAfter = (
+    evidence: TurnEvidence,
+    update: (after: Record<string, unknown>) => Record<string, unknown>,
+  ) => {
+    const observations = expectDefined(evidence.writeObservations);
+    const changePlan = (raw: unknown) => {
+      const entry = object(raw),
+        change = object(entry['change']),
+        plan = object(change['plan']);
+      return {
+        ...entry,
+        change: { ...change, plan: { ...plan, after: update(object(plan['after'])) } },
+      };
+    };
+    const proposalPlan = (raw: unknown) => {
+      const change = object(raw),
+        plan = object(change['plan']);
+      return { ...change, plan: { ...plan, after: update(object(plan['after'])) } };
+    };
+    observations.input = {
+      ...observations.input,
+      proposalChanges: observations.input.proposalChanges.map(proposalPlan),
+    };
+    observations.snapshots = observations.snapshots.map((event) => ({
+      ...event,
+      journal: event.journal.map(changePlan),
+    }));
+    observations.final = {
+      ...observations.final,
+      journal: observations.final.journal.map(changePlan),
+    };
+    evidence.journal = evidence.journal.map(changePlan) as typeof evidence.journal;
+  };
+  const mutateReviewedBefore = (
+    evidence: TurnEvidence,
+    update: (before: Record<string, unknown>) => Record<string, unknown>,
+  ) => {
+    const observations = expectDefined(evidence.writeObservations);
+    const changePlan = (raw: unknown) => {
+      const entry = object(raw),
+        change = object(entry['change']),
+        plan = object(change['plan']);
+      return {
+        ...entry,
+        change: { ...change, plan: { ...plan, before: update(object(plan['before'])) } },
+      };
+    };
+    const proposalPlan = (raw: unknown) => {
+      const change = object(raw),
+        plan = object(change['plan']);
+      return { ...change, plan: { ...plan, before: update(object(plan['before'])) } };
+    };
+    observations.input = {
+      ...observations.input,
+      proposalChanges: observations.input.proposalChanges.map(proposalPlan),
+    };
+    observations.snapshots = observations.snapshots.map((event) => ({
+      ...event,
+      journal: event.journal.map(changePlan),
+    }));
+    observations.final = {
+      ...observations.final,
+      journal: observations.final.journal.map(changePlan),
+    };
+    evidence.journal = evidence.journal.map(changePlan) as typeof evidence.journal;
+  };
+  const swapRuntimeSettlementWithResult = (evidence: TurnEvidence) => {
+    const observations = expectDefined(evidence.writeObservations);
+    const result = expectDefined(observations.results[0]);
+    const settlementIndex = observations.snapshots.findIndex(
+      (event) =>
+        event.kind === 'snapshot' &&
+        event.journal.some((raw) => object(raw)['state'] === 'settled'),
+    );
+    const settlement = expectDefined(observations.snapshots[settlementIndex]);
+    observations.results = observations.results.map((event, index) =>
+      index === 0 ? { ...event, sequence: settlement.sequence } : event,
+    );
+    observations.snapshots = observations.snapshots.map((event, index) =>
+      index === settlementIndex ? { ...event, sequence: result.sequence } : event,
+    );
+  };
+  const mutations: Array<{
+    name: string;
+    mutate: (evidence: TurnEvidence) => void;
+    failure: string;
+  }> = [
+    {
+      name: 'runtime settlement must follow its native result',
+      mutate: swapRuntimeSettlementWithResult,
+      failure: 'unchanged-save-settlement',
+    },
+    {
+      name: 'a prior receipt cannot authorize replay with the current request id',
+      mutate(evidence) {
+        const observations = expectDefined(evidence.writeObservations);
+        const prior = { ...object(expectDefined(evidence.journal[0])), id: 'earlier-entry' };
+        observations.input = { ...observations.input, journal: [prior] };
+        observations.snapshots = observations.snapshots.map((event) => ({
+          ...event,
+          journal: [...event.journal, prior],
+        }));
+        observations.final = {
+          ...observations.final,
+          journal: [...observations.final.journal, prior],
+        };
+      },
+      failure: 'unchanged-save-settlement',
+    },
+    {
+      name: 'all issued tasks need exact correspondence',
+      mutate(evidence) {
+        mutateReceipt(evidence, (receipt) => {
+          const continuity = object(receipt['contentContinuity']);
+          const correspondence = object(continuity['correspondence']);
+          return {
+            ...receipt,
+            contentContinuity: {
+              ...continuity,
+              correspondence: { ...correspondence, tasks: [] },
+            },
+          };
+        });
+      },
+      failure: 'unchanged-save-receipt',
+    },
+    {
+      name: 'a receipt cannot map a reviewed task to a foreign task',
+      mutate(evidence) {
+        mutateReceipt(evidence, (receipt) => {
+          const continuity = object(receipt['contentContinuity']);
+          const correspondence = object(continuity['correspondence']);
+          const tasks = (correspondence['tasks'] as unknown[]).map((raw, index) =>
+            index === 0 ? { ...object(raw), committedTarget: 'foreign-task' } : raw,
+          );
+          return {
+            ...receipt,
+            contentContinuity: {
+              ...continuity,
+              correspondence: { ...correspondence, tasks },
+            },
+          };
+        });
+      },
+      failure: 'unchanged-save-receipt',
+    },
+    {
+      name: 'the retained original target must equal the reviewed target',
+      mutate(evidence) {
+        mutateReceipt(evidence, (receipt) => ({
+          ...receipt,
+          original: { ...object(receipt['original']), target: 'foreign-task' },
+        }));
+      },
+      failure: 'unchanged-save-receipt',
+    },
+    {
+      name: 'readback must remain complete and untruncated',
+      mutate(evidence) {
+        evidence.complete = false;
+        evidence.publicTrees = (evidence.publicTrees ?? []).map((raw) => ({
+          ...object(raw),
+          complete: false,
+          truncated: true,
+        }));
+      },
+      failure: 'unchanged-save-readback',
+    },
+    {
+      name: 'authored comment changes are rejected',
+      mutate(evidence) {
+        mutateReviewedAfter(evidence, (after) => ({
+          ...after,
+          comments: [{ ...object((after['comments'] as unknown[])[0]), text: 'Changed history' }],
+        }));
+      },
+      failure: 'unchanged-save-content',
+    },
+    {
+      name: 'authored time-entry values are rejected',
+      mutate(evidence) {
+        mutateReviewedAfter(evidence, (after) => ({
+          ...after,
+          timeEntries: [
+            { ...object((after['timeEntries'] as unknown[])[0]), note: 'Changed time record' },
+          ],
+        }));
+      },
+      failure: 'unchanged-save-content',
+    },
+    {
+      name: 'reviewed plan trees must be complete',
+      mutate(evidence) {
+        const observations = expectDefined(evidence.writeObservations);
+        const planIncomplete = (value: unknown) => {
+          const entry = object(value),
+            change = object(entry['change']),
+            plan = object(change['plan']);
+          const incomplete = (raw: unknown) => ({
+            ...object(raw),
+            complete: false,
+            truncated: true,
+          });
+          return {
+            ...entry,
+            change: {
+              ...change,
+              plan: {
+                ...plan,
+                before: incomplete(plan['before']),
+                after: incomplete(plan['after']),
+              },
+            },
+          };
+        };
+        observations.input = {
+          ...observations.input,
+          proposalChanges: observations.input.proposalChanges.map((raw) => {
+            const change = object(raw),
+              plan = object(change['plan']);
+            const incomplete = (value: unknown) => ({
+              ...object(value),
+              complete: false,
+              truncated: true,
+            });
+            return {
+              ...change,
+              plan: {
+                ...plan,
+                before: incomplete(plan['before']),
+                after: incomplete(plan['after']),
+              },
+            };
+          }),
+        };
+        observations.snapshots = observations.snapshots.map((event) => ({
+          ...event,
+          journal: event.journal.map(planIncomplete),
+        }));
+        observations.final = {
+          ...observations.final,
+          journal: observations.final.journal.map(planIncomplete),
+        };
+        evidence.journal = evidence.journal.map(planIncomplete) as typeof evidence.journal;
+      },
+      failure: 'unchanged-save-content',
+    },
+    {
+      name: 'reviewed before descendants must be complete',
+      mutate(evidence) {
+        mutateReviewedBefore(evidence, (before) => ({
+          ...before,
+          children: (before['children'] as unknown[]).map((child) => ({
+            ...object(child),
+            complete: false,
+            truncated: true,
+          })),
+        }));
+      },
+      failure: 'unchanged-save-content',
+    },
+    {
+      name: 'plan provider epoch must match current api epoch',
+      mutate(evidence) {
+        const observations = expectDefined(evidence.writeObservations);
+        const planAtEpoch = (value: unknown) => {
+          const entry = object(value),
+            change = object(entry['change']),
+            plan = object(change['plan']);
+          return { ...entry, change: { ...change, plan: { ...plan, providerEpoch: 'old-epoch' } } };
+        };
+        observations.input = {
+          ...observations.input,
+          proposalChanges: observations.input.proposalChanges.map((raw) => {
+            const change = object(raw),
+              plan = object(change['plan']);
+            return { ...change, plan: { ...plan, providerEpoch: 'old-epoch' } };
+          }),
+        };
+        observations.snapshots = observations.snapshots.map((event) => ({
+          ...event,
+          journal: event.journal.map(planAtEpoch),
+        }));
+        observations.final = {
+          ...observations.final,
+          journal: observations.final.journal.map(planAtEpoch),
+        };
+        evidence.journal = evidence.journal.map(planAtEpoch) as typeof evidence.journal;
+      },
+      failure: 'unchanged-save-admission',
+    },
+    {
+      name: 'all observed copies must reject an intermediate uncertain settlement',
+      mutate(evidence) {
+        const observations = expectDefined(evidence.writeObservations);
+        const index = observations.snapshots.findIndex(
+          (event) =>
+            event.kind === 'durable-journal' &&
+            event.journal.some((raw) => object(raw)['state'] === 'settled'),
+        );
+        const event = expectDefined(observations.snapshots[index]);
+        observations.snapshots = observations.snapshots.map((snapshot, position) =>
+          position !== index
+            ? snapshot
+            : {
+                ...event,
+                journal: event.journal.map((raw) => ({
+                  ...object(raw),
+                  effects: 'unknown',
+                  error: 'WRITE_UNCERTAIN',
+                })),
+              },
+        );
+      },
+      failure: 'unchanged-save-settlement',
+    },
+    {
+      name: 'all new journal copies must belong to the input session',
+      mutate(evidence) {
+        const observations = expectDefined(evidence.writeObservations);
+        observations.snapshots = observations.snapshots.map((event) =>
+          event.journal.length === 0 ? event : { ...event, sessionId: 'other-session' },
+        );
+      },
+      failure: 'unchanged-save-settlement',
+    },
+    {
+      name: 'final session must remain unblocked and certain',
+      mutate(evidence) {
+        const observations = expectDefined(evidence.writeObservations);
+        observations.final = { ...observations.final, sessionId: 'other-session' };
+      },
+      failure: 'unchanged-save-settlement',
+    },
+    {
+      name: 'blocked uncertain final sessions cannot prove an unchanged save',
+      mutate(evidence) {
+        const observations = expectDefined(evidence.writeObservations);
+        observations.final = { ...observations.final, blocked: true, recovery: 'uncertain' };
+      },
+      failure: 'unchanged-save-settlement',
+    },
+    {
+      name: 'unknown final recovery states cannot prove an unchanged save',
+      mutate(evidence) {
+        const observations = expectDefined(evidence.writeObservations);
+        observations.final = { ...observations.final, recovery: 'not-a-known-recovery' };
+      },
+      failure: 'unchanged-save-settlement',
+    },
+  ];
+  for (const mutation of mutations) {
+    const evidence = copyEvidence();
+    mutation.mutate(evidence);
+    expect(evaluateTurn(expected, evidence), mutation.name).toContain(mutation.failure);
+  }
+});
+it.each([false, true])(
+  'qualifies a mixed canonical no-op and committed edit batch (reverse=%s)',
+  async (reverse) => {
+    const gaugeBefore = '- [ ] Calibrate gauge ⏳ 2027-02-03\n';
+    const freightBefore = '- [ ] Book freight 📅 2027-02-04\n';
+    const freightAfter = '- [ ] Book freight 📅 2027-02-06\n';
+    const sourceFiles = files('', { 'workshop.md': gaugeBefore, 'dispatch.md': freightBefore });
+    const gauge = tree('Calibrate gauge', { dates: { scheduled: '2027-02-03' } });
+    const pendingGauge = tree('Calibrate gauge', { dates: { scheduled: '2027-02-04' } });
+    const freight = tree('Book freight', { dates: { due: '2027-02-04' } });
+    const pendingFreight = tree('Book freight', { dates: { due: '2027-02-06' } });
+    const test: EvalCase = {
+      id: `dev-mixed-noop-commit-${reverse ? 'reverse' : 'forward'}`,
+      family: 'write-oracle-control',
+      split: 'development',
+      files: sourceFiles,
+      turns: [
+        {
+          text: 'Move Calibrate gauge to February 4 and Book freight deadline to February 6, 2027.',
+          expect: {
+            status: 'ready',
+            trees: [pendingGauge, pendingFreight],
+            publicTrees: [gauge, freight],
+            taskSources: [
+              { path: 'workshop.md', line: 0, kind: 'edit' },
+              { path: 'dispatch.md', line: 0, kind: 'edit' },
+            ],
+            proposalKinds: ['task', 'task'],
+            writeCount: 0,
+          },
+        },
+        {
+          text: 'Restore Calibrate gauge to February 3, 2027.',
+          expect: {
+            status: 'ready',
+            trees: [gauge, pendingFreight],
+            publicTrees: [gauge, freight],
+            taskSources: [
+              { path: 'workshop.md', line: 0, kind: 'edit' },
+              { path: 'dispatch.md', line: 0, kind: 'edit' },
+            ],
+            proposalKinds: ['task', 'task'],
+            writeCount: 0,
+          },
+        },
+        {
+          text: 'Save both reviewed edits.',
+          expect: {
+            status: 'saved',
+            trees: [gauge, pendingFreight],
+            publicTrees: [gauge, pendingFreight],
+            files: { 'workshop.md': gaugeBefore, 'dispatch.md': freightAfter },
+            proposalKinds: [],
+            writeCount: 2,
+            createdFiles: [],
+          },
+        },
+      ],
+    };
+    const restoreGauge: Step = (prompt) =>
+      restoreTaskDate(prompt, 'Calibrate gauge', 'scheduled', '2027-02-03');
+    const first = reverse
+      ? [
+          ...editTask('Book freight', 'due', '2027-02-06'),
+          ...editTask('Calibrate gauge', 'scheduled', '2027-02-04'),
+        ]
+      : [
+          ...editTask('Calibrate gauge', 'scheduled', '2027-02-04'),
+          ...editTask('Book freight', 'due', '2027-02-06'),
+        ];
+    const { report } = await replay(
+      test,
+      [plan, ...first, finish, plan, restoreGauge, finish, confirm],
+      3,
+    );
+    const saved = expectDefined(report.turns[2]);
+    expect(saved.failures).toEqual([]);
+    expect(saved.writeCount).toBe(2);
+    expect(
+      saved.journal
+        .map((entry) => entry.effects)
+        .sort((a, b) => String(a).localeCompare(String(b))),
+    ).toEqual(['committed', 'unchanged']);
+    expect(saved.writeObservations?.dispatches).toHaveLength(2);
+    expect(saved.writeObservations?.results).toHaveLength(2);
+    expect(saved.before['workshop.md']).toBe(saved.after['workshop.md']);
+    expect(saved.after['dispatch.md']).toBe(freightAfter);
+
+    const expected = expectDefined(test.turns[2]).expect;
+    const omittedSibling = structuredClone(saved) as unknown as TurnEvidence;
+    omittedSibling.writeObservations = structuredClone(expectDefined(saved.writeObservations));
+    omittedSibling.after = { ...omittedSibling.after, 'dispatch.md': freightBefore };
+    expect(evaluateTurn(expected, omittedSibling)).toContain('file:dispatch.md');
+
+    const unknownResourceEffect = structuredClone(saved) as unknown as TurnEvidence;
+    const observations = (unknownResourceEffect.writeObservations = structuredClone(
+      expectDefined(saved.writeObservations),
+    ));
+    const unknownReceipt = (raw: unknown) => {
+      const entry = object(raw),
+        receipt = object(entry['receipt']);
+      return receipt['effects'] === 'committed'
+        ? { ...entry, receipt: { ...receipt, destinationEffects: 'unknown' } }
+        : raw;
+    };
+    unknownResourceEffect.journal = unknownResourceEffect.journal.map(
+      unknownReceipt,
+    ) as typeof unknownResourceEffect.journal;
+    observations.final = {
+      ...observations.final,
+      journal: observations.final.journal.map(unknownReceipt),
+    };
+    observations.snapshots = observations.snapshots.map((event) => ({
+      ...event,
+      journal: event.journal.map(unknownReceipt),
+    }));
+    observations.results = observations.results.map((event) => {
+      const result = object(event.result),
+        receipt = object(result['receipt']);
+      return receipt['effects'] === 'committed'
+        ? {
+            ...event,
+            result: { ...result, receipt: { ...receipt, destinationEffects: 'unknown' } },
+          }
+        : event;
+    });
+    expect(evaluateTurn(expected, unknownResourceEffect)).toContain('unchanged-save-settlement');
+  },
+);
+it('eliminates a no-op owner while saving its material sibling', async () => {
+  const gaugeBefore = '- [ ] Calibrate gauge ⏳ 2027-02-03\n';
+  const freightBefore = '- [ ] Book freight 📅 2027-02-04\n';
+  const freightAfter = '- [ ] Book freight 📅 2027-02-06\n';
+  const sourceFiles = files('', { 'workshop.md': gaugeBefore, 'dispatch.md': freightBefore });
+  const gauge = tree('Calibrate gauge', { dates: { scheduled: '2027-02-03' } });
+  const pendingGauge = tree('Calibrate gauge', { dates: { scheduled: '2027-02-04' } });
+  const freight = tree('Book freight', { dates: { due: '2027-02-04' } });
+  const pendingFreight = tree('Book freight', { dates: { due: '2027-02-06' } });
+  const test: EvalCase = {
+    id: 'dev-save-material-owner-with-unchanged-sibling',
+    family: 'write-oracle-control',
+    split: 'development',
+    files: sourceFiles,
+    turns: [
+      {
+        text: 'Move Calibrate gauge to February 4 and Book freight deadline to February 6, 2027.',
+        expect: {
+          status: 'ready',
+          trees: [pendingGauge, pendingFreight],
+          publicTrees: [gauge, freight],
+          taskSources: [
+            { path: 'workshop.md', line: 0, kind: 'edit' },
+            { path: 'dispatch.md', line: 0, kind: 'edit' },
+          ],
+          proposalKinds: ['task', 'task'],
+          writeCount: 0,
+        },
+      },
+      {
+        text: 'Restore Calibrate gauge to February 3, 2027.',
+        expect: {
+          status: 'ready',
+          trees: [gauge, pendingFreight],
+          publicTrees: [gauge, freight],
+          proposalKinds: ['task', 'task'],
+          writeCount: 0,
+        },
+      },
+      {
+        text: 'Save only Book freight and leave Calibrate gauge unchanged.',
+        expect: {
+          status: 'saved',
+          trees: [gauge, pendingFreight],
+          publicTrees: [gauge, pendingFreight],
+          files: { 'workshop.md': gaugeBefore, 'dispatch.md': freightAfter },
+          proposalKinds: [],
+          writeCount: 1,
+          createdFiles: [],
+        },
+      },
+    ],
+  };
+  const restoreGauge: Step = (prompt) => {
+    return restoreTaskDate(prompt, 'Calibrate gauge', 'scheduled', '2027-02-03');
+  };
+  const saveFreightOnly: Step = (prompt) => {
+    const changes = visibleChanges(prompt);
+    const index = changes.findIndex(
+      (candidate) =>
+        object(object(object(candidate)['plan'])['after'])['markdownTitle'] === 'Book freight',
+    );
+    return tool('interpret', {
+      intent: 'confirm',
+      approval: submittedMessage(prompt),
+      research: false,
+      scope: {
+        proposalRevision: object(visibleContext(prompt)['proposal'])['revision'],
+        changes: [{ kind: 'change', index }],
+      },
+    });
+  };
+  const { report } = await replay(
+    test,
+    [
+      plan,
+      ...editTask('Calibrate gauge', 'scheduled', '2027-02-04'),
+      ...editTask('Book freight', 'due', '2027-02-06'),
+      finish,
+      plan,
+      restoreGauge,
+      finish,
+      saveFreightOnly,
+    ],
+    3,
+  );
+  const saved = expectDefined(report.turns[2]);
+  expect(saved.status).toBe('saved');
+  expect(saved.journal).toMatchObject([{ state: 'settled', effects: 'committed' }]);
+  expect(saved.journal).toHaveLength(1);
+  expect(saved.proposalKinds).toEqual([]);
+  expect(saved.after['workshop.md']).toBe(gaugeBefore);
+  expect(saved.after['dispatch.md']).toBe(freightAfter);
+  expect(saved.failures).toEqual([]);
+});
+it('regrades a distinct canonical save after a prior successful canonical save', async () => {
+  const alphaBefore = '- [ ] Calibrate gauge ⏳ 2027-02-03\n';
+  const alphaAfter = '- [ ] Calibrate gauge ⏳ 2027-02-04\n';
+  const betaBefore = '- [ ] Book freight 📅 2027-02-04\n';
+  const sourceFiles = files('', { 'workshop.md': alphaBefore, 'dispatch.md': betaBefore });
+  const alpha = tree('Calibrate gauge', { dates: { scheduled: '2027-02-03' } });
+  const alphaPending = tree('Calibrate gauge', { dates: { scheduled: '2027-02-04' } });
+  const alphaCommitted = tree('Calibrate gauge', {
+    dates: { scheduled: '2027-02-04' },
+    source: { path: 'workshop.md', line: 0 },
+  });
+  const beta = tree('Book freight', { dates: { due: '2027-02-04' } });
+  const betaPending = tree('Book freight', { dates: { due: '2027-02-06' } });
+  const test: EvalCase = {
+    id: 'dev-distinct-successive-saves',
+    family: 'write-oracle-control',
+    split: 'development',
+    files: sourceFiles,
+    turns: [
+      {
+        text: 'Move Calibrate gauge to February 4, 2027.',
+        expect: {
+          status: 'ready',
+          trees: [alphaPending],
+          publicTrees: [alpha, beta],
+          taskSources: [{ path: 'workshop.md', line: 0, kind: 'edit' }],
+          proposalKinds: ['task'],
+          writeCount: 0,
+        },
+      },
+      {
+        text: 'Save Calibrate gauge.',
+        expect: {
+          status: 'saved',
+          trees: [alphaCommitted, beta],
+          publicTrees: [alphaCommitted, beta],
+          files: { 'workshop.md': alphaAfter, 'dispatch.md': betaBefore },
+          proposalKinds: [],
+          writeCount: 1,
+          createdFiles: [],
+        },
+      },
+      {
+        text: 'Move Book freight deadline to February 6, 2027.',
+        expect: {
+          status: 'ready',
+          trees: [betaPending],
+          publicTrees: [alphaCommitted, beta],
+          taskSources: [{ path: 'dispatch.md', line: 0, kind: 'edit' }],
+          proposalKinds: ['task'],
+          writeCount: 0,
+        },
+      },
+      {
+        text: 'Restore Book freight deadline to February 4, 2027.',
+        expect: {
+          status: 'ready',
+          trees: [beta],
+          publicTrees: [alphaCommitted, beta],
+          taskSources: [{ path: 'dispatch.md', line: 0, kind: 'edit' }],
+          proposalKinds: ['task'],
+          writeCount: 0,
+        },
+      },
+      {
+        text: 'Save Book freight.',
+        expect: {
+          status: 'saved',
+          trees: [alphaCommitted, beta],
+          publicTrees: [alphaCommitted, beta],
+          files: { 'workshop.md': alphaAfter, 'dispatch.md': betaBefore },
+          proposalKinds: [],
+          writeCount: 1,
+          createdFiles: [],
+        },
+      },
+    ],
+  };
+  const { report } = await replay(test, [
+    plan,
+    ...editTask('Calibrate gauge', 'scheduled', '2027-02-04'),
+    finish,
+    confirm,
+    plan,
+    ...editTask('Book freight', 'due', '2027-02-06'),
+    finish,
+    plan,
+    (prompt) => restoreTaskDate(prompt, 'Book freight', 'due', '2027-02-04'),
+    finish,
+    confirm,
+  ]);
+  expect(report.turns.map((turn) => turn.failures)).toEqual([[], [], [], [], []]);
+  const firstSave = expectDefined(report.turns[1]);
+  const secondSave = expectDefined(report.turns[4]);
+  const firstEntry = expectDefined(firstSave.snapshot.journal[0]);
+  const secondEntry = expectDefined(secondSave.snapshot.journal[1]);
+  expect(firstSave.inputSnapshot.journal).toEqual([]);
+  expect(secondSave.inputSnapshot.journal).toHaveLength(1);
+  expect(secondSave.inputSnapshot.journal[0]?.receipt).toBeDefined();
+  expect(secondEntry.id).not.toBe(firstEntry.id);
+  expect(secondEntry.request.requestId).not.toBe(firstEntry.request.requestId);
+  expect(secondEntry.effects).toBe('unchanged');
+  expect(object(secondEntry.receipt)['outcome']).toBe('noop');
+  const retained = JSON.parse(JSON.stringify(report)) as unknown as {
+    turns: RetainedTurn[];
+    trace: RetainedTraceEvent[];
+  };
+  expect(
+    regradeRetainedTurn(
+      expectDefined(test.turns[4]).expect,
+      expectDefined(retained.turns[4]),
+      retained.trace,
+      5,
+    ).failures,
+  ).toEqual([]);
 });
 
 function commentOracleFailures(

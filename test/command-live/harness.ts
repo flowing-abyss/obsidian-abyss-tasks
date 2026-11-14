@@ -43,9 +43,10 @@ import {
   transportCode,
 } from './diagnostics';
 import {
-  evaluateTurn,
+  regradeRetainedTurn,
   type ObservationEvidence,
   type ResearchEvidence,
+  type RetainedTurn,
   type TurnEvidence,
 } from './oracles';
 import { preservationEvidence, type SelectedPlanObservation } from './preservation';
@@ -880,6 +881,42 @@ async function inboxEvidence(
     ),
   };
 }
+function traceWriteAdmissionFailures(trace: readonly TraceEvent[]): string[] {
+  return trace.flatMap((event) => {
+    if (event.kind !== 'write-dispatch') return [];
+    const requestId = object(object(event.data)['input'])['requestId'];
+    const admitted = trace.some(
+      (candidate) =>
+        candidate.sequence < event.sequence &&
+        candidate.kind === 'durable-journal' &&
+        Array.isArray(object(candidate.data)['journal']) &&
+        (object(candidate.data)['journal'] as unknown[]).some(
+          (raw) =>
+            object(object(raw)['request'])['requestId'] === requestId &&
+            object(raw)['state'] === 'admitted',
+        ),
+    );
+    return admitted ? [] : ['write-before-admission'];
+  });
+}
+function appendTurnFailures(
+  failures: string[],
+  input: {
+    trace: readonly TraceEvent[];
+    traceStart: number;
+    budget: RequestBudget;
+    providerDiagnostics: ReturnType<typeof classifyCompletionRecovery>;
+  },
+): void {
+  failures.push(
+    ...(input.trace.slice(input.traceStart).some((entry) => entry.kind === 'headless-reveal')
+      ? ['native-ui-unavailable']
+      : []),
+    ...traceWriteAdmissionFailures(input.trace),
+  );
+  if (input.budget.interrupted) failures.push('request-budget');
+  if (input.providerDiagnostics.unrecovered.length > 0) failures.push('provider-failure');
+}
 async function runTurn(input: {
   turn: EvalTurn;
   h: EvalHost;
@@ -932,6 +969,7 @@ async function runTurn(input: {
     })),
     writeCount: report.trace.slice(traceStart).filter((entry) => entry.kind === 'write-dispatch')
       .length,
+    hostProviderEpoch: h.api.info.providerEpoch,
     question: snapshot.activeQuestion,
     trees,
     before,
@@ -1021,37 +1059,34 @@ async function runTurn(input: {
       change.kind === 'note' ? [{ path: change.plan.path, text: change.plan.after.text }] : [],
     ),
   };
-  const failures = evaluateTurn(turn.expect, evidence);
-  if (report.trace.slice(traceStart).some((entry) => entry.kind === 'headless-reveal'))
-    failures.push('native-ui-unavailable');
-  for (const event of report.trace.filter((entry) => entry.kind === 'write-dispatch')) {
-    const requestId = object(object(event.data)['input'])['requestId'];
-    const admitted = report.trace.some(
-      (entry) =>
-        entry.sequence < event.sequence &&
-        entry.kind === 'durable-journal' &&
-        Array.isArray(object(entry.data)['journal']) &&
-        (object(entry.data)['journal'] as unknown[]).some(
-          (raw) =>
-            object(object(raw)['request'])['requestId'] === requestId &&
-            object(raw)['state'] === 'admitted',
-        ),
-    );
-    if (!admitted) failures.push('write-before-admission');
-  }
-  if (budget.interrupted) failures.push('request-budget');
+  const retainedTurn = { ...evidence, inputSnapshot, snapshot, publicReadback } as RetainedTurn;
+  const regraded = regradeRetainedTurn(
+    turn.expect,
+    retainedTurn,
+    report.trace,
+    report.activeTurn ?? 0,
+  );
+  const failures = regraded.failures;
   const providerDiagnostics = classifyCompletionRecovery(report.trace.slice(traceStart));
-  if (providerDiagnostics.unrecovered.length > 0) failures.push('provider-failure');
+  appendTurnFailures(failures, { trace: report.trace, traceStart, budget, providerDiagnostics });
   trace('owner-store', state.raw());
-  return {
+  const reportEvidence = evidence;
+  const writeObservations = regraded.evidence?.writeObservations;
+  const turnReport: TurnReport = {
     text: turn.text,
     inputSnapshot,
     snapshot,
     publicReadback,
-    ...evidence,
+    ...reportEvidence,
     failures,
     providerDiagnostics,
   };
+  if (writeObservations !== undefined)
+    Object.defineProperty(turnReport, 'writeObservations', {
+      value: writeObservations,
+      enumerable: false,
+    });
+  return turnReport;
 }
 function initialReport(test: EvalCase, provider: EvalOptions['provider']): CaseReport {
   const liveSource = provider === 'local' ? 'local-server' : 'live-provider';
