@@ -79,9 +79,23 @@ export function hasSourceAbsenceFacts(text: string, facts: readonly AbsenceFact[
     .toLowerCase()
     .replace(/doesn['’]t/gu, 'does not')
     .replace(/isn['’]t/gu, 'is not');
-  const pieces = normalized.split(
-    /(,|[.!?;\n]+|\b(?:but|however|whereas|yet)\b|(?<![\p{L}\p{N}])(?:но|однако|зато|а)(?![\p{L}\p{N}]))/gu,
-  );
+  const boundaries: Array<{ start: number; end: number; value: string }> = [];
+  for (const match of normalized.matchAll(/,|[.!?;\n]+/gu)) {
+    boundaries.push({ start: match.index, end: match.index + match[0].length, value: match[0] });
+  }
+  const adversatives = new Set(['but', 'however', 'whereas', 'yet', 'но', 'однако', 'зато', 'а']);
+  for (const match of normalized.matchAll(/[\p{L}\p{N}]+/gu)) {
+    if (adversatives.has(match[0]))
+      boundaries.push({ start: match.index, end: match.index + match[0].length, value: match[0] });
+  }
+  boundaries.sort((left, right) => left.start - right.start);
+  const pieces: string[] = [];
+  let offset = 0;
+  for (const boundary of boundaries) {
+    pieces.push(normalized.slice(offset, boundary.start), boundary.value);
+    offset = boundary.end;
+  }
+  pieces.push(normalized.slice(offset));
   const clauses: Array<{ tokens: string[]; commaLinked: boolean }> = [];
   for (let index = 0; index < pieces.length; index += 2) {
     const clause = pieces[index] ?? '';

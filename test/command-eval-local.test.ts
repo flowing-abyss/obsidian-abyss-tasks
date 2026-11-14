@@ -2,10 +2,9 @@ import { Platform } from 'obsidian';
 import { expect, it } from 'vitest';
 import { parseArgs } from '../tooling/command-eval.mjs';
 import { selectCases } from './command-live/corpus';
-import { liveRequest } from './command-live/harness';
+import { liveRequest, runCase } from './command-live/harness';
 import { readFreeCatalog } from './command-live/providerBoundary';
 import { object, RequestBudget, validateOptions, type EvalOptions } from './command-live/safety';
-import { runScriptedCase as runCase } from './command-live/scriptedCase';
 import { expectDefined, useRealMoment } from './helpers';
 import { CHILD_PROCESS_TIMEOUT_MS } from './support/timeouts';
 

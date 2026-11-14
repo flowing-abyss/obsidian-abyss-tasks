@@ -2041,6 +2041,10 @@ it('lets an already-open command owner use research after settings are corrected
       { toolName: 'interpret', input: { intent: 'plan', research: true } },
       { toolName: 'expand', input: { capabilities: ['research'] } },
       { toolName: 'research', input: { query: 'Compare two choices' } },
+      {
+        toolName: 'assess_research',
+        input: { authorized: true, requiresTaskPreparation: false },
+      },
       { toolName: 'finish', input: { state: 'ready', message: 'Compared.' } },
     ];
     const model = new MockLanguageModelV4({

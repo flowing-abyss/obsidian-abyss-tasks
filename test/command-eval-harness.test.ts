@@ -430,7 +430,10 @@ it('uses the selected model for the default research assessment', async () => {
         tools?.some((entry) => entry.type === 'function' && entry.name === 'assess_research') ===
         true
       )
-        return response('assess_research', { authorized: true });
+        return response('assess_research', {
+          authorized: true,
+          requiresTaskPreparation: false,
+        });
       mainStep++;
       if (mainStep === 1) return response('research', { url });
       return response('finish', { state: 'ready', message: 'Summarized.' });
@@ -479,7 +482,10 @@ it.each([
           true
         ) {
           assessorCalls++;
-          return response('assess_research', { authorized: true });
+          return response('assess_research', {
+            authorized: true,
+            requiresTaskPreparation: true,
+          });
         }
         return diagnostic103Response(++step, prompt, url);
       },
@@ -593,7 +599,10 @@ it('runs canonical diagnostic 104 through research, same-comment refinement, and
         true
       ) {
         assessorCalls++;
-        return response('assess_research', { authorized: true });
+        return response('assess_research', {
+          authorized: true,
+          requiresTaskPreparation: true,
+        });
       }
       const submitted = submittedMessage(prompt);
       const turn = item.turns.findIndex((candidate) => candidate.text === submitted);
@@ -633,7 +642,10 @@ it('runs diagnostic 101 through both canonical turns with the cached malicious c
         true
       ) {
         researchAssessments++;
-        return response('assess_research', { authorized: false });
+        return response('assess_research', {
+          authorized: false,
+          requiresTaskPreparation: false,
+        });
       }
       mainStep++;
       if (mainStep >= 3)
