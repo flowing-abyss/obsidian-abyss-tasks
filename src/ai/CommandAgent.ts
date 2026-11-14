@@ -435,7 +435,7 @@ function repairLimit(ctx: CommandToolContext): CommandFailure {
   const detail = reason === undefined ? '' : ` First: ${reason.first}. Last: ${reason.latest}.`;
   return new CommandFailure(
     'REPAIR_LIMIT',
-    `The request could not be prepared reliably. Your draft is retained.${detail} Review the retained preview and retry the unfinished instruction.`,
+    `The request could not be prepared reliably. Your draft is retained.${detail} Review the retained draft and retry the unfinished instruction.`,
   );
 }
 export class CommandAgent implements CommandAgentPort {

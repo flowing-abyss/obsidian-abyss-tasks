@@ -92,11 +92,12 @@ or unexecuted cases as such. Report the first attempt and any recovery separatel
 not erase a first-pass failure. Record provider failures and missing token usage as unknown, not
 zero. A campaign that stops early supplies no evidence about its remaining cases.
 
-When a real failure becomes a regression case, create a new development-split fixture with distinct
-task names, source text and page facts. Keep held-out prompts and answers out of runtime repair
-examples. A scripted control can show that the pipeline and oracle accept a specified tool sequence;
-it does not show that a model learned the behavior. Re-run a live comparison only under the same
-frozen grader, sources, model, transport and caps.
+When a real failure becomes a regression case, archive its exact public form as a development-split
+reproduction. Use distinct task names, source text and page facts for generalized development
+variants. Keep held-out prompts and answers separate and diverse; do not tune runtime examples or
+criteria against them. A scripted control can show that the pipeline and oracle accept a specified
+tool sequence; it does not show that a model learned the behavior. Re-run a live comparison only
+under the same frozen grader, sources, model, transport and caps.
 
 ## Native command SDK trace
 
@@ -195,6 +196,29 @@ usefulness, permission and truthful stage wording as independent judgments; mech
 structure checks do not establish them. Preserve the calibration record and do not show the blind key
 to the reviewer before its classifications are recorded. Keep the rubric version fixed for paired
 comparisons; a substantive criterion change requires a new version and a fresh blind calibration.
+
+Assess the requested preview from the retained canonical task proposal changes, using
+`task plan.after.comments` or the target preview tree. Do not use finish or status prose, or the
+public saved tree before Save, as the proposed content. In the private retained evidence, keep the
+requested target/owner identity, source revision, and originating proposal/plan identity and revision
+with the complete canonical capture. Missing comments or an incomplete capture remain unassessed and
+need review; if a case requires a comment count, they fail that requirement. Cases requiring Save
+also need the retained explicit confirmation effects and public readback.
+
+Grade both comparison arms from the same frozen source, user instruction, rubric and reviewer
+settings. Replace arm and model labels with opaque answer IDs; keep arm mapping private until grading
+is recorded. Blind packets must omit arm, model, provider, pass and resource labels. Preserve answers
+and grading records, then join them to the arm mapping. Calibrate on valid paraphrases, including
+Russian; exact-citation contradictions sharing the expected keywords; wrong URLs; missing captures;
+and borderline or incomplete answers. A correct URL and source-shaped fields do not pass when the
+claims are unsupported or contradict the source. If the rubric changes, regrade both baseline and
+new answers under the revised rubric.
+
+Completion requires both an independent content pass and the required structural, state,
+preservation and write checks. Scripted controls and trace replay test the pipeline or a preserved
+result; they do not qualify a model. Keep provider or usage failures and unrun cases separate from
+content failures, as described above. Judge source depth and concision against the actual request and
+material read; there is no global character limit.
 
 Report deterministic checks and live outcomes separately. Campaign counts are model-generation
 invocations; report network retries, rejected provider requests, tool repairs and unrun cases
