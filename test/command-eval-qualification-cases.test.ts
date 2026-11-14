@@ -2,14 +2,14 @@ import { expect, it } from 'vitest';
 import { atomDateTime } from '../src/tasks/domain/commentTimestamp';
 import { TaskBlockEditor } from '../src/tasks/infrastructure/markdown/TaskBlockEditor';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
-import { corpus } from './command-live/corpus';
+import { corpus, selectCases } from './command-live/corpus';
 import { qualificationCases } from './command-live/qualificationCases';
 import {
   hasSourceAbsenceFacts,
   hasSourceDestination,
   hasSourceFacts,
 } from './command-live/sourceOracle';
-import { canonicalStatusCatalog } from './helpers';
+import { canonicalStatusCatalog, expectDefined } from './helpers';
 
 interface SourceCommentMatcher {
   sourceText: string;
@@ -72,8 +72,75 @@ it('keeps the planned seven Russian and seven English cases', () => {
 });
 
 it('includes fourteen new unique cases after the original resolved corpus', () => {
-  expect(corpus).toHaveLength(194);
-  expect(new Set(corpus.map((test) => test.id)).size).toBe(194);
+  expect(corpus).toHaveLength(195);
+  expect(new Set(corpus.map((test) => test.id)).size).toBe(195);
+});
+
+function native9Fixture() {
+  const item = selectCases('research-native-dictation-comments-ru')[0];
+  if (item === undefined) throw new Error('Missing Native9 fixture');
+  return item;
+}
+
+it('selects the faithful Native9 Russian dictation development fixture', () => {
+  const item = native9Fixture();
+  const turn = expectDefined(item.turns[0]);
+  const page = expectDefined(item.pageFixture);
+  expect(item.split).toBe('development');
+  expect(item.turns).toHaveLength(1);
+  expect(turn.text).toHaveLength(1304);
+  expect(turn.expect).toMatchObject({
+    status: 'ready',
+    proposalKinds: ['task'],
+    researchCalls: 1,
+    researchPage:
+      'https://raw.githubusercontent.com/flowing-abyss/obsidian-abyss-tasks/master/README.md',
+    writeCount: 0,
+  });
+  expect(page.content).toHaveLength(5216);
+  expect(item.files['Projects QA/Regular Project.md']).toContain(
+    '- [/] Ready task with priority and tags #work/dev #next 🔼 🛫 2026-09-20 📅 2026-09-24 🆔 qa-ready\n',
+  );
+});
+
+it('targets the existing qa-ready owner and keeps every QA fixture task in the readback', () => {
+  const item = native9Fixture();
+  const turn = expectDefined(item.turns[0]);
+  const owner = turn.expect.trees?.[0] as {
+    markdownTitle?: string;
+    statusSymbol?: string;
+    priority?: string;
+    tags?: string[];
+    dates?: { start?: string; due?: string };
+    authoredId?: string;
+    comments?: Array<{ text?: { sourceText?: string } }>;
+  };
+  expect(owner).toMatchObject({
+    markdownTitle: 'Ready task with priority and tags',
+    statusSymbol: '/',
+    priority: 'C',
+    tags: ['#work/dev', '#next'],
+    dates: { start: '2026-09-20', due: '2026-09-24' },
+    authoredId: 'qa-ready',
+  });
+  expect(owner.comments?.map((comment) => comment.text?.sourceText)).toEqual(
+    Array.from({ length: 3 }, () => item.pageFixture?.url),
+  );
+  const publicTrees = (turn.expect.publicTrees ?? []) as Array<{
+    markdownTitle?: string;
+    authoredId?: string;
+  }>;
+  expect(publicTrees.map(({ markdownTitle, authoredId }) => [markdownTitle, authoredId])).toEqual([
+    ['Ready task with priority and tags', 'qa-ready'],
+    ['Blocked task with valid dependency', 'qa-blocked'],
+    ['Invalid dependency diagnostic', 'qa-invalid'],
+    ['In progress task', 'abyss-1vk3nzn15m38pz0gexy001tept8l'],
+    ['Completed fixture task', undefined],
+    ['Cancelled fixture task', undefined],
+  ]);
+  expect(turn.expect.taskSources).toEqual([
+    { path: 'Projects QA/Regular Project.md', line: 8, kind: 'edit' },
+  ]);
 });
 
 it('encodes trajectory-neutral stale conflict handling and task-read evidence', () => {

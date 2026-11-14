@@ -344,6 +344,193 @@ function qualificationTitles(id: string): string[] {
     ? ['Позвонить мастеру', 'Позвонить мастеру']
     : ['Купить кабель', 'Проверить насос'];
 }
+
+const native9ShortComments = (url: string) => [
+  `Abyss Tasks помогает вести задачи в Markdown в Obsidian, используя синтаксис, совместимый с плагином Tasks. Источник: ${url}`,
+  `Календарь поддерживает планы на день, неделю и месяц, а временные блоки можно перемещать и менять по длительности. Проекты доступны в таблице, kanban и timeline; в деталях задачи видны её свойства. Источник: ${url}`,
+  `README отмечает интеграцию AI, голосовой ввод и гибридный поиск как незавершённые пункты roadmap; они не представлены как готовые функции. Источник: ${url}`,
+];
+
+function native9InspectResponse(prompt: TestPrompt) {
+  const result = jsonToolResult(prompt, 'find') as { items: Array<{ target: string }> };
+  return response('inspect', { target: expectDefined(result.items[0]).target });
+}
+
+function native9CommentResponse(prompt: TestPrompt, comments: readonly string[], index: number) {
+  const inspected = jsonToolResult(prompt, 'inspect') as {
+    references?: { taskReferences?: Array<{ edit: string }> };
+  };
+  const owner = expectDefined(inspected.references?.taskReferences?.[0]);
+  return response('change_task', {
+    edit: owner.edit,
+    operation: { type: 'add-comment', text: expectDefined(comments[index]) },
+    complete: index === comments.length - 1,
+  });
+}
+
+function native9PipelineReply(
+  step: number,
+  prompt: TestPrompt,
+  comments: readonly string[],
+  url: string,
+) {
+  switch (step) {
+    case 0:
+      return response('find', {
+        query: 'qa-ready',
+        taskId: 'qa-ready',
+        path: 'Projects QA/Regular Project.md',
+        purpose: 'change',
+      });
+    case 1:
+      return native9InspectResponse(prompt);
+    case 2:
+      return response('research', { url });
+    case 3:
+      return comments.length === 0
+        ? response('finish', { state: 'ready', message: 'Черновик подготовлен.' })
+        : native9CommentResponse(prompt, comments, 0);
+    default:
+      if (step >= 2 * comments.length + 2)
+        return response('finish', { state: 'ready', message: 'Черновик подготовлен.' });
+      return step % 2 === 0
+        ? native9InspectResponse(prompt)
+        : native9CommentResponse(prompt, comments, Math.floor((step - 3) / 2));
+  }
+}
+
+async function runNative9Pipeline(comments: readonly string[]) {
+  const item = expectDefined(selectCases('research-native-dictation-comments-ru')[0]);
+  const url = expectDefined(item.pageFixture).url;
+  let step = 0;
+  const model = new MockLanguageModelV4({
+    doGenerate: async ({ prompt, tools }) => {
+      if (
+        tools?.some((entry) => entry.type === 'function' && entry.name === 'assess_research') ===
+        true
+      )
+        return response('assess_research', {
+          authorized: true,
+          requiresTaskPreparation: true,
+        });
+      return native9PipelineReply(step++, prompt, comments, url);
+    },
+  });
+  const report = await runLiveCase(
+    item,
+    {
+      options: { provider: 'openrouter', model: 'synthetic', allowPaid: false, maxRequests: 1 },
+      budget: new RequestBudget(1),
+      key: 'synthetic',
+      fetch: async () => {
+        throw new Error('No network');
+      },
+    },
+    async () => {},
+    model,
+  );
+  return { item, report };
+}
+
+it('mechanically passes three Russian paraphrase comments through the canonical Native9 harness', async () => {
+  const item = expectDefined(selectCases('research-native-dictation-comments-ru')[0]);
+  const url = expectDefined(item.pageFixture).url;
+  const { report } = await runNative9Pipeline(native9ShortComments(url));
+  const turn = expectDefined(report.turns[0]);
+  expect(
+    report.outcome,
+    JSON.stringify({
+      status: turn.status,
+      snapshotStatus: turn.snapshot.status,
+      failures: turn.failures,
+      trees: turn.trees,
+      events: report.trace.filter((event) => ['tool-call', 'tool-result'].includes(event.kind)),
+    }),
+  ).toBe('passed');
+  expect(turn.trees).toHaveLength(1);
+  const prepared = expectDefined(turn.trees[0]) as TaskTreeV1;
+  expect(prepared).toMatchObject({
+    markdownTitle: 'Ready task with priority and tags',
+    statusSymbol: '/',
+    priority: 'C',
+    tags: ['#work/dev', '#next'],
+    dates: { start: '2026-09-20', due: '2026-09-24' },
+    authoredId: 'qa-ready',
+  });
+  expect(prepared.comments.map((comment) => comment.text)).toEqual(native9ShortComments(url));
+  expect(turn.admissions).toEqual([]);
+  expect(turn.journal).toEqual([]);
+  expect(turn.taskSources).toEqual([
+    expect.objectContaining({
+      path: 'Projects QA/Regular Project.md',
+      line: 8,
+      kind: 'edit',
+      basisValid: true,
+    }),
+  ]);
+  const persistedOwner = expectDefined(
+    turn.publicReadback.find(
+      (tree) => tree.source?.path === 'Projects QA/Regular Project.md' && tree.source.line === 8,
+    ),
+  );
+  expect(
+    turn.publicReadback.map((tree) => [tree.markdownTitle, tree.authoredId, tree.source?.line]),
+  ).toEqual([
+    ['Ready task with priority and tags', 'qa-ready', 8],
+    ['Blocked task with valid dependency', 'qa-blocked', 9],
+    ['Invalid dependency diagnostic', 'qa-invalid', 10],
+    ['In progress task', 'abyss-1vk3nzn15m38pz0gexy001tept8l', 11],
+    ['Completed fixture task', undefined, 12],
+    ['Cancelled fixture task', undefined, 13],
+    ['Untouched [unknown:: keep]', undefined, 4],
+  ]);
+  expect(persistedOwner).toMatchObject({
+    markdownTitle: 'Ready task with priority and tags',
+    statusSymbol: '/',
+    priority: 'C',
+    tags: ['#work/dev', '#next'],
+    dates: { start: '2026-09-20', due: '2026-09-24' },
+    authoredId: 'qa-ready',
+    comments: [],
+    children: [],
+    source: { path: 'Projects QA/Regular Project.md', line: 8 },
+  });
+  expect(turn.writeCount).toBe(0);
+  expect(turn.before).toEqual(turn.after);
+  expect(turn.after['Projects QA/Regular Project.md']).toBe(
+    item.files['Projects QA/Regular Project.md'],
+  );
+  expect(
+    turn.research?.some(
+      (result) =>
+        result.action === 'read-page' && result.query === url && result.sources.includes(url),
+    ),
+  ).toBe(true);
+  expect(report.physicalRequests).toBe(0);
+});
+it.each([
+  { label: 'zero comments', count: 0 },
+  { label: 'two comments', count: 2 },
+])('fails the canonical Native9 pipeline with $label', async ({ count }) => {
+  const item = expectDefined(selectCases('research-native-dictation-comments-ru')[0]);
+  const comments = native9ShortComments(expectDefined(item.pageFixture).url).slice(0, count);
+  const { report } = await runNative9Pipeline(comments);
+  expect(report.outcome).not.toBe('passed');
+  expect(report.turns[0]?.failures).toContain('tree-postcondition');
+  expect(report.turns[0]?.writeCount).toBe(0);
+  expect(report.turns[0]?.before).toEqual(report.turns[0]?.after);
+});
+
+it('mechanically accepts a cited contradiction for independent semantic review', async () => {
+  const item = expectDefined(selectCases('research-native-dictation-comments-ru')[0]);
+  const url = expectDefined(item.pageFixture).url;
+  const comments = native9ShortComments(url);
+  comments[2] = `README confirms that AI integration, voice input, and hybrid search are already fully implemented and ready. Источник: ${url}`;
+  const { report } = await runNative9Pipeline(comments);
+  expect(report.outcome).toBe('passed');
+  expect(report.turns[0]?.writeCount).toBe(0);
+  expect(report.turns[0]?.before).toEqual(report.turns[0]?.after);
+});
 it.each(['Q6-context', 'Q6-capture', 'Q6-ambiguous', 'Q6-twins', 'Q6-independent'])(
   'executes the held-out %s oracle with canonical scripted tools and no network',
   async (id) => {
