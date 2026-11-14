@@ -117,6 +117,8 @@ function installNativeTrace(
   const toolCallsById = new Map();
   const observedToolResults = new Set();
   const readToolNames = new Set(['find', 'inspect', 'read']);
+  const commandInputToolNames = new Set(['find', 'interpret', 'assess_research']);
+  const resultToolNames = new Set([...readToolNames, 'finish']);
   const readKeys = new Set([
     'kind',
     'read',
@@ -176,6 +178,35 @@ function installNativeTrace(
     'VALIDATION_ERROR',
   ]);
   const diagnosticPathSegments = new Set([...readKeys, 'selection', 'states', 'status']);
+  const finishDiagnosticCodes = new Set([
+    ...diagnosticCodes,
+    'PENDING_TASK_CHANGE',
+    'UNGROUNDED_FINISH',
+    'UNGROUNDED_QUESTION',
+    'UNRESOLVED',
+    'STALE',
+    'TIMEOUT',
+    'CANCELLED',
+    'ABORTED',
+  ]);
+  const finishDiagnosticPathSegments = new Set([
+    'finish',
+    'input',
+    'selection',
+    'kind',
+    'target',
+    'plan',
+    'expectedPlanRevision',
+    'revision',
+    'state',
+    'message',
+    'coverage',
+    'presentation',
+    'reveal',
+    'blockingIssue',
+    'detail',
+    'evidence',
+  ]);
   const toolResultOutputTypes = new Set([
     'text',
     'json',
@@ -438,25 +469,89 @@ function installNativeTrace(
       return { representation: 'invalid-json' };
     }
   };
-  /** @param {unknown} content @param {Set<string>} declaredNames */
-  const safeFinishInputs = (content, declaredNames) => {
-    if (!Array.isArray(content) || !declaredNames.has('finish')) return [];
-    const inputs = [];
-    for (const part of content.slice(0, maxContentEntries)) {
-      if (
-        typeof part !== 'object' ||
-        part === null ||
-        !('type' in part) ||
-        part.type !== 'tool-call' ||
-        !('toolName' in part) ||
-        part.toolName !== 'finish' ||
-        !('input' in part)
-      )
-        continue;
-      inputs.push(finishInputShape(part.input));
-      if (inputs.length === 8) break;
+  /** @param {object} part @param {number} generationOrdinal @param {number} callOrdinal @param {{inputs: Record<string, unknown>[], omittedCount: number, failureCount: number, registrationOmittedCount: number, truncated: boolean}} result */
+  const captureFinishToolCallInput = (part, generationOrdinal, callOrdinal, result) => {
+    if (!tryRegisterReadToolCall(part, generationOrdinal, callOrdinal)) {
+      result.registrationOmittedCount++;
+      result.truncated = true;
     }
-    return inputs;
+    if (result.inputs.length >= maxReadInputShapes) {
+      result.omittedCount++;
+      result.truncated = true;
+      return;
+    }
+    try {
+      if (!('input' in part)) {
+        result.inputs.push({ representation: 'missing', inputParseFailed: true });
+        result.failureCount++;
+        return;
+      }
+      result.inputs.push(finishInputShape(part.input));
+    } catch {
+      result.failureCount = Math.min(1_000_000, result.failureCount + 1);
+      result.omittedCount = Math.min(1_000_000, result.omittedCount + 1);
+      result.truncated = true;
+    }
+  };
+  /** @param {unknown} content @param {Set<string>} declaredNames @param {number} generationOrdinal */
+  const safeFinishInputs = (content, declaredNames, generationOrdinal) => {
+    const result =
+      /** @type {{inputs: Record<string, unknown>[], omittedCount: number, failureCount: number, registrationOmittedCount: number, truncated: boolean}} */ ({
+        inputs: [],
+        omittedCount: 0,
+        failureCount: 0,
+        registrationOmittedCount: 0,
+        truncated: false,
+      });
+    if (!Array.isArray(content)) {
+      result.failureCount = 1;
+      result.truncated = true;
+      return result;
+    }
+    if (!declaredNames.has('finish')) return result;
+    let callOrdinal = 0;
+    for (const part of content.slice(0, maxContentEntries)) {
+      try {
+        if (
+          typeof part !== 'object' ||
+          part === null ||
+          !('type' in part) ||
+          part.type !== 'tool-call'
+        )
+          continue;
+        callOrdinal++;
+        if (!('toolName' in part) || part.toolName !== 'finish') continue;
+        captureFinishToolCallInput(part, generationOrdinal, callOrdinal, result);
+      } catch {
+        result.failureCount = Math.min(1_000_000, result.failureCount + 1);
+        result.omittedCount = Math.min(1_000_000, result.omittedCount + 1);
+        result.truncated = true;
+      }
+    }
+    if (content.length > maxContentEntries) {
+      result.omittedCount = Math.min(
+        1_000_000,
+        result.omittedCount + content.length - maxContentEntries,
+      );
+      result.truncated = true;
+    }
+    return result;
+  };
+  /** @param {Record<string, unknown>} generation @param {unknown} content @param {Set<string>} declaredNames @param {number} generationOrdinal */
+  const recordFinishInputObservation = (generation, content, declaredNames, generationOrdinal) => {
+    const observation = safeFinishInputs(content, declaredNames, generationOrdinal);
+    if (observation.inputs.length > 0) generation['finishInputs'] = observation.inputs;
+    if (
+      observation.omittedCount > 0 ||
+      observation.failureCount > 0 ||
+      observation.registrationOmittedCount > 0 ||
+      observation.truncated
+    ) {
+      generation['finishInputOmittedCount'] = observation.omittedCount;
+      generation['finishInputFailureCount'] = observation.failureCount;
+      generation['finishCallRegistrationOmittedCount'] = observation.registrationOmittedCount;
+      generation['finishInputsTruncated'] = observation.truncated;
+    }
   };
   /** @param {unknown} input @returns {Record<string, unknown>} */
   const parseReadInput = (input) => {
@@ -471,6 +566,149 @@ function installNativeTrace(
     } catch {
       return { summary: { representation: 'invalid-json', inputParseFailed: true } };
     }
+  };
+  /** @param {unknown} value @returns {Record<string, unknown>} */
+  const boundedObservationShape = (value) => {
+    const summary = shape(value);
+    if (summary['type'] === 'string') {
+      const length = /** @type {number} */ (summary['length']);
+      return { type: 'string', length: Math.min(10000, length), lengthTruncated: length > 10000 };
+    }
+    if (summary['type'] === 'array') {
+      const length = /** @type {number} */ (summary['length']);
+      return { type: 'array', length: Math.min(10000, length), lengthTruncated: length > 10000 };
+    }
+    return summary;
+  };
+  /** @param {Record<string, unknown>} fields @param {string} key @param {Set<string>} allowed @returns {Record<string, unknown>} */
+  const observedEnumField = (fields, key, allowed) => {
+    if (!Object.prototype.hasOwnProperty.call(fields, key)) return { status: 'omitted' };
+    const value = fields[key];
+    return typeof value === 'string' && allowed.has(value)
+      ? { status: 'allowed', value }
+      : { status: 'invalid', shape: boundedObservationShape(value) };
+  };
+  /** @param {Record<string, unknown>} fields @param {string} key @returns {Record<string, unknown>} */
+  const observedBooleanField = (fields, key) => {
+    if (!Object.prototype.hasOwnProperty.call(fields, key)) return { status: 'omitted' };
+    const value = fields[key];
+    return typeof value === 'boolean'
+      ? { status: 'valid', value }
+      : { status: 'invalid', shape: boundedObservationShape(value) };
+  };
+  /** @param {Record<string, unknown>} fields @param {string} key @param {boolean} [unknownIssuance] @returns {Record<string, unknown>} */
+  const observedShapeField = (fields, key, unknownIssuance = false) => {
+    if (!Object.prototype.hasOwnProperty.call(fields, key))
+      return { status: 'omitted', ...(unknownIssuance ? { issued: 'unknown' } : {}) };
+    const value = fields[key];
+    return {
+      status: typeof value === 'string' ? 'present' : 'invalid',
+      shape: boundedObservationShape(value),
+      ...(unknownIssuance ? { issued: 'unknown' } : {}),
+    };
+  };
+  /** @param {string} sourceName @param {unknown} input @returns {Record<string, unknown>} */
+  const commandInputShape = (sourceName, input) => {
+    const parsed = parseReadInput(input);
+    if (typeof parsed['summary'] === 'object' && parsed['summary'] !== null) {
+      const summary = /** @type {Record<string, unknown>} */ (parsed['summary']);
+      return { representation: summary['representation'], fieldsUnavailable: true };
+    }
+    const value = parsed['value'];
+    if (typeof value !== 'object' || value === null || Array.isArray(value))
+      return { representation: parsed['representation'], fieldsUnavailable: true };
+    const fields = /** @type {Record<string, unknown>} */ (value);
+    const result = /** @type {Record<string, unknown>} */ ({
+      representation: parsed['representation'],
+    });
+    if (sourceName === 'find') {
+      result['purpose'] = observedEnumField(
+        fields,
+        'purpose',
+        new Set(['change', 'remove', 'show-only', 'locate-child']),
+      );
+      result['showExact'] = observedBooleanField(fields, 'showExact');
+      result['taskId'] = observedShapeField(fields, 'taskId');
+      result['retryOf'] = observedShapeField(fields, 'retryOf', true);
+    } else if (sourceName === 'interpret') {
+      result['intent'] = observedEnumField(
+        fields,
+        'intent',
+        new Set([
+          'plan',
+          'confirm',
+          'immediate',
+          'save-then-plan',
+          'review',
+          'new-session',
+          'acknowledge-uncertainty',
+          'voice-mode',
+          'resolve-transition',
+        ]),
+      );
+    } else if (sourceName === 'assess_research') {
+      result['allowed'] = observedBooleanField(fields, 'allowed');
+      result['requiresTaskPreparation'] = observedBooleanField(fields, 'requiresTaskPreparation');
+    }
+    return result;
+  };
+  /** @param {unknown} content @param {Set<string>} declaredNames @param {number} generationOrdinal */
+  const safeCommandInputs = (content, declaredNames, generationOrdinal) => {
+    const result =
+      /** @type {{inputs: Record<string, unknown>[], omittedCount: number, failureCount: number, truncated: boolean}} */ ({
+        inputs: [],
+        omittedCount: 0,
+        failureCount: 0,
+        truncated: false,
+      });
+    if (!Array.isArray(content)) {
+      result.failureCount = 1;
+      result.truncated = true;
+      return result;
+    }
+    let callOrdinal = 0;
+    for (const part of content.slice(0, maxContentEntries)) {
+      try {
+        if (
+          typeof part !== 'object' ||
+          part === null ||
+          !('type' in part) ||
+          part.type !== 'tool-call'
+        )
+          continue;
+        callOrdinal++;
+        const record = /** @type {Record<string, unknown>} */ (part);
+        const sourceName = record['toolName'];
+        if (
+          typeof sourceName !== 'string' ||
+          !commandInputToolNames.has(sourceName) ||
+          !declaredNames.has(sourceName)
+        )
+          continue;
+        if (result.inputs.length >= maxReadInputShapes) {
+          result.omittedCount++;
+          result.truncated = true;
+          continue;
+        }
+        const observation = {
+          sourceName,
+          generationOrdinal,
+          callOrdinal,
+          ...commandInputShape(sourceName, 'input' in record ? record['input'] : undefined),
+        };
+        if (!tryRegisterReadToolCall(part, generationOrdinal, callOrdinal)) result.omittedCount++;
+        result.inputs.push(observation);
+      } catch {
+        result.failureCount++;
+        result.omittedCount++;
+        result.truncated = true;
+      }
+    }
+    if (content.length > maxContentEntries) {
+      result.omittedCount += Math.min(1_000_000, content.length - maxContentEntries);
+      result.truncated = true;
+    }
+    return result;
   };
   /** @param {Record<string, unknown>} value */
   const boundedReadKeys = (value) => {
@@ -752,11 +990,11 @@ function installNativeTrace(
     return result;
   };
   /** @param {unknown} candidate */
-  const safeValidationPath = (candidate) => {
+  const safeValidationPath = (candidate, allowedSegments = diagnosticPathSegments) => {
     if (!Array.isArray(candidate)) return undefined;
     const path = /** @type {unknown[]} */ (candidate);
     return {
-      segments: path.slice(0, 12).map(safePathSegment),
+      segments: path.slice(0, 12).map((segment) => safePathSegment(segment, allowedSegments)),
       truncated: path.length > 12,
       omittedCount: Math.min(1_000_000, Math.max(0, path.length - 12)),
       omittedCountTruncated: path.length - 12 > 1_000_000,
@@ -774,8 +1012,8 @@ function installNativeTrace(
     if (record['type'] === 'content') return Array.isArray(record['value']);
     return record['reason'] === undefined || typeof record['reason'] === 'string';
   };
-  /** @param {unknown} output @returns {Record<string, unknown>} */
-  const safeToolResultDiagnostic = (output) => {
+  /** @param {unknown} output @param {string} [sourceName] @returns {Record<string, unknown>} */
+  const safeToolResultDiagnostic = (output, sourceName) => {
     const record = /** @type {Record<string, unknown>} */ (output);
     const isError = record['type'] === 'error-text' || record['type'] === 'error-json';
     const errorText = record['type'] === 'error-text' ? record['value'] : undefined;
@@ -784,12 +1022,18 @@ function installNativeTrace(
       typeof value === 'object' && value !== null
         ? /** @type {Record<string, unknown>} */ (value)
         : {};
+    const allowedCodes = sourceName === 'finish' ? finishDiagnosticCodes : diagnosticCodes;
     const code =
-      typeof structured['code'] === 'string' && diagnosticCodes.has(structured['code'])
+      typeof structured['code'] === 'string' && allowedCodes.has(structured['code'])
         ? structured['code']
         : undefined;
     const hasPath = 'validationPath' in structured || 'path' in structured;
-    const validationPath = safeValidationPath(structured['validationPath'] ?? structured['path']);
+    const allowedPathSegments =
+      sourceName === 'finish' ? finishDiagnosticPathSegments : diagnosticPathSegments;
+    const validationPath = safeValidationPath(
+      structured['validationPath'] ?? structured['path'],
+      allowedPathSegments,
+    );
     return {
       resultKind: isError ? 'error' : 'result',
       ...(errorText === 'Invalid API argument.'
@@ -809,8 +1053,54 @@ function installNativeTrace(
       validationUnavailable: validationPath === undefined,
     };
   };
-  /** @param {unknown} segment */
-  const safePathSegment = (segment) => {
+  /** @param {unknown} output */
+  const safeFinishResultDiagnostic = (output) => {
+    const record = /** @type {Record<string, unknown>} */ (output);
+    const type = record['type'];
+    if (type === 'error-text' || type === 'error-json')
+      return { ...safeToolResultDiagnostic(output, 'finish'), finishOutcome: 'rejected' };
+    if (type === 'execution-denied')
+      return { resultKind: 'error', finishOutcome: 'rejected', codeUnavailable: true };
+    if (type !== 'json' || typeof record['value'] !== 'object' || record['value'] === null)
+      return {
+        resultKind: 'unknown',
+        finishOutcome: 'unknown',
+        codeUnavailable: true,
+        validationUnavailable: true,
+      };
+    const value = /** @type {Record<string, unknown>} */ (record['value']);
+    let finishOutcome = 'unknown';
+    if (value['finished'] === true) finishOutcome = 'accepted';
+    else if (value['finished'] === false) finishOutcome = 'unfinished';
+    else if (value['needsDisposition'] === true) finishOutcome = 'needs-disposition';
+    return { resultKind: 'result', finishOutcome, codeUnavailable: true };
+  };
+  /** @param {string} sourceName @param {Record<string, unknown>} diagnostic */
+  const isDeduplicableToolResult = (sourceName, diagnostic) =>
+    sourceName !== 'finish' || diagnostic['finishOutcome'] !== 'unknown';
+  /** @param {string} sourceName @param {unknown} output @returns {{diagnostic?: Record<string, unknown>, deduplicate: boolean, omitted?: string}} */
+  const observeAttributedToolResult = (sourceName, output) => {
+    if (!isToolResultOutput(output)) {
+      if (sourceName !== 'finish') return { omitted: 'invalid-envelope', deduplicate: false };
+      return {
+        diagnostic: {
+          resultKind: 'unknown',
+          finishOutcome: 'unknown',
+          resultUnavailable: true,
+          codeUnavailable: true,
+          validationUnavailable: true,
+        },
+        deduplicate: false,
+      };
+    }
+    const diagnostic =
+      sourceName === 'finish'
+        ? safeFinishResultDiagnostic(output)
+        : safeToolResultDiagnostic(output, sourceName);
+    return { diagnostic, deduplicate: isDeduplicableToolResult(sourceName, diagnostic) };
+  };
+  /** @param {unknown} segment @param {Set<string>} allowed */
+  const safePathSegment = (segment, allowed) => {
     if (
       typeof segment === 'number' &&
       Number.isInteger(segment) &&
@@ -819,7 +1109,7 @@ function installNativeTrace(
     )
       return { index: segment };
     return {
-      key: typeof segment === 'string' && diagnosticPathSegments.has(segment) ? segment : 'unknown',
+      key: typeof segment === 'string' && allowed.has(segment) ? segment : 'unknown',
     };
   };
   /** @param {unknown} part @param {Set<string>} declaredNames @returns {{summary?: Record<string, unknown>, omitted?: string, duplicate?: boolean}} */
@@ -835,26 +1125,28 @@ function installNativeTrace(
       return {};
     const callId = part.toolCallId;
     const record = /** @type {Record<string, unknown>} */ (part);
-    if (callId.length === 0 || callId.length > 256 || !isToolResultOutput(record['output']))
-      return { omitted: 'invalid-envelope' };
+    if (callId.length === 0 || callId.length > 256) return { omitted: 'invalid-envelope' };
     if (observedToolResults.has(callId)) return { duplicate: true };
     if (observedToolResults.size >= maxToolCallIds) return { omitted: 'dedup-cap' };
     const attribution = toolCallsById.get(callId);
     const partName = record['toolName'];
     if (typeof partName !== 'string') return { omitted: 'invalid-envelope' };
     if (!attribution)
-      return readToolNames.has(partName) && declaredNames.has(partName)
+      return resultToolNames.has(partName) && declaredNames.has(partName)
         ? { omitted: 'unattributed' }
         : {};
     if (partName !== attribution.sourceName) return { omitted: 'source-mismatch' };
-    if (!readToolNames.has(attribution.sourceName)) return {};
+    if (!resultToolNames.has(attribution.sourceName)) return {};
+    const observedResult = observeAttributedToolResult(attribution.sourceName, record['output']);
+    if (observedResult.omitted) return { omitted: observedResult.omitted };
+    const diagnostic = observedResult.diagnostic ?? {};
     const summary = {
       sourceName: attribution.sourceName,
       generationOrdinal: attribution.generationOrdinal,
       callOrdinal: attribution.callOrdinal,
-      ...safeToolResultDiagnostic(record['output']),
+      ...diagnostic,
     };
-    observedToolResults.add(callId);
+    if (observedResult.deduplicate) observedToolResults.add(callId);
     return { summary };
   };
   /** @param {unknown} message */
@@ -1145,6 +1437,22 @@ function installNativeTrace(
           generation['readInputsTruncated'] = true;
         }
         try {
+          const commandInputObservation = safeCommandInputs(
+            result['content'],
+            declaredNames,
+            generationIndex,
+          );
+          if (commandInputObservation.inputs.length > 0)
+            generation['commandInputs'] = commandInputObservation.inputs;
+          if (
+            commandInputObservation.omittedCount > 0 ||
+            commandInputObservation.failureCount > 0 ||
+            commandInputObservation.truncated
+          ) {
+            generation['commandInputOmittedCount'] = commandInputObservation.omittedCount;
+            generation['commandInputFailureCount'] = commandInputObservation.failureCount;
+            generation['commandInputsTruncated'] = commandInputObservation.truncated;
+          }
           const finishReason = result['finishReason'];
           if (
             typeof finishReason === 'object' &&
@@ -1166,8 +1474,12 @@ function installNativeTrace(
           generation['toolNames'] = toolNameSummary.names;
           generation['toolNameUnknownCount'] = toolNameSummary.unknownCount;
           generation['toolNameOmittedCount'] = toolNameSummary.omittedCount;
-          const finishInputs = safeFinishInputs(result['content'], declaredNames);
-          if (finishInputs.length > 0) generation['finishInputs'] = finishInputs;
+          recordFinishInputObservation(
+            generation,
+            result['content'],
+            declaredNames,
+            generationIndex,
+          );
         } catch {
           // Diagnostic observation must never replace the provider result.
         }

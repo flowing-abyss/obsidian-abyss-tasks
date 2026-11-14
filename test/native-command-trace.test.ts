@@ -58,6 +58,10 @@ async function evaluate(code: string, app: unknown, root: object): Promise<unkno
   return vm.runInContext(code, context as object);
 }
 
+function replaceGenerate(model: ReturnType<typeof fixture>['model'], generate: SdkGenerate): void {
+  Object.defineProperty(model, 'doGenerate', { value: generate });
+}
+
 function fixture() {
   const calls = { model: 0, search: 0, readPage: 0 };
   const model = {
@@ -1733,5 +1737,807 @@ describe('native command trace installer', () => {
     ) as { sdkInvocations: number; guardRejections: Array<Record<string, unknown>> };
     expect(trace.sdkInvocations).toBe(0);
     expect(trace.guardRejections).toEqual([{ kind: 'model-id-mismatch' }]);
+  });
+
+  it('classifies find and interpret controls without retaining values or ID text', async () => {
+    const { app, root, plugin, model } = fixture();
+    const enumCanary = 'UNKNOWN_ENUM_SECRET_CANARY';
+    const idCanary = 'PRIVATE_TASK_ID_CANARY';
+    let generation = 0;
+    replaceGenerate(model, async () => {
+      generation++;
+      const content: SdkGenerationResult['content'] = [
+        {
+          type: 'tool-call',
+          toolName: 'find',
+          toolCallId: 'find-change-call',
+          input: JSON.stringify({
+            purpose: 'change',
+            showExact: true,
+            taskId: idCanary,
+            retryOf: 'PRIVATE_FIND_EVIDENCE_CANARY',
+            query: 'PRIVATE_QUERY_CANARY',
+            path: 'PRIVATE_PATH_CANARY',
+          }),
+        },
+        {
+          type: 'tool-call',
+          toolName: 'find',
+          toolCallId: 'find-omitted-call',
+          input: '{}',
+        },
+        {
+          type: 'tool-call',
+          toolName: 'find',
+          toolCallId: 'find-invalid-call',
+          input: JSON.stringify({
+            purpose: enumCanary,
+            showExact: 'PRIVATE_BOOLEAN_CANARY',
+            taskId: { value: idCanary },
+            retryOf: 42,
+          }),
+        },
+        {
+          type: 'tool-call',
+          toolName: 'assess_research',
+          toolCallId: 'assess-enabled-call',
+          input: JSON.stringify({
+            allowed: true,
+            requiresTaskPreparation: false,
+            reason: 'PRIVATE_REASON_CANARY',
+          }),
+        },
+        {
+          type: 'tool-call',
+          toolName: 'assess_research',
+          toolCallId: 'assess-denied-call',
+          input: JSON.stringify({ allowed: false }),
+        },
+        {
+          type: 'tool-call',
+          toolName: 'assess_research',
+          toolCallId: 'assess-invalid-call',
+          input: JSON.stringify({
+            allowed: enumCanary,
+            requiresTaskPreparation: 'PRIVATE_REQUIRES_PREPARATION_CANARY',
+            reason: 'PRIVATE_REASON_CANARY',
+          }),
+        },
+        {
+          type: 'tool-call',
+          toolName: 'assess_research',
+          toolCallId: 'assess-omitted-call',
+          input: '{}',
+        },
+        {
+          type: 'tool-call',
+          toolName: 'interpret',
+          toolCallId: 'interpret-plan-call',
+          input: JSON.stringify({ intent: 'plan', approval: 'PRIVATE_APPROVAL_CANARY' }),
+        },
+        {
+          type: 'tool-call',
+          toolName: 'find',
+          toolCallId: 'find-command-input-cap-call',
+          input: JSON.stringify({ purpose: 'show-only' }),
+        },
+        {
+          type: 'tool-call',
+          toolName: 'interpret',
+          toolCallId: 'interpret-invalid-call',
+          input: JSON.stringify({ intent: enumCanary }),
+        },
+        {
+          type: 'tool-call',
+          toolName: 'interpret',
+          toolCallId: 'interpret-omitted-call',
+          input: '{}',
+        },
+        {
+          type: 'tool-call',
+          toolName: 'find',
+          toolCallId: 'find-show-exact-false-call',
+          input: JSON.stringify({ showExact: false }),
+        },
+        {
+          type: 'tool-call',
+          toolName: 'find',
+          toolCallId: 'find-malformed-call',
+          input: `{${enumCanary}`,
+        },
+        {
+          type: 'tool-call',
+          toolName: 'find',
+          toolCallId: 'find-oversized-call',
+          input: 'x'.repeat(16385),
+        },
+      ];
+      return {
+        content: generation === 1 ? content.slice(0, 9) : content.slice(9),
+        finishReason: { unified: 'tool-calls', raw: 'tool_calls' },
+        usage: {
+          inputTokens: { total: 0, noCache: 0, cacheRead: 0, cacheWrite: 0 },
+          outputTokens: { total: 0, text: 0, reasoning: 0 },
+        },
+        warnings: [],
+      };
+    });
+    await evaluate(buildNativeTraceInstallEval(pageUrl, expectedModelId, traceKey), app, root);
+    const tools = [
+      { type: 'function' as const, name: 'find', inputSchema: { type: 'object' } },
+      { type: 'function' as const, name: 'interpret', inputSchema: { type: 'object' } },
+      { type: 'function' as const, name: 'assess_research', inputSchema: { type: 'object' } },
+    ] satisfies NonNullable<SdkTools>;
+    const wrapped = plugin.providerConnections.model({ fixture: true });
+    await wrapped.doGenerate({ tools, prompt: [] });
+    await wrapped.doGenerate({ tools, prompt: [] });
+
+    const trace = JSON.parse(
+      String(await evaluate(buildNativeTraceReadEval(traceKey), app, root)),
+    ) as { generations: Array<Record<string, unknown>> };
+    expect(trace.generations[0]?.['commandInputs']).toMatchObject([
+      {
+        sourceName: 'find',
+        generationOrdinal: 1,
+        callOrdinal: 1,
+        purpose: { status: 'allowed', value: 'change' },
+        showExact: { status: 'valid', value: true },
+        taskId: { status: 'present', shape: { type: 'string', length: idCanary.length } },
+        retryOf: {
+          status: 'present',
+          shape: { type: 'string', length: 'PRIVATE_FIND_EVIDENCE_CANARY'.length },
+          issued: 'unknown',
+        },
+      },
+      {
+        sourceName: 'find',
+        callOrdinal: 2,
+        purpose: { status: 'omitted' },
+        showExact: { status: 'omitted' },
+        taskId: { status: 'omitted' },
+        retryOf: { status: 'omitted' },
+      },
+      {
+        sourceName: 'find',
+        callOrdinal: 3,
+        purpose: { status: 'invalid', shape: { type: 'string', length: enumCanary.length } },
+        showExact: {
+          status: 'invalid',
+          shape: { type: 'string', length: 'PRIVATE_BOOLEAN_CANARY'.length },
+        },
+        taskId: { status: 'invalid', shape: { type: 'object' } },
+        retryOf: { status: 'invalid', shape: { type: 'number' }, issued: 'unknown' },
+      },
+      {
+        sourceName: 'assess_research',
+        callOrdinal: 4,
+        allowed: { status: 'valid', value: true },
+        requiresTaskPreparation: { status: 'valid', value: false },
+      },
+      {
+        sourceName: 'assess_research',
+        callOrdinal: 5,
+        allowed: { status: 'valid', value: false },
+        requiresTaskPreparation: { status: 'omitted' },
+      },
+      {
+        sourceName: 'assess_research',
+        callOrdinal: 6,
+        allowed: { status: 'invalid', shape: { type: 'string', length: enumCanary.length } },
+        requiresTaskPreparation: {
+          status: 'invalid',
+          shape: { type: 'string', length: 'PRIVATE_REQUIRES_PREPARATION_CANARY'.length },
+        },
+      },
+      {
+        sourceName: 'assess_research',
+        callOrdinal: 7,
+        allowed: { status: 'omitted' },
+        requiresTaskPreparation: { status: 'omitted' },
+      },
+      {
+        sourceName: 'interpret',
+        callOrdinal: 8,
+        intent: { status: 'allowed', value: 'plan' },
+      },
+    ]);
+    expect(trace.generations[0]).toMatchObject({
+      commandInputOmittedCount: 1,
+      commandInputsTruncated: true,
+    });
+    expect(trace.generations[1]?.['commandInputs']).toMatchObject([
+      {
+        sourceName: 'interpret',
+        generationOrdinal: 2,
+        callOrdinal: 1,
+        intent: { status: 'invalid', shape: { type: 'string', length: enumCanary.length } },
+      },
+      {
+        sourceName: 'interpret',
+        generationOrdinal: 2,
+        callOrdinal: 2,
+        intent: { status: 'omitted' },
+      },
+      {
+        sourceName: 'find',
+        generationOrdinal: 2,
+        callOrdinal: 3,
+        showExact: { status: 'valid', value: false },
+      },
+      {
+        sourceName: 'find',
+        generationOrdinal: 2,
+        callOrdinal: 4,
+        representation: 'invalid-json',
+        fieldsUnavailable: true,
+      },
+      {
+        sourceName: 'find',
+        generationOrdinal: 2,
+        callOrdinal: 5,
+        representation: 'oversized-string',
+        fieldsUnavailable: true,
+      },
+    ]);
+    const serialized = JSON.stringify(trace);
+    for (const canary of [
+      enumCanary,
+      idCanary,
+      'PRIVATE_REQUIRES_PREPARATION_CANARY',
+      'PRIVATE_FIND_EVIDENCE_CANARY',
+      'PRIVATE_BOOLEAN_CANARY',
+      'PRIVATE_APPROVAL_CANARY',
+      'PRIVATE_REASON_CANARY',
+      'PRIVATE_QUERY_CANARY',
+      'PRIVATE_PATH_CANARY',
+    ])
+      expect(serialized).not.toContain(canary);
+    expect(serialized).not.toContain('find-change-call');
+  });
+
+  it('attributes finish outcomes to accepted calls and keeps unknown results explicit', async () => {
+    const { app, root, plugin, model } = fixture();
+    const canary = 'PRIVATE_FINISH_DIAGNOSTIC_CANARY';
+    let generation = 0;
+    replaceGenerate(model, async () => {
+      generation++;
+      if (generation === 1)
+        return {
+          content: [
+            {
+              type: 'tool-call',
+              toolName: 'finish',
+              toolCallId: 'finish-rejected-call',
+              input: JSON.stringify({ state: 'ready', message: canary }),
+            },
+          ],
+          finishReason: { unified: 'tool-calls', raw: 'tool_calls' },
+          usage: {
+            inputTokens: { total: 0, noCache: 0, cacheRead: 0, cacheWrite: 0 },
+            outputTokens: { total: 0, text: 0, reasoning: 0 },
+          },
+          warnings: [],
+        };
+      if (generation === 2)
+        return {
+          content: [
+            {
+              type: 'tool-call',
+              toolName: 'finish',
+              toolCallId: 'finish-success-call',
+              input: JSON.stringify({ state: 'ready' }),
+            },
+            {
+              type: 'tool-call',
+              toolName: 'finish',
+              toolCallId: 'finish-unknown-code-call',
+              input: JSON.stringify({ state: 'ready' }),
+            },
+            {
+              type: 'tool-call',
+              toolName: 'finish',
+              toolCallId: 'finish-unavailable-result-call',
+              input: JSON.stringify({ state: 'ready' }),
+            },
+          ],
+          finishReason: { unified: 'tool-calls', raw: 'tool_calls' },
+          usage: {
+            inputTokens: { total: 0, noCache: 0, cacheRead: 0, cacheWrite: 0 },
+            outputTokens: { total: 0, text: 0, reasoning: 0 },
+          },
+          warnings: [],
+        };
+      return {
+        content: [],
+        finishReason: { unified: 'stop', raw: 'stop' },
+        usage: {
+          inputTokens: { total: 0, noCache: 0, cacheRead: 0, cacheWrite: 0 },
+          outputTokens: { total: 0, text: 0, reasoning: 0 },
+        },
+        warnings: [],
+      };
+    });
+    await evaluate(buildNativeTraceInstallEval(pageUrl, expectedModelId, traceKey), app, root);
+    const wrapped = plugin.providerConnections.model({ fixture: true });
+    const tools = [
+      { type: 'function' as const, name: 'finish', inputSchema: { type: 'object' } },
+    ] satisfies NonNullable<SdkTools>;
+    await wrapped.doGenerate({ tools, prompt: [] });
+    const rejectedResult = {
+      type: 'tool-result',
+      toolCallId: 'finish-rejected-call',
+      toolName: 'finish',
+      output: {
+        type: 'error-json',
+        value: {
+          code: 'PENDING_TASK_CHANGE',
+          validationPath: ['finish', 'state', canary],
+          message: canary,
+          unknownPrivateField: canary,
+        },
+      },
+    };
+    await wrapped.doGenerate({
+      tools,
+      prompt: [{ role: 'tool', content: [rejectedResult, rejectedResult] }],
+    });
+    await wrapped.doGenerate({
+      tools,
+      prompt: [
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'finish-success-call',
+              toolName: 'interpret',
+              output: { type: 'json', value: { finished: true } },
+            },
+            {
+              type: 'tool-result',
+              toolCallId: 'finish-success-call',
+              toolName: 'finish',
+              output: { type: 'json', value: { finished: true, result: 'prepared' } },
+            },
+            {
+              type: 'tool-result',
+              toolCallId: 'finish-unknown-code-call',
+              toolName: 'finish',
+              output: {
+                type: 'error-json',
+                value: {
+                  code: 'UNKNOWN_FINISH_SECRET_CODE',
+                  validationPath: ['finish', canary],
+                  message: canary,
+                  privateFieldName: canary,
+                  cause: { code: canary, privateMessage: canary },
+                },
+              },
+            },
+            {
+              type: 'tool-result',
+              toolCallId: 'finish-unavailable-result-call',
+              toolName: 'finish',
+              output: { type: 'unsupported-private-output', value: canary },
+            },
+            {
+              type: 'tool-result',
+              toolCallId: 'unattributed-finish-call',
+              toolName: 'finish',
+              output: { type: 'json', value: { finished: true } },
+            },
+          ],
+        },
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'finish-success-call',
+              toolName: 'finish',
+              output: { type: 'json', value: { finished: true } },
+            },
+          ],
+        },
+      ],
+    });
+
+    const trace = JSON.parse(
+      String(await evaluate(buildNativeTraceReadEval(traceKey), app, root)),
+    ) as { generations: Array<Record<string, unknown>> };
+    expect(trace.generations[1]?.['toolResults']).toMatchObject([
+      {
+        sourceName: 'finish',
+        generationOrdinal: 1,
+        callOrdinal: 1,
+        finishOutcome: 'rejected',
+        code: 'PENDING_TASK_CHANGE',
+        validationPath: [{ key: 'finish' }, { key: 'state' }, { key: 'unknown' }],
+      },
+    ]);
+    expect(trace.generations[2]?.['toolResults']).toMatchObject([
+      {
+        sourceName: 'finish',
+        generationOrdinal: 2,
+        callOrdinal: 1,
+        finishOutcome: 'accepted',
+      },
+      {
+        sourceName: 'finish',
+        generationOrdinal: 2,
+        callOrdinal: 2,
+        resultKind: 'error',
+        finishOutcome: 'rejected',
+        codeUnavailable: true,
+        validationPath: [{ key: 'finish' }, { key: 'unknown' }],
+      },
+      {
+        sourceName: 'finish',
+        generationOrdinal: 2,
+        callOrdinal: 3,
+        resultKind: 'unknown',
+        finishOutcome: 'unknown',
+        resultUnavailable: true,
+      },
+    ]);
+    expect(trace.generations[2]).toMatchObject({
+      toolResultsUnattributedCount: 1,
+      toolResultsFailureCount: 1,
+    });
+    expect(JSON.stringify(trace)).not.toContain(canary);
+    expect(JSON.stringify(trace)).not.toContain('finish-rejected-call');
+    expect(JSON.stringify(trace)).not.toContain('finish-success-call');
+    expect(JSON.stringify(trace)).not.toContain('unattributed-finish-call');
+  });
+
+  it('registers the ninth finish call independently of the eight retained input shapes', async () => {
+    const { app, root, plugin, model } = fixture();
+    const missingInput = {
+      type: 'tool-call' as const,
+      toolName: 'finish',
+      toolCallId: 'missing-input-call',
+      input: '{}',
+    };
+    Reflect.deleteProperty(missingInput, 'input');
+    const mixedCalls: SdkGenerationResult['content'] = [
+      {
+        type: 'tool-call',
+        toolName: 'find',
+        toolCallId: 'non-finish-call',
+        input: '{}',
+      },
+      missingInput,
+      ...Array.from({ length: 8 }, (_, index) => ({
+        type: 'tool-call' as const,
+        toolName: 'finish',
+        toolCallId: `finish-call-${index + 3}`,
+        input: '{}',
+      })),
+    ];
+    let generation = 0;
+    replaceGenerate(model, async () => {
+      generation++;
+      return {
+        content: generation === 1 ? mixedCalls : [],
+        finishReason: { unified: generation === 1 ? 'tool-calls' : 'stop', raw: 'fixture' },
+        usage: {
+          inputTokens: { total: 0, noCache: 0, cacheRead: 0, cacheWrite: 0 },
+          outputTokens: { total: 0, text: 0, reasoning: 0 },
+        },
+        warnings: [],
+      };
+    });
+    await evaluate(buildNativeTraceInstallEval(pageUrl, expectedModelId, traceKey), app, root);
+    const wrapped = plugin.providerConnections.model({ fixture: true });
+    const tools = [
+      { type: 'function' as const, name: 'find', inputSchema: { type: 'object' } },
+      { type: 'function' as const, name: 'finish', inputSchema: { type: 'object' } },
+    ] satisfies NonNullable<SdkTools>;
+    await wrapped.doGenerate({ tools, prompt: [] });
+    await wrapped.doGenerate({
+      tools,
+      prompt: [
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'finish-call-10',
+              toolName: 'finish',
+              output: { type: 'json', value: { finished: true } },
+            },
+          ],
+        },
+      ],
+    });
+    const trace = JSON.parse(
+      String(await evaluate(buildNativeTraceReadEval(traceKey), app, root)),
+    ) as { generations: Array<Record<string, unknown>> };
+    const finishInputs = trace.generations[0]?.['finishInputs'] as Array<Record<string, unknown>>;
+    expect(finishInputs).toHaveLength(8);
+    expect(finishInputs[0]).toMatchObject({ representation: 'missing', inputParseFailed: true });
+    expect(trace.generations[0]).toMatchObject({
+      finishInputOmittedCount: 1,
+      finishInputsTruncated: true,
+    });
+    expect(trace.generations[1]?.['toolResults']).toMatchObject([
+      {
+        sourceName: 'finish',
+        generationOrdinal: 1,
+        callOrdinal: 10,
+        finishOutcome: 'accepted',
+      },
+    ]);
+  });
+
+  it('records a throwing finish input and still registers later finish calls', async () => {
+    const { app, root, plugin, model } = fixture();
+    const throwingInput = {
+      type: 'tool-call' as const,
+      toolName: 'finish',
+      toolCallId: 'throwing-finish-input-call',
+      input: '{}',
+    };
+    Object.defineProperty(throwingInput, 'input', {
+      get() {
+        throw new Error('PRIVATE_THROWING_INPUT_CANARY');
+      },
+    });
+    let generation = 0;
+    replaceGenerate(model, async () => {
+      generation++;
+      return {
+        content:
+          generation === 1
+            ? [
+                throwingInput,
+                {
+                  type: 'tool-call',
+                  toolName: 'finish',
+                  toolCallId: 'after-throwing-finish-input-call',
+                  input: '{}',
+                },
+              ]
+            : [],
+        finishReason: { unified: generation === 1 ? 'tool-calls' : 'stop', raw: 'fixture' },
+        usage: {
+          inputTokens: { total: 0, noCache: 0, cacheRead: 0, cacheWrite: 0 },
+          outputTokens: { total: 0, text: 0, reasoning: 0 },
+        },
+        warnings: [],
+      };
+    });
+    await evaluate(buildNativeTraceInstallEval(pageUrl, expectedModelId, traceKey), app, root);
+    const wrapped = plugin.providerConnections.model({ fixture: true });
+    const tools = [
+      { type: 'function' as const, name: 'finish', inputSchema: { type: 'object' } },
+    ] satisfies NonNullable<SdkTools>;
+    await wrapped.doGenerate({ tools, prompt: [] });
+    await wrapped.doGenerate({
+      tools,
+      prompt: [
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'after-throwing-finish-input-call',
+              toolName: 'finish',
+              output: { type: 'json', value: { finished: true } },
+            },
+          ],
+        },
+      ],
+    });
+    const trace = JSON.parse(
+      String(await evaluate(buildNativeTraceReadEval(traceKey), app, root)),
+    ) as { generations: Array<Record<string, unknown>> };
+    expect(trace.generations[0]).toMatchObject({
+      finishInputFailureCount: 1,
+      finishInputsTruncated: true,
+    });
+    expect(trace.generations[1]?.['toolResults']).toMatchObject([
+      { sourceName: 'finish', generationOrdinal: 1, callOrdinal: 2, finishOutcome: 'accepted' },
+    ]);
+    expect(JSON.stringify(trace)).not.toContain('PRIVATE_THROWING_INPUT_CANARY');
+  });
+
+  it('reports invalid and full-registry finish registration without inferring attribution', async () => {
+    const { app, root, plugin, model } = fixture();
+    const firstCalls: SdkGenerationResult['content'] = Array.from({ length: 64 }, (_, index) => ({
+      type: 'tool-call' as const,
+      toolName: 'find',
+      toolCallId: `registered-find-${index}`,
+      input: '{}',
+    }));
+    const secondCalls: SdkGenerationResult['content'] = Array.from({ length: 64 }, (_, index) => ({
+      type: 'tool-call' as const,
+      toolName: 'find',
+      toolCallId: `registered-find-${index + 64}`,
+      input: '{}',
+    }));
+    const overflowCalls: SdkGenerationResult['content'] = [
+      { type: 'tool-call', toolName: 'finish', toolCallId: '', input: '{}' },
+      { type: 'tool-call', toolName: 'finish', toolCallId: 'over-cap-finish', input: '{}' },
+    ];
+    let generation = 0;
+    replaceGenerate(model, async () => {
+      generation++;
+      let content: SdkGenerationResult['content'] = overflowCalls;
+      if (generation === 1) content = firstCalls;
+      else if (generation === 2) content = secondCalls;
+      return {
+        content,
+        finishReason: { unified: generation === 1 ? 'tool-calls' : 'stop', raw: 'fixture' },
+        usage: {
+          inputTokens: { total: 0, noCache: 0, cacheRead: 0, cacheWrite: 0 },
+          outputTokens: { total: 0, text: 0, reasoning: 0 },
+        },
+        warnings: [],
+      };
+    });
+    await evaluate(buildNativeTraceInstallEval(pageUrl, expectedModelId, traceKey), app, root);
+    const wrapped = plugin.providerConnections.model({ fixture: true });
+    const tools = [
+      { type: 'function' as const, name: 'finish', inputSchema: { type: 'object' } },
+      { type: 'function' as const, name: 'find', inputSchema: { type: 'object' } },
+    ] satisfies NonNullable<SdkTools>;
+    await wrapped.doGenerate({ tools, prompt: [] });
+    await wrapped.doGenerate({ tools, prompt: [] });
+    await wrapped.doGenerate({ tools, prompt: [] });
+    await wrapped.doGenerate({
+      tools,
+      prompt: [
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: '',
+              toolName: 'finish',
+              output: { type: 'json', value: { finished: true } },
+            },
+            {
+              type: 'tool-result',
+              toolCallId: 'over-cap-finish',
+              toolName: 'finish',
+              output: { type: 'json', value: { finished: true } },
+            },
+          ],
+        },
+      ],
+    });
+    await wrapped.doGenerate({
+      tools,
+      prompt: [
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: '',
+              toolName: 'finish',
+              output: { type: 'json', value: { finished: true } },
+            },
+            {
+              type: 'tool-result',
+              toolCallId: 'over-cap-finish',
+              toolName: 'finish',
+              output: { type: 'json', value: { finished: true } },
+            },
+          ],
+        },
+      ],
+    });
+    const trace = JSON.parse(
+      String(await evaluate(buildNativeTraceReadEval(traceKey), app, root)),
+    ) as { generations: Array<Record<string, unknown>> };
+    expect(trace.generations[2]).toMatchObject({
+      finishCallRegistrationOmittedCount: 2,
+      finishInputOmittedCount: 0,
+      finishInputsTruncated: true,
+    });
+    expect(trace.generations[3]).toMatchObject({
+      toolResultsUnattributedCount: 1,
+      toolResultsFailureCount: 1,
+    });
+    expect(trace.generations[3]?.['toolResults']).toBeUndefined();
+  });
+
+  it('retains valid finish outcomes after malformed result envelopes and deduplicates accepted results', async () => {
+    const { app, root, plugin, model } = fixture();
+    let generation = 0;
+    replaceGenerate(model, async () => {
+      generation++;
+      return {
+        content:
+          generation === 1
+            ? [
+                {
+                  type: 'tool-call',
+                  toolName: 'finish',
+                  toolCallId: 'malformed-then-accepted-call',
+                  input: '{}',
+                },
+                {
+                  type: 'tool-call',
+                  toolName: 'finish',
+                  toolCallId: 'malformed-then-rejected-call',
+                  input: '{}',
+                },
+              ]
+            : [],
+        finishReason: { unified: generation === 1 ? 'tool-calls' : 'stop', raw: 'fixture' },
+        usage: {
+          inputTokens: { total: 0, noCache: 0, cacheRead: 0, cacheWrite: 0 },
+          outputTokens: { total: 0, text: 0, reasoning: 0 },
+        },
+        warnings: [],
+      };
+    });
+    await evaluate(buildNativeTraceInstallEval(pageUrl, expectedModelId, traceKey), app, root);
+    const wrapped = plugin.providerConnections.model({ fixture: true });
+    const tools = [
+      { type: 'function' as const, name: 'finish', inputSchema: { type: 'object' } },
+    ] satisfies NonNullable<SdkTools>;
+    await wrapped.doGenerate({ tools, prompt: [] });
+    const malformedAccepted = {
+      type: 'tool-result' as const,
+      toolCallId: 'malformed-then-accepted-call',
+      toolName: 'finish',
+      output: { type: 'json' as const, value: {} },
+    };
+    Object.defineProperty(malformedAccepted.output, 'type', {
+      get() {
+        return 'unsupported-private-output';
+      },
+    });
+    const malformedRejected = {
+      type: 'tool-result' as const,
+      toolCallId: 'malformed-then-rejected-call',
+      toolName: 'finish',
+      output: { type: 'json' as const, value: {} },
+    };
+    Object.defineProperty(malformedRejected.output, 'type', {
+      get() {
+        return 'unsupported-private-output';
+      },
+    });
+    const accepted = {
+      type: 'tool-result' as const,
+      toolCallId: 'malformed-then-accepted-call',
+      toolName: 'finish',
+      output: { type: 'json' as const, value: { finished: true } },
+    };
+    const rejected = {
+      type: 'tool-result' as const,
+      toolCallId: 'malformed-then-rejected-call',
+      toolName: 'finish',
+      output: {
+        type: 'error-json' as const,
+        value: { code: 'PENDING_TASK_CHANGE', validationPath: ['finish', 'state'] },
+      },
+    };
+    await wrapped.doGenerate({
+      tools,
+      prompt: [
+        {
+          role: 'tool',
+          content: [malformedAccepted, accepted, accepted, malformedRejected, rejected],
+        },
+      ],
+    });
+    await wrapped.doGenerate({ tools, prompt: [{ role: 'tool', content: [accepted, rejected] }] });
+    const trace = JSON.parse(
+      String(await evaluate(buildNativeTraceReadEval(traceKey), app, root)),
+    ) as { generations: Array<Record<string, unknown>> };
+    expect(trace.generations[1]?.['toolResults']).toMatchObject([
+      { callOrdinal: 1, resultKind: 'unknown', finishOutcome: 'unknown' },
+      { callOrdinal: 1, resultKind: 'result', finishOutcome: 'accepted' },
+      { callOrdinal: 2, resultKind: 'unknown', finishOutcome: 'unknown' },
+      { callOrdinal: 2, resultKind: 'error', finishOutcome: 'rejected' },
+    ]);
+    expect(trace.generations[2]?.['toolResults']).toBeUndefined();
+    expect(JSON.stringify(trace)).not.toContain('PRIVATE_MALFORMED_OUTPUT_CANARY');
   });
 });
