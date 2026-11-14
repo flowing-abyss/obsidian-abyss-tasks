@@ -115,9 +115,12 @@ function assertCurrentScopeIndexes(
 export interface CommandToolContext {
   readonly userMessage: string;
   reviewWrite?: WriteReviewer;
-  reviewResearch?: () => Promise<{ readonly authorized: boolean }>;
+  reviewResearch?: () => Promise<{
+    readonly authorized: boolean;
+    readonly requiresTaskPreparation: boolean;
+  }>;
   researchAvailable?: () => boolean;
-  researchAdmission?: 'allowed' | 'denied';
+  researchAdmission?: 'allowed' | 'allowed-prepare' | 'denied';
   readonly temporalContext: string;
   readonly api: TasksApiV1;
   readonly session: CommandSession;
@@ -2272,8 +2275,11 @@ class CommandToolOwner {
     if (this.ctx_abyssPrivate.researchAdmission === undefined) {
       const decision = await required(this.ctx_abyssPrivate.reviewResearch)();
       this.assertResearchCurrent_abyssPrivate();
-      this.ctx_abyssPrivate.researchAdmission =
-        typeof decision.authorized === 'boolean' && decision.authorized ? 'allowed' : 'denied';
+      if (decision.authorized)
+        this.ctx_abyssPrivate.researchAdmission = decision.requiresTaskPreparation
+          ? 'allowed-prepare'
+          : 'allowed';
+      else this.ctx_abyssPrivate.researchAdmission = 'denied';
     }
     if (this.ctx_abyssPrivate.researchAdmission === 'denied') return false;
     this.ctx_abyssPrivate.researchMode = true;
@@ -2329,15 +2335,18 @@ class CommandToolOwner {
   private checkFinishEvidence(input: z.infer<typeof finishSchema>): string | undefined {
     if (input.state === 'question') return this.questionMessage_abyssPrivate(input);
     const ctx = this.ctx_abyssPrivate;
+    const evidence = required(ctx.evidence);
     const displayOnly = !ctx.immediate && this.currentConsentBasis_abyssPrivate();
     const selection = input.selection ?? [];
     const savedTasks = selection.flatMap((entry) =>
       entry.kind === 'task' && 'revision' in entry ? [entry] : [],
     );
-    required(ctx.evidence).checkTaskChanges(
+    evidence.checkTaskChanges(
       displayOnly && savedTasks.length === selection.length ? savedTasks : undefined,
       ctx.references,
     );
+    if (ctx.researchAdmission === 'allowed-prepare' && evidence.requiresTaskContentPreparation())
+      throw new CommandFailure('UNGROUNDED_FINISH', 'Prepare task content.');
     return undefined;
   }
   private checkFinishBasis_abyssPrivate(reviewed?: { id: string; revision: number }): void {

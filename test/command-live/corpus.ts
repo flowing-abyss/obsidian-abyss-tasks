@@ -2268,6 +2268,31 @@ const qualificationContrasts: readonly EvalCase[] = [
   },
 ];
 
+const researchPageReadOnlyRu: EvalCase = {
+  id: 'research-page-read-only-ru',
+  family: 'research-page-read-only',
+  split: 'development',
+  files: files('- [ ] Existing status task\n'),
+  pageFixture: {
+    url: 'https://example.test/desk-status',
+    title: 'Desk Status Viewer',
+    content: 'The fictional Desk Status Viewer lists service availability and planned maintenance.',
+  },
+  turns: [
+    {
+      text: 'Прочитай только https://example.test/desk-status и остановись. Не меняй задачи или комментарии и ничего не сохраняй.',
+      expect: {
+        status: 'ready',
+        publicTrees: [tree('Existing status task')],
+        proposalKinds: [],
+        createdFiles: [],
+        researchPage: 'https://example.test/desk-status',
+        writeCount: 0,
+      },
+    },
+  ],
+};
+
 export const corpus = [
   canonicalControl,
   ...reproductions,
@@ -2284,6 +2309,7 @@ export const corpus = [
   ...semanticCases,
   ...pageCases,
   ...qualificationCases,
+  researchPageReadOnlyRu,
 ];
 export function selectCases(selection: string): readonly EvalCase[] {
   if (selection === 'all') return corpus;

@@ -1,5 +1,30 @@
 import { expect, it } from 'vitest';
 import { CommandEvidence } from '../src/ai/CommandEvidence';
+it('recognizes only retained non-removal task content as research preparation', () => {
+  const evidence = new CommandEvidence();
+  expect(evidence.requiresTaskContentPreparation()).toBe(false);
+  evidence.accept({ action: 'research', entity: 'web', complete: true });
+  expect(evidence.requiresTaskContentPreparation()).toBe(true);
+  evidence.accept({ action: 'inspect', entity: 'task', target: 'old' });
+  evidence.accept({ action: 'change', entity: 'note', target: 'note' });
+  evidence.accept({ action: 'change', entity: 'project', target: 'project' });
+  evidence.accept({ action: 'change', entity: 'task', target: 'removed', removal: true });
+  evidence.accept({ action: 'change', entity: 'task', target: 'status-change', revision: 'r2' });
+  expect(evidence.requiresTaskContentPreparation()).toBe(false);
+  evidence.accept({ action: 'change', entity: 'task', target: 'status-change', removal: true });
+  expect(evidence.requiresTaskContentPreparation()).toBe(true);
+  evidence.accept({ action: 'change', entity: 'task', target: 'edited', revision: 'r1' });
+  expect(evidence.requiresTaskContentPreparation()).toBe(false);
+});
+it('requires task preparation again when the only research draft is cancelled', () => {
+  const evidence = new CommandEvidence();
+  evidence.accept({ action: 'create', entity: 'task', target: 'draft', revision: 'r1' });
+  expect(evidence.requiresTaskContentPreparation()).toBe(false);
+  evidence.accept({ action: 'research', entity: 'web', complete: true });
+  expect(evidence.requiresTaskContentPreparation()).toBe(false);
+  evidence.accept({ action: 'change', entity: 'task', target: 'draft', removal: true });
+  expect(evidence.requiresTaskContentPreparation()).toBe(true);
+});
 it('requires an accepted current result rather than a catalog or item observation', () => {
   const evidence = new CommandEvidence();
   expect(() => evidence.ready()).toThrow();
@@ -201,7 +226,7 @@ it('requires a fresh correction for a newly declared edit of the same saved vers
   evidence.expectTaskChange(evidence.discovery(query), 'change', row, [row]);
   expect(() => {
     evidence.checkTaskChanges([row]);
-  }).toThrow(/no preview/);
+  }).toThrow(/Prepare requested edit first/);
   expect(() => {
     evidence.correctDisplayLookup(original, evidence.discovery(query), [row]);
   }).toThrow();
@@ -234,12 +259,12 @@ it('binds corrected descendants to their saved branch and original change only',
   evidence.observeSavedBranch({ ...root, revision: 'different', children: [child] });
   expect(() => {
     evidence.checkTaskChanges([child]);
-  }).toThrow(/no preview/);
+  }).toThrow(/Prepare requested edit first/);
   evidence.observeSavedBranch({ ...root, children: [child] });
   evidence.checkTaskChanges([child]);
   expect(() => {
     evidence.checkTaskChanges([{ ...child, revision: 'different' }]);
-  }).toThrow(/no preview/);
+  }).toThrow(/Prepare requested edit first/);
   const removal = evidence.discovery({ ...query, query: 'Echo' });
   evidence.expectTaskChange(removal, 'remove', child, [child]);
   expect(() => {
@@ -268,19 +293,19 @@ it('allows a parent lookup correction only for a prepared change on the observed
     evidence.accept({ entity: 'task', ...fact });
     expect(() => {
       evidence.checkTaskChanges([], references);
-    }).toThrow(/no preview/u);
+    }).toThrow(/Prepare requested edit first/u);
   }
   evidence.accept({ action: 'change', entity: 'task', ...child });
   expect(() => {
     evidence.checkTaskChanges([], references);
-  }).toThrow(/child edit is already prepared/u);
+  }).toThrow(/If parent only locates prepared child/u);
   const repeated = evidence.discovery(query);
   evidence.correctParentLookup(lookup, repeated, [parent]);
   evidence.checkTaskChanges();
   evidence.expectTaskChange(evidence.discovery(query), 'change', parent, [parent]);
   expect(() => {
     evidence.checkTaskChanges();
-  }).toThrow(/no preview/u);
+  }).toThrow(/Prepare requested edit first/u);
 });
 it('keeps another ambiguous change unresolved when a corrected display search shares one candidate', () => {
   const evidence = new CommandEvidence();
@@ -359,7 +384,7 @@ it('does not reuse an accepted task edit from before the ambiguous lookup', () =
   evidence.expectTaskChange(narrowed, 'change', north, [north]);
   expect(() => {
     evidence.checkTaskChanges();
-  }).toThrow(/no preview/u);
+  }).toThrow(/Prepare requested edit first/u);
 });
 it('keeps the original acceptance boundary across repeated ambiguous lookups', () => {
   const evidence = new CommandEvidence();
@@ -436,7 +461,7 @@ it.each([
   evidence.expectTaskChange(narrowed, effect, north, [north]);
   expect(() => {
     evidence.checkTaskChanges();
-  }).toThrow(/no preview|still ambiguous|unique task|requested removal/u);
+  }).toThrow(/Prepare requested edit first|still ambiguous|unique task|requested removal/u);
 });
 it('does not report removed accepted work as a retained preview', () => {
   const evidence = new CommandEvidence();
@@ -526,7 +551,7 @@ it.each([
   evidence.expectTaskChange(narrowed, 'change', north, [north]);
   expect(() => {
     evidence.checkTaskChanges();
-  }).toThrow(/ambiguous|no preview/iu);
+  }).toThrow(/ambiguous|Prepare requested edit first/iu);
 });
 it('does not inherit a preview from an unsupported current discovery', () => {
   const evidence = new CommandEvidence();
@@ -552,7 +577,7 @@ it('does not inherit a preview from an unsupported current discovery', () => {
   evidence.expectTaskChange(current, 'change', north, [north]);
   expect(() => {
     evidence.checkTaskChanges();
-  }).toThrow(/no preview/iu);
+  }).toThrow(/Prepare requested edit first/iu);
 });
 it('does not inherit a superseded accepted change fact', () => {
   const evidence = new CommandEvidence();
@@ -578,7 +603,7 @@ it('does not inherit a superseded accepted change fact', () => {
   evidence.expectTaskChange(current, 'change', north, [north]);
   expect(() => {
     evidence.checkTaskChanges();
-  }).toThrow(/no preview/iu);
+  }).toThrow(/Prepare requested edit first/iu);
 });
 it.each([
   ['strict subset', ['open']],

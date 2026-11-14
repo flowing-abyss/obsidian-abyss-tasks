@@ -533,7 +533,7 @@ it('marks a trusted subscription transport as scripted when a research reviewer 
   expect(injectedControl(source, trustedModel)).toBe(false);
   expect(
     injectedControl(source, trustedModel, {
-      reviewResearch: async () => ({ authorized: true }),
+      reviewResearch: async () => ({ authorized: true, requiresTaskPreparation: false }),
       options: {
         provider: 'chatgpt-plan',
         model: 'gpt-6-luna',
@@ -600,7 +600,7 @@ it('delivers each case fixed research evidence to the model rather than the gene
       },
       budget: new RequestBudget(10),
       key: '',
-      reviewResearch: async () => ({ authorized: true }),
+      reviewResearch: async () => ({ authorized: true, requiresTaskPreparation: false }),
       fetch: async () => {
         throw new Error('No network');
       },
@@ -703,7 +703,7 @@ it('returns only the selected fixed page as attributed untrusted content', async
       },
       budget: new RequestBudget(10),
       key: '',
-      reviewResearch: async () => ({ authorized: true }),
+      reviewResearch: async () => ({ authorized: true, requiresTaskPreparation: false }),
       fetch: async () => {
         throw new Error('No network');
       },

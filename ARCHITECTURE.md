@@ -117,7 +117,9 @@ port is configured, the existing research tool is also directly available. Its f
 lazily assesses the exact current user message and up to four recent whole user messages (bounded to
 6,000 characters total); the current exchange is excluded from history by position. The assessor
 receives no task, note, page, agent, proposed query or mutable session context. One allowance or
-denial is cached for the turn. Denial returns a not-executed result without evidence or an adapter
+denial is cached for the turn. Its strict result also classifies whether this turn clearly requires
+task creation/content/status work using research; that flag grants no write authority and false does
+not prove read-only intent. Denial returns a not-executed result without evidence or an adapter
 call; malformed or unavailable assessment retains the prepared work with a concrete blocker.
 Cached page reads still require current-turn admission, and the two uncached-call limit is unchanged.
 `interpret(research:true)` is only a declaration; provider configuration and tool availability do
@@ -144,6 +146,13 @@ lifecycle staging and draft cancellation retain their own outputs. Invalid confi
 branch-specific scope repair guidance; an empty scope never becomes whole-proposal consent, and
 finish cannot repair or execute rejected control.
 
+After accepted research, a positive task-preparation classification arms the shared ready-finish
+check. The check blocks only when that turn lacks a retained non-removal task create/change fact;
+without an accepted web fact the existing unresolved-operation or cancellation handling remains in
+force. It runs before selection or transition effects. Task lifecycle status changes use the same
+task fact; project/note changes and discarded drafts do not qualify. Questions retain their existing
+independent path. This is a minimum-work check, not proof that every requested task effect is
+complete.
 `CommandEvidence` retains accepted current-turn action/owner, removal and completeness facts, plus
 aggregate discovery coverage. Canonical plans retain field values; evidence does not duplicate them.
 Native-validated selection replaces focus evidence; removal invalidates affected descendant facts.

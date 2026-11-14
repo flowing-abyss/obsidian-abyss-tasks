@@ -366,6 +366,17 @@ export class CommandEvidence {
       );
     }
   }
+  requiresTaskContentPreparation(): boolean {
+    return (
+      this.facts.some((fact) => fact.action === 'research' && fact.entity === 'web') &&
+      !this.facts.some(
+        (fact) =>
+          ['create', 'change'].includes(fact.action) &&
+          fact.entity === 'task' &&
+          fact.removal !== true,
+      )
+    );
+  }
   checkTaskChanges(
     displayed: readonly TaskVersion[] = [],
     references?: Pick<CommandReferenceBook, 'issuedFindEvidence'>,
@@ -414,12 +425,12 @@ export class CommandEvidence {
       const find = { query: lookup.query, ...scope, purpose: 'locate-child', retryOf };
       return new CommandFailure(
         'PENDING_TASK_CHANGE',
-        `The child edit is already prepared. If the parent only locates that child, call find(${JSON.stringify(find)}) now, then finish. Do not repeat the child edit or add its comment again. If the user also requested a parent edit, prepare that edit.`,
+        `If parent only locates prepared child, call find(${JSON.stringify(find)}), then finish; keep child edit/comment, do not repeat. Prepare parent edit only if requested.`,
       );
     }
     return new CommandFailure(
       'PENDING_TASK_CHANGE',
-      'The requested edit has no preview on that lookup target. If the target only locates the requested child, repeat the same find with purpose:"locate-child" and retryOf set to its evidence. Keep any accepted child edits. If the user only asked for display, repeat with purpose:"show-only" and retryOf, then finish with exact selection.',
+      'Prepare requested edit first. Child lookup: repeat same find(purpose:"locate-child",retryOf:evidence); keep accepted child edits. Display-only: repeat find(purpose:"show-only",retryOf:evidence), then finish exact selection.',
     );
   }
   discovery(fact: CommandDiscovery): string {

@@ -72,8 +72,8 @@ it('keeps the planned seven Russian and seven English cases', () => {
 });
 
 it('includes fourteen new unique cases after the original resolved corpus', () => {
-  expect(corpus).toHaveLength(193);
-  expect(new Set(corpus.map((test) => test.id)).size).toBe(193);
+  expect(corpus).toHaveLength(194);
+  expect(new Set(corpus.map((test) => test.id)).size).toBe(194);
 });
 
 it('encodes trajectory-neutral stale conflict handling and task-read evidence', () => {

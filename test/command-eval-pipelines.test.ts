@@ -91,7 +91,10 @@ function restoreTaskDate(
   });
 }
 const readRoot = tool('read', { input: { kind: 'tasks', query: 'Root' } });
-const scriptedResearchAllowance: ResearchReviewer = async () => ({ authorized: true });
+const scriptedResearchAllowance: ResearchReviewer = async () => ({
+  authorized: true,
+  requiresTaskPreparation: false,
+});
 const readExternalTask: Step = () =>
   tool('read', { input: { kind: 'tasks', query: 'Calibrate gauge externally changed' } });
 const selectReadTask: Step = (prompt) => {
@@ -132,6 +135,61 @@ it.each([
   };
   const { report } = await replay(test, [plan, lookup, selection], 1, 'semantic-failure');
   expect(report.turns[0]?.failures).toContain('fresh-preparation');
+});
+it('keeps the read-only research page case free of task preparation', async () => {
+  const test = expectDefined(selectCases('research-page-read-only-ru')[0]);
+  const url = expectDefined(test.pageFixture).url;
+  const steps = [research, tool('research', { url }), finish];
+  const readOnly = await replay(test, steps, 1, {
+    reviewResearch: async () => ({ authorized: true, requiresTaskPreparation: false }),
+  });
+  expect(readOnly.report.outcome).toBe('passed');
+  expect(readOnly.report.turns[0]?.research?.[0]?.action).toBe('read-page');
+  expect(readOnly.report.turns[0]?.status).toBe('ready');
+  expect(readOnly.report.turns[0]?.trees.map((item) => object(item)['markdownTitle'])).toEqual([
+    'Existing status task',
+  ]);
+  expect(readOnly.report.turns[0]?.proposalKinds).toEqual([]);
+  expect(readOnly.report.turns[0]?.admissions).toEqual([]);
+  expect(readOnly.report.turns[0]?.writeCount).toBe(0);
+  expect(readOnly.report.turns[0]?.after).toEqual(test.files);
+});
+
+it('rejects a false task-preparation classification for a read-only research page', async () => {
+  const test = expectDefined(selectCases('research-page-read-only-ru')[0]);
+  const url = expectDefined(test.pageFixture).url;
+  const steps = [research, tool('research', { url }), finish];
+  const falsePositive = await replay(test, steps, 1, {
+    expectedOutcome: 'agent-failure',
+    reviewResearch: async () => ({ authorized: true, requiresTaskPreparation: true }),
+  });
+  expect(falsePositive.report.turns[0]?.status).toBe('error');
+  expect(falsePositive.report.turns[0]?.trees.map((item) => object(item)['markdownTitle'])).toEqual(
+    ['Existing status task'],
+  );
+  expect(falsePositive.report.turns[0]?.admissions).toEqual([]);
+  expect(falsePositive.report.turns[0]?.writeCount).toBe(0);
+  expect(falsePositive.report.turns[0]?.after).toEqual(test.files);
+  expect(JSON.stringify(falsePositive.report.trace)).toContain('Prepare task content.');
+});
+
+it('fails the read-only page oracle when the script adds an unrequested task preview', async () => {
+  const test = expectDefined(selectCases('research-page-read-only-ru')[0]);
+  const url = expectDefined(test.pageFixture).url;
+  const wrongPreparation = await replay(
+    test,
+    [research, tool('research', { url }), createNamed('Unrequested task'), finish],
+    1,
+    {
+      expectedOutcome: 'semantic-failure',
+      reviewResearch: async () => ({ authorized: true, requiresTaskPreparation: false }),
+    },
+  );
+  expect(wrongPreparation.report.turns[0]?.proposalKinds).toEqual(['task']);
+  expect(
+    wrongPreparation.report.turns[0]?.trees.map((item) => object(item)['markdownTitle']),
+  ).toContain('Unrequested task');
+  expect(wrongPreparation.report.turns[0]?.failures).toContain('proposal-counts');
 });
 function result(prompt: Prompt, name: string) {
   const part = prompt
@@ -3265,8 +3323,8 @@ it('keeps the prepared child edit when its parent lookup was classified as the e
   const item = expectDefined(selectCases('C01-en')[0]);
   const query = { query: 'Relay', fields: 'all', path: 'a.md' };
   function recovery(feedback: unknown, evidence: unknown): unknown {
-    expect(feedback).toContain('child edit is already prepared');
-    expect(feedback).toContain('Do not repeat');
+    expect(feedback).toContain('If parent only locates prepared child');
+    expect(feedback).toContain('do not repeat');
     const args = /find\((\{.*\})\)/u.exec(String(feedback))?.[1];
     const input: unknown = JSON.parse(expectDefined(args));
     expect(input).toEqual({ ...query, purpose: 'locate-child', retryOf: evidence });
