@@ -169,6 +169,48 @@ it('does not grant a save when the reviewer refuses an unmentioned pending owner
   ).rejects.toMatchObject({ code: 'WRITE_DENIED' });
 });
 
+it('rejects immediate reviewed-save when the canonical displayed proposal is empty', async () => {
+  const basis = {
+    id: 'session',
+    input: message,
+    focus: [],
+    context: '',
+    trees: [],
+    entities: { tasks: [], projects: [], notes: [] },
+    exchanges: [],
+    activeQuestion: null,
+    status: { kind: 'ready', message: '' },
+    proposal: { revision: 1, operations: 0, changes: [] },
+    journal: [],
+    actual: [],
+    blocked: false,
+  } satisfies CommandSessionSnapshot;
+
+  await expect(
+    authorizeCommandWrite(
+      {
+        intent: 'immediate',
+        approval: message,
+        saveInstruction: message,
+      } as Parameters<typeof authorizeCommandWrite>[0],
+      {
+        userMessage: message,
+        basis,
+        review: async (request) => {
+          expect(request.displayed).toEqual([]);
+          return {
+            effect: 'save-reviewed',
+            scope: 'all',
+            scopeMatches: true,
+            authorization: message,
+          };
+        },
+        signal: new AbortController().signal,
+      },
+    ),
+  ).rejects.toMatchObject({ code: 'WRITE_NOT_AUTHORIZED' });
+});
+
 it.each([
   [
     'duplicate index',

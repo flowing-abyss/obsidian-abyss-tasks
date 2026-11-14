@@ -155,8 +155,10 @@ active accepted non-removal change to that same owner and saved revision after t
 discovery began. Repeated ambiguous discoveries preserve that original chronology boundary; older
 or superseded facts cannot carry preparation forward.
 The established first-control immediate path may save an unchanged captured visible proposal,
-subject to captured status and current history/recovery guards at the save boundary. Read or focus
-evidence cannot bypass that check. New immediate preparation or draft removal records its accepted proposal revision;
+subject to captured status and current history/recovery guards at the save boundary; an empty displayed
+proposal cannot satisfy immediate reviewed-save compatibility. Immediate save-after-edits remains
+available after accepted preparation. Read or focus evidence cannot bypass that check. New immediate
+preparation or draft removal records its accepted proposal revision;
 publication rejects any later proposal change before passing that exact revision to confirmation. Issued discovery aliases bind questions to the
 latest accepted query/scope and completeness; raw, prior-turn and superseded evidence rejects.
 The host validates discovery blockers before any focus/transition effect. Evidence-backed questions

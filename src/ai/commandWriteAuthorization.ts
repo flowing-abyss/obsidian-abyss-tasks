@@ -56,7 +56,10 @@ function matchesMode(request: WriteReview, decision: WriteDecision): boolean {
   if (request.proposedMode === 'transition-save')
     return decision.effect === 'save-reviewed' || decision.effect === 'save-first';
   if (request.proposedMode === 'immediate' && request.proposedScope === 'all')
-    return decision.effect === 'save-after-edits' || decision.effect === 'save-reviewed';
+    return (
+      decision.effect === 'save-after-edits' ||
+      (decision.effect === 'save-reviewed' && request.displayed.length > 0)
+    );
   return decision.effect === 'save-reviewed';
 }
 

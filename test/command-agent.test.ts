@@ -7402,6 +7402,162 @@ function finishPrepared(session: CommandSession, focus?: string) {
     });
   };
 }
+it('recovers an empty immediate reviewed-save by preparing, previewing, and explicitly saving the requested task', async () => {
+  const source = '- [ ] Neighbor [unknown:: preserve]\n';
+  const h = await setup({ 'a.md': source }, {}, undefined, { reviewWrite: 'native' });
+  const request = 'Create a task called Follow up with description Call the clinic.';
+  h.script(
+    () => call('interpret', { intent: 'immediate', approval: request, saveInstruction: request }),
+    () =>
+      call('assess_write', {
+        effect: 'save-reviewed',
+        scope: 'all',
+        scopeMatches: true,
+        authorization: request,
+      }),
+    () =>
+      call('interpret', {
+        intent: 'plan',
+        research: false,
+      }),
+    () =>
+      call('create_task', {
+        destination: { type: 'note', path: 'a.md', insertion: { type: 'append' } },
+        tree: { markdownTitle: 'Follow up', description: 'Call the clinic.' },
+      }),
+    finish(),
+  );
+  await h.session.submit(request);
+
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+  expect(await h.read('a.md')).toBe(source);
+  expect(JSON.stringify(h.model.doGenerateCalls)).toContain(
+    'requested effect or scope did not match this write',
+  );
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(h.session.snapshot().trees[0]?.after).toMatchObject({
+    markdownTitle: 'Follow up',
+    description: 'Call the clinic.',
+  });
+
+  h.script(
+    () => controlled({ intent: 'confirm', approval: 'Save the prepared Follow up task.' }),
+    () =>
+      call('assess_write', {
+        effect: 'save-reviewed',
+        scope: 'all',
+        scopeMatches: true,
+        authorization: 'Save the prepared Follow up task.',
+      }),
+    finish(),
+  );
+  await h.session.submit('Save the prepared Follow up task.');
+
+  expect(h.session.snapshot().status.kind).toBe('saved');
+  expect(h.session.snapshot().journal).toHaveLength(1);
+  expect(h.session.snapshot().journal[0]).toMatchObject({
+    state: 'settled',
+    effects: 'committed',
+  });
+  expect(await h.read('a.md')).toBe(
+    `${source}- [ ] Follow up ➕ 2026-08-01\n\t- > Call the clinic.\n`,
+  );
+  const rows = await h.api.tasks.list({ path: 'a.md' });
+  if (!rows.ok) throw Error(rows.error.code);
+  expect(rows.value.items.map((item) => item.title)).toEqual([
+    'Neighbor unknown:: preserve',
+    'Follow up',
+  ]);
+  const savedTask = expectDefined(rows.value.items.find((item) => item.title === 'Follow up'));
+  const readback = await expectDefined(h.api.tasks.tree)({
+    target: savedTask.target,
+    expectedRevision: savedTask.revision,
+  });
+  if (!readback.ok) throw Error(readback.error.code);
+  expect(readback.value.tree.description).toBe('Call the clinic.');
+});
+
+it('allows immediate reviewed-save of a displayed canonical no-op plan', async () => {
+  const source = '- [ ] Stable 📅 2026-11-18\n';
+  let applyCalls = 0;
+  const h = await setup(
+    { 'a.md': source },
+    {},
+    (api) => ({
+      ...api,
+      tasks: {
+        ...api.tasks,
+        apply: (...args: Parameters<NonNullable<TasksApiV1['tasks']['apply']>>) => {
+          applyCalls++;
+          return expectDefined(api.tasks.apply)(...args);
+        },
+      },
+    }),
+    { reviewWrite: 'native' },
+  );
+  const listed = await h.api.tasks.list({ path: 'a.md' });
+  if (!listed.ok) throw Error(listed.error.code);
+  const task = expectDefined(listed.value.items.find((item) => item.title === 'Stable'));
+  const prepared = await expectDefined(h.api.tasks.prepare)({
+    kind: 'edit',
+    target: task.target,
+    expectedRevision: task.revision,
+    operation: {
+      type: 'patch',
+      target: task.target,
+      patch: { due: { type: 'set', value: '2026-11-18' } },
+    },
+  });
+  if (!prepared.ok) throw Error(prepared.error.code);
+  const plan = await canonicalCommandPlan(h.api, prepared.value, new AbortController().signal, {
+    now: () => 0,
+    deadline: 5000,
+  });
+  expect(plan.hasChanges).toBe(false);
+  h.session.stage({ kind: 'task', plan });
+  const message = 'Save the displayed task as reviewed.';
+  let reviewedDisplayed: unknown;
+  h.script(
+    () => call('interpret', { intent: 'immediate', approval: message, saveInstruction: message }),
+    () => {
+      const step = expectDefined(h.model.doGenerateCalls[h.model.doGenerateCalls.length - 1]);
+      const user = expectDefined(step.prompt.find((part) => part.role === 'user'));
+      const text = Array.isArray(user.content)
+        ? expectDefined(user.content.find((part) => part.type === 'text')).text
+        : user.content;
+      reviewedDisplayed = record(JSON.parse(text) as unknown)?.['displayed'];
+      return call('assess_write', {
+        effect: 'save-reviewed',
+        scope: 'all',
+        scopeMatches: true,
+        authorization: message,
+      });
+    },
+  );
+  await h.session.submit(message);
+
+  expect(reviewedDisplayed).toHaveLength(1);
+  expect(JSON.stringify(reviewedDisplayed)).toContain('Stable');
+  expect(JSON.stringify(reviewedDisplayed)).toContain('"prepared":[]');
+  expect(h.session.snapshot().status.kind).toBe('saved');
+  expect(h.session.snapshot().proposal.changes).toEqual([]);
+  expect(h.session.snapshot().journal).toHaveLength(1);
+  expect(h.session.snapshot().journal[0]).toMatchObject({
+    state: 'settled',
+    effects: 'unchanged',
+    receipt: { effects: 'unchanged', planRevision: plan.revision },
+  });
+  expect(applyCalls).toBe(1);
+  expect(await h.read('a.md')).toBe(source);
+  const readback = await expectDefined(h.api.tasks.tree)({
+    target: task.target,
+    expectedRevision: task.revision,
+  });
+  if (!readback.ok) throw Error(readback.error.code);
+  expect(readback.value.tree.dates.due).toBe('2026-11-18');
+});
+
 const readyCreation = {
   kind: 'create',
   destination: { type: 'note', path: 'a.md', insertion: { type: 'append' } },
