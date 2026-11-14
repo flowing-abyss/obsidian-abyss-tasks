@@ -5,6 +5,9 @@
 /** @typedef {{providerConnections: {model: Method}, commandResearch: {search: Method, readPage: Method}}} NativePlugin */
 /** @typedef {{plugins?: {plugins?: Record<string, NativePlugin>}}} NativeApp */
 /** @typedef {{hash: string, length: number}} UrlMetadata */
+/** @typedef {{nodes: number, seen: WeakSet<object>, truncated: boolean}} ReadContext */
+/** @typedef {{inputs: Record<string, unknown>[], omittedCount: number, truncated: boolean, failureCount: number, registrationOmittedCount: number, registrationTruncated: boolean}} ReadInputObservation */
+/** @typedef {{results: Record<string, unknown>[], omittedCount: number, truncated: boolean, failureCount: number, unattributedCount: number, visited: number}} IncomingObservation */
 /** @typedef {(methodName: 'search'|'readPage', requested: unknown, captureUrls: string[], result: unknown, durationMs: number, urlMetadata: (value: unknown) => UrlMetadata, addProvenance: (event: TraceEvent, page: Record<string, unknown>, source: Record<string, unknown>, urls: string[], hashUrl: (value: unknown) => UrlMetadata) => void) => TraceEvent} SuccessEvent */
 /** @typedef {{trace: Trace, originals: Methods, wrapped: Partial<Methods>, connections: NativePlugin['providerConnections'], research: NativePlugin['commandResearch'], modelWrappers: Map<{modelId?: unknown, doGenerate: Method}, {original: Method, wrapped: Method}>}} TraceState */
 
@@ -105,6 +108,91 @@ function installNativeTrace(
     'billing',
     'query-too-long',
     'PAGE_UNAVAILABLE',
+  ]);
+  const maxToolCallIds = 128;
+  const maxReadInputShapes = 8;
+  const maxReadShapeDepth = 6;
+  const maxReadShapeNodes = 64;
+  const maxReadObjectKeys = 32;
+  const toolCallsById = new Map();
+  const observedToolResults = new Set();
+  const readToolNames = new Set(['find', 'inspect', 'read']);
+  const readKeys = new Set([
+    'kind',
+    'read',
+    'input',
+    'query',
+    'cursor',
+    'path',
+    'folder',
+    'inbox',
+    'statuses',
+    'tagsAll',
+    'dates',
+    'field',
+    'from',
+    'to',
+    'fields',
+    'matchScope',
+    'target',
+    'expectedRevision',
+    'side',
+    'plan',
+    'expectedPlanRevision',
+    'limit',
+    'prefix',
+    'selector',
+    'linkFor',
+    'limitCharacters',
+    'link',
+    'section',
+    'wikiLink',
+    'expectedFromRevision',
+    'alias',
+  ]);
+  /** @type {Record<string, Set<string>>} */
+  const readEnums = {
+    kind: new Set([
+      'tasks',
+      'tree',
+      'tags',
+      'statuses',
+      'projects',
+      'project',
+      'project-schema',
+      'notes',
+      'note',
+    ]),
+    side: new Set(['before', 'after']),
+    fields: new Set(['title', 'body', 'all', 'name']),
+    matchScope: new Set(['node', 'subtree']),
+    field: new Set(['created', 'start', 'scheduled', 'due', 'completion', 'cancelled']),
+    status: new Set(['open', 'in-progress', 'done', 'cancelled']),
+  };
+  const diagnosticCodes = new Set([
+    'INVALID_ARGUMENT',
+    'INVALID_ARGUMENTS',
+    'INVALID_INPUT',
+    'VALIDATION_ERROR',
+  ]);
+  const diagnosticPathSegments = new Set([...readKeys, 'selection', 'states', 'status']);
+  const toolResultOutputTypes = new Set([
+    'text',
+    'json',
+    'execution-denied',
+    'error-text',
+    'error-json',
+    'content',
+  ]);
+  const referenceInputKeys = new Set([
+    'target',
+    'cursor',
+    'expectedRevision',
+    'plan',
+    'expectedPlanRevision',
+    'expectedFromRevision',
+    'section',
+    'from',
   ]);
   /** @param {unknown} error */
   const errorCode = (error) => {
@@ -370,6 +458,559 @@ function installNativeTrace(
     }
     return inputs;
   };
+  /** @param {unknown} input @returns {Record<string, unknown>} */
+  const parseReadInput = (input) => {
+    if (typeof input !== 'string')
+      return { value: input, representation: shape(input).type === 'object' ? 'object' : 'other' };
+    if (input.length > 16384)
+      return { summary: { representation: 'oversized-string', inputTruncated: true } };
+    if (new TextEncoder().encode(input).length > 16384)
+      return { summary: { representation: 'oversized-string', inputTruncated: true } };
+    try {
+      return { value: JSON.parse(input), representation: 'json-string' };
+    } catch {
+      return { summary: { representation: 'invalid-json', inputParseFailed: true } };
+    }
+  };
+  /** @param {Record<string, unknown>} value */
+  const boundedReadKeys = (value) => {
+    const keys = [];
+    let unknownKeyCount = 0;
+    let visited = 0;
+    let truncated = false;
+    for (const key in value) {
+      visited++;
+      if (visited > maxReadObjectKeys) {
+        truncated = true;
+        break;
+      }
+      if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
+      if (readKeys.has(key)) keys.push(key);
+      else unknownKeyCount++;
+    }
+    return {
+      keys,
+      unknownKeyCount,
+      ...(truncated ? { keyScanTruncated: true, omittedKeyCountAtLeast: 1 } : {}),
+    };
+  };
+  /** @param {unknown} value @param {ReadContext} context @param {string} reason */
+  const omittedReadShape = (value, context, reason) => {
+    context.truncated = true;
+    return { ...shape(value), omitted: true, omissionReason: reason };
+  };
+  /** @param {unknown} value */
+  const boundedReadValueShape = (value) => {
+    /** @type {Record<string, unknown>} */
+    const summary = shape(value);
+    const lengthCap = 1_000_000;
+    if (
+      summary['type'] === 'string' &&
+      typeof summary['length'] === 'number' &&
+      summary['length'] > lengthCap
+    ) {
+      summary['length'] = lengthCap;
+      summary['lengthTruncated'] = true;
+    }
+    if (
+      summary['type'] === 'array' &&
+      typeof summary['length'] === 'number' &&
+      summary['length'] > lengthCap
+    ) {
+      summary['length'] = lengthCap;
+      summary['lengthTruncated'] = true;
+    }
+    return summary;
+  };
+  /** @param {unknown[]} item @param {number} depth @param {ReadContext} context */
+  const datesShape = (item, depth, context) => {
+    if (context.seen.has(item)) return omittedReadShape(item, context, 'repeated-reference');
+    context.seen.add(item);
+    return {
+      type: 'array',
+      count: Math.min(1000, item.length),
+      countTruncated: item.length > 1000,
+      entries: item.slice(0, 6).map((entry) => readObjectShape(entry, depth + 1, context)),
+      omittedCount: Math.min(1000, Math.max(0, item.length - 6)),
+    };
+  };
+  /** @param {string} key @param {unknown} item @param {number} depth @param {ReadContext} context */
+  const nestedReadShape = (key, item, depth, context) => {
+    if (key === 'dates' && Array.isArray(item)) return datesShape(item, depth, context);
+    if ((key === 'input' || key === 'read') && typeof item === 'string') {
+      const parsed = parseReadInput(item);
+      if (typeof parsed['summary'] === 'object' && parsed['summary'] !== null) {
+        context.truncated = true;
+        return /** @type {Record<string, unknown>} */ (parsed['summary']);
+      }
+      return {
+        representation: parsed['representation'],
+        ...readObjectShape(parsed['value'], depth + 1, context),
+      };
+    }
+    if (
+      ['input', 'read', 'selector', 'linkFor', 'link'].includes(key) &&
+      typeof item === 'object' &&
+      item !== null
+    )
+      return readObjectShape(item, depth + 1, context);
+    return undefined;
+  };
+  /** @param {string} key @param {unknown} item @param {number} depth @param {ReadContext} context */
+  const readFieldShape = (key, item, depth, context) => {
+    if (key === 'inbox')
+      return typeof item === 'boolean'
+        ? { type: 'boolean', value: item }
+        : boundedReadValueShape(item);
+    if (key === 'limit' || key === 'limitCharacters')
+      return typeof item === 'number' && Number.isFinite(item)
+        ? { type: 'number', value: Math.max(-100000, Math.min(100000, item)) }
+        : boundedReadValueShape(item);
+    if (readEnums[key]) return enumShape(item, readEnums[key]);
+    const statusValues = readEnums['status'];
+    if (key === 'statuses' && Array.isArray(item) && statusValues)
+      return {
+        type: 'array',
+        count: Math.min(1000, item.length),
+        countTruncated: item.length > 1000,
+        entries: item.slice(0, 8).map((entry) => enumShape(entry, statusValues)),
+        omittedCount: Math.min(1000, Math.max(0, item.length - 8)),
+      };
+    const nested = nestedReadShape(key, item, depth, context);
+    if (nested !== undefined) return nested;
+    /** @type {Record<string, unknown>} */
+    const summary = boundedReadValueShape(item);
+    if (referenceInputKeys.has(key)) summary['issued'] = 'unknown';
+    return summary;
+  };
+  /** @param {unknown} value @param {number} depth @param {ReadContext} context */
+  const readObjectShape = (value, depth, context) => {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return shape(value);
+    if (depth >= maxReadShapeDepth) return omittedReadShape(value, context, 'depth-limit');
+    if (context.seen.has(value)) return omittedReadShape(value, context, 'repeated-reference');
+    if (context.nodes >= maxReadShapeNodes) return omittedReadShape(value, context, 'node-limit');
+    context.nodes++;
+    context.seen.add(value);
+    const source = /** @type {Record<string, unknown>} */ (value);
+    const keySummary = boundedReadKeys(source);
+    if (keySummary['keyScanTruncated']) context.truncated = true;
+    /** @type {Record<string, unknown>} */
+    const summary = { ...keySummary };
+    for (let index = 0; index < keySummary.keys.length; index++) {
+      if (context.nodes >= maxReadShapeNodes) {
+        summary['omittedFieldCount'] = keySummary.keys.length - index;
+        summary['shapeOmitted'] = true;
+        context.truncated = true;
+        break;
+      }
+      const key = keySummary.keys[index];
+      if (key === undefined) continue;
+      context.nodes++;
+      summary[key] = readFieldShape(key, source[key], depth, context);
+    }
+    return summary;
+  };
+  /** @param {unknown} part @param {number} generationOrdinal @param {number} callOrdinal */
+  const registerReadToolCall = (part, generationOrdinal, callOrdinal) => {
+    const record = /** @type {Record<string, unknown>} */ (part);
+    const callId = record['toolCallId'];
+    if (typeof callId !== 'string' || callId.length === 0 || callId.length > 256) return false;
+    if (toolCallsById.has(callId)) {
+      const previous = toolCallsById.get(callId);
+      return (
+        previous.sourceName === record['toolName'] &&
+        previous.generationOrdinal === generationOrdinal &&
+        previous.callOrdinal === callOrdinal
+      );
+    }
+    if (toolCallsById.size >= maxToolCallIds) return false;
+    toolCallsById.set(callId, {
+      sourceName: record['toolName'],
+      generationOrdinal,
+      callOrdinal,
+    });
+    return true;
+  };
+  /** @param {unknown} part @param {number} generationOrdinal @param {number} callOrdinal */
+  const tryRegisterReadToolCall = (part, generationOrdinal, callOrdinal) => {
+    try {
+      return registerReadToolCall(part, generationOrdinal, callOrdinal);
+    } catch {
+      return false;
+    }
+  };
+  /** @param {unknown} part */
+  const readInputCallShape = (part) => {
+    const record = /** @type {Record<string, unknown>} */ (part);
+    if (!('input' in record))
+      return {
+        summary: { representation: 'missing', inputParseFailed: true },
+        failure: true,
+        truncated: false,
+      };
+    const parsed = parseReadInput(record['input']);
+    if (typeof parsed['summary'] === 'object' && parsed['summary'] !== null) {
+      const summary = /** @type {Record<string, unknown>} */ (parsed['summary']);
+      return {
+        summary,
+        failure: summary['inputParseFailed'] === true,
+        truncated: summary['inputTruncated'] === true,
+      };
+    }
+    /** @type {ReadContext} */
+    const walk = { nodes: 0, seen: new WeakSet(), truncated: false };
+    return {
+      summary: {
+        representation: parsed['representation'],
+        ...readObjectShape(parsed['value'], 0, walk),
+        ...(walk.truncated ? { shapeTruncated: true } : {}),
+      },
+      failure: false,
+      truncated: walk.truncated,
+    };
+  };
+  /** @param {unknown} part @param {Set<string>} declaredNames @param {number} callOrdinal */
+  const declaredReadToolCall = (part, declaredNames, callOrdinal) => {
+    if (typeof part !== 'object' || part === null || !('type' in part) || part.type !== 'tool-call')
+      return undefined;
+    const record = /** @type {Record<string, unknown>} */ (part);
+    const sourceName = record['toolName'];
+    if (
+      typeof sourceName !== 'string' ||
+      !readToolNames.has(sourceName) ||
+      !declaredNames.has(sourceName)
+    )
+      return undefined;
+    return { sourceName, callOrdinal };
+  };
+  /** @param {unknown} part @param {{sourceName: string, callOrdinal: number}} declaredCall @param {ReadInputObservation} result @param {number} generationOrdinal @param {number} shapedReads */
+  const captureDeclaredReadCall = (part, declaredCall, result, generationOrdinal, shapedReads) => {
+    if (!tryRegisterReadToolCall(part, generationOrdinal, declaredCall.callOrdinal))
+      result.registrationOmittedCount++;
+    if (shapedReads >= maxReadInputShapes) {
+      result.omittedCount++;
+      result.truncated = true;
+      return false;
+    }
+    const observation = readInputCallShape(part);
+    result.inputs.push({
+      sourceName: declaredCall.sourceName,
+      generationOrdinal,
+      callOrdinal: declaredCall.callOrdinal,
+      ...observation.summary,
+    });
+    if (observation.failure) result.failureCount++;
+    if (observation.truncated) result.truncated = true;
+    return true;
+  };
+  /** @param {unknown[]} content @param {Set<string>} declaredNames @param {number} generationOrdinal @param {ReadInputObservation} result */
+  const inspectReadContent = (content, declaredNames, generationOrdinal, result) => {
+    let callOrdinal = 0;
+    let shapedReads = 0;
+    for (const part of content.slice(0, maxContentEntries)) {
+      try {
+        if (
+          typeof part === 'object' &&
+          part !== null &&
+          'type' in part &&
+          part.type === 'tool-call'
+        )
+          callOrdinal++;
+        const declaredCall = declaredReadToolCall(part, declaredNames, callOrdinal);
+        if (!declaredCall) continue;
+        if (captureDeclaredReadCall(part, declaredCall, result, generationOrdinal, shapedReads))
+          shapedReads++;
+      } catch {
+        result.failureCount++;
+        result.truncated = true;
+        result.omittedCount++;
+      }
+    }
+  };
+  /** @param {unknown} content @param {Set<string>} declaredNames @param {number} generationOrdinal */
+  const safeReadInputs = (content, declaredNames, generationOrdinal) => {
+    /** @type {ReadInputObservation} */
+    const result = {
+      inputs: [],
+      omittedCount: 0,
+      truncated: false,
+      failureCount: 0,
+      registrationOmittedCount: 0,
+      registrationTruncated: false,
+    };
+    if (!Array.isArray(content)) {
+      result.failureCount = 1;
+      result.truncated = true;
+      return result;
+    }
+    if (content.length > maxContentEntries) {
+      result.truncated = true;
+      result.registrationTruncated = true;
+      result.omittedCount = Math.min(1_000_000, content.length - maxContentEntries);
+    }
+    inspectReadContent(content, declaredNames, generationOrdinal, result);
+    return result;
+  };
+  /** @param {unknown} candidate */
+  const safeValidationPath = (candidate) => {
+    if (!Array.isArray(candidate)) return undefined;
+    const path = /** @type {unknown[]} */ (candidate);
+    return {
+      segments: path.slice(0, 12).map(safePathSegment),
+      truncated: path.length > 12,
+      omittedCount: Math.min(1_000_000, Math.max(0, path.length - 12)),
+      omittedCountTruncated: path.length - 12 > 1_000_000,
+    };
+  };
+  /** @param {unknown} output */
+  const isToolResultOutput = (output) => {
+    if (typeof output !== 'object' || output === null || !('type' in output)) return false;
+    const record = /** @type {Record<string, unknown>} */ (output);
+    if (typeof record['type'] !== 'string' || !toolResultOutputTypes.has(record['type']))
+      return false;
+    if (record['type'] === 'text' || record['type'] === 'error-text')
+      return typeof record['value'] === 'string';
+    if (record['type'] === 'json' || record['type'] === 'error-json') return 'value' in record;
+    if (record['type'] === 'content') return Array.isArray(record['value']);
+    return record['reason'] === undefined || typeof record['reason'] === 'string';
+  };
+  /** @param {unknown} output @returns {Record<string, unknown>} */
+  const safeToolResultDiagnostic = (output) => {
+    const record = /** @type {Record<string, unknown>} */ (output);
+    const isError = record['type'] === 'error-text' || record['type'] === 'error-json';
+    const errorText = record['type'] === 'error-text' ? record['value'] : undefined;
+    const value = record['type'] === 'error-json' ? record['value'] : undefined;
+    const structured =
+      typeof value === 'object' && value !== null
+        ? /** @type {Record<string, unknown>} */ (value)
+        : {};
+    const code =
+      typeof structured['code'] === 'string' && diagnosticCodes.has(structured['code'])
+        ? structured['code']
+        : undefined;
+    const hasPath = 'validationPath' in structured || 'path' in structured;
+    const validationPath = safeValidationPath(structured['validationPath'] ?? structured['path']);
+    return {
+      resultKind: isError ? 'error' : 'result',
+      ...(errorText === 'Invalid API argument.'
+        ? { errorClassification: 'invalid-api-argument' }
+        : {}),
+      ...(code ? { code } : {}),
+      ...(validationPath
+        ? {
+            validationPath: validationPath.segments,
+            validationPathTruncated: validationPath.truncated,
+            validationPathOmittedCount: validationPath.omittedCount,
+            validationPathOmittedCountTruncated: validationPath.omittedCountTruncated,
+          }
+        : {}),
+      ...(hasPath && !validationPath ? { validationPathMalformed: true } : {}),
+      codeUnavailable: code === undefined,
+      validationUnavailable: validationPath === undefined,
+    };
+  };
+  /** @param {unknown} segment */
+  const safePathSegment = (segment) => {
+    if (
+      typeof segment === 'number' &&
+      Number.isInteger(segment) &&
+      segment >= 0 &&
+      segment <= 100000
+    )
+      return { index: segment };
+    return {
+      key: typeof segment === 'string' && diagnosticPathSegments.has(segment) ? segment : 'unknown',
+    };
+  };
+  /** @param {unknown} part @param {Set<string>} declaredNames @returns {{summary?: Record<string, unknown>, omitted?: string, duplicate?: boolean}} */
+  const incomingToolResultPart = (part, declaredNames) => {
+    if (
+      typeof part !== 'object' ||
+      part === null ||
+      !('type' in part) ||
+      part.type !== 'tool-result' ||
+      !('toolCallId' in part) ||
+      typeof part.toolCallId !== 'string'
+    )
+      return {};
+    const callId = part.toolCallId;
+    const record = /** @type {Record<string, unknown>} */ (part);
+    if (callId.length === 0 || callId.length > 256 || !isToolResultOutput(record['output']))
+      return { omitted: 'invalid-envelope' };
+    if (observedToolResults.has(callId)) return { duplicate: true };
+    if (observedToolResults.size >= maxToolCallIds) return { omitted: 'dedup-cap' };
+    const attribution = toolCallsById.get(callId);
+    const partName = record['toolName'];
+    if (typeof partName !== 'string') return { omitted: 'invalid-envelope' };
+    if (!attribution)
+      return readToolNames.has(partName) && declaredNames.has(partName)
+        ? { omitted: 'unattributed' }
+        : {};
+    if (partName !== attribution.sourceName) return { omitted: 'source-mismatch' };
+    if (!readToolNames.has(attribution.sourceName)) return {};
+    const summary = {
+      sourceName: attribution.sourceName,
+      generationOrdinal: attribution.generationOrdinal,
+      callOrdinal: attribution.callOrdinal,
+      ...safeToolResultDiagnostic(record['output']),
+    };
+    observedToolResults.add(callId);
+    return { summary };
+  };
+  /** @param {unknown} message */
+  const promptMessageParts = (message) => {
+    if (
+      typeof message !== 'object' ||
+      message === null ||
+      !('content' in message) ||
+      !Array.isArray(message.content)
+    )
+      return { parts: [], omittedCount: 0 };
+    return {
+      parts: message.content.slice(0, maxContentEntries),
+      omittedCount: Math.min(1_000_000, Math.max(0, message.content.length - maxContentEntries)),
+    };
+  };
+  /** @param {IncomingObservation} observation @param {string} [kind] */
+  const omitIncomingResult = (observation, kind) => {
+    observation.omittedCount = Math.min(1_000_000, observation.omittedCount + 1);
+    observation.truncated = true;
+    if (kind === 'failure') observation.failureCount++;
+    if (kind === 'unattributed') observation.unattributedCount++;
+  };
+  /** @param {unknown} part @param {Set<string>} declaredNames @param {IncomingObservation} observation */
+  const appendIncomingResult = (part, declaredNames, observation) => {
+    if (observation.results.length >= maxRecordedEntries) {
+      omitIncomingResult(observation);
+      return false;
+    }
+    try {
+      const result = incomingToolResultPart(part, declaredNames);
+      if (result.summary) observation.results.push(result.summary);
+      else if (result.omitted === 'invalid-envelope' || result.omitted === 'source-mismatch')
+        omitIncomingResult(observation, 'failure');
+      else if (result.omitted === 'unattributed') omitIncomingResult(observation, 'unattributed');
+      else if (result.omitted) omitIncomingResult(observation);
+      return true;
+    } catch {
+      omitIncomingResult(observation, 'failure');
+      return true;
+    }
+  };
+  /** @param {unknown} message @param {Set<string>} declaredNames @param {IncomingObservation} observation */
+  const appendIncomingMessage = (message, declaredNames, observation) => {
+    if (typeof message !== 'object' || message === null) return true;
+    try {
+      if (!('role' in message) || message.role !== 'tool') return true;
+    } catch {
+      omitIncomingResult(observation, 'failure');
+      return true;
+    }
+    let messageParts;
+    try {
+      messageParts = promptMessageParts(message);
+    } catch {
+      omitIncomingResult(observation, 'failure');
+      return true;
+    }
+    if (messageParts.omittedCount > 0) {
+      observation.omittedCount = Math.min(
+        1_000_000,
+        observation.omittedCount + messageParts.omittedCount,
+      );
+      observation.truncated = true;
+    }
+    for (const part of messageParts.parts) {
+      if (observation.visited >= maxContentEntries) {
+        omitIncomingResult(observation);
+        return false;
+      }
+      observation.visited++;
+      if (!appendIncomingResult(part, declaredNames, observation)) return false;
+    }
+    return true;
+  };
+  /** @param {unknown} prompt @param {Set<string>} declaredNames */
+  const safeIncomingToolResults = (prompt, declaredNames) => {
+    if (!Array.isArray(prompt))
+      return {
+        results: [],
+        omittedCount: 0,
+        truncated: false,
+        failureCount: 1,
+        unattributedCount: 0,
+        visited: 0,
+      };
+    /** @type {IncomingObservation} */
+    const observation = {
+      results: [],
+      omittedCount: Math.min(1_000_000, Math.max(0, prompt.length - maxContentEntries)),
+      truncated: prompt.length > maxContentEntries,
+      failureCount: 0,
+      unattributedCount: 0,
+      visited: 0,
+    };
+    for (const message of prompt.slice(0, maxContentEntries)) {
+      if (!appendIncomingMessage(message, declaredNames, observation)) break;
+    }
+    return observation;
+  };
+  /** @param {unknown} params @returns {Promise<{declaredNames: Set<string>, finishSchemaSha256: string|undefined, toolResults: Record<string, unknown>[], toolResultsOmittedCount: number, toolResultsTruncated: boolean, toolResultsFailureCount: number, toolResultsUnattributedCount: number}>} */
+  const observeGenerationInputs = async (params) => {
+    /** @type {Set<string>} */
+    let declaredNames = new Set();
+    let finishSchemaSha256;
+    /** @type {Record<string, unknown>[]} */
+    let toolResults = [];
+    let toolResultsOmittedCount = 0;
+    let toolResultsTruncated = false;
+    let toolResultsFailureCount = 0;
+    let toolResultsUnattributedCount = 0;
+    try {
+      declaredNames = declaredToolNames(params);
+      finishSchemaSha256 = await finishSchemaFingerprint(params);
+      const prompt =
+        typeof params === 'object' && params !== null && 'prompt' in params
+          ? /** @type {Record<string, unknown>} */ (params)['prompt']
+          : undefined;
+      const observation = safeIncomingToolResults(prompt, declaredNames);
+      toolResults = observation.results;
+      toolResultsOmittedCount = observation.omittedCount;
+      toolResultsTruncated = observation.truncated;
+      toolResultsFailureCount = observation.failureCount;
+      toolResultsUnattributedCount = observation.unattributedCount;
+    } catch {
+      toolResultsFailureCount++;
+      toolResultsOmittedCount = Math.max(1, toolResultsOmittedCount);
+      toolResultsTruncated = true;
+    }
+    return {
+      declaredNames,
+      finishSchemaSha256,
+      toolResults,
+      toolResultsOmittedCount,
+      toolResultsTruncated,
+      toolResultsFailureCount,
+      toolResultsUnattributedCount,
+    };
+  };
+  /** @param {TraceEvent} generation @param {Awaited<ReturnType<typeof observeGenerationInputs>>} observation */
+  const addInputObservations = (generation, observation) => {
+    if (observation.finishSchemaSha256 !== undefined)
+      generation['finishSchemaSha256'] = observation.finishSchemaSha256;
+    if (observation.toolResults.length > 0) generation['toolResults'] = observation.toolResults;
+    const hasToolResultGaps =
+      observation.toolResultsOmittedCount > 0 ||
+      observation.toolResultsTruncated ||
+      observation.toolResultsFailureCount > 0 ||
+      observation.toolResultsUnattributedCount > 0;
+    if (hasToolResultGaps) {
+      generation['toolResultsOmittedCount'] = observation.toolResultsOmittedCount;
+      generation['toolResultsTruncated'] = observation.toolResultsTruncated;
+      generation['toolResultsFailureCount'] = observation.toolResultsFailureCount;
+      generation['toolResultsUnattributedCount'] = observation.toolResultsUnattributedCount;
+    }
+  };
   /** @param {unknown} params */
   const finishSchemaFingerprint = async (params) => {
     try {
@@ -460,27 +1101,49 @@ function installNativeTrace(
         throw new Error('native-trace-budget-generation');
       }
       trace.sdkInvocations++;
+      const generationIndex = trace.sdkInvocations;
       /** @type {TraceEvent} */
       const generation = {
-        index: trace.sdkInvocations,
+        index: generationIndex,
         modelId: typeof model.modelId === 'string' ? model.modelId : 'unknown',
       };
       const params = generateArgs[0];
-      let declaredNames = new Set();
-      let finishSchemaSha256;
-      try {
-        declaredNames = declaredToolNames(params);
-        finishSchemaSha256 = await finishSchemaFingerprint(params);
-      } catch {
-        finishSchemaSha256 = undefined;
-      }
-      if (finishSchemaSha256 !== undefined) generation['finishSchemaSha256'] = finishSchemaSha256;
+      const inputObservation = await observeGenerationInputs(params);
+      const declaredNames = inputObservation.declaredNames;
+      addInputObservations(generation, inputObservation);
       const start = performance.now();
       try {
         const result = /** @type {Record<string, unknown>} */ (
           await Reflect.apply(originalGenerate, this, generateArgs)
         );
         generation['durationMs'] = elapsed(start);
+        try {
+          const readInputObservation = safeReadInputs(
+            result['content'],
+            declaredNames,
+            generationIndex,
+          );
+          if (readInputObservation.inputs.length > 0)
+            generation['readInputs'] = readInputObservation.inputs;
+          if (
+            readInputObservation.omittedCount > 0 ||
+            readInputObservation.truncated ||
+            readInputObservation.failureCount > 0 ||
+            readInputObservation.registrationOmittedCount > 0 ||
+            readInputObservation.registrationTruncated
+          ) {
+            generation['readInputOmittedCount'] = readInputObservation.omittedCount;
+            generation['readInputsTruncated'] = readInputObservation.truncated;
+            generation['readInputFailureCount'] = readInputObservation.failureCount;
+            generation['readCallRegistrationOmittedCount'] =
+              readInputObservation.registrationOmittedCount;
+            generation['readCallRegistrationTruncated'] =
+              readInputObservation.registrationTruncated;
+          }
+        } catch {
+          generation['readInputFailureCount'] = 1;
+          generation['readInputsTruncated'] = true;
+        }
         try {
           const finishReason = result['finishReason'];
           if (

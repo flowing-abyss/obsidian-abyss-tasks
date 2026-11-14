@@ -137,6 +137,829 @@ function fixture() {
 }
 
 describe('native command trace installer', () => {
+  it('attributes bounded read inputs to deduplicated incoming structured tool results', async () => {
+    const { app, root, plugin, model } = fixture();
+    let generation = 0;
+    const taskId = 'TASK_PRIVATE_CANARY';
+    const query = 'QUERY_PRIVATE_CANARY';
+    const rawCallId = 'CALL_ID_PRIVATE_CANARY';
+    const canary = 'MESSAGE_PRIVATE_CANARY';
+    model.doGenerate = async function (this: typeof model, params: unknown) {
+      expect(this).toBe(model);
+      generation++;
+      if (generation === 1) {
+        return {
+          content: [
+            {
+              type: 'tool-call',
+              toolName: 'find',
+              toolCallId: rawCallId,
+              input: JSON.stringify({
+                query,
+                side: 'private-side-enum',
+                privateFilter: taskId,
+                limit: 3,
+              }),
+            },
+          ],
+          finishReason: { unified: 'tool-calls' },
+          usage: {},
+        };
+      }
+      expect(params).toMatchObject({
+        prompt: [
+          {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool-result',
+                toolCallId: rawCallId,
+                toolName: 'find',
+                output: { type: 'error-text', value: `Invalid API argument. ${canary}` },
+              },
+            ],
+          },
+          {
+            role: 'system',
+            content: [
+              {
+                type: 'tool-result',
+                toolCallId: rawCallId,
+                toolName: 'find',
+                output: { type: 'error-text', value: canary },
+              },
+            ],
+          },
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'tool-result',
+                toolCallId: rawCallId,
+                toolName: 'find',
+                output: { type: 'error-text', value: canary },
+              },
+            ],
+          },
+          {
+            role: 'tool',
+            content: [
+              {
+                type: 'tool-result',
+                toolCallId: rawCallId,
+                toolName: 'find',
+                output: { type: 'error-text', value: { wrong: 'shape' } },
+              },
+              {
+                type: 'tool-result',
+                toolCallId: rawCallId,
+                toolName: 'find',
+                output: { type: 'error-text', value: 'Invalid API argument.' },
+              },
+              {
+                type: 'tool-result',
+                toolCallId: rawCallId,
+                toolName: 'find',
+                output: { type: 'error-text', value: `Invalid API argument. ${canary}` },
+              },
+              {
+                type: 'tool-result',
+                toolCallId: 'UNKNOWN_CALL_ID_CANARY',
+                toolName: 'UNDECLARED_TOOL_NAME_CANARY',
+                output: { type: 'error-text', value: canary },
+              },
+            ],
+          },
+        ],
+      });
+      return {
+        content: [{ type: 'text', text: 'private response' }],
+        finishReason: { unified: 'stop' },
+        usage: {},
+      };
+    } as typeof model.doGenerate;
+    await evaluate(buildNativeTraceInstallEval(pageUrl, expectedModelId, traceKey), app, root);
+    const wrapped = plugin.providerConnections.model({ fixture: true });
+    const tools = [
+      { type: 'function' as const, name: 'find', inputSchema: { type: 'object' } },
+    ] satisfies NonNullable<SdkTools>;
+    await wrapped.doGenerate({ tools, prompt: [] });
+    await wrapped.doGenerate({
+      tools,
+      prompt: [
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: rawCallId,
+              toolName: 'find',
+              output: { type: 'error-text', value: `Invalid API argument. ${canary}` },
+            },
+          ],
+        },
+        {
+          role: 'system',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: rawCallId,
+              toolName: 'find',
+              output: { type: 'error-text', value: canary },
+            },
+          ],
+        },
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: rawCallId,
+              toolName: 'find',
+              output: { type: 'error-text', value: canary },
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: rawCallId,
+              toolName: 'find',
+              output: { type: 'error-text', value: { wrong: 'shape' } },
+            },
+            {
+              type: 'tool-result',
+              toolCallId: rawCallId,
+              toolName: 'find',
+              output: { type: 'error-text', value: 'Invalid API argument.' },
+            },
+            {
+              type: 'tool-result',
+              toolCallId: rawCallId,
+              toolName: 'find',
+              output: { type: 'error-text', value: `Invalid API argument. ${canary}` },
+            },
+            {
+              type: 'tool-result',
+              toolCallId: 'UNKNOWN_CALL_ID_CANARY',
+              toolName: 'UNDECLARED_TOOL_NAME_CANARY',
+              output: { type: 'error-text', value: canary },
+            },
+          ],
+        },
+      ],
+    });
+    const trace = JSON.parse(
+      String(await evaluate(buildNativeTraceReadEval(traceKey), app, root)),
+    ) as {
+      generations: Array<Record<string, unknown>>;
+    };
+    expect(trace.generations[0]).toMatchObject({
+      readInputs: [
+        {
+          sourceName: 'find',
+          generationOrdinal: 1,
+          callOrdinal: 1,
+          representation: 'json-string',
+          keys: ['query', 'side', 'limit'],
+          unknownKeyCount: 1,
+          query: { type: 'string', length: query.length },
+          side: { type: 'string', enum: 'other', length: 'private-side-enum'.length },
+          limit: { type: 'number', value: 3 },
+        },
+      ],
+    });
+    expect(trace.generations[1]?.['toolResults']).toEqual([
+      {
+        sourceName: 'find',
+        generationOrdinal: 1,
+        callOrdinal: 1,
+        resultKind: 'error',
+        errorClassification: 'invalid-api-argument',
+        codeUnavailable: true,
+        validationUnavailable: true,
+      },
+    ]);
+    expect(trace.generations[1]).toMatchObject({
+      toolResultsOmittedCount: 1,
+      toolResultsTruncated: true,
+      toolResultsFailureCount: 1,
+      toolResultsUnattributedCount: 0,
+    });
+    const serialized = JSON.stringify(trace);
+    for (const privateValue of [
+      taskId,
+      query,
+      rawCallId,
+      canary,
+      'private-side-enum',
+      'private response',
+      'UNKNOWN_CALL_ID_CANARY',
+      'UNDECLARED_TOOL_NAME_CANARY',
+    ])
+      expect(serialized).not.toContain(privateValue);
+  });
+
+  it('keeps only allowlisted structured code and validation path data and omits terminal outcomes', async () => {
+    const { app, root, plugin, model } = fixture();
+    let generation = 0;
+    const rawCallId = 'STRUCTURED_CALL_ID_CANARY';
+    const privatePath = 'PRIVATE_PATH_CANARY';
+    const privatePrompt = 'PRIVATE_PROMPT_CANARY';
+    const rawPath = [
+      'read',
+      'input',
+      'target',
+      2,
+      privatePath,
+      ...Array.from({ length: 9 }, () => privatePath),
+    ];
+    model.doGenerate = async function (this: typeof model, params: unknown) {
+      expect(this).toBe(model);
+      generation++;
+      if (generation === 1) {
+        return {
+          content: [
+            {
+              type: 'tool-call',
+              toolName: 'inspect',
+              toolCallId: rawCallId,
+              input: {
+                read: {
+                  input: JSON.stringify({
+                    kind: 'tree',
+                    side: 'after',
+                    target: 'HANDLE_PRIVATE_CANARY',
+                    privateKey: privatePath,
+                  }),
+                },
+              },
+            },
+          ],
+          finishReason: { unified: 'tool-calls' },
+          usage: {},
+        };
+      }
+      expect(params).toMatchObject({
+        prompt: [
+          { role: 'system', content: privatePrompt },
+          { role: 'user', content: privatePrompt },
+          { role: 'assistant', content: privatePrompt },
+          {
+            role: 'tool',
+            content: [
+              {
+                type: 'tool-result',
+                toolCallId: rawCallId,
+                toolName: 'inspect',
+                output: {
+                  type: 'error-json',
+                  value: {
+                    code: 'INVALID_ARGUMENT',
+                    validationPath: rawPath,
+                    message: privatePath,
+                    cause: { message: privatePrompt },
+                  },
+                },
+              },
+            ],
+          },
+        ],
+      });
+      return {
+        content: [
+          {
+            type: 'tool-call',
+            toolName: 'read',
+            toolCallId: 'TERMINAL_CALL_ID_CANARY',
+            input: '{malformed PRIVATE_INPUT_CANARY',
+          },
+          {
+            type: 'tool-call',
+            toolName: 'read',
+            toolCallId: 'OVERSIZED_CALL_ID_CANARY',
+            input: 'x'.repeat(16385),
+          },
+        ],
+        finishReason: { unified: 'tool-calls' },
+        usage: {},
+      };
+    } as typeof model.doGenerate;
+    await evaluate(buildNativeTraceInstallEval(pageUrl, expectedModelId, traceKey), app, root);
+    const wrapped = plugin.providerConnections.model({ fixture: true });
+    const tools = [
+      { type: 'function' as const, name: 'inspect', inputSchema: { type: 'object' } },
+      { type: 'function' as const, name: 'read', inputSchema: { type: 'object' } },
+    ] satisfies NonNullable<SdkTools>;
+    await wrapped.doGenerate({ tools, prompt: [] });
+    await wrapped.doGenerate({
+      tools,
+      prompt: [
+        { role: 'system', content: privatePrompt },
+        { role: 'user', content: privatePrompt },
+        { role: 'assistant', content: privatePrompt },
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: rawCallId,
+              toolName: 'inspect',
+              output: {
+                type: 'error-json',
+                value: {
+                  code: 'INVALID_ARGUMENT',
+                  validationPath: rawPath,
+                  message: privatePath,
+                  cause: { message: privatePrompt },
+                },
+              },
+            },
+          ],
+        },
+      ],
+    });
+    const trace = JSON.parse(
+      String(await evaluate(buildNativeTraceReadEval(traceKey), app, root)),
+    ) as {
+      generations: Array<Record<string, unknown>>;
+    };
+    expect(trace.generations[0]).toMatchObject({
+      readInputs: [
+        {
+          sourceName: 'inspect',
+          generationOrdinal: 1,
+          callOrdinal: 1,
+          read: {
+            keys: ['input'],
+            input: {
+              representation: 'json-string',
+              keys: ['kind', 'side', 'target'],
+              unknownKeyCount: 1,
+              target: { type: 'string', length: 'HANDLE_PRIVATE_CANARY'.length, issued: 'unknown' },
+            },
+          },
+        },
+      ],
+    });
+    expect(trace.generations[1]?.['toolResults']).toEqual([
+      {
+        sourceName: 'inspect',
+        generationOrdinal: 1,
+        callOrdinal: 1,
+        resultKind: 'error',
+        code: 'INVALID_ARGUMENT',
+        codeUnavailable: false,
+        validationPath: [
+          { key: 'read' },
+          { key: 'input' },
+          { key: 'target' },
+          { index: 2 },
+          { key: 'unknown' },
+          { key: 'unknown' },
+          { key: 'unknown' },
+          { key: 'unknown' },
+          { key: 'unknown' },
+          { key: 'unknown' },
+          { key: 'unknown' },
+          { key: 'unknown' },
+        ],
+        validationPathTruncated: true,
+        validationPathOmittedCount: 2,
+        validationPathOmittedCountTruncated: false,
+        validationUnavailable: false,
+      },
+    ]);
+    expect(trace.generations[1]?.['readInputs']).toEqual([
+      {
+        sourceName: 'read',
+        generationOrdinal: 2,
+        callOrdinal: 1,
+        representation: 'invalid-json',
+        inputParseFailed: true,
+      },
+      {
+        sourceName: 'read',
+        generationOrdinal: 2,
+        callOrdinal: 2,
+        representation: 'oversized-string',
+        inputTruncated: true,
+      },
+    ]);
+    expect(trace.generations[2]).toBeUndefined();
+    const serialized = JSON.stringify(trace);
+    for (const privateValue of [
+      rawCallId,
+      privatePath,
+      privatePrompt,
+      'HANDLE_PRIVATE_CANARY',
+      'PRIVATE_INPUT_CANARY',
+      'TERMINAL_CALL_ID_CANARY',
+      'OVERSIZED_CALL_ID_CANARY',
+    ])
+      expect(serialized).not.toContain(privateValue);
+  });
+
+  it('marks incoming tool results omitted beyond the prompt observation cap', async () => {
+    const { app, root, plugin, model } = fixture();
+    let generation = 0;
+    const rawCallId = 'TRUNCATED_RESULT_CALL_ID_CANARY';
+    model.doGenerate = async function (this: typeof model) {
+      expect(this).toBe(model);
+      generation++;
+      if (generation === 1) {
+        return {
+          content: [
+            { type: 'tool-call', toolName: 'read', toolCallId: rawCallId, input: { kind: 'tags' } },
+          ],
+          finishReason: { unified: 'tool-calls' },
+          usage: {},
+        };
+      }
+      return { content: [], finishReason: { unified: 'stop' }, usage: {} };
+    } as unknown as typeof model.doGenerate;
+    await evaluate(buildNativeTraceInstallEval(pageUrl, expectedModelId, traceKey), app, root);
+    const wrapped = plugin.providerConnections.model({ fixture: true });
+    const tools = [
+      { type: 'function' as const, name: 'read', inputSchema: { type: 'object' } },
+    ] satisfies NonNullable<SdkTools>;
+    await wrapped.doGenerate({ tools, prompt: [] });
+    const cappedPrompt = [
+      {
+        role: 'tool',
+        content: [
+          ...Array.from({ length: 64 }, (_, index) => ({
+            type: 'tool-approval-response' as const,
+            approvalId: `PRIVATE_OMITTED_PROMPT_CANARY_${index}`,
+            approved: true,
+          })),
+          {
+            type: 'tool-result',
+            toolCallId: rawCallId,
+            toolName: 'read',
+            output: { type: 'error-text', value: 'Invalid API argument.' },
+          },
+        ],
+      },
+    ];
+    await wrapped.doGenerate({ tools, prompt: cappedPrompt });
+    const trace = JSON.parse(
+      String(await evaluate(buildNativeTraceReadEval(traceKey), app, root)),
+    ) as { generations: Array<Record<string, unknown>> };
+    expect(trace.generations[1]).toMatchObject({
+      toolResultsOmittedCount: 1,
+      toolResultsTruncated: true,
+    });
+    expect(trace.generations[1]?.['toolResults']).toBeUndefined();
+    const serialized = JSON.stringify(trace);
+    expect(serialized).not.toContain(rawCallId);
+    expect(serialized).not.toContain('PRIVATE_OMITTED_PROMPT_CANARY');
+  });
+
+  it('bounds nested, shared, and cyclic read input shapes and marks references unissued', async () => {
+    const { app, root, plugin, model } = fixture();
+    const shared = { target: 'PRIVATE_SHARED_HANDLE', expectedRevision: 'PRIVATE_REVISION' };
+    const dateNode: Record<string, unknown> = { field: 'due', from: 'PRIVATE_DATE_FROM' };
+    dateNode['dates'] = [dateNode];
+    let deepBranch: Record<string, unknown> = shared;
+    for (let index = 0; index < 8; index++) deepBranch = { selector: deepBranch };
+    const cyclic: Record<string, unknown> = {
+      kind: 'tasks',
+      selector: deepBranch,
+      linkFor: deepBranch,
+      target: 'PRIVATE_ROOT_HANDLE',
+      dates: [dateNode],
+    };
+    cyclic['input'] = cyclic;
+    for (let index = 0; index < 40; index++)
+      cyclic[`PRIVATE_UNKNOWN_KEY_${index}`] = `PRIVATE_UNKNOWN_VALUE_${index}`;
+    const makeWideTree = (depth: number): Record<string, unknown> => ({
+      kind: 'tasks',
+      dates:
+        depth === 0
+          ? []
+          : Array.from({ length: 6 }, () => ({
+              field: 'due',
+              dates: makeWideTree(depth - 1)['dates'],
+            })),
+    });
+    const result = {
+      content: [
+        {
+          type: 'tool-call',
+          toolName: 'inspect',
+          toolCallId: 'CYCLE_INPUT_ID_CANARY',
+          input: cyclic,
+        },
+        {
+          type: 'tool-call',
+          toolName: 'read',
+          toolCallId: 'NODE_BUDGET_ID_CANARY',
+          input: makeWideTree(4),
+        },
+      ],
+      finishReason: { unified: 'tool-calls' },
+      usage: {},
+    };
+    model.doGenerate = async function (this: typeof model) {
+      expect(this).toBe(model);
+      return result;
+    } as unknown as typeof model.doGenerate;
+    await evaluate(buildNativeTraceInstallEval(pageUrl, expectedModelId, traceKey), app, root);
+    const wrapped = plugin.providerConnections.model({ fixture: true });
+    const tools = [
+      { type: 'function' as const, name: 'inspect', inputSchema: { type: 'object' } },
+      { type: 'function' as const, name: 'read', inputSchema: { type: 'object' } },
+    ] satisfies NonNullable<SdkTools>;
+    await expect(wrapped.doGenerate({ tools, prompt: [] })).resolves.toBe(result);
+    const trace = JSON.parse(
+      String(await evaluate(buildNativeTraceReadEval(traceKey), app, root)),
+    ) as { generations: Array<Record<string, unknown>> };
+    const inputs = trace.generations[0]?.['readInputs'] as Array<Record<string, unknown>>;
+    expect(inputs).toHaveLength(2);
+    expect(JSON.stringify(inputs)).toContain('repeated-reference');
+    expect(JSON.stringify(inputs)).toContain('depth-limit');
+    expect(JSON.stringify(inputs)).toContain('node-limit');
+    expect(JSON.stringify(inputs)).toContain('"issued":"unknown"');
+    expect(JSON.stringify(inputs)).toContain('keyScanTruncated');
+    expect(JSON.stringify(inputs)).toContain('omittedKeyCountAtLeast');
+    expect(trace.generations[0]).toMatchObject({ readInputsTruncated: true });
+    const serialized = JSON.stringify(trace);
+    for (const privateValue of [
+      'PRIVATE_SHARED_HANDLE',
+      'PRIVATE_REVISION',
+      'PRIVATE_DATE_FROM',
+      'PRIVATE_ROOT_HANDLE',
+      'CYCLE_INPUT_ID_CANARY',
+      'NODE_BUDGET_ID_CANARY',
+      'PRIVATE_UNKNOWN_KEY_',
+      'PRIVATE_UNKNOWN_VALUE_',
+    ])
+      expect(serialized).not.toContain(privateValue);
+  });
+
+  it('registers read calls beyond the shape cap and retains mixed-batch ordinals', async () => {
+    const { app, root, plugin, model } = fixture();
+    let generation = 0;
+    model.doGenerate = async function (this: typeof model) {
+      expect(this).toBe(model);
+      generation++;
+      if (generation === 1) {
+        return {
+          content: [
+            { type: 'tool-call', toolName: 'research', toolCallId: 'OTHER_TOOL_ID', input: {} },
+            ...Array.from({ length: 9 }, (_, index) => ({
+              type: 'tool-call',
+              toolName: 'find',
+              toolCallId: `READ_CAP_ID_${index + 1}`,
+              input: { query: `PRIVATE_QUERY_${index + 1}` },
+            })),
+          ],
+          finishReason: { unified: 'tool-calls' },
+          usage: {},
+        };
+      }
+      return { content: [], finishReason: { unified: 'stop' }, usage: {} };
+    } as unknown as typeof model.doGenerate;
+    await evaluate(buildNativeTraceInstallEval(pageUrl, expectedModelId, traceKey), app, root);
+    const wrapped = plugin.providerConnections.model({ fixture: true });
+    const tools = [
+      { type: 'function' as const, name: 'research', inputSchema: { type: 'object' } },
+      { type: 'function' as const, name: 'find', inputSchema: { type: 'object' } },
+    ] satisfies NonNullable<SdkTools>;
+    await wrapped.doGenerate({ tools, prompt: [] });
+    await wrapped.doGenerate({
+      tools,
+      prompt: [
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'READ_CAP_ID_9',
+              toolName: 'find',
+              output: { type: 'json', value: { private: 'PRIVATE_RESULT' } },
+            },
+          ],
+        },
+      ],
+    });
+    const trace = JSON.parse(
+      String(await evaluate(buildNativeTraceReadEval(traceKey), app, root)),
+    ) as { generations: Array<Record<string, unknown>> };
+    expect(trace.generations[0]).toMatchObject({
+      readInputOmittedCount: 1,
+      readInputsTruncated: true,
+    });
+    const retainedReadInputs = trace.generations[0]?.['readInputs'] as Array<
+      Record<string, unknown>
+    >;
+    expect(retainedReadInputs.some((input) => input['callOrdinal'] === 2)).toBe(true);
+    expect(retainedReadInputs.some((input) => input['callOrdinal'] === 9)).toBe(true);
+    expect(retainedReadInputs).toHaveLength(8);
+    expect(trace.generations[1]?.['toolResults']).toEqual([
+      {
+        sourceName: 'find',
+        generationOrdinal: 1,
+        callOrdinal: 10,
+        resultKind: 'result',
+        codeUnavailable: true,
+        validationUnavailable: true,
+      },
+    ]);
+    expect(JSON.stringify(trace)).not.toContain('PRIVATE_QUERY_');
+    expect(JSON.stringify(trace)).not.toContain('PRIVATE_RESULT');
+  });
+
+  it('keeps generation ordinals stable for overlapping calls and out-of-order host results', async () => {
+    const { app, root, plugin, model } = fixture();
+    let providerCalls = 0;
+    let enterFirst!: () => void;
+    let releaseFirst!: () => void;
+    const firstEntered = new Promise<void>((resolve) => (enterFirst = resolve));
+    const firstGate = new Promise<void>((resolve) => (releaseFirst = resolve));
+    model.doGenerate = async function (this: typeof model) {
+      expect(this).toBe(model);
+      providerCalls++;
+      if (providerCalls === 1) {
+        enterFirst();
+        await firstGate;
+        return {
+          content: [
+            { type: 'tool-call', toolName: 'research', toolCallId: 'FIRST_OTHER_ID', input: {} },
+            {
+              type: 'tool-call',
+              toolName: 'find',
+              toolCallId: 'FIRST_READ_ID',
+              input: { query: 'PRIVATE_FIRST_QUERY' },
+            },
+          ],
+          finishReason: { unified: 'tool-calls' },
+          usage: {},
+        };
+      }
+      if (providerCalls === 2) {
+        return {
+          content: [
+            { type: 'tool-call', toolName: 'research', toolCallId: 'SECOND_OTHER_ID', input: {} },
+            {
+              type: 'tool-call',
+              toolName: 'inspect',
+              toolCallId: 'SECOND_READ_ID',
+              input: { kind: 'tree' },
+            },
+          ],
+          finishReason: { unified: 'tool-calls' },
+          usage: {},
+        };
+      }
+      return { content: [], finishReason: { unified: 'stop' }, usage: {} };
+    } as unknown as typeof model.doGenerate;
+    await evaluate(buildNativeTraceInstallEval(pageUrl, expectedModelId, traceKey), app, root);
+    const wrapped = plugin.providerConnections.model({ fixture: true });
+    const tools = [
+      { type: 'function' as const, name: 'research', inputSchema: { type: 'object' } },
+      { type: 'function' as const, name: 'find', inputSchema: { type: 'object' } },
+      { type: 'function' as const, name: 'inspect', inputSchema: { type: 'object' } },
+    ] satisfies NonNullable<SdkTools>;
+    const firstCall = wrapped.doGenerate({ tools, prompt: [] });
+    await firstEntered;
+    await wrapped.doGenerate({ tools, prompt: [] });
+    releaseFirst();
+    await firstCall;
+    await wrapped.doGenerate({
+      tools,
+      prompt: [
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'SECOND_READ_ID',
+              toolName: 'inspect',
+              output: { type: 'error-text', value: 'second' },
+            },
+            {
+              type: 'tool-result',
+              toolCallId: 'FIRST_READ_ID',
+              toolName: 'find',
+              output: { type: 'error-text', value: 'first' },
+            },
+          ],
+        },
+      ],
+    });
+    const trace = JSON.parse(
+      String(await evaluate(buildNativeTraceReadEval(traceKey), app, root)),
+    ) as { generations: Array<Record<string, unknown>> };
+    const generationOne = trace.generations.find((entry) => entry['index'] === 1);
+    const generationTwo = trace.generations.find((entry) => entry['index'] === 2);
+    const generationThree = trace.generations.find((entry) => entry['index'] === 3);
+    expect(generationOne?.['readInputs']).toMatchObject([
+      { sourceName: 'find', generationOrdinal: 1, callOrdinal: 2 },
+    ]);
+    expect(generationTwo?.['readInputs']).toMatchObject([
+      { sourceName: 'inspect', generationOrdinal: 2, callOrdinal: 2 },
+    ]);
+    expect(generationThree?.['toolResults']).toMatchObject([
+      { sourceName: 'inspect', generationOrdinal: 2, callOrdinal: 2 },
+      { sourceName: 'find', generationOrdinal: 1, callOrdinal: 2 },
+    ]);
+    expect(JSON.stringify(trace)).not.toContain('PRIVATE_FIRST_QUERY');
+    expect(JSON.stringify(trace)).not.toContain('FIRST_READ_ID');
+    expect(JSON.stringify(trace)).not.toContain('SECOND_READ_ID');
+  });
+
+  it('keeps source registration after input observation fails and deduplicates only accepted host envelopes', async () => {
+    const { app, root, plugin, model } = fixture();
+    const callId = 'RECOVERABLE_CALL_ID_CANARY';
+    let providerCalls = 0;
+    const result = {
+      content: [
+        Object.defineProperties(
+          { type: 'tool-call', toolName: 'find', toolCallId: callId },
+          {
+            input: {
+              get() {
+                throw new Error('PRIVATE_INPUT_GETTER_ERROR');
+              },
+            },
+          },
+        ),
+      ],
+      finishReason: { unified: 'tool-calls' },
+      usage: {},
+    };
+    model.doGenerate = async function (this: typeof model) {
+      expect(this).toBe(model);
+      providerCalls++;
+      return providerCalls === 1 ? result : returned;
+    } as unknown as typeof model.doGenerate;
+    await evaluate(buildNativeTraceInstallEval(pageUrl, expectedModelId, traceKey), app, root);
+    const wrapped = plugin.providerConnections.model({ fixture: true });
+    const tools = [
+      { type: 'function' as const, name: 'find', inputSchema: { type: 'object' } },
+    ] satisfies NonNullable<SdkTools>;
+    await expect(wrapped.doGenerate({ tools, prompt: [] })).resolves.toBe(result);
+    const outputValue = Object.defineProperty({}, 'type', {
+      get() {
+        throw new Error('PRIVATE_OUTPUT_GETTER_ERROR');
+      },
+    });
+    const returned = {
+      content: [],
+      finishReason: { unified: 'stop' },
+      usage: {},
+    };
+    const params = {
+      tools,
+      prompt: [
+        {
+          role: 'tool',
+          content: [
+            { type: 'tool-result', toolCallId: callId, toolName: 'find', output: outputValue },
+            {
+              type: 'tool-result',
+              toolCallId: callId,
+              toolName: 'find',
+              output: { type: 'error-text', value: 'Invalid API argument.' },
+            },
+          ],
+        },
+      ],
+    };
+    await expect(wrapped.doGenerate(params)).resolves.toBe(returned);
+    const trace = JSON.parse(
+      String(await evaluate(buildNativeTraceReadEval(traceKey), app, root)),
+    ) as { generations: Array<Record<string, unknown>> };
+    expect(trace.generations[0]).toMatchObject({
+      readInputFailureCount: 1,
+      readInputOmittedCount: 1,
+      readCallRegistrationOmittedCount: 0,
+    });
+    expect(trace.generations[1]?.['toolResults']).toEqual([
+      {
+        sourceName: 'find',
+        generationOrdinal: 1,
+        callOrdinal: 1,
+        resultKind: 'error',
+        errorClassification: 'invalid-api-argument',
+        codeUnavailable: true,
+        validationUnavailable: true,
+      },
+    ]);
+    expect(trace.generations[1]).toMatchObject({
+      toolResultsFailureCount: 1,
+      toolResultsOmittedCount: 1,
+      toolResultsTruncated: true,
+    });
+    expect(JSON.stringify(trace)).not.toContain(callId);
+    expect(JSON.stringify(trace)).not.toContain('PRIVATE_INPUT_GETTER_ERROR');
+    expect(JSON.stringify(trace)).not.toContain('PRIVATE_OUTPUT_GETTER_ERROR');
+  });
+
   it('captures bounded finish input shape and schema fingerprint without retaining private values', async () => {
     const { app, root, plugin, model } = fixture();
     const privateCanaries = [
