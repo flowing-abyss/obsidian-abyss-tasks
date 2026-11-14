@@ -2222,28 +2222,33 @@ class CommandToolOwner {
   ): Promise<unknown> {
     this.assertResearchCurrent_abyssPrivate();
     const cached = 'url' in input ? this.pageReads_abyssPrivate.get(input.url) : undefined;
-    if (cached !== undefined) return { untrustedResearch: cached };
-    if (this.ctx_abyssPrivate.researchCalls >= 2)
-      throw new CommandFailure(
-        'RESEARCH_LIMIT',
-        'This turn reached its research limit. Continue with another command.',
-      );
-    this.ctx_abyssPrivate.researchCalls++;
-    this.ctx_abyssPrivate.session.status('searching', commandMessage('Researching…'));
-    this.assertResearchCurrent_abyssPrivate();
-    const output =
-      'url' in input
-        ? await required(readPage)(input.url, this.ctx_abyssPrivate.signal)
-        : await port.search(input.query, this.ctx_abyssPrivate.signal);
-    const result = researchResultSchema.parse(output);
-    this.ctx_abyssPrivate.signal.throwIfAborted();
-    if ('url' in input) this.pageReads_abyssPrivate.set(input.url, result);
-    this.ctx_abyssPrivate.evidence?.accept({
-      action: 'research',
-      entity: 'web',
-      complete: !result.truncated,
-    });
-    return { untrustedResearch: result };
+    let result = cached;
+    if (result === undefined) {
+      if (this.ctx_abyssPrivate.researchCalls >= 2)
+        throw new CommandFailure(
+          'RESEARCH_LIMIT',
+          'This turn reached its research limit. Continue with another command.',
+        );
+      this.ctx_abyssPrivate.researchCalls++;
+      this.ctx_abyssPrivate.session.status('searching', commandMessage('Researching…'));
+      this.assertResearchCurrent_abyssPrivate();
+      const output =
+        'url' in input
+          ? await required(readPage)(input.url, this.ctx_abyssPrivate.signal)
+          : await port.search(input.query, this.ctx_abyssPrivate.signal);
+      result = researchResultSchema.parse(output);
+      this.ctx_abyssPrivate.signal.throwIfAborted();
+      if ('url' in input) this.pageReads_abyssPrivate.set(input.url, result);
+      this.ctx_abyssPrivate.evidence?.accept({
+        action: 'research',
+        entity: 'web',
+        complete: !result.truncated,
+      });
+    }
+    return {
+      next: 'Research only. Use task tools for requested changes.',
+      untrustedResearch: result,
+    };
   }
   private assertResearchCurrent_abyssPrivate(): void {
     this.ctx_abyssPrivate.signal.throwIfAborted();
