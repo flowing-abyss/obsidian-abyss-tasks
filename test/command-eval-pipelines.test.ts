@@ -2,6 +2,7 @@ import { MockLanguageModelV4 } from 'ai/test';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { TaskTreeV1 } from '../api';
 import type { ResearchReviewer } from '../src/ai/CommandAgent';
+import type { CommandSessionSnapshot } from '../src/ai/commandTypes';
 import { parseRecurrenceRule } from '../src/tasks';
 import { submittedMessage } from './command-live/controls';
 import { actions, pipelines, selectCases, type EvalCase } from './command-live/corpus';
@@ -15,7 +16,11 @@ import {
   type TurnEvidence,
   type TurnExpectation,
 } from './command-live/oracles';
-import { preservationEvidence, type SelectedPlanObservation } from './command-live/preservation';
+import {
+  preservationEvidence,
+  retainedPlanEvidenceFromTrace,
+  type SelectedPlanObservation,
+} from './command-live/preservation';
 import { object, RequestBudget } from './command-live/safety';
 import { runScriptedCase as runCase } from './command-live/scriptedCase';
 import { expectDefined, useRealMoment } from './helpers';
@@ -2328,6 +2333,238 @@ function commentOracleFailures(
     ),
   });
 }
+function structuralProbeNode(
+  target: string,
+  markdownTitle: string,
+  parentTarget: string | null,
+  children: TaskTreeV1[] = [],
+): TaskTreeV1 {
+  return {
+    target,
+    revision: `${target}:r1`,
+    title: markdownTitle,
+    markdownTitle,
+    parentTarget,
+    dates: {},
+    tags: [],
+    comments: [],
+    entries: children.map((child) => ({ kind: 'child', target: child.target })),
+    children,
+    childCount: children.length,
+    commentCount: 0,
+    complete: true,
+    truncated: false,
+  } as unknown as TaskTreeV1;
+}
+function structuralProbeFailures({
+  before,
+  after,
+  operation,
+  expected,
+  inputKind = 'edit',
+  batchPlanRevision = 'p2',
+  sourceRevision = before.revision,
+}: {
+  before: TaskTreeV1;
+  after: TaskTreeV1;
+  operation?: Record<string, unknown> | undefined;
+  expected: TurnExpectation;
+  inputKind?: 'edit' | 'batch';
+  batchPlanRevision?: string;
+  sourceRevision?: string;
+}): string[] {
+  const previous = {
+    trees: [],
+    proposal: { changes: [] },
+    journal: [],
+    entities: { tasks: [] },
+    preparations: [],
+  } as unknown as CommandSessionSnapshot;
+  const snapshot = {
+    ...previous,
+    proposal: {
+      changes: [
+        {
+          kind: 'task',
+          plan: { kind: 'edit', target: 'probe-plan', revision: 'p2', before, after },
+        },
+      ],
+    },
+    preparations:
+      operation === undefined
+        ? []
+        : [
+            {
+              kind: 'task',
+              input:
+                inputKind === 'edit'
+                  ? {
+                      kind: 'edit',
+                      target: before.target,
+                      expectedRevision: sourceRevision,
+                      operation,
+                    }
+                  : {
+                      kind: 'batch',
+                      plan: 'probe-plan',
+                      expectedPlanRevision: batchPlanRevision,
+                      operations: [operation],
+                    },
+            },
+          ],
+  } as unknown as CommandSessionSnapshot;
+  const preservation = preservationEvidence({ snapshot, previous }, [after], expected);
+  return evaluateTurn(expected, {
+    status: 'ready',
+    question: null,
+    trees: [after],
+    before: {},
+    after: {},
+    journal: [],
+    admissions: [],
+    complete: true,
+    writeCount: 0,
+    preservation,
+  });
+}
+function mutableChildren(node: unknown): unknown[] {
+  const children = object(node)['children'];
+  return Array.isArray(children) ? children : [];
+}
+function mutableTree(evidence: TurnEvidence): Record<string, unknown> {
+  return object(evidence.trees[0]);
+}
+it.each([
+  { name: 'missing accepted operation', operation: undefined, sourceRevision: 'probe-root:r1' },
+  {
+    name: 'stale edit source revision',
+    operation: { type: 'add-child', target: 'probe-root', markdownTitle: 'Check rope anchors' },
+    sourceRevision: 'stale-revision',
+  },
+])('requires structural proof for an explicit addition: $name', ({ operation, sourceRevision }) => {
+  const before = structuralProbeNode('probe-root', 'Plan glacier inspection', null);
+  const after = structuralProbeNode('probe-root', 'Plan glacier inspection', null, [
+    structuralProbeNode('new-step', 'Check rope anchors', 'probe-root'),
+  ]);
+  const failures = structuralProbeFailures({
+    before,
+    after,
+    operation,
+    sourceRevision,
+    expected: {
+      status: 'ready',
+      trees: [
+        {
+          markdownTitle: 'Plan glacier inspection',
+          children: [{ markdownTitle: 'Check rope anchors' }],
+        },
+      ],
+      addedNodes: [[0, 0]],
+      writeCount: 0,
+    },
+  });
+  expect(failures).toContain('preservation:task-correspondence');
+});
+it('does not authorize decomposition additions beneath an existing descendant', () => {
+  const before = structuralProbeNode('probe-root', 'Survey glacial ridge', null, [
+    structuralProbeNode('old-child', 'Retained weather station', 'probe-root'),
+  ]);
+  const after = structuredClone(before);
+  const nested = structuralProbeNode('new-procedure', 'Check station antenna', 'old-child');
+  const oldChild = object(expectDefined(after.children[0]));
+  oldChild['children'] = [nested];
+  oldChild['childCount'] = 1;
+  oldChild['entries'] = [{ kind: 'child', target: nested.target }];
+  const failures = structuralProbeFailures({
+    before,
+    after,
+    operation: {
+      type: 'add-child',
+      target: 'old-child',
+      markdownTitle: nested.markdownTitle,
+    },
+    expected: {
+      status: 'ready',
+      trees: [{ markdownTitle: 'Survey glacial ridge' }],
+      decomposition: { minChildren: 1, maxChildren: 3, maxDepth: 2, noInventedSchedule: true },
+      writeCount: 0,
+    },
+  });
+  expect(failures).toContain('preservation:task-correspondence');
+});
+it('fails closed on raw batch preparations and stale batch plan bases', () => {
+  const original = structuralProbeNode('probe-root', 'Chart salt marsh route', null, [
+    structuralProbeNode('retained-step', 'Check the north inlet', 'probe-root'),
+  ]);
+  const added = structuralProbeNode('new-step', 'Mark the east marker', 'probe-root');
+  const after = structuralProbeNode('probe-root', 'Chart salt marsh route', null, [
+    structuredClone(original.children[0] as TaskTreeV1),
+    added,
+  ]);
+  const expected: TurnExpectation = {
+    status: 'ready',
+    trees: [{ markdownTitle: 'Chart salt marsh route' }],
+    decomposition: { minChildren: 1, maxChildren: 3, maxDepth: 2, noInventedSchedule: true },
+    writeCount: 0,
+  };
+  const operation = {
+    type: 'add-child',
+    target: 'probe-root',
+    markdownTitle: 'Mark the east marker',
+  };
+  expect(
+    structuralProbeFailures({
+      before: original,
+      after,
+      operation,
+      expected,
+      inputKind: 'batch',
+    }),
+  ).toContain('preservation:children');
+  expect(
+    structuralProbeFailures({
+      before: original,
+      after,
+      operation,
+      expected,
+      inputKind: 'batch',
+      batchPlanRevision: 'stale-revision',
+    }),
+  ).toContain('preservation:children');
+});
+it.each([
+  { name: 'unaccepted grandchild', parentTarget: 'new-step', target: 'rogue-step' },
+  { name: 'foreign-parent grandchild', parentTarget: 'foreign-owner', target: 'foreign-step' },
+  { name: 'copied original identity', parentTarget: 'new-step', target: 'retained-step' },
+])('rejects an unproved descendant under a new child: $name', ({ parentTarget, target }) => {
+  const original = structuralProbeNode('probe-root', 'Chart salt marsh route', null, [
+    structuralProbeNode('retained-step', 'Check the north inlet', 'probe-root'),
+  ]);
+  const added = structuralProbeNode('new-step', 'Mark the east marker', 'probe-root', [
+    structuralProbeNode(target, 'Check the new beacon', parentTarget),
+  ]);
+  const after = structuralProbeNode('probe-root', 'Chart salt marsh route', null, [
+    structuredClone(original.children[0] as TaskTreeV1),
+    added,
+  ]);
+  const expected: TurnExpectation = {
+    status: 'ready',
+    trees: [{ markdownTitle: 'Chart salt marsh route' }],
+    decomposition: { minChildren: 1, maxChildren: 3, maxDepth: 2, noInventedSchedule: true },
+    writeCount: 0,
+  };
+  const failures = structuralProbeFailures({
+    before: original,
+    after,
+    operation: {
+      type: 'add-child',
+      target: 'probe-root',
+      markdownTitle: 'Mark the east marker',
+    },
+    expected,
+  });
+  expect(failures).toContain('preservation:task-correspondence');
+});
 it('rejects ungrounded comment projection bridges and changed retained timestamps or history', async () => {
   const { test, report } = await replay('034', [...removeFirstIssuedComment]);
   const turn = expectDefined(report.turns[0]);
@@ -3829,7 +4066,7 @@ it('uses mechanical source predicates to continue a project preview through cano
   expect(preview.preservationFailures ?? []).toEqual([]);
   expect(previewExpectation).toEqual(originalExpectation);
 
-  const serialized = JSON.parse(JSON.stringify(report)) as {
+  const serialized = JSON.parse(JSON.stringify(report)) as unknown as {
     turns: RetainedTurn[];
     trace: RetainedTraceEvent[];
   };
@@ -4103,5 +4340,917 @@ it.each(['ru', 'en'] as const)(
         ];
       },
     ]);
+  },
+);
+
+it('preserves an existing route when removing its middle stop with a retained dated comment', async () => {
+  const initial =
+    '- [ ] Plan lantern route\n' +
+    '  - [ ] Mark north gate #field ⏳ 2026-12-03\n' +
+    '    - 2026-12-01: Gate code confirmed\n' +
+    '    - 2026-12-02: Keep the signal flag dry\n' +
+    '  - [ ] Inspect closed bridge\n' +
+    '  - [ ] Check west beacon 📅 2026-12-08\n';
+  const final =
+    '- [ ] Plan lantern route\n' +
+    '  - [ ] Mark north gate #field ⏳ 2026-12-03\n' +
+    '    - 2026-12-01: Gate code confirmed\n' +
+    '    - 2026-12-02: Keep the signal flag dry\n' +
+    '  - [ ] Check west beacon 📅 2026-12-08\n';
+  const test: EvalCase = {
+    id: 'dev-existing-route-middle-stop-removal',
+    family: 'write-oracle-control',
+    split: 'development',
+    files: files(initial),
+    turns: [
+      {
+        text: 'Remove the closed bridge stop from Plan lantern route.',
+        expect: {
+          status: 'ready',
+          trees: [
+            {
+              markdownTitle: 'Plan lantern route',
+              children: [
+                {
+                  markdownTitle: 'Mark north gate',
+                  tags: ['#field'],
+                  dates: { scheduled: '2026-12-03' },
+                  comments: [
+                    {
+                      text: 'Gate code confirmed',
+                      timestamp: { precision: 'day', value: '2026-12-01' },
+                    },
+                    {
+                      text: 'Keep the signal flag dry',
+                      timestamp: { precision: 'day', value: '2026-12-02' },
+                    },
+                  ],
+                },
+                { markdownTitle: 'Check west beacon', dates: { due: '2026-12-08' } },
+              ],
+            },
+          ],
+          removedNodes: [[0, 1]],
+          writeCount: 0,
+        },
+      },
+      {
+        text: 'Save the route change.',
+        expect: {
+          status: 'saved',
+          files: { 'a.md': final },
+          writeCount: 1,
+          createdFiles: [],
+        },
+      },
+    ],
+  };
+  const { report } = await replay(test, [
+    plan,
+    tool('read', { input: { kind: 'tasks', query: 'Plan lantern route' } }),
+    (p) => tool('read', { input: { kind: 'tree', target: firstRead(p)['target'] } }),
+    (p) => {
+      const root = object(result(p, 'read')['tree']);
+      const middle = object((root['children'] as unknown[])[1]);
+      return tool('task', {
+        input: {
+          kind: 'edit',
+          target: root['target'],
+          expectedRevision: root['revision'],
+          operation: { type: 'remove', target: middle['target'] },
+        },
+      });
+    },
+    finish,
+    confirm,
+  ]);
+  expect(report.turns.map((turn) => turn.failures)).toEqual([[], []]);
+  const preview = expectDefined(report.turns[0]);
+  expect(preview.writeCount).toBe(0);
+  expect(preview.trees[0]).toMatchObject({
+    children: [{ markdownTitle: 'Mark north gate' }, { markdownTitle: 'Check west beacon' }],
+  });
+  const saved = expectDefined(report.turns[1]);
+  expect(saved.journal).toMatchObject([{ state: 'settled', effects: 'committed' }]);
+  expect(saved.journal[0]?.receipt).toBeDefined();
+  expect(saved.admissions).toContainEqual(expect.objectContaining({ state: 'admitted' }));
+  expect(saved.after['a.md']).toBe(final);
+  expect(
+    (
+      saved.publicReadback.find((item) => item.markdownTitle === 'Plan lantern route')?.children ??
+      []
+    ).map((child) => child.markdownTitle),
+  ).toEqual(['Mark north gate', 'Check west beacon']);
+  expect(
+    saved.publicReadback.find((item) => item.markdownTitle === 'Plan lantern route')?.children[0]
+      ?.comments,
+  ).toMatchObject([
+    { text: 'Gate code confirmed', timestamp: { precision: 'day', value: '2026-12-01' } },
+    { text: 'Keep the signal flag dry', timestamp: { precision: 'day', value: '2026-12-02' } },
+  ]);
+  const expected = expectDefined(test.turns[0]).expect;
+  const serialized = JSON.parse(JSON.stringify(report)) as {
+    turns: RetainedTurn[];
+    trace: RetainedTraceEvent[];
+  };
+  const retainedPreview = expectDefined(serialized.turns[0]);
+  const rebuiltPreview = {
+    ...retainedPreview,
+    preservation: preservationEvidence(
+      {
+        snapshot: retainedPreview.snapshot as CommandSessionSnapshot,
+        previous: retainedPreview.inputSnapshot as CommandSessionSnapshot,
+        ...retainedPlanEvidenceFromTrace(serialized.trace, 1),
+      },
+      retainedPreview.trees as unknown as TaskTreeV1[],
+      expected,
+    ),
+  };
+  expect(regradeRetainedTurn(expected, rebuiltPreview, serialized.trace, 1).failures).toEqual([]);
+  expect(
+    regradeRetainedTurn(expectDefined(test.turns[1]).expect, rebuiltPreview, serialized.trace, 1)
+      .failures,
+  ).toContain('status:ready:expected:saved');
+  const wrongRemoval = structuredClone(preview);
+  const preparation = expectDefined(wrongRemoval.snapshot.preparations?.[0]);
+  const operation = object(object(preparation)['input'])['operation'];
+  object(operation)['target'] = object(mutableChildren(preview.trees[0])[1])['target'];
+  expect(commentOracleFailures(wrongRemoval, expected)).toContain(
+    'preservation:task-correspondence',
+  );
+
+  const wrongSiblingAndRenamedSurvivor = structuredClone(preview);
+  const wrongSiblingInput = object(
+    object(expectDefined(wrongSiblingAndRenamedSurvivor.snapshot.preparations?.[0]))['input'],
+  );
+  const wrongSiblingChanges = object(object(wrongSiblingAndRenamedSurvivor.snapshot)['proposal'])[
+    'changes'
+  ] as unknown[];
+  const wrongSiblingPlan = object(
+    object(expectDefined(wrongSiblingChanges.find((change) => object(change)['kind'] === 'task')))[
+      'plan'
+    ],
+  );
+  const wrongSiblingSource = object(wrongSiblingPlan['before']);
+  const wrongSiblingSourceChildren = mutableChildren(wrongSiblingSource);
+  const expectedRenamedSurvivor = structuredClone(
+    object(expectDefined(wrongSiblingSourceChildren[1])),
+  );
+  const actuallyRemoved = object(expectDefined(wrongSiblingSourceChildren[2]));
+  object(wrongSiblingInput['operation'])['target'] = actuallyRemoved['target'];
+  const wrongSiblingTree = object(wrongSiblingAndRenamedSurvivor.trees[0]);
+  const afterLast = structuredClone(object(mutableChildren(preview.trees[0])[1]));
+  afterLast['target'] = expectedRenamedSurvivor['target'];
+  afterLast['revision'] = expectedRenamedSurvivor['revision'];
+  mutableChildren(wrongSiblingTree).splice(1, 1, {
+    ...afterLast,
+  });
+  wrongSiblingTree['entries'] = mutableChildren(wrongSiblingTree).map((child) => ({
+    kind: 'child',
+    target: object(child)['target'],
+  }));
+  wrongSiblingTree['childCount'] = 2;
+  expect(commentOracleFailures(wrongSiblingAndRenamedSurvivor, expected)).toContain(
+    'preservation:task-correspondence',
+  );
+
+  const replacedSurvivor = structuredClone(preview);
+  const replacementChild = object(mutableChildren(replacedSurvivor.trees[0])[0]);
+  replacementChild['target'] = 'different-issued-child';
+  expect(commentOracleFailures(replacedSurvivor, expected)).toContain(
+    'preservation:task-correspondence',
+  );
+
+  const movedComment = structuredClone(preview);
+  const movedRoot = object(movedComment.trees[0]);
+  const owner = object(mutableChildren(movedRoot)[0]);
+  const comment = object((owner['comments'] as unknown[])[0]);
+  owner['comments'] = [];
+  owner['entries'] = [];
+  movedRoot['comments'] = [{ ...comment, parentTarget: movedRoot['target'] }];
+  expect(commentOracleFailures(movedComment, expected)).toContain(
+    'preservation:comment-correspondence',
+  );
+
+  const changedCommentTimestamp = structuredClone(preview);
+  const timestampOwner = object(mutableChildren(changedCommentTimestamp.trees[0])[0]);
+  object((timestampOwner['comments'] as unknown[])[0])['timestamp'] = {
+    precision: 'day',
+    value: '2026-12-03',
+  };
+  expect(commentOracleFailures(changedCommentTimestamp, expected)).toContain('tree-postcondition');
+
+  const changedCommentText = structuredClone(preview);
+  const textOwner = object(mutableChildren(changedCommentText.trees[0])[0]);
+  object((textOwner['comments'] as unknown[])[0])['text'] = 'Changed the gate code';
+  expect(commentOracleFailures(changedCommentText, expected)).toContain('tree-postcondition');
+
+  const reorderedComments = structuredClone(preview);
+  const commentOwner = object(mutableChildren(reorderedComments.trees[0])[0]);
+  (commentOwner['comments'] as unknown[]).reverse();
+  (commentOwner['entries'] as unknown[]).reverse();
+  expect(commentOracleFailures(reorderedComments, expected)).toContain('tree-postcondition');
+
+  const duplicateCommentHandle = structuredClone(preview);
+  const duplicateOwner = object(mutableChildren(duplicateCommentHandle.trees[0])[0]);
+  const duplicateComments = duplicateOwner['comments'] as unknown[];
+  object(duplicateComments[1])['target'] = object(duplicateComments[0])['target'];
+  (duplicateOwner['entries'] as unknown[])[1] = {
+    kind: 'comment',
+    target: object(duplicateComments[0])['target'],
+  };
+  expect(commentOracleFailures(duplicateCommentHandle, expected)).toContain(
+    'preservation:comment-correspondence',
+  );
+
+  const copiedCommentOwner = structuredClone(preview);
+  const copiedOwnerRoot = object(copiedCommentOwner.trees[0]);
+  const sourceOwner = object(mutableChildren(copiedOwnerRoot)[0]);
+  const copiedComment = structuredClone(object((sourceOwner['comments'] as unknown[])[0]));
+  copiedComment['parentTarget'] = copiedOwnerRoot['target'];
+  copiedOwnerRoot['comments'] = [copiedComment];
+  copiedOwnerRoot['entries'] = [{ kind: 'comment', target: copiedComment['target'] }];
+  expect(commentOracleFailures(copiedCommentOwner, expected)).toContain('preservation:comments');
+
+  const missingOperation = structuredClone(preview);
+  object(missingOperation.snapshot)['preparations'] = [];
+  expect(commentOracleFailures(missingOperation, expected)).toContain(
+    'preservation:task-correspondence',
+  );
+
+  const wrongSourceRevision = structuredClone(preview);
+  const wrongBasis = expectDefined(wrongSourceRevision.snapshot.preparations?.[0]);
+  object(wrongBasis.input)['expectedRevision'] = 'another-source-revision';
+  expect(commentOracleFailures(wrongSourceRevision, expected)).toContain(
+    'preservation:task-correspondence',
+  );
+
+  const extraRemoval = structuredClone(preview);
+  mutableChildren(extraRemoval.trees[0]).pop();
+  expect(commentOracleFailures(extraRemoval, expected)).toContain(
+    'preservation:task-correspondence',
+  );
+
+  const incompleteCommentOwner = structuredClone(preview);
+  Object.assign(object(mutableChildren(incompleteCommentOwner.trees[0])[0]), {
+    complete: false,
+    truncated: true,
+  });
+  expect(commentOracleFailures(incompleteCommentOwner, expected)).toContain(
+    'preservation:comment-correspondence',
+  );
+});
+
+it.each(['issued-child', 'append', 'batch'] as const)(
+  'proves a declared middle-stop removal through the canonical %s trajectory',
+  async (mode) => {
+    const rootTitle = `Sketch marsh crossing ${mode}`;
+    const first = `Mark reed shelter ${mode}`;
+    const removed = `Check silted ford ${mode}`;
+    const last = `Measure channel depth ${mode}`;
+    const added = `Record wind marker ${mode}`;
+    const initial =
+      `- [ ] ${rootTitle} #coast 📅 2026-12-17\n` +
+      `  - [ ] ${first} #survey ⏳ 2026-12-18\n` +
+      '    - 2026-12-04: Keep the tide gauge dry\n' +
+      `  - [ ] ${removed}\n` +
+      `  - [ ] ${last} #depth\n`;
+    const includesAdded = mode !== 'issued-child';
+    const addedLine = includesAdded ? `  - [ ] ${added}\n` : '';
+    const final = `- [ ] ${rootTitle} #coast 📅 2026-12-17
+  - [ ] ${first} #survey ⏳ 2026-12-18
+    - 2026-12-04: Keep the tide gauge dry
+  - [ ] ${last} #depth
+${addedLine}`;
+    const expectedChildren = [
+      tree(first, {
+        tags: ['#survey'],
+        dates: { scheduled: '2026-12-18' },
+        comments: [
+          { text: 'Keep the tide gauge dry', timestamp: { precision: 'day', value: '2026-12-04' } },
+        ],
+      }),
+      tree(last, { tags: ['#depth'] }),
+    ];
+    if (includesAdded) expectedChildren.push(tree(added));
+    const test: EvalCase = {
+      id: `dev-declared-removal-${mode}`,
+      family: 'write-oracle-control',
+      split: 'development',
+      files: files(initial),
+      turns: [
+        {
+          text: `Remove only ${removed} from ${rootTitle}. Keep the remaining checks intact.`,
+          expect: {
+            status: 'ready',
+            trees: [
+              tree(rootTitle, {
+                tags: ['#coast'],
+                dates: { due: '2026-12-17' },
+                children: expectedChildren,
+              }),
+            ],
+            removedNodes: [[0, 1]],
+            ...(includesAdded ? { addedNodes: [[0, 2]] } : {}),
+            writeCount: 0,
+          },
+        },
+        {
+          text: 'Save the reviewed marsh route.',
+          expect: { status: 'saved', files: { 'a.md': final }, writeCount: 1, createdFiles: [] },
+        },
+      ],
+    };
+    const steps: Step[] = [
+      plan,
+      tool('read', { input: { kind: 'tasks', query: rootTitle } }),
+      (p) => tool('read', { input: { kind: 'tree', target: firstRead(p)['target'] } }),
+      (p) => {
+        const root = object(result(p, 'read')['tree']);
+        const child = object((root['children'] as unknown[])[1]);
+        if (mode === 'issued-child')
+          return tool('task', {
+            input: {
+              kind: 'edit',
+              target: child['target'],
+              expectedRevision: child['revision'],
+              operation: { type: 'remove', target: child['target'] },
+            },
+          });
+        return tool('task', {
+          input: {
+            kind: 'edit',
+            target: root['target'],
+            expectedRevision: root['revision'],
+            operation: { type: 'add-child', target: root['target'], markdownTitle: added },
+          },
+        });
+      },
+    ];
+    if (includesAdded)
+      steps.push((p) => {
+        const staged = result(p, 'task');
+        const root = object(staged['after']);
+        const child = object((root['children'] as unknown[])[1]);
+        const operation = { type: 'remove', target: child['target'] };
+        return tool('task', {
+          input:
+            mode === 'append'
+              ? {
+                  kind: 'append',
+                  plan: staged['target'],
+                  expectedPlanRevision: staged['revision'],
+                  operation,
+                }
+              : {
+                  kind: 'batch',
+                  plan: staged['target'],
+                  expectedPlanRevision: staged['revision'],
+                  operations: [operation],
+                },
+        });
+      });
+    steps.push(finish, confirm);
+    const { report } = await replay(test, steps);
+    expect(report.turns.map((turn) => turn.failures)).toEqual([[], []]);
+    const preview = expectDefined(report.turns[0]);
+    expect(preview.writeCount).toBe(0);
+    expect((preview.trees[0] as TaskTreeV1).children.map((child) => child.markdownTitle)).toEqual(
+      expectedChildren.map((child) => object(child)['markdownTitle']),
+    );
+    if (mode === 'batch')
+      expect(
+        report.trace.some((event) => {
+          if (event.kind !== 'generation-output') return false;
+          const calls = object(event.data)['content'];
+          return (
+            Array.isArray(calls) &&
+            calls.some((call) => {
+              const item = object(call);
+              if (item['toolName'] !== 'task' || typeof item['input'] !== 'string') return false;
+              const parsed = JSON.parse(item['input']) as unknown;
+              return object(object(parsed)['input'])['kind'] === 'batch';
+            })
+          );
+        }),
+      ).toBe(true);
+    const saved = expectDefined(report.turns[1]);
+    expect(saved.journal).toMatchObject([{ state: 'settled', effects: 'committed' }]);
+    expect(saved.journal[0]?.receipt).toBeDefined();
+    expect(saved.admissions).toContainEqual(expect.objectContaining({ state: 'admitted' }));
+    expect(saved.after['a.md']).toBe(final);
+    expect(
+      saved.publicReadback
+        .find((item) => item.markdownTitle === rootTitle)
+        ?.children.map((child) => child.markdownTitle),
+    ).toEqual(expectedChildren.map((child) => object(child)['markdownTitle']));
+  },
+);
+
+it('accepts chained canonical additions under two existing parent owners before Save', async () => {
+  const rootTitle = 'Plan estuary sampling';
+  const ownerTitle = 'Prepare specimen kits';
+  const nestedTitle = 'Label cold-storage vials';
+  const directTitle = 'Check the landing site';
+  const neighbor = '- [ ] Inspect reserve batteries #safety 📅 2026-12-16\n';
+  const initial = `- [ ] ${rootTitle}\n  - [ ] ${ownerTitle}\n${neighbor}`;
+  const final = `- [ ] ${rootTitle} 📅 2026-12-12\n  - [ ] ${ownerTitle}\n  \t- [ ] ${nestedTitle}\n  - [ ] ${directTitle}\n${neighbor}`;
+  const test: EvalCase = {
+    id: 'dev-two-parent-append-chain',
+    family: 'write-oracle-control',
+    split: 'development',
+    files: files(initial),
+    turns: [
+      {
+        text: `Set the due date of ${rootTitle} to 2026-12-12. Add ${directTitle} under it and ${nestedTitle} under ${ownerTitle}.`,
+        expect: {
+          status: 'ready',
+          trees: [
+            tree(rootTitle, {
+              dates: { due: '2026-12-12' },
+              children: [tree(ownerTitle, { children: [tree(nestedTitle)] }), tree(directTitle)],
+            }),
+          ],
+          addedNodes: [
+            [0, 0, 0],
+            [0, 1],
+          ],
+          writeCount: 0,
+        },
+      },
+      {
+        text: `Save ${rootTitle}.`,
+        expect: { status: 'saved', files: { 'a.md': final }, writeCount: 1, createdFiles: [] },
+      },
+    ],
+  };
+  const { report } = await replay(test, [
+    plan,
+    tool('read', { input: { kind: 'tasks', query: rootTitle } }),
+    (prompt) => tool('read', { input: { kind: 'tree', target: firstRead(prompt)['target'] } }),
+    (prompt) => {
+      const root = object(result(prompt, 'read')['tree']);
+      return tool('task', {
+        input: {
+          kind: 'edit',
+          target: root['target'],
+          expectedRevision: root['revision'],
+          operation: {
+            type: 'patch',
+            target: root['target'],
+            patch: { due: { type: 'set', value: '2026-12-12' } },
+          },
+        },
+      });
+    },
+    (prompt) => {
+      const staged = result(prompt, 'task');
+      const root = object(staged['after']);
+      const owner = object((root['children'] as unknown[])[0]);
+      return tool('task', {
+        input: {
+          kind: 'batch',
+          plan: staged['target'],
+          expectedPlanRevision: staged['revision'],
+          operations: [
+            { type: 'add-child', target: root['target'], markdownTitle: directTitle },
+            { type: 'add-child', target: owner['target'], markdownTitle: nestedTitle },
+          ],
+        },
+      });
+    },
+    finish,
+    confirm,
+  ]);
+  expect(report.turns.map((turn) => turn.failures)).toEqual([[], []]);
+  const preview = expectDefined(report.turns[0]);
+  const finalAppendEvents = report.trace.filter(
+    (event) =>
+      event.kind === 'observed-plan-preparation' &&
+      object(object(event.data)['input'])['operationType'] === 'add-child',
+  );
+  const shallowFinal = object(object(expectDefined(finalAppendEvents[1]).data)['result']);
+  expect(shallowFinal['rootComplete']).toBe(false);
+  expect(shallowFinal['rootTruncated']).toBe(true);
+  expect(shallowFinal['membershipComplete']).toBe(false);
+  const expectation = expectDefined(test.turns[0]).expect;
+  const preservationWithWitness = (
+    trace: typeof report.trace,
+    snapshot: typeof preview.snapshot = preview.snapshot,
+  ) =>
+    preservationEvidence(
+      {
+        snapshot,
+        previous: preview.inputSnapshot,
+        ...retainedPlanEvidenceFromTrace(trace, 1),
+      },
+      preview.trees as readonly TaskTreeV1[],
+      expectation,
+    );
+  const nestedTarget = expectDefined(
+    expectDefined((preview.trees as readonly TaskTreeV1[])[0]).children[0]?.children[0],
+  ).target;
+  const permittedTargets = (pairs: ReturnType<typeof preservationEvidence>) =>
+    pairs.flatMap((pair) => pair.addedNodeTargets ?? []);
+  expect(permittedTargets(preservationWithWitness(report.trace))).toContain(nestedTarget);
+  const missingFinalPlan = structuredClone(preview.snapshot);
+  object(missingFinalPlan.proposal)['changes'] = [];
+  expect(permittedTargets(preservationWithWitness(report.trace, missingFinalPlan))).not.toContain(
+    nestedTarget,
+  );
+  const foreignFinalEpoch = structuredClone(preview.snapshot);
+  const finalChange = object((object(foreignFinalEpoch.proposal)['changes'] as unknown[])[0]);
+  object(finalChange['plan'])['providerEpoch'] = 'foreign-epoch';
+  expect(permittedTargets(preservationWithWitness(report.trace, foreignFinalEpoch))).not.toContain(
+    nestedTarget,
+  );
+  const duplicateRawMembership = structuredClone(report.trace);
+  const duplicateWitnessResult = object(object(expectDefined(finalAppendEvents[1]).data)['result']);
+  const duplicateEvent = expectDefined(
+    duplicateRawMembership.find(
+      (event) =>
+        event.kind === 'observed-plan-preparation' &&
+        object(object(event.data)['input'])['operationType'] === 'add-child' &&
+        object(object(event.data)['result'])['planRevision'] ===
+          duplicateWitnessResult['planRevision'],
+    ),
+  );
+  const duplicateRawResult = object(object(duplicateEvent.data)['result']);
+  const duplicateMembers = duplicateRawResult['taskMembership'] as unknown[];
+  duplicateMembers.push(structuredClone(expectDefined(duplicateMembers[0])));
+  const missingRawMembership = structuredClone(report.trace);
+  const missingWitness = expectDefined(
+    missingRawMembership.find(
+      (event) =>
+        event.kind === 'observed-plan-preparation' &&
+        object(object(event.data)['input'])['operationType'] === 'add-child' &&
+        object(object(event.data)['result'])['planRevision'] ===
+          duplicateWitnessResult['planRevision'],
+    ),
+  );
+  delete object(object(missingWitness.data)['result'])['taskMembership'];
+  const malformedRawWitnessPermissions = [
+    permittedTargets(preservationWithWitness(duplicateRawMembership)).includes(nestedTarget),
+    permittedTargets(preservationWithWitness(missingRawMembership)).includes(nestedTarget),
+  ];
+  expect(malformedRawWitnessPermissions).toEqual([false, false]);
+  const conflictingPartialTree = structuredClone(report.trace);
+  const nestedResultIndex = conflictingPartialTree.findIndex(
+    (event) =>
+      event.kind === 'observed-plan-preparation' &&
+      object(object(event.data)['input'])['operationType'] === 'add-child' &&
+      conflictingPartialTree
+        .filter(
+          (candidate) =>
+            candidate.kind === 'observed-plan-preparation' &&
+            object(object(candidate.data)['input'])['operationType'] === 'add-child',
+        )
+        .indexOf(event) === 1,
+  );
+  const partialMembers = object(object(conflictingPartialTree[nestedResultIndex]?.data)['result'])[
+    'taskMembership'
+  ] as Array<Record<string, unknown>>;
+  object(expectDefined(partialMembers[0]))['parentTarget'] = 'foreign-parent';
+  expect(permittedTargets(preservationWithWitness(conflictingPartialTree))).not.toContain(
+    nestedTarget,
+  );
+  const incompleteFinalPlan = structuredClone(preview.snapshot);
+  const incompleteFinalChange = object(
+    (object(incompleteFinalPlan.proposal)['changes'] as unknown[])[0],
+  );
+  const incompleteFinalRoot = object(object(incompleteFinalChange['plan'])['after']);
+  incompleteFinalRoot['complete'] = false;
+  expect(
+    permittedTargets(preservationWithWitness(report.trace, incompleteFinalPlan)),
+  ).not.toContain(nestedTarget);
+  expect(preview.writeCount).toBe(0);
+  expect(report.turns[1]?.after['a.md']).toBe(final);
+  expect(
+    report.turns[1]?.publicReadback.find((row) => row.markdownTitle === rootTitle)?.children,
+  ).toMatchObject([
+    { markdownTitle: ownerTitle, children: [{ markdownTitle: nestedTitle }] },
+    { markdownTitle: directTitle },
+  ]);
+});
+
+it.each([
+  {
+    rootTitle: 'Prepare observatory visit',
+    first: 'Verify the hill road',
+    nested: 'Check the winter gate',
+    second: 'Compare radio batteries',
+    third: 'Record cloud cover',
+  },
+  {
+    rootTitle: 'Plan desert survey',
+    first: 'Inspect the eastern ridge',
+    nested: 'Record water markers',
+    second: 'Test the field radio',
+    third: 'Log the wind direction',
+  },
+])(
+  'allows bounded open expansion of an existing owner through staged additions and Save (%#)',
+  async ({ rootTitle, first, nested, second, third }) => {
+    const neighbor = '- [ ] Check the reserve lantern #safety 📅 2026-12-16\n';
+    const initial = `- [ ] ${rootTitle}
+  - > Use the north trail if the wind turns.
+  - [ ] Confirm access hours #admin 📅 2026-12-11
+  - [ ] Pack red-light lamp ⏳ 2026-12-12
+    - 2026-12-02: Use the spare battery
+${neighbor}`;
+    const final = `- [ ] ${rootTitle}
+  - > Use the north trail if the wind turns.
+  - [ ] Confirm access hours #admin 📅 2026-12-11
+  - [ ] Pack red-light lamp ⏳ 2026-12-12
+    - 2026-12-02: Use the spare battery
+  - [ ] ${first}${'\n  \t'}- [ ] ${nested}
+  - [ ] ${second}
+  - [ ] ${third}
+${neighbor}`;
+    const test: EvalCase = {
+      id: `dev-existing-${rootTitle.toLowerCase().replaceAll(' ', '-')}-open-expansion`,
+      family: 'write-oracle-control',
+      split: 'development',
+      files: files(initial),
+      turns: [
+        {
+          text: `Break ${rootTitle} into a few more practical steps.`,
+          expect: {
+            status: 'ready',
+            trees: [{ markdownTitle: rootTitle }],
+            decomposition: {
+              minChildren: 3,
+              maxChildren: 5,
+              maxDepth: 2,
+              noInventedSchedule: true,
+            },
+            writeCount: 0,
+          },
+        },
+        {
+          text: `Save ${rootTitle}.`,
+          expect: { status: 'saved', files: { 'a.md': final }, writeCount: 1, createdFiles: [] },
+        },
+      ],
+    };
+    const { report } = await replay(test, [
+      plan,
+      tool('read', { input: { kind: 'tasks', query: rootTitle } }),
+      (p) => tool('read', { input: { kind: 'tree', target: firstRead(p)['target'] } }),
+      (p) => {
+        const root = object(result(p, 'read')['tree']);
+        return tool('task', {
+          input: {
+            kind: 'edit',
+            target: root['target'],
+            expectedRevision: root['revision'],
+            operation: {
+              type: 'add-child',
+              target: root['target'],
+              markdownTitle: first,
+            },
+          },
+        });
+      },
+      (p) => {
+        const value = result(p, 'task');
+        return tool('task', {
+          input: {
+            kind: 'append',
+            plan: value['target'],
+            expectedPlanRevision: value['revision'],
+            operation: {
+              type: 'add-child',
+              target: object(value['after'])['target'],
+              markdownTitle: second,
+            },
+          },
+        });
+      },
+      (p) => {
+        const value = result(p, 'task');
+        const newChild = (object(value['after'])['children'] as unknown[]).find(
+          (child) => object(child)['markdownTitle'] === first,
+        );
+        return tool('task', {
+          input: {
+            kind: 'append',
+            plan: value['target'],
+            expectedPlanRevision: value['revision'],
+            operation: {
+              type: 'add-child',
+              target: object(newChild)['target'],
+              markdownTitle: nested,
+            },
+          },
+        });
+      },
+      (p) => {
+        const value = result(p, 'task');
+        const root = object(value['after']);
+        return tool('task', {
+          input: {
+            kind: 'batch',
+            plan: value['target'],
+            expectedPlanRevision: value['revision'],
+            operations: [{ type: 'add-child', target: root['target'], markdownTitle: third }],
+          },
+        });
+      },
+      finish,
+      confirm,
+    ]);
+    expect(report.turns.map((turn) => turn.failures)).toEqual([[], []]);
+    const preview = expectDefined(report.turns[0]);
+    expect(preview.writeCount).toBe(0);
+    expect((preview.trees[0] as TaskTreeV1).description).toBe(
+      'Use the north trail if the wind turns.',
+    );
+    expect((preview.trees[0] as TaskTreeV1).children.map((child) => child.markdownTitle)).toEqual([
+      'Confirm access hours',
+      'Pack red-light lamp',
+      first,
+      second,
+      third,
+    ]);
+    expect((preview.trees[0] as TaskTreeV1).children[2]?.children[0]?.markdownTitle).toBe(nested);
+    const saved = expectDefined(report.turns[1]);
+    expect(saved.journal).toMatchObject([{ state: 'settled', effects: 'committed' }]);
+    expect(saved.journal[0]?.receipt).toBeDefined();
+    expect(saved.admissions).toContainEqual(expect.objectContaining({ state: 'admitted' }));
+    expect(saved.after['a.md']).toBe(final);
+    const savedTree = expectDefined(
+      saved.publicReadback.find((item) => item.markdownTitle === rootTitle),
+    );
+    expect(savedTree.children.map((child) => child.markdownTitle)).toEqual([
+      'Confirm access hours',
+      'Pack red-light lamp',
+      first,
+      second,
+      third,
+    ]);
+    expect(savedTree.children[2]?.children[0]?.markdownTitle).toBe(nested);
+    expect(savedTree.children[4]?.markdownTitle).toBe(third);
+    expect(
+      saved.publicReadback.some((item) => item.markdownTitle === 'Check the reserve lantern'),
+    ).toBe(true);
+
+    const expected = expectDefined(test.turns[0]).expect;
+    const expansionMutations: Array<{
+      failure: string;
+      mutate: (evidence: TurnEvidence) => void;
+    }> = [
+      {
+        failure: 'preservation:task-correspondence',
+        mutate: (evidence) => {
+          mutableChildren(mutableTree(evidence)).splice(0, 2);
+        },
+      },
+      {
+        failure: 'preservation:task-correspondence',
+        mutate: (evidence) => {
+          const children = mutableChildren(mutableTree(evidence));
+          [children[0], children[1]] = [children[1], children[0]];
+        },
+      },
+      {
+        failure: 'preservation:task-correspondence',
+        mutate: (evidence) => {
+          const parent = object(mutableChildren(mutableTree(evidence))[2]);
+          const nested = mutableChildren(parent);
+          nested.push({
+            ...structuredClone(object(expectDefined(nested[0]))),
+            target: 'rogue-grandchild',
+            markdownTitle: 'Unrequested beacon check',
+            parentTarget: parent['target'],
+          });
+        },
+      },
+      {
+        failure: 'preservation:task-correspondence',
+        mutate: (evidence) => {
+          const parent = object(mutableChildren(mutableTree(evidence))[2]);
+          const nested = mutableChildren(parent);
+          nested.push({
+            ...structuredClone(object(expectDefined(nested[0]))),
+            target: 'foreign-grandchild',
+            markdownTitle: 'Unrequested radio check',
+            parentTarget: 'foreign-owner',
+          });
+        },
+      },
+      {
+        failure: 'preservation:task-correspondence',
+        mutate: (evidence) => {
+          const parent = object(mutableChildren(mutableTree(evidence))[2]);
+          const nested = mutableChildren(parent);
+          nested.push({
+            ...structuredClone(object(expectDefined(nested[0]))),
+            target: object(mutableChildren(mutableTree(evidence))[0])['target'],
+            markdownTitle: 'Copied original identity',
+            parentTarget: parent['target'],
+          });
+        },
+      },
+      {
+        failure: 'preservation:dates',
+        mutate: (evidence) => {
+          object(mutableChildren(mutableTree(evidence))[0])['dates'] = { due: '2026-12-14' };
+        },
+      },
+      {
+        failure: 'preservation:tags',
+        mutate: (evidence) => {
+          object(mutableChildren(mutableTree(evidence))[0])['tags'] = ['#changed'];
+        },
+      },
+      {
+        failure: 'preservation:description',
+        mutate: (evidence) => {
+          mutableTree(evidence)['description'] = 'unrequested route change';
+        },
+      },
+      {
+        failure: 'preservation:comment-correspondence',
+        mutate: (evidence) => {
+          object((object(mutableChildren(mutableTree(evidence))[1])['comments'] as unknown[])[0])[
+            'text'
+          ] = 'Changed old comment';
+        },
+      },
+      {
+        failure: 'preservation:task-correspondence',
+        mutate: (evidence) => {
+          object(mutableChildren(mutableTree(evidence))[2])['parentTarget'] = 'another-root';
+        },
+      },
+      {
+        failure: 'preservation:task-correspondence',
+        mutate: (evidence) => {
+          const children = mutableChildren(mutableTree(evidence));
+          children.push({
+            ...structuredClone(object(expectDefined(children[2]))),
+            target: 'ungrounded-extra',
+          });
+        },
+      },
+      {
+        failure: 'decomposition:child-count',
+        mutate: (evidence) => {
+          mutableChildren(mutableTree(evidence)).splice(2);
+        },
+      },
+      {
+        failure: 'decomposition:child-count',
+        mutate: (evidence) => {
+          const children = mutableChildren(mutableTree(evidence));
+          const duplicate = structuredClone(object(expectDefined(children[2])));
+          children.push({ ...duplicate, target: 'too-many-steps' });
+          children.push({ ...duplicate, target: 'one-more-step' });
+        },
+      },
+      {
+        failure: 'decomposition:depth',
+        mutate: (evidence) => {
+          const added = object(mutableChildren(mutableTree(evidence))[2]);
+          const nestedNode = object(mutableChildren(added)[0]);
+          const existingNested = mutableChildren(nestedNode)[0] ?? added;
+          nestedNode['children'] = [
+            { ...structuredClone(object(existingNested)), target: 'too-deep' },
+          ];
+        },
+      },
+      {
+        failure: 'decomposition:duplicate-title',
+        mutate: (evidence) => {
+          const children = mutableChildren(mutableTree(evidence));
+          object(expectDefined(children[3]))['markdownTitle'] = object(expectDefined(children[2]))[
+            'markdownTitle'
+          ];
+        },
+      },
+      {
+        failure: 'decomposition:empty-title',
+        mutate: (evidence) => {
+          object(mutableChildren(mutableTree(evidence))[2])['markdownTitle'] = '  ';
+        },
+      },
+      {
+        failure: 'decomposition:invented-schedule',
+        mutate: (evidence) => {
+          object(mutableChildren(mutableTree(evidence))[2])['dates'] = { due: '2026-12-19' };
+        },
+      },
+    ];
+    for (const { failure, mutate } of expansionMutations) {
+      const damaged = structuredClone(preview);
+      mutate(damaged);
+      const failures = commentOracleFailures(damaged, expected);
+      const rejectedBy =
+        failure === 'preservation:task-correspondence' && failures.includes('preservation:children')
+          ? 'preservation:children'
+          : failure;
+      expect(failures).toContain(rejectedBy);
+    }
   },
 );

@@ -76,6 +76,7 @@ export interface PreservationPair {
   requested: unknown;
   addedNodeTargets?: readonly string[];
   removedNodeTargets?: readonly string[];
+  structuralOrderRequired?: true;
   relocatedNodeTargets?: readonly string[];
   removedCommentTargets?: readonly string[];
   commentContinuity?: readonly CommentContinuity[];
@@ -259,28 +260,9 @@ function preserve(pair: PreservationPair): string[] {
   const before = record(pair.before),
     after = record(pair.after),
     requested = record(pair.requested);
-  const fields = protectedFields.flatMap((key) => {
-    const carrier = record(record(requested[key])['linkCarrier']);
-    if (typeof carrier['notePath'] === 'string')
-      return equal(
-        authored(normalizeLinkCarrier(before[key])),
-        authored(normalizeLinkCarrier(after[key], carrier['notePath'])),
-      )
-        ? []
-        : [`preservation:${key}`];
-    if (key in requested) {
-      if (key === 'dates')
-        return Object.entries(record(before[key]))
-          .filter(
-            ([date]) =>
-              !(date in record(requested[key])) &&
-              record(after[key])[date] !== record(before[key])[date],
-          )
-          .map(([date]) => `preservation:dates.${date}`);
-      return [];
-    }
-    return equal(authored(before[key]), authored(after[key])) ? [] : [`preservation:${key}`];
-  });
+  const fields = protectedFields.flatMap((key) =>
+    preservedFieldFailures(key, pair, { before, after, requested }),
+  );
   const descendants = preserveChildren(pair);
   return [
     ...fields,
@@ -293,6 +275,51 @@ function preserve(pair: PreservationPair): string[] {
     ...descendants,
   ];
 }
+function preservedFieldFailures(
+  key: string,
+  pair: PreservationPair,
+  view: {
+    before: Record<string, unknown>;
+    after: Record<string, unknown>;
+    requested: Record<string, unknown>;
+  },
+): string[] {
+  const { before, after, requested } = view;
+  if (key === 'children' && !(key in requested) && (pair.addedNodeTargets?.length ?? 0) > 0)
+    return [];
+  const carrier = record(record(requested[key])['linkCarrier']);
+  if (typeof carrier['notePath'] === 'string')
+    return linkCarrierFailures(key, before[key], after[key], carrier['notePath']);
+  if (key in requested) return requestedFieldFailures(key, before, after, requested);
+  return equal(authored(before[key]), authored(after[key])) ? [] : [`preservation:${key}`];
+}
+function linkCarrierFailures(
+  key: string,
+  before: unknown,
+  after: unknown,
+  notePath: unknown,
+): string[] {
+  return equal(
+    authored(normalizeLinkCarrier(before)),
+    authored(normalizeLinkCarrier(after, String(notePath))),
+  )
+    ? []
+    : [`preservation:${key}`];
+}
+function requestedFieldFailures(
+  key: string,
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+  requested: Record<string, unknown>,
+): string[] {
+  if (key !== 'dates') return [];
+  return Object.entries(record(before[key]))
+    .filter(
+      ([date]) =>
+        !(date in record(requested[key])) && record(after[key])[date] !== record(before[key])[date],
+    )
+    .map(([date]) => `preservation:dates.${date}`);
+}
 function preserveChildren(pair: PreservationPair): string[] {
   const before = record(pair.before),
     after = record(pair.after),
@@ -303,39 +330,147 @@ function preserveChildren(pair: PreservationPair): string[] {
   const currentTarget = (old: unknown) =>
     pair.nodeContinuity?.find((link) => link.before === record(old)['target'])?.after ??
     record(old)['target'];
-  const failures = oldChildren.flatMap((old) => {
-    const index = children.findIndex(
-      (child) =>
-        record(child)['target'] !== undefined && record(child)['target'] === currentTarget(old),
-    );
-    if (index < 0)
-      return [...(pair.removedNodeTargets ?? []), ...(pair.relocatedNodeTargets ?? [])].includes(
-        String(record(old)['target']),
-      )
-        ? []
-        : ['preservation:task-correspondence'];
-    return preserve({
-      ...pair,
-      before: old,
-      after: children[index],
-      requested: expectedChildren[index] ?? {},
-    });
-  });
-  for (const child of children) {
-    if (
-      oldChildren.some(
-        (old) => currentTarget(old) !== undefined && currentTarget(old) === record(child)['target'],
-      )
-    )
-      continue;
-    if (
-      ![...(pair.addedNodeTargets ?? []), ...(pair.relocatedNodeTargets ?? [])].includes(
-        String(record(child)['target']),
-      )
-    )
-      failures.push('preservation:task-correspondence');
-  }
+  const failures = oldChildren.flatMap((old) =>
+    preservedOldChildFailures({ pair, old, children, expectedChildren, currentTarget }),
+  );
+  if (
+    pair.structuralOrderRequired === true &&
+    childOrderChanged(pair, oldChildren, children, currentTarget)
+  )
+    failures.push('preservation:task-correspondence');
+  failures.push(...unprovedDirectChildFailures(pair, oldChildren, children, currentTarget));
+  if (requiresStructuralClosure(pair)) failures.push(...unprovedChildFailures(pair, currentTarget));
   return failures;
+}
+function requiresStructuralClosure(pair: PreservationPair): boolean {
+  return (
+    pair.structuralOrderRequired === true &&
+    ((pair.addedNodeTargets?.length ?? 0) > 0 || (pair.relocatedNodeTargets?.length ?? 0) > 0)
+  );
+}
+function preservedOldChildFailures({
+  pair,
+  old,
+  children,
+  expectedChildren,
+  currentTarget,
+}: {
+  pair: PreservationPair;
+  old: unknown;
+  children: readonly unknown[];
+  expectedChildren: readonly unknown[];
+  currentTarget: (old: unknown) => unknown;
+}): string[] {
+  const index = children.findIndex(
+    (child) =>
+      record(child)['target'] !== undefined && record(child)['target'] === currentTarget(old),
+  );
+  if (index < 0)
+    return [...(pair.removedNodeTargets ?? []), ...(pair.relocatedNodeTargets ?? [])].includes(
+      String(record(old)['target']),
+    )
+      ? []
+      : ['preservation:task-correspondence'];
+  return preserve({
+    ...pair,
+    before: old,
+    after: children[index],
+    requested: expectedChildren[index] ?? {},
+  });
+}
+function unprovedDirectChildFailures(
+  pair: PreservationPair,
+  oldChildren: readonly unknown[],
+  children: readonly unknown[],
+  currentTarget: (old: unknown) => unknown,
+): string[] {
+  const knownTargets = [
+    ...oldChildren.map(currentTarget),
+    ...(pair.addedNodeTargets ?? []),
+    ...(pair.relocatedNodeTargets ?? []),
+  ];
+  return children.some((child) => {
+    const target = record(child)['target'];
+    return typeof target !== 'string' || !knownTargets.includes(target);
+  })
+    ? ['preservation:task-correspondence']
+    : [];
+}
+function unprovedChildFailures(
+  pair: PreservationPair,
+  currentTarget: (old: unknown) => unknown,
+): string[] {
+  const authorized = [...(pair.addedNodeTargets ?? []), ...(pair.relocatedNodeTargets ?? [])];
+  const oldTargets = new Set(
+    walkTaskSubtree(pair.before)
+      .map(currentTarget)
+      .filter((target): target is string => typeof target === 'string'),
+  );
+  const rootTarget = record(pair.after)['target'];
+  const seen = new Set(typeof rootTarget === 'string' ? [rootTarget] : []);
+  const state = {
+    authorized,
+    oldTargets,
+    relocated: pair.relocatedNodeTargets ?? [],
+    seen,
+  };
+  return invalidTaskDescendants(record(pair.after), state)
+    ? ['preservation:task-correspondence']
+    : [];
+}
+function invalidTaskDescendants(
+  parent: Record<string, unknown>,
+  state: {
+    authorized: readonly string[];
+    oldTargets: ReadonlySet<string>;
+    relocated: readonly string[];
+    seen: Set<string>;
+  },
+): boolean {
+  const children = Array.isArray(parent['children']) ? parent['children'] : [];
+  return children.some((rawChild) => {
+    const child = record(rawChild);
+    return invalidTaskIdentity(parent, child, state) || invalidTaskDescendants(child, state);
+  });
+}
+function invalidTaskIdentity(
+  parent: Record<string, unknown>,
+  child: Record<string, unknown>,
+  state: {
+    authorized: readonly string[];
+    oldTargets: ReadonlySet<string>;
+    relocated: readonly string[];
+    seen: Set<string>;
+  },
+): boolean {
+  const target = child['target'];
+  if (typeof target !== 'string') return true;
+  const duplicate = state.seen.has(target);
+  state.seen.add(target);
+  const wrongParent =
+    child['parentTarget'] !== parent['target'] && !state.relocated.includes(target);
+  const unprovedNewNode = !state.oldTargets.has(target) && !state.authorized.includes(target);
+  return duplicate || wrongParent || unprovedNewNode;
+}
+function walkTaskSubtree(value: unknown): Array<Record<string, unknown>> {
+  const node = record(value);
+  const children = Array.isArray(node['children']) ? node['children'] : [];
+  return [node, ...children.flatMap(walkTaskSubtree)];
+}
+function childOrderChanged(
+  pair: PreservationPair,
+  oldChildren: readonly unknown[],
+  children: readonly unknown[],
+  currentTarget: (old: unknown) => unknown,
+): boolean {
+  const positions = oldChildren
+    .filter(
+      (old) =>
+        !(pair.removedNodeTargets ?? []).includes(String(record(old)['target'])) &&
+        !(pair.relocatedNodeTargets ?? []).includes(String(record(old)['target'])),
+    )
+    .map((old) => children.findIndex((child) => record(child)['target'] === currentTarget(old)));
+  return positions.some((position, index) => index > 0 && position <= (positions[index - 1] ?? -1));
 }
 function retainedComments(
   before: Record<string, unknown>,
@@ -1616,12 +1751,51 @@ function hasSchedule(value: Record<string, unknown>): boolean {
     value['recurrence'] != null
   );
 }
+function hasUnchangedOriginalSchedule(
+  value: Record<string, unknown>,
+  originalNodes: readonly unknown[],
+): boolean {
+  const original = originalNodes.find(
+    (candidate) => record(candidate)['target'] === value['target'],
+  );
+  return (
+    original !== undefined &&
+    equal(record(original)['dates'], value['dates']) &&
+    equal(record(original)['time'], value['time']) &&
+    equal(record(original)['recurrence'], value['recurrence'])
+  );
+}
+function decompositionNodeFailures(
+  value: Record<string, unknown>,
+  depth: number,
+  constraint: NonNullable<TurnExpectation['decomposition']>,
+  originalNodes: readonly unknown[],
+): string[] {
+  const failures: string[] = [];
+  if (typeof value['markdownTitle'] !== 'string' || value['markdownTitle'].trim().length === 0)
+    failures.push('decomposition:empty-title');
+  if (depth > constraint.maxDepth) failures.push('decomposition:depth');
+  if (
+    constraint.noInventedSchedule &&
+    hasSchedule(value) &&
+    !hasUnchangedOriginalSchedule(value, originalNodes)
+  )
+    failures.push('decomposition:invented-schedule');
+  return failures;
+}
 /** Structural checks leave the usefulness of an open plan for human review. */
 function decompositionFailures(expected: TurnExpectation, evidence: TurnEvidence): string[] {
   const constraint = expected.decomposition;
   if (constraint === undefined) return [];
   if (evidence.trees.length !== 1) return ['decomposition:root-count'];
   const failures = new Set<string>();
+  const originalNodes = (evidence.preservation ?? []).flatMap((pair) => {
+    const visit = (node: unknown): unknown[] => {
+      const value = record(node);
+      return [value, ...(Array.isArray(value['children']) ? value['children'].flatMap(visit) : [])];
+    };
+    return visit(pair.before);
+  });
   const children = record(evidence.trees[0])['children'];
   if (
     !Array.isArray(children) ||
@@ -1631,11 +1805,8 @@ function decompositionFailures(expected: TurnExpectation, evidence: TurnEvidence
     failures.add('decomposition:child-count');
   const visit = (node: unknown, depth: number) => {
     const value = record(node);
-    if (typeof value['markdownTitle'] !== 'string' || value['markdownTitle'].trim().length === 0)
-      failures.add('decomposition:empty-title');
-    if (depth > constraint.maxDepth) failures.add('decomposition:depth');
-    if (constraint.noInventedSchedule && hasSchedule(value))
-      failures.add('decomposition:invented-schedule');
+    for (const failure of decompositionNodeFailures(value, depth, constraint, originalNodes))
+      failures.add(failure);
     const descendants = Array.isArray(value['children']) ? value['children'] : [];
     const titles = descendants.map((child) => {
       const title = record(child)['markdownTitle'];

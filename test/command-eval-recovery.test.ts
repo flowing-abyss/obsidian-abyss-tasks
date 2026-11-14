@@ -81,7 +81,7 @@ it('accepts bounded HTTP recovery only after real SDK output, exact preview and 
   const report = await runCase(fixture(), runtime(), async () => {});
   expect(report.outcome, JSON.stringify(report.turns.map((turn) => turn.failures))).toBe('passed');
   expect(report).toMatchObject({
-    evaluationPolicyVersion: 'turn-generation-recovery-v2',
+    evaluationPolicyVersion: 'turn-structural-preservation-v4',
     physicalRequests: 3,
     cleanup: 'settled',
   });

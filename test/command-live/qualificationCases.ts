@@ -123,6 +123,7 @@ const cases: readonly EvalCase[] = [
               ],
             }),
           ],
+          removedNodes: [[0, 1]],
           publicTrees: [
             tree('Prepare the North Pier inspection', {
               tags: ['#marine'],

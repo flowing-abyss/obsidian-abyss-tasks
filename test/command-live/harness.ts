@@ -1,6 +1,6 @@
 import { wrapLanguageModel, type LanguageModel } from 'ai';
 import { vi } from 'vitest';
-import type { TasksApiV1, TaskTreeV1 } from '../../api';
+import type { ContentPlanV1, PrepareTaskContentV1, TasksApiV1, TaskTreeV1 } from '../../api';
 import { CommandAgent, type ResearchReviewer } from '../../src/ai/CommandAgent';
 import { canonicalCommandTree } from '../../src/ai/commandReads';
 import { CommandSession } from '../../src/ai/CommandSession';
@@ -52,7 +52,12 @@ import {
   type RetainedTurn,
   type TurnEvidence,
 } from './oracles';
-import { preservationEvidence, type SelectedPlanObservation } from './preservation';
+import {
+  nativeOperationIdentity,
+  preservationEvidence,
+  retainedPlanEvidenceFromTrace,
+  type SelectedPlanObservation,
+} from './preservation';
 import {
   assertLocalRequest,
   guardRoute,
@@ -510,25 +515,94 @@ function research(
     },
   };
 }
+function observedTaskMembership(root: TaskTreeV1 | null) {
+  const taskMembership: Array<{ target: string; parentTarget: string | null }> = [];
+  let membershipComplete = root !== null;
+  let membershipTruncated = false;
+  const visit = (node: TaskTreeV1) => {
+    if (taskMembership.length >= 256) {
+      membershipComplete = false;
+      membershipTruncated = true;
+      return;
+    }
+    if (!node.complete) membershipComplete = false;
+    if (node.truncated) {
+      membershipComplete = false;
+      membershipTruncated = true;
+    }
+    taskMembership.push({ target: node.target, parentTarget: node.parentTarget ?? null });
+    for (const child of node.children) {
+      if (taskMembership.length >= 256) {
+        membershipComplete = false;
+        membershipTruncated = true;
+        break;
+      }
+      visit(child);
+    }
+  };
+  if (root !== null) visit(root);
+  return { taskMembership, membershipComplete, membershipTruncated };
+}
+function recordNativePreparationResult(
+  trace: Trace,
+  input: Extract<PrepareTaskContentV1, { kind: 'append' }>,
+  result: { ok: true; value: ContentPlanV1 },
+): void {
+  const root = result.value.after;
+  const { taskMembership, membershipComplete, membershipTruncated } = observedTaskMembership(root);
+  trace('observed-plan-preparation', {
+    input: {
+      kind: 'append',
+      plan: input.plan,
+      expectedPlanRevision: input.expectedPlanRevision,
+      operationIdentity: nativeOperationIdentity(input.operation),
+      operationType: input.operation.type,
+    },
+    result: {
+      planTarget: result.value.target,
+      planRevision: result.value.revision,
+      providerEpoch: result.value.providerEpoch,
+      rootTarget: root?.target ?? null,
+      rootRevision: root?.revision ?? null,
+      taskMembership,
+      rootComplete: root?.complete === true,
+      rootTruncated: root?.truncated === true || membershipTruncated,
+      membershipComplete,
+    },
+  });
+}
+async function prepareObservedInput(
+  prepare: NonNullable<TasksApiV1['tasks']['prepare']>,
+  input: Parameters<NonNullable<TasksApiV1['tasks']['prepare']>>[0],
+  trace: Trace,
+) {
+  if (input.kind === 'append')
+    trace('native-plan-preparation-input', {
+      plan: input.plan,
+      expectedPlanRevision: input.expectedPlanRevision,
+      operationIdentity: nativeOperationIdentity(input.operation),
+      operationType: input.operation.type,
+    });
+  const result = await prepare(input);
+  if (input.kind === 'append' && result.ok) recordNativePreparationResult(trace, input, result);
+  if (input.kind === 'select-fields' && result.ok) {
+    const observed: SelectedPlanObservation = {
+      source: input.plan,
+      sourceRevision: input.expectedPlanRevision,
+      selected: result.value.target,
+      selectedRevision: result.value.revision,
+    };
+    trace('selected-task-fields', observed);
+  }
+  return result;
+}
 function observedPreparation(
   prepare: TasksApiV1['tasks']['prepare'],
   trace: Trace,
 ): Pick<TasksApiV1['tasks'], 'prepare'> {
   if (prepare === undefined) return {};
   return {
-    prepare: async (input) => {
-      const result = await prepare(input);
-      if (input.kind === 'select-fields' && result.ok) {
-        const observed: SelectedPlanObservation = {
-          source: input.plan,
-          sourceRevision: input.expectedPlanRevision,
-          selected: result.value.target,
-          selectedRevision: result.value.revision,
-        };
-        trace('selected-task-fields', observed);
-      }
-      return result;
-    },
+    prepare: async (input) => prepareObservedInput(prepare, input, trace),
   };
 }
 function observeApi(
@@ -951,19 +1025,9 @@ async function runTurn(input: {
     },
   );
   await input.lifetime.checkpoint('evaluation');
-  const turnTrace = report.trace.slice(traceStart);
-  const selectedPlans = turnTrace.flatMap((event) =>
-    event.kind === 'selected-task-fields' ? [event.data as SelectedPlanObservation] : [],
-  );
-  const stagedPlans = turnTrace.flatMap((event) =>
-    event.kind === 'snapshot'
-      ? (event.data as CommandSessionSnapshot).proposal.changes.flatMap((change) =>
-          change.kind === 'task' ? [change.plan] : [],
-        )
-      : [],
-  );
+  const planEvidence = retainedPlanEvidenceFromTrace(report.trace, report.turns.length + 1);
   const preserved = preservationEvidence(
-    { snapshot, previous: inputSnapshot, stagedPlans, selectedPlans },
+    { snapshot, previous: inputSnapshot, ...planEvidence },
     trees,
     turn.expect,
   );

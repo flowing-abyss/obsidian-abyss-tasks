@@ -1415,15 +1415,142 @@ it('preserves the full retained P03 draft and owner-bound comment through explic
     async () => {},
     model,
   );
+  const { retainedPlanEvidenceFromTrace } = await import('./command-live/preservation');
+  const retainedBasis = retainedPlanEvidenceFromTrace(report.trace, 2);
+  expect(retainedBasis.nativePlanBasis).toHaveLength(3);
+  const batchBasisEvents = report.trace.filter(
+    (event) =>
+      event.kind === 'observed-plan-preparation' &&
+      object(object(event.data)['input'])['operationType'] === 'add-child',
+  );
+  const batchPreparationInputs = report.trace.filter(
+    (event) =>
+      event.kind === 'native-plan-preparation-input' &&
+      object(event.data)['operationType'] === 'add-child',
+  );
+  expect(batchBasisEvents).toHaveLength(3);
+  expect(batchPreparationInputs).toHaveLength(3);
+  const basisFacts = batchBasisEvents.map((event) => {
+    const data = object(event.data);
+    return { event, input: object(data['input']), result: object(data['result']) };
+  });
+  basisFacts.forEach(({ event, input, result }, index) => {
+    const inputEvent = batchPreparationInputs[index];
+    expect(inputEvent).toBeDefined();
+    const consumed = object(inputEvent?.data);
+    expect(event.sequence).toBeGreaterThan(inputEvent?.sequence ?? Infinity);
+    expect(input).toEqual(
+      expect.objectContaining({
+        plan: consumed['plan'],
+        expectedPlanRevision: consumed['expectedPlanRevision'],
+        operationIdentity: consumed['operationIdentity'],
+      }),
+    );
+    expect(result['membershipComplete']).toBe(true);
+    expect(result['rootComplete']).toBe(true);
+    expect(result['rootTruncated']).toBe(false);
+    expect(result['taskMembership']).toHaveLength(index + 2);
+    if (index > 0)
+      expect(input['expectedPlanRevision']).toBe(basisFacts[index - 1]?.result['planRevision']);
+  });
+  expect(
+    batchBasisEvents.every((event) => !JSON.stringify(event.data).includes('markdownTitle')),
+  ).toBe(true);
+  const batchTurn = expectDefined(report.turns[1]);
+  const expectedBatchChildren = expectDefined(
+    (batchTurn.trees as readonly TaskTreeV1[])[0],
+  ).children.map((node) => node.target);
+  const observedBatchChildren =
+    batchTurn.preservation?.flatMap((pair) => pair.addedNodeTargets) ?? [];
+  expect(new Set(observedBatchChildren)).toEqual(new Set(expectedBatchChildren));
   expect(
     report.outcome,
     JSON.stringify(report.turns.map((t) => ({ status: t.snapshot.status, failures: t.failures }))),
   ).toBe('passed');
+  const { preservationEvidence } = await import('./command-live/preservation');
+  const { evaluateTurn } = await import('./command-live/oracles');
+  const expectation = expectDefined(test.turns[1]).expect;
+  const failuresWithTrace = (trace: typeof report.trace) => {
+    const evidence = retainedPlanEvidenceFromTrace(trace, 2);
+    const preservation = preservationEvidence(
+      {
+        snapshot: batchTurn.snapshot,
+        previous: batchTurn.inputSnapshot,
+        ...evidence,
+      },
+      batchTurn.trees as readonly TaskTreeV1[],
+      expectation,
+    );
+    return evaluateTurn(expectation, { ...batchTurn, preservation });
+  };
+  const betaInputIndex = report.trace.findIndex(
+    (event) =>
+      event.kind === 'native-plan-preparation-input' &&
+      object(event.data)['operationType'] === 'add-child' &&
+      report.trace
+        .filter(
+          (candidate) =>
+            candidate.kind === 'native-plan-preparation-input' &&
+            object(candidate.data)['operationType'] === 'add-child',
+        )
+        .indexOf(event) === 1,
+  );
+  const betaResultIndex = report.trace.findIndex(
+    (event) =>
+      event.kind === 'observed-plan-preparation' &&
+      object(object(event.data)['input'])['operationType'] === 'add-child' &&
+      report.trace
+        .filter(
+          (candidate) =>
+            candidate.kind === 'observed-plan-preparation' &&
+            object(object(candidate.data)['input'])['operationType'] === 'add-child',
+        )
+        .indexOf(event) === 1,
+  );
+  expect(betaInputIndex).toBeGreaterThanOrEqual(0);
+  expect(betaResultIndex).toBeGreaterThanOrEqual(0);
+  const rejectsTraceMutation = (mutate: (trace: typeof report.trace) => void) => {
+    const trace = structuredClone(report.trace);
+    mutate(trace);
+    expect(failuresWithTrace(trace)).toContain('preservation:task-correspondence');
+  };
+  rejectsTraceMutation((trace) => {
+    trace.splice(betaInputIndex, 1);
+  });
+  rejectsTraceMutation((trace) => {
+    object(trace[betaInputIndex]?.data)['expectedPlanRevision'] = 'stale-basis';
+  });
+  rejectsTraceMutation((trace) => {
+    object(object(trace[betaResultIndex]?.data)['result'])['rootTarget'] = 'foreign-root';
+  });
+  rejectsTraceMutation((trace) => {
+    object(object(trace[betaResultIndex]?.data)['result'])['providerEpoch'] = 'foreign-epoch';
+  });
+  rejectsTraceMutation((trace) => {
+    const duplicate = structuredClone(expectDefined(trace[betaResultIndex]));
+    duplicate.sequence = expectDefined(trace[betaResultIndex]).sequence;
+    object(duplicate.data)['result'] = {
+      ...object(object(duplicate.data)['result']),
+      planRevision: 'conflicting-revision',
+    };
+    trace.splice(betaResultIndex + 1, 0, duplicate);
+  });
+  rejectsTraceMutation((trace) => {
+    const inputEvent = expectDefined(trace[betaInputIndex]);
+    const resultEvent = expectDefined(trace[betaResultIndex]);
+    inputEvent.sequence = resultEvent.sequence + 1;
+  });
+  rejectsTraceMutation((trace) => {
+    const result = object(object(trace[betaResultIndex]?.data)['result']);
+    const members = result['taskMembership'] as Array<Record<string, unknown>>;
+    members.push({ target: 'ungrounded-grandchild', parentTarget: members[1]?.['target'] });
+  });
+  rejectsTraceMutation((trace) => {
+    object(object(trace[betaResultIndex]?.data)['result'])['membershipComplete'] = false;
+  });
   expect(
     report.turns[3]?.preservation?.some((pair) => (pair.commentContinuity?.length ?? 0) > 0),
   ).toBe(true);
-  const { preservationEvidence } = await import('./command-live/preservation');
-  const { evaluateTurn } = await import('./command-live/oracles');
   const damaged = structuredClone(expectDefined(report.turns[3]));
   const priorChild = expectDefined(
     expectDefined(damaged.inputSnapshot.trees[0]?.after).children[1],

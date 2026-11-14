@@ -76,6 +76,66 @@ it('includes fourteen new unique cases after the original resolved corpus', () =
   expect(new Set(corpus.map((test) => test.id)).size).toBe(195);
 });
 
+it('keeps all actor projections and unrelated fixture hashes bound to the frozen definition', async () => {
+  const digest = async (value: unknown) => {
+    const bytes = new TextEncoder().encode(JSON.stringify(value));
+    const result = await crypto.subtle.digest('SHA-256', bytes);
+    return [...new Uint8Array(result)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+  };
+  const rows = await Promise.all(
+    corpus.map(async (test) => {
+      const actorProjection = {
+        ...test,
+        turns: test.turns.map(({ expect: _expected, ...rest }) => rest),
+      };
+      return {
+        id: test.id,
+        fixtureHash: await digest(test),
+        actorProjectionHash: await digest(actorProjection),
+      };
+    }),
+  );
+  const qualifications = corpus.filter((test) => test.id.startsWith('q6-h'));
+  const h02 = expectDefined(rows.find((row) => row.id === 'q6-h02-child-delete-en'));
+  expect(await digest(rows.map(({ id, actorProjectionHash }) => [id, actorProjectionHash]))).toBe(
+    '98f74853380e35dee85cdb4f4413e2b48dbcd33fe8ea63ce40167375180fb1dc',
+  );
+  expect(
+    await digest(
+      rows
+        .filter((row) => row.id !== 'q6-h02-child-delete-en')
+        .map(({ id, fixtureHash }) => [id, fixtureHash]),
+    ),
+  ).toBe('8ada1e806d20c5277c41b40c26cc3b64368607f4451592fe7953dcf5f5224a4b');
+  expect(h02.fixtureHash).toBe('25daeee2267d24155d873bfa983c4a76f0f677c658a81c6cfd8eb46f9a2e8038');
+  expect(await digest(qualifications)).toBe(
+    '4cea47769ad96511712e5925dd395cce3e67060c7db7e9f18845736d4d06c8b9',
+  );
+});
+
+it('binds the H02 removed-node path to its original source child order', () => {
+  const h02 = expectDefined(
+    qualificationCases.find((test) => test.id === 'q6-h02-child-delete-en'),
+  );
+  const preview = expectDefined(h02.turns[0]).expect;
+  const sourceRoot = (preview.publicTrees?.[0] ?? {}) as {
+    markdownTitle?: string;
+    children?: Array<{ markdownTitle?: string }>;
+  };
+  expect(sourceRoot.markdownTitle).toBe('Prepare the North Pier inspection');
+  expect(sourceRoot.children?.map((child) => child.markdownTitle)).toEqual([
+    'Photograph the ladder',
+    'Return the access key',
+    'Confirm the tide window',
+  ]);
+  expect(preview.removedNodes).toEqual([[0, 1]]);
+  expect(
+    (preview.trees?.[0] as { children?: Array<{ markdownTitle?: string }> }).children?.map(
+      (child) => child.markdownTitle,
+    ),
+  ).toEqual(['Photograph the ladder', 'Confirm the tide window']);
+});
+
 function native9Fixture() {
   const item = selectCases('research-native-dictation-comments-ru')[0];
   if (item === undefined) throw new Error('Missing Native9 fixture');
