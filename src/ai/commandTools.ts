@@ -134,7 +134,7 @@ export interface CommandToolContext {
   generationCalls?: number;
   readonly deferred: Set<string>;
   readonly rejected: Set<string>;
-  controlRepair?: { readonly intent: unknown; readonly scoped?: boolean };
+  controlRepair?: { intent: unknown; scoped?: boolean };
   account?: (id?: string) => void;
   immediate: boolean;
   done: boolean;
@@ -343,6 +343,14 @@ export function commandTools(ctx: CommandToolContext): ToolSet {
     Object.entries(tools).map(([name, definition]) => [name, owner.bind(name, definition)]),
   );
 }
+function controlScopeDropped(
+  repair: NonNullable<CommandToolContext['controlRepair']>,
+  intent: z.infer<typeof intentSchema>['intent'],
+  scoped: boolean,
+): boolean {
+  return repair.scoped === true && repair.intent === intent && !scoped;
+}
+
 class CommandToolOwner {
   private readonly inspections_abyssPrivate = new Map<string, string>();
   private readonly pageReads_abyssPrivate = new Map<string, z.infer<typeof researchResultSchema>>();
@@ -995,17 +1003,21 @@ class CommandToolOwner {
   private requireControlRepair(input: z.infer<typeof intentSchema>): void {
     const scoped = 'scope' in input && input.scope !== undefined;
     const repair = (this.ctx_abyssPrivate.controlRepair ??= { intent: input.intent, scoped });
-    if (repair.scoped === true && repair.intent === input.intent && !scoped)
+    if (repair.intent === undefined) {
+      repair.intent = input.intent;
+      repair.scoped ||= scoped;
+    }
+    if (input.intent === 'plan' && !input.research && input.transitionDisposition === undefined)
+      return;
+    if (controlScopeDropped(repair, input.intent, scoped))
       throw new CommandFailure(
         'CONTROL_REPAIR',
         'A scoped write cannot be repaired by dropping its scope. Use the exact reviewed subset, or return to preview.',
       );
     if (repair.intent === input.intent) return;
-    if (input.intent === 'plan' && !input.research && input.transitionDisposition === undefined)
-      return;
     throw new CommandFailure(
       'CONTROL_REPAIR',
-      'Repair the original control, or use interpret({"intent":"plan"}) to continue previewing. A different control requires a fresh request.',
+      'Repair original control; plan. Switch: new request.',
     );
   }
   private controlConfirmation_abyssPrivate(input: z.infer<typeof intentSchema>): Promise<unknown> {

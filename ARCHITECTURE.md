@@ -558,10 +558,12 @@ templates expose those same arguments. Runtime validation still uses the origina
 Interpretation accepts intent and consent only; task, note and project preparation use their existing
 separate tools. The SDK parses calls concurrently; its model-call callback captures their order, and
 binding accounts rejected predecessors at the serial execution boundary (remaining rejections at
-step end). A schema-invalid leading control reserves its position before admission. Dependent
-siblings, including malformed ones, receive deferral feedback without effects or repair charges;
-a corrected leading control must pass ordinary authority guards, then work is explicitly resubmitted.
-A rejected control retains its original intent. The same turn can return to ordinary preview planning.
+step end). An invalid leading control reserves its position before admission. Dependent siblings,
+including malformed ones, receive deferral feedback without effects or repair charges; work is
+explicitly resubmitted after the control is corrected. A rejected control with an identified intent
+retains it; an unidentified rejection binds its first schema-valid retry before scope and authority
+checks, and keeps that intent after a failed guard. Any scope on the valid retry joins recoverable
+original scope restrictions. The same turn can return to ordinary preview planning.
 Late controls cannot reopen authority or prevent earlier ordinary operations. Rejections after a
 ready call still prevent successful turn completion. The sole terminal exception is schema-valid
 `expand` after a positively completed `finish`: the tool owner returns a not-executed diagnostic

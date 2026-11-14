@@ -682,6 +682,23 @@ function call(
     warnings: [],
   };
 }
+function invalidParsedInterpret(
+  input: Record<string, unknown>,
+  siblings: ReadonlyArray<{ toolName: string; input: unknown }> = [],
+): Awaited<ReturnType<MockLanguageModelV4['doGenerate']>> {
+  const response = call('interpret', {});
+  return {
+    ...response,
+    content: [
+      ...response.content.map((part) =>
+        part.type === 'tool-call' ? { ...part, input: JSON.stringify(input) } : part,
+      ),
+      ...siblings.flatMap(
+        ({ toolName, input: siblingInput }) => call(toolName, siblingInput).content,
+      ),
+    ],
+  };
+}
 function emptyResearchAssessment(): Awaited<ReturnType<MockLanguageModelV4['doGenerate']>> {
   const response = call('assess_research', { authorized: true });
   return {
@@ -10284,6 +10301,380 @@ it('reserves a rejected leading control before valid and invalid dependent sibli
   expect(h.session.snapshot().proposal.changes.map((change) => change.kind)).toEqual(['note']);
   expect(h.session.snapshot().journal).toEqual([]);
   expect(await h.read('a.md')).toBe('');
+});
+it('binds an unidentified malformed control to its first valid retry before native write review', async () => {
+  const source = '- [ ] Original 📅 2026-08-01\n- [ ] Neighbor\n';
+  const h = await setup({ 'a.md': source }, {}, undefined, { reviewWrite: 'native' });
+  const rows = await h.api.tasks.list({ path: 'a.md' });
+  if (!rows.ok) throw Error(rows.error.code);
+  const original = expectDefined(rows.value.items.find((item) => item.title === 'Original'));
+  const prepared = await expectDefined(h.api.tasks.prepare)({
+    kind: 'edit',
+    target: original.target,
+    expectedRevision: original.revision,
+    operation: {
+      type: 'patch',
+      target: original.target,
+      patch: { scheduled: { type: 'set', value: '2026-08-02' } },
+    },
+  });
+  if (!prepared.ok) throw Error(prepared.error.code);
+  const plan = await canonicalCommandPlan(h.api, prepared.value, new AbortController().signal, {
+    now: () => 0,
+    deadline: 5000,
+  });
+  h.session.stage({ kind: 'task', plan });
+  const message = 'Сохрани.';
+  const proposalRevision = h.session.snapshot().proposal.revision;
+  const scope = {
+    proposalRevision,
+    changes: [
+      {
+        kind: 'task-fields' as const,
+        index: 0,
+        plan: plan.target,
+        expectedPlanRevision: plan.revision,
+        target: original.target,
+        fields: ['scheduled'],
+      },
+    ],
+  };
+  h.script(
+    () => {
+      const response = call('interpret', {});
+      return {
+        ...response,
+        content: [
+          ...response.content.map((part) =>
+            part.type === 'tool-call' ? { ...part, input: '{"intent":' } : part,
+          ),
+          ...call('create_task', { tree: { markdownTitle: 'Deferred sibling' } }).content,
+        ],
+      };
+    },
+    () => call('interpret', { intent: 'confirm', approval: message, scope }),
+    () =>
+      call('assess_write', {
+        effect: 'save-reviewed',
+        scope: 'fields',
+        scopeMatches: true,
+        authorization: message,
+      }),
+  );
+
+  await h.session.submit(message);
+
+  expect(h.session.snapshot().status.kind).toBe('saved');
+  expect(h.session.snapshot().journal).toMatchObject([{ state: 'settled', effects: 'committed' }]);
+  expect(await h.read('a.md')).toBe('- [ ] Original ⏳ 2026-08-02 📅 2026-08-01\n- [ ] Neighbor\n');
+  const task = expectDefined(
+    h.session.snapshot().actual.find((tree) => tree.target === original.target),
+  );
+  const readback = await expectDefined(h.api.tasks.tree)({ target: original.target, limit: 500 });
+  if (!readback.ok) throw Error(readback.error.code);
+  expect(task).toEqual(readback.value.tree);
+  expect(
+    h.model.doGenerateCalls.filter(
+      (step) => step.tools?.some((tool) => tool.name === 'assess_write') === true,
+    ),
+  ).toHaveLength(1);
+});
+it('preserves the preview escape after an unidentified scoped malformed control', async () => {
+  const h = await setup({ 'a.md': '' });
+  h.script(
+    () =>
+      invalidParsedInterpret(
+        {
+          approval: 'untrusted malformed control',
+          scope: {
+            proposalRevision: 0,
+            changes: [{ kind: 'change', index: 0 }],
+          },
+        },
+        [{ toolName: 'create_task', input: { tree: { markdownTitle: 'Deferred sibling' } } }],
+      ),
+    () => call('interpret', { intent: 'plan' }),
+    () => call('create_task', { tree: { markdownTitle: 'Keep' }, complete: true }),
+  );
+
+  await h.session.submit('Prepare a task called Keep and leave it in preview.');
+
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+  expect(h.session.snapshot().trees[0]?.after?.markdownTitle).toBe('Keep');
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(await h.read('a.md')).toBe('');
+  expect(JSON.stringify(h.model.doGenerateCalls)).toContain(
+    'Deferred. Correct interpret first, then resubmit this work. Nothing ran.',
+  );
+  expect(
+    h.model.doGenerateCalls.some(
+      (step) => step.tools?.some((tool) => tool.name === 'assess_write') === true,
+    ),
+  ).toBe(false);
+});
+it('does not treat a research plan as the safe preview escape', async () => {
+  const h = await setup({ 'a.md': '' }, {}, undefined, {
+    reviewWrite: 'native',
+    reviewResearch: 'native',
+  });
+  const search = vi.spyOn(h.research, 'search');
+  h.script(
+    () =>
+      invalidParsedInterpret({
+        approval: 'untrusted malformed control',
+        scope: {
+          proposalRevision: 0,
+          changes: [{ kind: 'change', index: 0 }],
+        },
+      }),
+    () => call('interpret', { intent: 'plan', research: true }),
+  );
+
+  await h.session.submit('Prepare a task called Keep and leave it in preview.');
+
+  expect(search).not.toHaveBeenCalled();
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(await h.read('a.md')).toBe('');
+  expect(
+    h.model.doGenerateCalls.some(
+      (step) => step.tools?.some((tool) => tool.name === 'assess_research') === true,
+    ),
+  ).toBe(false);
+});
+it('keeps the captured scope when an unidentified scoped control retries as an unscoped save', async () => {
+  const source = '- [ ] Original\n';
+  const h = await setup({ 'a.md': source }, {}, undefined, { reviewWrite: 'native' });
+  const rows = await h.api.tasks.list({ path: 'a.md' });
+  if (!rows.ok) throw Error(rows.error.code);
+  const original = expectDefined(rows.value.items[0]);
+  const prepared = await expectDefined(h.api.tasks.prepare)({
+    kind: 'edit',
+    target: original.target,
+    expectedRevision: original.revision,
+    operation: {
+      type: 'patch',
+      target: original.target,
+      patch: { scheduled: { type: 'set', value: '2026-08-02' } },
+    },
+  });
+  if (!prepared.ok) throw Error(prepared.error.code);
+  const plan = await canonicalCommandPlan(h.api, prepared.value, new AbortController().signal, {
+    now: () => 0,
+    deadline: 5000,
+  });
+  h.session.stage({ kind: 'task', plan });
+  const message = 'Сохрани.';
+  h.script(
+    () =>
+      invalidParsedInterpret({
+        approval: message,
+        scope: {
+          proposalRevision: h.session.snapshot().proposal.revision,
+          changes: [{ kind: 'change', index: 0 }],
+        },
+      }),
+    () => call('interpret', { intent: 'confirm', approval: message }),
+    () =>
+      call('assess_write', {
+        effect: 'save-reviewed',
+        scope: 'all',
+        scopeMatches: true,
+        authorization: message,
+      }),
+  );
+
+  await h.session.submit(message);
+
+  expect(h.session.snapshot().status.kind).toBe('error');
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(await h.read('a.md')).toBe(source);
+  const readback = await expectDefined(h.api.tasks.tree)({ target: original.target, limit: 500 });
+  if (!readback.ok) throw Error(readback.error.code);
+  expect(readback.value.tree).toMatchObject({ dates: {}, markdownTitle: 'Original' });
+  expect(
+    h.model.doGenerateCalls.some(
+      (step) => step.tools?.some((tool) => tool.name === 'assess_write') === true,
+    ),
+  ).toBe(false);
+});
+it('does not broaden a field-only instruction after an unidentified control retry', async () => {
+  const { h, source, plan, south } = await structuredReviewFixture('none', 'native');
+  const appended = await expectDefined(h.api.tasks.prepare)({
+    kind: 'append',
+    plan: plan.target,
+    expectedPlanRevision: plan.revision,
+    operation: {
+      type: 'patch',
+      target: south.target,
+      patch: { scheduled: { type: 'set', value: '2026-11-21' } },
+    },
+  });
+  if (!appended.ok) throw Error(appended.error.code);
+  const combined = await canonicalCommandPlan(h.api, appended.value, new AbortController().signal, {
+    now: () => 0,
+    deadline: 5000,
+  });
+  h.session.stage({ kind: 'task', plan: combined });
+  const message = 'Save only the scheduled date.';
+  h.script(
+    () => invalidParsedInterpret({ approval: message }),
+    () => call('interpret', { intent: 'confirm', approval: message }),
+    () =>
+      call('assess_write', {
+        effect: 'save-reviewed',
+        scope: 'fields',
+        scopeMatches: false,
+        authorization: message,
+      }),
+  );
+
+  await h.session.submit(message);
+
+  expect(h.session.snapshot().status.kind).toBe('error');
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(await h.read('a.md')).toBe(source);
+  const readback = await expectDefined(h.api.tasks.tree)({ target: south.target, limit: 500 });
+  if (!readback.ok) throw Error(readback.error.code);
+  expect(readback.value.tree.dates).toEqual({ due: '2026-11-25' });
+  const assessor = h.model.doGenerateCalls.filter(
+    (step) => step.tools?.some((tool) => tool.name === 'assess_write') === true,
+  );
+  expect(assessor).toHaveLength(1);
+  const userMessage = expectDefined(assessor[0]?.prompt.find((part) => part.role === 'user'));
+  const userText = Array.isArray(userMessage.content)
+    ? expectDefined(userMessage.content.find((part) => part.type === 'text')).text
+    : userMessage.content;
+  expect((JSON.parse(userText) as { proposedScope: string }).proposedScope).toBe('all');
+  expect(userText).toContain('2026-11-24');
+  expect(userText).toContain('2026-11-21');
+});
+it.each(['denied', 'historical', 'stale'] as const)(
+  'keeps an unidentified repaired control from saving a %s proposal',
+  async (mode) => {
+    const { h, source, south } = await structuredReviewFixture('none', 'native');
+    const before = await expectDefined(h.api.tasks.tree)({ target: south.target, limit: 500 });
+    if (!before.ok) throw Error(before.error.code);
+    if (mode === 'historical') {
+      h.session.restore({ ...h.session.snapshot(), recovery: 'historical' }, false);
+    } else if (mode === 'stale') {
+      await h.external('a.md', source.replace('Keep.', 'External edit.'));
+    }
+    const message = 'Сохрани.';
+    h.script(
+      () => invalidParsedInterpret({ approval: message }),
+      () => call('interpret', { intent: 'confirm', approval: message }),
+      ...(mode === 'denied'
+        ? [
+            () =>
+              call('assess_write', {
+                effect: 'preview',
+                scope: 'none',
+                scopeMatches: false,
+                authorization: '',
+              }),
+          ]
+        : [
+            () =>
+              call('assess_write', {
+                effect: 'save-reviewed',
+                scope: 'all',
+                scopeMatches: true,
+                authorization: message,
+              }),
+          ]),
+    );
+
+    await h.session.submit(message);
+
+    expect(h.session.snapshot().journal.every((entry) => entry.effects !== 'committed')).toBe(true);
+    if (mode === 'historical') expect(h.session.snapshot().recovery).toBe('historical');
+    expect(await h.read('a.md')).toBe(
+      mode === 'stale' ? source.replace('Keep.', 'External edit.') : source,
+    );
+    if (mode === 'stale') {
+      expect(h.session.snapshot().journal).toMatchObject([
+        { state: 'settled', error: 'TARGET_UNAVAILABLE' },
+      ]);
+      const current = await expectDefined(h.api.tasks.list)({ path: 'a.md' });
+      if (!current.ok) throw Error(current.error.code);
+      expect(current.value.items.map((item) => item.title)).toEqual(['Dispatch', 'Proof', 'Proof']);
+    } else {
+      const readback = await expectDefined(h.api.tasks.tree)({ target: south.target, limit: 500 });
+      if (!readback.ok) throw Error(readback.error.code);
+      expect(readback.value.tree).toEqual(before.value.tree);
+    }
+    const reviews = h.model.doGenerateCalls.filter(
+      (step) => step.tools?.some((tool) => tool.name === 'assess_write') === true,
+    );
+    expect(reviews).toHaveLength(1);
+  },
+);
+it('rejects a privileged intent switch after the first valid retry fails its scope guard', async () => {
+  const reviewWrite = vi.fn<WriteReviewer>(async (request) => ({
+    effect: 'save-after-edits',
+    scope: 'all',
+    scopeMatches: true,
+    authorization: request.saveInstruction,
+  }));
+  const h = await setup({ 'a.md': '- [ ] Original\n' }, {}, undefined, { reviewWrite });
+  const rows = await h.api.tasks.list({ path: 'a.md' });
+  if (!rows.ok) throw Error(rows.error.code);
+  const original = expectDefined(rows.value.items[0]);
+  const prepared = await expectDefined(h.api.tasks.prepare)({
+    kind: 'edit',
+    target: original.target,
+    expectedRevision: original.revision,
+    operation: {
+      type: 'patch',
+      target: original.target,
+      patch: { scheduled: { type: 'set', value: '2026-08-02' } },
+    },
+  });
+  if (!prepared.ok) throw Error(prepared.error.code);
+  const plan = await canonicalCommandPlan(h.api, prepared.value, new AbortController().signal, {
+    now: () => 0,
+    deadline: 5000,
+  });
+  h.session.stage({ kind: 'task', plan });
+  const message = 'Save the displayed task after correcting the stale scope.';
+  const proposalRevision = h.session.snapshot().proposal.revision;
+  let switched = false;
+  h.script(
+    () => {
+      const response = call('interpret', {});
+      return {
+        ...response,
+        content: response.content.map((part) =>
+          part.type === 'tool-call' ? { ...part, input: '{"intent":' } : part,
+        ),
+      };
+    },
+    () =>
+      call('interpret', {
+        intent: 'confirm',
+        approval: message,
+        scope: {
+          proposalRevision,
+          changes: [{ kind: 'change', index: 99 }],
+        },
+      }),
+    () => {
+      switched = true;
+      return call('interpret', { intent: 'immediate', ...writeGrant(h) });
+    },
+  );
+
+  await h.session.submit(message);
+
+  expect(switched).toBe(true);
+  expect(JSON.stringify(h.model.doGenerateCalls)).toContain(
+    'Scope indexes must identify top-level changes in the captured proposal.',
+  );
+  expect(reviewWrite).not.toHaveBeenCalled();
+  expect(h.session.snapshot().status.kind).toBe('error');
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(await h.read('a.md')).toBe('- [ ] Original\n');
 });
 it('does not let parsing of a later malformed control block or reopen earlier ordinary work', async () => {
   const h = await setup({ 'a.md': '' });
