@@ -4,6 +4,7 @@ import { files, tree } from './fixtures';
 import { lookupCases } from './lookupCases';
 import type { TurnExpectation } from './oracles';
 import { pageCases } from './pageCases';
+import { qualificationCases } from './qualificationCases';
 import { semanticCases } from './semanticCases';
 export interface EvalTurn {
   text: string;
@@ -2282,6 +2283,7 @@ export const corpus = [
   ...lookupCases,
   ...semanticCases,
   ...pageCases,
+  ...qualificationCases,
 ];
 export function selectCases(selection: string): readonly EvalCase[] {
   if (selection === 'all') return corpus;
