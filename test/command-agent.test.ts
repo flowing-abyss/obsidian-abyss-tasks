@@ -100,8 +100,14 @@ it('labels accepted task previews before unchanged canonical values and issued r
     expect(Object.keys(value)[0]).toBe('preparation');
     expect(value['preparation']).toContain('Preview accepted');
     expect(value['preparation']).toContain('has not saved source');
+    expect(value['preparation']).toContain('whole request’s effects, counts and content roles');
+    expect(value['preparation']).toContain(
+      'Continue remaining authorized preparation through the current issued edit aliases without asking permission to continue.',
+    );
     expect(value['preparation']).toContain('If the request is complete, finish');
-    expect(value['preparation']).toContain('issued edit alias');
+    expect(value['preparation']).toContain(
+      'ask a question when a required user fact or choice is missing or conflicting.',
+    );
     expect(value['preparation']).toContain('another requested task');
     expect(value).toHaveProperty('after.dates.scheduled', '2026-08-02');
     expect(value).toHaveProperty('references.taskReferences');
@@ -1958,6 +1964,140 @@ it('an affirmative answer to a question refines instead of saving', async () => 
   await h.session.submit('okay');
   expect(await h.read('a.md')).not.toContain('- [ ] New');
   expect(h.session.snapshot().activeQuestion).toBeNull();
+});
+it('retains an accepted change through a genuine missing-date question and applies the supplied date', async () => {
+  const source = '- [ ] Report\n';
+  const h = await setup({ 'a.md': source });
+  h.script(
+    interpret(),
+    () => call('find', { query: 'Report', purpose: 'change' }),
+    () =>
+      call('change_task', {
+        edit: projectedEdit(h, 'Report'),
+        operation: { type: 'description', text: 'Use the approved project wording.' },
+      }),
+    () =>
+      call('finish', {
+        state: 'question',
+        message: 'What date should I schedule Report for?',
+        blockingIssue: {
+          kind: 'missing-information',
+          detail: 'The requested schedule date is absent from the current instructions.',
+        },
+      }),
+  );
+  await h.session.submit(
+    'Update Report with description “Use the approved project wording” and schedule it for the date we agreed.',
+  );
+
+  expect(h.session.snapshot().status.kind).toBe('question');
+  expect(h.session.snapshot().activeQuestion).toBe('What date should I schedule Report for?');
+  expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+  const first = expectDefined(h.session.snapshot().proposal.changes[0]);
+  if (first.kind !== 'task') throw new Error('Expected retained task draft');
+  const planTarget = first.plan.target;
+  expect(first.plan.after).toMatchObject({
+    title: 'Report',
+    description: 'Use the approved project wording.',
+  });
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(await h.read('a.md')).toBe(source);
+
+  h.script(
+    () =>
+      call('change_task', {
+        edit: projectedEdit(h, 'Report'),
+        operation: { type: 'patch', patch: { scheduled: { type: 'set', value: '2026-08-12' } } },
+      }),
+    finish(),
+  );
+  await h.session.submit('Use 2026-08-12.');
+
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+  const completed = expectDefined(h.session.snapshot().proposal.changes[0]);
+  if (completed.kind !== 'task') throw new Error('Expected retained task draft');
+  expect(completed.plan.target).toBe(planTarget);
+  expect(completed.plan.after).toMatchObject({
+    title: 'Report',
+    description: 'Use the approved project wording.',
+    dates: { scheduled: '2026-08-12' },
+  });
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(await h.read('a.md')).toBe(source);
+
+  await h.session.confirm();
+  expect(h.session.snapshot().status.kind).toBe('saved');
+  expect(await h.read('a.md')).toContain('Use the approved project wording.');
+  expect(await h.read('a.md')).toContain('⏳ 2026-08-12');
+});
+it('honors an explicit first-portion-only request and leaves later work unprepared', async () => {
+  const source = '- [ ] Report\n';
+  const h = await setup({ 'a.md': source });
+  h.script(
+    interpret(),
+    () => call('find', { query: 'Report', purpose: 'change' }),
+    () =>
+      call('change_task', {
+        edit: projectedEdit(h, 'Report'),
+        operation: { type: 'add-comment', text: 'First review step completed.' },
+        complete: true,
+      }),
+    finish(),
+  );
+  await h.session.submit(
+    'Prepare only the first portion now: add the comment “First review step completed.” Stop there; I will provide the next portion later.',
+  );
+
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+  const change = expectDefined(h.session.snapshot().proposal.changes[0]);
+  if (change.kind !== 'task') throw new Error('Expected task draft');
+  expect(change.plan.after?.comments.map((comment) => comment.text)).toEqual([
+    'First review step completed.',
+  ]);
+  expect(change.plan.after?.dates.scheduled).toBeUndefined();
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(await h.read('a.md')).toBe(source);
+});
+it('asks for a fact omitted by a successfully read source without inventing it', async () => {
+  const source = '- [ ] Report\n';
+  const note = 'Warehouse instructions.md';
+  const noteText = 'Use the west loading bay for deliveries. Opening hours are not listed.\n';
+  const h = await setup({ 'a.md': source, [note]: noteText });
+  h.script(
+    interpret(),
+    () => call('read', { kind: 'notes', query: 'Warehouse instructions' }),
+    () => call('read', { kind: 'note', selector: { path: note } }),
+    () =>
+      call('finish', {
+        state: 'question',
+        message: 'What opening time should I add? The warehouse note does not give one.',
+        blockingIssue: {
+          kind: 'missing-information',
+          detail: 'The requested opening time is absent from the accepted note content.',
+        },
+      }),
+  );
+  await h.session.submit(
+    'Add the warehouse opening time from Warehouse instructions.md to Report.',
+  );
+
+  expect(h.session.snapshot().status.kind).toBe('question');
+  expect(h.session.snapshot().activeQuestion).toContain('does not give one');
+  expect(h.session.snapshot().entities.notes).toMatchObject([
+    { note: { path: note }, complete: true },
+  ]);
+  expect(
+    h.session
+      .snapshot()
+      .entities.notes[0]?.segments.map((segment) => segment.text)
+      .join(''),
+  ).toBe(noteText);
+  expect(h.session.snapshot().proposal.changes).toEqual([]);
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(await h.read('a.md')).toBe(source);
+  expect(await h.read(note)).toBe(noteText);
 });
 it('preserves omitted unknown authored annotations in an exact child title rewrite', async () => {
   const h = await setup({ 'a.md': '- [ ] Root\n  - [ ] Child [unknown:: keep]\n  - [ ] Other\n' });

@@ -451,7 +451,13 @@ export const finishSchema = z.union([
     selection,
     blockingIssue: z.strictObject({
       kind: z.enum(['missing-information', 'conflict']),
-      detail: z.string().min(1).max(240),
+      detail: z
+        .string()
+        .min(1)
+        .max(240)
+        .describe(
+          'Identify the required user fact or choice that is absent or conflicting in the current instructions and accepted evidence. Unfinished authorized preparation is not missing information; continue it with the available tools.',
+        ),
     }),
   }),
   z.strictObject({
@@ -962,7 +968,7 @@ export function planToolOutput(
         preparation:
           plan.hasChanges === false
             ? 'This plan has no authored differences relative to saved source; nothing has been saved. An undo may be complete, but other requested changes need their own operations before finish. Use the current issued edit aliases.'
-            : 'Preview accepted; this operation has not saved source content. If the request is complete, finish; otherwise refine through its issued edit alias. Create again only for another requested task.',
+            : 'Preview accepted; this operation has not saved source content. Check the whole request’s effects, counts and content roles. Continue remaining authorized preparation through the current issued edit aliases without asking permission to continue. If the request is complete, finish; ask a question when a required user fact or choice is missing or conflicting. Create again only for another requested task.',
       }
     : {};
   const selection =

@@ -493,10 +493,29 @@ it.each([
   },
 );
 it('advertises actual finish and control discriminator enums', async () => {
-  expect((await modelToolSchema(finishSchema, 'finish').jsonSchema).properties?.['state']).toEqual({
+  const finish = modelToolSchema(finishSchema, 'finish');
+  const advertised = await finish.jsonSchema;
+  expect(advertised.properties?.['state']).toEqual({
     type: 'string',
     enum: ['ready', 'question'],
   });
+  expect(JSON.stringify(advertised)).toContain(
+    'Identify the required user fact or choice that is absent or conflicting in the current instructions and accepted evidence. Unfinished authorized preparation is not missing information; continue it with the available tools.',
+  );
+  expect(
+    await finish.validate?.({
+      state: 'question',
+      message: 'Which date?',
+      blockingIssue: { kind: 'missing-information', detail: 'The date is unspecified.' },
+    }),
+  ).toHaveProperty('success', true);
+  expect(
+    await finish.validate?.({
+      state: 'question',
+      message: 'Which date?',
+      blockingIssue: { kind: 'missing-information', detail: '' },
+    }),
+  ).toHaveProperty('success', false);
   expect(
     (await modelToolSchema(controlSchema(false), 'interpret').jsonSchema).properties?.['intent'],
   ).toHaveProperty('enum', expect.arrayContaining(['confirm', 'immediate']));
