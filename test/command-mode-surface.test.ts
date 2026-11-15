@@ -5108,6 +5108,13 @@ it('reopens the discarded task tree from history without reviving its changes or
   });
   const id = h.owner.snapshot().id;
   expect(await h.owner.newSession('discard')).toBe(true);
+  expect(h.owner.snapshot().id).not.toBe(id);
+  expect(h.owner.snapshot().status).toEqual({ kind: 'ready', message: 'Draft discarded.' });
+  expect(surface.element.querySelector('.abyss-command-phase')?.textContent).toBe(
+    'Draft discarded.',
+  );
+  expect(surface.element.querySelector('[aria-label="Save proposal"]')).toBeNull();
+  expect(h.owner.snapshot().proposal.changes).toEqual([]);
   const stored = await CommandSessionStore.open({ ...h.persisted, now: () => 1 });
   const record = expectDefined(stored.records().find((entry) => entry.snapshot.id === id));
   expect(record.snapshot.proposal.changes).toEqual([]);
@@ -5137,6 +5144,24 @@ it('reopens the discarded task tree from history without reviving its changes or
   });
   expect(h.session.beginReview()).toBe(true);
   expect(surface.element.querySelector('.abyss-command-tree')?.textContent).toBe('');
+});
+
+it('shows the Russian acknowledgement on the accepted new session after discard', async () => {
+  configureCommandLocale('ru');
+  const h = await setup();
+  const surface = h.mount();
+  enter(surface, 'Create a temporary task');
+  await vi.waitFor(() => {
+    expect(surface.element.querySelector('.abyss-task-title')?.textContent).toBe('Parent');
+  });
+  expect(await h.owner.newSession('discard')).toBe(true);
+  expect(h.owner.snapshot().status).toEqual({ kind: 'ready', message: 'Черновик удалён.' });
+  expect(surface.element.querySelector('.abyss-command-phase')?.textContent).toBe(
+    'Черновик удалён.',
+  );
+  expect(surface.element.querySelector('[aria-label="Сохранить предложение"]')).toBeNull();
+  expect(h.owner.snapshot().proposal.changes).toEqual([]);
+  expect(await h.read('a.md')).toBe('- [ ] Existing\n');
 });
 
 it.each([false, true])(

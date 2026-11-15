@@ -1719,6 +1719,23 @@ it('a late failure from a semantic session switch cannot replace the new session
   expect(h.session.snapshot().status.kind).toBe('ready');
 });
 
+it('only an accepted discard acknowledges the new session and later feedback replaces it', async () => {
+  const h = await setup();
+  expect(h.session.snapshot().status).toEqual({ kind: 'ready', message: '' });
+  expect(await h.session.newSession('keep')).toBe(true);
+  expect(h.session.snapshot().status).toEqual({ kind: 'ready', message: '' });
+
+  expect(await h.session.newSession('discard')).toBe(true);
+  expect(h.session.snapshot().status).toEqual({ kind: 'ready', message: 'Draft discarded.' });
+
+  h.setRun(async () => {
+    h.session.status('ready', 'Follow-up is current.');
+  });
+  await h.session.submit('Continue with a new request');
+  expect(h.session.snapshot().status).toEqual({ kind: 'ready', message: 'Follow-up is current.' });
+  expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+});
+
 it('keeping a draft after a disposition question retains its original unresolved question in history', async () => {
   const h = await setup();
   const plan = ok(

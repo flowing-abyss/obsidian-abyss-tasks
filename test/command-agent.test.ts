@@ -5444,6 +5444,22 @@ it.each(['keep', 'discard'] as const)(
   },
 );
 
+it('acknowledges a semantic discard on the new active session without a source write', async () => {
+  const h = await setup({ 'a.md': '' });
+  h.script(interpret(), create, finish());
+  await h.session.submit('Prepare a task');
+  const previous = h.session.snapshot();
+  const generations = h.model.doGenerateCalls.length;
+  h.script(() =>
+    call('interpret', { intent: 'new-session', research: false, disposition: 'discard' }),
+  );
+  await h.session.submit('Discard this draft and start another session');
+  expect(h.session.snapshot().id).not.toBe(previous.id);
+  expect(h.session.snapshot().status).toEqual({ kind: 'ready', message: 'Draft discarded.' });
+  expect(h.model.doGenerateCalls).toHaveLength(generations + 1);
+  expect(await h.read('a.md')).toBe('');
+});
+
 it('an unresolved semantic disposition retains the pending draft and asks without a tool repair', async () => {
   const h = await setup();
   h.script(interpret(), create, finish());

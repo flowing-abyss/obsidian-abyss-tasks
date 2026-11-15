@@ -593,6 +593,9 @@ it('unresolved effects permit inspection and only explicit acknowledgement start
   expect(await h.owner.newSession('discard')).toBe(false);
   expect(await h.owner.acknowledgeUncertainty()).toBe(true);
   expect(h.owner.snapshot().id).not.toBe(id);
+  expect(
+    h.owner.recent().find((entry) => entry.snapshot.id === id)?.snapshot.status.message,
+  ).not.toBe('Draft discarded.');
   await h.owner.clearCompleted();
   expect(
     h.owner.recent().find((entry) => entry.snapshot.id === id)?.snapshot.journal[0]?.effects,
@@ -688,18 +691,70 @@ it('never reports Saved when a real receipt retains per-resource uncertainty', a
   expect((await h.read('a.md')).match(/Created once/g)).toHaveLength(1);
 });
 
-it('cancellation during archive persistence cannot select an unaccepted new session', async () => {
+it.each(['keep', 'discard'] as const)(
+  'cancellation during archive persistence cannot accept a %s new session',
+  async (disposition) => {
+    const h = await setup();
+    await stageCreate(h);
+    const id = h.owner.snapshot().id;
+    h.run(async ({ signal }) => {
+      await h.session().newSession(disposition, signal);
+    });
+    h.afterSave(() => {
+      h.session().cancelTurn();
+    });
+    await h.owner.submit('Start an independent conversation');
+    expect(h.owner.snapshot().id).toBe(id);
+    expect(h.store.activeId()).toBe(id);
+    expect(h.owner.snapshot().status.message).not.toBe('Draft discarded.');
+    expect(h.owner.snapshot().proposal.changes).toHaveLength(1);
+  },
+);
+
+it('failed discard persistence keeps the draft and shows the retention failure', async () => {
   const h = await setup();
-  const id = h.owner.snapshot().id;
-  h.run(async ({ signal }) => {
-    await h.session().newSession('keep', signal);
+  await stageCreate(h);
+  await h.owner.flush();
+  const before = h.owner.snapshot();
+  h.fail(true);
+  expect(await h.owner.newSession('discard')).toBe(false);
+  expect(h.owner.snapshot().id).toBe(before.id);
+  expect(h.store.activeId()).toBe(before.id);
+  expect(h.owner.snapshot().proposal).toEqual(before.proposal);
+  expect(h.owner.snapshot().status).toEqual({
+    kind: 'error',
+    message: 'Local history could not be saved. Keep this session open.',
   });
-  h.afterSave(() => {
-    h.session().cancelTurn();
-  });
-  await h.owner.submit('Start an independent conversation');
-  expect(h.owner.snapshot().id).toBe(id);
-  expect(h.store.activeId()).toBe(id);
+});
+
+it('a superseded discard transition cannot replace later session feedback', async () => {
+  const h = await setup();
+  await stageCreate(h);
+  await h.owner.flush();
+  const write = h.storage.write,
+    started = deferred<void>(),
+    release = deferred<void>();
+  h.storage.write = async (...args) => {
+    if (args[0].kind === 'session') {
+      started.resolve();
+      await release.promise;
+    }
+    await write(...args);
+  };
+  const changing = h.owner.newSession('discard');
+  await started.promise;
+  const later = {
+    ...h.owner.snapshot(),
+    id: 'later-session',
+    input: 'Later unsent input',
+    status: { kind: 'ready' as const, message: 'Later session feedback.' },
+  };
+  expect(h.session().restore(later, false)).toBe(true);
+  release.resolve();
+  expect(await changing).toBe(false);
+  expect(h.owner.snapshot().id).toBe('later-session');
+  expect(h.owner.snapshot().input).toBe('Later unsent input');
+  expect(h.owner.snapshot().status).toEqual({ kind: 'ready', message: 'Later session feedback.' });
 });
 
 it.each(['hide', 'stop'] as const)(

@@ -2893,6 +2893,58 @@ function assertReceiptRetentionNegatives(
   expect(regradePendingPipelineTurn(mutated, 3, expected)).toContain('pending-task-state-receipt');
 }
 
+function workshopEndingText(ending: 'restore-title-noop' | 'clear-session'): string {
+  return ending === 'clear-session'
+    ? 'Discard the remaining workshop title draft and start a clean session.'
+    : 'Restore the workshop shutter title to its saved text.';
+}
+
+function workshopEndingSteps(
+  ending: 'restore-title-noop' | 'clear-session',
+  original: string,
+): Step[] {
+  return ending === 'clear-session'
+    ? [tool('interpret', { intent: 'new-session', disposition: 'discard', research: false })]
+    : [plan, restoreTaskTitle(original), finish];
+}
+
+function expectWorkshopDiscardFeedback(
+  finalTurn: RetainedTurn,
+  report: Awaited<ReturnType<typeof replay>>['report'],
+): void {
+  const snapshot = finalTurn.snapshot as CommandSessionSnapshot;
+  const previous = finalTurn.inputSnapshot as CommandSessionSnapshot;
+  expect(snapshot.status).toEqual({ kind: 'ready', message: 'Draft discarded.' });
+  expect(snapshot.proposal.changes).toEqual([]);
+  expect(snapshot.pendingTransition).toBeUndefined();
+  const ownerStore = object(
+    [...report.trace].reverse().find((event) => event.kind === 'owner-store')?.data,
+  );
+  const archived = (ownerStore['sessions'] as Array<{ snapshot: CommandSessionSnapshot }>).find(
+    (record) => record.snapshot.id === previous.id,
+  );
+  const archivedReceipt = archived?.snapshot.journal[0];
+  const inputReceipt = previous.journal[0];
+  expect(archivedReceipt?.id).toBe(inputReceipt?.id);
+  expect(archivedReceipt?.effects).toBe('committed');
+  expect(archivedReceipt?.receipt).toEqual(inputReceipt?.receipt);
+}
+
+function expectWorkshopNoop(finalTurn: RetainedTurn): void {
+  const snapshot = finalTurn.snapshot as CommandSessionSnapshot;
+  const previous = finalTurn.inputSnapshot as CommandSessionSnapshot;
+  expect(finalTurn.before).toEqual(finalTurn.after);
+  expect(snapshot.journal).toEqual(previous.journal);
+  expect(snapshot.status).toEqual({
+    kind: 'ready',
+    message: 'There are no changes to save.',
+  });
+  expect(snapshot.proposal.changes).toHaveLength(1);
+  const remainder = expectDefined(snapshot.proposal.changes[0]);
+  expect(remainder.kind).toBe('task');
+  if (remainder.kind === 'task') expect(remainder.plan).toHaveProperty('hasChanges', false);
+}
+
 it.each(['restore-title-noop', 'clear-session'] as const)(
   'preserves a parsed comment and closed time entry through partial Save and %s',
   async (ending) => {
@@ -3026,124 +3078,117 @@ it.each(['restore-title-noop', 'clear-session'] as const)(
     expect(report.turns[2]?.inputSnapshot.journal[0]?.receipt).toBeDefined();
   },
 );
-it('retains a partial-Save receipt when the remaining Workshop title returns to a no-op', async () => {
-  const original = 'Inspect the workshop shutter';
-  const edited = 'Inspect the painted workshop shutter';
-  const sourcePath = 'Workshop-review.md';
-  const sourceText =
-    '- [ ] Inspect the workshop shutter #workshop ⏳ 2027-03-04 📅 2027-03-08\n' +
-    '  - 2027-03-01T09:00:00Z → 2027-03-01T10:00:00Z\n' +
-    '  - 2027-03-01: Keep the hinge clean\n' +
-    '- [ ] Sentinel sibling\n';
-  const savedText = sourceText.replace('📅 2027-03-08', '📅 2027-03-12');
-  const comment = {
-    text: 'Keep the hinge clean',
-    timestamp: { precision: 'day', value: '2027-03-01' },
-  };
-  const closedTime = {
-    state: 'closed',
-    startMs: 1803891600000,
-    endMs: 1803895200000,
-  };
-  const initialOwner = tree(original, {
-    tags: ['#workshop'],
-    dates: { scheduled: '2027-03-04', due: '2027-03-08' },
-    comments: [comment],
-    timeEntries: [closedTime],
-    source: { path: sourcePath, line: 0 },
-  });
-  const savedOwner = tree(original, {
-    tags: ['#workshop'],
-    dates: { scheduled: '2027-03-04', due: '2027-03-12' },
-    comments: [comment],
-    timeEntries: [closedTime],
-    source: { path: sourcePath, line: 0 },
-  });
-  const draftOwner = tree(edited, {
-    tags: ['#workshop'],
-    dates: { scheduled: '2027-03-04', due: '2027-03-12' },
-    comments: [comment],
-    timeEntries: [closedTime],
-  });
-  const sentinel = tree('Sentinel sibling');
-  const expected = {
-    status: 'ready',
-    writeCount: 0,
-    publicTrees: [savedOwner, sentinel],
-    pendingTaskStates: [
-      {
-        path: sourcePath,
-        line: 0,
-        tree: {
-          markdownTitle: original,
-          dates: { scheduled: '2027-03-04', due: '2027-03-12' },
+it.each(['restore-title-noop', 'clear-session'] as const)(
+  'retains a partial-Save receipt when the remaining Workshop title ends with %s',
+  async (ending) => {
+    const original = 'Inspect the workshop shutter';
+    const edited = 'Inspect the painted workshop shutter';
+    const sourcePath = 'Workshop-review.md';
+    const sourceText =
+      '- [ ] Inspect the workshop shutter #workshop ⏳ 2027-03-04 📅 2027-03-08\n' +
+      '  - 2027-03-01T09:00:00Z → 2027-03-01T10:00:00Z\n' +
+      '  - 2027-03-01: Keep the hinge clean\n' +
+      '- [ ] Sentinel sibling\n';
+    const savedText = sourceText.replace('📅 2027-03-08', '📅 2027-03-12');
+    const comment = {
+      text: 'Keep the hinge clean',
+      timestamp: { precision: 'day', value: '2027-03-01' },
+    };
+    const closedTime = {
+      state: 'closed',
+      startMs: 1803891600000,
+      endMs: 1803895200000,
+    };
+    const initialOwner = tree(original, {
+      tags: ['#workshop'],
+      dates: { scheduled: '2027-03-04', due: '2027-03-08' },
+      comments: [comment],
+      timeEntries: [closedTime],
+      source: { path: sourcePath, line: 0 },
+    });
+    const savedOwner = tree(original, {
+      tags: ['#workshop'],
+      dates: { scheduled: '2027-03-04', due: '2027-03-12' },
+      comments: [comment],
+      timeEntries: [closedTime],
+      source: { path: sourcePath, line: 0 },
+    });
+    const draftOwner = tree(edited, {
+      tags: ['#workshop'],
+      dates: { scheduled: '2027-03-04', due: '2027-03-12' },
+      comments: [comment],
+      timeEntries: [closedTime],
+    });
+    const sentinel = tree('Sentinel sibling');
+    const expected = {
+      status: 'ready',
+      writeCount: 0,
+      publicTrees: [savedOwner, sentinel],
+      pendingTaskStates: [
+        {
+          path: sourcePath,
+          line: 0,
+          tree: {
+            markdownTitle: original,
+            dates: { scheduled: '2027-03-04', due: '2027-03-12' },
+          },
         },
-      },
-    ],
-  } as TurnExpectation;
-  const test: EvalCase = {
-    id: 'dev-pending-state-workshop-restore-title',
-    family: 'development-pending-state',
-    split: 'development',
-    profile: 'owner',
-    scripted: true,
-    files: files('', { [sourcePath]: sourceText }),
-    turns: [
-      {
-        text: 'Rename the workshop shutter and move its due date to March 12, 2027. Preview it.',
-        expect: { status: 'ready', trees: [draftOwner], publicTrees: [initialOwner, sentinel] },
-      },
-      {
-        text: 'Save only the due date and leave the new title in the draft.',
-        expect: {
-          status: 'ready',
-          partialSave: true,
-          trees: [draftOwner],
-          publicTrees: [savedOwner, sentinel],
-          files: { [sourcePath]: savedText },
-          proposalKinds: ['task'],
-          writeCount: 1,
+      ],
+    } as TurnExpectation;
+    const test: EvalCase = {
+      id: `dev-pending-state-workshop-${ending}`,
+      family: 'development-pending-state',
+      split: 'development',
+      profile: 'owner',
+      scripted: true,
+      files: files('', { [sourcePath]: sourceText }),
+      turns: [
+        {
+          text: 'Rename the workshop shutter and move its due date to March 12, 2027. Preview it.',
+          expect: { status: 'ready', trees: [draftOwner], publicTrees: [initialOwner, sentinel] },
         },
-      },
-      {
-        text: 'Restore the workshop shutter title to its saved text.',
-        expect: expected,
-      },
-    ],
-  };
-  const { report } = await replay(
-    test,
-    [
-      plan,
-      tool('read', { input: { kind: 'tasks', query: original } }),
-      editTaskTitleAndDue(edited, '2027-03-12'),
-      finish,
-      saveTaskDueOnly,
-      plan,
-      restoreTaskTitle(original),
-      finish,
-    ],
-    3,
-  );
-  const finalTurn = expectDefined(report.turns[2]);
-  expect(report.turns.map((turn) => turn.failures)).toEqual([[], [], []]);
-  expect(finalTurn.failures).toEqual([]);
-  expect(regradePendingPipelineTurn(report, 3, expected)).toEqual([]);
-  expect(finalTurn.writeCount).toBe(0);
-  expect(finalTurn.before).toEqual(finalTurn.after);
-  expect(finalTurn.after[sourcePath]).toBe(savedText);
-  expect(finalTurn.inputSnapshot.journal).toHaveLength(1);
-  expect(finalTurn.snapshot.journal).toEqual(finalTurn.inputSnapshot.journal);
-  expect(finalTurn.snapshot.status).toEqual({
-    kind: 'ready',
-    message: 'There are no changes to save.',
-  });
-  expect(finalTurn.snapshot.proposal.changes).toHaveLength(1);
-  const remainder = expectDefined(finalTurn.snapshot.proposal.changes[0]);
-  expect(remainder.kind).toBe('task');
-  if (remainder.kind === 'task') expect(remainder.plan).toHaveProperty('hasChanges', false);
-  assertReceiptRetentionNegatives('restore-title-noop', report, expected, sourcePath);
-});
+        {
+          text: 'Save only the due date and leave the new title in the draft.',
+          expect: {
+            status: 'ready',
+            partialSave: true,
+            trees: [draftOwner],
+            publicTrees: [savedOwner, sentinel],
+            files: { [sourcePath]: savedText },
+            proposalKinds: ['task'],
+            writeCount: 1,
+          },
+        },
+        {
+          text: workshopEndingText(ending),
+          expect: expected,
+        },
+      ],
+    };
+    const { report } = await replay(
+      test,
+      [
+        plan,
+        tool('read', { input: { kind: 'tasks', query: original } }),
+        editTaskTitleAndDue(edited, '2027-03-12'),
+        finish,
+        saveTaskDueOnly,
+        ...workshopEndingSteps(ending, original),
+      ],
+      3,
+    );
+    const finalTurn = expectDefined(report.turns[2]);
+    expect(report.turns.map((turn) => turn.failures)).toEqual([[], [], []]);
+    expect(finalTurn.failures).toEqual([]);
+    expect(regradePendingPipelineTurn(report, 3, expected)).toEqual([]);
+    expect(finalTurn.writeCount).toBe(0);
+    expect(finalTurn.after[sourcePath]).toBe(savedText);
+    expect(finalTurn.inputSnapshot.journal).toHaveLength(1);
+    if (ending === 'clear-session') expectWorkshopDiscardFeedback(finalTurn, report);
+    else expectWorkshopNoop(finalTurn);
+    assertReceiptRetentionNegatives(ending, report, expected, sourcePath);
+  },
+);
 it('eliminates a no-op owner while saving its material sibling', async () => {
   const gaugeBefore = '- [ ] Calibrate gauge ⏳ 2027-02-03\n';
   const freightBefore = '- [ ] Book freight 📅 2027-02-04\n';

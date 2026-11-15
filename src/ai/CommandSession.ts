@@ -1891,9 +1891,13 @@ export class CommandSession {
       );
       return false;
     }
+    const archived = this.archivedSnapshot_abyssPrivate(disposition, acknowledgeUncertainty);
+    const next = this.empty_abyssPrivate();
     return this.startSession_abyssPrivate(
-      this.archivedSnapshot_abyssPrivate(disposition, acknowledgeUncertainty),
-      this.empty_abyssPrivate(),
+      archived,
+      disposition === 'discard' && !this.state_abyssPrivate.blocked
+        ? { ...next, status: { kind: 'ready', message: commandMessage('Draft discarded.') } }
+        : next,
       signal,
     );
   }
@@ -1916,7 +1920,7 @@ export class CommandSession {
       if (!this.current_abyssPrivate(archived.id)) return false;
       return this.restore(next, false);
     } catch {
-      if (signal?.aborted !== true)
+      if (signal?.aborted !== true && this.current_abyssPrivate(archived.id))
         this.status(
           'error',
           commandMessage('Could not retain this session. Keep it open and try again.'),

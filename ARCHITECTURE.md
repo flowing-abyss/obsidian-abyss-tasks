@@ -520,8 +520,12 @@ for the current message. A partial approval binds to verified owners and values 
 changes pending. Saving a requested new edit also requires material new preparation. Enter still
 confirms the visible proposal through the session's native command.
 Keep retains the complete unsaved draft in history without a source write; discard requires explicit
-abandonment. Ambiguous disposition retains work and asks a short question. Legitimate transition
-questions terminate normally instead of consuming tool-repair attempts.
+abandonment. A successful nonblocked discard prepares the existing localized acknowledgement on the
+next snapshot before persistence and displays it only after the transition is accepted. Failed,
+cancelled or stale transitions cannot overwrite newer feedback; a current-session persistence
+failure retains the draft and reports an error. Archived history keeps its journal and receipts.
+Ambiguous disposition retains work and asks a short question. Legitimate transition questions
+terminate normally instead of consuming tool-repair attempts.
 
 Reloaded handles are historical. Opening preserves input, question, exchanges and canonical trees
 without replay. Persisted thinking/searching/writing phases restore as stopped history or unresolved-write
