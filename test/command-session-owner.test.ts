@@ -3,6 +3,7 @@ import type { TasksApiV1 } from '../api';
 import { CommandSession } from '../src/ai/CommandSession';
 import { CommandSessionOwner } from '../src/ai/CommandSessionOwner';
 import { CommandSessionStore } from '../src/ai/CommandSessionStore';
+import { configureCommandLocale } from '../src/ai/commandMessages';
 import type { CommandAgentPort, CommandSessionSnapshot } from '../src/ai/commandTypes';
 import { deferred, expectDefined } from './helpers';
 import { commandSessionStorage } from './support/commandSessionStorage';
@@ -11,6 +12,7 @@ import { publicApiHarness, type PublicApiHarness } from './support/publicApiHarn
 const harnesses: PublicApiHarness[] = [];
 const owners: CommandSessionOwner[] = [];
 afterEach(() => {
+  configureCommandLocale('en');
   owners.splice(0).forEach((owner) => {
     owner.dispose();
   });
@@ -595,7 +597,7 @@ it('unresolved effects permit inspection and only explicit acknowledgement start
   expect(h.owner.snapshot().id).not.toBe(id);
   expect(
     h.owner.recent().find((entry) => entry.snapshot.id === id)?.snapshot.status.message,
-  ).not.toBe('Draft discarded.');
+  ).not.toBe('Draft discarded. Ready to continue.');
   await h.owner.clearCompleted();
   expect(
     h.owner.recent().find((entry) => entry.snapshot.id === id)?.snapshot.journal[0]?.effects,
@@ -706,7 +708,7 @@ it.each(['keep', 'discard'] as const)(
     await h.owner.submit('Start an independent conversation');
     expect(h.owner.snapshot().id).toBe(id);
     expect(h.store.activeId()).toBe(id);
-    expect(h.owner.snapshot().status.message).not.toBe('Draft discarded.');
+    expect(h.owner.snapshot().status.message).not.toBe('Draft discarded. Ready to continue.');
     expect(h.owner.snapshot().proposal.changes).toHaveLength(1);
   },
 );
@@ -726,6 +728,63 @@ it('failed discard persistence keeps the draft and shows the retention failure',
     message: 'Local history could not be saved. Keep this session open.',
   });
 });
+
+it.each([
+  {
+    locale: 'en' as const,
+    acknowledgement: 'Draft discarded. Ready to continue.',
+    archivedMessage: 'Draft discarded.',
+  },
+  {
+    locale: 'ru' as const,
+    acknowledgement: 'Черновик удалён. Можно продолжать.',
+    archivedMessage: 'Черновик удалён.',
+  },
+])(
+  'persists unsent input after discard and resumes writable work with the $locale acknowledgement',
+  async ({ locale, acknowledgement, archivedMessage }) => {
+    configureCommandLocale(locale);
+    const h = await setup();
+    const discardedId = h.owner.snapshot().id;
+    await stageCreate(h, 'Discarded proposal');
+
+    expect(await h.owner.newSession('discard')).toBe(true);
+    const freshId = h.owner.snapshot().id;
+    expect(h.owner.snapshot().status.message).toBe(acknowledgement);
+    expect(h.owner.snapshot().recoveryEvidence?.discarded).not.toBe(true);
+    expect(h.owner.snapshot().proposal.changes).toEqual([]);
+    expect(h.owner.recent().some((record) => record.snapshot.id === freshId)).toBe(false);
+    const archive = expectDefined(
+      h.owner.recent().find((record) => record.snapshot.id === discardedId),
+    );
+    expect(archive.snapshot.status.message).toBe(archivedMessage);
+    expect(archive.snapshot.recoveryEvidence?.discarded).toBe(true);
+
+    h.owner.setInput('Keep this unsent instruction');
+    await h.owner.flush();
+    const storedFresh = expectDefined(
+      h.owner.recent().find((record) => record.snapshot.id === freshId),
+    );
+    expect(storedFresh.snapshot.input).toBe('Keep this unsent instruction');
+    expect(storedFresh.snapshot.recoveryEvidence?.discarded).not.toBe(true);
+
+    expect(await h.owner.newSession('keep')).toBe(true);
+    expect(await h.owner.select(freshId)).toBe(true);
+    expect(h.owner.snapshot().input).toBe('Keep this unsent instruction');
+    expect(h.owner.snapshot().recovery).toBe('live');
+    expect(h.session().readOnly()).toBe(false);
+    await stageCreate(h, 'Continued task');
+    expect(h.owner.snapshot().proposal.changes).toHaveLength(1);
+    expect(await h.owner.confirm()).toBe(true);
+    expect(h.owner.snapshot().journal).toHaveLength(1);
+    const committed = expectDefined(
+      h.owner.snapshot().journal[h.owner.snapshot().journal.length - 1],
+    );
+    expect(committed.effects).toBe('committed');
+    expect(committed.receipt).toBeDefined();
+    expect(await h.read('a.md')).toBe('- [ ] Existing\n- [ ] Continued task ➕ 2026-08-01\n');
+  },
+);
 
 it('a superseded discard transition cannot replace later session feedback', async () => {
   const h = await setup();

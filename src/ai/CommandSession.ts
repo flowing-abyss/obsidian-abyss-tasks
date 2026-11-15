@@ -1916,7 +1916,13 @@ export class CommandSession {
     return this.startSession_abyssPrivate(
       archived,
       disposition === 'discard' && !this.state_abyssPrivate.blocked
-        ? { ...next, status: { kind: 'ready', message: commandMessage('Draft discarded.') } }
+        ? {
+            ...next,
+            status: {
+              kind: 'ready',
+              message: commandMessage('Draft discarded. Ready to continue.'),
+            },
+          }
         : next,
       signal,
     );

@@ -5109,9 +5109,12 @@ it('reopens the discarded task tree from history without reviving its changes or
   const id = h.owner.snapshot().id;
   expect(await h.owner.newSession('discard')).toBe(true);
   expect(h.owner.snapshot().id).not.toBe(id);
-  expect(h.owner.snapshot().status).toEqual({ kind: 'ready', message: 'Draft discarded.' });
+  expect(h.owner.snapshot().status).toEqual({
+    kind: 'ready',
+    message: 'Draft discarded. Ready to continue.',
+  });
   expect(surface.element.querySelector('.abyss-command-phase')?.textContent).toBe(
-    'Draft discarded.',
+    'Draft discarded. Ready to continue.',
   );
   expect(surface.element.querySelector('[aria-label="Save proposal"]')).toBeNull();
   expect(h.owner.snapshot().proposal.changes).toEqual([]);
@@ -5155,9 +5158,12 @@ it('shows the Russian acknowledgement on the accepted new session after discard'
     expect(surface.element.querySelector('.abyss-task-title')?.textContent).toBe('Parent');
   });
   expect(await h.owner.newSession('discard')).toBe(true);
-  expect(h.owner.snapshot().status).toEqual({ kind: 'ready', message: 'Черновик удалён.' });
+  expect(h.owner.snapshot().status).toEqual({
+    kind: 'ready',
+    message: 'Черновик удалён. Можно продолжать.',
+  });
   expect(surface.element.querySelector('.abyss-command-phase')?.textContent).toBe(
-    'Черновик удалён.',
+    'Черновик удалён. Можно продолжать.',
   );
   expect(surface.element.querySelector('[aria-label="Сохранить предложение"]')).toBeNull();
   expect(h.owner.snapshot().proposal.changes).toEqual([]);
@@ -5241,6 +5247,11 @@ it.each(['Draft discarded.', 'Черновик удалён.'])(
       }),
     ).toBe(true);
     expect(surface.element.querySelector('.abyss-command-tree')?.textContent).toBe('');
+    expect(h.session.restore(legacy, false)).toBe(true);
+    expect(h.owner.snapshot().recovery).toBe('historical');
+    expect(h.owner.snapshot().proposal.changes).toEqual([]);
+    expect(await h.session.confirm()).toBe(false);
+    expect(await h.read('a.md')).toBe('- [ ] Existing\n');
   },
 );
 it('opens retained history once for a list of sessions and keeps tree updates independent of it', async () => {

@@ -1,5 +1,9 @@
 import { chimeBuffer } from '../../audioChime';
-import { commandMessage } from '../commandMessages';
+import {
+  commandMessage,
+  microphoneUnavailableMessage,
+  recordingFailedMessage,
+} from '../commandMessages';
 import { CommandFailure } from '../commandTypes';
 export interface VoiceCaptureEvents<B> {
   begin(): B;
@@ -83,7 +87,7 @@ export class NativeVoiceCapture<B> {
   private acceptsStart(generation: number, allowed?: () => boolean): boolean {
     if (generation !== this.generation) return false;
     if (allowed?.() !== false) return true;
-    this.fail(commandMessage('Microphone unavailable. Try the microphone again.'));
+    this.fail(commandMessage(microphoneUnavailableMessage));
     return false;
   }
   private async startMedia(
@@ -129,7 +133,7 @@ export class NativeVoiceCapture<B> {
     for (const track of stream.getTracks())
       for (const event of ['ended', 'mute'])
         this.listen(track, event, () => {
-          this.fail(commandMessage('Microphone unavailable. Try the microphone again.'));
+          this.fail(commandMessage(microphoneUnavailableMessage));
         });
     this.listen(context, 'statechange', () => {
       if (this.context?.state !== 'running')
@@ -229,7 +233,7 @@ export class NativeVoiceCapture<B> {
       this.recorded(item);
     };
     const failed = (): void => {
-      this.fail(commandMessage('Recording failed. Try the microphone again.'));
+      this.fail(commandMessage(recordingFailedMessage));
     };
     recorder.addEventListener('dataavailable', data);
     recorder.addEventListener('stop', stopped);
@@ -241,7 +245,7 @@ export class NativeVoiceCapture<B> {
     const item = this.recording;
     if (item?.recorder.state !== 'recording' || this.analyser === undefined) return;
     if (!item.recorder.stream.active || this.context?.state !== 'running') {
-      this.fail(commandMessage('Microphone unavailable. Try the microphone again.'));
+      this.fail(commandMessage(microphoneUnavailableMessage));
       return;
     }
     const now = this.win.performance.now();
@@ -301,7 +305,7 @@ export class NativeVoiceCapture<B> {
         : undefined;
     item.chunks.length = 0;
     if (item.ending === undefined) {
-      this.fail(commandMessage('Recording failed. Try the microphone again.'));
+      this.fail(commandMessage(recordingFailedMessage));
       return;
     }
     if (item.ending === 'rollover') this.restart(item.recorder.mimeType);

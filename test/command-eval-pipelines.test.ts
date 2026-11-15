@@ -415,46 +415,50 @@ it('replays the fresh R9 child-removal case through canonical task readback', as
   expect(saved.publicReadback.map((task) => task.markdownTitle)).toContain('Пересадить базилик');
 });
 
-it('cancels a draft before saving the corrected fresh capture through canonical APIs', async () => {
-  const item = expectDefined(selectCases('r9-fresh-cancel-corrected-capture-en')[0]);
-  const { report } = await replay(item, [
-    tool('find', {
-      query: 'Inspect the cedar press',
-      path: 'a.md',
-      showExact: true,
-      purpose: 'change',
-    }),
-    (p) => {
-      return tool('change_task', {
-        edit: object(result(p, 'find')['match'])['edit'],
-        operation: { type: 'set', due: '2027-06-21' },
-        complete: true,
-      });
-    },
-    tool('interpret', { intent: 'new-session', disposition: 'discard', research: false }),
-    tool('create_task', {
-      tree: {
-        markdownTitle: 'Book the kiln safety check',
-        initial: {
-          scheduled: { type: 'set', value: '2027-06-24' },
-          tags: { add: ['#inspection'] },
-        },
+it.each(['default', 'owner'] as const)(
+  'cancels a draft before saving the corrected fresh capture through canonical APIs (%s)',
+  async (profile) => {
+    const selected = expectDefined(selectCases('r9-fresh-cancel-corrected-capture-en')[0]);
+    const item = profile === 'owner' ? { ...selected, profile } : selected;
+    const { report } = await replay(item, [
+      tool('find', {
+        query: 'Inspect the cedar press',
+        path: 'a.md',
+        showExact: true,
+        purpose: 'change',
+      }),
+      (p) => {
+        return tool('change_task', {
+          edit: object(result(p, 'find')['match'])['edit'],
+          operation: { type: 'set', due: '2027-06-21' },
+          complete: true,
+        });
       },
-    }),
-    finish,
-    confirm,
-  ]);
-  expect(report.turns.map((turn) => turn.failures)).toEqual([[], [], [], []]);
-  const canceled = expectDefined(report.turns[1]);
-  expect(canceled.writeCount).toBe(0);
-  expect(canceled.after).toEqual(canceled.before);
-  const saved = expectDefined(report.turns[3]);
-  expect(saved.journal).toMatchObject([{ state: 'settled', effects: 'committed' }]);
-  expect(saved.journal[0]?.receipt).toBeDefined();
-  expect(saved.publicReadback.map((task) => task.markdownTitle)).toContain(
-    'Book the kiln safety check',
-  );
-});
+      tool('interpret', { intent: 'new-session', disposition: 'discard', research: false }),
+      tool('create_task', {
+        tree: {
+          markdownTitle: 'Book the kiln safety check',
+          initial: {
+            scheduled: { type: 'set', value: '2027-06-24' },
+            tags: { add: ['#inspection'] },
+          },
+        },
+      }),
+      finish,
+      confirm,
+    ]);
+    expect(report.turns.map((turn) => turn.failures)).toEqual([[], [], [], []]);
+    const canceled = expectDefined(report.turns[1]);
+    expect(canceled.writeCount).toBe(0);
+    expect(canceled.after).toEqual(canceled.before);
+    const saved = expectDefined(report.turns[3]);
+    expect(saved.journal).toMatchObject([{ state: 'settled', effects: 'committed' }]);
+    expect(saved.journal[0]?.receipt).toBeDefined();
+    expect(saved.publicReadback.map((task) => task.markdownTitle)).toContain(
+      'Book the kiln safety check',
+    );
+  },
+);
 
 it('resolves the fresh equal-name case only after selecting its discriminated owner', async () => {
   const item = expectDefined(selectCases('r9-fresh-ambiguous-owner-discriminator-ru')[0]);
@@ -3441,7 +3445,10 @@ function expectWorkshopDiscardFeedback(
 ): void {
   const snapshot = finalTurn.snapshot as CommandSessionSnapshot;
   const previous = finalTurn.inputSnapshot as CommandSessionSnapshot;
-  expect(snapshot.status).toEqual({ kind: 'ready', message: 'Draft discarded.' });
+  expect(snapshot.status).toEqual({
+    kind: 'ready',
+    message: 'Draft discarded. Ready to continue.',
+  });
   expect(snapshot.proposal.changes).toEqual([]);
   expect(snapshot.pendingTransition).toBeUndefined();
   const ownerStore = object(

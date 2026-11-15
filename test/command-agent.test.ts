@@ -5856,7 +5856,10 @@ it('acknowledges a semantic discard on the new active session without a source w
   );
   await h.session.submit('Discard this draft and start another session');
   expect(h.session.snapshot().id).not.toBe(previous.id);
-  expect(h.session.snapshot().status).toEqual({ kind: 'ready', message: 'Draft discarded.' });
+  expect(h.session.snapshot().status).toEqual({
+    kind: 'ready',
+    message: 'Draft discarded. Ready to continue.',
+  });
   expect(h.model.doGenerateCalls).toHaveLength(generations + 1);
   expect(await h.read('a.md')).toBe('');
 });

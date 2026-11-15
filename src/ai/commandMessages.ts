@@ -17,6 +17,8 @@ export const savedContentStatusMessage =
   'Status uses ordinary completion, recurrence, deletion, timer and blocker rules after the content is saved.';
 export const changedProposalMessage =
   'The proposal changed while this input was recorded. Review the current version before confirming.';
+export const microphoneUnavailableMessage = 'Microphone unavailable. Try the microphone again.';
+export const recordingFailedMessage = 'Recording failed. Try the microphone again.';
 
 const russian = {
   'Review the prepared changes before saving them.':
@@ -59,6 +61,7 @@ const russian = {
   'Current work retained.': 'Текущая работа сохранена в черновике.',
   'Stopped. Your draft is retained.': 'Остановлено. Черновик сохранён.',
   'Draft discarded.': 'Черновик удалён.',
+  'Draft discarded. Ready to continue.': 'Черновик удалён. Можно продолжать.',
   'Prepare a fresh preview from the current source.':
     'Подготовьте новый предпросмотр по текущему источнику.',
   'Review this preview again.': 'Проверьте этот предпросмотр ещё раз.',
@@ -328,8 +331,7 @@ const russian = {
   Assistant: 'Помощник',
   Start: 'Начало',
   End: 'Конец',
-  'Microphone unavailable. Try the microphone again.':
-    'Микрофон недоступен. Попробуйте включить его снова.',
+  [microphoneUnavailableMessage]: 'Микрофон недоступен. Попробуйте включить его снова.',
   'Voice input paused. Try the microphone again.':
     'Голосовой ввод приостановлен. Включите микрофон снова.',
   'Voice processing failed. Try the microphone again.':
@@ -338,7 +340,7 @@ const russian = {
     'Не удалось включить микрофон. Проверьте разрешение и повторите попытку.',
   'Recording is too large. Try a shorter command.':
     'Запись слишком большая. Попробуйте более короткую команду.',
-  'Recording failed. Try the microphone again.': 'Запись не удалась. Включите микрофон снова.',
+  [recordingFailedMessage]: 'Запись не удалась. Включите микрофон снова.',
   'Recording reached one minute. Try a shorter command.':
     'Запись достигла одной минуты. Попробуйте более короткую команду.',
   'Recording could not finish. Try the microphone again.':

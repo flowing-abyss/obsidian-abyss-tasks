@@ -1725,8 +1725,16 @@ it('only an accepted discard acknowledges the new session and later feedback rep
   expect(await h.session.newSession('keep')).toBe(true);
   expect(h.session.snapshot().status).toEqual({ kind: 'ready', message: '' });
 
+  const previousId = h.session.snapshot().id;
   expect(await h.session.newSession('discard')).toBe(true);
-  expect(h.session.snapshot().status).toEqual({ kind: 'ready', message: 'Draft discarded.' });
+  expect(h.session.snapshot().id).not.toBe(previousId);
+  expect(h.session.snapshot().status).toEqual({
+    kind: 'ready',
+    message: 'Draft discarded. Ready to continue.',
+  });
+  expect(h.session.snapshot().proposal.changes).toEqual([]);
+  expect(h.session.snapshot().recoveryEvidence?.discarded).not.toBe(true);
+  expect(h.session.readOnly()).toBe(false);
 
   h.setRun(async () => {
     h.session.status('ready', 'Follow-up is current.');

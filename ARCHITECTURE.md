@@ -526,8 +526,9 @@ for the current message. A partial approval binds to verified owners and values 
 changes pending. Saving a requested new edit also requires material new preparation. Enter still
 confirms the visible proposal through the session's native command.
 Keep retains the complete unsaved draft in history without a source write; discard requires explicit
-abandonment. A successful nonblocked discard prepares the existing localized acknowledgement on the
-next snapshot before persistence and displays it only after the transition is accepted. Failed,
+abandonment. A successful nonblocked discard gives the fresh session a localized continuation
+acknowledgement before persistence and displays it only after the transition is accepted. The
+archived snapshot retains the original discard marker for historical recovery. Failed,
 cancelled or stale transitions cannot overwrite newer feedback; a current-session persistence
 failure retains the draft and reports an error. Archived history keeps its journal and receipts.
 Ambiguous disposition retains work and asks a short question. Legitimate transition questions
