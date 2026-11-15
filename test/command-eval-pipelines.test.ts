@@ -493,6 +493,32 @@ it('resolves the fresh equal-name case only after selecting its discriminated ow
   ).toEqual({ due: '2027-08-18' });
 });
 
+it('accepts a grounded first-turn question from a shorter fresh-task search', async () => {
+  const item = expectDefined(selectCases('r9-fresh-ambiguous-owner-discriminator-ru')[0]);
+  const { report } = await replay(
+    item,
+    [
+      tool('find', { query: 'Позвонить', purpose: 'change' }),
+      (p) => {
+        const found = result(p, 'find');
+        return tool('finish', {
+          state: 'question',
+          message:
+            'Встречаются две задачи «Позвонить Марине»: приём в клинике и макет афиши для команды. Какую из них изменить?',
+          blockingIssue: { kind: 'ambiguous', evidence: found['evidence'] },
+        });
+      },
+    ],
+    1,
+  );
+  const question = expectDefined(report.turns[0]);
+  expect(evaluateTurn(expectDefined(item.turns[0]).expect, question)).toEqual([]);
+  expect(question.snapshot.status).toMatchObject({ kind: 'question' });
+  expect(question.proposalKinds).toEqual([]);
+  expect(question.writeCount).toBe(0);
+  expect(question.after).toEqual(question.before);
+});
+
 it('accepts varied fresh open-goal plans through edit, append, and batch tool paths', async () => {
   const item = expectDefined(selectCases('r9-fresh-open-goal-expansion-en')[0]);
   const title = 'Get the west greenhouse ventilation ready';

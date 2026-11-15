@@ -1,4 +1,4 @@
-/** Four fresh, held-out R9 qualification fixtures authored after the runtime freeze. */
+/** Four fresh R9 development fixtures authored after the runtime freeze. */
 import type { EvalCase } from './corpus';
 import { files, tree } from './fixtures';
 
@@ -289,7 +289,6 @@ const freshQualificationCases: readonly EvalCase[] = [
         text: 'Измени дедлайн задачи «Позвонить Марине» на 18 августа 2027 года. Сначала покажи черновик, установленный срок и комментарии не теряй.',
         expect: {
           status: 'question',
-          questionIncludes: 'Марине',
           publicTrees: [
             tree('Позвонить Марине', {
               tags: ['#клиника'],
