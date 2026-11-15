@@ -1206,6 +1206,71 @@ const contracts: Readonly<Record<number, Readonly<Record<number, Partial<TurnExp
     0: { proposalKinds: ['task'], taskSources: [{ path: 'a.md', line: 0, kind: 'edit' }] },
     1: { proposalKinds: [], writeCount: 1, createdFiles: [] },
   },
+  51: {
+    0: {
+      proposalKinds: ['task'],
+      publicTrees: [],
+      freshPreparation: true,
+      writeCount: 0,
+    },
+    1: {
+      proposalKinds: [],
+      publicTrees: [],
+      files: files(''),
+      writeCount: 0,
+    },
+  },
+  53: {
+    0: {
+      proposalKinds: ['task'],
+      taskSources: [{ path: 'a.md', line: 0, kind: 'edit' }],
+      freshPreparation: true,
+      publicTrees: [
+        tree('Root', {
+          source: { path: 'a.md', line: 0 },
+          children: [
+            tree('Child A', { source: { path: 'a.md', line: 1 } }),
+            tree('Child B', { source: { path: 'a.md', line: 2 } }),
+          ],
+        }),
+      ],
+      writeCount: 0,
+    },
+    1: {
+      publicTrees: [],
+      proposalKinds: [],
+      createdFiles: [],
+      writeCount: 1,
+    },
+  },
+  58: {
+    0: {
+      status: 'question',
+      proposalKinds: [],
+      publicTrees: [
+        tree('Same', { source: { path: 'a.md', line: 0 } }),
+        tree('Same', { source: { path: 'a.md', line: 1 } }),
+      ],
+      writeCount: 0,
+    },
+    1: {
+      publicTrees: [
+        tree('Same', { source: { path: 'a.md', line: 0 } }),
+        tree('Same', { source: { path: 'a.md', line: 1 } }),
+      ],
+    },
+  },
+  62: {
+    1: {
+      publicTrees: [
+        tree('Alpha', { dates: { scheduled: '2026-11-11' }, source: { path: 'a.md', line: 0 } }),
+        tree('Beta', { dates: { scheduled: '2026-11-12' }, source: { path: 'a.md', line: 1 } }),
+      ],
+      proposalKinds: [],
+      createdFiles: [],
+      writeCount: 2,
+    },
+  },
 };
 function flexibleLinkedRoot() {
   return tree('Root', {

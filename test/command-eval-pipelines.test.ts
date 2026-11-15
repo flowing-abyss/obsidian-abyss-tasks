@@ -373,6 +373,164 @@ function rejectDamage(
     expect(evaluateTurn(expected, damaged).length).toBeGreaterThan(0);
   }
 }
+
+function stateContractEvidence(overrides: Partial<TurnEvidence> = {}): TurnEvidence {
+  const unchangedFiles = { 'a.md': '', 'control.md': '' };
+  return {
+    status: 'ready',
+    question: null,
+    trees: [],
+    publicTrees: [],
+    proposalKinds: [],
+    taskSources: [],
+    before: unchangedFiles,
+    after: unchangedFiles,
+    journal: [],
+    admissions: [],
+    complete: true,
+    writeCount: 0,
+    ...overrides,
+  };
+}
+
+it('accepts valid state transitions and rejects missing deletion, ambiguity, cancel, and save evidence', async () => {
+  const deletion = expectDefined(actions.find((item) => item.id === '053'));
+  const deletionExpectation = expectDefined(deletion.turns[0]).expect;
+  const deletionWithoutProposal = stateContractEvidence({
+    status: 'ready',
+    trees: [],
+    publicTrees: [tree('Root')],
+    before: deletion.files,
+    after: deletion.files,
+  });
+  expect(evaluateTurn(deletionExpectation, deletionWithoutProposal)).toContain('proposal-counts');
+  const deletionPreview = {
+    ...deletionWithoutProposal,
+    proposalKinds: ['task'],
+    taskSources: [{ path: 'a.md', line: 0, kind: 'edit', basisValid: true }],
+    freshPreparation: true,
+    publicTrees: [
+      tree('Root', {
+        source: { path: 'a.md', line: 0 },
+        children: [
+          tree('Child A', { source: { path: 'a.md', line: 1 } }),
+          tree('Child B', { source: { path: 'a.md', line: 2 } }),
+        ],
+      }),
+    ],
+  };
+  expect(evaluateTurn(deletionExpectation, deletionPreview)).toEqual([]);
+
+  const ambiguity = expectDefined(actions.find((item) => item.id === '058'));
+  const ambiguousWithPendingMutation = stateContractEvidence({
+    status: 'question',
+    question: 'Which Same task should I rename?',
+    trees: [tree('Chosen')],
+    publicTrees: [tree('Same'), tree('Same')],
+    proposalKinds: ['task'],
+    taskSources: [{ path: 'a.md', line: 1, kind: 'edit', basisValid: true }],
+    before: ambiguity.files,
+    after: ambiguity.files,
+  });
+  const ambiguityExpectation = expectDefined(ambiguity.turns[0]).expect;
+  expect(evaluateTurn(ambiguityExpectation, ambiguousWithPendingMutation)).toContain(
+    'proposal-counts',
+  );
+  const ambiguousWithoutMutation = {
+    ...ambiguousWithPendingMutation,
+    trees: [],
+    publicTrees: expectDefined(ambiguityExpectation.publicTrees),
+    proposalKinds: [],
+    taskSources: [],
+  };
+  expect(evaluateTurn(ambiguityExpectation, ambiguousWithoutMutation)).toEqual([]);
+  const resolvedPreview = {
+    ...ambiguousWithPendingMutation,
+    status: 'ready',
+    question: null,
+    trees: [tree('Chosen')],
+    proposalKinds: ['task'],
+    taskSources: [{ path: 'a.md', line: 1, kind: 'edit', basisValid: true }],
+    freshPreparation: true,
+    publicTrees: expectDefined(expectDefined(ambiguity.turns[1]).expect.publicTrees),
+  };
+  expect(evaluateTurn(expectDefined(ambiguity.turns[1]).expect, resolvedPreview)).toEqual([]);
+
+  const cancellation = expectDefined(actions.find((item) => item.id === '051'));
+  const cancelledWithPendingProposal = stateContractEvidence({
+    status: 'ready',
+    trees: [],
+    proposalKinds: ['task'],
+    before: cancellation.files,
+    after: cancellation.files,
+  });
+  const cancellationExpectation = expectDefined(cancellation.turns[1]).expect;
+  expect(evaluateTurn(cancellationExpectation, cancelledWithPendingProposal)).toContain(
+    'proposal-counts',
+  );
+  const cancelled = {
+    ...cancelledWithPendingProposal,
+    proposalKinds: [],
+    before: cancellation.files,
+    after: cancellation.files,
+  };
+  expect(evaluateTurn(cancellationExpectation, cancelled)).toEqual([]);
+  const creationExpectation = expectDefined(cancellation.turns[0]).expect;
+  const creationPreview = stateContractEvidence({
+    status: 'ready',
+    trees: [tree('Root')],
+    publicTrees: [],
+    proposalKinds: ['task'],
+    freshPreparation: true,
+    before: cancellation.files,
+    after: cancellation.files,
+  });
+  expect(evaluateTurn(creationExpectation, creationPreview)).toEqual([]);
+
+  const prepareDate =
+    (scheduled: string): Step =>
+    (prompt) => {
+      const node = firstRead(prompt);
+      return tool('task', {
+        input: {
+          kind: 'edit',
+          target: node['target'],
+          expectedRevision: node['revision'],
+          operation: {
+            type: 'patch',
+            target: node['target'],
+            patch: { scheduled: { type: 'set', value: scheduled } },
+          },
+        },
+      });
+    };
+  const { report } = await replay(
+    '062',
+    [
+      plan,
+      tool('read', { input: { kind: 'tasks', query: 'Alpha' } }),
+      prepareDate('2026-11-11'),
+      tool('read', { input: { kind: 'tasks', query: 'Beta' } }),
+      prepareDate('2026-11-12'),
+      finish,
+      confirm,
+    ],
+    2,
+  );
+  const saveExpectation = expectDefined(
+    expectDefined(actions.find((item) => item.id === '062')).turns[1],
+  ).expect;
+  const saved = expectDefined(report.turns[1]);
+  expect(saved.failures).toEqual([]);
+  expect(saved.writeCount).toBe(2);
+  const omittedSavedTask = structuredClone(saved);
+  omittedSavedTask.publicTrees = expectDefined(omittedSavedTask.publicTrees).slice(0, 1);
+  expect(evaluateTurn(saveExpectation, omittedSavedTask)).toContain('public-tree-postcondition');
+  const extraSavedEffect = structuredClone(saved);
+  extraSavedEffect.publicTrees = [...(extraSavedEffect.publicTrees ?? []), tree('Unrequested')];
+  expect(evaluateTurn(saveExpectation, extraSavedEffect)).toContain('public-tree-postcondition');
+});
+
 it('accepts the prospective due-date focus input through preparation then current-plan selection', async () => {
   const item = expectDefined(selectCases('prospective-focus-select-due-date-en')[0]);
   await replay(item, [
