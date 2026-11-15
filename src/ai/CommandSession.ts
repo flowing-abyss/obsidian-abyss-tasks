@@ -12,6 +12,7 @@ import {
   commandMessage,
   draftDispositionMessage,
   noteMoveConflictMessage,
+  savedContentStatusMessage,
   writeJournalFailureMessage,
 } from './commandMessages';
 import { projectMoveFocusMessage, projectMoveWithDescendantFocus } from './commandProjects';
@@ -1292,9 +1293,7 @@ export class CommandSession {
       revision: input.revision,
       symbol: input.symbol,
       ...(input.plan === undefined ? {} : { plan: input.plan }),
-      nuance: commandMessage(
-        'Status uses ordinary completion, recurrence, deletion, timer and blocker rules after the content is saved.',
-      ),
+      nuance: commandMessage(savedContentStatusMessage),
     });
   }
   setInput(text: string, draft = true): void {

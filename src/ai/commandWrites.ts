@@ -16,7 +16,13 @@ import type {
   TaskTreePageV1,
   TaskTreeV1,
 } from '../../api';
-import { commandMessage } from './commandMessages';
+import {
+  changedNoteSectionReadbackMessage,
+  commandMessage,
+  completeWriteReadbackMessage,
+  mergeAssessmentReviewMessage,
+  relatedContentReviewMessage,
+} from './commandMessages';
 import {
   projectMoveFocusMessage,
   projectMoveWithDescendantFocus,
@@ -224,12 +230,7 @@ class CommandWriteRun {
       deadline: this.ctx.now() + 5000,
     });
     if (!sameReviewedContent(plan, refreshed))
-      throw new CommandFailure(
-        'REVIEW_REQUIRED',
-        commandMessage(
-          'Related content changed after the earlier write. Review the remaining proposal before saving.',
-        ),
-      );
+      throw new CommandFailure('REVIEW_REQUIRED', commandMessage(relatedContentReviewMessage));
     if (
       change.kind === 'task' &&
       this.ctx.proposal.changes.some(
@@ -238,9 +239,7 @@ class CommandWriteRun {
     )
       throw new CommandFailure(
         'PRESERVATION_EXPIRED',
-        commandMessage(
-          'The earlier write invalidated the merge assessment. The source is retained for a fresh review.',
-        ),
+        commandMessage(mergeAssessmentReviewMessage),
       );
     return { ...change, plan: refreshed };
   }
@@ -540,12 +539,7 @@ class CommandWriteRun {
       );
     this.notes.set(receipt.plan, note);
     if (change.kind === 'note' && change.plan.kind === 'edit' && receipt.section === undefined)
-      throw new CommandFailure(
-        'READBACK',
-        commandMessage(
-          'The note was written, but its changed section could not be verified. Read the current note before continuing.',
-        ),
-      );
+      throw new CommandFailure('READBACK', commandMessage(changedNoteSectionReadbackMessage));
     const request = {
       selector:
         receipt.section === undefined
@@ -727,12 +721,7 @@ class CommandWriteRun {
       });
     } catch (cause) {
       if (cause instanceof CommandFailure && cause.code === 'CANCELLED') throw cause;
-      throw new CommandFailure(
-        'READBACK',
-        commandMessage(
-          'The write settled, but the complete saved result could not be verified. Review the current source before continuing.',
-        ),
-      );
+      throw new CommandFailure('READBACK', commandMessage(completeWriteReadbackMessage));
     }
   }
   private async operation(
