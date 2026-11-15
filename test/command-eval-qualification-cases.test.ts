@@ -2,8 +2,10 @@ import { expect, it } from 'vitest';
 import { atomDateTime } from '../src/tasks/domain/commentTimestamp';
 import { TaskBlockEditor } from '../src/tasks/infrastructure/markdown/TaskBlockEditor';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
-import { corpus, selectCases } from './command-live/corpus';
+import { corpus, selectCases, unqualifiedTurns } from './command-live/corpus';
+import { tree } from './command-live/fixtures';
 import { followupCases } from './command-live/followupCases';
+import { matchesPendingTaskState } from './command-live/oracles';
 import { qualificationCases } from './command-live/qualificationCases';
 import {
   hasSourceAbsenceFacts,
@@ -77,26 +79,98 @@ it('keeps the planned seven Russian and seven English cases', () => {
   expect(qualificationCases.filter((test) => test.id.endsWith('-en'))).toHaveLength(7);
 });
 
-it('registers four follow-up cases after the original resolved corpus', () => {
-  expect(corpus).toHaveLength(199);
-  expect(new Set(corpus.map((test) => test.id)).size).toBe(199);
-  expect(corpus.slice(-4)).toEqual(followupCases);
+it('registers five follow-up cases after the original resolved corpus', () => {
+  expect(corpus).toHaveLength(200);
+  expect(new Set(corpus.map((test) => test.id)).size).toBe(200);
+  expect(corpus.slice(-5)).toEqual(followupCases);
   expect(followupCases.map((test) => test.id)).toEqual([
     'prospective-focus-select-due-date-en',
     'q-followup-h15-select-kestrel-page-comments-ru',
     'prospective-no-pending-title-cancel-en',
     'prospective-read-expand-eastmere-cleanup-en',
+    'prospective-pending-owner-comment-ru',
   ]);
   expect(followupCases.map((test) => test.split)).toEqual([
     'development',
     'held-out',
     'development',
     'development',
+    'development',
   ]);
   expect(followupCases.every((test) => test.scripted === undefined)).toBe(true);
 });
 
-it('freezes the four prospective definitions and their actor projections', async () => {
+it('binds the Russian pending-owner follow-up to its saved source and current draft', () => {
+  const item = expectDefined(
+    followupCases.find((test) => test.id === 'prospective-pending-owner-comment-ru'),
+  );
+  const [preview, followup, saved] = item.turns.map((turn) => turn.expect);
+  const title = 'Inspect the Nacre receiver';
+  const comment = 'Проверить кабельный ввод перед тестом.';
+  expect(unqualifiedTurns(item)).toEqual([]);
+  expect(item.files['Field archive.md']).toContain(
+    '- [ ] Inspect the Nacre receiver #radio 🛫 2027-06-02 📅 2027-06-06',
+  );
+  expect(preview).toMatchObject({
+    status: 'ready',
+    taskSources: [{ path: 'Field archive.md', line: 1, kind: 'edit' }],
+    writeCount: 0,
+  });
+  expect(followup).toMatchObject({
+    status: 'ready',
+    taskSources: [{ path: 'Field archive.md', line: 1, kind: 'edit' }],
+    pendingTaskStates: [
+      {
+        path: 'Field archive.md',
+        line: 1,
+        tree: {
+          markdownTitle: title,
+          tags: ['#radio'],
+          dates: { start: '2027-06-02', due: '2027-06-13' },
+          comments: [{ text: 'Retain the copper seal until the test.' }, { text: comment }],
+        },
+      },
+    ],
+    writeCount: 0,
+  });
+  const pending = expectDefined(followup?.pendingTaskStates?.[0]).tree;
+  expect(
+    matchesPendingTaskState(
+      pending,
+      tree(title, {
+        tags: ['#radio'],
+        dates: { start: '2027-06-02', due: '2027-06-13' },
+        comments: [{ text: 'Retain the copper seal until the test.' }, { text: comment }],
+      }),
+    ),
+  ).toBe(true);
+  expect(
+    matchesPendingTaskState(
+      pending,
+      tree(title, {
+        tags: ['#radio'],
+        dates: { start: '2027-06-02', due: '2027-06-06' },
+        comments: [{ text: 'Retain the copper seal until the test.' }],
+      }),
+    ),
+  ).toBe(false);
+  expect(saved).toMatchObject({
+    status: 'saved',
+    proposalKinds: [],
+    createdFiles: [],
+    writeCount: 1,
+  });
+  expect(saved?.publicTrees?.[0]).toMatchObject({
+    markdownTitle: title,
+    tags: ['#radio'],
+    dates: { start: '2027-06-02', due: '2027-06-13' },
+    comments: [{ text: 'Retain the copper seal until the test.' }, { text: comment }],
+    source: { path: 'Field archive.md', line: 1 },
+  });
+  expect(item.files['Archive register.md']).toContain('Keep this file unchanged.');
+});
+
+it('freezes the five prospective definitions and their actor projections', async () => {
   const rows = await Promise.all(
     followupCases.map(async (test) => {
       const actorProjection = {
@@ -130,6 +204,11 @@ it('freezes the four prospective definitions and their actor projections', async
       id: 'prospective-read-expand-eastmere-cleanup-en',
       fixtureHash: '2b42a41ef18b3bc2ccf501049dd95cfa65ee5535c83e8292a9116253d9a5950a',
       actorProjectionHash: '2a2a4198af8db779b50968d23ff6e5753f5d6ac0a2f7aef072a350a88e2a0798',
+    },
+    {
+      id: 'prospective-pending-owner-comment-ru',
+      fixtureHash: '90222d40dd73c13b5c1a168f8751f473bf742aac151619f9c61d9cf5fed0830e',
+      actorProjectionHash: '57cd74deb14ed970550ac30a2c8e7d92d7f886bbb1cecc8ef924d9ab5ec08137',
     },
   ]);
 });

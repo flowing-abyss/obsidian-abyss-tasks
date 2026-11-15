@@ -391,6 +391,35 @@ it('accepts the prospective due-date focus input through preparation then curren
   ]);
 });
 
+it('passes pending-owner comment preview and Save under canonical readback checks', async () => {
+  const item = expectDefined(selectCases('prospective-pending-owner-comment-ru')[0]);
+  const title = 'Inspect the Nacre receiver';
+  const path = 'Field archive.md';
+  const comment = 'Проверить кабельный ввод перед тестом.';
+  const find = tool('find', { query: title, path, purpose: 'change', showExact: true });
+  const updateDue: Step = (prompt) =>
+    tool('change_task', {
+      edit: object(result(prompt, 'find')['match'])['edit'],
+      operation: { type: 'set', due: '2027-06-13' },
+      complete: true,
+    });
+  const addComment: Step = (prompt) =>
+    tool('change_task', {
+      edit: object(result(prompt, 'find')['match'])['edit'],
+      operation: { type: 'add-comment', text: comment },
+      complete: true,
+    });
+  const { report } = await replay(item, [find, updateDue, find, addComment, confirm], 3);
+  expect(report.turns.map((turn) => turn.failures)).toEqual([[], [], []]);
+  expect(report.turns[0]?.writeCount).toBe(0);
+  expect(report.turns[1]?.writeCount).toBe(0);
+  expect(report.turns[2]?.writeCount).toBe(1);
+  expect(report.turns[2]?.publicTrees?.map((task) => object(task)['source'])).toEqual([
+    { path, line: 1 },
+    { path, line: 4 },
+  ]);
+});
+
 it('accepts the synthetic page input through canonical read, preparation, selection, and Save', async () => {
   const item = expectDefined(selectCases('q-followup-h15-select-kestrel-page-comments-ru')[0]);
   const url = expectDefined(item.pageFixture).url;

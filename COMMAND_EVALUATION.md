@@ -107,6 +107,12 @@ criteria against them. A scripted control can show that the pipeline and oracle 
 tool sequence; it does not show that a model learned the behavior. Re-run a live comparison only
 under the same frozen grader, sources, model, transport and caps.
 
+The development case `prospective-pending-owner-comment-ru` in
+`test/command-live/pendingOwnerCase.ts` covers a due-date preview, a Russian follow-up that repeats
+the unchanged task title and exact path before appending one supplied comment, and an explicit Save.
+Run the same case registration on the baseline and candidate. Its oracle accepts any valid tool path
+that preserves the pending due date and owner; it does not require a particular lookup trajectory.
+
 ## Native command SDK trace
 
 `tooling/native-command-trace.mjs` builds temporary Obsidian CLI eval snippets for the live plugin
@@ -123,6 +129,11 @@ active schema SHA-256 and allowlisted argument-shape metadata: known-key presenc
 length, plus an enum value only when its value is on an explicit allowlist. Do not retain raw arguments,
 free text, task references, unknown field names, model prompts, credentials, headers or raw errors.
 Search query text and vault text are not recorded.
+
+For ChatGPT plan subscription accounting, sum retained `generation-output.usage.inputTokens.total`
+and `generation-output.usage.outputTokens.total` across generations. The report's `knownTokens` is a
+summary of HTTP request usage and does not represent total subscription usage; keep missing SDK
+usage unknown.
 
 Before any UI interaction, copy the real file bytes for the exact target task note, workspace
 configuration, plugin settings/state, session index and session files to a location outside the vault.
