@@ -2,6 +2,7 @@ import { expectDefined } from '../helpers';
 import { bilingualCases } from './bilingual';
 import { files, tree } from './fixtures';
 import { followupCases } from './followupCases';
+import { freshQualificationCases } from './freshQualificationCases';
 import { freshSourceCommentCase } from './freshSourceCommentCase';
 import { lookupCases } from './lookupCases';
 import type { TurnExpectation } from './oracles';
@@ -2379,6 +2380,7 @@ export const corpus = [
   researchPageReadOnlyRu,
   native9FeedbackCase,
   ...followupCases,
+  ...freshQualificationCases,
   freshSourceCommentCase,
 ];
 export function selectCases(selection: string): readonly EvalCase[] {

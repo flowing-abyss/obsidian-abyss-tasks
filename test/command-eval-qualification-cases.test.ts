@@ -5,6 +5,7 @@ import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMark
 import { corpus, selectCases, unqualifiedTurns } from './command-live/corpus';
 import { tree } from './command-live/fixtures';
 import { followupCases } from './command-live/followupCases';
+import { freshQualificationCases } from './command-live/freshQualificationCases';
 import { matchesPendingTaskState } from './command-live/oracles';
 import { qualificationCases } from './command-live/qualificationCases';
 import {
@@ -80,9 +81,9 @@ it('keeps the planned seven Russian and seven English cases', () => {
 });
 
 it('registers five follow-up cases after the original resolved corpus', () => {
-  expect(corpus).toHaveLength(201);
-  expect(new Set(corpus.map((test) => test.id)).size).toBe(201);
-  expect(corpus.slice(-6, -1)).toEqual(followupCases);
+  expect(corpus).toHaveLength(205);
+  expect(new Set(corpus.map((test) => test.id)).size).toBe(205);
+  expect(corpus.slice(-10, -5)).toEqual(followupCases);
   expect(followupCases.map((test) => test.id)).toEqual([
     'prospective-focus-select-due-date-en',
     'q-followup-h15-select-kestrel-page-comments-ru',
@@ -98,6 +99,20 @@ it('registers five follow-up cases after the original resolved corpus', () => {
     'development',
   ]);
   expect(followupCases.every((test) => test.scripted === undefined)).toBe(true);
+});
+
+it('adds four fresh development cases for the audited workflow gaps', () => {
+  expect(freshQualificationCases.map((test) => test.id)).toEqual([
+    'r9-fresh-selective-child-removal-ru',
+    'r9-fresh-cancel-corrected-capture-en',
+    'r9-fresh-ambiguous-owner-discriminator-ru',
+    'r9-fresh-open-goal-expansion-en',
+  ]);
+  expect(freshQualificationCases.every((test) => test.split === 'development')).toBe(true);
+  expect(new Set(freshQualificationCases.map((test) => test.id)).size).toBe(4);
+  for (const test of freshQualificationCases) expect(unqualifiedTurns(test)).toEqual([]);
+  expect(corpus.slice(-5, -1)).toEqual(freshQualificationCases);
+  expect(corpus).toHaveLength(205);
 });
 
 it('registers and freezes the fresh English source-comment fixture after follow-ups', async () => {
@@ -258,13 +273,15 @@ it('keeps all actor projections and unrelated fixture hashes bound to the frozen
   expect(await digest(rows.map(({ id, actorProjectionHash }) => [id, actorProjectionHash]))).toBe(
     '98f74853380e35dee85cdb4f4413e2b48dbcd33fe8ea63ce40167375180fb1dc',
   );
+  // Task 2a added expectation-only contracts for corpus cases 051, 053, 058, and 062.
+  // Actor projections remain frozen; this aggregate binds their updated fixture expectations.
   expect(
     await digest(
       rows
         .filter((row) => row.id !== 'q6-h02-child-delete-en')
         .map(({ id, fixtureHash }) => [id, fixtureHash]),
     ),
-  ).toBe('f7a818691a879344c08c2e2438ba0575229a763c9986212d7caaa54bb9cda567');
+  ).toBe('a3f199eb287c4e4e333b660f16856dac97990fa9d1a42044e032d33a08e63925');
   expect(h02.fixtureHash).toBe('25daeee2267d24155d873bfa983c4a76f0f677c658a81c6cfd8eb46f9a2e8038');
   expect(h05.actorProjectionHash).toBe(
     'a0490363e14d98d5f339ec2455ee64e6463e3f62cfb57549c6882c0b7845e3ba',

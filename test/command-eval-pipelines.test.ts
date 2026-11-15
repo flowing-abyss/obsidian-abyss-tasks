@@ -362,6 +362,220 @@ async function replay(
   }
   return { test, report };
 }
+
+it('replays the fresh R9 child-removal case through canonical task readback', async () => {
+  const item = expectDefined(selectCases('r9-fresh-selective-child-removal-ru')[0]);
+  const title = 'Подготовить рассадный стол';
+  const { report } = await replay(item, [
+    plan,
+    tool('read', { input: { kind: 'tasks', query: title } }),
+    (p) => tool('read', { input: { kind: 'tree', target: firstRead(p)['target'] } }),
+    (p) => {
+      const root = object(result(p, 'read')['tree']);
+      const child = object(
+        (root['children'] as unknown[]).find(
+          (value) => object(value)['markdownTitle'] === 'Заказать второй термометр',
+        ),
+      );
+      return tool('task', {
+        input: {
+          kind: 'edit',
+          target: root['target'],
+          expectedRevision: root['revision'],
+          operation: { type: 'remove', target: child['target'] },
+        },
+      });
+    },
+    finish,
+    confirm,
+  ]);
+  expect(report.turns.map((turn) => turn.failures)).toEqual([[], []]);
+  const expected = expectDefined(item.turns[0]).expect;
+  const preview = expectDefined(report.turns[0]);
+  expect(evaluateTurn(expected, preview)).toEqual([]);
+  const wrongOwner = structuredClone(preview);
+  wrongOwner.taskSources = (wrongOwner.taskSources ?? []).map((source) => ({
+    ...source,
+    path: 'outside/another-note.md',
+  }));
+  expect(evaluateTurn(expected, wrongOwner)).toContain('task-source-basis');
+  const omittedDate = structuredClone(preview);
+  object(omittedDate.trees[0])['dates'] = {};
+  expect(evaluateTurn(expected, omittedDate)).toContain('tree-postcondition');
+  const duplicateRoot = structuredClone(preview);
+  duplicateRoot.trees = [...duplicateRoot.trees, structuredClone(duplicateRoot.trees[0])];
+  expect(evaluateTurn(expected, duplicateRoot)).toContain('tree-postcondition');
+  expect(evaluateTurn({ ...expected, status: 'saved' }, { ...preview, status: 'saved' })).toContain(
+    'saved-without-committed-receipt',
+  );
+  const saved = expectDefined(report.turns[1]);
+  expect(saved.writeCount).toBe(1);
+  expect(saved.journal).toMatchObject([{ state: 'settled', effects: 'committed' }]);
+  expect(saved.journal[0]?.receipt).toBeDefined();
+  expect(saved.publicReadback.map((task) => task.markdownTitle)).toContain('Пересадить базилик');
+});
+
+it('cancels a draft before saving the corrected fresh capture through canonical APIs', async () => {
+  const item = expectDefined(selectCases('r9-fresh-cancel-corrected-capture-en')[0]);
+  const { report } = await replay(item, [
+    tool('find', {
+      query: 'Inspect the cedar press',
+      path: 'a.md',
+      showExact: true,
+      purpose: 'change',
+    }),
+    (p) => {
+      return tool('change_task', {
+        edit: object(result(p, 'find')['match'])['edit'],
+        operation: { type: 'set', due: '2027-06-21' },
+        complete: true,
+      });
+    },
+    tool('interpret', { intent: 'new-session', disposition: 'discard', research: false }),
+    tool('create_task', {
+      tree: {
+        markdownTitle: 'Book the kiln safety check',
+        initial: {
+          scheduled: { type: 'set', value: '2027-06-24' },
+          tags: { add: ['#inspection'] },
+        },
+      },
+    }),
+    finish,
+    confirm,
+  ]);
+  expect(report.turns.map((turn) => turn.failures)).toEqual([[], [], [], []]);
+  const canceled = expectDefined(report.turns[1]);
+  expect(canceled.writeCount).toBe(0);
+  expect(canceled.after).toEqual(canceled.before);
+  const saved = expectDefined(report.turns[3]);
+  expect(saved.journal).toMatchObject([{ state: 'settled', effects: 'committed' }]);
+  expect(saved.journal[0]?.receipt).toBeDefined();
+  expect(saved.publicReadback.map((task) => task.markdownTitle)).toContain(
+    'Book the kiln safety check',
+  );
+});
+
+it('resolves the fresh equal-name case only after selecting its discriminated owner', async () => {
+  const item = expectDefined(selectCases('r9-fresh-ambiguous-owner-discriminator-ru')[0]);
+  const { report } = await replay(item, [
+    tool('find', { query: 'Позвонить Марине', purpose: 'change' }),
+    (p) => {
+      const found = result(p, 'find');
+      return tool('finish', {
+        state: 'question',
+        message: 'Уточните, какую задачу выбрать.',
+        blockingIssue: { kind: 'ambiguous', evidence: found['evidence'] },
+      });
+    },
+    plan,
+    tool('find', {
+      query: 'Позвонить Марине',
+      path: 'Ветеринар/приём.md',
+      purpose: 'change',
+    }),
+    (p) => {
+      return tool('change_task', {
+        edit: object(result(p, 'find')['match'])['edit'],
+        operation: { type: 'set', due: '2027-08-18' },
+        complete: true,
+      });
+    },
+    confirm,
+  ]);
+  expect(report.turns.map((turn) => turn.failures)).toEqual([[], [], []]);
+  expect(expectDefined(report.turns[0]).snapshot.status).toMatchObject({ kind: 'question' });
+  const saved = expectDefined(report.turns[2]);
+  expect(saved.journal).toMatchObject([{ state: 'settled', effects: 'committed' }]);
+  expect(saved.journal[0]?.receipt).toBeDefined();
+  expect(
+    saved.publicReadback.find((task) => task.source?.path === 'Ветеринар/приём.md')?.dates,
+  ).toEqual({ due: '2027-08-18' });
+});
+
+it('accepts varied fresh open-goal plans through edit, append, and batch tool paths', async () => {
+  const item = expectDefined(selectCases('r9-fresh-open-goal-expansion-en')[0]);
+  const title = 'Get the west greenhouse ventilation ready';
+  const expand = (steps: readonly string[], useBatch: boolean) => {
+    const script: Step[] = [
+      plan,
+      tool('read', { input: { kind: 'tasks', query: title } }),
+      (p) => tool('read', { input: { kind: 'tree', target: firstRead(p)['target'] } }),
+      (p) => {
+        const root = object(result(p, 'read')['tree']);
+        const first = { type: 'add-child', target: root['target'], markdownTitle: steps[0] };
+        return tool('task', {
+          input: {
+            kind: 'edit',
+            target: root['target'],
+            expectedRevision: root['revision'],
+            operation: first,
+          },
+        });
+      },
+    ];
+    if (useBatch) {
+      script.push((p) => {
+        const currentPlan = result(p, 'task');
+        const root = object(currentPlan['after']);
+        return tool('task', {
+          input: {
+            kind: 'batch',
+            plan: currentPlan['target'],
+            expectedPlanRevision: currentPlan['revision'],
+            operations: steps.slice(1).map((markdownTitle) => ({
+              type: 'add-child',
+              target: root['target'],
+              markdownTitle,
+            })),
+          },
+        });
+      });
+    } else {
+      for (const markdownTitle of steps.slice(1))
+        script.push((p) => appendToLatestTaskPlan(p, { type: 'add-child', markdownTitle }));
+    }
+    script.push(finish, confirm);
+    return replay(item, script);
+  };
+  const variants = [
+    await expand(
+      ['Inspect the vent frame', 'Clear the louver tracks', 'Cycle the crank through its range'],
+      false,
+    ),
+    await expand(
+      [
+        'Check each louver pivot',
+        'Remove dust from the air path',
+        'Log a full open and close test',
+      ],
+      true,
+    ),
+  ];
+  const expected = expectDefined(item.turns[0]).expect;
+  for (const { report } of variants) {
+    expect(report.turns.map((turn) => turn.failures)).toEqual([[], []]);
+    const preview = expectDefined(report.turns[0]);
+    expect(evaluateTurn(expected, preview)).toEqual([]);
+    const root = object(preview.trees[0]);
+    const children = root['children'] as unknown[];
+    expect(children).toHaveLength(4);
+    expect(object(children[0])['markdownTitle']).toBe('Check the cabinet latch');
+    const hollow = structuredClone(preview);
+    object(hollow.trees[0])['children'] = children.slice(0, 3);
+    expect(evaluateTurn(expected, hollow)).toContain('decomposition:child-count');
+    const saved = expectDefined(report.turns[1]);
+    expect(saved.journal).toMatchObject([{ state: 'settled', effects: 'committed' }]);
+    expect(saved.journal[0]?.receipt).toBeDefined();
+    const savedRoot = expectDefined(
+      saved.publicReadback.find((task) => task.markdownTitle === title),
+    );
+    expect(savedRoot.children.map((child) => child.markdownTitle)).toHaveLength(4);
+    expect(savedRoot.children[0]?.markdownTitle).toBe('Check the cabinet latch');
+    expect(saved.after['a.md']).toContain('Check the cabinet latch #maintenance');
+  }
+});
+
 function rejectDamage(
   expected: TurnExpectation,
   actual: TurnEvidence,
