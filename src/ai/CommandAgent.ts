@@ -207,6 +207,7 @@ function validationIssue(value: unknown): string {
     .join('.')
     .slice(0, 160);
   const expected = typeof issue['expected'] === 'string' ? ` (${issue['expected']})` : '';
+  const maximum = validationMaximum(issue);
   const keys =
     issue['code'] === 'unrecognized_keys' && Array.isArray(issue['keys'])
       ? issue['keys']
@@ -218,7 +219,12 @@ function validationIssue(value: unknown): string {
           .join(', ')
       : '';
   const removed = keys === '' ? '' : `; unrecognized at this level: ${keys}`;
-  return `${path === '' ? 'arguments' : path}: ${issue['code']}${expected}${removed}`;
+  return `${path === '' ? 'arguments' : path}: ${issue['code']}${expected}${maximum}${removed}`;
+}
+function validationMaximum(issue: Record<string, unknown>): string {
+  return issue['code'] === 'too_big' && typeof issue['maximum'] === 'number'
+    ? ` (maximum ${issue['maximum']})`
+    : '';
 }
 function validationLeaves(issues: unknown[], depth = 0): string[] {
   return issues

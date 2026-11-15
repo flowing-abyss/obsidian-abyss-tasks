@@ -1474,6 +1474,13 @@ missing or ambiguous targets, partial transfers, and I/O failures return structu
 The initiating presentation boundary reports them. A retry retains the operation's source proof
 and policy; it cannot silently acquire a different target.
 
+Command research preparation is settled only by an accepted task operation. The command adapter
+resolves the operation's exact owner in its participating working trees, then records that owner's
+revision from the canonical saved `before` side when present; draft-only owners retain their working
+identity. This keeps lookup obligations bound to saved task versions across appended previews,
+comment-handle projections, and removals. Find feedback reuses the current issued edit; finish
+validation supplies that edit when a requested change remains pending.
+
 [`taskFileMutationQueue`](src/tasks/infrastructure/obsidian/taskFileMutationQueue.ts) orders
 repository transactions, publication, and cleanup per App and path. Moves and archives prove the
 destination before removing the source. Recovery compensates only exact content still owned by

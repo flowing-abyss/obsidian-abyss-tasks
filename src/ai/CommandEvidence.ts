@@ -379,7 +379,8 @@ export class CommandEvidence {
   }
   checkTaskChanges(
     displayed: readonly TaskVersion[] = [],
-    references?: Pick<CommandReferenceBook, 'issuedFindEvidence'>,
+    references?: Partial<Pick<CommandReferenceBook, 'issuedFindEvidence' | 'issuedTaskEdit'>>,
+    current?: unknown,
   ): void {
     const corrected = this.correctedRoots(displayed);
     this.checkUnresolvedLookups(corrected);
@@ -403,35 +404,53 @@ export class CommandEvidence {
       throw this.pendingChangeFailure(
         versionKey({ target, revision: change.revision }),
         references,
+        current,
       );
     }
   }
   private pendingChangeFailure(
     root: string,
-    references?: Pick<CommandReferenceBook, 'issuedFindEvidence'>,
+    references?: Partial<Pick<CommandReferenceBook, 'issuedFindEvidence' | 'issuedTaskEdit'>>,
+    current?: unknown,
   ): CommandFailure {
     const id = this.changeLookups.get(root);
     const lookup = id === undefined ? undefined : this.discoveries_abyssPrivate.get(id);
-    const retryOf = id === undefined ? undefined : references?.issuedFindEvidence([id])[0];
-    if (
-      retryOf !== undefined &&
-      lookup?.complete === true &&
-      lookup.count === 1 &&
-      this.latest.get(this.queryKey_abyssPrivate(lookup)) === lookup &&
-      this.preparedDescendant(root)
-    ) {
-      const scope = { ...lookup.scope };
-      Reflect.deleteProperty(scope, 'limit');
-      const find = { query: lookup.query, ...scope, purpose: 'locate-child', retryOf };
-      return new CommandFailure(
-        'PENDING_TASK_CHANGE',
-        `If parent only locates prepared child, call find(${JSON.stringify(find)}), then finish; keep child edit/comment, do not repeat. Prepare parent edit only if requested.`,
-      );
-    }
+    const retryOf = id === undefined ? undefined : references?.issuedFindEvidence?.([id])[0];
+    const correction = this.parentCorrection(root, lookup, retryOf);
+    if (correction !== undefined) return new CommandFailure('PENDING_TASK_CHANGE', correction);
     return new CommandFailure(
       'PENDING_TASK_CHANGE',
-      'Prepare requested edit first. Child lookup: repeat same find(purpose:"locate-child",retryOf:evidence); keep accepted child edits. Display-only: repeat find(purpose:"show-only",retryOf:evidence), then finish exact selection.',
+      this.pendingTaskChangeMessage(root, references, current),
     );
+  }
+  private parentCorrection(
+    root: string,
+    lookup: CommandDiscovery | undefined,
+    retryOf: string | undefined,
+  ): string | undefined {
+    if (
+      retryOf === undefined ||
+      lookup?.complete !== true ||
+      lookup.count !== 1 ||
+      this.latest.get(this.queryKey_abyssPrivate(lookup)) !== lookup ||
+      !this.preparedDescendant(root)
+    )
+      return undefined;
+    const scope = { ...lookup.scope };
+    Reflect.deleteProperty(scope, 'limit');
+    const find = { query: lookup.query, ...scope, purpose: 'locate-child', retryOf };
+    return `If parent only locates prepared child: find(${JSON.stringify(find)}), then finish; do not repeat child edit. Edit parent only if requested.`;
+  }
+  private pendingTaskChangeMessage(
+    root: string,
+    references?: Partial<Pick<CommandReferenceBook, 'issuedTaskEdit'>>,
+    current?: unknown,
+  ): string {
+    const [target] = JSON.parse(root) as [string, string];
+    const edit = references?.issuedTaskEdit?.(target, current);
+    return edit === undefined
+      ? 'Prepare change_task first; refresh stale edit references.'
+      : `Pending: change_task(edit:"${edit}",operation:requested). Finish cannot prepare content.`;
   }
   discovery(fact: CommandDiscovery): string {
     const evidence = `discovery:${this.discoveries_abyssPrivate.size + 1}`;
