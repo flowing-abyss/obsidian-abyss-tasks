@@ -8,6 +8,7 @@ import { lookupCases } from './lookupCases';
 import type { TurnExpectation } from './oracles';
 import { native9FeedbackCase, pageCases } from './pageCases';
 import { qualificationCases } from './qualificationCases';
+import { r9QualificationCases } from './r9QualificationCases';
 import { semanticCases } from './semanticCases';
 export interface EvalTurn {
   text: string;
@@ -2382,6 +2383,7 @@ export const corpus = [
   ...followupCases,
   ...freshQualificationCases,
   freshSourceCommentCase,
+  ...r9QualificationCases,
 ];
 export function selectCases(selection: string): readonly EvalCase[] {
   if (selection === 'all') return corpus;

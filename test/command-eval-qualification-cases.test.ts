@@ -81,9 +81,9 @@ it('keeps the planned seven Russian and seven English cases', () => {
 });
 
 it('registers five follow-up cases after the original resolved corpus', () => {
-  expect(corpus).toHaveLength(205);
-  expect(new Set(corpus.map((test) => test.id)).size).toBe(205);
-  expect(corpus.slice(-10, -5)).toEqual(followupCases);
+  expect(corpus).toHaveLength(209);
+  expect(new Set(corpus.map((test) => test.id)).size).toBe(209);
+  expect(corpus.slice(-14, -9)).toEqual(followupCases);
   expect(followupCases.map((test) => test.id)).toEqual([
     'prospective-focus-select-due-date-en',
     'q-followup-h15-select-kestrel-page-comments-ru',
@@ -111,13 +111,33 @@ it('adds four fresh development cases for the audited workflow gaps', () => {
   expect(freshQualificationCases.every((test) => test.split === 'development')).toBe(true);
   expect(new Set(freshQualificationCases.map((test) => test.id)).size).toBe(4);
   for (const test of freshQualificationCases) expect(unqualifiedTurns(test)).toEqual([]);
-  expect(corpus.slice(-5, -1)).toEqual(freshQualificationCases);
-  expect(corpus).toHaveLength(205);
+  expect(corpus.slice(-9, -5)).toEqual(freshQualificationCases);
+  expect(corpus).toHaveLength(209);
+});
+
+it('adds four independent held-out replacement qualification cases', () => {
+  const ids = [
+    'r9-repl-due-schedule-en',
+    'r9-repl-comment-owner-ru',
+    'r9-repl-two-captures-en',
+    'r9-repl-courtyard-goal-ru',
+  ];
+  const cases = selectCases(ids.join(','));
+  expect(cases.map((test) => test.id)).toEqual(ids);
+  expect(cases.every((test) => test.split === 'held-out' && test.scripted === undefined)).toBe(
+    true,
+  );
+  expect(cases.every((test) => test.turns.length === 2)).toBe(true);
+  expect(cases.every((test) => unqualifiedTurns(test).length === 0)).toBe(true);
+  expect(cases.filter((test) => test.id.endsWith('-en'))).toHaveLength(2);
+  expect(cases.filter((test) => test.id.endsWith('-ru'))).toHaveLength(2);
+  expect(corpus.slice(-4)).toEqual(cases);
+  expect(corpus).toHaveLength(209);
 });
 
 it('registers and freezes the fresh English source-comment fixture after follow-ups', async () => {
   const item = expectDefined(selectCases('r8-source-comment-utility-en')[0]);
-  expect(expectDefined(corpus[corpus.length - 1])).toEqual(item);
+  expect(expectDefined(corpus[corpus.length - 5])).toEqual(item);
   expect(item.split).toBe('held-out');
   expect(item.pageFixture).toMatchObject({
     url: 'https://manual.emberline.example/kiln-log',
