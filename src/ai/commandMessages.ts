@@ -1,4 +1,7 @@
 /** Fixed CommandMode chrome only. main supplies the host language; Node consumers default to English. */
+export const writeJournalFailureMessage =
+  'Could not save or record the result. Review the retained write journal before continuing.';
+
 const russian = {
   'Review the prepared changes before saving them.':
     'Проверьте подготовленные изменения перед сохранением.',
@@ -50,7 +53,7 @@ const russian = {
   'The note preview is not ready to save.': 'Предпросмотр заметки ещё не готов к сохранению.',
   'Could not prepare the selected changes. Your proposal is retained.':
     'Не удалось подготовить выбранные изменения. Предложение сохранено.',
-  'Could not save or record the result. Review the retained write journal before continuing.':
+  [writeJournalFailureMessage]:
     'Не удалось сохранить или записать результат. Проверьте сохранённый журнал перед продолжением.',
   'The earlier result is unresolved. Acknowledge it before starting independent work.':
     'Результат предыдущей операции не выяснен. Подтвердите это перед началом новой работы.',

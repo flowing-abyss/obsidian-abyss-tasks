@@ -7,7 +7,7 @@ import type {
   TaskTreePageV1,
   TaskTreeV1,
 } from '../../api';
-import { commandDiagnostic, commandMessage } from './commandMessages';
+import { commandDiagnostic, commandMessage, writeJournalFailureMessage } from './commandMessages';
 import { projectMoveFocusMessage, projectMoveWithDescendantFocus } from './commandProjects';
 import { canonicalCommandPlan, commandRead } from './commandReads';
 import {
@@ -414,9 +414,7 @@ export class CommandSession {
           status: blocked
             ? {
                 kind: 'error',
-                message: commandMessage(
-                  'Could not save or record the result. Review the retained write journal before continuing.',
-                ),
+                message: commandMessage(writeJournalFailureMessage),
               }
             : { kind: 'ready', message: commandMessage('Stopped. Your draft is retained.') },
         };
@@ -1847,9 +1845,7 @@ export class CommandSession {
         message:
           cause instanceof CommandFailure
             ? cause.message
-            : commandMessage(
-                'Could not save or record the result. Review the retained write journal before continuing.',
-              ),
+            : commandMessage(writeJournalFailureMessage),
       },
     });
     if (!unsettled && cause instanceof CommandFailure && cause.code === 'PROJECT_MOVE_FOCUS')
