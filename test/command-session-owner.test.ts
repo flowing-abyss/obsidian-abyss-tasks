@@ -595,9 +595,10 @@ it('unresolved effects permit inspection and only explicit acknowledgement start
   expect(await h.owner.newSession('discard')).toBe(false);
   expect(await h.owner.acknowledgeUncertainty()).toBe(true);
   expect(h.owner.snapshot().id).not.toBe(id);
+  expect(h.owner.snapshot().status.message).not.toBe('Draft discarded. Ready to continue.');
   expect(
     h.owner.recent().find((entry) => entry.snapshot.id === id)?.snapshot.status.message,
-  ).not.toBe('Draft discarded. Ready to continue.');
+  ).not.toBe('Draft discarded.');
   await h.owner.clearCompleted();
   expect(
     h.owner.recent().find((entry) => entry.snapshot.id === id)?.snapshot.journal[0]?.effects,
