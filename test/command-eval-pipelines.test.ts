@@ -111,6 +111,17 @@ const selectReadTask: Step = (prompt) => {
     selection: [{ kind: 'task', target: row['target'], revision: row['revision'] }],
   });
 };
+const removeReadTree: Step = (prompt) => {
+  const root = object(result(prompt, 'read')['tree']);
+  return tool('task', {
+    input: {
+      kind: 'edit',
+      target: root['target'],
+      expectedRevision: root['revision'],
+      operation: { type: 'remove', target: root['target'] },
+    },
+  });
+};
 
 it.each([
   ['ru', 'Сделать домашнюю работу'],
@@ -120,18 +131,7 @@ it.each([
   const lookup = tool('read', { input: { kind: 'tasks', query: title } });
   const inspect: Step = (prompt) =>
     tool('read', { input: { kind: 'tree', target: firstRead(prompt)['target'] } });
-  const remove: Step = (prompt) => {
-    const root = object(result(prompt, 'read')['tree']);
-    return tool('task', {
-      input: {
-        kind: 'edit',
-        target: root['target'],
-        expectedRevision: root['revision'],
-        operation: { type: 'remove', target: root['target'] },
-      },
-    });
-  };
-  await replay(test, [plan, lookup, inspect, remove, finish, confirm]);
+  await replay(test, [plan, lookup, inspect, removeReadTree, finish, confirm]);
   // A successful selection is exactly the regression the user saw.
   const selection: Step = (prompt) => {
     const match = firstRead(prompt);
@@ -420,13 +420,41 @@ it('accepts valid state transitions and rejects missing deletion, ambiguity, can
     ],
   };
   expect(evaluateTurn(deletionExpectation, deletionPreview)).toEqual([]);
+  const { report: deletionReport } = await replay(
+    deletion,
+    [
+      plan,
+      tool('read', { input: { kind: 'tasks', query: 'Root' } }),
+      (prompt) => tool('read', { input: { kind: 'tree', target: firstRead(prompt)['target'] } }),
+      removeReadTree,
+      finish,
+      confirm,
+    ],
+    2,
+  );
+  const deletionSaved = expectDefined(deletionReport.turns[1]);
+  expect(deletionSaved.failures).toEqual([]);
+  expect(deletionSaved.status).toBe('saved');
+  expect(deletionSaved.publicTrees).toEqual([]);
+  expect(deletionSaved.proposalKinds).toEqual([]);
+  expect(deletionSaved.writeCount).toBe(1);
+  expect(deletionSaved.journal).toHaveLength(1);
+  expect(deletionSaved.journal[0]?.receipt).toBeDefined();
+  expect(deletionSaved.after['a.md']).toBe('');
+  expect(
+    Object.keys(deletionSaved.after).filter((path) => !(path in deletionSaved.before)),
+  ).toEqual([]);
 
   const ambiguity = expectDefined(actions.find((item) => item.id === '058'));
+  const originalSamePublicTrees = [
+    tree('Same', { source: { path: 'a.md', line: 0 } }),
+    tree('Same', { source: { path: 'a.md', line: 1 } }),
+  ];
   const ambiguousWithPendingMutation = stateContractEvidence({
     status: 'question',
     question: 'Which Same task should I rename?',
     trees: [tree('Chosen')],
-    publicTrees: [tree('Same'), tree('Same')],
+    publicTrees: originalSamePublicTrees,
     proposalKinds: ['task'],
     taskSources: [{ path: 'a.md', line: 1, kind: 'edit', basisValid: true }],
     before: ambiguity.files,
@@ -439,11 +467,21 @@ it('accepts valid state transitions and rejects missing deletion, ambiguity, can
   const ambiguousWithoutMutation = {
     ...ambiguousWithPendingMutation,
     trees: [],
-    publicTrees: expectDefined(ambiguityExpectation.publicTrees),
+    publicTrees: originalSamePublicTrees,
     proposalKinds: [],
     taskSources: [],
   };
   expect(evaluateTurn(ambiguityExpectation, ambiguousWithoutMutation)).toEqual([]);
+  const damagedFirstOwner = {
+    ...ambiguousWithoutMutation,
+    publicTrees: [
+      tree('Replaced First', { source: { path: 'a.md', line: 0 } }),
+      originalSamePublicTrees[1],
+    ],
+  };
+  expect(evaluateTurn(ambiguityExpectation, damagedFirstOwner)).toContain(
+    'public-tree-postcondition',
+  );
   const resolvedPreview = {
     ...ambiguousWithPendingMutation,
     status: 'ready',
@@ -452,7 +490,7 @@ it('accepts valid state transitions and rejects missing deletion, ambiguity, can
     proposalKinds: ['task'],
     taskSources: [{ path: 'a.md', line: 1, kind: 'edit', basisValid: true }],
     freshPreparation: true,
-    publicTrees: expectDefined(expectDefined(ambiguity.turns[1]).expect.publicTrees),
+    publicTrees: originalSamePublicTrees,
   };
   expect(evaluateTurn(expectDefined(ambiguity.turns[1]).expect, resolvedPreview)).toEqual([]);
 
