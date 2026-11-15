@@ -534,7 +534,12 @@ export const readSchema = z.discriminatedUnion('kind', [
     kind: z.literal('tree'),
     target: handle.describe('Task node, never plan/project/note/section.'),
     expectedRevision: handle.optional().describe('For a saved search result, use its revision.'),
-    side: z.enum(['before', 'after']).optional(),
+    side: z
+      .enum(['before', 'after'])
+      .optional()
+      .describe(
+        'Pending plans only: requires plan and expectedPlanRevision. Saved task: omit side; use target/expectedRevision.',
+      ),
     plan: handle.optional().describe('For a pending task, copy its editBasis.plan.'),
     expectedPlanRevision: handle
       .optional()

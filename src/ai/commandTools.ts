@@ -292,6 +292,13 @@ function checkSavedVersion(tree: TaskTreeV1, requested: ReadTaskTreeV1): void {
       'The task changed after the search. Repeat the lookup to inspect its current version.',
     );
 }
+function assertTreeReadSide(input: Extract<z.infer<typeof readSchema>, { kind: 'tree' }>): void {
+  if (input.side !== undefined && input.plan === undefined)
+    throw new CommandFailure(
+      'INVALID_ARGUMENT',
+      'side requires plan and expectedPlanRevision. For saved tasks omit side and use target/expectedRevision; for pending tasks copy the current editBasis plan/revision.',
+    );
+}
 function isEmptyLiveProposal(state: CommandSessionSnapshot): boolean {
   return (
     state.proposal.changes.length === 0 &&
@@ -1389,6 +1396,7 @@ class CommandToolOwner {
   private async readTree_abyssPrivate(
     input: Extract<z.infer<typeof readSchema>, { kind: 'tree' }>,
   ): Promise<unknown> {
+    assertTreeReadSide(input);
     const query = this.ctx_abyssPrivate.session.resolveTreeRead({
       ...omitKind(input),
       limit: input.limit ?? 50,

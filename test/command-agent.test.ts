@@ -7092,8 +7092,193 @@ it('reads the exact live draft subtree without a supplied plan and retains its d
 });
 
 it.each([
+  { tool: 'inspect' as const, side: 'before' as const },
+  { tool: 'inspect' as const, side: 'after' as const },
+  { tool: 'read' as const, side: 'before' as const },
+  { tool: 'read' as const, side: 'after' as const },
+])(
+  'repairs a saved tree side read with $tool side=$side without inventing a plan',
+  async ({ tool, side }) => {
+    const source =
+      '- [ ] Inspect observatory shutter\n  - > Keep the hinge dry.\n- [ ] Preserve latch\n';
+    const h = await setup({ 'a.md': source });
+    const listed = await h.api.tasks.list({ path: 'a.md' });
+    if (!listed.ok) throw Error(listed.error.code);
+    const root = expectDefined(
+      listed.value.items.find((item) => item.title === 'Inspect observatory shutter'),
+    );
+    let invalidFeedback = '';
+    const invalidRead = () =>
+      tool === 'inspect'
+        ? call('inspect', { target: root.target, expectedRevision: root.revision, side })
+        : call('read', {
+            kind: 'tree',
+            target: root.target,
+            expectedRevision: root.revision,
+            side,
+          });
+    h.script(
+      ...(tool === 'read' ? [interpret('plan', false)] : []),
+      invalidRead,
+      () => {
+        const result = expectDefined(h.model.doGenerateCalls[h.model.doGenerateCalls.length - 1])
+          .prompt.flatMap((message) => (message.role === 'tool' ? message.content : []))
+          .reverse()
+          .find((part) => part.type === 'tool-result' && part.toolName === tool);
+        if (result?.type !== 'tool-result' || result.output.type !== 'error-text')
+          throw Error('Missing rejected saved tree read');
+        invalidFeedback = result.output.value;
+        expect(h.session.snapshot().entities.tasks).toEqual([]);
+        expect(h.session.snapshot().proposal.changes).toEqual([]);
+        return call('inspect', { target: root.target, expectedRevision: root.revision });
+      },
+      () =>
+        call('change_task', {
+          edit: projectedEdit(h, 'Inspect observatory shutter'),
+          operation: { type: 'add-child', markdownTitle: 'Check hinge clearance' },
+          complete: true,
+        }),
+    );
+    await h.session.submit(
+      'Read the shutter description and preview a child to check hinge clearance.',
+    );
+    const snapshot = h.session.snapshot();
+    expect(snapshot.status.kind).toBe('ready');
+    expect(invalidFeedback).toContain(
+      'side requires plan and expectedPlanRevision. For saved tasks omit side and use target/expectedRevision; for pending tasks copy the current editBasis plan/revision.',
+    );
+    expect(snapshot.trees[0]?.before?.description).toBe('Keep the hinge dry.');
+    expect(snapshot.trees[0]?.after?.description).toBe('Keep the hinge dry.');
+    expect(snapshot.trees[0]?.after?.children.map((child) => child.markdownTitle)).toContain(
+      'Check hinge clearance',
+    );
+    expect(snapshot.journal).toEqual([]);
+    expect(await h.read('a.md')).toBe(source);
+  },
+);
+
+it('reads valid current plan sides through inspect and read', async () => {
+  const source =
+    '- [ ] Inspect observatory shutter\n  - > Keep the hinge dry.\n- [ ] Preserve latch\n';
+  const h = await setup({ 'a.md': source });
+  const listed = await h.api.tasks.list({ path: 'a.md' });
+  if (!listed.ok) throw Error(listed.error.code);
+  const root = expectDefined(
+    listed.value.items.find((item) => item.title === 'Inspect observatory shutter'),
+  );
+  let inspectBefore: Record<string, unknown> | undefined;
+  let inspectAfter: Record<string, unknown> | undefined;
+  let readBefore: Record<string, unknown> | undefined;
+  let readAfter: Record<string, unknown> | undefined;
+  let proposalAfterEdit: CommandSessionSnapshot['proposal'] | undefined;
+  const sideInput = (side: 'before' | 'after') => {
+    const change = expectDefined(h.session.snapshot().proposal.changes[0]);
+    if (change.kind !== 'task') throw Error('task');
+    proposalAfterEdit ??= h.session.snapshot().proposal;
+    return {
+      target: expectDefined(change.plan.after).target,
+      plan: change.plan.target,
+      expectedPlanRevision: change.plan.revision,
+      side,
+    };
+  };
+  h.script(
+    interpret('plan', false),
+    () => call('inspect', { target: root.target, expectedRevision: root.revision }),
+    () =>
+      call('change_task', {
+        edit: projectedEdit(h, 'Inspect observatory shutter'),
+        operation: { type: 'add-child', markdownTitle: 'Check hinge clearance' },
+      }),
+    () => call('inspect', sideInput('before')),
+    () => {
+      inspectBefore = latestToolValue(h, 'inspect');
+      return call('inspect', sideInput('after'));
+    },
+    () => {
+      inspectAfter = latestToolValue(h, 'inspect');
+      return call('read', { kind: 'tree', ...sideInput('before') });
+    },
+    () => {
+      readBefore = latestToolValue(h, 'read');
+      return call('read', { kind: 'tree', ...sideInput('after') });
+    },
+    () => {
+      readAfter = latestToolValue(h, 'read');
+      return finish()();
+    },
+  );
+  await h.session.submit(
+    'Preview a hinge clearance child and read both sides of the current plan.',
+  );
+  const beforeExpected = {
+    description: 'Keep the hinge dry.',
+    children: [],
+  };
+  const afterExpected = {
+    description: 'Keep the hinge dry.',
+    children: [expect.objectContaining({ markdownTitle: 'Check hinge clearance' })],
+  };
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  expect(h.session.snapshot().entities.tasks.length).toBeGreaterThan(0);
+  expect(inspectBefore?.['tree']).toMatchObject(beforeExpected);
+  expect(inspectAfter?.['tree']).toMatchObject(afterExpected);
+  expect(readBefore?.['tree']).toMatchObject(beforeExpected);
+  expect(readAfter?.['tree']).toMatchObject(afterExpected);
+  expect(h.session.snapshot().proposal).toEqual(proposalAfterEdit);
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(await h.read('a.md')).toBe(source);
+});
+
+it('rejects a stale saved revision after a native task edit', async () => {
+  const source = '- [ ] Inspect observatory shutter\n  - > Keep the hinge dry.\n';
+  const changedSource = '- [ ] Inspect observatory shutter\n  - > Keep the new hinge dry.\n';
+  const h = await setup({ 'a.md': source });
+  const listed = await h.api.tasks.list({ path: 'a.md' });
+  if (!listed.ok) throw Error(listed.error.code);
+  const staleRoot = expectDefined(
+    listed.value.items.find((item) => item.title === 'Inspect observatory shutter'),
+  );
+  await h.external('a.md', changedSource);
+  const refreshed = await h.api.tasks.list({ path: 'a.md' });
+  if (!refreshed.ok) throw Error(refreshed.error.code);
+  const currentRoot = expectDefined(
+    refreshed.value.items.find((item) => item.title === 'Inspect observatory shutter'),
+  );
+  expect(currentRoot.revision).not.toBe(staleRoot.revision);
+  let staleFeedback = '';
+  h.script(
+    () => call('inspect', { target: currentRoot.target, expectedRevision: staleRoot.revision }),
+    () => {
+      const result = expectDefined(h.model.doGenerateCalls[h.model.doGenerateCalls.length - 1])
+        .prompt.flatMap((message) => (message.role === 'tool' ? message.content : []))
+        .reverse()
+        .find((part) => part.type === 'tool-result' && part.toolName === 'inspect');
+      if (result?.type !== 'tool-result' || result.output.type !== 'error-text')
+        throw Error('Missing stale saved tree rejection');
+      staleFeedback = result.output.value;
+      expect(h.session.snapshot().entities.tasks).toEqual([]);
+      expect(h.session.snapshot().proposal.changes).toEqual([]);
+      return call('inspect', {
+        target: currentRoot.target,
+        expectedRevision: currentRoot.revision,
+      });
+    },
+    finish(),
+  );
+  await h.session.submit('Read the current shutter task after checking its saved revision.');
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  expect(staleFeedback).toContain('content basis is no longer available.');
+  expect(h.session.snapshot().entities.tasks[0]?.tree.description).toBe('Keep the new hinge dry.');
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(await h.read('a.md')).toBe(changedSource);
+});
+
+it.each([
   { plan: 'wrong-plan', expectedPlanRevision: 'wrong-revision' },
   { side: 'before' },
+  { plan: 'wrong-plan' },
+  { expectedPlanRevision: 'wrong-revision' },
   { cursor: 'wrong-cursor' },
 ])(
   'does not replace explicit draft tree read selectors with an inferred basis: %j',
