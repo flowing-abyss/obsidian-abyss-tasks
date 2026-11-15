@@ -72,6 +72,42 @@ function latestToolValue(h: Awaited<ReturnType<typeof setup>>, name: string) {
     throw Error('Missing accepted tool result');
   return expectDefined(record(result.output.value));
 }
+function findTreeNode(tree: TaskTreeV1 | null, target: string): TaskTreeV1 | undefined {
+  if (tree === null) return undefined;
+  if (tree.target === target) return tree;
+  for (const child of tree.children) {
+    const match = findTreeNode(child, target);
+    if (match !== undefined) return match;
+  }
+  return undefined;
+}
+function taskTree(value: unknown): TaskTreeV1 | null {
+  if (value === null) return null;
+  return expectDefined(record(value)) as unknown as TaskTreeV1;
+}
+function expectUnselectedNodePreserved(
+  before: TaskTreeV1 | null,
+  after: TaskTreeV1 | null,
+  row: TaskDtoV1,
+): void {
+  const beforeNode = findTreeNode(before, row.target);
+  const afterNode = findTreeNode(after, row.target);
+  if (row.parentTarget === undefined) {
+    expect(beforeNode).toBeUndefined();
+    expect(afterNode).toBeUndefined();
+    return;
+  }
+  const unchanged = {
+    target: row.target,
+    title: row.title,
+    status: row.status,
+    priority: row.priority,
+    dates: row.dates,
+    tags: row.tags,
+  };
+  expect(beforeNode).toMatchObject(unchanged);
+  expect(afterNode).toMatchObject(unchanged);
+}
 function scopedConfirmation(message: string, proposalRevision: number, index: number) {
   return () =>
     call('interpret', {
@@ -3649,6 +3685,327 @@ it('guides ambiguous searches to explicit user filters and valid parent inspecti
   expect(h.session.snapshot().journal).toEqual([]);
   expect(await h.read('a.md')).toBe(source);
 });
+it('inspects a source-coordinate match for a retained partial title query', async () => {
+  const path = 'Reports/Quarterly.md';
+  const source = '- [ ] Quarterly review #work\n- [ ] Quarterly planning #work\n';
+  const treeReads: Array<{ target: string; expectedRevision: string | undefined }> = [];
+  const searchInputs: Array<Record<string, unknown>> = [];
+  const h = await setup({ [path]: source }, {}, (api) => {
+    const search = expectDefined(api.tasks.search);
+    const tree = expectDefined(api.tasks.tree);
+    return {
+      ...api,
+      tasks: {
+        ...api.tasks,
+        search: async (input) => {
+          searchInputs.push({ ...input });
+          return search(input);
+        },
+        tree: async (input) => {
+          treeReads.push({ target: input.target, expectedRevision: input.expectedRevision });
+          return tree(input);
+        },
+      },
+    };
+  });
+  const query = { query: 'quarterly', fields: 'title' as const, tagsAll: ['#work'] };
+  let coordinate: Record<string, unknown> = {};
+  let readsAfterCoordinate = 0;
+  h.script(
+    () => call('find', { ...query, purpose: 'change' }),
+    () => finish('Which Quarterly task should I change?', true)(),
+  );
+  await h.session.submit('Change the quarterly task.');
+  h.script(
+    () => call('find', { ...query, path, sourceLine: 0, purpose: 'change' }),
+    () => {
+      coordinate = latestToolValue(h, 'find');
+      readsAfterCoordinate = treeReads.length;
+      return finish('The selected task is Quarterly review.', true)();
+    },
+  );
+  await h.session.submit('Use Reports/Quarterly.md, line 1.');
+
+  expect(searchInputs[0]).toMatchObject(query);
+  expect(searchInputs[0]).not.toHaveProperty('path');
+  expect(searchInputs[1]).toMatchObject({ ...query, path });
+  const canonical = await h.api.tasks.list({ path });
+  if (!canonical.ok) throw Error('Missing canonical task source');
+  const selected = expectDefined(canonical.value.items.find((row) => row.source.line === 0));
+  expect(coordinate).toHaveProperty('match.target');
+  expect(coordinate).toHaveProperty('match.revision');
+  expect(coordinate['selection']).toMatchObject({
+    target: record(coordinate['match'])?.['target'],
+  });
+  expect(readsAfterCoordinate).toBe(1);
+  expect(treeReads[0]?.target).toBe(selected.target);
+  expect(treeReads[0]?.expectedRevision).toBe(selected.revision);
+  expect(h.session.snapshot().proposal.changes).toEqual([]);
+  expect(await h.read(path)).toBe(source);
+});
+it.each([
+  {
+    label: 'a root task',
+    path: 'Root candidates.md',
+    title: 'Same',
+    query: 'Same',
+    source: '- [ ] Same #work\n- [ ] Control\n- [ ] Same #work\n',
+    sourceLine: 2,
+    clarification: 'The second one in Root candidates.md, on line 3.',
+  },
+  {
+    label: 'a nested task',
+    path: 'Nested/Candidates.md',
+    title: 'Echo',
+    query: 'Echo',
+    source: '- [ ] Container\n  - [ ] Echo #work\n  - [ ] Marker\n  - [ ] Echo #work\n',
+    sourceLine: 3,
+    clarification: 'The second Echo under Container in Nested/Candidates.md, on line 4.',
+  },
+])(
+  'resolves an ambiguous $label by its exact source coordinate',
+  async ({ path, title, query: queryText, source, sourceLine, clarification }) => {
+    const controlPath = 'Control.md';
+    const controlSource = '- [ ] Leave this unchanged\n';
+    const searchInputs: Array<Record<string, unknown>> = [];
+    const h = await setup({ [path]: source, [controlPath]: controlSource }, {}, (api) => {
+      const search = expectDefined(api.tasks.search);
+      return {
+        ...api,
+        tasks: {
+          ...api.tasks,
+          search: async (input) => {
+            searchInputs.push({ ...input });
+            return search(input);
+          },
+        },
+      };
+    });
+    const query = { query: queryText, fields: 'title' as const, tagsAll: ['#work'] };
+    let ambiguousEvidence = '';
+    h.script(
+      () => call('find', { ...query, purpose: 'change' }),
+      () => {
+        ambiguousEvidence = String(latestToolValue(h, 'find')['evidence']);
+        return call('finish', {
+          state: 'question',
+          blockingIssue: { kind: 'ambiguous', evidence: ambiguousEvidence },
+        });
+      },
+    );
+    await h.session.submit('Rename Same to Chosen.');
+
+    let selectedTarget = '';
+    h.script(
+      () => call('find', { ...query, path, sourceLine, purpose: 'change' }),
+      () => {
+        const result = latestToolValue(h, 'find');
+        const match = record(result['match']);
+        selectedTarget = String(record(result['selection'])?.['target']);
+        return call('change_task', {
+          edit: String(match?.['edit']),
+          operation: {
+            type: 'patch',
+            patch: { markdownTitle: { type: 'set', value: 'Chosen' } },
+          },
+          complete: true,
+        });
+      },
+    );
+    await h.session.submit(clarification);
+
+    const rows = latestToolValue(h, 'find')['items'] as Array<Record<string, unknown>>;
+    const canonical = await h.api.tasks.list({ path });
+    if (!canonical.ok) throw Error('Missing canonical task source');
+    const selectedCanonical = expectDefined(
+      canonical.value.items.find((row) => row.source.line === sourceLine && row.title === title),
+    );
+    const otherDuplicate = expectDefined(
+      canonical.value.items.find(
+        (row) => row.title === title && row.target !== selectedCanonical.target,
+      ),
+    );
+    const selectedRow = rows.find(
+      (row) => JSON.stringify(row['source']) === JSON.stringify({ path, line: sourceLine }),
+    );
+    expect(ambiguousEvidence).not.toBe('');
+    const lastSearch = searchInputs[searchInputs.length - 1];
+    expect(lastSearch).toMatchObject({ ...query, path });
+    expect(lastSearch).not.toHaveProperty('sourceLine');
+    expect(selectedRow).toMatchObject({
+      title,
+      source: { path, line: sourceLine },
+    });
+    expect(selectedTarget).toBe(selectedRow?.['target']);
+    expect(h.session.snapshot().status.kind).toBe('ready');
+    const change = record(h.session.snapshot().proposal.changes[0]);
+    const plan = record(change?.['plan']);
+    const before = taskTree(plan?.['before']);
+    const after = taskTree(plan?.['after']);
+    expect(change?.['kind']).toBe('task');
+    expect(plan?.['kind']).toBe('edit');
+    const selectedBefore = findTreeNode(before, selectedCanonical.target);
+    const selectedAfter = findTreeNode(after, selectedCanonical.target);
+    expect(selectedBefore).toMatchObject({
+      target: selectedCanonical.target,
+      title,
+    });
+    expect(selectedAfter).toMatchObject({ target: selectedCanonical.target, title: 'Chosen' });
+    expectUnselectedNodePreserved(before, after, otherDuplicate);
+    expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+    expect(h.session.snapshot().journal).toEqual([]);
+    expect(await h.read(path)).toBe(source);
+    expect(await h.read(controlPath)).toBe(controlSource);
+  },
+);
+it('does not fall back to a unique row when the requested source line is absent', async () => {
+  const source = '- [ ] Unique\n';
+  const h = await setup({ 'Exact path.md': source });
+  let result: Record<string, unknown> = {};
+  h.script(
+    () =>
+      call('find', { query: 'Unique', path: 'Exact path.md', sourceLine: 99, purpose: 'change' }),
+    () => {
+      result = latestToolValue(h, 'find');
+      return finish('Which source line should I use?', true)();
+    },
+  );
+  await h.session.submit('Change the task at Exact path.md, line 100.');
+
+  expect(result['items']).toHaveLength(1);
+  expect(result['next']).not.toContain('showExact:true');
+  expect(result['match']).toBeUndefined();
+  expect(result['selection']).toBeUndefined();
+  expect(h.session.snapshot().status.kind).toBe('question');
+  expect(h.session.snapshot().proposal.changes).toEqual([]);
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(await h.read('Exact path.md')).toBe(source);
+});
+it('requires the returned row path to equal the source coordinate path', async () => {
+  const actualPath = 'Actual path.md';
+  const source = '- [ ] Unique\n';
+  const h = await setup({ [actualPath]: source }, {}, (api) => {
+    const search = expectDefined(api.tasks.search);
+    return {
+      ...api,
+      tasks: {
+        ...api.tasks,
+        search: (input) => {
+          const unscoped = { ...input };
+          Reflect.deleteProperty(unscoped, 'path');
+          return search(unscoped);
+        },
+      },
+    };
+  });
+  let result: Record<string, unknown> = {};
+  h.script(
+    () =>
+      call('find', {
+        query: 'Unique',
+        path: 'Requested path.md',
+        sourceLine: 0,
+        purpose: 'change',
+      }),
+    () => {
+      result = latestToolValue(h, 'find');
+      return finish('Please check the requested path.', true)();
+    },
+  );
+  await h.session.submit('Change the task in Requested path.md at line 1.');
+
+  expect(result['items']).toMatchObject([{ source: { path: actualPath, line: 0 } }]);
+  expect(result['match']).toBeUndefined();
+  expect(result['selection']).toBeUndefined();
+  expect(h.session.snapshot().status.kind).toBe('question');
+  expect(h.session.snapshot().proposal.changes).toEqual([]);
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(await h.read(actualPath)).toBe(source);
+});
+it('recovers with sourceLine after rejecting retryOf for a nonempty result', async () => {
+  const path = 'Exact path.md';
+  const source = '- [ ] Same\n- [ ] Same\n';
+  const h = await setup({ [path]: source });
+  let evidence = '';
+  let retryErrorPrompt = '';
+  h.script(
+    () => call('find', { query: 'Same', purpose: 'change' }),
+    () => {
+      evidence = String(latestToolValue(h, 'find')['evidence']);
+      return call('find', { query: 'Same', purpose: 'change', retryOf: evidence });
+    },
+    () => {
+      const previousStep = expectDefined(
+        h.model.doGenerateCalls[h.model.doGenerateCalls.length - 1],
+      );
+      const previousResults = previousStep.prompt
+        .flatMap((message) => (message.role === 'tool' ? message.content : []))
+        .filter((part) => part.type === 'tool-result' && part.toolName === 'find');
+      retryErrorPrompt = JSON.stringify(previousResults);
+      return call('find', {
+        query: 'Same',
+        path,
+        sourceLine: 1,
+        purpose: 'change',
+      });
+    },
+    () => {
+      const match = record(latestToolValue(h, 'find')['match']);
+      return call('change_task', {
+        edit: String(match?.['edit']),
+        operation: {
+          type: 'patch',
+          patch: { markdownTitle: { type: 'set', value: 'Selected' } },
+        },
+        complete: true,
+      });
+    },
+  );
+  await h.session.submit('Change the second Same task in Exact path.md.');
+
+  expect(evidence).not.toBe('');
+  expect(retryErrorPrompt).toMatch(/first empty search/iu);
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+  expect(h.session.snapshot().proposal.changes).toMatchObject([
+    { plan: { before: { title: 'Same' }, after: { title: 'Selected' } } },
+  ]);
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(h.model.doGenerateCalls).toHaveLength(4);
+  expect(await h.read(path)).toBe(source);
+});
+it.each([
+  ['missing path', { sourceLine: 0 }],
+  ['negative line', { path: 'Exact path.md', sourceLine: -1 }],
+  ['fractional line', { path: 'Exact path.md', sourceLine: 1.5 }],
+  ['conflicting task ID', { path: 'Exact path.md', sourceLine: 0, taskId: 'task-id' }],
+  ['conflicting exact-title selector', { path: 'Exact path.md', sourceLine: 0, showExact: true }],
+])('rejects a source coordinate with %s before public search', async (_name, selector) => {
+  const source = '- [ ] Unique\n';
+  let searchCalls = 0;
+  const h = await setup({ 'Exact path.md': source }, {}, (api) => {
+    const search = expectDefined(api.tasks.search);
+    return {
+      ...api,
+      tasks: {
+        ...api.tasks,
+        search: async (input) => {
+          searchCalls += 1;
+          return search(input);
+        },
+      },
+    };
+  });
+  h.script(
+    () => call('find', { query: 'Unique', purpose: 'change', ...selector }),
+    finish('Please restate the exact path and source position.', true),
+  );
+  await h.session.submit('Change the task at its exact source position.');
+
+  expect(searchCalls).toBe(0);
+  expect(h.session.snapshot().proposal.changes).toEqual([]);
+  expect(await h.read('Exact path.md')).toBe(source);
+});
 it('does not choose between duplicate matches or select a partial title', async () => {
   for (const source of ['- [ ] Green\n- [ ] Green\n', '- [ ] Deep Green\n']) {
     const h = await setup({ 'a.md': source });
@@ -4285,7 +4642,7 @@ function scriptAcceptedCommentNarrowing(
   selector: Record<string, unknown> = { tagsAll: ['#north'] },
 ): AcceptedNarrowedCommentCapture {
   const capture: AcceptedNarrowedCommentCapture = {};
-  capture.multipleItems = selector['taskId'] !== undefined;
+  capture.multipleItems = selector['taskId'] !== undefined || selector['sourceLine'] !== undefined;
   h.script(
     () => call('find', { ...broad, purpose: 'change' }),
     findNorthFromBroadResult(h, capture),
@@ -4365,28 +4722,35 @@ function assertAcceptedCommentNarrowing(
   expect(capture.completionBlocked).toBeTruthy();
   expect(source).toContain('South original.');
 }
-it('retains an accepted comment when a complete narrowed lookup resolves ambiguity', async () => {
-  const source = [
-    '- [ ] Proof #north',
-    '\t- 2026-11-14 09:00 North original.',
-    '- [ ] Proof #south',
-    '\t- 2026-11-14 09:01 South original.',
-    '',
-  ].join('\n');
-  const h = await setup({ 'a.md': source });
-  const initial = await h.api.tasks.list({ path: 'a.md' });
-  if (!initial.ok) throw Error('Missing canonical task source');
-  const canonicalNorth = expectDefined(
-    initial.value.items.find((item) => item.tags.includes('#north')),
-  );
-  const broad = { query: 'Proof', fields: 'all', path: 'a.md' };
-  const capture = scriptAcceptedCommentNarrowing(h, broad);
-  await h.session.submit('Add the comment "Call Jo." to Proof tagged #north in a.md.');
-  expect(capture.finishError).toBeUndefined();
-  expect(h.session.snapshot().status.kind).toBe('ready');
-  assertAcceptedCommentNarrowing(h, source, canonicalNorth, capture);
-  expect(await h.read('a.md')).toBe(source);
-});
+it.each(['source-line coordinate', 'accepted tag filter'] as const)(
+  'retains an accepted comment when a complete narrowed lookup resolves ambiguity by %s',
+  async (narrowing) => {
+    const source = [
+      '- [ ] Proof #north',
+      '\t- 2026-11-14 09:00 North original.',
+      '- [ ] Proof #south',
+      '\t- 2026-11-14 09:01 South original.',
+      '',
+    ].join('\n');
+    const h = await setup({ 'a.md': source });
+    const initial = await h.api.tasks.list({ path: 'a.md' });
+    if (!initial.ok) throw Error('Missing canonical task source');
+    const canonicalNorth = expectDefined(
+      initial.value.items.find((item) => item.tags.includes('#north')),
+    );
+    const broad = { query: 'Proof', fields: 'all', path: 'a.md' };
+    const selector =
+      narrowing === 'source-line coordinate'
+        ? { sourceLine: canonicalNorth.source.line }
+        : { tagsAll: ['#north'] };
+    const capture = scriptAcceptedCommentNarrowing(h, broad, selector);
+    await h.session.submit('Add the comment "Call Jo." to Proof tagged #north in a.md.');
+    expect(capture.finishError).toBeUndefined();
+    expect(h.session.snapshot().status.kind).toBe('ready');
+    assertAcceptedCommentNarrowing(h, source, canonicalNorth, capture);
+    expect(await h.read('a.md')).toBe(source);
+  },
+);
 it('retains an accepted comment when an exact authored ID selects one complete result row', async () => {
   const source = [
     '- [ ] Proof #north 🆔 north-id',
@@ -5492,7 +5856,10 @@ it('acknowledges a semantic discard on the new active session without a source w
   );
   await h.session.submit('Discard this draft and start another session');
   expect(h.session.snapshot().id).not.toBe(previous.id);
-  expect(h.session.snapshot().status).toEqual({ kind: 'ready', message: 'Draft discarded.' });
+  expect(h.session.snapshot().status).toEqual({
+    kind: 'ready',
+    message: 'Draft discarded. Ready to continue.',
+  });
   expect(h.model.doGenerateCalls).toHaveLength(generations + 1);
   expect(await h.read('a.md')).toBe('');
 });

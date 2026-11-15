@@ -5,6 +5,20 @@ export const draftDispositionMessage =
   'Save these changes, keep them for later, discard them, or stay here?';
 export const noteMoveConflictMessage =
   'Save or discard the pending changes to these notes before moving tasks. All current work is retained.';
+export const completeWriteReadbackMessage =
+  'The write settled, but the complete saved result could not be verified. Review the current source before continuing.';
+export const changedNoteSectionReadbackMessage =
+  'The note was written, but its changed section could not be verified. Read the current note before continuing.';
+export const relatedContentReviewMessage =
+  'Related content changed after the earlier write. Review the remaining proposal before saving.';
+export const mergeAssessmentReviewMessage =
+  'The earlier write invalidated the merge assessment. The source is retained for a fresh review.';
+export const savedContentStatusMessage =
+  'Status uses ordinary completion, recurrence, deletion, timer and blocker rules after the content is saved.';
+export const changedProposalMessage =
+  'The proposal changed while this input was recorded. Review the current version before confirming.';
+export const microphoneUnavailableMessage = 'Microphone unavailable. Try the microphone again.';
+export const recordingFailedMessage = 'Recording failed. Try the microphone again.';
 
 const russian = {
   'Review the prepared changes before saving them.':
@@ -47,6 +61,7 @@ const russian = {
   'Current work retained.': 'Текущая работа сохранена в черновике.',
   'Stopped. Your draft is retained.': 'Остановлено. Черновик сохранён.',
   'Draft discarded.': 'Черновик удалён.',
+  'Draft discarded. Ready to continue.': 'Черновик удалён. Можно продолжать.',
   'Prepare a fresh preview from the current source.':
     'Подготовьте новый предпросмотр по текущему источнику.',
   'Review this preview again.': 'Проверьте этот предпросмотр ещё раз.',
@@ -91,7 +106,7 @@ const russian = {
     'Проект изменился, пока предыдущие правки ожидали сохранения. Проверьте их перед продолжением.',
   [noteMoveConflictMessage]:
     'Сохраните или отмените изменения этих заметок перед переносом задач. Вся текущая работа сохранена.',
-  'Status uses ordinary completion, recurrence, deletion, timer and blocker rules after the content is saved.':
+  [savedContentStatusMessage]:
     'После сохранения содержимого статус применяет обычные правила завершения, повторения, удаления, таймера и блокировок.',
   'Custom servers require an Obsidian desktop runtime with secure HTTP support.':
     'Для подключения к своему серверу нужна настольная версия Obsidian с поддержкой запросов без переадресации.',
@@ -233,7 +248,7 @@ const russian = {
   'Changed section · {label}': 'Изменённый раздел · {label}',
   'Select the saved root task before moving it. The previous focus and proposal are retained.':
     'Перед переносом выберите сохранённую корневую задачу. Предыдущий выбор и предложение сохранены.',
-  'The proposal changed while this input was recorded. Review the current version before confirming.':
+  [changedProposalMessage]:
     'Предложение изменилось во время записи. Проверьте текущую версию перед подтверждением.',
   'Listen continuously, or transcribe for editing?':
     'Слушать непрерывно или записывать текст для редактирования?',
@@ -246,15 +261,15 @@ const russian = {
   'Researching…': 'Ищу информацию…',
   'Stopped after the last admitted write. Review the result before continuing.':
     'Остановлено после последней принятой записи. Проверьте результат перед продолжением.',
-  'The write settled, but the complete saved result could not be verified. Review the current source before continuing.':
+  [completeWriteReadbackMessage]:
     'Запись завершилась, но полный сохранённый результат не удалось проверить. Проверьте текущий источник перед продолжением.',
   'The write settled, but a selected task is unavailable. Review the current result.':
     'Запись завершена, но выбранная задача недоступна. Проверьте текущий результат.',
   'The note was saved; the task link could not be verified. Review the current result.':
     'Заметка сохранена; ссылку в задаче проверить не удалось. Проверьте текущий результат.',
-  'Related content changed after the earlier write. Review the remaining proposal before saving.':
+  [relatedContentReviewMessage]:
     'Связанное содержимое изменилось после предыдущей записи. Проверьте оставшееся предложение перед сохранением.',
-  'The earlier write invalidated the merge assessment. The source is retained for a fresh review.':
+  [mergeAssessmentReviewMessage]:
     'Предыдущая запись изменила условия объединения. Источник оставлен для повторной проверки.',
   'The note was saved, but the reviewed task link no longer matches.':
     'Заметка сохранена, но проверенная ссылка в задаче больше не соответствует ей.',
@@ -283,7 +298,7 @@ const russian = {
     'Перенесённая задача изменилась до завершения проверки.',
   'The note write finished without a verified result.':
     'Запись заметки завершена без проверенного результата.',
-  'The note was written, but its changed section could not be verified. Read the current note before continuing.':
+  [changedNoteSectionReadbackMessage]:
     'Заметка записана, но проверить изменённый раздел не удалось. Прочитайте текущую заметку перед продолжением.',
   'The note changed before its edited section could be verified.':
     'Заметка изменилась до проверки отредактированного раздела.',
@@ -316,8 +331,7 @@ const russian = {
   Assistant: 'Помощник',
   Start: 'Начало',
   End: 'Конец',
-  'Microphone unavailable. Try the microphone again.':
-    'Микрофон недоступен. Попробуйте включить его снова.',
+  [microphoneUnavailableMessage]: 'Микрофон недоступен. Попробуйте включить его снова.',
   'Voice input paused. Try the microphone again.':
     'Голосовой ввод приостановлен. Включите микрофон снова.',
   'Voice processing failed. Try the microphone again.':
@@ -326,7 +340,7 @@ const russian = {
     'Не удалось включить микрофон. Проверьте разрешение и повторите попытку.',
   'Recording is too large. Try a shorter command.':
     'Запись слишком большая. Попробуйте более короткую команду.',
-  'Recording failed. Try the microphone again.': 'Запись не удалась. Включите микрофон снова.',
+  [recordingFailedMessage]: 'Запись не удалась. Включите микрофон снова.',
   'Recording reached one minute. Try a shorter command.':
     'Запись достигла одной минуты. Попробуйте более короткую команду.',
   'Recording could not finish. Try the microphone again.':

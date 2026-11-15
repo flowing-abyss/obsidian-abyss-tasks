@@ -21,7 +21,12 @@ import type {
 } from '../../api';
 import { buildLinkRaw } from '../markdown/links';
 import { CommandEvidence, type CommandFact } from './CommandEvidence';
-import { commandDiagnostic, commandMessage, draftDispositionMessage } from './commandMessages';
+import {
+  changedProposalMessage,
+  commandDiagnostic,
+  commandMessage,
+  draftDispositionMessage,
+} from './commandMessages';
 import { modelToolSchema } from './commandModelSchema';
 import type { CommandPendingOperations } from './CommandPendingOperations';
 import {
@@ -30,6 +35,7 @@ import {
   sameCommandProjectSchema,
   validateCommandProject,
 } from './commandProjects';
+import { sourceLineGuidance } from './commandPrompt';
 import { canonicalCommandPlan, canonicalCommandTree, commandRead } from './commandReads';
 import { CommentRemovalMismatch, type CommandReferenceBook } from './CommandReferenceBook';
 import { commandReferences } from './commandReferences';
@@ -173,31 +179,45 @@ export function canonicalToolName(name: string): string {
   if (['create_task', 'change_task'].includes(name)) return 'task';
   return ['find', 'inspect'].includes(name) ? 'read' : name;
 }
-const findSchema = readSchema.options[0].omit({ kind: true }).extend({
-  purpose: z
-    .enum(['change', 'remove', 'show-only', 'locate-child'])
-    .optional()
-    .describe(
-      'Effect on this search subject. Use locate-child when the named parent only locates the requested subtask. Use change for the actual edit subject.',
-    ),
-  showExact: z.boolean().optional().describe('Inspect a unique exact title match and continue.'),
-  taskId: z
-    .string()
-    .min(1)
-    .max(256)
-    .optional()
-    .describe(
-      'Exact task ID supplied by the user; match authoredId case-sensitively, never by title.',
-    ),
-  retryOf: z
-    .string()
-    .min(1)
-    .max(512)
-    .optional()
-    .describe(
-      'Evidence for alternate wording of an empty change/removal search. For a change lookup that only located a parent or displayed a task, repeat its query and filters with locate-child or show-only and its evidence.',
-    ),
-});
+const findSchema = readSchema.options[0]
+  .omit({ kind: true })
+  .extend({
+    sourceLine: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe('Exact zero-based source.line from a returned task row; requires its exact path.'),
+    purpose: z
+      .enum(['change', 'remove', 'show-only', 'locate-child'])
+      .optional()
+      .describe(
+        'Effect on this search subject. Use locate-child when the named parent only locates the requested subtask. Use change for the actual edit subject.',
+      ),
+    showExact: z.boolean().optional().describe('Inspect a unique exact title match and continue.'),
+    taskId: z
+      .string()
+      .min(1)
+      .max(256)
+      .optional()
+      .describe(
+        'Exact task ID supplied by the user; match authoredId case-sensitively, never by title.',
+      ),
+    retryOf: z
+      .string()
+      .min(1)
+      .max(512)
+      .optional()
+      .describe(
+        'Evidence for alternate wording of an empty change/removal search. For a change lookup that only located a parent or displayed a task, repeat its query and filters with locate-child or show-only and its evidence.',
+      ),
+  })
+  .refine(
+    (input) =>
+      input.sourceLine === undefined ||
+      (Boolean(input.path?.trim()) && input.taskId === undefined && input.showExact === undefined),
+    'sourceLine requires an exact nonempty path and cannot combine with taskId/showExact.',
+  );
 type FindRequest = z.infer<typeof findSchema>;
 type TaskSearchResult = TaskSearchPageV1 & { evidence: string };
 function lookupFeedback(
@@ -227,11 +247,14 @@ function verifiedMatchNext(edit: string, purpose: unknown): string {
     return `Delete with change_task edit "${edit}", operation:{type:"remove"}, complete:true.`;
   return general;
 }
+type TaskSearchSelector = Pick<
+  FindRequest,
+  'query' | 'path' | 'sourceLine' | 'showExact' | 'taskId'
+>;
 function soleTask(
   result: TaskSearchResult,
-  cursor?: string,
-  exactTitle?: string,
-  exactTaskId?: string,
+  cursor: string | undefined,
+  selector: TaskSearchSelector,
 ): TaskDtoV1 | undefined {
   if (
     cursor !== undefined ||
@@ -240,13 +263,15 @@ function soleTask(
     result.nextCursor !== undefined
   )
     return undefined;
-  if (exactTaskId !== undefined) {
-    const matches = result.items.filter((row) => exactTaskMatch(row, exactTaskId, 'id'));
-    return matches.length === 1 ? matches[0] : undefined;
-  }
-  if (result.items.length === 1) return result.items[0];
-  const query = exactTitle ?? '';
-  const matches = result.items.filter((row) => exactTaskMatch(row, query, 'title'));
+  const matches = result.items.filter((row) => {
+    if (selector.sourceLine !== undefined)
+      return row.source.path === selector.path && row.source.line === selector.sourceLine;
+    if (selector.taskId !== undefined) return exactTaskMatch(row, selector.taskId, 'id');
+    return (
+      result.items.length === 1 ||
+      (selector.showExact === true && exactTaskMatch(row, selector.query, 'title'))
+    );
+  });
   return matches.length === 1 ? matches[0] : undefined;
 }
 function exactTaskMatch(row: TaskDtoV1, query: string, kind: 'title' | 'id'): boolean {
@@ -260,7 +285,7 @@ function shouldRetryExactTitle(
   query: string,
   taskId: string | undefined,
 ): boolean {
-  return taskId === undefined && soleTask(result, cursor, query) !== undefined;
+  return taskId === undefined && soleTask(result, cursor, { query, showExact: true }) !== undefined;
 }
 function isPartialTaskCandidate(
   candidate: TaskDtoV1,
@@ -1111,11 +1136,7 @@ class CommandToolOwner {
   ): Promise<unknown> {
     if ((intent !== 'plan' || hasDisposition) && !this.currentConsentBasis_abyssPrivate()) {
       this.ctx_abyssPrivate.done = true;
-      this.ctx_abyssPrivate.session.question(
-        commandMessage(
-          'The proposal changed while this input was recorded. Review the current version before confirming.',
-        ),
-      );
+      this.ctx_abyssPrivate.session.question(commandMessage(changedProposalMessage));
       return { needsReview: true };
     }
     if (this.confirmsNow(intent, scope !== undefined)) {
@@ -1229,35 +1250,31 @@ class CommandToolOwner {
         this.execute_abyssPrivate('read', toolCallId, () => this.lookupTask(input)),
     });
   }
-  private async lookupTask({
-    purpose,
-    retryOf,
-    showExact,
-    taskId,
-    ...query
-  }: FindRequest): Promise<unknown> {
+  private async lookupTask(input: FindRequest): Promise<unknown> {
+    const { purpose, retryOf, showExact, taskId, sourceLine, ...query } = input;
     const ctx = this.ctx_abyssPrivate;
     ctx.session.status('searching', commandMessage('Looking up the requested content…'));
     const result = await this.readTasks_abyssPrivate({ ...query, kind: 'tasks' });
-    const candidate = soleTask(
-      result,
-      query.cursor,
-      showExact === true ? query.query : undefined,
-      taskId,
-    );
+    const candidate = soleTask(result, query.cursor, input);
     const evidence = required(ctx.evidence);
     if (retryOf !== undefined) this.correctLookup(result, retryOf, purpose);
     if (purpose === 'change' || purpose === 'remove')
       evidence.expectTaskChange(result.evidence, purpose, candidate, result.items);
     if (candidate === undefined) {
-      if (shouldRetryExactTitle(result, query.cursor, query.query, taskId))
+      if (
+        sourceLine === undefined &&
+        shouldRetryExactTitle(result, query.cursor, query.query, taskId)
+      )
         return {
           next: 'One title exactly matches this query; the other titles matched approximately. If the user named that exact title, repeat this find with the same filters and purpose and showExact:true. Check the requested parent before editing.',
           ...result,
         };
       return this.lookupCandidates(result, query.cursor, retryOf);
     }
-    if (isPartialTaskCandidate(candidate, query.query, showExact, taskId))
+    if (
+      sourceLine === undefined &&
+      isPartialTaskCandidate(candidate, query.query, showExact, taskId)
+    )
       return {
         candidate: { kind: 'task', target: candidate.target, revision: candidate.revision },
         ...result,
@@ -1284,7 +1301,7 @@ class CommandToolOwner {
       };
     if (result.items.length > 0)
       return {
-        next: 'Use an explicit tag or path clue from the user as a filter first; keep this query and preserve all existing filters. If it still matches multiple tasks, ask with this evidence. Inspect a parent only when needed for an ordinal; its parentTarget can be inspected with expectedRevision omitted, but never use a child revision for the parent.',
+        next: `Use an explicit tag or path clue from the user as a filter first; keep this query and preserve all existing filters. ${sourceLineGuidance} Otherwise ask with this evidence. Inspect a parent only when needed for an ordinal; its parentTarget can be inspected with expectedRevision omitted, but never use a child revision for the parent.`,
         ...(cursor === undefined &&
         result.items.length > 1 &&
         !result.truncated &&

@@ -134,6 +134,12 @@ For an explicitly supplied task ID, `find.taskId` requires a unique case-sensiti
 match inside complete, filtered results; `showExact` remains title-only. Both paths issue an edit
 alias only after a canonical revision-checked read. Each editable alias captures its exact
 task/comment owner and saved or pending-plan basis; superseding that basis invalidates the alias.
+The optional `find.sourceLine` narrows the same local lookup using the exact requested path and a
+zero-based line copied from a returned task's `source.line`. It is removed before the public task
+search call. Only one matching row from a complete, cursor-free, nontruncated result can proceed to
+the existing revision-checked inspection; a missing or conflicting coordinate cannot fall back to a
+unique or title/ID match. Unqualified ambiguous lookups still require a supported narrowing before
+their requested mutation is considered resolved.
 
 The core prompt defines existing-context selection before new capture. At the control boundary,
 ordinary create/add/schedule requests preview; approval of the displayed proposal uses confirm
@@ -520,8 +526,9 @@ for the current message. A partial approval binds to verified owners and values 
 changes pending. Saving a requested new edit also requires material new preparation. Enter still
 confirms the visible proposal through the session's native command.
 Keep retains the complete unsaved draft in history without a source write; discard requires explicit
-abandonment. A successful nonblocked discard prepares the existing localized acknowledgement on the
-next snapshot before persistence and displays it only after the transition is accepted. Failed,
+abandonment. A successful nonblocked discard gives the fresh session a localized continuation
+acknowledgement before persistence and displays it only after the transition is accepted. The
+archived snapshot retains the original discard marker for historical recovery. Failed,
 cancelled or stale transitions cannot overwrite newer feedback; a current-session persistence
 failure retains the draft and reports an error. Archived history keeps its journal and receipts.
 Ambiguous disposition retains work and asks a short question. Legitimate transition questions
