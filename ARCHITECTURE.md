@@ -484,7 +484,8 @@ assignments by field ID and retain omitted status/fields; explicit null clears r
 The original accepted project revision remains guarded across those refinements.
 
 Explicit working selection is separate from background reads. Optional typed `finish.selection`
-selects up to five verified entities; omission preserves selection and an empty list clears it.
+selects up to five verified entities; omission preserves focus, preview does not auto-focus, and an
+empty list clears it. Requested draft selection uses the current plan references.
 The session verifies the entire selection before publishing, including exact plan/revision for draft
 nodes. A uniquely owned opaque draft target can resolve its current plan internally; supplied
 node/plan revisions must still match, and ambiguous overlapping plans require an explicit plan.

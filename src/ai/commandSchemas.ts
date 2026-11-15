@@ -252,7 +252,9 @@ export const capabilitySchema = z.enum([
 const completePreview = z
   .boolean()
   .optional()
-  .describe('Set true when this single preview covers the whole request. Does not save.');
+  .describe(
+    'Only when all requested effects are done and no selection remains. Does not save; otherwise continue work. Use current draft refs for finish.selection only on request.',
+  );
 export const createTaskSchema = prepareSchema.options[1].omit({ kind: true }).extend({
   destination: destination.optional(),
   retryOf: handle.optional(),

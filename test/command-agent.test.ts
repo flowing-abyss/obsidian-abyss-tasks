@@ -423,7 +423,149 @@ it('keeps advanced grammar with the enabled family and context choice at the sta
     'reviewed proposal/scope',
   ])
     expect(system).toContain(policy);
+
+  expect(system).not.toContain('omit after preparation');
+  expect(system).toContain('Requested selection');
+  expect(system).toContain('current draft');
+  const finishTool = first.tools?.find((definition) => definition.name === 'finish');
+  expect(finishTool).toHaveProperty('description', expect.stringContaining('requested selection'));
+  expect(finishTool?.type === 'function' ? finishTool.description : '').not.toContain(
+    'Prepared work needs no selection.',
+  );
+  const completionSchemas = first.tools
+    ?.flatMap((definition) =>
+      definition.type === 'function' && ['create_task', 'change_task'].includes(definition.name)
+        ? [JSON.stringify(definition.inputSchema)]
+        : [],
+    )
+    .join('\n');
+  expect(completionSchemas).toContain('all requested effects');
+  expect(completionSchemas).toContain('selection remains');
 });
+
+it.each(['root', 'second child'] as const)(
+  'selects the current requested %s after two task refinements',
+  async (requestedNode) => {
+    const source = '- [ ] Shutter\n  - [ ] First child\n  - [ ] Second child\n';
+    const h = await setup({ 'a.md': source });
+    let firstPlanRevision: string | undefined;
+    h.script(
+      interpret(),
+      () => call('find', { query: 'Shutter', purpose: 'change' }),
+      () =>
+        call('change_task', {
+          edit: projectedEdit(h, 'Shutter'),
+          operation: { type: 'set', due: '2026-08-20' },
+        }),
+      () => {
+        const change = expectDefined(h.session.snapshot().proposal.changes[0]);
+        if (change.kind !== 'task') throw Error('Expected task');
+        firstPlanRevision = change.plan.revision;
+        return call('change_task', {
+          edit: projectedEdit(h, 'Shutter'),
+          operation: { type: 'set', due: '2026-08-21' },
+        });
+      },
+      () => {
+        const change = expectDefined(h.session.snapshot().proposal.changes[0]);
+        if (change.kind !== 'task') throw Error('Expected task');
+        const root = expectDefined(change.plan.after);
+        const node = requestedNode === 'root' ? root : expectDefined(root.children[1]);
+        expect(firstPlanRevision).not.toBe(change.plan.revision);
+        return call('finish', {
+          state: 'ready',
+          selection: [
+            {
+              kind: 'task',
+              target: node.target,
+              plan: change.plan.target,
+              expectedPlanRevision: expectDefined(firstPlanRevision),
+            },
+          ],
+        });
+      },
+      () => {
+        expect(h.session.snapshot().focus).toEqual([]);
+        expect(
+          JSON.stringify(h.model.doGenerateCalls[h.model.doGenerateCalls.length - 1]?.prompt),
+        ).toContain('The requested selection could not be verified');
+        const change = expectDefined(h.session.snapshot().proposal.changes[0]);
+        if (change.kind !== 'task') throw Error('Expected task');
+        const root = expectDefined(change.plan.after);
+        const node = requestedNode === 'root' ? root : expectDefined(root.children[1]);
+        return call('finish', {
+          state: 'ready',
+          selection: [
+            {
+              kind: 'task',
+              target: node.target,
+              plan: change.plan.target,
+              expectedPlanRevision: change.plan.revision,
+            },
+          ],
+        });
+      },
+    );
+
+    await h.session.submit(`Set Shutter's date to August 21 and select the ${requestedNode}.`);
+
+    const change = expectDefined(h.session.snapshot().proposal.changes[0]);
+    if (change.kind !== 'task') throw Error('Expected task');
+    const root = expectDefined(change.plan.after);
+    const node = requestedNode === 'root' ? root : expectDefined(root.children[1]);
+    expect(change.plan.after?.dates.due).toBe('2026-08-21');
+    expect(h.session.snapshot().focus).toEqual([
+      {
+        kind: 'task',
+        target: node.target,
+        plan: change.plan.target,
+        expectedPlanRevision: change.plan.revision,
+      },
+    ]);
+    expect(h.session.snapshot().journal).toEqual([]);
+    expect(h.saved).toHaveLength(0);
+    expect(await h.read('a.md')).toBe(source);
+  },
+);
+
+it.each([false, true])(
+  'preserves existing focus after edits when finish omits selection (initial focus: %s)',
+  async (startFocused) => {
+    const source = '- [ ] Shutter\n- [ ] Other\n';
+    const h = await setup({ 'a.md': source });
+    if (startFocused) {
+      const tasks = await h.api.tasks.list({});
+      if (!tasks.ok) throw Error('Missing tasks');
+      const other = expectDefined(tasks.value.items.find((task) => task.title === 'Other'));
+      expect(
+        await h.session.focus({ kind: 'task', target: other.target, revision: other.revision }),
+      ).toBe(true);
+    }
+    const previousFocus = h.session.snapshot().focus;
+    h.script(
+      interpret(),
+      () => call('find', { query: 'Shutter', purpose: 'change' }),
+      () =>
+        call('change_task', {
+          edit: projectedEdit(h, 'Shutter'),
+          operation: { type: 'set', due: '2026-08-20' },
+        }),
+      () =>
+        call('change_task', {
+          edit: projectedEdit(h, 'Shutter'),
+          operation: { type: 'set', due: '2026-08-21' },
+        }),
+      finish(),
+    );
+
+    await h.session.submit('Set Shutter’s deadline to August 21.');
+
+    expect(h.session.snapshot().focus).toEqual(previousFocus);
+    expect(h.session.snapshot().journal).toEqual([]);
+    expect(h.saved).toHaveLength(0);
+    expect(await h.read('a.md')).toBe(source);
+  },
+);
 
 function extraRepairSteps(mode: string, invalid: ReturnType<typeof finish>) {
   if (mode === 'exhausted') return [invalid];

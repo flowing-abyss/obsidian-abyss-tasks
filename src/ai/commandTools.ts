@@ -326,12 +326,12 @@ export function commandTools(ctx: CommandToolContext): ToolSet {
     create_task: adapter(
       createTaskSchema,
       owner.task(),
-      `Prepare a NEW tree once. Explicit create-and-save requires interpret(intent=immediate) first. Include every requested date/time in tree.initial; omit unrequested fields. Example: ${creationGrammar}. Use complete:true when this is the entire request. Otherwise finish after the remaining work. Omit destination and intent unless specified; intent=inbox only if Inbox requested.`,
+      `Prepare one NEW tree. Explicit create-and-save requires interpret(intent=immediate) first. Include requested dates/times in tree.initial; omit unrequested fields. Example: ${creationGrammar}. complete:true only if no requested selection or other effect remains; otherwise continue remaining work, then finish with current references. Omit destination and intent unless specified; intent=inbox only if Inbox requested.`,
     ),
     change_task: adapter(
       changeTaskSchema,
       owner.task(),
-      'Preview the change with the row’s issued edit (b handle). Delete a saved task and its entire subtree with operation:{"type":"remove"}; on an unsaved root this discards the draft. On an issued comment edit use operation:{"type":"remove-comment"} to remove just that comment or update-comment to replace its text. For metadata use operation:{"type":"set","due":"YYYY-MM-DD"} or {"type":"set","time":"HH:mm"}; null clears a field. When correcting two owners, restore the first, then apply the change to the other with the new references. Use complete:true only on the final edit.',
+      'Use the issued row edit (b handle). Delete a saved task and its entire subtree with operation:{"type":"remove"}; on an unsaved root this discards the draft. On an issued comment edit, use operation:{"type":"remove-comment"} to remove just that comment or update-comment to replace its text. Set metadata with operation:{"type":"set","due":"YYYY-MM-DD"} or {"type":"set","time":"HH:mm"}; null clears a field. For two-owner corrections, restore the first, then edit the other with new references. complete:true only if no requested selection or other effect remains; otherwise continue remaining work, then finish with current references.',
     ),
     find: owner.findTasks(),
     inspect: adapter(
@@ -2298,7 +2298,7 @@ class CommandToolOwner {
   }
   finish(): Tool {
     return tool({
-      description: `Finish accepted current work: ${finishGrammar}. Discovery questions need issued blockingIssue.evidence. Context: find then selection with typed target/revision; never create/move. Prepared work needs no selection. Only receipts establish Saved.`,
+      description: `Finish accepted work: ${finishGrammar}. Discovery questions need issued blockingIssue.evidence. Context: find, then select typed targets/revisions; never create or move. For requested selection after preparation, use current draft target/plan/revision; otherwise omit selection. Only receipts establish Saved.`,
       inputSchema: modelSchema(finishSchema),
       execute: (input, { toolCallId }) =>
         this.execute_abyssPrivate('finish', toolCallId, () =>
