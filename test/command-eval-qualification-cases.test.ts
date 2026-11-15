@@ -3,6 +3,7 @@ import { atomDateTime } from '../src/tasks/domain/commentTimestamp';
 import { TaskBlockEditor } from '../src/tasks/infrastructure/markdown/TaskBlockEditor';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { corpus, selectCases } from './command-live/corpus';
+import { followupCases } from './command-live/followupCases';
 import { qualificationCases } from './command-live/qualificationCases';
 import {
   hasSourceAbsenceFacts,
@@ -20,6 +21,11 @@ interface SourceCommentMatcher {
 }
 
 type FixtureCommentMatcher = Partial<SourceCommentMatcher>;
+async function digest(value: unknown): Promise<string> {
+  const bytes = new TextEncoder().encode(JSON.stringify(value));
+  const result = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(result)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
 
 const h08AbsenceFacts = [
   [['shared', 'editing']],
@@ -71,19 +77,66 @@ it('keeps the planned seven Russian and seven English cases', () => {
   expect(qualificationCases.filter((test) => test.id.endsWith('-en'))).toHaveLength(7);
 });
 
-it('includes fourteen new unique cases after the original resolved corpus', () => {
-  expect(corpus).toHaveLength(195);
-  expect(new Set(corpus.map((test) => test.id)).size).toBe(195);
+it('registers four follow-up cases after the original resolved corpus', () => {
+  expect(corpus).toHaveLength(199);
+  expect(new Set(corpus.map((test) => test.id)).size).toBe(199);
+  expect(corpus.slice(-4)).toEqual(followupCases);
+  expect(followupCases.map((test) => test.id)).toEqual([
+    'prospective-focus-select-due-date-en',
+    'q-followup-h15-select-kestrel-page-comments-ru',
+    'prospective-no-pending-title-cancel-en',
+    'prospective-read-expand-eastmere-cleanup-en',
+  ]);
+  expect(followupCases.map((test) => test.split)).toEqual([
+    'development',
+    'held-out',
+    'development',
+    'development',
+  ]);
+  expect(followupCases.every((test) => test.scripted === undefined)).toBe(true);
+});
+
+it('freezes the four prospective definitions and their actor projections', async () => {
+  const rows = await Promise.all(
+    followupCases.map(async (test) => {
+      const actorProjection = {
+        ...test,
+        turns: test.turns.map(({ expect: _expected, ...rest }) => rest),
+      };
+      return {
+        id: test.id,
+        fixtureHash: await digest(test),
+        actorProjectionHash: await digest(actorProjection),
+      };
+    }),
+  );
+  expect(rows).toEqual([
+    {
+      id: 'prospective-focus-select-due-date-en',
+      fixtureHash: '6ec3b33e7eff1c7f849e99977a03ee8b5c8a098d9778cab2611316b0ba2341d6',
+      actorProjectionHash: '26734df80b557761c8fd659b48dbae3b86bad5ab3da0987eac83787f15e3d2f7',
+    },
+    {
+      id: 'q-followup-h15-select-kestrel-page-comments-ru',
+      fixtureHash: '757b1eee69501f59b59c29723351bf5d2eb662acbd434a6c112ffb2693791724',
+      actorProjectionHash: 'cee2ad5d36efafaa824719e03442e1d5d9e4884bce6211f698bf9de589e23599',
+    },
+    {
+      id: 'prospective-no-pending-title-cancel-en',
+      fixtureHash: '2806f144a48b81107a336a65e7c7c9e8809c04d1551520d5a23ea40bc0735e19',
+      actorProjectionHash: '17e3fef29acd8963e21e75bc9a8baec1804e7e855d6d82426e2b97bf80d5ed42',
+    },
+    {
+      id: 'prospective-read-expand-eastmere-cleanup-en',
+      fixtureHash: '2b42a41ef18b3bc2ccf501049dd95cfa65ee5535c83e8292a9116253d9a5950a',
+      actorProjectionHash: '2a2a4198af8db779b50968d23ff6e5753f5d6ac0a2f7aef072a350a88e2a0798',
+    },
+  ]);
 });
 
 it('keeps all actor projections and unrelated fixture hashes bound to the frozen definition', async () => {
-  const digest = async (value: unknown) => {
-    const bytes = new TextEncoder().encode(JSON.stringify(value));
-    const result = await crypto.subtle.digest('SHA-256', bytes);
-    return [...new Uint8Array(result)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-  };
   const rows = await Promise.all(
-    corpus.map(async (test) => {
+    corpus.slice(0, 195).map(async (test) => {
       const actorProjection = {
         ...test,
         turns: test.turns.map(({ expect: _expected, ...rest }) => rest),

@@ -230,6 +230,37 @@ function append(prompt: Prompt, operation: unknown) {
 function currentRoot(prompt: Prompt) {
   return object(object(current(prompt)['plan'])['after']);
 }
+function finishPreparedSelection(prompt: Prompt, sourceTool: string) {
+  const prepared = prompt
+    .flatMap((message) => (message.role === 'tool' ? message.content : []))
+    .reverse()
+    .find((part) => part.type === 'tool-result');
+  if (prepared?.type !== 'tool-result' || prepared.output.type !== 'json')
+    throw new Error(`Missing canonical ${sourceTool} preparation output`);
+  const selection = object(object(prepared.output.value)['selection']);
+  return tool('finish', {
+    state: 'ready',
+    message: 'Ready.',
+    selection: [selection],
+  });
+}
+function appendToLatestTaskPlan(prompt: Prompt, operation: unknown) {
+  const prepared = prompt
+    .flatMap((message) => (message.role === 'tool' ? message.content : []))
+    .reverse()
+    .find((part) => part.type === 'tool-result');
+  if (prepared?.type !== 'tool-result' || prepared.output.type !== 'json')
+    throw new Error('Missing canonical task preparation output');
+  const value = object(prepared.output.value);
+  return tool('task', {
+    input: {
+      kind: 'append',
+      plan: value['target'],
+      expectedPlanRevision: value['revision'],
+      operation: { ...object(operation), target: object(value['after'])['target'] },
+    },
+  });
+}
 async function replay(
   id: string | EvalCase,
   steps: Step[],
@@ -342,6 +373,144 @@ function rejectDamage(
     expect(evaluateTurn(expected, damaged).length).toBeGreaterThan(0);
   }
 }
+it('accepts the prospective due-date focus input through preparation then current-plan selection', async () => {
+  const item = expectDefined(selectCases('prospective-focus-select-due-date-en')[0]);
+  await replay(item, [
+    tool('find', {
+      query: 'Recheck the Morrow lens calibration log',
+      path: 'Workshop log.md',
+      showExact: true,
+      purpose: 'change',
+    }),
+    (prompt) =>
+      tool('change_task', {
+        edit: object(result(prompt, 'find')['match'])['edit'],
+        operation: { type: 'set', due: '2027-01-09' },
+      }),
+    (prompt) => finishPreparedSelection(prompt, 'task'),
+  ]);
+});
+
+it('accepts the synthetic page input through canonical read, preparation, selection, and Save', async () => {
+  const item = expectDefined(selectCases('q-followup-h15-select-kestrel-page-comments-ru')[0]);
+  const url = expectDefined(item.pageFixture).url;
+  const firstComment = `Kestrel is for small museums; its local SQLite catalog stores photos and metadata. ${url}`;
+  const secondComment = `It prints accession labels and CSV reports; it has no OCR, so staff enter scanned details manually. ${url}`;
+  const find = tool('find', {
+    query: 'Оценить Kestrel для музейного архива',
+    path: 'projects/Willow Register.md',
+    showExact: true,
+    purpose: 'change',
+  });
+  await replay(
+    item,
+    [
+      research,
+      tool('research', { url }),
+      find,
+      (prompt) =>
+        tool('change_task', {
+          edit: object(result(prompt, 'find')['match'])['edit'],
+          operation: { type: 'add-comment', text: firstComment },
+        }),
+      (prompt) => appendToLatestTaskPlan(prompt, { type: 'add-comment', text: secondComment }),
+      (prompt) => finishPreparedSelection(prompt, 'task'),
+      confirm,
+      finish,
+    ],
+    undefined,
+    { reviewResearch: scriptedResearchAllowance },
+  );
+});
+
+it.each(['noop', 'discard'] as const)(
+  'accepts the prospective cancellation input through canonical %s handling',
+  async (representation) => {
+    const item = expectDefined(selectCases('prospective-no-pending-title-cancel-en')[0]);
+    const caseUnderTest =
+      representation === 'noop'
+        ? item
+        : {
+            ...item,
+            turns: item.turns.map((turn, index) =>
+              index === 1 ? { ...turn, action: 'keep' as const } : turn,
+            ),
+          };
+    const steps: Step[] = [
+      plan,
+      ...editTask('Check the Ternway field relay', 'due', '2027-04-07').slice(0, 1),
+      (prompt) => {
+        const node = firstRead(prompt);
+        return tool('task', {
+          input: {
+            kind: 'edit',
+            target: node['target'],
+            expectedRevision: node['revision'],
+            operation: {
+              type: 'patch',
+              target: node['target'],
+              patch: {
+                markdownTitle: { type: 'set', value: 'Inspect the Ternway field relay housing' },
+              },
+            },
+          },
+        });
+      },
+      finish,
+      plan,
+      (prompt) =>
+        append(prompt, {
+          type: 'patch',
+          target: currentRoot(prompt)['target'],
+          patch: { markdownTitle: { type: 'set', value: 'Check the Ternway field relay' } },
+        }),
+      finish,
+    ];
+    if (representation === 'discard') steps.splice(5, 2);
+    await replay(caseUnderTest, steps);
+  },
+);
+
+it('accepts the prospective read-and-expand input with an open generated child set', async () => {
+  const item = expectDefined(selectCases('prospective-read-expand-eastmere-cleanup-en')[0]);
+  await replay(item, [
+    plan,
+    tool('read', { input: { kind: 'tasks', query: 'Organize the Eastmere canal-path cleanup' } }),
+    (prompt) => tool('read', { input: { kind: 'tree', target: firstRead(prompt)['target'] } }),
+    (prompt) => {
+      const root = object(result(prompt, 'read')['tree']);
+      return tool('task', {
+        input: {
+          kind: 'edit',
+          target: root['target'],
+          expectedRevision: root['revision'],
+          operation: {
+            type: 'add-child',
+            target: root['target'],
+            markdownTitle: 'Collect litter along the canal path',
+          },
+        },
+      });
+    },
+    (prompt) => {
+      const value = result(prompt, 'task');
+      return tool('task', {
+        input: {
+          kind: 'append',
+          plan: value['target'],
+          expectedPlanRevision: value['revision'],
+          operation: {
+            type: 'add-child',
+            target: object(value['after'])['target'],
+            markdownTitle: 'Leave the path clear for residents',
+          },
+        },
+      });
+    },
+    finish,
+  ]);
+});
+
 function freezeRecursively<T>(value: T): T {
   if (value === null || typeof value !== 'object' || Object.isFrozen(value)) return value;
   for (const child of Object.values(value) as unknown[]) freezeRecursively(child);
