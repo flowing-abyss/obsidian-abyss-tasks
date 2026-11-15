@@ -520,7 +520,7 @@ it('keeps advanced grammar with the enabled family and context choice at the sta
   const enabled = expectDefined(h.model.doGenerateCalls[1]).tools;
   for (const [name, grammar] of [
     ['read', 'Keep request/cursors'],
-    ['task', 'saved root edit'],
+    ['task', 'Advanced: batch, copy'],
     ['note', 'replace-body'],
     ['project', 'refine-create'],
     ['link', 'link.template'],
@@ -4687,6 +4687,40 @@ it.each([true, false])(
     expect(await h.read('a.md')).toBe(source);
   },
 );
+it('settles separately requested child removal at its saved revision after a parent preview', async () => {
+  const source = '- [ ] Parent\n  - [ ] Child\n- [ ] Keep\n';
+  const h = await setup({ 'a.md': source });
+  const rows = await h.api.tasks.list();
+  if (!rows.ok) throw Error(rows.error.code);
+  const parent = expectDefined(rows.value.items.find((item) => item.title === 'Parent'));
+  const initial = await expectDefined(h.api.tasks.prepare)({
+    kind: 'edit',
+    target: parent.target,
+    expectedRevision: parent.revision,
+    operation: { type: 'description', target: parent.target, text: 'Previous preview.' },
+  });
+  if (!initial.ok) throw Error(initial.error.code);
+  const plan = await canonicalCommandPlan(h.api, initial.value, new AbortController().signal, {
+    now: () => 0,
+    deadline: 5000,
+  });
+  h.session.stage({ kind: 'task', plan });
+
+  h.script(
+    () => call('find', { query: 'Parent', purpose: 'remove' }),
+    () => call('find', { query: 'Child', purpose: 'remove' }),
+    () => call('change_task', { edit: projectedEdit(h, 'Parent'), operation: { type: 'remove' } }),
+    finish(),
+  );
+  await h.session.submit('Remove Parent and Child.');
+
+  expect(h.session.snapshot().status.kind, h.session.snapshot().status.message).toBe('ready');
+  expect(h.session.snapshot().proposal.changes).toMatchObject([
+    { kind: 'task', plan: { before: { title: 'Parent' }, after: null } },
+  ]);
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(await h.read('a.md')).toBe(source);
+});
 it('keeps the host clock authoritative for relative dates and locates a single reviewed creation for confirmation', async () => {
   const h = await setup({ 'a.md': '' });
   h.script(() => call('create_task', { tree: { markdownTitle: 'Calibration' }, complete: true }));
@@ -5893,6 +5927,12 @@ it.each(['rewrite', 'remove'] as const)(
 
     expect(h.session.snapshot().status.kind, h.session.snapshot().status.message).toBe('ready');
     expect(h.session.snapshot().journal).toEqual([]);
+    const change = expectDefined(h.session.snapshot().proposal.changes[0]);
+    if (change.kind !== 'task') throw Error('Expected a task proposal');
+    expect(change.plan.after).toMatchObject({
+      target: existing.target,
+      comments: kind === 'rewrite' ? [expect.objectContaining({ text: 'Current comment.' })] : [],
+    });
     expect(await h.read('a.md')).toContain('Original comment.');
   },
 );
@@ -8084,7 +8124,7 @@ it.each(['own basis', 'wrong batch'] as const)(
     }
     const advertised = expectDefined(h.model.doGenerateCalls[1]);
     const task = expectDefined(advertised.tools?.find((definition) => definition.name === 'task'));
-    expect(task).toHaveProperty('description', expect.stringContaining('one pending plan'));
+    expect(task).toHaveProperty('description', expect.stringContaining('one plan'));
     expect(task).toHaveProperty(
       'inputSchema.properties.input.description',
       expect.stringContaining('each target’s own editBasis'),
@@ -8092,7 +8132,7 @@ it.each(['own basis', 'wrong batch'] as const)(
     const system = advertised.prompt.filter((message) => message.role === 'system');
     expect(task).toHaveProperty('description', expect.stringContaining('A plan covers one tree'));
     expect(JSON.stringify(system)).toContain('reviewed proposal/scope');
-    expect(task).toHaveProperty('description', expect.stringContaining('saved root edit'));
+    expect(task).toHaveProperty('description', expect.stringContaining('Advanced: batch'));
   },
 );
 
@@ -9305,6 +9345,23 @@ function projectedEdit(h: Awaited<ReturnType<typeof setup>>, title: string): str
   throw Error('Missing editable reference');
 }
 
+it('directs ordinary task operations to change_task from the advanced task tool', async () => {
+  const h = await setup({ 'a.md': '' });
+  h.script(
+    () => call('expand', { capabilities: ['task'] }),
+    () => {
+      const task = h.model.doGenerateCalls[1]?.tools?.find((tool) => tool.name === 'task');
+      expect(JSON.stringify(task)).toContain('Advanced');
+      expect(JSON.stringify(task)).toContain(
+        'Use change_task for ordinary fields, comments, descriptions, children and removals.',
+      );
+      return call('create_task', { tree: { markdownTitle: 'Root' } });
+    },
+    finish(),
+  );
+  await h.session.submit('Create Root');
+  expect(h.session.snapshot().status.kind).toBe('ready');
+});
 it('uses narrow create/change schemas and immutable edit bases without an authority-refresh read', async () => {
   const h = await setup({ 'a.md': '' }, {}, (api) => ({ ...api, tasks: { ...api.tasks } }));
   h.script(() => call('create_task', { tree: { markdownTitle: 'Root' } }), finish());

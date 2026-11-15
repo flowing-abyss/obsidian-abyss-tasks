@@ -337,6 +337,12 @@ function savedOwner(
     ? undefined
     : trees.map((tree) => find(tree, owner.target)).find((value) => value !== undefined);
 }
+function requestedRemoval(
+  evidence: CommandEvidence | undefined,
+  task: TaskTreeV1 | undefined,
+): boolean {
+  return task !== undefined && evidence?.requestedRemoval(task) === true;
+}
 export function commandTools(ctx: CommandToolContext): ToolSet {
   const owner = new CommandToolOwner(ctx);
   const tools: Record<string, Tool> = {
@@ -860,7 +866,11 @@ class CommandToolOwner {
     const baseline = savedOwner(owner, saved);
     const fact = baseline ?? owner;
     if (operation.type === 'remove' && owner !== undefined) {
-      this.removeTreeEvidence_abyssPrivate(owner);
+      this.removeTreeEvidence_abyssPrivate(
+        owner,
+        saved,
+        requestedRemoval(this.ctx_abyssPrivate.evidence, fact),
+      );
       this.entityEvidence_abyssPrivate('change', 'task', fact, true);
       return;
     }
@@ -868,12 +878,15 @@ class CommandToolOwner {
   }
   private removeTreeEvidence_abyssPrivate(
     tree: TaskTreeV1,
-    requested = this.ctx_abyssPrivate.evidence?.requestedRemoval(tree),
+    saved: ReadonlyArray<TaskTreeV1 | null> = [],
+    requested = false,
   ): void {
     const evidence = this.ctx_abyssPrivate.evidence;
+    const baseline = savedOwner(tree, saved) ?? tree;
     evidence?.remove(tree.target);
-    if (requested === true) evidence?.settleTaskEffect(tree, 'remove');
-    for (const child of tree.children) this.removeTreeEvidence_abyssPrivate(child, requested);
+    if (requested) evidence?.settleTaskEffect(baseline, 'remove');
+    for (const child of tree.children)
+      this.removeTreeEvidence_abyssPrivate(child, saved, requested);
   }
   private async currentNode_abyssPrivate(target: string): Promise<TaskTreeV1> {
     for (const tree of this.ctx_abyssPrivate.session.snapshot().trees) {
@@ -1603,7 +1616,7 @@ class CommandToolOwner {
   task(): Tool {
     return tool({
       description:
-        'Preview: saved root edit or pending append/batch. For one comment/field, prefer change_task with the owner’s issued edit; raw task edits need each node’s issued target. A plan covers one tree; independent saved roots need separate edits. Batch up to20 operations on issued nodes in one pending plan; dependent new children/comments need later calls. Hierarchy reparent combines intact trees without copy/delete. Selective copy: copy-comment/copy-subtree. After final destination edit: assess-merge, then cleanup only with coverage.',
+        'Advanced: batch, copy or hierarchy/merge. Use change_task for ordinary fields, comments, descriptions, children and removals. Raw edits need each node’s issued target. A plan covers one tree; independent roots need separate edits. Batch up to20 operations on issued nodes in one plan; dependent new children/comments need later calls. Reparent combines intact trees without copy/delete. Copy uses copy-comment/copy-subtree. After the final destination edit: assess-merge, then cleanup only with coverage.',
       inputSchema: taskArgumentsSchema,
       execute: (input, { toolCallId }) =>
         this.execute_abyssPrivate('task', toolCallId, () => this.prepareTask(input)),
