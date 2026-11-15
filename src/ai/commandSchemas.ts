@@ -252,9 +252,7 @@ export const capabilitySchema = z.enum([
 const completePreview = z
   .boolean()
   .optional()
-  .describe(
-    'Only when all requested effects are done and no selection remains. Does not save; otherwise continue work. Use current draft refs for finish.selection only on request.',
-  );
+  .describe('Only when all requested effects and any selection are complete. Does not save.');
 export const createTaskSchema = prepareSchema.options[1].omit({ kind: true }).extend({
   destination: destination.optional(),
   retryOf: handle.optional(),
@@ -976,8 +974,8 @@ export function planToolOutput(
     ? {
         preparation:
           plan.hasChanges === false
-            ? 'This plan has no authored differences relative to saved source; nothing has been saved. An undo may be complete, but other requested changes need their own operations before finish. Use the current issued edit aliases.'
-            : 'Preview accepted; this operation has not saved source content. Check the whole request’s effects, counts and content roles. Continue remaining authorized preparation through the current issued edit aliases without asking permission to continue. If the request is complete, finish; ask a question when a required user fact or choice is missing or conflicting. Create again only for another requested task.',
+            ? 'No authored differences from saved source; nothing saved. Undo may be complete; other requested changes still need their own operations before finish. Use current issued edit aliases.'
+            : 'Preview accepted, not saved. Check all requested effects/counts/content roles. Continue authorized work with current issued edit aliases without further permission. Finish when complete; ask only for missing/conflicting required user facts or choices. Create only another requested task.',
       }
     : {};
   const selection =

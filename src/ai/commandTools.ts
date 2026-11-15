@@ -326,12 +326,12 @@ export function commandTools(ctx: CommandToolContext): ToolSet {
     create_task: adapter(
       createTaskSchema,
       owner.task(),
-      `Prepare one NEW tree. Explicit create-and-save requires interpret(intent=immediate) first. Include requested dates/times in tree.initial; omit unrequested fields. Example: ${creationGrammar}. complete:true only if no requested selection or other effect remains; otherwise continue remaining work, then finish with current references. Omit destination and intent unless specified; intent=inbox only if Inbox requested.`,
+      `Prepare one NEW tree; explicit create-and-save needs interpret(intent=immediate) first. Requested dates/times: tree.initial; omit unrequested fields. Example: ${creationGrammar}. Omit destination/intent unless specified; intent=inbox only for requested Inbox.`,
     ),
     change_task: adapter(
       changeTaskSchema,
       owner.task(),
-      'Use the issued row edit (b handle). Delete a saved task and its entire subtree with operation:{"type":"remove"}; on an unsaved root this discards the draft. On an issued comment edit, use operation:{"type":"remove-comment"} to remove just that comment or update-comment to replace its text. Set metadata with operation:{"type":"set","due":"YYYY-MM-DD"} or {"type":"set","time":"HH:mm"}; null clears a field. For two-owner corrections, restore the first, then edit the other with new references. complete:true only if no requested selection or other effect remains; otherwise continue remaining work, then finish with current references.',
+      'Use row edit (b handle). operation:{"type":"remove"} deletes a saved subtree or discards an unsaved root. On comment edits, operation:{"type":"remove-comment"} deletes that comment; update-comment rewrites it. Metadata: operation:{"type":"set","due":"YYYY-MM-DD"} or {"type":"set","time":"HH:mm"}; null clears. Two-owner correction: restore first, then edit the other with current refs.',
     ),
     find: owner.findTasks(),
     inspect: adapter(
@@ -2298,7 +2298,7 @@ class CommandToolOwner {
   }
   finish(): Tool {
     return tool({
-      description: `Finish accepted work: ${finishGrammar}. Discovery questions need issued blockingIssue.evidence. Context: find, then select typed targets/revisions; never create or move. For requested selection after preparation, use current draft target/plan/revision; otherwise omit selection. Only receipts establish Saved.`,
+      description: `Finish: ${finishGrammar}. Blockers need issued blockingIssue.evidence. Find/select exact targets/revisions; never create/move. Requested draft selection: latest target/plan/revision; other verified targets: current refs. Only receipts prove Saved.`,
       inputSchema: modelSchema(finishSchema),
       execute: (input, { toolCallId }) =>
         this.execute_abyssPrivate('finish', toolCallId, () =>

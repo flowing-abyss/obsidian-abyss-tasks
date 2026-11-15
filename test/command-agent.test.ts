@@ -112,16 +112,16 @@ it('labels accepted task previews before unchanged canonical values and issued r
   for (const value of feedback) {
     expect(Object.keys(value)[0]).toBe('preparation');
     expect(value['preparation']).toContain('Preview accepted');
-    expect(value['preparation']).toContain('has not saved source');
-    expect(value['preparation']).toContain('whole request’s effects, counts and content roles');
+    expect(value['preparation']).toContain('not saved');
+    expect(value['preparation']).toContain('all requested effects/counts/content roles');
     expect(value['preparation']).toContain(
-      'Continue remaining authorized preparation through the current issued edit aliases without asking permission to continue.',
+      'Continue authorized work with current issued edit aliases without further permission.',
     );
-    expect(value['preparation']).toContain('If the request is complete, finish');
+    expect(value['preparation']).toContain('Finish when complete');
     expect(value['preparation']).toContain(
-      'ask a question when a required user fact or choice is missing or conflicting.',
+      'ask only for missing/conflicting required user facts or choices.',
     );
-    expect(value['preparation']).toContain('another requested task');
+    expect(value['preparation']).toContain('Create only another requested task');
     expect(value).toHaveProperty('after.dates.scheduled', '2026-08-02');
     expect(value).toHaveProperty('references.taskReferences');
     expect(value).toHaveProperty('selection.expectedPlanRevision', value['revision']);
@@ -173,7 +173,7 @@ it('adds local no-op feedback only for a current unchanged plan and keeps paging
   if (!result.ok || result.value.after === null) throw Error('Missing plan');
   const plan = result.value;
   const noOpText =
-    'This plan has no authored differences relative to saved source; nothing has been saved. An undo may be complete, but other requested changes need their own operations before finish. Use the current issued edit aliases.';
+    'No authored differences from saved source; nothing saved. Undo may be complete; other requested changes still need their own operations before finish. Use current issued edit aliases.';
   const noOp = record(planToolOutput({ ...plan, hasChanges: false }));
   expect(noOp).toHaveProperty('preparation', noOpText);
   const canonical = { ...noOp };
@@ -279,7 +279,7 @@ it.each([
       expect(hasMaterialCommandWork(withoutCanonicalFlag)).toBe(true);
       expect(record(planToolOutput(plan.plan))).toHaveProperty(
         'preparation',
-        expect.stringContaining('An undo may be complete'),
+        expect.stringContaining('Undo may be complete'),
       );
       expect(await h.read('a.md')).toBe(source);
     } finally {
@@ -356,7 +356,7 @@ it('preserves a canonical sibling no-op restore and an independent edit together
   expect(alreadySatisfied.value).toHaveProperty('hasChanges', false);
   expect(record(planToolOutput(restored.value))).toHaveProperty(
     'preparation',
-    expect.stringContaining('no authored differences relative to saved source'),
+    expect.stringContaining('No authored differences from saved source'),
   );
   h.session.stage({ kind: 'task', plan: restored.value });
   h.session.stage({ kind: 'task', plan: sibling.value });
@@ -543,10 +543,13 @@ it('keeps advanced grammar with the enabled family and context choice at the sta
     expect(system).toContain(policy);
 
   expect(system).not.toContain('omit after preparation');
-  expect(system).toContain('Requested selection');
-  expect(system).toContain('current draft');
+  expect(system).toContain('Requested draft selection');
+  expect(system).toContain('latest target/plan/revision');
   const finishTool = first.tools?.find((definition) => definition.name === 'finish');
-  expect(finishTool).toHaveProperty('description', expect.stringContaining('requested selection'));
+  expect(finishTool).toHaveProperty(
+    'description',
+    expect.stringContaining('Requested draft selection'),
+  );
   expect(finishTool?.type === 'function' ? finishTool.description : '').not.toContain(
     'Prepared work needs no selection.',
   );
@@ -558,7 +561,7 @@ it('keeps advanced grammar with the enabled family and context choice at the sta
     )
     .join('\n');
   expect(completionSchemas).toContain('all requested effects');
-  expect(completionSchemas).toContain('selection remains');
+  expect(completionSchemas).toContain('any selection');
 });
 
 it.each(['root', 'second child'] as const)(
@@ -8355,7 +8358,7 @@ it('repairs a malformed finish with conditional selection guidance in the existi
   expect(h.preparations()).toBe(1);
   const prompts = JSON.stringify(h.model.doGenerateCalls);
   expect(prompts).toContain(
-    'Omit selection unless requested; no saving question for prepared work.',
+    'Requested selection: exact typed targets/revisions/bases; otherwise omit. Prepared work needs no save question.',
   );
   expect(prompts).not.toContain('Prepared work needs no selection/saving question.');
   expect(h.session.snapshot().status.kind).toBe('ready');
