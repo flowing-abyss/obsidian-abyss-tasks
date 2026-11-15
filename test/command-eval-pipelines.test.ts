@@ -452,6 +452,85 @@ it('accepts the synthetic page input through canonical read, preparation, select
   );
 });
 
+it('qualifies a fresh English source-comment case through preview and explicit Save', async () => {
+  const item = expectDefined(selectCases('r8-source-comment-utility-en')[0]);
+  const url = expectDefined(item.pageFixture).url;
+  const firstComment = `Emberline records firings for community studios and plots temperature curves from controller CSV files. ${url}`;
+  const secondComment = `It exports firing summaries as PDF; it has no direct connection to kiln controllers, so readings need manual import. ${url}`;
+  const path = 'projects/Kiln Lab.md';
+  const title = 'Review Emberline for studio firing records';
+  const { report } = await replay(
+    item,
+    [
+      research,
+      tool('research', { url }),
+      tool('find', { query: title, path, showExact: true, purpose: 'change' }),
+      (prompt) =>
+        tool('change_task', {
+          edit: object(result(prompt, 'find')['match'])['edit'],
+          operation: { type: 'add-comment', text: firstComment },
+        }),
+      (prompt) => appendToLatestTaskPlan(prompt, { type: 'add-comment', text: secondComment }),
+      (prompt) => finishPreparedSelection(prompt, 'task'),
+      confirm,
+      finish,
+    ],
+    2,
+    { reviewResearch: scriptedResearchAllowance },
+  );
+
+  expect(report.outcome).toBe('passed');
+  expect(report.turns).toHaveLength(2);
+  expect(report.turns[0]?.research?.[0]?.action).toBe('read-page');
+  const preview = expectDefined(report.turns[0]);
+  const previewExpectation = expectDefined(item.turns[0]).expect;
+  expect(
+    evaluateTurn(previewExpectation, preview, { sourcePredicatePolicy: 'mechanical' }),
+  ).toEqual([]);
+  rejectDamage(previewExpectation, preview, [
+    (value) => {
+      const comments = object(value.trees[0])['comments'] as unknown[];
+      object(value.trees[0])['comments'] = comments.slice(0, -1);
+    },
+    (value) => {
+      value.taskSources = [{ path: 'projects/Other.md', line: 5, kind: 'edit', basisValid: true }];
+    },
+    (value) => {
+      value.writeCount = 1;
+      value.journal = [{ id: 'early-save', state: 'settled', effects: 'committed' }];
+      value.after = { ...value.after, [path]: 'premature write' };
+    },
+  ]);
+  const contradictorySource = structuredClone(preview);
+  const comments = object(contradictorySource.trees[0])['comments'] as unknown[];
+  object(comments[2])['text'] =
+    `It exports firing summaries as PDF; it has a direct connection to kiln controllers, but staff can manually import readings. ${url}`;
+  expect(evaluateTurn(previewExpectation, contradictorySource)).toContain('tree-postcondition');
+
+  const saved = expectDefined(report.turns[1]);
+  expect(saved.failures).toEqual([]);
+  const saveExpectation = expectDefined(item.turns[1]).expect;
+  expect(saved.status).toBe('saved');
+  expect(saved.writeCount).toBe(1);
+  expect(saved.journal).toHaveLength(1);
+  expect(saved.journal[0]).toMatchObject({ state: 'settled', effects: 'committed' });
+  expect(saved.journal[0]?.receipt).toBeDefined();
+  expect(saved.proposalKinds).toEqual([]);
+  expect(saved.publicTrees?.[0]).toMatchObject({
+    markdownTitle: title,
+    description: 'Keep glaze sample K-14 below 980°C.',
+    tags: ['#studio'],
+    dates: { due: '2027-03-14' },
+    comments: [
+      { text: 'Ask the technician whether the controller CSV uses Celsius.' },
+      { text: firstComment },
+      { text: secondComment },
+    ],
+    source: { path, line: 5 },
+  });
+  expect(evaluateTurn(saveExpectation, saved, { sourcePredicatePolicy: 'mechanical' })).toEqual([]);
+});
+
 it.each(['noop', 'discard'] as const)(
   'accepts the prospective cancellation input through canonical %s handling',
   async (representation) => {
