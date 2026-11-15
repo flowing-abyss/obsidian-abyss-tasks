@@ -487,6 +487,11 @@ it('qualifies a fresh English source-comment case through preview and explicit S
   expect(
     evaluateTurn(previewExpectation, preview, { sourcePredicatePolicy: 'mechanical' }),
   ).toEqual([]);
+  const multilinePreview = structuredClone(preview);
+  const multilinePreviewComments = object(multilinePreview.trees[0])['comments'] as unknown[];
+  object(multilinePreviewComments[2])['text'] =
+    `It exports firing summaries as PDF; it has no direct connection to kiln controllers, so readings need manual import.\n${url}`;
+  expect(evaluateTurn(previewExpectation, multilinePreview)).toEqual([]);
   rejectDamage(previewExpectation, preview, [
     (value) => {
       const comments = object(value.trees[0])['comments'] as unknown[];
@@ -510,6 +515,10 @@ it('qualifies a fresh English source-comment case through preview and explicit S
   const saved = expectDefined(report.turns[1]);
   expect(saved.failures).toEqual([]);
   const saveExpectation = expectDefined(item.turns[1]).expect;
+  const shiftedSavedSibling = structuredClone(saved);
+  const shiftedSibling = object(shiftedSavedSibling.publicTrees?.[1]);
+  object(shiftedSibling['source'])['line'] = 11;
+  expect(evaluateTurn(saveExpectation, shiftedSavedSibling)).toEqual([]);
   expect(saved.status).toBe('saved');
   expect(saved.writeCount).toBe(1);
   expect(saved.journal).toHaveLength(1);

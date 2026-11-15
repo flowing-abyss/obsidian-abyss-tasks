@@ -119,7 +119,7 @@ it('registers and freezes the fresh English source-comment fixture after follow-
     fixtureHash: await digest(item),
     actorProjectionHash: await digest(actorProjection),
   }).toEqual({
-    fixtureHash: 'f5c5b49fea8c13c6b9262e03a1cf60b1437a568098beb27764a2cdfc75b6a947',
+    fixtureHash: 'cff076ab9a2a2d3c4dc21f99dd8828cd870fdf56b1abfe21154b6d9fc6d4dcdb',
     actorProjectionHash: 'f28326b7a258e3e6c3c3e5be5c39a82d7cf152612c3f658a958a03bdf0dbe141',
   });
 });
