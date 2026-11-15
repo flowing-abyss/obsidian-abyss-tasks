@@ -95,8 +95,12 @@ it('aborts the admitted remote call and drains it before removing the exchange',
   try {
     await entered.promise;
     controller.abort();
-    await new Promise((resolve) => window.setTimeout(resolve, 20));
-    expect(remoteSignal?.aborted).toBe(true);
+    await vi.waitFor(
+      () => {
+        expect(remoteSignal?.aborted).toBe(true);
+      },
+      { timeout: 1_000, interval: 5 },
+    );
   } finally {
     release.resolve();
   }
