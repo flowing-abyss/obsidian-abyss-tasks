@@ -602,6 +602,194 @@ it('accepts varied fresh open-goal plans through edit, append, and batch tool pa
   }
 });
 
+it('accepts canonical preview and Save controls for the replacement held-out cases', async () => {
+  const dueSchedule = expectDefined(selectCases('r9-repl-due-schedule-en')[0]);
+  const dueScheduleRun = await replay(dueSchedule, [
+    plan,
+    tool('read', { input: { kind: 'tasks', query: 'Inspect the rainwater barrel mesh' } }),
+    (prompt) => tool('read', { input: { kind: 'tree', target: firstRead(prompt)['target'] } }),
+    (prompt) => {
+      const root = object(result(prompt, 'read')['tree']);
+      return tool('task', {
+        input: {
+          kind: 'edit',
+          target: root['target'],
+          expectedRevision: root['revision'],
+          operation: {
+            type: 'patch',
+            target: root['target'],
+            patch: {
+              due: { type: 'clear' },
+              scheduled: { type: 'set', value: '2027-03-12' },
+            },
+          },
+        },
+      });
+    },
+    finish,
+    confirm,
+  ]);
+
+  const commentOwner = expectDefined(selectCases('r9-repl-comment-owner-ru')[0]);
+  const commentOwnerRun = await replay(commentOwner, [
+    plan,
+    tool('read', { input: { kind: 'tasks', query: 'Проверить клапан дождевого бака' } }),
+    (prompt) => tool('read', { input: { kind: 'tree', target: firstRead(prompt)['target'] } }),
+    (prompt) => {
+      const root = object(result(prompt, 'read')['tree']);
+      const comment = object(
+        (root['comments'] as unknown[]).find(
+          (value) => object(value)['text'] === 'Снимок показаний приложен.',
+        ),
+      );
+      return tool('task', {
+        input: {
+          kind: 'edit',
+          target: root['target'],
+          expectedRevision: root['revision'],
+          operation: { type: 'remove-comment', target: comment['target'] },
+        },
+      });
+    },
+    finish,
+    confirm,
+  ]);
+
+  const twoCaptures = expectDefined(selectCases('r9-repl-two-captures-en')[0]);
+  const twoCapturesRun = await replay(twoCaptures, [
+    plan,
+    tool('task', {
+      input: {
+        kind: 'create',
+        destination: { type: 'configured-default' },
+        tree: {
+          markdownTitle: 'Order seed trays',
+          initial: { due: { type: 'set', value: '2027-04-08' }, tags: { add: ['#garden'] } },
+        },
+      },
+    }),
+    tool('task', {
+      input: {
+        kind: 'create',
+        destination: { type: 'configured-default' },
+        tree: {
+          markdownTitle: 'Print volunteer orientation sheets',
+          initial: { durationMinutes: { type: 'set', value: 45 } },
+        },
+      },
+    }),
+    finish,
+    confirm,
+  ]);
+
+  const courtyardGoal = expectDefined(selectCases('r9-repl-courtyard-goal-ru')[0]);
+  const courtyardPlans = [
+    [
+      'Спросить жителей, кто сможет прийти',
+      'Определить участки двора для уборки',
+      'Подготовить перчатки, мешки и инвентарь',
+      'Согласовать вывоз собранного мусора',
+    ],
+    [
+      'Уточнить у соседей, какие места требуют внимания',
+      'Проверить, какие инструменты уже есть',
+      'Разделить двор на удобные рабочие участки',
+      'Договориться, куда передать собранный мусор',
+    ],
+  ];
+  const courtyardRuns = [];
+  for (const titles of courtyardPlans) {
+    const steps: Step[] = [
+      plan,
+      tool('task', {
+        input: {
+          kind: 'create',
+          destination: { type: 'configured-default' },
+          tree: { markdownTitle: 'Подготовить соседскую уборку двора' },
+        },
+      }),
+      ...titles.map(
+        (markdownTitle): Step =>
+          (prompt) =>
+            appendToLatestTaskPlan(prompt, { type: 'add-child', markdownTitle }),
+      ),
+      finish,
+      confirm,
+    ];
+    courtyardRuns.push(await replay(courtyardGoal, steps));
+  }
+
+  const runs = [dueScheduleRun, commentOwnerRun, twoCapturesRun, ...courtyardRuns];
+  for (const { report } of runs) {
+    expect(report.turns.map((turn) => turn.failures)).toEqual(report.turns.map(() => []));
+    const preview = expectDefined(report.turns[0]);
+    expect(preview.status).toBe('ready');
+    expect(preview.writeCount).toBe(0);
+    const saved = expectDefined(report.turns[1]);
+    expect(saved.status).toBe('saved');
+    const expectedSaveWrites = report === twoCapturesRun.report ? 2 : 1;
+    expect(saved.writeCount).toBe(expectedSaveWrites);
+    expect(saved.journal).toHaveLength(expectedSaveWrites);
+    expect(
+      saved.journal.every(
+        (entry) =>
+          entry.state === 'settled' && entry.effects === 'committed' && entry.receipt !== undefined,
+      ),
+    ).toBe(true);
+  }
+  for (const { report } of courtyardRuns) {
+    const root = expectDefined(
+      expectDefined(report.turns[1]).publicReadback.find(
+        (task) => task.markdownTitle === 'Подготовить соседскую уборку двора',
+      ),
+    );
+    expect(root.children).toHaveLength(4);
+    expect(new Set(root.children.map((child) => child.markdownTitle)).size).toBe(4);
+    expect(
+      root.children.every(
+        (child) =>
+          Object.values(child.dates).every((value) => value === undefined) &&
+          child.time === undefined &&
+          child.recurrence === undefined,
+      ),
+    ).toBe(true);
+  }
+
+  const duePreview = expectDefined(dueScheduleRun.report.turns[0]);
+  rejectDamage(expectDefined(dueSchedule.turns[0]).expect, duePreview, [
+    (value) => {
+      value.taskSources = (value.taskSources ?? []).map((source) => ({
+        ...source,
+        path: 'grounds/other.md',
+      }));
+    },
+    (value) => {
+      object(value.trees[0])['dates'] = { due: undefined };
+    },
+  ]);
+  const commentPreview = expectDefined(commentOwnerRun.report.turns[0]);
+  rejectDamage(expectDefined(commentOwner.turns[0]).expect, commentPreview, [
+    (value) => {
+      value.taskSources = (value.taskSources ?? []).map((source) => ({
+        ...source,
+        line: 3,
+      }));
+    },
+  ]);
+  const capturesPreview = expectDefined(twoCapturesRun.report.turns[0]);
+  rejectDamage(expectDefined(twoCaptures.turns[0]).expect, capturesPreview, [
+    (value) => {
+      value.trees = [...value.trees, tree('Unexpected third task')];
+    },
+  ]);
+  const commentSaved = expectDefined(commentOwnerRun.report.turns[1]);
+  rejectDamage(expectDefined(commentOwner.turns[1]).expect, commentSaved, [
+    (value) => {
+      value.journal = [];
+    },
+  ]);
+});
+
 function rejectDamage(
   expected: TurnExpectation,
   actual: TurnEvidence,
