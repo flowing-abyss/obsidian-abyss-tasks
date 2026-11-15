@@ -4457,7 +4457,7 @@ it.each(['before correcting the lookup', 'with an unrelated task'] as const)(
       'Under Orbit there are two subtasks called Echo. Select the second one.',
     );
     const last = expectDefined(h.model.doGenerateCalls[h.model.doGenerateCalls.length - 1]);
-    expect(JSON.stringify(last.prompt)).toContain('Prepare requested edit first.');
+    expect(JSON.stringify(last.prompt)).toContain('Pending: change_task');
     expect(h.model.doGenerateCalls).toHaveLength(5);
     expect(h.session.snapshot().status.kind).toBe('ready');
     expect(h.session.snapshot().focus).toMatchObject([{ target: second.target }]);
@@ -5797,6 +5797,125 @@ it('requires accepted research task preparation before finish and complete:true 
     'Prepared follow up',
   );
   expect(JSON.stringify(h.model.doGenerateCalls)).toContain('Prepare task content.');
+});
+it('accepts a current append change as research preparation when the task already has a preview', async () => {
+  const h = await setup({ 'a.md': '- [ ] Existing\n' }, {}, undefined, {
+    reviewWrite: 'native',
+    reviewResearch: async () => ({ authorized: true, requiresTaskPreparation: true }),
+  });
+  const rows = await h.api.tasks.list();
+  if (!rows.ok) throw Error(rows.error.code);
+  const existing = expectDefined(rows.value.items.find((item) => item.title === 'Existing'));
+  const initial = await expectDefined(h.api.tasks.prepare)({
+    kind: 'edit',
+    target: existing.target,
+    expectedRevision: existing.revision,
+    operation: { type: 'description', target: existing.target, text: 'Previous preview.' },
+  });
+  if (!initial.ok) throw Error(initial.error.code);
+  const plan = await canonicalCommandPlan(h.api, initial.value, new AbortController().signal, {
+    now: () => 0,
+    deadline: 5000,
+  });
+  h.session.stage({ kind: 'task', plan });
+  let lookupNext = '';
+
+  h.script(
+    interpret('plan', true),
+    () => call('research', { query: 'requested source' }),
+    () => call('find', { query: 'Existing', purpose: 'change' }),
+    () => {
+      lookupNext = String(latestToolValue(h, 'find')['next']);
+      return call('change_task', {
+        edit: projectedEdit(h, 'Existing'),
+        operation: { type: 'description', text: 'Current research follow-up.' },
+      });
+    },
+    finish(),
+  );
+  await h.session.submit('Research the source and update Existing with the follow-up.');
+
+  expect(h.session.snapshot().status.kind, h.session.snapshot().status.message).toBe('ready');
+  expect(h.session.snapshot().proposal.changes).toMatchObject([
+    { kind: 'task', plan: { after: { description: 'Current research follow-up.' } } },
+  ]);
+  expect(lookupNext).toContain('Finish never prepares');
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+});
+it.each(['rewrite', 'remove'] as const)(
+  'settles a %s comment operation against its saved owner after an earlier preview',
+  async (kind) => {
+    const h = await setup(
+      { 'a.md': '- [ ] Existing\n  - 2026-07-01T10:00:00Z: Original comment.\n' },
+      {},
+    );
+    const rows = await h.api.tasks.list();
+    if (!rows.ok) throw Error(rows.error.code);
+    const existing = expectDefined(rows.value.items.find((item) => item.title === 'Existing'));
+    const tree = await expectDefined(h.api.tasks.tree)({ target: existing.target, limit: 500 });
+    if (!tree.ok) throw Error(tree.error.code);
+    const original = expectDefined(tree.value.tree.comments[0]);
+    const initial = await expectDefined(h.api.tasks.prepare)({
+      kind: 'edit',
+      target: existing.target,
+      expectedRevision: existing.revision,
+      operation: { type: 'update-comment', target: original.target, text: 'Previous preview.' },
+    });
+    if (!initial.ok) throw Error(initial.error.code);
+    const plan = await canonicalCommandPlan(h.api, initial.value, new AbortController().signal, {
+      now: () => 0,
+      deadline: 5000,
+    });
+    h.session.stage({ kind: 'task', plan });
+
+    h.script(
+      () => call('find', { query: 'Existing', purpose: 'change' }),
+      () => {
+        const references = record(latestToolValue(h, 'find')['references']);
+        const comments = references?.['commentReferences'];
+        const comment: unknown = Array.isArray(comments)
+          ? comments.find((value: unknown) => record(value)?.['text'] === 'Previous preview.')
+          : undefined;
+        const edit = record(comment)?.['edit'];
+        if (typeof edit !== 'string') throw Error('Missing comment edit');
+        return call('change_task', {
+          edit,
+          operation:
+            kind === 'rewrite'
+              ? { type: 'update-comment', text: 'Current comment.' }
+              : { type: 'remove-comment' },
+        });
+      },
+      finish(),
+    );
+    await h.session.submit(`${kind === 'rewrite' ? 'Rewrite' : 'Remove'} the Existing comment.`);
+
+    expect(h.session.snapshot().status.kind, h.session.snapshot().status.message).toBe('ready');
+    expect(h.session.snapshot().journal).toEqual([]);
+    expect(await h.read('a.md')).toContain('Original comment.');
+  },
+);
+it('settles a fresh saved-task removal without a prior task preview', async () => {
+  const source = '- [ ] Remove me\n';
+  const h = await setup({ 'a.md': source });
+  h.script(
+    () => call('find', { query: 'Remove me', purpose: 'remove' }),
+    () =>
+      call('change_task', {
+        edit: projectedEdit(h, 'Remove me'),
+        operation: { type: 'remove' },
+        complete: true,
+      }),
+    finish(),
+  );
+  await h.session.submit('Remove Remove me.');
+  expect(h.session.snapshot().status.kind, h.session.snapshot().status.message).toBe('ready');
+  expect(h.session.snapshot().proposal.changes).toMatchObject([
+    { kind: 'task', plan: { before: { title: 'Remove me' }, after: null } },
+  ]);
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(await h.read('a.md')).toBe(source);
 });
 it('does not let cancellation of the last research draft satisfy task preparation', async () => {
   const h = await setup({ 'a.md': '' }, {}, undefined, {
@@ -8363,6 +8482,17 @@ it('repairs a malformed finish with conditional selection guidance in the existi
   expect(prompts).not.toContain('Prepared work needs no selection/saving question.');
   expect(h.session.snapshot().status.kind).toBe('ready');
   expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+});
+it('includes the finish message limit when repairing an oversized ready message', async () => {
+  const h = await setup({ 'a.md': '' });
+  h.script(
+    () => call('create_task', { tree: { markdownTitle: 'Prepared' } }),
+    () => call('finish', { state: 'ready', message: 'x'.repeat(161) }),
+    finish(),
+  );
+  await h.session.submit('Prepare Prepared');
+  expect(JSON.stringify(h.model.doGenerateCalls[2]?.prompt)).toContain('maximum 160');
+  expect(h.session.snapshot().status.kind).toBe('ready');
 });
 it('decodes an encoded task object once through canonical preparation without another model request', async () => {
   const h = await setupCountedPreparation();
