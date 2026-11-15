@@ -506,10 +506,13 @@ export const readSchema = z.discriminatedUnion('kind', [
     path: z
       .string()
       .optional()
+      .describe('Actual vault file path, not a task title; child: search parent and use tree.'),
+    folder: z
+      .string()
+      .optional()
       .describe(
-        'Actual vault file path only. For a child of a named task, search the parent title and use its tree; a task title is not a path.',
+        'Literal recursive folder path; retain on empty results; project/section names alone do not imply folders.',
       ),
-    folder: z.string().optional(),
     inbox: z.boolean().optional(),
     statuses: z
       .array(z.enum(['open', 'in-progress', 'done', 'cancelled']))
@@ -559,7 +562,10 @@ export const readSchema = z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('notes'),
     query: z.string().max(2000),
-    fields: z.enum(['name', 'body', 'all']).optional(),
+    fields: z
+      .enum(['name', 'body', 'all'])
+      .optional()
+      .describe('name=paths/aliases; body=content/headings; all=both'),
     path: z.string().optional(),
     folder: z.string().optional(),
     cursor: handle.optional(),

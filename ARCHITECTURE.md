@@ -630,9 +630,13 @@ settle it. Canonical binding/domain/preparation failures retain field-specific o
 proves continuation of existing work, not semantic fulfillment of malformed values; independent
 oracles must still reject omitted fields or wrong statuses. Other malformed operations retain the
 conservative existing accounting.
-Unqualified live draft tree reads reuse the session's exact, uniquely owned proposal basis; explicit
-plan/side/cursor selectors are never replaced. Reads return their declared cursor query, and large
-complete-tree exploration falls back to a truthful bounded page.
+Unqualified live draft tree reads keep the existing uniquely owned proposal resolution, including
+its before-node fallback for removed targets. When a read supplies a node revision but omits its
+plan, the resolver adds the owning plan only for an exact target-and-revision match in a current
+after-node, preserving the supplied revision and limit without using the before-node fallback.
+Saved revisions, unmatched or ambiguous revisions, and explicit
+plan/expected-plan-revision/side/cursor selectors are left unchanged. Reads return their declared
+cursor query, and large complete-tree exploration falls back to a truthful bounded page.
 Same-plan batches prepare at most 20 operations against concrete nodes present at the
 initial revision, then stage the whole validated result and count every operation. Failed
 preparation retains the earlier committable plan. Version-scoped comment edits remain separate.

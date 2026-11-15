@@ -7668,6 +7668,230 @@ it('reads valid current plan sides through inspect and read', async () => {
   expect(await h.read('a.md')).toBe(source);
 });
 
+async function prepareExactRevisionReadFixture(h: Awaited<ReturnType<typeof setup>>) {
+  const listed = await h.api.tasks.list({ path: 'a.md' });
+  if (!listed.ok) throw new Error(listed.error.code);
+  const saved = expectDefined(listed.value.items[0]);
+  const sibling = expectDefined(
+    listed.value.items.find(
+      (item) => item.target !== saved.target && item.title === 'Review notes',
+    ),
+  );
+  const prepare = expectDefined(h.api.tasks.prepare);
+  const initial = await prepare({
+    kind: 'edit',
+    target: saved.target,
+    expectedRevision: saved.revision,
+    operation: { type: 'add-comment', target: saved.target, text: 'First comment' },
+  });
+  if (!initial.ok) throw new Error(initial.error.code);
+  const timing = { now: () => 0, deadline: 5000 };
+  let plan = await canonicalCommandPlan(h.api, initial.value, new AbortController().signal, timing);
+  for (const text of ['Second comment', 'Third comment']) {
+    const appended = await prepare({
+      kind: 'append',
+      plan: plan.target,
+      expectedPlanRevision: plan.revision,
+      operation: { type: 'add-comment', target: saved.target, text },
+    });
+    if (!appended.ok) throw new Error(appended.error.code);
+    plan = await canonicalCommandPlan(h.api, appended.value, new AbortController().signal, timing);
+  }
+  const childPrepared = await prepare({
+    kind: 'append',
+    plan: plan.target,
+    expectedPlanRevision: plan.revision,
+    operation: { type: 'add-child', target: saved.target, markdownTitle: 'New draft child' },
+  });
+  if (!childPrepared.ok) throw new Error(childPrepared.error.code);
+  plan = await canonicalCommandPlan(
+    h.api,
+    childPrepared.value,
+    new AbortController().signal,
+    timing,
+  );
+  h.session.stage({ kind: 'task', plan });
+  return { saved, sibling, plan };
+}
+
+it('reads exact current root and nested draft revisions when the plan is omitted', async () => {
+  const source = '- [ ] Review notes\n  - [ ] Existing nested\n- [ ] Review notes\n';
+  const h = await setup({ 'a.md': source });
+  const { saved, sibling, plan } = await prepareExactRevisionReadFixture(h);
+  const after = expectDefined(plan.after);
+  const nested = expectDefined(after.children[0]);
+  const created = expectDefined(after.children.find((node) => node.title === 'New draft child'));
+  const current = {
+    target: after.target,
+    revision: after.revision,
+    plan: plan.target,
+    planRevision: plan.revision,
+  };
+  const savedQuery = { target: saved.target, expectedRevision: saved.revision, limit: 50 };
+  const staleQuery = { target: after.target, expectedRevision: 'old-draft-revision', limit: 50 };
+  const wrongNodeQuery = { target: sibling.target, expectedRevision: plan.revision, limit: 50 };
+  const nestedQuery = { target: nested.target, expectedRevision: nested.revision, limit: 50 };
+  const createdQuery = { target: created.target, expectedRevision: created.revision, limit: 50 };
+  expect(h.session.resolveTreeRead(savedQuery)).toEqual(savedQuery);
+  expect(h.session.resolveTreeRead(staleQuery)).toEqual(staleQuery);
+  expect(h.session.resolveTreeRead(wrongNodeQuery)).toEqual(wrongNodeQuery);
+  for (const query of [nestedQuery, createdQuery]) {
+    expect(h.session.resolveTreeRead(query)).toMatchObject({
+      ...query,
+      plan: plan.target,
+      expectedPlanRevision: plan.revision,
+      side: 'after',
+    });
+  }
+  let inspectValue: Record<string, unknown> | undefined;
+  let readValue: Record<string, unknown> | undefined;
+  h.script(
+    () => call('inspect', { target: current.target, expectedRevision: current.revision }),
+    () => {
+      inspectValue = latestToolValue(h, 'inspect');
+      return controlled({ intent: 'plan', research: false });
+    },
+    () => {
+      const request = expectDefined(record(inspectValue?.['request']));
+      return call('read', {
+        kind: 'tree',
+        target: String(request['target']),
+        expectedRevision: String(request['expectedRevision']),
+      });
+    },
+    () => {
+      readValue = latestToolValue(h, 'read');
+      return finish()();
+    },
+  );
+  await h.session.submit('Inspect and read the current three-comment task draft.');
+
+  expect(typeof current.target).toBe('string');
+  expect(current.revision).toBe(plan.revision);
+  expect(current.plan).toBe(plan.target);
+  expect(current.planRevision).toBe(plan.revision);
+  const inspectRequest = expectDefined(record(inspectValue?.['request']));
+  const readRequest = expectDefined(record(readValue?.['request']));
+  for (const value of [inspectValue, readValue]) {
+    const request = expectDefined(record(value?.['request']));
+    expect(typeof request['target']).toBe('string');
+    expect(typeof request['expectedRevision']).toBe('string');
+    expect(typeof request['plan']).toBe('string');
+    expect(typeof request['expectedPlanRevision']).toBe('string');
+    expect(request['side']).toBe('after');
+    expect(request['expectedRevision']).toBe(request['expectedPlanRevision']);
+    expect(record(value?.['tree'])).toMatchObject({
+      target: request['target'],
+      revision: request['expectedRevision'],
+    });
+  }
+  expect(readRequest).toEqual(inspectRequest);
+  for (const value of [inspectValue, readValue]) {
+    expect(record(value?.['tree'])?.['comments']).toMatchObject([
+      { text: 'First comment' },
+      { text: 'Second comment' },
+      { text: 'Third comment' },
+    ]);
+  }
+  expect(h.session.snapshot().proposal.changes[0]).toMatchObject({
+    kind: 'task',
+    plan: {
+      after: {
+        comments: [
+          { text: 'First comment' },
+          { text: 'Second comment' },
+          { text: 'Third comment' },
+        ],
+      },
+    },
+  });
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(await h.read('a.md')).toBe(source);
+});
+
+it('does not infer a draft basis for a before-only removed node', async () => {
+  const h = await setup({ 'a.md': '- [ ] Parent\n  - [ ] Removed child\n' });
+  const listed = await h.api.tasks.list({ path: 'a.md' });
+  if (!listed.ok) throw new Error(listed.error.code);
+  const root = expectDefined(listed.value.items[0]);
+  const page = await expectDefined(h.api.tasks.tree)({ target: root.target });
+  if (!page.ok) throw new Error(page.error.code);
+  const child = expectDefined(page.value.tree.children[0]);
+  const prepared = await expectDefined(h.api.tasks.prepare)({
+    kind: 'edit',
+    target: root.target,
+    expectedRevision: root.revision,
+    operation: { type: 'remove', target: child.target },
+  });
+  if (!prepared.ok) throw new Error(prepared.error.code);
+  const plan = await canonicalCommandPlan(h.api, prepared.value, new AbortController().signal, {
+    now: () => 0,
+    deadline: 5000,
+  });
+  h.session.stage({ kind: 'task', plan });
+  const query = { target: child.target, expectedRevision: child.revision, limit: 50 };
+
+  expect(h.session.resolveTreeRead(query)).toEqual(query);
+});
+
+it('leaves a current revision unchanged when two plans own its after-node', async () => {
+  const h = await setup({ 'a.md': '- [ ] Parent\n  - [ ] Child\n' });
+  const listed = await h.api.tasks.list({ path: 'a.md' });
+  if (!listed.ok) throw new Error(listed.error.code);
+  const root = expectDefined(listed.value.items[0]);
+  const page = await expectDefined(h.api.tasks.tree)({ target: root.target });
+  if (!page.ok) throw new Error(page.error.code);
+  const child = expectDefined(page.value.tree.children[0]);
+  const prepare = expectDefined(h.api.tasks.prepare);
+  const timing = { now: () => 0, deadline: 5000 };
+  const parentPrepared = await prepare({
+    kind: 'edit',
+    target: root.target,
+    expectedRevision: root.revision,
+    operation: { type: 'add-comment', target: child.target, text: 'Parent plan' },
+  });
+  if (!parentPrepared.ok) throw new Error(parentPrepared.error.code);
+  const childPrepared = await prepare({
+    kind: 'edit',
+    target: child.target,
+    expectedRevision: child.revision,
+    operation: { type: 'add-comment', target: child.target, text: 'Child plan' },
+  });
+  if (!childPrepared.ok) throw new Error(childPrepared.error.code);
+  const parentPlan = await canonicalCommandPlan(
+    h.api,
+    parentPrepared.value,
+    new AbortController().signal,
+    timing,
+  );
+  const childPlan = await canonicalCommandPlan(
+    h.api,
+    childPrepared.value,
+    new AbortController().signal,
+    timing,
+  );
+  const snapshot = h.session.snapshot();
+  expect(
+    h.session.restore(
+      {
+        ...snapshot,
+        proposal: {
+          ...snapshot.proposal,
+          revision: snapshot.proposal.revision + 1,
+          changes: [
+            { kind: 'task', plan: parentPlan },
+            { kind: 'task', plan: childPlan },
+          ],
+        },
+      },
+      false,
+    ),
+  ).toBe(true);
+  const query = { target: child.target, expectedRevision: parentPlan.revision, limit: 50 };
+
+  expect(h.session.resolveTreeRead(query)).toEqual(query);
+});
+
 it('rejects a stale saved revision after a native task edit', async () => {
   const source = '- [ ] Inspect observatory shutter\n  - > Keep the hinge dry.\n';
   const changedSource = '- [ ] Inspect observatory shutter\n  - > Keep the new hinge dry.\n';

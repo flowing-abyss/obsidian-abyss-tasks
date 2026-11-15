@@ -21,7 +21,7 @@ import type {
 } from '../../api';
 import { buildLinkRaw } from '../markdown/links';
 import { CommandEvidence, type CommandFact } from './CommandEvidence';
-import { commandDiagnostic, commandMessage } from './commandMessages';
+import { commandDiagnostic, commandMessage, draftDispositionMessage } from './commandMessages';
 import { modelToolSchema } from './commandModelSchema';
 import type { CommandPendingOperations } from './CommandPendingOperations';
 import {
@@ -356,7 +356,7 @@ export function commandTools(ctx: CommandToolContext): ToolSet {
     change_task: adapter(
       changeTaskSchema,
       owner.task(),
-      'Use row edit (b handle). operation:{"type":"remove"} deletes a saved subtree or discards an unsaved root. On comment edits, operation:{"type":"remove-comment"} deletes that comment; update-comment rewrites it. Metadata: operation:{"type":"set","due":"YYYY-MM-DD"} or {"type":"set","time":"HH:mm"}; null clears. Two-owner correction: restore first, then edit the other with current refs.',
+      'Prepare unsaved task changes with row edit (b handle); does not write vault content. Use each returned current edit for requested operations before finish. remove deletes a saved subtree or discards an unsaved root; remove-comment deletes a comment; update-comment rewrites it. set due YYYY-MM-DD or time HH:mm; null clears that field. Two-owner correction: restore first, then edit the other with current refs.',
     ),
     find: owner.findTasks(),
     inspect: adapter(
@@ -1076,9 +1076,7 @@ class CommandToolOwner {
       return { needsRootContext: true };
     }
     this.ctx_abyssPrivate.done = true;
-    this.ctx_abyssPrivate.session.question(
-      commandMessage('Save these changes, keep them for later, discard them, or stay here?'),
-    );
+    this.ctx_abyssPrivate.session.question(commandMessage(draftDispositionMessage));
     return { needsDisposition: true };
   }
   private async continueTransition(input: z.infer<typeof intentSchema>): Promise<boolean> {

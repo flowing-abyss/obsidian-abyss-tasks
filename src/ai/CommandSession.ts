@@ -7,7 +7,13 @@ import type {
   TaskTreePageV1,
   TaskTreeV1,
 } from '../../api';
-import { commandDiagnostic, commandMessage } from './commandMessages';
+import {
+  commandDiagnostic,
+  commandMessage,
+  draftDispositionMessage,
+  noteMoveConflictMessage,
+  writeJournalFailureMessage,
+} from './commandMessages';
 import { projectMoveFocusMessage, projectMoveWithDescendantFocus } from './commandProjects';
 import { canonicalCommandPlan, commandRead } from './commandReads';
 import {
@@ -140,12 +146,7 @@ function requireComposable(change: CommandChange, changes: readonly CommandChang
       (pending) => structuralConflict(change, pending) || structuralConflict(pending, change),
     )
   )
-    throw new CommandFailure(
-      'STRUCTURAL_CONFLICT',
-      commandMessage(
-        'Save or discard the pending changes to these notes before moving tasks. All current work is retained.',
-      ),
-    );
+    throw new CommandFailure('STRUCTURAL_CONFLICT', commandMessage(noteMoveConflictMessage));
 }
 function planFocus(focus: readonly CommandFocus[], change: CommandChange): readonly CommandFocus[] {
   if (change.kind !== 'task') return focus;
@@ -277,6 +278,47 @@ function matchesFocusRevision(
       target.revision === node.revision ||
       target.revision === planRevision)
   );
+}
+type TaskFocusBasisMatch = {
+  plan: ContentPlanV1;
+  node: TaskTreeV1;
+  side: 'before' | 'after';
+};
+function exactAfterFocusOwner(
+  matches: readonly TaskFocusBasisMatch[],
+  revision: string,
+): TaskFocusBasisMatch | undefined {
+  const match = matches[matches.length - 1];
+  return matches.every((entry) => entry.plan.target === match?.plan.target) &&
+    match?.side === 'after' &&
+    match.node.revision === revision
+    ? match
+    : undefined;
+}
+function selectedTaskFocusMatch(
+  target: Extract<CommandFocus, { kind: 'task' }>,
+  matches: TaskFocusBasisMatch[],
+): TaskFocusBasisMatch | undefined {
+  const match =
+    target.plan === undefined
+      ? matches[0]
+      : matches.find((entry) => entry.plan.target === target.plan);
+  if (
+    target.plan === undefined &&
+    matches.length === 0 &&
+    target.expectedPlanRevision === undefined
+  )
+    return undefined;
+  if (
+    match === undefined ||
+    (target.plan === undefined && matches.length !== 1) ||
+    !matchesFocusRevision(target, match.node, match.plan.revision)
+  )
+    throw new CommandFailure(
+      'STALE_FOCUS',
+      commandMessage('Use the exact current proposal and node for draft selection.'),
+    );
+  return match;
 }
 function focusError(cause: unknown): string {
   return cause instanceof CommandFailure
@@ -414,9 +456,7 @@ export class CommandSession {
           status: blocked
             ? {
                 kind: 'error',
-                message: commandMessage(
-                  'Could not save or record the result. Review the retained write journal before continuing.',
-                ),
+                message: commandMessage(writeJournalFailureMessage),
               }
             : { kind: 'ready', message: commandMessage('Stopped. Your draft is retained.') },
         };
@@ -740,7 +780,7 @@ export class CommandSession {
     if (!this.needsFocusDisposition_abyssPrivate(requested)) return false;
     this.requestTransition_abyssPrivate(
       { kind: 'focus', target: requested },
-      commandMessage('Save these changes, keep them for later, discard them, or stay here?'),
+      commandMessage(draftDispositionMessage),
     );
     return true;
   }
@@ -961,7 +1001,10 @@ export class CommandSession {
       focus: { kind: 'note', target: note.note.target, revision: note.note.revision },
     };
   }
-  private taskFocusBasis_abyssPrivate(target: Extract<CommandFocus, { kind: 'task' }>): {
+  private taskFocusBasis_abyssPrivate(
+    target: Extract<CommandFocus, { kind: 'task' }>,
+    exactAfterRevision?: string,
+  ): {
     focus: Extract<CommandFocus, { kind: 'task' }>;
     side: 'before' | 'after';
   } {
@@ -975,29 +1018,15 @@ export class CommandSession {
         after ??
         views
           .map((view) => focusNode(view.before, target.target))
-          .find((node) => node !== undefined);
+          .find((value) => value !== undefined);
       const side = after === undefined ? ('before' as const) : ('after' as const);
       return node === undefined ? [] : [{ plan: change.plan, node, side }];
     });
     const match =
-      target.plan === undefined
-        ? matches[0]
-        : matches.find((entry) => entry.plan.target === target.plan);
-    if (
-      target.plan === undefined &&
-      matches.length === 0 &&
-      target.expectedPlanRevision === undefined
-    )
-      return { focus: target, side: 'after' };
-    if (
-      match === undefined ||
-      (target.plan === undefined && matches.length !== 1) ||
-      !matchesFocusRevision(target, match.node, match.plan.revision)
-    )
-      throw new CommandFailure(
-        'STALE_FOCUS',
-        commandMessage('Use the exact current proposal and node for draft selection.'),
-      );
+      exactAfterRevision === undefined
+        ? selectedTaskFocusMatch(target, matches)
+        : exactAfterFocusOwner(matches, exactAfterRevision);
+    if (match === undefined) return { focus: target, side: 'after' };
     return {
       focus: {
         kind: 'task',
@@ -1011,19 +1040,13 @@ export class CommandSession {
   resolveTreeRead(query: ReadTaskTreeV1): ReadTaskTreeV1 {
     if (
       this.readOnly() ||
-      [
-        query.plan,
-        query.expectedPlanRevision,
-        query.expectedRevision,
-        query.side,
-        query.cursor,
-      ].some((value) => value !== undefined)
+      [query.plan, query.expectedPlanRevision, query.side, query.cursor].some(
+        (value) => value !== undefined,
+      )
     )
       return query;
-    const { focus, side } = this.taskFocusBasis_abyssPrivate({
-      kind: 'task',
-      target: query.target,
-    });
+    const target = { kind: 'task' as const, target: query.target };
+    const { focus, side } = this.taskFocusBasis_abyssPrivate(target, query.expectedRevision);
     return focus.plan === undefined
       ? query
       : {
@@ -1847,9 +1870,7 @@ export class CommandSession {
         message:
           cause instanceof CommandFailure
             ? cause.message
-            : commandMessage(
-                'Could not save or record the result. Review the retained write journal before continuing.',
-              ),
+            : commandMessage(writeJournalFailureMessage),
       },
     });
     if (!unsettled && cause instanceof CommandFailure && cause.code === 'PROJECT_MOVE_FOCUS')

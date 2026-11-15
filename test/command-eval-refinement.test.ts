@@ -587,8 +587,8 @@ describe('focused offline refinement oracle qualification', () => {
   });
   it('keeps development research-admission diagnostics unique, qualified, and outside P12 turns', () => {
     const diagnostics = selectCases('research-admission-diagnostic');
-    expect(corpus).toHaveLength(200);
-    expect(new Set(corpus.map((item) => item.id)).size).toBe(200);
+    expect(corpus).toHaveLength(201);
+    expect(new Set(corpus.map((item) => item.id)).size).toBe(201);
     expect(diagnostics.map((item) => item.id)).toEqual(['101', '102', '103', '104']);
     for (const diagnostic of diagnostics) {
       expect(selectCases(diagnostic.id)).toHaveLength(1);
