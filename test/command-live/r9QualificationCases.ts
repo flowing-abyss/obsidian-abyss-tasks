@@ -140,6 +140,10 @@ export const r9QualificationCases: readonly EvalCase[] = [
     files: files(
       '- [ ] Check the park noticeboard #volunteers\n' +
         '- [ ] Refill the first-aid kit ⏳ 2027-04-02 📅 2027-04-14\n',
+      {
+        'garden/seed-log.md':
+          '# Seed log\r\nPreferred supplier: Lakeside Nursery.\r\nKeep the old tray labels in the cabinet.\r\n',
+      },
     ),
     turns: [
       {
@@ -153,9 +157,13 @@ export const r9QualificationCases: readonly EvalCase[] = [
             tree('Print volunteer orientation sheets', { durationMinutes: 45 }),
           ],
           publicTrees: [
-            tree('Check the park noticeboard', { tags: ['#volunteers'] }),
+            tree('Check the park noticeboard', {
+              tags: ['#volunteers'],
+              source: { path: 'a.md', line: 0 },
+            }),
             tree('Refill the first-aid kit', {
               dates: { scheduled: '2027-04-02', due: '2027-04-14' },
+              source: { path: 'a.md', line: 1 },
             }),
           ],
           writeCount: 0,
@@ -167,21 +175,34 @@ export const r9QualificationCases: readonly EvalCase[] = [
           status: 'saved',
           proposalKinds: [],
           publicTrees: [
-            tree('Check the park noticeboard', { tags: ['#volunteers'] }),
+            tree('Check the park noticeboard', {
+              tags: ['#volunteers'],
+              source: { path: 'a.md', line: 0 },
+            }),
             tree('Refill the first-aid kit', {
               dates: { scheduled: '2027-04-02', due: '2027-04-14' },
+              source: { path: 'a.md', line: 1 },
             }),
             tree('Order seed trays', { dates: { due: '2027-04-08' }, tags: ['#garden'] }),
             tree('Print volunteer orientation sheets', { durationMinutes: 45 }),
           ],
           createdFiles: [],
           writeCount: 2,
-          files: files(
-            '- [ ] Check the park noticeboard #volunteers\n' +
-              '- [ ] Refill the first-aid kit ⏳ 2027-04-02 📅 2027-04-14\n' +
-              '- [ ] Order seed trays #garden 📅 2027-04-08\n' +
-              '- [ ] Print volunteer orientation sheets ⏱️ 45m\n',
-          ),
+          retainPreviousTasks: true,
+          contains: {
+            'a.md': [
+              '- [ ] Check the park noticeboard #volunteers',
+              '- [ ] Refill the first-aid kit ⏳ 2027-04-02 📅 2027-04-14',
+              '- [ ] Order seed trays #garden 📅 2027-04-08',
+              '- [ ] Print volunteer orientation sheets ⏱️ 45m',
+            ],
+          },
+          files: {
+            'control.md':
+              '---\nprotected: true\n---\n# Control\r\n- [ ] Untouched [unknown:: keep] #control\r\n',
+            'garden/seed-log.md':
+              '# Seed log\r\nPreferred supplier: Lakeside Nursery.\r\nKeep the old tray labels in the cabinet.\r\n',
+          },
         },
       },
     ],
@@ -200,7 +221,7 @@ export const r9QualificationCases: readonly EvalCase[] = [
         expect: {
           status: 'ready',
           proposalKinds: ['task'],
-          trees: [{ markdownTitle: 'Подготовить соседскую уборку двора' }],
+          trees: [{ markdownTitle: 'Подготовить соседскую уборку двора', statusSymbol: ' ' }],
           publicTrees: [],
           decomposition: { minChildren: 4, maxChildren: 4, maxDepth: 1, noInventedSchedule: true },
           writeCount: 0,
@@ -211,8 +232,8 @@ export const r9QualificationCases: readonly EvalCase[] = [
         expect: {
           status: 'saved',
           proposalKinds: [],
-          trees: [{ markdownTitle: 'Подготовить соседскую уборку двора' }],
-          publicTrees: [{ markdownTitle: 'Подготовить соседскую уборку двора' }],
+          trees: [{ markdownTitle: 'Подготовить соседскую уборку двора', statusSymbol: ' ' }],
+          publicTrees: [{ markdownTitle: 'Подготовить соседскую уборку двора', statusSymbol: ' ' }],
           decomposition: { minChildren: 4, maxChildren: 4, maxDepth: 1, noInventedSchedule: true },
           createdFiles: [],
           writeCount: 1,

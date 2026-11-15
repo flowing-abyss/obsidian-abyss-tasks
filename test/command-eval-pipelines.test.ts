@@ -681,6 +681,31 @@ it('accepts canonical preview and Save controls for the replacement held-out cas
     finish,
     confirm,
   ]);
+  const twoCapturesReverseRun = await replay(twoCaptures, [
+    plan,
+    tool('task', {
+      input: {
+        kind: 'create',
+        destination: { type: 'configured-default' },
+        tree: {
+          markdownTitle: 'Print volunteer orientation sheets',
+          initial: { durationMinutes: { type: 'set', value: 45 } },
+        },
+      },
+    }),
+    tool('task', {
+      input: {
+        kind: 'create',
+        destination: { type: 'configured-default' },
+        tree: {
+          markdownTitle: 'Order seed trays',
+          initial: { due: { type: 'set', value: '2027-04-08' }, tags: { add: ['#garden'] } },
+        },
+      },
+    }),
+    finish,
+    confirm,
+  ]);
 
   const courtyardGoal = expectDefined(selectCases('r9-repl-courtyard-goal-ru')[0]);
   const courtyardPlans = [
@@ -719,7 +744,13 @@ it('accepts canonical preview and Save controls for the replacement held-out cas
     courtyardRuns.push(await replay(courtyardGoal, steps));
   }
 
-  const runs = [dueScheduleRun, commentOwnerRun, twoCapturesRun, ...courtyardRuns];
+  const runs = [
+    dueScheduleRun,
+    commentOwnerRun,
+    twoCapturesRun,
+    twoCapturesReverseRun,
+    ...courtyardRuns,
+  ];
   for (const { report } of runs) {
     expect(report.turns.map((turn) => turn.failures)).toEqual(report.turns.map(() => []));
     const preview = expectDefined(report.turns[0]);
@@ -727,7 +758,8 @@ it('accepts canonical preview and Save controls for the replacement held-out cas
     expect(preview.writeCount).toBe(0);
     const saved = expectDefined(report.turns[1]);
     expect(saved.status).toBe('saved');
-    const expectedSaveWrites = report === twoCapturesRun.report ? 2 : 1;
+    const expectedSaveWrites =
+      report === twoCapturesRun.report || report === twoCapturesReverseRun.report ? 2 : 1;
     expect(saved.writeCount).toBe(expectedSaveWrites);
     expect(saved.journal).toHaveLength(expectedSaveWrites);
     expect(
@@ -788,6 +820,29 @@ it('accepts canonical preview and Save controls for the replacement held-out cas
       value.journal = [];
     },
   ]);
+  const courtyardSaved = expectDefined(courtyardRuns[0]?.report.turns[1]);
+  const completedCourtyard = structuredClone(courtyardSaved);
+  object(completedCourtyard.trees[0])['statusSymbol'] = 'x';
+  object(completedCourtyard.trees[0])['status'] = 'done';
+  const completedCourtyardPublicTree = completedCourtyard.publicTrees?.find(
+    (task) => object(task)['markdownTitle'] === 'Подготовить соседскую уборку двора',
+  );
+  if (completedCourtyardPublicTree !== undefined) {
+    object(completedCourtyardPublicTree)['statusSymbol'] = 'x';
+    object(completedCourtyardPublicTree)['status'] = 'done';
+  }
+  const courtyardSaveExpectation = expectDefined(courtyardGoal.turns[1]).expect;
+  const titleOnlyExpectation = {
+    ...courtyardSaveExpectation,
+    trees: [{ markdownTitle: 'Подготовить соседскую уборку двора' }],
+    publicTrees: [{ markdownTitle: 'Подготовить соседскую уборку двора' }],
+  };
+  expect(evaluateTurn(titleOnlyExpectation, completedCourtyard)).not.toContain(
+    'tree-postcondition',
+  );
+  expect(evaluateTurn(courtyardSaveExpectation, completedCourtyard)).toContain(
+    'tree-postcondition',
+  );
 });
 
 function rejectDamage(
