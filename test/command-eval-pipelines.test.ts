@@ -9,8 +9,10 @@ import { actions, pipelines, selectCases, type EvalCase } from './command-live/c
 import { files, tree } from './command-live/fixtures';
 import { traceWriteAdmissionFailures } from './command-live/harness';
 import {
+  authoredTaskState,
   evaluateTurn,
   regradeRetainedTurn,
+  resolvePendingTaskStates,
   type RetainedTraceEvent,
   type RetainedTurn,
   type TurnEvidence,
@@ -1631,6 +1633,13 @@ it('qualifies an all-unchanged canonical task edit save with a current receipt a
       const entry = object(raw),
         change = object(entry['change']),
         plan = object(change['plan']);
+      const after = object(plan['after']);
+      if (
+        typeof after['target'] !== 'string' ||
+        !Array.isArray(after['comments']) ||
+        !Array.isArray(after['timeEntries'])
+      )
+        return raw;
       return {
         ...entry,
         change: { ...change, plan: { ...plan, after: update(object(plan['after'])) } },
@@ -1639,6 +1648,13 @@ it('qualifies an all-unchanged canonical task edit save with a current receipt a
     const proposalPlan = (raw: unknown) => {
       const change = object(raw),
         plan = object(change['plan']);
+      const after = object(plan['after']);
+      if (
+        typeof after['target'] !== 'string' ||
+        !Array.isArray(after['comments']) ||
+        !Array.isArray(after['timeEntries'])
+      )
+        return raw;
       return { ...change, plan: { ...plan, after: update(object(plan['after'])) } };
     };
     observations.input = {
@@ -1664,6 +1680,14 @@ it('qualifies an all-unchanged canonical task edit save with a current receipt a
       const entry = object(raw),
         change = object(entry['change']),
         plan = object(change['plan']);
+      const before = object(plan['before']);
+      if (
+        typeof before['target'] !== 'string' ||
+        !Array.isArray(before['children']) ||
+        !Array.isArray(before['comments']) ||
+        !Array.isArray(before['timeEntries'])
+      )
+        return raw;
       return {
         ...entry,
         change: { ...change, plan: { ...plan, before: update(object(plan['before'])) } },
@@ -1672,6 +1696,14 @@ it('qualifies an all-unchanged canonical task edit save with a current receipt a
     const proposalPlan = (raw: unknown) => {
       const change = object(raw),
         plan = object(change['plan']);
+      const before = object(plan['before']);
+      if (
+        typeof before['target'] !== 'string' ||
+        !Array.isArray(before['children']) ||
+        !Array.isArray(before['comments']) ||
+        !Array.isArray(before['timeEntries'])
+      )
+        return raw;
       return { ...change, plan: { ...plan, before: update(object(plan['before'])) } };
     };
     observations.input = {
@@ -2106,6 +2138,719 @@ it.each([false, true])(
         : event;
     });
     expect(evaluateTurn(expected, unknownResourceEffect)).toContain('unchanged-save-settlement');
+  },
+);
+it('corrects one owner while retaining its unsaved comment and saving the sibling', async () => {
+  const studioBefore =
+    '- [ ] Map the reservoir shoreline #survey 📅 2027-03-08\n  - [ ] Verify the north marker\n';
+  const officeBefore = '- [ ] Arrange the field tent #outdoors 📅 2027-03-12\n';
+  const studioDraft = tree('Map the reservoir shoreline', {
+    tags: ['#survey'],
+    dates: { due: '2027-03-10' },
+    children: [tree('Verify the north marker')],
+    comments: [
+      {
+        text: 'Keep the north marker visible',
+        timestamp: {
+          precision: 'instant',
+          atom: '2026-11-10T05:00:00+00:00',
+          epochMs: 1794286800000,
+        },
+      },
+    ],
+  });
+  const studioRestored = tree('Map the reservoir shoreline', {
+    tags: ['#survey'],
+    dates: { due: '2027-03-08' },
+    children: [tree('Verify the north marker')],
+    comments: studioDraft.comments,
+  });
+  const officeDraft = tree('Arrange the field tent', {
+    tags: ['#outdoors'],
+    dates: { due: '2027-03-10' },
+  });
+  const test: EvalCase = {
+    id: 'dev-pending-state-reservoir-tent-correction-comment',
+    family: 'development-pending-state',
+    split: 'development',
+    files: files('', { 'Field-notes.md': studioBefore, 'Camp-list.md': officeBefore }),
+    turns: [
+      {
+        text: 'Move Map the reservoir shoreline to March 10, 2027 and add a note to keep the north marker visible. Show the draft.',
+        expect: {
+          status: 'ready',
+          trees: [studioDraft],
+          publicTrees: [
+            tree('Map the reservoir shoreline', {
+              tags: ['#survey'],
+              dates: { due: '2027-03-08' },
+              children: [tree('Verify the north marker')],
+              source: { path: 'Field-notes.md', line: 0 },
+            }),
+            tree('Arrange the field tent', {
+              tags: ['#outdoors'],
+              dates: { due: '2027-03-12' },
+              source: { path: 'Camp-list.md', line: 0 },
+            }),
+          ],
+          proposalKinds: ['task'],
+          writeCount: 0,
+        },
+      },
+      {
+        text: 'Restore Map the reservoir shoreline to March 8 and move Arrange the field tent to March 10. Keep the north marker note. Show the pending states.',
+        expect: {
+          status: 'ready',
+          pendingTaskStates: [
+            { path: 'Field-notes.md', line: 0, tree: { dates: { due: '2027-03-08' } } },
+            { path: 'Camp-list.md', line: 0, tree: { dates: { due: '2027-03-10' } } },
+          ],
+          publicTrees: [
+            tree('Map the reservoir shoreline', {
+              tags: ['#survey'],
+              dates: { due: '2027-03-08' },
+              children: [tree('Verify the north marker')],
+              source: { path: 'Field-notes.md', line: 0 },
+            }),
+            tree('Arrange the field tent', {
+              tags: ['#outdoors'],
+              dates: { due: '2027-03-12' },
+              source: { path: 'Camp-list.md', line: 0 },
+            }),
+          ],
+          proposalKinds: ['task', 'task'],
+          trees: [studioRestored, officeDraft],
+          writeCount: 0,
+        },
+      },
+      {
+        text: 'Save both corrected dates and keep the note.',
+        expect: {
+          status: 'saved',
+          proposalKinds: [],
+          publicTrees: [studioRestored, officeDraft],
+          writeCount: 2,
+          createdFiles: [],
+        },
+      },
+    ],
+  };
+  const restoreStudio: Step = (prompt) =>
+    restoreTaskDate(prompt, 'Map the reservoir shoreline', 'due', '2027-03-08');
+  const addStudioComment: Step = (prompt) => {
+    const value = result(prompt, 'task');
+    return tool('task', {
+      input: {
+        kind: 'append',
+        plan: value['target'],
+        expectedPlanRevision: value['revision'],
+        operation: {
+          type: 'add-comment',
+          target: object(value['after'])['target'],
+          text: 'Keep the north marker visible',
+        },
+      },
+    });
+  };
+  const { report } = await replay(
+    test,
+    [
+      plan,
+      ...editTask('Map the reservoir shoreline', 'due', '2027-03-10'),
+      addStudioComment,
+      finish,
+      plan,
+      restoreStudio,
+      ...editTask('Arrange the field tent', 'due', '2027-03-10'),
+      finish,
+      confirm,
+    ],
+    3,
+  );
+  expect(report.turns.map((turn) => turn.failures)).toEqual([[], [], []]);
+  const preview = expectDefined(report.turns[1]);
+  expect(preview.writeCount).toBe(0);
+  expect(preview.admissions).toEqual([]);
+  const saved = expectDefined(report.turns[2]);
+  expect(saved.writeCount).toBe(2);
+  expect(
+    saved.journal.map((entry) => entry.effects).sort((a, b) => String(a).localeCompare(String(b))),
+  ).toEqual(['committed', 'committed']);
+  const previewExpectation = expectDefined(test.turns[1]).expect;
+  const lostComment = structuredClone(report);
+  const lostTurn = expectDefined(lostComment.turns[1]);
+  const owner = expectDefined(lostTurn.trees[0]) as TaskTreeV1;
+  const withoutPendingComment = (value: Record<string, unknown>): Record<string, unknown> => ({
+    ...value,
+    comments: [],
+    commentCount: 0,
+    entries: (Array.isArray(value['entries']) ? value['entries'] : []).filter(
+      (entry) => object(entry)['kind'] !== 'comment',
+    ),
+  });
+  Object.assign(owner, withoutPendingComment(object(owner)));
+  const retained = lostTurn as RetainedTurn;
+  const rawSnapshot = object(retained.snapshot);
+  const proposal = object(rawSnapshot['proposal']);
+  const changes = proposal['changes'] as unknown[];
+  const matchingChange = changes.find((change) => {
+    const plan = object(object(change)['plan']);
+    return object(plan['after'])['target'] === owner.target;
+  });
+  if (matchingChange === undefined) throw new Error('Missing canonical pending comment owner');
+  const matchingPlan = object(object(matchingChange)['plan']);
+  const canonicalAfter = object(matchingPlan['after']);
+  if (typeof canonicalAfter['target'] !== 'string')
+    throw new Error('Missing canonical pending comment tree');
+  matchingPlan['after'] = withoutPendingComment(canonicalAfter);
+  const snapshotTrees = rawSnapshot['trees'] as unknown[];
+  const rawPair = snapshotTrees.find(
+    (pair) => object(object(pair)['after'])['target'] === owner.target,
+  );
+  if (rawPair === undefined) throw new Error('Missing canonical pending comment projection');
+  const canonicalProjection = object(object(rawPair)['after']);
+  if (typeof canonicalProjection['target'] !== 'string')
+    throw new Error('Missing canonical pending comment projection tree');
+  object(rawPair)['after'] = withoutPendingComment(canonicalProjection);
+  const commentFailures = regradePendingPipelineTurn(lostComment, 2, previewExpectation);
+  expect(commentFailures).toContain('preservation:comment-correspondence');
+  expect(commentFailures).not.toContain('pending-task-state-projection');
+  assertOmittedPriorOwnerFails(report, previewExpectation, 'Field-notes.md');
+  assertRawPlanAndDisplayBoundaries(report, previewExpectation, 'Field-notes.md');
+  assertMaterialEntryReorderFails(report, previewExpectation, 'Field-notes.md');
+  assertRequiredRetainedRawFactsFailClosed(report, previewExpectation);
+});
+
+it('checks a partial date Save followed by restoring the remaining title to its saved owner', async () => {
+  const original = 'Inspect the cast-iron stove';
+  const edited = 'Inspect the compact cast-iron stove';
+  const before =
+    '- [ ] Inspect the cast-iron stove #camping ⏳ 2027-03-04 📅 2027-03-08\n  - [ ] Check the burner seal\n';
+  const after =
+    '- [ ] Inspect the cast-iron stove #camping ⏳ 2027-03-04 📅 2027-03-12\n  - [ ] Check the burner seal\n';
+  const initial = tree(original, {
+    tags: ['#camping'],
+    dates: { scheduled: '2027-03-04', due: '2027-03-08' },
+    children: [tree('Check the burner seal')],
+  });
+  const draft = tree(edited, {
+    tags: ['#camping'],
+    dates: { scheduled: '2027-03-04', due: '2027-03-12' },
+    children: [tree('Check the burner seal')],
+  });
+  const savedTree = tree(original, {
+    tags: ['#camping'],
+    dates: { scheduled: '2027-03-04', due: '2027-03-12' },
+    children: [tree('Check the burner seal')],
+  });
+  const test: EvalCase = {
+    id: 'dev-pending-state-stove-partial-save-discard',
+    family: 'development-pending-state',
+    split: 'development',
+    profile: 'owner',
+    files: files('', { 'Camp-kitchen.md': before }),
+    turns: [
+      {
+        text: 'Rename Inspect the cast-iron stove to Inspect the compact cast-iron stove and move its due date to March 12, 2027. Preview it.',
+        expect: {
+          status: 'ready',
+          trees: [draft],
+          publicTrees: [initial],
+          proposalKinds: ['task'],
+          writeCount: 0,
+        },
+      },
+      {
+        text: 'Save only the due date and leave the new title in the draft.',
+        expect: {
+          status: 'ready',
+          partialSave: true,
+          trees: [draft],
+          publicTrees: [savedTree],
+          proposalKinds: ['task'],
+          writeCount: 1,
+          files: { 'Camp-kitchen.md': after },
+        },
+      },
+      {
+        text: 'Discard the title change and keep the saved due date.',
+        expect: {
+          status: 'ready',
+          pendingTaskStates: [
+            {
+              path: 'Camp-kitchen.md',
+              line: 0,
+              tree: {
+                markdownTitle: original,
+                dates: { scheduled: '2027-03-04', due: '2027-03-12' },
+              },
+            },
+          ],
+          publicTrees: [savedTree],
+          writeCount: 0,
+          files: { 'Camp-kitchen.md': after },
+        },
+      },
+    ],
+  };
+  const restoreTitle = restoreTaskTitle(original);
+  const { report } = await replay(
+    test,
+    [
+      plan,
+      tool('read', { input: { kind: 'tasks', query: original } }),
+      editTaskTitleAndDue(edited, '2027-03-12'),
+      finish,
+      saveTaskDueOnly,
+      plan,
+      restoreTitle,
+      finish,
+    ],
+    3,
+  );
+  expect(report.turns.map((turn) => turn.failures)).toEqual([[], [], []]);
+  expect(report.turns[1]?.journal).toMatchObject([{ state: 'settled', effects: 'committed' }]);
+  expect(report.turns[2]?.writeCount).toBe(0);
+  const receipt = object(report.turns[2]?.inputSnapshot.journal[0]);
+  expect(receipt['receipt']).toBeDefined();
+});
+
+function regradePendingPipelineTurn(
+  report: { turns: unknown[]; trace: RetainedTraceEvent[] },
+  oneBasedTurn: number,
+  expected: TurnExpectation,
+): string[] {
+  const turn = expectDefined(report.turns[oneBasedTurn - 1]) as RetainedTurn;
+  return regradeRetainedTurn(expected, turn, report.trace, oneBasedTurn).failures;
+}
+
+function pendingStateOnly(expected: TurnExpectation): TurnExpectation {
+  const output = { ...expected };
+  delete output.trees;
+  delete output.proposalKinds;
+  return output;
+}
+
+function pendingOwnerChange(turn: RetainedTurn, sourcePath: string) {
+  const snapshot = object(turn.snapshot);
+  const proposal = object(snapshot['proposal']);
+  const changes = proposal['changes'] as unknown[];
+  const change = changes.find((value) => {
+    const plan = object(object(value)['plan']);
+    return object(object(plan['before'])['source'])['path'] === sourcePath;
+  });
+  if (change === undefined) throw new Error(`Missing pending owner plan for ${sourcePath}`);
+  return { snapshot, proposal, changes, change, plan: object(object(change)['plan']) };
+}
+
+function assertOmittedPriorOwnerFails(
+  report: { turns: unknown[]; trace: RetainedTraceEvent[] },
+  expected: TurnExpectation,
+  sourcePath: string,
+): void {
+  const mutated = structuredClone(report);
+  const turn = expectDefined(mutated.turns[1]) as RetainedTurn;
+  const { snapshot, proposal, changes, change } = pendingOwnerChange(turn, sourcePath);
+  const target = object(object(object(change)['plan'])['before'])['target'];
+  proposal['changes'] = changes.filter((item) => item !== change);
+  snapshot['trees'] = (snapshot['trees'] as unknown[]).filter(
+    (pair) => object(object(pair)['after'])['target'] !== target,
+  );
+  turn.trees = turn.trees.filter((tree) => object(tree)['target'] !== target);
+  turn.proposalKinds = ['task'];
+  turn.preservation = [];
+  const failures = regradeRetainedTurn(pendingStateOnly(expected), turn, mutated.trace, 2).failures;
+  expect(failures).toContain('preservation:comment-correspondence');
+  expect(failures).not.toContain('pending-task-state-projection');
+}
+
+function assertRawPlanAndDisplayBoundaries(
+  report: { turns: unknown[]; trace: RetainedTraceEvent[] },
+  expected: TurnExpectation,
+  sourcePath: string,
+): void {
+  const planOnly = structuredClone(report);
+  const planTurn = expectDefined(planOnly.turns[1]) as RetainedTurn;
+  const plan = pendingOwnerChange(planTurn, sourcePath).plan;
+  const planAfter = { ...object(plan['after']) };
+  planAfter['tags'] = ['#unrequested'];
+  plan['after'] = planAfter;
+  planTurn.preservation = [];
+  expect(
+    regradeRetainedTurn(pendingStateOnly(expected), planTurn, planOnly.trace, 2).failures,
+  ).toContain('pending-task-state-projection');
+
+  const consistent = structuredClone(report);
+  const consistentTurn = expectDefined(consistent.turns[1]) as RetainedTurn;
+  const { snapshot, plan: consistentPlan } = pendingOwnerChange(consistentTurn, sourcePath);
+  const tags = ['#unrequested'];
+  const consistentAfter: Record<string, unknown> = { ...object(consistentPlan['after']), tags };
+  consistentPlan['after'] = consistentAfter;
+  const target = consistentAfter['target'];
+  const pair = (snapshot['trees'] as unknown[]).find(
+    (item) => object(object(item)['after'])['target'] === target,
+  );
+  if (pair === undefined) throw new Error('Missing projected owner pair');
+  object(pair)['after'] = { ...object(object(pair)['after']), tags };
+  consistentTurn.trees = consistentTurn.trees.map((item) =>
+    object(item)['target'] === target ? { ...object(item), tags } : object(item),
+  );
+  const displayed = consistentTurn.trees.find((item) => object(item)['target'] === target);
+  if (displayed === undefined) throw new Error('Missing displayed pending owner');
+  consistentTurn.preservation = [{ before: displayed, after: displayed, requested: {} }];
+  const consistentFailures = regradeRetainedTurn(
+    pendingStateOnly(expected),
+    consistentTurn,
+    consistent.trace,
+    2,
+  ).failures;
+  expect(consistentFailures).toContain('preservation:tags');
+  expect(consistentFailures).not.toContain('pending-task-state-projection');
+
+  const displayOnly = structuredClone(report);
+  const displayTurn = expectDefined(displayOnly.turns[1]) as RetainedTurn;
+  const displayTarget = object(object(pendingOwnerChange(displayTurn, sourcePath).plan['after']))[
+    'target'
+  ];
+  const displayRoot = displayTurn.trees.find((item) => object(item)['target'] === displayTarget);
+  if (displayRoot === undefined) throw new Error('Missing display-only owner');
+  displayTurn.trees = displayTurn.trees.map((item) =>
+    object(item)['target'] === displayTarget
+      ? { ...object(item), tags: ['#display-only'] }
+      : object(item),
+  );
+  displayTurn.preservation = [];
+  expect(
+    regradeRetainedTurn(pendingStateOnly(expected), displayTurn, displayOnly.trace, 2).failures,
+  ).toContain('pending-task-state-projection');
+}
+
+function assertMaterialEntryReorderFails(
+  report: { turns: unknown[]; trace: RetainedTraceEvent[] },
+  expected: TurnExpectation,
+  sourcePath: string,
+): void {
+  const mutated = structuredClone(report);
+  const turn = expectDefined(mutated.turns[1]) as RetainedTurn;
+  const { snapshot, plan } = pendingOwnerChange(turn, sourcePath);
+  const target = object(object(plan['after']))['target'];
+  const rootAfter = object(plan['after']);
+  const pair = (snapshot['trees'] as unknown[]).find(
+    (item) => object(object(item)['after'])['target'] === target,
+  );
+  const displayed = turn.trees.find((item) => object(item)['target'] === target);
+  if (pair === undefined || displayed === undefined) throw new Error('Missing current owner view');
+  for (const value of [rootAfter, object(object(pair)['after']), object(displayed)]) {
+    const entries = value['entries'] as unknown[];
+    expect(entries).toHaveLength(2);
+    entries.reverse();
+  }
+  turn.preservation = [];
+  const failures = regradeRetainedTurn(pendingStateOnly(expected), turn, mutated.trace, 2).failures;
+  expect(failures).toContain('preservation:entry-order');
+  expect(failures).not.toContain('pending-task-state-projection');
+}
+
+function assertRequiredRetainedRawFactsFailClosed(
+  report: { turns: unknown[]; trace: RetainedTraceEvent[] },
+  expected: TurnExpectation,
+): void {
+  const originalTurn = expectDefined(report.turns[1]) as RetainedTurn;
+  expect(regradeRetainedTurn(expected, originalTurn, report.trace, 2).failures).toEqual([]);
+  const serialized = JSON.parse(JSON.stringify(report)) as {
+    turns: RetainedTurn[];
+    trace: RetainedTraceEvent[];
+  };
+  expect(
+    regradeRetainedTurn(expected, expectDefined(serialized.turns[1]), serialized.trace, 2).failures,
+  ).toEqual([]);
+
+  const malformed: Array<[string, (turn: RetainedTurn) => void]> = [
+    ['missing prior entities', (turn) => delete object(turn.inputSnapshot)['entities']],
+    ['missing current entities', (turn) => delete object(turn.snapshot)['entities']],
+    [
+      'missing prior task pages',
+      (turn) => delete object(object(turn.inputSnapshot)['entities'])['tasks'],
+    ],
+    [
+      'missing current task pages',
+      (turn) => delete object(object(turn.snapshot)['entities'])['tasks'],
+    ],
+    ['missing current status', (turn) => delete object(turn.snapshot)['status']],
+    [
+      'missing prior tree pair after value',
+      (turn) => {
+        const pairs = object(turn.inputSnapshot)['trees'] as unknown[];
+        const pair = pairs.map(object).find((value) => value['after'] !== null);
+        if (pair === undefined) throw new Error('Missing prior canonical tree pair');
+        delete pair['after'];
+      },
+    ],
+    [
+      'missing current task plan',
+      (turn) => {
+        const changes = object(object(turn.snapshot)['proposal'])['changes'] as unknown[];
+        const change = changes.map(object).find((value) => value['kind'] === 'task');
+        if (change === undefined) throw new Error('Missing current task change');
+        delete change['plan'];
+      },
+    ],
+    [
+      'null persisted root',
+      (turn) => Object.assign(turn, { publicReadback: [null, ...turn.publicReadback.slice(1)] }),
+    ],
+  ];
+  for (const [name, mutate] of malformed) {
+    const damaged = structuredClone(report);
+    const turn = expectDefined(damaged.turns[1]) as RetainedTurn;
+    mutate(turn);
+    expect(() => regradeRetainedTurn(expected, turn, damaged.trace, 2), name).not.toThrow();
+    expect(regradeRetainedTurn(expected, turn, damaged.trace, 2).failures, name).toContain(
+      'retained-preservation-evidence',
+    );
+  }
+}
+
+function editTaskTitleAndDue(edited: string, due: string): Step {
+  return (prompt) => {
+    const node = firstRead(prompt);
+    return tool('task', {
+      input: {
+        kind: 'edit',
+        target: node['target'],
+        expectedRevision: node['revision'],
+        operation: {
+          type: 'patch',
+          target: node['target'],
+          patch: {
+            markdownTitle: { type: 'set', value: edited },
+            due: { type: 'set', value: due },
+          },
+        },
+      },
+    });
+  };
+}
+
+const saveTaskDueOnly: Step = (prompt) => {
+  const change = current(prompt);
+  return tool('interpret', {
+    intent: 'confirm',
+    approval: submittedMessage(prompt),
+    research: false,
+    scope: {
+      proposalRevision: object(visibleContext(prompt)['proposal'])['revision'],
+      changes: [
+        {
+          kind: 'task-fields',
+          index: 0,
+          ...object(change['planBasis']),
+          target: object(object(change['plan'])['after'])['target'],
+          fields: ['due'],
+        },
+      ],
+    },
+  });
+};
+
+function restoreTaskTitle(title: string): Step {
+  return (prompt) =>
+    append(prompt, {
+      type: 'patch',
+      target: currentRoot(prompt)['target'],
+      patch: { markdownTitle: { type: 'set', value: title } },
+    });
+}
+
+function assertReceiptRetentionNegatives(
+  ending: 'restore-title-noop' | 'clear-session',
+  report: { turns: unknown[]; trace: RetainedTraceEvent[] },
+  expected: TurnExpectation,
+  sourcePath: string,
+): void {
+  const mutated = structuredClone(report);
+  const turn = expectDefined(mutated.turns[2]) as RetainedTurn;
+  const sessionId = (turn.inputSnapshot as CommandSessionSnapshot).id;
+  const ownerStoreEvents = mutated.trace.filter((event) => event.kind === 'owner-store');
+  const ownerStoreEvent = expectDefined(ownerStoreEvents[ownerStoreEvents.length - 1]);
+  if (ending === 'restore-title-noop') {
+    const canonicalSnapshot = turn.snapshot as CommandSessionSnapshot;
+    const noOpPlan = canonicalSnapshot.proposal.changes.find(
+      (change) => change.kind === 'task' && change.plan.before?.source?.path === sourcePath,
+    );
+    expect(noOpPlan?.kind).toBe('task');
+    if (noOpPlan?.kind !== 'task' || noOpPlan.plan.before === null) {
+      throw new Error('Expected the canonical stove correction to retain its saved-root plan.');
+    }
+    expect(authoredTaskState(noOpPlan.plan.before)).toEqual(authoredTaskState(noOpPlan.plan.after));
+    // Representation-only control: exercise omitted-plan resolution from this actual
+    // canonical full-noop plan. No public operation selectively removes saved-root plans.
+    const omittedNoopSnapshot: CommandSessionSnapshot = {
+      ...canonicalSnapshot,
+      proposal: {
+        ...canonicalSnapshot.proposal,
+        changes: canonicalSnapshot.proposal.changes.filter((change) => change !== noOpPlan),
+      },
+    };
+    expect(
+      resolvePendingTaskStates(
+        expected,
+        {
+          snapshot: omittedNoopSnapshot,
+          previous: turn.inputSnapshot as CommandSessionSnapshot,
+        },
+        turn.publicReadback as TaskTreeV1[],
+        {
+          writeCount: turn.writeCount ?? -1,
+          ...(turn.hostProviderEpoch === undefined
+            ? {}
+            : { hostProviderEpoch: turn.hostProviderEpoch }),
+          ownerStore: ownerStoreEvent.data,
+        },
+      ).failures,
+    ).toEqual([]);
+    Object.assign(turn.snapshot as object, { journal: [] });
+  } else {
+    const store = object(ownerStoreEvent.data);
+    const sessions = store['sessions'] as Array<{ snapshot: CommandSessionSnapshot }>;
+    const ownerSession = sessions.find((session) => session.snapshot.id === sessionId);
+    expect(ownerSession).toBeDefined();
+    Object.assign(expectDefined(ownerSession).snapshot, { journal: [] });
+  }
+  expect(regradePendingPipelineTurn(mutated, 3, expected)).toContain('pending-task-state-receipt');
+}
+
+it.each(['restore-title-noop', 'clear-session'] as const)(
+  'preserves a parsed comment and closed time entry through partial Save and %s',
+  async (ending) => {
+    const original = 'Inspect the cast-iron stove';
+    const edited = 'Inspect the compact cast-iron stove';
+    const sourcePath = 'Camp-kitchen.md';
+    const sourceText =
+      '- [ ] Inspect the cast-iron stove #camping ⏳ 2027-03-04 📅 2027-03-08\n' +
+      '  - 2027-03-01T09:00:00Z → 2027-03-01T10:00:00Z\n' +
+      '  - 2027-03-01: Keep the gasket dry\n' +
+      '  - [ ] Check the burner seal\n';
+    const savedText = sourceText.replace('📅 2027-03-08', '📅 2027-03-12');
+    const comment = {
+      text: 'Keep the gasket dry',
+      timestamp: { precision: 'day', value: '2027-03-01' },
+    };
+    const closedTime = {
+      state: 'closed',
+      startMs: 1803891600000,
+      endMs: 1803895200000,
+    };
+    const initialOwner = tree(original, {
+      tags: ['#camping'],
+      dates: { scheduled: '2027-03-04', due: '2027-03-08' },
+      children: [tree('Check the burner seal')],
+      comments: [comment],
+      timeEntries: [closedTime],
+      source: { path: sourcePath, line: 0 },
+    });
+    const savedOwner = tree(original, {
+      tags: ['#camping'],
+      dates: { scheduled: '2027-03-04', due: '2027-03-12' },
+      children: [tree('Check the burner seal')],
+      comments: [comment],
+      timeEntries: [closedTime],
+      source: { path: sourcePath, line: 0 },
+    });
+    const draftOwner = tree(edited, {
+      tags: ['#camping'],
+      dates: { scheduled: '2027-03-04', due: '2027-03-12' },
+      children: [tree('Check the burner seal')],
+      comments: [comment],
+      timeEntries: [closedTime],
+    });
+    const expected = {
+      status: 'ready',
+      writeCount: 0,
+      publicTrees: [savedOwner],
+      pendingTaskStates: [
+        {
+          path: sourcePath,
+          line: 0,
+          tree: {
+            markdownTitle: original,
+            dates: { scheduled: '2027-03-04', due: '2027-03-12' },
+          },
+        },
+      ],
+    } as TurnExpectation;
+    const test: EvalCase = {
+      id: `dev-pending-state-stove-${ending}`,
+      family: 'development-pending-state',
+      split: 'development',
+      profile: 'owner',
+      scripted: true,
+      files: files('', { [sourcePath]: sourceText }),
+      turns: [
+        {
+          text: 'Rename the stove to Inspect the compact cast-iron stove and move its due date to March 12, 2027. Preview it.',
+          expect: { status: 'ready', trees: [draftOwner], publicTrees: [initialOwner] },
+        },
+        {
+          text: 'Save only the due date and leave the new title in the draft.',
+          expect: {
+            status: 'ready',
+            partialSave: true,
+            trees: [draftOwner],
+            publicTrees: [savedOwner],
+            files: { [sourcePath]: savedText },
+            proposalKinds: ['task'],
+            writeCount: 1,
+          },
+        },
+        {
+          text:
+            ending === 'clear-session'
+              ? 'Discard the remaining title draft and start a clean session.'
+              : 'Restore the stove title to its saved text.',
+          expect: expected,
+        },
+      ],
+    };
+    const restoreTitle = restoreTaskTitle(original);
+    const endingStep: Step =
+      ending === 'clear-session'
+        ? tool('interpret', { intent: 'new-session', disposition: 'discard', research: false })
+        : restoreTitle;
+    const steps: Step[] = [
+      plan,
+      tool('read', { input: { kind: 'tasks', query: original } }),
+      editTaskTitleAndDue(edited, '2027-03-12'),
+      finish,
+      saveTaskDueOnly,
+      ...(ending === 'clear-session' ? [endingStep] : [plan, endingStep, finish]),
+    ];
+    const { report } = await replay(test, steps, 3);
+    const finalTurn = expectDefined(report.turns[2]);
+    expect(finalTurn.failures).toEqual([]);
+    expect(regradePendingPipelineTurn(report, 3, expected)).toEqual([]);
+    expect(finalTurn.writeCount).toBe(0);
+
+    assertReceiptRetentionNegatives(ending, report, expected, sourcePath);
+
+    const lostComment = structuredClone(report);
+    const lostCommentTurn = expectDefined(lostComment.turns[2]) as RetainedTurn;
+    const lostOwner = expectDefined(lostCommentTurn.trees[0]) as TaskTreeV1;
+    Object.assign(lostOwner, {
+      comments: [],
+      entries: lostOwner.entries.filter((entry) => entry.kind !== 'comment'),
+    });
+    expect(regradePendingPipelineTurn(lostComment, 3, expected)).toContain(
+      'pending-task-state-projection',
+    );
+    if (ending === 'clear-session') {
+      const ownerStoreEvents = lostComment.trace.filter((event) => event.kind === 'owner-store');
+      const store = object(expectDefined(ownerStoreEvents[ownerStoreEvents.length - 1]).data);
+      expect(store['activeSessionId']).toBeNull();
+      expect(regradePendingPipelineTurn(report, 3, expected)).toEqual([]);
+    }
+    expect(report.turns[1]?.journal).toMatchObject([{ state: 'settled', effects: 'committed' }]);
+    expect(report.turns[2]?.inputSnapshot.journal[0]?.receipt).toBeDefined();
   },
 );
 it('eliminates a no-op owner while saving its material sibling', async () => {

@@ -97,6 +97,8 @@ it('keeps all actor projections and unrelated fixture hashes bound to the frozen
   );
   const qualifications = corpus.filter((test) => test.id.startsWith('q6-h'));
   const h02 = expectDefined(rows.find((row) => row.id === 'q6-h02-child-delete-en'));
+  const h05 = expectDefined(rows.find((row) => row.id === 'q6-h05-cross-owner-correction-ru'));
+  const h14 = expectDefined(rows.find((row) => row.id === 'q6-h14-partial-field-save-discard-en'));
   expect(await digest(rows.map(({ id, actorProjectionHash }) => [id, actorProjectionHash]))).toBe(
     '98f74853380e35dee85cdb4f4413e2b48dbcd33fe8ea63ce40167375180fb1dc',
   );
@@ -106,10 +108,36 @@ it('keeps all actor projections and unrelated fixture hashes bound to the frozen
         .filter((row) => row.id !== 'q6-h02-child-delete-en')
         .map(({ id, fixtureHash }) => [id, fixtureHash]),
     ),
-  ).toBe('8ada1e806d20c5277c41b40c26cc3b64368607f4451592fe7953dcf5f5224a4b');
+  ).toBe('f7a818691a879344c08c2e2438ba0575229a763c9986212d7caaa54bb9cda567');
   expect(h02.fixtureHash).toBe('25daeee2267d24155d873bfa983c4a76f0f677c658a81c6cfd8eb46f9a2e8038');
+  expect(h05.actorProjectionHash).toBe(
+    'a0490363e14d98d5f339ec2455ee64e6463e3f62cfb57549c6882c0b7845e3ba',
+  );
+  expect(h14.actorProjectionHash).toBe(
+    '26c04217e2433a2770a98ef5754652c7121fa119271c91a81bfcf76fa9d9e1ad',
+  );
+  expect(
+    qualificationCases.find((test) => test.id === 'q6-h05-cross-owner-correction-ru')?.turns[1]
+      ?.expect.pendingTaskStates,
+  ).toEqual([
+    { path: 'Studio.md', line: 0, tree: { dates: { due: '2026-12-08' } } },
+    { path: 'Office.md', line: 0, tree: { dates: { due: '2026-12-10' } } },
+  ]);
+  expect(
+    qualificationCases.find((test) => test.id === 'q6-h14-partial-field-save-discard-en')?.turns[2]
+      ?.expect.pendingTaskStates,
+  ).toEqual([
+    {
+      path: 'a.md',
+      line: 0,
+      tree: {
+        markdownTitle: 'Book the community kiln',
+        dates: { scheduled: '2026-12-04', due: '2026-12-11' },
+      },
+    },
+  ]);
   expect(await digest(qualifications)).toBe(
-    '4cea47769ad96511712e5925dd395cce3e67060c7db7e9f18845736d4d06c8b9',
+    'fcc92a9ff7cb4c97e1b1904fc22cc4a998abfbc23a41b639ad9b3e7e75a8d1bc',
   );
 });
 

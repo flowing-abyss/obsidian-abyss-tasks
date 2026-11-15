@@ -1,86 +1,40 @@
-import { normalizeLinkCarrier, taskLinkFailures, type TaskLinkExpectation } from './linkOracle';
-import { hasSourceAbsenceFacts, hasSourceDestination, hasSourceFacts } from './sourceOracle';
-export interface ObservationExpectation {
-  kind: 'task' | 'note' | 'project';
-  path: string;
-  line?: number;
-  text?: string;
-  subpath?: string;
-  focused?: boolean;
-}
+import type { TaskTreeV1 } from '../../api';
+import type { CommandSessionSnapshot } from '../../src/ai/commandTypes';
+import { normalizeLinkCarrier, taskLinkFailures } from './linkOracle';
+import {
+  buildTurnPreservation,
+  retainedPlanEvidenceFromTrace,
+  type TurnPreservationEvidence,
+} from './preservation';
+import { hasSourceDestination } from './sourceOracle';
+import {
+  authoredTaskState,
+  equal,
+  matches,
+  type CommentContinuity,
+  type ObservationExpectation,
+  type PreservationPair,
+  type StatusPlanExpectation,
+  type TurnExpectation,
+} from './taskStateOracle';
+export { resolvePendingTaskStates } from './preservation';
+export type { PendingTaskStateOptions, PendingTaskStateResolution } from './preservation';
+export { authoredTaskState, matchesPendingTaskState, requestedTree } from './taskStateOracle';
+export type {
+  CommentContinuity,
+  ObservationExpectation,
+  PreservationPair,
+  StatusPlanExpectation,
+  TurnExpectation,
+} from './taskStateOracle';
 export interface ObservationEvidence extends ObservationExpectation {
   complete: boolean;
-}
-export interface StatusPlanExpectation {
-  path: string;
-  line: number;
-  symbol: string;
 }
 export interface ResearchEvidence {
   action?: string;
   invocation: number;
   query: string;
   sources: readonly string[];
-}
-export interface CommentContinuity {
-  before: string;
-  after: string;
-  ownerBefore: string;
-  ownerAfter: string;
-}
-export interface TurnExpectation {
-  status: 'ready' | 'saved' | 'question' | 'error';
-  statusAlternatives?: ReadonlyArray<'ready' | 'question' | 'error'>;
-  preservedConflict?: true;
-  questionIncludes?: string;
-  inboxMembers?: readonly boolean[];
-  addedNodes?: ReadonlyArray<readonly number[]>;
-  removedNodes?: ReadonlyArray<readonly number[]>;
-  focus?: readonly ObservationExpectation[];
-  proposalKinds?: readonly string[];
-  taskSources?: ReadonlyArray<{ path: string; line: number; kind: string }>;
-  taskPlanKinds?: readonly string[];
-  statusPlans?: readonly StatusPlanExpectation[];
-  publicTrees?: readonly unknown[];
-  retainPreviousTasks?: boolean;
-  freshPreparation?: boolean;
-  researchCalls?: number;
-  researchCallLimit?: number;
-  researchSource?: string;
-  researchPage?: string;
-  noteFacts?: ReadonlyArray<{ path: string; line: string; source: string }>;
-
-  trees?: readonly unknown[];
-  files?: Readonly<Record<string, string>>;
-  contains?: Readonly<Record<string, readonly string[]>>;
-  absent?: Readonly<Record<string, readonly string[]>>;
-  allowWrites?: boolean;
-  partialSave?: true;
-  rejectedWrite?: { error: string };
-  createdFiles?: readonly string[];
-  writeCount?: number;
-  observations?: readonly ObservationExpectation[];
-  projectChanges?: readonly unknown[];
-  notePlans?: ReadonlyArray<{ path: string; text: string }>;
-  taskLinks?: readonly TaskLinkExpectation[];
-  decomposition?: {
-    minChildren: number;
-    maxChildren: number;
-    maxDepth: number;
-    noInventedSchedule: boolean;
-  };
-}
-export interface PreservationPair {
-  before: unknown;
-  after: unknown;
-  requested: unknown;
-  addedNodeTargets?: readonly string[];
-  removedNodeTargets?: readonly string[];
-  structuralOrderRequired?: true;
-  relocatedNodeTargets?: readonly string[];
-  removedCommentTargets?: readonly string[];
-  commentContinuity?: readonly CommentContinuity[];
-  nodeContinuity?: ReadonlyArray<{ before: string; after: string }>;
 }
 export interface TurnEvidence {
   status: string;
@@ -135,85 +89,13 @@ export interface TurnEvidence {
 export type SourcePredicatePolicy = 'strict' | 'mechanical';
 export interface EvaluationPolicyOptions {
   sourcePredicatePolicy?: SourcePredicatePolicy;
+  pendingTaskStateFailures?: readonly string[];
 }
 export interface RetainedTurnRegradeOptions extends EvaluationPolicyOptions {
   oneBasedTurn: number;
 }
 function record(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
-}
-function equal(a: unknown, b: unknown): boolean {
-  if (Array.isArray(a))
-    return Array.isArray(b) && a.length === b.length && a.every((value, i) => equal(value, b[i]));
-  if (typeof a === 'object' && a !== null)
-    return (
-      typeof b === 'object' &&
-      b !== null &&
-      Object.keys(a).length === Object.keys(b).length &&
-      Object.entries(a).every(([key, value]) => equal(value, record(b)[key]))
-    );
-  return a === b;
-}
-function fieldMatcher(expected: unknown, actual: unknown): boolean | undefined {
-  const carrier = record(record(expected)['linkCarrier']);
-  if (typeof carrier['notePath'] === 'string')
-    return equal(
-      authored(normalizeLinkCarrier(carrier['original'])),
-      authored(normalizeLinkCarrier(actual, carrier['notePath'])),
-    );
-  const source = record(expected)['sourceText'];
-  if (typeof source === 'string') return sourceMatches(expected, actual, source);
-  const includes = record(expected)['includes'];
-  if (typeof includes === 'string') return typeof actual === 'string' && actual.includes(includes);
-  const alternatives = record(expected)['oneOf'];
-  return Array.isArray(alternatives) ? alternatives.includes(actual) : undefined;
-}
-function sourceMatches(expected: unknown, actual: unknown, source: string): boolean {
-  const maxLength = record(expected)['maxLength'];
-  return (
-    typeof actual === 'string' &&
-    actual.trim().length > source.length &&
-    (typeof maxLength !== 'number' || actual.length <= maxLength) &&
-    hasSourceDestination(actual, source) &&
-    hasSourceFacts(
-      actual,
-      (record(expected)['facts'] ?? []) as ReadonlyArray<readonly string[]>,
-      (record(expected)['excludes'] ?? []) as readonly string[],
-    ) &&
-    hasSourceAbsenceFacts(
-      actual,
-      (record(expected)['absenceFacts'] ?? []) as ReadonlyArray<ReadonlyArray<readonly string[]>>,
-    )
-  );
-}
-function matches(expected: unknown, actual: unknown): boolean {
-  const special = fieldMatcher(expected, actual);
-  if (special !== undefined) return special;
-  if (Array.isArray(expected))
-    return (
-      Array.isArray(actual) &&
-      actual.length === expected.length &&
-      expected.every((item, i) => matches(item, actual[i]))
-    );
-  return objectMatches(expected, actual);
-}
-function objectMatches(expected: unknown, actual: unknown): boolean {
-  if (typeof expected === 'object' && expected !== null)
-    return (
-      typeof actual === 'object' &&
-      actual !== null &&
-      Object.entries(expected).every(([key, value]) =>
-        key === 'dates'
-          ? dateMatches(value, record(actual)[key])
-          : matches(value, record(actual)[key]),
-      )
-    );
-  return expected === actual;
-}
-function dateMatches(expected: unknown, actual: unknown): boolean {
-  const nonempty = (value: unknown) =>
-    Object.fromEntries(Object.entries(record(value)).filter(([, date]) => date !== undefined));
-  return equal(nonempty(expected), nonempty(actual));
 }
 const protectedFields = [
   'markdownTitle',
@@ -232,30 +114,6 @@ const protectedFields = [
   'children',
   'timeEntries',
 ];
-function authored(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(authored);
-  if (typeof value !== 'object' || value === null) return value;
-  return Object.fromEntries(
-    Object.entries(value)
-      .filter(
-        ([key]) =>
-          ![
-            'target',
-            'revision',
-            'parentTarget',
-            'source',
-            'activity',
-            'entries',
-            'timeEntryCount',
-            'childCount',
-            'commentCount',
-            'complete',
-            'truncated',
-          ].includes(key),
-      )
-      .map(([key, child]) => [key, authored(child)]),
-  );
-}
 function preserve(pair: PreservationPair): string[] {
   const before = record(pair.before),
     after = record(pair.after),
@@ -291,7 +149,9 @@ function preservedFieldFailures(
   if (typeof carrier['notePath'] === 'string')
     return linkCarrierFailures(key, before[key], after[key], carrier['notePath']);
   if (key in requested) return requestedFieldFailures(key, before, after, requested);
-  return equal(authored(before[key]), authored(after[key])) ? [] : [`preservation:${key}`];
+  return equal(authoredTaskState(before[key]), authoredTaskState(after[key]))
+    ? []
+    : [`preservation:${key}`];
 }
 function linkCarrierFailures(
   key: string,
@@ -300,8 +160,8 @@ function linkCarrierFailures(
   notePath: unknown,
 ): string[] {
   return equal(
-    authored(normalizeLinkCarrier(before)),
-    authored(normalizeLinkCarrier(after, String(notePath))),
+    authoredTaskState(normalizeLinkCarrier(before)),
+    authoredTaskState(normalizeLinkCarrier(after, String(notePath))),
   )
     ? []
     : [`preservation:${key}`];
@@ -511,21 +371,6 @@ function rootsMatch(expected: readonly unknown[], actual: readonly unknown[]): b
     });
   return expected.every((_tree, index) => assign(index, new Set()));
 }
-export function requestedTree(expected: TurnExpectation, tree: unknown): unknown {
-  const matched = expected.trees?.find((want) => matches(want, tree));
-  if (matched !== undefined) return matched;
-  const candidates = (expected.trees ?? []).filter((want) => {
-    const wanted = record(want),
-      actual = record(tree);
-    if (!Array.isArray(wanted['comments']) || !Array.isArray(actual['comments'])) return false;
-    const withoutComments = (value: Record<string, unknown>) =>
-      Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'comments'));
-    const wantedWithoutComments = withoutComments(wanted),
-      actualWithoutComments = withoutComments(actual);
-    return matches(wantedWithoutComments, actualWithoutComments);
-  });
-  return candidates.length === 1 ? candidates[0] : {};
-}
 type StatusContract = { valid: boolean; allowed: ReadonlySet<string> };
 function statusContract(expected: TurnExpectation): StatusContract {
   const alternatives = expected.statusAlternatives;
@@ -679,6 +524,8 @@ function journalHistoryBaseline(
     if (typeof id !== 'string' || id.length === 0 || entries.has(id)) return undefined;
     entries.set(id, entry);
     if (typeof requestId === 'string') requests.add(requestId);
+    const receiptRequestId = record(entry['receipt'])['requestId'];
+    if (typeof receiptRequestId === 'string') requests.add(receiptRequestId);
   }
   return { entries, requests };
 }
@@ -1300,7 +1147,7 @@ function unchangedPlanFailure(plan: Record<string, unknown>): boolean {
     sourcePath === '' ||
     !completeTaskTree(before) ||
     !completeTaskTree(after) ||
-    !equal(authored(before), authored(after))
+    !equal(authoredTaskState(before), authoredTaskState(after))
   );
 }
 function unchangedReceiptLineageFailure(
@@ -1448,7 +1295,7 @@ function unchangedReadbackFailure(evidence: TurnEvidence, context: SuccessfulSav
         record(tree)['complete'] === true &&
         record(tree)['truncated'] === false &&
         record(record(tree)['source'])['path'] === sourcePath &&
-        equal(authored(tree), authored(after)),
+        equal(authoredTaskState(tree), authoredTaskState(after)),
     ) !== true
   );
 }
@@ -1854,6 +1701,14 @@ function inboxMembershipFailures(expected: TurnExpectation, evidence: TurnEviden
     ? ['inbox-membership']
     : [];
 }
+function pendingStatePolicyFailures(
+  expected: TurnExpectation,
+  policy: EvaluationPolicyOptions,
+): readonly string[] {
+  return expected.pendingTaskStates === undefined
+    ? []
+    : (policy.pendingTaskStateFailures ?? ['pending-task-state-evidence']);
+}
 export function evaluateTurn(
   expected: TurnExpectation,
   evidence: TurnEvidence,
@@ -1861,6 +1716,7 @@ export function evaluateTurn(
 ): string[] {
   const evaluatedExpected = evaluationExpectation(expected, policy);
   return [
+    ...pendingStatePolicyFailures(evaluatedExpected, policy),
     ...statusFailures(evaluatedExpected, evidence),
     ...inboxMembershipFailures(evaluatedExpected, evidence),
     ...focusFailures(evaluatedExpected, evidence),
@@ -1950,6 +1806,29 @@ function retainedSnapshot(value: unknown): Record<string, unknown> | undefined {
     Number.isSafeInteger(proposal['revision'])
     ? snapshot
     : undefined;
+}
+function retainedTerminalOwnerStore(
+  trace: readonly RetainedTraceEvent[],
+  oneBasedTurn: number,
+): Record<string, unknown> | undefined {
+  const evaluation = trace.findIndex(
+    (event) =>
+      event.kind === 'case-phase' &&
+      record(event.data)['phase'] === 'evaluation' &&
+      phaseTurn(event.data) === oneBasedTurn,
+  );
+  if (evaluation < 0) return undefined;
+  const nextBoundary = trace.findIndex(
+    (event, index) =>
+      index > evaluation &&
+      event.kind === 'case-phase' &&
+      ['turn', 'cleanup'].includes(String(record(event.data)['phase'])),
+  );
+  const terminalEvents = trace
+    .slice(evaluation + 1, nextBoundary < 0 ? undefined : nextBoundary)
+    .filter((event) => event.kind === 'owner-store');
+  const terminal = terminalEvents[terminalEvents.length - 1];
+  return terminal === undefined ? undefined : record(terminal.data);
 }
 function retainedJournalSummary(value: unknown): TurnEvidence['journal'][number] | undefined {
   const entry = record(value);
@@ -2093,6 +1972,7 @@ interface RetainedTurnParts {
   before: Record<string, unknown>;
   after: Record<string, unknown>;
   currentJournal: TurnEvidence['journal'];
+  ownerStore?: unknown;
 }
 function retainedTurnParts(
   turn: RetainedTurn,
@@ -2111,7 +1991,17 @@ function retainedTurnParts(
   )
     return undefined;
   const currentJournal = retainedCurrentJournal(before, after);
-  return currentJournal === undefined ? undefined : { events, before, after, currentJournal };
+  const ownerStoreEvent = [...events].reverse().find((event) => event.kind === 'owner-store');
+  const ownerStore = ownerStoreEvent?.data ?? retainedTerminalOwnerStore(trace, oneBasedTurn);
+  return currentJournal === undefined
+    ? undefined
+    : {
+        events,
+        before,
+        after,
+        currentJournal,
+        ...(ownerStore === undefined ? {} : { ownerStore }),
+      };
 }
 function retainedTurnEvidenceFromParts(
   expected: TurnExpectation,
@@ -2120,16 +2010,14 @@ function retainedTurnEvidenceFromParts(
 ): TurnEvidence {
   const { events, before, after, currentJournal } = parts;
   const evidence = { ...turn } as TurnEvidence;
+  delete evidence.preservationFailures;
   evidence.publicTrees = turn.publicReadback.filter(
     (tree) => record(record(tree)['source'])['path'] !== 'control.md',
   );
   delete evidence.writeObservations;
   const dispatchCount = events.filter((event) => event.kind === 'write-dispatch').length;
   if (!retainedSummaryMatches(turn, currentJournal, dispatchCount))
-    evidence.preservationFailures = [
-      ...(evidence.preservationFailures ?? []),
-      'retained-write-summary',
-    ];
+    evidence.preservationFailures = ['retained-write-summary'];
   evidence.journal = currentJournal;
   evidence.writeCount = dispatchCount;
   if (needsRetainedWriteEvidence(expected, currentJournal)) {
@@ -2145,15 +2033,6 @@ function retainedTurnEvidenceFromParts(
   }
   return evidence;
 }
-function retainedTurnEvidence(
-  expected: TurnExpectation,
-  turn: RetainedTurn,
-  trace: readonly RetainedTraceEvent[],
-  oneBasedTurn: number,
-): TurnEvidence | undefined {
-  const parts = retainedTurnParts(turn, trace, oneBasedTurn);
-  return parts === undefined ? undefined : retainedTurnEvidenceFromParts(expected, turn, parts);
-}
 function needsRetainedWriteEvidence(
   expected: TurnExpectation,
   currentJournal: TurnEvidence['journal'],
@@ -2161,6 +2040,116 @@ function needsRetainedWriteEvidence(
   return (
     expected.preservedConflict === true ||
     (expected.status === 'saved' && currentJournal.some((entry) => entry.effects === 'unchanged'))
+  );
+}
+function hasRawPreservationEvidence(
+  expected: TurnExpectation,
+  turn: RetainedTurn,
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+): boolean {
+  return (
+    hasRawTaskRoots(turn.trees) &&
+    hasRawTaskRoots(turn.publicReadback) &&
+    hasRawSnapshotTaskEvidence(before) &&
+    hasRawSnapshotTaskEvidence(after) &&
+    (expected.pendingTaskStates === undefined || isObjectRecord(after['status'])) &&
+    hasRawTaskPairs(before['trees']) &&
+    hasRawTaskPairs(after['trees']) &&
+    hasRawTaskChanges(before) &&
+    hasRawTaskChanges(after)
+  );
+}
+function hasRawSnapshotTaskEvidence(snapshot: Record<string, unknown>): boolean {
+  const entities = record(snapshot['entities']);
+  return (
+    Array.isArray(entities['tasks']) &&
+    entities['tasks'].every((page) => {
+      const tree = record(page)['tree'];
+      return hasRawTaskTreeShape(tree);
+    })
+  );
+}
+function hasRawTaskRoots(value: unknown): boolean {
+  if (!Array.isArray(value)) return false;
+  const roots: unknown[] = value;
+  return roots.every(hasRawTaskTreeShape);
+}
+function hasRawTaskTreeShape(value: unknown): boolean {
+  if (!isObjectRecord(value)) return false;
+  const children = record(value)['children'];
+  return Array.isArray(children) && children.every(hasRawTaskTreeShape);
+}
+function hasRawTaskPairs(value: unknown): boolean {
+  if (!Array.isArray(value)) return false;
+  const pairs: unknown[] = value;
+  return pairs.every((raw) => {
+    if (!isObjectRecord(raw)) return false;
+    const pair = record(raw);
+    return (
+      hasOwnRawField(pair, 'before') &&
+      hasOwnRawField(pair, 'after') &&
+      hasRawTaskTreeOrNull(pair['before']) &&
+      hasRawTaskTreeOrNull(pair['after'])
+    );
+  });
+}
+function hasRawTaskTreeOrNull(value: unknown): boolean {
+  return value === null || hasRawTaskTreeShape(value);
+}
+function hasRawTaskChanges(snapshot: Record<string, unknown>): boolean {
+  const changes = record(snapshot['proposal'])['changes'];
+  if (!Array.isArray(changes)) return false;
+  const changeList: unknown[] = changes;
+  return changeList.every((raw) => {
+    if (!isObjectRecord(raw)) return false;
+    const change = record(raw);
+    if (change['kind'] !== 'task') return true;
+    const plan = change['plan'];
+    if (!isObjectRecord(plan)) return false;
+    const value = record(plan);
+    return (
+      hasOwnRawField(value, 'before') &&
+      hasOwnRawField(value, 'after') &&
+      hasRawTaskTreeOrNull(value['before']) &&
+      hasRawTaskTreeOrNull(value['after']) &&
+      (value['copies'] === undefined || Array.isArray(value['copies']))
+    );
+  });
+}
+function hasOwnRawField(value: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+function retainedPreservationBuild(input: {
+  expected: TurnExpectation;
+  turn: RetainedTurn;
+  trace: readonly RetainedTraceEvent[];
+  options: RetainedTurnRegradeOptions;
+  parts: RetainedTurnParts;
+}): TurnPreservationEvidence | undefined {
+  const { expected, turn, trace, options, parts } = input;
+  if (!hasRawPreservationEvidence(expected, turn, parts.before, parts.after)) return undefined;
+  return buildTurnPreservation(
+    {
+      snapshot: parts.after as unknown as CommandSessionSnapshot,
+      previous: parts.before as unknown as CommandSessionSnapshot,
+      ...retainedPlanEvidenceFromTrace(trace, options.oneBasedTurn),
+    },
+    turn.trees as readonly TaskTreeV1[],
+    expected,
+    {
+      publicReadback: turn.publicReadback.filter(
+        (tree) => record(record(tree)['source'])['path'] !== 'control.md',
+      ) as readonly TaskTreeV1[],
+      writeCount: parts.events.filter((event) => event.kind === 'write-dispatch').length,
+      ...(turn.hostProviderEpoch === undefined
+        ? {}
+        : { hostProviderEpoch: turn.hostProviderEpoch }),
+      ...(parts.ownerStore === undefined ? {} : { ownerStore: parts.ownerStore }),
+    },
   );
 }
 /** Regrades a retained turn using its serialized snapshots and canonical trace. Turn numbers are one-based. */
@@ -2171,8 +2160,31 @@ export function regradeRetainedTurn(
   turnOptions: number | RetainedTurnRegradeOptions,
 ): { failures: string[]; evidence?: TurnEvidence } {
   const options = typeof turnOptions === 'number' ? { oneBasedTurn: turnOptions } : turnOptions;
-  const evidence = retainedTurnEvidence(expected, turn, trace, options.oneBasedTurn);
-  return evidence === undefined
-    ? { failures: ['retained-turn-evidence'] }
-    : { failures: evaluateTurn(expected, evidence, options), evidence };
+  const parts = retainedTurnParts(turn, trace, options.oneBasedTurn);
+  if (parts === undefined) return { failures: ['retained-turn-evidence'] };
+  const evidence = retainedTurnEvidenceFromParts(expected, turn, parts);
+  const beforeSnapshot = parts.before as unknown as CommandSessionSnapshot;
+  const built = retainedPreservationBuild({ expected, turn, trace, options, parts });
+  if (built === undefined) {
+    return {
+      failures: [...evaluateTurn(expected, evidence, options), 'retained-preservation-evidence'],
+      evidence,
+    };
+  }
+  evidence.preservation = built.preservation;
+  evidence.previousTaskContinuity = beforeSnapshot.trees.every(
+    (pair) =>
+      pair.after === null ||
+      built.preservation.some((kept) => record(kept.before)['target'] === pair.after?.target),
+  );
+  const policy =
+    expected.pendingTaskStates === undefined
+      ? options
+      : {
+          ...options,
+          pendingTaskStateFailures: built.pendingTaskStateFailures ?? [
+            'retained-preservation-evidence',
+          ],
+        };
+  return { failures: evaluateTurn(expected, evidence, policy), evidence };
 }

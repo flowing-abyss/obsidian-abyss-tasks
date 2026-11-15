@@ -3,14 +3,805 @@ import type { ContentPlanV1, ContentSourceCopyV1, TaskTreeV1 } from '../../api';
 import { commandPlanViews } from '../../src/ai/commandSchemas';
 import type { CommandSessionSnapshot } from '../../src/ai/commandTypes';
 import { normalizeLinkCarrier } from './linkOracle';
-import {
-  requestedTree,
-  type CommentContinuity,
-  type PreservationPair,
-  type TurnExpectation,
-} from './oracles';
 import { object } from './safety';
+import type { CommentContinuity, PreservationPair, TurnExpectation } from './taskStateOracle';
+import {
+  authoredTaskState,
+  equal,
+  matchesPendingTaskState,
+  requestedTree,
+} from './taskStateOracle';
 const createHash = Platform.isDesktop ? (await import('node:crypto')).createHash : undefined;
+const record = object;
+export interface PendingTaskStateResolution {
+  failures: string[];
+  requestedByTarget: ReadonlyMap<string, unknown>;
+  owners: readonly ResolvedPendingOwner[];
+}
+export interface ResolvedPendingOwner {
+  persisted: TaskTreeV1;
+  prior?: TaskTreeV1;
+  effective: TaskTreeV1;
+  requested: unknown;
+}
+type PendingTaskStateDeclaration = NonNullable<TurnExpectation['pendingTaskStates']>[number];
+type PendingOwner = { persisted: TaskTreeV1; declaration: PendingTaskStateDeclaration };
+type PendingEdit = { before: TaskTreeV1; after: TaskTreeV1; hasChanges?: boolean };
+type ExistingPendingPlan = Extract<
+  CommandSessionSnapshot['proposal']['changes'][number],
+  { kind: 'task' }
+>['plan'] & { kind: 'edit'; before: TaskTreeV1; after: TaskTreeV1 };
+export type PendingTaskStateOptions = {
+  writeCount: number;
+  hostProviderEpoch?: string;
+  ownerStore?: unknown;
+};
+function pendingRootComplete(tree: TaskTreeV1): boolean {
+  const targets = new Set<string>();
+  const commentTargets = new Set<string>();
+  const timeTargets = new Set<string>();
+  return visitPendingRoot(tree, undefined, { targets, commentTargets, timeTargets });
+}
+type PendingTargetSets = {
+  targets: Set<string>;
+  commentTargets: Set<string>;
+  timeTargets: Set<string>;
+};
+function visitPendingRoot(
+  node: TaskTreeV1,
+  parentTarget: string | undefined,
+  seen: PendingTargetSets,
+): boolean {
+  if (!pendingNodeHeaderComplete(node, parentTarget, seen.targets)) return false;
+  seen.targets.add(node.target);
+  if (!pendingCommentOwnersComplete(node, seen.commentTargets)) return false;
+  if (!pendingTimeEntryOwnersComplete(node, seen.timeTargets)) return false;
+  return (
+    pendingEntriesCoverNode(node) &&
+    node.children.every((child) => visitPendingRoot(child, node.target, seen))
+  );
+}
+function pendingNodeHeaderComplete(
+  node: TaskTreeV1,
+  parentTarget: string | undefined,
+  targets: ReadonlySet<string>,
+): boolean {
+  const target = object(node)['target'];
+  return (
+    pendingNodeCollectionsComplete(node) &&
+    typeof target === 'string' &&
+    target.length > 0 &&
+    node.parentTarget === parentTarget &&
+    !targets.has(target)
+  );
+}
+function pendingNodeCollectionsComplete(node: TaskTreeV1): boolean {
+  const value = object(node);
+  const children = value['children'];
+  const comments = value['comments'];
+  const timeEntries = value['timeEntries'];
+  const entries = value['entries'];
+  return (
+    value['complete'] === true &&
+    value['truncated'] === false &&
+    Array.isArray(children) &&
+    Array.isArray(comments) &&
+    Array.isArray(timeEntries) &&
+    Array.isArray(entries) &&
+    validPendingCount(value['childCount'], children.length) &&
+    validPendingCount(value['commentCount'], comments.length) &&
+    validPendingCount(value['timeEntryCount'], timeEntries.length)
+  );
+}
+function pendingCommentOwnersComplete(node: TaskTreeV1, seen: Set<string>): boolean {
+  for (const comment of node.comments) {
+    const value = object(comment);
+    const target = value['target'];
+    if (
+      typeof target !== 'string' ||
+      target.length === 0 ||
+      value['parentTarget'] !== node.target ||
+      seen.has(target)
+    )
+      return false;
+    seen.add(target);
+  }
+  return true;
+}
+function pendingTimeEntryOwnersComplete(node: TaskTreeV1, seen: Set<string>): boolean {
+  for (const entry of node.timeEntries) {
+    const value = object(entry);
+    const target = value['target'];
+    if (
+      typeof target !== 'string' ||
+      target.length === 0 ||
+      value['parentTarget'] !== node.target ||
+      seen.has(target)
+    )
+      return false;
+    seen.add(target);
+  }
+  return true;
+}
+function validPendingCount(value: unknown, length: number): boolean {
+  return Number.isSafeInteger(value) && (value as number) >= 0 && value === length;
+}
+function pendingEntriesCoverNode(node: TaskTreeV1): boolean {
+  const collections = pendingEntryCollections(node);
+  if (collections === undefined) return false;
+  const seen = new Set<string>();
+  const offsets = { child: 0, comment: 0, 'time-entry': 0 };
+  for (const raw of node.entries as readonly unknown[]) {
+    const entry = object(raw);
+    const kind = entry['kind'];
+    const targets =
+      kind === 'child' || kind === 'comment' || kind === 'time-entry'
+        ? collections[kind]
+        : undefined;
+    if (targets === undefined || typeof entry['target'] !== 'string') return false;
+    if (
+      !pendingEntryMatchesCollection({
+        kind: kind as 'child' | 'comment' | 'time-entry',
+        target: entry['target'],
+        targets,
+        offsets,
+        seen,
+      })
+    )
+      return false;
+  }
+  return pendingCollectionCountsMatch(collections, offsets);
+}
+function pendingEntryCollections(node: TaskTreeV1):
+  | {
+      child: string[];
+      comment: string[];
+      'time-entry': string[];
+    }
+  | undefined {
+  const childTargets = pendingCollectionTargets(node.children);
+  const commentTargets = pendingCollectionTargets(node.comments);
+  const timeTargets = pendingCollectionTargets(node.timeEntries);
+  if (childTargets === undefined || commentTargets === undefined || timeTargets === undefined)
+    return undefined;
+  return {
+    child: childTargets,
+    comment: commentTargets,
+    'time-entry': timeTargets,
+  };
+}
+function pendingCollectionCountsMatch(
+  collections: {
+    child: readonly string[];
+    comment: readonly string[];
+    'time-entry': readonly string[];
+  },
+  offsets: { child: number; comment: number; 'time-entry': number },
+): boolean {
+  return (
+    offsets.child === collections.child.length &&
+    offsets.comment === collections.comment.length &&
+    offsets['time-entry'] === collections['time-entry'].length
+  );
+}
+function pendingCollectionTargets(values: readonly unknown[]): string[] | undefined {
+  const targets = values.map((value) => object(value)['target']);
+  return targets.every((target): target is string => typeof target === 'string')
+    ? targets
+    : undefined;
+}
+function pendingEntryMatchesCollection(input: {
+  kind: 'child' | 'comment' | 'time-entry';
+  target: string;
+  targets: readonly string[];
+  offsets: { child: number; comment: number; 'time-entry': number };
+  seen: Set<string>;
+}): boolean {
+  const { kind, target, targets, offsets, seen } = input;
+  const key = `${kind}:${target}`;
+  if (target !== targets[offsets[kind]] || seen.has(key)) return false;
+  offsets[kind] += 1;
+  seen.add(key);
+  return true;
+}
+function pendingSameAuthoredTree(left: unknown, right: unknown): boolean {
+  return equal(authoredTaskState(left), authoredTaskState(right));
+}
+function pendingDirectEntryOrder(value: unknown): string[] | undefined {
+  const tree = record(value);
+  const entries = Array.isArray(tree['entries']) ? tree['entries'] : [];
+  const indexByTarget = (key: 'children' | 'comments' | 'timeEntries') =>
+    new Map(
+      (Array.isArray(tree[key]) ? tree[key] : []).flatMap((item, index) => {
+        const target = record(item)['target'];
+        return typeof target === 'string' ? [[target, index] as const] : [];
+      }),
+    );
+  const indexes = {
+    child: indexByTarget('children'),
+    comment: indexByTarget('comments'),
+    'time-entry': indexByTarget('timeEntries'),
+  };
+  const order: string[] = [];
+  for (const value of entries) {
+    const entry = record(value);
+    const kind = entry['kind'];
+    if (kind !== 'child' && kind !== 'comment' && kind !== 'time-entry') return undefined;
+    const target = entry['target'];
+    const index = typeof target === 'string' ? indexes[kind].get(target) : undefined;
+    if (index === undefined) return undefined;
+    order.push(`${kind}:${index}`);
+  }
+  return order;
+}
+function pendingSameDirectEntryOrder(before: unknown, after: unknown): boolean {
+  const left = pendingDirectEntryOrder(before);
+  const right = pendingDirectEntryOrder(after);
+  return left !== undefined && right !== undefined && equal(left, right);
+}
+function validPendingDeclaration(value: unknown): value is PendingTaskStateDeclaration {
+  const item = record(value);
+  return (
+    typeof item['path'] === 'string' &&
+    Number.isSafeInteger(item['line']) &&
+    (item['line'] as number) >= 0 &&
+    typeof item['tree'] === 'object' &&
+    item['tree'] !== null
+  );
+}
+function pendingContractFailures(
+  expected: TurnExpectation,
+  history: { snapshot: CommandSessionSnapshot; previous: CommandSessionSnapshot },
+  options: PendingTaskStateOptions,
+): string[] {
+  return expected.status === 'ready' &&
+    expected.allowWrites !== true &&
+    expected.partialSave !== true &&
+    expected.publicTrees !== undefined &&
+    expected.writeCount === 0 &&
+    options.writeCount === 0 &&
+    hasPendingHostEpoch(options) &&
+    history.snapshot.status.kind === 'ready' &&
+    noNewPendingAdmissions(history.snapshot, history.previous)
+    ? []
+    : ['pending-task-state-contract'];
+}
+function hasPendingHostEpoch(options: PendingTaskStateOptions): boolean {
+  return typeof options.hostProviderEpoch === 'string' && options.hostProviderEpoch.length > 0;
+}
+function noNewPendingAdmissions(
+  snapshot: CommandSessionSnapshot,
+  previous: CommandSessionSnapshot,
+): boolean {
+  const prior = new Set(previous.journal.map((entry) => entry.id));
+  return snapshot.journal.every((entry) => prior.has(entry.id) || entry.state !== 'admitted');
+}
+function resolveDeclaredOwners(
+  declarations: readonly PendingTaskStateDeclaration[],
+  publicReadback: readonly TaskTreeV1[],
+): { owners: Map<string, PendingOwner>; failures: string[] } {
+  const owners = new Map<string, PendingOwner>();
+  const failures: string[] = [];
+  const seenSources = new Set<string>();
+  for (const declaration of declarations) {
+    const sourceKey = `${declaration.path}\u0000${declaration.line}`;
+    if (seenSources.has(sourceKey)) {
+      failures.push('pending-task-state-contract');
+      continue;
+    }
+    seenSources.add(sourceKey);
+    const matches = publicReadback.filter(
+      (tree) =>
+        tree.parentTarget === undefined &&
+        tree.source?.path === declaration.path &&
+        tree.source.line === declaration.line,
+    );
+    const owner = matches[0];
+    if (matches.length !== 1 || owner === undefined || !pendingRootComplete(owner)) {
+      failures.push('pending-task-state-owner');
+      continue;
+    }
+    if (owners.has(owner.target)) {
+      failures.push('pending-task-state-owner');
+      continue;
+    }
+    owners.set(owner.target, { persisted: owner, declaration });
+  }
+  return { owners, failures };
+}
+function validCurrentPendingEdit(
+  change: CommandSessionSnapshot['proposal']['changes'][number],
+  owners: ReadonlyMap<string, PendingOwner>,
+  hostProviderEpoch: string | undefined,
+): { target: string; edit: PendingEdit } | undefined {
+  const plan = existingPendingPlan(change);
+  if (plan === undefined) return undefined;
+  const before = plan.before;
+  const owner = owners.get(before.target)?.persisted;
+  if (owner === undefined || !pendingBeforeMatchesOwner(before, owner)) return undefined;
+  if (!pendingPlanAfterMatchesOwner(plan, owner, hostProviderEpoch)) return undefined;
+  return {
+    target: before.target,
+    edit: {
+      before,
+      after: plan.after,
+      ...(typeof plan.hasChanges === 'boolean' ? { hasChanges: plan.hasChanges } : {}),
+    },
+  };
+}
+function existingPendingPlan(
+  change: CommandSessionSnapshot['proposal']['changes'][number],
+): ExistingPendingPlan | undefined {
+  return change.kind === 'task' &&
+    change.plan.kind === 'edit' &&
+    change.plan.before !== null &&
+    change.plan.after !== null
+    ? (change.plan as ExistingPendingPlan)
+    : undefined;
+}
+function pendingPlanAfterMatchesOwner(
+  plan: ExistingPendingPlan,
+  owner: TaskTreeV1,
+  hostProviderEpoch: string | undefined,
+): boolean {
+  return (
+    plan.after.target === owner.target &&
+    plan.providerEpoch === hostProviderEpoch &&
+    pendingRootComplete(plan.after)
+  );
+}
+function pendingBeforeMatchesOwner(before: TaskTreeV1, owner: TaskTreeV1): boolean {
+  return (
+    pendingRootComplete(before) &&
+    pendingRootComplete(owner) &&
+    pendingOwnerBasisMatches(before, owner) &&
+    pendingSameAuthoredTree(before, owner)
+  );
+}
+function pendingOwnerBasisMatches(before: TaskTreeV1, owner: TaskTreeV1): boolean {
+  return (
+    before.target === owner.target &&
+    before.revision === owner.revision &&
+    before.source?.path === owner.source?.path &&
+    before.source?.line === owner.source?.line
+  );
+}
+function currentPendingEdits(
+  snapshot: CommandSessionSnapshot,
+  owners: ReadonlyMap<string, PendingOwner>,
+  hostProviderEpoch: string | undefined,
+): { edits: Map<string, PendingEdit[]>; failures: string[] } {
+  const edits = new Map<string, PendingEdit[]>();
+  const failures: string[] = [];
+  for (const change of snapshot.proposal.changes) {
+    const result = validCurrentPendingEdit(change, owners, hostProviderEpoch);
+    if (result === undefined) {
+      failures.push('pending-task-state-owner');
+      continue;
+    }
+    edits.set(result.target, [...(edits.get(result.target) ?? []), result.edit]);
+  }
+  return { edits, failures };
+}
+function previousPendingStates(
+  snapshot: CommandSessionSnapshot,
+  owners: ReadonlyMap<string, PendingOwner>,
+  hostProviderEpoch: string | undefined,
+): { priors: ReadonlyMap<string, TaskTreeV1>; failures: string[] } {
+  const failures: string[] = [];
+  const priors = new Map<string, TaskTreeV1>();
+  const seenOwners = new Set<string>();
+  for (const change of snapshot.proposal.changes) {
+    const plan = existingPendingPlan(change);
+    if (plan === undefined) {
+      failures.push('pending-task-state-contract');
+      continue;
+    }
+    const before = plan.before;
+    const owner = owners.get(before.target)?.persisted;
+    if (
+      owner === undefined ||
+      !pendingBeforeMatchesOwner(before, owner) ||
+      !pendingPlanAfterMatchesOwner(plan, owner, hostProviderEpoch)
+    ) {
+      failures.push('pending-task-state-owner');
+      continue;
+    }
+    if (seenOwners.has(owner.target)) {
+      failures.push('pending-task-state-owner');
+      continue;
+    }
+    seenOwners.add(owner.target);
+    priors.set(owner.target, plan.after);
+  }
+  return { priors, failures };
+}
+function pendingOwnerFailures(
+  owners: ReadonlyMap<string, PendingOwner>,
+  edits: ReadonlyMap<string, readonly PendingEdit[]>,
+): string[] {
+  const failures: string[] = [];
+  for (const [target, entry] of owners) {
+    failures.push(...pendingOwnerStateFailures(entry, edits.get(target) ?? []));
+  }
+  return failures;
+}
+function pendingOwnerStateFailures(entry: PendingOwner, plans: readonly PendingEdit[]): string[] {
+  if (plans.length > 1) return ['pending-task-state-owner'];
+  const plan = plans[0];
+  const effective = plan?.after ?? entry.persisted;
+  const failures = matchesPendingTaskState(entry.declaration.tree, effective)
+    ? []
+    : ['pending-task-state-value'];
+  failures.push(...pendingNoopFailures(plan, entry.persisted));
+  return failures;
+}
+function pendingNoopFailures(plan: PendingEdit | undefined, owner: TaskTreeV1): string[] {
+  return plan?.hasChanges === false &&
+    (!pendingSameAuthoredTree(plan.before, owner) ||
+      !pendingSameAuthoredTree(plan.after, owner) ||
+      !pendingSameDirectEntryOrder(plan.before, owner) ||
+      !pendingSameDirectEntryOrder(plan.before, plan.after))
+    ? ['pending-task-state-noop']
+    : [];
+}
+function pendingReceiptFailures(
+  snapshot: CommandSessionSnapshot,
+  previous: CommandSessionSnapshot,
+  owners: ReadonlyMap<string, PendingOwner>,
+  ownerStoreValue: unknown,
+): string[] {
+  const relevantReceipts = relevantPendingReceipts(previous, owners);
+  if (relevantReceipts.length === 0) return [];
+  const ownerStore = record(ownerStoreValue);
+  const sessionsValue = ownerStore['sessions'];
+  const activeSessionId = ownerStore['activeSessionId'];
+  if (
+    !Array.isArray(sessionsValue) ||
+    !(activeSessionId === null || typeof activeSessionId === 'string')
+  )
+    return ['pending-task-state-receipt'];
+  const sessions: readonly unknown[] = sessionsValue;
+  const previousSessionId = record(previous)['id'];
+  const storedJournal = sessions.flatMap((sessionValue): unknown[] => {
+    const snapshot = record(sessionValue)['snapshot'];
+    if (record(snapshot)['id'] !== previousSessionId) return [];
+    const journal = record(snapshot)['journal'];
+    return Array.isArray(journal) ? journal : [];
+  });
+  const activeJournal =
+    ownerStore['activeSessionId'] === previousSessionId ? snapshot.journal : undefined;
+  const missing = relevantReceipts.some(
+    (expected) =>
+      !hasExactSettledReceipt(storedJournal, expected) ||
+      (activeJournal !== undefined && !hasExactSettledReceipt(activeJournal, expected)),
+  );
+  return missing ? ['pending-task-state-receipt'] : [];
+}
+function relevantPendingReceipts(
+  previous: CommandSessionSnapshot,
+  owners: ReadonlyMap<string, PendingOwner>,
+): CommandSessionSnapshot['journal'] {
+  return previous.journal.filter((entry) => {
+    if (entry.state !== 'settled' || entry.change.kind !== 'task') return false;
+    const before = entry.change.plan.before;
+    return before !== null && owners.has(before.target);
+  });
+}
+function hasExactSettledReceipt(
+  journal: readonly unknown[],
+  expected: CommandSessionSnapshot['journal'][number],
+): boolean {
+  const matches = journal.filter((value) => record(value)['id'] === expected.id);
+  if (matches.length !== 1) return false;
+  const actual = record(matches[0]);
+  return (
+    actual['state'] === 'settled' &&
+    actual['effects'] === expected.effects &&
+    equal(actual['receipt'], expected.receipt)
+  );
+}
+/** Rebuild the opt-in state assertion from canonical snapshots and the current public inventory. */
+export function resolvePendingTaskStates(
+  expected: TurnExpectation,
+  history: { snapshot: CommandSessionSnapshot; previous: CommandSessionSnapshot },
+  publicReadback: readonly TaskTreeV1[],
+  options: PendingTaskStateOptions,
+): PendingTaskStateResolution {
+  const rawDeclarations: readonly unknown[] = expected.pendingTaskStates ?? [];
+  if (rawDeclarations.length === 0)
+    return {
+      failures: expected.pendingTaskStates === undefined ? [] : ['pending-task-state-contract'],
+      requestedByTarget: new Map(),
+      owners: [],
+    };
+  const declarations = rawDeclarations.filter(validPendingDeclaration);
+  if (declarations.length !== rawDeclarations.length)
+    return { failures: ['pending-task-state-contract'], requestedByTarget: new Map(), owners: [] };
+  const declared = resolveDeclaredOwners(declarations, publicReadback);
+  const current = currentPendingEdits(history.snapshot, declared.owners, options.hostProviderEpoch);
+  const previous = previousPendingStates(
+    history.previous,
+    declared.owners,
+    options.hostProviderEpoch,
+  );
+  const resolvedOwners = [...declared.owners].map(([target, entry]): ResolvedPendingOwner => {
+    const plan = (current.edits.get(target) ?? [])[0];
+    const prior = previous.priors.get(target);
+    return {
+      persisted: entry.persisted,
+      ...(prior === undefined ? {} : { prior }),
+      effective: plan?.after ?? entry.persisted,
+      requested: entry.declaration.tree,
+    };
+  });
+  const requestedByTarget = new Map(
+    [...declared.owners].map(([target, entry]) => [target, entry.declaration.tree]),
+  );
+  return {
+    failures: [
+      ...new Set([
+        ...pendingContractFailures(expected, history, options),
+        ...declared.failures,
+        ...current.failures,
+        ...previous.failures,
+        ...pendingOwnerFailures(declared.owners, current.edits),
+        ...pendingReceiptFailures(
+          history.snapshot,
+          history.previous,
+          declared.owners,
+          options.ownerStore,
+        ),
+      ]),
+    ],
+    requestedByTarget,
+    owners: resolvedOwners,
+  };
+}
+
+function projectionState(value: TaskTreeV1): unknown {
+  const projected: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (key === 'activity') continue;
+    projected[key] = Array.isArray(child) ? projectedItems(child) : child;
+  }
+  return projected;
+}
+function projectedItems(items: readonly unknown[]): unknown[] {
+  return items.map((item) =>
+    typeof object(item)['target'] === 'string' ? projectionState(item as TaskTreeV1) : item,
+  );
+}
+function pendingRootProjectionEqual(left: TaskTreeV1 | null, right: TaskTreeV1 | null): boolean {
+  if (left === null || right === null) return left === right;
+  if (!pendingRootComplete(left) || !pendingRootComplete(right)) return false;
+  return equal(projectionState(left), projectionState(right));
+}
+function pendingViewKey(pair: { before: TaskTreeV1 | null; after: TaskTreeV1 | null }): string {
+  return `${pair.before?.target ?? ''}\\u0000${pair.after?.target ?? ''}`;
+}
+function pendingSnapshotProjectionFailures(snapshot: CommandSessionSnapshot): string[] {
+  const canonical = snapshot.proposal.changes.flatMap((change) =>
+    change.kind === 'task' ? commandPlanViews(change.plan) : [],
+  );
+  if (canonical.length !== snapshot.trees.length) return ['pending-task-state-projection'];
+  const remaining = [...snapshot.trees];
+  for (const pair of canonical) {
+    const matches = remaining.filter((item) => pendingViewKey(item) === pendingViewKey(pair));
+    const match = matches[0];
+    if (
+      matches.length !== 1 ||
+      match === undefined ||
+      !pendingRootProjectionEqual(pair.before, match.before) ||
+      !pendingRootProjectionEqual(pair.after, match.after)
+    )
+      return ['pending-task-state-projection'];
+    remaining.splice(remaining.indexOf(match), 1);
+  }
+  return remaining.length === 0 ? [] : ['pending-task-state-projection'];
+}
+function pendingOutputProjectionFailures(
+  snapshot: CommandSessionSnapshot,
+  trees: readonly TaskTreeV1[],
+  publicReadback: readonly TaskTreeV1[],
+): string[] {
+  const canonical =
+    snapshot.proposal.changes.length > 0
+      ? snapshot.trees.flatMap((pair) => (pair.after === null ? [] : [pair.after]))
+      : [...publicReadback];
+  if (canonical.length !== trees.length) return ['pending-task-state-projection'];
+  const remaining = [...trees];
+  for (const root of canonical) {
+    const matches = remaining.filter((tree) => tree.target === root.target);
+    const match = matches[0];
+    if (matches.length !== 1 || match === undefined || !pendingRootProjectionEqual(root, match))
+      return ['pending-task-state-projection'];
+    remaining.splice(remaining.indexOf(match), 1);
+  }
+  return remaining.length === 0 ? [] : ['pending-task-state-projection'];
+}
+function pendingProjectionFailures(
+  history: TurnSnapshots,
+  trees: readonly TaskTreeV1[],
+  publicReadback: readonly TaskTreeV1[],
+  owners: readonly ResolvedPendingOwner[],
+): string[] {
+  const failures = [
+    ...pendingSnapshotProjectionFailures(history.previous),
+    ...pendingSnapshotProjectionFailures(history.snapshot),
+    ...pendingOutputProjectionFailures(history.snapshot, trees, publicReadback),
+  ];
+  for (const owner of owners) {
+    const matches = publicReadback.filter((tree) => tree.target === owner.persisted.target);
+    if (matches.length !== 1 || !pendingRootProjectionEqual(owner.persisted, matches[0] ?? null))
+      failures.push('pending-task-state-projection');
+  }
+  return [...new Set(failures)];
+}
+function pendingEntryOrderFailures(pair: PreservationPair): string[] {
+  const failures: string[] = [];
+  if (
+    !pendingRootComplete(pair.before as TaskTreeV1) ||
+    !pendingRootComplete(pair.after as TaskTreeV1)
+  )
+    return ['preservation:entry-order'];
+  comparePendingEntryOrder({
+    before: pair.before as TaskTreeV1,
+    after: pair.after as TaskTreeV1,
+    requested: pair.requested,
+    pair,
+    nodeMappings: new Map((pair.nodeContinuity ?? []).map((entry) => [entry.before, entry.after])),
+    failures,
+  });
+  return [...new Set(failures)];
+}
+function comparePendingEntryOrder(input: {
+  before: TaskTreeV1;
+  after: TaskTreeV1;
+  requested: unknown;
+  pair: PreservationPair;
+  nodeMappings: ReadonlyMap<string, string>;
+  failures: string[];
+}): void {
+  const { before, after, requested, pair, nodeMappings, failures } = input;
+  const surviving = new Set<string>();
+  const expectedSequence = before.entries.flatMap((entry) => {
+    const target = retainedEntryTarget({ entry, before, after, pair, nodeMappings, failures });
+    if (target === undefined) return [];
+    const value = `${entry.kind}:${target}`;
+    surviving.add(value);
+    return [value];
+  });
+  const requestedNode = object(requested);
+  if (
+    !('entries' in requestedNode) &&
+    !pendingEntrySequenceMatches(after, expectedSequence, surviving)
+  )
+    failures.push('preservation:entry-order');
+  comparePendingChildEntryOrder({
+    before,
+    after,
+    requested: requestedNode,
+    pair,
+    nodeMappings,
+    failures,
+  });
+}
+function retainedEntryTarget(input: {
+  entry: TaskTreeV1['entries'][number];
+  before: TaskTreeV1;
+  after: TaskTreeV1;
+  pair: PreservationPair;
+  nodeMappings: ReadonlyMap<string, string>;
+  failures: string[];
+}): string | undefined {
+  const { entry, before, after, pair, nodeMappings, failures } = input;
+  if (entry.kind === 'child')
+    return retainedChildEntryTarget({ target: entry.target, after, pair, nodeMappings, failures });
+  if (entry.kind === 'comment')
+    return retainedCommentEntryTarget({ target: entry.target, before, after, pair, failures });
+  return retainedTimeEntryTarget({ target: entry.target, before, after, failures });
+}
+function retainedChildEntryTarget(input: {
+  target: string;
+  after: TaskTreeV1;
+  pair: PreservationPair;
+  nodeMappings: ReadonlyMap<string, string>;
+  failures: string[];
+}): string | undefined {
+  const { target, after, pair, nodeMappings, failures } = input;
+  if (
+    (pair.removedNodeTargets ?? []).includes(target) ||
+    (pair.relocatedNodeTargets ?? []).includes(target)
+  )
+    return undefined;
+  const mapped = nodeMappings.get(target) ?? target;
+  if (after.children.some((child) => child.target === mapped)) return mapped;
+  failures.push('preservation:entry-order');
+  return undefined;
+}
+function retainedCommentEntryTarget(input: {
+  target: string;
+  before: TaskTreeV1;
+  after: TaskTreeV1;
+  pair: PreservationPair;
+  failures: string[];
+}): string | undefined {
+  const { target, before, after, pair, failures } = input;
+  const proof = (pair.commentContinuity ?? []).find(
+    (item) =>
+      item.before === target &&
+      item.ownerBefore === before.target &&
+      item.ownerAfter === after.target,
+  );
+  const mapped = proof?.after ?? target;
+  if (after.comments.some((comment) => comment.target === mapped)) return mapped;
+  if ((pair.removedCommentTargets ?? []).includes(target)) return undefined;
+  failures.push('preservation:entry-order');
+  return undefined;
+}
+function retainedTimeEntryTarget(input: {
+  target: string;
+  before: TaskTreeV1;
+  after: TaskTreeV1;
+  failures: string[];
+}): string | undefined {
+  const { target, before, after, failures } = input;
+  const index = before.timeEntries.findIndex((entry) => entry.target === target);
+  const previous = before.timeEntries[index];
+  const current = after.timeEntries[index];
+  if (
+    index < 0 ||
+    previous === undefined ||
+    current === undefined ||
+    !equal(authoredTaskState(previous), authoredTaskState(current))
+  ) {
+    failures.push('preservation:entry-order');
+    return undefined;
+  }
+  return current.target;
+}
+function pendingEntrySequenceMatches(
+  after: TaskTreeV1,
+  expected: readonly string[],
+  surviving: ReadonlySet<string>,
+): boolean {
+  const actual = after.entries.flatMap((entry) => {
+    const value = `${entry.kind}:${entry.target}`;
+    return surviving.has(value) ? [value] : [];
+  });
+  return equal(expected, actual);
+}
+function comparePendingChildEntryOrder(input: {
+  before: TaskTreeV1;
+  after: TaskTreeV1;
+  requested: Record<string, unknown>;
+  pair: PreservationPair;
+  nodeMappings: ReadonlyMap<string, string>;
+  failures: string[];
+}): void {
+  const { before, after, requested, pair, nodeMappings, failures } = input;
+  const requestedChildren = Array.isArray(requested['children']) ? requested['children'] : [];
+  for (const oldChild of before.children) {
+    if (
+      (pair.removedNodeTargets ?? []).includes(oldChild.target) ||
+      (pair.relocatedNodeTargets ?? []).includes(oldChild.target)
+    )
+      continue;
+    const target = nodeMappings.get(oldChild.target) ?? oldChild.target;
+    const nextChild = after.children.find((child) => child.target === target);
+    if (nextChild === undefined) continue;
+    comparePendingEntryOrder({
+      before: oldChild,
+      after: nextChild,
+      requested: requestedChildren[after.children.indexOf(nextChild)],
+      pair,
+      nodeMappings,
+      failures,
+    });
+  }
+}
+
 function nodes(tree: TaskTreeV1): TaskTreeV1[] {
   return [tree, ...tree.children.flatMap(nodes)];
 }
@@ -85,11 +876,12 @@ export interface NativePlanBasisObservation {
     membershipComplete: boolean;
   };
 }
-interface TurnSnapshots {
+export interface TurnSnapshots {
   snapshot: CommandSessionSnapshot;
   previous: CommandSessionSnapshot;
   stagedPlans?: readonly ContentPlanV1[];
   selectedPlans?: readonly SelectedPlanObservation[];
+  selectedPlanSources?: readonly ContentPlanV1[];
   nativePlanBasis?: readonly NativePlanBasisObservation[];
 }
 export function nativeOperationIdentity(operation: unknown): string {
@@ -210,12 +1002,24 @@ function hasNativeBasisStrings(
 export function retainedPlanEvidenceFromTrace(
   trace: ReadonlyArray<{ kind: string; data?: unknown; sequence?: number }>,
   oneBasedTurn: number,
-): Pick<TurnSnapshots, 'stagedPlans' | 'selectedPlans' | 'nativePlanBasis'> {
+): Pick<
+  TurnSnapshots,
+  'stagedPlans' | 'selectedPlans' | 'selectedPlanSources' | 'nativePlanBasis'
+> {
   const start = trace.findIndex((event) => {
     const data = object(event.data);
     return event.kind === 'case-phase' && data['phase'] === 'turn' && data['turn'] === oneBasedTurn;
   });
-  if (start < 0) return { stagedPlans: [], selectedPlans: [], nativePlanBasis: [] };
+  if (start < 0)
+    return { stagedPlans: [], selectedPlans: [], selectedPlanSources: [], nativePlanBasis: [] };
+  let caseStart = start;
+  for (let index = start - 1; index >= 0; index -= 1) {
+    const event = trace[index];
+    if (event?.kind === 'case-phase' && object(event.data)['phase'] === 'case-start') {
+      caseStart = index;
+      break;
+    }
+  }
   const end = trace.findIndex((event, index) => {
     if (index <= start || event.kind !== 'case-phase') return false;
     const phase = object(event.data)['phase'];
@@ -233,14 +1037,26 @@ export function retainedPlanEvidenceFromTrace(
           : [];
       });
   });
-  const selectedPlans = events.flatMap((event) =>
+  const continuityEvents = [...trace.slice(caseStart, start), ...events];
+  const selectedPlans = continuityEvents.flatMap((event) =>
     event.kind === 'selected-task-fields'
       ? [object(event.data) as unknown as SelectedPlanObservation]
       : [],
   );
+  const selectedPlanSources = continuityEvents.flatMap((event) => {
+    if (event.kind !== 'snapshot') return [];
+    return list(object(object(event.data)['proposal'])['changes']).flatMap((raw) => {
+      const change = object(raw);
+      const plan = change['plan'];
+      return change['kind'] === 'task' && typeof plan === 'object' && plan !== null
+        ? [plan as ContentPlanV1]
+        : [];
+    });
+  });
   return {
     stagedPlans,
     selectedPlans,
+    selectedPlanSources,
     nativePlanBasis: nativePlanBasisFromTrace(events),
   };
 }
@@ -343,24 +1159,39 @@ function selectedCommentSource(
   previous: CommandSessionSnapshot,
   plan: ContentPlanV1,
   selected: readonly SelectedPlanObservation[],
+  sourcePlans: readonly ContentPlanV1[] = [],
 ): TaskTreeV1 | undefined {
   const matches = selected.filter(
     (item) => item.selected === plan.target && item.selectedRevision === plan.revision,
   );
   if (matches.length !== 1 || plan.kind !== 'edit' || plan.before === null) return undefined;
-  const source = previous.proposal.changes.find(
-    (item) =>
-      item.kind === 'task' &&
-      item.plan.target === matches[0]?.source &&
-      item.plan.revision === matches[0].sourceRevision,
+  const selectedPlan = matches[0];
+  if (selectedPlan === undefined) return undefined;
+  const source = [
+    ...previous.proposal.changes.flatMap((item) => (item.kind === 'task' ? [item.plan] : [])),
+    ...sourcePlans,
+  ].find(
+    (candidate) =>
+      candidate.target === selectedPlan.source &&
+      candidate.revision === selectedPlan.sourceRevision &&
+      candidate.kind === 'edit',
   );
-  if (
-    source?.kind !== 'task' ||
-    source.plan.before?.target !== plan.before.target ||
-    source.plan.before.revision !== plan.before.revision
-  )
-    return undefined;
-  return source.plan.after ?? undefined;
+  if (!selectedSourceMatchesOwner(source, plan)) return undefined;
+  if (source?.kind !== 'edit') return undefined;
+  return source.after ?? undefined;
+}
+function selectedSourceMatchesOwner(
+  source: ContentPlanV1 | undefined,
+  selected: ContentPlanV1,
+): boolean {
+  return (
+    source?.kind === 'edit' &&
+    source.before !== null &&
+    selected.kind === 'edit' &&
+    selected.before !== null &&
+    source.before.target === selected.before.target &&
+    source.before.revision === selected.before.revision
+  );
 }
 function selectedReceiptComments(
   before: TaskTreeV1,
@@ -387,36 +1218,125 @@ function selectedReceiptComments(
     });
   });
 }
-function receiptMappings({ snapshot, previous, selectedPlans = [] }: TurnSnapshots) {
-  return snapshot.journal
-    .filter((entry) => !previous.journal.some((old) => old.id === entry.id))
-    .flatMap((entry) => {
-      const continuity = object(object(entry.receipt)['contentContinuity']);
-      const correspondence = object(continuity['correspondence']);
-      if (correspondence['state'] !== 'complete') return [];
-      const change = entry.change;
-      if (change.kind !== 'task' || change.plan.after === null) return [correspondence];
-      const old = previous.proposal.changes.find(
-        (c) => c.kind === 'task' && c.plan.target === change.plan.target,
-      );
-      let comments: Array<Record<string, unknown>> = [];
-      if (old?.kind === 'task' && old.plan.after !== null)
-        comments = continuedReceiptComments(
-          old.plan.after,
-          change.plan.after,
-          correspondence,
-          previous,
-        );
-      else if (
-        continuity['plan'] === change.plan.target &&
-        continuity['planRevision'] === change.plan.revision
-      ) {
-        const source = selectedCommentSource(previous, change.plan, selectedPlans);
-        if (source !== undefined)
-          comments = selectedReceiptComments(source, change.plan.after, correspondence);
-      }
-      return [{ ...correspondence, comments: [...list(correspondence['comments']), ...comments] }];
-    });
+function reboundReceiptComments(
+  comments: ReadonlyArray<Record<string, unknown>>,
+  source: TaskTreeV1,
+  previous: CommandSessionSnapshot,
+): Array<Record<string, unknown>> {
+  return comments.flatMap((proof) => {
+    const sourceOwner = nodes(source).find((owner) =>
+      owner.comments.some((comment) => comment.target === proof['preparedTarget']),
+    );
+    if (sourceOwner === undefined) return [];
+    const sourceIndex = sourceOwner.comments.findIndex(
+      (comment) => comment.target === proof['preparedTarget'],
+    );
+    return previous.proposal.changes.flatMap((change) =>
+      reboundReceiptForChange(proof, sourceOwner, sourceIndex, change),
+    );
+  });
+}
+function reboundReceiptForChange(
+  proof: Record<string, unknown>,
+  sourceOwner: TaskTreeV1,
+  sourceIndex: number,
+  change: CommandSessionSnapshot['proposal']['changes'][number],
+): Array<Record<string, unknown>> {
+  if (change.kind !== 'task' || change.plan.kind !== 'edit' || change.plan.before === null)
+    return [];
+  const savedOwner = nodes(change.plan.before).find(
+    (owner) =>
+      owner.target === proof['committedParent'] && owner.revision === proof['committedRevision'],
+  );
+  if (!receiptOwnerMatches(savedOwner, sourceOwner)) return [];
+  const effectiveOwner =
+    change.plan.after === null
+      ? undefined
+      : nodes(change.plan.after).find((owner) => owner.target === proof['committedParent']);
+  const currentComment = effectiveOwner?.comments[sourceIndex];
+  return effectiveOwner !== undefined &&
+    currentComment !== undefined &&
+    sameOwnComments(sourceOwner, effectiveOwner)
+    ? [{ ...proof, preparedTarget: currentComment.target }]
+    : [];
+}
+function receiptOwnerMatches(
+  owner: TaskTreeV1 | undefined,
+  source: TaskTreeV1,
+): owner is TaskTreeV1 {
+  return owner !== undefined && sameOwnComments(source, owner);
+}
+function receiptMappings({
+  snapshot,
+  previous,
+  selectedPlans = [],
+  selectedPlanSources = [],
+}: TurnSnapshots) {
+  return [
+    ...previous.journal,
+    ...snapshot.journal.filter((entry) => !previous.journal.some((old) => old.id === entry.id)),
+  ].flatMap((entry) => receiptMapping(entry, previous, selectedPlans, selectedPlanSources));
+}
+function receiptMapping(
+  entry: CommandSessionSnapshot['journal'][number],
+  previous: CommandSessionSnapshot,
+  selectedPlans: readonly SelectedPlanObservation[],
+  selectedPlanSources: readonly ContentPlanV1[],
+): Array<Record<string, unknown>> {
+  const continuity = object(object(entry.receipt)['contentContinuity']);
+  const correspondence = object(continuity['correspondence']);
+  if (correspondence['state'] !== 'complete') return [];
+  const change = entry.change;
+  if (change.kind !== 'task' || change.plan.after === null) return [correspondence];
+  const old = previous.proposal.changes.find(
+    (candidate) => candidate.kind === 'task' && candidate.plan.target === change.plan.target,
+  );
+  if (old?.kind === 'task' && old.plan.after !== null)
+    return receiptWithComments(
+      correspondence,
+      continuedReceiptComments(old.plan.after, change.plan.after, correspondence, previous),
+    );
+  return selectedReceiptMapping(entry, change.plan, {
+    continuity,
+    correspondence,
+    previous,
+    selectedPlans,
+    selectedPlanSources,
+  });
+}
+interface SelectedReceiptContext {
+  continuity: Record<string, unknown>;
+  correspondence: Record<string, unknown>;
+  previous: CommandSessionSnapshot;
+  selectedPlans: readonly SelectedPlanObservation[];
+  selectedPlanSources: readonly ContentPlanV1[];
+}
+function selectedReceiptMapping(
+  entry: CommandSessionSnapshot['journal'][number],
+  plan: ContentPlanV1,
+  context: SelectedReceiptContext,
+): Array<Record<string, unknown>> {
+  const { continuity, correspondence, previous, selectedPlans, selectedPlanSources } = context;
+  if (
+    plan.kind !== 'edit' ||
+    plan.before === null ||
+    plan.after === null ||
+    continuity['plan'] !== plan.target ||
+    continuity['planRevision'] !== plan.revision
+  )
+    return receiptWithComments(correspondence, []);
+  const source = selectedCommentSource(previous, plan, selectedPlans, selectedPlanSources);
+  if (source === undefined) return receiptWithComments(correspondence, []);
+  let comments = selectedReceiptComments(source, plan.after, correspondence);
+  if (previous.journal.some((item) => item.id === entry.id))
+    comments = reboundReceiptComments(comments, source, previous);
+  return receiptWithComments(correspondence, comments);
+}
+function receiptWithComments(
+  correspondence: Record<string, unknown>,
+  comments: ReadonlyArray<Record<string, unknown>>,
+): Array<Record<string, unknown>> {
+  return [{ ...correspondence, comments: [...list(correspondence['comments']), ...comments] }];
 }
 function continuedReceiptComments(
   before: TaskTreeV1,
@@ -455,30 +1375,17 @@ function commentProof({
   ops,
   mappings,
   removedTargets = [],
+  sourceRoot,
 }: {
   before: TaskTreeV1;
   after: TaskTreeV1;
   ops: ReadonlyArray<Record<string, unknown>>;
   mappings: ReadonlyArray<Record<string, unknown>>;
   removedTargets?: readonly string[];
+  sourceRoot?: TaskTreeV1;
 }): CommentContinuity[] {
   const output: CommentContinuity[] = [];
-  const safe =
-    ops.length > 0 &&
-    ops.every(
-      (op) =>
-        (op['type'] === 'remove' && removedTargets.includes(String(op['target']))) ||
-        [
-          'patch',
-          'description',
-          'set-initial-status',
-          'add-child',
-          'update-comment',
-          'add-comment',
-          'remove-comment',
-          'copy-comment',
-        ].includes(String(op['type'])),
-    );
+  const safe = commentOperationsSafe(ops, removedTargets);
   for (const oldOwner of nodes(before)) {
     if (
       removedTargets.some((target) => {
@@ -526,7 +1433,95 @@ function commentProof({
         });
     });
   }
-  return output;
+  if (sourceRoot !== undefined)
+    output.push(...sourceRootCommentProof(before, after, mappings, sourceRoot));
+  return uniqueCommentContinuity(output);
+}
+function commentOperationsSafe(
+  ops: ReadonlyArray<Record<string, unknown>>,
+  removedTargets: readonly string[],
+): boolean {
+  const accepted = new Set([
+    'patch',
+    'description',
+    'set-initial-status',
+    'add-child',
+    'update-comment',
+    'add-comment',
+    'remove-comment',
+    'copy-comment',
+  ]);
+  return (
+    ops.length > 0 &&
+    ops.every(
+      (op) =>
+        (op['type'] === 'remove' && removedTargets.includes(String(op['target']))) ||
+        accepted.has(String(op['type'])),
+    )
+  );
+}
+function uniqueCommentContinuity(values: readonly CommentContinuity[]): CommentContinuity[] {
+  const seen: CommentContinuity[] = [];
+  return values.filter((item) => {
+    if (
+      seen.some(
+        (candidate) =>
+          candidate.before === item.before &&
+          candidate.after === item.after &&
+          candidate.ownerBefore === item.ownerBefore &&
+          candidate.ownerAfter === item.ownerAfter,
+      )
+    )
+      return false;
+    seen.push(item);
+    return true;
+  });
+}
+function sourceRootCommentProof(
+  before: TaskTreeV1,
+  after: TaskTreeV1,
+  mappings: ReadonlyArray<Record<string, unknown>>,
+  sourceRoot: TaskTreeV1,
+): CommentContinuity[] {
+  return nodes(before).flatMap((oldOwner) => {
+    const sourceOwner = nodes(sourceRoot).find((node) => node.target === oldOwner.target);
+    const mappedOwner = mappings
+      .flatMap((mapping) => list(mapping['tasks']).map(object))
+      .find((mapping) => mapping['preparedTarget'] === oldOwner.target)?.['committedTarget'];
+    const currentOwner = nodes(after).find(
+      (node) => node.target === (mappedOwner ?? oldOwner.target),
+    );
+    return sourceOwner === undefined || currentOwner === undefined
+      ? []
+      : sourceOwnerCommentContinuity(sourceOwner, oldOwner, currentOwner);
+  });
+}
+function sourceOwnerCommentContinuity(
+  source: TaskTreeV1,
+  prior: TaskTreeV1,
+  current: TaskTreeV1,
+): CommentContinuity[] {
+  if (!sameOwnComments(source, prior) || !sameOwnComments(source, current)) return [];
+  return source.comments.flatMap((comment, index) => {
+    const previous = prior.comments[index];
+    const restored = current.comments[index];
+    if (
+      previous === undefined ||
+      restored === undefined ||
+      comment.parentTarget !== source.target ||
+      previous.parentTarget !== prior.target ||
+      restored.parentTarget !== current.target
+    )
+      return [];
+    return [
+      {
+        before: previous.target,
+        after: restored.target,
+        ownerBefore: prior.target,
+        ownerAfter: current.target,
+      },
+    ];
+  });
 }
 function nodeAt(trees: readonly TaskTreeV1[], path: readonly number[]): TaskTreeV1 | undefined {
   let values = trees,
@@ -1326,28 +2321,45 @@ interface PreservationAppendContext {
   history: TurnSnapshots;
   ops: ReadonlyArray<Record<string, unknown>>;
   mappings: ReadonlyArray<Record<string, unknown>>;
+  pendingRequestedByTarget: ReadonlyMap<string, unknown>;
 }
 function appendPreservationPair(
   context: PreservationAppendContext,
   before: TaskTreeV1,
   after: TaskTreeV1,
 ): void {
-  const { pairs, trees, expected, permissions, history, ops, mappings } = context;
+  const { pairs, trees, pendingRequestedByTarget } = context;
   const index = trees.flatMap(nodes).findIndex((tree) => tree.target === after.target);
   if (index < 0) return;
+  const requested =
+    pendingRequestedByTarget.get(before.target) ?? requestedTree(context.expected, after);
+  pairs.push(makePreservationPair(context, { before, after, requested }));
+}
+function makePreservationPair(
+  context: PreservationAppendContext,
+  pair: {
+    before: TaskTreeV1;
+    after: TaskTreeV1;
+    requested: unknown;
+    sourceRoot?: TaskTreeV1;
+  },
+): PreservationPair {
+  const { before, after, requested, sourceRoot } = pair;
+  const { expected, permissions, history, ops, mappings } = context;
   const pairOps = groundedCommentOperations(before, history, ops);
-  pairs.push({
+  return {
     before,
     after,
     ...permissions,
     ...structuralOrderFlag(expected, permissions),
-    requested: requestedTree(expected, after),
+    requested,
     commentContinuity: commentProof({
       before,
       after,
       ops: pairOps,
       mappings,
       removedTargets: permissions.removedNodeTargets,
+      ...(sourceRoot === undefined ? {} : { sourceRoot }),
     }),
     removedCommentTargets: pairOps.flatMap((op) =>
       op['type'] === 'remove-comment' && typeof op['target'] === 'string' ? [op['target']] : [],
@@ -1359,7 +2371,7 @@ function appendPreservationPair(
           ? [{ before: m['preparedTarget'], after: m['committedTarget'] }]
           : [],
       ),
-  });
+  };
 }
 function appendExistingAndRelocatedPairs(
   context: PreservationAppendContext,
@@ -1392,12 +2404,20 @@ function planSourceTrees(snapshot: CommandSessionSnapshot): TaskTreeV1[] {
 function previousTaskTrees(snapshot: CommandSessionSnapshot): TaskTreeV1[] {
   return snapshot.trees.flatMap((pair) => (pair.after === null ? [] : [pair.after]));
 }
-/** Pair actual issued roots; authored expectation positions describe output structure only. */
-export function preservationEvidence(
+export interface PreservationEvidenceOptions extends PendingTaskStateOptions {
+  publicReadback?: readonly TaskTreeV1[];
+}
+export interface TurnPreservationEvidence {
+  preservation: PreservationPair[];
+  pendingTaskStateFailures?: readonly string[];
+}
+/** Build shared owner-bound pairs and pending-state diagnostics from canonical turn facts. */
+export function buildTurnPreservation(
   history: TurnSnapshots,
   trees: readonly TaskTreeV1[],
   expected: TurnExpectation,
-): PreservationPair[] {
+  options: PreservationEvidenceOptions = { writeCount: 0 },
+): TurnPreservationEvidence {
   const { snapshot, previous } = history;
   const ops = operations(snapshot, previous),
     mappings = receiptMappings(history);
@@ -1427,11 +2447,61 @@ export function preservationEvidence(
         : [],
     ),
   );
-  const appendContext = { pairs, trees, expected, permissions, history, ops, mappings };
+  const pendingStates =
+    expected.pendingTaskStates === undefined
+      ? { failures: [], requestedByTarget: new Map<string, unknown>(), owners: [] }
+      : resolvePendingTaskStates(expected, history, options.publicReadback ?? [], options);
+  const appendContext = {
+    pairs,
+    trees,
+    expected,
+    permissions,
+    history,
+    ops,
+    mappings,
+    pendingRequestedByTarget: pendingStates.requestedByTarget,
+  };
   for (const pair of newPlanPairs(snapshot, previous))
     appendPreservationPair(appendContext, pair.before, pair.after);
   appendExistingAndRelocatedPairs(appendContext, previousTrees, sourceTrees);
-  return pairs;
+  if (expected.pendingTaskStates !== undefined) {
+    const pendingTargets = new Set(pendingStates.owners.map((owner) => owner.persisted.target));
+    const requiredPairs = pendingStates.owners.map((owner) =>
+      makePreservationPair(appendContext, {
+        before: owner.prior ?? owner.persisted,
+        after: owner.effective,
+        requested: owner.requested,
+        sourceRoot: owner.persisted,
+      }),
+    );
+    const ordinaryPairs = pairs.filter(
+      (pair) => !pendingTargets.has(String(object(pair.before)['target'])),
+    );
+    const pendingTaskStateFailures = [
+      ...pendingStates.failures,
+      ...pendingProjectionFailures(
+        history,
+        trees,
+        options.publicReadback ?? [],
+        pendingStates.owners,
+      ),
+      ...requiredPairs.flatMap(pendingEntryOrderFailures),
+    ];
+    return {
+      preservation: [...ordinaryPairs, ...requiredPairs],
+      pendingTaskStateFailures: [...new Set(pendingTaskStateFailures)],
+    };
+  }
+  return { preservation: pairs };
+}
+/** Compatibility wrapper for callers that only need the canonical preservation pairs. */
+export function preservationEvidence(
+  history: TurnSnapshots,
+  trees: readonly TaskTreeV1[],
+  expected: TurnExpectation,
+  options: PreservationEvidenceOptions = { writeCount: 0 },
+): PreservationPair[] {
+  return buildTurnPreservation(history, trees, expected, options).preservation;
 }
 
 function newPlanPairs(

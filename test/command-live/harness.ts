@@ -52,12 +52,7 @@ import {
   type RetainedTurn,
   type TurnEvidence,
 } from './oracles';
-import {
-  nativeOperationIdentity,
-  preservationEvidence,
-  retainedPlanEvidenceFromTrace,
-  type SelectedPlanObservation,
-} from './preservation';
+import { nativeOperationIdentity, type SelectedPlanObservation } from './preservation';
 import {
   assertLocalRequest,
   guardRoute,
@@ -1025,20 +1020,18 @@ async function runTurn(input: {
     },
   );
   await input.lifetime.checkpoint('evaluation');
-  const planEvidence = retainedPlanEvidenceFromTrace(report.trace, report.turns.length + 1);
-  const preserved = preservationEvidence(
-    { snapshot, previous: inputSnapshot, ...planEvidence },
-    trees,
-    turn.expect,
-  );
+  const ownerStore = state.raw();
+  trace('owner-store', ownerStore);
+  const turnWriteCount = report.trace
+    .slice(traceStart)
+    .filter((entry) => entry.kind === 'write-dispatch').length;
   const evidence: TurnEvidence = {
     status: snapshot.status.kind,
     ...(await inboxEvidence(turn.expect.inboxMembers, trees, report.behavior, {
       api: h.api,
       saved: snapshot.status.kind === 'saved',
     })),
-    writeCount: report.trace.slice(traceStart).filter((entry) => entry.kind === 'write-dispatch')
-      .length,
+    writeCount: turnWriteCount,
     hostProviderEpoch: h.api.info.providerEpoch,
     question: snapshot.activeQuestion,
     trees,
@@ -1051,12 +1044,6 @@ async function runTurn(input: {
       entry.journal.filter((item) => item.state === 'admitted'),
     ),
     complete: trees.every((tree) => tree.complete && !tree.truncated),
-    preservation: preserved,
-    previousTaskContinuity: inputSnapshot.trees.every(
-      (pair) =>
-        pair.after === null ||
-        preserved.some((kept) => object(kept.before)['target'] === pair.after?.target),
-    ),
     freshPreparation:
       (snapshot.preparations?.length ?? 0) > 0 &&
       snapshot.proposal.changes.some(
@@ -1137,8 +1124,7 @@ async function runTurn(input: {
   const failures = regraded.failures;
   const providerDiagnostics = classifyCompletionRecovery(report.trace.slice(traceStart));
   appendTurnFailures(failures, { trace: report.trace, traceStart, budget, providerDiagnostics });
-  trace('owner-store', state.raw());
-  const reportEvidence = evidence;
+  const reportEvidence = regraded.evidence ?? evidence;
   const writeObservations = regraded.evidence?.writeObservations;
   const turnReport: TurnReport = {
     text: turn.text,

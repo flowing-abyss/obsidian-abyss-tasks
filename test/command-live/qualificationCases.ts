@@ -334,6 +334,10 @@ const cases: readonly EvalCase[] = [
         text: 'Я перепутал задачу: верни “Order linen for the class” срок 8 декабря и поставь 10 декабря у “Order printer paper”. Первое изменение отмени.',
         expect: {
           status: 'ready',
+          pendingTaskStates: [
+            { path: 'Studio.md', line: 0, tree: { dates: { due: '2026-12-08' } } },
+            { path: 'Office.md', line: 0, tree: { dates: { due: '2026-12-10' } } },
+          ],
           publicTrees: [
             tree('Order linen for the class', {
               tags: ['#studio'],
@@ -1091,6 +1095,16 @@ const cases: readonly EvalCase[] = [
         text: 'Discard the remaining title change. Keep the date that you already saved; don’t write anything else.',
         expect: {
           status: 'ready',
+          pendingTaskStates: [
+            {
+              path: 'a.md',
+              line: 0,
+              tree: {
+                markdownTitle: 'Book the community kiln',
+                dates: { scheduled: '2026-12-04', due: '2026-12-11' },
+              },
+            },
+          ],
           publicTrees: [
             tree('Book the community kiln', {
               tags: ['#ceramics'],

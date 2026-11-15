@@ -420,6 +420,11 @@ Existing-file updates compare previous bytes inside DataAdapter.process. New-fil
 absence. The host adapter has no atomic create-if-absent, conditional remove, or fsync operation.
 Another process can change a file between the final comparison and removal.
 
+Command evaluation rebuilds preservation from each retained turn's canonical snapshot, current task
+plans, public readback and owner-store evidence. `oracles.ts` grades the rebuilt pairs from
+`preservation.ts`; shared task-state matching lives in `taskStateOracle.ts` below both modules.
+Serialized preservation pairs and computed pending-state flags do not establish their own evidence.
+
 Each device reconciles its own legacy localStorage history. Before clearing the local copy, the
 store verifies the control file, the surviving session files and the original local contents.
 Deletion writes a version-3 control file pairing each deleted file UUID with its logical session
