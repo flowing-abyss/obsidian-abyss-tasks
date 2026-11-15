@@ -135,7 +135,7 @@ export const freshSourceCommentCase: EvalCase = {
             }),
             source: source(5),
           },
-          { ...siblingTask(), source: source(10) },
+          { ...siblingTask(), source: { path } },
         ],
         focus: [{ kind: 'task', path, line: 5 }],
         proposalKinds: [],
