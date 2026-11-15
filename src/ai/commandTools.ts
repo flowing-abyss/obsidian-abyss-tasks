@@ -1271,7 +1271,10 @@ class CommandToolOwner {
         };
       return this.lookupCandidates(result, query.cursor, retryOf);
     }
-    if (isPartialTaskCandidate(candidate, query.query, showExact, taskId))
+    if (
+      sourceLine === undefined &&
+      isPartialTaskCandidate(candidate, query.query, showExact, taskId)
+    )
       return {
         candidate: { kind: 'task', target: candidate.target, revision: candidate.revision },
         ...result,

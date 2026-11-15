@@ -72,6 +72,42 @@ function latestToolValue(h: Awaited<ReturnType<typeof setup>>, name: string) {
     throw Error('Missing accepted tool result');
   return expectDefined(record(result.output.value));
 }
+function findTreeNode(tree: TaskTreeV1 | null, target: string): TaskTreeV1 | undefined {
+  if (tree === null) return undefined;
+  if (tree.target === target) return tree;
+  for (const child of tree.children) {
+    const match = findTreeNode(child, target);
+    if (match !== undefined) return match;
+  }
+  return undefined;
+}
+function taskTree(value: unknown): TaskTreeV1 | null {
+  if (value === null) return null;
+  return expectDefined(record(value)) as unknown as TaskTreeV1;
+}
+function expectUnselectedNodePreserved(
+  before: TaskTreeV1 | null,
+  after: TaskTreeV1 | null,
+  row: TaskDtoV1,
+): void {
+  const beforeNode = findTreeNode(before, row.target);
+  const afterNode = findTreeNode(after, row.target);
+  if (row.parentTarget === undefined) {
+    expect(beforeNode).toBeUndefined();
+    expect(afterNode).toBeUndefined();
+    return;
+  }
+  const unchanged = {
+    target: row.target,
+    title: row.title,
+    status: row.status,
+    priority: row.priority,
+    dates: row.dates,
+    tags: row.tags,
+  };
+  expect(beforeNode).toMatchObject(unchanged);
+  expect(afterNode).toMatchObject(unchanged);
+}
 function scopedConfirmation(message: string, proposalRevision: number, index: number) {
   return () =>
     call('interpret', {
@@ -3649,10 +3685,70 @@ it('guides ambiguous searches to explicit user filters and valid parent inspecti
   expect(h.session.snapshot().journal).toEqual([]);
   expect(await h.read('a.md')).toBe(source);
 });
+it('inspects a source-coordinate match for a retained partial title query', async () => {
+  const path = 'Reports/Quarterly.md';
+  const source = '- [ ] Quarterly review #work\n- [ ] Quarterly planning #work\n';
+  const treeReads: Array<{ target: string; expectedRevision: string | undefined }> = [];
+  const searchInputs: Array<Record<string, unknown>> = [];
+  const h = await setup({ [path]: source }, {}, (api) => {
+    const search = expectDefined(api.tasks.search);
+    const tree = expectDefined(api.tasks.tree);
+    return {
+      ...api,
+      tasks: {
+        ...api.tasks,
+        search: async (input) => {
+          searchInputs.push({ ...input });
+          return search(input);
+        },
+        tree: async (input) => {
+          treeReads.push({ target: input.target, expectedRevision: input.expectedRevision });
+          return tree(input);
+        },
+      },
+    };
+  });
+  const query = { query: 'quarterly', fields: 'title' as const, tagsAll: ['#work'] };
+  let coordinate: Record<string, unknown> = {};
+  let readsAfterCoordinate = 0;
+  h.script(
+    () => call('find', { ...query, purpose: 'change' }),
+    () => finish('Which Quarterly task should I change?', true)(),
+  );
+  await h.session.submit('Change the quarterly task.');
+  h.script(
+    () => call('find', { ...query, path, sourceLine: 0, purpose: 'change' }),
+    () => {
+      coordinate = latestToolValue(h, 'find');
+      readsAfterCoordinate = treeReads.length;
+      return finish('The selected task is Quarterly review.', true)();
+    },
+  );
+  await h.session.submit('Use Reports/Quarterly.md, line 1.');
+
+  expect(searchInputs[0]).toMatchObject(query);
+  expect(searchInputs[0]).not.toHaveProperty('path');
+  expect(searchInputs[1]).toMatchObject({ ...query, path });
+  const canonical = await h.api.tasks.list({ path });
+  if (!canonical.ok) throw Error('Missing canonical task source');
+  const selected = expectDefined(canonical.value.items.find((row) => row.source.line === 0));
+  expect(coordinate).toHaveProperty('match.target');
+  expect(coordinate).toHaveProperty('match.revision');
+  expect(coordinate['selection']).toMatchObject({
+    target: record(coordinate['match'])?.['target'],
+  });
+  expect(readsAfterCoordinate).toBe(1);
+  expect(treeReads[0]?.target).toBe(selected.target);
+  expect(treeReads[0]?.expectedRevision).toBe(selected.revision);
+  expect(h.session.snapshot().proposal.changes).toEqual([]);
+  expect(await h.read(path)).toBe(source);
+});
 it.each([
   {
     label: 'a root task',
     path: 'Root candidates.md',
+    title: 'Same',
+    query: 'Same',
     source: '- [ ] Same #work\n- [ ] Control\n- [ ] Same #work\n',
     sourceLine: 2,
     clarification: 'The second one in Root candidates.md, on line 3.',
@@ -3660,13 +3756,15 @@ it.each([
   {
     label: 'a nested task',
     path: 'Nested/Candidates.md',
-    source: '- [ ] Outer\n  - [ ] Same #work\n- [ ] Other\n  - [ ] Same #work\n',
+    title: 'Echo',
+    query: 'Echo',
+    source: '- [ ] Container\n  - [ ] Echo #work\n  - [ ] Marker\n  - [ ] Echo #work\n',
     sourceLine: 3,
-    clarification: 'The one under Other in Nested/Candidates.md, on line 4.',
+    clarification: 'The second Echo under Container in Nested/Candidates.md, on line 4.',
   },
 ])(
   'resolves an ambiguous $label by its exact source coordinate',
-  async ({ path, source, sourceLine, clarification }) => {
+  async ({ path, title, query: queryText, source, sourceLine, clarification }) => {
     const controlPath = 'Control.md';
     const controlSource = '- [ ] Leave this unchanged\n';
     const searchInputs: Array<Record<string, unknown>> = [];
@@ -3683,7 +3781,7 @@ it.each([
         },
       };
     });
-    const query = { query: 'Same', fields: 'title' as const, tagsAll: ['#work'] };
+    const query = { query: queryText, fields: 'title' as const, tagsAll: ['#work'] };
     let ambiguousEvidence = '';
     h.script(
       () => call('find', { ...query, purpose: 'change' }),
@@ -3717,6 +3815,16 @@ it.each([
     await h.session.submit(clarification);
 
     const rows = latestToolValue(h, 'find')['items'] as Array<Record<string, unknown>>;
+    const canonical = await h.api.tasks.list({ path });
+    if (!canonical.ok) throw Error('Missing canonical task source');
+    const selectedCanonical = expectDefined(
+      canonical.value.items.find((row) => row.source.line === sourceLine && row.title === title),
+    );
+    const otherDuplicate = expectDefined(
+      canonical.value.items.find(
+        (row) => row.title === title && row.target !== selectedCanonical.target,
+      ),
+    );
     const selectedRow = rows.find(
       (row) => JSON.stringify(row['source']) === JSON.stringify({ path, line: sourceLine }),
     );
@@ -3724,17 +3832,26 @@ it.each([
     const lastSearch = searchInputs[searchInputs.length - 1];
     expect(lastSearch).toMatchObject({ ...query, path });
     expect(lastSearch).not.toHaveProperty('sourceLine');
-    expect(selectedRow).toMatchObject({ title: 'Same', source: { path, line: sourceLine } });
+    expect(selectedRow).toMatchObject({
+      title,
+      source: { path, line: sourceLine },
+    });
     expect(selectedTarget).toBe(selectedRow?.['target']);
     expect(h.session.snapshot().status.kind).toBe('ready');
     const change = record(h.session.snapshot().proposal.changes[0]);
     const plan = record(change?.['plan']);
-    const before = record(plan?.['before']);
-    const after = record(plan?.['after']);
+    const before = taskTree(plan?.['before']);
+    const after = taskTree(plan?.['after']);
     expect(change?.['kind']).toBe('task');
     expect(plan?.['kind']).toBe('edit');
-    expect(JSON.stringify(before)).toContain('"title":"Same"');
-    expect(JSON.stringify(after)).toContain('"title":"Chosen"');
+    const selectedBefore = findTreeNode(before, selectedCanonical.target);
+    const selectedAfter = findTreeNode(after, selectedCanonical.target);
+    expect(selectedBefore).toMatchObject({
+      target: selectedCanonical.target,
+      title,
+    });
+    expect(selectedAfter).toMatchObject({ target: selectedCanonical.target, title: 'Chosen' });
+    expectUnselectedNodePreserved(before, after, otherDuplicate);
     expect(h.session.snapshot().proposal.changes).toHaveLength(1);
     expect(h.session.snapshot().journal).toEqual([]);
     expect(await h.read(path)).toBe(source);
@@ -4605,30 +4722,35 @@ function assertAcceptedCommentNarrowing(
   expect(capture.completionBlocked).toBeTruthy();
   expect(source).toContain('South original.');
 }
-it('retains an accepted comment when a complete source-line lookup resolves ambiguity', async () => {
-  const source = [
-    '- [ ] Proof #north',
-    '\t- 2026-11-14 09:00 North original.',
-    '- [ ] Proof #south',
-    '\t- 2026-11-14 09:01 South original.',
-    '',
-  ].join('\n');
-  const h = await setup({ 'a.md': source });
-  const initial = await h.api.tasks.list({ path: 'a.md' });
-  if (!initial.ok) throw Error('Missing canonical task source');
-  const canonicalNorth = expectDefined(
-    initial.value.items.find((item) => item.tags.includes('#north')),
-  );
-  const broad = { query: 'Proof', fields: 'all', path: 'a.md' };
-  const capture = scriptAcceptedCommentNarrowing(h, broad, {
-    sourceLine: canonicalNorth.source.line,
-  });
-  await h.session.submit('Add the comment "Call Jo." to Proof tagged #north in a.md.');
-  expect(capture.finishError).toBeUndefined();
-  expect(h.session.snapshot().status.kind).toBe('ready');
-  assertAcceptedCommentNarrowing(h, source, canonicalNorth, capture);
-  expect(await h.read('a.md')).toBe(source);
-});
+it.each(['source-line coordinate', 'accepted tag filter'] as const)(
+  'retains an accepted comment when a complete narrowed lookup resolves ambiguity by %s',
+  async (narrowing) => {
+    const source = [
+      '- [ ] Proof #north',
+      '\t- 2026-11-14 09:00 North original.',
+      '- [ ] Proof #south',
+      '\t- 2026-11-14 09:01 South original.',
+      '',
+    ].join('\n');
+    const h = await setup({ 'a.md': source });
+    const initial = await h.api.tasks.list({ path: 'a.md' });
+    if (!initial.ok) throw Error('Missing canonical task source');
+    const canonicalNorth = expectDefined(
+      initial.value.items.find((item) => item.tags.includes('#north')),
+    );
+    const broad = { query: 'Proof', fields: 'all', path: 'a.md' };
+    const selector =
+      narrowing === 'source-line coordinate'
+        ? { sourceLine: canonicalNorth.source.line }
+        : { tagsAll: ['#north'] };
+    const capture = scriptAcceptedCommentNarrowing(h, broad, selector);
+    await h.session.submit('Add the comment "Call Jo." to Proof tagged #north in a.md.');
+    expect(capture.finishError).toBeUndefined();
+    expect(h.session.snapshot().status.kind).toBe('ready');
+    assertAcceptedCommentNarrowing(h, source, canonicalNorth, capture);
+    expect(await h.read('a.md')).toBe(source);
+  },
+);
 it('retains an accepted comment when an exact authored ID selects one complete result row', async () => {
   const source = [
     '- [ ] Proof #north 🆔 north-id',
