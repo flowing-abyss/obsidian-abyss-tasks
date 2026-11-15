@@ -80,9 +80,9 @@ it('keeps the planned seven Russian and seven English cases', () => {
 });
 
 it('registers five follow-up cases after the original resolved corpus', () => {
-  expect(corpus).toHaveLength(200);
-  expect(new Set(corpus.map((test) => test.id)).size).toBe(200);
-  expect(corpus.slice(-5)).toEqual(followupCases);
+  expect(corpus).toHaveLength(201);
+  expect(new Set(corpus.map((test) => test.id)).size).toBe(201);
+  expect(corpus.slice(-6, -1)).toEqual(followupCases);
   expect(followupCases.map((test) => test.id)).toEqual([
     'prospective-focus-select-due-date-en',
     'q-followup-h15-select-kestrel-page-comments-ru',
@@ -98,6 +98,30 @@ it('registers five follow-up cases after the original resolved corpus', () => {
     'development',
   ]);
   expect(followupCases.every((test) => test.scripted === undefined)).toBe(true);
+});
+
+it('registers and freezes the fresh English source-comment fixture after follow-ups', async () => {
+  const item = expectDefined(selectCases('r8-source-comment-utility-en')[0]);
+  expect(expectDefined(corpus[corpus.length - 1])).toEqual(item);
+  expect(item.split).toBe('held-out');
+  expect(item.pageFixture).toMatchObject({
+    url: 'https://manual.emberline.example/kiln-log',
+    title: 'Emberline kiln firing log',
+    content:
+      'Emberline is an offline desktop utility for recording kiln firings at community pottery studios.\nIt plots temperature curves from imported controller CSV files and exports firing summaries as PDF.\nIt has no direct connection to kiln controllers; staff import readings manually.',
+  });
+  expect(item.turns).toHaveLength(2);
+  const actorProjection = {
+    ...item,
+    turns: item.turns.map(({ expect: _expected, ...rest }) => rest),
+  };
+  expect({
+    fixtureHash: await digest(item),
+    actorProjectionHash: await digest(actorProjection),
+  }).toEqual({
+    fixtureHash: 'f5c5b49fea8c13c6b9262e03a1cf60b1437a568098beb27764a2cdfc75b6a947',
+    actorProjectionHash: 'f28326b7a258e3e6c3c3e5be5c39a82d7cf152612c3f658a958a03bdf0dbe141',
+  });
 });
 
 it('binds the Russian pending-owner follow-up to its saved source and current draft', () => {
