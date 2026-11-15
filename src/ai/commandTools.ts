@@ -21,7 +21,7 @@ import type {
 } from '../../api';
 import { buildLinkRaw } from '../markdown/links';
 import { CommandEvidence, type CommandFact } from './CommandEvidence';
-import { commandDiagnostic, commandMessage } from './commandMessages';
+import { commandDiagnostic, commandMessage, draftDispositionMessage } from './commandMessages';
 import { modelToolSchema } from './commandModelSchema';
 import type { CommandPendingOperations } from './CommandPendingOperations';
 import {
@@ -1076,9 +1076,7 @@ class CommandToolOwner {
       return { needsRootContext: true };
     }
     this.ctx_abyssPrivate.done = true;
-    this.ctx_abyssPrivate.session.question(
-      commandMessage('Save these changes, keep them for later, discard them, or stay here?'),
-    );
+    this.ctx_abyssPrivate.session.question(commandMessage(draftDispositionMessage));
     return { needsDisposition: true };
   }
   private async continueTransition(input: z.infer<typeof intentSchema>): Promise<boolean> {

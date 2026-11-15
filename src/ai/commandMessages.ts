@@ -1,6 +1,10 @@
 /** Fixed CommandMode chrome only. main supplies the host language; Node consumers default to English. */
 export const writeJournalFailureMessage =
   'Could not save or record the result. Review the retained write journal before continuing.';
+export const draftDispositionMessage =
+  'Save these changes, keep them for later, discard them, or stay here?';
+export const noteMoveConflictMessage =
+  'Save or discard the pending changes to these notes before moving tasks. All current work is retained.';
 
 const russian = {
   'Review the prepared changes before saving them.':
@@ -61,8 +65,7 @@ const russian = {
     'Оставить черновик в истории или удалить перед началом новой сессии?',
   'Could not retain this session. Keep it open and try again.':
     'Не удалось сохранить сессию. Оставьте её открытой и повторите попытку.',
-  'Save these changes, keep them for later, discard them, or stay here?':
-    'Сохранить изменения, отложить, удалить или остаться здесь?',
+  [draftDispositionMessage]: 'Сохранить изменения, отложить, удалить или остаться здесь?',
   'Could not verify the requested selection.': 'Не удалось проверить выбранные объекты.',
   'That task changed. Read it again before opening it.':
     'Задача изменилась. Прочитайте её снова перед открытием.',
@@ -86,7 +89,7 @@ const russian = {
     'Уточните текущее предложение заметки, чтобы сохранить ожидающие изменения разделов.',
   'The project changed while its earlier edits were pending. Review them before continuing.':
     'Проект изменился, пока предыдущие правки ожидали сохранения. Проверьте их перед продолжением.',
-  'Save or discard the pending changes to these notes before moving tasks. All current work is retained.':
+  [noteMoveConflictMessage]:
     'Сохраните или отмените изменения этих заметок перед переносом задач. Вся текущая работа сохранена.',
   'Status uses ordinary completion, recurrence, deletion, timer and blocker rules after the content is saved.':
     'После сохранения содержимого статус применяет обычные правила завершения, повторения, удаления, таймера и блокировок.',
