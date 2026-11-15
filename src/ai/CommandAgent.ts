@@ -268,7 +268,7 @@ function schemaRepairMessage(name: string, input: string, error: unknown): strin
     return `${common}Use owner’s issued edit; preserve values; fix reported leaf.`;
   if (name === 'interpret') return common + controlSchemaRepair(input);
   if (name === 'finish')
-    return `${common}Use ${finishGrammar}; blockers need issued evidence; selection: exact typed targets/revisions/bases. Prepared work needs no selection/saving question.`;
+    return `${common}Use ${finishGrammar}; blockers need issued evidence; selection: exact typed targets/revisions/bases. Omit selection unless requested; no saving question for prepared work.`;
   if (name === 'project')
     return `${common}Read project-schema; use fields:[{fieldId,value}] and target/expectedRevision, not task date patches.`;
   if (name === 'note')

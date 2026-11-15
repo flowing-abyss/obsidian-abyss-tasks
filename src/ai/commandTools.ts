@@ -76,7 +76,7 @@ import {
   type WriteReview,
   type WriteReviewer,
 } from './commandWriteAuthorization';
-import { hasFreshCommandWork } from './commandWriteSubjects';
+import { hasFreshCommandWork, hasMaterialCommandWork } from './commandWriteSubjects';
 import { ProviderFailure } from './providers/providerFailure';
 const linkFields = {
   notePlan: z.string(),
@@ -2403,16 +2403,14 @@ class CommandToolOwner {
         this.ctx_abyssPrivate.signal,
         true,
       );
-    else
-      this.ctx_abyssPrivate.session.status(
-        'ready',
-        commandMessage(
-          result === 'prepared' &&
-            this.ctx_abyssPrivate.session.snapshot().proposal.changes.length > 0
-            ? 'Ready. Enter to save.'
-            : 'Ready.',
-        ),
-      );
+    else {
+      let message: Parameters<typeof commandMessage>[0] = 'Ready.';
+      if (result === 'prepared')
+        message = hasMaterialCommandWork(this.ctx_abyssPrivate.session.snapshot())
+          ? 'Ready. Enter to save.'
+          : 'There are no changes to save.';
+      this.ctx_abyssPrivate.session.status('ready', commandMessage(message));
+    }
     this.ctx_abyssPrivate.session.exchange(
       'agent',
       this.ctx_abyssPrivate.session.snapshot().status.message,

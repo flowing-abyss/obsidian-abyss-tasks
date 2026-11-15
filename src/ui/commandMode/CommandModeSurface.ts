@@ -3,6 +3,7 @@ import { discardedHistoryPreview } from '../../ai/commandHistoryMetadata';
 import { commandMessage } from '../../ai/commandMessages';
 import type { CommandSessionOwner } from '../../ai/CommandSessionOwner';
 import type { CommandSessionSnapshot, CommandSubmissionBasis } from '../../ai/commandTypes';
+import { hasMaterialCommandWork } from '../../ai/commandWriteSubjects';
 import { CommandVoiceController } from '../../ai/voice/CommandVoiceController';
 import type { CommandTranscriptionPort } from '../../ai/voice/ProviderTranscription';
 import type { ProjectsSettings } from '../../settings/types';
@@ -66,7 +67,7 @@ function busy(state: CommandSessionSnapshot): boolean {
 function readyToSave(state: CommandSessionSnapshot): boolean {
   return (
     state.status.kind === 'ready' &&
-    state.proposal.changes.length > 0 &&
+    hasMaterialCommandWork(state) &&
     state.activeQuestion === null &&
     !state.blocked &&
     state.pendingTransition == null &&

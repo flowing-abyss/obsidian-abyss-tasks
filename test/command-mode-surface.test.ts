@@ -3,7 +3,7 @@ import { MarkdownRenderer, Menu } from 'obsidian';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { ContentPlanV1, ProjectDtoV1, TaskContentOperationV1, TasksApiV1 } from '../api';
 import { CommandAgent } from '../src/ai/CommandAgent';
-import { configureCommandLocale } from '../src/ai/commandMessages';
+import { commandMessage, configureCommandLocale } from '../src/ai/commandMessages';
 import { canonicalCommandPlan } from '../src/ai/commandReads';
 import { commandReferences } from '../src/ai/commandReferences';
 import { record } from '../src/ai/commandReferenceShapes';
@@ -1392,6 +1392,243 @@ function scriptedAgent(
   });
   h.setRun((input) => agent.run(input));
 }
+
+it.each([
+  ['en', 'There are no changes to save.'],
+  ['ru', 'Нет изменений для сохранения.'],
+])(
+  'keeps a restored no-op out of Save feedback after completion and remount in %s',
+  async (locale, message) => {
+    configureCommandLocale(locale);
+    try {
+      const source = '- [ ] North Proof #north 📅 2026-11-18\n';
+      const h = await setup({ 'a.md': source });
+      const listed = await h.api.tasks.list({ path: 'a.md' });
+      if (!listed.ok) throw new Error(listed.error.code);
+      const root = expectDefined(listed.value.items[0]);
+      const surface = h.mount();
+      await flushMicrotasks(0);
+      scriptedAgent(h, [
+        { tool: 'interpret', input: { intent: 'plan', research: false } },
+        {
+          tool: 'read',
+          input: { input: { kind: 'tree', target: root.target, limit: 500 } },
+        },
+        {
+          tool: 'change_task',
+          input: (references: unknown) => ({
+            edit: surfaceEdit(h, references, root.target),
+            operation: { type: 'set', due: '2026-11-21' },
+          }),
+        },
+        { tool: 'finish', input: { state: 'ready', message: 'Ready.' } },
+        { tool: 'interpret', input: { intent: 'plan', research: false } },
+        {
+          tool: 'change_task',
+          input: (references: unknown) => ({
+            edit: surfaceEdit(h, references, root.target),
+            operation: { type: 'set', due: '2026-11-18' },
+            complete: true,
+          }),
+        },
+      ]);
+
+      enter(surface, 'Move North Proof to November 21.');
+      await vi.waitFor(() => {
+        expect(h.owner.snapshot().status.kind, h.owner.snapshot().status.message).toBe('ready');
+        expect(h.owner.snapshot().input).toBe('');
+        expect(h.owner.snapshot().proposal.changes).toHaveLength(1);
+      });
+      enter(surface, 'Restore North Proof to November 18.');
+      await vi.waitFor(() => {
+        expect(h.owner.snapshot().input).toBe('');
+        expect(h.owner.snapshot().status).toEqual({ kind: 'ready', message });
+        const change = h.owner.snapshot().proposal.changes[0];
+        expect(change?.kind).toBe('task');
+        if (change?.kind === 'task') expect(change.plan).toHaveProperty('hasChanges', false);
+      });
+      const expectNoSave = (target: typeof surface): void => {
+        const phase = target.element.querySelector('.abyss-command-phase');
+        const primary = expectDefined(
+          target.element.querySelector<HTMLButtonElement>(
+            '.abyss-command-toolbar button:last-child',
+          ),
+        );
+        expect(phase?.textContent).toContain(message);
+        expect(phase?.textContent).not.toContain('Enter to save');
+        expect(primary.getAttribute('aria-label')).toBe(commandMessage('Send'));
+        expect(target.element.querySelector('[aria-label="Save proposal"]')).toBeNull();
+      };
+      expectNoSave(surface);
+      expect(h.owner.snapshot().proposal.changes).toHaveLength(1);
+      expect(await h.read('a.md')).toBe(source);
+      surface.destroy();
+      const reopened = h.mount();
+      await flushMicrotasks(0);
+      expectNoSave(reopened);
+      expect(h.owner.snapshot().proposal.changes).toHaveLength(1);
+      expect(await h.read('a.md')).toBe(source);
+    } finally {
+      configureCommandLocale('en');
+    }
+  },
+);
+
+it('retains question and error feedback while material note work keeps Save available', async () => {
+  const source = '- [ ] North Proof 📅 2026-11-18\n';
+  const h = await setup({ 'a.md': source });
+  const listed = await h.api.tasks.list({ path: 'a.md' });
+  if (!listed.ok) throw new Error(listed.error.code);
+  const root = expectDefined(listed.value.items[0]);
+  const task = await expectDefined(h.api.tasks.prepare)({
+    kind: 'edit',
+    target: root.target,
+    expectedRevision: root.revision,
+    operation: {
+      type: 'patch',
+      target: root.target,
+      patch: { due: { type: 'set', value: '2026-11-18' } },
+    },
+  });
+  if (!task.ok) throw new Error(task.error.code);
+  expect(task.value).toHaveProperty('hasChanges', false);
+  h.session.stage({ kind: 'task', plan: task.value });
+  expect(h.owner.snapshot().proposal.changes).toHaveLength(1);
+  const noOpState = h.owner.snapshot();
+  const surface = h.mount();
+  await flushMicrotasks(0);
+
+  h.session.status('error', 'The write was rejected.');
+  expect(h.owner.snapshot().proposal.changes).toEqual(noOpState.proposal.changes);
+  expect(surface.element.querySelector('.abyss-command-phase')?.textContent).toBe(
+    'The write was rejected.',
+  );
+  expect(surface.element.querySelector('[aria-label="Save proposal"]')).toBeNull();
+  h.session.question('Which change should I keep?');
+  expect(surface.element.querySelector('.abyss-command-phase')?.textContent).toBe(
+    'Needs your answer.',
+  );
+  expect(surface.element.querySelector('[aria-label="Save proposal"]')).toBeNull();
+
+  const note = await expectDefined(h.api.notes).prepare({
+    kind: 'create',
+    path: 'Review.md',
+    title: 'Review',
+    text: 'A pending note.',
+  });
+  if (!note.ok) throw new Error(note.error.code);
+  h.session.stage({ kind: 'note', plan: note.value });
+  h.session.status('ready', 'Ready.');
+  expect(surface.element.querySelector('[aria-label="Save proposal"]')).not.toBeNull();
+});
+
+it('shows Save for a material task beside a no-op and hides it during a focus transition', async () => {
+  const source =
+    '- [ ] North Proof 📅 2026-11-18\n' +
+    '- [ ] South Proof 📅 2026-11-25\n' +
+    '- [ ] Other focus\n';
+  const h = await setup({ 'a.md': source });
+  const listed = await h.api.tasks.list({ path: 'a.md' });
+  if (!listed.ok) throw new Error(listed.error.code);
+  const north = expectDefined(listed.value.items.find((task) => task.title === 'North Proof'));
+  const south = expectDefined(listed.value.items.find((task) => task.title === 'South Proof'));
+  const other = expectDefined(listed.value.items.find((task) => task.title === 'Other focus'));
+  expect(
+    await h.owner.focus({ kind: 'task', target: north.target, revision: north.revision }),
+  ).toBe(true);
+  const prepare = expectDefined(h.api.tasks.prepare);
+  const noOp = await prepare({
+    kind: 'edit',
+    target: north.target,
+    expectedRevision: north.revision,
+    operation: {
+      type: 'patch',
+      target: north.target,
+      patch: { due: { type: 'set', value: '2026-11-18' } },
+    },
+  });
+  if (!noOp.ok) throw new Error(noOp.error.code);
+  const material = await prepare({
+    kind: 'edit',
+    target: south.target,
+    expectedRevision: south.revision,
+    operation: {
+      type: 'patch',
+      target: south.target,
+      patch: { due: { type: 'set', value: '2026-11-26' } },
+    },
+  });
+  if (!material.ok) throw new Error(material.error.code);
+  expect(noOp.value).toHaveProperty('hasChanges', false);
+  expect(material.value).toHaveProperty('hasChanges', true);
+  h.session.stage({ kind: 'task', plan: noOp.value });
+  h.session.stage({ kind: 'task', plan: material.value });
+
+  const surface = h.mount();
+  await flushMicrotasks(0);
+  expect(surface.element.querySelector('[aria-label="Save proposal"]')).not.toBeNull();
+  expect(
+    await h.owner.focus({ kind: 'task', target: other.target, revision: other.revision }),
+  ).toBe(false);
+  expect(h.owner.snapshot().pendingTransition?.kind).toBe('focus');
+  expect(surface.element.querySelector('.abyss-command-phase')?.textContent).toBe(
+    'Needs your answer.',
+  );
+  expect(surface.element.querySelector('[aria-label="Save proposal"]')).toBeNull();
+});
+
+it('keeps a no-op proposal blocked after an unresolved explicit Save attempt', async () => {
+  const source = '- [ ] North Proof 📅 2026-11-18\n';
+  const h = await setup({ 'a.md': source }, (api) => ({
+    ...api,
+    tasks: {
+      ...api.tasks,
+      apply: async () => ({
+        ok: false as const,
+        error: { code: 'LOST', category: 'io' as const, message: 'Lost receipt' },
+        effects: 'unknown' as const,
+        recovery: 'reconcile' as const,
+      }),
+    },
+  }));
+  const listed = await h.api.tasks.list({ path: 'a.md' });
+  if (!listed.ok) throw new Error(listed.error.code);
+  const north = expectDefined(listed.value.items[0]);
+  const noOp = await expectDefined(h.api.tasks.prepare)({
+    kind: 'edit',
+    target: north.target,
+    expectedRevision: north.revision,
+    operation: {
+      type: 'patch',
+      target: north.target,
+      patch: { due: { type: 'set', value: '2026-11-18' } },
+    },
+  });
+  if (!noOp.ok) throw new Error(noOp.error.code);
+  expect(noOp.value).toHaveProperty('hasChanges', false);
+  h.session.stage({ kind: 'task', plan: noOp.value });
+  const surface = h.mount();
+  await flushMicrotasks(0);
+  expect(surface.element.querySelector('[aria-label="Save proposal"]')).toBeNull();
+
+  h.confirmInSession(surface);
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().blocked).toBe(true);
+  });
+  expect(h.owner.snapshot().recovery).toBe('uncertain');
+  expect(h.owner.snapshot().proposal.changes).toHaveLength(1);
+  const change = expectDefined(h.owner.snapshot().proposal.changes[0]);
+  expect(change.kind).toBe('task');
+  if (change.kind === 'task') expect(change.plan).toHaveProperty('hasChanges', false);
+  expect(surface.element.querySelector('.abyss-command-phase')?.textContent).toBe(
+    h.owner.snapshot().status.message,
+  );
+  expect(surface.element.querySelector('.abyss-command-phase')?.textContent).toContain(
+    'The request may be partly saved. Review the actual result before continuing.',
+  );
+  expect(surface.element.querySelector('[aria-label="Save proposal"]')).toBeNull();
+  expect(await h.read('a.md')).toBe(source);
+});
 
 it('proves the first saved-comment rewrite through the real tool path and restores cumulative changes under the exact duplicate owner', async () => {
   const h = await setup();
@@ -4888,7 +5125,7 @@ it('reopens the discarded task tree from history without reviving its changes or
     'Draft discarded.',
   );
   expect(h.owner.snapshot().recovery).toBe('historical');
-  expect(surface.element.querySelector('[aria-label="Save"]')).toBeNull();
+  expect(surface.element.querySelector('[aria-label="Save proposal"]')).toBeNull();
   expect(await h.session.confirm()).toBe(false);
   expect(await h.read('a.md')).toBe('- [ ] Existing\n');
   // The same JSON survives a fresh client with no retained plan handles.

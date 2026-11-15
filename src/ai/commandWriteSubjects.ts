@@ -85,12 +85,16 @@ function preparedValue(change: CommandChange): unknown {
     return [change.kind, change.plan.destination?.path, planContents(change.plan)];
   return change;
 }
+function isMaterialCommandChange(change: CommandChange): boolean {
+  return change.kind !== 'task' || change.plan.kind !== 'edit' || change.plan.hasChanges !== false;
+}
+export function hasMaterialCommandWork(snapshot: CommandSessionSnapshot): boolean {
+  return snapshot.proposal.changes.some(isMaterialCommandChange);
+}
 function materialProposal(snapshot: CommandSessionSnapshot): string {
-  const changes = snapshot.proposal.changes.filter(
-    (change) =>
-      change.kind !== 'task' || change.plan.kind !== 'edit' || change.plan.hasChanges !== false,
+  return JSON.stringify(
+    snapshot.proposal.changes.filter(isMaterialCommandChange).map(preparedValue),
   );
-  return JSON.stringify(changes.map(preparedValue));
 }
 /** Compare material published proposal contents, including removal of an earlier draft. Version tokens alone never prove a requested edit. */
 export function hasFreshCommandWork(

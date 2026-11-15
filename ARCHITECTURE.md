@@ -174,6 +174,11 @@ The host validates discovery blockers before any focus/transition effect. Eviden
 cannot supply selection or reveal; the host renders their factual question from that evidence. Missing-information/conflict
 questions retain the model's exact text. Routine completion text describes accepted results and
 proposal/receipt state; it does not claim that every natural-language requirement was understood.
+Materiality has one owner in `commandWriteSubjects`: a canonical task edit with
+`hasChanges === false` is excluded from material work. Prepared success with no material work uses
+localized no-changes feedback. `CommandModeSurface` uses the same selector for Save visibility;
+explicit unchanged confirmation remains available through native confirmation and retains its
+canonical receipt and readback.
 Independent utterance and outcome oracles remain necessary. Explicit immediate consent is required
 to save newly prepared work in that turn. Canonical Zod
 validation remains the execution boundary. The model presentation adds redundant properties and common
@@ -349,6 +354,10 @@ controller receives input. Command input never follows ordinary capture's blur s
 Each mounted surface owns its displayed mode and submission route; main's transient mode memory
 only initializes reopening. Main retains selection/scroll memory and the shared owner. The capture
 boundary handles command departure as hide, while ordinary text keeps its submit-on-departure rules.
+For a ready live session, `CommandModeSurface` consults `hasMaterialCommandWork` before showing the
+Save invitation. Existing question, error, blocked, pending-transition and recovery guards continue
+to control the action. Empty-input confirmation still uses the explicit session command and can save
+a reviewed unchanged proposal.
 The coordinator owns document Escape for Q, after nested menus, history and wiki suggestions have
 consumed their first Escape. Outside departure preserves outside focus. Destroying or migrating a
 surface releases its Components and subscriptions without discarding the session. `CommandNotes`

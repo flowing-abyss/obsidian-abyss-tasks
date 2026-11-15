@@ -27,7 +27,11 @@ import {
 import { CommandSession } from '../src/ai/CommandSession';
 import type { CommandSessionSnapshot } from '../src/ai/commandTypes';
 import type { WriteReviewer } from '../src/ai/commandWriteAuthorization';
-import { commandWriteSubjects } from '../src/ai/commandWriteSubjects';
+import {
+  commandWriteSubjects,
+  hasFreshCommandWork,
+  hasMaterialCommandWork,
+} from '../src/ai/commandWriteSubjects';
 import { ProviderFailure } from '../src/ai/providers/providerFailure';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { toStatusRules } from '../src/settings/statusCatalogAdapter';
@@ -212,45 +216,77 @@ it('adds local no-op feedback only for a current unchanged plan and keeps paging
   expect(paged).toHaveProperty('selection.expectedPlanRevision', plan.revision);
   expect(JSON.stringify(paged).length).toBeLessThanOrEqual(65536);
 });
-it('completes an undo-only no-op restore without another model request', async () => {
-  const source = '- [ ] North Proof #north 📅 2026-11-18\n';
-  const h = await setup({ 'a.md': source });
-  h.script(
-    () => call('find', { query: 'North Proof', purpose: 'change' }),
-    () => call('find', { query: 'North Proof', purpose: 'change', showExact: true }),
-    () =>
-      call('change_task', {
-        edit: projectedEdit(h, 'North Proof'),
-        operation: { type: 'patch', patch: { due: { type: 'set', value: '2026-11-21' } } },
-        complete: true,
-      }),
-  );
-  await h.session.submit('Change North Proof to November 21.');
-  expect(h.session.snapshot().status.kind).toBe('ready');
-  expect(await h.read('a.md')).toBe(source);
+it.each([
+  ['en', 'There are no changes to save.'],
+  ['ru', 'Нет изменений для сохранения.'],
+])(
+  'completes an undo-only no-op restore without another model request in %s',
+  async (locale, message) => {
+    configureCommandLocale(locale);
+    try {
+      const source = '- [ ] North Proof #north 📅 2026-11-18\n';
+      const h = await setup({ 'a.md': source });
+      const empty = h.session.snapshot();
+      h.script(
+        () => call('find', { query: 'North Proof', purpose: 'change' }),
+        () => call('find', { query: 'North Proof', purpose: 'change', showExact: true }),
+        () =>
+          call('change_task', {
+            edit: projectedEdit(h, 'North Proof'),
+            operation: { type: 'patch', patch: { due: { type: 'set', value: '2026-11-21' } } },
+            complete: true,
+          }),
+      );
+      await h.session.submit('Change North Proof to November 21.');
+      const changed = h.session.snapshot();
+      expect(h.session.snapshot().status.kind).toBe('ready');
+      expect(await h.read('a.md')).toBe(source);
 
-  const beforeRestore = h.model.doGenerateCalls.length;
-  h.script(() =>
-    call('change_task', {
-      edit: projectedEdit(h, 'North Proof'),
-      operation: { type: 'patch', patch: { due: { type: 'set', value: '2026-11-18' } } },
-      complete: true,
-    }),
-  );
-  await h.session.submit('Restore North Proof to November 18; that is the whole request.');
-  expect(h.model.doGenerateCalls).toHaveLength(beforeRestore + 1);
-  expect(h.session.snapshot().status.kind).toBe('ready');
-  expect(h.session.snapshot().journal).toEqual([]);
-  expect(h.session.snapshot().trees[0]?.after?.dates.due).toBe('2026-11-18');
-  const plan = h.session.snapshot().proposal.changes[0];
-  if (plan?.kind !== 'task') throw Error('Missing canonical no-op restore');
-  expect(plan.plan).toHaveProperty('hasChanges', false);
-  expect(record(planToolOutput(plan.plan))).toHaveProperty(
-    'preparation',
-    expect.stringContaining('An undo may be complete'),
-  );
-  expect(await h.read('a.md')).toBe(source);
-});
+      const beforeRestore = h.model.doGenerateCalls.length;
+      h.script(() =>
+        call('change_task', {
+          edit: projectedEdit(h, 'North Proof'),
+          operation: { type: 'patch', patch: { due: { type: 'set', value: '2026-11-18' } } },
+          complete: true,
+        }),
+      );
+      await h.session.submit('Restore North Proof to November 18; that is the whole request.');
+      expect(h.model.doGenerateCalls).toHaveLength(beforeRestore + 1);
+      expect(h.session.snapshot().status).toEqual({ kind: 'ready', message });
+      const exchanges = h.session.snapshot().exchanges;
+      expect(exchanges[exchanges.length - 1]).toEqual({ role: 'agent', text: message });
+      expect(h.session.snapshot().journal).toEqual([]);
+      expect(h.session.snapshot().trees[0]?.after?.dates.due).toBe('2026-11-18');
+      const plan = h.session.snapshot().proposal.changes[0];
+      if (plan?.kind !== 'task') throw Error('Missing canonical no-op restore');
+      expect(plan.plan).toHaveProperty('hasChanges', false);
+      const restored = h.session.snapshot();
+      expect(hasMaterialCommandWork(restored)).toBe(false);
+      expect(hasFreshCommandWork(empty, restored)).toBe(false);
+      expect(hasFreshCommandWork(changed, restored)).toBe(true);
+      const withoutCanonicalFlag = {
+        ...restored,
+        proposal: {
+          ...restored.proposal,
+          changes: restored.proposal.changes.map((change) => {
+            if (change.kind !== 'task' || change.plan.kind !== 'edit') return change;
+            const planWithoutFlag = { ...change.plan };
+            Reflect.deleteProperty(planWithoutFlag, 'hasChanges');
+            return { ...change, plan: planWithoutFlag };
+          }),
+        },
+      } as unknown as CommandSessionSnapshot;
+      expect(hasMaterialCommandWork(withoutCanonicalFlag)).toBe(true);
+      expect(record(planToolOutput(plan.plan))).toHaveProperty(
+        'preparation',
+        expect.stringContaining('An undo may be complete'),
+      );
+      expect(await h.read('a.md')).toBe(source);
+    } finally {
+      configureCommandLocale('en');
+    }
+  },
+);
 
 it('preserves a canonical sibling no-op restore and an independent edit together', async () => {
   const source = [
@@ -324,6 +360,7 @@ it('preserves a canonical sibling no-op restore and an independent edit together
   );
   h.session.stage({ kind: 'task', plan: restored.value });
   h.session.stage({ kind: 'task', plan: sibling.value });
+  expect(hasMaterialCommandWork(h.session.snapshot())).toBe(true);
   expect(h.session.snapshot().journal).toEqual([]);
   expect(h.session.snapshot().trees.map((tree) => tree.after?.title)).toEqual([
     'North Proof',
@@ -345,6 +382,87 @@ it('preserves a canonical sibling no-op restore and an independent edit together
   });
   expect(await h.read('a.md')).toBe(source);
   expect(await h.read('Other.md')).toBe('Unrelated bytes.\n');
+});
+
+it('keeps pending notes, project changes, and task creation material beside canonical no-ops', async () => {
+  const source = '- [ ] Existing 📅 2026-11-18\n';
+  const h = await setup({ 'a.md': source });
+  const listed = await h.api.tasks.list({ path: 'a.md' });
+  if (!listed.ok) throw new Error(listed.error.code);
+  const existing = expectDefined(listed.value.items[0]);
+  const prepareTask = expectDefined(h.api.tasks.prepare);
+  const noOp = await prepareTask({
+    kind: 'edit',
+    target: existing.target,
+    expectedRevision: existing.revision,
+    operation: {
+      type: 'patch',
+      target: existing.target,
+      patch: { due: { type: 'set', value: '2026-11-18' } },
+    },
+  });
+  if (!noOp.ok) throw new Error(noOp.error.code);
+  expect(noOp.value).toHaveProperty('hasChanges', false);
+  h.session.stage({ kind: 'task', plan: noOp.value });
+  expect(hasMaterialCommandWork(h.session.snapshot())).toBe(false);
+
+  const note = await expectDefined(h.api.notes).prepare({
+    kind: 'create',
+    path: 'Review.md',
+    title: 'Review',
+    text: 'A pending note.',
+  });
+  if (!note.ok) throw new Error(note.error.code);
+  h.session.stage({ kind: 'note', plan: note.value });
+  expect(hasMaterialCommandWork(h.session.snapshot())).toBe(true);
+
+  const created = await prepareTask({
+    kind: 'create',
+    destination: { type: 'note', path: 'a.md', insertion: { type: 'append' } },
+    tree: { markdownTitle: 'New task' },
+  });
+  if (!created.ok) throw new Error(created.error.code);
+  h.session.stage({ kind: 'task', plan: created.value });
+  expect(hasMaterialCommandWork(h.session.snapshot())).toBe(true);
+});
+
+it('keeps a project change material beside a canonical task no-op', async () => {
+  const source = '- [ ] Existing 📅 2026-11-18\n';
+  const h = await setup({ 'a.md': source }, {}, projectApiFixture);
+  const listed = await h.api.tasks.list({ path: 'a.md' });
+  if (!listed.ok) throw new Error(listed.error.code);
+  const existing = expectDefined(listed.value.items[0]);
+  const plan = await expectDefined(h.api.tasks.prepare)({
+    kind: 'edit',
+    target: existing.target,
+    expectedRevision: existing.revision,
+    operation: {
+      type: 'patch',
+      target: existing.target,
+      patch: { due: { type: 'set', value: '2026-11-18' } },
+    },
+  });
+  if (!plan.ok) throw new Error(plan.error.code);
+  expect(plan.value).toHaveProperty('hasChanges', false);
+  h.session.stage({ kind: 'task', plan: plan.value });
+  expect(hasMaterialCommandWork(h.session.snapshot())).toBe(false);
+
+  h.script(
+    interpret('plan', false),
+    () =>
+      call('project', {
+        kind: 'update',
+        target: 'Launch',
+        expectedRevision: 'r',
+        fields: [{ fieldId: 'start', value: '2026-08-02' }],
+      }),
+    finish(),
+  );
+  await h.session.submit('Set the Launch start date to August 2.');
+  expect(h.session.snapshot().proposal.changes.some((change) => change.kind === 'project')).toBe(
+    true,
+  );
+  expect(hasMaterialCommandWork(h.session.snapshot())).toBe(true);
 });
 
 it('does not label discovery, lifecycle staging or cancelled drafts as prepared task previews', async () => {
@@ -8208,6 +8326,25 @@ it('repairs finish selection without replaying a successful preparation', async 
   expect(h.session.snapshot().status.kind).toBe('ready');
   expect(h.session.snapshot().proposal.changes).toHaveLength(1);
 });
+it('repairs a malformed finish with conditional selection guidance in the existing repair pass', async () => {
+  const h = await setupCountedPreparation();
+  h.script(
+    interpret('plan', false),
+    () => call('task', { input: readyCreation }),
+    () => call('finish', { state: 'ready', message: 'Ready.', unsupported: true }),
+    finish(),
+  );
+  await h.session.submit('Prepare a task');
+  expect(h.model.doGenerateCalls).toHaveLength(4);
+  expect(h.preparations()).toBe(1);
+  const prompts = JSON.stringify(h.model.doGenerateCalls);
+  expect(prompts).toContain(
+    'Omit selection unless requested; no saving question for prepared work.',
+  );
+  expect(prompts).not.toContain('Prepared work needs no selection/saving question.');
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+});
 it('decodes an encoded task object once through canonical preparation without another model request', async () => {
   const h = await setupCountedPreparation();
   h.script(
@@ -9154,6 +9291,7 @@ it('finishes creation with canonical dates and time and publishes only trusted r
     finish('Saved. Everything is written.'),
   );
   await h.session.submit('Gym tomorrow at 10');
+  expect(hasMaterialCommandWork(h.session.snapshot())).toBe(true);
   expect(h.session.snapshot().status).toEqual({ kind: 'ready', message: 'Ready. Enter to save.' });
   expect(
     h.session.snapshot().exchanges.some((e) => e.text === 'Saved. Everything is written.'),
@@ -12198,7 +12336,10 @@ it('finishes a terminal discard of the last draft in that generation and accepts
   );
   await h.session.submit('I changed my mind. Discard that draft.');
   expect(h.model.doGenerateCalls).toHaveLength(2);
-  expect(h.session.snapshot().status).toEqual({ kind: 'ready', message: 'Ready.' });
+  expect(h.session.snapshot().status).toEqual({
+    kind: 'ready',
+    message: 'There are no changes to save.',
+  });
   expect(h.session.snapshot().proposal.changes).toEqual([]);
   expect(h.session.snapshot().journal).toEqual([]);
   expect(await h.read('a.md')).toBe('');
@@ -12307,6 +12448,7 @@ it.each([
     const proposal = h.session.snapshot().proposal;
     expect(proposal.revision).toBeGreaterThan(0);
     expect(proposal.changes).toEqual([]);
+    expect(hasMaterialCommandWork(h.session.snapshot())).toBe(false);
     h.script(() => call('interpret', { intent: 'confirm', approval: currentApproval(h) }));
     await h.session.submit('Save it');
     expect(h.session.snapshot().status).toEqual({ kind: 'ready', message });
