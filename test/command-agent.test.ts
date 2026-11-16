@@ -4104,7 +4104,8 @@ it.each([
   ['taskId', { taskId: 'private-task-id' }],
 ])('repairs a conflicting source coordinate with owned guidance: %s', async (_label, conflict) => {
   const path = 'Private path.md';
-  const source = '- [ ] Private title #work\n- [ ] Private title #work\n';
+  const source =
+    '- [ ] Private title #work ⏳ 2026-11-20\n- [ ] Private title #work ⏳ 2026-11-21\n';
   const control = '- [ ] Control\n';
   let searches = 0;
   const h = await setup({ [path]: source, 'Control.md': control }, {}, (api) => {
@@ -4120,8 +4121,21 @@ it.each([
       },
     };
   });
+  const canonical = await h.api.tasks.list({ path });
+  if (!canonical.ok) throw Error('Missing canonical task source');
+  const selectedCanonical = expectDefined(
+    canonical.value.items.find((row) => row.source.line === 1 && row.title === 'Private title'),
+  );
+  const siblingCanonical = expectDefined(
+    canonical.value.items.find((row) => row.source.line === 0 && row.title === 'Private title'),
+  );
+  const controlListing = await h.api.tasks.list({ path: 'Control.md' });
+  if (!controlListing.ok) throw Error('Missing canonical control task source');
+  const controlCanonical = expectDefined(controlListing.value.items[0]);
   const query = { query: 'Private title', fields: 'title' as const, tagsAll: ['#work'] };
   let errorFeedback = '';
+  let repairedMatch: Record<string, unknown> = {};
+  let repairedSourceRow: Record<string, unknown> = {};
   h.script(
     interpret(),
     () => call('find', { ...query, path, sourceLine: 2, purpose: 'change', ...conflict }),
@@ -4133,9 +4147,14 @@ it.each([
       return call('find', { ...query, path, sourceLine: 2, purpose: 'change' });
     },
     () => {
-      const match = record(latestToolValue(h, 'find')['match']);
+      const result = latestToolValue(h, 'find');
+      repairedMatch = record(result['match']) ?? {};
+      const items = result['items'] as Array<Record<string, unknown>>;
+      repairedSourceRow =
+        items.find((row) => JSON.stringify(row['source']) === JSON.stringify({ path, line: 2 })) ??
+        {};
       return call('change_task', {
-        edit: String(match?.['edit']),
+        edit: String(repairedMatch['edit']),
         operation: {
           type: 'patch',
           patch: { markdownTitle: { type: 'set', value: 'Chosen' } },
@@ -4154,8 +4173,48 @@ it.each([
   expect(errorFeedback).not.toContain('Private title');
   expect(errorFeedback).not.toContain(path);
   expect(errorFeedback).not.toContain('private-task-id');
+  expect(repairedMatch).toMatchObject({ markdownTitle: 'Private title' });
+  expect(repairedSourceRow).toMatchObject({
+    title: 'Private title',
+    source: { path, line: 2 },
+  });
   expect(h.session.snapshot().status.kind).toBe('ready');
-  expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+  const changes = h.session.snapshot().proposal.changes;
+  expect(changes).toHaveLength(1);
+  const change = record(changes[0]);
+  const plan = record(change?.['plan']);
+  const before = taskTree(plan?.['before']);
+  const after = taskTree(plan?.['after']);
+  expect(change?.['kind']).toBe('task');
+  expect(plan?.['kind']).toBe('edit');
+  expect(before?.target).toBe(selectedCanonical.target);
+  expect(after?.target).toBe(selectedCanonical.target);
+  const selectedBefore = expectDefined(findTreeNode(before, selectedCanonical.target));
+  const selectedAfter = expectDefined(findTreeNode(after, selectedCanonical.target));
+  expect(selectedBefore).toMatchObject({
+    target: selectedCanonical.target,
+    title: 'Private title',
+    tags: ['#work'],
+    dates: selectedCanonical.dates,
+  });
+  expect(selectedAfter).toMatchObject({
+    target: selectedCanonical.target,
+    title: 'Chosen',
+    markdownTitle: 'Chosen',
+    status: selectedBefore.status,
+    statusSymbol: selectedBefore.statusSymbol,
+    priority: selectedBefore.priority,
+    dates: selectedBefore.dates,
+    tags: selectedBefore.tags,
+    onCompletion: selectedBefore.onCompletion,
+    onCompletionExplicit: selectedBefore.onCompletionExplicit,
+    children: selectedBefore.children,
+    comments: selectedBefore.comments,
+    timeEntries: selectedBefore.timeEntries,
+    entries: selectedBefore.entries,
+  });
+  expectUnselectedNodePreserved(before, after, siblingCanonical);
+  expectUnselectedNodePreserved(before, after, controlCanonical);
   expect(h.session.snapshot().journal).toEqual([]);
   expect(await h.read(path)).toBe(source);
   expect(await h.read('Control.md')).toBe(control);
