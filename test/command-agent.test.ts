@@ -4761,6 +4761,7 @@ it('refines the earlier of two pending creations without changing the later root
   });
   expect(laterAfter.target).toBe(later.target);
   expect(laterAfter.after?.target).toBe(laterRoot.target);
+  expect(laterAfter).toEqual(later);
   expect(laterAfter.after).toMatchObject({
     title: 'Later root',
     description: 'Keep this later root.',
