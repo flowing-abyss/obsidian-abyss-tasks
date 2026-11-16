@@ -8,6 +8,7 @@ import { lookupCases } from './lookupCases';
 import type { TurnExpectation } from './oracles';
 import { native9FeedbackCase, pageCases } from './pageCases';
 import { qualificationCases } from './qualificationCases';
+import { r10QualificationCases } from './r10QualificationCases';
 import { r9QualificationCases } from './r9QualificationCases';
 import { semanticCases } from './semanticCases';
 export interface EvalTurn {
@@ -2380,6 +2381,7 @@ export const corpus = [
   ...qualificationCases,
   researchPageReadOnlyRu,
   native9FeedbackCase,
+  ...r10QualificationCases,
   ...followupCases,
   ...freshQualificationCases,
   freshSourceCommentCase,

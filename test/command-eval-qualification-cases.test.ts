@@ -81,8 +81,8 @@ it('keeps the planned seven Russian and seven English cases', () => {
 });
 
 it('registers five follow-up cases after the original resolved corpus', () => {
-  expect(corpus).toHaveLength(209);
-  expect(new Set(corpus.map((test) => test.id)).size).toBe(209);
+  expect(corpus).toHaveLength(211);
+  expect(new Set(corpus.map((test) => test.id)).size).toBe(211);
   expect(corpus.slice(-14, -9)).toEqual(followupCases);
   expect(followupCases.map((test) => test.id)).toEqual([
     'prospective-focus-select-due-date-en',
@@ -112,7 +112,7 @@ it('adds four fresh development cases for the audited workflow gaps', () => {
   expect(new Set(freshQualificationCases.map((test) => test.id)).size).toBe(4);
   for (const test of freshQualificationCases) expect(unqualifiedTurns(test)).toEqual([]);
   expect(corpus.slice(-9, -5)).toEqual(freshQualificationCases);
-  expect(corpus).toHaveLength(209);
+  expect(corpus).toHaveLength(211);
 });
 
 it('adds four independent held-out replacement qualification cases', () => {
@@ -132,7 +132,7 @@ it('adds four independent held-out replacement qualification cases', () => {
   expect(cases.filter((test) => test.id.endsWith('-en'))).toHaveLength(2);
   expect(cases.filter((test) => test.id.endsWith('-ru'))).toHaveLength(2);
   expect(corpus.slice(-4)).toEqual(cases);
-  expect(corpus).toHaveLength(209);
+  expect(corpus).toHaveLength(211);
 });
 
 it('registers and freezes the fresh English source-comment fixture after follow-ups', async () => {
