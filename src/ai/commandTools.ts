@@ -35,7 +35,7 @@ import {
   sameCommandProjectSchema,
   validateCommandProject,
 } from './commandProjects';
-import { sourceLineGuidance } from './commandPrompt';
+import { sourceLineConstraint, sourceLineGuidance } from './commandPrompt';
 import { canonicalCommandPlan, canonicalCommandTree, commandRead } from './commandReads';
 import { CommentRemovalMismatch, type CommandReferenceBook } from './CommandReferenceBook';
 import { commandReferences } from './commandReferences';
@@ -211,7 +211,7 @@ const findSchema = readSchema.options[0]
     (input) =>
       input.sourceLine === undefined ||
       (Boolean(input.path?.trim()) && input.taskId === undefined && input.showExact === undefined),
-    'sourceLine requires an exact nonempty path and cannot combine with taskId/showExact.',
+    sourceLineConstraint,
   );
 type FindRequest = z.infer<typeof findSchema>;
 type TaskSearchResult = TaskSearchPageV1 & { evidence: string };

@@ -2490,6 +2490,29 @@ it('repairs malformed model arguments through SDK tool error feedback', async ()
   expect(h.session.snapshot().proposal.changes).toHaveLength(1);
   expect(JSON.stringify(h.model.doGenerateCalls[2]?.prompt)).toContain('error');
 });
+it('keeps untrusted custom schema messages and rejected URL values out of repair feedback', async () => {
+  const h = await setup();
+  const rejectedUrl = 'https://user:private-secret@example.org/page';
+  let feedback = '';
+  h.script(
+    interpret('plan', true),
+    () => call('research', { url: rejectedUrl }),
+    () => {
+      const result = h.model.doGenerateCalls[2]?.prompt.flatMap((message) =>
+        message.role === 'tool' ? message.content : [],
+      );
+      feedback = JSON.stringify(result);
+      return finish()();
+    },
+  );
+  await h.session.submit('Read the requested page.');
+
+  expect(feedback).toContain('url: custom');
+  expect(feedback).not.toContain('Invalid input');
+  expect(feedback).not.toContain(rejectedUrl);
+  expect(feedback).not.toContain('private-secret');
+  expect(h.session.snapshot().journal).toEqual([]);
+});
 it('researches an exact child refinement while treating injected source instructions as data', async () => {
   const h = await setup();
   h.script(interpret(), create, finish());
@@ -3365,12 +3388,8 @@ it('keeps strict runtime validation for discriminants and cross-branch fields', 
     finish(),
   );
   await h.session.submit('Show the status catalog and tasks');
-  expect(JSON.stringify(h.model.doGenerateCalls[2]?.prompt)).toContain(
-    'Match one advertised schema branch',
-  );
-  expect(JSON.stringify(h.model.doGenerateCalls[3]?.prompt)).toContain(
-    'Match one advertised schema branch',
-  );
+  expect(JSON.stringify(h.model.doGenerateCalls[2]?.prompt)).toContain('Match intended branch');
+  expect(JSON.stringify(h.model.doGenerateCalls[3]?.prompt)).toContain('Match intended branch');
   expect(h.session.snapshot().status.kind).toBe('ready');
 });
 
@@ -4049,6 +4068,10 @@ it.each([
   ['fractional line', { path: 'Exact path.md', sourceLine: 1.5 }],
   ['conflicting task ID', { path: 'Exact path.md', sourceLine: 1, taskId: 'task-id' }],
   ['conflicting exact-title selector', { path: 'Exact path.md', sourceLine: 1, showExact: true }],
+  [
+    'explicitly false exact-title selector',
+    { path: 'Exact path.md', sourceLine: 1, showExact: false },
+  ],
 ])('rejects a source coordinate with %s before public search', async (_name, selector) => {
   const source = '- [ ] Unique\n';
   let searchCalls = 0;
@@ -4074,6 +4097,101 @@ it.each([
   expect(searchCalls).toBe(0);
   expect(h.session.snapshot().proposal.changes).toEqual([]);
   expect(await h.read('Exact path.md')).toBe(source);
+});
+it.each([
+  ['showExact true', { showExact: true }],
+  ['showExact false', { showExact: false }],
+  ['taskId', { taskId: 'private-task-id' }],
+])('repairs a conflicting source coordinate with owned guidance: %s', async (_label, conflict) => {
+  const path = 'Private path.md';
+  const source = '- [ ] Private title #work\n- [ ] Private title #work\n';
+  const control = '- [ ] Control\n';
+  let searches = 0;
+  const h = await setup({ [path]: source, 'Control.md': control }, {}, (api) => {
+    const search = expectDefined(api.tasks.search);
+    return {
+      ...api,
+      tasks: {
+        ...api.tasks,
+        search: async (input) => {
+          searches += 1;
+          return search(input);
+        },
+      },
+    };
+  });
+  const query = { query: 'Private title', fields: 'title' as const, tagsAll: ['#work'] };
+  let errorFeedback = '';
+  h.script(
+    interpret(),
+    () => call('find', { ...query, path, sourceLine: 2, purpose: 'change', ...conflict }),
+    () => {
+      const result = h.model.doGenerateCalls[2]?.prompt.flatMap((message) =>
+        message.role === 'tool' ? message.content : [],
+      );
+      errorFeedback = JSON.stringify(result);
+      return call('find', { ...query, path, sourceLine: 2, purpose: 'change' });
+    },
+    () => {
+      const match = record(latestToolValue(h, 'find')['match']);
+      return call('change_task', {
+        edit: String(match?.['edit']),
+        operation: {
+          type: 'patch',
+          patch: { markdownTitle: { type: 'set', value: 'Chosen' } },
+        },
+        complete: true,
+      });
+    },
+    finish(),
+  );
+  await h.session.submit('Rename the second Private title to Chosen in Private path.md, line 2.');
+
+  expect(searches).toBe(1);
+  expect(errorFeedback).toContain(
+    'sourceLine requires exact path; cannot combine with taskId/showExact.',
+  );
+  expect(errorFeedback).not.toContain('Private title');
+  expect(errorFeedback).not.toContain(path);
+  expect(errorFeedback).not.toContain('private-task-id');
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(await h.read(path)).toBe(source);
+  expect(await h.read('Control.md')).toBe(control);
+});
+it('exhausts bounded repair on repeated source-coordinate conflicts without preparation', async () => {
+  let searches = 0;
+  const h = await setup({ 'Exact path.md': '- [ ] Unique\n' }, {}, (api) => {
+    const search = expectDefined(api.tasks.search);
+    return {
+      ...api,
+      tasks: {
+        ...api.tasks,
+        search: async (input) => {
+          searches += 1;
+          return search(input);
+        },
+      },
+    };
+  });
+  const invalidFind = () =>
+    call('find', {
+      query: 'Unique',
+      path: 'Exact path.md',
+      sourceLine: 1,
+      showExact: false,
+      purpose: 'change',
+    });
+  h.script(interpret(), invalidFind, invalidFind, invalidFind, finish());
+  await h.session.submit('Change Unique at Exact path.md, line 1.');
+
+  expect(searches).toBe(0);
+  expect(h.model.doGenerateCalls).toHaveLength(4);
+  expect(h.session.snapshot().status.kind).toBe('error');
+  expect(h.session.snapshot().proposal.changes).toEqual([]);
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(await h.read('Exact path.md')).toBe('- [ ] Unique\n');
 });
 it('does not choose between duplicate matches or select a partial title', async () => {
   for (const source of ['- [ ] Green\n- [ ] Green\n', '- [ ] Deep Green\n']) {

@@ -14,7 +14,7 @@ import { repairEncodedContainers } from './commandArgumentRepair';
 import { CommandEvidence } from './CommandEvidence';
 import { commandEditTools } from './commandModelSchema';
 import { CommandPendingOperations } from './CommandPendingOperations';
-import { commandPrompt } from './commandPrompt';
+import { commandPrompt, sourceLineConstraint } from './commandPrompt';
 import { CommandReferenceBook } from './CommandReferenceBook';
 import { commandReferences } from './commandReferences';
 import { record } from './commandReferenceShapes';
@@ -219,7 +219,15 @@ function validationIssue(value: unknown): string {
           .join(', ')
       : '';
   const removed = keys === '' ? '' : `; unrecognized at this level: ${keys}`;
-  return `${path === '' ? 'arguments' : path}: ${issue['code']}${expected}${maximum}${removed}`;
+  return (
+    sourceLineConstraintHint(issue) ??
+    `${path === '' ? 'arguments' : path}: ${issue['code']}${expected}${maximum}${removed}`
+  );
+}
+function sourceLineConstraintHint(issue: Record<string, unknown>): string | undefined {
+  return issue['code'] === 'custom' && issue['message'] === sourceLineConstraint
+    ? sourceLineConstraint
+    : undefined;
 }
 function validationMaximum(issue: Record<string, unknown>): string {
   return issue['code'] === 'too_big' && typeof issue['maximum'] === 'number'
@@ -264,7 +272,7 @@ function rejectedRemoval(name: string, input: string): boolean {
   }
 }
 function schemaRepairMessage(name: string, input: string, error: unknown): string {
-  const common = `Arguments rejected; nothing ran. Retain intended content/target. ${validationHint(error)} `;
+  const common = `Arguments rejected; nothing ran. ${validationHint(error)} `;
   if (rejectedRemoval(name, input))
     return `${common}For whole-task deletion use change_task with the matched row’s issued edit and operation:{"type":"remove"}, complete:true. This previews the entire subtree.`;
   if (name === 'task') return common + taskSchemaRepair(input);
@@ -279,7 +287,7 @@ function schemaRepairMessage(name: string, input: string, error: unknown): strin
     return `${common}Read project-schema; use fields:[{fieldId,value}] and target/expectedRevision, not task date patches.`;
   if (name === 'note')
     return `${common}input: create/title/text (path if requested), edit/target/expectedRevision/operation, or refine/plan/expectedPlanRevision/operation. Keep content/frozen path. replace-body: new-note plans only.`;
-  return `${common}Match one advertised schema branch; omit unrelated fields. Keep exact references/requested values.`;
+  return `${common}Match intended branch; preserve exact values/references.`;
 }
 function controlSchemaRepair(input: string): string {
   try {
