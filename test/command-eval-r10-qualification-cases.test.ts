@@ -25,6 +25,7 @@ function previewEvidence(expected: (typeof cases)[number]['turns'][number]['expe
     admissions: [],
     complete: true,
     writeCount: expected.writeCount ?? 0,
+    previousTaskContinuity: expected.retainPreviousTasks === true,
   };
 }
 
@@ -83,6 +84,24 @@ it('binds the earlier Russian pending root and complete two-task save', () => {
   expect(saved.expect.files?.['control.md']).toContain('\r\n');
 });
 
+it('ties the Russian requested child literals to the expected tree and saved bytes', () => {
+  const earlier = expectDefined(cases.find((test) => test.id === 'r10-fresh-earlier-draft-ru'));
+  const capture = expectDefined(earlier.turns[0]);
+  const root = expectDefined(capture.expect.trees?.[0]) as {
+    children?: Array<{ markdownTitle?: string; comments?: Array<{ text?: string }> }>;
+  };
+  const child = expectDefined(root.children?.[0]);
+  const childTitle = expectDefined(child.markdownTitle);
+  const note = expectDefined(expectDefined(child.comments?.[0]).text);
+  const saved = expectDefined(earlier.turns[2]).expect;
+  const savedBytes = expectDefined(saved.files?.['a.md']);
+
+  expect(capture.text).toContain(`«${childTitle}»`);
+  expect(capture.text).toContain(`«${note}»`);
+  expect(savedBytes).toContain(childTitle);
+  expect(savedBytes).toContain(note);
+});
+
 it('accepts the line-seven owner and rejects the other same-title owner coordinate', () => {
   const sparse = expectDefined(cases.find((test) => test.id === 'r10-fresh-sparse-line-en'));
   const preview = expectDefined(sparse.turns[1]).expect;
@@ -99,7 +118,13 @@ it('accepts both refined pending roots and rejects duplicate or unrefined result
   const earlier = expectDefined(cases.find((test) => test.id === 'r10-fresh-earlier-draft-ru'));
   const refine = expectDefined(earlier.turns[1]).expect;
   const correct = previewEvidence(refine);
+  expect(refine.retainPreviousTasks).toBe(true);
+  expect(correct.previousTaskContinuity).toBe(true);
   expect(evaluateTurn(refine, correct)).toEqual([]);
+
+  const replacement = previewEvidence(refine);
+  replacement.previousTaskContinuity = false;
+  expect(evaluateTurn(refine, replacement)).toContain('preservation:task-correspondence');
 
   const duplicateRoot = previewEvidence(refine);
   const expectedRoots = expectDefined(refine.trees);
