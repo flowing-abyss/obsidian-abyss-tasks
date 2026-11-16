@@ -99,6 +99,19 @@ function taskTree(value: unknown): TaskTreeV1 | null {
   if (value === null) return null;
   return expectDefined(record(value)) as unknown as TaskTreeV1;
 }
+function pendingCreateByTitle(h: Awaited<ReturnType<typeof setup>>, title: string): ContentPlanV1 {
+  const change = h.session
+    .snapshot()
+    .proposal.changes.find(
+      (candidate) =>
+        candidate.kind === 'task' &&
+        candidate.plan.kind === 'create' &&
+        candidate.plan.after?.title === title,
+    );
+  if (change?.kind !== 'task' || change.plan.kind !== 'create')
+    throw Error(`Missing pending creation for ${title}`);
+  return change.plan;
+}
 function expectUnselectedNodePreserved(
   before: TaskTreeV1 | null,
   after: TaskTreeV1 | null,
@@ -4502,6 +4515,63 @@ it('offers current draft refinement and add-child guidance for the sole working 
   ]);
   expect(await h.read('a.md')).toBe('');
 });
+it.each(['mixed proposal', 'unrelated focus'] as const)(
+  'omits the sole-draft cue for %s while keeping independent creation available',
+  async (condition) => {
+    const source = '- [ ] Existing\n';
+    const h = await setup({ 'a.md': source });
+    const rows = await h.api.tasks.list({ path: 'a.md' });
+    if (!rows.ok) throw Error(rows.error.code);
+    const existing = expectDefined(rows.value.items[0]);
+    const pending = await expectDefined(h.api.tasks.prepare)({
+      kind: 'create',
+      destination: { type: 'configured-default' },
+      tree: { markdownTitle: 'Pending' },
+    });
+    if (!pending.ok) throw Error(pending.error.code);
+    if (condition === 'unrelated focus') {
+      expect(
+        await h.session.focus({
+          kind: 'task',
+          target: existing.target,
+          revision: existing.revision,
+        }),
+      ).toBe(true);
+    }
+    h.session.stage({ kind: 'task', plan: pending.value });
+    if (condition === 'mixed proposal') {
+      const note = await expectDefined(h.api.notes).prepare({
+        kind: 'create',
+        path: 'Review.md',
+        title: 'Review',
+        text: 'A pending note.',
+      });
+      if (!note.ok) throw Error(note.error.code);
+      h.session.stage({ kind: 'note', plan: note.value });
+    }
+
+    h.script(() => {
+      const index = h.model.doGenerateCalls.length - 1;
+      expect(generatedToolDescription(h, index, 'create_task')).not.toContain(
+        'Refine this unsaved task',
+      );
+      return call('create_task', {
+        tree: { markdownTitle: 'Independent' },
+        complete: true,
+      });
+    });
+    await h.session.submit('Prepare an independent task named Independent.');
+
+    expect(h.session.snapshot().proposal.changes).toHaveLength(
+      condition === 'mixed proposal' ? 3 : 2,
+    );
+    expect(pendingCreateByTitle(h, 'Pending').target).toBe(pending.value.target);
+    expect(pendingCreateByTitle(h, 'Independent').after).toMatchObject({
+      title: 'Independent',
+    });
+    expect(await h.read('a.md')).toBe(source);
+  },
+);
 it('refines one captured creation through its current edit, then saves one preserved root', async () => {
   const control = 'Keep these control bytes.\r\n';
   const h = await setup({ 'a.md': '', 'control.md': control });
@@ -4637,6 +4707,67 @@ it('refines one captured creation through its current edit, then saves one prese
   const finalReadback = await expectDefined(h.api.tasks.tree)({ target: saved.target, limit: 500 });
   if (!finalReadback.ok) throw Error(finalReadback.error.code);
   expect(finalReadback.value.tree).toMatchObject({ time: '11:30' });
+});
+it('refines the earlier of two pending creations without changing the later root', async () => {
+  const h = await setup({ 'a.md': '' });
+  const writes = vi.spyOn(h.app.vault, 'process');
+  h.script(() =>
+    call('create_task', {
+      tree: {
+        markdownTitle: 'First root',
+        initial: { time: { type: 'set', value: '10:00' } },
+      },
+      complete: true,
+    }),
+  );
+  await h.session.submit('Prepare First root at 10:00.');
+  const first = pendingCreateByTitle(h, 'First root');
+  const firstRoot = expectDefined(first.after);
+
+  h.script(() =>
+    call('create_task', {
+      tree: { markdownTitle: 'Later root', description: 'Keep this later root.' },
+      complete: true,
+    }),
+  );
+  await h.session.submit('Prepare a separate Later root.');
+  const later = pendingCreateByTitle(h, 'Later root');
+  const laterRoot = expectDefined(later.after);
+  expect(h.session.snapshot().proposal.changes).toHaveLength(2);
+
+  h.script(() => {
+    const index = h.model.doGenerateCalls.length - 1;
+    const edit = projectedEdit(h, 'First root');
+    expect(generatedEditField(h, index)).toHaveProperty('enum', expect.arrayContaining([edit]));
+    expect(generatedToolDescription(h, index, 'create_task')).not.toContain(
+      'Refine this unsaved task',
+    );
+    return call('change_task', {
+      edit,
+      operation: { type: 'set', time: '11:30' },
+      complete: true,
+    });
+  });
+  await h.session.submit('Change First root to 11:30.');
+
+  const firstAfter = pendingCreateByTitle(h, 'First root');
+  const laterAfter = pendingCreateByTitle(h, 'Later root');
+  expect(h.session.snapshot().proposal.changes).toHaveLength(2);
+  expect(firstAfter.target).toBe(first.target);
+  expect(firstAfter.after?.target).toBe(firstRoot.target);
+  expect(firstAfter.after).toMatchObject({
+    title: 'First root',
+    time: '11:30',
+  });
+  expect(laterAfter.target).toBe(later.target);
+  expect(laterAfter.after?.target).toBe(laterRoot.target);
+  expect(laterAfter.after).toMatchObject({
+    title: 'Later root',
+    description: 'Keep this later root.',
+  });
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(writes).not.toHaveBeenCalled();
+  expect(await h.read('a.md')).toBe('');
 });
 it('binds a complete filter-only lookup to the single matching saved task', async () => {
   const source = '- [ ] Groceries #errand\n  - [ ] Keep apples on the preview\n- [ ] Keep\n';
