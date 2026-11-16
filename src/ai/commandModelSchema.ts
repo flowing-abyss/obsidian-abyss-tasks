@@ -84,7 +84,7 @@ function projectEdits(
     if (tool.type === 'function' && tool.name === 'create_task' && parentEdit !== undefined)
       return {
         ...tool,
-        description: `For a subtask of the working task use change_task with edit "${parentEdit}" and operation {"type":"add-child","markdownTitle":"…"}; replace … with the requested child title. ${tool.description ?? ''}`,
+        description: `Refine this unsaved task with change_task edit "${parentEdit}"; add-child adds its subtask. create_task adds an independent root. ${tool.description ?? ''}`,
       };
     return tool;
   });

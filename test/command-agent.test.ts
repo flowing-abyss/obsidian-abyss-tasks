@@ -72,6 +72,20 @@ function latestToolValue(h: Awaited<ReturnType<typeof setup>>, name: string) {
     throw Error('Missing accepted tool result');
   return expectDefined(record(result.output.value));
 }
+function generatedToolDescription(
+  h: Awaited<ReturnType<typeof setup>>,
+  index: number,
+  name: string,
+): string {
+  const tool = h.model.doGenerateCalls[index]?.tools?.find((candidate) => candidate.name === name);
+  return tool?.type === 'function' ? (tool.description ?? '') : '';
+}
+function generatedEditField(h: Awaited<ReturnType<typeof setup>>, index: number) {
+  const tool = h.model.doGenerateCalls[index]?.tools?.find(
+    (candidate) => candidate.name === 'change_task',
+  );
+  return tool?.type === 'function' ? tool.inputSchema.properties?.['edit'] : undefined;
+}
 function findTreeNode(tree: TaskTreeV1 | null, target: string): TaskTreeV1 | undefined {
   if (tree === null) return undefined;
   if (tree.target === target) return tree;
@@ -4461,18 +4475,21 @@ it('returns the exact inspect call for a partial title and repeats it when a dis
   expect(h.model.doGenerateCalls).toHaveLength(4);
   expect(await h.read('a.md')).toBe(source);
 });
-it('offers an exact add-child call on the sole working creation for a bare subtask request', async () => {
+it('offers current draft refinement and add-child guidance for the sole working creation', async () => {
   const h = await setup({ 'a.md': '' });
   h.script(() => call('create_task', { tree: { markdownTitle: 'Root' }, complete: true }));
   await h.session.submit('Create Root.');
   h.script(() => {
     const edit = projectedEdit(h, 'Root');
-    const create = h.model.doGenerateCalls[1]?.tools?.find(
-      (candidate) => candidate.name === 'create_task',
+    expect(generatedToolDescription(h, 1, 'create_task')).toContain(
+      `Refine this unsaved task with change_task edit "${edit}"`,
     );
-    expect(create?.type === 'function' ? create.description : '').toContain(
-      `change_task with edit "${edit}" and operation {"type":"add-child","markdownTitle":"…"}`,
+    expect(generatedToolDescription(h, 1, 'create_task')).toContain(
+      'create_task adds an independent root.',
     );
+    expect(generatedToolDescription(h, 1, 'change_task')).toContain('saved tasks');
+    expect(generatedToolDescription(h, 1, 'change_task')).toContain('unsaved drafts');
+    expect(generatedEditField(h, 1)).toHaveProperty('enum', expect.arrayContaining([edit]));
     return call('change_task', {
       edit,
       operation: { type: 'add-child', markdownTitle: 'Child A' },
@@ -4484,6 +4501,142 @@ it('offers an exact add-child call on the sole working creation for a bare subta
     { plan: { after: { title: 'Root', children: [{ title: 'Child A' }] } } },
   ]);
   expect(await h.read('a.md')).toBe('');
+});
+it('refines one captured creation through its current edit, then saves one preserved root', async () => {
+  const control = 'Keep these control bytes.\r\n';
+  const h = await setup({ 'a.md': '', 'control.md': control });
+  const writes = vi.spyOn(h.app.vault, 'process');
+  h.script(() =>
+    call('create_task', {
+      tree: {
+        markdownTitle: 'Orion',
+        description: 'Keep this detail.',
+        initial: {
+          scheduled: { type: 'set', value: '2026-11-11' },
+          time: { type: 'set', value: '10:00' },
+          tags: { add: ['keep'] },
+        },
+        children: [{ markdownTitle: 'Check the latch' }],
+      },
+      complete: true,
+    }),
+  );
+  await h.session.submit(
+    'Prepare Orion for 2026-11-11 at 10:00 with description Keep this detail, child Check the latch, and tag #keep.',
+  );
+
+  const initial = h.session.snapshot();
+  const initialChange = expectDefined(initial.proposal.changes[0]);
+  if (initialChange.kind !== 'task' || initialChange.plan.kind !== 'create')
+    throw Error('Expected one creation plan');
+  const firstPlan = initialChange.plan;
+  const firstRoot = expectDefined(firstPlan.after);
+  expect(initial.proposal.changes).toHaveLength(1);
+  expect(initial.trees).toHaveLength(1);
+  expect(firstRoot).toMatchObject({
+    description: 'Keep this detail.',
+    dates: { scheduled: '2026-11-11' },
+    time: '10:00',
+    tags: ['#keep'],
+    children: [{ title: 'Check the latch' }],
+  });
+  expect(firstPlan).toHaveProperty('destination.path', 'a.md');
+  expect(writes).not.toHaveBeenCalled();
+  expect(await h.read('a.md')).toBe('');
+  expect(await h.read('control.md')).toBe(control);
+
+  let oldEdit = '';
+  h.script(() => {
+    const index = h.model.doGenerateCalls.length - 1;
+    expect(generatedToolDescription(h, index, 'change_task')).toContain('saved tasks');
+    expect(generatedToolDescription(h, index, 'change_task')).toContain('unsaved drafts');
+    expect(generatedToolDescription(h, index, 'create_task')).toContain('Refine this unsaved task');
+    oldEdit = projectedEdit(h, 'Orion');
+    expect(generatedEditField(h, index)).toHaveProperty('enum', expect.arrayContaining([oldEdit]));
+    return call('change_task', {
+      edit: oldEdit,
+      operation: { type: 'set', time: '11:30' },
+      complete: true,
+    });
+  });
+  await h.session.submit('Actually, make it 11:30. Keep the same day.');
+
+  const refined = h.session.snapshot();
+  expect(refined.status).toMatchObject({ kind: 'ready', message: 'Ready. Enter to save.' });
+  const refinedChange = expectDefined(refined.proposal.changes[0]);
+  if (refinedChange.kind !== 'task') throw Error('Expected the refined creation plan');
+  const refinedPlan = refinedChange.plan;
+  const refinedAfter = refinedPlan.after;
+  if (refinedAfter === null) throw Error('Expected the refined creation tree');
+  expect(refined.proposal.changes).toHaveLength(1);
+  expect(refinedPlan.target).toBe(firstPlan.target);
+  expect(refinedAfter.target).toBe(firstRoot.target);
+  expect(refinedPlan.destination).toEqual(firstPlan.destination);
+  expect(refinedAfter).toMatchObject({
+    description: 'Keep this detail.',
+    dates: { scheduled: '2026-11-11' },
+    time: '11:30',
+    tags: ['#keep'],
+    children: [{ title: 'Check the latch' }],
+  });
+  expect(refined.journal).toEqual([]);
+  expect(writes).not.toHaveBeenCalled();
+  expect(await h.read('a.md')).toBe('');
+  expect(await h.read('control.md')).toBe(control);
+
+  const approval = 'Save the displayed Orion task at 11:30.';
+  let refinedEdit = '';
+  h.script(() => {
+    const index = h.model.doGenerateCalls.length - 1;
+    refinedEdit = projectedEdit(h, 'Orion');
+    expect(refinedEdit).not.toBe(oldEdit);
+    expect(generatedEditField(h, index)).toHaveProperty(
+      'enum',
+      expect.arrayContaining([refinedEdit]),
+    );
+    return call('interpret', { intent: 'confirm', approval });
+  });
+  await h.session.submit(approval);
+  expect(h.session.snapshot().status).toEqual({ kind: 'saved', message: 'Saved.' });
+  expect(h.session.snapshot().journal).toMatchObject([{ state: 'settled', effects: 'committed' }]);
+  expect(writes).toHaveBeenCalledTimes(1);
+  const savedRows = await h.api.tasks.list({ path: 'a.md' });
+  if (!savedRows.ok) throw Error(savedRows.error.code);
+  expect(savedRows.value.items.filter((item) => item.parentTarget === undefined)).toHaveLength(1);
+  const saved = expectDefined(savedRows.value.items.find((item) => item.title === 'Orion'));
+  const readback = await expectDefined(h.api.tasks.tree)({ target: saved.target, limit: 500 });
+  if (!readback.ok) throw Error(readback.error.code);
+  expect(readback.value.tree).toMatchObject({
+    description: 'Keep this detail.',
+    dates: { scheduled: '2026-11-11' },
+    time: '11:30',
+    tags: ['#keep'],
+    children: [{ title: 'Check the latch' }],
+  });
+  const savedBytes = await h.read('a.md');
+  expect(await h.read('control.md')).toBe(control);
+
+  h.script(() => {
+    const request = expectDefined(h.model.doGenerateCalls[h.model.doGenerateCalls.length - 1]);
+    const change = request.tools?.find((tool) => tool.name === 'change_task');
+    const editSchema = change?.type === 'function' ? change.inputSchema.properties?.['edit'] : null;
+    expect(editSchema).toHaveProperty('enum', expect.not.arrayContaining([oldEdit]));
+    return call('change_task', {
+      edit: oldEdit,
+      operation: { type: 'set', time: '10:00' },
+    });
+  }, finish());
+  await h.session.submit('Try the superseded edit.');
+  expect(h.session.snapshot().proposal.changes).toEqual([]);
+  expect(writes).toHaveBeenCalledTimes(1);
+  expect(await h.read('a.md')).toBe(savedBytes);
+  expect(await h.read('control.md')).toBe(control);
+  const finalRows = await h.api.tasks.list({ path: 'a.md' });
+  if (!finalRows.ok) throw Error(finalRows.error.code);
+  expect(finalRows.value.items.filter((item) => item.parentTarget === undefined)).toHaveLength(1);
+  const finalReadback = await expectDefined(h.api.tasks.tree)({ target: saved.target, limit: 500 });
+  if (!finalReadback.ok) throw Error(finalReadback.error.code);
+  expect(finalReadback.value.tree).toMatchObject({ time: '11:30' });
 });
 it('binds a complete filter-only lookup to the single matching saved task', async () => {
   const source = '- [ ] Groceries #errand\n  - [ ] Keep apples on the preview\n- [ ] Keep\n';
@@ -5263,7 +5416,12 @@ it('keeps siblings and immediate write authority out of terminal preview shortha
         ...call('create_task', { tree: { markdownTitle: 'Red' } }).content,
       ],
     }),
-    finish(),
+    () => {
+      expect(generatedToolDescription(h, 1, 'create_task')).not.toContain(
+        'Refine this unsaved task',
+      );
+      return finish()();
+    },
   );
   await h.session.submit('Draft Blue and Red');
   expect(h.session.snapshot().proposal.changes).toHaveLength(2);

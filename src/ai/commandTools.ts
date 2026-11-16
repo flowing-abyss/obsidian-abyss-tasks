@@ -376,7 +376,7 @@ export function commandTools(ctx: CommandToolContext): ToolSet {
     change_task: adapter(
       changeTaskSchema,
       owner.task(),
-      'Prepare unsaved task changes with row edit (b handle); does not write vault content. Use each returned current edit for requested operations before finish. remove deletes a saved subtree or discards an unsaved root; remove-comment deletes a comment; update-comment rewrites it. set due YYYY-MM-DD or time HH:mm; null clears that field. Two-owner correction: restore first, then edit the other with current refs.',
+      'Edit saved tasks or unsaved drafts with current row edit (b handle); does not write vault content. Use returned current edits for requested operations before finish. remove deletes a saved subtree or discards an unsaved root; remove-comment deletes a comment; update-comment rewrites it. set due YYYY-MM-DD or time HH:mm; null clears that field. Two-owner correction: restore first, then edit the other with current refs.',
     ),
     find: owner.findTasks(),
     inspect: adapter(

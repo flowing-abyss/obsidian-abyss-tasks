@@ -3,7 +3,7 @@ import { generateText, tool, wrapLanguageModel, type LanguageModelMiddleware } f
 import { expect, it, vi } from 'vitest';
 import { commandEditTools, modelToolSchema } from '../src/ai/commandModelSchema';
 import { CommandReferenceBook } from '../src/ai/CommandReferenceBook';
-import { changeTaskSchema } from '../src/ai/commandSchemas';
+import { changeTaskSchema, createTaskSchema } from '../src/ai/commandSchemas';
 import { expectDefined } from './helpers';
 
 type Params = Parameters<NonNullable<LanguageModelMiddleware['wrapGenerate']>>[0]['params'];
@@ -73,6 +73,56 @@ it('advertises each exact issued edit with its subject and the comment owner on 
   expect(book.edit(comment.edit, 'update-comment', current).target).toBe('native-comment');
   expect(() => book.edit(comment.edit, 'patch', current)).toThrow();
   expect(() => book.edit(expectDefined(refs.taskReferences[0]).target, 'patch', current)).toThrow();
+});
+
+it('projects the sole pending owner edit as refinement while preserving independent creation', async () => {
+  const book = new CommandReferenceBook('pending-owner');
+  const current = catalog('revision-one', ['native-root']);
+  const issued = book.project(current) as IssuedRows;
+  const tools = await modelTools();
+  tools.push({
+    type: 'function',
+    name: 'create_task',
+    description: 'Create one task.',
+    inputSchema: await modelToolSchema(createTaskSchema, 'create_task').jsonSchema,
+  });
+
+  const projected = commandEditTools(tools, book, () => current, {
+    workingRoot: 'native-root',
+    retryEvidence: [],
+  });
+  const create = projected?.find((candidate) => candidate.name === 'create_task');
+  const edit = expectDefined(issued.taskReferences[0]).edit;
+  const changeChoices = field(projected).enum;
+
+  expect(create?.type === 'function' ? create.description : '').toContain(
+    `Refine this unsaved task with change_task edit "${edit}"`,
+  );
+  expect(create?.type === 'function' ? create.description : '').toContain(
+    'create_task adds an independent root.',
+  );
+  expect(changeChoices).toContain(edit);
+
+  const description = (value: Tools): string => {
+    const tool = value.find((candidate) => candidate.name === 'create_task');
+    return tool?.type === 'function' ? (tool.description ?? '') : '';
+  };
+  expect(
+    description(
+      commandEditTools(tools, book, () => current, {
+        workingRoot: undefined,
+        retryEvidence: [],
+      }) ?? [],
+    ),
+  ).toBe('Create one task.');
+  expect(
+    description(
+      commandEditTools(tools, book, () => ({ ...current, truncated: true }), {
+        workingRoot: 'native-root',
+        retryEvidence: [],
+      }) ?? [],
+    ),
+  ).toBe('Create one task.');
 });
 
 it('rechecks immutable bases between generations and emits fresh handles only after the new row was issued', async () => {
